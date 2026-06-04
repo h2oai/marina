@@ -1,0 +1,60 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+  "files": {
+    "includes": ["**", "!**/*.css"]
+  },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "style": {
+        "noNonNullAssertion": "off"
+      },
+      "suspicious": {
+        "noAssignInExpressions": "off"
+      },
+      "correctness": {
+        "noUnusedPrivateClassMembers": "warn"
+      }
+    }
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "overrides": [
+    {
+      "includes": ["**/dashboard/src/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "useExhaustiveDependencies": "warn"
+          },
+          "a11y": {
+            "useKeyWithClickEvents": "warn",
+            "useButtonType": "warn",
+            "noAutofocus": "warn",
+            "useSemanticElements": "warn",
+            "noNoninteractiveTabindex": "warn",
+            "useMediaCaption": "warn",
+            "noSvgWithoutTitle": "warn",
+            "noLabelWithoutControl": "warn",
+            "noStaticElementInteractions": "warn"
+          },
+          "suspicious": {
+            "noArrayIndexKey": "warn"
+          },
+          "security": {
+            "noDangerouslySetInnerHtml": "warn"
+          },
+          "style": {
+            "useSingleVarDeclarator": "warn"
+          }
+        }
+      }
+    }
+  ]
+}

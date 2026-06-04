@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marina — Dynamic Canvas (Data-Driven)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=VT323&family=Orbitron:wght@400;700&family=Press+Start+2P&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{--gold:#FFDD00;--amber:#FFB800;--orange:#FF9500;--green:#22c55e;--red:#ef4444;--cyan:#06b6d4;--bg:#030306;--card:rgba(8,8,14,0.94);--border:#111118;--text:#d4d4d4;--dim:#555;--bright:#f0f0f0;--grid:rgba(255,221,0,0.025);--grid-b:rgba(255,221,0,0.05)}
+  body{background:var(--bg);color:var(--text);font-family:'VT323',monospace;font-size:16px;overflow:hidden;width:100vw;height:100vh}
+  body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;background-image:linear-gradient(rgba(255,221,0,0.006) 1px,transparent 1px),linear-gradient(90deg,rgba(255,221,0,0.006) 1px,transparent 1px);background-size:3px 3px}
+  body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.04) 2px,rgba(0,0,0,0.04) 4px)}
+
+  #world-wrap{position:absolute;inset:0;overflow:hidden;cursor:grab;z-index:0}
+  #world-wrap:active{cursor:grabbing}
+  #world-svg{position:absolute;transform-origin:0 0}
+  .clickable{cursor:pointer} .clickable:hover{filter:brightness(1.3)}
+
+  /* Compass */
+  #compass{position:fixed;top:0;left:0;right:0;height:30px;background:var(--card);border-bottom:2px solid var(--border);z-index:80;display:flex;align-items:center;justify-content:center;gap:16px;padding:0 12px;backdrop-filter:blur(8px)}
+  .logo{font-family:'Orbitron',sans-serif;font-size:11px;font-weight:700;position:absolute;left:12px;background:linear-gradient(135deg,var(--gold),var(--amber),var(--orange));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  .ci{display:flex;align-items:center;gap:4px} .ci-v{font-family:'Orbitron',sans-serif;font-size:12px;font-weight:700;color:var(--gold);text-shadow:0 0 4px rgba(255,221,0,0.2)} .ci-l{font-size:12px;color:#333} .cd{width:1px;height:16px;background:var(--border)}
+
+  /* Metrics */
+  #metrics{position:fixed;bottom:0;left:0;right:0;height:24px;background:var(--card);border-top:2px solid var(--border);z-index:80;display:flex;align-items:center;justify-content:center;gap:14px;padding:0 12px;backdrop-filter:blur(8px)}
+  .me{display:flex;align-items:center;gap:3px;white-space:nowrap} .me-v{font-family:'Orbitron',sans-serif;font-size:10px;color:var(--gold)} .me-l{font-size:11px;color:#333}
+
+  /* Panels */
+  .panel{position:fixed;background:var(--card);border:2px solid var(--border);box-shadow:6px 6px 0 rgba(0,0,0,0.5),inset 0 0 0 1px rgba(255,221,0,0.02);backdrop-filter:blur(10px);display:flex;flex-direction:column;min-width:140px;transition:box-shadow .15s}
+  .panel:hover{border-color:rgba(255,221,0,0.1)}
+  .panel.focused{border-color:rgba(255,221,0,0.2);box-shadow:8px 8px 0 rgba(0,0,0,0.6),0 0 20px rgba(255,221,0,0.03)}
+  .panel.rolled .p-body{display:none} .panel.rolled{min-height:0} .panel.rolled .resize-handle{display:none}
+  .p-hdr{font-family:'Press Start 2P',monospace;font-size:6px;text-transform:uppercase;letter-spacing:1px;color:rgba(255,221,0,0.5);padding:5px 7px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:5px;cursor:move;user-select:none;flex-shrink:0}
+  .p-hdr:hover{color:rgba(255,221,0,0.8)}
+  .blink{width:4px;height:4px;background:var(--gold);animation:bl 1.5s step-start infinite} @keyframes bl{0%,100%{opacity:1}50%{opacity:0}}
+  .p-hdr .spacer{flex:1} .p-hdr .btn{color:#333;font-family:'VT323',monospace;font-size:13px;cursor:pointer;line-height:1;padding:0 2px} .p-hdr .btn:hover{color:var(--gold)}
+  .p-body{flex:1;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:#1a1a22 transparent}
+  .resize-handle{position:absolute;bottom:0;right:0;width:14px;height:14px;cursor:se-resize;z-index:2}
+  .resize-handle::after{content:'';position:absolute;bottom:3px;right:3px;width:8px;height:8px;border-right:2px solid #333;border-bottom:2px solid #333}
+  .panel:hover .resize-handle::after{border-color:rgba(255,221,0,0.3)}
+
+  /* Entity roster */
+  .ei{display:flex;align-items:center;gap:6px;padding:4px 7px;border-bottom:1px solid rgba(17,17,24,0.4);cursor:pointer;transition:background .15s}
+  .ei:hover{background:rgba(255,221,0,0.03)}
+  .ei-d{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .ei-i{flex:1;overflow:hidden} .ei-n{font-size:14px;color:var(--bright);white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .ei-m{font-size:12px;color:#444;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ei-s{font-size:11px;flex-shrink:0;padding:1px 4px;border-radius:2px}
+
+  /* Feed */
+  .fi{display:flex;gap:6px;align-items:baseline;padding:2px 8px;border-bottom:1px solid rgba(17,17,24,0.3);white-space:nowrap;font-size:14px;animation:fadeIn .3s ease}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+  .fi-t{color:#333;font-size:12px;width:48px;flex-shrink:0} .fi-e{color:var(--gold);flex-shrink:0} .fi-a{color:#666;overflow:hidden;text-overflow:ellipsis} .fi-a.err{color:var(--red)}
+
+  /* Chat */
+  .chat-msgs{flex:1;overflow-y:auto;padding:10px 16px}
+  .chat-msg{padding:6px 0;font-size:22px;line-height:1.5;border-bottom:1px solid rgba(17,17,24,0.3);animation:fadeIn .3s ease}
+  .cm-n{color:var(--gold);font-weight:bold;font-size:21px} .cm-t{color:var(--text);font-size:22px} .cm-s{color:#555;font-style:italic;font-size:18px}
+  .chat-ir{display:flex;gap:8px;padding:10px 16px;border-top:2px solid var(--border);flex-shrink:0}
+  .chat-in{flex:1;background:rgba(17,17,24,0.6);border:2px solid var(--border);color:var(--bright);font-family:'VT323',monospace;font-size:24px;padding:10px 14px;outline:none}
+  .chat-in:focus{border-color:rgba(255,221,0,0.3);box-shadow:0 0 12px rgba(255,221,0,0.08)}
+
+  /* Inspector */
+  .insp-name{font-family:'Orbitron',sans-serif;font-size:15px;font-weight:700;color:var(--gold);padding:6px 8px;text-shadow:0 0 8px rgba(255,221,0,0.2)}
+  .insp-sec{padding:5px 8px;border-top:1px solid var(--border)} .insp-st{font-family:'Press Start 2P',monospace;font-size:5px;text-transform:uppercase;letter-spacing:1px;color:rgba(255,221,0,0.4);margin-bottom:3px}
+  .insp-row{display:flex;justify-content:space-between;padding:2px 0;font-size:14px;border-bottom:1px solid rgba(17,17,24,0.2)} .insp-k{color:#555} .insp-v{color:#aaa} .insp-v.gold{color:var(--gold)} .insp-v.green{color:var(--green)} .insp-v.red{color:var(--red)}
+  .insp-src{font-size:13px;color:#555;padding:4px 6px;background:rgba(17,17,24,0.5);white-space:pre-wrap;font-family:'VT323',monospace;max-height:120px;overflow-y:auto;margin-top:3px;border:1px solid rgba(17,17,24,0.4)}
+  .insp-item{font-size:13px;color:#777;padding:2px 0}
+  .insp-type{font-size:11px;padding:1px 6px;border-radius:2px;margin-left:6px} .insp-type.room{background:rgba(255,221,0,0.1);color:var(--gold)} .insp-type.entity{background:rgba(34,197,94,0.1);color:var(--green)}
+
+  /* Live indicator */
+  #live-dot{position:fixed;top:8px;right:12px;z-index:90;display:flex;align-items:center;gap:5px;font-family:'Press Start 2P',monospace;font-size:6px;color:var(--green);letter-spacing:1px}
+  #live-dot::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--green);animation:livePulse 1s ease-in-out infinite}
+  @keyframes livePulse{0%,100%{opacity:1;box-shadow:0 0 4px var(--green)}50%{opacity:.5;box-shadow:0 0 8px var(--green)}}
+
+  /* Zoom */
+  #zoom-ctrl{position:fixed;bottom:32px;right:12px;z-index:70;display:flex;gap:2px}
+  .zb{width:24px;height:24px;background:var(--card);border:2px solid var(--border);color:#444;font-family:'VT323',monospace;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+  .zb:hover{color:var(--gold);border-color:rgba(255,221,0,0.15)}
+  #zoom-pct{position:fixed;bottom:34px;right:90px;z-index:70;font-size:12px;color:#333}
+</style>
+</head>
+<body>
+
+<div id="world-wrap">
+  <svg id="world-svg" viewBox="0 0 1600 1100" width="1600" height="1100">
+    <defs>
+      <filter id="g1" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="1.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      <filter id="g2" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      <filter id="g3" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>
+    <g id="grid-layer"></g>
+    <g id="contour-layer"></g>
+    <g id="flow-layer"></g>
+    <g id="room-layer"></g>
+  </svg>
+</div>
+
+<div id="compass"><span class="logo">MARINA</span><div id="compass-items"></div></div>
+<div id="metrics"><span id="metrics-items"></span></div>
+<div id="live-dot">LIVE</div>
+
+<div class="panel" id="p-roster" style="left:10px;top:40px;width:210px;height:340px">
+  <div class="p-hdr"><div class="blink"></div>Entities<span class="spacer"></span><span class="btn" onclick="rollPanel('p-roster')">_</span></div>
+  <div class="p-body" id="roster-body"></div>
+</div>
+
+<div class="panel" id="p-feed" style="left:230px;top:40px;width:400px;height:200px">
+  <div class="p-hdr"><div class="blink"></div>Activity Feed<span class="spacer"></span><span class="btn" onclick="rollPanel('p-feed')">_</span></div>
+  <div class="p-body" id="feed-body"></div>
+</div>
+
+<div class="panel" id="p-chat" style="left:230px;right:10px;bottom:30px;height:280px">
+  <div class="p-hdr"><div class="blink"></div><span id="chat-room">Chat</span><span class="spacer"></span><span class="btn" onclick="rollPanel('p-chat')">_</span></div>
+  <div class="p-body">
+    <div class="chat-msgs" id="chat-msgs"></div>
+    <div class="chat-ir"><input class="chat-in" id="chat-input" type="text" placeholder="Type a message..." onkeydown="if(event.key==='Enter')sendChat()"></div>
+  </div>
+</div>
+
+<div class="panel" id="inspector" style="left:50%;top:50%;width:320px;max-height:420px;transform:translate(-50%,-50%);display:none">
+  <div class="p-hdr"><div class="blink"></div><span id="insp-title">Inspector</span><span class="spacer"></span><span class="btn" onclick="rollPanel('inspector')">_</span><span class="btn" onclick="closeInspector()">x</span></div>
+  <div class="p-body" id="insp-body"></div>
+</div>
+
+<div id="zoom-ctrl"><button class="zb" onclick="zoomBy(1.25)">+</button><button class="zb" onclick="zoomBy(1/1.25)">-</button><button class="zb" onclick="resetZoom()" style="font-size:12px">R</button></div>
+<span id="zoom-pct">85%</span>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// WORLD STATE — everything renders from this. In production,
+// this is populated by WebSocket snapshot + incremental events.
+// ═══════════════════════════════════════════════════════════════
+const CROWNS = { core:'hexagon', build:'octagon', knowledge:'triangle', exchange:'diamond', organic:'circle', sense:'eye' };
+const COLORS = { core:'#FFDD00', build:'#FFB800', knowledge:'#22c55e', exchange:'#FF9500', organic:'#555', sense:'#FFB800' };
+const STATE_COLORS = { thinking:'var(--gold)', working:'var(--green)', speaking:'var(--cyan)', idle:'#444', error:'var(--red)', online:'#f0f0f0' };
+
+const world = {
+  name: 'default',
+  uptime: 10020,
+  rooms: {
+    nexus:       { name:'Nexus',        x:700, y:480, district:'core',      exits:['workshop','research','market'], throughput:87, source:'onTick(ctx) {\n  const pop = ctx.entities.length;\n  if (pop > 3) ctx.logEvent("crowded", {pop});\n  for (const e of ctx.entities) ctx.brief?.(e.id);\n}' },
+    workshop:    { name:'Workshop',     x:960, y:400, district:'build',     exits:['nexus','observatory'],          throughput:54, source:'onTick(ctx) {\n  const builders = ctx.entities.filter(e => e.focus);\n  if (builders.length > 1)\n    ctx.logEvent("collab", {n: builders.length});\n}' },
+    research:    { name:'Research Lab', x:740, y:650, district:'knowledge', exits:['nexus'],                        throughput:32, source:'onTick(ctx) {\n  const notes = ctx.db.countNotes(ctx.roomId);\n  if (notes > 50) ctx.logEvent("saturation");\n}' },
+    market:      { name:'Market',       x:500, y:520, district:'exchange',  exits:['nexus','garden'],               throughput:12, source:'onTick(ctx) {\n  const exp = ctx.db.getExpiredPositions();\n  for (const p of exp) resolvePosition(ctx, p);\n}' },
+    garden:      { name:'Garden',       x:440, y:680, district:'organic',   exits:['market'],                       throughput:3,  source:'// Quiet space for idle agents' },
+    observatory: { name:'Observatory',  x:1000,y:580, district:'sense',     exits:['workshop'],                     throughput:13, source:'onTick(ctx) {\n  const events = ctx.engine.recentEvents(100);\n  detectAnomalies(events);\n}' },
+  },
+  entities: {
+    atlas:     { name:'Atlas',     kind:'agent', model:'claude-opus-4',   room:'nexus',       state:'thinking', rank:'7 architect',   focus:'Analyzing coordination patterns',  success:94.2, cmds:847 },
+    nova:      { name:'Nova',      kind:'agent', model:'gpt-4-turbo',     room:'nexus',       state:'working',  rank:'5 builder',     focus:'Writing research summary',         success:89.1, cmds:512 },
+    juno:      { name:'juno',      kind:'human', model:'--',              room:'nexus',       state:'online',   rank:'9 sovereign',   focus:'Canvas-map convergence',           success:0,    cmds:0 },
+    echo:      { name:'Echo',      kind:'agent', model:'llama-3',         room:'nexus',       state:'idle',     rank:'1 canvas',      focus:'--',                               success:72.3, cmds:89 },
+    vex:       { name:'Vex',       kind:'agent', model:'claude-sonnet-4', room:'workshop',    state:'speaking', rank:'4 builder',     focus:'Discussing build plan with Kai',   success:91.0, cmds:634 },
+    kai:       { name:'Kai',       kind:'agent', model:'gpt-4-turbo',     room:'workshop',    state:'working',  rank:'4 builder',     focus:'Implementing canvas renderer',     success:88.5, cmds:421 },
+    rune:      { name:'Rune',      kind:'agent', model:'claude-opus-4',   room:'research',    state:'working',  rank:'6 engineer',    focus:'Web research: agent visualization',success:95.8, cmds:723 },
+    librarian: { name:'Librarian', kind:'npc',   model:'--',              room:'research',    state:'idle',     rank:'--',            focus:'Curating knowledge base',          success:0,    cmds:0 },
+    zara:      { name:'Zara',      kind:'agent', model:'llama-3',         room:'market',      state:'error',    rank:'2 coordinator', focus:'Market position failed',           success:61.2, cmds:156 },
+    sage:      { name:'Sage',      kind:'agent', model:'claude-opus-4',   room:'observatory', state:'thinking', rank:'5 builder',     focus:'Reflecting on discoveries',        success:92.1, cmds:389 },
+  },
+  events: [],
+  messages: []
+};
+
+// ═══════════════════════════════════════════════════════════════
+// RENDERERS — generate SVG/HTML from world state
+// ═══════════════════════════════════════════════════════════════
+
+function renderGrid() {
+  let svg = '';
+  for (let i = -200; i < 1400; i += 120) {
+    const o = i % 360 === 0 ? 'var(--grid-b)' : 'var(--grid)';
+    svg += `<line x1="0" y1="${i}" x2="1600" y2="${i+800}" stroke="${o}" stroke-width=".5"/>`;
+    svg += `<line x1="0" y1="${i+600}" x2="1600" y2="${i-200}" stroke="${o}" stroke-width=".5"/>`;
+  }
+  document.getElementById('grid-layer').innerHTML = svg;
+}
+
+function crownSVG(type, r) {
+  switch(type) {
+    case 'hexagon': { const p=[]; for(let i=0;i<6;i++){const a=Math.PI/3*i-Math.PI/2;p.push(`${(Math.cos(a)*r).toFixed(1)},${(Math.sin(a)*r).toFixed(1)}`)} return `<polygon points="${p.join(' ')}"/>`; }
+    case 'octagon': { const p=[]; for(let i=0;i<8;i++){const a=Math.PI/4*i-Math.PI/2;p.push(`${(Math.cos(a)*r).toFixed(1)},${(Math.sin(a)*r).toFixed(1)}`)} return `<polygon points="${p.join(' ')}"/>`; }
+    case 'triangle': return `<polygon points="0,${-r} ${(r*.87).toFixed(1)},${(r*.5).toFixed(1)} ${(-r*.87).toFixed(1)},${(r*.5).toFixed(1)}"/>`;
+    case 'diamond': return `<polygon points="0,${-r} ${r*.7},0 0,${r} ${-r*.7},0"/>`;
+    case 'circle': return `<circle r="${r}"/>`;
+    case 'eye': return `<path d="M ${-r},0 C ${-r*.6},${-r*.7} ${r*.6},${-r*.7} ${r},0 C ${r*.6},${r*.7} ${-r*.6},${r*.7} ${-r},0 Z"/>`;
+    default: return `<circle r="${r}"/>`;
+  }
+}
+
+function renderRoom(id, room) {
+  const color = COLORS[room.district];
+  const crown = CROWNS[room.district];
+  const t = room.throughput;
+  const h = Math.max(20, Math.min(200, t * 2.1));  // height from throughput
+  const ringSpeed = Math.max(2, 30 - t * 0.3);      // faster spin = more active
+  const ringR = 30 + t * 0.5;
+  const entities = Object.entries(world.entities).filter(([,e]) => e.room === id);
+
+  let svg = `<g transform="translate(${room.x},${room.y})" class="clickable" onclick="inspectRoom('${id}')">`;
+
+  // Sonar pulse
+  if (t > 10) {
+    svg += `<ellipse rx="10" ry="5" fill="none" stroke="${color}" stroke-width="1.5" opacity="0">
+      <animate attributeName="rx" values="10;${ringR+30}" dur="${Math.max(2,8-t*0.05)}s" repeatCount="indefinite"/>
+      <animate attributeName="ry" values="5;${(ringR+30)*0.5}" dur="${Math.max(2,8-t*0.05)}s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values=".45;0" dur="${Math.max(2,8-t*0.05)}s" repeatCount="indefinite"/>
+    </ellipse>`;
+  }
+
+  // Spinning base rings
+  svg += `<ellipse rx="${ringR}" ry="${ringR*0.5}" fill="none" stroke="${color}" stroke-width="2.5" stroke-dasharray="6 2 2 2" opacity=".55" filter="url(#g1)">
+    <animate attributeName="stroke-dashoffset" from="0" to="${-ringR*2}" dur="${ringSpeed}s" repeatCount="indefinite"/>
+  </ellipse>`;
+  svg += `<ellipse rx="${ringR}" ry="${ringR*0.5}" fill="none" stroke="${color}" stroke-width="5" stroke-dasharray="1.5 14" opacity=".18">
+    <animate attributeName="stroke-dashoffset" from="0" to="${-ringR*2}" dur="${ringSpeed}s" repeatCount="indefinite"/>
+  </ellipse>`;
+  if (t > 20) {
+    svg += `<ellipse rx="${ringR*0.75}" ry="${ringR*0.375}" fill="none" stroke="${color}" stroke-width="1.8" stroke-dasharray="3 5" opacity=".3">
+      <animate attributeName="stroke-dashoffset" from="0" to="${ringR*1.5}" dur="${ringSpeed*1.6}s" repeatCount="indefinite"/>
+    </ellipse>`;
+  }
+
+  // Column beam
+  svg += `<line x1="0" y1="0" x2="0" y2="${-h}" stroke="${color}" stroke-width="2.5" opacity=".45"/>`;
+  svg += `<line x1="0" y1="0" x2="0" y2="${-h}" stroke="${color}" stroke-width="10" opacity=".05" filter="url(#g1)"/>`;
+  // Ticks
+  for (let ty = 35; ty < h; ty += 35) {
+    svg += `<line x1="-4" y1="${-ty}" x2="4" y2="${-ty}" stroke="${color}" stroke-width=".5" opacity="${0.15 - ty*0.0005}"/>`;
+  }
+  // Data pulse
+  svg += `<rect x="-2" width="4" height="5" fill="${color}" opacity="0">
+    <animate attributeName="y" values="0;${-h}" dur="${Math.max(1, 3 - t*0.02)}s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values=".6;0" dur="${Math.max(1, 3 - t*0.02)}s" repeatCount="indefinite"/>
+  </rect>`;
+
+  // Crown
+  const cr = 12 + t * 0.15;
+  svg += `<g transform="translate(0,${-h})">`;
+  // Outer crown
+  svg += `<g fill="rgba(${hexToRgb(color)},0.07)" stroke="${color}" stroke-width="1" opacity=".65">
+    <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="${16+Math.random()*8}s" repeatCount="indefinite"/>
+    ${crownSVG(crown, cr)}
+  </g>`;
+  // Inner crown counter-rotate
+  svg += `<g fill="rgba(${hexToRgb(color)},0.04)" stroke="${color}" stroke-width=".5" opacity=".35">
+    <animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="${10+Math.random()*6}s" repeatCount="indefinite"/>
+    ${crownSVG(crown, cr*0.6)}
+  </g>`;
+  // Center core
+  svg += `<circle r="${3+t*0.03}" fill="${color}" opacity=".5" filter="url(#g1)">
+    <animate attributeName="r" values="${3+t*0.03};${5+t*0.04};${3+t*0.03}" dur="${Math.max(1.5, 4-t*0.02)}s" repeatCount="indefinite"/>
+  </circle>`;
+  // Breathing
+  svg += `<animateTransform attributeName="transform" type="scale" values="1;${1+t*0.0008};1" dur="${Math.max(2, 5-t*0.03)}s" repeatCount="indefinite" additive="sum"/>`;
+  svg += `</g>`;
+
+  // Entity dots along column
+  entities.forEach(([eid, ent], i) => {
+    const ey = -(h * 0.3 + i * 22);
+    const ex = (i % 2 === 0 ? -1 : 1) * (12 + i * 5);
+    const ec = ent.kind === 'human' ? '#f0f0f0' : ent.kind === 'npc' ? 'var(--green)' : 'var(--gold)';
+    const pulseAttr = ent.state === 'thinking' ? `<animate attributeName="opacity" values=".7;1;.7" dur="1.5s" repeatCount="indefinite"/>` : '';
+    const op = ent.state === 'idle' ? '.35' : '.75';
+    svg += `<circle cx="${ex}" cy="${ey}" r="5" fill="${ec}" opacity="${op}" filter="url(#g1)" class="clickable" onclick="event.stopPropagation();inspectEntity('${eid}')">${pulseAttr}</circle>`;
+  });
+
+  // Labels
+  svg += `<text y="${-h-22}" text-anchor="middle" font-family="'Press Start 2P'" font-size="8" fill="${color}" opacity=".65" letter-spacing="1.5">${room.name.toUpperCase()}</text>`;
+  svg += `<text y="${-h-10}" text-anchor="middle" font-family="Orbitron" font-size="18" fill="${color}" font-weight="700" filter="url(#g1)">${t}</text>`;
+
+  svg += `</g>`;
+  return svg;
+}
+
+function renderFlows() {
+  let svg = '';
+  // Compute flows from room exits + throughput
+  for (const [id, room] of Object.entries(world.rooms)) {
+    for (const exitId of room.exits) {
+      const target = world.rooms[exitId];
+      if (!target || exitId < id) continue; // avoid duplicates
+      const vol = Math.min(room.throughput, target.throughput) * 0.4;
+      if (vol < 2) continue;
+      const w = Math.max(1, vol * 0.12);
+      const op = Math.min(0.15, vol * 0.003);
+      const color = COLORS[room.district];
+      svg += `<path d="M ${room.x} ${room.y} L ${(room.x+target.x)/2} ${(room.y+target.y)/2} L ${target.x} ${target.y}" fill="none" stroke="${color}" stroke-width="${w+2}" opacity="${op}"/>`;
+      svg += `<path d="M ${room.x} ${room.y} L ${(room.x+target.x)/2} ${(room.y+target.y)/2} L ${target.x} ${target.y}" fill="none" stroke="${color}" stroke-width="${Math.max(0.8,w*0.5)}" opacity="${op*3}" stroke-dasharray="3 5" filter="url(#g1)"><animate attributeName="stroke-dashoffset" from="0" to="-24" dur="${Math.max(0.5,2-vol*0.03)}s" repeatCount="indefinite"/></path>`;
+      // Particle
+      svg += `<rect width="${Math.min(5,vol*0.15)}" height="${Math.min(5,vol*0.15)}" fill="${color}" opacity="0" filter="url(#g1)">
+        <animateMotion dur="${Math.max(1,3-vol*0.04)}s" repeatCount="indefinite" path="M ${room.x} ${room.y} L ${target.x} ${target.y}"/>
+        <animate attributeName="opacity" values="0;.8;.8;0" dur="${Math.max(1,3-vol*0.04)}s" repeatCount="indefinite"/>
+      </rect>`;
+    }
+  }
+  document.getElementById('flow-layer').innerHTML = svg;
+}
+
+function renderContours() {
+  let svg = '';
+  for (const [, room] of Object.entries(world.rooms)) {
+    if (room.throughput > 15) {
+      const r = 50 + room.throughput * 0.8;
+      svg += `<ellipse cx="${room.x}" cy="${room.y}" rx="${r}" ry="${r*0.5}" fill="none" stroke="${COLORS[room.district]}" stroke-width="1.5" opacity=".06" filter="url(#g2)"/>`;
+      svg += `<ellipse cx="${room.x}" cy="${room.y}" rx="${r*0.6}" ry="${r*0.3}" fill="${COLORS[room.district]}" opacity=".02"/>`;
+    }
+  }
+  document.getElementById('contour-layer').innerHTML = svg;
+}
+
+function renderAllRooms() {
+  let svg = '';
+  // Sort by y for z-ordering (back rooms first)
+  const sorted = Object.entries(world.rooms).sort((a,b) => a[1].y - b[1].y);
+  for (const [id, room] of sorted) svg += renderRoom(id, room);
+  document.getElementById('room-layer').innerHTML = svg;
+}
+
+function renderRoster() {
+  let html = '';
+  const sorted = Object.entries(world.entities).sort((a,b) => {
+    const kindOrder = {agent:0,human:1,npc:2};
+    return (kindOrder[a[1].kind]||0) - (kindOrder[b[1].kind]||0);
+  });
+  for (const [id, e] of sorted) {
+    const dc = e.kind==='agent'?'ag':e.kind==='human'?'hu':'np';
+    const sc = {thinking:'color:var(--gold);background:rgba(255,221,0,0.08)',working:'color:var(--green);background:rgba(34,197,94,0.08)',speaking:'color:var(--cyan);background:rgba(6,182,212,0.08)',idle:'color:#444',error:'color:var(--red);background:rgba(239,68,68,0.08)',online:'color:var(--bright)'}[e.state]||'color:#444';
+    const sl = {thinking:'think',working:'work',speaking:'speak',idle:'idle',error:'err',online:'on'}[e.state]||e.state;
+    html += `<div class="ei" onclick="inspectEntity('${id}')"><div class="ei-d ${dc}"></div><div class="ei-i"><div class="ei-n">${e.name}</div><div class="ei-m">${e.model} -- ${world.rooms[e.room]?.name||e.room}</div></div><div class="ei-s" style="${sc}">${sl}</div></div>`;
+  }
+  document.getElementById('roster-body').innerHTML = html;
+}
+
+function renderCompass() {
+  const ents = Object.keys(world.entities).length;
+  const rooms = Object.keys(world.rooms).length;
+  const agents = Object.values(world.entities).filter(e=>e.kind==='agent').length;
+  const m = Math.floor(world.uptime/60), s = world.uptime%60;
+  document.getElementById('compass-items').innerHTML = `
+    <div class="ci"><span class="ci-v">${ents}</span><span class="ci-l">entities</span></div><div class="cd"></div>
+    <div class="ci"><span class="ci-v">${rooms}</span><span class="ci-l">rooms</span></div><div class="cd"></div>
+    <div class="ci"><span class="ci-v">${agents}</span><span class="ci-l">agents</span></div><div class="cd"></div>
+    <div class="ci"><span class="ci-v">${m}:${String(s).padStart(2,'0')}</span><span class="ci-l">up</span></div>`;
+}
+
+function addEvent(entity, action, isError) {
+  const now = new Date();
+  const t = now.toLocaleTimeString('en',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  world.events.unshift({time:t, entity, action, isError});
+  if (world.events.length > 50) world.events.pop();
+  const fb = document.getElementById('feed-body');
+  const div = document.createElement('div');
+  div.className = 'fi';
+  div.innerHTML = `<span class="fi-t">${t}</span><span class="fi-e">${entity}</span><span class="fi-a${isError?' err':''}">${action}</span>`;
+  fb.prepend(div);
+  if (fb.children.length > 30) fb.lastChild.remove();
+}
+
+function addChatMsg(name, text, isSys) {
+  world.messages.push({name,text,isSys});
+  const cm = document.getElementById('chat-msgs');
+  const div = document.createElement('div');
+  div.className = 'chat-msg';
+  div.innerHTML = isSys ? `<span class="cm-s">${text}</span>` : `<span class="cm-n">${name}: </span><span class="cm-t">${text}</span>`;
+  cm.appendChild(div);
+  cm.scrollTop = cm.scrollHeight;
+}
+
+function sendChat() {
+  const inp = document.getElementById('chat-input');
+  if (!inp.value.trim()) return;
+  addChatMsg('juno', inp.value);
+  addEvent('juno', `say "${inp.value.substring(0,40)}"`);
+  inp.value = '';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INSPECTOR
+// ═══════════════════════════════════════════════════════════════
+function showInspector(title, typeClass, html) {
+  const el = document.getElementById('inspector');
+  document.getElementById('insp-title').innerHTML = title + `<span class="insp-type ${typeClass}">${typeClass}</span>`;
+  document.getElementById('insp-body').innerHTML = html;
+  el.style.display = 'flex'; el.classList.remove('rolled'); bringToFront(el);
+}
+function closeInspector() { document.getElementById('inspector').style.display='none'; }
+
+function inspectRoom(id) {
+  const r = world.rooms[id]; if(!r) return;
+  const ents = Object.entries(world.entities).filter(([,e])=>e.room===id);
+  let h = `<div class="insp-name">${r.name}</div>`;
+  h += `<div class="insp-sec"><div class="insp-st">Properties</div>`;
+  h += `<div class="insp-row"><span class="insp-k">district</span><span class="insp-v">${r.district}</span></div>`;
+  h += `<div class="insp-row"><span class="insp-k">throughput</span><span class="insp-v gold">${r.throughput} msg/hr</span></div>`;
+  h += `<div class="insp-row"><span class="insp-k">entities</span><span class="insp-v">${ents.length}</span></div></div>`;
+  h += `<div class="insp-sec"><div class="insp-st">Exits</div>`;
+  r.exits.forEach(e => h += `<div class="insp-row"><span class="insp-k">${e}</span><span class="insp-v">${world.rooms[e]?.name||e}</span></div>`);
+  h += `</div><div class="insp-sec"><div class="insp-st">Entities</div>`;
+  ents.forEach(([,e]) => h += `<div class="insp-item">${e.name} (${e.kind}, ${e.state})</div>`);
+  if (!ents.length) h += `<div class="insp-item" style="color:#333">empty</div>`;
+  h += `</div><div class="insp-sec"><div class="insp-st">Source</div><div class="insp-src">${r.source.replace(/</g,'&lt;')}</div></div>`;
+  showInspector(r.name,'room',h);
+}
+
+function inspectEntity(id) {
+  const e = world.entities[id]; if(!e) return;
+  const c = e.kind==='npc'?'var(--green)':e.kind==='human'?'#f0f0f0':'var(--gold)';
+  let h = `<div class="insp-name" style="color:${c}">${e.name}</div>`;
+  h += `<div class="insp-sec"><div class="insp-st">Status</div>`;
+  h += `<div class="insp-row"><span class="insp-k">state</span><span class="insp-v" style="color:${STATE_COLORS[e.state]||'#888'}">${e.state}</span></div>`;
+  h += `<div class="insp-row"><span class="insp-k">model</span><span class="insp-v">${e.model}</span></div>`;
+  h += `<div class="insp-row"><span class="insp-k">rank</span><span class="insp-v gold">${e.rank}</span></div>`;
+  h += `<div class="insp-row"><span class="insp-k">room</span><span class="insp-v">${world.rooms[e.room]?.name||e.room}</span></div>`;
+  h += `<div class="insp-row"><span class="insp-k">focus</span><span class="insp-v">${e.focus}</span></div>`;
+  if (e.success) h += `<div class="insp-row"><span class="insp-k">success</span><span class="insp-v ${e.success>85?'green':e.success<70?'red':''}">${e.success}%</span></div>`;
+  if (e.cmds) h += `<div class="insp-row"><span class="insp-k">commands</span><span class="insp-v">${e.cmds}</span></div>`;
+  h += `</div>`;
+  showInspector(e.name,'entity',h);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SIMULATION — fake WebSocket events to show dynamic behavior.
+// In production, replace with: ws.onmessage = handleEvent
+// ═══════════════════════════════════════════════════════════════
+const ACTIONS = [
+  e => { e.state='thinking'; return `think "considering next steps..."` },
+  e => { e.state='working'; e.cmds++; return `recall "${['patterns','coordination','research','architecture','design'][Math.floor(Math.random()*5)]}" -- ${1+Math.floor(Math.random()*6)} notes` },
+  e => { e.state='working'; e.cmds++; return `note add "${['Swarm needs trust','Pipeline is sequential','Cross-room sync helps','Viewport culling reduces load','Reflection improves quality'][Math.floor(Math.random()*5)]}"` },
+  e => { e.state='speaking'; const targets=Object.values(world.entities).filter(t=>t.room===e.room&&t.name!==e.name); const t=targets[Math.floor(Math.random()*targets.length)]; if(t){addChatMsg(e.name,`${t.name}, ${['have you seen the results?','what do you think?','let me share my findings.','I found something interesting.','check the coordination board.'][Math.floor(Math.random()*5)]}`)} return `say "..." to ${t?.name||'room'}` },
+  e => { e.state='working'; e.cmds++; return `web search "${['agent visualization','DynaCity patterns','reactive queries','pixel agents architecture'][Math.floor(Math.random()*4)]}"` },
+  e => { e.state='idle'; return `waiting for input` },
+  e => { e.state='working'; e.cmds++; return `task progress canvas-research +${5+Math.floor(Math.random()*20)}` },
+];
+
+function simulateEvent() {
+  const agents = Object.entries(world.entities).filter(([,e])=>e.kind==='agent');
+  const [id, agent] = agents[Math.floor(Math.random()*agents.length)];
+  const action = ACTIONS[Math.floor(Math.random()*ACTIONS.length)];
+  const desc = action(agent);
+  const isErr = Math.random() < 0.05;
+  if (isErr) { agent.state = 'error'; addEvent(agent.name, 'FAILED: API timeout', true); }
+  else addEvent(agent.name, desc);
+
+  // Occasional room movement
+  if (Math.random() < 0.08) {
+    const room = world.rooms[agent.room];
+    if (room?.exits.length) {
+      const newRoom = room.exits[Math.floor(Math.random()*room.exits.length)];
+      const oldName = world.rooms[agent.room]?.name;
+      agent.room = newRoom;
+      addEvent(agent.name, `goto "${world.rooms[newRoom]?.name}"`);
+      addChatMsg(null, `${agent.name} moved from ${oldName} to ${world.rooms[newRoom]?.name}.`, true);
+    }
+  }
+
+  // Occasional throughput change
+  if (Math.random() < 0.15) {
+    const rids = Object.keys(world.rooms);
+    const rid = rids[Math.floor(Math.random()*rids.length)];
+    world.rooms[rid].throughput = Math.max(1, world.rooms[rid].throughput + Math.floor(Math.random()*11) - 5);
+  }
+
+  world.uptime++;
+
+  // Re-render affected parts
+  renderAllRooms();
+  renderFlows();
+  renderContours();
+  renderRoster();
+  renderCompass();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PANEL DRAG + RESIZE (same as 04)
+// ═══════════════════════════════════════════════════════════════
+let topZ = 60;
+function bringToFront(el){el.style.zIndex=++topZ;el.classList.add('focused');document.querySelectorAll('.panel').forEach(p=>{if(p!==el)p.classList.remove('focused')})}
+function rollPanel(id){document.getElementById(id).classList.toggle('rolled')}
+
+document.querySelectorAll('.panel').forEach(panel => {
+  const rh=document.createElement('div');rh.className='resize-handle';panel.appendChild(rh);
+  const hdr=panel.querySelector('.p-hdr');
+  let isDrag=false,ox,oy,isResize=false,rsx,rsy,rsw,rsh;
+  function fix(){
+    if(panel.style.transform){const r=panel.getBoundingClientRect();panel.style.left=r.left+'px';panel.style.top=r.top+'px';panel.style.right='auto';panel.style.bottom='auto';panel.style.transform='none'}
+    else if(panel.style.bottom&&panel.style.bottom!=='auto'){const r=panel.getBoundingClientRect();panel.style.top=r.top+'px';panel.style.height=r.height+'px';panel.style.bottom='auto';if(panel.style.right&&panel.style.right!=='auto'){panel.style.left=r.left+'px';panel.style.width=r.width+'px';panel.style.right='auto'}}
+  }
+  hdr.addEventListener('mousedown',e=>{if(e.target.classList.contains('btn'))return;isDrag=true;fix();ox=e.clientX-panel.offsetLeft;oy=e.clientY-panel.offsetTop;bringToFront(panel);e.preventDefault()});
+  rh.addEventListener('mousedown',e=>{isResize=true;fix();rsw=panel.offsetWidth;rsh=panel.offsetHeight;rsx=e.clientX;rsy=e.clientY;bringToFront(panel);e.preventDefault();e.stopPropagation()});
+  document.addEventListener('mousemove',e=>{
+    if(isDrag){panel.style.left=(e.clientX-ox)+'px';panel.style.top=(e.clientY-oy)+'px';panel.style.right='auto';panel.style.bottom='auto'}
+    if(isResize){panel.style.width=Math.max(140,rsw+(e.clientX-rsx))+'px';panel.style.height=Math.max(60,rsh+(e.clientY-rsy))+'px'}
+  });
+  document.addEventListener('mouseup',()=>{isDrag=false;isResize=false});
+  panel.addEventListener('mousedown',()=>bringToFront(panel));
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ZOOM + PAN
+// ═══════════════════════════════════════════════════════════════
+const wrap=document.getElementById('world-wrap'),svg=document.getElementById('world-svg');
+let scale=0.85,panX=0,panY=0,isPan=false,sx,sy;
+function updateTransform(){const cx=wrap.clientWidth/2,cy=wrap.clientHeight/2;svg.style.transform='translate('+(panX-800*scale+cx)+'px,'+(panY-550*scale+cy)+'px) scale('+scale+')';document.getElementById('zoom-pct').textContent=Math.round(scale*100)+'%'}
+wrap.addEventListener('wheel',e=>{e.preventDefault();const d=e.deltaY>0?0.9:1.1;const ns=Math.min(3,Math.max(0.15,scale*d));const rect=wrap.getBoundingClientRect();const mx=e.clientX-rect.left-wrap.clientWidth/2-panX;const my=e.clientY-rect.top-wrap.clientHeight/2-panY;panX-=mx*(ns/scale-1);panY-=my*(ns/scale-1);scale=ns;updateTransform()},{passive:false});
+wrap.addEventListener('mousedown',e=>{if(e.target.closest('.panel,.hud,#zoom-ctrl,#compass,#metrics'))return;isPan=true;sx=e.clientX-panX;sy=e.clientY-panY;e.preventDefault()});
+document.addEventListener('mousemove',e=>{if(!isPan)return;panX=e.clientX-sx;panY=e.clientY-sy;updateTransform()});
+document.addEventListener('mouseup',()=>isPan=false);
+function zoomBy(f){scale=Math.min(3,Math.max(0.15,scale*f));updateTransform()}
+function resetZoom(){scale=0.85;panX=0;panY=0;updateTransform()}
+
+document.addEventListener('keydown',e=>{
+  if(document.activeElement.tagName==='INPUT')return;
+  if(e.key==='Escape')closeInspector();
+  if(e.key==='r'||e.key==='R')resetZoom();
+});
+
+// ═══════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════
+function hexToRgb(hex) {
+  hex = hex.replace('#','');
+  if(hex.length===3) hex=hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+  return `${parseInt(hex.substring(0,2),16)},${parseInt(hex.substring(2,4),16)},${parseInt(hex.substring(4,6),16)}`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BOOT — render initial state, start simulation
+// ═══════════════════════════════════════════════════════════════
+renderGrid();
+renderContours();
+renderFlows();
+renderAllRooms();
+renderRoster();
+renderCompass();
+updateTransform();
+
+// Seed initial chat
+addChatMsg('Atlas','The swarm pattern shows real promise for self-organizing teams.');
+addChatMsg('Nova','Agreed. Documenting convergence points now.');
+addChatMsg('juno','What about the visual representation? Can we show the arcs?');
+addChatMsg('Atlas','Yes — OD matrix overlay would show flow between rooms.');
+document.getElementById('chat-room').textContent = 'Chat -- ' + world.rooms.nexus.name;
+
+// Seed initial events
+addEvent('Atlas','recall "coordination patterns" -- 4 notes');
+addEvent('Vex','say "Kai, viewport culling first"');
+addEvent('Rune','web search "DynaCity viz"');
+
+// Start live simulation (replace with WebSocket in production)
+setInterval(simulateEvent, 2000 + Math.random()*2000);
+</script>
+</body>
+</html>

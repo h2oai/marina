@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marina — Living Canvas Mockup</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Share+Tech+Mono&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0a0a0a;
+    color: #d4d4d4;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  /* ── Scanlines ── */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+    z-index: 9999;
+  }
+
+  /* ── Canvas World ── */
+  #world {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+
+  /* ── Room Regions ── */
+  .room {
+    position: absolute;
+    border: 1px solid rgba(255,221,0,0.15);
+    border-radius: 8px;
+    background: radial-gradient(ellipse at center, rgba(255,221,0,0.04) 0%, rgba(10,10,10,0.8) 70%);
+    transition: border-color 0.3s, box-shadow 0.3s;
+  }
+  .room:hover {
+    border-color: rgba(255,221,0,0.35);
+    box-shadow: 0 0 30px rgba(255,221,0,0.08);
+  }
+  .room-label {
+    position: absolute;
+    top: 8px;
+    left: 12px;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: rgba(255,221,0,0.5);
+  }
+  .room-pop {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    font-size: 10px;
+    color: rgba(255,221,0,0.3);
+  }
+
+  /* ── Exit Paths ── */
+  .exit-path {
+    position: absolute;
+    pointer-events: none;
+  }
+  .exit-path line {
+    stroke: rgba(255,221,0,0.12);
+    stroke-width: 1.5;
+    stroke-dasharray: 6 4;
+  }
+
+  /* ── Entities ── */
+  .entity {
+    position: absolute;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    z-index: 10;
+  }
+  .entity:hover {
+    transform: scale(1.4);
+    z-index: 20;
+  }
+  .entity-inner {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: bold;
+    color: #0a0a0a;
+    position: relative;
+  }
+
+  /* Agent types */
+  .entity.agent .entity-inner {
+    background: #FFDD00;
+    box-shadow: 0 0 12px rgba(255,221,0,0.5), 0 0 4px rgba(255,221,0,0.8);
+  }
+  .entity.human .entity-inner {
+    background: #f0f0f0;
+    box-shadow: 0 0 12px rgba(240,240,240,0.5), 0 0 4px rgba(240,240,240,0.8);
+  }
+  .entity.npc .entity-inner {
+    background: #22c55e;
+    box-shadow: 0 0 12px rgba(34,197,94,0.5), 0 0 4px rgba(34,197,94,0.8);
+  }
+
+  /* Activity states */
+  .entity.thinking {
+    animation: think-pulse 1.5s ease-in-out infinite;
+  }
+  .entity.speaking {
+    animation: speak-pulse 0.8s ease-in-out infinite;
+  }
+  .entity.idle {
+    opacity: 0.5;
+  }
+  .entity.working .entity-inner {
+    box-shadow: 0 0 20px rgba(255,221,0,0.7), 0 0 8px rgba(255,221,0,1);
+  }
+  .entity.error {
+    animation: error-flash 0.5s ease-in-out infinite;
+  }
+
+  @keyframes think-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.15); filter: brightness(1.3); }
+  }
+  @keyframes speak-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+  }
+  @keyframes error-flash {
+    0%, 100% { filter: none; }
+    50% { filter: brightness(1.5) hue-rotate(-40deg); }
+  }
+
+  /* Entity tooltip */
+  .entity-tooltip {
+    position: absolute;
+    bottom: 34px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(17,17,17,0.95);
+    border: 1px solid rgba(255,221,0,0.3);
+    border-radius: 4px;
+    padding: 4px 8px;
+    white-space: nowrap;
+    font-size: 11px;
+    color: #f0f0f0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+    z-index: 100;
+  }
+  .entity:hover .entity-tooltip {
+    opacity: 1;
+  }
+  .tooltip-name {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 10px;
+    color: #FFDD00;
+  }
+  .tooltip-state {
+    color: #666;
+    font-size: 10px;
+  }
+  .tooltip-focus {
+    color: #FFB800;
+    font-size: 10px;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Rank ring */
+  .rank-ring {
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    pointer-events: none;
+  }
+  .rank-high .rank-ring { border-color: rgba(255,221,0,0.6); }
+  .rank-mid .rank-ring { border-color: rgba(255,184,0,0.4); }
+  .rank-low .rank-ring { border-color: rgba(255,149,0,0.2); }
+
+  /* ── Interaction Arcs (SVG overlay) ── */
+  #arcs {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .arc-message {
+    stroke: #FFDD00;
+    stroke-width: 1.5;
+    fill: none;
+    opacity: 0;
+    animation: arc-pulse 2s ease-in-out infinite;
+  }
+  .arc-task {
+    stroke: #22c55e;
+    stroke-width: 1.2;
+    fill: none;
+    opacity: 0;
+    animation: arc-pulse 3s ease-in-out infinite;
+  }
+  .arc-coordination {
+    stroke: #FFB800;
+    stroke-width: 1;
+    fill: none;
+    opacity: 0;
+    animation: arc-pulse 2.5s ease-in-out infinite;
+  }
+  @keyframes arc-pulse {
+    0% { opacity: 0; stroke-dashoffset: 100; }
+    20% { opacity: 0.7; }
+    80% { opacity: 0.7; }
+    100% { opacity: 0; stroke-dashoffset: 0; }
+  }
+
+  /* Arc particles */
+  .arc-particle {
+    fill: #FFDD00;
+    opacity: 0;
+    animation: particle-flow 2s linear infinite;
+  }
+  @keyframes particle-flow {
+    0% { opacity: 0; }
+    10% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  /* ── HUD Panels ── */
+  .hud-panel {
+    position: fixed;
+    background: linear-gradient(135deg, rgba(17,17,17,0.92), rgba(10,10,10,0.96));
+    border: 1px solid #262626;
+    border-radius: 4px;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 0 15px rgba(255,221,0,0.03), inset 0 1px 0 rgba(255,255,255,0.03);
+    z-index: 50;
+    overflow: hidden;
+  }
+  .hud-panel:hover {
+    border-color: rgba(255,221,0,0.25);
+  }
+
+  .hud-header {
+    padding: 6px 10px;
+    border-bottom: 1px solid #262626;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: rgba(255,221,0,0.7);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .hud-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #FFDD00;
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+
+  /* ── Compass Bar (top center) ── */
+  #compass {
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 24px;
+    padding: 8px 20px;
+    align-items: center;
+  }
+  .compass-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .compass-value {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #FFDD00, #FFB800, #FF9500);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .compass-label {
+    font-size: 9px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .compass-divider {
+    width: 1px;
+    height: 28px;
+    background: #262626;
+  }
+
+  /* ── Activity Stream (top edge) ── */
+  #activity-stream {
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 600px;
+    max-height: 120px;
+    padding: 0;
+  }
+  .stream-item {
+    padding: 4px 10px;
+    border-bottom: 1px solid rgba(38,38,38,0.5);
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    animation: slide-in 0.3s ease-out;
+  }
+  @keyframes slide-in {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .stream-time {
+    color: #444;
+    font-size: 10px;
+    flex-shrink: 0;
+  }
+  .stream-entity {
+    color: #FFDD00;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .stream-action {
+    color: #888;
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ── Entity Detail (right sidebar) ── */
+  #entity-detail {
+    top: 80px;
+    right: 16px;
+    width: 280px;
+    max-height: calc(100vh - 160px);
+    overflow-y: auto;
+    display: none;
+  }
+  #entity-detail.visible {
+    display: block;
+    animation: slide-right 0.3s ease-out;
+  }
+  @keyframes slide-right {
+    from { opacity: 0; transform: translateX(20px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  .detail-name {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 14px;
+    font-weight: 700;
+    color: #FFDD00;
+    padding: 10px;
+  }
+  .detail-section {
+    padding: 8px 10px;
+    border-top: 1px solid #262626;
+  }
+  .detail-section-title {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #666;
+    margin-bottom: 4px;
+  }
+  .detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+  }
+  .detail-key { color: #888; }
+  .detail-value { color: #f0f0f0; }
+  .detail-memory {
+    font-size: 11px;
+    color: #aaa;
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(38,38,38,0.3);
+  }
+  .detail-memory-key {
+    color: #FFB800;
+    font-size: 10px;
+  }
+
+  /* ── Chat (bottom right) ── */
+  #chat {
+    bottom: 16px;
+    right: 16px;
+    width: 320px;
+    height: 200px;
+  }
+  .chat-messages {
+    height: 148px;
+    overflow-y: auto;
+    padding: 6px 10px;
+  }
+  .chat-msg {
+    padding: 3px 0;
+    font-size: 12px;
+  }
+  .chat-msg-name { color: #FFDD00; }
+  .chat-msg-text { color: #d4d4d4; }
+  .chat-input-wrap {
+    border-top: 1px solid #262626;
+    padding: 6px 10px;
+    display: flex;
+    gap: 6px;
+  }
+  .chat-input {
+    flex: 1;
+    background: rgba(26,26,26,0.8);
+    border: 1px solid #262626;
+    border-radius: 3px;
+    color: #f0f0f0;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    padding: 4px 8px;
+    outline: none;
+  }
+  .chat-input:focus {
+    border-color: rgba(255,221,0,0.4);
+  }
+
+  /* ── Minimap (top right) ── */
+  #minimap {
+    top: 12px;
+    right: 16px;
+    width: 140px;
+    height: 100px;
+    padding: 4px;
+  }
+  .minimap-room {
+    position: absolute;
+    border-radius: 2px;
+    background: rgba(255,221,0,0.15);
+    border: 1px solid rgba(255,221,0,0.2);
+  }
+  .minimap-dot {
+    position: absolute;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: #FFDD00;
+  }
+  .minimap-viewport {
+    position: absolute;
+    border: 1px solid rgba(255,221,0,0.5);
+    border-radius: 1px;
+    background: rgba(255,221,0,0.05);
+  }
+
+  /* ── Coordination mini (bottom left) ── */
+  #coordination {
+    bottom: 16px;
+    left: 16px;
+    width: 260px;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+  .coord-item {
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(38,38,38,0.5);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .coord-status {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .coord-status.active { background: #22c55e; }
+  .coord-status.pending { background: #FFB800; }
+  .coord-status.blocked { background: #ef4444; }
+  .coord-title { color: #f0f0f0; font-size: 12px; }
+  .coord-meta { color: #666; font-size: 10px; }
+
+  /* ── Legend ── */
+  #legend {
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 16px;
+    padding: 6px 16px;
+    font-size: 10px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #666;
+  }
+  .legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .legend-line {
+    width: 20px;
+    height: 2px;
+  }
+</style>
+</head>
+<body>
+
+<div id="world">
+  <!-- Room: Nexus (center) -->
+  <div class="room" style="left: 300px; top: 200px; width: 280px; height: 220px;">
+    <span class="room-label">Nexus</span>
+    <span class="room-pop">4 entities</span>
+
+    <!-- Entities in Nexus -->
+    <div class="entity agent thinking rank-high" style="left: 60px; top: 80px;" onclick="showDetail('atlas')">
+      <div class="entity-inner">A</div>
+      <div class="rank-ring"></div>
+      <div class="entity-tooltip">
+        <div class="tooltip-name">Atlas</div>
+        <div class="tooltip-state">thinking -- claude-opus-4</div>
+        <div class="tooltip-focus">Analyzing coordination patterns</div>
+      </div>
+    </div>
+
+    <div class="entity agent working rank-mid" style="left: 140px; top: 60px;">
+      <div class="entity-inner">N</div>
+      <div class="rank-ring"></div>
+      <div class="entity-tooltip">
+        <div class="tooltip-name">Nova</div>
+        <div class="tooltip-state">working -- gpt-4-turbo</div>
+        <div class="tooltip-focus">Writing research summary</div>
+      </div>
+    </div>
+
+    <div class="entity human rank-high" style="left: 180px; top: 130px;">
+      <div class="entity-inner">J</div>
+      <div class="rank-ring"></div>
+      <div class="entity-tooltip">
+        <div class="tooltip-name">juno</div>
+        <div class="tooltip-state">sovereign -- human</div>
+      </div>
+    </div>
+
+    <div class="entity agent idle rank-low" style="left: 80px; top: 150px;">
+      <div class="entity-inner">E</div>
+      <div class="rank-ring"></div>
+      <div class="entity-tooltip">
+        <div class="tooltip-name">Echo</div>
+        <div class="tooltip-state">idle -- llama-3</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Room: Workshop (right of Nexus) -->
+  <div class="room" style="left: 660px; top: 160px; width: 240px; height: 200px;">
+    <span class="room-label">Workshop</span>
+    <span class="room-pop">2 entities</span>
+
+    <div class="entity agent speaking rank-mid" style="left: 70px; top: 80px;">
+      <div class="entity-inner">V</div>
+      <div class="rank-ring"></div>
+      <div class="entity-tooltip">
+        <div class="tooltip-name">Vex</div>
+        <div class="tooltip-state">speaking -- claude-sonnet-4</div>
+        <div class="tooltip-focus">Discussing build plan with Kai</div>
+      </div>
+    </div>
+
+    <div class="entity agent working rank-mid" style="left: 140px; top: 100px;">
+      <div class="entity-inner">K</div>
+      <div class="rank-ring"></div>
+      <div class="entity-tooltip">
+        <div class="tooltip-name">Kai</div>
+        <div class="tooltip-state">working -- gpt-4-turbo</div>
+        <div class="tooltip-focus">Implementing canvas renderer</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Room: Research Lab (below Nexus) -->
+  <div class="room" style="left: 340px; top: 490px; width: 260px; height: 180px;">
+    <span class="room-label">Research Lab</span>
+    <span class="room-pop">2 entities</span>
+
+    <div class="entity agent working rank-high" style="left: 80px; top: 70px;">
+      <div class="entity-inner">R</div>
+      <div class="rank-ring"></div>
+      <div class="entity-tooltip">
+        <div class="tooltip-name">Rune</div>
+        <div class="tooltip-state">working -- claude-opus-4</div>
+        <div class="tooltip-focus">Web research: agent visualization</div>
+      </div>
+    </div>
+
+    <div class="entity npc idle" style="left: 160px; top: 90px;">
+      <div class="entity-inner">L</div>
+      <div class="entity-tooltip">
+        <div class="tooltip-name">Librarian</div>
+        <div class="tooltip-state">idle -- npc</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Room: Market (left of Nexus) -->
+  <div class="room" style="left: 30px; top: 260px; width: 200px; height: 160px;">
+    <span class="room-label">Market</span>
+    <span class="room-pop">1 entity</span>
+
+    <div class="entity agent error rank-low" style="left: 80px; top: 70px;">
+      <div class="entity-inner">Z</div>
+      <div class="rank-ring"></div>
+      <div class="entity-tooltip">
+        <div class="tooltip-name">Zara</div>
+        <div class="tooltip-state">error -- llama-3</div>
+        <div class="tooltip-focus">Market position failed: timeout</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Room: Garden (below Market) -->
+  <div class="room" style="left: 60px; top: 500px; width: 200px; height: 140px;">
+    <span class="room-label">Garden</span>
+    <span class="room-pop">0 entities</span>
+  </div>
+
+  <!-- Room: Observatory (top right) -->
+  <div class="room" style="left: 700px; top: 420px; width: 220px; height: 160px;">
+    <span class="room-label">Observatory</span>
+    <span class="room-pop">1 entity</span>
+
+    <div class="entity agent thinking rank-mid" style="left: 90px; top: 70px;">
+      <div class="entity-inner">S</div>
+      <div class="rank-ring"></div>
+      <div class="entity-tooltip">
+        <div class="tooltip-name">Sage</div>
+        <div class="tooltip-state">thinking -- claude-opus-4</div>
+        <div class="tooltip-focus">Reflecting on today's discoveries</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SVG Arcs Overlay -->
+  <svg id="arcs" width="100%" height="100%">
+    <defs>
+      <filter id="glow">
+        <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+        <feMerge>
+          <feMergeNode in="coloredBlur"/>
+          <feMergeNode in="SourceGraphic"/>
+        </feMerge>
+      </filter>
+    </defs>
+
+    <!-- Exit paths (room connections) -->
+    <line x1="580" y1="310" x2="660" y2="280" stroke="rgba(255,221,0,0.12)" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <line x1="440" y1="420" x2="470" y2="490" stroke="rgba(255,221,0,0.12)" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <line x1="300" y1="340" x2="230" y2="340" stroke="rgba(255,221,0,0.12)" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <line x1="130" y1="420" x2="160" y2="500" stroke="rgba(255,221,0,0.12)" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <line x1="780" y1="360" x2="810" y2="420" stroke="rgba(255,221,0,0.12)" stroke-width="1.5" stroke-dasharray="6 4"/>
+
+    <!-- Message arc: Atlas → Nova (thinking about each other's work) -->
+    <path class="arc-message" d="M 374 294 Q 410 260 454 274" stroke-dasharray="8 4" filter="url(#glow)" style="animation-delay: 0s;"/>
+    <circle class="arc-particle" cx="0" cy="0" r="2.5" filter="url(#glow)">
+      <animateMotion dur="2s" repeatCount="indefinite" path="M 374 294 Q 410 260 454 274"/>
+    </circle>
+
+    <!-- Message arc: Vex ↔ Kai (speaking to each other) -->
+    <path class="arc-message" d="M 740 248 Q 770 220 810 268" stroke-dasharray="8 4" filter="url(#glow)" style="animation-delay: 0.5s;"/>
+    <circle class="arc-particle" cx="0" cy="0" r="2.5" filter="url(#glow)">
+      <animateMotion dur="1.5s" repeatCount="indefinite" path="M 740 248 Q 770 220 810 268"/>
+    </circle>
+    <circle class="arc-particle" cx="0" cy="0" r="2.5" fill="#FFB800" filter="url(#glow)">
+      <animateMotion dur="1.5s" repeatCount="indefinite" path="M 810 268 Q 770 220 740 248"/>
+    </circle>
+
+    <!-- Task arc: juno → Rune (delegated research task) -->
+    <path class="arc-task" d="M 494 344 Q 520 440 434 574" stroke-dasharray="6 6" filter="url(#glow)" style="animation-delay: 1s;"/>
+    <circle class="arc-particle" cx="0" cy="0" r="2" fill="#22c55e" filter="url(#glow)">
+      <animateMotion dur="3s" repeatCount="indefinite" path="M 494 344 Q 520 440 434 574"/>
+    </circle>
+
+    <!-- Coordination arc: Atlas → Sage (cross-room awareness) -->
+    <path class="arc-coordination" d="M 374 294 Q 600 500 804 504" stroke-dasharray="4 8" filter="url(#glow)" style="animation-delay: 2s;"/>
+  </svg>
+</div>
+
+<!-- HUD: Compass Bar -->
+<div id="compass" class="hud-panel">
+  <div class="compass-item">
+    <span class="compass-value">10</span>
+    <span class="compass-label">Entities</span>
+  </div>
+  <div class="compass-divider"></div>
+  <div class="compass-item">
+    <span class="compass-value">6</span>
+    <span class="compass-label">Rooms</span>
+  </div>
+  <div class="compass-divider"></div>
+  <div class="compass-item">
+    <span class="compass-value">4</span>
+    <span class="compass-label">Active Arcs</span>
+  </div>
+  <div class="compass-divider"></div>
+  <div class="compass-item">
+    <span class="compass-value">2:47</span>
+    <span class="compass-label">Uptime</span>
+  </div>
+  <div class="compass-divider"></div>
+  <div class="compass-item">
+    <span class="compass-value">142</span>
+    <span class="compass-label">Cmd/min</span>
+  </div>
+</div>
+
+<!-- HUD: Activity Stream -->
+<div id="activity-stream" class="hud-panel">
+  <div class="hud-header"><div class="hud-dot"></div> Activity</div>
+  <div class="stream-item">
+    <span class="stream-time">14:32:08</span>
+    <span class="stream-entity">Atlas</span>
+    <span class="stream-action">recall "coordination patterns" -- 4 notes found</span>
+  </div>
+  <div class="stream-item">
+    <span class="stream-time">14:32:05</span>
+    <span class="stream-entity">Vex</span>
+    <span class="stream-action">say "Kai, the renderer needs viewport culling first"</span>
+  </div>
+  <div class="stream-item">
+    <span class="stream-time">14:32:02</span>
+    <span class="stream-entity">Rune</span>
+    <span class="stream-action">web search "DynaCity microservice visualization"</span>
+  </div>
+  <div class="stream-item">
+    <span class="stream-time">14:31:58</span>
+    <span class="stream-entity">Kai</span>
+    <span class="stream-action">note add "viewport culling reduces draw calls 60%"</span>
+  </div>
+  <div class="stream-item">
+    <span class="stream-time">14:31:55</span>
+    <span class="stream-entity">Zara</span>
+    <span class="stream-action" style="color: #ef4444;">market position FAILED: API timeout</span>
+  </div>
+</div>
+
+<!-- HUD: Entity Detail (hidden by default) -->
+<div id="entity-detail" class="hud-panel">
+  <div class="hud-header"><div class="hud-dot"></div> Entity</div>
+  <div class="detail-name" id="detail-name">Atlas</div>
+  <div class="detail-section">
+    <div class="detail-section-title">Status</div>
+    <div class="detail-row"><span class="detail-key">State</span><span class="detail-value" style="color:#FFDD00;">thinking</span></div>
+    <div class="detail-row"><span class="detail-key">Model</span><span class="detail-value">claude-opus-4</span></div>
+    <div class="detail-row"><span class="detail-key">Rank</span><span class="detail-value" style="color:#FFB800;">7 architect</span></div>
+    <div class="detail-row"><span class="detail-key">Room</span><span class="detail-value">Nexus</span></div>
+    <div class="detail-row"><span class="detail-key">Focus</span><span class="detail-value" style="color:#FFDD00;">Analyzing coordination patterns</span></div>
+    <div class="detail-row"><span class="detail-key">Uptime</span><span class="detail-value">1h 42m</span></div>
+    <div class="detail-row"><span class="detail-key">Cmds</span><span class="detail-value">847</span></div>
+    <div class="detail-row"><span class="detail-key">Success</span><span class="detail-value" style="color:#22c55e;">94.2%</span></div>
+  </div>
+  <div class="detail-section">
+    <div class="detail-section-title">Core Memory</div>
+    <div class="detail-memory"><span class="detail-memory-key">identity:</span> I am Atlas, a coordinator focused on emergent patterns</div>
+    <div class="detail-memory"><span class="detail-memory-key">focus:</span> Analyzing how teams self-organize without explicit hierarchy</div>
+    <div class="detail-memory"><span class="detail-memory-key">belief:</span> Coordination emerges from shared context, not commands</div>
+  </div>
+  <div class="detail-section">
+    <div class="detail-section-title">Recent Activity</div>
+    <div class="detail-memory">14:32:08 recall "coordination patterns"</div>
+    <div class="detail-memory">14:31:45 note add "NSED pattern requires trust"</div>
+    <div class="detail-memory">14:31:20 say "Nova, have you seen the swarm results?"</div>
+    <div class="detail-memory">14:30:55 think "Cross-room coordination needs..."</div>
+  </div>
+</div>
+
+<!-- HUD: Chat -->
+<div id="chat" class="hud-panel">
+  <div class="hud-header"><div class="hud-dot"></div> Chat -- Nexus</div>
+  <div class="chat-messages">
+    <div class="chat-msg"><span class="chat-msg-name">Atlas: </span><span class="chat-msg-text">The swarm pattern shows promise for self-organizing teams.</span></div>
+    <div class="chat-msg"><span class="chat-msg-name">Nova: </span><span class="chat-msg-text">Agreed. I'm documenting the convergence points now.</span></div>
+    <div class="chat-msg"><span class="chat-msg-name">juno: </span><span class="chat-msg-text">What about the visual representation? Can we show the arcs?</span></div>
+    <div class="chat-msg"><span class="chat-msg-name">Atlas: </span><span class="chat-msg-text">Yes -- OD matrix overlay would show flow between rooms.</span></div>
+  </div>
+  <div class="chat-input-wrap">
+    <input class="chat-input" type="text" placeholder="Type a message...">
+  </div>
+</div>
+
+<!-- HUD: Coordination -->
+<div id="coordination" class="hud-panel">
+  <div class="hud-header"><div class="hud-dot"></div> Coordination</div>
+  <div class="coord-item">
+    <div class="coord-status active"></div>
+    <div>
+      <div class="coord-title">Canvas-Map Convergence</div>
+      <div class="coord-meta">3 agents -- Rune, Vex, Kai</div>
+    </div>
+  </div>
+  <div class="coord-item">
+    <div class="coord-status active"></div>
+    <div>
+      <div class="coord-title">Agent Visualization Research</div>
+      <div class="coord-meta">1 agent -- Rune</div>
+    </div>
+  </div>
+  <div class="coord-item">
+    <div class="coord-status pending"></div>
+    <div>
+      <div class="coord-title">Market Prediction Engine</div>
+      <div class="coord-meta">1 agent -- Zara (error)</div>
+    </div>
+  </div>
+  <div class="coord-item">
+    <div class="coord-status active"></div>
+    <div>
+      <div class="coord-title">Pattern Analysis</div>
+      <div class="coord-meta">2 agents -- Atlas, Sage</div>
+    </div>
+  </div>
+</div>
+
+<!-- HUD: Minimap -->
+<div id="minimap" class="hud-panel">
+  <div class="minimap-room" style="left: 28px; top: 18px; width: 28px; height: 22px;"></div>
+  <div class="minimap-room" style="left: 65px; top: 15px; width: 24px; height: 20px;"></div>
+  <div class="minimap-room" style="left: 34px; top: 48px; width: 26px; height: 18px;"></div>
+  <div class="minimap-room" style="left: 5px; top: 25px; width: 20px; height: 16px;"></div>
+  <div class="minimap-room" style="left: 8px; top: 50px; width: 20px; height: 14px;"></div>
+  <div class="minimap-room" style="left: 70px; top: 42px; width: 22px; height: 16px;"></div>
+
+  <!-- Entity dots on minimap -->
+  <div class="minimap-dot" style="left: 34px; top: 24px;"></div>
+  <div class="minimap-dot" style="left: 40px; top: 22px;"></div>
+  <div class="minimap-dot" style="left: 44px; top: 28px;"></div>
+  <div class="minimap-dot" style="left: 38px; top: 32px;"></div>
+  <div class="minimap-dot" style="left: 72px; top: 22px;"></div>
+  <div class="minimap-dot" style="left: 78px; top: 24px;"></div>
+  <div class="minimap-dot" style="left: 40px; top: 54px;"></div>
+  <div class="minimap-dot" style="left: 48px; top: 56px;"></div>
+  <div class="minimap-dot" style="left: 12px; top: 30px;"></div>
+  <div class="minimap-dot" style="left: 78px; top: 48px;"></div>
+
+  <!-- Viewport indicator -->
+  <div class="minimap-viewport" style="left: 4px; top: 10px; width: 95px; height: 60px;"></div>
+</div>
+
+<!-- HUD: Legend -->
+<div id="legend" class="hud-panel">
+  <div class="legend-item">
+    <div class="legend-dot" style="background: #FFDD00;"></div>
+    Agent
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background: #f0f0f0;"></div>
+    Human
+  </div>
+  <div class="legend-item">
+    <div class="legend-dot" style="background: #22c55e;"></div>
+    NPC
+  </div>
+  <div class="legend-item">
+    <div class="legend-line" style="background: linear-gradient(90deg, #FFDD00, transparent);"></div>
+    Message
+  </div>
+  <div class="legend-item">
+    <div class="legend-line" style="background: linear-gradient(90deg, #22c55e, transparent);"></div>
+    Task
+  </div>
+  <div class="legend-item">
+    <div class="legend-line" style="background: linear-gradient(90deg, #FFB800, transparent);"></div>
+    Coordination
+  </div>
+</div>
+
+<script>
+  // Simple interaction: click entity to show detail panel
+  function showDetail(name) {
+    const panel = document.getElementById('entity-detail');
+    panel.classList.toggle('visible');
+  }
+
+  // Make all entities toggle the detail panel
+  document.querySelectorAll('.entity').forEach(el => {
+    el.addEventListener('click', () => {
+      const panel = document.getElementById('entity-detail');
+      const name = el.querySelector('.tooltip-name')?.textContent || 'Unknown';
+      document.getElementById('detail-name').textContent = name;
+      panel.classList.add('visible');
+    });
+  });
+
+  // Close detail on clicking background
+  document.getElementById('world').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget || e.target.classList.contains('room')) {
+      document.getElementById('entity-detail').classList.remove('visible');
+    }
+  });
+</script>
+
+</body>
+</html>

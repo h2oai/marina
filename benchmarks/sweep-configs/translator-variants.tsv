@@ -1,0 +1,30 @@
+# Translator-variant sweep — holds orchestrator + answerer fixed, varies the
+# translator (keyword extraction) model. Tests the hypothesis that translator
+# quality materially affects recall quality and therefore answer quality.
+#
+# Requires multiple translator processes on different channels. This sweep
+# assumes the operator launches the desired translator externally with
+# MARINA_MODEL set to the tested value; the orchestrator always points
+# at TRANSLATOR_CHANNEL="translator" as usual.
+#
+# Format: orchestrator | benchmark | limit | seed | extra
+# (operator notes record which translator was running for each group)
+
+# --- Group 1: translator = marina:haiku ---
+# (Launch: MARINA_MODEL=marina:haiku bun run src/sdk/examples/translator.ts)
+nsed-smart | mmlu-pro   | 100 | 42 | NSED_SUBSTRATES=marina:qwen,marina:gemma,marina:deepseek,marina:nemotron;USE_TRANSLATOR=true;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:haiku
+nsed-smart | truthfulqa | 100 | 42 | NSED_SUBSTRATES=marina:qwen,marina:gemma,marina:deepseek,marina:nemotron;USE_TRANSLATOR=true;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:haiku
+
+# --- Group 2: translator = marina:gemini (strong) ---
+# (Launch: MARINA_MODEL=marina:gemini bun run src/sdk/examples/translator.ts)
+nsed-smart | mmlu-pro   | 100 | 42 | NSED_SUBSTRATES=marina:qwen,marina:gemma,marina:deepseek,marina:nemotron;USE_TRANSLATOR=true;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:gemini
+nsed-smart | truthfulqa | 100 | 42 | NSED_SUBSTRATES=marina:qwen,marina:gemma,marina:deepseek,marina:nemotron;USE_TRANSLATOR=true;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:gemini
+
+# --- Group 3: translator = marina:qwen (cheap sovereign) ---
+nsed-smart | mmlu-pro   | 100 | 42 | NSED_SUBSTRATES=marina:haiku,marina:gemma,marina:deepseek,marina:nemotron;USE_TRANSLATOR=true;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:qwen
+nsed-smart | truthfulqa | 100 | 42 | NSED_SUBSTRATES=marina:haiku,marina:gemma,marina:deepseek,marina:nemotron;USE_TRANSLATOR=true;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:qwen
+
+# --- Group 4: no translator (control — baseline recall on raw question) ---
+# (Still launches nsed-smart but with USE_TRANSLATOR=false)
+nsed-smart | mmlu-pro   | 100 | 42 | NSED_SUBSTRATES=marina:qwen,marina:gemma,marina:deepseek,marina:nemotron;USE_TRANSLATOR=false;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:haiku
+nsed-smart | truthfulqa | 100 | 42 | NSED_SUBSTRATES=marina:qwen,marina:gemma,marina:deepseek,marina:nemotron;USE_TRANSLATOR=false;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:haiku

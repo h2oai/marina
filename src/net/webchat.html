@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marina</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0a;
+    color: #d4d4d4;
+    font-family: 'Courier New', monospace;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  #header {
+    background: #111;
+    padding: 8px 16px;
+    border-bottom: 1px solid #333;
+    color: #0ff;
+    font-weight: bold;
+    font-size: 14px;
+  }
+  #output {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .msg { margin-bottom: 4px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg-system { color: #0ff; }
+  .msg-error { color: #f44; }
+  .msg-room { color: #8f8; }
+  .msg-message { color: #d4d4d4; }
+  #input-area {
+    display: flex;
+    border-top: 1px solid #333;
+    background: #111;
+    padding: 8px;
+  }
+  #input {
+    flex: 1;
+    background: #1a1a1a;
+    color: #d4d4d4;
+    border: 1px solid #444;
+    padding: 8px 12px;
+    font-family: inherit;
+    font-size: 14px;
+    outline: none;
+  }
+  #input:focus { border-color: #0ff; }
+  #send {
+    background: #0ff;
+    color: #000;
+    border: none;
+    padding: 8px 16px;
+    font-family: inherit;
+    font-weight: bold;
+    cursor: pointer;
+    margin-left: 8px;
+  }
+  #send:hover { background: #0dd; }
+  #login-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 24px;
+  }
+  #login-area input {
+    background: #1a1a1a;
+    color: #d4d4d4;
+    border: 1px solid #444;
+    padding: 10px 16px;
+    font-family: inherit;
+    font-size: 16px;
+    width: 240px;
+    text-align: center;
+    outline: none;
+  }
+  #login-area input:focus { border-color: #0ff; }
+  #login-area button {
+    background: #0ff;
+    color: #000;
+    border: none;
+    padding: 10px 24px;
+    font-family: inherit;
+    font-weight: bold;
+    cursor: pointer;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<div id="header">A R T I L E C T</div>
+<div id="output"></div>
+<div id="login-area">
+  <div style="color: #0ff; font-size: 18px; margin-bottom: 8px;">Welcome to Marina</div>
+  <input id="name-input" type="text" placeholder="Enter your name" maxlength="20" >
+  <button id="login-btn" type="button">Connect</button>
+</div>
+<div id="input-area" style="display: none;">
+  <input id="input" type="text" placeholder="Type a command..." >
+  <button id="send" type="button">Send</button>
+</div>
+
+<script>
+(() => {
+  const output = document.getElementById('output');
+  const loginArea = document.getElementById('login-area');
+  const inputArea = document.getElementById('input-area');
+  const nameInput = document.getElementById('name-input');
+  const loginBtn = document.getElementById('login-btn');
+  const input = document.getElementById('input');
+  const sendBtn = document.getElementById('send');
+
+  let ws = null;
+  let token = localStorage.getItem('marina_token');
+  const history = [];
+  let historyIdx = -1;
+
+  function connect() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+    ws.onopen = () => {
+      if (token) {
+        ws.send(JSON.stringify({ type: 'auth', token: token }));
+      }
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const p = JSON.parse(e.data);
+        handlePerception(p);
+      } catch {
+        appendMsg(e.data, 'message');
+      }
+    };
+
+    ws.onclose = () => {
+      appendMsg('Disconnected. Refresh to reconnect.', 'system');
+    };
+  }
+
+  function handlePerception(p) {
+    if (p.data?.token) {
+      token = p.data.token;
+      localStorage.setItem('marina_token', token);
+    }
+
+    if (p.data?.entityId && loginArea.style.display !== 'none') {
+      loginArea.style.display = 'none';
+      inputArea.style.display = 'flex';
+      input.focus();
+    }
+
+    const kind = p.kind || 'message';
+    if (kind === 'room') {
+      const d = p.data;
+      let text = '';
+      if (d.short) text += `${d.short}\n`;
+      if (d.long) text += `${d.long}\n`;
+      if (d.items && Object.keys(d.items).length > 0) {
+        text += `\nItems: ${Object.keys(d.items).join(', ')}\n`;
+      }
+      if (d.entities && d.entities.length > 0) {
+        text += `Present: ${d.entities.map(e => e.name).join(', ')}\n`;
+      }
+      if (d.exits && d.exits.length > 0) {
+        text += `Exits: ${d.exits.join(', ')}\n`;
+      }
+      appendMsg(text, 'room');
+    } else {
+      appendMsg(p.data?.text || JSON.stringify(p.data), kind);
+    }
+  }
+
+  const ANSI_COLORS = {
+    '30': '#4d4d4d', '31': '#f44',    '32': '#4e4',    '33': '#fd0',
+    '34': '#69f',    '35': '#f6f',    '36': '#0ff',    '37': '#d4d4d4',
+    '90': '#888',    '91': '#f66',    '92': '#8f8',    '93': '#ff5',
+    '94': '#8af',    '95': '#f8f',    '96': '#5ff',    '97': '#fff',
+  };
+
+  function ansiToHtml(text) {
+    let result = '';
+    let i = 0;
+    let openSpans = 0;
+    while (i < text.length) {
+      if (text[i] === '\x1b' && text[i + 1] === '[') {
+        const end = text.indexOf('m', i + 2);
+        if (end === -1) { result += escHtml(text[i]); i++; continue; }
+        const codes = text.substring(i + 2, end).split(';');
+        i = end + 1;
+        const styles = [];
+        for (const code of codes) {
+          if (code === '0' || code === '') {
+            // Reset — close all open spans
+            while (openSpans > 0) { result += '</span>'; openSpans--; }
+          } else if (code === '1') {
+            styles.push('font-weight:bold');
+          } else if (code === '3') {
+            styles.push('font-style:italic');
+          } else if (code === '4') {
+            styles.push('text-decoration:underline');
+          } else if (ANSI_COLORS[code]) {
+            styles.push(`color:${ANSI_COLORS[code]}`);
+          }
+        }
+        if (styles.length > 0) {
+          result += `<span style="${styles.join(';')}">`;
+          openSpans++;
+        }
+      } else {
+        result += escHtml(text[i]);
+        i++;
+      }
+    }
+    while (openSpans > 0) { result += '</span>'; openSpans--; }
+    return result;
+  }
+
+  function escHtml(ch) {
+    if (ch === '&') return '&amp;';
+    if (ch === '<') return '&lt;';
+    if (ch === '>') return '&gt;';
+    if (ch === '"') return '&quot;';
+    return ch;
+  }
+
+  function appendMsg(text, kind) {
+    const div = document.createElement('div');
+    div.className = `msg msg-${kind}`;
+    div.innerHTML = ansiToHtml(text);
+    output.appendChild(div);
+    output.scrollTop = output.scrollHeight;
+  }
+
+  function sendCommand() {
+    const cmd = input.value.trim();
+    if (!cmd || !ws) return;
+    history.unshift(cmd);
+    historyIdx = -1;
+    ws.send(JSON.stringify({ type: 'command', command: cmd }));
+    input.value = '';
+  }
+
+  function doLogin() {
+    const name = nameInput.value.trim();
+    if (!name || !ws) return;
+    ws.send(JSON.stringify({ type: 'login', name: name }));
+  }
+
+  loginBtn.onclick = doLogin;
+  nameInput.onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
+  sendBtn.onclick = sendCommand;
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') sendCommand();
+    if (e.key === 'ArrowUp') {
+      if (historyIdx < history.length - 1) {
+        historyIdx++;
+        input.value = history[historyIdx];
+      }
+      e.preventDefault();
+    }
+    if (e.key === 'ArrowDown') {
+      if (historyIdx > 0) {
+        historyIdx--;
+        input.value = history[historyIdx];
+      } else {
+        historyIdx = -1;
+        input.value = '';
+      }
+      e.preventDefault();
+    }
+  };
+
+  connect();
+})();
+</script>
+</body>
+</html>

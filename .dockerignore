@@ -1,0 +1,34 @@
+# Dependencies + build artifacts (reinstalled / rebuilt inside the image)
+node_modules
+dashboard/node_modules
+dist
+dashboard/dist
+
+# Local state + secrets — never bake these into an image
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+data
+backups
+.env
+.env.*
+
+# VCS / CI / editor
+.git
+.github
+.DS_Store
+
+# Tests (not needed at runtime)
+test
+*.test.ts
+
+# Unrelated subprojects (not part of the server runtime)
+marina-desktop
+examples
+
+# These files are provided by the build, not the context
+.dockerignore
+Dockerfile
+docker-compose.yml
+biome.json

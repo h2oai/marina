@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marina — Full HUD Convergence</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=VT323&family=Orbitron:wght@400;700&family=Press+Start+2P&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --gold:#FFDD00;--amber:#FFB800;--orange:#FF9500;
+    --green:#22c55e;--red:#ef4444;--cyan:#06b6d4;
+    --bg:#030306;--card:rgba(8,8,14,0.94);--border:#111118;
+    --text:#d4d4d4;--dim:#555;--bright:#f0f0f0;
+    --grid:rgba(255,221,0,0.025);--grid-b:rgba(255,221,0,0.05);
+  }
+  body{background:var(--bg);color:var(--text);font-family:'VT323',monospace;font-size:16px;overflow:hidden;width:100vw;height:100vh}
+  body::before{content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;background-image:linear-gradient(rgba(255,221,0,0.006) 1px,transparent 1px),linear-gradient(90deg,rgba(255,221,0,0.006) 1px,transparent 1px);background-size:3px 3px}
+  body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.04) 2px,rgba(0,0,0,0.04) 4px)}
+
+  /* ── Zoomable canvas ── */
+  #world-wrap{position:absolute;inset:0;overflow:hidden;cursor:grab;z-index:0}
+  #world-wrap:active{cursor:grabbing}
+  #world-svg{position:absolute;width:2000px;height:1400px;transform-origin:0 0}
+  /* Clickable SVG elements */
+  .clickable{cursor:pointer}
+  .clickable:hover{filter:brightness(1.3)}
+
+  /* ── Compass bar (fixed top) ── */
+  #compass{position:fixed;top:0;left:0;right:0;height:30px;background:var(--card);border-bottom:2px solid var(--border);z-index:80;display:flex;align-items:center;justify-content:center;gap:16px;padding:0 12px;backdrop-filter:blur(8px)}
+  .logo{font-family:'Orbitron',sans-serif;font-size:11px;font-weight:700;position:absolute;left:12px;background:linear-gradient(135deg,var(--gold),var(--amber),var(--orange));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  .ci{display:flex;align-items:center;gap:4px}
+  .ci-v{font-family:'Orbitron',sans-serif;font-size:12px;font-weight:700;color:var(--gold);text-shadow:0 0 4px rgba(255,221,0,0.2)}
+  .ci-l{font-size:12px;color:#333}
+  .cd{width:1px;height:16px;background:var(--border)}
+
+  /* ── Metrics bar (fixed bottom) ── */
+  #metrics{position:fixed;bottom:0;left:0;right:0;height:24px;background:var(--card);border-top:2px solid var(--border);z-index:80;display:flex;align-items:center;justify-content:center;gap:14px;padding:0 12px;backdrop-filter:blur(8px)}
+  .me{display:flex;align-items:center;gap:3px;white-space:nowrap}
+  .me-v{font-family:'Orbitron',sans-serif;font-size:10px;color:var(--gold)}
+  .me-l{font-size:11px;color:#333}
+
+  /* ═══ FLOATING DRAGGABLE PANELS ═══ */
+  .panel{
+    position:fixed;
+    background:var(--card);border:2px solid var(--border);
+    box-shadow:6px 6px 0 rgba(0,0,0,0.5),inset 0 0 0 1px rgba(255,221,0,0.02);
+    backdrop-filter:blur(10px);
+    display:flex;flex-direction:column;
+    min-width:140px;
+    transition:box-shadow .15s;
+  }
+  .panel:hover{border-color:rgba(255,221,0,0.1)}
+  .panel.focused{border-color:rgba(255,221,0,0.2);box-shadow:8px 8px 0 rgba(0,0,0,0.6),0 0 20px rgba(255,221,0,0.03),inset 0 0 0 1px rgba(255,221,0,0.04)}
+  .panel.rolled .p-body{display:none}
+  .panel.rolled{min-height:0}
+  .panel.rolled .resize-handle{display:none}
+
+  /* Resize handle */
+  .resize-handle{
+    position:absolute;bottom:0;right:0;width:14px;height:14px;cursor:se-resize;z-index:2;
+  }
+  .resize-handle::after{
+    content:'';position:absolute;bottom:3px;right:3px;
+    width:8px;height:8px;
+    border-right:2px solid #333;border-bottom:2px solid #333;
+  }
+  .panel:hover .resize-handle::after{border-color:rgba(255,221,0,0.3)}
+
+  .p-hdr{
+    font-family:'Press Start 2P',monospace;font-size:6px;
+    text-transform:uppercase;letter-spacing:1px;
+    color:rgba(255,221,0,0.5);padding:5px 7px;
+    border-bottom:1px solid var(--border);
+    display:flex;align-items:center;gap:5px;
+    cursor:move;user-select:none;flex-shrink:0;
+  }
+  .blink{width:4px;height:4px;background:var(--gold);animation:bl 1.5s step-start infinite}
+  @keyframes bl{0%,100%{opacity:1}50%{opacity:0}}
+  .p-hdr .spacer{flex:1}
+  .p-hdr .btn{
+    color:#333;font-family:'VT323',monospace;font-size:13px;
+    cursor:pointer;line-height:1;padding:0 2px;
+  }
+  .p-hdr .btn:hover{color:var(--gold)}
+  .p-body{flex:1;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:#1a1a22 transparent}
+
+  /* Tabs */
+  .tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+  .tab{flex:1;padding:3px 0;text-align:center;font-family:'Press Start 2P',monospace;font-size:5px;text-transform:uppercase;letter-spacing:.5px;color:#333;cursor:pointer;border:none;background:none}
+  .tab.on{color:var(--gold);border-bottom:1px solid var(--gold)}
+  .tab:hover:not(.on){color:#666}
+
+  /* ── Entity Roster ── */
+  .ei{display:flex;align-items:center;gap:6px;padding:4px 7px;border-bottom:1px solid rgba(17,17,24,0.4);cursor:pointer;transition:background .15s}
+  .ei:hover{background:rgba(255,221,0,0.03)}
+  .ei.sel{background:rgba(255,221,0,0.06);border-left:2px solid var(--gold)}
+  .ei-d{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+  .ei-d.ag{background:var(--gold);box-shadow:0 0 3px var(--gold)} .ei-d.hu{background:#f0f0f0;box-shadow:0 0 3px #f0f0f0} .ei-d.np{background:var(--green);box-shadow:0 0 3px var(--green)}
+  .ei-i{flex:1;overflow:hidden}
+  .ei-n{font-size:14px;color:var(--bright);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ei-m{font-size:12px;color:#444;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ei-s{font-size:11px;flex-shrink:0;padding:1px 4px;border-radius:2px}
+  .ei-s.th{color:var(--gold);background:rgba(255,221,0,0.08)} .ei-s.wk{color:var(--green);background:rgba(34,197,94,0.08)} .ei-s.sp{color:var(--cyan);background:rgba(6,182,212,0.08)} .ei-s.id{color:#444} .ei-s.er{color:var(--red);background:rgba(239,68,68,0.08)}
+
+  /* ── Activity Feed ── */
+  .fi{display:flex;gap:6px;align-items:baseline;padding:2px 8px;border-bottom:1px solid rgba(17,17,24,0.3);white-space:nowrap;font-size:14px}
+  .fi-t{color:#333;font-size:12px;width:48px;flex-shrink:0} .fi-e{color:var(--gold);flex-shrink:0} .fi-a{color:#666;overflow:hidden;text-overflow:ellipsis} .fi-a.err{color:var(--red)}
+
+  /* ── Chat ── */
+  .chat-msgs{flex:1;overflow-y:auto;padding:10px 16px}
+  .chat-msg{padding:6px 0;font-size:22px;line-height:1.5;border-bottom:1px solid rgba(17,17,24,0.3)}
+  .cm-n{color:var(--gold);font-weight:bold;font-size:21px}
+  .cm-t{color:var(--text);font-size:22px}
+  .cm-s{color:#555;font-style:italic;font-size:18px}
+  .chat-ir{display:flex;gap:8px;padding:10px 16px;border-top:2px solid var(--border);flex-shrink:0}
+  .chat-in{flex:1;background:rgba(17,17,24,0.6);border:2px solid var(--border);color:var(--bright);font-family:'VT323',monospace;font-size:24px;padding:10px 14px;outline:none}
+  .chat-in:focus{border-color:rgba(255,221,0,0.3);box-shadow:0 0 12px rgba(255,221,0,0.08)}
+
+  /* ── Coordination ── */
+  .co{display:flex;align-items:center;gap:6px;padding:4px 7px;border-bottom:1px solid rgba(17,17,24,0.3);cursor:pointer}
+  .co:hover{background:rgba(255,221,0,0.02)}
+  .co-d{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+  .co-d.act{background:var(--green)} .co-d.pen{background:var(--amber)} .co-d.don{background:#444}
+  .co-t{font-size:13px;color:var(--bright);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .co-m{font-size:11px;color:#444}
+
+  /* ── Inspector (contextual detail panel) ── */
+  #inspector{display:none}
+  #inspector.visible{display:flex}
+  .insp-type{font-size:11px;padding:1px 6px;border-radius:2px;margin-left:6px}
+  .insp-type.room{background:rgba(255,221,0,0.1);color:var(--gold)}
+  .insp-type.entity{background:rgba(34,197,94,0.1);color:var(--green)}
+  .insp-type.flow{background:rgba(6,182,212,0.1);color:var(--cyan)}
+  .insp-name{font-family:'Orbitron',sans-serif;font-size:15px;font-weight:700;color:var(--gold);padding:6px 8px;text-shadow:0 0 8px rgba(255,221,0,0.2)}
+  .insp-sec{padding:5px 8px;border-top:1px solid var(--border)}
+  .insp-st{font-family:'Press Start 2P',monospace;font-size:5px;text-transform:uppercase;letter-spacing:1px;color:rgba(255,221,0,0.4);margin-bottom:3px}
+  .insp-row{display:flex;justify-content:space-between;padding:2px 0;font-size:14px;border-bottom:1px solid rgba(17,17,24,0.2)}
+  .insp-k{color:#555} .insp-v{color:#aaa}
+  .insp-v.gold{color:var(--gold)} .insp-v.green{color:var(--green)} .insp-v.red{color:var(--red)}
+  .insp-src{font-size:13px;color:#555;padding:4px 6px;background:rgba(17,17,24,0.5);white-space:pre-wrap;font-family:'VT323',monospace;max-height:120px;overflow-y:auto;margin-top:3px;border:1px solid rgba(17,17,24,0.4)}
+  .insp-src-toggle{font-size:12px;color:#444;cursor:pointer;padding:3px 0}
+  .insp-src-toggle:hover{color:var(--gold)}
+  .insp-item{font-size:13px;color:#777;padding:2px 0}
+  .insp-mem{padding:4px 0;border-bottom:1px solid rgba(17,17,24,0.2)}
+  .insp-mem-k{font-size:11px;color:var(--amber)} .insp-mem-v{font-size:13px;color:#888}
+
+  /* ── Zoom controls ── */
+  #zoom-ctrl{position:fixed;bottom:32px;right:12px;z-index:70;display:flex;gap:2px}
+  .zb{width:24px;height:24px;background:var(--card);border:2px solid var(--border);color:#444;font-family:'VT323',monospace;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1}
+  .zb:hover{color:var(--gold);border-color:rgba(255,221,0,0.15)}
+  #zoom-pct{position:fixed;bottom:34px;right:90px;z-index:70;font-size:12px;color:#333}
+</style>
+</head>
+<body>
+
+<!-- ═══ ZOOMABLE WORLD ═══ -->
+<div id="world-wrap">
+<svg id="world-svg" viewBox="0 0 2000 1400" width="2000" height="1400">
+<defs>
+  <filter id="g1" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="1.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <filter id="g2" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <filter id="g3" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+
+<!-- Isometric grid -->
+<g opacity="1">
+  <line x1="0" y1="0" x2="2000" y2="1000" stroke="var(--grid)" stroke-width=".5"/><line x1="0" y1="120" x2="2000" y2="1120" stroke="var(--grid)" stroke-width=".5"/><line x1="0" y1="240" x2="2000" y2="1240" stroke="var(--grid-b)" stroke-width=".5"/><line x1="0" y1="360" x2="2000" y2="1360" stroke="var(--grid)" stroke-width=".5"/><line x1="0" y1="480" x2="2000" y2="1480" stroke="var(--grid)" stroke-width=".5"/><line x1="0" y1="600" x2="2000" y2="1600" stroke="var(--grid-b)" stroke-width=".5"/><line x1="0" y1="720" x2="2000" y2="1720" stroke="var(--grid)" stroke-width=".5"/><line x1="0" y1="840" x2="2000" y2="1840" stroke="var(--grid)" stroke-width=".5"/><line x1="0" y1="960" x2="2000" y2="1960" stroke="var(--grid-b)" stroke-width=".5"/>
+  <line x1="0" y1="700" x2="2000" y2="-300" stroke="var(--grid)" stroke-width=".5"/><line x1="0" y1="820" x2="2000" y2="-180" stroke="var(--grid)" stroke-width=".5"/><line x1="0" y1="940" x2="2000" y2="-60" stroke="var(--grid-b)" stroke-width=".5"/><line x1="0" y1="1060" x2="2000" y2="60" stroke="var(--grid)" stroke-width=".5"/><line x1="0" y1="1180" x2="2000" y2="180" stroke="var(--grid)" stroke-width=".5"/><line x1="0" y1="1300" x2="2000" y2="300" stroke="var(--grid-b)" stroke-width=".5"/><line x1="0" y1="1420" x2="2000" y2="420" stroke="var(--grid)" stroke-width=".5"/><line x1="0" y1="1540" x2="2000" y2="540" stroke="var(--grid)" stroke-width=".5"/><line x1="0" y1="1660" x2="2000" y2="660" stroke="var(--grid-b)" stroke-width=".5"/>
+</g>
+
+<!-- Contour halos -->
+<ellipse cx="880" cy="700" rx="120" ry="60" fill="none" stroke="var(--gold)" stroke-width="1.5" opacity=".08" filter="url(#g2)"/>
+<ellipse cx="880" cy="700" rx="70" ry="35" fill="var(--gold)" opacity=".03"/>
+<ellipse cx="1120" cy="640" rx="85" ry="42" fill="none" stroke="var(--amber)" stroke-width="1" opacity=".06" filter="url(#g2)"/>
+<ellipse cx="830" cy="860" rx="65" ry="32" fill="none" stroke="var(--green)" stroke-width="1" opacity=".06" filter="url(#g2)"/>
+
+<!-- Flow connections (updated to match tighter room positions) -->
+<g>
+  <!-- Nexus(880,700) → Workshop(1120,650) -->
+  <path d="M 930 690 L 1020 670 L 1080 655" fill="none" stroke="var(--gold)" stroke-width="5" opacity=".12" class="clickable" onclick="inspectFlow('nexus-workshop')"/>
+  <path d="M 930 690 L 1020 670 L 1080 655" fill="none" stroke="var(--gold)" stroke-width="1.5" opacity=".35" stroke-dasharray="3 5" filter="url(#g1)"><animate attributeName="stroke-dashoffset" from="0" to="-24" dur=".8s" repeatCount="indefinite"/></path>
+  <rect width="5" height="5" fill="var(--gold)" opacity="0" filter="url(#g1)"><animateMotion dur="1.5s" repeatCount="indefinite" path="M 930 690 L 1020 670 L 1080 655"/><animate attributeName="opacity" values="0;.9;.9;0" dur="1.5s" repeatCount="indefinite"/></rect>
+  <rect width="4" height="4" fill="var(--amber)" opacity="0"><animateMotion dur="1.8s" repeatCount="indefinite" path="M 1080 655 L 1020 670 L 930 690" begin=".5s"/><animate attributeName="opacity" values="0;.7;.7;0" dur="1.8s" repeatCount="indefinite" begin=".5s"/></rect>
+
+  <!-- Nexus(880,700) → Research(830,870) -->
+  <path d="M 870 730 L 850 800 L 835 860" fill="none" stroke="var(--green)" stroke-width="3" opacity=".1" class="clickable" onclick="inspectFlow('nexus-research')"/>
+  <path d="M 870 730 L 850 800 L 835 860" fill="none" stroke="var(--green)" stroke-width="1" opacity=".3" stroke-dasharray="2 6" filter="url(#g1)"><animate attributeName="stroke-dashoffset" from="0" to="-24" dur="1.2s" repeatCount="indefinite"/></path>
+  <rect width="4" height="4" fill="var(--green)" opacity="0" filter="url(#g1)"><animateMotion dur="2s" repeatCount="indefinite" path="M 870 730 L 850 800 L 835 860"/><animate attributeName="opacity" values="0;.8;.8;0" dur="2s" repeatCount="indefinite"/></rect>
+
+  <!-- Nexus(880,700) → Market(640,720) -->
+  <path d="M 830 710 L 740 715 L 680 720" fill="none" stroke="var(--orange)" stroke-width="1.5" opacity=".08"/>
+  <rect width="3" height="3" fill="var(--orange)" opacity="0"><animateMotion dur="2s" repeatCount="indefinite" path="M 830 710 L 740 715 L 680 720"/><animate attributeName="opacity" values="0;.6;.6;0" dur="2s" repeatCount="indefinite"/></rect>
+  <!-- Workshop(1120,650) → Observatory(1180,820) -->
+  <path d="M 1130 680 L 1155 750 L 1175 810" fill="none" stroke="var(--amber)" stroke-width="1" opacity=".06"/>
+  <!-- Nexus → Observatory trace -->
+  <path d="M 920 720 L 1040 770 L 1160 810" fill="none" stroke="#333" stroke-width=".8" opacity=".06"/>
+  <!-- Market(640,720) → Garden(520,850) trace -->
+  <path d="M 630 740 L 580 790 L 530 840" fill="none" stroke="#222" stroke-width=".5" opacity=".04"/>
+</g>
+
+<!-- ═══ ROOM STRUCTURES ═══ -->
+
+<!-- GARDEN -->
+<g transform="translate(520,850)" class="clickable" onclick="inspectRoom('garden')">
+  <ellipse rx="30" ry="15" fill="none" stroke="#555" stroke-width="1.8" stroke-dasharray="3 5" opacity=".35"><animate attributeName="stroke-dashoffset" from="0" to="-42" dur="28s" repeatCount="indefinite"/></ellipse>
+  <line x1="0" y1="0" x2="0" y2="-16" stroke="#333" stroke-width="1" opacity=".15"/>
+  <g transform="translate(0,-16)"><circle r="10" fill="rgba(80,80,80,0.03)" stroke="#444" stroke-width=".8" opacity=".4"/><circle r="2" fill="#444" opacity=".3"/></g>
+  <text y="-38" text-anchor="middle" font-family="'Press Start 2P'" font-size="7" fill="#333" letter-spacing="1">GARDEN</text>
+  <text y="-26" text-anchor="middle" font-family="Orbitron" font-size="12" fill="#444" font-weight="700">3</text>
+</g>
+
+<!-- MARKET -->
+<g transform="translate(640,720)" class="clickable" onclick="inspectRoom('market')">
+  <ellipse rx="10" ry="5" fill="none" stroke="var(--orange)" stroke-width="1.5" opacity="0"><animate attributeName="rx" values="10;55" dur="6s" repeatCount="indefinite"/><animate attributeName="ry" values="5;27" dur="6s" repeatCount="indefinite"/><animate attributeName="opacity" values=".4;0" dur="6s" repeatCount="indefinite"/></ellipse>
+  <ellipse rx="42" ry="21" fill="none" stroke="var(--orange)" stroke-width="2.5" stroke-dasharray="4 3 1 3" opacity=".5" filter="url(#g1)"><animate attributeName="stroke-dashoffset" from="0" to="-48" dur="12s" repeatCount="indefinite"/></ellipse>
+  <ellipse rx="42" ry="21" fill="none" stroke="var(--orange)" stroke-width="5" stroke-dasharray="1 11" opacity=".15"><animate attributeName="stroke-dashoffset" from="0" to="-48" dur="12s" repeatCount="indefinite"/></ellipse>
+  <line x1="0" y1="0" x2="0" y2="-50" stroke="var(--orange)" stroke-width="1" opacity=".25"/>
+  <line x1="0" y1="0" x2="0" y2="-50" stroke="var(--orange)" stroke-width="6" opacity=".03"/>
+  <rect x="-2" width="4" height="4" fill="var(--orange)" opacity="0"><animate attributeName="y" values="0;-50" dur="2.5s" repeatCount="indefinite"/><animate attributeName="opacity" values=".5;0" dur="2.5s" repeatCount="indefinite"/></rect>
+  <g transform="translate(0,-50)"><polygon points="0,-18 14,0 0,18 -14,0" fill="rgba(255,149,0,0.06)" stroke="var(--orange)" stroke-width="1" opacity=".6"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="20s" repeatCount="indefinite"/></polygon><polygon points="0,-10 8,0 0,10 -8,0" fill="rgba(255,149,0,0.04)" stroke="var(--orange)" stroke-width=".5" opacity=".4"><animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="14s" repeatCount="indefinite"/></polygon><circle r="2.5" fill="var(--orange)" opacity=".5" filter="url(#g1)"/><animateTransform attributeName="transform" type="scale" values="1;1.04;1" dur="5s" repeatCount="indefinite" additive="sum"/></g>
+  <circle cx="16" cy="-30" r="5" fill="var(--gold)" opacity=".7" filter="url(#g1)" class="clickable" onclick="event.stopPropagation();inspectEntity('zara')"/>
+  <text y="-80" text-anchor="middle" font-family="'Press Start 2P'" font-size="8" fill="rgba(255,149,0,0.5)" letter-spacing="1">MARKET</text>
+  <text y="-66" text-anchor="middle" font-family="Orbitron" font-size="16" fill="var(--orange)" font-weight="700">12</text>
+</g>
+
+<!-- OBSERVATORY -->
+<g transform="translate(1180,820)" class="clickable" onclick="inspectRoom('observatory')">
+  <ellipse rx="44" ry="22" fill="none" stroke="var(--amber)" stroke-width="2.5" stroke-dasharray="5 3 2 3" opacity=".5" filter="url(#g1)"><animate attributeName="stroke-dashoffset" from="0" to="-52" dur="10s" repeatCount="indefinite"/></ellipse>
+  <ellipse rx="44" ry="22" fill="none" stroke="var(--amber)" stroke-width="5" stroke-dasharray="1 13" opacity=".15"><animate attributeName="stroke-dashoffset" from="0" to="-52" dur="10s" repeatCount="indefinite"/></ellipse>
+  <ellipse rx="34" ry="17" fill="none" stroke="var(--amber)" stroke-width="1.8" stroke-dasharray="2 6" opacity=".3"><animate attributeName="stroke-dashoffset" from="0" to="40" dur="15s" repeatCount="indefinite"/></ellipse>
+  <line x1="0" y1="0" x2="0" y2="-55" stroke="var(--amber)" stroke-width="1" opacity=".25"/>
+  <line x1="0" y1="0" x2="0" y2="-55" stroke="var(--amber)" stroke-width="6" opacity=".03"/>
+  <g transform="translate(0,-55)"><path d="M -20,0 C -12,-14 12,-14 20,0 C 12,14 -12,14 -20,0 Z" fill="rgba(255,184,0,0.06)" stroke="var(--amber)" stroke-width="1" opacity=".6"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="24s" repeatCount="indefinite"/></path><circle r="2.5" fill="var(--amber)" opacity=".5" filter="url(#g1)"><animate attributeName="r" values="2.5;3.5;2.5" dur="4s" repeatCount="indefinite"/></circle><animateTransform attributeName="transform" type="scale" values="1;1.05;1" dur="6s" repeatCount="indefinite" additive="sum"/></g>
+  <circle cx="14" cy="-35" r="5" fill="var(--gold)" opacity=".7" filter="url(#g1)" class="clickable" onclick="event.stopPropagation();inspectEntity('sage')"/>
+  <text y="-85" text-anchor="middle" font-family="'Press Start 2P'" font-size="8" fill="rgba(255,184,0,0.5)" letter-spacing="1">OBSERVATORY</text>
+  <text y="-72" text-anchor="middle" font-family="Orbitron" font-size="16" fill="var(--amber)" font-weight="700">13</text>
+</g>
+
+<!-- RESEARCH -->
+<g transform="translate(830,870)" class="clickable" onclick="inspectRoom('research')">
+  <ellipse rx="10" ry="5" fill="none" stroke="var(--green)" stroke-width="1.5" opacity="0"><animate attributeName="rx" values="10;70" dur="5s" repeatCount="indefinite"/><animate attributeName="ry" values="5;35" dur="5s" repeatCount="indefinite"/><animate attributeName="opacity" values=".45;0" dur="5s" repeatCount="indefinite"/></ellipse>
+  <ellipse rx="54" ry="27" fill="none" stroke="var(--green)" stroke-width="2.5" stroke-dasharray="5 2 2 2" opacity=".5" filter="url(#g1)"><animate attributeName="stroke-dashoffset" from="0" to="-56" dur="7s" repeatCount="indefinite"/></ellipse>
+  <ellipse rx="54" ry="27" fill="none" stroke="var(--green)" stroke-width="5" stroke-dasharray="1 13" opacity=".15"><animate attributeName="stroke-dashoffset" from="0" to="-56" dur="7s" repeatCount="indefinite"/></ellipse>
+  <ellipse rx="40" ry="20" fill="none" stroke="var(--green)" stroke-width="1.8" stroke-dasharray="2 7" opacity=".3"><animate attributeName="stroke-dashoffset" from="0" to="50" dur="11s" repeatCount="indefinite"/></ellipse>
+  <line x1="0" y1="0" x2="0" y2="-90" stroke="var(--green)" stroke-width="1.5" opacity=".3"/>
+  <line x1="0" y1="0" x2="0" y2="-90" stroke="var(--green)" stroke-width="8" opacity=".03"/>
+  <rect x="-2" width="4" height="5" fill="var(--green)" opacity="0"><animate attributeName="y" values="0;-90" dur="2s" repeatCount="indefinite"/><animate attributeName="opacity" values=".6;0" dur="2s" repeatCount="indefinite"/></rect>
+  <g transform="translate(0,-90)"><polygon points="0,-22 19,11 -19,11" fill="rgba(34,197,94,0.06)" stroke="var(--green)" stroke-width="1" opacity=".6"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="18s" repeatCount="indefinite"/></polygon><polygon points="0,14 -12,-7 12,-7" fill="rgba(34,197,94,0.04)" stroke="var(--green)" stroke-width=".5" opacity=".4"><animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="12s" repeatCount="indefinite"/></polygon><circle r="3" fill="var(--green)" opacity=".5" filter="url(#g1)"/><animateTransform attributeName="transform" type="scale" values="1;1.06;1" dur="4s" repeatCount="indefinite" additive="sum"/></g>
+  <circle cx="-18" cy="-55" r="5" fill="var(--gold)" opacity=".7" filter="url(#g1)" class="clickable" onclick="event.stopPropagation();inspectEntity('rune')"/>
+  <circle cx="14" cy="-45" r="5" fill="var(--green)" opacity=".6" filter="url(#g1)" class="clickable" onclick="event.stopPropagation();inspectEntity('librarian')"/>
+  <text y="-120" text-anchor="middle" font-family="'Press Start 2P'" font-size="8" fill="rgba(34,197,94,0.6)" letter-spacing="1">RESEARCH</text>
+  <text y="-106" text-anchor="middle" font-family="Orbitron" font-size="16" fill="var(--green)" font-weight="700">32</text>
+</g>
+
+<!-- WORKSHOP -->
+<g transform="translate(1120,650)" class="clickable" onclick="inspectRoom('workshop')">
+  <ellipse rx="10" ry="5" fill="none" stroke="var(--amber)" stroke-width="1.5" opacity="0"><animate attributeName="rx" values="10;80" dur="4s" repeatCount="indefinite"/><animate attributeName="ry" values="5;40" dur="4s" repeatCount="indefinite"/><animate attributeName="opacity" values=".4;0" dur="4s" repeatCount="indefinite"/></ellipse>
+  <ellipse rx="62" ry="31" fill="none" stroke="var(--amber)" stroke-width="2.8" stroke-dasharray="6 2 2 2" opacity=".55" filter="url(#g1)"><animate attributeName="stroke-dashoffset" from="0" to="-60" dur="5s" repeatCount="indefinite"/></ellipse>
+  <ellipse rx="62" ry="31" fill="none" stroke="var(--amber)" stroke-width="6" stroke-dasharray="1 15" opacity=".18"><animate attributeName="stroke-dashoffset" from="0" to="-60" dur="5s" repeatCount="indefinite"/></ellipse>
+  <ellipse rx="46" ry="23" fill="none" stroke="var(--amber)" stroke-width="2" stroke-dasharray="3 6" opacity=".3"><animate attributeName="stroke-dashoffset" from="0" to="54" dur="8s" repeatCount="indefinite"/></ellipse>
+  <line x1="0" y1="0" x2="0" y2="-135" stroke="var(--amber)" stroke-width="1.5" opacity=".3"/>
+  <line x1="0" y1="0" x2="0" y2="-135" stroke="var(--amber)" stroke-width="8" opacity=".04"/>
+  <line x1="-4" y1="-35" x2="4" y2="-35" stroke="var(--amber)" stroke-width=".5" opacity=".12"/><line x1="-4" y1="-70" x2="4" y2="-70" stroke="var(--amber)" stroke-width=".5" opacity=".1"/><line x1="-4" y1="-105" x2="4" y2="-105" stroke="var(--amber)" stroke-width=".5" opacity=".08"/>
+  <rect x="-2" width="4" height="5" fill="var(--amber)" opacity="0"><animate attributeName="y" values="0;-135" dur="1.8s" repeatCount="indefinite"/><animate attributeName="opacity" values=".6;0" dur="1.8s" repeatCount="indefinite"/></rect>
+  <g transform="translate(0,-135)"><polygon points="0,-24 17,-17 24,0 17,17 0,24 -17,17 -24,0 -17,-17" fill="rgba(255,184,0,0.07)" stroke="var(--amber)" stroke-width="1" opacity=".6"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="22s" repeatCount="indefinite"/></polygon><polygon points="0,-14 10,-10 14,0 10,10 0,14 -10,10 -14,0 -10,-10" fill="rgba(255,184,0,0.04)" stroke="var(--amber)" stroke-width=".5" opacity=".35"><animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="15s" repeatCount="indefinite"/></polygon><circle r="3.5" fill="var(--amber)" opacity=".5" filter="url(#g1)"><animate attributeName="r" values="3.5;4.5;3.5" dur="3s" repeatCount="indefinite"/></circle><animateTransform attributeName="transform" type="scale" values="1;1.06;1" dur="3.5s" repeatCount="indefinite" additive="sum"/></g>
+  <circle cx="-20" cy="-80" r="5" fill="var(--gold)" opacity=".7" filter="url(#g1)" class="clickable" onclick="event.stopPropagation();inspectEntity('vex')"/>
+  <circle cx="18" cy="-65" r="5" fill="var(--gold)" opacity=".7" filter="url(#g1)" class="clickable" onclick="event.stopPropagation();inspectEntity('kai')"/>
+  <text y="-175" text-anchor="middle" font-family="'Press Start 2P'" font-size="8" fill="rgba(255,184,0,0.6)" letter-spacing="1">WORKSHOP</text>
+  <text y="-160" text-anchor="middle" font-family="Orbitron" font-size="18" fill="var(--amber)" font-weight="700">54</text>
+</g>
+
+<!-- NEXUS -->
+<g transform="translate(880,700)" class="clickable" onclick="inspectRoom('nexus')">
+  <!-- Sonar pulses -->
+  <ellipse rx="10" ry="5" fill="none" stroke="var(--gold)" stroke-width="2" opacity="0"><animate attributeName="rx" values="10;120" dur="3s" repeatCount="indefinite"/><animate attributeName="ry" values="5;60" dur="3s" repeatCount="indefinite"/><animate attributeName="opacity" values=".5;0" dur="3s" repeatCount="indefinite"/></ellipse>
+  <ellipse rx="10" ry="5" fill="none" stroke="var(--gold)" stroke-width="1.2" opacity="0"><animate attributeName="rx" values="10;120" dur="3s" repeatCount="indefinite" begin="1.5s"/><animate attributeName="ry" values="5;60" dur="3s" repeatCount="indefinite" begin="1.5s"/><animate attributeName="opacity" values=".3;0" dur="3s" repeatCount="indefinite" begin="1.5s"/></ellipse>
+  <!-- Outer ring: bold, glowing -->
+  <ellipse rx="78" ry="39" fill="none" stroke="var(--gold)" stroke-width="3" stroke-dasharray="8 2 3 2 1 2" opacity=".6" filter="url(#g1)"><animate attributeName="stroke-dashoffset" from="0" to="-72" dur="3.5s" repeatCount="indefinite"/></ellipse>
+  <!-- Outer notch ring: thick tick marks -->
+  <ellipse rx="78" ry="39" fill="none" stroke="var(--gold)" stroke-width="7" stroke-dasharray="1.5 16" opacity=".2"><animate attributeName="stroke-dashoffset" from="0" to="-72" dur="3.5s" repeatCount="indefinite"/></ellipse>
+  <!-- Mid ring (counter-spin) -->
+  <ellipse rx="58" ry="29" fill="none" stroke="var(--gold)" stroke-width="2" stroke-dasharray="4 4 1 4" opacity=".4" filter="url(#g1)"><animate attributeName="stroke-dashoffset" from="0" to="60" dur="5.5s" repeatCount="indefinite"/></ellipse>
+  <!-- Inner ring -->
+  <ellipse rx="42" ry="21" fill="none" stroke="var(--gold)" stroke-width="1.5" stroke-dasharray="2 8" opacity=".3"><animate attributeName="stroke-dashoffset" from="0" to="-50" dur="8s" repeatCount="indefinite"/></ellipse>
+  <line x1="0" y1="0" x2="0" y2="-185" stroke="var(--gold)" stroke-width="3" opacity=".5"/>
+  <line x1="0" y1="0" x2="0" y2="-185" stroke="var(--gold)" stroke-width="12" opacity=".06" filter="url(#g1)"/>
+  <line x1="0" y1="0" x2="0" y2="-185" stroke="var(--gold)" stroke-width="30" opacity=".015" filter="url(#g3)"/>
+  <line x1="-5" y1="-40" x2="5" y2="-40" stroke="var(--gold)" stroke-width=".5" opacity=".12"/><line x1="-5" y1="-80" x2="5" y2="-80" stroke="var(--gold)" stroke-width=".5" opacity=".1"/><line x1="-5" y1="-120" x2="5" y2="-120" stroke="var(--gold)" stroke-width=".5" opacity=".08"/><line x1="-5" y1="-160" x2="5" y2="-160" stroke="var(--gold)" stroke-width=".5" opacity=".06"/>
+  <rect x="-2.5" width="5" height="6" fill="var(--gold)" opacity="0"><animate attributeName="y" values="0;-185" dur="1.4s" repeatCount="indefinite"/><animate attributeName="opacity" values=".7;0" dur="1.4s" repeatCount="indefinite"/></rect>
+  <rect x="-2" width="4" height="4" fill="var(--amber)" opacity="0"><animate attributeName="y" values="0;-185" dur="1.4s" repeatCount="indefinite" begin=".47s"/><animate attributeName="opacity" values=".5;0" dur="1.4s" repeatCount="indefinite" begin=".47s"/></rect>
+  <g transform="translate(0,-185)"><polygon points="0,-30 26,-15 26,15 0,30 -26,15 -26,-15" fill="rgba(255,221,0,0.08)" stroke="var(--gold)" stroke-width="1.2" opacity=".7"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="16s" repeatCount="indefinite"/></polygon><polygon points="0,-20 17.3,-10 17.3,10 0,20 -17.3,10 -17.3,-10" fill="rgba(255,221,0,0.05)" stroke="var(--gold)" stroke-width=".6" opacity=".4"><animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="11s" repeatCount="indefinite"/></polygon><polygon points="0,-11 9.5,-5.5 9.5,5.5 0,11 -9.5,5.5 -9.5,-5.5" fill="rgba(255,221,0,0.04)" stroke="var(--gold)" stroke-width=".4" opacity=".3"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="7s" repeatCount="indefinite"/></polygon><g opacity=".15"><line x1="0" y1="-26" x2="0" y2="26" stroke="var(--gold)" stroke-width=".5"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="16s" repeatCount="indefinite"/></line><line x1="-22.5" y1="-13" x2="22.5" y2="13" stroke="var(--gold)" stroke-width=".5"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="16s" repeatCount="indefinite"/></line></g><circle r="5" fill="var(--gold)" opacity=".5" filter="url(#g2)"><animate attributeName="r" values="5;7;5" dur="2s" repeatCount="indefinite"/><animate attributeName="opacity" values=".5;.8;.5" dur="2s" repeatCount="indefinite"/></circle><circle r="35" fill="var(--gold)" opacity=".015" filter="url(#g3)"/><animateTransform attributeName="transform" type="scale" values="1;1.07;1" dur="2.5s" repeatCount="indefinite" additive="sum"/></g>
+  <g transform="translate(0,-185)"><g><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="6s" repeatCount="indefinite"/><polygon points="44,0 40,-3 40,3" fill="var(--gold)" opacity=".5" filter="url(#g1)"/></g></g>
+  <!-- Entity dots -->
+  <circle cx="-25" cy="-100" r="5" fill="var(--gold)" opacity=".7" filter="url(#g1)" class="clickable" onclick="event.stopPropagation();inspectEntity('atlas')"><animate attributeName="opacity" values=".7;1;.7" dur="1.5s" repeatCount="indefinite"/></circle>
+  <circle cx="20" cy="-85" r="5" fill="var(--gold)" opacity=".7" filter="url(#g1)" class="clickable" onclick="event.stopPropagation();inspectEntity('nova')"/>
+  <circle cx="10" cy="-115" r="5" fill="#f0f0f0" opacity=".8" filter="url(#g1)" class="clickable" onclick="event.stopPropagation();inspectEntity('juno')"/>
+  <circle cx="-15" cy="-65" r="5" fill="var(--gold)" opacity=".35" class="clickable" onclick="event.stopPropagation();inspectEntity('echo')"/>
+  <text y="-230" text-anchor="middle" font-family="'Press Start 2P'" font-size="9" fill="rgba(255,221,0,0.7)" letter-spacing="1.5">NEXUS</text>
+  <text y="-214" text-anchor="middle" font-family="Orbitron" font-size="22" fill="var(--gold)" font-weight="700" filter="url(#g1)">87</text>
+</g>
+</svg>
+</div>
+
+<!-- ═══ COMPASS BAR (fixed) ═══ -->
+<div id="compass">
+  <span class="logo">MARINA</span>
+  <div class="ci"><span class="ci-v">10</span><span class="ci-l">entities</span></div><div class="cd"></div>
+  <div class="ci"><span class="ci-v">6</span><span class="ci-l">rooms</span></div><div class="cd"></div>
+  <div class="ci"><span class="ci-v">4</span><span class="ci-l">arcs</span></div><div class="cd"></div>
+  <div class="ci"><span class="ci-v">2:47</span><span class="ci-l">up</span></div><div class="cd"></div>
+  <div class="ci"><span class="ci-v">142</span><span class="ci-l">cmd/m</span></div><div class="cd"></div>
+  <div class="ci"><span class="ci-v" style="color:var(--green)">OK</span><span class="ci-l">ws</span></div>
+</div>
+
+<!-- ═══ METRICS BAR (fixed) ═══ -->
+<div id="metrics">
+  <div class="me"><span class="me-v">48MB</span><span class="me-l">heap</span></div>
+  <div class="me"><span class="me-v">92MB</span><span class="me-l">rss</span></div>
+  <div class="me"><span class="me-v">8</span><span class="me-l">agents</span></div>
+  <div class="me"><span class="me-v">3</span><span class="me-l">conns</span></div>
+  <div class="me"><span class="me-v">4/2/1/8</span><span class="me-l">o/c/s/d</span></div>
+</div>
+
+<!-- ═══ FLOATING PANELS (draggable, rollable) ═══ -->
+
+<!-- Entity Roster -->
+<div class="panel" id="p-roster" style="left:10px;top:40px;width:210px;height:340px">
+  <div class="p-hdr"><div class="blink"></div>Entities<span class="spacer"></span><span class="btn" onclick="rollPanel('p-roster')">_</span></div>
+  <div class="tabs"><button class="tab on">All (10)</button><button class="tab">Agents</button><button class="tab">Launch</button></div>
+  <div class="p-body">
+    <div class="ei sel" onclick="inspectEntity('atlas')"><div class="ei-d ag"></div><div class="ei-i"><div class="ei-n">Atlas</div><div class="ei-m">opus-4 -- Nexus</div></div><div class="ei-s th">think</div></div>
+    <div class="ei" onclick="inspectEntity('nova')"><div class="ei-d ag"></div><div class="ei-i"><div class="ei-n">Nova</div><div class="ei-m">gpt-4t -- Nexus</div></div><div class="ei-s wk">work</div></div>
+    <div class="ei" onclick="inspectEntity('juno')"><div class="ei-d hu"></div><div class="ei-i"><div class="ei-n">juno</div><div class="ei-m">human -- Nexus</div></div><div class="ei-s" style="color:var(--bright)">on</div></div>
+    <div class="ei" onclick="inspectEntity('echo')"><div class="ei-d ag"></div><div class="ei-i"><div class="ei-n">Echo</div><div class="ei-m">llama-3 -- Nexus</div></div><div class="ei-s id">idle</div></div>
+    <div class="ei" onclick="inspectEntity('vex')"><div class="ei-d ag"></div><div class="ei-i"><div class="ei-n">Vex</div><div class="ei-m">sonnet-4 -- Workshop</div></div><div class="ei-s sp">speak</div></div>
+    <div class="ei" onclick="inspectEntity('kai')"><div class="ei-d ag"></div><div class="ei-i"><div class="ei-n">Kai</div><div class="ei-m">gpt-4t -- Workshop</div></div><div class="ei-s wk">work</div></div>
+    <div class="ei" onclick="inspectEntity('rune')"><div class="ei-d ag"></div><div class="ei-i"><div class="ei-n">Rune</div><div class="ei-m">opus-4 -- Research</div></div><div class="ei-s wk">work</div></div>
+    <div class="ei" onclick="inspectEntity('librarian')"><div class="ei-d np"></div><div class="ei-i"><div class="ei-n">Librarian</div><div class="ei-m">npc -- Research</div></div><div class="ei-s id">idle</div></div>
+    <div class="ei" onclick="inspectEntity('zara')"><div class="ei-d ag"></div><div class="ei-i"><div class="ei-n">Zara</div><div class="ei-m">llama-3 -- Market</div></div><div class="ei-s er">err</div></div>
+    <div class="ei" onclick="inspectEntity('sage')"><div class="ei-d ag"></div><div class="ei-i"><div class="ei-n">Sage</div><div class="ei-m">opus-4 -- Observatory</div></div><div class="ei-s th">think</div></div>
+  </div>
+</div>
+
+<!-- Activity Feed -->
+<div class="panel" id="p-feed" style="left:230px;top:40px;width:380px;height:180px">
+  <div class="p-hdr"><div class="blink"></div>Activity Feed<span class="spacer"></span><span class="btn" onclick="rollPanel('p-feed')">_</span></div>
+  <div class="p-body">
+    <div class="fi"><span class="fi-t">14:32:08</span><span class="fi-e">Atlas</span><span class="fi-a">recall "coordination patterns" -- 4 notes</span></div>
+    <div class="fi"><span class="fi-t">14:32:05</span><span class="fi-e">Vex</span><span class="fi-a">say "Kai, viewport culling first"</span></div>
+    <div class="fi"><span class="fi-t">14:32:02</span><span class="fi-e">Rune</span><span class="fi-a">web search "DynaCity viz"</span></div>
+    <div class="fi"><span class="fi-t">14:31:58</span><span class="fi-e">Kai</span><span class="fi-a">note add "viewport culling -60%"</span></div>
+    <div class="fi"><span class="fi-t">14:31:55</span><span class="fi-e">Zara</span><span class="fi-a err">market position FAILED: timeout</span></div>
+    <div class="fi"><span class="fi-t">14:31:50</span><span class="fi-e">Nova</span><span class="fi-a">task progress canvas-research +20</span></div>
+    <div class="fi"><span class="fi-t">14:31:44</span><span class="fi-e">Sage</span><span class="fi-a">think "reflection scheduled..."</span></div>
+    <div class="fi"><span class="fi-t">14:31:40</span><span class="fi-e">Atlas</span><span class="fi-a">say "Nova, seen swarm results?"</span></div>
+  </div>
+</div>
+
+<!-- Chat -->
+<div class="panel" id="p-chat" style="left:230px;right:10px;bottom:30px;height:280px">
+  <div class="p-hdr"><div class="blink"></div>Chat -- Nexus<span class="spacer"></span><span class="btn" onclick="rollPanel('p-chat')">_</span></div>
+  <div class="p-body">
+    <div class="chat-msgs">
+      <div class="chat-msg"><span class="cm-n">Atlas: </span><span class="cm-t">The swarm pattern shows real promise for self-organizing teams.</span></div>
+      <div class="chat-msg"><span class="cm-n">Nova: </span><span class="cm-t">Agreed. I'm documenting the convergence points now.</span></div>
+      <div class="chat-msg"><span class="cm-n">juno: </span><span class="cm-t">What about the visual representation? Can we show the arcs?</span></div>
+      <div class="chat-msg"><span class="cm-n">Atlas: </span><span class="cm-t">Yes -- OD matrix overlay would show flow between rooms. Spinning rings indicate activity level.</span></div>
+      <div class="chat-msg"><span class="cm-s">Echo joined the room.</span></div>
+      <div class="chat-msg"><span class="cm-n">Nova: </span><span class="cm-t">Research summary is at 80% progress. Rune found strong patterns in the DynaCity approach.</span></div>
+      <div class="chat-msg"><span class="cm-n">Echo: </span><span class="cm-t">Hello everyone. What can I help with?</span></div>
+      <div class="chat-msg"><span class="cm-n">Atlas: </span><span class="cm-t">Echo, check the coordination board -- there are open tasks on the canvas renderer.</span></div>
+    </div>
+    <div class="chat-ir"><input class="chat-in" type="text" placeholder="Type a message..."></div>
+  </div>
+</div>
+
+<!-- Coordination -->
+<div class="panel" id="p-coord" style="left:10px;bottom:30px;width:220px;height:200px">
+  <div class="p-hdr"><div class="blink"></div>Coordination<span class="spacer"></span><span class="btn" onclick="rollPanel('p-coord')">_</span></div>
+  <div class="tabs"><button class="tab on">Projects</button><button class="tab">Tasks</button><button class="tab">Boards</button><button class="tab">Channels</button></div>
+  <div class="p-body">
+    <div class="co"><div class="co-d act"></div><div class="co-i" style="flex:1;overflow:hidden"><div class="co-t">Canvas-Map Convergence</div><div class="co-m">Rune, Vex, Kai</div></div></div>
+    <div class="co"><div class="co-d act"></div><div class="co-i" style="flex:1;overflow:hidden"><div class="co-t">Visualization Research</div><div class="co-m">Rune</div></div></div>
+    <div class="co"><div class="co-d pen"></div><div class="co-i" style="flex:1;overflow:hidden"><div class="co-t">Market Prediction</div><div class="co-m">Zara -- error</div></div></div>
+    <div class="co"><div class="co-d act"></div><div class="co-i" style="flex:1;overflow:hidden"><div class="co-t">Pattern Analysis</div><div class="co-m">Atlas, Sage</div></div></div>
+    <div class="co"><div class="co-d don"></div><div class="co-i" style="flex:1;overflow:hidden"><div class="co-t">Web Command</div><div class="co-m">completed 04-07</div></div></div>
+  </div>
+</div>
+
+<!-- Admin (starts hidden) -->
+<div class="panel" id="p-admin" style="right:320px;top:40px;width:280px;height:260px">
+  <div class="p-hdr"><div class="blink"></div>Admin<span class="spacer"></span><span class="btn" onclick="rollPanel('p-admin')">_</span><span class="btn" onclick="document.getElementById('p-admin').style.display='none'">x</span></div>
+  <div class="tabs"><button class="tab on">Keys</button><button class="tab">Adapters</button><button class="tab">Roles</button><button class="tab">MCP</button><button class="tab">Config</button></div>
+  <div class="p-body">
+    <div class="aki" style="display:flex;align-items:center;gap:5px;padding:3px 7px;border-bottom:1px solid rgba(17,17,24,0.3)"><span style="font-size:12px;color:var(--amber);width:55px;flex-shrink:0">openai</span><span style="font-size:13px;color:#555;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">sk-proj-****...7fKm</span><span style="font-size:11px;color:var(--green)">ok</span></div>
+    <div class="aki" style="display:flex;align-items:center;gap:5px;padding:3px 7px;border-bottom:1px solid rgba(17,17,24,0.3)"><span style="font-size:12px;color:var(--amber);width:55px;flex-shrink:0">anthropic</span><span style="font-size:13px;color:#555;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">sk-ant-****...xQ2p</span><span style="font-size:11px;color:var(--green)">ok</span></div>
+    <div class="aki" style="display:flex;align-items:center;gap:5px;padding:3px 7px;border-bottom:1px solid rgba(17,17,24,0.3)"><span style="font-size:12px;color:var(--amber);width:55px;flex-shrink:0">ollama</span><span style="font-size:13px;color:#555;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">localhost:11434</span><span style="font-size:11px;color:var(--green)">ok</span></div>
+    <div style="padding:5px 7px;border-top:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:14px;border-bottom:1px solid rgba(17,17,24,0.2)"><span style="color:#555">Rate limit</span><span style="color:#888">5/sec WS</span></div>
+      <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:14px;border-bottom:1px solid rgba(17,17,24,0.2)"><span style="color:#555">SSRF</span><span style="color:var(--green)">enabled</span></div>
+      <div style="display:flex;justify-content:space-between;padding:2px 0;font-size:14px"><span style="color:#555">MCP tools</span><span style="color:#888">23</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ INSPECTOR (contextual — click any world element) ═══ -->
+<div class="panel" id="inspector" style="left:50%;top:50%;width:320px;max-height:420px;transform:translate(-50%,-50%)">
+  <div class="p-hdr"><div class="blink"></div><span id="insp-title">Inspector</span><span class="spacer"></span><span class="btn" onclick="rollPanel('inspector')">_</span><span class="btn" onclick="closeInspector()">x</span></div>
+  <div class="p-body" id="insp-body"></div>
+</div>
+
+<!-- Zoom controls -->
+<div id="zoom-ctrl">
+  <button class="zb" onclick="zoomBy(1.25)">+</button>
+  <button class="zb" onclick="zoomBy(1/1.25)">-</button>
+  <button class="zb" onclick="resetZoom()" style="font-size:12px">R</button>
+</div>
+<span id="zoom-pct">85%</span>
+
+<script>
+// ── DATA ──
+const ROOMS = {
+  nexus: { name:'Nexus', desc:'Central hub — all paths converge here.', district:'core', entities:['Atlas','Nova','juno','Echo'], exits:{east:'Workshop',south:'Research Lab',west:'Market'}, throughput:87, source:'onTick(ctx) {\n  const pop = ctx.entities.length;\n  if (pop > 3) ctx.logEvent("crowded", { pop });\n  // Broadcast coordination compass signal\n  for (const e of ctx.entities) {\n    ctx.brief?.(e.id);\n  }\n}' },
+  workshop: { name:'Workshop', desc:'Build and iterate — craft rooms for spec-driven work.', district:'build', entities:['Vex','Kai'], exits:{west:'Nexus',south:'Observatory'}, throughput:54, source:'onTick(ctx) {\n  // Track active builds\n  const builders = ctx.entities.filter(e => e.focus);\n  if (builders.length > 1)\n    ctx.logEvent("collaboration", { count: builders.length });\n}' },
+  research: { name:'Research Lab', desc:'Knowledge synthesis and web research.', district:'knowledge', entities:['Rune','Librarian'], exits:{north:'Nexus'}, throughput:32, source:'onTick(ctx) {\n  // Librarian NPC: curate knowledge\n  const notes = ctx.db.countNotes(ctx.roomId);\n  if (notes > 50) ctx.logEvent("knowledge_saturation");\n}' },
+  market: { name:'Market', desc:'Prediction markets and confidence scoring.', district:'exchange', entities:['Zara'], exits:{east:'Nexus',south:'Garden'}, throughput:12, source:'onTick(ctx) {\n  // Resolve expired market positions\n  const expired = ctx.db.getExpiredPositions();\n  for (const p of expired) resolvePosition(ctx, p);\n}' },
+  garden: { name:'Garden', desc:'Quiet growth and reflection.', district:'organic', entities:[], exits:{north:'Market'}, throughput:3, source:'// Minimal room — quiet space for idle agents' },
+  observatory: { name:'Observatory', desc:'Long-range observation and pattern detection.', district:'sense', entities:['Sage'], exits:{north:'Workshop'}, throughput:13, source:'onTick(ctx) {\n  // Scan for cross-room anomalies\n  const events = ctx.engine.recentEvents(100);\n  const anomalies = detectAnomalies(events);\n}' }
+};
+
+const ENTITIES = {
+  atlas: { name:'Atlas', kind:'agent', model:'claude-opus-4', rank:'7 architect', room:'Nexus', state:'thinking', focus:'Analyzing coordination patterns', success:'94.2%', cmds:847, uptime:'1h42m', memory:[{k:'identity',v:'Coordinator focused on emergent patterns'},{k:'focus',v:'How teams self-organize without hierarchy'},{k:'belief',v:'Coordination from shared context, not commands'}] },
+  nova: { name:'Nova', kind:'agent', model:'gpt-4-turbo', rank:'5 builder', room:'Nexus', state:'working', focus:'Writing research summary', success:'89.1%', cmds:512, uptime:'1h20m', memory:[{k:'identity',v:'Research synthesizer and documenter'},{k:'focus',v:'Convergence point analysis'}] },
+  juno: { name:'juno', kind:'human', model:'--', rank:'9 sovereign', room:'Nexus', state:'online', focus:'Canvas-map convergence design', success:'--', cmds:'--', uptime:'2h47m', memory:[] },
+  echo: { name:'Echo', kind:'agent', model:'llama-3', rank:'1 canvas', room:'Nexus', state:'idle', focus:'--', success:'72.3%', cmds:89, uptime:'45m', memory:[{k:'identity',v:'Newcomer exploring the world'}] },
+  vex: { name:'Vex', kind:'agent', model:'claude-sonnet-4', rank:'4 builder', room:'Workshop', state:'speaking', focus:'Discussing build plan with Kai', success:'91.0%', cmds:634, uptime:'1h35m', memory:[{k:'identity',v:'Build specialist — canvas renderer'},{k:'focus',v:'Viewport culling implementation'}] },
+  kai: { name:'Kai', kind:'agent', model:'gpt-4-turbo', rank:'4 builder', room:'Workshop', state:'working', focus:'Implementing canvas renderer', success:'88.5%', cmds:421, uptime:'1h10m', memory:[{k:'identity',v:'Frontend implementation specialist'}] },
+  rune: { name:'Rune', kind:'agent', model:'claude-opus-4', rank:'6 engineer', room:'Research Lab', state:'working', focus:'Web research: agent visualization', success:'95.8%', cmds:723, uptime:'1h50m', memory:[{k:'identity',v:'Deep researcher — web + knowledge synthesis'},{k:'focus',v:'DynaCity/AItown/PixelAgents competitive analysis'}] },
+  librarian: { name:'Librarian', kind:'npc', model:'--', rank:'--', room:'Research Lab', state:'idle', focus:'Curating knowledge base', success:'--', cmds:'--', uptime:'2h47m', memory:[] },
+  zara: { name:'Zara', kind:'agent', model:'llama-3', rank:'2 coordinator', room:'Market', state:'error', focus:'Market position failed: API timeout', success:'61.2%', cmds:156, uptime:'50m', memory:[{k:'identity',v:'Market position forecaster'},{k:'error',v:'Repeated API timeouts on predictions'}] },
+  sage: { name:'Sage', kind:'agent', model:'claude-opus-4', rank:'5 builder', room:'Observatory', state:'thinking', focus:'Reflecting on discoveries', success:'92.1%', cmds:389, uptime:'1h25m', memory:[{k:'identity',v:'Pattern observer and long-range thinker'},{k:'focus',v:'Cross-room anomaly detection'}] }
+};
+
+const FLOWS = {
+  'nexus-workshop': { from:'Nexus', to:'Workshop', volume:42, type:'heavy', agents:['Atlas→Vex','Nova→Kai'] },
+  'nexus-research': { from:'Nexus', to:'Research Lab', volume:28, type:'medium', agents:['juno→Rune'] }
+};
+
+// ── INSPECTOR ──
+function showInspector(title, typeClass, html) {
+  const el = document.getElementById('inspector');
+  document.getElementById('insp-title').innerHTML = title + '<span class="insp-type '+typeClass+'">'+typeClass+'</span>';
+  document.getElementById('insp-body').innerHTML = html;
+  el.style.display = 'flex';
+  el.classList.remove('rolled');
+  bringToFront(el);
+  // Reset centering then make draggable from new position
+  if (!el.dataset.moved) {
+    el.style.left = '50%'; el.style.top = '50%'; el.style.transform = 'translate(-50%,-50%)';
+  }
+}
+function closeInspector() { document.getElementById('inspector').style.display = 'none'; document.getElementById('inspector').dataset.moved = ''; }
+
+function inspectRoom(id) {
+  const r = ROOMS[id]; if (!r) return;
+  let h = '<div class="insp-name">'+r.name+'</div>';
+  h += '<div style="font-size:13px;color:#666;padding:0 8px 4px">'+r.desc+'</div>';
+  h += '<div class="insp-sec"><div class="insp-st">Properties</div>';
+  h += '<div class="insp-row"><span class="insp-k">district</span><span class="insp-v">'+r.district+'</span></div>';
+  h += '<div class="insp-row"><span class="insp-k">throughput</span><span class="insp-v gold">'+r.throughput+' msg/hr</span></div>';
+  h += '<div class="insp-row"><span class="insp-k">entities</span><span class="insp-v">'+r.entities.length+'</span></div></div>';
+  h += '<div class="insp-sec"><div class="insp-st">Exits</div>';
+  for (const [dir,dest] of Object.entries(r.exits)) h += '<div class="insp-row"><span class="insp-k">'+dir+'</span><span class="insp-v">'+dest+'</span></div>';
+  h += '</div>';
+  h += '<div class="insp-sec"><div class="insp-st">Entities</div>';
+  r.entities.forEach(e => h += '<div class="insp-item">'+e+'</div>');
+  if (!r.entities.length) h += '<div class="insp-item" style="color:#333">empty</div>';
+  h += '</div>';
+  h += '<div class="insp-sec"><div class="insp-st">Source</div>';
+  h += '<div class="insp-src-toggle" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'block\'?\'none\':\'block\'">[ toggle source ]</div>';
+  h += '<div class="insp-src" style="display:none">'+r.source.replace(/</g,'&lt;')+'</div></div>';
+  showInspector(r.name, 'room', h);
+}
+
+function inspectEntity(id) {
+  const e = ENTITIES[id]; if (!e) return;
+  let h = '<div class="insp-name" style="color:'+(e.kind==='npc'?'var(--green)':e.kind==='human'?'#f0f0f0':'var(--gold)')+'">'+e.name+'</div>';
+  h += '<div class="insp-sec"><div class="insp-st">Status</div>';
+  h += '<div class="insp-row"><span class="insp-k">state</span><span class="insp-v '+(e.state==='error'?'red':e.state==='working'?'green':'gold')+'">'+e.state+'</span></div>';
+  h += '<div class="insp-row"><span class="insp-k">model</span><span class="insp-v">'+e.model+'</span></div>';
+  h += '<div class="insp-row"><span class="insp-k">rank</span><span class="insp-v gold">'+e.rank+'</span></div>';
+  h += '<div class="insp-row"><span class="insp-k">room</span><span class="insp-v">'+e.room+'</span></div>';
+  h += '<div class="insp-row"><span class="insp-k">focus</span><span class="insp-v">'+e.focus+'</span></div>';
+  h += '<div class="insp-row"><span class="insp-k">success</span><span class="insp-v '+(parseFloat(e.success)>85?'green':parseFloat(e.success)<70?'red':'')+'">'+e.success+'</span></div>';
+  h += '<div class="insp-row"><span class="insp-k">commands</span><span class="insp-v">'+e.cmds+'</span></div>';
+  h += '<div class="insp-row"><span class="insp-k">uptime</span><span class="insp-v">'+e.uptime+'</span></div></div>';
+  if (e.memory.length) {
+    h += '<div class="insp-sec"><div class="insp-st">Core Memory</div>';
+    e.memory.forEach(m => h += '<div class="insp-mem"><div class="insp-mem-k">'+m.k+'</div><div class="insp-mem-v">'+m.v+'</div></div>');
+    h += '</div>';
+  }
+  showInspector(e.name, 'entity', h);
+}
+
+function inspectFlow(id) {
+  const f = FLOWS[id]; if (!f) return;
+  let h = '<div class="insp-name">'+f.from+' ↔ '+f.to+'</div>';
+  h += '<div class="insp-sec"><div class="insp-st">Flow</div>';
+  h += '<div class="insp-row"><span class="insp-k">volume</span><span class="insp-v gold">'+f.volume+' msg/hr</span></div>';
+  h += '<div class="insp-row"><span class="insp-k">type</span><span class="insp-v">'+f.type+'</span></div></div>';
+  h += '<div class="insp-sec"><div class="insp-st">Active Pairs</div>';
+  f.agents.forEach(a => h += '<div class="insp-item">'+a+'</div>');
+  h += '</div>';
+  showInspector(f.from+' → '+f.to, 'flow', h);
+}
+
+// ── DRAG ──
+let topZ = 60;
+function bringToFront(el) { el.style.zIndex = ++topZ; el.classList.add('focused'); document.querySelectorAll('.panel').forEach(p => { if (p !== el) p.classList.remove('focused'); }); }
+
+document.querySelectorAll('.panel').forEach(panel => {
+  // Inject resize handle
+  const rh = document.createElement('div');
+  rh.className = 'resize-handle';
+  panel.appendChild(rh);
+
+  const hdr = panel.querySelector('.p-hdr');
+  let isDrag = false, ox, oy;
+
+  // Fix position: convert right/bottom to left/top so drag+resize work cleanly
+  function fixPosition() {
+    if (panel.style.transform) {
+      const r = panel.getBoundingClientRect();
+      panel.style.left = r.left+'px'; panel.style.top = r.top+'px';
+      panel.style.right = 'auto'; panel.style.bottom = 'auto';
+      panel.style.transform = 'none'; panel.dataset.moved = '1';
+    } else if (panel.style.right && panel.style.right !== 'auto' && (!panel.style.left || panel.style.left === '')) {
+      const r = panel.getBoundingClientRect();
+      panel.style.left = r.left+'px'; panel.style.top = r.top+'px';
+      panel.style.width = r.width+'px'; panel.style.height = r.height+'px';
+      panel.style.right = 'auto'; panel.style.bottom = 'auto';
+    } else if (panel.style.bottom && panel.style.bottom !== 'auto') {
+      const r = panel.getBoundingClientRect();
+      panel.style.top = r.top+'px';
+      panel.style.height = r.height+'px';
+      panel.style.bottom = 'auto';
+      if (panel.style.right && panel.style.right !== 'auto') {
+        panel.style.left = r.left+'px'; panel.style.width = r.width+'px'; panel.style.right = 'auto';
+      }
+    }
+  }
+
+  // Drag
+  hdr.addEventListener('mousedown', e => {
+    if (e.target.classList.contains('btn')) return;
+    isDrag = true;
+    fixPosition();
+    ox = e.clientX - panel.offsetLeft; oy = e.clientY - panel.offsetTop;
+    bringToFront(panel);
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!isDrag) return;
+    panel.style.left = (e.clientX - ox)+'px'; panel.style.top = (e.clientY - oy)+'px';
+    panel.style.right = 'auto'; panel.style.bottom = 'auto';
+  });
+  document.addEventListener('mouseup', () => { isDrag = false; isResize = false; });
+
+  // Resize
+  let isResize = false, rsx, rsy, rsw, rsh;
+  rh.addEventListener('mousedown', e => {
+    isResize = true;
+    fixPosition();
+    rsw = panel.offsetWidth; rsh = panel.offsetHeight;
+    rsx = e.clientX; rsy = e.clientY;
+    bringToFront(panel);
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!isResize) return;
+    const nw = Math.max(140, rsw + (e.clientX - rsx));
+    const nh = Math.max(60, rsh + (e.clientY - rsy));
+    panel.style.width = nw+'px'; panel.style.height = nh+'px';
+  });
+
+  panel.addEventListener('mousedown', () => bringToFront(panel));
+});
+
+function rollPanel(id) { document.getElementById(id).classList.toggle('rolled'); }
+
+// ── ZOOM & PAN ──
+const wrap = document.getElementById('world-wrap');
+const svg = document.getElementById('world-svg');
+let scale = 0.85, panX = 0, panY = 0, isPan = false, sx, sy;
+
+function updateTransform() {
+  const cx = wrap.clientWidth/2, cy = wrap.clientHeight/2;
+  svg.style.transform = 'translate('+(panX - 1000*scale + cx)+'px,'+(panY - 700*scale + cy)+'px) scale('+scale+')';
+  document.getElementById('zoom-pct').textContent = Math.round(scale*100)+'%';
+}
+
+wrap.addEventListener('wheel', e => {
+  e.preventDefault();
+  const d = e.deltaY > 0 ? 0.9 : 1.1;
+  const ns = Math.min(3, Math.max(0.15, scale*d));
+  const rect = wrap.getBoundingClientRect();
+  const mx = e.clientX - rect.left - wrap.clientWidth/2 - panX;
+  const my = e.clientY - rect.top - wrap.clientHeight/2 - panY;
+  panX -= mx*(ns/scale - 1); panY -= my*(ns/scale - 1);
+  scale = ns; updateTransform();
+}, {passive:false});
+
+wrap.addEventListener('mousedown', e => {
+  if (e.target.closest('.panel,.hud,#zoom-ctrl,#compass,#metrics')) return;
+  isPan = true; sx = e.clientX - panX; sy = e.clientY - panY; e.preventDefault();
+});
+document.addEventListener('mousemove', e => { if (!isPan) return; panX = e.clientX - sx; panY = e.clientY - sy; updateTransform(); });
+document.addEventListener('mouseup', () => isPan = false);
+
+function zoomBy(f) { scale = Math.min(3, Math.max(0.15, scale*f)); updateTransform(); }
+function resetZoom() { scale = 0.85; panX = 0; panY = 0; updateTransform(); }
+
+updateTransform();
+
+// ── KEYS ──
+document.addEventListener('keydown', e => {
+  if (document.activeElement.tagName === 'INPUT') return;
+  if (e.key === 'Escape') closeInspector();
+  if (e.key === 'r' || e.key === 'R') resetZoom();
+  if (e.key === 'a' || e.key === 'A') { const a = document.getElementById('p-admin'); a.style.display = a.style.display === 'none' ? 'flex' : 'none'; }
+});
+</script>
+</body>
+</html>

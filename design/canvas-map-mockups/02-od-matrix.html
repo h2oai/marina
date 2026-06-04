@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marina — OD Matrix : Holographic Flow</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=VT323&family=Orbitron:wght@400;700&family=Press+Start+2P&display=swap');
+
+  *{box-sizing:border-box;margin:0;padding:0}
+
+  :root{
+    --gold:#FFDD00; --amber:#FFB800; --orange:#FF9500;
+    --green:#22c55e; --red:#ef4444; --cyan:#06b6d4;
+    --bg:#030306; --grid:rgba(255,221,0,0.025); --grid-b:rgba(255,221,0,0.05);
+  }
+
+  body{
+    background:var(--bg);
+    color:#d4d4d4;
+    font-family:'VT323',monospace;
+    font-size:16px;
+    overflow:hidden;
+    width:100vw;height:100vh;
+  }
+
+  /* ── Pixel micro-grid ── */
+  body::before{
+    content:'';position:fixed;inset:0;pointer-events:none;z-index:9998;
+    background-image:
+      linear-gradient(rgba(255,221,0,0.008) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(255,221,0,0.008) 1px,transparent 1px);
+    background-size:3px 3px;
+  }
+  /* ── Scanlines ── */
+  body::after{
+    content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;
+    background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.05) 2px,rgba(0,0,0,0.05) 4px);
+  }
+
+  /* ── SVG canvas ── */
+  #canvas{position:absolute;inset:0;z-index:1}
+
+  /* ── Floating labels ── */
+  .lbl{
+    position:absolute;text-align:center;pointer-events:none;z-index:20;
+    transform:translateX(-50%);
+  }
+  .lbl .n{
+    font-family:'Press Start 2P',monospace;font-size:7px;
+    letter-spacing:1.5px;text-transform:uppercase;
+    display:block;text-shadow:0 0 6px currentColor,2px 2px 0 #000;
+  }
+  .lbl .v{
+    font-family:'Orbitron',sans-serif;font-size:18px;font-weight:700;
+    display:block;margin-top:2px;
+    text-shadow:0 0 12px currentColor,0 0 24px currentColor,2px 2px 0 #000;
+  }
+  .lbl .u{
+    font-family:'VT323',monospace;font-size:13px;color:#555;
+    display:block;text-shadow:1px 1px 0 #000;
+  }
+  .lbl .dots{
+    display:flex;justify-content:center;gap:3px;margin-top:3px;
+  }
+  .lbl .d{width:5px;height:5px}
+  .lbl .d.ag{background:var(--gold);box-shadow:0 0 3px var(--gold)}
+  .lbl .d.hu{background:#f0f0f0;box-shadow:0 0 3px #f0f0f0}
+  .lbl .d.np{background:var(--green);box-shadow:0 0 3px var(--green)}
+
+  /* Color classes */
+  .c-gold{color:var(--gold)} .c-amber{color:var(--amber)}
+  .c-orange{color:var(--orange)} .c-green{color:var(--green)}
+  .c-dim{color:#555}
+
+  /* ── HUD ── */
+  .hud{
+    position:fixed;
+    background:rgba(3,3,6,0.94);
+    border:2px solid #111118;
+    box-shadow:4px 4px 0 rgba(0,0,0,0.5),inset 0 0 0 1px rgba(255,221,0,0.03);
+    z-index:50;
+  }
+  .hud:hover{border-color:rgba(255,221,0,0.15)}
+  .hud-t{
+    font-family:'Press Start 2P',monospace;font-size:6px;
+    text-transform:uppercase;letter-spacing:1px;
+    color:rgba(255,221,0,0.5);padding:5px 7px;
+    border-bottom:1px solid #111118;
+    display:flex;align-items:center;gap:5px;
+  }
+  .blink{width:4px;height:4px;background:var(--gold);animation:bl 1.5s step-start infinite}
+  @keyframes bl{0%,100%{opacity:1}50%{opacity:0}}
+
+  /* Mode toggle */
+  #mode{top:8px;left:10px;display:flex;gap:0}
+  .mb{
+    padding:5px 10px;border:2px solid #111118;margin-left:-2px;
+    background:transparent;color:#333;cursor:pointer;
+    font-family:'Press Start 2P',monospace;font-size:6px;
+    text-transform:uppercase;letter-spacing:1px;
+  }
+  .mb:first-child{margin-left:0}
+  .mb.on{color:var(--gold);background:rgba(255,221,0,0.05);border-color:rgba(255,221,0,0.15);z-index:1;position:relative}
+  .mb:hover:not(.on){color:#666}
+
+  /* Stats */
+  #stats{top:8px;right:10px;width:200px}
+  .sr{display:flex;justify-content:space-between;padding:2px 7px;border-bottom:1px solid rgba(17,17,24,0.6);font-size:14px}
+  .sk{color:#444} .sv{color:#888} .sv.hi{color:var(--gold)}
+
+  /* OD table */
+  #od{bottom:10px;right:10px;padding:0}
+  .og{display:grid;grid-template-columns:50px repeat(6,32px);gap:0}
+  .oh{font-family:'Press Start 2P',monospace;font-size:5px;color:rgba(255,221,0,0.35);text-align:center;padding:3px 1px;text-transform:uppercase}
+  .or{font-size:12px;color:#444;padding:3px 3px;display:flex;align-items:center}
+  .oc{text-align:center;padding:2px;font-size:14px;color:#666;border:1px solid transparent}
+  .oc.z{color:#1a1a1a} .oc.l{color:#555;background:rgba(255,221,0,0.03)}
+  .oc.m{color:#bbb;background:rgba(255,221,0,0.08);border-color:rgba(255,221,0,0.04)}
+  .oc.h{color:var(--gold);background:rgba(255,221,0,0.15);border-color:rgba(255,221,0,0.08);text-shadow:0 0 4px rgba(255,221,0,0.3)}
+  .oc.x{color:#030306;background:var(--gold);border-color:var(--gold);font-weight:bold}
+  .oc.s{color:#0a0a0a}
+
+  /* Legend */
+  #leg{bottom:10px;left:50%;transform:translateX(-50%);display:flex;gap:14px;padding:5px 12px;font-size:12px}
+  .li{display:flex;align-items:center;gap:5px;color:#444}
+  .ls{height:3px}
+</style>
+</head>
+<body>
+
+<svg id="canvas" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid meet">
+<defs>
+  <filter id="g1" x="-10%" y="-10%" width="120%" height="120%">
+    <feGaussianBlur stdDeviation="1.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <filter id="g2" x="-20%" y="-20%" width="140%" height="140%">
+    <feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <filter id="g3" x="-40%" y="-40%" width="180%" height="180%">
+    <feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+  <filter id="g4" x="-60%" y="-60%" width="220%" height="220%">
+    <feGaussianBlur stdDeviation="10" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+</defs>
+
+<!-- ═══ ISOMETRIC GRID FLOOR ═══ -->
+<g opacity="1">
+  <!-- slope +0.5 -->
+  <line x1="0" y1="-200" x2="1000" y2="300" stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="-140" x2="1000" y2="360" stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="-80"  x2="1000" y2="420" stroke="var(--grid-b)" stroke-width=".5"/>
+  <line x1="0" y1="-20"  x2="1000" y2="480" stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="40"   x2="1000" y2="540" stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="100"  x2="1000" y2="600" stroke="var(--grid-b)" stroke-width=".5"/>
+  <line x1="0" y1="160"  x2="1000" y2="660" stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="220"  x2="1000" y2="720" stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="280"  x2="1000" y2="780" stroke="var(--grid-b)" stroke-width=".5"/>
+  <line x1="0" y1="340"  x2="1000" y2="840" stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="400"  x2="1000" y2="900" stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="460"  x2="1000" y2="960" stroke="var(--grid-b)" stroke-width=".5"/>
+  <!-- slope -0.5 -->
+  <line x1="0" y1="200" x2="1000" y2="-300" stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="260" x2="1000" y2="-240" stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="320" x2="1000" y2="-180" stroke="var(--grid-b)" stroke-width=".5"/>
+  <line x1="0" y1="380" x2="1000" y2="-120" stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="440" x2="1000" y2="-60"  stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="500" x2="1000" y2="0"    stroke="var(--grid-b)" stroke-width=".5"/>
+  <line x1="0" y1="560" x2="1000" y2="60"   stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="620" x2="1000" y2="120"  stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="680" x2="1000" y2="180"  stroke="var(--grid-b)" stroke-width=".5"/>
+  <line x1="0" y1="740" x2="1000" y2="240"  stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="800" x2="1000" y2="300"  stroke="var(--grid)" stroke-width=".5"/>
+  <line x1="0" y1="860" x2="1000" y2="360"  stroke="var(--grid-b)" stroke-width=".5"/>
+</g>
+
+<!-- ═══ ACTIVITY CONTOUR HALOS (floor plane) ═══ -->
+<g>
+  <ellipse cx="430" cy="425" rx="110" ry="55" fill="none" stroke="var(--gold)" stroke-width=".5" opacity=".04"/>
+  <ellipse cx="430" cy="425" rx="80"  ry="40" fill="none" stroke="var(--gold)" stroke-width=".5" opacity=".06"/>
+  <ellipse cx="430" cy="425" rx="50"  ry="25" fill="var(--gold)" opacity=".015"/>
+  <ellipse cx="690" cy="375" rx="75"  ry="37" fill="none" stroke="var(--amber)" stroke-width=".5" opacity=".03"/>
+  <ellipse cx="690" cy="375" rx="45"  ry="22" fill="var(--amber)" opacity=".01"/>
+  <ellipse cx="395" cy="560" rx="60"  ry="30" fill="none" stroke="var(--green)" stroke-width=".5" opacity=".03"/>
+  <ellipse cx="395" cy="560" rx="35"  ry="17" fill="var(--green)" opacity=".01"/>
+</g>
+
+<!-- ═══ FLOW CONNECTIONS ═══ -->
+<g id="flows">
+  <!-- Heavy: Nexus↔Workshop (42 msg/hr) -->
+  <path d="M 470 418 L 560 390 L 650 372" fill="none" stroke="var(--gold)" stroke-width="4" opacity=".12"/>
+  <path d="M 470 418 L 560 390 L 650 372" fill="none" stroke="var(--gold)" stroke-width="1.5" opacity=".35" stroke-dasharray="3 5" filter="url(#g1)">
+    <animate attributeName="stroke-dashoffset" from="0" to="-24" dur=".8s" repeatCount="indefinite"/>
+  </path>
+  <rect width="4" height="4" fill="var(--gold)" opacity="0" filter="url(#g1)">
+    <animateMotion dur="1.8s" repeatCount="indefinite" path="M 470 418 L 560 390 L 650 372"/>
+    <animate attributeName="opacity" values="0;.9;.9;0" dur="1.8s" repeatCount="indefinite"/>
+  </rect>
+  <rect width="4" height="4" fill="var(--gold)" opacity="0" filter="url(#g1)">
+    <animateMotion dur="1.8s" repeatCount="indefinite" path="M 470 418 L 560 390 L 650 372" begin=".6s"/>
+    <animate attributeName="opacity" values="0;.9;.9;0" dur="1.8s" repeatCount="indefinite" begin=".6s"/>
+  </rect>
+  <rect width="3" height="3" fill="var(--amber)" opacity="0">
+    <animateMotion dur="2.2s" repeatCount="indefinite" path="M 650 372 L 560 390 L 470 418" begin=".3s"/>
+    <animate attributeName="opacity" values="0;.7;.7;0" dur="2.2s" repeatCount="indefinite" begin=".3s"/>
+  </rect>
+
+  <!-- Medium: Nexus↔Research (28 msg/hr) -->
+  <path d="M 420 440 L 408 490 L 400 540" fill="none" stroke="var(--green)" stroke-width="3" opacity=".1"/>
+  <path d="M 420 440 L 408 490 L 400 540" fill="none" stroke="var(--green)" stroke-width="1" opacity=".3" stroke-dasharray="2 6" filter="url(#g1)">
+    <animate attributeName="stroke-dashoffset" from="0" to="-24" dur="1.2s" repeatCount="indefinite"/>
+  </path>
+  <rect width="3" height="3" fill="var(--green)" opacity="0" filter="url(#g1)">
+    <animateMotion dur="2.4s" repeatCount="indefinite" path="M 420 440 L 408 490 L 400 540"/>
+    <animate attributeName="opacity" values="0;.8;.8;0" dur="2.4s" repeatCount="indefinite"/>
+  </rect>
+
+  <!-- Light: Nexus↔Market (12 msg/hr) -->
+  <path d="M 390 420 L 290 415 L 195 410" fill="none" stroke="var(--orange)" stroke-width="1.5" opacity=".08"/>
+  <path d="M 390 420 L 290 415 L 195 410" fill="none" stroke="var(--orange)" stroke-width=".8" opacity=".2" stroke-dasharray="2 8">
+    <animate attributeName="stroke-dashoffset" from="0" to="-30" dur="1.8s" repeatCount="indefinite"/>
+  </path>
+  <rect width="2" height="2" fill="var(--orange)" opacity="0">
+    <animateMotion dur="3s" repeatCount="indefinite" path="M 390 420 L 290 415 L 195 410"/>
+    <animate attributeName="opacity" values="0;.6;.6;0" dur="3s" repeatCount="indefinite"/>
+  </rect>
+
+  <!-- Light: Workshop↔Observatory (8 msg/hr) -->
+  <path d="M 700 390 L 720 430 L 735 470" fill="none" stroke="var(--amber)" stroke-width="1" opacity=".06"/>
+  <rect width="2" height="2" fill="var(--amber)" opacity="0">
+    <animateMotion dur="4s" repeatCount="indefinite" path="M 700 390 L 720 430 L 735 470"/>
+    <animate attributeName="opacity" values="0;.5;.5;0" dur="4s" repeatCount="indefinite"/>
+  </rect>
+
+  <!-- Trace: Nexus→Observatory -->
+  <path d="M 450 430 L 570 450 L 720 475" fill="none" stroke="#333" stroke-width=".8" opacity=".06"/>
+  <!-- Trace: Market↔Garden -->
+  <path d="M 175 425 L 160 455 L 150 510" fill="none" stroke="#222" stroke-width=".5" opacity=".04"/>
+</g>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<!-- ═══ ROOM STRUCTURES (back to front for z-order) ═══════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+
+<!-- ────── GARDEN (cx=150 base=520 h=18) — Circle crown, barely alive ────── -->
+<g transform="translate(150,520)">
+  <!-- Base ring: slow spin -->
+  <ellipse rx="28" ry="14" fill="none" stroke="#555" stroke-width="1.8" stroke-dasharray="3 5 1 5" opacity=".4">
+    <animate attributeName="stroke-dashoffset" from="0" to="-42" dur="28s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Column -->
+  <line x1="0" y1="0" x2="0" y2="-18" stroke="#333" stroke-width="1" opacity=".2"/>
+  <line x1="0" y1="0" x2="0" y2="-18" stroke="#333" stroke-width="6" opacity=".03"/>
+  <!-- Crown: simple circle -->
+  <g transform="translate(0,-18)">
+    <circle r="10" fill="rgba(80,80,80,0.04)" stroke="#444" stroke-width=".8" opacity=".5"/>
+    <circle r="2" fill="#444" opacity=".4"/>
+  </g>
+</g>
+
+<!-- ────── MARKET (cx=185 base=415 h=50) — Diamond crown ────── -->
+<g transform="translate(185,415)">
+  <!-- Sonar pulse -->
+  <ellipse rx="10" ry="5" fill="none" stroke="var(--orange)" stroke-width=".5" opacity="0">
+    <animate attributeName="rx" values="10;55" dur="6s" repeatCount="indefinite"/>
+    <animate attributeName="ry" values="5;27" dur="6s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values=".25;0" dur="6s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Base ring -->
+  <ellipse rx="38" ry="19" fill="none" stroke="var(--orange)" stroke-width="2.5" stroke-dasharray="4 3 1 3 2 3" opacity=".5" filter="url(#glow-hard)">
+    <animate attributeName="stroke-dashoffset" from="0" to="-48" dur="12s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Notch ring -->
+  <ellipse rx="38" ry="19" fill="none" stroke="var(--orange)" stroke-width="5" stroke-dasharray="1 11" opacity=".18">
+    <animate attributeName="stroke-dashoffset" from="0" to="-48" dur="12s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Column -->
+  <line x1="0" y1="0" x2="0" y2="-50" stroke="var(--orange)" stroke-width="1" opacity=".25"/>
+  <line x1="0" y1="0" x2="0" y2="-50" stroke="var(--orange)" stroke-width="6" opacity=".04"/>
+  <!-- Data pulse up column -->
+  <rect x="-2" width="4" height="4" fill="var(--orange)" opacity="0">
+    <animate attributeName="y" values="0;-50" dur="2.5s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values=".5;0" dur="2.5s" repeatCount="indefinite"/>
+  </rect>
+  <!-- Crown: Diamond/rhombus -->
+  <g transform="translate(0,-50)">
+    <!-- Outer diamond wireframe — slow rotate -->
+    <polygon points="0,-18 14,0 0,18 -14,0" fill="rgba(255,149,0,0.06)" stroke="var(--orange)" stroke-width="1" opacity=".6">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="20s" repeatCount="indefinite"/>
+    </polygon>
+    <!-- Inner diamond — counter-rotate -->
+    <polygon points="0,-10 8,0 0,10 -8,0" fill="rgba(255,149,0,0.04)" stroke="var(--orange)" stroke-width=".5" opacity=".4">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="14s" repeatCount="indefinite"/>
+    </polygon>
+    <!-- Center dot -->
+    <circle r="2.5" fill="var(--orange)" opacity=".6" filter="url(#g1)"/>
+    <!-- Vertex dots -->
+    <circle cy="-18" r="1.5" fill="var(--orange)" opacity=".5">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="20s" repeatCount="indefinite"/>
+    </circle>
+    <!-- Breathing -->
+    <animateTransform attributeName="transform" type="scale" values="1;1.04;1" dur="5s" repeatCount="indefinite" additive="sum"/>
+  </g>
+</g>
+
+<!-- ────── OBSERVATORY (cx=735 base=485 h=55) — Eye/lens crown ────── -->
+<g transform="translate(735,485)">
+  <!-- Sonar -->
+  <ellipse rx="10" ry="5" fill="none" stroke="var(--amber)" stroke-width=".5" opacity="0">
+    <animate attributeName="rx" values="10;60" dur="7s" repeatCount="indefinite"/>
+    <animate attributeName="ry" values="5;30" dur="7s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values=".2;0" dur="7s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Base rings -->
+  <ellipse rx="42" ry="21" fill="none" stroke="var(--amber)" stroke-width="2.5" stroke-dasharray="5 3 2 3" opacity=".5" filter="url(#glow-hard)">
+    <animate attributeName="stroke-dashoffset" from="0" to="-52" dur="10s" repeatCount="indefinite"/>
+  </ellipse>
+  <ellipse rx="42" ry="21" fill="none" stroke="var(--amber)" stroke-width="5" stroke-dasharray="1 13" opacity=".15">
+    <animate attributeName="stroke-dashoffset" from="0" to="-52" dur="10s" repeatCount="indefinite"/>
+  </ellipse>
+  <ellipse rx="32" ry="16" fill="none" stroke="var(--amber)" stroke-width="1.8" stroke-dasharray="2 6" opacity=".3">
+    <animate attributeName="stroke-dashoffset" from="0" to="40" dur="15s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Column -->
+  <line x1="0" y1="0" x2="0" y2="-55" stroke="var(--amber)" stroke-width="1.5" opacity=".35"/>
+  <line x1="0" y1="0" x2="0" y2="-55" stroke="var(--amber)" stroke-width="6" opacity=".06" filter="url(#glow-hard)"/>
+  <rect x="-2" width="4" height="4" fill="var(--amber)" opacity="0">
+    <animate attributeName="y" values="0;-55" dur="3s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values=".4;0" dur="3s" repeatCount="indefinite"/>
+  </rect>
+  <!-- Crown: Eye/lens shape -->
+  <g transform="translate(0,-55)">
+    <path d="M -20,0 C -12,-14 12,-14 20,0 C 12,14 -12,14 -20,0 Z" fill="rgba(255,184,0,0.06)" stroke="var(--amber)" stroke-width="1" opacity=".6">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="24s" repeatCount="indefinite"/>
+    </path>
+    <!-- Iris -->
+    <circle r="6" fill="rgba(255,184,0,0.08)" stroke="var(--amber)" stroke-width=".5" opacity=".5">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="16s" repeatCount="indefinite"/>
+    </circle>
+    <!-- Pupil -->
+    <circle r="2.5" fill="var(--amber)" opacity=".5" filter="url(#g1)">
+      <animate attributeName="r" values="2.5;3.5;2.5" dur="4s" repeatCount="indefinite"/>
+    </circle>
+    <animateTransform attributeName="transform" type="scale" values="1;1.05;1" dur="6s" repeatCount="indefinite" additive="sum"/>
+  </g>
+</g>
+
+<!-- ────── RESEARCH (cx=400 base=560 h=90) — Triangle crown (green) ────── -->
+<g transform="translate(400,560)">
+  <!-- Sonar -->
+  <ellipse rx="10" ry="5" fill="none" stroke="var(--green)" stroke-width=".5" opacity="0">
+    <animate attributeName="rx" values="10;70" dur="5s" repeatCount="indefinite"/>
+    <animate attributeName="ry" values="5;35" dur="5s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values=".25;0" dur="5s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Base rings -->
+  <ellipse rx="50" ry="25" fill="none" stroke="var(--green)" stroke-width="2.5" stroke-dasharray="5 2 2 2 1 2" opacity=".5" filter="url(#glow-hard)">
+    <animate attributeName="stroke-dashoffset" from="0" to="-56" dur="7s" repeatCount="indefinite"/>
+  </ellipse>
+  <ellipse rx="50" ry="25" fill="none" stroke="var(--green)" stroke-width="5" stroke-dasharray="1 13" opacity=".15">
+    <animate attributeName="stroke-dashoffset" from="0" to="-56" dur="7s" repeatCount="indefinite"/>
+  </ellipse>
+  <ellipse rx="38" ry="19" fill="none" stroke="var(--green)" stroke-width="1.8" stroke-dasharray="2 7" opacity=".3">
+    <animate attributeName="stroke-dashoffset" from="0" to="50" dur="11s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Column -->
+  <line x1="0" y1="0" x2="0" y2="-90" stroke="var(--green)" stroke-width="2" opacity=".4"/>
+  <line x1="0" y1="0" x2="0" y2="-90" stroke="var(--green)" stroke-width="8" opacity=".06" filter="url(#glow-hard)"/>
+  <rect x="-2" width="4" height="5" fill="var(--green)" opacity="0">
+    <animate attributeName="y" values="0;-90" dur="2s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values=".6;0" dur="2s" repeatCount="indefinite"/>
+  </rect>
+  <!-- Crown: Triangle (knowledge/discovery) -->
+  <g transform="translate(0,-90)">
+    <!-- Outer triangle — rotate -->
+    <polygon points="0,-22 19,11 -19,11" fill="rgba(34,197,94,0.06)" stroke="var(--green)" stroke-width="1" opacity=".6">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="18s" repeatCount="indefinite"/>
+    </polygon>
+    <!-- Inner inverted triangle — counter-rotate -->
+    <polygon points="0,14 -12,-7 12,-7" fill="rgba(34,197,94,0.04)" stroke="var(--green)" stroke-width=".5" opacity=".4">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="12s" repeatCount="indefinite"/>
+    </polygon>
+    <!-- Vertex nodes -->
+    <circle cy="-22" r="2" fill="var(--green)" opacity=".6" filter="url(#g1)">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="18s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="19" cy="11" r="2" fill="var(--green)" opacity=".6" filter="url(#g1)">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="18s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="-19" cy="11" r="2" fill="var(--green)" opacity=".6" filter="url(#g1)">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="18s" repeatCount="indefinite"/>
+    </circle>
+    <!-- Center -->
+    <circle r="3" fill="var(--green)" opacity=".5" filter="url(#g1)"/>
+    <animateTransform attributeName="transform" type="scale" values="1;1.06;1" dur="4s" repeatCount="indefinite" additive="sum"/>
+  </g>
+</g>
+
+<!-- ────── WORKSHOP (cx=690 base=375 h=135) — Octagon crown ────── -->
+<g transform="translate(690,375)">
+  <!-- Sonar -->
+  <ellipse rx="10" ry="5" fill="none" stroke="var(--amber)" stroke-width=".5" opacity="0">
+    <animate attributeName="rx" values="10;80" dur="4s" repeatCount="indefinite"/>
+    <animate attributeName="ry" values="5;40" dur="4s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values=".2;0" dur="4s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Base rings -->
+  <ellipse rx="58" ry="29" fill="none" stroke="var(--amber)" stroke-width="2.8" stroke-dasharray="6 2 2 2 1 2" opacity=".55" filter="url(#glow-hard)">
+    <animate attributeName="stroke-dashoffset" from="0" to="-60" dur="5s" repeatCount="indefinite"/>
+  </ellipse>
+  <ellipse rx="58" ry="29" fill="none" stroke="var(--amber)" stroke-width="6" stroke-dasharray="1 15" opacity=".18">
+    <animate attributeName="stroke-dashoffset" from="0" to="-60" dur="5s" repeatCount="indefinite"/>
+  </ellipse>
+  <ellipse rx="44" ry="22" fill="none" stroke="var(--amber)" stroke-width="2" stroke-dasharray="3 6" opacity=".3">
+    <animate attributeName="stroke-dashoffset" from="0" to="54" dur="8s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Column -->
+  <line x1="0" y1="0" x2="0" y2="-135" stroke="var(--amber)" stroke-width="1.5" opacity=".3"/>
+  <line x1="0" y1="0" x2="0" y2="-135" stroke="var(--amber)" stroke-width="8" opacity=".04"/>
+  <!-- Column data ticks -->
+  <line x1="-4" y1="-30"  x2="4" y2="-30"  stroke="var(--amber)" stroke-width=".5" opacity=".15"/>
+  <line x1="-4" y1="-60"  x2="4" y2="-60"  stroke="var(--amber)" stroke-width=".5" opacity=".12"/>
+  <line x1="-4" y1="-90"  x2="4" y2="-90"  stroke="var(--amber)" stroke-width=".5" opacity=".1"/>
+  <line x1="-4" y1="-120" x2="4" y2="-120" stroke="var(--amber)" stroke-width=".5" opacity=".08"/>
+  <!-- Data pulses -->
+  <rect x="-2" width="4" height="5" fill="var(--amber)" opacity="0">
+    <animate attributeName="y" values="0;-135" dur="1.8s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values=".6;0" dur="1.8s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="-1.5" width="3" height="3" fill="var(--gold)" opacity="0">
+    <animate attributeName="y" values="0;-135" dur="1.8s" repeatCount="indefinite" begin=".9s"/>
+    <animate attributeName="opacity" values=".4;0" dur="1.8s" repeatCount="indefinite" begin=".9s"/>
+  </rect>
+  <!-- Crown: Octagon (building/solid) -->
+  <g transform="translate(0,-135)">
+    <!-- Outer octagon -->
+    <polygon points="0,-24 17,-17 24,0 17,17 0,24 -17,17 -24,0 -17,-17" fill="rgba(255,184,0,0.07)" stroke="var(--amber)" stroke-width="1" opacity=".6">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="22s" repeatCount="indefinite"/>
+    </polygon>
+    <!-- Inner octagon — counter -->
+    <polygon points="0,-14 10,-10 14,0 10,10 0,14 -10,10 -14,0 -10,-10" fill="rgba(255,184,0,0.04)" stroke="var(--amber)" stroke-width=".5" opacity=".35">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="15s" repeatCount="indefinite"/>
+    </polygon>
+    <!-- Cross-lines through center (gear spokes) -->
+    <g opacity=".2">
+      <line x1="0" y1="-20" x2="0" y2="20" stroke="var(--amber)" stroke-width=".5">
+        <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="22s" repeatCount="indefinite"/>
+      </line>
+      <line x1="-20" y1="0" x2="20" y2="0" stroke="var(--amber)" stroke-width=".5">
+        <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="22s" repeatCount="indefinite"/>
+      </line>
+    </g>
+    <!-- Vertex nodes (on outer octagon) -->
+    <g opacity=".5" filter="url(#g1)">
+      <circle cy="-24" r="1.8" fill="var(--amber)">
+        <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="22s" repeatCount="indefinite"/>
+      </circle>
+      <circle cx="24" r="1.8" fill="var(--amber)">
+        <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="22s" repeatCount="indefinite"/>
+      </circle>
+    </g>
+    <!-- Center core -->
+    <circle r="3.5" fill="var(--amber)" opacity=".5" filter="url(#g1)">
+      <animate attributeName="r" values="3.5;4.5;3.5" dur="3s" repeatCount="indefinite"/>
+    </circle>
+    <animateTransform attributeName="transform" type="scale" values="1;1.06;1" dur="3.5s" repeatCount="indefinite" additive="sum"/>
+  </g>
+</g>
+
+<!-- ────── NEXUS (cx=430 base=425 h=185) — Hexagon crown, HOT ────── -->
+<g transform="translate(430,425)">
+  <!-- Sonar pulses (staggered) -->
+  <ellipse rx="10" ry="5" fill="none" stroke="var(--gold)" stroke-width="2" opacity="0">
+    <animate attributeName="rx" values="10;110" dur="3s" repeatCount="indefinite"/>
+    <animate attributeName="ry" values="5;55" dur="3s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values=".5;0" dur="3s" repeatCount="indefinite"/>
+  </ellipse>
+  <ellipse rx="10" ry="5" fill="none" stroke="var(--gold)" stroke-width="1.2" opacity="0">
+    <animate attributeName="rx" values="10;110" dur="3s" repeatCount="indefinite" begin="1.5s"/>
+    <animate attributeName="ry" values="5;55" dur="3s" repeatCount="indefinite" begin="1.5s"/>
+    <animate attributeName="opacity" values=".3;0" dur="3s" repeatCount="indefinite" begin="1.5s"/>
+  </ellipse>
+  <!-- Base rings: 3 concentric, fast spin -->
+  <!-- Outer ring: bold, glowing -->
+  <ellipse rx="72" ry="36" fill="none" stroke="var(--gold)" stroke-width="3" stroke-dasharray="8 2 3 2 1 2" opacity=".6" filter="url(#glow-hard)">
+    <animate attributeName="stroke-dashoffset" from="0" to="-72" dur="3.5s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Outer notch ring: thick tick marks -->
+  <ellipse rx="72" ry="36" fill="none" stroke="var(--gold)" stroke-width="7" stroke-dasharray="1.5 16" opacity=".2">
+    <animate attributeName="stroke-dashoffset" from="0" to="-72" dur="3.5s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Mid ring (counter-spin) -->
+  <ellipse rx="55" ry="27" fill="none" stroke="var(--gold)" stroke-width="2" stroke-dasharray="4 4 1 4" opacity=".4" filter="url(#glow-hard)">
+    <animate attributeName="stroke-dashoffset" from="0" to="60" dur="5.5s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Inner ring -->
+  <ellipse rx="40" ry="20" fill="none" stroke="var(--gold)" stroke-width="1.5" stroke-dasharray="2 8" opacity=".3">
+    <animate attributeName="stroke-dashoffset" from="0" to="-50" dur="8s" repeatCount="indefinite"/>
+  </ellipse>
+
+  <!-- Column beam -->
+  <line x1="0" y1="0" x2="0" y2="-185" stroke="var(--gold)" stroke-width="3" opacity=".5"/>
+  <line x1="0" y1="0" x2="0" y2="-185" stroke="var(--gold)" stroke-width="12" opacity=".06" filter="url(#glow-hard)"/>
+  <!-- Column wide ambient -->
+  <line x1="0" y1="0" x2="0" y2="-185" stroke="var(--gold)" stroke-width="30" opacity=".015" filter="url(#g3)"/>
+  <!-- Column ticks -->
+  <line x1="-5" y1="-35"  x2="5" y2="-35"  stroke="var(--gold)" stroke-width=".5" opacity=".15"/>
+  <line x1="-5" y1="-70"  x2="5" y2="-70"  stroke="var(--gold)" stroke-width=".5" opacity=".13"/>
+  <line x1="-5" y1="-105" x2="5" y2="-105" stroke="var(--gold)" stroke-width=".5" opacity=".11"/>
+  <line x1="-5" y1="-140" x2="5" y2="-140" stroke="var(--gold)" stroke-width=".5" opacity=".09"/>
+  <line x1="-5" y1="-175" x2="5" y2="-175" stroke="var(--gold)" stroke-width=".5" opacity=".07"/>
+  <!-- Data pulses (multiple, staggered) -->
+  <rect x="-2.5" width="5" height="6" fill="var(--gold)" opacity="0">
+    <animate attributeName="y" values="0;-185" dur="1.4s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values=".7;0" dur="1.4s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="-2" width="4" height="4" fill="var(--amber)" opacity="0">
+    <animate attributeName="y" values="0;-185" dur="1.4s" repeatCount="indefinite" begin=".47s"/>
+    <animate attributeName="opacity" values=".5;0" dur="1.4s" repeatCount="indefinite" begin=".47s"/>
+  </rect>
+  <rect x="-1.5" width="3" height="3" fill="var(--gold)" opacity="0">
+    <animate attributeName="y" values="0;-185" dur="1.4s" repeatCount="indefinite" begin=".93s"/>
+    <animate attributeName="opacity" values=".4;0" dur="1.4s" repeatCount="indefinite" begin=".93s"/>
+  </rect>
+
+  <!-- Crown: Hexagon (hub/connectivity) -->
+  <g transform="translate(0,-185)">
+    <!-- Outer hexagon wireframe -->
+    <polygon points="0,-30 26,-15 26,15 0,30 -26,15 -26,-15" fill="rgba(255,221,0,0.08)" stroke="var(--gold)" stroke-width="1.2" opacity=".7">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="16s" repeatCount="indefinite"/>
+    </polygon>
+    <!-- Mid hexagon — counter -->
+    <polygon points="0,-20 17.3,-10 17.3,10 0,20 -17.3,10 -17.3,-10" fill="rgba(255,221,0,0.05)" stroke="var(--gold)" stroke-width=".6" opacity=".4">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="11s" repeatCount="indefinite"/>
+    </polygon>
+    <!-- Inner hexagon — faster -->
+    <polygon points="0,-11 9.5,-5.5 9.5,5.5 0,11 -9.5,5.5 -9.5,-5.5" fill="rgba(255,221,0,0.04)" stroke="var(--gold)" stroke-width=".4" opacity=".3">
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="7s" repeatCount="indefinite"/>
+    </polygon>
+    <!-- Connecting spokes (outer to inner) -->
+    <g opacity=".15">
+      <line x1="0" y1="-26" x2="0" y2="26" stroke="var(--gold)" stroke-width=".5">
+        <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="16s" repeatCount="indefinite"/>
+      </line>
+      <line x1="-22.5" y1="-13" x2="22.5" y2="13" stroke="var(--gold)" stroke-width=".5">
+        <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="16s" repeatCount="indefinite"/>
+      </line>
+      <line x1="-22.5" y1="13" x2="22.5" y2="-13" stroke="var(--gold)" stroke-width=".5">
+        <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="16s" repeatCount="indefinite"/>
+      </line>
+    </g>
+    <!-- Vertex nodes on outer hex -->
+    <g opacity=".6" filter="url(#g1)">
+      <circle cy="-30" r="2.2" fill="var(--gold)"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="16s" repeatCount="indefinite"/></circle>
+      <circle cx="26" cy="-15" r="2.2" fill="var(--gold)"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="16s" repeatCount="indefinite"/></circle>
+      <circle cx="26" cy="15" r="2.2" fill="var(--gold)"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="16s" repeatCount="indefinite"/></circle>
+      <circle cy="30" r="2.2" fill="var(--gold)"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="16s" repeatCount="indefinite"/></circle>
+      <circle cx="-26" cy="15" r="2.2" fill="var(--gold)"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="16s" repeatCount="indefinite"/></circle>
+      <circle cx="-26" cy="-15" r="2.2" fill="var(--gold)"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="16s" repeatCount="indefinite"/></circle>
+    </g>
+    <!-- Center core — pulsing -->
+    <circle r="5" fill="var(--gold)" opacity=".5" filter="url(#g2)">
+      <animate attributeName="r" values="5;7;5" dur="2s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values=".5;.8;.5" dur="2s" repeatCount="indefinite"/>
+    </circle>
+    <!-- Crown glow halo -->
+    <circle r="35" fill="var(--gold)" opacity=".02" filter="url(#g4)"/>
+    <!-- Breathing -->
+    <animateTransform attributeName="transform" type="scale" values="1;1.07;1" dur="2.5s" repeatCount="indefinite" additive="sum"/>
+  </g>
+
+  <!-- Orbiting satellite (small triangle) around Nexus crown -->
+  <g transform="translate(0,-185)">
+    <g>
+      <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="6s" repeatCount="indefinite"/>
+      <polygon points="42,0 38,-3 38,3" fill="var(--gold)" opacity=".5" filter="url(#g1)">
+        <animate attributeName="opacity" values=".5;.8;.5" dur="1s" repeatCount="indefinite"/>
+      </polygon>
+    </g>
+    <g>
+      <animateTransform attributeName="transform" type="rotate" from="180" to="540" dur="9s" repeatCount="indefinite"/>
+      <rect x="36" y="-2" width="3" height="3" fill="var(--amber)" opacity=".3"/>
+    </g>
+  </g>
+</g>
+
+</svg>
+
+<!-- ═══ FLOATING LABELS ═══ -->
+<div class="lbl c-gold" style="left:43%;top:27%">
+  <span class="n">Nexus</span>
+  <span class="v">87</span>
+  <span class="u">msg/hr</span>
+  <div class="dots"><div class="d ag"></div><div class="d ag"></div><div class="d hu"></div><div class="d ag"></div></div>
+</div>
+
+<div class="lbl c-amber" style="left:69%;top:28%">
+  <span class="n">Workshop</span>
+  <span class="v">54</span>
+  <span class="u">msg/hr</span>
+  <div class="dots"><div class="d ag"></div><div class="d ag"></div></div>
+</div>
+
+<div class="lbl c-green" style="left:40%;top:62%">
+  <span class="n">Research</span>
+  <span class="v" style="color:var(--green);text-shadow:0 0 12px var(--green),0 0 24px var(--green),2px 2px 0 #000">32</span>
+  <span class="u">msg/hr</span>
+  <div class="dots"><div class="d ag"></div><div class="d np"></div></div>
+</div>
+
+<div class="lbl c-orange" style="left:18.5%;top:48%">
+  <span class="n">Market</span>
+  <span class="v">12</span>
+  <span class="u">msg/hr</span>
+  <div class="dots"><div class="d ag"></div></div>
+</div>
+
+<div class="lbl c-dim" style="left:15%;top:68%">
+  <span class="n">Garden</span>
+  <span class="v" style="font-size:14px">3</span>
+  <span class="u">msg/hr</span>
+</div>
+
+<div class="lbl c-amber" style="left:73.5%;top:57%">
+  <span class="n">Observatory</span>
+  <span class="v">13</span>
+  <span class="u">msg/hr</span>
+  <div class="dots"><div class="d ag"></div></div>
+</div>
+
+<!-- ═══ HUD: Mode ═══ -->
+<div id="mode" class="hud">
+  <button class="mb" onclick="setM(this)">Spatial</button>
+  <button class="mb on" onclick="setM(this)">Flow</button>
+  <button class="mb" onclick="setM(this)">Heat</button>
+</div>
+
+<!-- ═══ HUD: Stats ═══ -->
+<div id="stats" class="hud">
+  <div class="hud-t"><div class="blink"></div>Flow Analytics</div>
+  <div class="sr"><span class="sk">Total flow</span><span class="sv hi">201 msg/hr</span></div>
+  <div class="sr"><span class="sk">Busiest</span><span class="sv">NXS-WRK</span></div>
+  <div class="sr"><span class="sk">Peak room</span><span class="sv">NXS (87)</span></div>
+  <div class="sr"><span class="sk">Cross-room</span><span class="sv">62%</span></div>
+  <div class="sr"><span class="sk">Latency</span><span class="sv">1.2s</span></div>
+  <div class="sr"><span class="sk">Agents</span><span class="sv">8</span></div>
+  <div class="sr"><span class="sk">Arcs</span><span class="sv">4</span></div>
+</div>
+
+<!-- ═══ HUD: OD Matrix ═══ -->
+<div id="od" class="hud">
+  <div class="hud-t"><div class="blink"></div>OD Matrix</div>
+  <div class="og">
+    <div class="oh"></div><div class="oh">Nxs</div><div class="oh">Wrk</div><div class="oh">Res</div><div class="oh">Mkt</div><div class="oh">Gdn</div><div class="oh">Obs</div>
+    <div class="or">Nexus</div><div class="oc s">--</div><div class="oc x">24</div><div class="oc h">16</div><div class="oc m">8</div><div class="oc l">2</div><div class="oc l">3</div>
+    <div class="or">Wrkshp</div><div class="oc x">18</div><div class="oc s">--</div><div class="oc l">4</div><div class="oc z">0</div><div class="oc z">0</div><div class="oc m">8</div>
+    <div class="or">Resrch</div><div class="oc h">12</div><div class="oc z">0</div><div class="oc s">--</div><div class="oc z">0</div><div class="oc z">0</div><div class="oc z">0</div>
+    <div class="or">Market</div><div class="oc l">4</div><div class="oc z">0</div><div class="oc z">0</div><div class="oc s">--</div><div class="oc l">3</div><div class="oc z">0</div>
+    <div class="or">Garden</div><div class="oc z">0</div><div class="oc z">0</div><div class="oc z">0</div><div class="oc z">0</div><div class="oc s">--</div><div class="oc z">0</div>
+    <div class="or">Obsrve</div><div class="oc l">2</div><div class="oc z">0</div><div class="oc z">0</div><div class="oc z">0</div><div class="oc z">0</div><div class="oc s">--</div>
+  </div>
+</div>
+
+<!-- ═══ HUD: Legend ═══ -->
+<div id="leg" class="hud">
+  <div class="li"><div class="ls" style="width:20px;background:var(--gold);box-shadow:0 0 4px var(--gold)"></div>Heavy 40+</div>
+  <div class="li"><div class="ls" style="width:16px;background:var(--green);box-shadow:0 0 4px var(--green)"></div>Med 20-40</div>
+  <div class="li"><div class="ls" style="width:14px;background:var(--orange)"></div>Light 5-20</div>
+  <div class="li"><div class="ls" style="width:10px;background:#444"></div>Trace &lt;5</div>
+</div>
+
+<script>
+function setM(b){document.querySelectorAll('.mb').forEach(x=>x.classList.remove('on'));b.classList.add('on')}
+</script>
+</body>
+</html>

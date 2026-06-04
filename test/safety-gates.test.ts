@@ -1,0 +1,178 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import {
+  canWitness,
+  checkGate,
+  grant,
+  grantGatesForRank,
+  listGates,
+  recordDemonstration,
+  revoke,
+  SAFETY_GATES,
+} from "../src/engine/safety-gates";
+import { MarinaDB } from "../src/persistence/database";
+import { cleanupDb } from "./helpers";
+
+const TEST_DB = "test_safety_gates.db";
+
+/** Seed an entity's standing via the existing task path. */
+function seedStanding(db: MarinaDB, entityId: string, name: string, amount: number): void {
+  const taskId = db.createTask({ title: "seed", creatorId: entityId, creatorName: name });
+  db.recordStandingEarned(entityId, name, taskId, amount);
+}
+
+describe("Safety gates", () => {
+  let db: MarinaDB;
+
+  beforeEach(() => {
+    cleanupDb(TEST_DB);
+    db = new MarinaDB(TEST_DB);
+  });
+
+  afterEach(() => {
+    db.close();
+    cleanupDb(TEST_DB);
+  });
+
+  it("registry includes all migrated commands", () => {
+    const ids = listGates();
+    expect(ids).toContain("shell.exec");
+    expect(ids).toContain("agent.run");
+    expect(ids).toContain("agent.spawn");
+    expect(ids).toContain("adapter.enable");
+    expect(ids).toContain("connect.manage");
+    expect(ids).toContain("gateway.connect");
+    expect(ids).toContain("key.manage");
+    expect(ids).toContain("admin.destructive");
+  });
+
+  it("rejects unknown gate ids", () => {
+    const result = checkGate(db, "e_alice", "fake.gate");
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("Unknown");
+  });
+
+  it("entity with no standing and no competence is denied", () => {
+    const result = checkGate(db, "e_nobody", "shell.exec");
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("standing");
+  });
+
+  it("grant() unconditionally authorizes an entity for a gate", () => {
+    grant(db, "e_operator", "shell.exec");
+    const result = checkGate(db, "e_operator", "shell.exec");
+    expect(result.ok).toBe(true);
+    expect(result.supervisedOnly).toBeUndefined();
+  });
+
+  it("standing alone does not unlock — first attempt is supervised-only", () => {
+    seedStanding(db, "e_alice", "Alice", 120);
+    const result = checkGate(db, "e_alice", "shell.exec");
+    expect(result.ok).toBe(true);
+    expect(result.supervisedOnly).toBe(true);
+  });
+
+  it("recordDemonstration increments and unlocks at the threshold", () => {
+    seedStanding(db, "e_alice", "Alice", 120);
+
+    // shell.exec.demoThreshold === 3
+    expect(checkGate(db, "e_alice", "shell.exec").supervisedOnly).toBe(true);
+    recordDemonstration(db, "e_alice", "shell.exec");
+    expect(checkGate(db, "e_alice", "shell.exec").supervisedOnly).toBe(true);
+    recordDemonstration(db, "e_alice", "shell.exec");
+    expect(checkGate(db, "e_alice", "shell.exec").supervisedOnly).toBe(true);
+    recordDemonstration(db, "e_alice", "shell.exec");
+
+    const final = checkGate(db, "e_alice", "shell.exec");
+    expect(final.ok).toBe(true);
+    expect(final.supervisedOnly).toBeUndefined();
+  });
+
+  it("canWitness returns true only for unsupervised entities on the same gate", () => {
+    expect(canWitness(db, "e_nobody", "shell.exec")).toBe(false);
+
+    grant(db, "e_witness", "shell.exec");
+    expect(canWitness(db, "e_witness", "shell.exec")).toBe(true);
+    // Authority on one gate does not transfer.
+    expect(canWitness(db, "e_witness", "key.manage")).toBe(false);
+  });
+
+  it("revoke removes an explicit grant", () => {
+    grant(db, "e_alice", "shell.exec");
+    expect(checkGate(db, "e_alice", "shell.exec").ok).toBe(true);
+    revoke(db, "e_alice", "shell.exec");
+    // Without standing, denial returns to the "not enough standing" reason.
+    const result = checkGate(db, "e_alice", "shell.exec");
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("standing");
+  });
+
+  it("each gate has a sane definition", () => {
+    for (const id of listGates()) {
+      const gate = SAFETY_GATES[id]!;
+      expect(gate.id).toBe(id);
+      expect(gate.minStanding).toBeGreaterThan(0);
+      expect(gate.demoThreshold).toBeGreaterThan(0);
+      expect(gate.description.length).toBeGreaterThan(5);
+    }
+  });
+
+  it("grantGatesForRank below the safety threshold is a no-op", () => {
+    grantGatesForRank(db, "e_alice", 4);
+    for (const id of listGates()) {
+      expect(db.getCompetence("e_alice", id)).toBeUndefined();
+    }
+  });
+
+  it("grantGatesForRank(5) grants shell.exec and agent.spawn", () => {
+    grantGatesForRank(db, "e_alice", 5);
+    expect(db.getCompetence("e_alice", "shell.exec")?.supervised_only).toBe(0);
+    expect(db.getCompetence("e_alice", "agent.spawn")?.supervised_only).toBe(0);
+    expect(db.getCompetence("e_alice", "agent.run")).toBeUndefined();
+    expect(db.getCompetence("e_alice", "admin.destructive")).toBeUndefined();
+  });
+
+  it("agent.spawn unlocks below the rank-4 ceiling (standing 40, supervised first)", () => {
+    // Well under the threshold (40) → denied outright. shell.exec (100)
+    // would also deny here — agent.spawn is the more reachable gate.
+    seedStanding(db, "e_low", "LowStanding", 20);
+    const denied = checkGate(db, "e_low", "agent.spawn");
+    expect(denied.ok).toBe(false);
+    expect(denied.reason).toContain("standing");
+
+    // Clear of the threshold → may attempt, but supervised until demonstrated.
+    seedStanding(db, "e_org", "Organizer", 60);
+    const supervised = checkGate(db, "e_org", "agent.spawn");
+    expect(supervised.ok).toBe(true);
+    expect(supervised.supervisedOnly).toBe(true);
+
+    // agent.spawn.demoThreshold === 3 → unsupervised after three clean spawns.
+    recordDemonstration(db, "e_org", "agent.spawn");
+    recordDemonstration(db, "e_org", "agent.spawn");
+    recordDemonstration(db, "e_org", "agent.spawn");
+    const unlocked = checkGate(db, "e_org", "agent.spawn");
+    expect(unlocked.ok).toBe(true);
+    expect(unlocked.supervisedOnly).toBeUndefined();
+  });
+
+  it("grantGatesForRank(7) grants shell.exec, agent.run, plus the rank-7 trio", () => {
+    grantGatesForRank(db, "e_steward", 7);
+    for (const id of [
+      "shell.exec",
+      "agent.run",
+      "adapter.enable",
+      "connect.manage",
+      "gateway.connect",
+    ]) {
+      expect(db.getCompetence("e_steward", id)?.supervised_only).toBe(0);
+    }
+    expect(db.getCompetence("e_steward", "key.manage")).toBeUndefined();
+    expect(db.getCompetence("e_steward", "admin.destructive")).toBeUndefined();
+  });
+
+  it("grantGatesForRank(9) grants every gate", () => {
+    grantGatesForRank(db, "e_sov", 9);
+    for (const id of listGates()) {
+      expect(db.getCompetence("e_sov", id)?.supervised_only).toBe(0);
+    }
+  });
+});

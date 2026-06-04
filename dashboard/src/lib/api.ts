@@ -1,0 +1,115 @@
+const BASE = import.meta.env.MODE === "development" ? "" : "";
+
+const TOKEN_KEY = "marina_chat_token";
+const LEGACY_TOKEN_KEY = "marina_dashboard_token";
+
+// One-time migration: older dashboards wrote to a separate key. Promote the
+// legacy value to the unified key so users don't get logged out on upgrade.
+try {
+  const legacy = localStorage.getItem(LEGACY_TOKEN_KEY);
+  if (legacy && !localStorage.getItem(TOKEN_KEY)) {
+    localStorage.setItem(TOKEN_KEY, legacy);
+  }
+  if (legacy) localStorage.removeItem(LEGACY_TOKEN_KEY);
+} catch {
+  /* localStorage disabled — non-fatal */
+}
+
+/** Get the current session token. */
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+/** Store the session token. */
+export function setToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+/** Clear the session token locally. Use `logout()` to also revoke server-side. */
+export function clearToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(LEGACY_TOKEN_KEY);
+}
+
+/**
+ * Revoke the current session on the server, then clear it locally.
+ * Callers should also reset in-memory chat state (loggedIn=false, entityName=null).
+ */
+export async function logout(): Promise<void> {
+  const token = getToken();
+  if (token) {
+    try {
+      await fetch(`${BASE}/api/logout`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      /* network down — still clear locally so the user isn't stuck */
+    }
+  }
+  clearToken();
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
+
+export async function fetchApi<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { headers: authHeaders() });
+  if (res.status === 401) clearToken();
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function postApi<T = unknown>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) clearToken();
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function deleteApi(path: string): Promise<void> {
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE", headers: authHeaders() });
+  if (res.status === 401) clearToken();
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+}
+
+export async function putApi<T = unknown>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) clearToken();
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+export async function patchApi<T = unknown>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PATCH",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) clearToken();
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+/**
+ * Drop-in replacement for `fetch()` that attaches the Bearer token.
+ * Used by canvas code and anywhere that needs raw fetch with auth.
+ */
+export function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  const headers: Record<string, string> = {
+    ...authHeaders(),
+    ...(init?.headers as Record<string, string>),
+  };
+  return fetch(url, { ...init, headers });
+}

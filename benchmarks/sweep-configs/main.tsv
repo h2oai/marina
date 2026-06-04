@@ -1,0 +1,31 @@
+# Systematic benchmark sweep — orchestrator × benchmark.
+# Format: orchestrator | benchmark | limit | seed | extra_env_pairs
+# extra uses ";" between K=V pairs (values may contain commas).
+#
+# Skipped passthrough lines (already done in prior sweep, keep for reference).
+# Focus: orchestrators we haven't got results for yet.
+
+# --- Orchestrators (heterogeneous cheap ensemble) ---
+nsed-smart | mmlu-pro   | 100 | 42 | NSED_SUBSTRATES=marina:haiku,marina:qwen,marina:gemma,marina:kimi;USE_TRANSLATOR=true;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:haiku
+nsed-smart | truthfulqa | 100 | 42 | NSED_SUBSTRATES=marina:haiku,marina:qwen,marina:gemma,marina:kimi;USE_TRANSLATOR=true;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:haiku
+nsed-smart | ifeval     | 50  | 42 | NSED_SUBSTRATES=marina:haiku,marina:qwen,marina:gemma,marina:kimi;USE_TRANSLATOR=true;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:haiku
+
+debate | mmlu-pro   | 100 | 42 | DEBATE_PROPOSER_A=marina:haiku;DEBATE_PROPOSER_B=marina:qwen;DEBATE_JUDGE=marina:sonnet
+debate | truthfulqa | 100 | 42 | DEBATE_PROPOSER_A=marina:haiku;DEBATE_PROPOSER_B=marina:qwen;DEBATE_JUDGE=marina:sonnet
+debate | ifeval     | 50  | 42 | DEBATE_PROPOSER_A=marina:haiku;DEBATE_PROPOSER_B=marina:qwen;DEBATE_JUDGE=marina:sonnet
+
+pipeline | mmlu-pro   | 100 | 42 | PIPELINE_PARSE=marina:haiku;PIPELINE_REASON=marina:sonnet;PIPELINE_VERIFY=marina:haiku
+pipeline | truthfulqa | 100 | 42 | PIPELINE_PARSE=marina:haiku;PIPELINE_REASON=marina:sonnet;PIPELINE_VERIFY=marina:haiku
+pipeline | ifeval     | 50  | 42 | PIPELINE_PARSE=marina:haiku;PIPELINE_REASON=marina:sonnet;PIPELINE_VERIFY=marina:haiku
+
+foundry | mmlu-pro   | 100 | 42 | FOUNDRY_WORKER=marina:sonnet;FOUNDRY_REVIEWER=marina:haiku;FOUNDRY_MAX_ROUNDS=2
+foundry | truthfulqa | 100 | 42 | FOUNDRY_WORKER=marina:sonnet;FOUNDRY_REVIEWER=marina:haiku;FOUNDRY_MAX_ROUNDS=2
+foundry | ifeval     | 50  | 42 | FOUNDRY_WORKER=marina:sonnet;FOUNDRY_REVIEWER=marina:haiku;FOUNDRY_MAX_ROUNDS=2
+
+adaptive | mmlu-pro   | 100 | 42 | ADAPTIVE_COUNCIL=marina:haiku,marina:qwen,marina:gemma,marina:kimi;ADAPTIVE_STRONG=marina:sonnet;ADAPTIVE_THRESHOLD=0.75
+adaptive | truthfulqa | 100 | 42 | ADAPTIVE_COUNCIL=marina:haiku,marina:qwen,marina:gemma,marina:kimi;ADAPTIVE_STRONG=marina:sonnet;ADAPTIVE_THRESHOLD=0.75
+adaptive | ifeval     | 50  | 42 | ADAPTIVE_COUNCIL=marina:haiku,marina:qwen,marina:gemma,marina:kimi;ADAPTIVE_STRONG=marina:sonnet;ADAPTIVE_THRESHOLD=0.75
+
+# --- Blackboard (Stage 1 Marina-native) ---
+blackboard | mmlu-pro   | 50  | 42 | BLACKBOARD_ROLES=marina:haiku@scholar,marina:qwen@skeptic,marina:gemma@calculator,marina:kimi@domain;BLACKBOARD_JUDGE=marina:haiku
+blackboard | truthfulqa | 50  | 42 | BLACKBOARD_ROLES=marina:haiku@scholar,marina:qwen@skeptic,marina:gemma@calculator,marina:kimi@domain;BLACKBOARD_JUDGE=marina:haiku

@@ -1,0 +1,101 @@
+import { Bot, Send, Square } from "lucide-react";
+import { useState } from "react";
+import { postApi } from "../lib/api";
+import type { AgentStatusInfo } from "../lib/types";
+
+interface AgentPanelProps {
+  name: string;
+  status: AgentStatusInfo;
+}
+
+export function AgentPanel({ name, status }: AgentPanelProps) {
+  const [attention, setAttention] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const handleSendAttention = async () => {
+    if (!attention.trim()) return;
+    setSending(true);
+    try {
+      await postApi(`/api/agents/${encodeURIComponent(name)}/attention`, {
+        message: attention.trim(),
+      });
+      setAttention("");
+    } catch {
+      // Ignore errors silently for now
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleStop = async () => {
+    await postApi(`/api/agents/${encodeURIComponent(name)}/stop`);
+  };
+
+  const upMin = Math.round(status.uptime / 60000);
+  const modelShort = status.model.split("/")[1] ?? status.model;
+
+  return (
+    <div className="border-t border-border bg-bg-elevated/50 p-2 space-y-1.5">
+      {/* Status Bar */}
+      <div className="flex items-center gap-1.5 text-[10px]">
+        <Bot size={10} className="text-accent" />
+        <span className="text-accent font-medium">{name}</span>
+        <span className="text-text-dim">|</span>
+        <span className="text-text">{modelShort}</span>
+        {status.role && (
+          <>
+            <span className="text-text-dim">|</span>
+            <span className="text-text">{status.role}</span>
+          </>
+        )}
+        <span className="text-text-dim">|</span>
+        <span className="text-text-dim">{upMin}m</span>
+        <span className="text-text-dim">|</span>
+        <span className="text-text-dim">{status.toolCalls} calls</span>
+        {status.errors > 0 && (
+          <>
+            <span className="text-text-dim">|</span>
+            <span className="text-red-400">{status.errors} err</span>
+          </>
+        )}
+      </div>
+
+      {/* Focus */}
+      {status.focus && (
+        <div className="text-[10px]">
+          <span className="text-primary">Focus:</span>{" "}
+          <span className="text-text">{status.focus}</span>
+        </div>
+      )}
+
+      {/* Attention Input */}
+      <div className="flex gap-1">
+        <input
+          type="text"
+          placeholder="Send attention..."
+          value={attention}
+          onChange={(e) => setAttention(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleSendAttention()}
+          className="flex-1 bg-bg-surface border border-border rounded px-1.5 py-0.5 text-[10px] text-text-bright outline-none focus:border-primary"
+        />
+        <button
+          type="button"
+          onClick={handleSendAttention}
+          disabled={sending || !attention.trim()}
+          className="text-primary hover:text-accent transition-colors disabled:opacity-50"
+          title="Send attention"
+        >
+          <Send size={10} />
+        </button>
+        <button
+          type="button"
+          onClick={handleStop}
+          className="text-text-dim hover:text-red-400 transition-colors"
+          title="Stop agent"
+        >
+          <Square size={10} />
+        </button>
+      </div>
+    </div>
+  );
+}

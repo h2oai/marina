@@ -1,0 +1,77 @@
+{
+  "name": "marina",
+  "version": "0.4.2",
+  "description": "You think, therefore you are here. A civilization for the future where humans and autonomous AI agents share memory, tools, reputation, and work.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "mud",
+    "agents",
+    "simulation",
+    "mcp",
+    "multi-agent",
+    "typescript",
+    "websocket",
+    "telnet",
+    "openai",
+    "ollama",
+    "llm",
+    "model-api"
+  ],
+  "bin": {
+    "marina": "scripts/connect.ts"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "dev": "bun run src/main.ts",
+    "build": "bun build src/main.ts --outdir dist --target bun",
+    "test": "bun test --path-ignore-patterns '**/dashboard/**'",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src/ test/ dashboard/src/",
+    "format": "biome format --write src/ test/ dashboard/src/",
+    "dashboard:dev": "cd dashboard && bunx vite",
+    "dashboard:build": "cd dashboard && bunx vite build",
+    "usecase-ui:dev": "cd examples/usecase-ui && bun run dev",
+    "usecase-ui:build": "cd examples/usecase-ui && bun run build",
+    "clean": "rm -f marina.db marina.db-shm marina.db-wal data/marina.db && rm -rf data/scratch/*",
+    "bench": "bun run benchmarks/harness.ts",
+    "bench:ui": "bun run benchmarks/server.ts",
+    "init": "bun run scripts/init.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.16",
+    "@types/bun": "^1.3.14",
+    "typescript": "^6.0.3"
+  },
+  "trustedDependencies": ["@biomejs/biome"],
+  "dependencies": {
+    "@mariozechner/pi-agent-core": "^0.73.1",
+    "@mariozechner/pi-ai": "^0.73.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@sinclair/typebox": "^0.34.49",
+    "discord.js": "^14.26.4",
+    "grammy": "^1.43.0",
+    "mathjs": "^15.2.0",
+    "mcporter": "^0.11.3"
+  },
+  "overrides": {
+    "@hono/node-server": "^1.19.13",
+    "@protobufjs/utf8": "^1.1.1",
+    "basic-ftp": "^5.3.1",
+    "express-rate-limit": "^8.2.2",
+    "fast-uri": "^3.1.2",
+    "fast-xml-builder": "^1.1.7",
+    "fast-xml-parser": "^5.7.0",
+    "hono": "^4.12.18",
+    "ip-address": "^10.1.1",
+    "lodash": "^4.18.0",
+    "path-to-regexp": "^8.4.0",
+    "protobufjs": "^7.5.8",
+    "qs": "^6.15.2",
+    "undici": "^6.24.0",
+    "ws": "^8.20.1"
+  }
+}

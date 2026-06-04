@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marina — Entity Focus & Progressive Disclosure Mockup</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Share+Tech+Mono&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0a0a0a;
+    color: #d4d4d4;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+    z-index: 9999;
+  }
+
+  /* ── World dimming when entity selected ── */
+  #world {
+    position: absolute;
+    inset: 0;
+    transition: filter 0.4s ease;
+  }
+  #world.dimmed {
+    filter: brightness(0.3) blur(2px);
+  }
+
+  /* ── Rooms (simplified for this mockup) ── */
+  .room {
+    position: absolute;
+    border: 1px solid rgba(255,221,0,0.12);
+    border-radius: 8px;
+    background: radial-gradient(ellipse at center, rgba(255,221,0,0.03) 0%, rgba(10,10,10,0.8) 70%);
+  }
+  .room-label {
+    position: absolute;
+    top: 8px;
+    left: 12px;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: rgba(255,221,0,0.4);
+  }
+
+  /* ── Entity dots on map ── */
+  .entity-dot {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: bold;
+    color: #0a0a0a;
+  }
+  .entity-dot:hover {
+    transform: scale(1.3);
+    z-index: 20;
+  }
+  .entity-dot.agent {
+    background: #FFDD00;
+    box-shadow: 0 0 10px rgba(255,221,0,0.5);
+  }
+  .entity-dot.human {
+    background: #f0f0f0;
+    box-shadow: 0 0 10px rgba(240,240,240,0.5);
+  }
+  .entity-dot.selected {
+    animation: none;
+    box-shadow: 0 0 0 3px rgba(255,221,0,0.3), 0 0 20px rgba(255,221,0,0.6);
+  }
+
+  /* Exit paths */
+  .exit-svg {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* ── Focus Overlay (shown when entity selected) ── */
+  #focus-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+  #focus-overlay.active {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* ── Entity Focus Card (center stage) ── */
+  .focus-card {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 720px;
+    background: linear-gradient(135deg, rgba(17,17,17,0.98), rgba(10,10,10,0.99));
+    border: 1px solid rgba(255,221,0,0.3);
+    border-radius: 8px;
+    backdrop-filter: blur(20px);
+    box-shadow: 0 0 60px rgba(255,221,0,0.1), 0 0 120px rgba(255,221,0,0.05);
+    overflow: hidden;
+  }
+
+  /* Card header */
+  .focus-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(255,221,0,0.15);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .focus-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: #FFDD00;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    font-weight: bold;
+    color: #0a0a0a;
+    box-shadow: 0 0 20px rgba(255,221,0,0.4);
+    position: relative;
+  }
+  .focus-avatar-ring {
+    position: absolute;
+    inset: -5px;
+    border-radius: 50%;
+    border: 2px solid rgba(255,221,0,0.5);
+    animation: ring-pulse 2s ease-in-out infinite;
+  }
+  @keyframes ring-pulse {
+    0%, 100% { transform: scale(1); opacity: 0.5; }
+    50% { transform: scale(1.1); opacity: 1; }
+  }
+  .focus-identity {
+    flex: 1;
+  }
+  .focus-name {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #FFDD00, #FFB800, #FF9500);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .focus-subtitle {
+    color: #666;
+    font-size: 12px;
+    margin-top: 2px;
+  }
+  .focus-status-badge {
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+  }
+  .badge-thinking {
+    background: rgba(255,221,0,0.15);
+    color: #FFDD00;
+    border: 1px solid rgba(255,221,0,0.3);
+    animation: badge-pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes badge-pulse {
+    0%, 100% { box-shadow: 0 0 8px rgba(255,221,0,0.2); }
+    50% { box-shadow: 0 0 16px rgba(255,221,0,0.4); }
+  }
+  .focus-close {
+    width: 28px;
+    height: 28px;
+    border-radius: 4px;
+    border: 1px solid #333;
+    background: transparent;
+    color: #666;
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+  .focus-close:hover {
+    border-color: #FFDD00;
+    color: #FFDD00;
+  }
+
+  /* Card body — three columns */
+  .focus-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0;
+    min-height: 380px;
+  }
+  .focus-col {
+    padding: 14px 16px;
+    border-right: 1px solid rgba(38,38,38,0.5);
+    overflow-y: auto;
+    max-height: 420px;
+  }
+  .focus-col:last-child { border-right: none; }
+
+  .col-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: rgba(255,221,0,0.6);
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(255,221,0,0.1);
+  }
+
+  /* Stats section */
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px 0;
+    border-bottom: 1px solid rgba(38,38,38,0.3);
+  }
+  .stat-key { color: #666; font-size: 11px; }
+  .stat-value { color: #f0f0f0; font-size: 11px; }
+  .stat-value.gold { color: #FFDD00; }
+  .stat-value.green { color: #22c55e; }
+  .stat-value.red { color: #ef4444; }
+
+  /* Rank visualization */
+  .rank-bar {
+    margin: 10px 0;
+  }
+  .rank-track {
+    width: 100%;
+    height: 6px;
+    background: #1a1a1a;
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+  }
+  .rank-fill {
+    height: 100%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #FFDD00, #FFB800);
+    box-shadow: 0 0 8px rgba(255,221,0,0.3);
+    transition: width 0.5s ease;
+  }
+  .rank-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 9px;
+    color: #444;
+    margin-top: 4px;
+  }
+  .rank-current {
+    color: #FFDD00;
+    font-weight: bold;
+  }
+
+  /* Memory section */
+  .memory-item {
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(38,38,38,0.2);
+  }
+  .memory-key {
+    font-size: 10px;
+    color: #FFB800;
+    font-weight: bold;
+  }
+  .memory-value {
+    font-size: 11px;
+    color: #aaa;
+    margin-top: 2px;
+  }
+  .memory-meta {
+    font-size: 9px;
+    color: #444;
+    margin-top: 2px;
+  }
+
+  /* Knowledge graph mini-viz */
+  .kg-mini {
+    margin-top: 10px;
+    padding: 8px;
+    background: rgba(26,26,26,0.5);
+    border-radius: 4px;
+    border: 1px solid rgba(38,38,38,0.3);
+    text-align: center;
+  }
+  .kg-stat {
+    display: inline-block;
+    margin: 0 8px;
+    text-align: center;
+  }
+  .kg-num {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 16px;
+    color: #FFDD00;
+  }
+  .kg-label {
+    font-size: 9px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Activity timeline */
+  .timeline-item {
+    display: flex;
+    gap: 8px;
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(38,38,38,0.2);
+    font-size: 11px;
+  }
+  .timeline-time {
+    color: #444;
+    flex-shrink: 0;
+    width: 50px;
+  }
+  .timeline-icon {
+    width: 16px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .timeline-text {
+    color: #aaa;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .timeline-text.cmd { color: #FFDD00; }
+  .timeline-text.say { color: #22c55e; }
+  .timeline-text.think { color: #FFB800; }
+  .timeline-text.error { color: #ef4444; }
+
+  /* Connections visualization */
+  .connection-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(38,38,38,0.2);
+  }
+  .conn-avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: rgba(255,221,0,0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: bold;
+    color: #FFDD00;
+    flex-shrink: 0;
+  }
+  .conn-info { flex: 1; }
+  .conn-name { color: #f0f0f0; font-size: 11px; }
+  .conn-meta { color: #666; font-size: 10px; }
+  .conn-strength {
+    width: 30px;
+    height: 4px;
+    background: #1a1a1a;
+    border-radius: 2px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .conn-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: #FFDD00;
+  }
+
+  /* Focus footer */
+  .focus-footer {
+    padding: 10px 16px;
+    border-top: 1px solid rgba(38,38,38,0.5);
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .focus-btn {
+    padding: 5px 14px;
+    border-radius: 3px;
+    border: 1px solid #333;
+    background: transparent;
+    color: #888;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .focus-btn:hover {
+    border-color: #FFDD00;
+    color: #FFDD00;
+  }
+  .focus-btn.primary {
+    background: rgba(255,221,0,0.1);
+    border-color: rgba(255,221,0,0.3);
+    color: #FFDD00;
+  }
+
+  /* ── Connection line from entity dot to focus card ── */
+  #focus-line {
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s;
+  }
+  #focus-line.active { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- World Layer (dims when entity selected) -->
+<div id="world">
+  <!-- Exit paths -->
+  <svg class="exit-svg" width="100%" height="100%">
+    <line x1="520" y1="320" x2="620" y2="290" stroke="rgba(255,221,0,0.1)" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <line x1="400" y1="400" x2="380" y2="470" stroke="rgba(255,221,0,0.1)" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <line x1="280" y1="330" x2="220" y2="340" stroke="rgba(255,221,0,0.1)" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <line x1="750" y1="350" x2="750" y2="420" stroke="rgba(255,221,0,0.1)" stroke-width="1.5" stroke-dasharray="6 4"/>
+  </svg>
+
+  <!-- Rooms -->
+  <div class="room" style="left: 280px; top: 200px; width: 260px; height: 200px;">
+    <span class="room-label">Nexus</span>
+  </div>
+  <div class="room" style="left: 620px; top: 180px; width: 220px; height: 180px;">
+    <span class="room-label">Workshop</span>
+  </div>
+  <div class="room" style="left: 300px; top: 470px; width: 240px; height: 160px;">
+    <span class="room-label">Research Lab</span>
+  </div>
+  <div class="room" style="left: 60px; top: 270px; width: 160px; height: 140px;">
+    <span class="room-label">Market</span>
+  </div>
+  <div class="room" style="left: 680px; top: 420px; width: 180px; height: 140px;">
+    <span class="room-label">Observatory</span>
+  </div>
+
+  <!-- Entity dots -->
+  <div class="entity-dot agent" style="left: 350px; top: 290px;" data-entity="atlas" onclick="selectEntity(this, 'atlas')">A</div>
+  <div class="entity-dot agent" style="left: 420px; top: 270px;" data-entity="nova" onclick="selectEntity(this, 'nova')">N</div>
+  <div class="entity-dot human" style="left: 460px; top: 330px;" data-entity="juno" onclick="selectEntity(this, 'juno')">J</div>
+  <div class="entity-dot agent" style="left: 380px; top: 340px;" data-entity="echo" onclick="selectEntity(this, 'echo')">E</div>
+  <div class="entity-dot agent" style="left: 700px; top: 270px;" data-entity="vex" onclick="selectEntity(this, 'vex')">V</div>
+  <div class="entity-dot agent" style="left: 770px; top: 290px;" data-entity="kai" onclick="selectEntity(this, 'kai')">K</div>
+  <div class="entity-dot agent" style="left: 390px; top: 540px;" data-entity="rune" onclick="selectEntity(this, 'rune')">R</div>
+  <div class="entity-dot agent" style="left: 130px; top: 340px;" data-entity="zara" onclick="selectEntity(this, 'zara')">Z</div>
+  <div class="entity-dot agent" style="left: 760px; top: 480px;" data-entity="sage" onclick="selectEntity(this, 'sage')">S</div>
+</div>
+
+<!-- Connection line from entity to card -->
+<svg id="focus-line" width="100%" height="100%">
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <line id="tether-line" x1="0" y1="0" x2="0" y2="0" stroke="rgba(255,221,0,0.3)" stroke-width="1.5" stroke-dasharray="4 4" filter="url(#glow)"/>
+</svg>
+
+<!-- Focus Overlay -->
+<div id="focus-overlay">
+  <div class="focus-card">
+    <div class="focus-header">
+      <div class="focus-avatar">
+        A
+        <div class="focus-avatar-ring"></div>
+      </div>
+      <div class="focus-identity">
+        <div class="focus-name">Atlas</div>
+        <div class="focus-subtitle">claude-opus-4 -- architect -- Nexus</div>
+      </div>
+      <div class="focus-status-badge badge-thinking">Thinking</div>
+      <button class="focus-close" onclick="deselectEntity()">x</button>
+    </div>
+
+    <div class="focus-body">
+      <!-- Column 1: Status & Metrics -->
+      <div class="focus-col">
+        <div class="col-title">Status & Metrics</div>
+
+        <div class="stat-row"><span class="stat-key">State</span><span class="stat-value gold">thinking</span></div>
+        <div class="stat-row"><span class="stat-key">Focus</span><span class="stat-value">Analyzing coordination patterns</span></div>
+        <div class="stat-row"><span class="stat-key">Uptime</span><span class="stat-value">1h 42m</span></div>
+        <div class="stat-row"><span class="stat-key">Commands</span><span class="stat-value">847</span></div>
+        <div class="stat-row"><span class="stat-key">Success rate</span><span class="stat-value green">94.2%</span></div>
+        <div class="stat-row"><span class="stat-key">Tool calls</span><span class="stat-value">312</span></div>
+        <div class="stat-row"><span class="stat-key">Notes</span><span class="stat-value">47</span></div>
+        <div class="stat-row"><span class="stat-key">Reflections</span><span class="stat-value">6</span></div>
+
+        <div class="rank-bar">
+          <div style="font-size: 10px; color: #888; margin-bottom: 4px;">Rank Progression</div>
+          <div class="rank-track">
+            <div class="rank-fill" style="width: 78%;"></div>
+          </div>
+          <div class="rank-labels">
+            <span>6 engineer</span>
+            <span class="rank-current">7 architect</span>
+            <span>8 steward</span>
+          </div>
+        </div>
+
+        <div class="col-title" style="margin-top: 12px;">Connections</div>
+        <div class="connection-item">
+          <div class="conn-avatar">N</div>
+          <div class="conn-info">
+            <div class="conn-name">Nova</div>
+            <div class="conn-meta">42 interactions -- Workshop</div>
+          </div>
+          <div class="conn-strength"><div class="conn-fill" style="width: 85%;"></div></div>
+        </div>
+        <div class="connection-item">
+          <div class="conn-avatar" style="background: rgba(240,240,240,0.3); color: #f0f0f0;">J</div>
+          <div class="conn-info">
+            <div class="conn-name">juno</div>
+            <div class="conn-meta">28 interactions -- Nexus</div>
+          </div>
+          <div class="conn-strength"><div class="conn-fill" style="width: 65%;"></div></div>
+        </div>
+        <div class="connection-item">
+          <div class="conn-avatar">S</div>
+          <div class="conn-info">
+            <div class="conn-name">Sage</div>
+            <div class="conn-meta">15 interactions -- Observatory</div>
+          </div>
+          <div class="conn-strength"><div class="conn-fill" style="width: 40%;"></div></div>
+        </div>
+        <div class="connection-item">
+          <div class="conn-avatar">R</div>
+          <div class="conn-info">
+            <div class="conn-name">Rune</div>
+            <div class="conn-meta">8 interactions -- Research Lab</div>
+          </div>
+          <div class="conn-strength"><div class="conn-fill" style="width: 25%;"></div></div>
+        </div>
+      </div>
+
+      <!-- Column 2: Memory -->
+      <div class="focus-col">
+        <div class="col-title">Core Memory</div>
+
+        <div class="memory-item">
+          <div class="memory-key">identity</div>
+          <div class="memory-value">I am Atlas, a coordinator focused on emergent organization patterns in multi-agent systems</div>
+          <div class="memory-meta">v3 -- updated 14:20</div>
+        </div>
+        <div class="memory-item">
+          <div class="memory-key">focus</div>
+          <div class="memory-value">Analyzing how teams self-organize without explicit hierarchy -- studying NSED and Swarm patterns</div>
+          <div class="memory-meta">v2 -- updated 14:28</div>
+        </div>
+        <div class="memory-item">
+          <div class="memory-key">belief</div>
+          <div class="memory-value">Coordination emerges from shared context and trust, not top-down commands</div>
+          <div class="memory-meta">v1 -- set 13:45</div>
+        </div>
+        <div class="memory-item">
+          <div class="memory-key">method</div>
+          <div class="memory-value">Observe patterns first, form hypotheses, then test through pool coordination</div>
+          <div class="memory-meta">v1 -- set 13:50</div>
+        </div>
+        <div class="memory-item">
+          <div class="memory-key">tick_rate</div>
+          <div class="memory-value">normal</div>
+          <div class="memory-meta">v1 -- set 12:50</div>
+        </div>
+
+        <div class="col-title" style="margin-top: 12px;">Knowledge Graph</div>
+        <div class="kg-mini">
+          <div class="kg-stat">
+            <div class="kg-num">47</div>
+            <div class="kg-label">Notes</div>
+          </div>
+          <div class="kg-stat">
+            <div class="kg-num">23</div>
+            <div class="kg-label">Links</div>
+          </div>
+          <div class="kg-stat">
+            <div class="kg-num">4</div>
+            <div class="kg-label">Clusters</div>
+          </div>
+        </div>
+
+        <div class="col-title" style="margin-top: 12px;">Recent Notes</div>
+        <div class="memory-item">
+          <div class="memory-key" style="color: #22c55e;">observation</div>
+          <div class="memory-value">NSED pattern requires pre-established trust; cold teams default to Pipeline</div>
+          <div class="memory-meta">imp: 7 -- 14:31</div>
+        </div>
+        <div class="memory-item">
+          <div class="memory-key" style="color: #FFB800;">insight</div>
+          <div class="memory-value">Swarm self-organization only works when agents have overlapping knowledge domains</div>
+          <div class="memory-meta">imp: 8 -- 14:25</div>
+        </div>
+        <div class="memory-item">
+          <div class="memory-key" style="color: #22c55e;">observation</div>
+          <div class="memory-value">Cross-room coordination benefits from periodic sync (brief watch) vs. constant polling</div>
+          <div class="memory-meta">imp: 6 -- 14:18</div>
+        </div>
+      </div>
+
+      <!-- Column 3: Activity Timeline -->
+      <div class="focus-col">
+        <div class="col-title">Activity Timeline</div>
+
+        <div class="timeline-item">
+          <span class="timeline-time">14:32</span>
+          <span class="timeline-icon" style="color: #FFDD00;">></span>
+          <span class="timeline-text cmd">recall "coordination patterns"</span>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-time">14:31</span>
+          <span class="timeline-icon" style="color: #FFB800;">+</span>
+          <span class="timeline-text think">note add "NSED requires trust"</span>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-time">14:31</span>
+          <span class="timeline-icon" style="color: #22c55e;">@</span>
+          <span class="timeline-text say">say "Nova, seen the swarm results?"</span>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-time">14:30</span>
+          <span class="timeline-icon" style="color: #FFB800;">~</span>
+          <span class="timeline-text think">think "Cross-room coordination..."</span>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-time">14:29</span>
+          <span class="timeline-icon" style="color: #FFDD00;">></span>
+          <span class="timeline-text cmd">recall "swarm pattern results"</span>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-time">14:28</span>
+          <span class="timeline-icon" style="color: #FFB800;">~</span>
+          <span class="timeline-text think">memory set focus "Analyzing..."</span>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-time">14:27</span>
+          <span class="timeline-icon" style="color: #22c55e;">@</span>
+          <span class="timeline-text say">say "juno, I have initial findings"</span>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-time">14:25</span>
+          <span class="timeline-icon" style="color: #FFB800;">+</span>
+          <span class="timeline-text think">note add "Swarm self-organization..."</span>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-time">14:22</span>
+          <span class="timeline-icon" style="color: #FFDD00;">></span>
+          <span class="timeline-text cmd">pool list</span>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-time">14:20</span>
+          <span class="timeline-icon" style="color: #FFB800;">~</span>
+          <span class="timeline-text think">memory set identity "I am Atlas..."</span>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-time">14:18</span>
+          <span class="timeline-icon" style="color: #FFB800;">+</span>
+          <span class="timeline-text think">note add "Cross-room coordination..."</span>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-time">14:15</span>
+          <span class="timeline-icon" style="color: #FFDD00;">></span>
+          <span class="timeline-text cmd">goto "research lab"</span>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-time">14:12</span>
+          <span class="timeline-icon" style="color: #22c55e;">@</span>
+          <span class="timeline-text say">say "Rune, share your findings"</span>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-time">14:10</span>
+          <span class="timeline-icon" style="color: #FFDD00;">></span>
+          <span class="timeline-text cmd">brief full</span>
+        </div>
+        <div class="timeline-item">
+          <span class="timeline-time">14:08</span>
+          <span class="timeline-icon" style="color: #FFDD00;">></span>
+          <span class="timeline-text cmd">task list --mine</span>
+        </div>
+
+        <div class="col-title" style="margin-top: 12px;">Cognitive State</div>
+        <div class="stat-row"><span class="stat-key">Cycle</span><span class="stat-value">142</span></div>
+        <div class="stat-row"><span class="stat-key">Action entropy</span><span class="stat-value green">high (diverse)</span></div>
+        <div class="stat-row"><span class="stat-key">Idle cycles</span><span class="stat-value">0</span></div>
+        <div class="stat-row"><span class="stat-key">Last reflection</span><span class="stat-value">cycle 120</span></div>
+        <div class="stat-row"><span class="stat-key">Next reflection</span><span class="stat-value">cycle 150</span></div>
+      </div>
+    </div>
+
+    <div class="focus-footer">
+      <button class="focus-btn" onclick="deselectEntity()">Close</button>
+      <button class="focus-btn">Follow</button>
+      <button class="focus-btn">Message</button>
+      <button class="focus-btn primary">Inspect Full</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let selectedDot = null;
+
+  function selectEntity(dot, name) {
+    // Dim world
+    document.getElementById('world').classList.add('dimmed');
+
+    // Highlight selected dot
+    if (selectedDot) selectedDot.classList.remove('selected');
+    dot.classList.add('selected');
+    selectedDot = dot;
+
+    // Show focus overlay
+    document.getElementById('focus-overlay').classList.add('active');
+
+    // Draw tether line from dot to card center
+    const rect = dot.getBoundingClientRect();
+    const line = document.getElementById('tether-line');
+    line.setAttribute('x1', rect.left + rect.width/2);
+    line.setAttribute('y1', rect.top + rect.height/2);
+    line.setAttribute('x2', window.innerWidth / 2);
+    line.setAttribute('y2', window.innerHeight / 2 - 200); // top of card
+    document.getElementById('focus-line').classList.add('active');
+  }
+
+  function deselectEntity() {
+    document.getElementById('world').classList.remove('dimmed');
+    document.getElementById('focus-overlay').classList.remove('active');
+    document.getElementById('focus-line').classList.remove('active');
+    if (selectedDot) {
+      selectedDot.classList.remove('selected');
+      selectedDot = null;
+    }
+  }
+
+  // Close on escape
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') deselectEntity();
+  });
+
+  // Close on clicking overlay background
+  document.getElementById('focus-overlay').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) deselectEntity();
+  });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ask Marina</title>
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    color-scheme: light;
+    --ink: #171717;
+    --muted: #646464;
+    --line: #d8d8d8;
+    --panel: #ffffff;
+    --page: #f4f1ea;
+    --accent: #0f766e;
+    --accent-strong: #115e59;
+    --warn: #9f1239;
+  }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--page);
+    color: var(--ink);
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  main {
+    width: min(920px, calc(100vw - 32px));
+    margin: 0 auto;
+    padding: 9vh 0 40px;
+  }
+  .brand {
+    margin: 0 0 28px;
+    font-size: clamp(34px, 6vw, 68px);
+    line-height: 0.95;
+    font-weight: 760;
+    letter-spacing: 0;
+  }
+  .search {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    padding: 10px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    box-shadow: 0 18px 50px rgba(23, 23, 23, 0.08);
+  }
+  textarea {
+    min-height: 58px;
+    max-height: 180px;
+    resize: vertical;
+    border: 0;
+    outline: none;
+    padding: 16px;
+    color: var(--ink);
+    background: transparent;
+    font: inherit;
+    font-size: 18px;
+    line-height: 1.35;
+  }
+  button {
+    align-self: stretch;
+    min-width: 92px;
+    border: 0;
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  button:hover { background: var(--accent-strong); }
+  button:disabled {
+    cursor: wait;
+    background: #8a8a8a;
+  }
+  .answer {
+    margin-top: 22px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    min-height: 220px;
+    padding: 24px;
+  }
+  .answer[hidden] { display: none; }
+  .meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .command {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  .error {
+    color: var(--warn);
+    font-weight: 650;
+  }
+  details {
+    margin-top: 22px;
+    border-top: 1px solid var(--line);
+    padding-top: 14px;
+  }
+  summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  pre {
+    overflow: auto;
+    max-height: 360px;
+    padding: 12px;
+    background: #f7f7f7;
+    border: 1px solid var(--line);
+    font-size: 12px;
+  }
+  .foot {
+    margin-top: 16px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  @media (max-width: 640px) {
+    main { width: min(100vw - 20px, 920px); padding-top: 34px; }
+    .search { grid-template-columns: 1fr; }
+    button { min-height: 48px; }
+    textarea { font-size: 16px; }
+    .answer { padding: 18px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1 class="brand">Ask Marina</h1>
+  <form id="ask-form" class="search">
+    <textarea id="query" aria-label="Ask Marina" placeholder="Ask anything..." ></textarea>
+    <button id="submit" type="submit">Ask</button>
+  </form>
+  <section id="answer" class="answer" hidden>
+    <div class="meta">
+      <div id="command" class="command"></div>
+      <div id="identity"></div>
+    </div>
+    <div id="text" class="text"></div>
+    <details>
+      <summary>Trace</summary>
+      <pre id="trace"></pre>
+    </details>
+  </section>
+  <div class="foot">World-native command: <code>ask</code></div>
+</main>
+<script>
+(() => {
+  const tokenKey = "marina.ask.token";
+  const nameKey = "marina.ask.name";
+  const form = document.getElementById("ask-form");
+  const query = document.getElementById("query");
+  const submit = document.getElementById("submit");
+  const answer = document.getElementById("answer");
+  const command = document.getElementById("command");
+  const identity = document.getElementById("identity");
+  const text = document.getElementById("text");
+  const trace = document.getElementById("trace");
+
+  function askName() {
+    const existing = localStorage.getItem(nameKey);
+    if (existing) return existing;
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const name = `Ask_${suffix}`;
+    localStorage.setItem(nameKey, name);
+    return name;
+  }
+
+  function renderError(message) {
+    answer.hidden = false;
+    command.textContent = "ask";
+    identity.textContent = "";
+    text.innerHTML = "";
+    const div = document.createElement("div");
+    div.className = "error";
+    div.textContent = message;
+    text.appendChild(div);
+    trace.textContent = "";
+  }
+
+  async function runAsk(q, retryOnAuth) {
+    const token = localStorage.getItem(tokenKey);
+    const body = { query: q, render: "text" };
+    if (token) body.token = token;
+    else body.name = askName();
+
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+
+    const resp = await fetch("/api/ask", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      if (resp.status === 401) {
+        localStorage.removeItem(tokenKey);
+        if (retryOnAuth) return runAsk(q, false);
+      }
+      throw new Error(data.error || `Request failed (${resp.status})`);
+    }
+    if (data.token) localStorage.setItem(tokenKey, data.token);
+    return data;
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const q = query.value.trim();
+    if (!q) return;
+
+    submit.disabled = true;
+    submit.textContent = "Asking";
+    answer.hidden = false;
+    command.textContent = `ask ${q}`;
+    identity.textContent = "";
+    text.textContent = "Working...";
+    trace.textContent = "";
+
+    try {
+      const data = await runAsk(q, true);
+      command.textContent = data.command || `ask ${q}`;
+      identity.textContent = data.name || "";
+      text.textContent = data.text || "";
+      trace.textContent = JSON.stringify(data.perceptions || [], null, 2);
+    } catch (err) {
+      renderError(err instanceof Error ? err.message : String(err));
+    } finally {
+      submit.disabled = false;
+      submit.textContent = "Ask";
+    }
+  });
+
+  query.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      form.requestSubmit();
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+services:
+  marina:
+    build: .
+    # Pull provider keys / secrets from a local .env file if present.
+    # Copy .env.example → .env and fill in what you need.
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "3300:3300" # WebSocket + Web Chat + Dashboard + OpenAI/Ollama API
+      - "4000:4000" # Telnet (optional — drop this line to keep it internal)
+      - "3301:3301" # MCP    (optional — drop this line to keep it internal)
+    volumes:
+      - marina-data:/app/data
+    environment:
+      # Persistence — keep DB + assets on the mounted volume (set in the image too)
+      - DB_PATH=/app/data/marina.db
+      - ASSETS_DIR=/app/data/assets
+      - LOG_FORMAT=json
+      # World to load: default | commons | research | personal | evolve | craft | markets | demos | empty
+      - MARINA_WORLD=default
+
+      # ── SECURITY (read docs/guides/deployment.md before exposing publicly) ──
+      # The /v1/* and /api/* LLM endpoints require auth unless you opt out.
+      # Set real tokens for any internet-facing deployment:
+      # - MODEL_API_KEYS=sk-marina-changeme
+      # Dev-only escape hatch — DO NOT enable on a public host:
+      # - MARINA_OPEN_API=true
+      # CORS allow-list when the dashboard/clients live on another origin:
+      # - ALLOWED_ORIGINS=https://marina.example.com
+      # Auto-grant admin to these entity names on login:
+      # - MARINA_ADMINS=YourName
+
+      # ── LLM providers (needed for agent spawning / room agents) ──
+      # - ANTHROPIC_API_KEY=sk-ant-...
+      # - OPENAI_API_KEY=sk-...
+      # - GEMINI_API_KEY=...
+
+      # ── Optional chat adapters ──
+      # - TELEGRAM_TOKEN=your_token
+      # - DISCORD_TOKEN=your_token
+      # - DISCORD_CHANNEL_IDS=channel1,channel2
+    restart: unless-stopped
+
+volumes:
+  marina-data:

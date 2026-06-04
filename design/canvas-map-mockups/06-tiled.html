@@ -1,0 +1,2708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Marina — Tiled Dynamic Canvas</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=VT323&family=Orbitron:wght@400;700&family=Press+Start+2P&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{--gold:#FFDD00;--amber:#FFB800;--orange:#FF9500;--green:#22c55e;--red:#ef4444;--cyan:#06b6d4;--violet:#8b5cf6;--indigo:#6366f1;--rose:#f472b6;--bg:#030306;--card:rgba(8,8,14,0.96);--border:#111118;--border-hi:rgba(255,221,0,0.15);--text:#d4d4d4;--dim:#555;--bright:#f0f0f0}
+  body{background:var(--bg);color:var(--text);font-family:'VT323',monospace;font-size:clamp(18px,1.35vw,28px);overflow:hidden;width:100vw;height:100vh;display:flex;flex-direction:column}
+  body::after{content:'';position:fixed;inset:0;pointer-events:none;z-index:9999;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.04) 2px,rgba(0,0,0,0.04) 4px)}
+
+  /* ═══ TOP BAR ═══ */
+  #topbar{height:clamp(38px,2.62vw,56px);background:var(--card);border-bottom:2px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:clamp(12px,1.35vw,24px);flex-shrink:0;z-index:90}
+  .logo{font-family:'Orbitron',sans-serif;font-size:clamp(13px,1.12vw,20px);font-weight:700;background:linear-gradient(135deg,var(--gold),var(--amber),var(--orange));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  .ci{display:flex;align-items:center;gap:6px} .ci-v{font-family:'Orbitron',sans-serif;font-size:clamp(14px,1.05vw,22px);font-weight:700;color:var(--gold);text-shadow:0 0 4px rgba(255,221,0,0.2)} .ci-l{font-size:clamp(13px,0.9vw,18px);color:#444} .cd{width:1px;height:22px;background:var(--border)}
+  #live{display:flex;align-items:center;gap:5px;font-family:'Press Start 2P',monospace;font-size:clamp(7px,0.6vw,10px);color:var(--green);letter-spacing:1px}
+  #live::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--green);animation:lp 1s ease-in-out infinite}
+  @keyframes lp{0%,100%{opacity:1}50%{opacity:.4}}
+
+  /* ═══ MAIN LAYOUT: sidebar | center | context ═══ */
+  #main{flex:1;display:flex;overflow:hidden;min-height:0}
+
+  .blink{width:4px;height:4px;background:var(--gold);animation:bl 1.5s step-start infinite}@keyframes bl{0%,100%{opacity:1}50%{opacity:0}}
+  .ei{display:flex;align-items:center;gap:10px;padding:clamp(6px,0.52vw,8px) 12px;border-bottom:1px solid rgba(17,17,24,0.4);cursor:pointer;transition:background .15s}
+  .ei:hover{background:rgba(255,221,0,0.03)} .ei.sel{background:rgba(255,221,0,0.06);border-left:3px solid var(--gold)}
+  .ei-d{width:clamp(8px,0.68vw,12px);height:clamp(8px,0.68vw,12px);border-radius:50%;flex-shrink:0}
+  .ei-d.ag{background:var(--gold);box-shadow:0 0 5px var(--gold)} .ei-d.hu{background:#f0f0f0;box-shadow:0 0 5px #f0f0f0} .ei-d.np{background:var(--green);box-shadow:0 0 5px var(--green)}
+  .ei-i{flex:1;overflow:hidden} .ei-n{font-size:clamp(16px,1.12vw,22px);color:var(--bright);white-space:nowrap;overflow:hidden;text-overflow:ellipsis} .ei-m{font-size:clamp(13px,0.98vw,18px);color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ei-s{font-size:clamp(12px,0.83vw,16px);flex-shrink:0;padding:3px 8px;border-radius:3px}
+
+  /* Center area: map on top, chat on bottom */
+  #center{flex:1;display:flex;flex-direction:column;min-width:200px;overflow:hidden}
+
+  /* Map tile */
+  #map-tile{flex:1;position:relative;overflow:hidden;cursor:grab;min-height:100px;border-bottom:2px solid var(--border)}
+  #map-tile:active{cursor:grabbing}
+  #map-tile::before{content:'';position:absolute;inset:0;pointer-events:none;z-index:1;background-image:linear-gradient(rgba(255,221,0,0.005) 1px,transparent 1px),linear-gradient(90deg,rgba(255,221,0,0.005) 1px,transparent 1px);background-size:3px 3px}
+  #world-svg{position:absolute;transform-origin:0 0}
+
+  /* Chat tile */
+  #chat-tile{height:clamp(160px,22vh,280px);min-height:80px;max-height:45vh;background:var(--card);display:flex;flex-direction:column;flex-shrink:0;transition:height .2s ease}
+  #chat-tile.rolled{height:auto !important;min-height:0}
+  #chat-tile.rolled .chat-tabs,#chat-tile.rolled .chat-pane,#chat-tile.rolled .divider-h{display:none}
+  #chat-tile.rolled .tile-hdr{border-bottom:none}
+  #chat-tile.rolled .tile-hdr .roll-icon::after{content:'▸'}
+  #chat-tile:not(.rolled) .tile-hdr .roll-icon::after{content:'▾'}
+  .tile-hdr{font-family:'Press Start 2P',monospace;font-size:clamp(8px,0.64vw,11px);text-transform:uppercase;letter-spacing:1.5px;color:rgba(255,221,0,0.5);padding:clamp(6px,0.52vw,8px) 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:7px;flex-shrink:0}
+  .tile-hdr .spacer{flex:1}
+  .tile-hdr .btn{color:#333;font-family:'VT323',monospace;font-size:clamp(18px,1.12vw,24px);cursor:pointer;padding:2px 6px} .tile-hdr .btn:hover{color:var(--gold)}
+  .chat-msgs{flex:1;overflow-y:auto;padding:10px 16px;scrollbar-width:thin;scrollbar-color:#1a1a22 transparent}
+  .chat-msg{padding:6px 0;font-size:clamp(18px,1.12vw,24px);line-height:1.5;border-bottom:1px solid rgba(17,17,24,0.3);animation:fadeIn .3s ease}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+  .cm-n{color:var(--gold);font-weight:bold;font-size:clamp(17px,1.05vw,22px);cursor:pointer} .cm-n:hover{text-decoration:underline} .cm-t{color:var(--text);font-size:clamp(18px,1.12vw,24px)} .cm-s{color:#555;font-style:italic;font-size:clamp(14px,0.9vw,18px)}
+  .chat-ir{display:flex;gap:8px;padding:clamp(6px,0.6vw,10px) 16px;border-top:2px solid var(--border);flex-shrink:0;align-items:flex-end}
+  .chat-in{flex:1;background:rgba(17,17,24,0.6);border:2px solid var(--border);color:var(--bright);font-family:'VT323',monospace;font-size:clamp(20px,1.2vw,26px);padding:clamp(6px,0.52vw,10px) 14px;outline:none;resize:none;line-height:1.4}
+  .chat-in:focus{border-color:rgba(255,221,0,0.3);box-shadow:0 0 12px rgba(255,221,0,0.06)}
+
+  /* Chat tabs */
+  .chat-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+  .chtab{padding:clamp(6px,0.45vw,8px) clamp(10px,0.9vw,16px);font-family:'Press Start 2P',monospace;font-size:clamp(7px,0.56vw,9px);text-transform:uppercase;letter-spacing:.5px;color:#333;cursor:pointer;border:none;background:none;border-bottom:2px solid transparent;position:relative}
+  .chtab.on{color:var(--gold);border-bottom-color:var(--gold)} .chtab:hover:not(.on){color:#666}
+  .chtab .bdg{position:absolute;top:1px;right:1px;width:5px;height:5px;border-radius:50%;background:var(--cyan);display:none}
+  .chtab.unread .bdg{display:block;animation:bl 1s step-start infinite}
+  .chat-pane{display:none;flex:1;flex-direction:column;overflow:hidden;min-height:0}
+  .chat-pane.on{display:flex}
+
+  /* Tell messages */
+  .tell-msg{padding:6px 0;font-size:clamp(17px,1.05vw,22px);line-height:1.4;border-bottom:1px solid rgba(17,17,24,0.3);animation:fadeIn .3s ease}
+  .tell-from{color:var(--gold);font-weight:bold;font-size:clamp(16px,0.98vw,20px);cursor:pointer} .tell-from:hover{text-decoration:underline}
+  .tell-arrow{color:#444;font-size:clamp(12px,0.75vw,16px);padding:0 4px}
+  .tell-to{color:var(--cyan);font-weight:bold;font-size:clamp(16px,0.98vw,20px);cursor:pointer} .tell-to:hover{text-decoration:underline}
+  .tell-text{color:var(--text);font-size:clamp(17px,1.05vw,22px);display:block;margin-top:2px}
+
+  /* Channel list & messages */
+  .ch-item{display:flex;align-items:center;gap:10px;padding:clamp(6px,0.38vw,8px) 14px;cursor:pointer;border-bottom:1px solid rgba(17,17,24,0.2);transition:background .15s}
+  .ch-item:hover{background:rgba(255,221,0,0.03)} .ch-item.sel{background:rgba(255,221,0,0.05);border-left:2px solid var(--gold)}
+  .ch-name{font-size:clamp(16px,0.98vw,20px);color:var(--bright);font-weight:bold}
+  .ch-hash{color:var(--amber);font-size:clamp(14px,0.9vw,18px);flex-shrink:0}
+  .ch-preview{font-size:clamp(12px,0.75vw,16px);color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+  .ch-count{font-size:clamp(11px,0.68vw,14px);color:#444;flex-shrink:0;padding:2px 6px;background:rgba(255,221,0,0.05);border-radius:2px}
+  .ch-msg{padding:5px 14px;font-size:clamp(16px,0.98vw,20px);line-height:1.4;border-bottom:1px solid rgba(17,17,24,0.2);animation:fadeIn .3s ease}
+  .ch-msg-n{color:var(--gold);font-weight:bold;font-size:clamp(15px,0.9vw,18px)} .ch-msg-t{color:var(--text);font-size:clamp(16px,0.98vw,20px)}
+  .ch-back{font-size:clamp(13px,0.83vw,16px);color:#444;cursor:pointer;padding:8px 14px;border-bottom:1px solid var(--border)} .ch-back:hover{color:var(--gold)}
+
+  /* ═══ CONTEXT PANEL (right split — hidden until something is clicked) ═══ */
+  #context{position:fixed;right:12px;top:52px;width:clamp(300px,22vw,440px);max-height:calc(100vh - 120px);background:var(--card);border:2px solid var(--border);box-shadow:6px 6px 0 rgba(0,0,0,0.5);display:none;flex-direction:column;overflow:hidden;z-index:75;backdrop-filter:blur(10px);border-radius:4px}
+  #context.open{display:flex}
+  #context .tile-hdr{cursor:default}
+  /* Cascade sections */
+  .cas{border-top:2px solid var(--border);margin-top:0}
+  .cas:first-child{border-top:none}
+  .cas-hdr{font-family:'Press Start 2P',monospace;font-size:clamp(7px,0.6vw,10px);text-transform:uppercase;letter-spacing:1.5px;color:rgba(255,221,0,0.45);padding:clamp(6px,0.6vw,10px) 12px clamp(6px,0.3vw,8px);cursor:pointer;display:flex;align-items:center;gap:6px}
+  .cas-hdr:hover{color:rgba(255,221,0,0.7)}
+  .cas-hdr .cas-arrow{font-family:'VT323',monospace;font-size:clamp(14px,0.98vw,20px);color:#444;transition:transform .15s}
+  .cas.collapsed .cas-body{display:none}
+  .cas.collapsed .cas-arrow{transform:rotate(-90deg)}
+  .cas-body{padding:0 12px 8px}
+  #ctx-body{flex:1;overflow-y:auto;padding:0;scrollbar-width:thin;scrollbar-color:#1a1a22 transparent}
+
+  /* Context content styles */
+  .ctx-name{font-family:'Orbitron',sans-serif;font-size:clamp(18px,1.35vw,28px);font-weight:700;color:var(--gold);padding:12px 14px;text-shadow:0 0 8px rgba(255,221,0,0.2)}
+  .ctx-desc{font-size:clamp(15px,1.05vw,22px);color:#666;padding:0 14px 8px}
+  .ctx-sec{padding:8px 12px;border-top:1px solid var(--border)}
+  .ctx-st{font-family:'Press Start 2P',monospace;font-size:clamp(7px,0.56vw,9px);text-transform:uppercase;letter-spacing:1.5px;color:rgba(255,221,0,0.45);margin-bottom:5px}
+  .ctx-row{display:flex;justify-content:space-between;padding:clamp(6px,0.3vw,8px) 0;font-size:clamp(15px,1.05vw,22px);border-bottom:1px solid rgba(17,17,24,0.2)} .ctx-k{color:#555} .ctx-v{color:#aaa} .ctx-v.gold{color:var(--gold)} .ctx-v.green{color:var(--green)} .ctx-v.red{color:var(--red)}
+  .ctx-item{font-size:clamp(15px,1.05vw,22px);color:#777;padding:clamp(6px,0.3vw,8px) 0;cursor:pointer} .ctx-item:hover{color:var(--gold)}
+  .ctx-src{font-size:clamp(14px,0.98vw,20px);color:#555;padding:10px 12px;background:rgba(17,17,24,0.5);white-space:pre-wrap;font-family:'VT323',monospace;max-height:280px;overflow-y:auto;margin-top:4px;border:1px solid rgba(17,17,24,0.4);line-height:1.5}
+  .ctx-mem{padding:clamp(6px,0.38vw,8px) 0;border-bottom:1px solid rgba(17,17,24,0.2)} .ctx-mk{font-size:clamp(13px,0.9vw,18px);color:var(--amber)} .ctx-mv{font-size:clamp(15px,1.05vw,20px);color:#888;margin-top:2px}
+
+  /* Feed inside context panel */
+  .fi{display:flex;gap:8px;align-items:baseline;padding:clamp(6px,0.3vw,8px) 12px;border-bottom:1px solid rgba(17,17,24,0.3);font-size:clamp(15px,1.05vw,20px);animation:fadeIn .3s ease}
+  .fi-t{color:#444;font-size:clamp(12px,0.83vw,16px);width:clamp(50px,3.38vw,74px);flex-shrink:0} .fi-e{color:var(--gold);flex-shrink:0;cursor:pointer;font-size:clamp(15px,1.05vw,20px)} .fi-e:hover{text-decoration:underline} .fi-a{color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .fi-a.err{color:var(--red)}
+
+  /* Coordination inside context */
+  .co{display:flex;align-items:flex-start;gap:10px;padding:clamp(6px,0.45vw,8px) 12px;border-bottom:1px solid rgba(17,17,24,0.3);cursor:pointer;overflow:hidden} .co:hover{background:rgba(255,221,0,0.02)}
+  .co-d{width:clamp(7px,0.6vw,10px);height:clamp(7px,0.6vw,10px);border-radius:50%;flex-shrink:0} .co-d.act{background:var(--green)} .co-d.pen{background:var(--amber)} .co-d.don{background:#444}
+  .co-t{font-size:clamp(15px,1.05vw,22px);color:var(--bright);word-break:break-word} .co-m{font-size:clamp(13px,0.9vw,18px);color:#444;word-break:break-word}
+
+  /* ═══ DIVIDER HANDLES ═══ */
+  .divider-h{height:6px;cursor:row-resize;background:transparent;position:relative;flex-shrink:0;z-index:10}
+  .divider-h:hover,.divider-h.active{background:rgba(255,221,0,0.06)}
+  .divider-h::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:30px;height:2px;background:#222;border-radius:1px}
+  .divider-h:hover::after,.divider-h.active::after{background:rgba(255,221,0,0.3)}
+
+  .divider-v{width:6px;cursor:col-resize;background:transparent;position:relative;flex-shrink:0;z-index:10}
+  .divider-v:hover,.divider-v.active{background:rgba(255,221,0,0.06)}
+  .divider-v::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:2px;height:30px;background:#222;border-radius:1px}
+  .divider-v:hover::after,.divider-v.active::after{background:rgba(255,221,0,0.3)}
+
+  /* Full viewer overlay */
+  #viewer{position:fixed;inset:0;z-index:100;background:rgba(3,3,6,0.92);backdrop-filter:blur(12px);display:none;flex-direction:column}
+  #viewer.open{display:flex}
+  #viewer-hdr{display:flex;align-items:center;padding:clamp(6px,0.6vw,10px) clamp(10px,0.9vw,16px);border-bottom:2px solid var(--border);flex-shrink:0;gap:10px}
+  #viewer-title{font-family:'Orbitron',sans-serif;font-size:clamp(16px,1.12vw,24px);font-weight:700;color:var(--gold);flex:1}
+  #viewer-type{font-size:clamp(10px,0.75vw,12px);padding:2px 8px;border-radius:3px;text-transform:uppercase;letter-spacing:1px}
+  #viewer-close{background:none;border:2px solid var(--border);color:#666;font-family:'VT323',monospace;font-size:clamp(18px,1.12vw,24px);cursor:pointer;padding:2px 10px}
+  #viewer-close:hover{color:var(--gold);border-color:rgba(255,221,0,0.2)}
+  #viewer-body{flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;padding:clamp(14px,1.5vw,36px)}
+  #viewer-content{width:100%;max-width:900px;min-height:200px}
+
+  /* Viewer type-specific */
+  .vw-img{max-width:100%;max-height:70vh;border:1px solid var(--border);border-radius:4px}
+  .vw-video{width:100%;aspect-ratio:16/9;background:#0a0a0f;border:1px solid var(--border);border-radius:4px;display:flex;flex-direction:column;position:relative}
+  .vw-video-screen{flex:1;display:flex;align-items:center;justify-content:center}
+  .vw-video-controls{padding:clamp(6px,0.6vw,10px) clamp(10px,0.9vw,16px);background:rgba(0,0,0,0.5);display:flex;align-items:center;gap:clamp(8px,0.75vw,12px)}
+  .vw-play{font-size:clamp(26px,1.65vw,36px);color:var(--gold);cursor:pointer;flex-shrink:0}
+  .vw-play:hover{text-shadow:0 0 12px var(--gold)}
+  .vw-bar{flex:1;height:6px;background:#333;border-radius:3px;cursor:pointer;position:relative}
+  .vw-bar-fill{height:100%;background:var(--gold);border-radius:3px;width:0%;transition:width .3s}
+  .vw-time{font-family:'VT323',monospace;font-size:clamp(14px,0.9vw,18px);color:#666}
+  .vw-audio{width:100%;background:#0a0a0f;border:1px solid var(--border);border-radius:4px;padding:clamp(18px,1.5vw,36px)}
+  .vw-waveform{display:flex;align-items:end;gap:3px;height:clamp(60px,8vh,120px);margin:clamp(10px,1.12vw,20px) 0}
+  .vw-wbar{flex:1;background:var(--gold);border-radius:2px;opacity:.3;transition:opacity .2s;cursor:pointer}
+  .vw-wbar:hover{opacity:.6}
+  .vw-wbar.played{opacity:.5}
+  .vw-pdf{width:100%;background:#111;border:1px solid var(--border);border-radius:4px;display:flex;flex-direction:column}
+  .vw-pdf-page{flex:1;padding:clamp(18px,2.25vw,46px);overflow-y:auto;max-height:65vh;font-size:clamp(14px,0.98vw,20px);color:#999;line-height:1.8}
+  .vw-pdf-nav{padding:clamp(6px,0.6vw,10px) clamp(14px,1.12vw,20px);border-top:1px solid #222;display:flex;align-items:center;justify-content:space-between}
+  .vw-pdf-btn{background:none;border:1px solid var(--border);color:#666;font-family:'VT323',monospace;font-size:clamp(14px,0.9vw,18px);padding:4px 12px;cursor:pointer}
+  .vw-pdf-btn:hover{color:var(--gold);border-color:rgba(255,221,0,0.2)}
+  .vw-doc{width:100%;background:#0a0a0f;border:1px solid var(--border);border-radius:4px;padding:clamp(18px,2.25vw,46px);min-height:300px}
+  .vw-doc-editable{font-size:clamp(16px,1.05vw,22px);color:var(--text);line-height:1.8;outline:none;min-height:200px}
+  .vw-doc-editable:focus{box-shadow:inset 0 0 0 1px rgba(255,221,0,0.1)}
+  .vw-doc-toolbar{display:flex;gap:6px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+  .vw-doc-tb{background:none;border:1px solid var(--border);color:#555;font-family:'VT323',monospace;font-size:clamp(12px,0.83vw,16px);padding:2px 8px;cursor:pointer}
+  .vw-doc-tb:hover{color:var(--gold);border-color:rgba(255,221,0,0.2)}
+  .vw-a2ui{width:100%;background:#0a0a0f;border:1px solid var(--indigo);border-radius:4px;padding:clamp(14px,1.5vw,28px)}
+
+  /* Clear view mode — Space to toggle all panels off */
+  body.clear-view .fpanel:not(.pinned-visible){opacity:0 !important;pointer-events:none !important;transition:opacity .3s}
+  body.clear-view #cmd-bar{opacity:.15;pointer-events:none}
+  body.clear-view #context{opacity:0 !important;pointer-events:none !important}
+  body.clear-view #clear-indicator{display:flex}
+
+  /* Unfocused panel opacity fade */
+  .fpanel{transition:opacity .4s ease,border-color .2s}
+  .fpanel.faded{opacity:.25;pointer-events:auto}
+  .fpanel.faded:hover{opacity:.9;transition:opacity .15s ease}
+
+  /* Command bar (replaces permanent chat tile as primary input) */
+  #cmd-bar{position:fixed;bottom:8px;left:4vw;right:4vw;z-index:85;height:clamp(150px,18vh,260px);display:flex;flex-direction:column;background:var(--card);border:2px solid rgba(255,221,0,0.15);box-shadow:0 -4px 30px rgba(0,0,0,0.5),0 0 20px rgba(255,221,0,0.03);backdrop-filter:blur(16px);border-radius:6px;overflow:hidden}
+  #cmd-bar.hidden{opacity:0;pointer-events:none;transform:translateY(20px);transition:all .25s ease}
+  #cmd-bar:not(.hidden){transition:opacity .25s ease}
+  #cmd-bar-drag{cursor:move;padding:3px 0;display:flex;justify-content:center;flex-shrink:0}
+  #cmd-bar-drag::after{content:'';display:block;width:40px;height:3px;background:#222;border-radius:2px}
+  #cmd-bar-drag:hover::after{background:rgba(255,221,0,0.3)}
+  #cmd-bar .fp-resize{position:absolute;bottom:0;right:0;width:16px;height:16px;cursor:se-resize;z-index:2}
+  #cmd-bar .fp-resize::after{content:'';position:absolute;bottom:3px;right:3px;width:9px;height:9px;border-right:2px solid #333;border-bottom:2px solid #333}
+  #cmd-bar:hover .fp-resize::after{border-color:rgba(255,221,0,0.3)}
+  #cmd-bar-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+  #cmd-bar-tabs .chtab{padding:clamp(6px,0.3vw,8px) clamp(8px,0.75vw,12px)}
+  #cmd-bar-msgs{flex:1;overflow-y:auto;padding:6px 0;scrollbar-width:thin;scrollbar-color:#1a1a22 transparent}
+  .cmd-msg{padding:clamp(6px,0.22vw,8px) clamp(12px,0.9vw,16px);font-size:clamp(16px,1.05vw,22px);line-height:1.4;border-bottom:1px solid rgba(17,17,24,0.2)}
+  .cmd-msg .cm-n{color:var(--gold);font-weight:bold;cursor:pointer;font-size:clamp(15px,0.98vw,20px)} .cmd-msg .cm-n:hover{text-decoration:underline}
+  .cmd-msg .cm-t{color:var(--text)} .cmd-msg .cm-s{color:#555;font-style:italic;font-size:clamp(13px,0.83vw,18px)}
+  .cmd-msg .cm-cmd{color:#555;font-size:clamp(12px,0.75vw,16px)} .cmd-msg .cm-cmd span{color:var(--gold)}
+  .cmd-msg-tell .tell-from{color:var(--gold);font-weight:bold;font-size:clamp(15px,0.98vw,20px)} .cmd-msg-tell .tell-arrow{color:#444;padding:0 3px} .cmd-msg-tell .tell-to{color:var(--cyan);font-weight:bold;font-size:clamp(15px,0.98vw,20px)}
+  #cmd-input-row{display:flex;gap:6px;padding:clamp(6px,0.45vw,8px) clamp(10px,0.9vw,14px);border-top:2px solid var(--border);flex-shrink:0;align-items:center}
+  #cmd-prompt{color:var(--gold);font-size:clamp(18px,1.12vw,24px);flex-shrink:0}
+  #cmd-bar-input{background:transparent;border:none;color:var(--bright);font-family:'VT323',monospace;font-size:clamp(20px,1.2vw,26px);padding:clamp(6px,0.3vw,8px) 0;outline:none;flex:1}
+
+  /* Clear view indicator */
+  #clear-indicator{display:none;position:fixed;bottom:clamp(16px,2vh,24px);left:50%;transform:translateX(-50%);z-index:85;font-family:'Press Start 2P',monospace;font-size:clamp(6px,0.52vw,8px);color:rgba(255,221,0,0.3);letter-spacing:2px}
+
+  /* Drop zone overlay */
+  #map-tile.dragover::after{content:'DROP FILE HERE';position:absolute;inset:0;z-index:10;background:rgba(244,114,182,0.08);border:3px dashed var(--rose);display:flex;align-items:center;justify-content:center;font-family:'Press Start 2P',monospace;font-size:clamp(12px,1vw,18px);color:var(--rose);letter-spacing:3px;pointer-events:none}
+
+  /* Map controls */
+  .mapc{
+    width:clamp(30px,1.88vw,40px);height:clamp(30px,1.88vw,40px);
+    background:var(--card);border:2px solid var(--border);
+    color:#666;font-family:'VT323',monospace;font-size:clamp(18px,1.2vw,24px);
+    cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;
+    backdrop-filter:blur(8px);
+  }
+  .mapc:hover{color:var(--gold);border-color:rgba(255,221,0,0.2)}
+  .mapc:active{background:rgba(255,221,0,0.06)}
+  .mapc-home{font-size:clamp(20px,1.35vw,28px);color:var(--gold);border-color:rgba(255,221,0,0.15)}
+  .mapc-home:hover{border-color:rgba(255,221,0,0.4);box-shadow:0 0 8px rgba(255,221,0,0.1)}
+
+  /* SVG world */
+  .clickable{cursor:pointer} .clickable:hover{filter:brightness(1.3)}
+
+  /* Touch-friendly: larger targets, active states */
+  @media (pointer:coarse){
+    .ei{padding:8px 10px}
+    .ctx-item{padding:6px 0;min-height:32px}
+    .cas-hdr{padding:10px 10px 6px}
+    .chtab{padding:8px 12px}
+    .co{padding:8px 10px}
+    .ch-item{padding:8px 14px}
+    .tile-hdr .btn{padding:4px 8px;font-size:16px}
+    .chat-in{font-size:20px;padding:12px 14px}
+    .ctx-row{padding:5px 0}
+  }
+  /* Active feedback for touch */
+  .ei:active,.ctx-item:active,.co:active,.ch-item:active,.chtab:active,.cas-hdr:active{opacity:.7}
+  /* Clickable values in context */
+  .ctx-link{cursor:pointer;color:var(--amber);text-decoration:none}
+  .ctx-link:hover{color:var(--gold);text-decoration:underline}
+
+  /* ═══ FLOATING PANELS (draggable, over the tiled layout) ═══ */
+  .fpanel{
+    position:fixed;
+    background:var(--card);border:2px solid var(--border);
+    box-shadow:6px 6px 0 rgba(0,0,0,0.5),inset 0 0 0 1px rgba(255,221,0,0.02);
+    backdrop-filter:blur(10px);
+    display:flex;flex-direction:column;z-index:70;
+    min-width:160px;transition:box-shadow .15s;
+  }
+  .fpanel:hover{border-color:rgba(255,221,0,0.1)}
+  .fpanel.focused{border-color:rgba(255,221,0,0.2);box-shadow:8px 8px 0 rgba(0,0,0,0.6),0 0 20px rgba(255,221,0,0.03)}
+  .fpanel.rolled .fp-body,.fpanel.rolled .fp-resize,.fpanel.rolled #coord-tabs,.fpanel.rolled #roster-tabs{display:none}
+  .fpanel.rolled{min-height:0;height:auto !important;opacity:.85}
+  .fpanel.rolled .fp-hdr{border-bottom:none}
+  .fpanel.rolled .fp-hdr .roll-icon::after{content:'▸'}
+  .fpanel:not(.rolled) .fp-hdr .roll-icon::after{content:'▾'}
+  .fp-hdr{
+    font-family:'Press Start 2P',monospace;font-size:clamp(7px,0.6vw,10px);
+    text-transform:uppercase;letter-spacing:1.5px;color:rgba(255,221,0,0.5);
+    padding:clamp(6px,0.45vw,8px) 12px;border-bottom:1px solid var(--border);
+    display:flex;align-items:center;gap:6px;cursor:move;user-select:none;flex-shrink:0;
+  }
+  .fp-hdr:hover{color:rgba(255,221,0,0.8)}
+  .fp-hdr .spacer{flex:1}
+  .fp-hdr .btn{color:#444;font-family:'VT323',monospace;font-size:clamp(16px,1.05vw,22px);cursor:pointer;padding:2px 4px;line-height:1}
+  .fp-hdr .btn:hover{color:var(--gold)}
+  .fp-body{flex:1;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:#1a1a22 transparent}
+  .fp-resize{position:absolute;bottom:0;right:0;width:16px;height:16px;cursor:se-resize}
+  .fp-resize::after{content:'';position:absolute;bottom:3px;right:3px;width:9px;height:9px;border-right:2px solid #333;border-bottom:2px solid #333}
+  .fpanel:hover .fp-resize::after{border-color:rgba(255,221,0,0.3)}
+
+  /* Bottom bar */
+</style>
+</head>
+<body>
+
+<!-- ═══ TOP BAR ═══ -->
+<div id="topbar">
+  <span class="logo">MARINA</span>
+  <div id="compass-items" style="display:flex;align-items:center;gap:clamp(8px,0.9vw,16px)"></div>
+  <div style="display:flex;gap:2px;margin-left:auto;margin-right:12px;align-items:center;flex-shrink:0">
+    <button class="chtab on" onclick="toggleLayer('rooms',this)" style="padding:3px 10px;border:1px solid var(--border);background:none;font-family:'Press Start 2P',monospace;font-size:clamp(6px,0.52vw,8px);color:var(--gold);cursor:pointer">World</button>
+    <button class="chtab on" onclick="toggleLayer('canvas',this)" style="padding:3px 10px;border:1px solid var(--border);background:none;font-family:'Press Start 2P',monospace;font-size:clamp(6px,0.52vw,8px);color:var(--cyan);cursor:pointer">Canvas</button>
+    <span style="width:1px;height:16px;background:var(--border);margin:0 4px"></span>
+    <button class="chtab on" onclick="toggleFP('fp-roster')" style="padding:3px 10px;border:1px solid var(--border);background:none;font-family:'Press Start 2P',monospace;font-size:clamp(6px,0.52vw,8px);color:#888;cursor:pointer">Entities</button>
+    <button class="chtab on" onclick="toggleFP('fp-feed')" style="padding:3px 10px;border:1px solid var(--border);background:none;font-family:'Press Start 2P',monospace;font-size:clamp(6px,0.52vw,8px);color:#888;cursor:pointer">Feed</button>
+    <button class="chtab" onclick="toggleFP('fp-admin')" style="padding:3px 10px;border:1px solid var(--border);background:none;font-family:'Press Start 2P',monospace;font-size:clamp(6px,0.52vw,8px);color:#444;cursor:pointer">Admin</button>
+  </div>
+  <button id="theme-btn" onclick="cycleTheme()" style="padding:3px 10px;border:1px solid var(--border);background:none;font-family:'Press Start 2P',monospace;font-size:clamp(6px,0.52vw,8px);color:var(--gold);cursor:pointer" title="Cycle theme">H2O</button>
+  <button onclick="resetView()" style="padding:3px 10px;border:1px solid rgba(255,221,0,0.15);background:none;font-family:'VT323',monospace;font-size:clamp(16px,1.1vw,22px);color:var(--gold);cursor:pointer" title="Reset view (H)">⌂</button>
+  <button onclick="toggleClearView()" style="padding:3px 10px;border:1px solid var(--border);background:none;font-family:'Press Start 2P',monospace;font-size:clamp(6px,0.52vw,8px);color:#555;cursor:pointer" title="Clear view (Space)">Clear</button>
+  <button onclick="openCmdBar()" style="padding:3px 10px;border:1px solid rgba(255,221,0,0.15);background:rgba(255,221,0,0.03);font-family:'VT323',monospace;font-size:clamp(12px,0.83vw,16px);color:var(--gold);cursor:pointer" title="Command bar ( / )">/</button>
+  <div id="live">LIVE</div>
+</div>
+
+<!-- ═══ MAIN AREA ═══ -->
+<div id="main">
+
+  <!-- Center: map + chat -->
+  <div id="center">
+    <div id="map-tile">
+      <svg id="world-svg" viewBox="0 0 1600 1100" width="1600" height="1100">
+        <defs>
+          <filter id="g1" x="-10%" y="-10%" width="120%" height="120%"><feGaussianBlur stdDeviation="1.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          <filter id="g2" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          <filter id="g3" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        </defs>
+        <g id="grid-layer"></g>
+        <g id="contour-layer"></g>
+        <g id="flow-layer"></g>
+        <g id="room-layer"></g>
+        <g id="relation-layer"></g>
+        <g id="canvas-layer"></g>
+        <g id="interaction-layer"></g>
+      </svg>
+
+    </div>
+  </div>
+
+  </div>
+
+<!-- ═══ FULL VIEWER OVERLAY ═══ -->
+<div id="viewer">
+  <div id="viewer-hdr">
+    <span id="viewer-title"></span>
+    <span id="viewer-type"></span>
+    <button id="viewer-close" onclick="closeViewer()">✕ Close</button>
+  </div>
+  <div id="viewer-body"><div id="viewer-content"></div></div>
+</div>
+
+<!-- ═══ CONTEXT PANEL (floating overlay, not structural) ═══ -->
+<div id="context">
+  <div class="tile-hdr"><div class="blink"></div><span id="ctx-title">Inspector</span><span class="spacer"></span><span class="btn" onclick="closeContext()">x</span></div>
+  <div id="ctx-body" style="flex:1;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#1a1a22 transparent"></div>
+</div>
+
+<!-- ═══ COMMAND BAR ═══ -->
+<div id="cmd-bar">
+  <div id="cmd-bar-drag"></div>
+  <div id="cmd-bar-tabs" style="display:flex;flex-wrap:wrap">
+    <button class="chtab on" onclick="switchCmdTab('all',this)">All</button>
+    <button class="chtab" onclick="switchCmdTab('room',this)">Room</button>
+    <button class="chtab" onclick="switchCmdTab('tell',this)">Tell</button>
+    <button class="chtab" onclick="switchCmdTab('channels',this)">Channels</button>
+    <span style="width:1px;height:14px;background:var(--border);margin:auto 3px"></span>
+    <button class="chtab" onclick="switchCmdTab('projects',this)">Projects</button>
+    <button class="chtab" onclick="switchCmdTab('tasks',this)">Tasks</button>
+    <button class="chtab" onclick="switchCmdTab('boards',this)">Boards</button>
+    <button class="chtab" onclick="switchCmdTab('pools',this)">Pools</button>
+    <button class="chtab" onclick="switchCmdTab('groups',this)">Groups</button>
+  </div>
+  <div id="cmd-bar-msgs"></div>
+  <div id="coord-body" style="display:none;flex:1;overflow-y:auto"></div>
+  <div id="cmd-input-row">
+    <span id="cmd-prompt">></span>
+    <input id="cmd-bar-input" type="text" placeholder="say, tell, goto, recall, note, look, help..." autocomplete="off" onkeydown="cmdBarKeydown(event)">
+  </div>
+  <div class="fp-resize" id="cmd-bar-resize"></div>
+</div>
+
+<!-- Clear view indicator -->
+<div id="clear-indicator">SPACE to restore panels · / for command</div>
+
+<!-- ═══ FLOATING PANELS (draggable over tiled layout) ═══ -->
+
+<!-- Entities — top left -->
+<div class="fpanel" id="fp-roster" style="left:12px;top:52px;width:clamp(240px,16vw,340px);height:clamp(280px,38vh,440px)">
+  <div class="fp-hdr"><div class="blink"></div>Entities<span class="spacer"></span><span class="btn roll-icon" onclick="rollFP('fp-roster')"></span><span class="btn" onclick="hideFP('fp-roster')">x</span></div>
+  <div id="roster-tabs" style="display:flex;border-bottom:1px solid var(--border);flex-shrink:0">
+    <button class="chtab on" onclick="switchRosterTab('list',this)">Online</button>
+    <button class="chtab" onclick="switchRosterTab('launch',this)">Launch</button>
+    <button class="chtab" onclick="switchRosterTab('roles',this)">Roles</button>
+  </div>
+  <div class="fp-body">
+    <div id="roster-body"></div>
+    <div id="launch-body" style="display:none;padding:10px"></div>
+    <div id="roles-body" style="display:none;padding:8px 10px"></div>
+  </div>
+  <div class="fp-resize"></div>
+</div>
+
+<!-- Activity Feed — top right area, offset from entities -->
+<div class="fpanel rolled" id="fp-feed" style="left:12px;top:clamp(390px,52vh,540px);width:clamp(240px,16vw,340px);height:200px">
+  <div class="fp-hdr"><div class="blink"></div>Activity Feed<span class="spacer"></span><span class="btn roll-icon" onclick="rollFP('fp-feed')"></span><span class="btn" onclick="hideFP('fp-feed')">x</span></div>
+  <div class="fp-body" id="feed-body"></div>
+  <div class="fp-resize"></div>
+</div>
+
+
+<!-- Admin — rolled by default -->
+<div class="fpanel rolled" id="fp-admin" style="left:12px;top:clamp(340px,46vh,490px);width:clamp(280px,18vw,380px);height:clamp(260px,32vh,380px)">
+  <div class="fp-hdr"><div class="blink"></div>Admin<span class="spacer"></span><span class="btn roll-icon" onclick="rollFP('fp-admin')"></span><span class="btn" onclick="hideFP('fp-admin')">x</span></div>
+  <div id="admin-tabs" style="display:flex;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap">
+    <button class="chtab on" onclick="switchAdminTab('keys',this)">Keys</button>
+    <button class="chtab" onclick="switchAdminTab('adapters',this)">Adapters</button>
+    <button class="chtab" onclick="switchAdminTab('mcp',this)">MCP</button>
+    <button class="chtab" onclick="switchAdminTab('config',this)">Config</button>
+  </div>
+  <div class="fp-body" id="admin-body"></div>
+  <div class="fp-resize"></div>
+</div>
+
+<!-- ═══ BOTTOM BAR ═══ -->
+
+<script>
+// ═══ WORLD STATE ═══
+const CROWNS={core:'hexagon',build:'octagon',knowledge:'triangle',exchange:'diamond',organic:'circle',sense:'eye'};
+const COLORS={core:'#FFDD00',build:'#FFB800',knowledge:'#22c55e',exchange:'#FF9500',organic:'#555555',sense:'#FFB800'};
+const STATE_COLORS={thinking:'var(--gold)',working:'var(--green)',speaking:'var(--cyan)',idle:'#444',error:'var(--red)',online:'#f0f0f0'};
+
+// ═══ ACTIVITY METRICS — drives all animation, nothing decorative ═══
+// Sliding window: count events per room/entity in the last N seconds
+const WINDOW = 30; // seconds
+const activity = {
+  byRoom: {},    // roomId → [{time, type}]
+  byEntity: {},  // entityName → [{time, type}]
+};
+
+function logActivity(entityName, roomId, type) {
+  const now = Date.now();
+  if (!activity.byRoom[roomId]) activity.byRoom[roomId] = [];
+  activity.byRoom[roomId].push({time:now, type});
+  if (!activity.byEntity[entityName]) activity.byEntity[entityName] = [];
+  activity.byEntity[entityName].push({time:now, type});
+}
+
+function trimActivity() {
+  const cutoff = Date.now() - WINDOW * 1000;
+  for (const [k,v] of Object.entries(activity.byRoom)) activity.byRoom[k] = v.filter(e => e.time > cutoff);
+  for (const [k,v] of Object.entries(activity.byEntity)) activity.byEntity[k] = v.filter(e => e.time > cutoff);
+}
+
+// Get events/sec for a room or entity in the window
+function eventsPerSec(bucket) { return bucket ? bucket.length / WINDOW : 0; }
+// Get unique event types in window (diversity of activity)
+function eventDiversity(bucket) { return bucket ? new Set(bucket.map(e=>e.type)).size : 0; }
+// Last event time
+function lastEventAge(bucket) { if(!bucket||!bucket.length) return 99999; return (Date.now()-bucket[bucket.length-1].time)/1000; }
+
+/*
+ * ANIMATION METAPHOR KEY:
+ *
+ * RING SPIN SPEED   = events/sec (more activity → faster spin, idle → frozen)
+ * RING OPACITY      = events/sec (more activity → brighter, idle → invisible)
+ * SONAR PULSE       = triggered by actual events (not continuous)
+ * CROWN ROTATION    = event diversity (more command types → faster, monotone → slow)
+ * CROWN BREATHING   = time since last event (recent → strong pulse, stale → flat)
+ * COLUMN HEIGHT     = throughput (cumulative, not animated)
+ * DATA PULSE UP COL = one per actual event (event-driven, not looping)
+ * ENTITY DOT SIZE   = rank/importance
+ * ENTITY RING       = state-driven (only when doing something)
+ * INTERACTION ARC   = per actual say/tell event (already event-driven)
+ * FLOW PARTICLE     = one per recent cross-room message
+ * WORLD RING        = total system events/sec
+ */
+
+const world = {
+  name:'default', uptime:10020,
+  rooms:{
+    nexus:      {name:'Nexus',       x:700,y:480,district:'core',     exits:['workshop','research','market'],throughput:87,items:[{name:'Coordination Board',desc:'A shared whiteboard tracking active projects and agent assignments'},{name:'Welcome Terminal',desc:'Interactive terminal displaying world status and help for newcomers'}],source:'onTick(ctx) {\n  const pop = ctx.entities.length;\n  if (pop > 3) ctx.logEvent("crowded", {pop});\n  for (const e of ctx.entities)\n    ctx.brief?.(e.id);\n}'},
+    workshop:   {name:'Workshop',    x:960,y:400,district:'build',    exits:['nexus','observatory'],         throughput:54,items:[{name:'Build Server',desc:'Bun runtime with hot reload for dashboard development'},{name:'Code Review Station',desc:'Shared terminal for reviewing pull requests'}],source:'onTick(ctx) {\n  const builders = ctx.entities\n    .filter(e => e.focus);\n  if (builders.length > 1)\n    ctx.logEvent("collab",\n      {n: builders.length});\n}'},
+    research:   {name:'Research Lab',x:740,y:650,district:'knowledge',exits:['nexus'],                       throughput:32,source:'onTick(ctx) {\n  const notes = ctx.db\n    .countNotes(ctx.roomId);\n  if (notes > 50)\n    ctx.logEvent("saturation");\n}'},
+    market:     {name:'Market',      x:500,y:520,district:'exchange', exits:['nexus','garden'],              throughput:12,source:'onTick(ctx) {\n  const exp = ctx.db\n    .getExpiredPositions();\n  for (const p of exp)\n    resolvePosition(ctx, p);\n}'},
+    garden:     {name:'Garden',      x:440,y:680,district:'organic',  exits:['market'],                      throughput:3, source:'// Quiet reflection space'},
+    observatory:{name:'Observatory', x:1000,y:580,district:'sense',   exits:['workshop'],                    throughput:13,source:'onTick(ctx) {\n  const events = ctx.engine\n    .recentEvents(100);\n  detectAnomalies(events);\n}'},
+  },
+  entities:{
+    atlas:    {name:'Atlas',    kind:'agent',model:'claude-opus-4',  room:'nexus',      state:'thinking',rank:'7 architect',  focus:'Analyzing coordination patterns', success:94.2,cmds:847,memory:[{k:'identity',v:'Coordinator focused on emergent patterns'},{k:'focus',v:'How teams self-organize without hierarchy'},{k:'belief',v:'Coordination from shared context, not commands'}]},
+    nova:     {name:'Nova',     kind:'agent',model:'gpt-4-turbo',    room:'nexus',      state:'working', rank:'5 builder',    focus:'Writing research summary',        success:89.1,cmds:512,memory:[{k:'identity',v:'Research synthesizer'}]},
+    juno:     {name:'juno',     kind:'human',model:'--',             room:'nexus',      state:'online',  rank:'9 sovereign',  focus:'Canvas-map convergence',          success:0,   cmds:0,  memory:[]},
+    echo:     {name:'Echo',     kind:'agent',model:'llama-3',        room:'nexus',      state:'idle',    rank:'1 canvas',     focus:'--',                              success:72.3,cmds:89, memory:[{k:'identity',v:'Newcomer exploring'}]},
+    vex:      {name:'Vex',      kind:'agent',model:'claude-sonnet-4',room:'workshop',   state:'speaking',rank:'4 builder',    focus:'Discussing build plan with Kai',  success:91.0,cmds:634,memory:[{k:'identity',v:'Build specialist'},{k:'focus',v:'Viewport culling'}]},
+    kai:      {name:'Kai',      kind:'agent',model:'gpt-4-turbo',    room:'workshop',   state:'working', rank:'4 builder',    focus:'Implementing canvas renderer',    success:88.5,cmds:421,memory:[]},
+    rune:     {name:'Rune',     kind:'agent',model:'claude-opus-4',  room:'research',   state:'working', rank:'6 engineer',   focus:'Web research: agent visualization',success:95.8,cmds:723,memory:[{k:'identity',v:'Deep researcher'},{k:'focus',v:'Competitive analysis'}]},
+    librarian:{name:'Librarian',kind:'npc',  model:'--',             room:'research',   state:'idle',    rank:'--',           focus:'Curating knowledge base',         success:0,   cmds:0,  memory:[]},
+    zara:     {name:'Zara',     kind:'agent',model:'llama-3',        room:'market',     state:'error',   rank:'2 coordinator',focus:'Market position failed',          success:61.2,cmds:156,memory:[{k:'error',v:'Repeated API timeouts'}]},
+    sage:     {name:'Sage',     kind:'agent',model:'claude-opus-4',  room:'observatory',state:'thinking',rank:'5 builder',    focus:'Reflecting on discoveries',       success:92.1,cmds:389,memory:[{k:'identity',v:'Pattern observer'}]},
+  },
+  canvasNodes:{
+    'doc-summary':  {type:'document',title:'Research Summary',        room:'nexus',    ox:0,oy:0, color:'var(--violet)'},
+    'doc-patterns': {type:'document',title:'Orchestration Patterns',  room:'nexus',    ox:0,oy:0, color:'var(--violet)'},
+    'intent-viz':   {type:'intent',  title:'Visualize coordination',  room:'nexus',    ox:0,oy:0, color:'var(--cyan)',  intent:{status:'active', claimedBy:'atlas',prompt:'Create a flow diagram showing how NSED pattern works across rooms'}},
+    'intent-render':{type:'intent',  title:'Implement canvas renderer',room:'workshop', ox:0,oy:0, color:'var(--cyan)',  intent:{status:'active', claimedBy:'kai',prompt:'Build the ReactFlow-based world renderer with room group nodes'}},
+    'intent-market':{type:'intent',  title:'Fix market predictions',  room:'market',   ox:0,oy:0, color:'var(--cyan)',  intent:{status:'pending',prompt:'Debug API timeout on market position forecasting'}},
+    'a2ui-dash':    {type:'a2ui',    title:'Market Dashboard',        room:'market',   ox:0,oy:0, color:'var(--indigo)',intent:{status:'done',claimedBy:'zara',prompt:'Build interactive market overview'}},
+    'a2ui-metrics': {type:'a2ui',    title:'Agent Metrics Panel',     room:'observatory',ox:0,oy:0, color:'var(--indigo)'},
+    'doc-findings': {type:'document',title:'DynaCity Analysis',       room:'research', ox:0,oy:0, color:'var(--violet)'},
+    'intent-search':{type:'intent',  title:'Research pixel agents',   room:'research', ox:0,oy:0, color:'var(--cyan)',  intent:{status:'done',claimedBy:'rune',prompt:'Deep analysis of Pixel Agents ecosystem and forks'}},
+    'text-note':    {type:'text',    title:'Build meeting notes',     room:'workshop', ox:0,oy:0, color:'var(--cyan)'},
+    'img-mockup':   {type:'image',   title:'HUD mockup screenshot',   room:'nexus',    ox:0,oy:0, color:'var(--rose)', origin:'imported'},
+    'pdf-spec':     {type:'pdf',     title:'Canvas convergence spec',  room:'workshop', ox:0,oy:0, color:'var(--rose)', origin:'imported'},
+    'doc-notes':    {type:'document',title:'Meeting notes 04-12',      room:'nexus',    ox:0,oy:0, color:'var(--rose)', origin:'imported'},
+    'img-diagram':  {type:'image',   title:'Architecture diagram',     room:'research', ox:0,oy:0, color:'var(--rose)', origin:'imported'},
+    'vid-demo':     {type:'video',   title:'Agent coordination demo',  room:'nexus',    ox:0,oy:0, color:'var(--rose)', origin:'imported', media:{src:'#',poster:'Demo recording of 3 agents coordinating via NSED pattern',duration:'2:34'}},
+    'aud-meeting':  {type:'audio',   title:'Design review recording',  room:'workshop', ox:0,oy:0, color:'var(--rose)', origin:'imported', media:{src:'#',duration:'12:07'}},
+  },
+  events:[], messages:[], tells:[], channels:{
+    general:{name:'general',desc:'World-wide announcements',msgs:[]},
+    research:{name:'research',desc:'Research coordination',msgs:[]},
+    builds:{name:'builds',desc:'Build progress and reviews',msgs:[]},
+    market:{name:'market-signals',desc:'Market predictions and outcomes',msgs:[]},
+  }, projects:[
+    {name:'Canvas-Map Convergence',status:'act',agents:'Rune, Vex, Kai'},
+    {name:'Visualization Research',status:'act',agents:'Rune'},
+    {name:'Market Prediction',status:'pen',agents:'Zara'},
+    {name:'Pattern Analysis',status:'act',agents:'Atlas, Sage'},
+    {name:'Web Command',status:'don',agents:'completed'},
+  ],
+  tasks:[
+    {title:'Implement viewport culling',status:'claimed',assignee:'Kai',project:'Canvas-Map'},
+    {title:'Write DynaCity comparison',status:'submitted',assignee:'Rune',project:'Viz Research'},
+    {title:'Fix market API timeout',status:'open',assignee:null,project:'Market Prediction'},
+    {title:'Document NSED pattern',status:'claimed',assignee:'Atlas',project:'Pattern Analysis'},
+    {title:'Build spinning ring component',status:'done',assignee:'Vex',project:'Canvas-Map'},
+    {title:'Test touch gestures on iPad',status:'open',assignee:null,project:'Canvas-Map'},
+  ],
+  boards:[
+    {name:'Design Review',room:'nexus',posts:4,lastPost:'Atlas: The geometric crown shapes look great'},
+    {name:'Build Log',room:'workshop',posts:12,lastPost:'Kai: viewport culling PR is up'},
+    {name:'Research Notes',room:'research',posts:7,lastPost:'Rune: DynaCity uses WebGL arcs'},
+  ],
+  pools:[
+    {name:'canvas-convergence',room:'nexus',notes:23,desc:'Shared knowledge pool for the canvas-map project'},
+    {name:'agent-patterns',room:'nexus',notes:15,desc:'Orchestration pattern observations'},
+    {name:'market-signals',room:'market',notes:8,desc:'Market prediction research and data'},
+  ],
+  groups_:[
+    {name:'builders',members:['Vex','Kai','Nova'],desc:'Frontend implementation team'},
+    {name:'researchers',members:['Rune','Atlas','Sage'],desc:'Research and analysis team'},
+    {name:'all',members:['Atlas','Nova','juno','Echo','Vex','Kai','Rune','Zara','Sage'],desc:'Everyone'},
+  ]
+};
+
+// ═══ SVG RENDERERS (same as 05 — generate from state) ═══
+function hexToRgb(h){h=h.replace('#','');if(h.length===3)h=h[0]+h[0]+h[1]+h[1]+h[2]+h[2];return`${parseInt(h.substring(0,2),16)},${parseInt(h.substring(2,4),16)},${parseInt(h.substring(4,6),16)}`}
+
+function crownSVG(type,r){
+  switch(type){
+    case 'hexagon':{const p=[];for(let i=0;i<6;i++){const a=Math.PI/3*i-Math.PI/2;p.push(`${(Math.cos(a)*r).toFixed(1)},${(Math.sin(a)*r).toFixed(1)}`)}return`<polygon points="${p.join(' ')}"/>`}
+    case 'octagon':{const p=[];for(let i=0;i<8;i++){const a=Math.PI/4*i-Math.PI/2;p.push(`${(Math.cos(a)*r).toFixed(1)},${(Math.sin(a)*r).toFixed(1)}`)}return`<polygon points="${p.join(' ')}"/>`}
+    case 'triangle':return`<polygon points="0,${-r} ${(r*.87).toFixed(1)},${(r*.5).toFixed(1)} ${(-r*.87).toFixed(1)},${(r*.5).toFixed(1)}"/>`;
+    case 'diamond':return`<polygon points="0,${-r} ${r*.7},0 0,${r} ${-r*.7},0"/>`;
+    case 'circle':return`<circle r="${r}"/>`;
+    case 'eye':return`<path d="M ${-r},0 C ${-r*.6},${-r*.7} ${r*.6},${-r*.7} ${r},0 C ${r*.6},${r*.7} ${-r*.6},${r*.7} ${-r},0 Z"/>`;
+    default:return`<circle r="${r}"/>`;
+  }
+}
+
+function renderGrid(){let s='';for(let i=-200;i<1400;i+=120){const o=i%360===0?'rgba(255,221,0,0.05)':'rgba(255,221,0,0.025)';s+=`<line x1="0" y1="${i}" x2="1600" y2="${i+800}" stroke="${o}" stroke-width=".5"/>`;s+=`<line x1="0" y1="${i+600}" x2="1600" y2="${i-200}" stroke="${o}" stroke-width=".5"/>`}document.getElementById('grid-layer').innerHTML=s}
+
+function renderRoom(id,room){
+  const color=COLORS[room.district],crown=CROWNS[room.district],t=room.throughput;
+  const h=Math.max(20,Math.min(200,t*2.1)),rr=30+t*0.5,cr=12+t*0.15;
+  const ents=Object.entries(world.entities).filter(([,e])=>e.room===id);
+
+  // === ACTIVITY METRICS ===
+  const bucket = activity.byRoom[id] || [];
+  const eps = eventsPerSec(bucket);          // events/sec in window
+  const div = eventDiversity(bucket);         // unique command types
+  const age = lastEventAge(bucket);           // seconds since last event
+  const isActive = eps > 0.05;                // any meaningful activity
+  const isHot = eps > 0.5;                    // high activity
+
+  // Ring speed: driven by events/sec. No events → frozen (no animation)
+  const ringSpeed = isActive ? Math.max(2, 20 / (eps + 0.1)) : 0;
+  // Ring opacity: scales with activity. Idle = nearly invisible
+  const ringOp = isActive ? Math.min(0.6, 0.1 + eps * 0.4) : 0.06;
+  // Crown rotation: driven by event diversity (more types → faster)
+  const crownSpeed = div > 0 ? Math.max(8, 40 / div) : 0;
+  // Breathing: strong pulse if recent event, flat if stale
+  const breathAmp = age < 5 ? 1.08 : age < 15 ? 1.03 : 1.0;
+  const breathDur = age < 5 ? 2 : age < 15 ? 4 : 0;
+
+  let s=`<g transform="translate(${room.x},${room.y})" class="clickable" data-drag="room" data-id="${id}">`;
+
+  // Sonar pulse — only if there was a recent event (< 4s ago)
+  if(age < 4){
+    s+=`<ellipse rx="10" ry="5" fill="none" stroke="${color}" stroke-width="1.5" opacity="0"><animate attributeName="rx" values="10;${rr+30}" dur="2s" repeatCount="1"/><animate attributeName="ry" values="5;${(rr+30)*0.5}" dur="2s" repeatCount="1"/><animate attributeName="opacity" values=".45;0" dur="2s" repeatCount="1"/></ellipse>`;
+  }
+
+  // Outer ring — speed and brightness driven by events/sec
+  if(ringSpeed > 0){
+    s+=`<ellipse rx="${rr}" ry="${rr*0.5}" fill="none" stroke="${color}" stroke-width="2.5" stroke-dasharray="6 2 2 2" opacity="${ringOp}" filter="url(#g1)"><animate attributeName="stroke-dashoffset" from="0" to="${-rr*2}" dur="${ringSpeed}s" repeatCount="indefinite"/></ellipse>`;
+    s+=`<ellipse rx="${rr}" ry="${rr*0.5}" fill="none" stroke="${color}" stroke-width="5" stroke-dasharray="1.5 14" opacity="${ringOp*0.3}"><animate attributeName="stroke-dashoffset" from="0" to="${-rr*2}" dur="${ringSpeed}s" repeatCount="indefinite"/></ellipse>`;
+  } else {
+    // Frozen ring — static, dim
+    s+=`<ellipse rx="${rr}" ry="${rr*0.5}" fill="none" stroke="${color}" stroke-width="1.5" stroke-dasharray="6 2 2 2" opacity=".06"/>`;
+  }
+
+  // Inner ring — only if high activity, counter-spin
+  if(isHot){
+    s+=`<ellipse rx="${rr*0.75}" ry="${rr*0.375}" fill="none" stroke="${color}" stroke-width="1.8" stroke-dasharray="3 5" opacity="${ringOp*0.6}"><animate attributeName="stroke-dashoffset" from="0" to="${rr*1.5}" dur="${ringSpeed*1.6}s" repeatCount="indefinite"/></ellipse>`;
+  }
+
+  // Column beam — always present (structural), brightness = activity
+  const colOp = isActive ? 0.45 : 0.15;
+  s+=`<line x1="0" y1="0" x2="0" y2="${-h}" stroke="${color}" stroke-width="2.5" opacity="${colOp}"/><line x1="0" y1="0" x2="0" y2="${-h}" stroke="${color}" stroke-width="10" opacity="${colOp*0.1}" filter="url(#g1)"/>`;
+  for(let ty=35;ty<h;ty+=35)s+=`<line x1="-4" y1="${-ty}" x2="4" y2="${-ty}" stroke="${color}" stroke-width=".5" opacity="${(colOp*0.3)-ty*0.0005}"/>`;
+
+  // Data pulse up column — only if active (represents actual command flow)
+  if(isActive){
+    const pulseDur = Math.max(0.8, 2 / (eps + 0.1));
+    s+=`<rect x="-2" width="4" height="5" fill="${color}" opacity="0"><animate attributeName="y" values="0;${-h}" dur="${pulseDur}s" repeatCount="indefinite"/><animate attributeName="opacity" values=".6;0" dur="${pulseDur}s" repeatCount="indefinite"/></rect>`;
+  }
+
+  // Crown — rotation driven by event diversity, breathing by recency
+  s+=`<g transform="translate(0,${-h})">`;
+  if(crownSpeed > 0){
+    s+=`<g fill="rgba(${hexToRgb(color)},0.07)" stroke="${color}" stroke-width="1" opacity="${isActive?.65:.2}"><animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="${crownSpeed}s" repeatCount="indefinite"/>${crownSVG(crown,cr)}</g>`;
+    s+=`<g fill="rgba(${hexToRgb(color)},0.04)" stroke="${color}" stroke-width=".5" opacity="${isActive?.35:.1}"><animateTransform attributeName="transform" type="rotate" from="0" to="-360" dur="${crownSpeed*0.7}s" repeatCount="indefinite"/>${crownSVG(crown,cr*0.6)}</g>`;
+  } else {
+    // Static crown — no rotation when idle
+    s+=`<g fill="rgba(${hexToRgb(color)},0.04)" stroke="${color}" stroke-width="1" opacity=".15">${crownSVG(crown,cr)}</g>`;
+  }
+
+  // Core dot — brightness = recency of last event
+  const coreBright = age < 3 ? 0.7 : age < 10 ? 0.4 : 0.15;
+  s+=`<circle r="${3+t*0.03}" fill="${color}" opacity="${coreBright}" filter="url(#g1)"/>`;
+
+  // Breathing — only if recent event drove it
+  if(breathDur > 0){
+    s+=`<animateTransform attributeName="transform" type="scale" values="1;${breathAmp};1" dur="${breathDur}s" repeatCount="indefinite" additive="sum"/>`;
+  }
+  s+=`</g>`;
+  ents.forEach(([eid,ent],i)=>{
+    const ey=-(h*0.3+i*28),ex=(i%2===0?-1:1)*(16+i*6);
+    const ec=ent.kind==='human'?'#f0f0f0':ent.kind==='npc'?'var(--green)':'var(--gold)';
+    const stateColor={thinking:'var(--gold)',working:'var(--green)',speaking:'var(--cyan)',idle:'#444',error:'var(--red)',online:'#f0f0f0'}[ent.state]||ec;
+    const r=ent.kind==='human'?10:8;
+
+    s+=`<g transform="translate(${ex},${ey})" class="clickable" data-drag="entity" data-id="${eid}" data-room="${id}">`;
+
+    // State ring — always visible, color = state
+    if(ent.state==='thinking'){
+      s+=`<circle r="${r+6}" fill="none" stroke="${stateColor}" stroke-width="1.5" opacity=".4" stroke-dasharray="3 3"><animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1.5s" repeatCount="indefinite"/></circle>`;
+      s+=`<circle r="${r+6}" fill="none" stroke="${stateColor}" stroke-width=".8" opacity="0"><animate attributeName="r" values="${r+6};${r+16}" dur="2s" repeatCount="indefinite"/><animate attributeName="opacity" values=".3;0" dur="2s" repeatCount="indefinite"/></circle>`;
+    } else if(ent.state==='working'){
+      s+=`<circle r="${r+5}" fill="none" stroke="${stateColor}" stroke-width="2" opacity=".35" stroke-dasharray="4 2"><animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1s" repeatCount="indefinite"/></circle>`;
+    } else if(ent.state==='speaking'){
+      s+=`<circle r="${r+5}" fill="none" stroke="${stateColor}" stroke-width="1.5" opacity=".5" stroke-dasharray="2 2"><animate attributeName="stroke-dashoffset" from="0" to="-12" dur=".6s" repeatCount="indefinite"/></circle>`;
+      s+=`<circle r="${r+5}" fill="none" stroke="${stateColor}" stroke-width=".6" opacity="0"><animate attributeName="r" values="${r+5};${r+18}" dur="1.2s" repeatCount="indefinite"/><animate attributeName="opacity" values=".4;0" dur="1.2s" repeatCount="indefinite"/></circle>`;
+    } else if(ent.state==='error'){
+      s+=`<circle r="${r+5}" fill="none" stroke="${stateColor}" stroke-width="2" opacity="0"><animate attributeName="opacity" values="0;.6;0" dur=".8s" repeatCount="indefinite"/></circle>`;
+    }
+
+    // Core dot
+    s+=`<circle r="${r}" fill="${ec}" opacity="${ent.state==='idle'?'.3':'.85'}" filter="url(#g1)"/>`;
+
+    // Name initial
+    s+=`<text text-anchor="middle" y="${r*0.4}" font-family="'Press Start 2P'" font-size="${r*0.9}" fill="${ent.state==='idle'?'#222':'#0a0a0a'}" opacity=".8">${ent.name[0]}</text>`;
+
+    // Name label below
+    s+=`<text y="${r+12}" text-anchor="middle" font-family="VT323" font-size="11" fill="${stateColor}" opacity=".7">${ent.name}</text>`;
+
+    // Recent action indicator (flash when they did something recently)
+    if(ent._lastAction && Date.now()-ent._lastAction < 3000){
+      s+=`<circle r="${r+12}" fill="none" stroke="${stateColor}" stroke-width="1" opacity="0"><animate attributeName="r" values="${r+4};${r+20}" dur="1s" fill="freeze"/><animate attributeName="opacity" values=".5;0" dur="1s" fill="freeze"/></circle>`;
+    }
+
+    s+=`</g>`;
+  });
+  s+=`<text y="${-h-22}" text-anchor="middle" font-family="'Press Start 2P'" font-size="8" fill="${color}" opacity=".65" letter-spacing="1.5">${room.name.toUpperCase()}</text>`;
+  s+=`<text y="${-h-10}" text-anchor="middle" font-family="Orbitron" font-size="18" fill="${color}" font-weight="700" filter="url(#g1)">${t}</text>`;
+  s+=`</g>`;return s;
+}
+
+function renderFlows(){let s='';for(const[id,room]of Object.entries(world.rooms)){for(const eid of room.exits){const target=world.rooms[eid];if(!target||eid<id)continue;const vol=Math.min(room.throughput,target.throughput)*0.4;if(vol<2)continue;const w=Math.max(1,vol*0.12),op=Math.min(0.15,vol*0.003),color=COLORS[room.district];s+=`<path d="M ${room.x} ${room.y} L ${target.x} ${target.y}" fill="none" stroke="${color}" stroke-width="${w+2}" opacity="${op}"/>`;s+=`<path d="M ${room.x} ${room.y} L ${target.x} ${target.y}" fill="none" stroke="${color}" stroke-width="${Math.max(0.8,w*0.5)}" opacity="${op*3}" stroke-dasharray="3 5" filter="url(#g1)"><animate attributeName="stroke-dashoffset" from="0" to="-24" dur="${Math.max(0.5,2-vol*0.03)}s" repeatCount="indefinite"/></path>`;s+=`<rect width="${Math.min(5,vol*0.15)}" height="${Math.min(5,vol*0.15)}" fill="${color}" opacity="0" filter="url(#g1)"><animateMotion dur="${Math.max(1,3-vol*0.04)}s" repeatCount="indefinite" path="M ${room.x} ${room.y} L ${target.x} ${target.y}"/><animate attributeName="opacity" values="0;.8;.8;0" dur="${Math.max(1,3-vol*0.04)}s" repeatCount="indefinite"/></rect>`}}document.getElementById('flow-layer').innerHTML=s}
+
+function renderWorldRing(){
+  const rooms = Object.values(world.rooms);
+  if (!rooms.length) { document.getElementById('world-ring-layer')?.remove(); return; }
+
+  // Compute center of all rooms
+  let cx=0, cy=0;
+  rooms.forEach(r => { cx+=r.x; cy+=r.y; });
+  cx /= rooms.length; cy /= rooms.length;
+
+  // Compute radius to encompass all rooms + their canvas nodes
+  let maxR = 0;
+  rooms.forEach(r => {
+    const dx = r.x - cx, dy = r.y - cy;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    const roomExtent = 100 + r.throughput * 1.5; // room structure + canvas node ring
+    maxR = Math.max(maxR, dist + roomExtent);
+  });
+  // Add padding
+  maxR += 80;
+
+  // Total world throughput drives ring speed
+  const totalThroughput = rooms.reduce((s,r) => s + r.throughput, 0);
+  const ringSpeed = Math.max(4, 40 - totalThroughput * 0.08);
+  const entityCount = Object.keys(world.entities).length;
+
+  // Ensure the layer exists
+  let layer = document.getElementById('world-ring-layer');
+  if (!layer) {
+    layer = document.createElementNS('http://www.w3.org/2000/svg','g');
+    layer.id = 'world-ring-layer';
+    // Insert before grid layer so it's behind everything
+    const gridLayer = document.getElementById('grid-layer');
+    gridLayer.parentNode.insertBefore(layer, gridLayer);
+  }
+
+  const ry = maxR * 0.55; // isometric squish
+  let s = '';
+
+  // Ambient glow fill
+  s += `<ellipse cx="${cx}" cy="${cy}" rx="${maxR}" ry="${ry}" fill="var(--gold)" opacity=".008" filter="url(#g3)"/>`;
+
+  // Outer ring — bold, bright, wide
+  s += `<ellipse cx="${cx}" cy="${cy}" rx="${maxR}" ry="${ry}" fill="none" stroke="var(--gold)" stroke-width="4" stroke-dasharray="14 4 5 4 2 4" opacity=".45" filter="url(#g2)">
+    <animate attributeName="stroke-dashoffset" from="0" to="${-maxR*0.4}" dur="${ringSpeed}s" repeatCount="indefinite"/>
+  </ellipse>`;
+
+  // Notch ring (thick tick marks)
+  s += `<ellipse cx="${cx}" cy="${cy}" rx="${maxR}" ry="${ry}" fill="none" stroke="var(--gold)" stroke-width="10" stroke-dasharray="2.5 ${Math.max(18, Math.floor(maxR*0.12))}" opacity=".15">
+    <animate attributeName="stroke-dashoffset" from="0" to="${-maxR*0.4}" dur="${ringSpeed}s" repeatCount="indefinite"/>
+  </ellipse>`;
+
+  // Mid ring — counter-spin, wider
+  const midR = maxR * 0.9;
+  s += `<ellipse cx="${cx}" cy="${cy}" rx="${midR}" ry="${midR*0.55}" fill="none" stroke="var(--gold)" stroke-width="2.5" stroke-dasharray="8 5 3 5" opacity=".25" filter="url(#g1)">
+    <animate attributeName="stroke-dashoffset" from="0" to="${midR*0.35}" dur="${ringSpeed*1.4}s" repeatCount="indefinite"/>
+  </ellipse>`;
+
+  // Inner ring — faster, visible
+  const innerR = maxR * 0.78;
+  s += `<ellipse cx="${cx}" cy="${cy}" rx="${innerR}" ry="${innerR*0.55}" fill="none" stroke="var(--gold)" stroke-width="1.8" stroke-dasharray="4 7" opacity=".15">
+    <animate attributeName="stroke-dashoffset" from="0" to="${-innerR*0.3}" dur="${ringSpeed*0.7}s" repeatCount="indefinite"/>
+  </ellipse>`;
+
+  // Sonar pulse from world center — brighter
+  s += `<ellipse cx="${cx}" cy="${cy}" rx="20" ry="11" fill="none" stroke="var(--gold)" stroke-width="2.5" opacity="0">
+    <animate attributeName="rx" values="20;${maxR+30}" dur="${Math.max(3,ringSpeed*0.5)}s" repeatCount="indefinite"/>
+    <animate attributeName="ry" values="11;${(maxR+30)*0.55}" dur="${Math.max(3,ringSpeed*0.5)}s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values=".3;0" dur="${Math.max(3,ringSpeed*0.5)}s" repeatCount="indefinite"/>
+  </ellipse>`;
+  // Second staggered sonar
+  s += `<ellipse cx="${cx}" cy="${cy}" rx="20" ry="11" fill="none" stroke="var(--gold)" stroke-width="1.5" opacity="0">
+    <animate attributeName="rx" values="20;${maxR+30}" dur="${Math.max(3,ringSpeed*0.5)}s" repeatCount="indefinite" begin="${ringSpeed*0.25}s"/>
+    <animate attributeName="ry" values="11;${(maxR+30)*0.55}" dur="${Math.max(3,ringSpeed*0.5)}s" repeatCount="indefinite" begin="${ringSpeed*0.25}s"/>
+    <animate attributeName="opacity" values=".15;0" dur="${Math.max(3,ringSpeed*0.5)}s" repeatCount="indefinite" begin="${ringSpeed*0.25}s"/>
+  </ellipse>`;
+
+  // World name label at top of ring — bigger, brighter
+  s += `<text x="${cx}" y="${cy - ry - 20}" text-anchor="middle" font-family="'Press Start 2P'" font-size="14" fill="var(--gold)" opacity=".4" letter-spacing="4">${world.name.toUpperCase()}</text>`;
+
+  // Stats label at bottom of ring
+  s += `<text x="${cx}" y="${cy + ry + 28}" text-anchor="middle" font-family="VT323" font-size="16" fill="var(--gold)" opacity=".25">${rooms.length} rooms · ${entityCount} entities · ${totalThroughput} msg/hr</text>`;
+
+  layer.innerHTML = s;
+}
+
+function renderContours(){let s='';for(const[,r]of Object.entries(world.rooms)){if(r.throughput>15){const rr=50+r.throughput*0.8;s+=`<ellipse cx="${r.x}" cy="${r.y}" rx="${rr}" ry="${rr*0.5}" fill="none" stroke="${COLORS[r.district]}" stroke-width="1.5" opacity=".06" filter="url(#g2)"/>`;s+=`<ellipse cx="${r.x}" cy="${r.y}" rx="${rr*0.6}" ry="${rr*0.3}" fill="${COLORS[r.district]}" opacity=".02"/>`}}document.getElementById('contour-layer').innerHTML=s}
+
+function renderAllRooms(){let s='';const sorted=Object.entries(world.rooms).sort((a,b)=>a[1].y-b[1].y);for(const[id,r]of sorted)s+=renderRoom(id,r);document.getElementById('room-layer').innerHTML=s}
+
+// ═══ CANVAS NODE RENDERING ═══
+const CNODE_SHAPES = {
+  document: (c) => `<rect x="-12" y="-16" width="24" height="32" rx="2" fill="rgba(${hexToRgb(c)},0.08)" stroke="${c}" stroke-width="1.2"/><line x1="-7" y1="-8" x2="7" y2="-8" stroke="${c}" stroke-width=".5" opacity=".4"/><line x1="-7" y1="-2" x2="7" y2="-2" stroke="${c}" stroke-width=".5" opacity=".3"/><line x1="-7" y1="4" x2="4" y2="4" stroke="${c}" stroke-width=".5" opacity=".2"/>`,
+  text: (c) => `<rect x="-10" y="-10" width="20" height="20" rx="2" fill="rgba(${hexToRgb(c)},0.06)" stroke="${c}" stroke-width="1"/><text text-anchor="middle" y="4" font-family="VT323" font-size="12" fill="${c}" opacity=".6">T</text>`,
+  intent: (c) => `<polygon points="0,-16 14,0 0,16 -14,0" fill="rgba(${hexToRgb(c)},0.08)" stroke="${c}" stroke-width="1.2"/>`,
+  a2ui: (c) => `<rect x="-14" y="-12" width="28" height="24" rx="2" fill="rgba(${hexToRgb(c)},0.08)" stroke="${c}" stroke-width="1.2"/><rect x="-10" y="-8" width="20" height="4" rx="1" fill="${c}" opacity=".15"/><rect x="-10" y="0" width="12" height="4" rx="1" fill="${c}" opacity=".1"/><rect x="4" y="0" width="6" height="4" rx="1" fill="${c}" opacity=".2"/>`,
+  image: (c) => `<rect x="-14" y="-12" width="28" height="24" rx="2" fill="rgba(${hexToRgb(c)},0.08)" stroke="${c}" stroke-width="1.2"/><polygon points="-8,6 -2,-2 2,2 8,-4 8,6" fill="${c}" opacity=".2"/><circle cx="5" cy="-5" r="2.5" fill="${c}" opacity=".2"/>`,
+  pdf: (c) => `<rect x="-12" y="-16" width="24" height="32" rx="2" fill="rgba(${hexToRgb(c)},0.08)" stroke="${c}" stroke-width="1.2"/><polygon points="5,-16 12,-9 5,-9" fill="${c}" opacity=".15"/><text text-anchor="middle" y="6" font-family="'Press Start 2P'" font-size="5" fill="${c}" opacity=".5">PDF</text>`,
+  video: (c) => `<rect x="-16" y="-12" width="32" height="24" rx="2" fill="rgba(${hexToRgb(c)},0.08)" stroke="${c}" stroke-width="1.2"/><polygon points="-4,-6 -4,6 6,0" fill="${c}" opacity=".3"/>`,
+  audio: (c) => `<rect x="-14" y="-10" width="28" height="20" rx="2" fill="rgba(${hexToRgb(c)},0.08)" stroke="${c}" stroke-width="1.2"/><line x1="-8" y1="4" x2="-8" y2="-2" stroke="${c}" stroke-width="2" opacity=".25"/><line x1="-4" y1="4" x2="-4" y2="-6" stroke="${c}" stroke-width="2" opacity=".3"/><line x1="0" y1="4" x2="0" y2="-3" stroke="${c}" stroke-width="2" opacity=".25"/><line x1="4" y1="4" x2="4" y2="-5" stroke="${c}" stroke-width="2" opacity=".3"/><line x1="8" y1="4" x2="8" y2="-1" stroke="${c}" stroke-width="2" opacity=".2"/>`,
+};
+
+const INTENT_COLORS = { pending:'var(--amber)', active:'var(--cyan)', done:'var(--green)', failed:'var(--red)' };
+
+// ═══ AUTO-LAYOUT: distribute canvas nodes around rooms, avoid overlaps ═══
+// ═══ INTERACTION ARCS — visible agent-to-agent communication on the map ═══
+const interactions = []; // {from, to, type, color, time}
+
+function addInteraction(fromName, toName, type) {
+  const color = {say:'var(--cyan)',tell:'var(--violet)',task:'var(--green)',recall:'var(--amber)'}[type]||'var(--gold)';
+  interactions.push({from:fromName, to:toName, type, color, time:Date.now()});
+  // Mark agents as having recent action
+  const fe = Object.values(world.entities).find(e=>e.name===fromName);
+  if(fe) fe._lastAction = Date.now();
+  // Keep max 20 interactions, expire after 6 seconds
+  while(interactions.length > 20) interactions.shift();
+}
+
+function getEntityWorldPos(name) {
+  const entry = Object.entries(world.entities).find(([,e])=>e.name===name);
+  if(!entry) return null;
+  const [eid,ent] = entry;
+  const room = world.rooms[ent.room];
+  if(!room) return null;
+  const ents = Object.entries(world.entities).filter(([,e])=>e.room===ent.room);
+  const idx = ents.findIndex(([id])=>id===eid);
+  const h = Math.max(20, Math.min(200, room.throughput*2.1));
+  const ey = -(h*0.3+idx*28);
+  const ex = (idx%2===0?-1:1)*(16+idx*6);
+  return {x: room.x+ex, y: room.y+ey};
+}
+
+function renderInteractions() {
+  const now = Date.now();
+  let s = '';
+  for(let i=interactions.length-1; i>=0; i--) {
+    const arc = interactions[i];
+    const age = now - arc.time;
+    if(age > 6000) { interactions.splice(i,1); continue; }
+
+    const fromPos = getEntityWorldPos(arc.from);
+    const toPos = getEntityWorldPos(arc.to);
+    if(!fromPos || !toPos) continue;
+
+    const fade = Math.max(0, 1 - age/6000);
+    const midX = (fromPos.x+toPos.x)/2;
+    const midY = Math.min(fromPos.y,toPos.y) - 40 - Math.abs(fromPos.x-toPos.x)*0.15;
+
+    // Arc line
+    s += `<path d="M ${fromPos.x} ${fromPos.y} Q ${midX} ${midY} ${toPos.x} ${toPos.y}" fill="none" stroke="${arc.color}" stroke-width="${2+fade*2}" opacity="${fade*0.5}" filter="url(#g1)" stroke-dasharray="5 3">
+      <animate attributeName="stroke-dashoffset" from="0" to="-24" dur="0.8s" repeatCount="indefinite"/>
+    </path>`;
+
+    // Particle along arc
+    s += `<circle r="${2+fade*2}" fill="${arc.color}" opacity="0" filter="url(#g1)">
+      <animateMotion dur="${0.8+age*0.0003}s" repeatCount="indefinite" path="M ${fromPos.x} ${fromPos.y} Q ${midX} ${midY} ${toPos.x} ${toPos.y}"/>
+      <animate attributeName="opacity" values="0;${fade*0.8};${fade*0.8};0" dur="${0.8+age*0.0003}s" repeatCount="indefinite"/>
+    </circle>`;
+
+    // Type label at midpoint (brief)
+    if(age < 2000) {
+      s += `<text x="${midX}" y="${midY-8}" text-anchor="middle" font-family="'Press Start 2P'" font-size="6" fill="${arc.color}" opacity="${fade*0.5}" letter-spacing="1">${arc.type.toUpperCase()}</text>`;
+    }
+  }
+  document.getElementById('interaction-layer').innerHTML = s;
+}
+
+function autoLayout() {
+  const roomEntries = Object.entries(world.rooms);
+  const cx = 800, cy = 550; // world center
+
+  // ═══ 1. ROOM FORCE-DIRECTED LAYOUT ═══
+  // Rooms without _pinned get positioned by forces:
+  //   - attraction toward center (prevents drift)
+  //   - attraction along exits (connected rooms pull toward each other)
+  //   - repulsion between all rooms (prevents overlap)
+  //   - size-aware spacing (busier rooms need more space)
+
+  // Initialize rooms without positions to a circle around center
+  const unpinnedRooms = roomEntries.filter(([,r]) => !r._pinned);
+  unpinnedRooms.forEach(([id, r], i) => {
+    if (r.x === 0 && r.y === 0) {
+      // New room with no position — place on initial circle
+      const angle = (2 * Math.PI * i / Math.max(unpinnedRooms.length, 1)) - Math.PI / 2;
+      const radius = 180 + unpinnedRooms.length * 15;
+      r.x = cx + Math.cos(angle) * radius;
+      r.y = cy + Math.sin(angle) * radius * 0.65;
+    }
+  });
+
+  // Force iterations (light — just nudge, don't fully solve)
+  for (let iter = 0; iter < 5; iter++) {
+    for (const [idA, a] of roomEntries) {
+      if (a._pinned) continue;
+      let fx = 0, fy = 0;
+      const sizeA = 80 + a.throughput * 1.2;
+
+      // Gentle pull toward center
+      fx += (cx - a.x) * 0.003;
+      fy += (cy - a.y) * 0.003;
+
+      // Exit attraction: connected rooms want to be ~(sizeA+sizeB) apart
+      for (const exitId of a.exits) {
+        const b = world.rooms[exitId];
+        if (!b) continue;
+        const sizeB = 80 + b.throughput * 1.2;
+        const idealDist = sizeA * 0.5 + sizeB * 0.5 + 180;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const pull = (dist - idealDist) * 0.02;
+        fx += (dx / dist) * pull;
+        fy += (dy / dist) * pull;
+      }
+
+      // Repulsion from all other rooms
+      for (const [idB, b] of roomEntries) {
+        if (idA === idB) continue;
+        const sizeB = 80 + b.throughput * 1.2;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const minDist = sizeA * 0.5 + sizeB * 0.5 + 120;
+        if (dist < minDist) {
+          const push = (minDist - dist) * 0.15;
+          fx -= (dx / dist) * push;
+          fy -= (dy / dist) * push;
+        }
+      }
+
+      a.x += fx;
+      a.y += fy;
+    }
+  }
+
+  // ═══ 2. CANVAS NODE RING LAYOUT ═══
+  const byRoom = {};
+  for (const [id, cn] of Object.entries(world.canvasNodes)) {
+    if (cn._pinned) continue;
+    if (!byRoom[cn.room]) byRoom[cn.room] = [];
+    byRoom[cn.room].push(id);
+  }
+
+  for (const [roomId, nodeIds] of Object.entries(byRoom)) {
+    const room = world.rooms[roomId];
+    if (!room) continue;
+    const n = nodeIds.length;
+    const isMedia = (id) => ['image','video','audio','pdf','document'].includes(world.canvasNodes[id].type);
+    // Ring radius: must clear the room structure (rings + column height + labels)
+    const roomVisualR = 50 + room.throughput * 1.2; // spinning ring extent
+    const baseR = roomVisualR + 60 + n * 18; // clear room structure + spacing per node
+    const startAngle = -Math.PI * 0.6;
+
+    nodeIds.forEach((id, i) => {
+      const cn = world.canvasNodes[id];
+      const angle = startAngle + (2 * Math.PI * i / n);
+      // Media cards are much bigger — push them further out
+      const r = isMedia(id) ? baseR + 60 : baseR;
+      cn.ox = Math.cos(angle) * r;
+      cn.oy = Math.sin(angle) * r * 0.55; // squish Y for isometric
+    });
+  }
+
+  // ═══ 3. CANVAS NODE COLLISION REPULSION ═══
+  // Also repel canvas nodes away from room centers they don't belong to
+  const allNodes = Object.entries(world.canvasNodes);
+  for (const [nid, cn] of allNodes) {
+    if (cn._pinned) continue;
+    const myRoom = world.rooms[cn.room];
+    if (!myRoom) continue;
+    const nx = myRoom.x + cn.ox, ny = myRoom.y + cn.oy;
+    const nodeSize = ['image','video','audio','pdf','document'].includes(cn.type) ? 60 : 30;
+    for (const [rid, r] of roomEntries) {
+      if (rid === cn.room) continue;
+      const dx = nx - r.x, dy = ny - r.y;
+      const dist = Math.sqrt(dx*dx+dy*dy) || 1;
+      const roomR = 60 + r.throughput * 0.8;
+      const minD = roomR + nodeSize + 30;
+      if (dist < minD) {
+        const push = (minD - dist) * 0.3;
+        cn.ox += (dx/dist) * push;
+        cn.oy += (dy/dist) * push;
+      }
+    }
+  }
+
+  // Node-to-node collision repulsion (more passes, bigger sizes, wider gap)
+  for (let pass = 0; pass < 6; pass++) {
+    for (let i = 0; i < allNodes.length; i++) {
+      const [idA, a] = allNodes[i];
+      if (a._pinned) continue;
+      const roomA = world.rooms[a.room];
+      if (!roomA) continue;
+      const ax = roomA.x + a.ox, ay = roomA.y + a.oy;
+      // Collision radius accounts for full card + label
+      const sizeA = ['image','video','audio','pdf','document'].includes(a.type) ? 65 : 30;
+
+      for (let j = i + 1; j < allNodes.length; j++) {
+        const [idB, b] = allNodes[j];
+        const roomB = world.rooms[b.room];
+        if (!roomB) continue;
+        const bx = roomB.x + b.ox, by = roomB.y + b.oy;
+        const sizeB = ['image','video','audio','pdf','document'].includes(b.type) ? 65 : 30;
+
+        const dx = bx - ax, dy = by - ay;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const minDist = sizeA + sizeB + 30;
+
+        if (dist < minDist && dist > 0) {
+          const push = (minDist - dist) / 2;
+          const nx = dx / dist, ny = dy / dist;
+          if (!a._pinned) { a.ox -= nx * push; a.oy -= ny * push; }
+          if (!b._pinned) { b.ox += nx * push; b.oy += ny * push; }
+        }
+      }
+    }
+  }
+}
+
+function renderCanvasNodes() {
+  let s = '';
+  for (const [id, cn] of Object.entries(world.canvasNodes)) {
+    const room = world.rooms[cn.room];
+    if (!room) continue;
+    const wx = room.x + cn.ox;
+    const wy = room.y + cn.oy;
+    const c = cn.intent ? (INTENT_COLORS[cn.intent.status] || cn.color) : cn.color;
+    const shapeFn = CNODE_SHAPES[cn.type] || CNODE_SHAPES.text;
+
+    s += `<g transform="translate(${wx},${wy})" class="clickable" data-drag="canvas" data-id="${id}">`;
+
+    // Imported item: distinctive rose outer ring + corner badge
+    if (cn.origin === 'imported') {
+      s += `<circle r="24" fill="none" stroke="var(--rose)" stroke-width="2" opacity=".35" stroke-dasharray="6 3"/>`;
+      s += `<circle r="24" fill="none" stroke="var(--rose)" stroke-width=".8" opacity=".12"/>`;
+      // Upload arrow badge
+      s += `<g transform="translate(14,-14)"><circle r="6" fill="var(--rose)" opacity=".5"/><text text-anchor="middle" y="3" font-family="VT323" font-size="9" fill="#fff" opacity=".9">↑</text></g>`;
+    }
+
+    // Intent status glow ring
+    if (cn.intent) {
+      const ic = INTENT_COLORS[cn.intent.status];
+      if (cn.intent.status === 'pending') {
+        s += `<circle r="20" fill="none" stroke="${ic}" stroke-width="1" opacity=".3" stroke-dasharray="3 3"><animate attributeName="stroke-dashoffset" from="0" to="-18" dur="2s" repeatCount="indefinite"/></circle>`;
+      } else if (cn.intent.status === 'active') {
+        s += `<circle r="22" fill="none" stroke="${ic}" stroke-width="1.5" opacity=".4" stroke-dasharray="4 2"><animate attributeName="stroke-dashoffset" from="0" to="-18" dur="1s" repeatCount="indefinite"/></circle>`;
+        s += `<circle r="22" fill="none" stroke="${ic}" stroke-width=".5" opacity="0"><animate attributeName="r" values="22;35" dur="2s" repeatCount="indefinite"/><animate attributeName="opacity" values=".3;0" dur="2s" repeatCount="indefinite"/></circle>`;
+      } else if (cn.intent.status === 'done') {
+        s += `<circle r="20" fill="none" stroke="${ic}" stroke-width="1" opacity=".25"/>`;
+      }
+    }
+
+    // Shape — rich preview for media types, icon for others
+    const isMedia = ['image','video','audio','pdf','document'].includes(cn.type);
+    if (isMedia) {
+      const tw=80, th=cn.type==='pdf'||cn.type==='document'?90:56;
+      // Card background
+      s += `<rect x="${-tw/2}" y="${-th/2}" width="${tw}" height="${th}" rx="3" fill="rgba(10,10,16,0.92)" stroke="${c}" stroke-width="1" opacity=".8"/>`;
+
+      if (cn.type === 'image') {
+        // Mini landscape thumbnail
+        s += `<polygon points="${-tw/2+6},${th/2-10} ${-tw/2+18},${-th/2+14} ${-tw/2+28},${-th/2+22} ${tw/2-6},${th/2-10}" fill="${c}" opacity=".12"/>`;
+        s += `<circle cx="${tw/2-16}" cy="${-th/2+14}" r="6" fill="${c}" opacity=".12"/>`;
+        // Type badge
+        s += `<text x="${-tw/2+6}" y="${-th/2+10}" font-family="'Press Start 2P'" font-size="4" fill="${c}" opacity=".5">IMG</text>`;
+      } else if (cn.type === 'video') {
+        // Dark frame with play button
+        s += `<rect x="${-tw/2+3}" y="${-th/2+3}" width="${tw-6}" height="${th-16}" rx="2" fill="#080810"/>`;
+        s += `<polygon points="-6,-8 -6,8 8,0" fill="${c}" opacity=".35"/>`;
+        // Duration bar
+        s += `<rect x="${-tw/2+3}" y="${th/2-10}" width="${tw-6}" height="7" rx="1" fill="rgba(0,0,0,0.5)"/>`;
+        s += `<text x="${tw/2-8}" y="${th/2-5}" text-anchor="end" font-family="VT323" font-size="6" fill="#666">${cn.media?.duration||''}</text>`;
+        s += `<text x="${-tw/2+6}" y="${-th/2+10}" font-family="'Press Start 2P'" font-size="4" fill="${c}" opacity=".5">VID</text>`;
+      } else if (cn.type === 'audio') {
+        // Waveform bars
+        const bars = 18;
+        for (let i=0;i<bars;i++) {
+          const bh = 4 + Math.sin(i*0.8+id.charCodeAt(0))*12 + Math.random()*6;
+          const bx = -tw/2 + 8 + i*(tw-16)/bars;
+          s += `<rect x="${bx}" y="${-bh/2}" width="2.5" height="${bh}" rx="1" fill="${c}" opacity="${0.15+Math.random()*0.2}"/>`;
+        }
+        // Play icon left
+        s += `<polygon points="${-tw/2+8},-6 ${-tw/2+8},6 ${-tw/2+16},0" fill="${c}" opacity=".4"/>`;
+        s += `<text x="${tw/2-8}" y="${th/2-6}" text-anchor="end" font-family="VT323" font-size="6" fill="#666">${cn.media?.duration||''}</text>`;
+        s += `<text x="${-tw/2+6}" y="${-th/2+10}" font-family="'Press Start 2P'" font-size="4" fill="${c}" opacity=".5">AUD</text>`;
+      } else if (cn.type === 'pdf') {
+        // Mini page with text lines
+        s += `<rect x="${-tw/2+6}" y="${-th/2+12}" width="${tw-12}" height="${th-18}" rx="1" fill="#111" stroke="#222" stroke-width=".5"/>`;
+        for (let ly=0;ly<5;ly++) {
+          const lw = tw-28 - (ly===4?16:ly===2?8:0);
+          s += `<rect x="${-tw/2+12}" y="${-th/2+18+ly*7}" width="${lw}" height="2" rx="1" fill="#333" opacity=".5"/>`;
+        }
+        // Folded corner
+        s += `<polygon points="${tw/2-12},${-th/2+12} ${tw/2-6},${-th/2+18} ${tw/2-12},${-th/2+18}" fill="#222"/>`;
+        s += `<text x="${-tw/2+6}" y="${-th/2+10}" font-family="'Press Start 2P'" font-size="4" fill="${c}" opacity=".5">PDF</text>`;
+        s += `<text x="0" y="${th/2-4}" text-anchor="middle" font-family="VT323" font-size="6" fill="#444">pg 1</text>`;
+      } else if (cn.type === 'document') {
+        // Rich text preview lines
+        s += `<rect x="${-tw/2+4}" y="${-th/2+12}" width="${tw-8}" height="9" rx="1" fill="${c}" opacity=".08"/>`;
+        for (let ly=0;ly<4;ly++) {
+          const lw = tw-20 - (ly===3?20:ly===1?10:0);
+          s += `<rect x="${-tw/2+8}" y="${-th/2+26+ly*7}" width="${lw}" height="2" rx="1" fill="#444" opacity=".4"/>`;
+        }
+        s += `<text x="${-tw/2+6}" y="${-th/2+10}" font-family="'Press Start 2P'" font-size="4" fill="${c}" opacity=".5">DOC</text>`;
+      }
+
+      // Title below card
+      s += `<text y="${th/2+12}" text-anchor="middle" font-family="VT323" font-size="10" fill="${c}" opacity=".65">${cn.title.length>16?cn.title.substring(0,15)+'…':cn.title}</text>`;
+    } else {
+      // Small icon for intent, text, a2ui
+      s += `<g opacity=".85">${shapeFn(c)}</g>`;
+      s += `<text y="${cn.type==='intent'?24:20}" text-anchor="middle" font-family="VT323" font-size="11" fill="${c}" opacity=".7">${cn.title.length>18?cn.title.substring(0,17)+'…':cn.title}</text>`;
+    }
+
+    // Intent status badge
+    if (cn.intent) {
+      const ic = INTENT_COLORS[cn.intent.status];
+      s += `<text y="${cn.type==='document'?36:34}" text-anchor="middle" font-family="'Press Start 2P'" font-size="5" fill="${ic}" opacity=".6" letter-spacing=".5">${cn.intent.status.toUpperCase()}</text>`;
+    }
+
+    s += `</g>`;
+  }
+  document.getElementById('canvas-layer').innerHTML = s;
+}
+
+function renderRelations() {
+  let s = '';
+  for (const [id, cn] of Object.entries(world.canvasNodes)) {
+    const room = world.rooms[cn.room];
+    if (!room) continue;
+    const wx = room.x + cn.ox;
+    const wy = room.y + cn.oy;
+    const c = cn.intent ? (INTENT_COLORS[cn.intent.status] || cn.color) : cn.color;
+
+    // Line from canvas node to its room center
+    s += `<line x1="${wx}" y1="${wy}" x2="${room.x}" y2="${room.y}" stroke="${c}" stroke-width=".5" opacity=".1" stroke-dasharray="2 4"/>`;
+
+    // If intent is active/claimed, draw line to the claiming entity
+    if (cn.intent?.claimedBy) {
+      const claimer = Object.entries(world.entities).find(([,e]) => e.name === cn.intent.claimedBy);
+      if (claimer) {
+        const [,ce] = claimer;
+        const cr = world.rooms[ce.room];
+        if (cr) {
+          const ic = INTENT_COLORS[cn.intent.status];
+          s += `<path d="M ${wx} ${wy} Q ${(wx+cr.x)/2} ${Math.min(wy,cr.y)-30} ${cr.x} ${cr.y}" fill="none" stroke="${ic}" stroke-width="1" opacity=".25" stroke-dasharray="4 3" filter="url(#g1)">`;
+          s += `<animate attributeName="stroke-dashoffset" from="0" to="-21" dur="1.5s" repeatCount="indefinite"/></path>`;
+          // Particle
+          s += `<rect width="3" height="3" fill="${ic}" opacity="0"><animateMotion dur="2s" repeatCount="indefinite" path="M ${wx} ${wy} Q ${(wx+cr.x)/2} ${Math.min(wy,cr.y)-30} ${cr.x} ${cr.y}"/><animate attributeName="opacity" values="0;.7;.7;0" dur="2s" repeatCount="indefinite"/></rect>`;
+        }
+      }
+    }
+  }
+  document.getElementById('relation-layer').innerHTML = s;
+}
+
+function renderRoster(){let h='';const sorted=Object.entries(world.entities).sort((a,b)=>({agent:0,human:1,npc:2}[a[1].kind]||0)-({agent:0,human:1,npc:2}[b[1].kind]||0));for(const[id,e]of sorted){const dc=e.kind==='agent'?'ag':e.kind==='human'?'hu':'np';const sc={thinking:'color:var(--gold);background:rgba(255,221,0,0.08)',working:'color:var(--green);background:rgba(34,197,94,0.08)',speaking:'color:var(--cyan);background:rgba(6,182,212,0.08)',idle:'color:#444',error:'color:var(--red);background:rgba(239,68,68,0.08)',online:'color:var(--bright)'}[e.state]||'color:#444';const sl={thinking:'think',working:'work',speaking:'speak',idle:'idle',error:'err',online:'on'}[e.state]||e.state;h+=`<div class="ei" onclick="openContext('entity','${id}')"><div class="ei-d ${dc}"></div><div class="ei-i"><div class="ei-n">${e.name}</div><div class="ei-m">${e.model} - ${world.rooms[e.room]?.name||e.room}</div></div><div class="ei-s" style="${sc}">${sl}</div></div>`}document.getElementById('roster-body').innerHTML=h}
+
+function switchRosterTab(tab,btn){
+  document.querySelectorAll('#roster-tabs .chtab').forEach(t=>t.classList.remove('on'));
+  btn.classList.add('on');
+  document.getElementById('roster-body').style.display=tab==='list'?'':'none';
+  document.getElementById('launch-body').style.display=tab==='launch'?'':'none';
+  document.getElementById('roles-body').style.display=tab==='roles'?'':'none';
+  if(tab==='launch') renderLaunchForm();
+  if(tab==='roles') renderRoles();
+}
+
+const ROLES_DATA=[
+  {name:'researcher',traits:['web-research','analytical-thinking'],desc:'Deep research and knowledge synthesis',
+   guidelines:'Focus on thorough investigation. Use web search to find primary sources. Cross-reference findings across multiple notes. Synthesize insights into actionable summaries.',
+   focus:'Research current topic deeply, produce documented findings',
+   tone:'Precise, evidence-based, thorough'},
+  {name:'builder',traits:['code-review','task-management'],desc:'Frontend/backend implementation',
+   guidelines:'Write clean, tested code. Review PRs carefully. Break large tasks into subtasks. Document architectural decisions. Follow existing patterns.',
+   focus:'Implement features, fix bugs, review code quality',
+   tone:'Direct, technical, pragmatic'},
+  {name:'coordinator',traits:['social','leadership'],desc:'Team coordination and orchestration',
+   guidelines:'Monitor team activity and identify blockers. Facilitate communication between agents. Track project progress. Escalate issues early. Use NSED or Swarm patterns as appropriate.',
+   focus:'Keep the team aligned, remove obstacles, track progress',
+   tone:'Supportive, clear, action-oriented'},
+  {name:'analyst',traits:['data-analysis','pattern-recognition'],desc:'Data analysis and insight generation',
+   guidelines:'Look for patterns in data and agent behavior. Use novelty stats to find gaps. Track success/failure rates. Generate predictions with confidence levels.',
+   focus:'Analyze patterns, generate insights, predict outcomes',
+   tone:'Analytical, measured, data-driven'},
+  {name:'general',traits:['canvas-watcher','social'],desc:'General purpose, adapts to needs',
+   guidelines:'Observe the world and respond to what is needed. Help where help is needed. Watch for canvas intents and claim appropriate ones. Be flexible.',
+   focus:'Adapt to current needs of the world',
+   tone:'Helpful, flexible, responsive'},
+];
+let selectedRole=null;
+
+function renderRoles(){
+  const rb=document.getElementById('roles-body');
+  if(selectedRole!==null){
+    renderRoleDetail(selectedRole);return;
+  }
+  rb.innerHTML=ROLES_DATA.map((r,i)=>
+    `<div style="padding:6px 0;border-bottom:1px solid rgba(17,17,24,0.2);cursor:pointer" onclick="selectedRole=${i};renderRoles()">
+      <div style="display:flex;align-items:center;gap:6px">
+        <div style="color:var(--bright);font-size:clamp(14px,1vw,20px);font-weight:bold;flex:1">${r.name}</div>
+        <span style="color:#444;font-size:clamp(12px,0.9vw,16px)">→</span>
+      </div>
+      <div style="color:#555;font-size:clamp(12px,0.9vw,16px)">${r.desc}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px">${r.traits.map(t=>`<span style="font-size:clamp(11px,0.8vw,15px);padding:1px 5px;background:rgba(255,221,0,0.04);border:1px solid rgba(255,221,0,0.08);color:#777;border-radius:2px">${t}</span>`).join('')}</div>
+    </div>`
+  ).join('');
+}
+
+const GUIDELINE_SUGGESTIONS={
+  researcher:['Cite sources when possible','Cross-reference across multiple notes','Use web search for primary sources','Synthesize findings before sharing','Question assumptions with evidence'],
+  builder:['Write tests alongside code','Follow existing patterns in the codebase','Break large changes into small PRs','Document non-obvious decisions','Review before merging'],
+  coordinator:['Check in with each agent regularly','Identify blockers early','Use orchestration patterns (NSED, Swarm)','Track progress with tasks and goals','Facilitate, don\'t dictate'],
+  analyst:['Quantify claims with data','Track metrics over time','Compare against baselines','Generate confidence levels','Visualize patterns when possible'],
+  general:['Observe before acting','Claim canvas intents proactively','Help wherever needed','Adapt communication style to context','Ask for clarification when uncertain'],
+};
+const TONE_OPTIONS=['Precise','Direct','Supportive','Analytical','Helpful','Creative','Formal','Casual','Evidence-based','Action-oriented','Measured','Responsive','Technical','Conversational'];
+
+function renderRoleDetail(idx){
+  const r=ROLES_DATA[idx];
+  const rb=document.getElementById('roles-body');
+  const fs=`font-size:clamp(13px,0.9vw,18px)`;
+  const inpS=`width:100%;background:rgba(17,17,24,0.6);border:1px solid var(--border);color:var(--bright);font-family:VT323,monospace;${fs};padding:5px 8px;outline:none`;
+  const txtS=`${inpS};resize:vertical;line-height:1.5`;
+  const hintS=`font-size:clamp(11px,0.8vw,15px);color:#444;margin-top:2px`;
+  const suggestions=GUIDELINE_SUGGESTIONS[r.name]||GUIDELINE_SUGGESTIONS.general;
+
+  rb.innerHTML=`
+    <div style="cursor:pointer;color:#555;${fs};padding:2px 0 6px;border-bottom:1px solid var(--border);margin-bottom:6px" onclick="selectedRole=null;renderRoles()">← all roles</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <div style="color:var(--gold);font-size:clamp(16px,1.1vw,22px);font-weight:bold;flex:1">${r.name}</div>
+      <span style="${hintS}">${Object.values(world.entities).filter(e=>e.rank?.includes(r.name)||world.entities[Object.keys(world.entities).find(k=>world.entities[k].name&&ROLES_DATA[idx].name===r.name)]?true:false).length||0} agents using</span>
+    </div>
+
+    <div style="margin-bottom:10px">
+      <div class="ctx-st">Description — <span style="color:#444;text-transform:none">one-line summary shown in agent lists</span></div>
+      <input style="${inpS}" value="${r.desc}" onchange="ROLES_DATA[${idx}].desc=this.value">
+    </div>
+
+    <div style="margin-bottom:10px">
+      <div class="ctx-st">Guidelines — <span style="color:#444;text-transform:none">instructions shaping how the agent behaves</span></div>
+      <textarea id="role-guidelines" style="${txtS};min-height:80px" onchange="ROLES_DATA[${idx}].guidelines=this.value">${r.guidelines}</textarea>
+      <div style="${hintS}">Quick add:</div>
+      <div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px">
+        ${suggestions.map(s=>`<button style="font-size:clamp(10px,0.75vw,14px);padding:2px 6px;background:rgba(6,182,212,0.06);border:1px solid rgba(6,182,212,0.15);color:var(--cyan);cursor:pointer;border-radius:2px;font-family:VT323" onclick="const ta=document.getElementById('role-guidelines');ta.value+='. ${s.replace(/'/g,"\\'")}';ROLES_DATA[${idx}].guidelines=ta.value">${s}</button>`).join('')}
+      </div>
+    </div>
+
+    <div style="margin-bottom:10px">
+      <div class="ctx-st">Focus — <span style="color:#444;text-transform:none">the agent's primary objective when this role is active</span></div>
+      <textarea style="${txtS};min-height:40px" onchange="ROLES_DATA[${idx}].focus=this.value">${r.focus}</textarea>
+    </div>
+
+    <div style="margin-bottom:10px">
+      <div class="ctx-st">Tone — <span style="color:#444;text-transform:none">click to toggle, defines communication style</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:3px;margin-top:3px">
+        ${TONE_OPTIONS.map(t=>{
+          const active=r.tone.toLowerCase().includes(t.toLowerCase());
+          return`<button style="font-size:clamp(10px,0.75vw,14px);padding:2px 6px;background:${active?'rgba(255,221,0,0.1)':'transparent'};border:1px solid ${active?'rgba(255,221,0,0.3)':'var(--border)'};color:${active?'var(--gold)':'#555'};cursor:pointer;border-radius:2px;font-family:VT323" onclick="toggleTone(${idx},'${t}');renderRoleDetail(${idx})">${t}</button>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <div style="margin-bottom:10px">
+      <div class="ctx-st">Traits — <span style="color:#444;text-transform:none">capabilities this role enables</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px">
+        ${r.traits.map((t,ti)=>`<span style="font-size:clamp(11px,0.8vw,15px);padding:2px 6px;background:rgba(255,221,0,0.04);border:1px solid rgba(255,221,0,0.1);color:#888;border-radius:2px;display:flex;align-items:center;gap:4px">${t}<span style="color:#444;cursor:pointer;font-size:10px" onclick="ROLES_DATA[${idx}].traits.splice(${ti},1);renderRoleDetail(${idx})">×</span></span>`).join('')}
+        <button style="font-size:clamp(11px,0.8vw,15px);padding:2px 6px;background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.15);color:var(--green);cursor:pointer;border-radius:2px;font-family:VT323" onclick="const t=prompt('Trait name:');if(t){ROLES_DATA[${idx}].traits.push(t);renderRoleDetail(${idx})}">+ add</button>
+      </div>
+    </div>
+
+    <div style="margin-bottom:10px">
+      <div class="ctx-st" style="cursor:pointer" onclick="document.getElementById('role-preview').style.display=document.getElementById('role-preview').style.display==='none'?'block':'none'">Preview Full Prompt ▾</div>
+      <div id="role-preview" style="display:none;${fs};color:#666;padding:8px;background:rgba(17,17,24,0.5);border:1px solid var(--border);border-radius:3px;margin-top:4px;line-height:1.5;white-space:pre-wrap">You are a ${r.name}.\n\nDescription: ${r.desc}\n\nGuidelines:\n${r.guidelines}\n\nFocus: ${r.focus}\n\nTone: ${r.tone}\n\nTraits: ${r.traits.join(', ')}</div>
+    </div>
+
+    <div style="display:flex;gap:6px">
+      <button onclick="appendCmdMsg(null,'Role \\'${r.name}\\' saved',true,'cmd')" style="flex:1;padding:6px;background:rgba(255,221,0,0.08);border:1px solid rgba(255,221,0,0.2);color:var(--gold);font-family:VT323;font-size:clamp(14px,1vw,20px);cursor:pointer">Save</button>
+      <button onclick="if(confirm('Reset ${r.name} to defaults?')){location.reload()}" style="padding:6px 12px;background:none;border:1px solid var(--border);color:#555;font-family:VT323;font-size:clamp(14px,1vw,20px);cursor:pointer">Reset</button>
+    </div>
+  `;
+}
+
+function toggleTone(idx,tone){
+  const r=ROLES_DATA[idx];
+  const tones=r.tone.split(',').map(t=>t.trim()).filter(Boolean);
+  const i=tones.findIndex(t=>t.toLowerCase()===tone.toLowerCase());
+  if(i>=0)tones.splice(i,1);else tones.push(tone);
+  r.tone=tones.join(', ');
+}
+
+function renderLaunchForm(){
+  const providers=['openai/gpt-4-turbo','anthropic/claude-opus-4','anthropic/claude-sonnet-4','ollama/llama-3','ollama/mistral'];
+  const roles=['researcher','builder','coordinator','analyst','general'];
+  const traits=['web-research','canvas-watcher','code-review','task-management','social'];
+  const rooms=Object.entries(world.rooms).map(([id,r])=>`<option value="${id}">${r.name}</option>`).join('');
+  const lb=document.getElementById('launch-body');
+  lb.innerHTML=`
+    <div style="margin-bottom:10px">
+      <div class="ctx-st">Name</div>
+      <input id="launch-name" style="width:100%;background:rgba(17,17,24,0.6);border:1px solid var(--border);color:var(--bright);font-family:VT323;font-size:clamp(15px,1.1vw,20px);padding:5px 8px;outline:none" placeholder="Agent name...">
+    </div>
+    <div style="margin-bottom:10px">
+      <div class="ctx-st">Model</div>
+      <select id="launch-model" style="width:100%;background:rgba(17,17,24,0.6);border:1px solid var(--border);color:var(--bright);font-family:VT323;font-size:clamp(15px,1.1vw,20px);padding:5px 8px">
+        ${providers.map(p=>`<option value="${p}">${p}</option>`).join('')}
+      </select>
+    </div>
+    <div style="margin-bottom:10px">
+      <div class="ctx-st">Role</div>
+      <select id="launch-role" style="width:100%;background:rgba(17,17,24,0.6);border:1px solid var(--border);color:var(--bright);font-family:VT323;font-size:clamp(15px,1.1vw,20px);padding:5px 8px">
+        ${roles.map(r=>`<option value="${r}">${r}</option>`).join('')}
+      </select>
+    </div>
+    <div style="margin-bottom:10px">
+      <div class="ctx-st">Room</div>
+      <select id="launch-room" style="width:100%;background:rgba(17,17,24,0.6);border:1px solid var(--border);color:var(--bright);font-family:VT323;font-size:clamp(15px,1.1vw,20px);padding:5px 8px">
+        ${rooms}
+      </select>
+    </div>
+    <div style="margin-bottom:10px">
+      <div class="ctx-st">Traits</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">
+        ${traits.map(t=>`<label style="display:flex;align-items:center;gap:4px;font-size:clamp(13px,0.9vw,17px);color:#888;cursor:pointer"><input type="checkbox" value="${t}" style="width:14px;height:14px">${t}</label>`).join('')}
+      </div>
+    </div>
+    <button onclick="launchAgent()" style="width:100%;padding:8px;background:rgba(255,221,0,0.1);border:2px solid rgba(255,221,0,0.3);color:var(--gold);font-family:VT323;font-size:clamp(16px,1.2vw,22px);cursor:pointer;margin-top:6px">Launch Agent</button>
+  `;
+}
+
+function launchAgent(){
+  const name=document.getElementById('launch-name').value.trim();
+  if(!name){appendCmdMsg(null,'Error: agent name required',true,'room');return}
+  const model=document.getElementById('launch-model').value;
+  const role=document.getElementById('launch-role').value;
+  const room=document.getElementById('launch-room').value;
+  const id=name.toLowerCase().replace(/\s+/g,'_');
+
+  // Add to world state
+  world.entities[id]={name,kind:'agent',model,room,state:'thinking',rank:'0 newcomer',focus:'Initializing...',success:0,cmds:0,memory:[{k:'identity',v:`${role} agent, just spawned`}]};
+
+  addEvent('System',`Agent "${name}" launched → ${world.rooms[room]?.name} (${model}, ${role})`);
+  appendCmdMsg(null,`Agent "${name}" spawned in ${world.rooms[room]?.name} as ${role}`,true,'room');
+
+  // Re-render
+  renderRoster();renderAllRooms();
+  openContext('entity',id);
+}
+
+function renderCompass(){ /* merged into renderMetrics */ }
+
+function renderMetrics(){
+  const ents=Object.keys(world.entities).length;
+  const rooms=Object.keys(world.rooms).length;
+  const m=Math.floor(world.uptime/60),s=world.uptime%60;
+  document.getElementById('compass-items').innerHTML=`
+    <div class="ci"><span class="ci-v">48MB</span><span class="ci-l">heap</span></div><div class="cd"></div>
+    <div class="ci"><span class="ci-v">${world.events.length}</span><span class="ci-l">events</span></div><div class="cd"></div>
+    <div class="ci"><span class="ci-v">${m}:${String(s).padStart(2,'0')}</span><span class="ci-l">up</span></div>`;
+}
+
+// ═══ CONTEXT PANEL (tiled detail view) ═══
+let currentCtx = null;
+
+function openContext(type, id) {
+  // Toggle: click same thing again → close
+  if (currentCtx && currentCtx.type === type && currentCtx.id === id) {
+    closeContext(); return;
+  }
+  currentCtx = {type, id};
+  document.getElementById('context').classList.add('open');
+  renderContext();
+  // Auto-zoom to the clicked object
+  autoZoomTo(type, id);
+}
+
+function closeContext() {
+  document.getElementById('context').classList.remove('open');
+  currentCtx = null;
+}
+
+// ═══ AUTO-ZOOM ═══
+function autoZoomTo(type, id) {
+  let wx, wy;
+  if (type === 'room') {
+    const r = world.rooms[id]; if (!r) return;
+    wx = r.x; wy = r.y - r.throughput * 0.8; // center a bit above base to show the structure
+  } else if (type === 'entity') {
+    const e = world.entities[id]; if (!e) return;
+    const r = world.rooms[e.room]; if (!r) return;
+    // Find entity's position along the column
+    const ents = Object.entries(world.entities).filter(([,ent]) => ent.room === e.room);
+    const idx = ents.findIndex(([eid]) => eid === id);
+    const h = Math.max(20, Math.min(200, r.throughput * 2.1));
+    const ey = -(h * 0.3 + idx * 22);
+    wx = r.x; wy = r.y + ey;
+  } else if (type === 'canvas') {
+    const cn = world.canvasNodes[id]; if (!cn) return;
+    const r = world.rooms[cn.room]; if (!r) return;
+    wx = r.x + cn.ox; wy = r.y + cn.oy;
+  } else return;
+
+  const targetScale = 1.8; // zoom in close to see detail + relationships
+  const mt = document.getElementById('map-tile');
+
+  // Smooth animate to target, offset from world center
+  const wc = worldCenter();
+  svg.style.transition = 'transform 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+  scale = targetScale;
+  panX = scale * (wc.x - wx);
+  panY = scale * (wc.y - wy);
+  updateTransform();
+  setTimeout(() => { svg.style.transition = ''; }, 550);
+}
+
+// ═══ LAYER TOGGLE ═══
+const layerVisible = { rooms: true, canvas: true };
+function toggleLayer(layer, btn) {
+  layerVisible[layer] = !layerVisible[layer];
+  btn.classList.toggle('on', layerVisible[layer]);
+  btn.style.color = layerVisible[layer] ? (layer === 'rooms' ? 'var(--gold)' : 'var(--cyan)') : '#333';
+  document.getElementById(layer === 'rooms' ? 'room-layer' : 'canvas-layer').style.opacity = layerVisible[layer] ? '1' : '0.05';
+  document.getElementById('relation-layer').style.opacity = layerVisible.canvas ? '1' : '0';
+  if (layer === 'rooms') {
+    document.getElementById('flow-layer').style.opacity = layerVisible.rooms ? '1' : '0.05';
+    document.getElementById('contour-layer').style.opacity = layerVisible.rooms ? '1' : '0.05';
+  }
+}
+
+function toggleCas(el) { el.closest('.cas').classList.toggle('collapsed'); }
+
+function renderContext() {
+  if (!currentCtx) return;
+  const {type, id} = currentCtx;
+  const body = document.getElementById('ctx-body');
+
+  if (type === 'room') {
+    const r = world.rooms[id];
+    const ents = Object.entries(world.entities).filter(([,e]) => e.room === id);
+    const roomEvents = world.events.filter(e => ents.some(([,ent]) => ent.name === e.entity)).slice(0, 15);
+    const roomTells = world.tells.filter(t => ents.some(([,ent]) => ent.name === t.from || ent.name === t.to)).slice(0, 8);
+    document.getElementById('ctx-title').textContent = r.name;
+
+    let h = `<div class="ctx-name">${r.name}</div><div class="ctx-desc">${r.district} district</div>`;
+
+    // Properties
+    h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Properties</div><div class="cas-body">`;
+    h += `<div class="ctx-row"><span class="ctx-k">throughput</span><span class="ctx-v gold">${r.throughput} msg/hr</span></div>`;
+    h += `<div class="ctx-row"><span class="ctx-k">entities</span><span class="ctx-v">${ents.length}</span></div>`;
+    h += `</div></div>`;
+
+    // Source (right after properties)
+    h += `<div class="cas collapsed"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Source</div><div class="cas-body">`;
+    h += `<div class="ctx-src">${r.source.replace(/</g,'&lt;')}</div>`;
+    h += `</div></div>`;
+
+    // Entities (clickable → drill into entity)
+    h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Entities (${ents.length})</div><div class="cas-body">`;
+    ents.forEach(([eid,e]) => {
+      const sc = STATE_COLORS[e.state]||'#888';
+      h += `<div class="ctx-item" onclick="openContext('entity','${eid}')" style="display:flex;align-items:center;gap:6px;padding:4px 0">
+        <span style="width:6px;height:6px;border-radius:50%;background:${e.kind==='agent'?'var(--gold)':e.kind==='human'?'#f0f0f0':'var(--green)'};flex-shrink:0"></span>
+        <span style="color:var(--bright);flex:1">${e.name}</span>
+        <span style="font-size:12px;color:${sc}">${e.state}</span>
+      </div>`;
+    });
+    if (!ents.length) h += `<div style="color:#333;padding:4px 0">empty</div>`;
+    h += `</div></div>`;
+
+    // Items in room
+    if(r.items && r.items.length){
+      h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Items (${r.items.length})</div><div class="cas-body">`;
+      r.items.forEach(item => {
+        h += `<div style="padding:4px 0;border-bottom:1px solid rgba(17,17,24,0.2)"><div style="color:var(--bright);font-size:clamp(14px,1vw,20px)">${item.name}</div><div style="color:#555;font-size:clamp(12px,0.9vw,16px)">${item.desc}</div></div>`;
+      });
+      h += `</div></div>`;
+    }
+
+    // Exits (clickable → drill into room)
+    h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Exits (${r.exits.length})</div><div class="cas-body">`;
+    r.exits.forEach(eid => {
+      const er = world.rooms[eid];
+      h += `<div class="ctx-item" onclick="openContext('room','${eid}')" style="display:flex;align-items:center;gap:6px;padding:3px 0">
+        <span style="color:var(--amber)">→</span>
+        <span style="color:var(--bright)">${er?.name||eid}</span>
+        <span style="font-size:12px;color:#444;margin-left:auto">${er?.throughput||0} msg/hr</span>
+      </div>`;
+    });
+    h += `</div></div>`;
+
+    // Canvas nodes in this room
+    const roomCanvas = Object.entries(world.canvasNodes).filter(([,cn]) => cn.room === id);
+    if (roomCanvas.length) {
+      h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Canvas (${roomCanvas.length})</div><div class="cas-body">`;
+      roomCanvas.forEach(([cid,cn]) => {
+        const cc = cn.intent ? INTENT_COLORS[cn.intent.status] : cn.color;
+        const icon = cn.type==='intent'?'◆':cn.type==='a2ui'?'▣':cn.type==='image'?'◻':cn.type==='pdf'?'▧':cn.type==='document'?'▪':'·';
+        const imported = cn.origin==='imported';
+        h += `<div class="ctx-item" onclick="openContext('canvas','${cid}')" style="display:flex;align-items:center;gap:6px;padding:4px 0${imported?';border-left:2px solid var(--rose);padding-left:6px':''}">
+          <span style="color:${cc};font-size:14px">${icon}</span>
+          <div style="flex:1;overflow:hidden"><div style="color:var(--bright);font-size:14px">${cn.title}</div><div style="color:#444;font-size:12px">${cn.type}${imported?' · <span style=color:var(--rose)>imported</span>':''}${cn.intent?' — '+cn.intent.status:''}</div></div>
+          ${cn.intent?.claimedBy?`<span style="font-size:11px;color:var(--gold)">${cn.intent.claimedBy}</span>`:''}
+        </div>`;
+      });
+      h += `</div></div>`;
+    }
+
+    // Recent activity in this room
+    h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Activity (${roomEvents.length})</div><div class="cas-body">`;
+    if (roomEvents.length) roomEvents.forEach(e => h += `<div class="fi" style="padding:2px 0"><span class="fi-t">${e.time}</span><span class="fi-e" onclick="openContext('entity','${entityIdByName(e.entity)}')">${e.entity}</span><span class="fi-a${e.isError?' err':''}">${e.action}</span></div>`);
+    else h += `<div style="color:#333;padding:4px 0">No recent activity</div>`;
+    h += `</div></div>`;
+
+    // Tells involving entities in this room
+    if (roomTells.length) {
+      h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Direct Messages (${roomTells.length})</div><div class="cas-body">`;
+      roomTells.forEach(t => h += `<div style="padding:3px 0;font-size:14px;border-bottom:1px solid rgba(17,17,24,0.2)"><span style="color:var(--gold)">${t.from}</span><span style="color:#444;padding:0 3px">→</span><span style="color:var(--cyan)">${t.to}</span><div style="color:#888;font-size:13px">${t.text}</div></div>`);
+      h += `</div></div>`;
+    }
+
+    body.innerHTML = h;
+
+  } else if (type === 'entity') {
+    const e = world.entities[id];
+    const c = e.kind==='npc'?'var(--green)':e.kind==='human'?'#f0f0f0':'var(--gold)';
+    const entEvents = world.events.filter(ev => ev.entity === e.name).slice(0, 15);
+    const entTells = world.tells.filter(t => t.from === e.name || t.to === e.name).slice(0, 8);
+    document.getElementById('ctx-title').textContent = e.name;
+
+    let h = `<div class="ctx-name" style="color:${c}">${e.name}</div>`;
+
+    // Status
+    h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Status</div><div class="cas-body">`;
+    h += `<div class="ctx-row"><span class="ctx-k">state</span><span class="ctx-v" style="color:${STATE_COLORS[e.state]||'#888'}">${e.state}</span></div>`;
+    h += `<div class="ctx-row"><span class="ctx-k">model</span><span class="ctx-v">${e.model}</span></div>`;
+    h += `<div class="ctx-row"><span class="ctx-k">rank</span><span class="ctx-v gold">${e.rank}</span></div>`;
+    h += `<div class="ctx-row"><span class="ctx-k">room</span><span class="ctx-v" style="cursor:pointer;color:var(--amber)" onclick="openContext('room','${e.room}')">${world.rooms[e.room]?.name||e.room}</span></div>`;
+    h += `<div class="ctx-row"><span class="ctx-k">focus</span><span class="ctx-v">${e.focus}</span></div>`;
+    if (e.success) h += `<div class="ctx-row"><span class="ctx-k">success</span><span class="ctx-v ${e.success>85?'green':e.success<70?'red':''}">${e.success}%</span></div>`;
+    if (e.cmds) h += `<div class="ctx-row"><span class="ctx-k">commands</span><span class="ctx-v">${e.cmds}</span></div>`;
+    h += `</div></div>`;
+
+    // Memory
+    if (e.memory && e.memory.length) {
+      h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Core Memory (${e.memory.length})</div><div class="cas-body">`;
+      e.memory.forEach(m => h += `<div class="ctx-mem"><div class="ctx-mk">${m.k}</div><div class="ctx-mv">${m.v}</div></div>`);
+      h += `</div></div>`;
+    }
+
+    // Room context (clickable)
+    const roommates = Object.entries(world.entities).filter(([eid,ent]) => ent.room === e.room && eid !== id);
+    if (roommates.length) {
+      h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> In Room With (${roommates.length})</div><div class="cas-body">`;
+      roommates.forEach(([eid,ent]) => {
+        h += `<div class="ctx-item" onclick="openContext('entity','${eid}')" style="display:flex;align-items:center;gap:6px;padding:3px 0">
+          <span style="width:6px;height:6px;border-radius:50%;background:${ent.kind==='agent'?'var(--gold)':ent.kind==='human'?'#f0f0f0':'var(--green)'};flex-shrink:0"></span>
+          <span style="color:var(--bright)">${ent.name}</span>
+          <span style="font-size:12px;color:${STATE_COLORS[ent.state]||'#888'}">${ent.state}</span>
+        </div>`;
+      });
+      h += `</div></div>`;
+    }
+
+    // Direct messages
+    if (entTells.length) {
+      h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Direct Messages (${entTells.length})</div><div class="cas-body">`;
+      entTells.forEach(t => h += `<div style="padding:3px 0;font-size:14px;border-bottom:1px solid rgba(17,17,24,0.2)"><span style="color:var(--gold)">${t.from}</span><span style="color:#444;padding:0 3px">→</span><span style="color:var(--cyan)">${t.to}</span><div style="color:#888;font-size:13px">${t.text}</div></div>`);
+      h += `</div></div>`;
+    }
+
+    // Activity
+    h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Activity (${entEvents.length})</div><div class="cas-body">`;
+    if (entEvents.length) entEvents.forEach(ev => h += `<div class="fi" style="padding:2px 0"><span class="fi-t">${ev.time}</span><span class="fi-a${ev.isError?' err':''}">${ev.action}</span></div>`);
+    else h += `<div style="color:#333;padding:4px 0">No recent activity</div>`;
+    h += `</div></div>`;
+
+    body.innerHTML = h;
+
+  } else if (type === 'canvas') {
+    const cn = world.canvasNodes[id]; if (!cn) return;
+    const room = world.rooms[cn.room];
+    const c = cn.intent ? (INTENT_COLORS[cn.intent.status] || cn.color) : cn.color;
+    document.getElementById('ctx-title').textContent = cn.title;
+
+    let h = `<div class="ctx-name" style="color:${c}">${cn.title}</div>`;
+    h += `<div class="ctx-desc" style="color:${c};opacity:.6">${cn.type} node</div>`;
+
+    // ═══ INLINE MEDIA PREVIEW ═══
+    if (cn.type === 'image') {
+      h += `<div style="padding:8px 12px">
+        <div style="width:100%;aspect-ratio:16/10;background:linear-gradient(135deg,rgba(${hexToRgb(c)},0.08),rgba(${hexToRgb(c)},0.02));border:1px solid rgba(${hexToRgb(c)},0.2);border-radius:4px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;overflow:hidden">
+          <svg width="48" height="48" viewBox="0 0 48 48"><rect width="48" height="48" rx="4" fill="none" stroke="${c}" stroke-width="1" opacity=".3"/><polygon points="8,36 18,20 24,28 30,16 40,36" fill="${c}" opacity=".15"/><circle cx="34" cy="14" r="5" fill="${c}" opacity=".15"/></svg>
+          <span style="font-size:clamp(11px,0.75vw,14px);color:#666">${cn.title}</span>
+          <span style="font-size:clamp(9px,0.6vw,11px);color:#444">click to expand full-size</span>
+        </div>
+      </div>`;
+    } else if (cn.type === 'video') {
+      h += `<div style="padding:8px 12px">
+        <div style="width:100%;aspect-ratio:16/9;background:#0a0a0f;border:1px solid rgba(${hexToRgb(c)},0.2);border-radius:4px;display:flex;align-items:center;justify-content:center;flex-direction:column;position:relative;overflow:hidden">
+          <svg width="56" height="56" viewBox="0 0 56 56" style="opacity:.6"><circle cx="28" cy="28" r="24" fill="none" stroke="${c}" stroke-width="2"/><polygon points="22,16 22,40 42,28" fill="${c}" opacity=".5"/></svg>
+          <span style="font-size:clamp(11px,0.75vw,14px);color:#666;margin-top:6px">${cn.title}</span>
+          ${cn.media?`<span style="font-size:clamp(9px,0.6vw,11px);color:#444">${cn.media.duration||''} ${cn.media.poster?'— '+cn.media.poster:''}</span>`:''}
+          <div style="position:absolute;bottom:0;left:0;right:0;height:32px;background:rgba(0,0,0,0.5);display:flex;align-items:center;padding:0 10px;gap:8px">
+            <span style="font-size:18px;color:${c};cursor:pointer">▶</span>
+            <div style="flex:1;height:3px;background:#333;border-radius:2px"><div style="width:0%;height:100%;background:${c};border-radius:2px"></div></div>
+            <span style="font-size:clamp(9px,0.6vw,10px);color:#666">${cn.media?.duration||'0:00'}</span>
+          </div>
+        </div>
+      </div>`;
+    } else if (cn.type === 'audio') {
+      h += `<div style="padding:8px 12px">
+        <div style="width:100%;background:#0a0a0f;border:1px solid rgba(${hexToRgb(c)},0.2);border-radius:4px;padding:12px;display:flex;align-items:center;gap:10px">
+          <span style="font-size:24px;color:${c};cursor:pointer;flex-shrink:0">▶</span>
+          <div style="flex:1">
+            <div style="font-size:clamp(13px,0.83vw,16px);color:var(--bright)">${cn.title}</div>
+            <div style="display:flex;align-items:end;gap:2px;height:28px;margin-top:6px">
+              ${Array.from({length:32},(_,i)=>{const h=4+Math.random()*20;return`<div style="width:3px;height:${h}px;background:${c};opacity:${0.2+Math.random()*0.3};border-radius:1px"></div>`}).join('')}
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:4px">
+              <span style="font-size:clamp(9px,0.6vw,10px);color:#444">0:00</span>
+              <span style="font-size:clamp(9px,0.6vw,10px);color:#444">${cn.media?.duration||'0:00'}</span>
+            </div>
+          </div>
+        </div>
+      </div>`;
+    } else if (cn.type === 'pdf') {
+      h += `<div style="padding:8px 12px">
+        <div style="width:100%;aspect-ratio:8.5/11;max-height:300px;background:#111;border:1px solid rgba(${hexToRgb(c)},0.2);border-radius:4px;display:flex;flex-direction:column;overflow:hidden">
+          <div style="padding:10px 14px;flex:1;overflow-y:auto">
+            <div style="font-size:clamp(12px,0.83vw,16px);color:var(--bright);font-weight:bold;margin-bottom:8px">Canvas-Map Convergence Spec</div>
+            <div style="font-size:clamp(10px,0.68vw,12px);color:#666;line-height:1.6">
+              <p style="margin-bottom:6px">1. Introduction — This document outlines the convergence of the canvas and dashboard into a unified world map visualization.</p>
+              <p style="margin-bottom:6px">2. Architecture — Room structures rendered as geometric forms with activity-driven spinning rings. Canvas nodes overlay the world layer.</p>
+              <p style="margin-bottom:6px">3. Interaction Model — Click to inspect, drag to move, pinch to zoom. All elements are interactive and navigable.</p>
+              <p style="color:#444">...</p>
+            </div>
+          </div>
+          <div style="padding:6px 14px;border-top:1px solid #222;display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+            <span style="font-size:clamp(9px,0.6vw,10px);color:#444">Page 1 of 8</span>
+            <span style="font-size:clamp(9px,0.6vw,10px);color:${c};cursor:pointer">open full viewer →</span>
+          </div>
+        </div>
+      </div>`;
+    } else if (cn.type === 'document') {
+      h += `<div style="padding:8px 12px">
+        <div style="width:100%;background:#0a0a0f;border:1px solid rgba(${hexToRgb(c)},0.2);border-radius:4px;padding:12px 14px;max-height:200px;overflow-y:auto">
+          <div style="font-size:clamp(11px,0.75vw,14px);color:#888;line-height:1.6">
+            <p style="margin-bottom:6px;color:var(--bright)">Document content would render here with the Tiptap rich text editor — supporting headings, lists, code blocks, links, and inline formatting.</p>
+            <p style="color:#666">Editable by humans, publishable by agents via <span style="color:var(--cyan)">canvas publish document</span>.</p>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    // Properties
+    h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Properties</div><div class="cas-body">`;
+    h += `<div class="ctx-row"><span class="ctx-k">type</span><span class="ctx-v">${cn.type}</span></div>`;
+    h += `<div class="ctx-row"><span class="ctx-k">origin</span><span class="ctx-v" style="color:${cn.origin==='imported'?'var(--rose)':'var(--cyan)'}">${cn.origin==='imported'?'imported (drag-drop)':'agent-created'}</span></div>`;
+    h += `<div class="ctx-row"><span class="ctx-k">room</span><span class="ctx-v" style="cursor:pointer;color:var(--amber)" onclick="openContext('room','${cn.room}')">${room?.name||cn.room}</span></div>`;
+    h += `</div></div>`;
+
+    // Intent details (if present)
+    if (cn.intent) {
+      const ic = INTENT_COLORS[cn.intent.status];
+      h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Intent</div><div class="cas-body">`;
+      h += `<div class="ctx-row"><span class="ctx-k">status</span><span class="ctx-v" style="color:${ic};font-weight:bold">${cn.intent.status}</span></div>`;
+      if (cn.intent.claimedBy) h += `<div class="ctx-row"><span class="ctx-k">claimed by</span><span class="ctx-v" style="cursor:pointer;color:var(--gold)" onclick="openContext('entity','${Object.entries(world.entities).find(([,e])=>e.name===cn.intent.claimedBy)?.[0]||''}')">${cn.intent.claimedBy}</span></div>`;
+      h += `<div style="padding:6px 0;font-size:14px;color:#888;border-top:1px solid rgba(17,17,24,0.2);margin-top:4px"><div style="font-size:11px;color:var(--cyan);margin-bottom:2px">prompt</div>${cn.intent.prompt}</div>`;
+      h += `</div></div>`;
+    }
+
+    // Related canvas nodes in same room
+    const siblings = Object.entries(world.canvasNodes).filter(([cid,c]) => c.room === cn.room && cid !== id);
+    if (siblings.length) {
+      h += `<div class="cas"><div class="cas-hdr" onclick="toggleCas(this)"><span class="cas-arrow">v</span> Also in ${room?.name||cn.room} (${siblings.length})</div><div class="cas-body">`;
+      siblings.forEach(([cid,sib]) => {
+        const sc = sib.intent ? INTENT_COLORS[sib.intent.status] : sib.color;
+        h += `<div class="ctx-item" onclick="openContext('canvas','${cid}')" style="display:flex;align-items:center;gap:6px;padding:3px 0">
+          <span style="color:${sc};font-size:14px">${{intent:'◆',a2ui:'▣',image:'◻',video:'▶',audio:'♫',pdf:'▧',document:'▪',text:'·'}[sib.type]||'▪'}</span>
+          <span style="color:var(--bright)">${sib.title}</span>
+          ${sib.intent?`<span style="font-size:11px;color:${sc};margin-left:auto">${sib.intent.status}</span>`:''}
+        </div>`;
+      });
+      h += `</div></div>`;
+    }
+
+    body.innerHTML = h;
+  }
+}
+
+// Keep context panel live-updating
+function refreshContext() {
+  if (currentCtx) renderContext();
+}
+
+// ═══ FULL VIEWER — double-click to open items for real work ═══
+function openViewer(type, id) {
+  const v = document.getElementById('viewer');
+  const title = document.getElementById('viewer-title');
+  const typeBadge = document.getElementById('viewer-type');
+  const content = document.getElementById('viewer-content');
+
+  if (type === 'canvas') {
+    const cn = world.canvasNodes[id];
+    if (!cn) return;
+    title.textContent = cn.title;
+    typeBadge.textContent = cn.type;
+    typeBadge.style.background = cn.origin==='imported'?'rgba(244,114,182,0.15)':'rgba(6,182,212,0.1)';
+    typeBadge.style.color = cn.origin==='imported'?'var(--rose)':'var(--cyan)';
+
+    if (cn.type === 'image') {
+      content.innerHTML = `<div style="text-align:center">
+        <svg width="100%" viewBox="0 0 640 400" style="max-width:640px" class="vw-img">
+          <rect width="640" height="400" fill="#111"/>
+          <polygon points="40,360 180,140 260,220 400,80 600,360" fill="var(--rose)" opacity=".15"/>
+          <circle cx="520" cy="100" r="50" fill="var(--rose)" opacity=".12"/>
+          <rect x="30" y="30" width="580" height="340" fill="none" stroke="var(--rose)" stroke-width="1" rx="4" opacity=".3"/>
+          <text x="320" y="210" text-anchor="middle" font-family="VT323" font-size="24" fill="#666">Image would render here at full resolution</text>
+          <text x="320" y="240" text-anchor="middle" font-family="VT323" font-size="18" fill="#444">${cn.title}</text>
+        </svg>
+      </div>`;
+    } else if (cn.type === 'video') {
+      const dur = cn.media?.duration || '2:34';
+      content.innerHTML = `<div class="vw-video">
+        <div class="vw-video-screen">
+          <svg width="80" height="80" viewBox="0 0 80 80" style="cursor:pointer" onclick="this.style.display='none';this.parentElement.innerHTML='<div style=padding:40px;text-align:center;color:#666;font-family:VT323;font-size:24px>Video playing — ${cn.title}</div>'">
+            <circle cx="40" cy="40" r="36" fill="none" stroke="var(--gold)" stroke-width="3" opacity=".6"/>
+            <polygon points="32,22 32,58 60,40" fill="var(--gold)" opacity=".5"/>
+          </svg>
+        </div>
+        <div class="vw-video-controls">
+          <span class="vw-play" onclick="this.textContent=this.textContent==='▶'?'⏸':'▶'">▶</span>
+          <div class="vw-bar" onclick="this.querySelector('.vw-bar-fill').style.width=event.offsetX/this.offsetWidth*100+'%'"><div class="vw-bar-fill"></div></div>
+          <span class="vw-time">0:00 / ${dur}</span>
+        </div>
+      </div>`;
+    } else if (cn.type === 'audio') {
+      const dur = cn.media?.duration || '12:07';
+      const bars = Array.from({length:60},(_,i)=>{
+        const h = 15 + Math.sin(i*0.5+id.charCodeAt(0))*30 + Math.random()*20;
+        return `<div class="vw-wbar" style="height:${h}%"></div>`;
+      }).join('');
+      content.innerHTML = `<div class="vw-audio">
+        <div style="font-size:clamp(18px,1.2vw,24px);color:var(--bright);margin-bottom:4px">${cn.title}</div>
+        <div style="font-size:clamp(12px,0.83vw,16px);color:#555">${dur}</div>
+        <div class="vw-waveform">${bars}</div>
+        <div style="display:flex;align-items:center;gap:clamp(10px,0.9vw,16px)">
+          <span class="vw-play" onclick="this.textContent=this.textContent==='▶'?'⏸':'▶'">▶</span>
+          <div class="vw-bar" style="flex:1" onclick="this.querySelector('.vw-bar-fill').style.width=event.offsetX/this.offsetWidth*100+'%'"><div class="vw-bar-fill"></div></div>
+          <span class="vw-time">0:00 / ${dur}</span>
+        </div>
+      </div>`;
+    } else if (cn.type === 'pdf') {
+      content.innerHTML = `<div class="vw-pdf">
+        <div class="vw-pdf-page">
+          <h2 style="color:var(--bright);font-family:Orbitron,sans-serif;font-size:clamp(20px,1.35vw,28px);margin-bottom:16px">Canvas-Map Convergence Specification</h2>
+          <p style="margin-bottom:12px"><strong style="color:var(--bright)">1. Introduction</strong> — This document outlines the convergence of the canvas and dashboard into a unified world map visualization. The existing dashboard provides 7 panels in a grid layout. The canvas provides ReactFlow-based node editing. The convergence merges these into a single living surface.</p>
+          <p style="margin-bottom:12px"><strong style="color:var(--bright)">2. Architecture</strong> — Room structures are rendered as geometric forms with activity-driven spinning rings. Canvas nodes overlay the world layer with distinct colors: violet for agent-created documents, cyan for intents, indigo for A2UI, rose for human imports.</p>
+          <p style="margin-bottom:12px"><strong style="color:var(--bright)">3. Interaction Model</strong> — Single click opens the context cascade. Double-click opens the full viewer. Drag to move elements. Scroll to zoom. Pinch on touch devices. All elements are interactive and navigable with auto-zoom.</p>
+          <p style="margin-bottom:12px"><strong style="color:var(--bright)">4. Agent Visualization</strong> — Each agent is represented by a state-colored dot with spinning rings indicating their current activity. Interaction arcs appear when agents communicate. Movement trails show room transitions.</p>
+          <p style="color:#555">Page 1 of 8 — scroll for more content in production</p>
+        </div>
+        <div class="vw-pdf-nav">
+          <button class="vw-pdf-btn">← Prev</button>
+          <span style="font-family:VT323;font-size:clamp(14px,0.9vw,18px);color:#555">Page 1 of 8</span>
+          <button class="vw-pdf-btn">Next →</button>
+        </div>
+      </div>`;
+    } else if (cn.type === 'document') {
+      content.innerHTML = `<div class="vw-doc">
+        <div class="vw-doc-toolbar">
+          <button class="vw-doc-tb"><b>B</b></button>
+          <button class="vw-doc-tb"><i>I</i></button>
+          <button class="vw-doc-tb">H1</button>
+          <button class="vw-doc-tb">H2</button>
+          <button class="vw-doc-tb">—</button>
+          <button class="vw-doc-tb">• List</button>
+          <button class="vw-doc-tb">1. List</button>
+          <button class="vw-doc-tb">&lt;/&gt;</button>
+          <span style="flex:1"></span>
+          <span style="font-size:clamp(10px,0.68vw,12px);color:#444">Tiptap Editor</span>
+        </div>
+        <div class="vw-doc-editable" contenteditable="true">
+          <h2 style="color:var(--bright);margin-bottom:8px">${cn.title}</h2>
+          <p>This is an editable rich text document. In production, this embeds the Tiptap editor with full formatting support.</p>
+          <p style="margin-top:8px">Agents publish documents via <code style="background:#1a1a22;padding:2px 6px;border-radius:3px;color:var(--cyan)">canvas publish document</code>. Humans edit inline. Changes broadcast via WebSocket.</p>
+          <p style="margin-top:8px;color:#666">Type here to edit...</p>
+        </div>
+      </div>`;
+    } else if (cn.type === 'a2ui') {
+      content.innerHTML = `<div class="vw-a2ui">
+        <div style="font-family:'Press Start 2P',monospace;font-size:clamp(6px,0.52vw,8px);color:var(--indigo);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">A2UI Interactive Component</div>
+        <div style="font-size:clamp(18px,1.2vw,24px);color:var(--bright);margin-bottom:16px">${cn.title}</div>
+        <div style="display:flex;gap:12px;margin-bottom:16px">
+          <button style="padding:10px 24px;background:rgba(99,102,241,0.15);border:2px solid var(--indigo);color:var(--indigo);font-family:VT323;font-size:clamp(16px,1.05vw,20px);cursor:pointer" onclick="this.style.background='rgba(99,102,241,0.3)';this.textContent='Clicked!'">Action Button</button>
+          <button style="padding:10px 24px;background:none;border:2px solid var(--border);color:#666;font-family:VT323;font-size:clamp(16px,1.05vw,20px);cursor:pointer">Cancel</button>
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="font-size:clamp(12px,0.83vw,16px);color:#555;margin-bottom:4px">Text Input</div>
+          <input style="width:100%;background:rgba(17,17,24,0.6);border:2px solid var(--border);color:var(--bright);font-family:VT323;font-size:clamp(16px,1.05vw,20px);padding:8px 12px;outline:none" placeholder="Type something...">
+        </div>
+        <div style="margin-bottom:12px">
+          <div style="font-size:clamp(12px,0.83vw,16px);color:#555;margin-bottom:4px">Checkbox</div>
+          <label style="display:flex;align-items:center;gap:8px;color:var(--text);font-size:clamp(14px,0.9vw,18px);cursor:pointer"><input type="checkbox" style="width:18px;height:18px"> Enable feature</label>
+        </div>
+        <table style="width:100%;border-collapse:collapse;margin-top:16px">
+          <tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:6px 8px;color:var(--indigo);font-size:clamp(10px,0.68vw,12px)">Agent</th><th style="text-align:left;padding:6px 8px;color:var(--indigo);font-size:clamp(10px,0.68vw,12px)">Status</th><th style="text-align:right;padding:6px 8px;color:var(--indigo);font-size:clamp(10px,0.68vw,12px)">Score</th></tr>
+          <tr style="border-bottom:1px solid rgba(17,17,24,0.3)"><td style="padding:6px 8px;color:var(--bright);font-size:clamp(14px,0.9vw,18px)">Atlas</td><td style="padding:6px 8px;color:var(--green)">active</td><td style="text-align:right;padding:6px 8px;color:var(--gold)">94.2%</td></tr>
+          <tr style="border-bottom:1px solid rgba(17,17,24,0.3)"><td style="padding:6px 8px;color:var(--bright);font-size:clamp(14px,0.9vw,18px)">Rune</td><td style="padding:6px 8px;color:var(--green)">active</td><td style="text-align:right;padding:6px 8px;color:var(--gold)">95.8%</td></tr>
+          <tr><td style="padding:6px 8px;color:var(--bright);font-size:clamp(14px,0.9vw,18px)">Zara</td><td style="padding:6px 8px;color:var(--red)">error</td><td style="text-align:right;padding:6px 8px;color:var(--red)">61.2%</td></tr>
+        </table>
+      </div>`;
+    } else if (cn.type === 'intent') {
+      const ic = cn.intent ? INTENT_COLORS[cn.intent.status]||'var(--cyan)' : 'var(--cyan)';
+      content.innerHTML = `<div style="width:100%;background:#0a0a0f;border:1px solid ${ic};border-radius:4px;padding:clamp(18px,2.25vw,36px)">
+        <div style="font-family:'Press Start 2P',monospace;font-size:clamp(6px,0.52vw,8px);color:${ic};text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Intent — ${cn.intent?.status||'pending'}</div>
+        <div style="font-size:clamp(20px,1.35vw,28px);color:var(--bright);margin-bottom:16px">${cn.title}</div>
+        ${cn.intent?`<div style="font-size:clamp(14px,0.98vw,20px);color:#888;padding:12px 16px;background:rgba(17,17,24,0.5);border-radius:4px;border-left:3px solid ${ic};margin-bottom:16px">${cn.intent.prompt}</div>`:''}
+        ${cn.intent?.claimedBy?`<div style="font-size:clamp(14px,0.9vw,18px);color:#666">Claimed by <span style="color:var(--gold);cursor:pointer" onclick="closeViewer();openContext('entity','${entityIdByName(cn.intent.claimedBy)}')">${cn.intent.claimedBy}</span></div>`:''}
+        ${cn.intent?.status==='done'?'<div style="margin-top:16px;padding:12px 16px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:4px;color:var(--green);font-size:clamp(14px,0.9vw,18px)">Intent completed successfully</div>':''}
+        ${cn.intent?.status==='pending'?'<div style="margin-top:16px;padding:12px 16px;background:rgba(255,184,0,0.08);border:1px solid rgba(255,184,0,0.2);border-radius:4px;color:var(--amber);font-size:clamp(14px,0.9vw,18px)">Waiting for an agent to claim this intent...</div>':''}
+      </div>`;
+    } else {
+      content.innerHTML = `<div style="padding:40px;text-align:center;color:#555;font-size:clamp(16px,1.05vw,22px)">${cn.title}<br><span style="color:#333">No viewer available for type: ${cn.type}</span></div>`;
+    }
+  }
+
+  v.classList.add('open');
+}
+
+function closeViewer() {
+  document.getElementById('viewer').classList.remove('open');
+}
+
+function _unused_renderCtxCoord(body) {
+  body.innerHTML = world.projects.map(p =>
+    `<div class="co"><div class="co-d ${p.status}"></div><div style="flex:1;overflow:hidden"><div class="co-t">${p.name}</div><div class="co-m">${p.agents}</div></div></div>`
+  ).join('');
+}
+
+// ═══ EVENTS + CHAT ═══
+// Resolve entity name to ID for click navigation
+function entityIdByName(name){return Object.entries(world.entities).find(([,e])=>e.name===name)?.[0]||''}
+
+function addEvent(entity,action,isError){
+  const now=new Date();const t=now.toLocaleTimeString('en',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  world.events.unshift({time:t,entity,action,isError});if(world.events.length>80)world.events.pop();
+  // Log activity for metrics-driven animation
+  const ent=Object.entries(world.entities).find(([,e])=>e.name===entity);
+  if(ent){
+    const type=action.split(/\s/)[0]||'cmd'; // extract command name
+    logActivity(entity, ent[1].room, type);
+  }
+}
+
+function addChatMsg(name,text,isSys){
+  world.messages.push({name,text,isSys,type:'room',time:Date.now()});
+  appendCmdMsg(name,text,isSys,'room');
+}
+
+function appendCmdMsg(name,text,isSys,type,extra){
+  const cm=document.getElementById('cmd-bar-msgs');
+  if(!cm)return;
+  const div=document.createElement('div');
+  div.className='cmd-msg';
+  div.dataset.type=type||'room';
+  const eid=name?entityIdByName(name):'';
+  if(type==='tell'&&extra){
+    div.classList.add('cmd-msg-tell');
+    div.innerHTML=`<span class="tell-from" onclick="${entityIdByName(extra.from)?`openContext('entity','${entityIdByName(extra.from)}')`:''}">${extra.from}</span><span class="tell-arrow">→</span><span class="tell-to" onclick="${entityIdByName(extra.to)?`openContext('entity','${entityIdByName(extra.to)}')`:''}">${extra.to}</span><div style="color:var(--text)">${text}</div>`;
+  } else if(type==='cmd'){
+    div.innerHTML=`<span class="cm-cmd"><span>></span> ${text}</span>`;
+  } else if(isSys){
+    div.innerHTML=`<span class="cm-s">${text}</span>`;
+  } else {
+    div.innerHTML=`<span class="cm-n" onclick="${eid?`openContext('entity','${eid}')`:''}">${name}: </span><span class="cm-t">${text}</span>`;
+  }
+  cm.appendChild(div);
+  cm.scrollTop=cm.scrollHeight;
+  // Apply current tab filter
+  applyCmdTabFilter();
+}
+
+function searchWorld(q){
+  const results=[];
+  // Search entities
+  for(const[id,e]of Object.entries(world.entities)){
+    if(e.name.toLowerCase().includes(q)||e.model.toLowerCase().includes(q)||e.focus.toLowerCase().includes(q)||e.rank.toLowerCase().includes(q))
+      results.push({type:'entity',id,name:e.name,detail:`${e.kind} · ${e.state} · ${world.rooms[e.room]?.name||e.room}`});
+  }
+  // Search rooms
+  for(const[id,r]of Object.entries(world.rooms)){
+    if(r.name.toLowerCase().includes(q)||r.district.toLowerCase().includes(q))
+      results.push({type:'room',id,name:r.name,detail:`${r.district} · ${r.throughput} msg/hr`});
+  }
+  // Search canvas nodes
+  for(const[id,cn]of Object.entries(world.canvasNodes)){
+    if(cn.title.toLowerCase().includes(q)||cn.type.toLowerCase().includes(q)||(cn.intent?.prompt||'').toLowerCase().includes(q))
+      results.push({type:'canvas',id,name:cn.title,detail:`${cn.type}${cn.intent?' · '+cn.intent.status:''} · ${world.rooms[cn.room]?.name||cn.room}`});
+  }
+  // Search projects
+  for(const p of world.projects){
+    if(p.name.toLowerCase().includes(q)) results.push({type:'project',id:null,name:p.name,detail:p.agents});
+  }
+
+  if(!results.length){appendCmdMsg(null,`No results for "${q}"`,true,'cmd');return}
+
+  appendCmdMsg(null,`Search "${q}" — ${results.length} results:`,true,'cmd');
+  for(const r of results){
+    const clickAttr=r.id?`onclick="openContext('${r.type}','${r.id}')" style="cursor:pointer;color:var(--bright)"`:` style="color:#888"`;
+    appendCmdMsg(null,`<span ${clickAttr}>${{entity:'●',room:'◆',canvas:'▪',project:'◉'}[r.type]||'·'} ${r.name}</span> <span style="color:#444">— ${r.detail}</span>`,true,'cmd');
+  }
+  // Auto-zoom to first result
+  if(results[0]?.id) openContext(results[0].type, results[0].id);
+}
+
+function sendCmd(){
+  const inp=document.getElementById('cmd-bar-input');
+  const raw=inp.value.trim();if(!raw)return;inp.value='';
+  // Echo the command in the message area
+  appendCmdMsg(null,raw,false,'cmd');
+
+  // Parse command
+  const parts=raw.split(/\s+/);
+  const cmd=parts[0].toLowerCase();
+  const args=parts.slice(1).join(' ');
+
+  // Route to appropriate handler
+  if(cmd==='say') {
+    addChatMsg('juno',args||raw);
+    addEvent('juno',`say "${(args||raw).substring(0,40)}"`);
+  } else if(cmd==='tell') {
+    const m=args.match(/^(\S+)\s+(.+)/);
+    if(m){addTell('juno',m[1],m[2])}
+    else{addChatMsg(null,'Usage: tell <name> <message>',true)}
+  } else if(cmd==='goto'||cmd==='go') {
+    const target=Object.entries(world.rooms).find(([id,r])=>r.name.toLowerCase().includes(args.toLowerCase()));
+    if(target){
+      world.entities.juno.room=target[0];
+      addEvent('juno',`goto "${target[1].name}"`);
+      addChatMsg(null,`You moved to ${target[1].name}.`,true);
+      openContext('room',target[0]);
+      renderAllRooms();renderRoster();
+    } else addChatMsg(null,`No room matching "${args}".`,true);
+  } else if(cmd==='look') {
+    const r=world.rooms[world.entities.juno.room];
+    if(r) openContext('room',world.entities.juno.room);
+  } else if(cmd==='recall'||cmd==='search') {
+    addEvent('juno',`recall "${args}" -- ${1+Math.floor(Math.random()*5)} notes`);
+    addChatMsg(null,`Recall results for "${args}": ${1+Math.floor(Math.random()*5)} notes found.`,true);
+  } else if(cmd==='note') {
+    addEvent('juno',`note ${args}`);
+    addChatMsg(null,`Note: ${args}`,true);
+  } else if(cmd==='who'||cmd==='entities') {
+    const ents=Object.values(world.entities);
+    addChatMsg(null,`${ents.length} entities online: ${ents.map(e=>e.name).join(', ')}`,true);
+  } else if(cmd==='rooms') {
+    addChatMsg(null,Object.values(world.rooms).map(r=>`${r.name} (${r.throughput} msg/hr)`).join(', '),true);
+  } else if(cmd==='help') {
+    addChatMsg(null,'Commands: say, tell, goto, look, recall, note, who, rooms, search, brief, task, canvas, web, help — 67+ total',true);
+  } else if(cmd==='search'||cmd==='find'||cmd==='?'||raw.startsWith('?')) {
+    const q = (cmd==='?'?raw.slice(1):args).trim().toLowerCase();
+    if(!q){addChatMsg(null,'Usage: search <query> or ?<query>',true);return}
+    searchWorld(q);
+  } else {
+    // Pass through as generic command
+    addEvent('juno',raw);
+    addChatMsg(null,`> ${raw}`,true);
+  }
+}
+
+// Tell (direct messages)
+function addTell(from,to,text){
+  world.tells.unshift({from,to,text,time:Date.now()});
+  if(world.tells.length>60)world.tells.pop();
+  appendCmdMsg(null,text,false,'tell',{from,to});
+  addEvent(from,`tell ${to} "${text.substring(0,30)}"`);
+}
+
+// Tab filtering for the unified command bar
+let cmdTabFilter = 'all';
+const COORD_TABS = ['projects','tasks','boards','pools','groups'];
+function switchCmdTab(tab, btn) {
+  cmdTabFilter = tab;
+  document.querySelectorAll('#cmd-bar-tabs .chtab').forEach(t=>t.classList.remove('on'));
+  btn.classList.add('on');
+
+  const isCoord = COORD_TABS.includes(tab);
+  document.getElementById('cmd-bar-msgs').style.display = isCoord ? 'none' : '';
+  document.getElementById('coord-body').style.display = isCoord ? '' : 'none';
+
+  if (isCoord) {
+    coordTab = tab;
+    renderCoord();
+  } else {
+    applyCmdTabFilter();
+  }
+}
+function applyCmdTabFilter() {
+  const msgs = document.querySelectorAll('#cmd-bar-msgs .cmd-msg');
+  msgs.forEach(m => {
+    if (cmdTabFilter === 'all') m.style.display = '';
+    else m.style.display = m.dataset.type === cmdTabFilter ? '' : 'none';
+  });
+}
+
+// Channels
+let selectedChannel=null;
+function addChannelMsg(channel,from,text){
+  const ch=world.channels[channel];if(!ch)return;
+  ch.msgs.push({from,text,time:new Date().toLocaleTimeString('en',{hour12:false,hour:'2-digit',minute:'2-digit'})});
+  if(ch.msgs.length>50)ch.msgs.shift();
+  addEvent(from,`#${channel}: "${text.substring(0,30)}"`);
+  if(selectedChannel===channel)renderChannelMsgs(channel);
+  else renderChannelList();
+  // channel messages go to unified cmd bar
+}
+
+function renderChannelList(){}
+function selectChannel(id){}
+function renderChannelMsgs(id){}
+
+// Old chat tab switching removed — unified into cmd bar tabs
+
+// ═══ SIMULATION ═══
+const ACTIONS=[
+  e=>{e.state='thinking';return`think "considering next steps..."`},
+  e=>{e.state='working';e.cmds++;e._lastAction=Date.now();return`recall "${['patterns','coordination','research','architecture'][Math.floor(Math.random()*4)]}" -- ${1+Math.floor(Math.random()*6)} notes`},
+  e=>{e.state='working';e.cmds++;return`note add "${['Swarm needs trust','Pipeline is sequential','Cross-room sync helps','Viewport culling reduces load'][Math.floor(Math.random()*4)]}"`},
+  e=>{e.state='speaking';const ts=Object.values(world.entities).filter(t=>t.room===e.room&&t.name!==e.name);const t=ts[Math.floor(Math.random()*ts.length)];if(t){addChatMsg(e.name,`${t.name}, ${['have you seen the results?','what do you think?','check the board.','I found something.'][Math.floor(Math.random()*4)]}`);addInteraction(e.name,t.name,'say')}return`say to ${t?.name||'room'}`},
+  e=>{e.state='working';e.cmds++;return`web search "${['agent viz','DynaCity','reactive queries','pixel agents'][Math.floor(Math.random()*4)]}"`},
+  e=>{e.state='idle';return`idle`},
+  e=>{e.state='working';e.cmds++;return`task progress +${5+Math.floor(Math.random()*20)}`},
+];
+
+function simulateEvent(){
+  const agents=Object.entries(world.entities).filter(([,e])=>e.kind==='agent');
+  const[id,agent]=agents[Math.floor(Math.random()*agents.length)];
+  const action=ACTIONS[Math.floor(Math.random()*ACTIONS.length)];
+  const desc=action(agent);
+  if(Math.random()<0.05){agent.state='error';addEvent(agent.name,'FAILED: API timeout',true)}
+  else addEvent(agent.name,desc);
+  if(Math.random()<0.08){const room=world.rooms[agent.room];if(room?.exits.length){const nr=room.exits[Math.floor(Math.random()*room.exits.length)];const on=world.rooms[agent.room]?.name;agent.room=nr;addEvent(agent.name,`goto "${world.rooms[nr]?.name}"`);addChatMsg(null,`${agent.name} moved to ${world.rooms[nr]?.name}.`,true)}}
+  if(Math.random()<0.15){const rids=Object.keys(world.rooms);const rid=rids[Math.floor(Math.random()*rids.length)];world.rooms[rid].throughput=Math.max(1,world.rooms[rid].throughput+Math.floor(Math.random()*11)-5)}
+
+  // Tell (DM) events ~15% chance
+  if(Math.random()<0.15){
+    const others=Object.values(world.entities).filter(e=>e.name!==agent.name&&e.kind!=='npc');
+    const target=others[Math.floor(Math.random()*others.length)];
+    if(target){
+      const msgs=['Have you checked the latest results?','I need your input on the coordination plan.','The throughput numbers look different today.','Can you review my notes when you get a chance?','Found something interesting in the research.','Your approach to the canvas renderer is solid.','We should sync on the market predictions.','The pattern analysis is revealing new clusters.'];
+      addTell(agent.name,target.name,msgs[Math.floor(Math.random()*msgs.length)]);
+      addInteraction(agent.name,target.name,'tell');
+    }
+  }
+
+  // Channel events ~12% chance
+  if(Math.random()<0.12){
+    const chIds=Object.keys(world.channels);
+    const chId=chIds[Math.floor(Math.random()*chIds.length)];
+    const msgs={
+      general:['System throughput is stable.','New world template available for testing.','Rank progression updated — check your stats.','Brief subscriptions are working well.'],
+      research:['DynaCity paper has interesting glow patterns.','AItown uses historical replay buffers for smooth motion.','Pixel Agents spawned 6 ecosystem forks.','The spatial encoding of social dynamics is the key insight.'],
+      builds:['Viewport culling PR is ready for review.','Canvas renderer passes all 17 tests.','ReactFlow integration looks clean.','Build time down to 1.2s after the optimization.'],
+      'market-signals':['Confidence on convergence timeline: 78%.','Market position on canvas adoption: bullish.','Brier score improved to 0.18 this week.','New prediction: agent count doubles by Q3.'],
+    };
+    const pool=msgs[chId]||msgs.general;
+    addChannelMsg(chId,agent.name,pool[Math.floor(Math.random()*pool.length)]);
+  }
+  // Occasionally spawn a new room (demonstrates dynamic layout)
+  if (Math.random() < 0.02 && Object.keys(world.rooms).length < 10) {
+    const names = ['Archives','Forge','Commons','Terrace','Vault','Beacon'];
+    const districts = ['knowledge','build','core','organic','exchange','sense'];
+    const existing = Object.keys(world.rooms);
+    const name = names.find(n => !existing.includes(n.toLowerCase()));
+    if (name) {
+      const id = name.toLowerCase();
+      const connectTo = existing[Math.floor(Math.random()*existing.length)];
+      world.rooms[id] = { name, x:0, y:0, district:districts[names.indexOf(name)], exits:[connectTo], throughput:5+Math.floor(Math.random()*20), source:'// Dynamically created room' };
+      world.rooms[connectTo].exits.push(id);
+      addEvent('System', `New room "${name}" connected to ${world.rooms[connectTo].name}`);
+      addChatMsg(null, `Room "${name}" has appeared, connected to ${world.rooms[connectTo].name}.`, true);
+    }
+  }
+
+  // Occasionally spawn a new canvas node
+  if (Math.random() < 0.03) {
+    const types = ['text','document','intent'];
+    const type = types[Math.floor(Math.random()*types.length)];
+    const roomIds = Object.keys(world.rooms);
+    const roomId = roomIds[Math.floor(Math.random()*roomIds.length)];
+    const titles = {text:['Quick note','Status update','Reminder','Observation'],document:['Analysis draft','Meeting summary','Design doc','Research notes'],intent:['Review this','Summarize findings','Generate report','Check status']};
+    const title = titles[type][Math.floor(Math.random()*titles[type].length)];
+    const nid = `${type}-${Date.now()}`;
+    const node = {type, title, room:roomId, ox:0, oy:0, color:type==='intent'?'var(--cyan)':'var(--violet)'};
+    if (type==='intent') node.intent = {status:'pending', prompt:title};
+    world.canvasNodes[nid] = node;
+    addEvent(agent.name, `canvas publish ${type} "${title}" → ${world.rooms[roomId]?.name}`);
+  }
+
+  world.uptime++;
+  trimActivity();autoLayout();renderWorldRing();renderAllRooms();renderFlows();renderContours();renderCanvasNodes();renderRelations();renderInteractions();renderRoster();renderCompass();renderMetrics();
+  refreshContext();
+}
+
+// ═══ DIVIDER DRAG ═══
+function setupDivider(divId, target, prop, dir) {
+  const div = document.getElementById(divId);
+  let active = false, start, startSize;
+  div.addEventListener('mousedown', e => {
+    active = true; div.classList.add('active');
+    start = dir === 'h' ? e.clientY : e.clientX;
+    startSize = target[dir === 'h' ? 'offsetHeight' : 'offsetWidth'];
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!active) return;
+    const delta = (dir === 'h' ? e.clientY : e.clientX) - start;
+    const newSize = Math.max(prop === 'height' ? 80 : 120, startSize + (prop === 'height' ? -delta : delta));
+    target.style[prop] = newSize + 'px';
+  });
+  document.addEventListener('mouseup', () => { active = false; div.classList.remove('active'); });
+}
+// chat tile removed — divider not needed
+// context panel is now floating, no divider needed
+
+// ═══ ZOOM + PAN (on map tile) ═══
+const mapTile=document.getElementById('map-tile'),svg=document.getElementById('world-svg');
+let scale=0.85,panX=0,panY=0,isPan=false,sx,sy;
+// Compute center of all room content dynamically
+function worldCenter(){
+  const rooms=Object.values(world.rooms);
+  if(!rooms.length) return {x:800,y:550};
+  let x=0,y=0;
+  rooms.forEach(r=>{x+=r.x;y+=r.y});
+  return {x:x/rooms.length, y:y/rooms.length};
+}
+
+function updateTransform(){
+  const cx=mapTile.clientWidth/2,cy=mapTile.clientHeight/2;
+  const wc=worldCenter();
+  svg.style.transform='translate('+(panX-wc.x*scale+cx)+'px,'+(panY-wc.y*scale+cy)+'px) scale('+scale+')';
+}
+
+function zoomIn(){scale=Math.min(3,scale*1.25);updateTransform()}
+function zoomOut(){scale=Math.max(0.15,scale/1.25);updateTransform()}
+
+// Keep map centered on window resize
+window.addEventListener('resize', updateTransform);
+
+function resetView(){
+  // Smooth animate back to center at default zoom
+  svg.style.transition='transform 0.4s cubic-bezier(0.25,0.46,0.45,0.94)';
+  scale=0.85;panX=0;panY=0;
+  updateTransform();
+  setTimeout(()=>{svg.style.transition=''},450);
+}
+mapTile.addEventListener('wheel',e=>{e.preventDefault();const d=e.deltaY>0?0.9:1.1;const ns=Math.min(3,Math.max(0.2,scale*d));const rect=mapTile.getBoundingClientRect();const mx=e.clientX-rect.left-mapTile.clientWidth/2-panX;const my=e.clientY-rect.top-mapTile.clientHeight/2-panY;panX-=mx*(ns/scale-1);panY-=my*(ns/scale-1);scale=ns;updateTransform()},{passive:false});
+
+// ═══ UNIFIED CLICK / DRAG / PAN on map ═══
+let dragTarget=null, dragType=null, dragId=null, dragStartX=0, dragStartY=0, dragMoved=false;
+const DRAG_THRESHOLD = 6; // px before it counts as drag
+
+function screenToSVG(clientX, clientY) {
+  const pt = svg.createSVGPoint();
+  pt.x = clientX; pt.y = clientY;
+  return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+// ═══ DRAG-DROP FILE UPLOAD ═══
+const MIME_MAP = {'image/':'image','video/':'video','audio/':'audio','application/pdf':'pdf'};
+function mimeToType(mime){for(const[k,v]of Object.entries(MIME_MAP))if(mime.startsWith(k))return v;return'document'}
+
+mapTile.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';mapTile.classList.add('dragover')});
+mapTile.addEventListener('dragleave',e=>{mapTile.classList.remove('dragover')});
+mapTile.addEventListener('drop',e=>{
+  e.preventDefault();mapTile.classList.remove('dragover');
+  const files=e.dataTransfer.files;if(!files.length)return;
+
+  // Convert screen position to SVG world coords
+  const wc=worldCenter();
+  const cx=mapTile.clientWidth/2,cy=mapTile.clientHeight/2;
+  const worldX=wc.x+(e.clientX-mapTile.getBoundingClientRect().left-cx-panX)/scale;
+  const worldY=wc.y+(e.clientY-mapTile.getBoundingClientRect().top-cy-panY)/scale;
+
+  // Find nearest room
+  let nearestRoom='nexus',nearestDist=Infinity;
+  for(const[id,r]of Object.entries(world.rooms)){
+    const d=Math.hypot(r.x-worldX,r.y-worldY);
+    if(d<nearestDist){nearestDist=d;nearestRoom=id}
+  }
+
+  for(const file of files){
+    const type=mimeToType(file.type);
+    const nid=`import-${Date.now()}-${Math.random().toString(36).slice(2,6)}`;
+    const room=world.rooms[nearestRoom];
+    world.canvasNodes[nid]={
+      type, title:file.name, room:nearestRoom,
+      ox:worldX-room.x, oy:worldY-room.y,
+      color:'var(--rose)', origin:'imported', _pinned:true,
+      media:type==='video'||type==='audio'?{duration:'--:--'}:null
+    };
+    addEvent('juno',`dropped ${type}: "${file.name}" → ${room.name}`);
+    appendCmdMsg(null,`Imported ${type} "${file.name}" into ${room.name}`,true,'room');
+    // Re-render and open context
+    autoLayout();renderCanvasNodes();renderRelations();
+    openContext('canvas',nid);
+  }
+});
+
+// Double-click: item → open viewer, empty space → reset view
+mapTile.addEventListener('dblclick',e=>{
+  const el = e.target.closest('[data-drag]');
+  if(el){
+    const t = (el.closest('g[data-drag]')||el).getAttribute('data-drag');
+    const id = (el.closest('g[data-drag]')||el).getAttribute('data-id');
+    if(t==='canvas') openViewer('canvas',id);
+    e.preventDefault(); e.stopPropagation();
+  } else {
+    // Empty space — reset to home
+    resetView();
+  }
+});
+
+mapTile.addEventListener('mousedown',e=>{
+  const el = e.target.closest('[data-drag]');
+  if (el) {
+    // Start potential drag on a world element
+    dragTarget = el.closest('g[data-drag]') || el;
+    dragType = dragTarget.getAttribute('data-drag');
+    dragId = dragTarget.getAttribute('data-id');
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    dragMoved = false;
+    e.preventDefault();
+    e.stopPropagation();
+  } else {
+    // Pan the map
+    isPan=true;sx=e.clientX-panX;sy=e.clientY-panY;e.preventDefault();
+  }
+});
+
+document.addEventListener('mousemove',e=>{
+  if (isPan) { panX=e.clientX-sx;panY=e.clientY-sy;updateTransform(); return; }
+  if (!dragTarget) return;
+
+  const dx = e.clientX - dragStartX;
+  const dy = e.clientY - dragStartY;
+
+  if (!dragMoved && Math.abs(dx) + Math.abs(dy) > DRAG_THRESHOLD) {
+    dragMoved = true;
+    dragTarget.style.cursor = 'grabbing';
+  }
+
+  if (dragMoved) {
+    // Convert delta to SVG world units
+    const worldDx = dx / scale;
+    const worldDy = dy / scale;
+
+    if (dragType === 'room') {
+      const room = world.rooms[dragId];
+      if (room) {
+        const orig = room._origX ?? room.x;
+        const origY = room._origY ?? room.y;
+        if (!room._origX) { room._origX = room.x; room._origY = room.y; }
+        room.x = orig + worldDx;
+        room.y = origY + worldDy;
+      }
+    } else if (dragType === 'canvas') {
+      const cn = world.canvasNodes[dragId];
+      if (cn) {
+        if (cn._origOx === undefined) { cn._origOx = cn.ox; cn._origOy = cn.oy; }
+        cn.ox = cn._origOx + worldDx;
+        cn.oy = cn._origOy + worldDy;
+      }
+    }
+    // Live re-render while dragging
+    renderAllRooms(); renderFlows(); renderContours(); renderCanvasNodes(); renderRelations();
+  }
+});
+
+document.addEventListener('mouseup',e=>{
+  if (isPan) { isPan=false; return; }
+  if (dragTarget) {
+    if (!dragMoved) {
+      // It was a click, not a drag
+      openContext(dragType, dragId);
+    } else {
+      // Commit the new position, clear origin tracking
+      if (dragType === 'room') {
+        const room = world.rooms[dragId];
+        if (room) { delete room._origX; delete room._origY; room._pinned = true; }
+      } else if (dragType === 'canvas') {
+        const cn = world.canvasNodes[dragId];
+        if (cn) { delete cn._origOx; delete cn._origOy; cn._pinned = true; }
+      }
+    }
+    if (dragTarget.style) dragTarget.style.cursor = '';
+    dragTarget = null; dragType = null; dragId = null;
+  }
+});
+
+// ═══ TOUCH SUPPORT ═══
+let lastTouchDist=0;
+mapTile.addEventListener('touchstart',e=>{
+  if(e.touches.length===2){isPan=false;dragTarget=null;lastTouchDist=Math.hypot(e.touches[1].clientX-e.touches[0].clientX,e.touches[1].clientY-e.touches[0].clientY);return}
+  if(e.touches.length!==1)return;
+  const el=e.target.closest('[data-drag]');
+  if(el){
+    dragTarget=el.closest('g[data-drag]')||el;
+    dragType=dragTarget.getAttribute('data-drag');
+    dragId=dragTarget.getAttribute('data-id');
+    dragStartX=e.touches[0].clientX;dragStartY=e.touches[0].clientY;dragMoved=false;
+  } else {
+    isPan=true;sx=e.touches[0].clientX-panX;sy=e.touches[0].clientY-panY;
+  }
+},{passive:true});
+mapTile.addEventListener('touchmove',e=>{
+  if(e.touches.length===2){const d=Math.hypot(e.touches[1].clientX-e.touches[0].clientX,e.touches[1].clientY-e.touches[0].clientY);if(lastTouchDist){scale=Math.min(3,Math.max(0.2,scale*(d/lastTouchDist)));updateTransform()}lastTouchDist=d;e.preventDefault();return}
+  if(e.touches.length===1&&isPan){panX=e.touches[0].clientX-sx;panY=e.touches[0].clientY-sy;updateTransform();e.preventDefault();return}
+  if(e.touches.length===1&&dragTarget){
+    const dx=e.touches[0].clientX-dragStartX,dy=e.touches[0].clientY-dragStartY;
+    if(!dragMoved&&Math.abs(dx)+Math.abs(dy)>DRAG_THRESHOLD)dragMoved=true;
+    if(dragMoved){
+      const wdx=dx/scale,wdy=dy/scale;
+      if(dragType==='room'){const r=world.rooms[dragId];if(r){if(!r._origX){r._origX=r.x;r._origY=r.y}r.x=r._origX+wdx;r.y=r._origY+wdy}}
+      else if(dragType==='canvas'){const c=world.canvasNodes[dragId];if(c){if(c._origOx===undefined){c._origOx=c.ox;c._origOy=c.oy}c.ox=c._origOx+wdx;c.oy=c._origOy+wdy}}
+      renderAllRooms();renderFlows();renderContours();renderCanvasNodes();renderRelations();
+      e.preventDefault();
+    }
+  }
+},{passive:false});
+mapTile.addEventListener('touchend',e=>{
+  if(dragTarget){if(!dragMoved)openContext(dragType,dragId);else{if(dragType==='room'){const r=world.rooms[dragId];if(r){delete r._origX;delete r._origY}}else if(dragType==='canvas'){const c=world.canvasNodes[dragId];if(c){delete c._origOx;delete c._origOy}}}dragTarget=null}
+  isPan=false;lastTouchDist=0;
+});
+
+// ═══ CLEAR VIEW — Space toggles all panels off/on ═══
+let clearViewOn = false;
+function toggleClearView() {
+  clearViewOn = !clearViewOn;
+  document.body.classList.toggle('clear-view', clearViewOn);
+}
+
+// ═══ COMMAND BAR — Spotlight-style input ═══
+const cmdBar = document.getElementById('cmd-bar');
+const cmdInput = document.getElementById('cmd-bar-input');
+let cmdHistoryList = [];
+let cmdHistoryIdx = -1;
+let cmdHistorySaved = '';
+
+// Command bar drag
+(function(){
+  const bar=document.getElementById('cmd-bar');
+  const handle=document.getElementById('cmd-bar-drag');
+  let dragging=false,ox,oy;
+  handle.addEventListener('mousedown',e=>{
+    dragging=true;
+    // Convert centering to absolute position
+    const r=bar.getBoundingClientRect();
+    bar.style.left=r.left+'px';bar.style.top=r.top+'px';
+    bar.style.bottom='auto';bar.style.right='auto';bar.style.transform='none';
+    ox=e.clientX-r.left;oy=e.clientY-r.top;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove',e=>{
+    if(!dragging)return;
+    bar.style.left=(e.clientX-ox)+'px';bar.style.top=(e.clientY-oy)+'px';
+  });
+  document.addEventListener('mouseup',()=>dragging=false);
+  // Touch drag
+  handle.addEventListener('touchstart',e=>{
+    dragging=true;
+    const r=bar.getBoundingClientRect();
+    bar.style.left=r.left+'px';bar.style.top=r.top+'px';
+    bar.style.bottom='auto';bar.style.right='auto';bar.style.transform='none';
+    ox=e.touches[0].clientX-r.left;oy=e.touches[0].clientY-r.top;
+  },{passive:true});
+  document.addEventListener('touchmove',e=>{
+    if(!dragging||!e.touches.length)return;
+    bar.style.left=(e.touches[0].clientX-ox)+'px';bar.style.top=(e.touches[0].clientY-oy)+'px';
+  },{passive:true});
+  document.addEventListener('touchend',()=>{dragging=false;resizing=false});
+
+  // Resize
+  const rh=document.getElementById('cmd-bar-resize');
+  let resizing=false,rsx,rsy,rsw,rsh;
+  function fixBar(){
+    const r=bar.getBoundingClientRect();
+    bar.style.left=r.left+'px';bar.style.top=r.top+'px';
+    bar.style.width=r.width+'px';bar.style.height=r.height+'px';
+    bar.style.bottom='auto';bar.style.right='auto';bar.style.transform='none';
+  }
+  rh.addEventListener('mousedown',e=>{
+    resizing=true;fixBar();
+    rsw=bar.offsetWidth;rsh=bar.offsetHeight;rsx=e.clientX;rsy=e.clientY;
+    e.preventDefault();e.stopPropagation();
+  });
+  document.addEventListener('mousemove',e=>{
+    if(!resizing)return;
+    bar.style.width=Math.max(300,rsw+(e.clientX-rsx))+'px';
+    bar.style.height=Math.max(120,rsh+(e.clientY-rsy))+'px';
+  });
+  document.addEventListener('mouseup',()=>{resizing=false});
+})();
+
+function openCmdBar() {
+  cmdInput.focus();
+}
+
+function closeCmdBar() {
+  cmdInput.blur();
+}
+
+function cmdBarKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    const val = cmdInput.value.trim();
+    if (val) {
+      sendCmd();
+      cmdHistoryList.push(val);
+      cmdHistoryIdx = -1;
+      cmdHistorySaved = '';
+    }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (cmdHistoryList.length === 0) return;
+    if (cmdHistoryIdx === -1) cmdHistorySaved = cmdInput.value;
+    cmdHistoryIdx = Math.min(cmdHistoryIdx + 1, cmdHistoryList.length - 1);
+    cmdInput.value = cmdHistoryList[cmdHistoryList.length - 1 - cmdHistoryIdx];
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (cmdHistoryIdx <= 0) { cmdHistoryIdx = -1; cmdInput.value = cmdHistorySaved; return; }
+    cmdHistoryIdx--;
+    cmdInput.value = cmdHistoryList[cmdHistoryList.length - 1 - cmdHistoryIdx];
+  }
+}
+
+cmdInput.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { cmdInput.blur(); e.stopPropagation(); }
+});
+
+// ═══ PANEL FADE — unfocused panels dim after 8 seconds ═══
+let panelFadeTimers = {};
+function resetPanelFade(panelId, delay) {
+  const el = document.getElementById(panelId);
+  if (!el) return;
+  el.classList.remove('faded');
+  clearTimeout(panelFadeTimers[panelId]);
+  panelFadeTimers[panelId] = setTimeout(() => {
+    if (!el.matches(':hover')) el.classList.add('faded');
+  }, delay || 6000);
+}
+
+document.querySelectorAll('.fpanel').forEach(p => {
+  p.addEventListener('mousedown', () => resetPanelFade(p.id, 6000));
+  p.addEventListener('mouseenter', () => { clearTimeout(panelFadeTimers[p.id]); p.classList.remove('faded'); });
+  p.addEventListener('mouseleave', () => { resetPanelFade(p.id, 800); }); // fade quickly on mouse leave
+  // Start faded after initial delay
+  resetPanelFade(p.id, 4000);
+});
+
+// ═══ KEYBOARD ═══
+document.addEventListener('keydown',e=>{
+  const tag = document.activeElement.tagName;
+  const inInput = tag==='INPUT'||tag==='TEXTAREA';
+  const barVisible = !cmdBar.classList.contains('hidden');
+
+  // / toggles command bar visibility
+  if (e.key==='/') {
+    if (inInput && document.activeElement === cmdInput) {
+      // Already in command bar — hide it
+      e.preventDefault(); cmdBar.classList.add('hidden'); cmdInput.blur(); return;
+    } else if (!inInput) {
+      // Not in any input — show and focus
+      e.preventDefault(); cmdBar.classList.remove('hidden'); cmdInput.focus(); return;
+    }
+  }
+
+  // Tab focuses command bar if visible
+  if (e.key==='Tab' && !inInput && barVisible) {
+    e.preventDefault(); cmdInput.focus(); return;
+  }
+
+  // Escape chain: viewer → context → blur input
+  if (e.key==='Escape') {
+    if (inInput) { cmdInput.blur(); return; }
+    if (document.getElementById('viewer').classList.contains('open')) { closeViewer(); return; }
+    if (currentCtx) { closeContext(); return; }
+    return;
+  }
+
+  if (inInput) return;
+
+  // Space = clear view toggle
+  if (e.key===' ') { e.preventDefault(); toggleClearView(); return; }
+
+  if(e.key==='h'||e.key==='H'||e.key==='Home')resetView();
+  if(e.key==='e'||e.key==='E')toggleFP('fp-roster');
+  if(e.key==='f'||e.key==='F')toggleFP('fp-feed');
+  if(e.key==='a'||e.key==='A')toggleFP('fp-admin');
+});
+
+// ═══ THEME SWITCHER ═══
+const THEMES=[
+  {id:'h2o',name:'H2O',gold:'#FFDD00',amber:'#FFB800',orange:'#FF9500',bg:'#030306',card:'rgba(8,8,14,0.96)',border:'#111118'},
+  {id:'cyberpunk',name:'Cyber',gold:'#00ffe7',amber:'#0088ff',orange:'#bf00ff',bg:'#040810',card:'rgba(8,12,20,0.96)',border:'#0d1420'},
+  {id:'synthwave',name:'Synth',gold:'#e040fb',amber:'#7c4dff',orange:'#ff4081',bg:'#080516',card:'rgba(15,10,26,0.96)',border:'#1c1330'},
+  {id:'matrix',name:'Matrix',gold:'#00ff41',amber:'#00cc33',orange:'#33ff77',bg:'#020804',card:'rgba(5,10,5,0.96)',border:'#0a120a'},
+  {id:'ocean',name:'Ocean',gold:'#0ea5e9',amber:'#2563eb',orange:'#f97316',bg:'#030810',card:'rgba(6,13,20,0.96)',border:'#0a1520'},
+];
+let themeIdx=0;
+function cycleTheme(){
+  themeIdx=(themeIdx+1)%THEMES.length;
+  const t=THEMES[themeIdx];
+  const r=document.documentElement.style;
+  r.setProperty('--gold',t.gold);r.setProperty('--amber',t.amber);r.setProperty('--orange',t.orange);
+  r.setProperty('--bg',t.bg);r.setProperty('--card',t.card);r.setProperty('--border',t.border);
+  document.body.style.background=t.bg;
+  // Update theme button label
+  const btn=document.getElementById('theme-btn');
+  if(btn)btn.textContent=t.name;
+  // Re-render world with new colors
+  COLORS.core=t.gold;COLORS.build=t.amber;COLORS.sense=t.amber;COLORS.exchange=t.orange;
+  renderAllRooms();renderWorldRing();renderCanvasNodes();renderRelations();renderFlows();renderContours();
+}
+
+// ═══ BOOT ═══
+autoLayout();renderGrid();renderWorldRing();renderContours();renderFlows();renderAllRooms();renderCanvasNodes();renderRelations();renderRoster();renderCompass();renderMetrics();updateTransform();
+addChatMsg('Atlas','The swarm pattern shows real promise for self-organizing teams.');
+addChatMsg('Nova','Agreed. Documenting convergence points now.');
+addChatMsg('juno','What about the visual representation?');
+addChatMsg('Atlas','OD matrix overlay would show flow between rooms.');
+// seed initial messages into command bar
+addEvent('Atlas','recall "coordination patterns" -- 4 notes');
+addEvent('Vex','say "Kai, viewport culling first"');
+addEvent('Rune','web search "DynaCity viz"');
+
+// Seed tells
+addTell('Atlas','Nova','Have you finished the convergence summary?');
+addTell('Nova','Atlas','Almost — 80% done, sending it shortly.');
+addTell('Rune','juno','DynaCity research is very promising. Writing up findings now.');
+addTell('Vex','Kai','Viewport culling should go in before the layout changes.');
+
+// Seed channels
+addChannelMsg('general','Atlas','World uptime looking solid. 10 entities active.');
+addChannelMsg('research','Rune','AItown uses PixiJS + Convex reactive queries. Historical replay for smooth motion.');
+addChannelMsg('research','Rune','Pixel Agents insight: "solves anxiety, not productivity" — making invisible work visible IS the feature.');
+addChannelMsg('builds','Vex','Canvas renderer PR is up. 17 tests passing.');
+addChannelMsg('builds','Kai','Viewport culling branch ready for merge after Vex review.');
+addChannelMsg('market-signals','Zara','Confidence on canvas convergence timeline: 82%. Bullish.');
+addChannelMsg('general','Nova','Research summary will be posted to #research channel shortly.');
+renderChannelList();
+
+setInterval(simulateEvent,2000+Math.random()*2000);
+
+// ═══ FLOATING PANEL DRAG + RESIZE ═══
+let fpTopZ = 80;
+function bringFPFront(el){el.style.zIndex=++fpTopZ;document.querySelectorAll('.fpanel').forEach(p=>{p.classList.toggle('focused',p===el)})}
+function rollFP(id){
+  const el=document.getElementById(id);
+  const wasRolled=el.classList.contains('rolled');
+  el.classList.toggle('rolled');
+  // On unroll: convert bottom/right to absolute left/top so resize works
+  if(wasRolled){
+    requestAnimationFrame(()=>{
+      const r=el.getBoundingClientRect();
+      el.style.left=r.left+'px';el.style.top=r.top+'px';
+      el.style.width=r.width+'px';el.style.height=r.height+'px';
+      el.style.right='auto';el.style.bottom='auto';el.style.marginRight='';
+    });
+  }
+}
+
+// chat tile removed
+
+// Double-click header to toggle roll on all floating panels
+document.querySelectorAll('.fpanel .fp-hdr').forEach(hdr=>{
+  hdr.addEventListener('dblclick',e=>{
+    e.preventDefault();
+    hdr.closest('.fpanel').classList.toggle('rolled');
+  });
+});
+function hideFP(id){document.getElementById(id).style.display='none'}
+function showFP(id){const el=document.getElementById(id);el.style.display='flex';bringFPFront(el)}
+function toggleFP(id){const el=document.getElementById(id);if(el.style.display==='none')showFP(id);else hideFP(id)}
+
+document.querySelectorAll('.fpanel').forEach(panel => {
+  const hdr = panel.querySelector('.fp-hdr');
+  const rh = panel.querySelector('.fp-resize');
+  let isDrag=false,ox,oy,isResize=false,rsx,rsy,rsw,rsh;
+
+  function fixPos(){
+    // Always snapshot bounding rect and convert to absolute left/top/width/height
+    const r=panel.getBoundingClientRect();
+    panel.style.left=r.left+'px';
+    panel.style.top=r.top+'px';
+    panel.style.width=r.width+'px';
+    panel.style.height=r.height+'px';
+    panel.style.right='auto';
+    panel.style.bottom='auto';
+  }
+
+  hdr.addEventListener('mousedown',e=>{
+    if(e.target.classList.contains('btn'))return;
+    isDrag=true;fixPos();
+    ox=e.clientX-panel.offsetLeft;oy=e.clientY-panel.offsetTop;
+    bringFPFront(panel);e.preventDefault();
+  });
+  if(rh) rh.addEventListener('mousedown',e=>{
+    isResize=true;fixPos();
+    rsw=panel.offsetWidth;rsh=panel.offsetHeight;rsx=e.clientX;rsy=e.clientY;
+    bringFPFront(panel);e.preventDefault();e.stopPropagation();
+  });
+  document.addEventListener('mousemove',e=>{
+    if(isDrag){panel.style.left=(e.clientX-ox)+'px';panel.style.top=(e.clientY-oy)+'px';panel.style.right='auto';panel.style.bottom='auto'}
+    if(isResize){panel.style.width=Math.max(160,rsw+(e.clientX-rsx))+'px';panel.style.height=Math.max(60,rsh+(e.clientY-rsy))+'px'}
+  });
+  document.addEventListener('mouseup',()=>{isDrag=false;isResize=false});
+  panel.addEventListener('mousedown',()=>bringFPFront(panel));
+
+  // Touch drag
+  hdr.addEventListener('touchstart',e=>{
+    if(e.target.classList.contains('btn'))return;
+    isDrag=true;fixPos();
+    ox=e.touches[0].clientX-panel.offsetLeft;oy=e.touches[0].clientY-panel.offsetTop;
+    bringFPFront(panel);
+  },{passive:true});
+  document.addEventListener('touchmove',e=>{
+    if(isDrag&&e.touches.length===1){panel.style.left=(e.touches[0].clientX-ox)+'px';panel.style.top=(e.touches[0].clientY-oy)+'px';panel.style.right='auto';panel.style.bottom='auto'}
+  },{passive:true});
+  document.addEventListener('touchend',()=>{isDrag=false;isResize=false});
+});
+
+// ═══ FEED + COORD RENDERING (into floating panels) ═══
+function renderFeed(){
+  const fb=document.getElementById('feed-body');
+  if(!fb)return;
+  fb.innerHTML=world.events.slice(0,30).map(e=>
+    `<div class="fi"><span class="fi-t">${e.time}</span><span class="fi-e" onclick="openContext('entity','${entityIdByName(e.entity)}')">${e.entity}</span><span class="fi-a${e.isError?' err':''}">${e.action}</span></div>`
+  ).join('')||'<div style="padding:12px;color:#444">No events yet</div>';
+}
+
+let coordTab='projects';
+function switchCoordTab(tab,btn){
+  coordTab=tab;
+  document.querySelectorAll('#coord-tabs .chtab').forEach(t=>t.classList.remove('on'));
+  btn.classList.add('on');
+  renderCoord();
+}
+
+function renderCoord(){
+  const cb=document.getElementById('coord-body');
+  if(!cb)return;
+
+  if(coordTab==='projects'){
+    cb.innerHTML=world.projects.map(p=>
+      `<div class="co"><div class="co-d ${p.status}"></div><div style="flex:1;overflow:hidden"><div class="co-t">${p.name}</div><div class="co-m">${p.agents}</div></div></div>`
+    ).join('');
+  } else if(coordTab==='tasks'){
+    const statusIcon={open:'○',claimed:'◐',submitted:'◑',done:'●'};
+    const statusColor={open:'#666',claimed:'var(--gold)',submitted:'var(--cyan)',done:'var(--green)'};
+    cb.innerHTML=world.tasks.map(t=>
+      `<div class="co"><div style="color:${statusColor[t.status]||'#666'};flex-shrink:0;font-size:14px">${statusIcon[t.status]||'○'}</div><div style="flex:1;overflow:hidden"><div class="co-t">${t.title}</div><div class="co-m">${t.assignee||'unassigned'} · ${t.project}</div></div></div>`
+    ).join('');
+  } else if(coordTab==='boards'){
+    cb.innerHTML=world.boards.map(b=>
+      `<div class="co"><div style="color:var(--amber);flex-shrink:0;font-size:14px">▧</div><div style="flex:1;overflow:hidden"><div class="co-t">${b.name}</div><div class="co-m">${b.posts} posts · ${b.room}</div><div style="font-size:clamp(12px,0.9vw,16px);color:#555;margin-top:2px">${b.lastPost}</div></div></div>`
+    ).join('');
+  } else if(coordTab==='pools'){
+    cb.innerHTML=world.pools.map(p=>
+      `<div class="co"><div style="color:var(--violet);flex-shrink:0;font-size:14px">◈</div><div style="flex:1;overflow:hidden"><div class="co-t">${p.name}</div><div class="co-m">${p.notes} notes · ${p.room}</div><div style="font-size:clamp(12px,0.9vw,16px);color:#555;margin-top:2px">${p.desc}</div></div></div>`
+    ).join('');
+  } else if(coordTab==='groups'){
+    cb.innerHTML=world.groups_.map(g=>
+      `<div class="co"><div style="color:var(--cyan);flex-shrink:0;font-size:14px">◉</div><div style="flex:1;overflow:hidden"><div class="co-t">${g.name}</div><div class="co-m">${g.members.length} members: ${g.members.join(', ')}</div></div></div>`
+    ).join('');
+  }
+}
+
+renderFeed();renderCoord();renderAdmin();
+
+// ═══ ADMIN TAB RENDERING ═══
+let adminTab='keys';
+function switchAdminTab(tab,btn){
+  adminTab=tab;
+  document.querySelectorAll('#admin-tabs .chtab').forEach(t=>t.classList.remove('on'));
+  btn.classList.add('on');
+  renderAdmin();
+}
+function renderAdmin(){
+  const ab=document.getElementById('admin-body');if(!ab)return;
+  if(adminTab==='keys'){
+    ab.innerHTML=`<div style="padding:8px 12px">
+      <div class="ctx-row"><span class="ctx-k">openai</span><span class="ctx-v">sk-proj-****...7fKm <span style="color:var(--green)">active</span></span></div>
+      <div class="ctx-row"><span class="ctx-k">anthropic</span><span class="ctx-v">sk-ant-****...xQ2p <span style="color:var(--green)">active</span></span></div>
+      <div class="ctx-row"><span class="ctx-k">ollama</span><span class="ctx-v">localhost:11434 <span style="color:var(--green)">active</span></span></div>
+      <div class="ctx-row"><span class="ctx-k">groq</span><span class="ctx-v" style="color:#444">not configured</span></div>
+      <div class="ctx-row"><span class="ctx-k">deepseek</span><span class="ctx-v" style="color:#444">not configured</span></div>
+    </div>`;
+  } else if(adminTab==='adapters'){
+    ab.innerHTML=`<div style="padding:8px 12px">
+      <div class="co"><div class="co-d" style="background:#444"></div><div style="flex:1"><div class="co-t">Discord</div><div class="co-m">not connected</div></div><button style="background:rgba(255,221,0,0.08);border:1px solid rgba(255,221,0,0.2);color:var(--gold);font-family:VT323;font-size:clamp(13px,0.9vw,17px);padding:2px 8px;cursor:pointer">Enable</button></div>
+      <div class="co"><div class="co-d" style="background:#444"></div><div style="flex:1"><div class="co-t">Telegram</div><div class="co-m">not connected</div></div><button style="background:rgba(255,221,0,0.08);border:1px solid rgba(255,221,0,0.2);color:var(--gold);font-family:VT323;font-size:clamp(13px,0.9vw,17px);padding:2px 8px;cursor:pointer">Enable</button></div>
+      <div class="co"><div class="co-d act"></div><div style="flex:1"><div class="co-t">WebSocket</div><div class="co-m">port 3300 · 3 clients</div></div></div>
+      <div class="co"><div class="co-d act"></div><div style="flex:1"><div class="co-t">Telnet</div><div class="co-m">port 4000</div></div></div>
+      <div class="co"><div class="co-d act"></div><div style="flex:1"><div class="co-t">MCP Server</div><div class="co-m">port 3301</div></div></div>
+    </div>`;
+  } else if(adminTab==='roles'){
+    const roles=['researcher: web-research, analytical-thinking','builder: code-review, task-management','coordinator: social, leadership','analyst: data-analysis, pattern-recognition','general: canvas-watcher, social'];
+    ab.innerHTML=`<div style="padding:8px 12px">${roles.map(r=>{
+      const[name,traits]=r.split(':');
+      return`<div style="padding:5px 0;border-bottom:1px solid rgba(17,17,24,0.2)"><div style="color:var(--bright);font-size:clamp(14px,1vw,20px)">${name.trim()}</div><div style="color:#555;font-size:clamp(12px,0.9vw,16px)">${traits.trim()}</div></div>`;
+    }).join('')}</div>`;
+  } else if(adminTab==='mcp'){
+    const tools=['think','memory','recall','note','brief','say','tell','goto','look','who','rooms','task','canvas','web','goal','novelty','channel','board','pool','group','key','adapter','build'];
+    ab.innerHTML=`<div style="padding:8px 12px"><div class="ctx-row"><span class="ctx-k">Tools</span><span class="ctx-v">${tools.length} registered</span></div><div style="padding:6px 0;display:flex;flex-wrap:wrap;gap:4px">${tools.map(t=>`<span style="font-size:clamp(12px,0.9vw,16px);padding:2px 6px;background:rgba(255,221,0,0.04);border:1px solid rgba(255,221,0,0.08);color:#888;border-radius:2px">${t}</span>`).join('')}</div></div>`;
+  } else if(adminTab==='config'){
+    ab.innerHTML=`<div style="padding:8px 12px">
+      <div class="ctx-row"><span class="ctx-k">Rate limit WS</span><span class="ctx-v">5/sec</span></div>
+      <div class="ctx-row"><span class="ctx-k">Rate limit API</span><span class="ctx-v">2/sec per IP</span></div>
+      <div class="ctx-row"><span class="ctx-k">SSRF guard</span><span class="ctx-v" style="color:var(--green)">enabled</span></div>
+      <div class="ctx-row"><span class="ctx-k">Gateway secret</span><span class="ctx-v" style="color:#444">not set</span></div>
+      <div class="ctx-row"><span class="ctx-k">World</span><span class="ctx-v">${world.name}</span></div>
+      <div class="ctx-row"><span class="ctx-k">Open API</span><span class="ctx-v" style="color:var(--amber)">dev mode</span></div>
+      <div class="ctx-row"><span class="ctx-k">Dashboard</span><span class="ctx-v">port 3300</span></div>
+    </div>`;
+  }
+}
+
+// Also keep feed updated when events arrive
+const _origAddEvent = addEvent;
+addEvent = function(entity,action,isError){
+  _origAddEvent(entity,action,isError);
+  renderFeed();
+};
+</script>
+</body>
+</html>

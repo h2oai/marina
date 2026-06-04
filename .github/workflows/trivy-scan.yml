@@ -1,0 +1,138 @@
+name: Trivy Image Scan
+
+on:
+#  pull_request:
+#    branches: [main]
+#    paths:
+#      - "Dockerfile"
+#      - "package.json"
+#      - "bun.lock"
+#      - "dashboard/package.json"
+#      - "dashboard/bun.lock"
+#      - "src/**"
+#      - "worlds/**"
+#      - ".github/workflows/trivy-scan.yml"
+  # schedule:
+    # Re-scan weekly so newly-disclosed CVEs in the base image surface even
+    # when the code hasn't changed. Mondays 06:00 UTC.
+    # - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read # checkout only; report is published as an artifact + job summary
+
+jobs:
+  build-and-scan:
+    name: Build image and scan with Trivy
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: marina:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build to the local docker daemon (load:true) so Trivy can scan it by
+      # tag without pushing to a registry. Layer cache via GitHub Actions cache.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Visibility scan: print fixable CRITICAL/HIGH as a table in the logs.
+      # Non-blocking (continue-on-error) — the scan reports, but never fails the
+      # build. Flip continue-on-error to false to turn this back into a gate.
+      - name: Trivy scan (CRITICAL/HIGH table)
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          vuln-type: os,library
+
+      # Machine-readable scan output to feed the job summary + report artifact.
+      - name: Trivy scan (JSON for summary)
+        if: always()
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}
+          format: json
+          output: trivy-results.json
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+          ignore-unfixed: false
+          vuln-type: os,library
+
+      # Render a summary on the run's "Summary" page: severity counts + a table
+      # of the top fixable CRITICAL/HIGH findings. jq is preinstalled on runners.
+      - name: Publish scan summary
+        if: always()
+        run: |
+          set -euo pipefail
+          REPORT=trivy-results.json
+          {
+            echo "## 🛡️ Trivy Image Scan"
+            echo ""
+            echo "**Image:** \`${IMAGE}\`"
+            echo ""
+
+            if [ ! -s "$REPORT" ]; then
+              echo "> Scan produced no report (\`$REPORT\` missing or empty)."
+              exit 0
+            fi
+
+            echo "### Vulnerabilities by severity"
+            echo ""
+            echo "| Severity | Count |"
+            echo "| --- | ---: |"
+            for sev in CRITICAL HIGH MEDIUM LOW UNKNOWN; do
+              count=$(jq --arg s "$sev" \
+                '[.Results[]?.Vulnerabilities[]? | select(.Severity == $s)] | length' \
+                "$REPORT")
+              echo "| $sev | $count |"
+            done
+            echo ""
+
+            total=$(jq '[.Results[]?.Vulnerabilities[]?] | length' "$REPORT")
+            echo "**Total:** $total vulnerabilities"
+            echo ""
+
+            echo "### Top fixable CRITICAL / HIGH"
+            echo ""
+            rows=$(jq -r '
+              [.Results[]? | .Target as $t | .Vulnerabilities[]?
+                | select((.Severity == "CRITICAL" or .Severity == "HIGH")
+                         and (.FixedVersion // "") != "")
+                | { sev: .Severity, id: .VulnerabilityID, pkg: .PkgName,
+                    inst: .InstalledVersion, fix: .FixedVersion }]
+              | sort_by(if .sev == "CRITICAL" then 0 else 1 end)
+              | .[0:25]
+              | .[]
+              | "| \(.sev) | \(.id) | \(.pkg) | \(.inst) | \(.fix) |"
+            ' "$REPORT")
+            if [ -n "$rows" ]; then
+              echo "| Severity | CVE | Package | Installed | Fixed |"
+              echo "| --- | --- | --- | --- | --- |"
+              echo "$rows"
+            else
+              echo "_No fixable CRITICAL/HIGH vulnerabilities._ ✅"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Publish the full JSON report as a downloadable artifact (replaces the
+      # SARIF/Security-tab upload — no code-scanning feature required).
+      - name: Upload scan report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report
+          path: trivy-results.json
+          if-no-files-found: warn
+          retention-days: 30
