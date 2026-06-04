@@ -1,0 +1,45 @@
+# Vendor expansion sweep — 14 substrates across 7 vendors.
+# Format: orchestrator | benchmark | limit | seed | K=V;K=V (values may have commas)
+
+# --- Per-vendor baselines (passthrough, bare model) ---
+passthrough | mmlu-pro   | 100 | 42 | MODEL=marina:nemotron
+passthrough | truthfulqa | 100 | 42 | MODEL=marina:nemotron
+passthrough | mmlu-pro   | 100 | 42 | MODEL=marina:glm
+passthrough | truthfulqa | 100 | 42 | MODEL=marina:glm
+passthrough | mmlu-pro   | 100 | 42 | MODEL=marina:mistral
+passthrough | truthfulqa | 100 | 42 | MODEL=marina:mistral
+passthrough | mmlu-pro   | 100 | 42 | MODEL=marina:gpt
+passthrough | truthfulqa | 100 | 42 | MODEL=marina:gpt
+passthrough | mmlu-pro   | 100 | 42 | MODEL=marina:gemini
+passthrough | truthfulqa | 100 | 42 | MODEL=marina:gemini
+passthrough | mmlu-pro   | 100 | 42 | MODEL=marina:grok
+passthrough | truthfulqa | 100 | 42 | MODEL=marina:grok
+passthrough | mmlu-pro   | 100 | 42 | MODEL=marina:minimax
+passthrough | truthfulqa | 100 | 42 | MODEL=marina:minimax
+
+# --- Adaptive with different "strong" models ---
+# How close to Sonnet-as-strong does each alternative get?
+adaptive | mmlu-pro | 100 | 42 | ADAPTIVE_COUNCIL=marina:haiku,marina:qwen,marina:gemma,marina:kimi;ADAPTIVE_STRONG=marina:gpt;ADAPTIVE_THRESHOLD=0.75
+adaptive | mmlu-pro | 100 | 42 | ADAPTIVE_COUNCIL=marina:haiku,marina:qwen,marina:gemma,marina:kimi;ADAPTIVE_STRONG=marina:gemini;ADAPTIVE_THRESHOLD=0.75
+adaptive | mmlu-pro | 100 | 42 | ADAPTIVE_COUNCIL=marina:haiku,marina:qwen,marina:gemma,marina:kimi;ADAPTIVE_STRONG=marina:grok;ADAPTIVE_THRESHOLD=0.75
+adaptive | mmlu-pro | 100 | 42 | ADAPTIVE_COUNCIL=marina:haiku,marina:qwen,marina:gemma,marina:kimi;ADAPTIVE_STRONG=marina:glm;ADAPTIVE_THRESHOLD=0.75
+adaptive | mmlu-pro | 100 | 42 | ADAPTIVE_COUNCIL=marina:haiku,marina:qwen,marina:gemma,marina:kimi;ADAPTIVE_STRONG=marina:nemotron;ADAPTIVE_THRESHOLD=0.75
+
+# Sovereign adaptive — NO Anthropic at all, with each vendor's strongest as escalator
+adaptive | mmlu-pro | 100 | 42 | ADAPTIVE_COUNCIL=marina:qwen,marina:gemma,marina:kimi,marina:mistral;ADAPTIVE_STRONG=marina:glm;ADAPTIVE_THRESHOLD=0.67
+adaptive | mmlu-pro | 100 | 42 | ADAPTIVE_COUNCIL=marina:qwen,marina:gemma,marina:kimi,marina:mistral;ADAPTIVE_STRONG=marina:deepseek;ADAPTIVE_THRESHOLD=0.67
+adaptive | mmlu-pro | 100 | 42 | ADAPTIVE_COUNCIL=marina:qwen,marina:gemma,marina:kimi,marina:mistral;ADAPTIVE_STRONG=marina:nemotron;ADAPTIVE_THRESHOLD=0.67
+
+# --- Mega-ensemble — 7 different vendors, no repeats ---
+nsed-smart | mmlu-pro   | 50 | 42 | NSED_SUBSTRATES=marina:haiku,marina:qwen,marina:gemma,marina:kimi,marina:deepseek,marina:mistral,marina:glm;USE_TRANSLATOR=true;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:haiku
+nsed-smart | truthfulqa | 50 | 42 | NSED_SUBSTRATES=marina:haiku,marina:qwen,marina:gemma,marina:kimi,marina:deepseek,marina:mistral,marina:glm;USE_TRANSLATOR=true;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:haiku
+
+# --- Debate with open judges ---
+debate | mmlu-pro | 100 | 42 | DEBATE_PROPOSER_A=marina:haiku;DEBATE_PROPOSER_B=marina:qwen;DEBATE_JUDGE=marina:glm
+debate | mmlu-pro | 100 | 42 | DEBATE_PROPOSER_A=marina:haiku;DEBATE_PROPOSER_B=marina:qwen;DEBATE_JUDGE=marina:gpt
+debate | mmlu-pro | 100 | 42 | DEBATE_PROPOSER_A=marina:haiku;DEBATE_PROPOSER_B=marina:qwen;DEBATE_JUDGE=marina:gemini
+
+# --- Pipeline with non-Anthropic reason model ---
+pipeline | mmlu-pro | 100 | 42 | PIPELINE_PARSE=marina:haiku;PIPELINE_REASON=marina:gpt;PIPELINE_VERIFY=marina:haiku
+pipeline | mmlu-pro | 100 | 42 | PIPELINE_PARSE=marina:haiku;PIPELINE_REASON=marina:gemini;PIPELINE_VERIFY=marina:haiku
+pipeline | mmlu-pro | 100 | 42 | PIPELINE_PARSE=marina:haiku;PIPELINE_REASON=marina:glm;PIPELINE_VERIFY=marina:haiku

@@ -1,0 +1,362 @@
+@import "tailwindcss";
+
+/* ── Theme token declarations (defaults = H2O) ────────────────────────── */
+/* Actual values are injected at runtime via JS (applyTheme).              */
+/* The @theme block tells Tailwind which tokens exist so utilities work.   */
+
+@theme {
+  --color-bg: #0a0a0a;
+  --color-bg-card: #111111;
+  --color-bg-hover: #1a1a1a;
+  --color-border: #262626;
+  --color-border-glow: #ffdd0040;
+  --color-primary: #ffdd00;
+  --color-secondary: #ffb800;
+  --color-accent: #ff9500;
+  --color-text: #d4d4d4;
+  --color-text-dim: #666666;
+  --color-text-bright: #f0f0f0;
+  --color-success: #22c55e;
+  --color-warning: #ffdd00;
+  --color-danger: #ef4444;
+  --color-coral: #f97316;
+  --color-teal: #eab308;
+  --color-pink: #fbbf24;
+
+  --font-display: "Orbitron", sans-serif;
+  --font-mono: "Share Tech Mono", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Native select & option styling for dark themes */
+select {
+  color: var(--color-text-bright);
+  background-color: var(--color-bg);
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23666666'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  padding-right: 20px;
+}
+
+select option {
+  background-color: var(--color-bg);
+  color: var(--color-text-bright);
+  padding: 4px 8px;
+}
+
+select optgroup {
+  background-color: var(--color-bg);
+  color: var(--color-text-dim);
+  font-style: normal;
+  font-weight: 600;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-dim);
+}
+
+/* Glass panel utility — uses runtime CSS vars for theme support */
+.glass-panel {
+  background: linear-gradient(
+    135deg,
+    var(--glass-stop-1, rgba(17, 17, 17, 0.92)),
+    var(--glass-stop-2, rgba(10, 10, 10, 0.96))
+  );
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 0 15px color-mix(in srgb, var(--color-primary) 3%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.glass-panel:hover {
+  border-color: var(--color-border-glow);
+}
+
+.panel-focused .glass-panel {
+  border-color: var(--color-primary);
+  box-shadow:
+    0 0 20px var(--glow-rgba, rgba(255, 221, 0, 0.15)),
+    0 0 40px color-mix(in srgb, var(--color-primary) 5%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Glow text utilities — theme-aware */
+.glow-cyan {
+  text-shadow: 0 0 8px color-mix(in srgb, var(--color-primary) 60%, transparent);
+}
+
+.glow-blue {
+  text-shadow: 0 0 8px color-mix(in srgb, var(--color-secondary) 60%, transparent);
+}
+
+.glow-magenta {
+  text-shadow: 0 0 8px color-mix(in srgb, var(--color-accent) 60%, transparent);
+}
+
+/* Scanline overlay */
+.scanlines::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  z-index: 9999;
+}
+
+/* Pulsing animation */
+@keyframes pulse-glow {
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+/* react-grid-layout overrides */
+.react-grid-item {
+  transition: all 300ms ease;
+}
+
+.react-grid-item > div {
+  height: 100%;
+}
+
+.react-grid-placeholder {
+  background: var(--color-primary);
+  opacity: 0.08;
+  border: 1px dashed var(--color-primary);
+  border-radius: 4px;
+}
+
+.react-resizable-handle {
+  z-index: 10;
+}
+
+.react-resizable-handle-se::after {
+  border-right-color: var(--color-text-dim);
+  border-bottom-color: var(--color-text-dim);
+}
+
+.react-grid-item > .react-resizable-handle::after {
+  width: 6px;
+  height: 6px;
+}
+
+/* Gradient text — theme-aware */
+.gradient-text {
+  background: linear-gradient(135deg, var(--gradient-stops, #ffdd00, #ffb800, #ff9500));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Unified Canvas animations ───────────────────────────────────── */
+
+/* Interaction arc dash animation */
+@keyframes uc-interaction-dash {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+
+.uc-interaction-arc-dash {
+  animation: uc-interaction-dash 0.8s linear infinite;
+}
+
+/* Sonar pulse — expanding circle that fades out */
+@keyframes uc-sonar-pulse {
+  from {
+    transform: scale(0.2);
+    opacity: 0.45;
+  }
+  to {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+.uc-sonar-pulse {
+  animation: uc-sonar-pulse 2s ease-out forwards;
+  transform-origin: center;
+}
+
+/* Data pulse — travels up a column and fades */
+@keyframes uc-data-pulse {
+  from {
+    transform: translateY(0);
+    opacity: 0.6;
+  }
+  to {
+    transform: translateY(-1px);
+    opacity: 0;
+  }
+}
+
+.uc-data-pulse {
+  animation: uc-data-pulse 1.5s linear infinite;
+}
+
+/* Crown breathing — subtle scale pulse */
+@keyframes uc-breathing {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+.uc-breathing {
+  animation: uc-breathing 2s ease-in-out infinite;
+  transform-origin: center;
+}
+
+/* Error flash — opacity blink */
+@keyframes uc-flash {
+  0%,
+  100% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+.uc-flash {
+  animation: uc-flash 0.8s ease-in-out infinite;
+}
+
+/* Heartbeat sonar — very subtle ambient pulse */
+@keyframes uc-heartbeat-sonar {
+  from {
+    transform: scale(0.3);
+    opacity: 0.12;
+  }
+  to {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+.uc-heartbeat-sonar {
+  animation: uc-heartbeat-sonar 3s ease-out forwards;
+  transform-origin: center;
+}
+
+/* ── Touch / mobile polish ───────────────────────────────────────── */
+@media (pointer: coarse) {
+  /* Larger touch targets for buttons */
+  button {
+    min-height: 36px;
+    min-width: 36px;
+  }
+
+  /* Larger command bar input area */
+  .uc-command-input {
+    min-height: 44px;
+    font-size: 16px; /* Prevents iOS auto-zoom on focus */
+  }
+
+  /* Larger topbar buttons */
+  .uc-topbar-btn {
+    min-height: 40px;
+    padding: 6px 14px;
+  }
+
+  /* Scrollbar wider for touch */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  /* ReactFlow controls larger */
+  .react-flow__controls button {
+    width: 32px;
+    height: 32px;
+  }
+
+  /* Larger drag handle for command bar */
+  .uc-drag-handle {
+    padding: 8px 0;
+  }
+
+  /* Prevent text selection during drag */
+  .uc-dragging {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+}
+
+/* ── Reduced motion ──────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+    transition-duration: 0.01ms;
+  }
+}

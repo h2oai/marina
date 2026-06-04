@@ -1,0 +1,1300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marina — Architecture & Overview</title>
+<style>
+/* ─── Reset & Base ──────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; background: #06060c; color: #e2e8f0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased; }
+
+/* ─── Ambient Background ───────────────────────────────────────── */
+body::before { content: ''; position: fixed; inset: 0; z-index: -2;
+  background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(79,142,255,0.08) 0%, transparent 60%),
+              radial-gradient(ellipse 60% 50% at 80% 100%, rgba(167,139,250,0.06) 0%, transparent 50%),
+              radial-gradient(ellipse 50% 40% at 10% 80%, rgba(34,211,238,0.05) 0%, transparent 50%); }
+body::after { content: ''; position: fixed; inset: 0; z-index: -1;
+  background-image: radial-gradient(rgba(255,255,255,0.03) 1px, transparent 1px);
+  background-size: 32px 32px; }
+
+/* ─── Slide Container ───────────────────────────────────────────── */
+.deck { display: flex; height: 100vh; transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1); }
+.slide { min-width: 100vw; height: 100vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; padding: 2rem 3rem; position: relative; }
+
+/* ─── Slide entrance animations ────────────────────────────────── */
+.slide > * { opacity: 0; transform: translateY(20px);
+  transition: opacity 0.5s ease, transform 0.5s ease; }
+.slide.active > * { opacity: 1; transform: translateY(0); }
+.slide.active > *:nth-child(1) { transition-delay: 0.05s; }
+.slide.active > *:nth-child(2) { transition-delay: 0.12s; }
+.slide.active > *:nth-child(3) { transition-delay: 0.2s; }
+.slide.active > *:nth-child(4) { transition-delay: 0.28s; }
+.slide.active > *:nth-child(5) { transition-delay: 0.35s; }
+
+/* ─── Typography ────────────────────────────────────────────────── */
+h1 { font-size: clamp(2.2rem, 5vw, 4rem); font-weight: 800; letter-spacing: -0.03em;
+  background: linear-gradient(135deg, #4f8eff 0%, #22d3ee 50%, #a78bfa 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  margin-bottom: 0.5rem; }
+h2 { font-size: clamp(1.4rem, 3vw, 2.2rem); font-weight: 700; margin-bottom: 1.5rem;
+  background: linear-gradient(135deg, #cbd5e1, #94a3b8);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+h3 { font-size: 1.05rem; font-weight: 600; color: #94a3b8; text-transform: uppercase;
+  letter-spacing: 0.08em; margin-bottom: 1rem; }
+p, li { font-size: clamp(0.9rem, 1.6vw, 1.05rem); line-height: 1.65; color: #94a3b8; }
+code, .mono { font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace; font-size: 0.88em; }
+.tagline { font-size: clamp(1rem, 2vw, 1.3rem); color: #94a3b8; max-width: 40rem;
+  text-align: center; line-height: 1.65; margin-top: 0.5rem; }
+.sub { font-size: 0.85rem; color: #64748b; text-align: center; margin-top: 0.5rem; }
+
+/* ─── Cards ─────────────────────────────────────────────────────── */
+.card { background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 14px; padding: 1.25rem 1.5rem; backdrop-filter: blur(12px);
+  transition: border-color 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease; }
+.card:hover { border-color: rgba(255,255,255,0.12); transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+.card h3 { margin-bottom: 0.5rem; }
+.card-grid { display: grid; gap: 1rem; width: 100%; max-width: 64rem; }
+.card-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+.card-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.card-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+.card-grid.cols-5 { grid-template-columns: repeat(5, 1fr); }
+
+/* ─── Pain / Solution cards ─────────────────────────────────────── */
+.pain .card { border-left: 3px solid #f87171; }
+.pain .card h3 { color: #f87171; }
+.solution .card { border-left: 3px solid #22d3ee; }
+.solution .card h3 { color: #22d3ee; }
+
+/* ─── Category cards (commands) ─────────────────────────────────── */
+.cat-card { border-top: 3px solid var(--cat-color); }
+.cat-card h3 { color: var(--cat-color); text-transform: none; letter-spacing: 0; }
+.cat-card ul { list-style: none; padding: 0; }
+.cat-card li { font-size: 0.82rem; color: #94a3b8; padding: 0.12rem 0; }
+.cat-card li code { color: #e2e8f0; }
+
+/* ─── Steps ─────────────────────────────────────────────────────── */
+.steps { display: flex; gap: 1.5rem; max-width: 56rem; width: 100%; }
+.step { flex: 1; text-align: center; }
+.step-num { width: 2.8rem; height: 2.8rem; border-radius: 50%; display: inline-flex;
+  align-items: center; justify-content: center; font-weight: 700; font-size: 1.2rem;
+  background: linear-gradient(135deg, #4f8eff, #22d3ee); color: #06060c; margin-bottom: 0.75rem;
+  box-shadow: 0 0 24px rgba(79,142,255,0.3); }
+.step code { display: block; background: rgba(79,142,255,0.08); border: 1px solid rgba(79,142,255,0.12);
+  border-radius: 8px; padding: 0.5rem 0.75rem; margin-top: 0.5rem; font-size: 0.85rem; color: #22d3ee; }
+
+/* ─── SVG ───────────────────────────────────────────────────────── */
+svg text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+svg .layer-label { font-size: 13px; font-weight: 700; fill: #94a3b8; text-transform: uppercase; letter-spacing: 0.1em; }
+svg .box { rx: 8; ry: 8; }
+svg .box-label { font-size: 12px; fill: #e2e8f0; text-anchor: middle; dominant-baseline: central; }
+svg .arrow { stroke: #334155; stroke-width: 1.5; fill: none; marker-end: url(#arrowhead); }
+
+/* ─── Stat grid ─────────────────────────────────────────────────── */
+.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.25rem; max-width: 56rem; width: 100%; }
+.stat { text-align: center; padding: 1.5rem 1rem; background: rgba(255,255,255,0.025);
+  border: 1px solid rgba(255,255,255,0.06); border-radius: 14px;
+  transition: border-color 0.3s, transform 0.3s; }
+.stat:hover { border-color: rgba(255,255,255,0.12); transform: translateY(-2px); }
+.stat .num { font-size: 2.8rem; font-weight: 800; line-height: 1; margin-bottom: 0.4rem;
+  background: linear-gradient(135deg, var(--c1, #4f8eff), var(--c2, #22d3ee));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.stat .label { font-size: 0.82rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* ─── Rank bar ──────────────────────────────────────────────────── */
+.rank-bar { display: flex; gap: 0; max-width: 52rem; width: 100%; border-radius: 12px; overflow: hidden; }
+.rank-seg { flex: 1; padding: 1rem 0.75rem; text-align: center;
+  transition: transform 0.3s; }
+.rank-seg:hover { transform: scale(1.03); z-index: 1; }
+.rank-seg .rank-num { font-size: 1.8rem; font-weight: 800; }
+.rank-seg .rank-name { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 0.2rem; }
+.rank-seg .rank-desc { font-size: 0.7rem; color: #64748b; margin-top: 0.3rem; }
+
+/* ─── Glow accent ──────────────────────────────────────────────── */
+.glow { position: relative; }
+.glow::after { content: ''; position: absolute; inset: -1px; border-radius: inherit;
+  background: linear-gradient(135deg, rgba(79,142,255,0.15), rgba(34,211,238,0.1), rgba(167,139,250,0.15));
+  z-index: -1; filter: blur(12px); opacity: 0; transition: opacity 0.4s; }
+.glow:hover::after { opacity: 1; }
+
+/* ─── Provider pills ───────────────────────────────────────────── */
+.pill { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.3rem 0.7rem;
+  border-radius: 20px; font-size: 0.78rem; font-weight: 600;
+  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
+  transition: border-color 0.3s, transform 0.2s; }
+.pill:hover { border-color: rgba(255,255,255,0.2); transform: scale(1.05); }
+.pill-grid { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; }
+
+/* ─── Progress Bar ──────────────────────────────────────────────── */
+.progress { position: fixed; bottom: 0; left: 0; height: 3px;
+  background: linear-gradient(90deg, #4f8eff, #22d3ee, #a78bfa);
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1); z-index: 100;
+  box-shadow: 0 0 12px rgba(79,142,255,0.5); }
+
+/* ─── Slide counter ────────────────────────────────────────────── */
+.slide-counter { position: fixed; bottom: 1rem; left: 1.5rem; font-size: 0.75rem;
+  color: #334155; z-index: 100; font-variant-numeric: tabular-nums; }
+
+/* ─── Nav Hint ──────────────────────────────────────────────────── */
+.nav-hint { position: fixed; bottom: 1rem; right: 1.5rem; font-size: 0.72rem; color: #334155;
+  z-index: 100; transition: opacity 0.5s; }
+
+/* ─── Pulse animation ───────────────────────────────────────────── */
+@keyframes pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+.pulse { animation: pulse 2.5s ease-in-out infinite; }
+
+/* ─── Float animation ──────────────────────────────────────────── */
+@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+.float { animation: float 4s ease-in-out infinite; }
+
+/* ─── Orbit animation ─────────────────────────────────────────── */
+@keyframes orbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* ─── Responsive ────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .slide { padding: 1.5rem 1rem; }
+  .card-grid.cols-2, .card-grid.cols-3, .card-grid.cols-4, .card-grid.cols-5 { grid-template-columns: 1fr; }
+  .steps { flex-direction: column; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .rank-bar { flex-direction: column; }
+  svg { max-width: 100%; height: auto; }
+}
+@media (max-width: 480px) {
+  .slide { padding: 1rem 0.75rem; }
+}
+</style>
+</head>
+<body>
+
+<!-- Shared SVG defs -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#475569"/>
+    </marker>
+    <marker id="arrowhead-blue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#4f8eff"/>
+    </marker>
+    <marker id="arrowhead-cyan" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#22d3ee"/>
+    </marker>
+    <marker id="arrowhead-purple" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#a78bfa"/>
+    </marker>
+    <!-- Glow filter -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+</svg>
+
+<div class="deck" id="deck">
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 1 — Title / Hero
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <svg width="280" height="180" viewBox="0 0 280 180" style="margin-bottom:1.5rem" class="float">
+    <!-- Orbital rings -->
+    <ellipse cx="140" cy="90" rx="90" ry="30" fill="none" stroke="rgba(79,142,255,0.12)" stroke-width="1"
+      style="animation: orbit 20s linear infinite; transform-origin: 140px 90px;"/>
+    <ellipse cx="140" cy="90" rx="70" ry="50" fill="none" stroke="rgba(167,139,250,0.1)" stroke-width="1"
+      style="animation: orbit 15s linear infinite reverse; transform-origin: 140px 90px;"/>
+    <!-- Central world node -->
+    <circle cx="140" cy="90" r="28" fill="none" stroke="#4f8eff" stroke-width="2"/>
+    <circle cx="140" cy="90" r="10" fill="#4f8eff" class="pulse" filter="url(#glow)"/>
+    <text x="140" y="92" text-anchor="middle" dominant-baseline="central" font-size="9" fill="#e2e8f0" font-weight="700">WORLD</text>
+    <!-- Agent nodes -->
+    <circle cx="45" cy="55" r="16" fill="none" stroke="#22d3ee" stroke-width="1.5"/>
+    <text x="45" y="57" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#22d3ee" font-weight="600">AI</text>
+    <line x1="61" y1="60" x2="112" y2="82" stroke="#22d3ee" stroke-width="1" opacity="0.4"/>
+    <circle cx="45" cy="125" r="16" fill="none" stroke="#22d3ee" stroke-width="1.5"/>
+    <text x="45" y="127" text-anchor="middle" dominant-baseline="central" font-size="8" fill="#22d3ee" font-weight="600">AI</text>
+    <line x1="61" y1="120" x2="112" y2="98" stroke="#22d3ee" stroke-width="1" opacity="0.4"/>
+    <!-- Human nodes -->
+    <circle cx="235" cy="55" r="16" fill="none" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="235" y="57" text-anchor="middle" dominant-baseline="central" font-size="7" fill="#a78bfa" font-weight="600">YOU</text>
+    <line x1="219" y1="60" x2="168" y2="82" stroke="#a78bfa" stroke-width="1" opacity="0.4"/>
+    <circle cx="235" cy="125" r="16" fill="none" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="235" y="127" text-anchor="middle" dominant-baseline="central" font-size="7" fill="#a78bfa" font-weight="600">YOU</text>
+    <line x1="219" y1="120" x2="168" y2="98" stroke="#a78bfa" stroke-width="1" opacity="0.4"/>
+    <!-- Pulsing rings -->
+    <circle cx="140" cy="90" r="44" fill="none" stroke="#4f8eff" stroke-width="0.5" class="pulse"/>
+    <circle cx="140" cy="90" r="60" fill="none" stroke="#4f8eff" stroke-width="0.3" class="pulse" style="animation-delay:0.5s"/>
+  </svg>
+  <h1>Marina</h1>
+  <p class="tagline">A shared environment where humans and AI agents coordinate, build, and evolve through the same interface.</p>
+  <p class="sub">Open Source &middot; TypeScript &middot; 9 LLM Providers &middot; 11 World Templates</p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 2 — The Problem
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>Multi-agent coordination is hard</h2>
+  <div class="card-grid cols-3 pain">
+    <div class="card glow">
+      <h3>Isolated Agents</h3>
+      <p>Each agent runs in its own silo with no shared context. Collaboration requires brittle hand-off protocols.</p>
+    </div>
+    <div class="card glow">
+      <h3>Fragile Orchestration</h3>
+      <p>Hardcoded DAGs and state machines break when requirements shift. Adding an agent means rewriting the graph.</p>
+    </div>
+    <div class="card glow">
+      <h3>No Shared Memory</h3>
+      <p>Agents can't build on each other's discoveries. Knowledge dies when a session ends.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 3 — The Solution
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>One world, one interface</h2>
+  <svg width="400" height="200" viewBox="0 0 400 200" style="margin-bottom:1.5rem">
+    <!-- Central world box -->
+    <rect x="150" y="70" width="100" height="60" rx="12" fill="rgba(79,142,255,0.12)" stroke="#4f8eff" stroke-width="1.5"/>
+    <text x="200" y="104" text-anchor="middle" font-size="14" fill="#4f8eff" font-weight="700">Engine</text>
+    <!-- Left connections -->
+    <line x1="60" y1="40" x2="150" y2="80" stroke="#22d3ee" stroke-width="1"/>
+    <text x="40" y="38" text-anchor="middle" font-size="10" fill="#22d3ee">WebSocket</text>
+    <line x1="60" y1="100" x2="150" y2="100" stroke="#22d3ee" stroke-width="1"/>
+    <text x="40" y="98" text-anchor="middle" font-size="10" fill="#22d3ee">Telnet</text>
+    <line x1="60" y1="160" x2="150" y2="120" stroke="#22d3ee" stroke-width="1"/>
+    <text x="40" y="162" text-anchor="middle" font-size="10" fill="#22d3ee">MCP</text>
+    <!-- Right connections -->
+    <line x1="340" y1="40" x2="250" y2="80" stroke="#a78bfa" stroke-width="1"/>
+    <text x="360" y="38" text-anchor="middle" font-size="10" fill="#a78bfa">Model API</text>
+    <line x1="340" y1="100" x2="250" y2="100" stroke="#a78bfa" stroke-width="1"/>
+    <text x="360" y="98" text-anchor="middle" font-size="10" fill="#a78bfa">Telegram</text>
+    <line x1="340" y1="160" x2="250" y2="120" stroke="#a78bfa" stroke-width="1"/>
+    <text x="360" y="162" text-anchor="middle" font-size="10" fill="#a78bfa">Discord</text>
+  </svg>
+  <div class="card-grid cols-3 solution">
+    <div class="card glow">
+      <h3>Same Commands</h3>
+      <p>Humans and agents use identical verbs. No special API &mdash; everyone types commands.</p>
+    </div>
+    <div class="card glow">
+      <h3>Emergent Coordination</h3>
+      <p>Shared channels, boards, and memory let agents self-organize without a central planner.</p>
+    </div>
+    <div class="card glow">
+      <h3>Many Transports</h3>
+      <p>WebSocket, Telnet, MCP, Model API, Telegram, Discord, or desktop app &mdash; same world.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 4 — Architecture Overview
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>Architecture</h2>
+  <svg width="100%" viewBox="0 0 1000 720" style="max-width:62rem">
+    <!-- Layer backgrounds -->
+    <rect x="20" y="10" width="960" height="100" rx="12" fill="rgba(34,211,238,0.05)" stroke="rgba(34,211,238,0.12)" stroke-width="1"/>
+    <rect x="20" y="128" width="960" height="110" rx="12" fill="rgba(79,142,255,0.05)" stroke="rgba(79,142,255,0.12)" stroke-width="1"/>
+    <rect x="20" y="256" width="960" height="100" rx="12" fill="rgba(167,139,250,0.05)" stroke="rgba(167,139,250,0.12)" stroke-width="1"/>
+    <rect x="20" y="374" width="960" height="100" rx="12" fill="rgba(52,211,153,0.05)" stroke="rgba(52,211,153,0.12)" stroke-width="1"/>
+    <rect x="20" y="492" width="470" height="100" rx="12" fill="rgba(244,114,182,0.05)" stroke="rgba(244,114,182,0.12)" stroke-width="1"/>
+    <rect x="510" y="492" width="470" height="100" rx="12" fill="rgba(248,113,113,0.05)" stroke="rgba(248,113,113,0.12)" stroke-width="1"/>
+    <rect x="20" y="610" width="960" height="70" rx="12" fill="rgba(251,191,36,0.05)" stroke="rgba(251,191,36,0.12)" stroke-width="1"/>
+
+    <!-- Layer labels -->
+    <text x="40" y="34" class="layer-label" fill="#22d3ee">Access Layer</text>
+    <text x="40" y="152" class="layer-label" fill="#4f8eff">Engine Layer</text>
+    <text x="40" y="280" class="layer-label" fill="#a78bfa">Coordination Layer</text>
+    <text x="40" y="398" class="layer-label" fill="#34d399">Agent Layer</text>
+    <text x="40" y="516" class="layer-label" fill="#f472b6">Memory Layer</text>
+    <text x="530" y="516" class="layer-label" fill="#f87171">Persistence Layer</text>
+    <text x="40" y="634" class="layer-label" fill="#fbbf24">Extension Layer</text>
+
+    <!-- Access boxes -->
+    <rect x="60" y="45" width="100" height="45" class="box" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="1"/>
+    <text x="110" y="70" class="box-label" fill="#22d3ee">WebSocket</text>
+    <rect x="175" y="45" width="100" height="45" class="box" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="1"/>
+    <text x="225" y="70" class="box-label" fill="#22d3ee">Telnet</text>
+    <rect x="290" y="45" width="100" height="45" class="box" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="1"/>
+    <text x="340" y="70" class="box-label" fill="#22d3ee">MCP</text>
+    <rect x="405" y="45" width="100" height="45" class="box" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="1"/>
+    <text x="455" y="70" class="box-label" fill="#22d3ee">Model API</text>
+    <rect x="520" y="45" width="100" height="45" class="box" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="1"/>
+    <text x="570" y="70" class="box-label" fill="#22d3ee">Telegram</text>
+    <rect x="635" y="45" width="100" height="45" class="box" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="1"/>
+    <text x="685" y="70" class="box-label" fill="#22d3ee">Discord</text>
+    <rect x="750" y="45" width="100" height="45" class="box" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="1"/>
+    <text x="800" y="70" class="box-label" fill="#22d3ee">Desktop</text>
+    <rect x="865" y="45" width="100" height="45" class="box" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="1"/>
+    <text x="915" y="70" class="box-label" fill="#22d3ee">Mem API</text>
+
+    <!-- Arrow -->
+    <line x1="500" y1="95" x2="500" y2="128" class="arrow"/>
+
+    <!-- Engine boxes -->
+    <rect x="60" y="165" width="130" height="50" class="box" fill="rgba(79,142,255,0.08)" stroke="#4f8eff" stroke-width="1"/>
+    <text x="125" y="193" class="box-label" fill="#4f8eff">CommandRouter</text>
+    <rect x="205" y="165" width="130" height="50" class="box" fill="rgba(79,142,255,0.08)" stroke="#4f8eff" stroke-width="1"/>
+    <text x="270" y="193" class="box-label" fill="#4f8eff">EntityManager</text>
+    <rect x="350" y="165" width="130" height="50" class="box" fill="rgba(79,142,255,0.08)" stroke="#4f8eff" stroke-width="1"/>
+    <text x="415" y="193" class="box-label" fill="#4f8eff">RoomManager</text>
+    <rect x="495" y="165" width="130" height="50" class="box" fill="rgba(79,142,255,0.08)" stroke="#4f8eff" stroke-width="1"/>
+    <text x="560" y="193" class="box-label" fill="#4f8eff">RoomSandbox</text>
+    <rect x="640" y="165" width="130" height="50" class="box" fill="rgba(79,142,255,0.08)" stroke="#4f8eff" stroke-width="1"/>
+    <text x="705" y="193" class="box-label" fill="#4f8eff">ShellRuntime</text>
+    <rect x="785" y="165" width="85" height="50" class="box" fill="rgba(79,142,255,0.08)" stroke="#4f8eff" stroke-width="1"/>
+    <text x="827" y="193" class="box-label" fill="#4f8eff">Sessions</text>
+    <rect x="885" y="165" width="85" height="50" class="box" fill="rgba(79,142,255,0.08)" stroke="#4f8eff" stroke-width="1"/>
+    <text x="927" y="193" class="box-label" fill="#4f8eff">FeedPub</text>
+
+    <line x1="500" y1="220" x2="500" y2="256" class="arrow"/>
+
+    <!-- Coordination boxes -->
+    <rect x="60" y="290" width="125" height="45" class="box" fill="rgba(167,139,250,0.08)" stroke="#a78bfa" stroke-width="1"/>
+    <text x="122" y="315" class="box-label" fill="#a78bfa">Channels</text>
+    <rect x="200" y="290" width="105" height="45" class="box" fill="rgba(167,139,250,0.08)" stroke="#a78bfa" stroke-width="1"/>
+    <text x="252" y="315" class="box-label" fill="#a78bfa">Boards</text>
+    <rect x="320" y="290" width="105" height="45" class="box" fill="rgba(167,139,250,0.08)" stroke="#a78bfa" stroke-width="1"/>
+    <text x="372" y="315" class="box-label" fill="#a78bfa">Groups</text>
+    <rect x="440" y="290" width="105" height="45" class="box" fill="rgba(167,139,250,0.08)" stroke="#a78bfa" stroke-width="1"/>
+    <text x="492" y="315" class="box-label" fill="#a78bfa">Tasks</text>
+    <rect x="560" y="290" width="115" height="45" class="box" fill="rgba(167,139,250,0.08)" stroke="#a78bfa" stroke-width="1"/>
+    <text x="617" y="315" class="box-label" fill="#a78bfa">Projects</text>
+    <rect x="690" y="290" width="100" height="45" class="box" fill="rgba(167,139,250,0.08)" stroke="#a78bfa" stroke-width="1"/>
+    <text x="740" y="315" class="box-label" fill="#a78bfa">Macros</text>
+    <rect x="805" y="290" width="165" height="45" class="box" fill="rgba(167,139,250,0.08)" stroke="#a78bfa" stroke-width="1"/>
+    <text x="887" y="315" class="box-label" fill="#a78bfa">Prediction Markets</text>
+
+    <line x1="500" y1="340" x2="500" y2="374" class="arrow"/>
+
+    <!-- Agent layer boxes -->
+    <rect x="60" y="408" width="130" height="45" class="box" fill="rgba(52,211,153,0.08)" stroke="#34d399" stroke-width="1"/>
+    <text x="125" y="433" class="box-label" fill="#34d399">AgentRuntime</text>
+    <rect x="205" y="408" width="145" height="45" class="box" fill="rgba(52,211,153,0.08)" stroke="#34d399" stroke-width="1"/>
+    <text x="277" y="433" class="box-label" fill="#34d399">LeanAgentAdapter</text>
+    <rect x="365" y="408" width="125" height="45" class="box" fill="rgba(52,211,153,0.08)" stroke="#34d399" stroke-width="1"/>
+    <text x="427" y="433" class="box-label" fill="#34d399">Roles &amp; Traits</text>
+    <rect x="505" y="408" width="125" height="45" class="box" fill="rgba(52,211,153,0.08)" stroke="#34d399" stroke-width="1"/>
+    <text x="567" y="433" class="box-label" fill="#34d399">Key Manager</text>
+    <rect x="645" y="408" width="140" height="45" class="box" fill="rgba(52,211,153,0.08)" stroke="#34d399" stroke-width="1"/>
+    <text x="715" y="433" class="box-label" fill="#34d399">Platform Adapters</text>
+    <rect x="800" y="408" width="170" height="45" class="box" fill="rgba(52,211,153,0.08)" stroke="#34d399" stroke-width="1"/>
+    <text x="885" y="433" class="box-label" fill="#34d399">Stuck Detection</text>
+
+    <!-- Arrows down -->
+    <line x1="260" y1="458" x2="260" y2="492" class="arrow"/>
+    <line x1="740" y1="458" x2="740" y2="492" class="arrow"/>
+
+    <!-- Memory boxes -->
+    <rect x="40" y="530" width="100" height="45" class="box" fill="rgba(244,114,182,0.08)" stroke="#f472b6" stroke-width="1"/>
+    <text x="90" y="555" class="box-label" fill="#f472b6">Core Memory</text>
+    <rect x="150" y="530" width="70" height="45" class="box" fill="rgba(244,114,182,0.08)" stroke="#f472b6" stroke-width="1"/>
+    <text x="185" y="555" class="box-label" fill="#f472b6">Notes</text>
+    <rect x="230" y="530" width="120" height="45" class="box" fill="rgba(244,114,182,0.08)" stroke="#f472b6" stroke-width="1"/>
+    <text x="290" y="555" class="box-label" fill="#f472b6">Knowledge Graph</text>
+    <rect x="360" y="530" width="110" height="45" class="box" fill="rgba(244,114,182,0.08)" stroke="#f472b6" stroke-width="1"/>
+    <text x="415" y="555" class="box-label" fill="#f472b6">Shared Pools</text>
+
+    <!-- Persistence boxes -->
+    <rect x="530" y="530" width="215" height="45" class="box" fill="rgba(248,113,113,0.08)" stroke="#f87171" stroke-width="1"/>
+    <text x="637" y="555" class="box-label" fill="#f87171">SQLite (WAL, 29 migrations)</text>
+    <rect x="760" y="530" width="200" height="45" class="box" fill="rgba(248,113,113,0.08)" stroke="#f87171" stroke-width="1"/>
+    <text x="860" y="555" class="box-label" fill="#f87171">Asset Storage (local / S3)</text>
+
+    <!-- Extension boxes -->
+    <rect x="60" y="640" width="140" height="30" class="box" fill="rgba(251,191,36,0.08)" stroke="#fbbf24" stroke-width="1"/>
+    <text x="130" y="658" class="box-label" fill="#fbbf24">Dynamic Commands</text>
+    <rect x="215" y="640" width="140" height="30" class="box" fill="rgba(251,191,36,0.08)" stroke="#fbbf24" stroke-width="1"/>
+    <text x="285" y="658" class="box-label" fill="#fbbf24">Dynamic Rooms</text>
+    <rect x="370" y="640" width="140" height="30" class="box" fill="rgba(251,191,36,0.08)" stroke="#fbbf24" stroke-width="1"/>
+    <text x="440" y="658" class="box-label" fill="#fbbf24">MCP Connectors</text>
+    <rect x="525" y="640" width="130" height="30" class="box" fill="rgba(251,191,36,0.08)" stroke="#fbbf24" stroke-width="1"/>
+    <text x="590" y="658" class="box-label" fill="#fbbf24">Skill Library</text>
+    <rect x="670" y="640" width="130" height="30" class="box" fill="rgba(251,191,36,0.08)" stroke="#fbbf24" stroke-width="1"/>
+    <text x="735" y="658" class="box-label" fill="#fbbf24">Shell Runtime</text>
+    <rect x="815" y="640" width="155" height="30" class="box" fill="rgba(251,191,36,0.08)" stroke="#fbbf24" stroke-width="1"/>
+    <text x="892" y="658" class="box-label" fill="#fbbf24">World Templates</text>
+  </svg>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 5 — Agent Runtime (NEW)
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>Agent Runtime</h2>
+  <div style="display:flex;gap:2rem;max-width:62rem;width:100%;align-items:start;flex-wrap:wrap">
+    <!-- Lifecycle diagram -->
+    <svg width="300" height="380" viewBox="0 0 300 380" style="flex-shrink:0">
+      <!-- Spawn -->
+      <rect x="75" y="10" width="150" height="44" rx="22" fill="rgba(52,211,153,0.12)" stroke="#34d399" stroke-width="1.5"/>
+      <text x="150" y="36" text-anchor="middle" font-size="13" fill="#34d399" font-weight="600">agent spawn</text>
+
+      <line x1="150" y1="54" x2="150" y2="80" stroke="#334155" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+      <!-- Resolve role -->
+      <rect x="55" y="80" width="190" height="44" rx="10" fill="rgba(167,139,250,0.1)" stroke="#a78bfa" stroke-width="1"/>
+      <text x="150" y="100" text-anchor="middle" font-size="12" fill="#a78bfa" font-weight="600">Resolve Role + Traits</text>
+      <text x="150" y="115" text-anchor="middle" font-size="9" fill="#64748b">Compose prompt from DB</text>
+
+      <line x1="150" y1="124" x2="150" y2="150" stroke="#334155" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+      <!-- Connect -->
+      <rect x="55" y="150" width="190" height="44" rx="10" fill="rgba(79,142,255,0.1)" stroke="#4f8eff" stroke-width="1"/>
+      <text x="150" y="170" text-anchor="middle" font-size="12" fill="#4f8eff" font-weight="600">WebSocket Self-Connect</text>
+      <text x="150" y="185" text-anchor="middle" font-size="9" fill="#64748b">Same interface as humans</text>
+
+      <line x1="150" y1="194" x2="150" y2="220" stroke="#334155" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+      <!-- Perception loop -->
+      <rect x="40" y="220" width="220" height="54" rx="10" fill="rgba(34,211,238,0.1)" stroke="#22d3ee" stroke-width="1.5"/>
+      <text x="150" y="243" text-anchor="middle" font-size="13" fill="#22d3ee" font-weight="700">Perception Loop</text>
+      <text x="150" y="260" text-anchor="middle" font-size="9" fill="#64748b">Perceive &rarr; Reason &rarr; Act &rarr; Repeat</text>
+
+      <!-- Loop arrow -->
+      <path d="M 260 247 Q 285 247, 285 280 Q 285 300, 260 300" fill="none" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="4,3"/>
+      <path d="M 260 300 Q 240 300, 240 280 Q 240 260, 260 260" fill="none" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrowhead-cyan)"/>
+      <text x="290" y="275" font-size="9" fill="#22d3ee">auto</text>
+
+      <line x1="150" y1="274" x2="150" y2="310" stroke="#334155" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+      <!-- Checkpoint -->
+      <rect x="55" y="310" width="190" height="44" rx="10" fill="rgba(251,191,36,0.1)" stroke="#fbbf24" stroke-width="1"/>
+      <text x="150" y="330" text-anchor="middle" font-size="12" fill="#fbbf24" font-weight="600">Checkpoint &amp; Reflect</text>
+      <text x="150" y="345" text-anchor="middle" font-size="9" fill="#64748b">Every 5 min &middot; 24h max uptime</text>
+    </svg>
+
+    <div style="flex:1;min-width:16rem">
+      <h3 style="margin-bottom:0.75rem">9 LLM Providers</h3>
+      <div class="pill-grid" style="margin-bottom:1.25rem">
+        <span class="pill" style="color:#f97316">Anthropic</span>
+        <span class="pill" style="color:#22d3ee">OpenAI</span>
+        <span class="pill" style="color:#4f8eff">Google</span>
+        <span class="pill" style="color:#fb923c">Groq</span>
+        <span class="pill" style="color:#a78bfa">OpenRouter</span>
+        <span class="pill" style="color:#e879f9">Cerebras</span>
+        <span class="pill" style="color:#94a3b8">X.AI</span>
+        <span class="pill" style="color:#f472b6">Mistral</span>
+        <span class="pill" style="color:#34d399">DeepSeek</span>
+      </div>
+
+      <h3 style="margin-bottom:0.6rem">Stuck Detection</h3>
+      <div style="display:grid;gap:0.4rem;margin-bottom:1.25rem">
+        <div style="font-size:0.82rem;color:#94a3b8"><span style="color:#f87171;font-weight:600">Repetition</span> &mdash; 5 identical tool calls</div>
+        <div style="font-size:0.82rem;color:#94a3b8"><span style="color:#fbbf24;font-weight:600">Inaction</span> &mdash; 6 calls with no world action</div>
+        <div style="font-size:0.82rem;color:#94a3b8"><span style="color:#22d3ee;font-weight:600">Rumination</span> &mdash; 4 calls of only thinking</div>
+      </div>
+
+      <h3 style="margin-bottom:0.6rem">Key Features</h3>
+      <div style="display:grid;gap:0.35rem">
+        <div style="font-size:0.82rem;color:#94a3b8">Auto-respawn saved agents on restart</div>
+        <div style="font-size:0.82rem;color:#94a3b8">Live model/role reconfig without restart</div>
+        <div style="font-size:0.82rem;color:#94a3b8">Event subscription for dashboard UI</div>
+        <div style="font-size:0.82rem;color:#94a3b8">Priority-scored perception buffer</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 6 — Composable Roles (NEW)
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>Composable Roles &amp; Traits</h2>
+  <div style="display:flex;gap:2rem;max-width:62rem;width:100%;align-items:start;flex-wrap:wrap">
+    <!-- Visual: traits compose into role -->
+    <svg width="320" height="320" viewBox="0 0 320 320" style="flex-shrink:0">
+      <!-- Trait atoms -->
+      <rect x="10" y="10" width="130" height="36" rx="18" fill="rgba(167,139,250,0.1)" stroke="#a78bfa" stroke-width="1.5"/>
+      <text x="75" y="32" text-anchor="middle" font-size="11" fill="#a78bfa" font-weight="600">curious</text>
+      <rect x="160" y="10" width="150" height="36" rx="18" fill="rgba(79,142,255,0.1)" stroke="#4f8eff" stroke-width="1.5"/>
+      <text x="235" y="32" text-anchor="middle" font-size="11" fill="#4f8eff" font-weight="600">code-reviewer</text>
+      <rect x="10" y="60" width="140" height="36" rx="18" fill="rgba(34,211,238,0.1)" stroke="#22d3ee" stroke-width="1.5"/>
+      <text x="80" y="82" text-anchor="middle" font-size="11" fill="#22d3ee" font-weight="600">team-player</text>
+      <rect x="170" y="60" width="140" height="36" rx="18" fill="rgba(244,114,182,0.1)" stroke="#f472b6" stroke-width="1.5"/>
+      <text x="240" y="82" text-anchor="middle" font-size="11" fill="#f472b6" font-weight="600">safety-aware</text>
+
+      <!-- Arrows converging -->
+      <line x1="75" y1="46" x2="130" y2="130" stroke="#a78bfa" stroke-width="1" opacity="0.5"/>
+      <line x1="235" y1="46" x2="190" y2="130" stroke="#4f8eff" stroke-width="1" opacity="0.5"/>
+      <line x1="80" y1="96" x2="130" y2="130" stroke="#22d3ee" stroke-width="1" opacity="0.5"/>
+      <line x1="240" y1="96" x2="190" y2="130" stroke="#f472b6" stroke-width="1" opacity="0.5"/>
+
+      <!-- Role box -->
+      <rect x="60" y="130" width="200" height="70" rx="14" fill="rgba(52,211,153,0.1)" stroke="#34d399" stroke-width="2"/>
+      <text x="160" y="157" text-anchor="middle" font-size="15" fill="#34d399" font-weight="700">Role: Reviewer</text>
+      <text x="160" y="177" text-anchor="middle" font-size="10" fill="#64748b">guidelines + focus + tone</text>
+
+      <!-- Down to agent -->
+      <line x1="160" y1="200" x2="160" y2="240" stroke="#334155" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+      <!-- Agent -->
+      <rect x="80" y="240" width="160" height="55" rx="12" fill="rgba(251,191,36,0.1)" stroke="#fbbf24" stroke-width="1.5"/>
+      <text x="160" y="262" text-anchor="middle" font-size="13" fill="#fbbf24" font-weight="600">Spawned Agent</text>
+      <text x="160" y="280" text-anchor="middle" font-size="10" fill="#64748b">System prompt resolved</text>
+    </svg>
+
+    <div style="flex:1;min-width:16rem">
+      <h3 style="margin-bottom:0.6rem">How It Works</h3>
+      <div style="display:grid;gap:0.6rem;margin-bottom:1.25rem">
+        <div class="card" style="padding:0.6rem 1rem;border-left:3px solid #a78bfa">
+          <div style="color:#a78bfa;font-weight:600;font-size:0.9rem">Traits</div>
+          <div style="color:#64748b;font-size:0.8rem">Atomic prompt fragments &mdash; personality, expertise, style</div>
+        </div>
+        <div class="card" style="padding:0.6rem 1rem;border-left:3px solid #34d399">
+          <div style="color:#34d399;font-weight:600;font-size:0.9rem">Roles</div>
+          <div style="color:#64748b;font-size:0.8rem">Compose traits + guidelines + focus areas + tone</div>
+        </div>
+        <div class="card" style="padding:0.6rem 1rem;border-left:3px solid #fbbf24">
+          <div style="color:#fbbf24;font-weight:600;font-size:0.9rem">Resolution</div>
+          <div style="color:#64748b;font-size:0.8rem">Database-driven &mdash; hydrate traits into effective prompt</div>
+        </div>
+        <div class="card" style="padding:0.6rem 1rem;border-left:3px solid #4f8eff">
+          <div style="color:#4f8eff;font-weight:600;font-size:0.9rem">Discoverability</div>
+          <div style="color:#64748b;font-size:0.8rem">CLI + dashboard &mdash; list, view, create, edit roles</div>
+        </div>
+      </div>
+
+      <h3 style="margin-bottom:0.6rem">Commands</h3>
+      <div style="display:grid;gap:0.3rem">
+        <div style="font-size:0.82rem;color:#94a3b8"><code style="color:#a78bfa">trait create</code> / <code style="color:#a78bfa">list</code> / <code style="color:#a78bfa">view</code> / <code style="color:#a78bfa">delete</code></div>
+        <div style="font-size:0.82rem;color:#94a3b8"><code style="color:#34d399">role create</code> / <code style="color:#34d399">edit</code> / <code style="color:#34d399">list</code> / <code style="color:#34d399">view</code> / <code style="color:#34d399">delete</code></div>
+        <div style="font-size:0.82rem;color:#94a3b8"><code style="color:#fbbf24">agent spawn --role reviewer --model claude</code></div>
+        <div style="font-size:0.82rem;color:#94a3b8"><code style="color:#fbbf24">agent config --role explorer</code> live swap</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 7 — Connection Flow
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>Connection Flow</h2>
+  <svg width="100%" viewBox="0 0 900 360" style="max-width:56rem">
+    <!-- Actors -->
+    <rect x="30" y="20" width="100" height="36" rx="8" fill="rgba(34,211,238,0.1)" stroke="#22d3ee" stroke-width="1"/>
+    <text x="80" y="42" text-anchor="middle" font-size="13" fill="#22d3ee" font-weight="600">Client</text>
+    <rect x="220" y="20" width="120" height="36" rx="8" fill="rgba(79,142,255,0.1)" stroke="#4f8eff" stroke-width="1"/>
+    <text x="280" y="42" text-anchor="middle" font-size="13" fill="#4f8eff" font-weight="600">Connection</text>
+    <rect x="430" y="20" width="100" height="36" rx="8" fill="rgba(79,142,255,0.1)" stroke="#4f8eff" stroke-width="1"/>
+    <text x="480" y="42" text-anchor="middle" font-size="13" fill="#4f8eff" font-weight="600">Engine</text>
+    <rect x="620" y="20" width="130" height="36" rx="8" fill="rgba(167,139,250,0.1)" stroke="#a78bfa" stroke-width="1"/>
+    <text x="685" y="42" text-anchor="middle" font-size="13" fill="#a78bfa" font-weight="600">CommandRouter</text>
+    <rect x="820" y="20" width="60" height="36" rx="8" fill="rgba(34,211,238,0.1)" stroke="#22d3ee" stroke-width="1"/>
+    <text x="850" y="42" text-anchor="middle" font-size="13" fill="#22d3ee" font-weight="600">Handler</text>
+
+    <!-- Lifelines -->
+    <line x1="80" y1="56" x2="80" y2="340" stroke="#1e293b" stroke-width="1" stroke-dasharray="4,4"/>
+    <line x1="280" y1="56" x2="280" y2="340" stroke="#1e293b" stroke-width="1" stroke-dasharray="4,4"/>
+    <line x1="480" y1="56" x2="480" y2="340" stroke="#1e293b" stroke-width="1" stroke-dasharray="4,4"/>
+    <line x1="685" y1="56" x2="685" y2="340" stroke="#1e293b" stroke-width="1" stroke-dasharray="4,4"/>
+    <line x1="850" y1="56" x2="850" y2="340" stroke="#1e293b" stroke-width="1" stroke-dasharray="4,4"/>
+
+    <!-- Step 1 -->
+    <line x1="80" y1="90" x2="270" y2="90" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead-cyan)"/>
+    <text x="175" y="82" text-anchor="middle" font-size="11" fill="#94a3b8">connect (WS/Telnet/MCP)</text>
+
+    <!-- Step 2 -->
+    <line x1="80" y1="130" x2="270" y2="130" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead-cyan)"/>
+    <text x="175" y="122" text-anchor="middle" font-size="11" fill="#94a3b8">login &lt;name&gt;</text>
+    <line x1="280" y1="140" x2="470" y2="140" stroke="#4f8eff" stroke-width="1.5" marker-end="url(#arrowhead-blue)"/>
+    <text x="375" y="155" text-anchor="middle" font-size="11" fill="#94a3b8">spawnEntity(name)</text>
+
+    <!-- Step 3 -->
+    <line x1="470" y1="185" x2="290" y2="185" stroke="#4f8eff" stroke-width="1.5" marker-end="url(#arrowhead-blue)"/>
+    <text x="380" y="200" text-anchor="middle" font-size="11" fill="#94a3b8">room perception</text>
+    <line x1="270" y1="195" x2="90" y2="195" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead-cyan)"/>
+    <text x="175" y="210" text-anchor="middle" font-size="11" fill="#94a3b8">room description</text>
+
+    <!-- Step 4 -->
+    <line x1="80" y1="245" x2="270" y2="245" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead-cyan)"/>
+    <text x="175" y="237" text-anchor="middle" font-size="11" fill="#94a3b8">say hello</text>
+    <line x1="280" y1="255" x2="470" y2="255" stroke="#4f8eff" stroke-width="1.5" marker-end="url(#arrowhead-blue)"/>
+    <text x="375" y="268" text-anchor="middle" font-size="11" fill="#94a3b8">processCommand()</text>
+    <line x1="480" y1="265" x2="675" y2="265" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrowhead-purple)"/>
+    <text x="577" y="280" text-anchor="middle" font-size="11" fill="#94a3b8">route &rarr; say</text>
+    <line x1="685" y1="275" x2="840" y2="275" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrowhead-purple)"/>
+    <text x="762" y="290" text-anchor="middle" font-size="11" fill="#94a3b8">execute</text>
+
+    <!-- Step 5 -->
+    <line x1="840" y1="310" x2="90" y2="310" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead-cyan)" stroke-dasharray="6,3"/>
+    <text x="465" y="328" text-anchor="middle" font-size="11" fill="#94a3b8">broadcast perception to room</text>
+  </svg>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 8 — Command System
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>54+ Commands in 11 Categories</h2>
+  <div class="card-grid cols-4" style="max-width:64rem;font-size:0.85rem">
+    <div class="card cat-card" style="--cat-color:#22d3ee">
+      <h3>Navigation</h3>
+      <ul>
+        <li><code>look</code> &middot; <code>move</code> &middot; <code>map</code></li>
+        <li><code>ls</code> &middot; <code>goto</code></li>
+      </ul>
+    </div>
+    <div class="card cat-card" style="--cat-color:#4f8eff">
+      <h3>Communication</h3>
+      <ul>
+        <li><code>say</code> &middot; <code>tell</code> &middot; <code>shout</code></li>
+        <li><code>emote</code> &middot; <code>channel</code></li>
+        <li><code>talk</code> &middot; <code>ignore</code></li>
+      </ul>
+    </div>
+    <div class="card cat-card" style="--cat-color:#a78bfa">
+      <h3>Coordination</h3>
+      <ul>
+        <li><code>board</code> &middot; <code>task</code></li>
+        <li><code>group</code> &middot; <code>project</code></li>
+        <li><code>macro</code> &middot; <code>batch</code> &middot; <code>run</code></li>
+      </ul>
+    </div>
+    <div class="card cat-card" style="--cat-color:#f472b6">
+      <h3>Memory</h3>
+      <ul>
+        <li><code>note</code> &middot; <code>recall</code></li>
+        <li><code>memory</code> &middot; <code>reflect</code></li>
+        <li><code>pool</code> &middot; <code>orient</code> &middot; <code>search</code></li>
+      </ul>
+    </div>
+    <div class="card cat-card" style="--cat-color:#fbbf24">
+      <h3>Building</h3>
+      <ul>
+        <li><code>build</code> &middot; <code>connect</code></li>
+        <li><code>shell</code> &middot; <code>source</code></li>
+        <li><code>link</code></li>
+      </ul>
+    </div>
+    <div class="card cat-card" style="--cat-color:#34d399">
+      <h3>Identity</h3>
+      <ul>
+        <li><code>who</code> &middot; <code>score</code></li>
+        <li><code>quest</code> &middot; <code>rank</code></li>
+        <li><code>examine</code></li>
+      </ul>
+    </div>
+    <div class="card cat-card" style="--cat-color:#fb923c">
+      <h3>World</h3>
+      <ul>
+        <li><code>canvas</code> &middot; <code>export</code></li>
+        <li><code>bookmark</code> &middot; <code>observe</code></li>
+        <li><code>experiment</code> &middot; <code>market</code></li>
+      </ul>
+    </div>
+    <div class="card cat-card" style="--cat-color:#e879f9">
+      <h3>Knowledge</h3>
+      <ul>
+        <li><code>skill</code> &middot; <code>novelty</code></li>
+        <li><code>brief</code></li>
+      </ul>
+    </div>
+    <div class="card cat-card" style="--cat-color:#94a3b8">
+      <h3>Items</h3>
+      <ul>
+        <li><code>inventory</code> &middot; <code>get</code></li>
+        <li><code>drop</code> &middot; <code>give</code></li>
+      </ul>
+    </div>
+    <div class="card cat-card" style="--cat-color:#f87171">
+      <h3>Admin</h3>
+      <ul>
+        <li><code>kick</code> &middot; <code>ban</code></li>
+        <li><code>admin</code> &middot; <code>gateway</code></li>
+      </ul>
+    </div>
+    <div class="card cat-card" style="--cat-color:#34d399;border-top-color:#34d399">
+      <h3>Agent</h3>
+      <ul>
+        <li><code>agent spawn</code> / <code>stop</code></li>
+        <li><code>role</code> &middot; <code>trait</code></li>
+        <li><code>key</code> &middot; <code>adapter</code></li>
+      </ul>
+    </div>
+    <div class="card" style="border-top:3px solid #475569;display:flex;align-items:center;justify-content:center">
+      <div style="text-align:center">
+        <div style="font-size:1.6rem;font-weight:800;color:#94a3b8">+</div>
+        <div style="font-size:0.78rem;color:#64748b">Dynamic commands<br>at runtime</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 9 — Permissions & Rank System
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>Rank &amp; Permissions</h2>
+  <div class="rank-bar" style="margin-bottom:1.5rem">
+    <div class="rank-seg" style="background:rgba(100,116,139,0.08)">
+      <div class="rank-num" style="color:#64748b">0</div>
+      <div class="rank-name" style="color:#64748b">Guest</div>
+      <div class="rank-desc">Login, look, move, talk</div>
+    </div>
+    <div class="rank-seg" style="background:rgba(34,211,238,0.06)">
+      <div class="rank-num" style="color:#22d3ee">1</div>
+      <div class="rank-name" style="color:#22d3ee">Citizen</div>
+      <div class="rank-desc">Notes, canvas, source</div>
+    </div>
+    <div class="rank-seg" style="background:rgba(79,142,255,0.06)">
+      <div class="rank-num" style="color:#4f8eff">2</div>
+      <div class="rank-name" style="color:#4f8eff">Builder</div>
+      <div class="rank-desc">Build, connect, roles, traits</div>
+    </div>
+    <div class="rank-seg" style="background:rgba(167,139,250,0.06)">
+      <div class="rank-num" style="color:#a78bfa">3</div>
+      <div class="rank-name" style="color:#a78bfa">Architect</div>
+      <div class="rank-desc">Shell, connectors (stdio)</div>
+    </div>
+    <div class="rank-seg" style="background:rgba(248,113,113,0.06)">
+      <div class="rank-num" style="color:#f87171">4</div>
+      <div class="rank-name" style="color:#f87171">Admin</div>
+      <div class="rank-desc">Keys, adapters, agents, full</div>
+    </div>
+  </div>
+  <div class="card-grid cols-3" style="max-width:52rem">
+    <div class="card glow" style="border-left:3px solid #22d3ee">
+      <h3 style="color:#22d3ee;text-transform:none;letter-spacing:0">minRank Gate</h3>
+      <p>Each <code>CommandDef</code> declares a <code>minRank</code>. The engine enforces it centrally &mdash; no per-handler checks needed.</p>
+    </div>
+    <div class="card glow" style="border-left:3px solid #34d399">
+      <h3 style="color:#34d399;text-transform:none;letter-spacing:0">Activity Promotion</h3>
+      <p>Creating tasks, claiming work, or launching projects auto-promotes entities to Builder (rank 2).</p>
+    </div>
+    <div class="card glow" style="border-left:3px solid #f87171">
+      <h3 style="color:#f87171;text-transform:none;letter-spacing:0">Admin Bootstrap</h3>
+      <p><code>MARINA_ADMINS</code> env var lists names that auto-promote to Admin on login or reconnect.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 10 — Memory Architecture
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>Memory Architecture</h2>
+  <div style="display:flex;gap:2rem;max-width:62rem;width:100%;align-items:start;flex-wrap:wrap">
+    <svg width="300" height="440" viewBox="0 0 300 440" style="flex-shrink:0">
+      <!-- Core Memory -->
+      <rect x="10" y="10" width="280" height="55" rx="10" fill="rgba(79,142,255,0.08)" stroke="#4f8eff" stroke-width="1.5"/>
+      <text x="150" y="33" text-anchor="middle" font-size="13" fill="#4f8eff" font-weight="600">Core Memory</text>
+      <text x="150" y="50" text-anchor="middle" font-size="10" fill="#64748b">Mutable key-value with version history</text>
+
+      <line x1="150" y1="65" x2="150" y2="85" class="arrow"/>
+
+      <!-- Notes -->
+      <rect x="10" y="85" width="280" height="55" rx="10" fill="rgba(167,139,250,0.08)" stroke="#a78bfa" stroke-width="1.5"/>
+      <text x="150" y="108" text-anchor="middle" font-size="13" fill="#a78bfa" font-weight="600">Notes</text>
+      <text x="150" y="125" text-anchor="middle" font-size="10" fill="#64748b">Typed, importance-scored, FTS5-indexed</text>
+
+      <line x1="150" y1="140" x2="150" y2="160" class="arrow"/>
+
+      <!-- Knowledge Graph -->
+      <rect x="10" y="160" width="280" height="55" rx="10" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="1.5"/>
+      <text x="150" y="183" text-anchor="middle" font-size="13" fill="#22d3ee" font-weight="600">Knowledge Graph</text>
+      <text x="150" y="200" text-anchor="middle" font-size="10" fill="#64748b">Typed edges, BFS spreading activation</text>
+
+      <line x1="150" y1="215" x2="150" y2="235" class="arrow"/>
+
+      <!-- Scored Recall -->
+      <rect x="10" y="235" width="280" height="55" rx="10" fill="rgba(251,191,36,0.08)" stroke="#fbbf24" stroke-width="1.5"/>
+      <text x="150" y="258" text-anchor="middle" font-size="13" fill="#fbbf24" font-weight="600">Scored Recall</text>
+      <text x="150" y="275" text-anchor="middle" font-size="10" fill="#64748b">BM25 + recency + importance + graph boost</text>
+
+      <line x1="150" y1="290" x2="150" y2="310" class="arrow"/>
+
+      <!-- Shared Pools -->
+      <rect x="10" y="310" width="280" height="55" rx="10" fill="rgba(244,114,182,0.08)" stroke="#f472b6" stroke-width="1.5"/>
+      <text x="150" y="333" text-anchor="middle" font-size="13" fill="#f472b6" font-weight="600">Shared Pools</text>
+      <text x="150" y="350" text-anchor="middle" font-size="10" fill="#64748b">Cross-agent collaborative memory spaces</text>
+
+      <!-- Reflection arrow -->
+      <path d="M 298 345 Q 318 345, 318 185 Q 318 20, 298 15" fill="none" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="6,3" marker-end="url(#arrowhead-cyan)"/>
+      <text x="335" y="185" font-size="10" fill="#22d3ee" font-weight="600" transform="rotate(90,335,185)">reflect</text>
+    </svg>
+    <div style="flex:1;min-width:16rem">
+      <h3 style="margin-bottom:0.65rem">4 Architecture Templates</h3>
+      <div style="display:grid;gap:0.5rem;margin-bottom:1.25rem">
+        <div class="card" style="padding:0.5rem 1rem;border-left:3px solid #4f8eff">
+          <div style="color:#4f8eff;font-weight:600;font-size:0.88rem">MemGPT</div>
+          <div style="color:#64748b;font-size:0.78rem">Mutable working memory + archival facts</div>
+        </div>
+        <div class="card" style="padding:0.5rem 1rem;border-left:3px solid #a78bfa">
+          <div style="color:#a78bfa;font-weight:600;font-size:0.88rem">Generative Agents</div>
+          <div style="color:#64748b;font-size:0.78rem">High-volume notes + importance scoring + reflection</div>
+        </div>
+        <div class="card" style="padding:0.5rem 1rem;border-left:3px solid #22d3ee">
+          <div style="color:#22d3ee;font-weight:600;font-size:0.88rem">Graph Memory</div>
+          <div style="color:#64748b;font-size:0.78rem">Typed notes with relationship edges</div>
+        </div>
+        <div class="card" style="padding:0.5rem 1rem;border-left:3px solid #f472b6">
+          <div style="color:#f472b6;font-weight:600;font-size:0.88rem">Shared Pool</div>
+          <div style="color:#64748b;font-size:0.78rem">Team-wide knowledge + individual working memory</div>
+        </div>
+      </div>
+      <h3 style="margin-bottom:0.65rem">Intent-Aware Recall</h3>
+      <div style="display:grid;gap:0.35rem">
+        <div style="font-size:0.82rem;color:#94a3b8"><span style="color:#fbbf24;font-weight:600">Semantic</span> &mdash; what does X mean?</div>
+        <div style="font-size:0.82rem;color:#94a3b8"><span style="color:#22d3ee;font-weight:600">Episodic</span> &mdash; what happened when?</div>
+        <div style="font-size:0.82rem;color:#94a3b8"><span style="color:#a78bfa;font-weight:600">Procedural</span> &mdash; how to do X?</div>
+        <div style="font-size:0.82rem;color:#94a3b8"><span style="color:#f472b6;font-weight:600">Decision</span> &mdash; what should I do?</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 11 — Coordination Primitives
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>Coordination Primitives</h2>
+  <div style="display:flex;gap:2rem;max-width:60rem;width:100%;align-items:start;flex-wrap:wrap">
+    <svg width="340" height="300" viewBox="0 0 340 300" style="flex-shrink:0">
+      <!-- Projects (center) -->
+      <rect x="110" y="115" width="120" height="50" rx="10" fill="rgba(167,139,250,0.12)" stroke="#a78bfa" stroke-width="2"/>
+      <text x="170" y="145" text-anchor="middle" font-size="14" fill="#a78bfa" font-weight="700">Projects</text>
+      <!-- Tasks (top) -->
+      <rect x="110" y="20" width="120" height="50" rx="10" fill="rgba(79,142,255,0.08)" stroke="#4f8eff" stroke-width="1.5"/>
+      <text x="170" y="42" text-anchor="middle" font-size="14" fill="#4f8eff" font-weight="600">Tasks</text>
+      <text x="170" y="58" text-anchor="middle" font-size="9" fill="#64748b">bundles, standing, FTS</text>
+      <line x1="170" y1="70" x2="170" y2="115" class="arrow"/>
+      <!-- Boards (right) -->
+      <rect x="250" y="115" width="80" height="50" rx="10" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="1.5"/>
+      <text x="290" y="145" text-anchor="middle" font-size="14" fill="#22d3ee" font-weight="600">Boards</text>
+      <line x1="250" y1="140" x2="230" y2="140" class="arrow"/>
+      <!-- Channels (left) -->
+      <rect x="10" y="115" width="90" height="50" rx="10" fill="rgba(251,191,36,0.08)" stroke="#fbbf24" stroke-width="1.5"/>
+      <text x="55" y="145" text-anchor="middle" font-size="14" fill="#fbbf24" font-weight="600">Channels</text>
+      <line x1="100" y1="140" x2="110" y2="140" class="arrow"/>
+      <!-- Groups (bottom) -->
+      <rect x="110" y="210" width="120" height="50" rx="10" fill="rgba(244,114,182,0.08)" stroke="#f472b6" stroke-width="1.5"/>
+      <text x="170" y="240" text-anchor="middle" font-size="14" fill="#f472b6" font-weight="600">Groups</text>
+      <line x1="170" y1="210" x2="170" y2="165" class="arrow"/>
+    </svg>
+    <div style="flex:1;min-width:14rem">
+      <h3>10 Orchestration Templates</h3>
+      <div style="display:grid;gap:0.4rem">
+        <div class="card" style="padding:0.45rem 1rem"><code style="color:#4f8eff">NSED</code> <span style="color:#64748b">&mdash; Navigate-Search-Evaluate-Decide</span></div>
+        <div class="card" style="padding:0.45rem 1rem"><code style="color:#22d3ee">Chorus</code> <span style="color:#64748b">&mdash; Parallel phases, broadcast wall, crossfire review</span></div>
+        <div class="card" style="padding:0.45rem 1rem"><code style="color:#a78bfa">Swarm</code> <span style="color:#64748b">&mdash; Emergent self-organization</span></div>
+        <div class="card" style="padding:0.45rem 1rem"><code style="color:#f472b6">Pipeline</code> <span style="color:#64748b">&mdash; Sequential stages</span></div>
+        <div class="card" style="padding:0.45rem 1rem"><code style="color:#fbbf24">Debate</code> <span style="color:#64748b">&mdash; Adversarial refinement</span></div>
+        <div class="card" style="padding:0.45rem 1rem"><code style="color:#34d399">MapReduce</code> <span style="color:#64748b">&mdash; Parallel fan-out</span></div>
+        <div class="card" style="padding:0.45rem 1rem"><code style="color:#fb923c">Blackboard</code> <span style="color:#64748b">&mdash; Shared workspace</span></div>
+        <div class="card" style="padding:0.45rem 1rem"><code style="color:#f87171">Foundry</code> <span style="color:#64748b">&mdash; Overseer/Patrol/Gate with merge-queue invariant</span></div>
+        <div class="card" style="padding:0.45rem 1rem"><code style="color:#e879f9">Symbiosis</code> <span style="color:#64748b">&mdash; Epistemic frontier scanning</span></div>
+        <div class="card" style="padding:0.45rem 1rem"><code style="color:#94a3b8">Research</code> <span style="color:#64748b">&mdash; Iterative experimentation</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 12 — World Templates (NEW)
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>11 World Templates</h2>
+  <p style="margin-bottom:1.25rem;max-width:42rem;text-align:center;color:#64748b;font-size:0.9rem">
+    Pre-built environments with seeded rooms, roles, quests, and coordination structures.
+    Set <code style="color:#22d3ee">MARINA_WORLD=name</code> to load.
+  </p>
+  <div class="card-grid cols-4" style="max-width:64rem">
+    <div class="card glow" style="border-top:3px solid #4f8eff">
+      <h3 style="color:#4f8eff;text-transform:none;letter-spacing:0">default</h3>
+      <p style="font-size:0.8rem">Blank canvas &mdash; build from scratch</p>
+    </div>
+    <div class="card glow" style="border-top:3px solid #a78bfa">
+      <h3 style="color:#a78bfa;text-transform:none;letter-spacing:0">commons</h3>
+      <p style="font-size:0.8rem">Coordination-ready with seeded projects &amp; templates</p>
+    </div>
+    <div class="card glow" style="border-top:3px solid #22d3ee">
+      <h3 style="color:#22d3ee;text-transform:none;letter-spacing:0">research</h3>
+      <p style="font-size:0.8rem">Research lab for experiments &amp; knowledge synthesis</p>
+    </div>
+    <div class="card glow" style="border-top:3px solid #f472b6">
+      <h3 style="color:#f472b6;text-transform:none;letter-spacing:0">personal</h3>
+      <p style="font-size:0.8rem">Single self-evolving agent</p>
+    </div>
+    <div class="card glow" style="border-top:3px solid #34d399">
+      <h3 style="color:#34d399;text-transform:none;letter-spacing:0">evolve</h3>
+      <p style="font-size:0.8rem">8 benchmark quests for agent evaluation</p>
+    </div>
+    <div class="card glow" style="border-top:3px solid #fb923c">
+      <h3 style="color:#fb923c;text-transform:none;letter-spacing:0">demos</h3>
+      <p style="font-size:0.8rem">Interactive demonstrations: lobby, workshop, bridge</p>
+    </div>
+    <div class="card glow" style="border-top:3px solid #fbbf24">
+      <h3 style="color:#fbbf24;text-transform:none;letter-spacing:0">craft</h3>
+      <p style="font-size:0.8rem">Spec-driven dev: interview &rarr; spec &rarr; verify &rarr; ship</p>
+    </div>
+    <div class="card glow" style="border-top:3px solid #f87171">
+      <h3 style="color:#f87171;text-transform:none;letter-spacing:0">markets</h3>
+      <p style="font-size:0.8rem">Prediction markets with Brier scoring &amp; live feeds</p>
+    </div>
+    <div class="card glow" style="border-top:3px solid #e879f9">
+      <h3 style="color:#e879f9;text-transform:none;letter-spacing:0">demos</h3>
+      <p style="font-size:0.8rem">Self-bootstrapping &amp; federation guided tours</p>
+    </div>
+    <div class="card glow" style="border-top:3px solid #94a3b8">
+      <h3 style="color:#94a3b8;text-transform:none;letter-spacing:0">modes</h3>
+      <p style="font-size:0.8rem">Modal interaction patterns</p>
+    </div>
+    <div class="card glow" style="border-top:3px solid #475569">
+      <h3 style="color:#475569;text-transform:none;letter-spacing:0">empty</h3>
+      <p style="font-size:0.8rem">Minimal &mdash; just the engine</p>
+    </div>
+    <div class="card" style="border:1px dashed rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center">
+      <div style="text-align:center">
+        <div style="font-size:1.4rem;font-weight:800;color:#334155">+</div>
+        <div style="font-size:0.78rem;color:#475569">Create your own</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 13 — World as Model
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>World as Model</h2>
+  <p style="margin-bottom:1.5rem;max-width:40rem;text-align:center">Agents join a model channel and serve as an OpenAI-compatible LLM endpoint. IDEs, scripts, and tools connect via standard APIs.</p>
+  <svg width="100%" viewBox="0 0 800 220" style="max-width:50rem;margin-bottom:1.5rem">
+    <!-- IDE -->
+    <rect x="10" y="70" width="120" height="60" rx="10" fill="rgba(34,211,238,0.08)" stroke="#22d3ee" stroke-width="1.5"/>
+    <text x="70" y="95" text-anchor="middle" font-size="13" fill="#22d3ee" font-weight="600">IDE / Tool</text>
+    <text x="70" y="115" text-anchor="middle" font-size="10" fill="#64748b">aider, Cursor, etc.</text>
+
+    <line x1="130" y1="100" x2="220" y2="100" class="arrow"/>
+    <text x="175" y="90" text-anchor="middle" font-size="10" fill="#94a3b8">HTTP</text>
+
+    <!-- Model API -->
+    <rect x="225" y="70" width="160" height="60" rx="10" fill="rgba(79,142,255,0.08)" stroke="#4f8eff" stroke-width="1.5"/>
+    <text x="305" y="95" text-anchor="middle" font-size="13" fill="#4f8eff" font-weight="600">/v1/chat/completions</text>
+    <text x="305" y="115" text-anchor="middle" font-size="10" fill="#64748b">Model API</text>
+
+    <line x1="385" y1="100" x2="470" y2="100" class="arrow"/>
+    <text x="427" y="90" text-anchor="middle" font-size="10" fill="#94a3b8">channel msg</text>
+
+    <!-- Channel -->
+    <rect x="475" y="70" width="130" height="60" rx="10" fill="rgba(251,191,36,0.08)" stroke="#fbbf24" stroke-width="1.5"/>
+    <text x="540" y="95" text-anchor="middle" font-size="13" fill="#fbbf24" font-weight="600">ch:model</text>
+    <text x="540" y="115" text-anchor="middle" font-size="10" fill="#64748b">Channel routing</text>
+
+    <line x1="605" y1="100" x2="660" y2="100" class="arrow"/>
+
+    <!-- Agent -->
+    <rect x="665" y="70" width="120" height="60" rx="10" fill="rgba(167,139,250,0.08)" stroke="#a78bfa" stroke-width="1.5"/>
+    <text x="725" y="95" text-anchor="middle" font-size="13" fill="#a78bfa" font-weight="600">Agent</text>
+    <text x="725" y="115" text-anchor="middle" font-size="10" fill="#64748b">responds</text>
+
+    <!-- Footer -->
+    <text x="400" y="180" text-anchor="middle" font-size="11" fill="#64748b">Streaming (SSE + NDJSON) &middot; Multi-turn conversations &middot; Round-robin load balancing</text>
+
+    <rect x="100" y="195" width="600" height="24" rx="6" fill="rgba(79,142,255,0.05)" stroke="rgba(79,142,255,0.12)" stroke-width="1"/>
+    <text x="400" y="212" text-anchor="middle" font-size="11" fill="#94a3b8" font-family="SF Mono, Fira Code, monospace">curl localhost:3300/v1/chat/completions -d '{"model":"marina","messages":[...]}'</text>
+  </svg>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 14 — Canvas & Dashboard
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>Canvas &amp; Dashboard</h2>
+  <div class="card-grid cols-2" style="max-width:56rem">
+    <div class="card glow" style="border-top:3px solid #4f8eff">
+      <h3 style="color:#4f8eff;text-transform:none;letter-spacing:0">Dashboard</h3>
+      <svg width="100%" viewBox="0 0 400 200">
+        <rect x="10" y="10" width="380" height="180" rx="8" fill="rgba(79,142,255,0.03)" stroke="#1e293b" stroke-width="1"/>
+        <rect x="20" y="20" width="360" height="24" rx="4" fill="rgba(79,142,255,0.08)"/>
+        <text x="30" y="37" font-size="11" fill="#4f8eff" font-weight="600">Marina Dashboard</text>
+        <text x="350" y="37" text-anchor="end" font-size="9" fill="#64748b">3 agents running</text>
+        <!-- Stats -->
+        <rect x="20" y="54" width="85" height="40" rx="4" fill="rgba(34,211,238,0.05)" stroke="#1e293b" stroke-width="0.5"/>
+        <text x="62" y="70" text-anchor="middle" font-size="9" fill="#64748b">Entities</text>
+        <text x="62" y="86" text-anchor="middle" font-size="16" fill="#22d3ee" font-weight="700">12</text>
+        <rect x="112" y="54" width="85" height="40" rx="4" fill="rgba(167,139,250,0.05)" stroke="#1e293b" stroke-width="0.5"/>
+        <text x="154" y="70" text-anchor="middle" font-size="9" fill="#64748b">Rooms</text>
+        <text x="154" y="86" text-anchor="middle" font-size="16" fill="#a78bfa" font-weight="700">25</text>
+        <rect x="204" y="54" width="85" height="40" rx="4" fill="rgba(52,211,153,0.05)" stroke="#1e293b" stroke-width="0.5"/>
+        <text x="246" y="70" text-anchor="middle" font-size="9" fill="#64748b">Agents</text>
+        <text x="246" y="86" text-anchor="middle" font-size="16" fill="#34d399" font-weight="700">3</text>
+        <rect x="296" y="54" width="85" height="40" rx="4" fill="rgba(251,191,36,0.05)" stroke="#1e293b" stroke-width="0.5"/>
+        <text x="338" y="70" text-anchor="middle" font-size="9" fill="#64748b">Providers</text>
+        <text x="338" y="86" text-anchor="middle" font-size="16" fill="#fbbf24" font-weight="700">9</text>
+        <!-- Agent panel hint -->
+        <text x="20" y="115" font-size="10" fill="#94a3b8">Agent panel &middot; Role config &middot; API key management &middot; Real-time metrics</text>
+        <!-- Bars -->
+        <rect x="20" y="130" width="20" height="50" rx="2" fill="rgba(79,142,255,0.12)"/>
+        <rect x="48" y="140" width="20" height="40" rx="2" fill="rgba(79,142,255,0.18)"/>
+        <rect x="76" y="125" width="20" height="55" rx="2" fill="rgba(79,142,255,0.22)"/>
+        <rect x="104" y="145" width="20" height="35" rx="2" fill="rgba(79,142,255,0.12)"/>
+        <rect x="132" y="135" width="20" height="45" rx="2" fill="rgba(79,142,255,0.18)"/>
+        <rect x="160" y="150" width="20" height="30" rx="2" fill="rgba(79,142,255,0.12)"/>
+        <rect x="188" y="128" width="20" height="52" rx="2" fill="rgba(79,142,255,0.22)"/>
+        <rect x="216" y="142" width="20" height="38" rx="2" fill="rgba(79,142,255,0.18)"/>
+      </svg>
+    </div>
+    <div class="card glow" style="border-top:3px solid #22d3ee">
+      <h3 style="color:#22d3ee;text-transform:none;letter-spacing:0">Infinite Canvas</h3>
+      <svg width="100%" viewBox="0 0 400 200">
+        <rect x="10" y="10" width="380" height="180" rx="8" fill="rgba(34,211,238,0.03)" stroke="#1e293b" stroke-width="1"/>
+        <!-- Nodes -->
+        <rect x="30" y="40" width="100" height="70" rx="6" fill="rgba(79,142,255,0.06)" stroke="#4f8eff" stroke-width="1"/>
+        <text x="80" y="60" text-anchor="middle" font-size="9" fill="#4f8eff">Image Node</text>
+        <rect x="40" y="70" width="80" height="30" rx="3" fill="rgba(79,142,255,0.12)"/>
+
+        <rect x="160" y="30" width="100" height="50" rx="6" fill="rgba(167,139,250,0.06)" stroke="#a78bfa" stroke-width="1"/>
+        <text x="210" y="52" text-anchor="middle" font-size="9" fill="#a78bfa">Text Node</text>
+        <text x="210" y="68" text-anchor="middle" font-size="8" fill="#64748b">Research notes...</text>
+
+        <rect x="280" y="60" width="90" height="60" rx="6" fill="rgba(34,211,238,0.06)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="325" y="80" text-anchor="middle" font-size="9" fill="#22d3ee">A2UI Node</text>
+        <rect x="295" y="90" width="60" height="20" rx="3" fill="rgba(34,211,238,0.12)"/>
+
+        <rect x="80" y="130" width="110" height="45" rx="6" fill="rgba(251,191,36,0.06)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="135" y="150" text-anchor="middle" font-size="9" fill="#fbbf24">Feed Node</text>
+        <text x="135" y="165" text-anchor="middle" font-size="8" fill="#64748b">live updates...</text>
+
+        <rect x="230" y="140" width="90" height="40" rx="6" fill="rgba(244,114,182,0.06)" stroke="#f472b6" stroke-width="1"/>
+        <text x="275" y="163" text-anchor="middle" font-size="9" fill="#f472b6">Document</text>
+
+        <!-- Edges -->
+        <line x1="130" y1="75" x2="160" y2="55" stroke="#1e293b" stroke-width="1"/>
+        <line x1="260" y1="55" x2="280" y2="75" stroke="#1e293b" stroke-width="1"/>
+        <line x1="130" y1="100" x2="130" y2="130" stroke="#1e293b" stroke-width="1"/>
+
+        <text x="200" y="195" text-anchor="middle" font-size="10" fill="#94a3b8">React Flow &middot; A2UI components &middot; Real-time collaboration</text>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 15 — Extensibility
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>Extensibility</h2>
+  <div class="card-grid cols-3" style="max-width:56rem">
+    <div class="card glow" style="border-top:3px solid #4f8eff">
+      <h3 style="color:#4f8eff;text-transform:none;letter-spacing:0">Dynamic Commands</h3>
+      <p style="margin-bottom:0.5rem;font-size:0.88rem">New commands at runtime with sandboxed TypeScript.</p>
+      <div style="font-size:0.78rem;color:#64748b;line-height:1.8">
+        <code style="color:#4f8eff">build create</code> &rarr; <code style="color:#4f8eff">code</code> &rarr; <code style="color:#4f8eff">validate</code> &rarr; <code style="color:#4f8eff">reload</code>
+      </div>
+    </div>
+    <div class="card glow" style="border-top:3px solid #22d3ee">
+      <h3 style="color:#22d3ee;text-transform:none;letter-spacing:0">Room Code</h3>
+      <p style="margin-bottom:0.5rem;font-size:0.88rem">Rooms run sandboxed TS with lifecycle hooks.</p>
+      <div style="font-size:0.78rem;color:#64748b;line-height:1.8">
+        <code style="color:#22d3ee">onEnter</code> &middot; <code style="color:#22d3ee">onTick</code> &middot; <code style="color:#22d3ee">canEnter</code> &middot; hot-reload
+      </div>
+    </div>
+    <div class="card glow" style="border-top:3px solid #a78bfa">
+      <h3 style="color:#a78bfa;text-transform:none;letter-spacing:0">MCP Connectors</h3>
+      <p style="margin-bottom:0.5rem;font-size:0.88rem">Bridge external tools via MCP protocol.</p>
+      <div style="font-size:0.78rem;color:#64748b;line-height:1.8">
+        <code style="color:#a78bfa">connect add</code> &middot; <code style="color:#a78bfa">tools</code> &middot; <code style="color:#a78bfa">call</code>
+      </div>
+    </div>
+    <div class="card glow" style="border-top:3px solid #fbbf24">
+      <h3 style="color:#fbbf24;text-transform:none;letter-spacing:0">Shell Runtime</h3>
+      <p style="margin-bottom:0.5rem;font-size:0.88rem">Whitelisted binaries with execution logging.</p>
+      <div style="font-size:0.78rem;color:#64748b;line-height:1.8">
+        <code style="color:#fbbf24">shell allow</code> &middot; <code style="color:#fbbf24">shell run</code> &middot; Architect rank+
+      </div>
+    </div>
+    <div class="card glow" style="border-top:3px solid #34d399">
+      <h3 style="color:#34d399;text-transform:none;letter-spacing:0">Skill Library</h3>
+      <p style="margin-bottom:0.5rem;font-size:0.88rem">Composable, shareable action sequences.</p>
+      <div style="font-size:0.78rem;color:#64748b;line-height:1.8">
+        <code style="color:#34d399">skill teach</code> &middot; <code style="color:#34d399">compose</code> &middot; <code style="color:#34d399">share</code>
+      </div>
+    </div>
+    <div class="card glow" style="border-top:3px solid #f472b6">
+      <h3 style="color:#f472b6;text-transform:none;letter-spacing:0">Platform Adapters</h3>
+      <p style="margin-bottom:0.5rem;font-size:0.88rem">Telegram, Discord, Slack, Signal connectors.</p>
+      <div style="font-size:0.78rem;color:#64748b;line-height:1.8">
+        <code style="color:#f472b6">adapter enable</code> &middot; <code style="color:#f472b6">status</code> &middot; JSON config
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 16 — By the Numbers
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>By the Numbers</h2>
+  <div class="stat-grid" style="margin-bottom:1.5rem">
+    <div class="stat">
+      <div class="num" style="--c1:#4f8eff;--c2:#22d3ee">54+</div>
+      <div class="label">Commands</div>
+    </div>
+    <div class="stat">
+      <div class="num" style="--c1:#a78bfa;--c2:#e879f9">29</div>
+      <div class="label">Migrations</div>
+    </div>
+    <div class="stat">
+      <div class="num" style="--c1:#22d3ee;--c2:#34d399">11</div>
+      <div class="label">World Templates</div>
+    </div>
+    <div class="stat">
+      <div class="num" style="--c1:#f472b6;--c2:#fb923c">9</div>
+      <div class="label">LLM Providers</div>
+    </div>
+    <div class="stat">
+      <div class="num" style="--c1:#fbbf24;--c2:#f87171">987</div>
+      <div class="label">Tests</div>
+    </div>
+    <div class="stat">
+      <div class="num" style="--c1:#34d399;--c2:#22d3ee">7</div>
+      <div class="label">Transports</div>
+    </div>
+    <div class="stat">
+      <div class="num" style="--c1:#fb923c;--c2:#fbbf24">23</div>
+      <div class="label">MCP Tools</div>
+    </div>
+    <div class="stat">
+      <div class="num" style="--c1:#e879f9;--c2:#a78bfa">134</div>
+      <div class="label">Source Files</div>
+    </div>
+  </div>
+  <div class="card-grid cols-4" style="max-width:56rem">
+    <div class="card" style="text-align:center">
+      <div style="color:#4f8eff;font-weight:700;font-size:0.95rem">TypeScript / Bun</div>
+      <div style="color:#64748b;font-size:0.82rem;margin-top:0.2rem">134 source files</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="color:#22d3ee;font-weight:700;font-size:0.95rem">SQLite (WAL)</div>
+      <div style="color:#64748b;font-size:0.82rem;margin-top:0.2rem">FTS5 + knowledge graph</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="color:#34d399;font-weight:700;font-size:0.95rem">4 Memory Archs</div>
+      <div style="color:#64748b;font-size:0.82rem;margin-top:0.2rem">10 orchestration templates</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="color:#a78bfa;font-weight:700;font-size:0.95rem">MIT License</div>
+      <div style="color:#64748b;font-size:0.82rem;margin-top:0.2rem">Open source</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SLIDE 17 — Getting Started
+     ═══════════════════════════════════════════════════════════════ -->
+<section class="slide">
+  <h2>Getting Started</h2>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <p>Clone</p>
+      <code>git clone github.com/h2oai/marina</code>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <p>Install</p>
+      <code>bun install</code>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <p>Start</p>
+      <code>bun run start</code>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <p>Connect</p>
+      <code>telnet localhost 4000</code>
+    </div>
+  </div>
+  <div style="margin-top:2rem;text-align:center;max-width:48rem">
+    <div class="card-grid cols-3" style="margin-bottom:1.5rem">
+      <div class="card" style="padding:0.65rem 1rem">
+        <div style="font-size:0.82rem;color:#94a3b8"><code style="color:#22d3ee">bun test</code> &mdash; 987 tests across 42 files</div>
+      </div>
+      <div class="card" style="padding:0.65rem 1rem">
+        <div style="font-size:0.82rem;color:#94a3b8"><code style="color:#22d3ee">bun run format</code> &mdash; Biome auto-format</div>
+      </div>
+      <div class="card" style="padding:0.65rem 1rem">
+        <div style="font-size:0.82rem;color:#94a3b8"><code style="color:#22d3ee">MARINA_WORLD=demos</code> &mdash; guided tour</div>
+      </div>
+    </div>
+    <p style="font-size:0.88rem;color:#64748b">Built with Bun &middot; Zero native dependencies &middot; Single binary deploy</p>
+  </div>
+</section>
+
+</div><!-- .deck -->
+
+<!-- Progress bar -->
+<div class="progress" id="progress"></div>
+<div class="slide-counter" id="counter">1 / 17</div>
+<div class="nav-hint" id="navHint">&larr; &rarr; arrow keys &middot; swipe &middot; click edges</div>
+
+<script>
+(function() {
+  const deck = document.getElementById('deck');
+  const progress = document.getElementById('progress');
+  const counter = document.getElementById('counter');
+  const slides = deck.querySelectorAll('.slide');
+  const total = slides.length;
+  let current = 0;
+
+  function goTo(n) {
+    // Remove active from old slide
+    slides[current].classList.remove('active');
+    current = Math.max(0, Math.min(n, total - 1));
+    // Activate new slide
+    slides[current].classList.add('active');
+    deck.style.transform = `translateX(-${current * 100}vw)`;
+    progress.style.width = `${((current + 1) / total) * 100}%`;
+    counter.textContent = `${current + 1} / ${total}`;
+  }
+
+  // Keyboard
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); goTo(current + 1); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); goTo(current - 1); }
+    else if (e.key === 'Home') { e.preventDefault(); goTo(0); }
+    else if (e.key === 'End') { e.preventDefault(); goTo(total - 1); }
+  });
+
+  // Click edges
+  document.addEventListener('click', function(e) {
+    const x = e.clientX / window.innerWidth;
+    if (x > 0.75) goTo(current + 1);
+    else if (x < 0.25) goTo(current - 1);
+  });
+
+  // Touch / swipe
+  let touchStartX = 0;
+  document.addEventListener('touchstart', function(e) { touchStartX = e.touches[0].clientX; });
+  document.addEventListener('touchend', function(e) {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 50) { dx < 0 ? goTo(current + 1) : goTo(current - 1); }
+  });
+
+  // Init — activate first slide
+  slides[0].classList.add('active');
+  goTo(0);
+
+  // Hide nav hint after first interaction
+  let hintHidden = false;
+  function hideHint() {
+    if (!hintHidden) {
+      document.getElementById('navHint').style.opacity = '0';
+      hintHidden = true;
+    }
+  }
+  document.addEventListener('keydown', hideHint);
+  document.addEventListener('touchstart', hideHint);
+})();
+</script>
+</body>
+</html>

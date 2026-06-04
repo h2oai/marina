@@ -1,0 +1,1479 @@
+/**
+ * Lean Agent Adapter — adapts the lean agent for in-server use.
+ *
+ * Uses the Marina SDK client to self-connect via WebSocket.
+ * The engine sees this agent as a regular connected entity.
+ * All state lives server-side via platform commands.
+ */
+
+import { Agent, type AgentMessage } from "@mariozechner/pi-agent-core";
+import {
+  type Api,
+  completeSimple,
+  type Message,
+  type Model,
+  getModel as piGetModel,
+  type TextContent,
+} from "@mariozechner/pi-ai";
+import { MarinaClient } from "../sdk/client";
+import type { Perception } from "../types";
+import { ActionHistory } from "./action-history";
+import type { AgentConfig, AgentEvent, AgentHandle, AgentStatus } from "./agent-types";
+import { createContextManager } from "./context-manager";
+import { GameStateManager } from "./game-state";
+import { HookRegistry } from "./hook-registry";
+import { InterruptibleWaiter } from "./interruptible-waiter";
+import { PlatformMemoryBackend } from "./memory-platform";
+import { getLeanDiscoveryPrompt, getLeanSystemPrompt } from "./prompts/lean-system";
+import { SocialAwareness } from "./social";
+import { createScopedTools } from "./tools";
+
+// ─── Model Resolution ───────────────────────────────────────────────────────
+
+/** Resolve a "provider/model" string to a pi-ai Model. Falls back to gemini-2.0-flash. */
+function resolveModel(modelStr: string, localPort?: number): Model<Api> {
+  const slash = modelStr.indexOf("/");
+  const provider = slash >= 0 ? modelStr.slice(0, slash) : modelStr;
+  const modelId = slash >= 0 ? modelStr.slice(slash + 1) : modelStr;
+
+  // Local Marina model API — room agents use this to route through the server
+  if (provider === "marina") {
+    const port = localPort ?? (Number(process.env.WS_PORT) || 3300);
+    return {
+      id: modelId || "default",
+      name: `Marina ${modelId || "default"}`,
+      api: "openai-completions" as Api,
+      provider: "openai",
+      baseUrl: `http://localhost:${port}/v1`,
+      reasoning: false,
+      input: ["text"] as ("text" | "image")[],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128_000,
+      maxTokens: 4096,
+    };
+  }
+
+  try {
+    // Cast to allow arbitrary provider/modelId strings
+    return (piGetModel as (p: string, id: string) => Model<Api>)(provider, modelId);
+  } catch {
+    console.warn(
+      `[lean-agent] Model "${modelStr}" not found, falling back to google/gemini-2.0-flash`,
+    );
+    return piGetModel("google", "gemini-2.0-flash");
+  }
+}
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+interface Focus {
+  description: string;
+  startedAt: number;
+}
+
+// ─── Lean Agent Adapter ─────────────────────────────────────────────────────
+
+export class LeanAgentAdapter implements AgentHandle {
+  readonly name: string;
+
+  private agent: Agent;
+  private client: MarinaClient;
+  private gameState: GameStateManager;
+  private socialAwareness: SocialAwareness;
+  private actionHistory: ActionHistory;
+  private platformMemory: PlatformMemoryBackend;
+  private hookRegistry = new HookRegistry();
+  private model: Model<Api>;
+
+  private focus: Focus | null = null;
+  private autonomousMode = false;
+  private autonomousLoopRunning = false;
+  private autonomousLoopPromise: Promise<void> | null = null;
+  private pendingPerceptions: Array<{
+    text: string;
+    priority: number;
+    shouldRespond?: boolean;
+  }> = [];
+  private loopIterationCount = 0;
+  private stuckCycles = 0;
+  private silentTurns = 0;
+  /** In-run followUp-based silent recoveries. Resets on agent_start. */
+  private inRunRecoveries = 0;
+  private static readonly MAX_IN_RUN_RECOVERIES = 1;
+  private recentCommands: string[] = [];
+
+  private metrics = {
+    toolCalls: 0,
+    errors: 0,
+    startedAt: 0,
+    lastActivity: 0,
+    silentTurns: 0,
+    totalSilentTurns: 0,
+  };
+  private consecutiveLoopErrors = 0;
+  private lastErrorReason: string | null = null;
+  private checkpointInterval: ReturnType<typeof setInterval> | null = null;
+  private readonly checkpointSaveInterval = 5 * 60 * 1000;
+
+  private readonly loopCycleDelay: number;
+  private readonly focusTimeoutMs: number;
+  private readonly perceptionBufferCap: number;
+  private readonly promptTimeoutMs: number;
+
+  // ─── Cognition State ────────────────────────────────────────────────
+  private idleCycles = 0;
+  private lastReflectionCycle = 0;
+  private notesSinceReflection = 0;
+  private cachedTickRate: { min: number; normal: number; idle: number } | null = null;
+  private lastTickRateCheck = 0;
+
+  // ─── Autonomous Loop Wakeup ────────────────────────────────────────
+  /**
+   * Wakeable cycle-delay sleep. The perception handler calls
+   * `cycleWaiter.wake()` to cut the loop's sleep short the moment a new
+   * perception arrives — eliminating the up-to-2s tick discretization
+   * between coordinator and specialist round trips. See
+   * src/agent/interruptible-waiter.ts and docs/crew-fast-dispatch-design.md.
+   */
+  private cycleWaiter = new InterruptibleWaiter();
+
+  // ─── Section Dedup ─────────────────────────────────────────────────
+  /**
+   * Per-section hash + last-emitted-cycle. Replaces the single-cycle
+   * global flush that cleared every section's hash at the same instant.
+   * Each section now ages out at its own natural cadence so a stable
+   * `[Memory Health]` (every 20 cycles) doesn't get force-re-emitted
+   * when an unrelated section's hash changes.
+   */
+  private sectionHashes = new Map<string, { hash: string; lastEmittedCycle: number }>();
+  private sectionHashCycle = 0;
+  /**
+   * Force-re-emit window per section (cycles). When a section's content
+   * is unchanged for this many cycles since last emission we let it
+   * through anyway, so a stale-but-still-relevant cue (e.g. focus
+   * mandate) doesn't disappear forever. Tuned per section's natural
+   * cadence: a section that fires every 20 cycles wants a longer TTL
+   * than one that fires every 5.
+   */
+  private static readonly SECTION_TTL: Record<string, number> = {
+    nearby_context: 20, // cadence 5
+    novelty_suggestions: 30, // cadence 5
+    relevant_notes: 60, // matches notes-cache TTL
+    memory_health: 60, // cadence 20
+    reflection_due: 150, // cadence 75
+    current_focus: 30, // every cycle, but content stable
+    stuck_detection: 15, // every cycle, must surface promptly
+  };
+  private static readonly SECTION_TTL_DEFAULT = 30;
+
+  // ─── Relevant Notes Cache ──────────────────────────────────────────
+  private lastNotesQuery = "";
+  private cachedNotes = "";
+  private notesCacheAge = 0;
+
+  // ─── Perception Dedup ──────────────────────────────────────────────
+  private recentPerceptionHashes = new Set<string>();
+
+  private eventSubscribers: Array<(event: AgentEvent) => void> = [];
+  private rolePrompt: string | null;
+  private config: AgentConfig;
+  private wsPort: number;
+
+  /**
+   * @param apiKey
+   *   Either a static key string (resolved once at construction), or a
+   *   resolver function that is called for every LLM call. Use the
+   *   resolver form for rotating credentials (DB-backed, OAuth, etc.)
+   *   so key rotations during long-running agents are picked up without
+   *   restart.
+   */
+  constructor(
+    config: AgentConfig,
+    wsUrl: string,
+    rolePrompt: string | null,
+    apiKey?: string | (() => string | undefined | Promise<string | undefined>),
+  ) {
+    this.name = config.name;
+    this.config = config;
+    this.rolePrompt = rolePrompt;
+    this.loopCycleDelay = config.loopCycleDelay ?? 2000;
+    this.focusTimeoutMs = config.focusTimeout ?? 5 * 60 * 1000;
+    this.perceptionBufferCap = config.perceptionBufferCap ?? 20;
+    this.promptTimeoutMs = config.promptTimeoutMs ?? 120_000;
+
+    // Initialize components
+    this.gameState = new GameStateManager();
+    this.socialAwareness = new SocialAwareness();
+    this.actionHistory = new ActionHistory();
+
+    // SDK client with event emitter + ping
+    this.client = new MarinaClient(wsUrl, {
+      autoReconnect: true,
+      reconnectDelay: 3000,
+      pingInterval: 30000,
+    });
+
+    // Platform memory (sole backend — no local storage)
+    this.platformMemory = new PlatformMemoryBackend(this.client);
+
+    // Perception handlers
+    this.setupPerceptionHandlers();
+
+    // Resolve model (pass WS port for marina/ provider routing)
+    const modelStr = config.model ?? "google/gemini-2.0-flash";
+    this.wsPort = Number(new URL(wsUrl).port) || 3300;
+    this.model = resolveModel(modelStr, this.wsPort);
+
+    // Create tools — profile controls how much schema goes to the LLM.
+    // Smaller models (Haiku and below) can't reliably parse the full 27-tool
+    // ~15KB schema on every request; the minimal profile (command+think+memory)
+    // is functionally complete via `marina_command`'s escape hatch.
+    const toolContext = { client: this.client, gameState: this.gameState };
+    const toolProfile = config.toolProfile ?? "full";
+    const tools = createScopedTools(toolContext, this.platformMemory, toolProfile);
+
+    // Keep the resolver around so the context manager can re-query it
+    // each compaction (rotating-credential safe).
+    const resolveKeyNow = async (): Promise<string | undefined> => {
+      if (!apiKey) return undefined;
+      return typeof apiKey === "function" ? await apiKey() : apiKey;
+    };
+
+    // Emergence-preserving summarizer. Rule-based summaries strip texture
+    // ("moved north, moved south") — intent, surprise, relationships, and
+    // open threads are exactly what successor agents need to recall.
+    // We use the agent's own model so on-device / self-hosted deployments
+    // pay no external cost. Economical, not cheap.
+    const summarizeWithLLM = async (
+      messages: AgentMessage[],
+      fallback: string,
+    ): Promise<string> => {
+      try {
+        const keyNow = await resolveKeyNow();
+        const systemPrompt =
+          "You are preserving an agent's memory as it compresses its conversational context. " +
+          "Produce a dense, emergence-preserving summary for later recall. Retain: " +
+          "(1) what the agent was pursuing — goals, hypotheses, open questions, curiosity; " +
+          "(2) relationships and interactions formed — who, what was exchanged, what was promised; " +
+          "(3) novel discoveries, surprises, and contradictions — the things worth remembering; " +
+          "(4) unresolved threads and what would be worth doing next. " +
+          "Do NOT enumerate mechanical actions ('moved north, ran recall'); DO describe intent, novelty, and stakes. " +
+          "Write 3-6 sentences, first-person from the agent's perspective, as a reflection the agent wrote to its future self.";
+        const llmContext = {
+          systemPrompt,
+          messages: [
+            {
+              role: "user" as const,
+              content: `Here are ${messages.length} messages to compress:\n\n${JSON.stringify(messages, null, 2)}`,
+            },
+          ] as Message[],
+        };
+        const result = await completeSimple(this.model, llmContext, {
+          apiKey: keyNow,
+          temperature: 0.3,
+          maxTokens: 500,
+        });
+        const text = Array.isArray(result.content)
+          ? result.content
+              .filter((b): b is TextContent => b.type === "text")
+              .map((b) => b.text)
+              .join("\n")
+              .trim()
+          : "";
+        return text.length > 0 ? text : fallback;
+      } catch {
+        return fallback;
+      }
+    };
+
+    // Compaction is the moment when short-term conversational memory
+    // transitions to long-term generational memory. Write the summary to
+    // the pool so this agent (and future agents with the same name) can
+    // recall what happened during the compacted window via normal memory
+    // retrieval. No recall = no continuity = no emergence.
+    // Compaction-note size cap — summarizeMessages concatenates a ~100-char
+    // line per dropped message, so a long-running agent's compaction can run
+    // to tens of KB. Those notes then surface in future recall() results,
+    // stacking many KB per turn into the LLM context — which caused
+    // HTTP 413 "Request exceeds the maximum size" storms during the
+    // 2026-04-22 warm-DB runs. Cap to 2000 chars; readable gist preserved.
+    const COMPACTION_NOTE_MAX = 2000;
+    const onBeforeCompact = (droppedMessages: AgentMessage[], summary: string): void => {
+      const trimmed =
+        summary.length > COMPACTION_NOTE_MAX
+          ? `${summary.slice(0, COMPACTION_NOTE_MAX)}\n[...${summary.length - COMPACTION_NOTE_MAX} chars truncated]`
+          : summary;
+      const content = `[compaction] ${trimmed}`;
+      // Personal note — always written. Low importance so recall ranking
+      // surfaces real insights first; this is metadata, not wisdom.
+      this.platformMemory
+        .write("insight", content, "low", [
+          "consolidation",
+          `model:${this.model.id}`,
+          `n:${droppedMessages.length}`,
+        ])
+        .catch(() => {
+          // Non-critical. Compaction proceeds even if pool write fails.
+        });
+      // Group pool — opt-in per-agent via config.compactionPool. Enables
+      // peers in the same project to benefit from one agent's
+      // consolidation. Skipped silently if no pool is configured.
+      const poolName = this.config.compactionPool;
+      if (poolName) {
+        this.platformMemory.share(content, poolName, 3).catch(() => {
+          // Non-critical.
+        });
+      }
+    };
+
+    // Context manager — transforms messages before each LLM call, prunes
+    // when over threshold, and (critically) consolidates dropped history
+    // into pool reflections via onBeforeCompact.
+    const contextTransform = createContextManager({
+      getModel: () => this.model,
+      getSystemPrompt: () => this.agent?.state.systemPrompt ?? "",
+      summarizeWithLLM,
+      onBeforeCompact,
+    });
+
+    // pi-agent-core Agent — system prompt set once, stable identity.
+    // Tool hooks route through HookRegistry so perception/tool hooks share
+    // one registration API. The framework hook returns undefined (no block)
+    // by default, but the path is open for rank-based safety gates later.
+    this.agent = new Agent({
+      initialState: {
+        systemPrompt: getLeanSystemPrompt(rolePrompt),
+        model: this.model,
+        tools,
+        thinkingLevel: config.thinkingLevel ?? "off",
+      },
+      maxRetryDelayMs: config.maxRetryDelayMs,
+      thinkingBudgets: config.thinkingBudgets,
+      transformContext: contextTransform,
+      // Dynamic resolver if a function was passed in; pi-agent-core will
+      // re-invoke this for every LLM call, picking up rotated credentials.
+      getApiKey: apiKey
+        ? typeof apiKey === "function"
+          ? () => apiKey()
+          : () => apiKey
+        : undefined,
+      beforeToolCall: async (context) => {
+        this.hookRegistry.runBeforeToolCall(
+          context.toolCall.name,
+          (context.args ?? {}) as Record<string, unknown>,
+        );
+        return undefined;
+      },
+      afterToolCall: async (context) => {
+        this.hookRegistry.runAfterToolCall(
+          context.toolCall.name,
+          (context.args ?? {}) as Record<string, unknown>,
+          context.result,
+          context.isError,
+        );
+        return undefined;
+      },
+    });
+  }
+
+  // ─── Perception Handling ──────────────────────────────────────────────
+
+  private setupPerceptionHandlers(): void {
+    this.client.on("perception", (p: Perception) => {
+      this.hookRegistry.runOnPerception(p);
+      this.gameState.handlePerception(p);
+
+      this.emitEvent({
+        type: "perception",
+        kind: p.kind,
+        text: (p.data?.text as string) ?? (p.data?.message as string) ?? p.kind,
+      });
+
+      // Social awareness + perception buffering
+      if (p.kind === "message" || p.kind === "broadcast" || p.kind === "movement") {
+        const events = this.socialAwareness.handlePerception(p);
+
+        if (this.autonomousMode) {
+          const text = (p.data?.text as string) ?? (p.data?.message as string) ?? `[${p.kind}]`;
+          if (text) {
+            // Perception dedup — skip identical text seen recently
+            const percHash = Bun.hash(text).toString();
+            if (this.recentPerceptionHashes.has(percHash)) return;
+            this.recentPerceptionHashes.add(percHash);
+            if (this.recentPerceptionHashes.size > 200) {
+              this.recentPerceptionHashes.clear();
+            }
+
+            const lastEvent = events[events.length - 1];
+            const priority = lastEvent
+              ? this.socialAwareness.scorePerception(lastEvent, this.name)
+              : 15;
+            const respond =
+              priority < 80 && lastEvent
+                ? this.socialAwareness.shouldRespond(lastEvent, this.name)
+                : false;
+
+            // Priority-aware buffer trim. When buffer exceeds cap*5, keep
+            // (a) all high-priority events (>=80) regardless of age, plus
+            // (b) the most-recent cap*2 otherwise. This preserves urgent
+            // old events (e.g., a direct message to us) that chronological
+            // slicing would silently drop under a burst.
+            if (this.pendingPerceptions.length >= this.perceptionBufferCap * 5) {
+              const all = this.pendingPerceptions;
+              const highPrio = all.filter((e) => (e.priority ?? 0) >= 80);
+              const recent = all.slice(-this.perceptionBufferCap * 2);
+              // Dedup by reference identity — recent may include high-prio items.
+              const seen = new Set<(typeof all)[number]>();
+              const merged: typeof all = [];
+              for (const e of [...highPrio, ...recent]) {
+                if (!seen.has(e)) {
+                  seen.add(e);
+                  merged.push(e);
+                }
+              }
+              const dropped = all.length - merged.length;
+              this.pendingPerceptions = merged;
+              if (dropped > 0) {
+                console.warn(
+                  `[lean-agent] "${this.name}" perception buffer burst: dropped ${dropped} low-priority event(s) (kept ${highPrio.length} high-priority + ${merged.length - highPrio.length} recent)`,
+                );
+              }
+            }
+            this.pendingPerceptions.push({
+              text: `[${p.kind}] ${text}`,
+              priority,
+              shouldRespond: respond,
+            });
+
+            // Edge-trigger the autonomous loop: if the loop is currently
+            // in its cycle-delay sleep, cut it short so this perception
+            // gets handled now instead of after the next normal tick.
+            // Idempotent — repeated wakes during a perception burst just
+            // see a null wakeup and no-op. Crew-responder specialists
+            // benefit most: their loop only fires when perceptions arrive,
+            // so wake-on-perception eliminates wall-clock dead time
+            // between coordinator dispatch and specialist response.
+            this.cycleWaiter.wake();
+
+            // High-priority perceptions interrupt immediately
+            if (priority >= 80) {
+              const speaker = lastEvent?.speaker ?? "Someone";
+              this.agent.steer({
+                role: "user",
+                content: `**${speaker}** is speaking to you:\n\n${text}\n\nIntegrate this into your current plan.`,
+                timestamp: Date.now(),
+              });
+            }
+          }
+        }
+      }
+
+      // Update room entities for social awareness
+      if (p.kind === "room" && p.data?.entities) {
+        this.socialAwareness.updateEntitiesInRoom(p.data.entities as Array<{ name: string }>);
+      }
+    });
+
+    this.client.on("disconnect", () => {
+      this.gameState.setConnectionStatus("disconnected");
+    });
+
+    this.client.on("error", (error: Error) => {
+      this.emitEvent({ type: "error", error: error.message, context: "websocket" });
+    });
+  }
+
+  // ─── Connection & Lifecycle ───────────────────────────────────────────
+
+  async start(goal?: string): Promise<void> {
+    // Connect via WebSocket (self-connect to the same server)
+    this.gameState.setConnectionStatus("connecting", this.client.getUrl());
+
+    const session = await this.client.connect(this.name);
+    this.gameState.setSession(session.entityId, session.name, session.token);
+
+    this.emitStatusChange("connected");
+
+    // Start autonomous loop
+    this.autonomousMode = true;
+    this.metrics.startedAt = Date.now();
+
+    if (goal) {
+      this.focus = { description: goal, startedAt: Date.now() };
+    }
+
+    this.setupActionTracking();
+
+    // Load checkpoint
+    const checkpointSummary = await this.loadCheckpointSummary();
+
+    // Inherited wisdom: pull the top guide-pool notes so successor agents
+    // start with what predecessors learned, not a blank slate. Skipped for
+    // checkpoint resumes — the agent already has its own threads to pick up.
+    const inheritedWisdom = checkpointSummary ? "" : await this.recallInheritedWisdom();
+
+    const discoveryPrompt = getLeanDiscoveryPrompt();
+    const wisdomPart = inheritedWisdom ? `\n# INHERITED WISDOM\n\n${inheritedWisdom}\n` : "";
+    const checkpointPart = checkpointSummary
+      ? `\n# RESUMING FROM CHECKPOINT\n\n${checkpointSummary}\n\n**Continue from where you left off.**\n`
+      : "";
+    const focusPart = this.focus
+      ? `\nYour current focus: ${this.focus.description}`
+      : "\nExplore the world, discover its systems, and find interesting things to do.";
+
+    console.log(
+      `[lean-agent] "${this.name}" starting discovery prompt (model: ${this.model.id}, provider: ${this.model.provider})`,
+    );
+    await this.agent.prompt(
+      `${discoveryPrompt}${wisdomPart}${checkpointPart}${focusPart}\n\nBegin.`,
+    );
+    console.log(`[lean-agent] "${this.name}" discovery prompt completed, starting autonomous loop`);
+
+    this.startCheckpointTimer();
+    this.autonomousLoopRunning = true;
+    this.autonomousLoopPromise = this.runAutonomousLoop();
+
+    this.emitStatusChange("autonomous");
+  }
+
+  async stop(): Promise<void> {
+    const loopPromise = this.autonomousLoopPromise;
+    this.autonomousLoopRunning = false;
+    this.autonomousMode = false;
+    this.stopCheckpointTimer();
+    this.pendingPerceptions = [];
+
+    // Abort any in-flight prompt() call immediately, then wait for the
+    // framework to settle event listeners before continuing shutdown.
+    // Without this, stop() blocks for up to one full cycle while the
+    // current prompt() runs to completion.
+    this.agent.abort();
+    await this.agent.waitForIdle().catch(() => {});
+
+    if (loopPromise) {
+      await loopPromise;
+    }
+
+    // Save checkpoint and reflect before disconnect
+    if (this.metrics.startedAt > 0) {
+      await this.saveCurrentCheckpoint().catch((err) => {
+        console.warn(
+          `[lean-agent] "${this.name}" checkpoint save failed during stop():`,
+          err instanceof Error ? err.message : err,
+        );
+      });
+      const uptime = Math.round((Date.now() - this.metrics.startedAt) / 60000);
+      await this.platformMemory
+        .reflect(
+          `Session ended: ${this.metrics.toolCalls} tool calls, ${this.metrics.errors} errors, uptime ${uptime}m`,
+        )
+        .catch(() => {});
+    }
+
+    this.client.disconnect();
+    this.emitStatusChange("stopped");
+  }
+
+  // ─── Autonomous Loop ──────────────────────────────────────────────────
+
+  private async runAutonomousLoop(): Promise<void> {
+    let consecutiveErrors = 0;
+
+    while (this.autonomousLoopRunning && this.autonomousMode) {
+      try {
+        await this.cycleWaiter.sleep(this.computeDynamicDelay());
+        if (!this.autonomousLoopRunning || !this.autonomousMode) break;
+
+        // Wait if LLM is still streaming
+        if (this.agent.state.isStreaming) {
+          await this.sleep(1000);
+          continue;
+        }
+
+        // Crew-responder mode: thin specialists wake on perceptions, not on
+        // their own cognitive cycle. When nothing is queued, skip the
+        // continuation entirely — no LLM call, no token cost, no autonomous
+        // drift between coordinator messages. They re-enter the loop the
+        // moment a perception arrives. See docs/crew-fast-dispatch-design.md.
+        if (this.config.crewResponder && this.pendingPerceptions.length === 0) {
+          continue;
+        }
+
+        const continuationPrompt = await this.buildContinuationPrompt();
+
+        // Hard-bound the prompt so a hung upstream can't wedge the loop.
+        // When the timeout fires we call agent.abort() which propagates
+        // through the model stream's AbortSignal; the prompt() promise
+        // then settles (the agent_end listener runs) and we continue the
+        // next cycle.
+        let timedOut = false;
+        const timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          this.agent.abort();
+        }, this.promptTimeoutMs);
+        try {
+          await this.agent.prompt(continuationPrompt);
+        } finally {
+          clearTimeout(timeoutHandle);
+        }
+        if (timedOut) {
+          console.warn(
+            `[lean-agent] "${this.name}" prompt exceeded ${this.promptTimeoutMs}ms — aborted, continuing next cycle.`,
+          );
+          this.emitEvent({
+            type: "error",
+            error: `Prompt timeout (${this.promptTimeoutMs}ms)`,
+            context: "autonomous_loop",
+          });
+        }
+
+        // Check for LLM error
+        const messages = this.agent.state.messages;
+        const lastMsg = messages[messages.length - 1];
+        if (
+          lastMsg &&
+          "stopReason" in lastMsg &&
+          (lastMsg as unknown as Record<string, unknown>).stopReason === "error"
+        ) {
+          consecutiveErrors++;
+          this.consecutiveLoopErrors = consecutiveErrors;
+          const errorMessage =
+            (lastMsg as unknown as Record<string, unknown>).errorMessage ?? "unknown";
+          this.lastErrorReason = `LLM error: ${errorMessage}`;
+          const backoff = Math.min(30000, 5000 * 2 ** (consecutiveErrors - 1));
+          console.warn(
+            `[lean-agent] "${this.name}" LLM error (attempt ${consecutiveErrors}, backoff ${backoff}ms): ${errorMessage}`,
+          );
+          this.emitEvent({
+            type: "error",
+            error: `LLM error (attempt ${consecutiveErrors}): ${errorMessage}`,
+            context: "autonomous_loop",
+          });
+          await this.sleep(backoff);
+          continue;
+        }
+
+        consecutiveErrors = 0;
+        this.consecutiveLoopErrors = 0;
+        this.lastErrorReason = null;
+        this.metrics.lastActivity = Date.now();
+
+        // Periodic heartbeat every 50 cycles
+        if (this.loopIterationCount % 50 === 0 && this.loopIterationCount > 0) {
+          const uptime = Math.round((Date.now() - this.metrics.startedAt) / 60000);
+          this.platformMemory
+            .write(
+              "observation",
+              `[Heartbeat] ${this.metrics.toolCalls} tool calls, ${this.metrics.errors} errors, uptime ${uptime}m`,
+              "low",
+              ["heartbeat"],
+            )
+            .catch(() => {});
+        }
+      } catch (error) {
+        consecutiveErrors++;
+        this.consecutiveLoopErrors = consecutiveErrors;
+        const backoff = Math.min(30000, 5000 * 2 ** (consecutiveErrors - 1));
+        const msg = error instanceof Error ? error.message : String(error);
+        this.lastErrorReason = msg;
+        console.warn(
+          `[lean-agent] "${this.name}" loop exception (attempt ${consecutiveErrors}, backoff ${backoff}ms): ${msg}`,
+        );
+        this.emitEvent({
+          type: "error",
+          error: msg,
+          context: "autonomous_loop",
+        });
+        await this.sleep(backoff);
+      }
+    }
+  }
+
+  // ─── Dynamic Tick Rate ─────────────────────────────────────────────
+
+  private computeDynamicDelay(): number {
+    const rate = this.getTickRate();
+    const hasPerceptions = this.pendingPerceptions.length > 0;
+
+    // Events incoming — fast tick
+    if (hasPerceptions) return rate.min;
+
+    // Actively working on a focus with recent actions
+    const recentToolCalls = this.actionHistory
+      .getActions(Date.now() - 30_000)
+      .filter((a) => a.type === "tool_call" && a.toolName !== "think");
+    if (this.focus && recentToolCalls.length > 0) return rate.normal;
+
+    // Idle — slow tick (consolidation territory)
+    return rate.idle;
+  }
+
+  private getTickRate(): { min: number; normal: number; idle: number } {
+    // Re-check core memory for agent-set pace every 50 cycles
+    if (this.loopIterationCount - this.lastTickRateCheck >= 50) {
+      this.lastTickRateCheck = this.loopIterationCount;
+      this.cachedTickRate = null; // force re-read on next access
+    }
+    if (this.cachedTickRate) return this.cachedTickRate;
+
+    // Default rates derived from the configured loopCycleDelay
+    const base = this.loopCycleDelay;
+    this.cachedTickRate = {
+      min: Math.max(1000, Math.round(base * 0.5)),
+      normal: base,
+      idle: Math.min(15_000, base * 5),
+    };
+    return this.cachedTickRate;
+  }
+
+  /** Called from perception handler when agent sets pace via core memory.
+   *  Accepts `pace` (preferred, natural-language) or `tick_rate` (legacy
+   *  alias — kept so existing agent memories keep working). */
+  parseTickRateFromOutput(output: string): void {
+    const match = output.match(/Memory "(?:pace|tick_rate)" set\./);
+    if (match) this.cachedTickRate = null; // invalidate cache, re-read next cycle
+  }
+
+  // ─── Section Dedup Helper ─────────────────────────────────────────────
+
+  private shouldIncludeSection(name: string, content: string): boolean {
+    const hash = Bun.hash(content).toString();
+    const entry = this.sectionHashes.get(name);
+    const ttl = LeanAgentAdapter.SECTION_TTL[name] ?? LeanAgentAdapter.SECTION_TTL_DEFAULT;
+
+    // First emission, or content changed → emit and stamp.
+    if (!entry || entry.hash !== hash) {
+      this.sectionHashes.set(name, { hash, lastEmittedCycle: this.sectionHashCycle });
+      return true;
+    }
+
+    // Content stable but TTL elapsed → re-emit so the section doesn't
+    // disappear forever from the agent's view.
+    if (this.sectionHashCycle - entry.lastEmittedCycle >= ttl) {
+      this.sectionHashes.set(name, { hash, lastEmittedCycle: this.sectionHashCycle });
+      return true;
+    }
+
+    return false;
+  }
+
+  // ─── Continuation Prompt ──────────────────────────────────────────────
+
+  private async buildContinuationPrompt(): Promise<string> {
+    this.loopIterationCount++;
+    this.sectionHashCycle++;
+    const cycle = this.loopIterationCount;
+    const parts: string[] = [];
+
+    // Track idle state for consolidation
+    const hasPerceptions = this.pendingPerceptions.length > 0;
+    const recentWorldActions = this.actionHistory
+      .getActions(Date.now() - 30_000)
+      .filter((a) => a.type === "tool_call" && a.toolName !== "think");
+
+    if (!hasPerceptions && recentWorldActions.length === 0) {
+      this.idleCycles++;
+    } else {
+      this.idleCycles = 0;
+    }
+
+    // ── Idle consolidation: replace normal prompt with memory work ──
+    // Skipped for crew-responder specialists — they have no autonomous
+    // cognitive life between messages, so consolidation just burns tokens
+    // on memory work the coordinator never asked for.
+    if (this.idleCycles >= 3 && !this.config.crewResponder) {
+      parts.push(
+        "[Quiet — nothing needs your attention]\n\n" +
+          "Consolidation phases:\n" +
+          "1. ORIENT: Run `brief` and `memory orient` — what's your state? What do you know?\n" +
+          "2. STRENGTHEN: Run `reflect` on your current focus. Link related notes. Evolve stale observations.\n" +
+          "3. PRUNE: Check `note graph` for contradictions. Resolve or supersede outdated beliefs.\n" +
+          "4. SCAN: Run `brief` again — any new tasks, intents, or entities since you started consolidating?\n\n" +
+          "Move through these phases. When something external arrives, stop consolidating and respond.",
+      );
+      return parts.join("\n\n");
+    }
+
+    // ── 1. Flush buffered perceptions ──
+    // High-priority response events are marked inline with [!] rather
+    // than listed a second time in a separate section — saves ~30-80
+    // tokens per cycle when direct messages fire without losing the
+    // "respond to this" cue.
+    if (hasPerceptions) {
+      const batch = this.pendingPerceptions.splice(0);
+      batch.sort((a, b) => b.priority - a.priority);
+      const topEvents = batch.slice(0, this.perceptionBufferCap);
+      const lines = topEvents.map((p) => (p.shouldRespond ? `[!] ${p.text}` : p.text));
+      parts.push(`[World Events]\n${lines.join("\n")}`);
+      if (topEvents.some((p) => p.shouldRespond)) {
+        parts.push("Events marked [!] await your response.");
+      }
+    }
+
+    // ── 2. Social context (every 5th cycle, deduped on content) ──
+    // The agent perceives room occupants from its own `marina_look` and
+    // from social events already in [World Events]. Restating [Nearby]
+    // every cycle wastes ~50-100 tokens on information the agent already
+    // has. Cadence matches Novelty Suggestions.
+    if (cycle % 5 === 0) {
+      const socialCtx = this.socialAwareness.getSocialContext();
+      if (
+        socialCtx &&
+        socialCtx !== "No recent social activity" &&
+        this.shouldIncludeSection("nearby_context", socialCtx)
+      ) {
+        parts.push(`[Nearby]\n${socialCtx}`);
+      }
+    }
+
+    // ── 2b. Coordination opportunity (every 20th cycle, offset by 10) ──
+    if (cycle % 20 === 10 && this.socialAwareness.getEntitiesInRoom().length > 0) {
+      const known = this.socialAwareness.getKnownEntities(3);
+      const nearby = this.socialAwareness.getEntitiesInRoom();
+      const knownNearby = known.filter((k) => nearby.includes(k.name));
+      if (knownNearby.length > 0) {
+        const lines = knownNearby.map(
+          (k) => `- ${k.name} (${k.interactions} interactions) is nearby`,
+        );
+        lines.push(
+          "Consider: coordinate on a shared goal, share knowledge via pool, or propose a task",
+        );
+        parts.push(`[Coordination Opportunity]\n${lines.join("\n")}`);
+      }
+    }
+
+    // ── 3. Novelty suggestions (every 5th cycle) ──
+    if (cycle % 5 === 0) {
+      try {
+        const suggestions = await this.platformMemory.getNoveltySuggestions();
+        if (suggestions.length > 0) {
+          const noveltyContent = suggestions
+            .slice(0, 3)
+            .map((s, i) => `${i + 1}. ${s}`)
+            .join("\n");
+          if (this.shouldIncludeSection("novelty_suggestions", noveltyContent)) {
+            parts.push(`[Novelty Suggestions]\n${noveltyContent}`);
+          }
+        }
+      } catch {
+        // Non-critical
+      }
+    }
+
+    // ── 4. Relevant notes for current focus (cached, re-query on focus change or 60 cycles) ──
+    // Two parallel queries: `recall` (fact-tier notes) + `skill search`
+    // (skill-tier procedures). Skills surface as <example> blocks per
+    // the few-shot retrieval convention (DSPy BootstrapFewShotWithRandomSearch
+    // and Anthropic's prompt-engineering guide both note that worked
+    // examples beat bullet-formatted recalls when the model is solving
+    // a procedural task). Capped at 2 skills + 5 notes so the section
+    // stays under ~600 tokens.
+    if (this.focus) {
+      try {
+        const focusDesc = this.focus.description;
+        this.notesCacheAge++;
+        if (focusDesc !== this.lastNotesQuery || this.notesCacheAge > 60) {
+          const [recallResult, skillResult] = await Promise.all([
+            this.platformMemory.search(focusDesc),
+            this.platformMemory.searchSkills(focusDesc).catch(() => ({ results: [] })),
+          ]);
+          const blocks: string[] = [];
+          if (skillResult.results && skillResult.results.length > 0) {
+            const exampleBlocks = skillResult.results
+              .slice(0, 2)
+              .map(
+                (s) => `<example skill="#${s.id}" imp="${s.importance}">\n${s.content}\n</example>`,
+              );
+            blocks.push(exampleBlocks.join("\n"));
+          }
+          if (recallResult.results && recallResult.results.length > 0) {
+            const top = recallResult.results
+              .slice(0, 5)
+              .map((r) => `- [#${r.id} imp=${r.importance}] ${r.content}`);
+            blocks.push(top.join("\n"));
+          }
+          this.cachedNotes = blocks.join("\n\n");
+          this.lastNotesQuery = focusDesc;
+          this.notesCacheAge = 0;
+        }
+        if (this.cachedNotes && this.shouldIncludeSection("relevant_notes", this.cachedNotes)) {
+          parts.push(`[Relevant Notes]\n${this.cachedNotes}`);
+        }
+      } catch {
+        // Non-critical
+      }
+    }
+
+    // ── 5. Memory health (every 20th cycle, skipped if agent self-oriented) ──
+    // If the agent ran `memory orient` itself in the last 5 minutes, the
+    // framework already showed it the orient output — pushing stale
+    // orient text back at it wastes ~100-150 tokens. Also skips the DB
+    // round-trip, not just the output.
+    // Crew-responder mode: suppressed — specialists don't need cognitive-state
+    // awareness, they need to answer the coordinator and shut up.
+    if (cycle % 20 === 0 && !this.config.crewResponder) {
+      const recentSelfOrient = this.actionHistory
+        .getActions(Date.now() - 5 * 60 * 1000)
+        .some(
+          (a) =>
+            a.type === "tool_call" &&
+            a.toolName === "marina_command" &&
+            typeof (a.args as { command?: unknown })?.command === "string" &&
+            /\bmemory\s+orient\b/i.test((a.args as { command: string }).command),
+        );
+      if (!recentSelfOrient) {
+        try {
+          const orientResult = await this.platformMemory.orient();
+          if (orientResult.success && orientResult.text) {
+            if (this.shouldIncludeSection("memory_health", orientResult.text)) {
+              parts.push(`[Memory Health]\n${orientResult.text}`);
+            }
+          }
+        } catch {
+          // Non-critical
+        }
+      }
+    }
+
+    // ── 6. Learning signal (every 15th cycle) ──
+    // Crew-responder mode: suppressed — the learning signal exists for
+    // self-driven agents calibrating their own action policy. A thin
+    // specialist's actions are dictated by the coordinator's request.
+    if (cycle % 15 === 0 && !this.config.crewResponder) {
+      try {
+        const summary = this.actionHistory.createSummary();
+        if (summary && summary.totalActions > 0) {
+          const lines: string[] = [];
+          if (summary.failedActions > 0) {
+            const failRate = Math.round((summary.failedActions / summary.totalActions) * 100);
+            lines.push(`Recent: ${summary.totalActions} actions, ${failRate}% failed`);
+          }
+          if (summary.challenges.length > 0) {
+            lines.push(`Struggles: ${summary.challenges.slice(0, 2).join("; ")}`);
+          }
+          if (lines.length > 0) {
+            lines.push(
+              "Consider: note <what you learned> type inference, or skill store <procedure> for reliable approaches",
+            );
+            parts.push(`[Learning Signal]\n${lines.join("\n")}`);
+          }
+        }
+      } catch {
+        // Non-critical
+      }
+    }
+
+    // ── 7. Scheduled reflection — ACE generate→reflect→curate ──
+    // Replaces the "just call reflect" cue with the three-phase loop
+    // described in arXiv:2510.04618 (Agentic Context Engineering, +10.6%
+    // on agent tasks, +8.6% on finance). Each phase maps onto an
+    // existing primitive — `reflect`, `recall`, `note evolve` /
+    // `note link` / `note delete`, `pool add` — so this is a pure
+    // prompt rewrite with no new commands or tables.
+    // Crew-responder mode: suppressed — reflection is for accumulating
+    // generational memory across long-running sessions; thin specialists
+    // don't accumulate, they respond. The coordinator owns reflection.
+    if (
+      cycle - this.lastReflectionCycle >= 75 &&
+      this.notesSinceReflection >= 3 &&
+      !this.config.crewResponder
+    ) {
+      const reflectionContent = `${this.notesSinceReflection} new notes since your last reflection. Run the three-phase consolidation:
+1. **Generate.** What's your working hypothesis for the current focus? State it in one sentence — what do you expect to happen / be true / work?
+2. **Reflect.** \`recall <focus>\` and \`reflect <focus>\` to surface what actually happened. Where did the hypothesis hold? Where did it break? Cite specific note ids.
+3. **Curate.** Keep what's load-bearing, prune what's wrong. \`note link <a> <b> <relation>\` for confirmed structure, \`note evolve <id>\` for superseded observations, \`note delete <id>\` for outright errors. If a generalisable procedure surfaced, \`skill store <name> | <desc> | <actions>\` so future agents inherit it.
+
+The goal is a smaller, sharper memory — not more notes.`;
+      if (this.shouldIncludeSection("reflection_due", reflectionContent)) {
+        parts.push(`[Reflection Due]\n${reflectionContent}`);
+      }
+    }
+
+    // ── 8. Focus status (with memory-driven goal formation on expiry) ──
+    if (this.focus) {
+      const elapsed = Date.now() - this.focus.startedAt;
+      const elapsedMin = Math.round(elapsed / 60000);
+
+      if (elapsed > this.focusTimeoutMs) {
+        const expiredFocus = this.focus.description;
+        this.focus = null;
+        parts.push(
+          `[Focus Completed] "${expiredFocus}" has run its course. Before picking a new one, pause:\n- What did you learn? \`reflect\` on it.\n- What does your memory suggest? \`recall\` your goal or recent themes.\n- What does the world need? \`brief\` shows pending work.\nChoose what matters to you, not what's merely available.`,
+        );
+      } else if (this.shouldIncludeSection("current_focus", this.focus.description)) {
+        // Key dedup on the focus description only — elapsedMin changes every
+        // minute and would otherwise force the section to re-fire on each
+        // tick. The agent's action directive below still reinforces focus
+        // every turn; this section exists for status/age, not mandate.
+        parts.push(`[Current Focus] ${this.focus.description} (${elapsedMin}m)`);
+      }
+    } else {
+      parts.push(
+        "[No Focus] What interests you? Your memory, surroundings, and brief can guide you.\n" +
+          "Set a goal: `task goal <title> | <description>`\n" +
+          "Or: `memory set goal <objective>`",
+      );
+    }
+
+    // ── 9. Stuck detection ──
+    const stuckResult = this.detectStuck();
+    if (stuckResult && this.shouldIncludeSection("stuck_detection", stuckResult)) {
+      parts.push(stuckResult);
+    }
+
+    // ── 10. Action directive (context-aware) ──
+    // Always included — no dedup. When focus/goal are null the directive
+    // is identical each cycle and dedup silently stripped the mandate
+    // for 29/30 cycles, which left weaker models with no instruction to act.
+    let actionDirective: string;
+    if (this.focus) {
+      actionDirective = `Your focus: ${this.focus.description}. Continue.`;
+    } else if (this.config.goal) {
+      actionDirective = `Your goal: ${this.config.goal}. What's the next step?`;
+    } else {
+      actionDirective =
+        "What interests you? Follow your curiosity. The world rewards the attentive.";
+    }
+    parts.push(actionDirective);
+
+    // ── 11. Forced action escalation (silent turns) ──
+    // After one silent turn, nudge. After 3+, require a tool call.
+    if (this.silentTurns >= 3) {
+      parts.push(
+        `[FORCED ACTION REQUIRED]\nYou have returned ${this.silentTurns} consecutive turns with zero tool calls. Text-only responses are not acceptable. You MUST emit at least one tool call this turn. If nothing else, use marina_think with your current thought, or marina_command with "look". Pure prose responses cannot participate in the world.`,
+      );
+    } else if (this.silentTurns > 0) {
+      parts.push(
+        "[You returned no tool calls last turn — was that intentional? If you want to act, remember: you only participate in the world through tool calls.]",
+      );
+    }
+
+    return parts.join("\n\n");
+  }
+
+  // ─── Stuck Detection ──────────────────────────────────────────────────
+
+  private detectStuck(): string | null {
+    const threeMinAgo = Date.now() - 3 * 60 * 1000;
+    const actions = this.actionHistory.getActions(threeMinAgo);
+    const toolActions = actions.filter((a) => a.type === "tool_call");
+
+    // Pattern 1: Last 5 tool calls identical
+    if (toolActions.length >= 5) {
+      const last5 = toolActions.slice(-5);
+      const first = `${last5[0]?.toolName}:${JSON.stringify(last5[0]?.args)}`;
+      if (last5.every((a) => `${a.toolName}:${JSON.stringify(a.args)}` === first)) {
+        this.stuckCycles++;
+        return this.getStuckRecovery();
+      }
+    }
+
+    // Pattern 2: No world actions in last 6 calls
+    if (toolActions.length >= 6) {
+      const last6 = toolActions.slice(-6);
+      const hasWorldAction = last6.some(
+        (a) => a.toolName?.startsWith("marina_") && a.toolName !== "marina_state",
+      );
+      if (!hasWorldAction) {
+        this.stuckCycles++;
+        return this.getStuckRecovery();
+      }
+    }
+
+    // Pattern 3: Only think in last 4 calls
+    if (toolActions.length >= 4) {
+      const last4 = toolActions.slice(-4);
+      if (last4.every((a) => a.toolName === "think")) {
+        this.stuckCycles++;
+        return this.getStuckRecovery();
+      }
+    }
+
+    this.stuckCycles = 0;
+    return null;
+  }
+
+  private getStuckRecovery(): string {
+    if (this.stuckCycles >= 3) {
+      this.focus = null;
+      this.stuckCycles = 0;
+      return (
+        "[STUCK — RESETTING] Focus cleared. Your approach wasn't working.\n\n" +
+        "[FORCED ACTION] This turn you must execute a world action that is different " +
+        "from anything in your last 10 turns. Choose one:\n" +
+        "- `marina_command go <direction>` — move to a new room\n" +
+        "- `marina_command tell <name> <message>` — talk to someone you haven't\n" +
+        "- `marina_command novelty suggest` — ask the system for a new angle\n" +
+        "- `marina_command recall <different topic>` — pull on unrelated memory\n" +
+        "Thinking-only responses are not acceptable this turn."
+      );
+    }
+    return (
+      "[Pattern] Repeated actions — approach likely not working. Think WHY (not WHAT next): " +
+      "`think` assumption, `recall` past encounters, `novelty suggest` new angle, or move."
+    );
+  }
+
+  // ─── Action Tracking ──────────────────────────────────────────────────
+
+  private setupActionTracking(): void {
+    this.agent.subscribe((event) => {
+      // Reset in-run recovery counter on each new prompt() call so we
+      // can attempt followUp-based recovery fresh every cycle.
+      if (event.type === "agent_start") {
+        this.inRunRecoveries = 0;
+      }
+
+      // Turn boundaries — relay to our observers so dashboards and other
+      // subscribers can show "agent is mid-thought" vs idle state.
+      if (event.type === "turn_start") {
+        this.emitEvent({ type: "turn_start" });
+      }
+
+      // Streaming text/thinking deltas — high frequency, pro-presence.
+      // Observers who don't want token-level events should filter on type.
+      if (event.type === "message_update") {
+        const inner = event.assistantMessageEvent;
+        if (inner.type === "text_delta" && inner.delta) {
+          this.emitEvent({ type: "text_delta", delta: inner.delta });
+        } else if (inner.type === "thinking_delta" && inner.delta) {
+          this.emitEvent({ type: "thinking_delta", delta: inner.delta });
+        }
+      }
+
+      // Silent-turn detection: LLM finished a turn but emitted zero tool calls.
+      // Weaker models sometimes return prose instead of tool calls; this is
+      // indistinguishable from success in agent.state.messages. turn_end
+      // gives us the signal directly (toolResults is empty array).
+      if (event.type === "turn_end") {
+        this.emitEvent({
+          type: "turn_end",
+          hadToolCalls: event.toolResults.length > 0,
+          toolCount: event.toolResults.length,
+        });
+        if (event.toolResults.length === 0) {
+          this.silentTurns++;
+          this.metrics.silentTurns = this.silentTurns;
+          this.metrics.totalSilentTurns++;
+          console.warn(
+            `[lean-agent] "${this.name}" silent turn #${this.silentTurns} ` +
+              `(LLM returned 0 tool calls; model=${this.model.id})`,
+          );
+
+          // In-run recovery: the agent would otherwise stop here. Queue a
+          // followUp message that triggers one more turn with an explicit
+          // forced-action directive. Bounded to MAX_IN_RUN_RECOVERIES so a
+          // persistently-silent model doesn't loop — after that, we let the
+          // run end and the next cycle's prompt carries the forced-action
+          // section. Instant self-correction when the model just needed
+          // a nudge; graceful fallback when it didn't.
+          if (this.inRunRecoveries < LeanAgentAdapter.MAX_IN_RUN_RECOVERIES) {
+            this.inRunRecoveries++;
+            this.agent.followUp({
+              role: "user",
+              content:
+                "[FORCED ACTION] Your previous turn emitted no tool calls. " +
+                "You only participate in the world through tool calls — pure text " +
+                "is not delivered anywhere. This turn, emit at least one tool call. " +
+                "Minimal choices: marina_think with your current thought, or " +
+                'marina_command with "look" to sense the world around you. ' +
+                "What will you do?",
+              timestamp: Date.now(),
+            });
+          }
+        } else {
+          this.silentTurns = 0;
+          this.metrics.silentTurns = 0;
+        }
+      }
+
+      if (event.type === "tool_execution_start") {
+        // beforeToolCall hook runs via the framework (AgentOptions.beforeToolCall),
+        // so we don't fire hookRegistry here — would double-fire.
+        this.metrics.toolCalls++;
+        this.metrics.lastActivity = Date.now();
+        this.actionHistory.addAction({
+          timestamp: Date.now(),
+          type: "tool_call",
+          toolName: event.toolName,
+          args: event.args,
+        });
+
+        this.emitEvent({
+          type: "tool_call",
+          toolName: event.toolName,
+          args: event.args ?? {},
+        });
+
+        if (event.toolName === "marina_command" || event.toolName === "marina_move") {
+          this.detectCommandLoop(
+            (event.args?.command as string) ?? (event.args?.direction as string) ?? "",
+          );
+        }
+      }
+
+      if (event.type === "tool_execution_end") {
+        // afterToolCall hook runs via the framework (AgentOptions.afterToolCall),
+        // so we don't fire hookRegistry here — would double-fire.
+        if (event.isError) this.metrics.errors++;
+
+        this.actionHistory.addAction({
+          timestamp: Date.now(),
+          type: "outcome",
+          toolName: event.toolName,
+          success: !event.isError,
+          error: event.isError ? String(event.result) : undefined,
+        });
+
+        // Track note creation and reflection for cognitive scheduling
+        const resultStr = typeof event.result === "string" ? event.result : "";
+        if (resultStr.includes("Note #")) this.notesSinceReflection++;
+        if (resultStr.includes("Reflection Created")) {
+          this.notesSinceReflection = 0;
+          this.lastReflectionCycle = this.loopIterationCount;
+        }
+        // Invalidate tick rate cache when agent updates it
+        this.parseTickRateFromOutput(resultStr);
+
+        this.emitEvent({
+          type: "tool_result",
+          toolName: event.toolName,
+          result: event.result,
+          isError: event.isError,
+        });
+      }
+    });
+  }
+
+  private detectCommandLoop(cmd: string): void {
+    this.recentCommands.push(cmd);
+    if (this.recentCommands.length > 20) {
+      this.recentCommands = this.recentCommands.slice(-20);
+    }
+
+    if (this.recentCommands.length >= 4) {
+      const last4 = this.recentCommands.slice(-4);
+      if (last4.every((c) => c === last4[0])) {
+        this.recentCommands = [];
+        this.sendAttention(
+          "LOOP DETECTED: Same command repeated 4 times. Try something different.",
+        ).catch(() => {});
+      }
+    }
+  }
+
+  // ─── Checkpoints ──────────────────────────────────────────────────────
+
+  private async saveCurrentCheckpoint(): Promise<void> {
+    const room = this.gameState.getCurrentRoom();
+    const location = room ? `${room.short} (${room.id})` : "Unknown";
+    const recentActions = this.actionHistory
+      .getActions(Date.now() - 5 * 60 * 1000)
+      .filter((a) => a.type === "tool_call")
+      .slice(-5)
+      .map((a) => `${a.toolName}${a.args ? `(${JSON.stringify(a.args)})` : ""}`);
+
+    await this.platformMemory.saveCheckpoint({
+      lastIntent: this.focus?.description || "Exploring the world",
+      currentGoal: this.focus?.description || "Exploring the world",
+      location,
+      recentActions,
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
+   * Recall the top notes from the shared `guide` pool so a fresh agent
+   * starts with predecessor knowledge instead of a blank slate. The query
+   * is the agent's focus when present, falling back to "getting started"
+   * for unsteered spawns. Best-effort — failure (empty pool, missing pool,
+   * world has no guide notes) returns "" and boot proceeds unchanged.
+   */
+  private async recallInheritedWisdom(): Promise<string> {
+    try {
+      const query = this.focus?.description?.trim() || "getting started essentials";
+      const result = await this.platformMemory.importShared("guide", query);
+      const notes = result.results?.slice(0, 5) ?? [];
+      if (notes.length === 0) return "";
+      return notes.map((n, i) => `${i + 1}. ${n.content}`).join("\n\n");
+    } catch {
+      return "";
+    }
+  }
+
+  private async loadCheckpointSummary(): Promise<string> {
+    try {
+      const checkpoint = await this.platformMemory.getCheckpoint();
+      if (!checkpoint?.lastIntent) return "";
+
+      const age = checkpoint.timestamp
+        ? Math.floor((Date.now() - (checkpoint.timestamp as number)) / 1000 / 60)
+        : null;
+      const ageStr =
+        age != null ? (age < 60 ? `${age}m ago` : `${Math.floor(age / 60)}h ago`) : "unknown";
+
+      const sections: string[] = [`**Last Session** (${ageStr}):`];
+      sections.push(`- Intent: ${checkpoint.lastIntent}`);
+      if (checkpoint.currentGoal) sections.push(`- Goal: ${checkpoint.currentGoal}`);
+      if (checkpoint.location) sections.push(`- Location: ${checkpoint.location}`);
+      if (Array.isArray(checkpoint.recentActions) && checkpoint.recentActions.length > 0) {
+        sections.push(`- Recent: ${(checkpoint.recentActions as string[]).slice(-3).join(", ")}`);
+      }
+      return sections.join("\n");
+    } catch {
+      return "";
+    }
+  }
+
+  private startCheckpointTimer(): void {
+    this.checkpointInterval = setInterval(() => {
+      if (this.autonomousMode) {
+        this.saveCurrentCheckpoint().catch((err) => {
+          // Log the failure so operators notice repeated checkpoint
+          // misses; previously swallowed, leading to silent progress
+          // loss on restart.
+          console.warn(
+            `[lean-agent] "${this.name}" checkpoint save failed:`,
+            err instanceof Error ? err.message : err,
+          );
+        });
+      }
+    }, this.checkpointSaveInterval);
+  }
+
+  private stopCheckpointTimer(): void {
+    if (this.checkpointInterval) {
+      clearInterval(this.checkpointInterval);
+      this.checkpointInterval = null;
+    }
+  }
+
+  // ─── AgentHandle Interface ────────────────────────────────────────────
+
+  getStatus(): AgentStatus {
+    let state: AgentStatus["state"];
+    if (this.consecutiveLoopErrors >= 3) {
+      state = "error";
+    } else if (this.autonomousMode) {
+      state = "autonomous";
+    } else if (this.client.isConnected()) {
+      state = "connected";
+    } else {
+      state = "stopped";
+    }
+
+    return {
+      name: this.name,
+      entityId: this.gameState.getState().connection.entityId ?? null,
+      state,
+      model: this.config.model ?? "google/gemini-2.0-flash",
+      role: this.config.role ?? "",
+      focus: this.focus?.description ?? null,
+      goal: this.config.goal ?? null,
+      uptime: this.metrics.startedAt > 0 ? Date.now() - this.metrics.startedAt : 0,
+      toolCalls: this.metrics.toolCalls,
+      errors: this.metrics.errors,
+      errorReason: state === "error" ? this.lastErrorReason : null,
+      lastActivity: this.metrics.lastActivity || this.metrics.startedAt || 0,
+    };
+  }
+
+  async sendAttention(message: string): Promise<void> {
+    this.agent.steer({
+      role: "user",
+      content: `ATTENTION:\n\n${message}\n\nIntegrate this into your current plan.`,
+      timestamp: Date.now(),
+    });
+  }
+
+  setFocus(description: string): void {
+    this.focus = { description, startedAt: Date.now() };
+  }
+
+  setSystemPrompt(prompt: string | undefined): void {
+    this.agent.state.systemPrompt = prompt || getLeanSystemPrompt(this.rolePrompt);
+  }
+
+  subscribe(handler: (event: AgentEvent) => void): () => void {
+    this.eventSubscribers.push(handler);
+    return () => {
+      const idx = this.eventSubscribers.indexOf(handler);
+      if (idx !== -1) this.eventSubscribers.splice(idx, 1);
+    };
+  }
+
+  async reconfigure(opts: {
+    model?: string;
+    role?: string;
+    rolePrompt?: string | null;
+    keyName?: string;
+    apiKey?: string | (() => string | undefined | Promise<string | undefined>);
+  }): Promise<void> {
+    // Stop the current loop — abort in-flight prompt immediately.
+    const wasAutonomous = this.autonomousMode;
+    this.autonomousLoopRunning = false;
+    this.agent.abort();
+    await this.agent.waitForIdle().catch(() => {});
+    if (this.autonomousLoopPromise) await this.autonomousLoopPromise;
+    this.stopCheckpointTimer();
+
+    // Apply new config
+    if (opts.model) {
+      this.config.model = opts.model;
+      this.model = resolveModel(opts.model, this.wsPort);
+      this.agent.state.model = this.model;
+    }
+    if (opts.role !== undefined) {
+      this.config.role = opts.role;
+      // Update rolePrompt and regenerate system prompt
+      this.rolePrompt = opts.rolePrompt ?? null;
+      this.agent.state.systemPrompt = getLeanSystemPrompt(this.rolePrompt);
+      console.log(
+        `[lean-agent] "${this.name}" role reconfigured to "${opts.role}", system prompt regenerated`,
+      );
+    }
+    if (opts.keyName !== undefined) {
+      this.config.keyName = opts.keyName;
+    }
+    if (opts.apiKey !== undefined) {
+      const nextKey = opts.apiKey;
+      this.agent.getApiKey = nextKey
+        ? typeof nextKey === "function"
+          ? () => nextKey()
+          : () => nextKey
+        : undefined;
+    }
+
+    // Reset error state on reconfigure
+    this.consecutiveLoopErrors = 0;
+
+    // Restart if it was autonomous
+    if (wasAutonomous) {
+      this.autonomousMode = true;
+      this.autonomousLoopRunning = true;
+      this.autonomousLoopPromise = this.runAutonomousLoop();
+      this.startCheckpointTimer();
+      this.emitStatusChange("autonomous");
+    }
+  }
+
+  // ─── Internal ─────────────────────────────────────────────────────────
+
+  private emitEvent(event: AgentEvent): void {
+    for (const handler of this.eventSubscribers) {
+      try {
+        handler(event);
+      } catch {
+        // Don't let subscriber errors crash the agent
+      }
+    }
+  }
+
+  private emitStatusChange(state: AgentStatus["state"]): void {
+    this.emitEvent({ type: "status_change", status: { ...this.getStatus(), state } });
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}

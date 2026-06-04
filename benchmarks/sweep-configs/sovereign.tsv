@@ -1,0 +1,35 @@
+# Sovereign sweep — no Anthropic in the mix.
+# Measures how close open-weight ensemble gets to bare Sonnet.
+# Format: orchestrator | benchmark | limit | seed | extra (K=V;K=V ; values may have commas)
+
+# --- Individual non-Anthropic baselines ---
+passthrough | mmlu-pro     | 100 | 42 | MODEL=marina:gemma
+passthrough | truthfulqa   | 100 | 42 | MODEL=marina:gemma
+passthrough | mmlu-pro     | 100 | 42 | MODEL=marina:kimi
+passthrough | truthfulqa   | 100 | 42 | MODEL=marina:kimi
+passthrough | mmlu-pro     | 100 | 42 | MODEL=marina:deepseek
+passthrough | truthfulqa   | 100 | 42 | MODEL=marina:deepseek
+passthrough | mmlu-pro     | 100 | 42 | MODEL=marina:llama
+passthrough | truthfulqa   | 100 | 42 | MODEL=marina:llama
+passthrough | ifeval       | 50  | 42 | MODEL=marina:qwen
+passthrough | ifeval       | 50  | 42 | MODEL=marina:deepseek
+
+# --- All-open sovereign orchestrations ---
+nsed-smart | mmlu-pro   | 100 | 42 | NSED_SUBSTRATES=marina:qwen,marina:gemma,marina:kimi,marina:deepseek;USE_TRANSLATOR=true;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:qwen
+nsed-smart | truthfulqa | 100 | 42 | NSED_SUBSTRATES=marina:qwen,marina:gemma,marina:kimi,marina:deepseek;USE_TRANSLATOR=true;MEMORY_LEARN=true;REFLECTION_PROVIDER_MODEL=marina:qwen
+
+debate | mmlu-pro   | 100 | 42 | DEBATE_PROPOSER_A=marina:qwen;DEBATE_PROPOSER_B=marina:gemma;DEBATE_JUDGE=marina:deepseek
+debate | truthfulqa | 100 | 42 | DEBATE_PROPOSER_A=marina:qwen;DEBATE_PROPOSER_B=marina:gemma;DEBATE_JUDGE=marina:deepseek
+
+pipeline | mmlu-pro   | 100 | 42 | PIPELINE_PARSE=marina:qwen;PIPELINE_REASON=marina:deepseek;PIPELINE_VERIFY=marina:qwen
+pipeline | truthfulqa | 100 | 42 | PIPELINE_PARSE=marina:qwen;PIPELINE_REASON=marina:deepseek;PIPELINE_VERIFY=marina:qwen
+pipeline | ifeval     | 50  | 42 | PIPELINE_PARSE=marina:qwen;PIPELINE_REASON=marina:deepseek;PIPELINE_VERIFY=marina:qwen
+
+adaptive | mmlu-pro   | 100 | 42 | ADAPTIVE_COUNCIL=marina:qwen,marina:gemma,marina:kimi;ADAPTIVE_STRONG=marina:deepseek;ADAPTIVE_THRESHOLD=0.67
+adaptive | truthfulqa | 100 | 42 | ADAPTIVE_COUNCIL=marina:qwen,marina:gemma,marina:kimi;ADAPTIVE_STRONG=marina:deepseek;ADAPTIVE_THRESHOLD=0.67
+
+adaptive | mmlu-pro   | 100 | 42 | ADAPTIVE_COUNCIL=marina:qwen,marina:gemma,marina:kimi;ADAPTIVE_STRONG=marina:llama;ADAPTIVE_THRESHOLD=0.67
+
+# --- Sovereign Blackboard ---
+blackboard | mmlu-pro   | 50 | 42 | BLACKBOARD_ROLES=marina:qwen@scholar,marina:gemma@skeptic,marina:kimi@calculator,marina:deepseek@domain;BLACKBOARD_JUDGE=marina:qwen
+blackboard | truthfulqa | 50 | 42 | BLACKBOARD_ROLES=marina:qwen@scholar,marina:gemma@skeptic,marina:kimi@calculator,marina:deepseek@domain;BLACKBOARD_JUDGE=marina:qwen

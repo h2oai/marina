@@ -1,0 +1,27 @@
+{
+  "name": "@marina/agent-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for building agents that connect to an Marina server via WebSocket. Agents can also serve as LLM backends via the OpenAI-compatible Model API.",
+  "type": "module",
+  "main": "index.ts",
+  "types": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "files": [
+    "index.ts",
+    "client.ts",
+    "examples/"
+  ],
+  "keywords": [
+    "marina",
+    "mud",
+    "agent",
+    "sdk",
+    "websocket"
+  ],
+  "license": "SEE LICENSE IN LICENSE",
+  "peerDependencies": {
+    "typescript": ">=5.0.0"
+  }
+}

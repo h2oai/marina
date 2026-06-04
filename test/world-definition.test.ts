@@ -1,0 +1,290 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { resolve } from "node:path";
+import { Engine } from "../src/engine/engine";
+import { MarinaDB } from "../src/persistence/database";
+import { roomId } from "../src/types";
+import { loadRooms } from "../src/world/room-loader";
+import { seedGuidePool } from "../src/world/seed-guide";
+import defaultWorld from "../worlds/default";
+import emptyWorld from "../worlds/empty";
+import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
+
+describe("WorldDefinition: default world", () => {
+  it("should have no inline rooms, roomsDir and gridPositions set", () => {
+    expect(Object.keys(defaultWorld.rooms).length).toBe(0); // all rooms from files, none inline
+    expect(defaultWorld.roomsDir).toBeDefined();
+    expect(defaultWorld.gridPositions).toBeDefined();
+    expect(Object.keys(defaultWorld.gridPositions!).length).toBe(25);
+  });
+
+  it("should load 25 rooms total (all from grid files)", async () => {
+    const engine = new Engine({
+      startRoom: roomId("hub/crossroads"),
+      tickInterval: 60_000,
+      world: defaultWorld,
+    });
+    engine.registerWorldRooms(defaultWorld);
+    await loadRooms(engine, resolve(defaultWorld.roomsDir!));
+    expect(engine.rooms.size).toBe(25);
+  });
+
+  it("should have hub/crossroads with multiple exits after loading", async () => {
+    const engine = new Engine({
+      startRoom: roomId("hub/crossroads"),
+      tickInterval: 60_000,
+      world: defaultWorld,
+    });
+    await loadRooms(engine, resolve(defaultWorld.roomsDir!));
+    const center = engine.rooms.get(roomId("hub/crossroads"));
+    expect(center).toBeDefined();
+    expect(center!.module.exits).toBeDefined();
+    expect(Object.keys(center!.module.exits!).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("ships with no ceremony quests — the guide pool is the inheritance surface", () => {
+    expect(defaultWorld.quests.length).toBe(0);
+    expect(defaultWorld.autoQuest).toBeUndefined();
+  });
+
+  it("should have guide notes", () => {
+    expect(defaultWorld.guideNotes.length).toBe(45); // 35 original + 5 mode + 3 decomposition + 1 csv-intent + 1 crew
+  });
+
+  it("should have canvas config", () => {
+    expect(defaultWorld.canvas).toBeDefined();
+    expect(defaultWorld.canvas!.name).toBe("global");
+  });
+});
+
+describe("WorldDefinition: empty world", () => {
+  it("should have 1 room", () => {
+    expect(Object.keys(emptyWorld.rooms).length).toBe(1);
+  });
+
+  it("should have 0 quests", () => {
+    expect(emptyWorld.quests.length).toBe(0);
+  });
+
+  it("should have 0 guide notes", () => {
+    expect(emptyWorld.guideNotes.length).toBe(0);
+  });
+
+  it("should not have autoQuest", () => {
+    expect(emptyWorld.autoQuest).toBeUndefined();
+  });
+});
+
+describe("WorldDefinition: registerWorldRooms", () => {
+  it("should register all rooms from a world definition", () => {
+    const engine = new Engine({
+      startRoom: roomId("void/center"),
+      tickInterval: 60_000,
+      world: emptyWorld,
+    });
+    engine.registerWorldRooms(emptyWorld);
+    expect(engine.rooms.size).toBe(1);
+    expect(engine.rooms.has(roomId("void/center"))).toBe(true);
+  });
+
+  it("should register all 25 rooms from default world (all files)", async () => {
+    const engine = new Engine({
+      startRoom: roomId("hub/crossroads"),
+      tickInterval: 60_000,
+      world: defaultWorld,
+    });
+    engine.registerWorldRooms(defaultWorld);
+    await loadRooms(engine, resolve(defaultWorld.roomsDir!));
+    expect(engine.rooms.size).toBe(25);
+  });
+});
+
+describe("WorldDefinition: empty world engine", () => {
+  let engine: Engine;
+  let conn: MockConnection;
+
+  beforeEach(() => {
+    engine = new Engine({
+      startRoom: roomId("void/center"),
+      tickInterval: 60_000,
+      world: emptyWorld,
+    });
+    engine.registerWorldRooms(emptyWorld);
+    conn = new MockConnection("c1");
+    engine.addConnection(conn);
+  });
+
+  it("should spawn in void room", () => {
+    const result = engine.login("c1", "Wanderer");
+    expect("entityId" in result).toBe(true);
+    if ("entityId" in result) {
+      const entity = engine.entities.get(result.entityId);
+      expect(entity?.room).toBe(roomId("void/center"));
+    }
+  });
+
+  it("should not auto-start any quest", () => {
+    const result = engine.login("c1", "Wanderer");
+    expect("entityId" in result).toBe(true);
+    if ("entityId" in result) {
+      const entity = engine.entities.get(result.entityId);
+      expect(entity?.properties.active_quest).toBeUndefined();
+    }
+  });
+
+  it("should have no objectives available", () => {
+    engine.login("c1", "Wanderer");
+    conn.clear();
+    engine.processCommand(conn.entity!, "quest list");
+    const text = conn.lastText();
+    // Should show header but no objective entries
+    expect(text).toContain("Available Objectives");
+    expect(text).not.toContain("First Steps");
+  });
+});
+
+describe("WorldDefinition: onComplete callback", () => {
+  let db: MarinaDB;
+  let engine: Engine;
+  let conn: MockConnection;
+  const dbPath = `/tmp/marina-oncomplete-test-${Date.now()}.db`;
+
+  beforeEach(() => {
+    db = new MarinaDB(dbPath);
+    engine = new Engine({
+      startRoom: roomId("hub/crossroads"),
+      tickInterval: 60_000,
+      db,
+      world: defaultWorld,
+    });
+    engine.registerRoom(
+      roomId("hub/crossroads"),
+      makeTestRoom({
+        short: "Crossroads",
+        items: { terminal: "A terminal." },
+        exits: {
+          north: roomId("knowledge/hub"),
+          east: roomId("markets/floor"),
+          south: roomId("coord/center"),
+        },
+      }),
+    );
+    engine.registerRoom(
+      roomId("knowledge/hub"),
+      makeTestRoom({ short: "Knowledge Hub", exits: { south: roomId("hub/crossroads") } }),
+    );
+    engine.registerRoom(
+      roomId("markets/floor"),
+      makeTestRoom({ short: "Trade Floor", exits: { west: roomId("hub/crossroads") } }),
+    );
+    engine.registerRoom(
+      roomId("coord/center"),
+      makeTestRoom({ short: "Coordination", exits: { north: roomId("hub/crossroads") } }),
+    );
+
+    conn = new MockConnection("c1");
+    engine.addConnection(conn);
+  });
+
+  afterEach(() => {
+    db.close();
+    cleanupDb(dbPath);
+  });
+
+  it("should fire onComplete and promote to citizen on tutorial completion", () => {
+    // Seed a project and task so the tutorial steps can complete
+    const groupId = crypto.randomUUID();
+    const poolId = crypto.randomUUID();
+    const projectId = crypto.randomUUID();
+    db.createMemoryPool(poolId, "test", "system", groupId);
+    db.createGroup({
+      id: groupId,
+      name: "test",
+      description: "Test project",
+      leaderId: "system",
+    });
+    db.createProject({
+      id: projectId,
+      name: "Test",
+      description: "Test project",
+      poolId,
+      groupId,
+      orchestration: "swarm",
+      createdBy: "system",
+    });
+    db.createTask({
+      groupId,
+      title: "Test task",
+      description: "A test task",
+      creatorId: "system",
+      creatorName: "system",
+      validationMode: "bounty",
+      standing: 5,
+    });
+
+    engine.login("c1", "Player");
+    const entity = engine.entities.get(conn.entity!)!;
+
+    // Complete all tutorial steps: look, set goal, join project, claim task, note
+    engine.processCommand(conn.entity!, "look");
+    engine.processCommand(conn.entity!, "memory set goal explore");
+    engine.processCommand(conn.entity!, "project Test join");
+    engine.processCommand(conn.entity!, "task claim 1");
+    engine.processCommand(conn.entity!, "note this is interesting");
+
+    engine.processCommand(conn.entity!, "quest complete");
+    // Should have at least rank 1 (may be higher if standing from tasks promoted further)
+    expect((entity.properties.rank as number) ?? 0).toBeGreaterThanOrEqual(1);
+
+    // DB should also reflect the rank
+    const user = db.getUserByName("Player");
+    expect(user!.rank).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("seedGuidePool with custom notes", () => {
+  let db: MarinaDB;
+  const dbPath = `/tmp/marina-guide-test-${Date.now()}.db`;
+
+  beforeEach(() => {
+    db = new MarinaDB(dbPath);
+  });
+
+  afterEach(() => {
+    db.close();
+    cleanupDb(dbPath);
+  });
+
+  it("should seed notes from provided array", () => {
+    const notes = [
+      { content: "Test note one", importance: 8, type: "skill" },
+      { content: "Test note two", importance: 5, type: "fact" },
+    ];
+    seedGuidePool(db, notes);
+
+    const pool = db.getMemoryPool("guide");
+    expect(pool).toBeDefined();
+
+    const recalled = db.recallPoolNotes(pool!.id, "Test note", {
+      weightRelevance: 1.0,
+      weightRecency: 0,
+      weightImportance: 0,
+    });
+    expect(recalled.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("should short-circuit on empty notes", () => {
+    seedGuidePool(db, []);
+    const pool = db.getMemoryPool("guide");
+    // Pool should not be created if no notes provided
+    expect(pool).toBeUndefined();
+  });
+
+  it("should be idempotent", () => {
+    const notes = [{ content: "Idempotency test", importance: 5, type: "skill" }];
+    seedGuidePool(db, notes);
+    seedGuidePool(db, notes); // second call should be no-op
+
+    const pool = db.getMemoryPool("guide");
+    expect(pool).toBeDefined();
+  });
+});

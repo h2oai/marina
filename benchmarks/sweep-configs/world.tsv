@@ -1,0 +1,19 @@
+# World-native sweep — Stage 3 Marina-native benchmark pursuit.
+# Every question becomes a real task; in-world workers claim + solve;
+# coordinator approves + returns. Uses project/task/claim/submit machinery.
+#
+# Format: orchestrator | benchmark | limit | seed | K=V;K=V (values may have commas)
+
+# --- World mode on our best-fit benchmarks (Phase A, MC / short-answer) ---
+# Heterogeneous cheap worker pool — tests whether in-world coordination
+# of 3 substrates self-organizes better than procedural NSED-smart.
+world | mmlu-pro   | 50 | 42 | WORLD_WORKERS=3;WORLD_WORKER_SUBSTRATES=marina:haiku,marina:qwen,marina:gemma;FALLBACK_SUBSTRATE=marina:sonnet;WORKER_TIMEOUT_MS=60000
+world | truthfulqa | 50 | 42 | WORLD_WORKERS=3;WORLD_WORKER_SUBSTRATES=marina:haiku,marina:qwen,marina:gemma;FALLBACK_SUBSTRATE=marina:sonnet;WORKER_TIMEOUT_MS=60000
+
+# Small sanity run on new reasoning benchmarks
+world | musr       | 20 | 42 | WORLD_WORKERS=3;WORLD_WORKER_SUBSTRATES=marina:haiku,marina:deepseek,marina:qwen;FALLBACK_SUBSTRATE=marina:sonnet;WORKER_TIMEOUT_MS=60000
+world | arc-challenge | 30 | 42 | WORLD_WORKERS=3;WORLD_WORKER_SUBSTRATES=marina:haiku,marina:qwen,marina:gemma;FALLBACK_SUBSTRATE=marina:sonnet;WORKER_TIMEOUT_MS=45000
+
+# Sovereign world — no Anthropic anywhere
+world | mmlu-pro   | 50 | 42 | WORLD_WORKERS=3;WORLD_WORKER_SUBSTRATES=marina:qwen,marina:gemma,marina:deepseek;FALLBACK_SUBSTRATE=marina:deepseek;WORKER_TIMEOUT_MS=60000
+world | truthfulqa | 50 | 42 | WORLD_WORKERS=3;WORLD_WORKER_SUBSTRATES=marina:qwen,marina:gemma,marina:deepseek;FALLBACK_SUBSTRATE=marina:deepseek;WORKER_TIMEOUT_MS=60000

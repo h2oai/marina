@@ -1,0 +1,134 @@
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - "desktop-v*"
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Build environment"
+        required: true
+        default: "canary"
+        type: choice
+        options:
+          - canary
+          - stable
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-13
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install root dependencies
+        run: bun install
+
+      - name: Install dashboard dependencies
+        run: cd dashboard && bun install
+
+      - name: Install desktop dependencies
+        run: cd marina-desktop && bun install
+
+      - name: Run tests (verify no regressions)
+        run: bun test
+
+      - name: Build desktop app
+        env:
+          ELECTROBUN_DEVELOPER_ID: ${{ secrets.ELECTROBUN_DEVELOPER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: |
+          ENV="${{ github.event.inputs.env || 'stable' }}"
+          bash marina-desktop/scripts/build.sh "$ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: marina-macos-${{ matrix.arch }}
+          path: marina-desktop/build/*.dmg
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: |
+          bun install
+          cd dashboard && bun install
+          cd ../marina-desktop && bun install
+
+      - name: Build desktop app
+        run: bash marina-desktop/scripts/build.sh ${{ github.event.inputs.env || 'stable' }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: marina-windows-x64
+          path: marina-desktop/build/*.exe
+
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev
+
+      - name: Install dependencies
+        run: |
+          bun install
+          cd dashboard && bun install
+          cd ../marina-desktop && bun install
+
+      - name: Build desktop app
+        run: bash marina-desktop/scripts/build.sh ${{ github.event.inputs.env || 'stable' }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: marina-linux-x64
+          path: marina-desktop/build/*.deb
+
+  release:
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
+          draft: true

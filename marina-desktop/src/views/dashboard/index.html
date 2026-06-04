@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Marina — Mission Control</title>
+    <!-- Catch JS errors and display them visually (dev debug) -->
+    <script>
+      window.onerror = function (msg, url, line, col, error) {
+        var el = document.getElementById("__err");
+        if (!el) {
+          el = document.createElement("pre");
+          el.id = "__err";
+          el.style.cssText =
+            "position:fixed;top:0;left:0;right:0;padding:16px;background:#1a1a2e;color:#ff4444;font:13px/1.5 monospace;z-index:99999;white-space:pre-wrap;max-height:50vh;overflow:auto";
+          document.body.prepend(el);
+        }
+        el.textContent +=
+          "ERROR: " + msg + "\n" + url + ":" + line + ":" + col + "\n";
+        if (error && error.stack) el.textContent += error.stack + "\n\n";
+        return false;
+      };
+      window.addEventListener("unhandledrejection", function (e) {
+        var el = document.getElementById("__err");
+        if (!el) {
+          el = document.createElement("pre");
+          el.id = "__err";
+          el.style.cssText =
+            "position:fixed;top:0;left:0;right:0;padding:16px;background:#1a1a2e;color:#ff4444;font:13px/1.5 monospace;z-index:99999;white-space:pre-wrap;max-height:50vh;overflow:auto";
+          document.body.prepend(el);
+        }
+        el.textContent +=
+          "UNHANDLED REJECTION: " +
+          (e.reason ? e.reason.stack || e.reason : e) +
+          "\n\n";
+      });
+    </script>
+    <!-- Dashboard CSS (Vite build output, stable filename) -->
+    <link rel="stylesheet" href="./app/assets/index.css" />
+    <style>
+      /* Offline fonts bundled in the app */
+      @font-face {
+        font-family: "Orbitron";
+        font-weight: 400 900;
+        font-display: swap;
+        src: url("./app/assets/orbitron.woff2") format("woff2");
+      }
+      @font-face {
+        font-family: "Share Tech Mono";
+        font-weight: 400;
+        font-display: swap;
+        src: url("./app/assets/share-tech-mono.woff2") format("woff2");
+      }
+
+      /* ── Splash screen ─────────────────────────────────────── */
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 90000;
+        background: #080c14;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 28px;
+        transition: opacity 0.6s ease-out;
+      }
+      #splash.fade-out {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #splash .mark { width: 200px; height: 200px; }
+      #splash .mark svg { width: 100%; height: 100%; overflow: visible; }
+
+      #splash .wordmark { text-align: center; line-height: 1; }
+      #splash .wordmark .name {
+        font-family: "Orbitron", monospace;
+        font-size: 32px;
+        font-weight: 900;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        background: linear-gradient(135deg, #00ffe7 0%, #00a8ff 50%, #bf00ff 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        filter: drop-shadow(0 0 18px rgba(0,255,231,0.5));
+      }
+      #splash .wordmark .tagline {
+        font-family: "Share Tech Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.35em;
+        color: #4ecdc4;
+        margin-top: 8px;
+        text-transform: uppercase;
+        opacity: 0.75;
+      }
+      #splash .status-line {
+        font-family: "Share Tech Mono", monospace;
+        font-size: 11px;
+        color: #00ffe7;
+        opacity: 0;
+        animation: status-fade-in 0.4s ease-out 1.2s forwards;
+      }
+
+      /* Scanline overlay */
+      #splash::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: repeating-linear-gradient(
+          0deg, transparent, transparent 3px,
+          rgba(0,255,231,0.015) 3px, rgba(0,255,231,0.015) 4px
+        );
+        pointer-events: none;
+      }
+
+      /* Splash animations */
+      @keyframes splash-spin-slow { to { transform: rotate(360deg); } }
+      @keyframes splash-spin-rev  { to { transform: rotate(-360deg); } }
+      @keyframes splash-pulse     {
+        0%, 100% { opacity: 0.6; }
+        50%      { opacity: 1; }
+      }
+      @keyframes splash-orbit   { to { transform: rotate(360deg); } }
+      @keyframes status-fade-in { to { opacity: 0.6; } }
+      @keyframes splash-enter {
+        from { transform: scale(0.8); opacity: 0; }
+        to   { transform: scale(1);   opacity: 1; }
+      }
+
+      #splash .mark { animation: splash-enter 0.8s ease-out; }
+      #splash .wordmark { animation: splash-enter 0.8s ease-out 0.3s both; }
+
+      .s-ring-outer { animation: splash-spin-slow 18s linear infinite; transform-origin: 140px 140px; }
+      .s-ring-mid   { animation: splash-spin-rev  12s linear infinite; transform-origin: 140px 140px; }
+      .s-ring-inner { animation: splash-spin-slow  8s linear infinite; transform-origin: 140px 140px; }
+      .s-core-glow  { animation: splash-pulse 3s ease-in-out infinite; }
+      .s-orbit-a    { animation: splash-orbit 6s linear infinite; transform-origin: 140px 140px; }
+      .s-orbit-b    { animation: splash-orbit 9s linear infinite reverse; transform-origin: 140px 140px; }
+      .s-orbit-c    { animation: splash-orbit 4s linear infinite; transform-origin: 140px 140px; }
+    </style>
+  </head>
+  <body>
+    <!-- ── Splash screen (fades when dashboard mounts) ── -->
+    <div id="splash">
+      <div class="mark">
+        <svg viewBox="0 0 280 280" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <radialGradient id="coreGrad" cx="50%" cy="50%" r="50%">
+              <stop offset="0%"   stop-color="#00ffe7" stop-opacity="1"/>
+              <stop offset="60%"  stop-color="#0066ff" stop-opacity=".8"/>
+              <stop offset="100%" stop-color="#bf00ff" stop-opacity="0"/>
+            </radialGradient>
+            <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%"   stop-color="#00ffe7"/>
+              <stop offset="50%"  stop-color="#0088ff"/>
+              <stop offset="100%" stop-color="#bf00ff"/>
+            </linearGradient>
+            <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur stdDeviation="4" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="softglow" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur stdDeviation="8" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <clipPath id="worldClip">
+              <circle cx="140" cy="140" r="56"/>
+            </clipPath>
+          </defs>
+
+          <!-- Ambient halo -->
+          <circle cx="140" cy="140" r="120" fill="none" stroke="url(#ringGrad)" stroke-width="1" opacity="0.08"/>
+          <circle cx="140" cy="140" r="100" fill="none" stroke="#00ffe7" stroke-width="0.5" opacity="0.12"/>
+
+          <!-- Outer ring with ticks -->
+          <g class="s-ring-outer" filter="url(#glow)">
+            <circle cx="140" cy="140" r="118" fill="none" stroke="url(#ringGrad)" stroke-width="1.5" stroke-opacity="0.6" stroke-dasharray="4 8"/>
+            <line x1="140" y1="22" x2="140" y2="30" stroke="#00ffe7" stroke-width="2" opacity="0.9"/>
+            <line x1="140" y1="22" x2="140" y2="30" stroke="#00ffe7" stroke-width="2" opacity="0.9" transform="rotate(45,140,140)"/>
+            <line x1="140" y1="22" x2="140" y2="30" stroke="#00ffe7" stroke-width="2" opacity="0.9" transform="rotate(90,140,140)"/>
+            <line x1="140" y1="22" x2="140" y2="30" stroke="#00ffe7" stroke-width="2" opacity="0.9" transform="rotate(135,140,140)"/>
+            <line x1="140" y1="22" x2="140" y2="30" stroke="#00ffe7" stroke-width="2" opacity="0.9" transform="rotate(180,140,140)"/>
+            <line x1="140" y1="22" x2="140" y2="30" stroke="#00ffe7" stroke-width="2" opacity="0.9" transform="rotate(225,140,140)"/>
+            <line x1="140" y1="22" x2="140" y2="30" stroke="#00ffe7" stroke-width="2" opacity="0.9" transform="rotate(270,140,140)"/>
+            <line x1="140" y1="22" x2="140" y2="30" stroke="#00ffe7" stroke-width="2" opacity="0.9" transform="rotate(315,140,140)"/>
+          </g>
+
+          <!-- Mid ring -->
+          <g class="s-ring-mid" filter="url(#glow)">
+            <circle cx="140" cy="140" r="92" fill="none" stroke="#0088ff" stroke-width="1" stroke-opacity="0.5" stroke-dasharray="2 12"/>
+          </g>
+
+          <!-- Inner ring -->
+          <g class="s-ring-inner" filter="url(#glow)">
+            <circle cx="140" cy="140" r="68" fill="none" stroke="#bf00ff" stroke-width="1.5" stroke-opacity="0.7" stroke-dasharray="6 4"/>
+          </g>
+
+          <!-- World sphere -->
+          <circle cx="140" cy="140" r="56" fill="#050b18" filter="url(#softglow)"/>
+          <g clip-path="url(#worldClip)" opacity="0.35" stroke="#00ffe7" stroke-width="0.7" fill="none">
+            <ellipse cx="140" cy="140" rx="10" ry="56"/>
+            <ellipse cx="140" cy="140" rx="25" ry="56"/>
+            <ellipse cx="140" cy="140" rx="42" ry="56"/>
+            <ellipse cx="140" cy="140" rx="56" ry="56"/>
+            <ellipse cx="140" cy="140" rx="56" ry="10"/>
+            <ellipse cx="140" cy="140" rx="56" ry="25"/>
+            <ellipse cx="140" cy="140" rx="56" ry="42"/>
+          </g>
+          <circle cx="140" cy="140" r="56" fill="none" stroke="url(#ringGrad)" stroke-width="2" filter="url(#glow)"/>
+
+          <!-- Core glow -->
+          <circle cx="140" cy="140" r="20" fill="url(#coreGrad)" class="s-core-glow" filter="url(#softglow)"/>
+          <circle cx="140" cy="140" r="8" fill="#00ffe7" opacity="0.95" filter="url(#glow)"/>
+
+          <!-- Orbiting agent nodes -->
+          <g class="s-orbit-a">
+            <circle cx="140" cy="22" r="6" fill="#00ffe7" filter="url(#glow)" opacity="0.95"/>
+            <circle cx="140" cy="22" r="3" fill="white"/>
+            <line x1="140" y1="22" x2="140" y2="84" stroke="#00ffe7" stroke-width="0.6" stroke-opacity="0.3" stroke-dasharray="3 4"/>
+          </g>
+          <g class="s-orbit-b">
+            <circle cx="140" cy="22" r="6" fill="#ff00cc" filter="url(#glow)" opacity="0.9"/>
+            <circle cx="140" cy="22" r="3" fill="white"/>
+            <line x1="140" y1="22" x2="140" y2="84" stroke="#ff00cc" stroke-width="0.6" stroke-opacity="0.25" stroke-dasharray="3 4"/>
+          </g>
+          <g class="s-orbit-c">
+            <circle cx="140" cy="48" r="5" fill="#00a8ff" filter="url(#glow)" opacity="0.9"/>
+            <circle cx="140" cy="48" r="2.5" fill="white"/>
+          </g>
+
+          <!-- Memory nodes -->
+          <g filter="url(#glow)" opacity="0.8">
+            <circle cx="234" cy="100" r="4" fill="#00ffe7">
+              <animate attributeName="opacity" values="1;0.3;1" dur="2.3s" repeatCount="indefinite"/>
+            </circle>
+            <circle cx="58" cy="188" r="4" fill="#bf00ff">
+              <animate attributeName="opacity" values="0.4;1;0.4" dur="3.1s" repeatCount="indefinite"/>
+            </circle>
+            <circle cx="200" cy="220" r="4" fill="#0088ff">
+              <animate attributeName="opacity" values="0.7;1;0.7" dur="1.8s" repeatCount="indefinite"/>
+            </circle>
+            <circle cx="80" cy="58" r="4" fill="#00ffe7">
+              <animate attributeName="opacity" values="1;0.2;1" dur="2.7s" repeatCount="indefinite"/>
+            </circle>
+          </g>
+
+          <!-- Memory edges -->
+          <g stroke="#00ffe7" stroke-width="0.5" stroke-opacity="0.15" fill="none">
+            <line x1="234" y1="100" x2="140" y2="140"/>
+            <line x1="58"  y1="188" x2="140" y2="140"/>
+            <line x1="200" y1="220" x2="140" y2="140"/>
+            <line x1="80"  y1="58"  x2="140" y2="140"/>
+            <line x1="234" y1="100" x2="80"  y2="58"/>
+            <line x1="200" y1="220" x2="58"  y2="188"/>
+          </g>
+        </svg>
+      </div>
+
+      <div class="wordmark">
+        <div class="name">MARINA</div>
+        <div class="tagline">multi-agent memory environment</div>
+      </div>
+
+      <div class="status-line">initializing engine...</div>
+    </div>
+
+    <!-- ── Dashboard app root ── -->
+    <div id="root"></div>
+
+    <!-- Splash dismissal: fade out once React mounts into #root -->
+    <script>
+      (function () {
+        var splash = document.getElementById("splash");
+        if (!splash) return;
+        var observer = new MutationObserver(function () {
+          var root = document.getElementById("root");
+          if (root && root.children.length > 0) {
+            observer.disconnect();
+            splash.classList.add("fade-out");
+            setTimeout(function () { splash.remove(); }, 700);
+          }
+        });
+        observer.observe(document.getElementById("root"), { childList: true });
+        // Fallback: remove after 6s even if React doesn't mount
+        setTimeout(function () {
+          if (splash.parentNode) {
+            splash.classList.add("fade-out");
+            setTimeout(function () { splash.remove(); }, 700);
+          }
+        }, 6000);
+      })();
+    </script>
+
+    <!-- Electroview entry: sets up RPC transport + patches fetch/WS -->
+    <script type="module" src="./index.js"></script>
+    <!-- Dashboard SPA (Vite build) — fetch/WS patched by the time this runs -->
+    <script type="module" src="./app/index.js"></script>
+  </body>
+</html>
