@@ -1,0 +1,5 @@
+node_modules
+dist
+.astro
+# Generated from ../docs/guides at build time by scripts/sync-docs.ts
+src/content/docs/docs/guides/

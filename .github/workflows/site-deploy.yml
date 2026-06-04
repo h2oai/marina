@@ -1,0 +1,52 @@
+name: Deploy site
+
+# Builds the Astro + Starlight site in /site and publishes it to GitHub Pages.
+# This repo's Pages site is served at a root subdomain (private-repo Pages /
+# custom domain), so the base path is "/". For a project page served under
+# /<repo>, set SITE_BASE=/<repo> instead.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "docs/guides/**"
+      - ".github/workflows/site-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install site deps
+        run: cd site && bun install --frozen-lockfile
+      - name: Build site
+        run: cd site && bun run build
+        env:
+          SITE_BASE: /
+          SITE_URL: https://h2oai.github.io
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
