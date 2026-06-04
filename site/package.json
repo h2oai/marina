@@ -1,0 +1,19 @@
+{
+  "name": "marina-site",
+  "private": true,
+  "type": "module",
+  "version": "0.4.2",
+  "scripts": {
+    "sync-docs": "bun run scripts/sync-docs.ts",
+    "predev": "bun run sync-docs",
+    "dev": "astro dev",
+    "prebuild": "bun run sync-docs",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.39.3",
+    "astro": "^6.4.4",
+    "sharp": "^0.34.4"
+  }
+}
