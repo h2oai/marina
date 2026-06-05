@@ -42,6 +42,7 @@ export class TelnetServer {
             protocol: "telnet",
             entity: null,
             connectedAt: Date.now(),
+            ip: socket.remoteAddress,
             send(perception: Perception) {
               const text = formatPerception(perception, "ansi");
               if (text) {

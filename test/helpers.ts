@@ -49,6 +49,8 @@ export class MockConnection implements Connection {
   protocol = "websocket" as const;
   entity: EntityId | null = null;
   connectedAt = Date.now();
+  ip?: string;
+  internal?: boolean;
   messages: Perception[] = [];
 
   constructor(id: string) {

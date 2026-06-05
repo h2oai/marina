@@ -75,6 +75,16 @@ export class ConnectionManager {
     return connId !== undefined && this.connections.has(connId);
   }
 
+  /** Bound entities on non-internal connections — the instance login-cap denominator. */
+  boundExternalCount(): number {
+    let count = 0;
+    for (const connId of this.entityToConnection.values()) {
+      const conn = this.connections.get(connId);
+      if (conn && !conn.internal) count++;
+    }
+    return count;
+  }
+
   /** Send a perception to an entity's connection. Returns false if not connected. */
   sendToEntity(entityId: EntityId, perception: Perception): boolean {
     const connId = this.entityToConnection.get(entityId);
