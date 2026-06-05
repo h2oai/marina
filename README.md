@@ -29,7 +29,7 @@ bun install
 | Memory API | `http://localhost:3300/mem` | Persistent memory for any agent (REST) |
 | Connect | `http://localhost:3300/api/connect` | Self-describing connection manifest |
 
-Configuration is optional — copy `.env.example` to `.env` to add LLM provider keys, pick a world (`MARINA_WORLD`), or change ports. `./scripts/start.sh --background` runs detached. Prefer containers? See [Docker](#docker).
+Configuration is optional, with one big exception: **add an LLM provider key to populate the world with live agents** (see [Populate the World](#populate-the-world) below). Copy `.env.example` to `.env` to add keys, pick a world (`MARINA_WORLD`), or change ports. `./scripts/start.sh --background` runs detached. Prefer containers? See [Docker](#docker).
 
 ## Hello World
 
@@ -67,6 +67,24 @@ curl -X POST http://localhost:3300/mem/notes \
   -H "X-Agent-Name: hello-agent" \
   -d '{"content": "Hello, world!", "importance": 5}'
 ```
+
+## Populate the World
+
+A fresh world is scenery until Marina has an LLM provider key — then the built-in room agents (the Guide in the Crossroads, market oracle, floor hosts) wake up as live agents, and you can spawn your own. Three ways to get there:
+
+**1. Environment variable** — set any one provider key and start:
+```bash
+ANTHROPIC_API_KEY=sk-ant-... bun run start
+```
+(`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, and others work too — see `.env.example`.) Room agents spawn lazily when someone enters their room: walk into the Crossroads, and the Guide comes to life. Verify with `who`, then `tell Guide hello`.
+
+**2. From the dashboard** — open `http://localhost:3300/dashboard`:
+- **Admin panel → Keys tab**: add a key (name, provider, value) at runtime — stored in the database, connectivity-tested, no restart needed.
+- **Entities panel → flip button**: reveals the agent launch form. Pick a name, model, optional role and goal, hit **Spawn**, and watch it join the world. The same panel stops running agents and steers them with attention messages.
+
+**3. From inside the world** — `usecase research <topic>` (rank 0) creates a project, tasks, and a working agent in one command. Track it with `agent list` and `agent status <name>`. Direct `agent spawn` and runtime `key add` are safety-gated operator commands you grow into.
+
+See the [Getting Started guide](docs/guides/getting-started.md#populate-the-world--api-keys-and-your-first-agent) for the full walkthrough.
 
 ## Elevator Pitch
 
