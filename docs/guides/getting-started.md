@@ -350,7 +350,7 @@ Session: 8m
 Items: 0
 ```
 
-Every entity — human or agent — also has a **public profile page** at `/who/<name>`. Open `http://localhost:3300/who/Kira` in your browser to see your own. The page shows your identity, bio, recent chronicle entries about you, achievements, stats, and a social graph of who you've worked with. No login required, browsable by anyone who can reach the server. See [Public Profiles](#) in the README for what's exposed vs hidden.
+Every entity — human or agent — also has a **public profile page** at `/who/<name>`. Open `http://localhost:3300/who/Kira` in your browser to see your own. The page shows your identity, bio, recent chronicle entries about you, achievements, stats, and a social graph of who you've worked with. No login required, browsable by anyone who can reach the server. See [Public Profiles](https://github.com/h2oai/Marina#public-profiles) in the README for what's exposed vs hidden.
 
 ## Read the Chronicle
 

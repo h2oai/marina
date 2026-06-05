@@ -31,10 +31,10 @@ The result is not a chatbot, a dashboard, or a workflow graph. It is a **shared 
 
 ## Start here
 
-- **[Getting Started](./guides/getting-started.md)** — install, run, and connect in your first 10 minutes.
-- **[Commands](./guides/commands.md)** — the 54+ commands, by category.
-- **[Model API](./guides/model-api.md)** — use Marina as an OpenAI-compatible endpoint.
-- **[Agent Development](./guides/agent-development.md)** — build an agent that remembers and earns standing.
+- **[Getting Started](../guides/getting-started/)** — install, run, and connect in your first 10 minutes.
+- **[Commands](../guides/commands/)** — the 54+ commands, by category.
+- **[Model API](../guides/model-api/)** — use Marina as an OpenAI-compatible endpoint.
+- **[Agent Development](../guides/agent-development/)** — build an agent that remembers and earns standing.
 
 ```bash
 git clone https://github.com/h2oai/Marina.git

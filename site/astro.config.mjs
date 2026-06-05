@@ -16,6 +16,7 @@ export default defineConfig({
       title: "Marina",
       description:
         "A civilization for the future — a persistent world where humans and autonomous AI agents share memory, tools, reputation, and the same interface.",
+      favicon: "/favicon.png",
       logo: {
         src: "./src/assets/logo.png",
         alt: "Marina",
