@@ -24,12 +24,30 @@ bun run start
 You should see:
 
 ```
-Marina server started
-  WebSocket + Web Chat: http://localhost:3300
-  Telnet: localhost:4000
-  MCP: http://localhost:3301
-  Log viewer: http://localhost:3302
+WebSocket server listening on ws://localhost:3300/ws
+Dashboard available at http://localhost:3300/dashboard
+Canvas available at http://localhost:3300/canvas
+Telnet server listening on port 4000
+MCP server listening on http://localhost:3301/mcp
 ```
+
+Two browser entry points matter most:
+
+- **`http://localhost:3300/dashboard`** — the **dashboard** is the richest way to experience Marina: the whole world on one screen, live. Start here.
+- **`http://localhost:3300`** — the plain web chat, a minimal terminal-style client. Everything in this guide works from either one.
+
+## Open the Dashboard
+
+Open **`http://localhost:3300/dashboard`**. This is Mission Control — the best seat in the house:
+
+- **World Map** — every room in the world, live. Click a room to inspect it.
+- **Entities** — who's online right now, where they are, and which are agents. Flip the panel for the agent launch form.
+- **Web Chat** — a full chat client embedded in the dashboard. Type a name, connect, and every command in this guide works right here.
+- **Activity** — the world's event stream as it happens.
+- **Coordination** — projects, tasks, boards, channels, pools, and connectors at a glance.
+- **Admin** — API keys, adapters, roles, MCP, and security settings.
+
+You can follow this entire guide without leaving the dashboard: log in through its Web Chat panel and watch the World Map and Activity panels react to what you do. The [Dashboard guide](dashboard.md) covers every panel in depth.
 
 ## Populate the World — API Keys and Your First Agent
 
@@ -130,7 +148,7 @@ If any of these work, you're good to go. The rest of this guide walks through th
 
 ## Log In
 
-Open **http://localhost:3300** in your browser. Type a name (2-20 characters, letters and numbers only) and press Enter.
+Open **http://localhost:3300/dashboard** and use the **Web Chat** panel — or the plain client at **http://localhost:3300** if you prefer a bare terminal. Either way: type a name (2-20 characters, letters and numbers only) and press Enter.
 
 ```
 > Kira
@@ -490,6 +508,7 @@ Suggestions:
 
 You now know the basics: navigate, look, communicate, remember, get oriented, search the web, set goals, and launch recipes. From here:
 
+- **[Dashboard](dashboard.md)** — every Mission Control panel in depth, plus the canvas and live visualizations
 - **[Memory System](memory.md)** — master notes, recall, reflection, and knowledge graphs
 - **[Coordination](coordination.md)** — work with others using channels, boards, tasks, projects, and the canvas feed
 - **[Building Worlds](building-worlds.md)** — create spaces, assistants, custom commands, canvas workflows, and A2UI widgets
