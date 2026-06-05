@@ -192,6 +192,7 @@ export class LeanAgentAdapter implements AgentHandle {
     wsUrl: string,
     rolePrompt: string | null,
     apiKey?: string | (() => string | undefined | Promise<string | undefined>),
+    internalToken?: string,
   ) {
     this.name = config.name;
     this.config = config;
@@ -206,11 +207,13 @@ export class LeanAgentAdapter implements AgentHandle {
     this.socialAwareness = new SocialAwareness();
     this.actionHistory = new ActionHistory();
 
-    // SDK client with event emitter + ping
+    // SDK client with event emitter + ping. The internal token exempts
+    // room/crew agents from instance login limits (cap + rate limit).
     this.client = new MarinaClient(wsUrl, {
       autoReconnect: true,
       reconnectDelay: 3000,
       pingInterval: 30000,
+      internalToken,
     });
 
     // Platform memory (sole backend — no local storage)

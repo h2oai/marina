@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { RateLimiter } from "../src/auth/rate-limiter";
 import { SessionManager } from "../src/auth/session-manager";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
@@ -183,6 +184,226 @@ describe("Auth & Session Integration", () => {
       engine.sessionManager?.revoke(loginResult.token);
       expect(engine.authenticate(loginResult.token)).toBeNull();
     });
+  });
+});
+
+describe("Instance login cap (maxLogins)", () => {
+  let db: MarinaDB;
+  let engine: Engine;
+  const dbPath = `/tmp/marina-logincap-test-${Date.now()}.db`;
+
+  const addConn = (id: string) => {
+    const conn = new MockConnection(id);
+    engine.addConnection(conn);
+    return conn;
+  };
+
+  beforeEach(() => {
+    db = new MarinaDB(dbPath);
+    engine = new Engine({
+      startRoom: roomId("test/start"),
+      tickInterval: 60_000,
+      db,
+      maxLogins: 2,
+      internalAuthToken: "internal-test-token",
+    });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+  });
+
+  afterEach(() => {
+    db.close();
+    cleanupDb(dbPath);
+  });
+
+  it("rejects logins beyond the cap and frees slots on disconnect", () => {
+    addConn("c1");
+    addConn("c2");
+    addConn("c3");
+    expect("entityId" in engine.login("c1", "Alice")).toBe(true);
+    expect("entityId" in engine.login("c2", "Bob")).toBe(true);
+
+    const third = engine.login("c3", "Carol");
+    expect("error" in third).toBe(true);
+    if ("error" in third) {
+      expect(third.error).toContain("capacity");
+    }
+
+    // Disconnect frees a slot
+    engine.removeConnection("c1");
+    addConn("c4");
+    expect("entityId" in engine.login("c4", "Carol")).toBe(true);
+  });
+
+  it("enforces the cap on the re-attach branch (post-restart loophole)", () => {
+    addConn("c1");
+    addConn("c2");
+    addConn("c3");
+    // Alice logs in then drops — her entity lingers in memory (grace window).
+    expect("entityId" in engine.login("c1", "Alice")).toBe(true);
+    engine.removeConnection("c1");
+
+    // Two others fill the cap while she's away.
+    expect("entityId" in engine.login("c2", "Bob")).toBe(true);
+    expect("entityId" in engine.login("c3", "Carol")).toBe(true);
+
+    // Alice's re-attach login hits the existing-entity branch — still capped.
+    addConn("c4");
+    const result = engine.login("c4", "Alice");
+    expect("error" in result).toBe(true);
+    if ("error" in result) {
+      expect(result.error).toContain("capacity");
+    }
+  });
+
+  it("exempts internal agents from the cap and excludes them from the count", () => {
+    addConn("c1");
+    addConn("c2");
+    addConn("c3");
+    addConn("c4");
+    expect("entityId" in engine.login("c1", "Alice")).toBe(true);
+    expect("entityId" in engine.login("c2", "Bob")).toBe(true);
+
+    // Internal agent logs in past the full cap…
+    const agent = engine.login("c3", "RoomGuide", "internal-test-token");
+    expect("entityId" in agent).toBe(true);
+    expect(engine.connections.get("c3")?.internal).toBe(true);
+
+    // …and doesn't consume a slot: external logins at cap still fail.
+    const external = engine.login("c4", "Carol");
+    expect("error" in external).toBe(true);
+  });
+
+  it("rejects an at-capacity login with a wrong internal token", () => {
+    addConn("c1");
+    addConn("c2");
+    addConn("c3");
+    expect("entityId" in engine.login("c1", "Alice")).toBe(true);
+    expect("entityId" in engine.login("c2", "Bob")).toBe(true);
+
+    const result = engine.login("c3", "Mallory", "wrong-token");
+    expect("error" in result).toBe(true);
+    expect(engine.connections.get("c3")?.internal).toBeUndefined();
+  });
+
+  it("enforces the cap on reconnect (rebind and respawn branches)", () => {
+    addConn("c1");
+    const loginResult = engine.login("c1", "Alice");
+    if (!("token" in loginResult) || "error" in loginResult) throw new Error("login failed");
+    engine.removeConnection("c1");
+
+    // Fill the cap while Alice is disconnected.
+    addConn("c2");
+    addConn("c3");
+    expect("entityId" in engine.login("c2", "Bob")).toBe(true);
+    expect("entityId" in engine.login("c3", "Carol")).toBe(true);
+
+    // Grace-window rebind finds the instance full → rejected (hard cap).
+    addConn("c4");
+    const rebind = engine.reconnect("c4", loginResult.token);
+    expect("error" in rebind).toBe(true);
+    if ("error" in rebind) {
+      expect(rebind.error).toContain("capacity");
+    }
+
+    // Freeing a slot lets the reconnect through.
+    engine.removeConnection("c2");
+    addConn("c5");
+    expect("entityId" in engine.reconnect("c5", loginResult.token)).toBe(true);
+  });
+
+  it("does not cap anything when maxLogins is unset", () => {
+    const openEngine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000 });
+    openEngine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+    for (let i = 1; i <= 5; i++) {
+      const conn = new MockConnection(`c${i}`);
+      openEngine.addConnection(conn);
+      expect("entityId" in openEngine.login(`c${i}`, `Agent${i}`)).toBe(true);
+    }
+  });
+});
+
+describe("Login attempt rate limiting", () => {
+  let engine: Engine;
+  let now: number;
+
+  const addConn = (id: string) => {
+    const conn = new MockConnection(id);
+    engine.addConnection(conn);
+    return conn;
+  };
+
+  beforeEach(() => {
+    now = 1_000_000;
+    engine = new Engine({
+      startRoom: roomId("test/start"),
+      tickInterval: 60_000,
+      internalAuthToken: "internal-test-token",
+      loginRateLimiter: new RateLimiter({
+        maxTokens: 3,
+        refillRate: 3,
+        refillInterval: 60_000,
+        now: () => now,
+      }),
+    });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+  });
+
+  it("rejects attempts past the budget and recovers after refill", () => {
+    // MockConnection has no ip — limiter keys per connId, so reuse one connection.
+    addConn("c1");
+    expect("entityId" in engine.login("c1", "Alice")).toBe(true);
+    engine.removeConnection("c1");
+    addConn("c1");
+    expect("entityId" in engine.login("c1", "Alice")).toBe(true);
+    engine.removeConnection("c1");
+    addConn("c1");
+    expect("entityId" in engine.login("c1", "Alice")).toBe(true);
+    engine.removeConnection("c1");
+
+    addConn("c1");
+    const fourth = engine.login("c1", "Alice");
+    expect("error" in fourth).toBe(true);
+    if ("error" in fourth) {
+      expect(fourth.error).toContain("Too many login attempts");
+    }
+
+    // After the refill interval the budget recovers.
+    now += 60_000;
+    expect("entityId" in engine.login("c1", "Alice")).toBe(true);
+  });
+
+  it("failed attempts consume budget too", () => {
+    addConn("c1");
+    for (let i = 0; i < 3; i++) {
+      // Invalid (too short) name — fails after the rate check.
+      expect("error" in engine.login("c1", "a")).toBe(true);
+    }
+    const result = engine.login("c1", "Alice");
+    expect("error" in result).toBe(true);
+    if ("error" in result) {
+      expect(result.error).toContain("Too many login attempts");
+    }
+  });
+
+  it("rate-limits reconnect attempts on the same budget", () => {
+    addConn("c1");
+    for (let i = 0; i < 3; i++) {
+      expect("error" in engine.reconnect("c1", "bogus-token")).toBe(true);
+    }
+    const result = engine.reconnect("c1", "bogus-token");
+    expect("error" in result).toBe(true);
+    if ("error" in result) {
+      expect(result.error).toContain("Too many login attempts");
+    }
+  });
+
+  it("internal agents bypass an exhausted budget", () => {
+    addConn("c1");
+    for (let i = 0; i < 3; i++) {
+      engine.login("c1", "a"); // burn the budget with failed attempts
+    }
+    const agent = engine.login("c1", "RoomGuide", "internal-test-token");
+    expect("entityId" in agent).toBe(true);
   });
 });
 

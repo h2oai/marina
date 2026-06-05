@@ -148,6 +148,7 @@ cd dashboard && bun run test  # Frontend smoke tests (vitest, ~24 tests)
 ## Security & API
 - **API authentication**: HTTP endpoints require `MODEL_API_KEYS` / `MEM_API_KEYS` or explicit `MARINA_OPEN_API=true` for dev mode
 - **Rate limiting**: all endpoints rate-limited — WebSocket commands (5/sec), MCP tools (5/sec), Model API (2/sec per IP), Memory API (10/sec per agent)
+- **Login limits**: `MARINA_MAX_LOGINS` caps concurrent entity-bound connections instance-wide (0 = unlimited); `MARINA_LOGIN_ATTEMPTS_PER_MIN` throttles login/reconnect attempts per IP (default 10, 0 = off). Enforced centrally in `engine.login()`/`reconnect()`; internal room/crew agents authenticate via the internal token (`internalToken` on the login/auth WS message) and are exempt from both
 - **SSRF protection**: `src/net/url-guard.ts` blocks private IPs, IPv6 loopback, link-local, cloud metadata, IPv4-mapped IPv6
 - **Gateway auth**: optional `GATEWAY_SECRET` env var for pre-shared-key federation authentication
 - **Gateway protocol**: structured JSON fields with version number, regex fallback for backward compatibility

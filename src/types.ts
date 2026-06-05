@@ -439,6 +439,10 @@ export interface Connection {
   protocol: ConnectionProtocol;
   entity: EntityId | null;
   connectedAt: number;
+  /** Client IP when known (WebSocket/telnet); undefined for MCP/in-process. */
+  ip?: string;
+  /** True for internal room/crew agent connections (exempt from instance login limits). */
+  internal?: boolean;
   send(perception: Perception): void;
   close(): void;
 }

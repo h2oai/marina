@@ -37,6 +37,9 @@ export interface ClientOptions {
   commandDrainTimeout?: number;
   /** Callback fired immediately after WebSocket opens, before any login message is sent. */
   onOpen?: (ws: WebSocket) => void;
+  /** Internal-agent token. Sent with login/auth messages so the engine can
+   * exempt internal room/crew agents from instance login limits. */
+  internalToken?: string;
 }
 
 type PerceptionHandler = (p: Perception) => void;
@@ -56,7 +59,8 @@ type ClientEventName = keyof ClientEventMap;
 export class MarinaClient {
   private ws: WebSocket | null = null;
   private url: string;
-  private options: Required<Omit<ClientOptions, "onOpen">> & Pick<ClientOptions, "onOpen">;
+  private options: Required<Omit<ClientOptions, "onOpen" | "internalToken">> &
+    Pick<ClientOptions, "onOpen" | "internalToken">;
   private session: SessionInfo | null = null;
   private handlers: PerceptionHandler[] = [];
   private commandResolvers: Array<{
@@ -81,6 +85,7 @@ export class MarinaClient {
       maxReconnectDelay: options?.maxReconnectDelay ?? 30000,
       commandDrainTimeout: options?.commandDrainTimeout ?? 500,
       onOpen: options?.onOpen ?? undefined,
+      internalToken: options?.internalToken ?? undefined,
     };
   }
 
@@ -154,7 +159,7 @@ export class MarinaClient {
         }
       };
       this.addInternalHandler(handler);
-      this.send({ type: "login", name });
+      this.send({ type: "login", name, internalToken: this.options.internalToken });
     });
   }
 
@@ -188,7 +193,7 @@ export class MarinaClient {
         }
       };
       this.addInternalHandler(handler);
-      this.send({ type: "auth", token });
+      this.send({ type: "auth", token, internalToken: this.options.internalToken });
     });
   }
 

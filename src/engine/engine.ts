@@ -6,6 +6,7 @@ import {
   recordFromEvent as recordStandingEvent,
 } from "../agent/standing";
 import type { RateLimiter } from "../auth/rate-limiter";
+import { secretsEqual } from "../auth/secret-compare";
 import { SessionManager } from "../auth/session-manager";
 import { BoardManager } from "../coordination/board-manager";
 import { ChannelManager } from "../coordination/channel-manager";
@@ -74,6 +75,9 @@ export interface EngineConfig {
   db?: MarinaDB; // optional persistence layer
   dbPath?: string; // path to the DB file (for export)
   rateLimiter?: RateLimiter; // optional rate limiter
+  loginRateLimiter?: RateLimiter; // optional limiter for login/reconnect attempts (keyed per IP)
+  maxLogins?: number; // instance-wide concurrent login cap; 0/undefined = unlimited
+  internalAuthToken?: string; // token exempting internal agent logins from cap + rate limit
   storage?: StorageProvider; // optional asset storage
   world?: WorldDefinition; // optional world definition
   logger?: Logger; // optional structured logger
@@ -90,6 +94,7 @@ export class Engine {
   // Auth & rate limiting
   readonly sessionManager?: SessionManager;
   readonly rateLimiter?: RateLimiter;
+  readonly loginRateLimiter?: RateLimiter;
 
   // Coordination managers (available when db is provided)
   readonly channelManager?: ChannelManager;
@@ -151,6 +156,7 @@ export class Engine {
     this.db = this.config.db;
     this._eventLog = new EventLog(this.logger, this.db);
     this.rateLimiter = this.config.rateLimiter;
+    this.loginRateLimiter = this.config.loginRateLimiter;
     this.storage = this.config.storage;
 
     // Wire DB into EntityManager for write-through persistence
@@ -374,11 +380,54 @@ export class Engine {
 
   // ─── Session-based Auth ─────────────────────────────────────────────────
 
+  private static readonly ERR_LOGIN_RATE_LIMITED =
+    "Too many login attempts. Please slow down and retry shortly.";
+  private static readonly ERR_AT_CAPACITY =
+    "Instance at capacity: too many concurrent logins. Try again later.";
+
+  /** Resolve and tag whether a connection is an internal agent (room/crew
+   * agents pass the process-local internal token). Internal connections are
+   * exempt from the instance login cap and the login rate limit, and don't
+   * consume cap slots. */
+  private resolveInternal(connId: string, internalToken?: string): boolean {
+    const expected = this.config.internalAuthToken;
+    const isInternal = !!expected && !!internalToken && secretsEqual(internalToken, expected);
+    if (isInternal) {
+      const conn = this._connections.get(connId);
+      if (conn) conn.internal = true;
+    }
+    return isInternal;
+  }
+
+  /** Consume a login-attempt token. Keyed per client IP, falling back to the
+   * connection id when IP is unknown (e.g. MCP sessions). */
+  private checkLoginRate(connId: string, internal: boolean): boolean {
+    if (internal || !this.loginRateLimiter) return true;
+    const conn = this._connections.get(connId);
+    return this.loginRateLimiter.consume(`login:${conn?.ip ?? connId}`);
+  }
+
+  /** True when binding one more external login would exceed MARINA_MAX_LOGINS. */
+  private atLoginCapacity(internal: boolean): boolean {
+    const cap = this.config.maxLogins ?? 0;
+    if (internal || cap <= 0) return false;
+    return this._connections.boundExternalCount() >= cap;
+  }
+
   /** Login: create entity + session, returns token. Checks ban list. */
   login(
     connId: string,
     name: string,
+    internalToken?: string,
   ): { entityId: EntityId; name: string; token: string } | { error: string } {
+    const internal = this.resolveInternal(connId, internalToken);
+
+    // Login attempts are rate-limited before any other work (success or failure
+    // both consume a token — attempts are what's limited).
+    if (!this.checkLoginRate(connId, internal)) {
+      return { error: Engine.ERR_LOGIN_RATE_LIMITED };
+    }
+
     // Check ban list
     if (this.db?.isBanned(name)) {
       return { error: "You are banned from this server." };
@@ -397,6 +446,12 @@ export class Engine {
       return { error: "That name is already in use." };
     }
     if (existing) {
+      // Re-attach still consumes a cap slot — this branch is what every user
+      // hits after a server restart, so exempting it would leave the cap
+      // unenforced post-restart.
+      if (this.atLoginCapacity(internal)) {
+        return { error: Engine.ERR_AT_CAPACITY };
+      }
       this._connections.bindEntity(connId, existing.id);
       if (this.db) {
         const existingUser = this.db.getUserByName(existing.name);
@@ -413,6 +468,9 @@ export class Engine {
       return { entityId: existing.id, name: existing.name, token: "" };
     }
 
+    if (this.atLoginCapacity(internal)) {
+      return { error: Engine.ERR_AT_CAPACITY };
+    }
     const entity = this.spawnEntity(connId, cleanName);
     if (!entity) {
       return { error: "Login failed. Name must be 2-20 alphanumeric characters." };
@@ -469,7 +527,14 @@ export class Engine {
   reconnect(
     connId: string,
     token: string,
+    internalToken?: string,
   ): { entityId: EntityId; name: string; token: string } | { error: string } {
+    const internal = this.resolveInternal(connId, internalToken);
+
+    if (!this.checkLoginRate(connId, internal)) {
+      return { error: Engine.ERR_LOGIN_RATE_LIMITED };
+    }
+
     if (!this.sessionManager) {
       return { error: "Session management not available." };
     }
@@ -501,6 +566,12 @@ export class Engine {
       if (this._connections.isEntityConnected(existing.id)) {
         return { error: "That name is already in use." };
       }
+      // The cap applies to every unbound→bound transition — a grace-window
+      // reconnect that finds the instance full is rejected (hard cap; the
+      // entity was unbound on transient close so it isn't double-counted).
+      if (this.atLoginCapacity(internal)) {
+        return { error: Engine.ERR_AT_CAPACITY };
+      }
       // Rebind: unbind any stale connection pointer, bind the new one to
       // the SAME entity id. No removal, no respawn, no migration needed.
       // Cancel any pending eviction so the grace timer doesn't yank the
@@ -515,6 +586,9 @@ export class Engine {
       entity = existing;
     } else {
       // Old entity gone — create a fresh one.
+      if (this.atLoginCapacity(internal)) {
+        return { error: Engine.ERR_AT_CAPACITY };
+      }
       entity = this.spawnEntity(connId, session.name);
       if (!entity) {
         return { error: "Reconnection failed." };

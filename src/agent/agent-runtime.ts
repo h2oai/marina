@@ -238,7 +238,13 @@ export class AgentRuntime {
       // Create adapter — use effectiveConfig so the inferred crewResponder
       // flag (and any other adapter-level defaults) reach the runtime.
       const wsUrl = `ws://localhost:${this.wsPort}`;
-      const adapter = new LeanAgentAdapter(effectiveConfig, wsUrl, rolePrompt, apiKeyResolver);
+      const adapter = new LeanAgentAdapter(
+        effectiveConfig,
+        wsUrl,
+        rolePrompt,
+        apiKeyResolver,
+        INTERNAL_MODEL_TOKEN,
+      );
 
       // Start the agent
       await adapter.start(config.goal);

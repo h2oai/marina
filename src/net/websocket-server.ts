@@ -1,7 +1,7 @@
-import { timingSafeEqual } from "node:crypto";
 import { join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
 import type { RateLimiter } from "../auth/rate-limiter";
+import { secretsEqual } from "../auth/secret-compare";
 import {
   WS_IDLE_TIMEOUT_SECONDS,
   WS_MAX_CONNECTIONS_PER_IP,
@@ -37,24 +37,6 @@ interface WSData {
 }
 
 let wsIdCounter = 0;
-
-/**
- * Constant-time string compare for shared-secret authentication. Returns
- * false fast on length mismatch (length itself is not a secret); equal-length
- * inputs are compared via `crypto.timingSafeEqual` to avoid leaking the
- * matching-prefix length through wall-clock timing.
- */
-function secretsEqual(a: string, b: string): boolean {
-  // Compare as plain Uint8Array views. Buffer is a Uint8Array at runtime, but
-  // some bun-types/TS combinations don't see `Buffer` as assignable to
-  // `timingSafeEqual`'s `ArrayBufferView` parameter; constructing Uint8Arrays
-  // is unambiguous across toolchains. Length is checked first, so the copies
-  // never leak timing.
-  const ab = new Uint8Array(Buffer.from(a, "utf8"));
-  const bb = new Uint8Array(Buffer.from(b, "utf8"));
-  if (ab.length !== bb.length) return false;
-  return timingSafeEqual(ab, bb);
-}
 
 export class WebSocketServer {
   private server: Server<WSData> | null = null;
@@ -384,6 +366,7 @@ export class WebSocketServer {
             protocol: "websocket",
             entity: null,
             connectedAt: Date.now(),
+            ip: ws.data.ip,
             send(perception: Perception) {
               if (ws.readyState === 1) {
                 ws.send(JSON.stringify(perception));
@@ -423,6 +406,7 @@ export class WebSocketServer {
             command?: string;
             token?: string;
             secret?: string;
+            internalToken?: string;
           };
           try {
             parsed = JSON.parse(raw);
@@ -469,7 +453,7 @@ export class WebSocketServer {
               return;
             }
 
-            const result = engine.login(connId, parsed.name);
+            const result = engine.login(connId, parsed.name, parsed.internalToken);
             if ("error" in result) {
               ws.send(
                 JSON.stringify({
@@ -498,7 +482,7 @@ export class WebSocketServer {
           }
 
           if (parsed.type === "auth" && parsed.token) {
-            const result = engine.reconnect(connId, parsed.token);
+            const result = engine.reconnect(connId, parsed.token, parsed.internalToken);
             if ("error" in result) {
               ws.send(
                 JSON.stringify({

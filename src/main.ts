@@ -1,6 +1,11 @@
 import { resolve } from "node:path";
+import { getInternalModelToken } from "./agent/agent-runtime";
 import { RateLimiter } from "./auth/rate-limiter";
-import { DASHBOARD_BROADCAST_INTERVAL_MS } from "./engine/constants";
+import {
+  DASHBOARD_BROADCAST_INTERVAL_MS,
+  MARINA_LOGIN_ATTEMPTS_PER_MIN,
+  MARINA_MAX_LOGINS,
+} from "./engine/constants";
 import { Engine } from "./engine/engine";
 import { Logger } from "./engine/logger";
 import { AdapterManager } from "./net/adapter-manager";
@@ -37,6 +42,15 @@ const INSTANCE_NAME = process.env.MARINA_NAME ?? world.name;
 const logger = new Logger();
 const db = new MarinaDB(DB_PATH);
 const rateLimiter = new RateLimiter({ maxTokens: 200, refillRate: 50, refillInterval: 1000 });
+// Login-attempt throttle: N attempts/min per client IP with a burst of N.
+const loginRateLimiter =
+  MARINA_LOGIN_ATTEMPTS_PER_MIN > 0
+    ? new RateLimiter({
+        maxTokens: MARINA_LOGIN_ATTEMPTS_PER_MIN,
+        refillRate: MARINA_LOGIN_ATTEMPTS_PER_MIN,
+        refillInterval: 60_000,
+      })
+    : undefined;
 const modelRateLimiter = new RateLimiter({ maxTokens: 100, refillRate: 20, refillInterval: 1000 });
 const memRateLimiter = new RateLimiter({ maxTokens: 20, refillRate: 10, refillInterval: 1000 });
 const assetsDir = process.env.ASSETS_DIR || "data/assets";
@@ -51,6 +65,9 @@ const engine = new Engine({
   db,
   dbPath: DB_PATH,
   rateLimiter,
+  loginRateLimiter,
+  maxLogins: MARINA_MAX_LOGINS,
+  internalAuthToken: getInternalModelToken(),
   storage,
   world,
   logger,

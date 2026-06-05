@@ -117,6 +117,19 @@ export const WS_MAX_CONNECTIONS_PER_IP = Number.parseInt(
 /** Max total WebSocket connections (all types combined) */
 export const WS_MAX_TOTAL_CONNECTIONS = 1000;
 
+/** Instance-wide concurrent login cap (total entity-bound connections).
+ *  0 (or unset) = unlimited. Internal room/crew agents are exempt and don't
+ *  consume slots — they're capped separately by MAX_AGENTS. */
+export const MARINA_MAX_LOGINS = Number.parseInt(process.env.MARINA_MAX_LOGINS ?? "0", 10);
+
+/** Login/reconnect attempts allowed per minute, keyed per client IP (falls
+ *  back to connection id when IP is unavailable, e.g. MCP sessions).
+ *  0 = disabled. */
+export const MARINA_LOGIN_ATTEMPTS_PER_MIN = Number.parseInt(
+  process.env.MARINA_LOGIN_ATTEMPTS_PER_MIN ?? "10",
+  10,
+);
+
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
 /** Dashboard state broadcast interval (ms) */
