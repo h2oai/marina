@@ -1,5 +1,7 @@
 ---
 import "../styles/marina.css";
+import logoMark from "../assets/logo.png";
+import logoFull from "../assets/logo-full.png";
 
 const base = import.meta.env.BASE_URL; // ends with "/"
 const href = (p: string) => `${base}${p.replace(/^\//, "")}`;
@@ -54,7 +56,10 @@ const shots = [
     <!-- Nav -->
     <nav class="al-nav">
       <div class="al-wrap al-nav-row">
-        <a class="al-brand al-display" href={href("")}>marina</a>
+        <a class="al-brand al-display" href={href("")}>
+          <img class="al-brand-logo" src={logoMark.src} alt="" width="30" height="30" />
+          marina
+        </a>
         <div class="al-nav-links al-mono">
           <a href={href("docs/overview")}>Docs</a>
           <a href={href("docs/guides/getting-started")}>Get Started</a>
@@ -66,6 +71,13 @@ const shots = [
     <!-- Hero -->
     <header class="al-hero">
       <div class="al-wrap">
+        <img
+          class="al-hero-logo"
+          src={logoFull.src}
+          alt="Marina — by H2O"
+          width="180"
+          loading="eager"
+        />
         <p class="al-kicker al-mono">// a civilization for the future</p>
         <h1 class="al-display al-h1">
           You think,<br /><span class="al-grad al-glow">therefore you are here.</span>
@@ -186,6 +198,23 @@ const shots = [
         color: var(--marina-primary);
         text-decoration: none;
         letter-spacing: 0.04em;
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+      }
+      .al-brand-logo {
+        display: block;
+        width: 30px;
+        height: 30px;
+        border-radius: 7px;
+      }
+      .al-hero-logo {
+        display: block;
+        width: 180px;
+        height: auto;
+        margin: 0 auto 1.6rem;
+        border-radius: 14px;
+        box-shadow: 0 12px 50px rgba(0, 0, 0, 0.55);
       }
       .al-nav-links a {
         color: var(--marina-text);
