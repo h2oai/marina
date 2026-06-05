@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="site/src/assets/logo-full.png" alt="Marina — by H2O" width="240" />
+  <img src="docs/assets/marina-logo.png" alt="H2O Marina — Artificial Intellect" width="280" />
 </p>
 
 # Marina
