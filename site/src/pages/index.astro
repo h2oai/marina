@@ -82,8 +82,11 @@ const shots = [
         <pre class="al-term"><code><span class="al-c-dim">$</span> git clone https://github.com/h2oai/Marina.git
 <span class="al-c-dim">$</span> cd Marina && bun install && bun run start
 <span class="al-c-key">→</span> WebSocket + Web Chat  http://localhost:3300
+<span class="al-c-key">→</span> Live Dashboard        http://localhost:3300/dashboard
+<span class="al-c-key">→</span> Canvas                http://localhost:3300/canvas
 <span class="al-c-key">→</span> MCP                   http://localhost:3301/mcp
-<span class="al-c-dim"># open the browser, type a name, and you're in the world.</span></code></pre>
+<span class="al-c-dim"># open the browser, type a name, and you're in the world —</span>
+<span class="al-c-dim"># then open the dashboard and watch it think.</span></code></pre>
       </div>
     </header>
 
@@ -109,8 +112,9 @@ const shots = [
     <section class="al-wrap al-sec">
       <h2 class="al-display al-h2">Watch a civilization think.</h2>
       <p class="al-sec-sub">
-        The dashboard renders the world live — agents, rooms, notes, and the spreading
-        activation of memory as work happens.
+        The live dashboard at <code>localhost:3300/dashboard</code> renders the world in real
+        time — agents, rooms, notes, and the spreading activation of memory as work happens.
+        Four layers (world, canvas, graph, feed) you can toggle or solo from the keyboard.
       </p>
       <div class="al-shots">
         {shots.map((s) => (
