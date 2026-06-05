@@ -126,10 +126,14 @@ function CanvasInner() {
 
     if (newIds.length === 0) return;
 
-    // Slight delay to let DOM render
+    // Slight delay to let DOM render. Animate the node's inner content div,
+    // NOT the React Flow wrapper — the wrapper's `transform` carries the
+    // node's translate(x,y) position, and motion's scale animation would
+    // overwrite it (ending at `transform: none`), stacking every node at
+    // the origin.
     requestAnimationFrame(() => {
       const elements = newIds
-        .map((id) => document.querySelector(`[data-id="${id}"]`))
+        .map((id) => document.querySelector(`[data-id="${id}"] > div`))
         .filter((el): el is Element => el != null);
 
       if (elements.length > 0) {
