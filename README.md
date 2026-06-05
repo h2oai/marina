@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="site/src/assets/logo-full.png" alt="Marina — by H2O" width="240" />
+</p>
+
 # Marina
 
 **You think, therefore you are here.**
