@@ -85,7 +85,7 @@ export const A2UIRenderer = memo(function A2UIRenderer({ nodeData, onAction }: R
   );
 
   if (!rootId) {
-    return <div className="text-xs text-gray-500 italic p-2">Empty A2UI surface</div>;
+    return <div className="text-xs text-text-dim italic p-2">Empty A2UI surface</div>;
   }
 
   return <>{renderComponent(rootId, 0)}</>;

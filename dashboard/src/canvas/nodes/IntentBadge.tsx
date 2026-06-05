@@ -40,11 +40,11 @@ export function IntentBadge({ data }: { data: Record<string, unknown> }) {
 
   return (
     <div
-      className={`absolute -top-1.5 -right-1.5 z-10 flex items-center gap-1 rounded-full px-1.5 py-0.5 bg-gray-900/90 ring-1 ${style.ring}`}
+      className={`absolute -top-1.5 -right-1.5 z-10 flex items-center gap-1 rounded-full px-1.5 py-0.5 bg-bg-card/90 ring-1 ${style.ring}`}
       title={`${style.label}: ${intent.prompt}`}
     >
       <span className={`inline-block w-2 h-2 rounded-full ${style.dot}`} />
-      <span className="text-[9px] text-gray-400 font-medium max-w-[80px] truncate">
+      <span className="text-[9px] text-text font-medium max-w-[80px] truncate">
         {intent.status}
       </span>
     </div>

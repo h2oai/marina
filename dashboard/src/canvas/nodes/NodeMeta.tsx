@@ -47,14 +47,14 @@ export function NodeMeta({ filename, data, className }: NodeMetaProps) {
   );
 
   return (
-    <div className={`bg-black/70 px-2 py-1.5 rounded text-xs text-gray-300 ${className ?? ""}`}>
+    <div className={`bg-black/70 px-2 py-1.5 rounded text-xs text-text ${className ?? ""}`}>
       <div className="flex items-baseline justify-between gap-2">
         <span className="font-medium truncate">{filename}</span>
-        {createdAt && <span className="text-[10px] text-gray-600 shrink-0">{createdAt}</span>}
+        {createdAt && <span className="text-[10px] text-text-dim shrink-0">{createdAt}</span>}
       </div>
-      {creator && <div className="text-[10px] text-gray-500 mt-0.5">Creator: {creator}</div>}
+      {creator && <div className="text-[10px] text-text-dim mt-0.5">Creator: {creator}</div>}
       {meta.length > 0 && (
-        <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0 text-[10px] text-gray-500">
+        <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0 text-[10px] text-text-dim">
           {meta.map(([k, v]) => (
             <span key={k}>
               {k}: {String(v)}

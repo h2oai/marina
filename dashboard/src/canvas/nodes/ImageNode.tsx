@@ -9,15 +9,15 @@ export function ImageNode({ data, selected }: NodeProps) {
   const [errored, setErrored] = useState(false);
 
   return (
-    <div className="rounded-lg overflow-hidden bg-gray-900 border border-cyan-800/50 shadow-lg shadow-cyan-900/20 h-full">
+    <div className="rounded-lg overflow-hidden bg-bg-card border border-primary/40 shadow-lg shadow-black/30 h-full">
       <NodeResizer
         isVisible={!!selected}
         minWidth={100}
         minHeight={80}
-        lineClassName="!border-cyan-500/50"
-        handleClassName="!w-2 !h-2 !bg-cyan-500 !border-cyan-400"
+        lineClassName="!border-primary/50"
+        handleClassName="!w-2 !h-2 !bg-primary !border-primary"
       />
-      <Handle type="target" position={Position.Top} className="!bg-cyan-500" />
+      <Handle type="target" position={Position.Top} className="!bg-primary" />
       {url && !errored ? (
         <img
           src={url}
@@ -27,17 +27,17 @@ export function ImageNode({ data, selected }: NodeProps) {
           onError={() => setErrored(true)}
         />
       ) : (
-        <div className="flex flex-col items-center justify-center h-full text-gray-500 text-sm gap-1 px-2 text-center">
+        <div className="flex flex-col items-center justify-center h-full text-text-dim text-sm gap-1 px-2 text-center">
           <span>{emptyAssetLabel("image", errored)}</span>
           {errored && filename && (
-            <span className="text-xs text-gray-600 truncate max-w-full" title={filename}>
+            <span className="text-xs text-text-dim truncate max-w-full" title={filename}>
               {filename}
             </span>
           )}
         </div>
       )}
       {selected && <NodeMeta filename={filename} data={data} />}
-      <Handle type="source" position={Position.Bottom} className="!bg-cyan-500" />
+      <Handle type="source" position={Position.Bottom} className="!bg-primary" />
     </div>
   );
 }

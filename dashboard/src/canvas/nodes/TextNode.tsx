@@ -20,22 +20,22 @@ interface AssetPreview {
 function PreviewBlock({ preview }: { preview: AssetPreview }) {
   if (preview.kind === "binary") {
     return (
-      <div className="text-xs text-gray-500 italic">
+      <div className="text-xs text-text-dim italic">
         Binary asset — {preview.mime}, {preview.size}B
       </div>
     );
   }
   if (preview.kind === "csv" && preview.rows && preview.rows.length > 0) {
     return (
-      <div className="text-xs font-mono text-gray-300 space-y-0.5">
-        <div className="text-gray-500">
+      <div className="text-xs font-mono text-text space-y-0.5">
+        <div className="text-text-dim">
           {preview.cols ?? 0} cols · {preview.size}B
         </div>
         {preview.rows.map((row, i) => (
           <div
             // biome-ignore lint/suspicious/noArrayIndexKey: CSV row position is the row identity
             key={i}
-            className={`truncate ${i === 0 ? "text-gray-200 font-semibold" : "text-gray-400"}`}
+            className={`truncate ${i === 0 ? "text-text-bright font-semibold" : "text-text"}`}
             title={row}
           >
             {row || "·"}
@@ -46,7 +46,7 @@ function PreviewBlock({ preview }: { preview: AssetPreview }) {
   }
   if (preview.snippet) {
     return (
-      <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap break-words">
+      <pre className="text-xs font-mono text-text whitespace-pre-wrap break-words">
         {preview.snippet}
       </pre>
     );
@@ -60,7 +60,7 @@ const FEED_BORDER: Record<string, string> = {
   pool_note: "border-purple-800/50",
   channel_message: "border-green-800/50",
   task_event: "border-blue-800/50",
-  market_position: "border-cyan-800/50",
+  market_position: "border-primary/40",
   market_consensus: "border-teal-800/50",
   market_resolution: "border-red-800/50",
   intent_result: "border-emerald-800/50",
@@ -69,7 +69,7 @@ const FEED_BORDER: Record<string, string> = {
   note_created: "border-sky-800/50",
   note_link_created: "border-indigo-800/50",
   rank_change: "border-yellow-800/50",
-  manual: "border-gray-700/50",
+  manual: "border-border/60",
 };
 
 const FEED_LABEL: Record<string, string> = {
@@ -128,7 +128,7 @@ export function TextNode({ data, selected }: NodeProps) {
     (feedType ? (FEED_LABEL[feedType] ?? friendlyFeedType(feedType)) : "") ??
     "";
   const author = resolveAuthor(data as Record<string, unknown>);
-  const border = (feedType && FEED_BORDER[feedType]) ?? "border-gray-700/50";
+  const border = (feedType && FEED_BORDER[feedType]) ?? "border-border/60";
   // Reply context: when this node was published with reply:<parent>, surface a
   // small "in reply to" indicator so threading reads visually without having
   // to follow edges.
@@ -136,15 +136,15 @@ export function TextNode({ data, selected }: NodeProps) {
   const preview = data.preview as AssetPreview | undefined;
 
   return (
-    <div className={`rounded-lg bg-gray-900 border ${border} shadow-lg p-3 h-full flex flex-col`}>
+    <div className={`rounded-lg bg-bg-card border ${border} shadow-lg p-3 h-full flex flex-col`}>
       <NodeResizer
         isVisible={!!selected}
         minWidth={120}
         minHeight={60}
-        lineClassName="!border-gray-500/50"
-        handleClassName="!w-2 !h-2 !bg-gray-500 !border-gray-400"
+        lineClassName="!border-text-dim/50"
+        handleClassName="!w-2 !h-2 !bg-text-dim !border-text-dim"
       />
-      <Handle type="target" position={Position.Top} className="!bg-gray-500" />
+      <Handle type="target" position={Position.Top} className="!bg-text-dim" />
       {parentNodeId && (
         <div
           className="mb-1 text-[10px] text-violet-400/80 truncate"
@@ -156,21 +156,21 @@ export function TextNode({ data, selected }: NodeProps) {
       {/* Always show header with label + author when available */}
       {(label || author) && (
         <div className="mb-1 flex items-baseline justify-between gap-2 text-xs">
-          {label && <span className="font-medium text-gray-400 truncate">{label}</span>}
-          {author && <span className="text-gray-600 shrink-0">by {author}</span>}
+          {label && <span className="font-medium text-text truncate">{label}</span>}
+          {author && <span className="text-text-dim shrink-0">by {author}</span>}
         </div>
       )}
       {selected && <NodeMeta filename={label} data={data} className="mb-1" />}
-      <div className="flex-1 text-sm text-gray-200 whitespace-pre-wrap overflow-auto">
+      <div className="flex-1 text-sm text-text-bright whitespace-pre-wrap overflow-auto">
         {content ? (
           content
         ) : preview ? (
           <PreviewBlock preview={preview} />
         ) : (
-          <span className="text-gray-600 italic">Empty</span>
+          <span className="text-text-dim italic">Empty</span>
         )}
       </div>
-      <Handle type="source" position={Position.Bottom} className="!bg-gray-500" />
+      <Handle type="source" position={Position.Bottom} className="!bg-text-dim" />
     </div>
   );
 }

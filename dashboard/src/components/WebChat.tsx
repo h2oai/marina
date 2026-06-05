@@ -239,7 +239,7 @@ export function WebChat() {
 
     switch (kind) {
       case "system":
-        return "border-l-2 border-sky-400 pl-2 text-sky-300 bg-sky-950/10";
+        return "border-l-2 border-primary pl-2 text-primary/90 bg-primary/5";
       case "error":
         return "border-l-2 border-red-500 pl-2 text-red-400 bg-red-950/15";
       case "room":

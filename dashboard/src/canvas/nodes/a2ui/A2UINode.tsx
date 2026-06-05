@@ -42,7 +42,7 @@ export function A2UINode({ data, id, selected }: NodeProps) {
   );
 
   return (
-    <div className="rounded-lg overflow-hidden bg-gray-900 border border-indigo-800/50 shadow-lg shadow-indigo-900/20 flex flex-col h-full">
+    <div className="rounded-lg overflow-hidden bg-bg-card border border-indigo-800/50 shadow-lg shadow-indigo-900/20 flex flex-col h-full">
       <NodeResizer
         isVisible={!!selected}
         minWidth={200}

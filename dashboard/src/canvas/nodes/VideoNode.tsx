@@ -10,7 +10,7 @@ export function VideoNode({ data, selected }: NodeProps) {
   const [errored, setErrored] = useState(false);
 
   return (
-    <div className="rounded-lg overflow-hidden bg-gray-900 border border-purple-800/50 shadow-lg shadow-purple-900/20 h-full flex flex-col">
+    <div className="rounded-lg overflow-hidden bg-bg-card border border-purple-800/50 shadow-lg shadow-purple-900/20 h-full flex flex-col">
       <NodeResizer
         isVisible={!!selected}
         minWidth={200}
@@ -30,10 +30,10 @@ export function VideoNode({ data, selected }: NodeProps) {
           <source src={url} type={mime} />
         </video>
       ) : (
-        <div className="flex flex-col items-center justify-center flex-1 text-gray-500 text-sm gap-1 px-2 text-center">
+        <div className="flex flex-col items-center justify-center flex-1 text-text-dim text-sm gap-1 px-2 text-center">
           <span>{emptyAssetLabel("video", errored)}</span>
           {errored && filename && (
-            <span className="text-xs text-gray-600 truncate max-w-full" title={filename}>
+            <span className="text-xs text-text-dim truncate max-w-full" title={filename}>
               {filename}
             </span>
           )}
