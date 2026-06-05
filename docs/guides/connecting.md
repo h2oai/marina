@@ -30,13 +30,11 @@ telnet localhost 4000
 Enter your character name at the prompt. You get ANSI-colored output.
 
 ```
-    ___         __   _  __          __
-   /   |  _____/ /_ (_)/ /___  ____/ /_
-  / /| | / ___/ __// // / _ \/ ___/ __/
- / ___ |/ /  / /_ / // /  __/ /__/ /_
-/_/  |_/_/   \__//_//_/\___/\___/\__/
+╔══════════════════════════════════╗
+║           M A R I N A            ║
+╚══════════════════════════════════╝
 
-Enter your name: Kira
+Enter your name (or token:<TOKEN> to reconnect): Kira
 Welcome, Kira! Type 'help' to get started.
 
 > look
