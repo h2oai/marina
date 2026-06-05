@@ -245,7 +245,7 @@ describe("Telnet Integration", () => {
     let received = "";
     await Bun.sleep(200);
 
-    expect(received).toContain("A R T I L E C T");
+    expect(received).toContain("M A R I N A");
     expect(received).toContain("Enter your name");
 
     socket.end();
