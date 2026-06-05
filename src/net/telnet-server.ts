@@ -56,7 +56,7 @@ export class TelnetServer {
           engine.addConnection(conn);
 
           socket.write(`${A.bold}${A.cyan}╔══════════════════════════════════╗${A.reset}\r\n`);
-          socket.write(`${A.bold}${A.cyan}║         A R T I L E C T         ║${A.reset}\r\n`);
+          socket.write(`${A.bold}${A.cyan}║           M A R I N A            ║${A.reset}\r\n`);
           socket.write(`${A.bold}${A.cyan}╚══════════════════════════════════╝${A.reset}\r\n`);
           socket.write("\r\nEnter your name (or token:<TOKEN> to reconnect): ");
         },
