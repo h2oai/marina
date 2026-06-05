@@ -72,7 +72,7 @@ docker run -d --name marina \
 
 ## Configuration essentials
 
-All variables are optional with sane defaults — the canonical, annotated list is [`.env.example`](../../.env.example). The load-bearing ones for a deployment:
+All variables are optional with sane defaults — the canonical, annotated list is [`.env.example`](https://github.com/h2oai/Marina/blob/main/.env.example). The load-bearing ones for a deployment:
 
 ```bash
 MARINA_WORLD=default          # which world to load

@@ -34,6 +34,17 @@ function yamlEscape(s: string): string {
   return s.replace(/"/g, '\\"');
 }
 
+/**
+ * Rewrite same-directory `guide.md` links to the routes Starlight serves.
+ * In the repo, guides link to each other as `[Memory](memory.md)` — correct
+ * on GitHub, but a 404 on the site where pages live at /docs/guides/<slug>/.
+ * From a page directory, the sibling guide is `../<slug>/`. Anchors survive.
+ * Absolute URLs, root-relative paths, and bare anchors are left untouched.
+ */
+function rewriteGuideLinks(md: string): string {
+  return md.replace(/\]\(([A-Za-z0-9_-]+)\.md(#[^)]*)?\)/g, "](../$1/$2)");
+}
+
 if (existsSync(DEST)) rmSync(DEST, { recursive: true, force: true });
 mkdirSync(DEST, { recursive: true });
 
@@ -43,7 +54,7 @@ for (const file of readdirSync(SRC)) {
   const raw = readFileSync(join(SRC, file), "utf8");
   const slug = file.replace(/\.md$/, "");
   const { title, body } = titleFromMarkdown(raw, slug);
-  const out = `---\ntitle: "${yamlEscape(title)}"\n---\n\n${body}`;
+  const out = `---\ntitle: "${yamlEscape(title)}"\n---\n\n${rewriteGuideLinks(body)}`;
   writeFileSync(join(DEST, file), out, "utf8");
   count++;
 }
