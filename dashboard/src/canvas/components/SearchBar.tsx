@@ -72,7 +72,7 @@ export function SearchBar({ nodes, onFilterChange }: SearchBarProps) {
           setQuery(e.target.value);
           applyFilters(e.target.value, typeFilter, intentFilter);
         }}
-        className="bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:outline-none focus:border-cyan-600 w-40"
+        className="bg-bg-hover text-text text-xs rounded px-2 py-1 border border-border focus:outline-none focus:border-primary w-40"
       />
       <select
         value={typeFilter}
@@ -80,7 +80,7 @@ export function SearchBar({ nodes, onFilterChange }: SearchBarProps) {
           setTypeFilter(e.target.value);
           applyFilters(query, e.target.value, intentFilter);
         }}
-        className="bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:outline-none focus:border-cyan-600"
+        className="bg-bg-hover text-text text-xs rounded px-2 py-1 border border-border focus:outline-none focus:border-primary"
       >
         <option value="">All types</option>
         {NODE_TYPES.map((t) => (
@@ -95,7 +95,7 @@ export function SearchBar({ nodes, onFilterChange }: SearchBarProps) {
           setIntentFilter(e.target.value);
           applyFilters(query, typeFilter, e.target.value);
         }}
-        className="bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700 focus:outline-none focus:border-cyan-600"
+        className="bg-bg-hover text-text text-xs rounded px-2 py-1 border border-border focus:outline-none focus:border-primary"
       >
         {INTENT_FILTERS.map((f) => (
           <option key={f.value} value={f.value}>

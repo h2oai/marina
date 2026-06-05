@@ -4,14 +4,14 @@ import type { A2UIAction, A2UIComponent } from "./types";
 // ── Text ────────────────────────────────────────────────────────────────────
 
 const VARIANT_CLASSES: Record<string, string> = {
-  h1: "text-xl font-bold text-gray-100",
-  h2: "text-lg font-semibold text-gray-100",
-  h3: "text-base font-semibold text-gray-200",
-  h4: "text-sm font-semibold text-gray-200",
-  h5: "text-xs font-semibold text-gray-300",
-  h6: "text-xs font-medium text-gray-300",
-  body: "text-sm text-gray-300",
-  caption: "text-xs text-gray-500",
+  h1: "text-xl font-bold text-text-bright",
+  h2: "text-lg font-semibold text-text-bright",
+  h3: "text-base font-semibold text-text-bright",
+  h4: "text-sm font-semibold text-text-bright",
+  h5: "text-xs font-semibold text-text",
+  h6: "text-xs font-medium text-text",
+  body: "text-sm text-text",
+  caption: "text-xs text-text-dim",
 };
 
 export const A2UIText = memo(function A2UIText({ component }: { component: A2UIComponent }) {
@@ -81,7 +81,7 @@ export const A2UITextField = memo(function A2UITextField({
 
   return (
     <label className="flex flex-col gap-1">
-      {label && <span className="text-xs text-gray-400">{label}</span>}
+      {label && <span className="text-xs text-text">{label}</span>}
       <input
         type="text"
         value={value}
@@ -89,7 +89,7 @@ export const A2UITextField = memo(function A2UITextField({
         onBlur={submit}
         onKeyDown={(e) => e.key === "Enter" && submit()}
         placeholder={placeholder}
-        className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-gray-200 placeholder-gray-600 focus:border-indigo-500 focus:outline-none"
+        className="bg-bg-hover border border-border rounded px-2 py-1 text-sm text-text-bright placeholder-gray-600 focus:border-indigo-500 focus:outline-none"
       />
     </label>
   );
@@ -116,7 +116,7 @@ export const A2UICheckBox = memo(function A2UICheckBox({
   }, [checked, fieldId, onAction]);
 
   return (
-    <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-300">
+    <label className="flex items-center gap-2 cursor-pointer text-sm text-text">
       <input type="checkbox" checked={checked} onChange={toggle} className="accent-indigo-500" />
       {label}
     </label>
@@ -143,13 +143,13 @@ export const A2UIDateTimeInput = memo(function A2UIDateTimeInput({
 
   return (
     <label className="flex flex-col gap-1">
-      {label && <span className="text-xs text-gray-400">{label}</span>}
+      {label && <span className="text-xs text-text">{label}</span>}
       <input
         type="datetime-local"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onBlur={submit}
-        className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm text-gray-200 focus:border-indigo-500 focus:outline-none"
+        className="bg-bg-hover border border-border rounded px-2 py-1 text-sm text-text-bright focus:border-indigo-500 focus:outline-none"
       />
     </label>
   );
@@ -211,8 +211,8 @@ export const A2UICard = memo(function A2UICard({
   const children = component.children ?? [];
   const child = component.child;
   return (
-    <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-3 flex flex-col gap-2">
-      {title && <div className="text-sm font-semibold text-gray-200">{title}</div>}
+    <div className="rounded-lg border border-border bg-bg-hover/50 p-3 flex flex-col gap-2">
+      {title && <div className="text-sm font-semibold text-text-bright">{title}</div>}
       {child && renderChild(child)}
       {children.map((id) => (
         <div key={id}>{renderChild(id)}</div>
@@ -236,7 +236,7 @@ export const A2UISurface = memo(function A2UISurface({
   return (
     <div className="flex flex-col gap-3 h-full">
       {title && (
-        <div className="text-base font-bold text-gray-100 border-b border-gray-700 pb-2">
+        <div className="text-base font-bold text-text-bright border-b border-border pb-2">
           {title}
         </div>
       )}
@@ -264,9 +264,9 @@ export const A2UIDataTable = memo(function A2UIDataTable({
   const rows = (component.rows as Record<string, unknown>[]) ?? [];
 
   return (
-    <div className="overflow-auto rounded border border-gray-700">
+    <div className="overflow-auto rounded border border-border">
       <table className="w-full text-sm text-left">
-        <thead className="bg-gray-800 text-xs text-gray-400 uppercase">
+        <thead className="bg-bg-hover text-xs text-text uppercase">
           <tr>
             {columns.map((col) => (
               <th key={col.key} className="px-3 py-2">
@@ -278,9 +278,9 @@ export const A2UIDataTable = memo(function A2UIDataTable({
         <tbody>
           {rows.map((row, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: A2UI rows are server-rendered in fixed order
-            <tr key={i} className="border-t border-gray-800 hover:bg-gray-800/50">
+            <tr key={i} className="border-t border-border hover:bg-bg-hover/50">
               {columns.map((col) => (
-                <td key={col.key} className="px-3 py-1.5 text-gray-300">
+                <td key={col.key} className="px-3 py-1.5 text-text">
                   {String(row[col.key] ?? "")}
                 </td>
               ))}
@@ -314,14 +314,12 @@ export const A2UITimeline = memo(function A2UITimeline({
         <div key={i} className="flex gap-3">
           <div className="flex flex-col items-center">
             <div className="w-2 h-2 rounded-full bg-indigo-500 mt-1.5" />
-            {i < items.length - 1 && <div className="w-px flex-1 bg-gray-700" />}
+            {i < items.length - 1 && <div className="w-px flex-1 bg-bg-hover" />}
           </div>
           <div className="pb-4">
-            <div className="text-sm font-medium text-gray-200">{item.label}</div>
-            {item.timestamp && <div className="text-xs text-gray-500">{item.timestamp}</div>}
-            {item.description && (
-              <div className="text-xs text-gray-400 mt-0.5">{item.description}</div>
-            )}
+            <div className="text-sm font-medium text-text-bright">{item.label}</div>
+            {item.timestamp && <div className="text-xs text-text-dim">{item.timestamp}</div>}
+            {item.description && <div className="text-xs text-text mt-0.5">{item.description}</div>}
           </div>
         </div>
       ))}

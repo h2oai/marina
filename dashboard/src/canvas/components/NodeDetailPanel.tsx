@@ -169,17 +169,17 @@ function NodeDetailPanelInner({
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: "100%", opacity: 0 }}
       transition={{ type: "spring", stiffness: 320, damping: 32 }}
-      className="fixed right-0 top-0 bottom-0 w-96 bg-gray-900 border-l border-gray-700 shadow-2xl z-50 flex flex-col overflow-hidden"
+      className="fixed right-0 top-0 bottom-0 w-96 bg-bg-card border-l border-border shadow-2xl z-50 flex flex-col overflow-hidden"
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
-        <h2 className="text-sm font-bold text-cyan-400 truncate">Node Detail</h2>
+      <div className="flex items-center justify-between px-4 py-3 bg-bg-hover border-b border-border">
+        <h2 className="text-sm font-bold text-primary truncate">Node Detail</h2>
         <motion.button
           type="button"
           onClick={onClose}
           whileHover={{ scale: 1.15, color: "rgb(229 231 235)" }}
           whileTap={{ scale: 0.92 }}
-          className="text-gray-400 text-lg leading-none px-1"
+          className="text-text text-lg leading-none px-1"
         >
           &times;
         </motion.button>
@@ -189,7 +189,7 @@ function NodeDetailPanelInner({
       <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
         {/* Identity */}
         <section>
-          <h3 className="text-[10px] uppercase tracking-widest text-gray-600 mb-1">Identity</h3>
+          <h3 className="text-[10px] uppercase tracking-widest text-text-dim mb-1">Identity</h3>
           <Row label="Name" value={filename} />
           <Row label="Type" value={node.type ?? "—"} />
           <Row label="ID" value={node.id} mono />
@@ -197,7 +197,7 @@ function NodeDetailPanelInner({
 
         {/* Creator & Timestamps */}
         <section>
-          <h3 className="text-[10px] uppercase tracking-widest text-gray-600 mb-1">Provenance</h3>
+          <h3 className="text-[10px] uppercase tracking-widest text-text-dim mb-1">Provenance</h3>
           <Row label="Creator" value={creator} />
           <Row label="Created" value={createdAt} />
           <Row label="Updated" value={updatedAt} />
@@ -206,7 +206,7 @@ function NodeDetailPanelInner({
 
         {/* Position & Size */}
         <section>
-          <h3 className="text-[10px] uppercase tracking-widest text-gray-600 mb-1">Layout</h3>
+          <h3 className="text-[10px] uppercase tracking-widest text-text-dim mb-1">Layout</h3>
           <Row
             label="Position"
             value={`${Math.round(node.position.x)}, ${Math.round(node.position.y)}`}
@@ -218,7 +218,7 @@ function NodeDetailPanelInner({
 
         {/* ── Intent Section ─────────────────────────────────────────── */}
         <section>
-          <h3 className="text-[10px] uppercase tracking-widest text-gray-600 mb-1">Intent</h3>
+          <h3 className="text-[10px] uppercase tracking-widest text-text-dim mb-1">Intent</h3>
 
           {intent && statusStyle ? (
             <div className="space-y-2">
@@ -239,14 +239,14 @@ function NodeDetailPanelInner({
                   {statusStyle.label}
                 </span>
                 {intent.claimedBy && (
-                  <span className="text-xs text-gray-500 ml-auto">by {intent.claimedBy}</span>
+                  <span className="text-xs text-text-dim ml-auto">by {intent.claimedBy}</span>
                 )}
               </div>
 
               {/* Prompt — editable when pending */}
               {intent.status === "pending" ? (
                 <div className="space-y-1.5">
-                  <div className="text-[10px] uppercase text-gray-600">Prompt</div>
+                  <div className="text-[10px] uppercase text-text-dim">Prompt</div>
                   <textarea
                     value={editText || intent.prompt}
                     onChange={(e) => setEditText(e.target.value)}
@@ -256,30 +256,30 @@ function NodeDetailPanelInner({
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleUpdateIntent();
                     }}
-                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-cyan-600 resize-none"
+                    className="w-full bg-bg-hover border border-border rounded px-2 py-1.5 text-xs text-text-bright focus:outline-none focus:border-primary resize-none"
                     rows={3}
                   />
                   <button
                     type="button"
                     onClick={handleUpdateIntent}
                     disabled={submitting || !editText.trim() || editText.trim() === intent.prompt}
-                    className="w-full bg-cyan-900/50 hover:bg-cyan-800/50 disabled:opacity-40 disabled:cursor-not-allowed text-cyan-300 text-xs font-medium rounded px-3 py-1.5 transition-colors"
+                    className="w-full bg-primary/20 hover:bg-primary/30 disabled:opacity-40 disabled:cursor-not-allowed text-primary text-xs font-medium rounded px-3 py-1.5 transition-colors"
                   >
                     {submitting ? "Updating..." : "Update Intent"}
                   </button>
                 </div>
               ) : (
-                <div className="rounded bg-gray-800 px-2 py-1.5">
-                  <div className="text-[10px] uppercase text-gray-600 mb-0.5">Prompt</div>
-                  <div className="text-gray-300 text-xs whitespace-pre-wrap">{intent.prompt}</div>
+                <div className="rounded bg-bg-hover px-2 py-1.5">
+                  <div className="text-[10px] uppercase text-text-dim mb-0.5">Prompt</div>
+                  <div className="text-text text-xs whitespace-pre-wrap">{intent.prompt}</div>
                 </div>
               )}
 
               {/* Result */}
               {intent.result && (
-                <div className="rounded bg-gray-800 px-2 py-1.5">
-                  <div className="text-[10px] uppercase text-gray-600 mb-0.5">Result</div>
-                  <div className="text-gray-300 text-xs whitespace-pre-wrap max-h-48 overflow-auto">
+                <div className="rounded bg-bg-hover px-2 py-1.5">
+                  <div className="text-[10px] uppercase text-text-dim mb-0.5">Result</div>
+                  <div className="text-text text-xs whitespace-pre-wrap max-h-48 overflow-auto">
                     {intent.result}
                   </div>
                 </div>
@@ -300,7 +300,7 @@ function NodeDetailPanelInner({
                 type="button"
                 onClick={handleClearIntent}
                 disabled={submitting}
-                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                className="text-xs text-text-dim hover:text-text-bright transition-colors"
               >
                 Clear intent
               </button>
@@ -317,18 +317,18 @@ function NodeDetailPanelInner({
                   }
                 }}
                 placeholder="What should an agent do with this? e.g. 'Summarize this document' or 'Extract key data points'"
-                className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-600 resize-none"
+                className="w-full bg-bg-hover border border-border rounded px-2 py-1.5 text-xs text-text-bright placeholder-text-dim focus:outline-none focus:border-primary resize-none"
                 rows={3}
               />
               <button
                 type="button"
                 onClick={handleSubmitIntent}
                 disabled={!promptText.trim() || submitting}
-                className="w-full bg-cyan-900/50 hover:bg-cyan-800/50 disabled:opacity-40 disabled:cursor-not-allowed text-cyan-300 text-xs font-medium rounded px-3 py-1.5 transition-colors"
+                className="w-full bg-primary/20 hover:bg-primary/30 disabled:opacity-40 disabled:cursor-not-allowed text-primary text-xs font-medium rounded px-3 py-1.5 transition-colors"
               >
                 {submitting ? "Setting intent..." : "Set Intent"}
               </button>
-              <p className="text-[10px] text-gray-600">
+              <p className="text-[10px] text-text-dim">
                 Ctrl+Enter to submit. An available agent will pick this up and deliver results.
               </p>
             </div>
@@ -337,7 +337,7 @@ function NodeDetailPanelInner({
 
         {/* ── Conversation Thread ──────────────────────────────────── */}
         <section>
-          <h3 className="text-[10px] uppercase tracking-widest text-gray-600 mb-1">Conversation</h3>
+          <h3 className="text-[10px] uppercase tracking-widest text-text-dim mb-1">Conversation</h3>
           {(() => {
             const children = nodes
               .filter((n) => n.data.parent_node_id === node.id)
@@ -353,18 +353,18 @@ function NodeDetailPanelInner({
                   const body = (cd.body as string) ?? (cd.content as string) ?? "";
                   const time = formatTimestamp(cd.created_at);
                   return (
-                    <div key={child.id} className="rounded bg-gray-800 px-2 py-1 text-xs">
+                    <div key={child.id} className="rounded bg-bg-hover px-2 py-1 text-xs">
                       <div className="flex items-baseline justify-between gap-1 mb-0.5">
-                        <span className="font-medium text-gray-400">{author}</span>
-                        <span className="text-[9px] text-gray-600">{time}</span>
+                        <span className="font-medium text-text">{author}</span>
+                        <span className="text-[9px] text-text-dim">{time}</span>
                       </div>
-                      <div className="text-gray-300 whitespace-pre-wrap">{body}</div>
+                      <div className="text-text whitespace-pre-wrap">{body}</div>
                     </div>
                   );
                 })}
               </div>
             ) : (
-              <p className="text-[10px] text-gray-600 mb-2">No messages yet.</p>
+              <p className="text-[10px] text-text-dim mb-2">No messages yet.</p>
             );
           })()}
           <div className="flex gap-1.5">
@@ -375,7 +375,7 @@ function NodeDetailPanelInner({
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSendMessage();
               }}
               placeholder="Say something about this node..."
-              className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-violet-600 resize-none"
+              className="flex-1 bg-bg-hover border border-border rounded px-2 py-1 text-xs text-text-bright placeholder-text-dim focus:outline-none focus:border-violet-600 resize-none"
               rows={2}
             />
             <button
@@ -387,15 +387,15 @@ function NodeDetailPanelInner({
               Send
             </button>
           </div>
-          <p className="text-[10px] text-gray-600 mt-1">
+          <p className="text-[10px] text-text-dim mt-1">
             Ctrl+Enter to send. Messages appear as child nodes with edges.
           </p>
         </section>
 
         {/* All data fields */}
         <section>
-          <h3 className="text-[10px] uppercase tracking-widest text-gray-600 mb-1">Data</h3>
-          {fields.length === 0 && <span className="text-gray-600 italic text-xs">No data</span>}
+          <h3 className="text-[10px] uppercase tracking-widest text-text-dim mb-1">Data</h3>
+          {fields.length === 0 && <span className="text-text-dim italic text-xs">No data</span>}
           {fields.map(([k, v]) => (
             <Row
               key={k}
@@ -423,13 +423,13 @@ function Row({
 }) {
   return (
     <div className="flex gap-2 py-0.5">
-      <span className="text-gray-500 shrink-0 w-20 text-right text-xs">{label}</span>
+      <span className="text-text-dim shrink-0 w-20 text-right text-xs">{label}</span>
       {pre ? (
-        <pre className="text-gray-300 text-xs whitespace-pre-wrap break-all font-mono flex-1 max-h-40 overflow-auto">
+        <pre className="text-text text-xs whitespace-pre-wrap break-all font-mono flex-1 max-h-40 overflow-auto">
           {value}
         </pre>
       ) : (
-        <span className={`text-gray-300 break-all flex-1 ${mono ? "font-mono text-[11px]" : ""}`}>
+        <span className={`text-text break-all flex-1 ${mono ? "font-mono text-[11px]" : ""}`}>
           {value}
         </span>
       )}

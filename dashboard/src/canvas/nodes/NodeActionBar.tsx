@@ -10,7 +10,7 @@ export function NodeActionBar({ nodeId }: { nodeId: string }) {
     <div className="absolute bottom-1 right-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
       <button
         type="button"
-        className="bg-gray-800/90 border border-gray-700 rounded p-1 text-gray-400 hover:text-cyan-400 transition-colors"
+        className="bg-bg-hover/90 border border-border rounded p-1 text-text hover:text-primary transition-colors"
         title="Set intent — ask an agent to do something with this"
         onClick={(e) => {
           e.stopPropagation();

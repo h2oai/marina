@@ -82,7 +82,7 @@ export function AudioNode({ data, selected }: NodeProps) {
   }, [url]);
 
   return (
-    <div className="rounded-lg overflow-hidden bg-gray-900 border border-green-800/50 shadow-lg shadow-green-900/20 p-3 h-full flex flex-col">
+    <div className="rounded-lg overflow-hidden bg-bg-card border border-green-800/50 shadow-lg shadow-green-900/20 p-3 h-full flex flex-col">
       <NodeResizer
         isVisible={!!selected}
         minWidth={200}
@@ -113,10 +113,10 @@ export function AudioNode({ data, selected }: NodeProps) {
           </audio>
         </>
       ) : (
-        <div className="flex flex-col items-center justify-center flex-1 text-gray-500 text-sm gap-1 px-2 text-center py-2">
+        <div className="flex flex-col items-center justify-center flex-1 text-text-dim text-sm gap-1 px-2 text-center py-2">
           <span>{emptyAssetLabel("audio", errored)}</span>
           {errored && filename && (
-            <span className="text-xs text-gray-600 truncate max-w-full" title={filename}>
+            <span className="text-xs text-text-dim truncate max-w-full" title={filename}>
               {filename}
             </span>
           )}

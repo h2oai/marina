@@ -261,7 +261,7 @@ function CanvasInner() {
         const isIntentResult = feedType === "intent_result";
         const isConversation = feedType === "conversation";
 
-        let stroke = "#06b6d4"; // default cyan
+        let stroke = "var(--color-primary)"; // default: theme primary
         if (isIntentResult) stroke = "#10b981"; // emerald
         if (isConversation) stroke = "#8b5cf6"; // violet
 
@@ -392,13 +392,13 @@ function CanvasInner() {
   );
 
   return (
-    <div className="w-screen h-screen bg-gray-950 flex flex-col">
+    <div className="w-screen h-screen bg-bg flex flex-col">
       {/* Top bar */}
-      <div className="flex items-center gap-3 px-4 py-2 bg-gray-900 border-b border-gray-800">
-        <h1 className="text-cyan-400 font-bold text-sm tracking-wider">MARINA CANVAS</h1>
-        <div className="w-px h-5 bg-gray-700" />
+      <div className="flex items-center gap-3 px-4 py-2 bg-bg-card border-b border-border">
+        <h1 className="text-primary font-bold text-sm tracking-wider">MARINA CANVAS</h1>
+        <div className="w-px h-5 bg-bg-hover" />
         <select
-          className="bg-gray-800 text-gray-300 text-sm rounded px-2 py-1 border border-gray-700 focus:outline-none focus:border-cyan-600"
+          className="bg-bg-hover text-text text-sm rounded px-2 py-1 border border-border focus:outline-none focus:border-primary"
           value={selectedId ?? ""}
           onChange={(e) => setSelectedId(e.target.value || null)}
         >
@@ -410,7 +410,7 @@ function CanvasInner() {
           ))}
         </select>
         {canvas && (
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-text-dim">
             {canvas.description} &middot; {nodes.length} nodes &middot; by {canvas.creator_name}
           </span>
         )}
@@ -425,7 +425,7 @@ function CanvasInner() {
         )}
         <div className="flex-1" />
         <SearchBar nodes={nodes} onFilterChange={onFilterChange} />
-        <div className="w-px h-5 bg-gray-700" />
+        <div className="w-px h-5 bg-bg-hover" />
         <CanvasToolbar
           canvasId={selectedId}
           nodes={nodes}
@@ -433,10 +433,10 @@ function CanvasInner() {
           onDelete={handleToolbarDelete}
           onAnimateLayout={handleAnimateLayout}
         />
-        <div className="w-px h-5 bg-gray-700" />
+        <div className="w-px h-5 bg-bg-hover" />
         <a
           href="/dashboard"
-          className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+          className="text-xs text-text-dim hover:text-text-bright transition-colors"
         >
           Dashboard
         </a>
@@ -453,13 +453,13 @@ function CanvasInner() {
       >
         {/* Drop overlay */}
         {dropping && (
-          <div className="absolute inset-0 z-50 pointer-events-none flex items-center justify-center bg-cyan-900/20 border-2 border-dashed border-cyan-500/50 rounded-lg m-2">
-            <div className="text-cyan-400 text-lg font-medium">Drop files to add to canvas</div>
+          <div className="absolute inset-0 z-50 pointer-events-none flex items-center justify-center bg-primary/10 border-2 border-dashed border-primary/50 rounded-lg m-2">
+            <div className="text-primary text-lg font-medium">Drop files to add to canvas</div>
           </div>
         )}
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center z-10">
-            <div className="text-cyan-400 text-sm animate-pulse">Loading canvas...</div>
+            <div className="text-primary text-sm animate-pulse">Loading canvas...</div>
           </div>
         )}
         {error && (
@@ -469,13 +469,13 @@ function CanvasInner() {
         )}
         {!loading && !selectedId && (
           <div className="absolute inset-0 flex items-center justify-center z-10">
-            <div className="text-center text-gray-500 max-w-md">
+            <div className="text-center text-text-dim max-w-md">
               <div className="text-lg mb-2">No Canvas Selected</div>
               <div className="text-sm mb-3">
-                Create one in-game: <code className="text-cyan-400">canvas create mycanvas</code>
+                Create one in-game: <code className="text-primary">canvas create mycanvas</code>
               </div>
-              <div className="text-xs text-gray-600">
-                Tip: the <span className="text-cyan-500">guide</span> canvas has an interactive
+              <div className="text-xs text-text-dim">
+                Tip: the <span className="text-primary">guide</span> canvas has an interactive
                 tutorial. Select it from the dropdown above.
               </div>
             </div>
@@ -483,16 +483,16 @@ function CanvasInner() {
         )}
         {!loading && selectedId && nodes.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-            <div className="text-center text-gray-600 max-w-sm">
+            <div className="text-center text-text-dim max-w-sm">
               <div className="text-sm mb-2">This canvas is empty</div>
               <div className="text-xs space-y-1">
                 <div>Drop files here to add them, or publish from the command line:</div>
                 <div>
-                  <code className="text-cyan-500/70">canvas asset upload &lt;url&gt;</code>
+                  <code className="text-primary/70">canvas asset upload &lt;url&gt;</code>
                   {" then "}
-                  <code className="text-cyan-500/70">canvas publish image &lt;id&gt;</code>
+                  <code className="text-primary/70">canvas publish image &lt;id&gt;</code>
                 </div>
-                <div className="mt-2 text-gray-700">
+                <div className="mt-2 text-text-dim">
                   Double-click any node to set an intent or start a conversation.
                 </div>
               </div>
@@ -514,13 +514,18 @@ function CanvasInner() {
           minZoom={0.1}
           maxZoom={4}
           proOptions={{ hideAttribution: true }}
-          className="bg-gray-950"
+          className="bg-bg"
         >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#1a2332" />
-          <Controls className="!bg-gray-800 !border-gray-700 !shadow-lg [&>button]:!bg-gray-800 [&>button]:!border-gray-700 [&>button]:!text-gray-400 [&>button:hover]:!bg-gray-700" />
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={20}
+            size={1}
+            color="var(--color-border)"
+          />
+          <Controls className="!bg-bg-hover !border-border !shadow-lg [&>button]:!bg-bg-hover [&>button]:!border-border [&>button]:!text-text [&>button:hover]:!bg-bg-hover" />
           <MiniMap
-            className="!bg-gray-900 !border-gray-700"
-            nodeColor="#06b6d4"
+            className="!bg-bg-card !border-border"
+            nodeColor="var(--color-primary)"
             maskColor="rgba(0,0,0,0.7)"
           />
         </ReactFlow>

@@ -142,7 +142,7 @@ export function CanvasToolbar({
         disabled={!canvasId}
         whileHover={HOVER}
         whileTap={TAP}
-        className="text-xs text-gray-400 hover:text-gray-200 bg-gray-800 px-2 py-1 rounded border border-gray-700 disabled:opacity-30"
+        className="text-xs text-text hover:text-text-bright bg-bg-hover px-2 py-1 rounded border border-border disabled:opacity-30"
         title="Export canvas as JSON"
       >
         Export
@@ -153,7 +153,7 @@ export function CanvasToolbar({
         disabled={!canvasId || nodes.length === 0}
         whileHover={HOVER}
         whileTap={TAP}
-        className="text-xs text-gray-400 hover:text-gray-200 bg-gray-800 px-2 py-1 rounded border border-gray-700 disabled:opacity-30"
+        className="text-xs text-text hover:text-text-bright bg-bg-hover px-2 py-1 rounded border border-border disabled:opacity-30"
         title="Arrange nodes in a grid"
       >
         Grid
@@ -164,7 +164,7 @@ export function CanvasToolbar({
         disabled={!canvasId || nodes.length === 0}
         whileHover={HOVER}
         whileTap={TAP}
-        className="text-xs text-gray-400 hover:text-gray-200 bg-gray-800 px-2 py-1 rounded border border-gray-700 disabled:opacity-30"
+        className="text-xs text-text hover:text-text-bright bg-bg-hover px-2 py-1 rounded border border-border disabled:opacity-30"
         title="Arrange nodes in a timeline"
       >
         Timeline
@@ -175,7 +175,7 @@ export function CanvasToolbar({
           onClick={onDelete}
           whileHover={HOVER}
           whileTap={TAP}
-          className="text-xs text-red-400 hover:text-red-200 bg-gray-800 px-2 py-1 rounded border border-red-900/50 hover:border-red-700"
+          className="text-xs text-red-400 hover:text-red-200 bg-bg-hover px-2 py-1 rounded border border-red-900/50 hover:border-red-700"
           title={`Delete ${selectedCount} selected node${selectedCount > 1 ? "s" : ""}`}
         >
           Delete ({selectedCount})

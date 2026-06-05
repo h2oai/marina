@@ -87,7 +87,7 @@ export default function PdfNode({ data, selected }: NodeProps) {
   }, [pageNum]);
 
   return (
-    <div className="rounded-lg overflow-hidden bg-gray-900 border border-red-800/50 shadow-lg shadow-red-900/20 flex flex-col h-full">
+    <div className="rounded-lg overflow-hidden bg-bg-card border border-red-800/50 shadow-lg shadow-red-900/20 flex flex-col h-full">
       <NodeResizer
         isVisible={!!selected}
         minWidth={200}
@@ -113,12 +113,12 @@ export default function PdfNode({ data, selected }: NodeProps) {
       )}
       <div className="flex-1 relative p-2 min-h-[200px] overflow-auto">
         {loading && (
-          <div className="absolute inset-0 flex items-center justify-center z-10 bg-gray-900/80">
-            <span className="text-gray-500 text-sm animate-pulse">Loading PDF...</span>
+          <div className="absolute inset-0 flex items-center justify-center z-10 bg-bg-card/80">
+            <span className="text-text-dim text-sm animate-pulse">Loading PDF...</span>
           </div>
         )}
         {!loading && !url && (
-          <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+          <div className="flex items-center justify-center h-full text-text-dim text-sm">
             {emptyAssetLabel("pdf", false)}
           </div>
         )}
@@ -136,12 +136,12 @@ export default function PdfNode({ data, selected }: NodeProps) {
         />
       </div>
       {numPages > 1 && (
-        <div className="nodrag flex items-center justify-center gap-2 py-1.5 bg-gray-800/50 text-xs text-gray-400">
+        <div className="nodrag flex items-center justify-center gap-2 py-1.5 bg-bg-hover/50 text-xs text-text">
           <button
             type="button"
             onClick={() => setPageNum((p) => Math.max(1, p - 1))}
             disabled={pageNum <= 1}
-            className="px-2 py-0.5 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-30"
+            className="px-2 py-0.5 bg-bg-hover rounded hover:bg-bg-hover disabled:opacity-30"
           >
             Prev
           </button>
@@ -152,7 +152,7 @@ export default function PdfNode({ data, selected }: NodeProps) {
             type="button"
             onClick={() => setPageNum((p) => Math.min(numPages, p + 1))}
             disabled={pageNum >= numPages}
-            className="px-2 py-0.5 bg-gray-700 rounded hover:bg-gray-600 disabled:opacity-30"
+            className="px-2 py-0.5 bg-bg-hover rounded hover:bg-bg-hover disabled:opacity-30"
           >
             Next
           </button>

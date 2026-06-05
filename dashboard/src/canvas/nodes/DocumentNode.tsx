@@ -40,7 +40,7 @@ export function DocumentNode({ data, id, selected }: NodeProps) {
   }, [editor, canvasId, id, filename]);
 
   return (
-    <div className="rounded-lg overflow-hidden bg-gray-900 border border-blue-800/50 shadow-lg shadow-blue-900/20 flex flex-col h-full">
+    <div className="rounded-lg overflow-hidden bg-bg-card border border-blue-800/50 shadow-lg shadow-blue-900/20 flex flex-col h-full">
       <NodeResizer
         isVisible={!!selected}
         minWidth={200}
@@ -72,12 +72,12 @@ export function DocumentNode({ data, id, selected }: NodeProps) {
           </div>
         </div>
       )}
-      <div className="flex-1 overflow-auto text-sm text-gray-300">
+      <div className="flex-1 overflow-auto text-sm text-text">
         {editor ? (
           <EditorContent editor={editor} />
         ) : (
           <div className="p-3 whitespace-pre-wrap">
-            {content || <span className="text-gray-600 italic">Empty document</span>}
+            {content || <span className="text-text-dim italic">Empty document</span>}
           </div>
         )}
       </div>

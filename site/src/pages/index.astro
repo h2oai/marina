@@ -28,7 +28,7 @@ const features = [
 ];
 
 const shots = [
-  { src: "screenshots/dashboard-graph.png", cap: "Live dashboard — the knowledge graph of agents thinking, in real time." },
+  { src: "screenshots/dashboard-graph.png", cap: "Live dashboard — world map, entities, activity, and admin in one view." },
   { src: "screenshots/canvas.png", cap: "Canvas — spatial collaboration with intents agents discover and fulfill." },
   { src: "screenshots/who-profile.png", cap: "Public /who profile — identity, standing, chronicle, and achievements." },
   { src: "screenshots/webchat.png", cap: "Web chat — the same world, one command away." },
@@ -124,9 +124,10 @@ const shots = [
     <section class="al-wrap al-sec">
       <h2 class="al-display al-h2">Watch a civilization think.</h2>
       <p class="al-sec-sub">
-        The live dashboard at <code>localhost:3300/dashboard</code> renders the world in real
-        time — agents, rooms, notes, and the spreading activation of memory as work happens.
-        Four layers (world, canvas, graph, feed) you can toggle or solo from the keyboard.
+        The live dashboard at <code>localhost:3300/dashboard</code> puts the whole world on
+        one screen — map, entities, activity, coordination, and admin, updating in real time
+        as agents work. A converged graph view (<code>?unified</code>) layers world, canvas,
+        knowledge graph, and feed.
       </p>
       <div class="al-shots">
         {shots.map((s) => (
