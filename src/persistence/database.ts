@@ -1228,6 +1228,18 @@ CREATE INDEX idx_chronicle_source ON chronicle(source, created_at DESC);
 CREATE INDEX idx_chronicle_period ON chronicle(period);
 `,
   },
+  // Migration 42: optional external-identity binding. Maps a verified
+  // better-auth subject (and email, for admin-by-email) to a named Marina
+  // user/entity. Both columns are nullable and inert unless MARINA_AUTH is on,
+  // so standalone/local instances are unaffected.
+  {
+    version: 42,
+    sql: `
+ALTER TABLE users ADD COLUMN auth_subject TEXT;
+ALTER TABLE users ADD COLUMN auth_email TEXT;
+CREATE UNIQUE INDEX idx_users_auth_subject ON users(auth_subject) WHERE auth_subject IS NOT NULL;
+`,
+  },
 ];
 
 // ─── Database Class ──────────────────────────────────────────────────────────
@@ -1911,6 +1923,24 @@ export class MarinaDB {
 
   updateUserRank(id: string, rank: number): void {
     this.db.run("UPDATE users SET rank = ? WHERE id = ?", [rank, id]);
+  }
+
+  /** Look up the named user bound to a verified external-identity subject. */
+  getUserByAuthSubject(subject: string): UserRow | undefined {
+    return (
+      (this.db
+        .query("SELECT * FROM users WHERE auth_subject = ?")
+        .get(subject) as UserRow | null) ?? undefined
+    );
+  }
+
+  /** Bind a verified identity (subject + email) to an existing named user. */
+  bindAuthSubject(id: string, subject: string, email: string): void {
+    this.db.run("UPDATE users SET auth_subject = ?, auth_email = ? WHERE id = ?", [
+      subject,
+      email,
+      id,
+    ]);
   }
 
   updateUserProperties(id: string, properties: Record<string, unknown>): void {
@@ -3737,6 +3767,10 @@ interface UserRow {
   last_login: number;
   rank: number;
   properties: string;
+  /** better-auth subject bound to this named user (null unless MARINA_AUTH on). */
+  auth_subject?: string | null;
+  /** Verified email from the bound identity (used for admin-by-email). */
+  auth_email?: string | null;
 }
 
 interface BanRow {
