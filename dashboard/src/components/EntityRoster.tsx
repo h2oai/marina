@@ -115,7 +115,7 @@ export function EntityRoster({ backContent }: { backContent?: ReactNode }) {
                     </span>
                   )}
                   <span className="truncate text-text-dim text-[10px]">{e.room.split("/")[1]}</span>
-                  {e.agentStatus ? (
+                  {e.agentStatus && (
                     <button
                       type="button"
                       title={`Stop agent ${e.name}`}
@@ -127,21 +127,23 @@ export function EntityRoster({ backContent }: { backContent?: ReactNode }) {
                     >
                       <Square size={10} />
                     </button>
-                  ) : (
-                    <button
-                      type="button"
-                      title={`Remove ${e.name}`}
-                      onClick={(ev) => {
-                        ev.stopPropagation();
-                        if (window.confirm(`Remove entity "${e.name}"?`)) {
-                          deleteApi(`/api/entities/${encodeURIComponent(e.name)}`);
-                        }
-                      }}
-                      className="text-text-dim hover:text-red-400 transition-colors"
-                    >
-                      <Trash2 size={10} />
-                    </button>
                   )}
+                  {/* Remove fully deletes the entity from the Marina. For a live
+                      agent it also stops the loop and deletes its config so it
+                      won't respawn — see engine.removeEntity. */}
+                  <button
+                    type="button"
+                    title={`Remove ${e.name}`}
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      if (window.confirm(`Remove entity "${e.name}"?`)) {
+                        deleteApi(`/api/entities/${encodeURIComponent(e.name)}`);
+                      }
+                    }}
+                    className="text-text-dim hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 size={10} />
+                  </button>
                   {isSelected ? (
                     <ChevronDown size={10} className="text-text-dim" />
                   ) : (
