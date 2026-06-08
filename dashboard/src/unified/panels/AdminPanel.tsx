@@ -13,6 +13,20 @@ import { deleteApi, patchApi, postApi, putApi } from "../../lib/api";
 import type { AdapterStatus, EnvVar, KeyStatus, McpToolInfo, RoleEntry } from "../../lib/types";
 import { FloatingPanel } from "./FloatingPanel";
 
+/**
+ * Turn a thrown API error into a human-readable message. `fetchApi`/`postApi`
+ * throw `Error("API error: <status>")`; a 401 means the dashboard has no valid
+ * session, which is the most common reason key save/list silently failed before
+ * this surfacing existed.
+ */
+function describeApiError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes("401")) {
+    return "Not authorized — log in as an admin (via the command bar) to manage keys.";
+  }
+  return msg.startsWith("API error:") ? `Request failed (${msg.slice(11).trim()}).` : msg;
+}
+
 const SUPPORTED_PROVIDERS = [
   "anthropic",
   "openai",
@@ -69,33 +83,55 @@ const TabButton = memo(function TabButton({
 // ── Keys Tab ────────────────────────────────────────────────────────────────
 
 const KeysTab = memo(function KeysTab() {
-  const { data: keys, isLoading, refetch } = useKeys();
+  const { data: keys, isLoading, isError, error, refetch } = useKeys();
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [provider, setProvider] = useState<string>(SUPPORTED_PROVIDERS[0]);
   const [value, setValue] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
 
   const handleSave = useCallback(async () => {
-    if (!name.trim() || !value.trim()) return;
-    await postApi("/api/keys", { name: name.trim(), provider, value: value.trim() });
-    setName("");
-    setProvider(SUPPORTED_PROVIDERS[0]);
-    setValue("");
-    setShowForm(false);
-    refetch();
+    if (!name.trim() || !value.trim()) {
+      setFormError("Name and key value are both required.");
+      return;
+    }
+    setSaving(true);
+    setFormError(null);
+    try {
+      await postApi("/api/keys", { name: name.trim(), provider, value: value.trim() });
+      setName("");
+      setProvider(SUPPORTED_PROVIDERS[0]);
+      setValue("");
+      setShowForm(false);
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 2500);
+      await refetch();
+    } catch (e) {
+      setFormError(describeApiError(e));
+    } finally {
+      setSaving(false);
+    }
   }, [name, provider, value, refetch]);
 
   const handleCancel = useCallback(() => {
     setName("");
     setProvider(SUPPORTED_PROVIDERS[0]);
     setValue("");
+    setFormError(null);
     setShowForm(false);
   }, []);
 
   const handleDelete = useCallback(
     async (keyName: string) => {
-      await deleteApi(`/api/keys/${encodeURIComponent(keyName)}`);
-      refetch();
+      setFormError(null);
+      try {
+        await deleteApi(`/api/keys/${encodeURIComponent(keyName)}`);
+        await refetch();
+      } catch (e) {
+        setFormError(describeApiError(e));
+      }
     },
     [refetch],
   );
@@ -159,18 +195,20 @@ const KeysTab = memo(function KeysTab() {
               <button
                 type="button"
                 onClick={handleSave}
+                disabled={saving}
                 style={{
                   background: "none",
                   border: "1px solid var(--color-success)",
                   color: "var(--color-success)",
                   fontFamily: "'VT323', monospace",
                   fontSize: "clamp(14px, 0.95vw, 18px)",
-                  cursor: "pointer",
+                  cursor: saving ? "default" : "pointer",
+                  opacity: saving ? 0.6 : 1,
                   padding: "3px 10px",
                   flex: 1,
                 }}
               >
-                Save
+                {saving ? "Saving…" : "Save"}
               </button>
               <button
                 type="button"
@@ -189,11 +227,59 @@ const KeysTab = memo(function KeysTab() {
                 Cancel
               </button>
             </div>
+            {formError && (
+              <div
+                style={{
+                  color: "var(--color-danger, #c33)",
+                  fontFamily: "'VT323', monospace",
+                  fontSize: "clamp(13px, 0.85vw, 16px)",
+                }}
+              >
+                {formError}
+              </div>
+            )}
+          </div>
+        )}
+        {!showForm && formError && (
+          <div
+            style={{
+              marginTop: "6px",
+              color: "var(--color-danger, #c33)",
+              fontFamily: "'VT323', monospace",
+              fontSize: "clamp(13px, 0.85vw, 16px)",
+            }}
+          >
+            {formError}
+          </div>
+        )}
+        {!showForm && savedFlash && (
+          <div
+            style={{
+              marginTop: "6px",
+              color: "var(--color-success)",
+              fontFamily: "'VT323', monospace",
+              fontSize: "clamp(13px, 0.85vw, 16px)",
+            }}
+          >
+            ✓ Key saved
           </div>
         )}
       </div>
 
-      {(keys ?? []).length === 0 && (
+      {isError && (
+        <div
+          style={{
+            textAlign: "center",
+            padding: "16px",
+            color: "var(--color-danger, #c33)",
+            fontSize: "clamp(14px, 0.95vw, 18px)",
+            fontFamily: "'VT323', monospace",
+          }}
+        >
+          {describeApiError(error)}
+        </div>
+      )}
+      {!isError && (keys ?? []).length === 0 && (
         <div
           style={{
             textAlign: "center",

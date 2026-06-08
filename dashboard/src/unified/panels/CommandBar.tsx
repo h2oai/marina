@@ -2346,12 +2346,16 @@ export const CommandBar = memo(
         const p = raw as Record<string, unknown>;
         const kind = (p.kind as string) ?? "message";
         const pTag = (p.tag as string) ?? undefined;
-        if (kind === "auth") {
-          const token = (p as Record<string, unknown>).token as string | undefined;
-          const authName = (p as Record<string, unknown>).name as string | undefined;
-          if (token) setToken(token);
-          useChatState.getState().setLoggedIn(true, authName ?? (loginName.trim() || undefined));
-          return;
+        // Login/reconnect success arrives as kind:"system" with the session
+        // token + entityId under `data` (see websocket-server.ts login handler).
+        // Capture it so authenticated REST calls (keys, adapters, config) work —
+        // without this the dashboard silently 401s on every admin action.
+        const authData = p.data as Record<string, unknown> | undefined;
+        if (authData?.token) {
+          setToken(authData.token as string);
+          useChatState
+            .getState()
+            .setLoggedIn(true, (authData.name as string) ?? (loginName.trim() || undefined));
         }
         if (kind === "auth_error") {
           // Server rejected login or token-based reconnect. Drop the stale
