@@ -187,6 +187,115 @@ describe("Auth & Session Integration", () => {
   });
 });
 
+describe("Auth-required mode (authRequired guard)", () => {
+  let db: MarinaDB;
+  let engine: Engine;
+  const dbPath = `/tmp/marina-authreq-test-${Date.now()}.db`;
+
+  beforeEach(() => {
+    db = new MarinaDB(dbPath);
+    engine = new Engine({
+      startRoom: roomId("test/start"),
+      tickInterval: 60_000,
+      db,
+      authRequired: true,
+      internalAuthToken: "internal-test-token",
+    });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+  });
+
+  afterEach(() => {
+    db.close();
+    cleanupDb(dbPath);
+  });
+
+  const addConn = (id: string) => {
+    const conn = new MockConnection(id);
+    engine.addConnection(conn);
+    return conn;
+  };
+
+  it("rejects external passwordless name-login", () => {
+    addConn("c1");
+    const result = engine.login("c1", "Mallory");
+    expect("error" in result).toBe(true);
+    if ("error" in result) expect(result.error).toContain("requires sign-in");
+  });
+
+  it("allows internal agents (internal token) to log in by name", () => {
+    addConn("c1");
+    const result = engine.login("c1", "RoomGuide", "internal-test-token");
+    expect("entityId" in result).toBe(true);
+  });
+
+  it("allows identity-verified logins and binds + does NOT grant admin to unverified email", () => {
+    addConn("c1");
+    const result = engine.login("c1", "creator", undefined, {
+      subject: "auth_sub_1",
+      email: "creator@h2o.ai",
+      emailVerified: false,
+    });
+    expect("entityId" in result).toBe(true);
+    if (!("entityId" in result)) return;
+    // Bound to the named entity, and the users row carries the subject.
+    expect(db.getUserByAuthSubject("auth_sub_1")?.name).toBe("creator");
+    // Unverified email is never promoted, even if it's on the admin list.
+    const entity = engine.entities.get(result.entityId);
+    expect((entity?.properties.rank as number) ?? 0).toBe(0);
+  });
+
+  it("grants admin only to a VERIFIED admin-list email", () => {
+    process.env.MARINA_AUTH_ADMIN_EMAILS = "boss@h2o.ai";
+    try {
+      addConn("c1");
+      const result = engine.login("c1", "boss", undefined, {
+        subject: "auth_sub_boss",
+        email: "boss@h2o.ai",
+        emailVerified: true,
+      });
+      expect("entityId" in result).toBe(true);
+      if (!("entityId" in result)) return;
+      expect(engine.entities.get(result.entityId)?.properties.rank).toBe(9);
+    } finally {
+      process.env.MARINA_AUTH_ADMIN_EMAILS = undefined;
+    }
+  });
+
+  it("does not grant name-based admin under auth-required mode", () => {
+    process.env.MARINA_ADMINS = "creator";
+    try {
+      addConn("c1");
+      // Identity login as 'creator' with a non-admin email → no rank from name.
+      const result = engine.login("c1", "creator", undefined, {
+        subject: "auth_sub_2",
+        email: "creator@h2o.ai",
+        emailVerified: true,
+      });
+      expect("entityId" in result).toBe(true);
+      if (!("entityId" in result)) return;
+      expect((engine.entities.get(result.entityId)?.properties.rank as number) ?? 0).toBe(0);
+    } finally {
+      process.env.MARINA_ADMINS = undefined;
+    }
+  });
+
+  it("lets a token-bearing client reconnect (agents are unaffected)", () => {
+    // Mint a session via an identity login, then reconnect with the token.
+    addConn("c1");
+    const login = engine.login("c1", "creator", undefined, {
+      subject: "auth_sub_3",
+      email: "creator@h2o.ai",
+      emailVerified: false,
+    });
+    if (!("token" in login) || "error" in login) throw new Error("login failed");
+    engine.removeConnection("c1");
+
+    addConn("c2");
+    const reconn = engine.reconnect("c2", login.token);
+    expect("entityId" in reconn).toBe(true);
+  });
+});
+
 describe("Instance login cap (maxLogins)", () => {
   let db: MarinaDB;
   let engine: Engine;
