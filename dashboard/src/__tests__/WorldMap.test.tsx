@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { WorldMap } from "../components/WorldMap";
 import { useWorldState } from "../hooks/use-world-state";
@@ -75,5 +75,20 @@ describe("WorldMap", () => {
     const { container } = renderWithProviders(<WorldMap worldData={SAMPLE_WORLD_DATA} />);
     // Should render without throwing even with no population data
     expect(container.querySelector("svg")).toBeTruthy();
+  });
+
+  it("exposes a reset-view control that restores the default viewBox", () => {
+    renderWithProviders(<WorldMap worldData={SAMPLE_WORLD_DATA} />);
+    const svg = screen.getByRole("img", { name: "World map" });
+    const defaultViewBox = svg.getAttribute("viewBox");
+    expect(defaultViewBox).toBe("50 10 900 730");
+
+    // Zoom out via the wheel so the viewport leaves its default.
+    fireEvent.wheel(svg, { deltaY: 100 });
+    expect(svg.getAttribute("viewBox")).not.toBe(defaultViewBox);
+
+    // The reset button restores the default viewport.
+    fireEvent.click(screen.getByRole("button", { name: "Reset map view" }));
+    expect(svg.getAttribute("viewBox")).toBe(defaultViewBox);
   });
 });

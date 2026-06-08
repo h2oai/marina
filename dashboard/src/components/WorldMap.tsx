@@ -1,4 +1,4 @@
-import { Map as MapIcon } from "lucide-react";
+import { Crosshair, Map as MapIcon } from "lucide-react";
 import { type AnimationPlaybackControlsWithThen, animate, motion } from "motion/react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWorldState } from "../hooks/use-world-state";
@@ -762,6 +762,21 @@ export function WorldMap({ worldData, backContent }: WorldMapProps) {
       title={worldName ? `World Map — ${worldName}` : "World Map"}
       icon={<MapIcon size={14} />}
       backContent={backContent}
+      headerExtra={
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setViewBox(DEFAULT_VIEWBOX);
+            setHighlightedRoom(null);
+          }}
+          className="text-text-dim transition-colors hover:text-primary"
+          title="Reset view (0)"
+          aria-label="Reset map view"
+        >
+          <Crosshair size={11} />
+        </button>
+      }
     >
       <svg
         ref={svgRef}
