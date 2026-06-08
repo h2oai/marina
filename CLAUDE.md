@@ -146,7 +146,7 @@ cd dashboard && bun run test  # Frontend smoke tests (vitest, ~24 tests)
 - **SDK client** (`src/sdk/client.ts`) — `MarinaClient` / `MarinaAgent` for external scripts. `tellAndAwait(target, message, timeoutMs)` is the synchronous reply primitive (also used by thin-responder crews and ACP). Worked examples in `examples/` consume it.
 
 ## Security & API
-- **API authentication**: HTTP endpoints require `MODEL_API_KEYS` / `MEM_API_KEYS` or explicit `MARINA_OPEN_API=true` for dev mode
+- **API authentication**: HTTP endpoints require `MODEL_API_KEYS` / `MEM_API_KEYS` or explicit `MARINA_OPEN_API=true` for dev mode. The dashboard/asset/canvas API auth gate (`authenticateRequest` in `src/net/auth-middleware.ts`) also honors `MARINA_OPEN_API=true`: a missing/invalid token is allowed through as the `OPEN_API_ENTITY_ID` sentinel (valid tokens still resolve to their real entity). Dev-only — never enable in production.
 - **Rate limiting**: all endpoints rate-limited — WebSocket commands (5/sec), MCP tools (5/sec), Model API (2/sec per IP), Memory API (10/sec per agent)
 - **Login limits**: `MARINA_MAX_LOGINS` caps concurrent entity-bound connections instance-wide (0 = unlimited); `MARINA_LOGIN_ATTEMPTS_PER_MIN` throttles login/reconnect attempts per IP (default 10, 0 = off). Enforced centrally in `engine.login()`/`reconnect()`; internal room/crew agents authenticate via the internal token (`internalToken` on the login/auth WS message) and are exempt from both
 - **SSRF protection**: `src/net/url-guard.ts` blocks private IPs, IPv6 loopback, link-local, cloud metadata, IPv4-mapped IPv6
