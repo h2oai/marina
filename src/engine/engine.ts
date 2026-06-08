@@ -1293,9 +1293,7 @@ export class Engine {
   }
 
   /** Remove an entity from the engine (kick if connected, despawn if NPC/orphan). */
-  async removeEntity(
-    entityId: EntityId,
-  ): Promise<{ ok: true; name: string } | { error: string }> {
+  async removeEntity(entityId: EntityId): Promise<{ ok: true; name: string } | { error: string }> {
     const entity = this.entities.get(entityId);
     if (!entity) {
       return { error: "Entity not found." };
