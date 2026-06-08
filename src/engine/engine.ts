@@ -1310,7 +1310,11 @@ export class Engine {
       );
     }
 
-    // If the entity has an active connection, kick them
+    // If the entity has an active connection, kick them. Use the "explicit"
+    // intent so the entity is evicted immediately — the default "transient"
+    // intent defers removal for RECONNECT_GRACE_MS (so a token-bearing
+    // reconnect can rebind), which would leave a deleted entity lingering in
+    // the live roster for up to a minute after an admin clicks Remove.
     const conn = this._connections.getConnectionForEntity(entityId);
     if (conn) {
       conn.send({
@@ -1318,7 +1322,7 @@ export class Engine {
         timestamp: Date.now(),
         data: { text: "You have been removed by an admin." },
       });
-      this.removeConnection(conn.id);
+      this.removeConnection(conn.id, "explicit");
     } else {
       // No connection — broadcast departure and remove directly
       const ctx = this.buildContext(entity.room);
