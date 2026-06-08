@@ -113,3 +113,49 @@ describe("better-auth bridge", () => {
     expect(res?.status).toBe(409);
   });
 });
+
+describe("better-auth social providers", () => {
+  const dbPath = `/tmp/marina-ba-social-${Date.now()}.db`;
+  const prev = {
+    secret: process.env.BETTER_AUTH_SECRET,
+    dbPath: process.env.BETTER_AUTH_DB_PATH,
+    gid: process.env.GOOGLE_CLIENT_ID,
+    gsec: process.env.GOOGLE_CLIENT_SECRET,
+  };
+
+  beforeAll(() => {
+    process.env.BETTER_AUTH_SECRET = "x".repeat(40);
+    process.env.BETTER_AUTH_DB_PATH = dbPath;
+    process.env.GOOGLE_CLIENT_ID = "dummy-id";
+    process.env.GOOGLE_CLIENT_SECRET = "dummy-secret";
+  });
+  afterAll(() => {
+    cleanupDb(dbPath);
+    process.env.BETTER_AUTH_SECRET = prev.secret;
+    process.env.BETTER_AUTH_DB_PATH = prev.dbPath;
+    process.env.GOOGLE_CLIENT_ID = prev.gid;
+    process.env.GOOGLE_CLIENT_SECRET = prev.gsec;
+  });
+
+  it("enables a configured provider and yields an authorize URL", async () => {
+    const provider = createBetterAuthProvider();
+    expect(provider.socialProviders).toContain("google");
+    expect(provider.methods).toEqual(expect.arrayContaining(["email", "google"]));
+
+    const res = await provider.handler(
+      new Request("http://localhost:3300/api/auth/sign-in/social", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: "google",
+          callbackURL: "http://localhost:3300/dashboard",
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { url?: string };
+    expect(body.url).toContain("accounts.google.com");
+    // The OAuth callback target is on our origin, as registered with the provider.
+    expect(decodeURIComponent(body.url ?? "")).toContain("/api/auth/callback/google");
+  });
+});
