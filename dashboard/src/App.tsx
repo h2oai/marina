@@ -33,28 +33,33 @@ const LazyUnifiedCanvas = lazy(() =>
   import("./unified/UnifiedCanvas").then((m) => ({ default: m.UnifiedCanvas })),
 );
 
-const LAYOUT_KEY = "marina-dashboard-layouts";
+// Bump the version suffix whenever DEFAULT_LAYOUTS changes shape so existing
+// users pick up the new default instead of a stale auto-persisted copy of the
+// old one. (The Header's "Reset layout" button also restores the default.)
+const LAYOUT_KEY = "marina-dashboard-layouts-v2";
 
 type Bp = "lg" | "md";
 
+// Webchat is the tall leftmost column; the other panels stack to its right in
+// two sub-columns across three rows, matching webchat's height.
 const DEFAULT_LAYOUTS: ResponsiveLayouts<Bp> = {
   lg: [
-    { i: "worldmap", x: 0, y: 0, w: 4, h: 4, minW: 2, minH: 2 },
-    { i: "entities", x: 4, y: 0, w: 3, h: 4, minW: 2, minH: 2 },
-    { i: "webchat", x: 7, y: 0, w: 5, h: 6, minW: 3, minH: 3 },
-    { i: "room", x: 0, y: 4, w: 4, h: 3, minW: 2, minH: 2 },
-    { i: "activity", x: 4, y: 4, w: 3, h: 3, minW: 2, minH: 2 },
-    { i: "coordination", x: 0, y: 7, w: 5, h: 3, minW: 2, minH: 2 },
-    { i: "admin", x: 5, y: 7, w: 7, h: 3, minW: 3, minH: 2 },
+    { i: "webchat", x: 0, y: 0, w: 5, h: 10, minW: 3, minH: 3 },
+    { i: "worldmap", x: 5, y: 0, w: 4, h: 4, minW: 2, minH: 2 },
+    { i: "entities", x: 9, y: 0, w: 3, h: 4, minW: 2, minH: 2 },
+    { i: "room", x: 5, y: 4, w: 4, h: 3, minW: 2, minH: 2 },
+    { i: "activity", x: 9, y: 4, w: 3, h: 3, minW: 2, minH: 2 },
+    { i: "coordination", x: 5, y: 7, w: 4, h: 3, minW: 2, minH: 2 },
+    { i: "admin", x: 9, y: 7, w: 3, h: 3, minW: 3, minH: 2 },
   ],
   md: [
-    { i: "worldmap", x: 0, y: 0, w: 5, h: 4, minW: 2, minH: 2 },
-    { i: "entities", x: 5, y: 0, w: 5, h: 4, minW: 2, minH: 2 },
-    { i: "webchat", x: 0, y: 4, w: 10, h: 5, minW: 3, minH: 3 },
-    { i: "room", x: 0, y: 9, w: 5, h: 3, minW: 2, minH: 2 },
-    { i: "activity", x: 5, y: 9, w: 5, h: 3, minW: 2, minH: 2 },
-    { i: "coordination", x: 0, y: 12, w: 5, h: 3, minW: 2, minH: 2 },
-    { i: "admin", x: 5, y: 12, w: 5, h: 3, minW: 3, minH: 2 },
+    { i: "webchat", x: 0, y: 0, w: 4, h: 10, minW: 3, minH: 3 },
+    { i: "worldmap", x: 4, y: 0, w: 3, h: 4, minW: 2, minH: 2 },
+    { i: "entities", x: 7, y: 0, w: 3, h: 4, minW: 2, minH: 2 },
+    { i: "room", x: 4, y: 4, w: 3, h: 3, minW: 2, minH: 2 },
+    { i: "activity", x: 7, y: 4, w: 3, h: 3, minW: 2, minH: 2 },
+    { i: "coordination", x: 4, y: 7, w: 3, h: 3, minW: 2, minH: 2 },
+    { i: "admin", x: 7, y: 7, w: 3, h: 3, minW: 3, minH: 2 },
   ],
 };
 
