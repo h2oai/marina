@@ -709,6 +709,7 @@ See [docs/load-test-results.md](docs/load-test-results.md) for full results.
 | Document | Description |
 |----------|-------------|
 | [SKILL.md](SKILL.md) | Full agent/LLM reference (system prompt compatible) |
+| [docs/authentication.md](docs/authentication.md) | Optional auth (better-auth) for public hosting — email/password, social OAuth |
 | [docs/guides/memory-api.md](docs/guides/memory-api.md) | Memory API — persistent memory for any agent |
 | [docs/mcp.md](docs/mcp.md) | MCP server setup and tool reference |
 | [docs/load-test-results.md](docs/load-test-results.md) | Performance benchmarks |
