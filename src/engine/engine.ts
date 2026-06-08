@@ -271,6 +271,15 @@ export class Engine {
   private entityEvictionTimers = new Map<EntityId, ReturnType<typeof setTimeout>>();
   private static readonly RECONNECT_GRACE_MS = 60_000;
 
+  /** Cancel a pending grace-period eviction for an entity (it's being rebound). */
+  private cancelEviction(entityId: EntityId): void {
+    const pending = this.entityEvictionTimers.get(entityId);
+    if (pending) {
+      clearTimeout(pending);
+      this.entityEvictionTimers.delete(entityId);
+    }
+  }
+
   /**
    * Tear down a connection. With `intent: "transient"` (default) the
    * entity lingers for RECONNECT_GRACE_MS so a token-bearing reconnect
@@ -452,6 +461,9 @@ export class Engine {
       if (this.atLoginCapacity(internal)) {
         return { error: Engine.ERR_AT_CAPACITY };
       }
+      // Re-attaching to a still-in-memory entity: cancel any pending grace
+      // eviction so it isn't torn out from under the new connection.
+      this.cancelEviction(existing.id);
       this._connections.bindEntity(connId, existing.id);
       if (this.db) {
         const existingUser = this.db.getUserByName(existing.name);
@@ -576,11 +588,7 @@ export class Engine {
       // the SAME entity id. No removal, no respawn, no migration needed.
       // Cancel any pending eviction so the grace timer doesn't yank the
       // entity out from under the freshly bound connection.
-      const pendingEviction = this.entityEvictionTimers.get(existing.id);
-      if (pendingEviction) {
-        clearTimeout(pendingEviction);
-        this.entityEvictionTimers.delete(existing.id);
-      }
+      this.cancelEviction(existing.id);
       this._connections.unbindEntity(existing.id);
       this._connections.bindEntity(connId, existing.id);
       entity = existing;
@@ -1579,6 +1587,7 @@ export class Engine {
     if (maxId > 0) {
       this.entities.setNextId(maxId + 1);
     }
+    this.dedupeAgentEntities();
     for (const room of this.rooms.all()) {
       const keys = this.db.getRoomStoreKeys(room.id);
       for (const key of keys) {
@@ -1595,6 +1604,54 @@ export class Engine {
       );
     }
     this.logger.info("engine", `Restored ${entities.length} entities from database.`);
+  }
+
+  /**
+   * Collapse duplicate same-named agent entities after a restore.
+   *
+   * A login only ever binds (and a reconnect only rebinds) ONE entity per name
+   * via `findAgentByName`, so any extra rows sharing that name are invisible
+   * ghosts — but `loadAllEntities` restores every row and the dashboard lists
+   * them all, so a name can appear several times. These accumulate from older
+   * respawn-on-reconnect behavior, crashes mid-session, or restore races.
+   *
+   * Keep the strongest survivor per name (highest rank, then most recently
+   * created) and delete the rest from memory + DB. Safe because reconnect
+   * rebinds by NAME, not by the token's original entity id, so the user's
+   * next reconnect lands on the survivor and keeps its persisted state.
+   */
+  private dedupeAgentEntities(): void {
+    const byName = new Map<string, Entity[]>();
+    for (const e of this.entities.all()) {
+      if (e.kind !== "agent") continue;
+      const key = e.name.toLowerCase();
+      const list = byName.get(key);
+      if (list) list.push(e);
+      else byName.set(key, [e]);
+    }
+
+    let removed = 0;
+    for (const list of byName.values()) {
+      if (list.length < 2) continue;
+      list.sort((a, b) => {
+        const rankA = (a.properties.rank as number) ?? 0;
+        const rankB = (b.properties.rank as number) ?? 0;
+        if (rankB !== rankA) return rankB - rankA; // highest rank wins
+        return (b.createdAt ?? 0) - (a.createdAt ?? 0); // then most recent
+      });
+      for (const dupe of list.slice(1)) {
+        this.entities.remove(dupe.id); // removes in-memory + deletes the DB row
+        removed++;
+      }
+      this.logger.warn(
+        "engine",
+        `Collapsed ${list.length} duplicate "${list[0]!.name}" entities → kept ${list[0]!.id}`,
+      );
+    }
+
+    if (removed > 0) {
+      this.logger.warn("engine", `Removed ${removed} duplicate agent entity row(s) on restore.`);
+    }
   }
 
   /** Load rooms stored in the DB (dynamic/built rooms) */
