@@ -905,12 +905,12 @@ function getGroups(db: MarinaDB): Response {
   return json(groups);
 }
 
-function deleteEntity(engine: Engine, name: string): Response {
+async function deleteEntity(engine: Engine, name: string): Promise<Response> {
   const entity = engine.findEntityGlobal(name);
   if (!entity) {
     return json({ error: "Entity not found" }, 404);
   }
-  const result = engine.removeEntity(entity.id);
+  const result = await engine.removeEntity(entity.id);
   if ("error" in result) {
     return json({ error: result.error }, 500);
   }

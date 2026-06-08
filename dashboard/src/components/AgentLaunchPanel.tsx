@@ -1,6 +1,6 @@
 import { Bot, Play, Send, Square } from "lucide-react";
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAgents, useKeys, useModels, useRoles } from "../hooks/use-api";
 import { postApi } from "../lib/api";
 import {
@@ -53,8 +53,28 @@ function SpawnForm() {
   const { data: modelsData, isLoading: modelsLoading } = useModels();
 
   const groups = useMemo(() => mergeGroups(modelsData?.groups), [modelsData]);
-  const modelCount = totalModelCount(groups);
-  const isLive = !!modelsData && modelsData.groups.some((g) => g.keySource !== null);
+  // Only providers we actually hold a key for are callable. Showing the keyless
+  // fallback catalog let users pick models that 404 at spawn — hide them.
+  const liveGroups = useMemo(
+    () => groups.filter((g) => g.keySource !== null && g.models.length > 0),
+    [groups],
+  );
+  const hasLive = liveGroups.length > 0;
+  const liveModelCount = totalModelCount(liveGroups);
+
+  // Default the selection to a callable model once discovery resolves; with no
+  // keyed providers, fall back to the custom field so nothing un-callable is preselected.
+  useEffect(() => {
+    if (modelsLoading) return;
+    if (hasLive) {
+      const valid = new Set(liveGroups.flatMap((g) => g.models.map((m) => m.value)));
+      setModel((cur) =>
+        cur === "__custom" || valid.has(cur) ? cur : liveGroups[0]!.models[0]!.value,
+      );
+    } else {
+      setModel("__custom");
+    }
+  }, [modelsLoading, hasLive, liveGroups]);
 
   const effectiveModel = model === "__custom" ? customModel : model;
 
@@ -100,9 +120,9 @@ function SpawnForm() {
           <span className="text-text-dim normal-case tracking-normal">
             {modelsLoading
               ? "discovering…"
-              : isLive
-                ? `${modelCount} live`
-                : `${modelCount} (fallback — add an API key)`}
+              : hasLive
+                ? `${liveModelCount} available`
+                : "no API key — add one in Admin → Keys"}
           </span>
         </span>
         <select
@@ -110,20 +130,23 @@ function SpawnForm() {
           onChange={(e) => setModel(e.target.value)}
           className="w-full bg-bg-surface border border-border rounded px-1.5 py-0.5 text-[11px] text-text-bright outline-none focus:border-primary"
         >
-          {groups.map((g) =>
-            g.models.length === 0 ? null : (
-              <optgroup key={g.provider} label={providerLabel(g.provider)}>
-                {g.models.map((m) => (
-                  <option key={m.value} value={m.value} title={m.description}>
-                    {m.label}
-                  </option>
-                ))}
-              </optgroup>
-            ),
-          )}
-          <option value="__custom">Custom...</option>
+          {liveGroups.map((g) => (
+            <optgroup key={g.provider} label={providerLabel(g.provider)}>
+              {g.models.map((m) => (
+                <option key={m.value} value={m.value} title={m.description}>
+                  {m.label}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+          <option value="__custom">Custom…</option>
         </select>
       </label>
+      {!modelsLoading && !hasLive && (
+        <div className="text-text-dim text-[9px]">
+          No keyed providers — add an API key in Admin → Keys, or enter a custom provider/model.
+        </div>
+      )}
       {model === "__custom" && (
         <input
           type="text"
