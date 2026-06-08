@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { lazy, StrictMode, Suspense } from "react";
+import { lazy, type ReactNode, StrictMode, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { AuthGate } from "./components/AuthGate";
 import { initTheme } from "./hooks/use-theme";
 import "./index.css";
 
@@ -32,20 +33,7 @@ const isUnified = new URLSearchParams(window.location.search).has("unified");
 const isWho = window.location.pathname.startsWith("/who");
 
 function RootContent() {
-  if (isUnified) {
-    return (
-      <Suspense>
-        <LazyUnifiedCanvas />
-      </Suspense>
-    );
-  }
-  if (isCanvas) {
-    return (
-      <Suspense>
-        <LazyCanvasPage />
-      </Suspense>
-    );
-  }
+  // Public per-entity pages are read-only and never gated.
   if (isWho) {
     return (
       <Suspense>
@@ -53,7 +41,25 @@ function RootContent() {
       </Suspense>
     );
   }
-  return <App />;
+  // All interactive surfaces sit behind the optional sign-in gate (no-op when
+  // auth is off).
+  let surface: ReactNode;
+  if (isUnified) {
+    surface = (
+      <Suspense>
+        <LazyUnifiedCanvas />
+      </Suspense>
+    );
+  } else if (isCanvas) {
+    surface = (
+      <Suspense>
+        <LazyCanvasPage />
+      </Suspense>
+    );
+  } else {
+    surface = <App />;
+  }
+  return <AuthGate>{surface}</AuthGate>;
 }
 
 createRoot(document.getElementById("root")!).render(
