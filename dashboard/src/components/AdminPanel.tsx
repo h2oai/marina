@@ -9,7 +9,7 @@ import {
   useRoles,
   useTraits,
 } from "../hooks/use-api";
-import { deleteApi, patchApi, postApi, putApi } from "../lib/api";
+import { deleteApi, describeApiError, patchApi, postApi, putApi } from "../lib/api";
 import { GlassPanel } from "./GlassPanel";
 
 const SUPPORTED_PROVIDERS = [
@@ -62,20 +62,37 @@ export function AdminPanel({ backContent }: { backContent?: React.ReactNode }) {
 // ─── Keys Tab ───────────────────────────────────────────────────────────────
 
 function KeysTab() {
-  const { data: keys, refetch } = useKeys();
+  const { data: keys, isError, error, refetch } = useKeys();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [provider, setProvider] = useState("");
   const [value, setValue] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
 
   const handleAdd = async () => {
-    if (!name || !provider || !value) return;
-    await postApi("/api/keys", { name, provider, value });
-    setName("");
-    setProvider("");
-    setValue("");
-    setAdding(false);
-    refetch();
+    // Be explicit about why a save won't proceed — the old silent return on a
+    // missing field looked like "nothing happens".
+    if (!name.trim()) return setFormError("Enter a key name.");
+    if (!provider) return setFormError("Select a provider.");
+    if (!value.trim()) return setFormError("Enter the API key value.");
+    setSaving(true);
+    setFormError(null);
+    try {
+      await postApi("/api/keys", { name: name.trim(), provider, value: value.trim() });
+      setName("");
+      setProvider("");
+      setValue("");
+      setAdding(false);
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 2500);
+      await refetch();
+    } catch (e) {
+      setFormError(describeApiError(e));
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -123,14 +140,21 @@ function KeysTab() {
           <button
             type="button"
             onClick={handleAdd}
-            className="w-full bg-primary/20 hover:bg-primary/30 text-primary text-[10px] rounded px-2 py-0.5"
+            disabled={saving}
+            className="w-full bg-primary/20 hover:bg-primary/30 text-primary text-[10px] rounded px-2 py-0.5 disabled:opacity-50"
           >
-            Save Key
+            {saving ? "Saving…" : "Save Key"}
           </button>
+          {formError && <div className="text-danger text-[10px]">{formError}</div>}
         </div>
       )}
 
-      {!keys || keys.length === 0 ? (
+      {!adding && formError && <div className="text-danger text-[10px]">{formError}</div>}
+      {savedFlash && <div className="text-success text-[10px]">✓ Key saved</div>}
+
+      {isError ? (
+        <div className="text-danger text-[10px]">{describeApiError(error)}</div>
+      ) : !keys || keys.length === 0 ? (
         <div className="text-text-dim text-[10px]">
           No database keys. Set env vars (ANTHROPIC_API_KEY, GEMINI_API_KEY, etc.) or add keys
           above.
