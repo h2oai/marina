@@ -15,6 +15,7 @@ import {
   getModel as piGetModel,
   type TextContent,
 } from "@mariozechner/pi-ai";
+import { MARINA_DEFAULT_MODEL } from "../engine/constants";
 import { MarinaClient } from "../sdk/client";
 import type { Perception } from "../types";
 import { ActionHistory } from "./action-history";
@@ -30,7 +31,7 @@ import { createScopedTools } from "./tools";
 
 // ─── Model Resolution ───────────────────────────────────────────────────────
 
-/** Resolve a "provider/model" string to a pi-ai Model. Falls back to gemini-2.0-flash. */
+/** Resolve a "provider/model" string to a pi-ai Model. Falls back to MARINA_DEFAULT_MODEL. */
 function resolveModel(modelStr: string, localPort?: number): Model<Api> {
   const slash = modelStr.indexOf("/");
   const provider = slash >= 0 ? modelStr.slice(0, slash) : modelStr;
@@ -57,10 +58,21 @@ function resolveModel(modelStr: string, localPort?: number): Model<Api> {
     // Cast to allow arbitrary provider/modelId strings
     return (piGetModel as (p: string, id: string) => Model<Api>)(provider, modelId);
   } catch {
+    // The requested model isn't in the dispatch registry. Fall back to the
+    // configured default — and say so clearly, since a silent provider switch
+    // (e.g. to a Google model you have no key for) otherwise surfaces later as
+    // a confusing upstream 4xx. Pick a supported model or set MARINA_DEFAULT_MODEL.
+    const dslash = MARINA_DEFAULT_MODEL.indexOf("/");
+    const dp = dslash >= 0 ? MARINA_DEFAULT_MODEL.slice(0, dslash) : MARINA_DEFAULT_MODEL;
+    const dId = dslash >= 0 ? MARINA_DEFAULT_MODEL.slice(dslash + 1) : MARINA_DEFAULT_MODEL;
     console.warn(
-      `[lean-agent] Model "${modelStr}" not found, falling back to google/gemini-2.0-flash`,
+      `[lean-agent] Model "${modelStr}" is not recognized by the model registry — falling back to MARINA_DEFAULT_MODEL "${MARINA_DEFAULT_MODEL}". Ensure you have a key for its provider, or pick a supported model.`,
     );
-    return piGetModel("google", "gemini-2.0-flash");
+    try {
+      return (piGetModel as (p: string, id: string) => Model<Api>)(dp, dId);
+    } catch {
+      return piGetModel("google", "gemini-2.0-flash");
+    }
   }
 }
 
@@ -223,7 +235,7 @@ export class LeanAgentAdapter implements AgentHandle {
     this.setupPerceptionHandlers();
 
     // Resolve model (pass WS port for marina/ provider routing)
-    const modelStr = config.model ?? "google/gemini-2.0-flash";
+    const modelStr = config.model ?? MARINA_DEFAULT_MODEL;
     this.wsPort = Number(new URL(wsUrl).port) || 3300;
     this.model = resolveModel(modelStr, this.wsPort);
 
@@ -1369,7 +1381,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       name: this.name,
       entityId: this.gameState.getState().connection.entityId ?? null,
       state,
-      model: this.config.model ?? "google/gemini-2.0-flash",
+      model: this.config.model ?? MARINA_DEFAULT_MODEL,
       role: this.config.role ?? "",
       focus: this.focus?.description ?? null,
       goal: this.config.goal ?? null,

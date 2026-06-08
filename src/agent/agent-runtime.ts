@@ -5,6 +5,7 @@
  * Agents self-connect via WebSocket — the engine sees them as regular connections.
  */
 
+import { MARINA_DEFAULT_MODEL } from "../engine/constants";
 import { MODEL_DISCOVERY_PROVIDERS } from "../net/model-discovery";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
@@ -217,7 +218,7 @@ export class AgentRuntime {
       // but hand the adapter a resolver so rotations in the DB are picked
       // up on every LLM call without restarting the agent.
       const apiKeyAtSpawn = this.resolveApiKey(config.model, config.keyName);
-      const modelStr = config.model ?? "google/gemini-2.0-flash";
+      const modelStr = config.model ?? MARINA_DEFAULT_MODEL;
       const provider = this.extractProvider(modelStr);
       if (!KNOWN_PROVIDERS.has(provider)) {
         // Most common cause: caller passed a bare model id ("claude-opus-4-7")
@@ -305,7 +306,7 @@ export class AgentRuntime {
       if (this.db) {
         this.db.saveAgentConfig({
           name: config.name,
-          model: config.model ?? "google/gemini-2.0-flash",
+          model: config.model ?? MARINA_DEFAULT_MODEL,
           role: config.role,
           goal: config.goal,
           keyName: config.keyName,
@@ -491,7 +492,7 @@ export class AgentRuntime {
   // ─── API Key Resolution ───────────────────────────────────────────────
 
   private resolveApiKey(model?: string, keyName?: string): string | undefined {
-    const provider = this.extractProvider(model ?? "google/gemini-2.0-flash");
+    const provider = this.extractProvider(model ?? MARINA_DEFAULT_MODEL);
 
     // Internal Marina model API — always use the startup-generated token
     if (provider === "marina") {

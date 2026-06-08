@@ -58,7 +58,7 @@ import {
   ROOM_FETCH_RATE_MS,
   ROOM_FETCH_TIMEOUT_MS,
 } from "./constants";
-import { getErrorMessage, tryLog } from "./errors";
+import { getErrorMessage, tryLog, tryLogAsync } from "./errors";
 import { EventLog } from "./event-log";
 import { GatewayRuntime } from "./gateway-runtime";
 import { Logger } from "./logger";
@@ -1293,12 +1293,24 @@ export class Engine {
   }
 
   /** Remove an entity from the engine (kick if connected, despawn if NPC/orphan). */
-  removeEntity(entityId: EntityId): { ok: true; name: string } | { error: string } {
+  async removeEntity(
+    entityId: EntityId,
+  ): Promise<{ ok: true; name: string } | { error: string }> {
     const entity = this.entities.get(entityId);
     if (!entity) {
       return { error: "Entity not found." };
     }
     const name = entity.name;
+
+    // If a live agent is driving this entity, stop its loop and delete its
+    // saved config first. Without this the agent loop keeps running against a
+    // deleted entity, and persistent/room agents would simply respawn — so
+    // "remove" wouldn't actually remove them from the Marina.
+    if (this.agentRuntime.get(name)) {
+      await tryLogAsync(this.logger, "entity", "Agent stop on removal failed", () =>
+        this.agentRuntime.stop(name),
+      );
+    }
 
     // If the entity has an active connection, kick them
     const conn = this._connections.getConnectionForEntity(entityId);
