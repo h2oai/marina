@@ -1,6 +1,17 @@
 import { memo } from "react";
+import { escapeHtml, linkifyHtml } from "../../lib/linkify";
 import { sanitizeChatHtml } from "../../lib/sanitize";
 import type { CommandMessage, PerceptionTag } from "./CommandBar";
+
+/**
+ * Sanitized, link-ified HTML for a message body. Uses the ANSI-converted
+ * `msg.html` when present (already HTML-escaped), else escapes the plain text.
+ * URLs are wrapped in anchors at render time — the plain-text protocol other
+ * clients receive is untouched.
+ */
+function bodyHtml(msg: CommandMessage): string {
+  return sanitizeChatHtml(linkifyHtml(msg.html ?? escapeHtml(msg.text)));
+}
 
 /** Map perception tags to CSS class suffixes for message styling. */
 function tagStyleClass(tag?: PerceptionTag): string {
@@ -103,9 +114,12 @@ export const MessageRow = memo(function MessageRow({
         >
           {msg.tell.to}
         </button>
-        <span className="uc-cm-text" style={{ display: "block", marginTop: "2px" }}>
-          {msg.text}
-        </span>
+        <span
+          className="uc-cm-text"
+          style={{ display: "block", marginTop: "2px" }}
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitizeChatHtml strips all but inline span/style + linkified anchors.
+          dangerouslySetInnerHTML={{ __html: bodyHtml(msg) }}
+        />
       </div>
     );
   }
@@ -132,15 +146,11 @@ export const MessageRow = memo(function MessageRow({
     return (
       <div className="uc-cmd-message">
         <SysBadge />
-        {msg.html ? (
-          <span
-            className="uc-cm-sys"
-            // biome-ignore lint/security/noDangerouslySetInnerHtml: defense-in-depth via sanitizeChatHtml — strips anything but inline span/style.
-            dangerouslySetInnerHTML={{ __html: sanitizeChatHtml(msg.html) }}
-          />
-        ) : (
-          <span className="uc-cm-sys">{msg.text}</span>
-        )}
+        <span
+          className="uc-cm-sys"
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitizeChatHtml strips all but inline span/style + linkified anchors.
+          dangerouslySetInnerHTML={{ __html: bodyHtml(msg) }}
+        />
       </div>
     );
   }
@@ -160,15 +170,11 @@ export const MessageRow = memo(function MessageRow({
           {msg.name}
         </button>
       )}{" "}
-      {msg.html ? (
-        <span
-          className="uc-cm-text"
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: defense-in-depth via sanitizeChatHtml — strips anything but inline span/style.
-          dangerouslySetInnerHTML={{ __html: sanitizeChatHtml(msg.html) }}
-        />
-      ) : (
-        <span className="uc-cm-text">{msg.text}</span>
-      )}
+      <span
+        className="uc-cm-text"
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitizeChatHtml strips all but inline span/style + linkified anchors.
+        dangerouslySetInnerHTML={{ __html: bodyHtml(msg) }}
+      />
     </div>
   );
 });

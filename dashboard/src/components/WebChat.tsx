@@ -2,6 +2,7 @@ import { MessageSquareText, Send } from "lucide-react";
 import { useCallback, useEffect, useRef } from "react";
 import { ensureChatWs, getChatWs, useChatState } from "../hooks/use-chat-state";
 import { clearToken, setToken } from "../lib/api";
+import { linkifyHtml } from "../lib/linkify";
 import { sanitizeChatHtml } from "../lib/sanitize";
 import { GlassPanel } from "./GlassPanel";
 
@@ -266,8 +267,8 @@ export function WebChat() {
               // biome-ignore lint/suspicious/noArrayIndexKey: chat messages are append-only; index is the message identity
               key={i}
               className={`whitespace-pre-wrap break-words rounded-sm my-0.5 py-0.5 ${msgStyle(m.kind, m.tag)}`}
-              // biome-ignore lint/security/noDangerouslySetInnerHtml: defense-in-depth via sanitizeChatHtml — strips anything but inline span/style.
-              dangerouslySetInnerHTML={{ __html: sanitizeChatHtml(m.html) }}
+              // biome-ignore lint/security/noDangerouslySetInnerHtml: defense-in-depth via sanitizeChatHtml — strips all but inline span/style + linkified anchors.
+              dangerouslySetInnerHTML={{ __html: sanitizeChatHtml(linkifyHtml(m.html)) }}
             />
           ))}
         </div>
