@@ -63,6 +63,19 @@ export async function fetchApi<T>(path: string): Promise<T> {
   return res.json();
 }
 
+/**
+ * Turn a thrown API error into a human-readable message. `fetchApi`/`postApi`
+ * throw `Error("API error: <status>")`; a 401 means the dashboard has no valid
+ * session — the most common reason admin saves/lists silently failed.
+ */
+export function describeApiError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes("401")) {
+    return "Not authorized — log in (chat panel) as an admin to manage this.";
+  }
+  return msg.startsWith("API error:") ? `Request failed (${msg.slice(11).trim()}).` : msg;
+}
+
 export async function postApi<T = unknown>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
