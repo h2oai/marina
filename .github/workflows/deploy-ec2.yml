@@ -84,12 +84,14 @@ jobs:
           REGION: ${{ vars.AWS_REGION }}
           IMAGE: ${{ steps.build.outputs.image }}
           GIT_REF: ${{ github.sha }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           # Build the command list safely (no shell-injection of dir/ref/image).
           jq -n \
             --arg dir "$APP_DIR" \
             --arg ref "$GIT_REF" \
+            --arg refname "$REF_NAME" \
             --arg img "$IMAGE" \
             --arg region "$REGION" '{
             commands: [
@@ -99,7 +101,7 @@ jobs:
               "export MARINA_IMAGE=\($img)",
               "cd \($dir)",
               "git config --global --add safe.directory \($dir)",
-              "git fetch origin main --prune",
+              "git fetch origin \($refname) --prune",
               "git reset --hard \($ref)",
               "bash scripts/deploy.sh"
             ]
