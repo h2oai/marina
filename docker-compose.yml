@@ -11,7 +11,13 @@ services:
       - "4000:4000" # Telnet (optional — drop this line to keep it internal)
       - "3301:3301" # MCP    (optional — drop this line to keep it internal)
     volumes:
-      - marina-data:/app/data
+      # Bind mount: persistent state (SQLite DB + assets) lives in ./marina-data
+      # on the host, so you can browse/back it up directly. The container runs as
+      # the unprivileged `bun` user (UID 1000) — if it can't write this folder
+      # you'll get SQLITE_CANTOPEN. Before first run:
+      #   mkdir -p ./marina-data && sudo chown -R 1000:1000 ./marina-data
+      # (or set `user: "<your-uid>:<your-gid>"` on this service to match the host).
+      - ./marina-data:/app/data
     environment:
       # Persistence — keep DB + assets on the mounted volume (set in the image too)
       - DB_PATH=/app/data/marina.db
@@ -41,6 +47,3 @@ services:
       # - DISCORD_TOKEN=your_token
       # - DISCORD_CHANNEL_IDS=channel1,channel2
     restart: unless-stopped
-
-volumes:
-  marina-data:

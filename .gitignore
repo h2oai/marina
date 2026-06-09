@@ -12,6 +12,7 @@ dist/
 *.pid
 backups/
 data/
+marina-data/
 dashboard/node_modules/
 marina-desktop/node_modules/
 marina-desktop/build/
