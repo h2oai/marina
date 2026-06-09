@@ -22,6 +22,7 @@
 import { type EdgeProps, getBezierPath } from "@xyflow/react";
 import { animate, type MotionValue, motion, useMotionValue, useTransform } from "motion/react";
 import { memo, useEffect, useState } from "react";
+import { prefersReducedMotion } from "../../lib/motion-prefs";
 import type { InteractionType } from "../hooks/use-interactions";
 import {
   INTERACTION_COLORS,
@@ -145,9 +146,11 @@ export const InteractionArc = memo(function InteractionArc({
   const midX = (sourceX + targetX) / 2;
   const midY = Math.min(sourceY, targetY) - 40 - Math.abs(sourceX - targetX) * 0.1;
 
-  // Particle speed: keep a stable cadence — visual variation comes from
-  // the parent group's fade, not the dur attribute.
-  const particleDur = 0.7;
+  // The two travelling particles used <animateMotion> to sample the bezier path
+  // every frame — multiplied across every live say/tell/shout arc, that was a
+  // dominant continuous-CPU cost. They're dropped; the dashed-offset flow carries
+  // the same direction far more cheaply and is itself disabled under reduce-motion.
+  const animateFlow = !prefersReducedMotion();
 
   return (
     <>
@@ -193,41 +196,16 @@ export const InteractionArc = memo(function InteractionArc({
           style={{ strokeWidth }}
           className="react-flow__edge-path"
         >
-          <animate
-            attributeName="stroke-dashoffset"
-            from="0"
-            to="-36"
-            dur="0.5s"
-            repeatCount="indefinite"
-          />
+          {animateFlow && (
+            <animate
+              attributeName="stroke-dashoffset"
+              from="0"
+              to="-36"
+              dur="0.5s"
+              repeatCount="indefinite"
+            />
+          )}
         </motion.path>
-
-        {/* Primary animated particle */}
-        <circle r={8} fill={color} opacity={0}>
-          <animateMotion dur={`${particleDur}s`} repeatCount="indefinite" path={edgePath} />
-          <animate
-            attributeName="opacity"
-            values="0;0.9;0.9;0"
-            dur={`${particleDur}s`}
-            repeatCount="indefinite"
-          />
-        </circle>
-        {/* Secondary particle offset */}
-        <circle r={5} fill={color} opacity={0}>
-          <animateMotion
-            dur={`${particleDur * 1.3}s`}
-            repeatCount="indefinite"
-            path={edgePath}
-            begin="0.35s"
-          />
-          <animate
-            attributeName="opacity"
-            values="0;0.6;0.6;0"
-            dur={`${particleDur * 1.3}s`}
-            repeatCount="indefinite"
-            begin="0.35s"
-          />
-        </circle>
 
         {/* Type label at midpoint — only when the arc has no body
             (movement, command, presence). */}

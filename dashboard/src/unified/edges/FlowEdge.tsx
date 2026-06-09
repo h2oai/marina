@@ -1,17 +1,18 @@
 /**
  * Custom ReactFlow edge for room-to-room connections.
  *
- * Visual characteristics matching the mockup's renderFlows:
- * - Animated dashed line
+ * Visual characteristics:
+ * - Dashed line whose offset animates to convey flow direction (disabled under
+ *   reduce-motion). The travelling <animateMotion> particle was removed — these
+ *   edges are persistent, so the particle ran indefinitely for the whole graph
+ *   and was a dominant always-on cost; the dashed flow conveys it far cheaper.
  * - Color derived from source room's district
  * - Width scales with min(source.throughput, target.throughput)
- * - Animated square particle flowing along the path (SVG animateMotion)
- * - Particle size and speed proportional to flow volume
- * - Particles only show when there's actual throughput
  */
 
 import { type EdgeProps, getBezierPath } from "@xyflow/react";
 import { memo } from "react";
+import { prefersReducedMotion } from "../../lib/motion-prefs";
 
 /** Short labels for cardinal directions. */
 const DIR_LABELS: Record<string, string> = {
@@ -74,11 +75,12 @@ export const FlowEdge = memo(function FlowEdge({
     ? Math.max(0.7, Math.min(0.95, 0.65 + throughput * 0.008))
     : Math.max(0.55, Math.min(0.8, 0.5 + throughput * 0.006));
 
-  // Particle dimensions — chunky
-  const particleSize = Math.min(12, Math.max(6, vol * 0.25));
-  const particleDur = Math.max(1, 3 - vol * 0.04);
-  // Always show particles — edges are alive
-  const showParticle = true;
+  // These flow edges are PERSISTENT (one per room connection), so a per-edge
+  // <animateMotion> particle ran indefinitely for the whole world graph the entire
+  // time the canvas was open — a dominant always-on CPU/paint cost. The particle is
+  // dropped; the dashed-offset flow conveys the same "artery" motion far cheaper and
+  // is disabled under reduce-motion (static arteries, no animation at all).
+  const animateFlow = !prefersReducedMotion();
 
   const [edgePath] = getBezierPath({
     sourceX,
@@ -116,13 +118,15 @@ export const FlowEdge = memo(function FlowEdge({
         strokeLinecap="round"
         className="react-flow__edge-path"
       >
-        <animate
-          attributeName="stroke-dashoffset"
-          from="0"
-          to="-24"
-          dur={`${dashDur}s`}
-          repeatCount="indefinite"
-        />
+        {animateFlow && (
+          <animate
+            attributeName="stroke-dashoffset"
+            from="0"
+            to="-24"
+            dur={`${dashDur}s`}
+            repeatCount="indefinite"
+          />
+        )}
       </path>
 
       {/* Cross-district gradient overlay */}
@@ -136,19 +140,6 @@ export const FlowEdge = memo(function FlowEdge({
           opacity={0.15}
           className="react-flow__edge-path"
         />
-      )}
-
-      {/* Animated square particle flowing along the edge */}
-      {showParticle && (
-        <rect width={particleSize} height={particleSize} fill={color} opacity={0}>
-          <animateMotion dur={`${particleDur}s`} repeatCount="indefinite" path={edgePath} />
-          <animate
-            attributeName="opacity"
-            values="0;0.8;0.8;0"
-            dur={`${particleDur}s`}
-            repeatCount="indefinite"
-          />
-        </rect>
       )}
 
       {/* Cardinal direction label at midpoint */}
