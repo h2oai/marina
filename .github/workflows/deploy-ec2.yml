@@ -91,6 +91,7 @@ jobs:
             --arg region "$REGION" '{
             commands: [
               "set -euo pipefail",
+              "export HOME=/root",
               "export AWS_REGION=\($region)",
               "export MARINA_IMAGE=\($img)",
               "cd \($dir)",
