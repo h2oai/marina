@@ -20,6 +20,7 @@ import {
 import type { BeforeToolCallHook, OnPerceptionHook } from "../src/agent/hook-registry";
 import { HookRegistry } from "../src/agent/hook-registry";
 import { InterruptibleWaiter } from "../src/agent/interruptible-waiter";
+import { classifyModelResolution, resolveModel } from "../src/agent/lean-agent-adapter";
 import { applyRankProgression, checkRankProgression } from "../src/agent/rank-progression";
 import {
   composeCapabilities,
@@ -1208,5 +1209,52 @@ describe("InterruptibleWaiter", () => {
     await w.sleep(40);
     const elapsed = performance.now() - start;
     expect(elapsed).toBeGreaterThanOrEqual(35);
+  });
+});
+
+describe("model resolution", () => {
+  it("resolves an exact registry hit to that provider + id", () => {
+    const m = resolveModel("anthropic/claude-3-5-haiku-20241022");
+    expect(m.provider).toBe("anthropic");
+    expect(m.id).toBe("claude-3-5-haiku-20241022");
+    expect(classifyModelResolution("anthropic/claude-3-5-haiku-20241022")).toBe("exact");
+  });
+
+  it("synthesizes a routable model for a known provider with an unlisted id", () => {
+    // The whole bug: pi-ai's `getModel` returns undefined (not a throw) for
+    // ids it doesn't bundle, so this used to leak an undefined model into a
+    // malformed upstream request. It must now route to the correct provider
+    // with the literal id rather than crash or switch providers.
+    const id = "claude-opus-4-99-some-unlisted-id";
+    const m = resolveModel(`anthropic/${id}`);
+    expect(m).toBeDefined();
+    expect(m.provider).toBe("anthropic");
+    expect(m.id).toBe(id);
+    expect(m.baseUrl).toContain("anthropic");
+    // Unknown ids assume no extended thinking so we don't emit reasoning params.
+    expect(m.reasoning).toBe(false);
+    expect(classifyModelResolution(`anthropic/${id}`)).toBe("synthesized");
+  });
+
+  it("routes an unlisted OpenRouter slug to OpenRouter, not the default", () => {
+    const id = "some-vendor/brand-new-model-not-yet-bundled";
+    const m = resolveModel(`openrouter/${id}`);
+    expect(m.provider).toBe("openrouter");
+    expect(m.id).toBe(id);
+    expect(m.baseUrl).toContain("openrouter");
+  });
+
+  it("falls back to the default model for an entirely unknown provider", () => {
+    const m = resolveModel("nonexistentprovider/whatever");
+    // Must not be the bogus provider, and must be a real, routable model.
+    expect(m.provider).not.toBe("nonexistentprovider");
+    expect(m.id.length).toBeGreaterThan(0);
+    expect(classifyModelResolution("nonexistentprovider/whatever")).toBe("fallback");
+  });
+
+  it("routes the synthetic marina provider to the local model API", () => {
+    const m = resolveModel("marina/default", 4321);
+    expect(m.baseUrl).toBe("http://localhost:4321/v1");
+    expect(classifyModelResolution("marina/default")).toBe("exact");
   });
 });
