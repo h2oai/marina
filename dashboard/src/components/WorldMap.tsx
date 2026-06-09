@@ -2,7 +2,7 @@ import { Crosshair, Map as MapIcon } from "lucide-react";
 import { type AnimationPlaybackControlsWithThen, animate, motion } from "motion/react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWorldState } from "../hooks/use-world-state";
-import type { WorldData } from "../lib/types";
+import type { DashboardEvent, WorldData } from "../lib/types";
 import {
   computeLayout,
   getDistrictColor,
@@ -284,7 +284,11 @@ export function WorldMap({ worldData, backContent }: WorldMapProps) {
   const roomPops = useWorldState((s) => s.roomPopulations);
   const wsStartRoom = useWorldState((s) => s.startRoom);
   const wsWorldName = useWorldState((s) => s.worldName);
-  const eventFeed = useWorldState((s) => s.eventFeed);
+  // NOTE: eventFeed is intentionally NOT subscribed reactively. It changes on
+  // every event batch; subscribing here re-rendered this entire ~1150-line SVG
+  // map on every event. The two effects that need it read it imperatively
+  // (getState / a non-rendering store subscription) so the map only re-renders
+  // when entities/rooms actually change.
 
   const startRoom = wsStartRoom || worldData?.startRoom || "";
   const worldName = wsWorldName || worldData?.worldName || "";
@@ -450,69 +454,81 @@ export function WorldMap({ worldData, backContent }: WorldMapProps) {
   }, [allPositions, posMap, startRoom]);
 
   // ── 2.2: Entity Movement Trails ───────────────────────────────────
+  // Driven by a non-rendering store subscription: the handler fires on event
+  // batches and animates SVG circles imperatively, so new events never trigger
+  // a React re-render of the map. Re-subscribes only when positions change.
   useEffect(() => {
-    if (prefersReducedMotion() || !trailsRef.current || allPositions.length === 0) return;
+    if (prefersReducedMotion() || allPositions.length === 0) return;
 
-    // Process latest events for movement
-    for (const ev of eventFeed.slice(0, 20)) {
-      if (ev.type === "entity_enter" && ev.entity && ev.room) {
-        const prevRoom = entityRoomRef.current.get(ev.entity);
-        entityRoomRef.current.set(ev.entity, ev.room);
+    const processMovement = (eventFeed: DashboardEvent[]) => {
+      if (!trailsRef.current) return;
+      const wsEntities = useWorldState.getState().entities;
+      for (const ev of eventFeed.slice(0, 20)) {
+        if (ev.type === "entity_enter" && ev.entity && ev.room) {
+          const prevRoom = entityRoomRef.current.get(ev.entity);
+          entityRoomRef.current.set(ev.entity, ev.room);
 
-        if (prevRoom && prevRoom !== ev.room && activeTrailsRef.current < 10) {
-          const from = posMap.get(prevRoom);
-          const to = posMap.get(ev.room);
-          if (!from || !to) continue;
+          if (prevRoom && prevRoom !== ev.room && activeTrailsRef.current < 10) {
+            const from = posMap.get(prevRoom);
+            const to = posMap.get(ev.room);
+            if (!from || !to) continue;
 
-          activeTrailsRef.current++;
+            activeTrailsRef.current++;
 
-          // Determine color by entity kind
-          const ent = wsEntities.find((e) => e.id === ev.entity);
-          const color =
-            ent?.kind === "agent"
-              ? getComputedStyle(document.documentElement)
-                  .getPropertyValue("--color-primary")
-                  .trim()
-              : ent?.kind === "npc"
+            // Determine color by entity kind
+            const ent = wsEntities.find((e) => e.id === ev.entity);
+            const color =
+              ent?.kind === "agent"
                 ? getComputedStyle(document.documentElement)
-                    .getPropertyValue("--color-warning")
+                    .getPropertyValue("--color-primary")
                     .trim()
-                : getComputedStyle(document.documentElement)
-                    .getPropertyValue("--color-text-dim")
-                    .trim();
+                : ent?.kind === "npc"
+                  ? getComputedStyle(document.documentElement)
+                      .getPropertyValue("--color-warning")
+                      .trim()
+                  : getComputedStyle(document.documentElement)
+                      .getPropertyValue("--color-text-dim")
+                      .trim();
 
-          // Create temp SVG circle
-          const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-          circle.setAttribute("r", "3");
-          circle.setAttribute("fill", color);
-          circle.setAttribute("filter", "url(#glow-sm)");
-          circle.setAttribute("cx", String(from.x));
-          circle.setAttribute("cy", String(from.y));
-          trailsRef.current.appendChild(circle);
+            // Create temp SVG circle
+            const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            circle.setAttribute("r", "3");
+            circle.setAttribute("fill", color);
+            circle.setAttribute("filter", "url(#glow-sm)");
+            circle.setAttribute("cx", String(from.x));
+            circle.setAttribute("cy", String(from.y));
+            trailsRef.current.appendChild(circle);
 
-          animate(
-            circle,
-            {
-              cx: [from.x, to.x],
-              cy: [from.y, to.y],
-              opacity: [0.8, 0],
-              r: [3, 1.5],
-            },
-            {
-              duration: 0.8,
-              ease: "easeOut",
-              onComplete: () => {
-                circle.remove();
-                activeTrailsRef.current--;
+            animate(
+              circle,
+              {
+                cx: [from.x, to.x],
+                cy: [from.y, to.y],
+                opacity: [0.8, 0],
+                r: [3, 1.5],
               },
-            },
-          );
+              {
+                duration: 0.8,
+                ease: "easeOut",
+                onComplete: () => {
+                  circle.remove();
+                  activeTrailsRef.current--;
+                },
+              },
+            );
+          }
+        } else if (ev.type === "entity_leave" && ev.entity && ev.room) {
+          entityRoomRef.current.set(ev.entity, ev.room);
         }
-      } else if (ev.type === "entity_leave" && ev.entity && ev.room) {
-        entityRoomRef.current.set(ev.entity, ev.room);
       }
-    }
-  }, [eventFeed, posMap, allPositions, wsEntities]);
+    };
+
+    processMovement(useWorldState.getState().eventFeed);
+    const unsub = useWorldState.subscribe((state, prev) => {
+      if (state.eventFeed !== prev.eventFeed) processMovement(state.eventFeed);
+    });
+    return unsub;
+  }, [posMap, allPositions]);
 
   // ── 2.3: Room Activity Breathing ──────────────────────────────────
   useEffect(() => {
@@ -523,6 +539,8 @@ export function WorldMap({ worldData, backContent }: WorldMapProps) {
       const now = Date.now();
       const thirtySecsAgo = now - 30_000;
 
+      // Read the feed imperatively — this runs on a 5s timer, not per event.
+      const eventFeed = useWorldState.getState().eventFeed;
       // Count events per room in last 30s
       const roomActivity = new Map<string, number>();
       for (const ev of eventFeed) {
@@ -566,7 +584,10 @@ export function WorldMap({ worldData, backContent }: WorldMapProps) {
       }
       breatheAnimsRef.current.clear();
     };
-  }, [eventFeed]);
+    // Runs once on mount: the timer reads the live feed via getState, so this
+    // effect no longer tears down + rebuilds (and restarts every room's infinite
+    // breathing animation) on every incoming event.
+  }, []);
 
   // ── 2.4: Selection Ripple ─────────────────────────────────────────
   useEffect(() => {

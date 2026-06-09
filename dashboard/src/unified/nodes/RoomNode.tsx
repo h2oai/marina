@@ -47,7 +47,12 @@ export interface RoomNodeData {
   [key: string]: unknown;
 }
 
-const ACTIVITY_TICK_MS = 500;
+// Every room node re-renders on this interval to re-poll its activity stats
+// (events/sec, diversity) from the activity store, which it reads via stable
+// function selectors rather than reactive subscriptions. 500ms meant every node
+// re-rendered twice a second forever, even on an idle world; 2s is plenty for an
+// ambient activity sparkline and cuts that idle churn 4x.
+const ACTIVITY_TICK_MS = 2000;
 
 function hexToRgb(h: string): string {
   let hex = h.replace("#", "");
