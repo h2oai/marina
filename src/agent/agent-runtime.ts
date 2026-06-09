@@ -211,14 +211,18 @@ export class AgentRuntime {
       // false. Explicit values from the caller win.
       const effectiveConfig: AgentConfig = {
         ...config,
+        // No explicit model → use the operator's runtime default (DB), then the
+        // env/built-in default. This is what makes "change the default once the
+        // world is running" apply to newly spawned agents.
+        model: config.model ?? this.db?.getDefaultModel() ?? MARINA_DEFAULT_MODEL,
         crewResponder: config.crewResponder ?? inferCrewResponder(config.role),
       };
 
       // Validate a key exists at spawn time (fail fast on missing config),
       // but hand the adapter a resolver so rotations in the DB are picked
       // up on every LLM call without restarting the agent.
-      const apiKeyAtSpawn = this.resolveApiKey(config.model, config.keyName);
-      const modelStr = config.model ?? MARINA_DEFAULT_MODEL;
+      const apiKeyAtSpawn = this.resolveApiKey(effectiveConfig.model, config.keyName);
+      const modelStr = effectiveConfig.model ?? MARINA_DEFAULT_MODEL;
       const provider = this.extractProvider(modelStr);
       if (!KNOWN_PROVIDERS.has(provider)) {
         // Most common cause: caller passed a bare model id ("claude-opus-4-7")
@@ -256,7 +260,7 @@ export class AgentRuntime {
           );
         }
       }
-      const apiKeyResolver = () => this.resolveApiKey(config.model, config.keyName);
+      const apiKeyResolver = () => this.resolveApiKey(effectiveConfig.model, config.keyName);
 
       // Create adapter — use effectiveConfig so the inferred crewResponder
       // flag (and any other adapter-level defaults) reach the runtime.
@@ -328,7 +332,9 @@ export class AgentRuntime {
       if (this.db) {
         this.db.saveAgentConfig({
           name: config.name,
-          model: config.model ?? MARINA_DEFAULT_MODEL,
+          // Snapshot the resolved model so respawns are stable even if the
+          // operator later changes the runtime default.
+          model: effectiveConfig.model ?? MARINA_DEFAULT_MODEL,
           role: config.role,
           goal: config.goal,
           keyName: config.keyName,
