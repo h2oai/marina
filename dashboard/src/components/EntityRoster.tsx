@@ -1,4 +1,13 @@
-import { Bot, ChevronDown, ChevronRight, Compass, Square, Trash2, Users } from "lucide-react";
+import {
+  Bot,
+  ChevronDown,
+  ChevronRight,
+  Compass,
+  Square,
+  Trash2,
+  TriangleAlert,
+  Users,
+} from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import type { ReactNode } from "react";
 import { useCallback, useMemo, useState } from "react";
@@ -107,6 +116,14 @@ export function EntityRoster({ backContent }: { backContent?: ReactNode }) {
                       title="Mid-turn — agent is thinking / acting"
                     >
                       ○
+                    </span>
+                  )}
+                  {e.agentStatus?.state === "error" && (
+                    <span
+                      className="shrink-0 text-red-400"
+                      title={e.agentStatus.errorReason ?? "Agent is in an error state"}
+                    >
+                      <TriangleAlert size={10} />
                     </span>
                   )}
                   {e.agentStatus && (

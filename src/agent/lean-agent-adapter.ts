@@ -654,14 +654,18 @@ export class LeanAgentAdapter implements AgentHandle {
           this.consecutiveLoopErrors = consecutiveErrors;
           const errorMessage =
             (lastMsg as unknown as Record<string, unknown>).errorMessage ?? "unknown";
-          this.lastErrorReason = `LLM error: ${errorMessage}`;
+          // Include the model so the dashboard error line names the failing
+          // model — upstream 4xx (e.g. OpenRouter "404 No allowed providers")
+          // are model-specific, and "which model?" is the first question.
+          const model = this.config.model ?? MARINA_DEFAULT_MODEL;
+          this.lastErrorReason = `LLM error [${model}]: ${errorMessage}`;
           const backoff = Math.min(30000, 5000 * 2 ** (consecutiveErrors - 1));
           console.warn(
-            `[lean-agent] "${this.name}" LLM error (attempt ${consecutiveErrors}, backoff ${backoff}ms): ${errorMessage}`,
+            `[lean-agent] "${this.name}" LLM error (attempt ${consecutiveErrors}, backoff ${backoff}ms) [${model}]: ${errorMessage}`,
           );
           this.emitEvent({
             type: "error",
-            error: `LLM error (attempt ${consecutiveErrors}): ${errorMessage}`,
+            error: `LLM error (attempt ${consecutiveErrors}) [${model}]: ${errorMessage}`,
             context: "autonomous_loop",
           });
           await this.sleep(backoff);
