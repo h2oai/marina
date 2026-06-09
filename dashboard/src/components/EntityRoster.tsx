@@ -68,7 +68,9 @@ export function EntityRoster({ backContent }: { backContent?: ReactNode }) {
               <motion.div
                 key={e.id}
                 data-kb-item
-                layout
+                // No `layout`: it forced Framer Motion to measure every roster
+                // row on each 2s world snapshot. Enter/exit fade is enough; rows
+                // snap to position on reorder instead of animating.
                 initial={{ opacity: 0, y: -6 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
