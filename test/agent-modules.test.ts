@@ -7,7 +7,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { Message, Model } from "@mariozechner/pi-ai";
+import type { Api, Message, Model } from "@mariozechner/pi-ai";
 import { type ActionEntry, ActionHistory } from "../src/agent/action-history";
 import { inferCrewResponder } from "../src/agent/agent-runtime";
 import {
@@ -20,7 +20,11 @@ import {
 import type { BeforeToolCallHook, OnPerceptionHook } from "../src/agent/hook-registry";
 import { HookRegistry } from "../src/agent/hook-registry";
 import { InterruptibleWaiter } from "../src/agent/interruptible-waiter";
-import { classifyModelResolution, resolveModel } from "../src/agent/lean-agent-adapter";
+import {
+  classifyModelResolution,
+  neutralizeUnusedReasoning,
+  resolveModel,
+} from "../src/agent/lean-agent-adapter";
 import { applyRankProgression, checkRankProgression } from "../src/agent/rank-progression";
 import {
   composeCapabilities,
@@ -1256,5 +1260,42 @@ describe("model resolution", () => {
     const m = resolveModel("marina/default", 4321);
     expect(m.baseUrl).toBe("http://localhost:4321/v1");
     expect(classifyModelResolution("marina/default")).toBe("exact");
+  });
+
+  // `requiresReasoningContentOnAssistantMessages` lives only on the
+  // openai-completions compat variant; read it loosely in assertions.
+  const roundTrip = (m: Model<Api>) =>
+    (m.compat as { requiresReasoningContentOnAssistantMessages?: boolean } | undefined)
+      ?.requiresReasoningContentOnAssistantMessages;
+
+  it("resolves a DeepSeek thinking model with its reasoning round-trip neutralized when thinking is off", () => {
+    // deepseek-v4-flash demands prior-turn reasoning_content be echoed back
+    // (API error 20015), but pi-ai only echoes an empty placeholder. With
+    // thinking off (Marina's default) we don't need reasoning at all.
+    const raw = resolveModel("openrouter/deepseek/deepseek-v4-flash");
+    expect(raw.reasoning).toBe(true);
+    expect(roundTrip(raw)).toBe(true);
+
+    const off = neutralizeUnusedReasoning(raw, "off");
+    expect(off.reasoning).toBe(false);
+    expect(roundTrip(off)).toBe(false);
+    // Identity is preserved — only the reasoning machinery is stripped.
+    expect(off.id).toBe(raw.id);
+    expect(off.provider).toBe(raw.provider);
+  });
+
+  it("keeps reasoning when the agent opts into extended thinking", () => {
+    const raw = resolveModel("openrouter/deepseek/deepseek-v4-flash");
+    const high = neutralizeUnusedReasoning(raw, "high");
+    expect(high.reasoning).toBe(true);
+    expect(roundTrip(high)).toBe(true);
+  });
+
+  it("leaves non-round-trip reasoning models untouched even when thinking is off", () => {
+    // A reasoning model that doesn't demand the reasoning_content echo must
+    // not be downgraded — only the providers that 400 without it are touched.
+    const m = resolveModel("anthropic/claude-3-5-haiku-20241022");
+    const out = neutralizeUnusedReasoning({ ...m, reasoning: true }, "off");
+    expect(out.reasoning).toBe(true);
   });
 });
