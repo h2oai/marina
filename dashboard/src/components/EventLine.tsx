@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { DashboardEvent } from "../lib/types";
 import { cn, formatTime } from "../lib/utils";
 import { formatEvent } from "./ActivityFeed";
@@ -22,7 +23,12 @@ export interface EventLineProps {
   highlighted?: boolean;
 }
 
-export function EventLine({
+// Memoized: ActivityFeed re-renders whenever a single event is prepended, but
+// every existing row receives the same props (event object identity is stable,
+// resolveEntityName/onEntityClick are stable callbacks). Without memo all ~80
+// rows re-run formatEvent every frame; with it only the new and highlighted
+// rows re-render.
+export const EventLine = memo(function EventLine({
   event,
   resolveEntityName,
   onEntityClick,
@@ -65,4 +71,4 @@ export function EventLine({
       </span>
     </div>
   );
-}
+});

@@ -1,5 +1,4 @@
 import { ScrollText } from "lucide-react";
-import { motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { parseMessage } from "../hooks/use-entity-activity";
 import { useKeyboardNav } from "../hooks/use-keyboard-nav";
@@ -7,6 +6,15 @@ import { useWorldState } from "../hooks/use-world-state";
 import type { DashboardEvent } from "../lib/types";
 import { EventLine } from "./EventLine";
 import { GlassPanel } from "./GlassPanel";
+
+/**
+ * How many of the (up-to-200) buffered events to actually render. The store
+ * keeps the full window for other consumers; the feed only needs the newest
+ * screenful. Rendering all 200 every time an event arrives — each as a spring
+ * animation with an O(entities) name lookup — was the dominant cause of
+ * dashboard jank under high event volume.
+ */
+const VISIBLE_EVENTS = 80;
 
 export function ActivityFeed({ backContent }: { backContent?: React.ReactNode }) {
   const events = useWorldState((s) => s.eventFeed);
@@ -21,24 +29,32 @@ export function ActivityFeed({ backContent }: { backContent?: React.ReactNode })
     }
   }, []);
 
+  const visibleEvents = useMemo(() => events.slice(0, VISIBLE_EVENTS), [events]);
+
+  // O(1) name resolution. A per-row entities.find() was O(rows × entities) per
+  // render; a Map built once per entities change is O(1) per row, and its stable
+  // identity lets memoized EventLine rows skip re-rendering on event-only frames.
+  const nameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const e of entities) m.set(e.id, e.name);
+    return m;
+  }, [entities]);
+  const resolveEntityName = useCallback((id: string) => nameById.get(id), [nameById]);
+
   const onActivate = useCallback(
     (index: number) => {
-      const event = events[index];
+      const event = visibleEvents[index];
       if (!event?.entity) return;
-      const name = entities.find((e) => e.id === event.entity)?.name;
+      const name = nameById.get(event.entity);
       if (name) selectEntity(name);
     },
-    [events, entities, selectEntity],
+    [visibleEvents, nameById, selectEntity],
   );
 
   const { highlightedIndex, onKeyDown, containerRef } = useKeyboardNav({
-    items: events,
+    items: visibleEvents,
     onActivate,
   });
-
-  const resolveEntityName = useMemo(() => {
-    return (id: string) => entities.find((e) => e.id === id)?.name;
-  }, [entities]);
 
   return (
     <GlassPanel title="Activity" icon={<ScrollText size={14} />} backContent={backContent}>
@@ -51,24 +67,18 @@ export function ActivityFeed({ backContent }: { backContent?: React.ReactNode })
         onKeyDown={onKeyDown}
         className="flex flex-col overflow-auto outline-none"
       >
-        {events.length === 0 && (
+        {visibleEvents.length === 0 && (
           <div className="p-2 text-text-dim text-[11px]">Waiting for events...</div>
         )}
-        {events.map((event, i) => (
-          <motion.div
+        {visibleEvents.map((event, i) => (
+          <EventLine
             key={`${event.timestamp}-${event.type}-${event.entity ?? ""}-${event.input ?? event.content ?? event.summary ?? ""}`}
-            initial={{ opacity: 0, y: -16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ type: "spring", stiffness: 300, damping: 28 }}
-          >
-            <EventLine
-              event={event}
-              resolveEntityName={resolveEntityName}
-              onEntityClick={selectEntity}
-              kbItem
-              highlighted={highlightedIndex === i}
-            />
-          </motion.div>
+            event={event}
+            resolveEntityName={resolveEntityName}
+            onEntityClick={selectEntity}
+            kbItem
+            highlighted={highlightedIndex === i}
+          />
         ))}
       </div>
     </GlassPanel>
