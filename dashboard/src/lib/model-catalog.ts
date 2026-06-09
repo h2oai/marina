@@ -64,6 +64,37 @@ export function totalModelCount(groups: ProviderGroup[]): number {
   return groups.reduce((n, g) => n + g.models.length, 0);
 }
 
+/**
+ * Substrings of well-known, broadly-available models, best-first. Used to pick a
+ * sane launch default instead of whatever sorts alphabetically first — which for
+ * a large catalog like OpenRouter's (~340 models) is an obscure model (e.g.
+ * `ai21/jamba-large`) most accounts can't serve, so the agent 404s on first call.
+ */
+const PREFERRED_MODEL_SUBSTRINGS = [
+  "claude-sonnet",
+  "claude-3-7-sonnet",
+  "gpt-4o",
+  "gpt-4.1",
+  "gemini-2.0-flash",
+  "gemini-1.5-pro",
+  "llama-3.3",
+];
+
+/**
+ * Pick a sensible default model value from the keyed/live groups. Prefers a
+ * recognizable mainstream model (see PREFERRED_MODEL_SUBSTRINGS); falls back to
+ * the first model only when none match. Returns undefined if there are no models.
+ */
+export function pickDefaultModel(liveGroups: ProviderGroup[]): string | undefined {
+  const all = liveGroups.flatMap((g) => g.models.map((m) => m.value));
+  if (all.length === 0) return undefined;
+  for (const want of PREFERRED_MODEL_SUBSTRINGS) {
+    const hit = all.find((v) => v.toLowerCase().includes(want));
+    if (hit) return hit;
+  }
+  return all[0];
+}
+
 /** Prettier provider names for the optgroup label. */
 const PROVIDER_LABELS: Record<string, string> = {
   anthropic: "Anthropic",

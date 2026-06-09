@@ -1,15 +1,17 @@
-import { Key, Plug, Settings, Shield, Tags, Wrench } from "lucide-react";
-import { useState } from "react";
+import { Cpu, Key, Plug, Settings, Shield, Tags, Wrench } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useAdapters,
   useAgents,
   useEnvConfig,
   useKeys,
   useMcpInfo,
+  useModels,
   useRoles,
   useTraits,
 } from "../hooks/use-api";
-import { deleteApi, patchApi, postApi, putApi } from "../lib/api";
+import { deleteApi, describeApiError, fetchApi, patchApi, postApi, putApi } from "../lib/api";
+import { mergeGroups, providerLabel } from "../lib/model-catalog";
 import { GlassPanel } from "./GlassPanel";
 
 const SUPPORTED_PROVIDERS = [
@@ -59,27 +61,154 @@ export function AdminPanel({ backContent }: { backContent?: React.ReactNode }) {
   );
 }
 
+// ─── Default Model Selector ──────────────────────────────────────────────────
+
+/**
+ * Runtime-changeable default model — what marina/default routes to and what new
+ * agents spawn with. Lists only keyed providers (incl. OpenRouter), plus a custom
+ * entry, and persists via PUT /api/default-model. Takes effect immediately for
+ * marina/default routing and for newly spawned agents.
+ */
+function DefaultModelSelector() {
+  const { data: modelsData } = useModels();
+  const groups = useMemo(() => mergeGroups(modelsData?.groups), [modelsData]);
+  const liveGroups = useMemo(
+    () => groups.filter((g) => g.keySource !== null && g.models.length > 0),
+    [groups],
+  );
+
+  const [effective, setEffective] = useState<string>("");
+  const [sel, setSel] = useState<string>("");
+  const [custom, setCustom] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [flash, setFlash] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchApi<{ model: string; configured: string | null }>("/api/default-model")
+      .then((d) => {
+        setEffective(d.model);
+        setSel(d.configured ?? d.model);
+      })
+      .catch(() => {});
+  }, []);
+
+  const save = async (model: string) => {
+    if (!model.trim()) return;
+    setSaving(true);
+    setErr(null);
+    try {
+      const d = await putApi<{ model: string; configured: string }>("/api/default-model", {
+        model: model.trim(),
+      });
+      setEffective(d.model);
+      setSel(d.configured);
+      setCustom("");
+      setFlash(true);
+      setTimeout(() => setFlash(false), 2000);
+    } catch (e) {
+      setErr(describeApiError(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const isCustom = sel === "__custom";
+
+  return (
+    <div className="space-y-1 rounded border border-border bg-bg-surface/50 p-1.5">
+      <div className="flex items-center gap-1 text-primary text-[10px] uppercase tracking-wider">
+        <Cpu size={10} /> Default Model
+      </div>
+      <div className="text-text-dim text-[9px]">
+        Used by marina/default and new agents. Current:{" "}
+        <span className="text-text">{effective || "…"}</span>
+      </div>
+      <select
+        value={sel}
+        onChange={(e) => {
+          const v = e.target.value;
+          setSel(v);
+          if (v !== "__custom") save(v);
+        }}
+        className="w-full bg-bg-surface border border-border rounded px-1.5 py-0.5 text-[10px] text-text-bright outline-none"
+      >
+        {liveGroups.length === 0 && <option value="">No keyed providers — add a key below</option>}
+        {liveGroups.map((g) => (
+          <optgroup key={g.provider} label={providerLabel(g.provider)}>
+            {g.models.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.value}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+        <option value="__custom">Custom…</option>
+      </select>
+      {isCustom && (
+        <div className="flex gap-1">
+          <input
+            placeholder="provider/model-id (e.g. openrouter/openai/gpt-4o)"
+            value={custom}
+            onChange={(e) => setCustom(e.target.value)}
+            className="flex-1 bg-bg-surface border border-border rounded px-1.5 py-0.5 text-[10px] text-text-bright outline-none"
+          />
+          <button
+            type="button"
+            onClick={() => save(custom)}
+            disabled={saving || !custom.trim()}
+            className="bg-primary/20 hover:bg-primary/30 text-primary text-[10px] rounded px-2 py-0.5 disabled:opacity-50"
+          >
+            Set
+          </button>
+        </div>
+      )}
+      {flash && <div className="text-success text-[9px]">✓ Default updated</div>}
+      {err && <div className="text-danger text-[9px]">{err}</div>}
+    </div>
+  );
+}
+
 // ─── Keys Tab ───────────────────────────────────────────────────────────────
 
 function KeysTab() {
-  const { data: keys, refetch } = useKeys();
+  const { data: keys, isError, error, refetch } = useKeys();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [provider, setProvider] = useState("");
   const [value, setValue] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
 
   const handleAdd = async () => {
-    if (!name || !provider || !value) return;
-    await postApi("/api/keys", { name, provider, value });
-    setName("");
-    setProvider("");
-    setValue("");
-    setAdding(false);
-    refetch();
+    // Be explicit about why a save won't proceed — the old silent return on a
+    // missing field looked like "nothing happens".
+    if (!name.trim()) return setFormError("Enter a key name.");
+    if (!provider) return setFormError("Select a provider.");
+    if (!value.trim()) return setFormError("Enter the API key value.");
+    setSaving(true);
+    setFormError(null);
+    try {
+      await postApi("/api/keys", { name: name.trim(), provider, value: value.trim() });
+      setName("");
+      setProvider("");
+      setValue("");
+      setAdding(false);
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 2500);
+      await refetch();
+    } catch (e) {
+      setFormError(describeApiError(e));
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
     <div className="space-y-2">
+      <DefaultModelSelector />
+
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1 text-primary text-[10px] uppercase tracking-wider">
           <Key size={10} /> API Keys
@@ -123,14 +252,21 @@ function KeysTab() {
           <button
             type="button"
             onClick={handleAdd}
-            className="w-full bg-primary/20 hover:bg-primary/30 text-primary text-[10px] rounded px-2 py-0.5"
+            disabled={saving}
+            className="w-full bg-primary/20 hover:bg-primary/30 text-primary text-[10px] rounded px-2 py-0.5 disabled:opacity-50"
           >
-            Save Key
+            {saving ? "Saving…" : "Save Key"}
           </button>
+          {formError && <div className="text-danger text-[10px]">{formError}</div>}
         </div>
       )}
 
-      {!keys || keys.length === 0 ? (
+      {!adding && formError && <div className="text-danger text-[10px]">{formError}</div>}
+      {savedFlash && <div className="text-success text-[10px]">✓ Key saved</div>}
+
+      {isError ? (
+        <div className="text-danger text-[10px]">{describeApiError(error)}</div>
+      ) : !keys || keys.length === 0 ? (
         <div className="text-text-dim text-[10px]">
           No database keys. Set env vars (ANTHROPIC_API_KEY, GEMINI_API_KEY, etc.) or add keys
           above.

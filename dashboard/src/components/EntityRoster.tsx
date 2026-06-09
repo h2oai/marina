@@ -1,4 +1,13 @@
-import { Bot, ChevronDown, ChevronRight, Compass, Square, Trash2, Users } from "lucide-react";
+import {
+  Bot,
+  ChevronDown,
+  ChevronRight,
+  Compass,
+  Square,
+  Trash2,
+  TriangleAlert,
+  Users,
+} from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import type { ReactNode } from "react";
 import { useCallback, useMemo, useState } from "react";
@@ -59,7 +68,9 @@ export function EntityRoster({ backContent }: { backContent?: ReactNode }) {
               <motion.div
                 key={e.id}
                 data-kb-item
-                layout
+                // No `layout`: it forced Framer Motion to measure every roster
+                // row on each 2s world snapshot. Enter/exit fade is enough; rows
+                // snap to position on reorder instead of animating.
                 initial={{ opacity: 0, y: -6 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
@@ -109,13 +120,21 @@ export function EntityRoster({ backContent }: { backContent?: ReactNode }) {
                       ○
                     </span>
                   )}
+                  {e.agentStatus?.state === "error" && (
+                    <span
+                      className="shrink-0 text-red-400"
+                      title={e.agentStatus.errorReason ?? "Agent is in an error state"}
+                    >
+                      <TriangleAlert size={10} />
+                    </span>
+                  )}
                   {e.agentStatus && (
                     <span className="text-accent text-[9px] truncate">
                       {e.agentStatus.model.split("/")[1] ?? e.agentStatus.model}
                     </span>
                   )}
                   <span className="truncate text-text-dim text-[10px]">{e.room.split("/")[1]}</span>
-                  {e.agentStatus ? (
+                  {e.agentStatus && (
                     <button
                       type="button"
                       title={`Stop agent ${e.name}`}
@@ -127,21 +146,23 @@ export function EntityRoster({ backContent }: { backContent?: ReactNode }) {
                     >
                       <Square size={10} />
                     </button>
-                  ) : (
-                    <button
-                      type="button"
-                      title={`Remove ${e.name}`}
-                      onClick={(ev) => {
-                        ev.stopPropagation();
-                        if (window.confirm(`Remove entity "${e.name}"?`)) {
-                          deleteApi(`/api/entities/${encodeURIComponent(e.name)}`);
-                        }
-                      }}
-                      className="text-text-dim hover:text-red-400 transition-colors"
-                    >
-                      <Trash2 size={10} />
-                    </button>
                   )}
+                  {/* Remove fully deletes the entity from the Marina. For a live
+                      agent it also stops the loop and deletes its config so it
+                      won't respawn — see engine.removeEntity. */}
+                  <button
+                    type="button"
+                    title={`Remove ${e.name}`}
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      if (window.confirm(`Remove entity "${e.name}"?`)) {
+                        deleteApi(`/api/entities/${encodeURIComponent(e.name)}`);
+                      }
+                    }}
+                    className="text-text-dim hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 size={10} />
+                  </button>
                   {isSelected ? (
                     <ChevronDown size={10} className="text-text-dim" />
                   ) : (

@@ -1,4 +1,9 @@
 import { create } from "zustand";
+import {
+  reconcileEntities,
+  reconcileNumberRecord,
+  reconcileRooms,
+} from "../lib/reconcile-snapshot";
 import type { DashboardEvent, WorldSnapshot } from "../lib/types";
 
 interface WorldState {
@@ -109,9 +114,12 @@ export const useWorldState = create<WorldState>((set) => ({
       instanceName: data.instanceName ?? state.instanceName,
       worldName: data.worldName ?? state.worldName,
       startRoom: data.startRoom ?? state.startRoom,
-      entities: data.entities,
-      rooms: data.rooms ?? [],
-      roomPopulations: data.roomPopulations,
+      // Structural sharing: the server resends the full world every 2s. Reuse the
+      // prior references when nothing user-visible changed so subscribers to
+      // entities/rooms/roomPopulations don't re-render every tick.
+      entities: reconcileEntities(state.entities, data.entities),
+      rooms: reconcileRooms(state.rooms, data.rooms ?? []),
+      roomPopulations: reconcileNumberRecord(state.roomPopulations, data.roomPopulations),
       connections: data.connections,
       memory: data.memory,
       gridPositions: data.gridPositions ?? state.gridPositions,

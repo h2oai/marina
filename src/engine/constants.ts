@@ -130,6 +130,13 @@ export const MARINA_LOGIN_ATTEMPTS_PER_MIN = Number.parseInt(
   10,
 );
 
+// ─── Agent Model Defaults ─────────────────────────────────────────────────────
+
+/** Default model ("provider/model-id") for agents spawned without an explicit
+ *  model, and the fallback when a requested model isn't recognized. Override to
+ *  match the provider you actually hold a key for. */
+export const MARINA_DEFAULT_MODEL = process.env.MARINA_DEFAULT_MODEL ?? "google/gemini-2.0-flash";
+
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
 /** Dashboard state broadcast interval (ms) */

@@ -55,7 +55,8 @@
     "discord.js": "^14.26.4",
     "grammy": "^1.43.0",
     "mathjs": "^15.2.0",
-    "mcporter": "^0.11.3"
+    "mcporter": "^0.11.3",
+    "zod": "4.3.6"
   },
   "overrides": {
     "@hono/node-server": "^1.19.13",
@@ -72,6 +73,11 @@
     "protobufjs": "^7.5.8",
     "qs": "^6.15.2",
     "undici": "^6.24.0",
-    "ws": "^8.20.1"
+    "ws": "^8.20.1",
+    "zod": "4.3.6"
+  },
+  "optionalDependencies": {
+    "better-auth": "^1.6.15",
+    "jose": "^6.2.3"
   }
 }

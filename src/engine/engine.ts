@@ -58,7 +58,7 @@ import {
   ROOM_FETCH_RATE_MS,
   ROOM_FETCH_TIMEOUT_MS,
 } from "./constants";
-import { getErrorMessage, tryLog } from "./errors";
+import { getErrorMessage, tryLog, tryLogAsync } from "./errors";
 import { EventLog } from "./event-log";
 import { GatewayRuntime } from "./gateway-runtime";
 import { Logger } from "./logger";
@@ -67,6 +67,13 @@ import { RoomSandbox } from "./room-sandbox";
 import { checkGate, grantGatesForRank, recordDemonstration } from "./safety-gates";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
 import { ShellRuntime } from "./shell-runtime";
+
+/** A verified external identity (from the better-auth bridge) passed to login(). */
+export interface LoginIdentity {
+  subject: string;
+  email: string;
+  emailVerified: boolean;
+}
 
 export interface EngineConfig {
   tickInterval: number; // ms between ticks (default 1000)
@@ -78,6 +85,7 @@ export interface EngineConfig {
   loginRateLimiter?: RateLimiter; // optional limiter for login/reconnect attempts (keyed per IP)
   maxLogins?: number; // instance-wide concurrent login cap; 0/undefined = unlimited
   internalAuthToken?: string; // token exempting internal agent logins from cap + rate limit
+  authRequired?: boolean; // when true, external passwordless name-login is rejected (MARINA_AUTH on)
   storage?: StorageProvider; // optional asset storage
   world?: WorldDefinition; // optional world definition
   logger?: Logger; // optional structured logger
@@ -423,11 +431,18 @@ export class Engine {
     return this._connections.boundExternalCount() >= cap;
   }
 
-  /** Login: create entity + session, returns token. Checks ban list. */
+  private static readonly ERR_AUTH_REQUIRED =
+    "This instance requires sign-in. Authenticate via the dashboard, or connect with a session token.";
+
+  /** Login: create entity + session, returns token. Checks ban list.
+   *  `identity` marks a login already verified by the external auth layer
+   *  (better-auth bridge) — it bypasses the passwordless guard and binds the
+   *  verified subject/email to the named entity. */
   login(
     connId: string,
     name: string,
     internalToken?: string,
+    identity?: LoginIdentity,
   ): { entityId: EntityId; name: string; token: string } | { error: string } {
     const internal = this.resolveInternal(connId, internalToken);
 
@@ -435,6 +450,14 @@ export class Engine {
     // both consume a token — attempts are what's limited).
     if (!this.checkLoginRate(connId, internal)) {
       return { error: Engine.ERR_LOGIN_RATE_LIMITED };
+    }
+
+    // Auth-required mode: reject untrusted passwordless name-login. Internal
+    // agents (internal token) and identity-verified logins are allowed; everyone
+    // else must present a session token via reconnect(). Single choke point for
+    // every surface (WS/telnet/MCP/dashboard-api/adapters).
+    if (this.config.authRequired && !internal && !identity) {
+      return { error: Engine.ERR_AUTH_REQUIRED };
     }
 
     // Check ban list
@@ -472,7 +495,7 @@ export class Engine {
           existing.properties.rank = existingUser.rank as EntityRank;
         }
       }
-      this.applyAdminBootstrap(existing);
+      this.applyAdminBootstrap(existing, identity);
       if (this.sessionManager) {
         const session = this.sessionManager.create(existing.id, existing.name);
         return { entityId: existing.id, name: existing.name, token: session.token };
@@ -505,7 +528,7 @@ export class Engine {
       }
     }
 
-    this.applyAdminBootstrap(entity);
+    this.applyAdminBootstrap(entity, identity);
 
     // Auto-start quest for new entities (rank 0)
     const rank = (entity.properties.rank as number) ?? 0;
@@ -1270,14 +1293,28 @@ export class Engine {
   }
 
   /** Remove an entity from the engine (kick if connected, despawn if NPC/orphan). */
-  removeEntity(entityId: EntityId): { ok: true; name: string } | { error: string } {
+  async removeEntity(entityId: EntityId): Promise<{ ok: true; name: string } | { error: string }> {
     const entity = this.entities.get(entityId);
     if (!entity) {
       return { error: "Entity not found." };
     }
     const name = entity.name;
 
-    // If the entity has an active connection, kick them
+    // If a live agent is driving this entity, stop its loop and delete its
+    // saved config first. Without this the agent loop keeps running against a
+    // deleted entity, and persistent/room agents would simply respawn — so
+    // "remove" wouldn't actually remove them from the Marina.
+    if (this.agentRuntime.get(name)) {
+      await tryLogAsync(this.logger, "entity", "Agent stop on removal failed", () =>
+        this.agentRuntime.stop(name),
+      );
+    }
+
+    // If the entity has an active connection, kick them. Use the "explicit"
+    // intent so the entity is evicted immediately — the default "transient"
+    // intent defers removal for RECONNECT_GRACE_MS (so a token-bearing
+    // reconnect can rebind), which would leave a deleted entity lingering in
+    // the live roster for up to a minute after an admin clicks Remove.
     const conn = this._connections.getConnectionForEntity(entityId);
     if (conn) {
       conn.send({
@@ -1285,7 +1322,7 @@ export class Engine {
         timestamp: Date.now(),
         data: { text: "You have been removed by an admin." },
       });
-      this.removeConnection(conn.id);
+      this.removeConnection(conn.id, "explicit");
     } else {
       // No connection — broadcast departure and remove directly
       const ctx = this.buildContext(entity.room);
@@ -1306,7 +1343,31 @@ export class Engine {
   }
 
   /** Promote entity to sovereign if listed in MARINA_ADMINS env var */
-  private applyAdminBootstrap(entity: Entity): void {
+  private applyAdminBootstrap(entity: Entity, identity?: LoginIdentity): void {
+    // Auth mode: bind the verified identity to this named entity and grant admin
+    // by VERIFIED EMAIL (MARINA_AUTH_ADMIN_EMAILS) — never by name. This closes
+    // the name-based admin hole that makes name-login unsafe for public hosting.
+    if (identity) {
+      if (this.db) {
+        const user = this.db.getUserByName(entity.name);
+        if (user) this.db.bindAuthSubject(user.id, identity.subject, identity.email);
+      }
+      const adminEmails = new Set(
+        (process.env.MARINA_AUTH_ADMIN_EMAILS ?? "")
+          .split(",")
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean),
+      );
+      if (identity.emailVerified && adminEmails.has(identity.email.toLowerCase())) {
+        this.grantSovereign(entity);
+      }
+      return;
+    }
+
+    // Under auth-required mode, name-based admin promotion is disabled entirely
+    // (an unauthenticated name can no longer claim admin).
+    if (this.config.authRequired) return;
+
     const adminNames = new Set(
       (process.env.MARINA_ADMINS ?? "")
         .split(",")
@@ -1314,16 +1375,19 @@ export class Engine {
         .filter(Boolean),
     );
     if (adminNames.has(entity.name)) {
-      setRank(entity, 9);
-      if (this.db) {
-        const user = this.db.getUserByName(entity.name);
-        if (user) this.db.updateUserRank(user.id, 9);
-        // Operator bootstrap: a sovereign needs full capability immediately,
-        // not after earning standing + demonstrations. Gate grants mirror
-        // the historical rank ladder (rank 9 → every gate, rank 8 → key.manage
-        // and below, etc.).
-        grantGatesForRank(this.db, entity.id, 9);
-      }
+      this.grantSovereign(entity);
+    }
+  }
+
+  /** Promote an entity to sovereign (rank 9) + all safety gates (operator bootstrap). */
+  private grantSovereign(entity: Entity): void {
+    setRank(entity, 9);
+    if (this.db) {
+      const user = this.db.getUserByName(entity.name);
+      if (user) this.db.updateUserRank(user.id, 9);
+      // A sovereign needs full capability immediately, not after earning
+      // standing + demonstrations. Gate grants mirror the historical rank ladder.
+      grantGatesForRank(this.db, entity.id, 9);
     }
   }
 

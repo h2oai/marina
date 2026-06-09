@@ -37,6 +37,11 @@ const worldModule = await import(`../worlds/${WORLD_NAME}`);
 const world: WorldDefinition = worldModule.default;
 const INSTANCE_NAME = process.env.MARINA_NAME ?? world.name;
 
+// Optional external-identity layer (off by default). When enabled, the provider
+// and the better-auth dependency are loaded lazily — standalone/local Marina
+// never imports them. Passwordless name-login is then gated (see engine.login).
+const AUTH_ENABLED = process.env.MARINA_AUTH === "better-auth";
+
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
 const logger = new Logger();
@@ -68,6 +73,7 @@ const engine = new Engine({
   loginRateLimiter,
   maxLogins: MARINA_MAX_LOGINS,
   internalAuthToken: getInternalModelToken(),
+  authRequired: AUTH_ENABLED,
   storage,
   world,
   logger,
@@ -174,6 +180,28 @@ wsServer.setDb(db);
 wsServer.setStorage(storage);
 wsServer.setModelRateLimiter(modelRateLimiter);
 wsServer.setMemRateLimiter(memRateLimiter);
+
+// ─── Optional auth provider (better-auth) ────────────────────────────────────
+if (AUTH_ENABLED) {
+  try {
+    const { createBetterAuthProvider } = await import("./auth/better-auth-provider");
+    const authProvider = createBetterAuthProvider();
+    wsServer.setAuthProvider(authProvider);
+    logger.info(
+      "auth",
+      `External auth enabled (better-auth) — sign-in required; methods: ${authProvider.methods.join(", ")}`,
+    );
+  } catch (err) {
+    logger.error(
+      "auth",
+      "Failed to initialize better-auth — refusing to start in a half-auth state",
+      {
+        error: String(err),
+      },
+    );
+    process.exit(1);
+  }
+}
 
 // ─── Feed Publisher (engine → canvas) ───────────────────────────────────────
 
