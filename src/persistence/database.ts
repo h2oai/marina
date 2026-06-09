@@ -1240,6 +1240,20 @@ ALTER TABLE users ADD COLUMN auth_email TEXT;
 CREATE UNIQUE INDEX idx_users_auth_subject ON users(auth_subject) WHERE auth_subject IS NOT NULL;
 `,
   },
+  // Migration 43: generic runtime settings store. A simple key→value table for
+  // operator-tunable config that should be changeable while the world runs
+  // (first use: `default_model`, the model marina/default routes to and that new
+  // agents spawn with — see db-agents getSetting/setSetting/getDefaultModel).
+  {
+    version: 43,
+    sql: `
+CREATE TABLE app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+`,
+  },
 ];
 
 // ─── Database Class ──────────────────────────────────────────────────────────
@@ -3448,6 +3462,22 @@ export class MarinaDB {
   }
   deleteAgentConfig(name: string): void {
     agentsDb.deleteAgentConfig(this.db, name);
+  }
+
+  // ─── Settings (delegated to db-agents.ts) ──────────────────────────────
+
+  getSetting(key: string): string | undefined {
+    return agentsDb.getSetting(this.db, key);
+  }
+  setSetting(key: string, value: string): void {
+    agentsDb.setSetting(this.db, key, value);
+  }
+  deleteSetting(key: string): void {
+    agentsDb.deleteSetting(this.db, key);
+  }
+  /** Effective default model — DB `default_model` setting, else MARINA_DEFAULT_MODEL. */
+  getDefaultModel(): string {
+    return agentsDb.getDefaultModel(this.db);
   }
 
   // ─── API Keys (delegated to db-agents.ts) ──────────────────────────────

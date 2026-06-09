@@ -976,7 +976,7 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
       // If no agents available (503), fall back to direct upstream proxy.
       // 404 (unknown model variant) remains an error — caller asked for a specific model.
       if (routeError instanceof HttpError && routeError.status === 503) {
-        return await proxyToUpstream(body);
+        return await proxyToUpstream(engine, body);
       }
       throw routeError;
     }
@@ -1112,86 +1112,124 @@ function isMarinaModel(model: string): boolean {
   );
 }
 
-async function proxyToUpstream(body: Record<string, unknown>): Promise<Response> {
-  const wantStream = body.stream === true;
-  // First-party providers are preferred over OpenRouter when both are set —
-  // OpenRouter is an aggregator that adds a markup and routes to upstream
-  // again (e.g. OPENROUTER_API_KEY + anthropic/claude-sonnet-4 would proxy
-  // through OpenRouter → Bedrock instead of hitting Anthropic directly).
-  // Keep OpenRouter as the meta-fallback for models the direct providers
-  // don't serve.
-  const upstreams = [
-    {
-      envKey: "ANTHROPIC_API_KEY",
-      url: "https://api.anthropic.com/v1/messages",
-    },
-    {
-      envKey: "OPENAI_API_KEY",
-      url: "https://api.openai.com/v1/chat/completions",
-    },
-    {
-      envKey: "GEMINI_API_KEY",
-      url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-    },
-    {
-      envKey: "GROQ_API_KEY",
-      url: "https://api.groq.com/openai/v1/chat/completions",
-    },
-    {
-      envKey: "OPENROUTER_API_KEY",
-      url: "https://openrouter.ai/api/v1/chat/completions",
-    },
-  ];
+/** provider → upstream endpoint. `anthropic` uses a non-OpenAI request format. */
+const PROVIDER_UPSTREAM: Record<string, { url: string; envKeys: string[]; anthropic?: boolean }> = {
+  anthropic: {
+    url: "https://api.anthropic.com/v1/messages",
+    envKeys: ["ANTHROPIC_API_KEY"],
+    anthropic: true,
+  },
+  openai: { url: "https://api.openai.com/v1/chat/completions", envKeys: ["OPENAI_API_KEY"] },
+  google: {
+    url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    envKeys: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+  },
+  groq: { url: "https://api.groq.com/openai/v1/chat/completions", envKeys: ["GROQ_API_KEY"] },
+  openrouter: {
+    url: "https://openrouter.ai/api/v1/chat/completions",
+    envKeys: ["OPENROUTER_API_KEY"],
+  },
+};
 
-  for (const up of upstreams) {
-    const apiKey = process.env[up.envKey];
-    if (!apiKey) continue;
+// First-party providers preferred over OpenRouter on the fallback path, since
+// OpenRouter is an aggregator that re-routes (and adds markup). An explicitly
+// configured default model overrides this order entirely (see proxyToUpstream).
+const FALLBACK_PRIORITY = ["anthropic", "openai", "google", "groq", "openrouter"];
 
-    // Anthropic needs special handling (non-OpenAI format)
-    if (up.envKey === "ANTHROPIC_API_KEY") {
-      return await proxyToAnthropic(body, apiKey, getDefaultUpstreamModel(up.envKey), wantStream);
+/** Resolve a provider's key from env first, then admin-panel/DB keys. */
+function resolveProviderKey(engine: Engine, provider: string): string | undefined {
+  const cfg = PROVIDER_UPSTREAM[provider];
+  if (cfg) {
+    for (const envKey of cfg.envKeys) {
+      const v = process.env[envKey];
+      if (v) return v;
     }
+  }
+  return engine.db?.getApiKeysByProvider(provider)[0]?.encrypted_value;
+}
 
-    const requestModel = isMarinaModel(body.model as string)
-      ? getDefaultUpstreamModel(up.envKey)
-      : (body.model as string);
-
-    try {
-      // For OpenAI-compatible providers, pass through stream preference
-      const resp = await fetch(up.url, {
-        method: "POST",
+/** POST to an OpenAI-compatible upstream. Returns null on network error / non-OK so the caller can try the next provider. */
+async function dispatchOpenAICompatible(
+  url: string,
+  apiKey: string,
+  body: Record<string, unknown>,
+  wantStream: boolean,
+): Promise<Response | null> {
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) return null;
+    if (wantStream) {
+      return new Response(resp.body, {
         headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+          ...MODEL_CORS,
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
         },
-        body: JSON.stringify({ ...body, model: requestModel }),
       });
-
-      if (resp.ok) {
-        // Pass through streaming responses directly
-        if (wantStream) {
-          return new Response(resp.body, {
-            headers: {
-              ...MODEL_CORS,
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-            },
-          });
-        }
-        const data = await resp.json();
-        return new Response(JSON.stringify(data), {
-          headers: { ...MODEL_CORS, "Content-Type": "application/json" },
-        });
-      }
-    } catch {
-      // Try next provider
     }
+    const data = await resp.json();
+    return new Response(JSON.stringify(data), {
+      headers: { ...MODEL_CORS, "Content-Type": "application/json" },
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function proxyToUpstream(engine: Engine, body: Record<string, unknown>): Promise<Response> {
+  const wantStream = body.stream === true;
+  const isDefault = isMarinaModel(body.model as string);
+
+  // 1) Explicit configured default: when marina/default is requested and an
+  //    operator has set `default_model`, honor that exact provider — including
+  //    OpenRouter — instead of the first-party priority. The key is resolved from
+  //    env or the admin panel. Falls through to (2) only if its key is missing.
+  if (isDefault && engine.db) {
+    const dm = engine.db.getDefaultModel();
+    const slash = dm.indexOf("/");
+    const provider = slash >= 0 ? dm.slice(0, slash) : dm;
+    const upstreamModel = slash >= 0 ? dm.slice(slash + 1) : dm;
+    const cfg = PROVIDER_UPSTREAM[provider];
+    const key = cfg ? resolveProviderKey(engine, provider) : undefined;
+    if (cfg && key && upstreamModel) {
+      if (cfg.anthropic) return await proxyToAnthropic(body, key, upstreamModel, wantStream);
+      const r = await dispatchOpenAICompatible(
+        cfg.url,
+        key,
+        { ...body, model: upstreamModel },
+        wantStream,
+      );
+      if (r) return r;
+    }
+  }
+
+  // 2) Fallback: first-party-preferred over whatever keys exist (env or DB).
+  for (const provider of FALLBACK_PRIORITY) {
+    const cfg = PROVIDER_UPSTREAM[provider]!;
+    const key = resolveProviderKey(engine, provider);
+    if (!key) continue;
+    const envKey = cfg.envKeys[0]!;
+    if (cfg.anthropic) {
+      return await proxyToAnthropic(body, key, getDefaultUpstreamModel(envKey), wantStream);
+    }
+    const requestModel = isDefault ? getDefaultUpstreamModel(envKey) : (body.model as string);
+    const r = await dispatchOpenAICompatible(
+      cfg.url,
+      key,
+      { ...body, model: requestModel },
+      wantStream,
+    );
+    if (r) return r;
   }
 
   return errorJson(
     503,
-    "No upstream LLM providers configured. Set an API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.).",
+    "No upstream LLM providers configured. Set an API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.) or add one in Admin → Keys.",
   );
 }
 

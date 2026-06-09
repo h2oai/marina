@@ -552,6 +552,34 @@ export async function handleDashboardApi(
     return handleKeyTest(decodeURIComponent(keyTestMatch[1]!), db);
   }
 
+  // ─── Default model API ─────────────────────────────────────────────────
+  // The model marina/default routes to and that new agents spawn with —
+  // changeable at runtime (persisted in app_settings). `configured` is null when
+  // falling back to the MARINA_DEFAULT_MODEL env/built-in value.
+  if (url.pathname === "/api/default-model" && method === "GET" && db) {
+    return json({
+      model: db.getDefaultModel(),
+      configured: db.getSetting("default_model") ?? null,
+    });
+  }
+  if (url.pathname === "/api/default-model" && method === "PUT" && db) {
+    const body = (await req.json().catch(() => ({}))) as { model?: string };
+    const model = body.model?.trim();
+    if (!model) return json({ error: "model is required" }, 400);
+    if (!/^[\w.-]+\/[\w./:-]+$/.test(model)) {
+      return json(
+        { error: 'model must be "provider/model-id" (e.g. openrouter/openai/gpt-4o)' },
+        400,
+      );
+    }
+    db.setSetting("default_model", model);
+    return json({ ok: true, model: db.getDefaultModel(), configured: model });
+  }
+  if (url.pathname === "/api/default-model" && method === "DELETE" && db) {
+    db.deleteSetting("default_model");
+    return json({ ok: true, model: db.getDefaultModel(), configured: null });
+  }
+
   // ─── Model Discovery API ───────────────────────────────────────────────
   if (url.pathname === "/api/models" && method === "GET") {
     const refresh = url.searchParams.get("refresh") === "1";

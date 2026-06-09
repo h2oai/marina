@@ -1,4 +1,38 @@
 import type { Database } from "bun:sqlite";
+import { MARINA_DEFAULT_MODEL } from "../engine/constants";
+
+// ─── Settings (runtime key→value config) ────────────────────────────────
+
+/** Read a runtime setting; undefined if unset. */
+export function getSetting(db: Database, key: string): string | undefined {
+  const row = db.query("SELECT value FROM app_settings WHERE key = ?").get(key) as {
+    value: string;
+  } | null;
+  return row?.value ?? undefined;
+}
+
+/** Write a runtime setting (upsert). */
+export function setSetting(db: Database, key: string, value: string): void {
+  db.run(
+    `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    [key, value, Date.now()],
+  );
+}
+
+/** Delete a runtime setting (revert to its env/built-in default). */
+export function deleteSetting(db: Database, key: string): void {
+  db.run("DELETE FROM app_settings WHERE key = ?", [key]);
+}
+
+/**
+ * The effective default model ("provider/model-id") for marina/default routing
+ * and for agents spawned without an explicit model. Runtime DB setting wins over
+ * the MARINA_DEFAULT_MODEL env value, which itself falls back to a built-in.
+ */
+export function getDefaultModel(db: Database): string {
+  return getSetting(db, "default_model") ?? MARINA_DEFAULT_MODEL;
+}
 
 // ─── Traits ─────────────────────────────────────────────────────────────
 
