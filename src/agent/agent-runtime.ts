@@ -5,11 +5,12 @@
  * Agents self-connect via WebSocket — the engine sees them as regular connections.
  */
 
+import { MARINA_DEFAULT_MODEL } from "../engine/constants";
 import { MODEL_DISCOVERY_PROVIDERS } from "../net/model-discovery";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
 import type { AgentConfig, AgentHandle, AgentStatus } from "./agent-types";
-import { LeanAgentAdapter } from "./lean-agent-adapter";
+import { classifyModelResolution, LeanAgentAdapter } from "./lean-agent-adapter";
 import { getRolePrompt, inferTaskCategory } from "./roles";
 
 const KNOWN_PROVIDERS = new Set<string>([...MODEL_DISCOVERY_PROVIDERS, "marina"]);
@@ -210,14 +211,18 @@ export class AgentRuntime {
       // false. Explicit values from the caller win.
       const effectiveConfig: AgentConfig = {
         ...config,
+        // No explicit model → use the operator's runtime default (DB), then the
+        // env/built-in default. This is what makes "change the default once the
+        // world is running" apply to newly spawned agents.
+        model: config.model ?? this.db?.getDefaultModel() ?? MARINA_DEFAULT_MODEL,
         crewResponder: config.crewResponder ?? inferCrewResponder(config.role),
       };
 
       // Validate a key exists at spawn time (fail fast on missing config),
       // but hand the adapter a resolver so rotations in the DB are picked
       // up on every LLM call without restarting the agent.
-      const apiKeyAtSpawn = this.resolveApiKey(config.model, config.keyName);
-      const modelStr = config.model ?? "google/gemini-2.0-flash";
+      const apiKeyAtSpawn = this.resolveApiKey(effectiveConfig.model, config.keyName);
+      const modelStr = effectiveConfig.model ?? MARINA_DEFAULT_MODEL;
       const provider = this.extractProvider(modelStr);
       if (!KNOWN_PROVIDERS.has(provider)) {
         // Most common cause: caller passed a bare model id ("claude-opus-4-7")
@@ -233,7 +238,29 @@ export class AgentRuntime {
           `No API key for provider "${provider}". Add one via dashboard Admin > Keys, or run: bun run init`,
         );
       }
-      const apiKeyResolver = () => this.resolveApiKey(config.model, config.keyName);
+      // The provider is known and keyed, but the specific model id may still be
+      // absent from the bundled model registry. An unlisted id under a known
+      // provider can still be routed ("synthesized" → the upstream validates
+      // it); only a provider with nothing to route through forces a silent
+      // switch to the default model. Fail fast on the unroutable case, and warn
+      // (attributed to the agent) on the unlisted case so a typoed/unsupported
+      // id is debuggable up front rather than as a downstream 4xx.
+      if (provider !== "marina") {
+        const resolution = classifyModelResolution(modelStr);
+        if (resolution === "fallback") {
+          throw new Error(
+            `Model "${modelStr}" can't be routed — provider "${provider}" has no models in the registry. ` +
+              `Use "<provider>/<model-id>" with a supported provider: ${[...KNOWN_PROVIDERS].join(", ")}.`,
+          );
+        }
+        if (resolution === "synthesized") {
+          console.warn(
+            `[agent-runtime] Spawning "${config.name}" with model "${modelStr}": id not in the bundled registry ` +
+              `for "${provider}". Routing to ${provider} with default params — verify the id is valid for that provider if it errors.`,
+          );
+        }
+      }
+      const apiKeyResolver = () => this.resolveApiKey(effectiveConfig.model, config.keyName);
 
       // Create adapter — use effectiveConfig so the inferred crewResponder
       // flag (and any other adapter-level defaults) reach the runtime.
@@ -305,7 +332,9 @@ export class AgentRuntime {
       if (this.db) {
         this.db.saveAgentConfig({
           name: config.name,
-          model: config.model ?? "google/gemini-2.0-flash",
+          // Snapshot the resolved model so respawns are stable even if the
+          // operator later changes the runtime default.
+          model: effectiveConfig.model ?? MARINA_DEFAULT_MODEL,
           role: config.role,
           goal: config.goal,
           keyName: config.keyName,
@@ -491,7 +520,7 @@ export class AgentRuntime {
   // ─── API Key Resolution ───────────────────────────────────────────────
 
   private resolveApiKey(model?: string, keyName?: string): string | undefined {
-    const provider = this.extractProvider(model ?? "google/gemini-2.0-flash");
+    const provider = this.extractProvider(model ?? MARINA_DEFAULT_MODEL);
 
     // Internal Marina model API — always use the startup-generated token
     if (provider === "marina") {

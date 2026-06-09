@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
+import type { MarinaAuthProvider } from "../auth/better-auth-provider";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { secretsEqual } from "../auth/secret-compare";
 import {
@@ -12,6 +13,7 @@ import type { MarinaDB } from "../persistence/database";
 import type { StorageProvider } from "../storage/provider";
 import type { Connection, Perception } from "../types";
 import { handleAssetApi, handleAssetServing } from "./asset-api";
+import { handleAuthApi } from "./auth-api";
 import { type CanvasNodeCreatedEvent, handleCanvasApi } from "./canvas-api";
 import { CanvasBroadcaster } from "./canvas-ws";
 import { buildConnectManifest, handleSkillRequest } from "./connect-api";
@@ -50,6 +52,7 @@ export class WebSocketServer {
   private onNodeCreated?: (event: CanvasNodeCreatedEvent) => void;
   private modelRateLimiter?: RateLimiter;
   private memRateLimiter?: RateLimiter;
+  private authProvider?: MarinaAuthProvider;
   /** Connection IDs that have successfully completed gateway auth. */
   private gatewayAuthed = new Set<string>();
 
@@ -81,6 +84,10 @@ export class WebSocketServer {
 
   setMemRateLimiter(limiter: RateLimiter): void {
     this.memRateLimiter = limiter;
+  }
+
+  setAuthProvider(provider: MarinaAuthProvider): void {
+    this.authProvider = provider;
   }
 
   start(): void {
@@ -257,6 +264,21 @@ export class WebSocketServer {
             self.modelRateLimiter,
           );
           if (modelResp) return modelResp;
+        }
+
+        // Auth API (optional better-auth bridge). /api/auth-status always
+        // answers (required:false when off); /api/auth/* + /api/auth-session
+        // only when a provider is configured.
+        if (url.pathname.startsWith("/api/auth")) {
+          const authResp = await handleAuthApi(
+            req,
+            url,
+            req.method,
+            engine,
+            self.db,
+            self.authProvider,
+          );
+          if (authResp) return authResp;
         }
 
         // API routes

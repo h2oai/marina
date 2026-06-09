@@ -10,6 +10,7 @@ dashboard/dist
 *.db-shm
 *.db-journal
 data
+marina-data
 backups
 .env
 .env.*

@@ -1,4 +1,4 @@
-import { Bot, Send, Square } from "lucide-react";
+import { Bot, Send, Square, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { postApi } from "../lib/api";
 import type { AgentStatusInfo } from "../lib/types";
@@ -59,6 +59,16 @@ export function AgentPanel({ name, status }: AgentPanelProps) {
           </>
         )}
       </div>
+
+      {/* Error reason — the diagnostic. errorReason is populated only while the
+          agent is in the error state, and now names the failing model
+          (e.g. "LLM error [openrouter/…]: 404 No allowed providers"). */}
+      {status.errorReason && (
+        <div className="flex items-start gap-1 rounded border border-red-500/40 bg-red-500/10 px-1.5 py-1 text-[10px] leading-tight">
+          <TriangleAlert size={11} className="mt-px shrink-0 text-red-400" />
+          <span className="break-words text-red-300">{status.errorReason}</span>
+        </div>
+      )}
 
       {/* Focus */}
       {status.focus && (

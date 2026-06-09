@@ -25,6 +25,7 @@
 import { type EdgeProps, getBezierPath } from "@xyflow/react";
 import { animate, type MotionValue, motion, useMotionValue, useTransform } from "motion/react";
 import { memo, useEffect, useState } from "react";
+import { prefersReducedMotion } from "../../lib/motion-prefs";
 import { RECALL_PATH_LIFETIME_MS, type RecallPathEdgeData } from "../lib/recall-paths";
 
 const RECALL_COLOR = "#f59e0b";
@@ -96,11 +97,15 @@ export const RecallPath = memo(function RecallPath({
 
   if (done) return null;
 
-  const particleDur = 1.8;
+  // The travelling-particle <animateMotion> samples the bezier path every frame
+  // and, with many simultaneous recall edges, was a dominant continuous-CPU cost
+  // — so it's dropped. The dashed-offset flow conveys the same direction far more
+  // cheaply, and is itself disabled under reduce-motion (static path + fade only).
+  const animateFlow = !prefersReducedMotion();
 
   return (
     <>
-      {/* Line + particle fade together as a group. */}
+      {/* Line fades as a group. */}
       <motion.g style={{ opacity: fade }}>
         {/* Soft glow under the path */}
         <motion.path
@@ -124,24 +129,16 @@ export const RecallPath = memo(function RecallPath({
           style={{ strokeWidth }}
           className="react-flow__edge-path"
         >
-          <animate
-            attributeName="stroke-dashoffset"
-            from="0"
-            to="-18"
-            dur="1.4s"
-            repeatCount="indefinite"
-          />
+          {animateFlow && (
+            <animate
+              attributeName="stroke-dashoffset"
+              from="0"
+              to="-18"
+              dur="1.4s"
+              repeatCount="indefinite"
+            />
+          )}
         </motion.path>
-        {/* Slow flowing particle — the memory trace travelling */}
-        <circle r={3.7} fill={color} opacity={0}>
-          <animateMotion dur={`${particleDur}s`} repeatCount="indefinite" path={edgePath} />
-          <animate
-            attributeName="opacity"
-            values="0;0.9;0.9;0"
-            dur={`${particleDur}s`}
-            repeatCount="indefinite"
-          />
-        </circle>
       </motion.g>
 
       {/* Query pill — rendered once per trace at the source (agent side).
