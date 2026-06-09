@@ -13,6 +13,7 @@ import {
   type Message,
   type Model,
   getModel as piGetModel,
+  getModels as piGetModels,
   type TextContent,
 } from "@mariozechner/pi-ai";
 import { MARINA_DEFAULT_MODEL } from "../engine/constants";
@@ -31,8 +32,72 @@ import { createScopedTools } from "./tools";
 
 // ─── Model Resolution ───────────────────────────────────────────────────────
 
+/**
+ * Safe wrapper around pi-ai's `getModel`.
+ *
+ * CRITICAL: `getModel` returns `undefined` (it does NOT throw) for ids absent
+ * from its bundled registry. The previous resolver wrapped it in try/catch
+ * expecting a throw, so the fallback was dead code — an unknown id leaked an
+ * `undefined` model downstream into a malformed upstream request (the "some
+ * models 4xx" symptom). Always go through this helper and check the result.
+ */
+function tryGetModel(provider: string, modelId: string): Model<Api> | undefined {
+  try {
+    return (piGetModel as (p: string, id: string) => Model<Api> | undefined)(provider, modelId);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Synthesize a Model for a known provider whose specific id isn't in the
+ * bundled registry. pi-ai's registry tracks releases on a lag, and aggregators
+ * like OpenRouter serve far more ids than it lists, so a perfectly valid model
+ * can be absent. Clone a sibling model's transport (api / provider / baseUrl /
+ * headers / input) and substitute the requested id with conservative defaults.
+ *
+ * The request then routes to the *correct* provider with the literal id, and
+ * the upstream becomes the authority on whether the id is valid — instead of
+ * silently switching the agent onto a different provider's default model.
+ */
+function synthesizeModel(provider: string, modelId: string): Model<Api> | undefined {
+  // Cast to allow arbitrary provider strings (pi-ai types the param as a
+  // closed `KnownProvider` union; we route on dynamic config values).
+  const sibling = (piGetModels as (p: string) => Model<Api>[] | undefined)(provider)?.[0];
+  if (!sibling) return undefined;
+  return {
+    ...sibling,
+    id: modelId,
+    name: `${provider}/${modelId}`,
+    // Unknown id → assume no extended thinking so we don't emit reasoning
+    // params the model may reject; the upstream still honors a real reasoning
+    // model's defaults.
+    reasoning: false,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  };
+}
+
+/**
+ * Classify how `resolveModel` will handle `modelStr`, with no side effects —
+ * lets the spawn path surface a model problem up front instead of as a
+ * downstream 4xx:
+ *  - "exact":       in the bundled registry (or the synthetic `marina` provider)
+ *  - "synthesized": known provider, unlisted id — routes to the right provider
+ *  - "fallback":    provider has no models to route through (silent switch)
+ */
+export function classifyModelResolution(modelStr: string): "exact" | "synthesized" | "fallback" {
+  const slash = modelStr.indexOf("/");
+  const provider = slash >= 0 ? modelStr.slice(0, slash) : modelStr;
+  const modelId = slash >= 0 ? modelStr.slice(slash + 1) : modelStr;
+  if (provider === "marina") return "exact";
+  if (tryGetModel(provider, modelId)) return "exact";
+  if (((piGetModels as (p: string) => Model<Api>[] | undefined)(provider)?.length ?? 0) > 0)
+    return "synthesized";
+  return "fallback";
+}
+
 /** Resolve a "provider/model" string to a pi-ai Model. Falls back to MARINA_DEFAULT_MODEL. */
-function resolveModel(modelStr: string, localPort?: number): Model<Api> {
+export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
   const slash = modelStr.indexOf("/");
   const provider = slash >= 0 ? modelStr.slice(0, slash) : modelStr;
   const modelId = slash >= 0 ? modelStr.slice(slash + 1) : modelStr;
@@ -54,26 +119,33 @@ function resolveModel(modelStr: string, localPort?: number): Model<Api> {
     };
   }
 
-  try {
-    // Cast to allow arbitrary provider/modelId strings
-    return (piGetModel as (p: string, id: string) => Model<Api>)(provider, modelId);
-  } catch {
-    // The requested model isn't in the dispatch registry. Fall back to the
-    // configured default — and say so clearly, since a silent provider switch
-    // (e.g. to a Google model you have no key for) otherwise surfaces later as
-    // a confusing upstream 4xx. Pick a supported model or set MARINA_DEFAULT_MODEL.
-    const dslash = MARINA_DEFAULT_MODEL.indexOf("/");
-    const dp = dslash >= 0 ? MARINA_DEFAULT_MODEL.slice(0, dslash) : MARINA_DEFAULT_MODEL;
-    const dId = dslash >= 0 ? MARINA_DEFAULT_MODEL.slice(dslash + 1) : MARINA_DEFAULT_MODEL;
+  // Exact registry hit — the common path.
+  const exact = tryGetModel(provider, modelId);
+  if (exact) return exact;
+
+  // Known provider, unlisted id: route to the correct provider with the literal
+  // id rather than silently switching providers. Lets the upstream validate it.
+  const synthesized = synthesizeModel(provider, modelId);
+  if (synthesized) {
     console.warn(
-      `[lean-agent] Model "${modelStr}" is not recognized by the model registry — falling back to MARINA_DEFAULT_MODEL "${MARINA_DEFAULT_MODEL}". Ensure you have a key for its provider, or pick a supported model.`,
+      `[lean-agent] Model id "${modelId}" isn't in the bundled registry for provider "${provider}" — routing to ${provider} with default params. If it 4xxes, verify the id is valid for that provider.`,
     );
-    try {
-      return (piGetModel as (p: string, id: string) => Model<Api>)(dp, dId);
-    } catch {
-      return piGetModel("google", "gemini-2.0-flash");
-    }
+    return synthesized;
   }
+
+  // Unknown provider entirely — fall back to the configured default and say so,
+  // since a silent provider switch otherwise surfaces later as a confusing 4xx.
+  const dslash = MARINA_DEFAULT_MODEL.indexOf("/");
+  const dp = dslash >= 0 ? MARINA_DEFAULT_MODEL.slice(0, dslash) : MARINA_DEFAULT_MODEL;
+  const dId = dslash >= 0 ? MARINA_DEFAULT_MODEL.slice(dslash + 1) : MARINA_DEFAULT_MODEL;
+  console.warn(
+    `[lean-agent] Provider "${provider}" (from model "${modelStr}") is not recognized by the model registry — falling back to MARINA_DEFAULT_MODEL "${MARINA_DEFAULT_MODEL}". Ensure you have a key for its provider, or pick a supported model.`,
+  );
+  const fallback = tryGetModel(dp, dId) ?? tryGetModel("google", "gemini-2.0-flash");
+  if (fallback) return fallback;
+  throw new Error(
+    `Cannot resolve model "${modelStr}" or fallback "${MARINA_DEFAULT_MODEL}" — the model registry is unavailable.`,
+  );
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
