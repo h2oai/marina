@@ -6,6 +6,7 @@ import { postApi } from "../lib/api";
 import {
   DEFAULT_FALLBACK_MODEL,
   mergeGroups,
+  pickDefaultModel,
   providerLabel,
   totalModelCount,
 } from "../lib/model-catalog";
@@ -68,9 +69,8 @@ function SpawnForm() {
     if (modelsLoading) return;
     if (hasLive) {
       const valid = new Set(liveGroups.flatMap((g) => g.models.map((m) => m.value)));
-      setModel((cur) =>
-        cur === "__custom" || valid.has(cur) ? cur : liveGroups[0]!.models[0]!.value,
-      );
+      const fallback = pickDefaultModel(liveGroups) ?? liveGroups[0]!.models[0]!.value;
+      setModel((cur) => (cur === "__custom" || valid.has(cur) ? cur : fallback));
     } else {
       setModel("__custom");
     }
