@@ -589,6 +589,29 @@ export function WorldMap({ worldData, backContent }: WorldMapProps) {
     // breathing animation) on every incoming event.
   }, []);
 
+  // ── 2.3b: Reduced-motion SMIL kill switch ─────────────────────────
+  // The map has ~10 indefinite SMIL loops (population pulse rings, rotating hub
+  // rings, hub glows, cross-edge pulse particles). pauseAnimations() freezes the
+  // whole SVG's SMIL timeline in one call — including elements added later, since
+  // the timeline itself is paused — so reduce-motion yields a fully static map
+  // with zero per-element gating. Reacts live to the OS setting changing.
+  useEffect(() => {
+    const svg = svgRef.current;
+    // pause/unpauseAnimations are SMIL methods absent in jsdom (and very old
+    // engines) — guard so tests and unsupported environments don't throw.
+    if (!svg || typeof svg.pauseAnimations !== "function" || !window.matchMedia) return;
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const apply = () => {
+      // Pausing the SVG's SMIL timeline also freezes elements mounted later,
+      // so this runs once on mount; the listener handles live toggles.
+      if (mq.matches) svg.pauseAnimations();
+      else svg.unpauseAnimations();
+    };
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
   // ── 2.4: Selection Ripple ─────────────────────────────────────────
   useEffect(() => {
     if (
