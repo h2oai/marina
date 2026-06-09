@@ -10,7 +10,7 @@ import { MODEL_DISCOVERY_PROVIDERS } from "../net/model-discovery";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
 import type { AgentConfig, AgentHandle, AgentStatus } from "./agent-types";
-import { LeanAgentAdapter } from "./lean-agent-adapter";
+import { classifyModelResolution, LeanAgentAdapter } from "./lean-agent-adapter";
 import { getRolePrompt, inferTaskCategory } from "./roles";
 
 const KNOWN_PROVIDERS = new Set<string>([...MODEL_DISCOVERY_PROVIDERS, "marina"]);
@@ -233,6 +233,28 @@ export class AgentRuntime {
         throw new Error(
           `No API key for provider "${provider}". Add one via dashboard Admin > Keys, or run: bun run init`,
         );
+      }
+      // The provider is known and keyed, but the specific model id may still be
+      // absent from the bundled model registry. An unlisted id under a known
+      // provider can still be routed ("synthesized" → the upstream validates
+      // it); only a provider with nothing to route through forces a silent
+      // switch to the default model. Fail fast on the unroutable case, and warn
+      // (attributed to the agent) on the unlisted case so a typoed/unsupported
+      // id is debuggable up front rather than as a downstream 4xx.
+      if (provider !== "marina") {
+        const resolution = classifyModelResolution(modelStr);
+        if (resolution === "fallback") {
+          throw new Error(
+            `Model "${modelStr}" can't be routed — provider "${provider}" has no models in the registry. ` +
+              `Use "<provider>/<model-id>" with a supported provider: ${[...KNOWN_PROVIDERS].join(", ")}.`,
+          );
+        }
+        if (resolution === "synthesized") {
+          console.warn(
+            `[agent-runtime] Spawning "${config.name}" with model "${modelStr}": id not in the bundled registry ` +
+              `for "${provider}". Routing to ${provider} with default params — verify the id is valid for that provider if it errors.`,
+          );
+        }
       }
       const apiKeyResolver = () => this.resolveApiKey(config.model, config.keyName);
 
