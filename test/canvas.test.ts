@@ -265,6 +265,31 @@ describe("Canvas — Phase 1: Asset Store", () => {
       const text = stripAnsi(conn.lastText());
       expect(text).toContain("rank 1+");
     });
+
+    it("canvas post creates an inline text node at rank 0 (no asset step)", () => {
+      const entity = engine.entities.get(entityId);
+      if (entity) entity.properties.rank = 0;
+      conn.clear();
+      engine.processCommand(entityId, "canvas post hello from a newcomer");
+      expect(stripAnsi(conn.lastText())).toContain("Posted to canvas");
+
+      const canvas = db.getCanvasByName("global");
+      expect(canvas).toBeDefined();
+      const nodes = db.getNodesByCanvas(canvas!.id);
+      const node = nodes.find((n) => n.type === "text");
+      expect(node).toBeDefined();
+      expect(node!.asset_id).toBeNull();
+      expect(JSON.parse(node!.data).content).toBe("hello from a newcomer");
+    });
+
+    it("canvas post routes to a named canvas via on:<name>", () => {
+      conn.clear();
+      engine.processCommand(entityId, "canvas post on:ideas spark of insight");
+      expect(stripAnsi(conn.lastText())).toContain('"ideas"');
+      const canvas = db.getCanvasByName("ideas");
+      expect(canvas).toBeDefined();
+      expect(db.getNodesByCanvas(canvas!.id).length).toBe(1);
+    });
   });
 
   // ─── Export includes assets ────────────────────────────────────────────
