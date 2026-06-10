@@ -1,0 +1,183 @@
+name: Deploy to EC2
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "dashboard/**"
+      - "worlds/**"
+      - "rooms/**"
+      - "seeds/**"
+      - "skills/**"
+      - "package.json"
+      - "bun.lock"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "docker-compose.yml"
+      - "scripts/deploy.sh"
+      - ".github/workflows/deploy-ec2.yml"
+  workflow_dispatch:
+    inputs:
+      rollback_sha:
+        description: "Rollback: full commit SHA of an already-built image to redeploy (skips build/push, deploys sha-<this>). Leave empty for a normal build + deploy."
+        required: false
+        type: string
+        default: ""
+
+concurrency:
+  group: h2o-marina-ec2-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  ECR_ACCOUNT_ID: "353750902984"
+  ECR_REPOSITORY: "h2oai-marina"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.GH_OIDC_ROLE_H2O_MARINA }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Resolve deploy target (build vs rollback)
+        id: target
+        env:
+          ROLLBACK_SHA: ${{ inputs.rollback_sha }}
+          REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          if [ -n "${ROLLBACK_SHA:-}" ]; then
+            echo "Rollback requested → redeploying sha-${ROLLBACK_SHA} (build/push skipped)"
+            # Fail fast if that image isn't already in ECR.
+            aws ecr describe-images --region "$REGION" \
+              --registry-id "$ECR_ACCOUNT_ID" --repository-name "$ECR_REPOSITORY" \
+              --image-ids imageTag="sha-${ROLLBACK_SHA}" >/dev/null \
+              || { echo "::error::No image tagged sha-${ROLLBACK_SHA} in ${ECR_REPOSITORY}"; exit 1; }
+            echo "sha=${ROLLBACK_SHA}" >> "$GITHUB_OUTPUT"
+            echo "rollback=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            echo "rollback=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate required configuration
+        env:
+          INSTANCE_ID: ${{ vars.MARINA_INSTANCE_ID }}
+          APP_DIR: ${{ vars.MARINA_APP_DIR }}
+        run: |
+          set -euo pipefail
+          : "${INSTANCE_ID:?Set repo variable MARINA_INSTANCE_ID}"
+          : "${APP_DIR:?Set repo variable MARINA_APP_DIR}"
+          echo "Deploying commit ${GITHUB_SHA} to ${INSTANCE_ID}:${APP_DIR}"
+
+      - name: Log in to Amazon ECR (cross-account registry)
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registries: ${{ env.ECR_ACCOUNT_ID }}
+
+      - name: Set up Docker Buildx
+        if: steps.target.outputs.rollback != 'true'
+        uses: docker/setup-buildx-action@v4
+
+      - name: Docker image metadata (tags + labels)
+        id: meta
+        if: steps.target.outputs.rollback != 'true'
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push image to ECR
+        id: build
+        if: steps.target.outputs.rollback != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trigger deploy via SSM Run Command
+        id: send
+        env:
+          INSTANCE_ID: ${{ vars.MARINA_INSTANCE_ID }}
+          APP_DIR: ${{ vars.MARINA_APP_DIR }}
+          REGION: ${{ vars.AWS_REGION }}
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:sha-${{ steps.target.outputs.sha }}
+          GIT_REF: ${{ steps.target.outputs.sha }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Build the command list safely (no shell-injection of dir/ref/image).
+          jq -n \
+            --arg dir "$APP_DIR" \
+            --arg ref "$GIT_REF" \
+            --arg refname "$REF_NAME" \
+            --arg img "$IMAGE" \
+            --arg region "$REGION" '{
+            commands: [
+              "set -euo pipefail",
+              "export HOME=/root",
+              "export AWS_REGION=\($region)",
+              "export MARINA_IMAGE=\($img)",
+              "cd \($dir)",
+              "git config --global --add safe.directory \($dir)",
+              "git fetch origin \($refname) --prune",
+              "git reset --hard \($ref)",
+              "bash scripts/deploy.sh"
+            ]
+          }' > /tmp/ssm-params.json
+
+          CMD_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy Marina ${GIT_REF:0:7} (run ${GITHUB_RUN_ID})" \
+            --parameters file:///tmp/ssm-params.json \
+            --query 'Command.CommandId' --output text)
+          echo "SSM CommandId: $CMD_ID"
+          echo "cmd_id=$CMD_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for deploy to finish
+        env:
+          INSTANCE_ID: ${{ vars.MARINA_INSTANCE_ID }}
+          CMD_ID: ${{ steps.send.outputs.cmd_id }}
+        run: |
+          set -euo pipefail
+          STATUS="Pending"
+          # Poll up to ~30 min.
+          for _ in $(seq 1 120); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+              --query 'Status' --output text 2>/dev/null || echo "Pending")
+            case "$STATUS" in
+              Success|Failed|Cancelled|TimedOut) break ;;
+            esac
+            sleep 15
+          done
+
+          echo "::group::Deploy stdout"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+            --query 'StandardOutputContent' --output text || true
+          echo "::endgroup::"
+          echo "::group::Deploy stderr"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" \
+            --query 'StandardErrorContent' --output text || true
+          echo "::endgroup::"
+
+          echo "Final SSM status: $STATUS"
+          [ "$STATUS" = "Success" ]
