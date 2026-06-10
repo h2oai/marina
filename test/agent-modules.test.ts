@@ -1291,11 +1291,21 @@ describe("model resolution", () => {
     expect(roundTrip(high)).toBe(true);
   });
 
-  it("leaves non-round-trip reasoning models untouched even when thinking is off", () => {
-    // A reasoning model that doesn't demand the reasoning_content echo must
-    // not be downgraded — only the providers that 400 without it are touched.
+  it("neutralizes any reasoning model when thinking is off (prevents the reasoning-disable 400)", () => {
+    // With thinking off, pi-ai would send an explicit reasoning-DISABLE directive
+    // for any reasoning model — which reasoning-MANDATORY endpoints (e.g.
+    // openrouter/auto routed to an o-series model) reject with
+    // "Reasoning is mandatory for this endpoint and cannot be disabled". Clearing
+    // model.reasoning suppresses that directive, so ALL reasoning models are
+    // downgraded when thinking is off, not just DeepSeek's round-trip variants.
     const m = resolveModel("anthropic/claude-3-5-haiku-20241022");
     const out = neutralizeUnusedReasoning({ ...m, reasoning: true }, "off");
+    expect(out.reasoning).toBe(false);
+  });
+
+  it("leaves a reasoning model alone when the agent opted into thinking", () => {
+    const m = resolveModel("anthropic/claude-3-5-haiku-20241022");
+    const out = neutralizeUnusedReasoning({ ...m, reasoning: true }, "high");
     expect(out.reasoning).toBe(true);
   });
 });
