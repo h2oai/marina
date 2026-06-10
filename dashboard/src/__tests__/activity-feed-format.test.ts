@@ -97,6 +97,25 @@ describe("formatEvent — lifecycle", () => {
     expect(r.suffix).toBe(" error: missing key");
   });
 
+  it("never prints 'undefined' for a transport connect/disconnect", () => {
+    // connectionId is stripped server-side and there's no entity at the
+    // transport layer — these are dropped before broadcast, but if one ever
+    // arrives, the feed must stay generic rather than printing "undefined".
+    const c = formatEvent(evt({ type: "connect" }), resolve);
+    expect(c.suffix).not.toContain("undefined");
+    expect(c.suffix).toBe("a client connected");
+
+    const d = formatEvent(evt({ type: "disconnect" }), resolve);
+    expect(d.suffix).not.toContain("undefined");
+    expect(d.suffix).toBe("a client disconnected");
+  });
+
+  it("names a connect/disconnect when an entity is present", () => {
+    const c = formatEvent(evt({ type: "connect", entity: "e_1" }), resolve);
+    expect(c.prefix).toBe("Alice");
+    expect(c.suffix).toBe(" connected");
+  });
+
   it("renders rank_change with direction arrow", () => {
     const up = formatEvent(
       evt({

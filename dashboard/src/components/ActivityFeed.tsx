@@ -149,9 +149,20 @@ export function formatEvent(
         suffix: ` left ${room}`,
       };
     case "connect":
-      return { color: "text-success", prefix: "", suffix: `${event.connectionId} connected` };
+      // connectionId is stripped server-side and there's no entity at the
+      // transport layer; name it if we somehow have one, else stay generic
+      // rather than printing "undefined connected".
+      return {
+        color: "text-success",
+        prefix: entityName ?? "",
+        suffix: entityName ? " connected" : "a client connected",
+      };
     case "disconnect":
-      return { color: "text-danger", prefix: "", suffix: `${event.connectionId} disconnected` };
+      return {
+        color: "text-danger",
+        prefix: entityName ?? "",
+        suffix: entityName ? " disconnected" : "a client disconnected",
+      };
     case "agent_error":
       return {
         color: "text-red-400",
