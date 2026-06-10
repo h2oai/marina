@@ -637,6 +637,15 @@ export type EngineEvent =
       error: string;
       timestamp: number;
     }
+  // Lifecycle state transition (connected → autonomous → stopped, etc.).
+  // Fires at milestones only (not per turn), so observers can refresh an
+  // agent's displayed state live without polling.
+  | {
+      type: "agent_state_change";
+      name: string;
+      state: "starting" | "connected" | "autonomous" | "idle" | "stopping" | "stopped" | "error";
+      timestamp: number;
+    }
   // Per-agent LLM lifecycle — observers (dashboard, MCP, gateway peers)
   // use these to render "agent is mid-thought" state, streaming thought,
   // and turn boundaries.

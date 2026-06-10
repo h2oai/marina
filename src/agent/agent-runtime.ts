@@ -292,6 +292,14 @@ export class AgentRuntime {
         const unsub = adapter.subscribe((event) => {
           const now = Date.now();
           switch (event.type) {
+            case "status_change":
+              onEvent({
+                type: "agent_state_change",
+                name: config.name,
+                state: event.status.state,
+                timestamp: now,
+              });
+              break;
             case "error":
               onEvent({
                 type: "agent_error",

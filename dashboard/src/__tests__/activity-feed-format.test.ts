@@ -97,6 +97,23 @@ describe("formatEvent — lifecycle", () => {
     expect(r.suffix).toBe(" error: missing key");
   });
 
+  it("renders agent_state_change with the new state and a state-keyed color", () => {
+    const auto = formatEvent(
+      evt({ type: "agent_state_change", name: "alice", state: "autonomous" }),
+      resolve,
+    );
+    expect(auto.prefix).toBe("alice");
+    expect(auto.suffix).toBe(" → autonomous");
+    expect(auto.color).toBe("text-green-400");
+
+    const stopped = formatEvent(
+      evt({ type: "agent_state_change", name: "alice", state: "stopped" }),
+      resolve,
+    );
+    expect(stopped.suffix).toBe(" → stopped");
+    expect(stopped.color).toBe("text-text-dim");
+  });
+
   it("never prints 'undefined' for a transport connect/disconnect", () => {
     // connectionId is stripped server-side and there's no entity at the
     // transport layer — these are dropped before broadcast, but if one ever

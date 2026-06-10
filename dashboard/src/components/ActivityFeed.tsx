@@ -169,6 +169,18 @@ export function formatEvent(
         prefix: event.name ?? "",
         suffix: ` error: ${clip(event.error ?? "unknown")}`,
       };
+    case "agent_state_change": {
+      const st = event.state ?? "";
+      const color =
+        st === "autonomous"
+          ? "text-green-400"
+          : st === "error"
+            ? "text-red-400"
+            : st === "stopped"
+              ? "text-text-dim"
+              : "text-secondary";
+      return { color, prefix: event.name ?? "", suffix: ` → ${st}` };
+    }
     case "agent_turn_start":
       return { color: "text-accent", prefix: event.name ?? "", suffix: " thinking…" };
     case "agent_turn_end":
