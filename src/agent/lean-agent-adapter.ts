@@ -242,6 +242,8 @@ export class LeanAgentAdapter implements AgentHandle {
   private autonomousMode = false;
   private autonomousLoopRunning = false;
   private autonomousLoopPromise: Promise<void> | null = null;
+  /** The detached discovery turn + loop startup kicked off by start(). */
+  private bootstrapPromise: Promise<void> | null = null;
   private pendingPerceptions: Array<{
     text: string;
     priority: number;
@@ -645,7 +647,9 @@ export class LeanAgentAdapter implements AgentHandle {
   // ─── Connection & Lifecycle ───────────────────────────────────────────
 
   async start(goal?: string): Promise<void> {
-    // Connect via WebSocket (self-connect to the same server)
+    // Connect via WebSocket (self-connect to the same server). This part is
+    // awaited — it's fast (localhost) and establishes the entity session, so
+    // callers know the agent exists and is connected when start() resolves.
     this.gameState.setConnectionStatus("connecting", this.client.getUrl());
 
     const session = await this.client.connect(this.name);
@@ -653,7 +657,7 @@ export class LeanAgentAdapter implements AgentHandle {
 
     this.emitStatusChange("connected");
 
-    // Start autonomous loop
+    // Mark autonomous and seed focus, but DON'T block on the discovery turn.
     this.autonomousMode = true;
     this.metrics.startedAt = Date.now();
 
@@ -663,6 +667,31 @@ export class LeanAgentAdapter implements AgentHandle {
 
     this.setupActionTracking();
 
+    // Run the discovery turn + autonomous-loop startup in the BACKGROUND. The
+    // first agentic turn fans out into many tool calls and can run for a long
+    // time; awaiting it here held the spawn() caller open for the entire turn —
+    // and with the dashboard launching via an awaited POST, the form sat on
+    // "Spawning…" (disabled) until discovery finished, unable to launch another
+    // agent without remounting (flipping the card). Detaching it lets start()
+    // (and the spawn POST) return as soon as the agent is connected. Errors
+    // surface via the "error" event (relayed to agent_error), and an abort
+    // from stop() mid-discovery is swallowed (autonomousMode is false by then).
+    this.bootstrapPromise = this.bootstrap().catch((err) => {
+      if (!this.autonomousMode) return;
+      this.emitEvent({
+        type: "error",
+        error: err instanceof Error ? err.message : String(err),
+        context: "bootstrap",
+      });
+    });
+  }
+
+  /**
+   * The detached portion of start(): runs the one-time discovery turn, then
+   * starts the autonomous loop. Kept off start()'s await path so spawning is
+   * non-blocking — see start() for why.
+   */
+  private async bootstrap(): Promise<void> {
     // Load checkpoint
     const checkpointSummary = await this.loadCheckpointSummary();
 
@@ -688,6 +717,10 @@ export class LeanAgentAdapter implements AgentHandle {
     );
     console.log(`[lean-agent] "${this.name}" discovery prompt completed, starting autonomous loop`);
 
+    // stop() may have been called while discovery was still running — don't
+    // start the loop or claim "autonomous" in that case.
+    if (!this.autonomousMode) return;
+
     this.startCheckpointTimer();
     this.autonomousLoopRunning = true;
     this.autonomousLoopPromise = this.runAutonomousLoop();
@@ -697,6 +730,9 @@ export class LeanAgentAdapter implements AgentHandle {
 
   async stop(): Promise<void> {
     const loopPromise = this.autonomousLoopPromise;
+    // The discovery turn may still be running in the background (start() no
+    // longer awaits it). Capture it so we can unwind it cleanly below.
+    const bootstrapPromise = this.bootstrapPromise;
     this.autonomousLoopRunning = false;
     this.autonomousMode = false;
     this.stopCheckpointTimer();
@@ -709,6 +745,11 @@ export class LeanAgentAdapter implements AgentHandle {
     this.agent.abort();
     await this.agent.waitForIdle().catch(() => {});
 
+    // Unwind a still-running discovery turn (its catch is a no-op now that
+    // autonomousMode is false), then the autonomous loop.
+    if (bootstrapPromise) {
+      await bootstrapPromise;
+    }
     if (loopPromise) {
       await loopPromise;
     }
