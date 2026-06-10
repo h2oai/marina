@@ -281,12 +281,12 @@ export class AgentRuntime {
         INTERNAL_MODEL_TOKEN,
       );
 
-      // Start the agent
-      await adapter.start(config.goal);
-
-      // Relay per-agent adapter events as engine events so dashboard /
-      // MCP / gateway peers can observe agent cognitive lifecycle:
-      // errors, turn boundaries, and streaming thought.
+      // Relay per-agent adapter events as engine events so dashboard / MCP /
+      // gateway peers can observe agent cognitive lifecycle: errors, turn
+      // boundaries, streaming thought, and state transitions. Registered
+      // BEFORE start() so the initial connected/autonomous status changes
+      // (start() emits "connected" synchronously and "autonomous" from the
+      // background discovery turn) are observed rather than fired into the void.
       if (this.onEvent) {
         const onEvent = this.onEvent;
         const unsub = adapter.subscribe((event) => {
@@ -340,6 +340,11 @@ export class AgentRuntime {
         });
         this.agentUnsubscribers.set(config.name, unsub);
       }
+
+      // Start the agent — connects synchronously, then runs the discovery turn
+      // in the background (see LeanAgentAdapter.start), so this resolves as soon
+      // as the agent is connected instead of after the whole first turn.
+      await adapter.start(config.goal);
 
       // Track it
       this.agents.set(config.name, adapter);
