@@ -211,3 +211,30 @@ Keep `auto_stop_machines = false` and `min_machines_running = 1` — and **do no
 - **Health**: `curl https://your-host/health` returns 200 + JSON when live; this is what the container and load balancer probes use.
 - **Upgrades**: `git pull` (or pull a new image tag), then `docker compose up -d --build`. Back up first; migrations in `src/persistence/database.ts` run automatically on boot and are append-only.
 - **Stuck?** See [Troubleshooting](troubleshooting.md).
+
+## Continuous deployment (CI/CD)
+
+On push to `main`, [`Deploy to EC2`](../../.github/workflows/deploy-ec2.yml) builds the image, pushes it to ECR (`h2oai-marina` in account `<aws-account-id>`), and — because the host is in a private subnet — uses **AWS SSM Run Command** (not SSH) to pull the pinned `:<commit-sha>` image and `docker compose up -d` via [`scripts/deploy.sh`](../../scripts/deploy.sh). Auth is via **GitHub OIDC** (no static keys). Setup lives in repo **secret** `GH_OIDC_ROLE_H2O_MARINA` and **variables** `AWS_REGION` / `MARINA_INSTANCE_ID` / `MARINA_APP_DIR`; the AWS side is in `terraform/aws/internal-deployments/{git-oidc-roles,ecr}`.
+
+### Rollback
+Every image is tagged by **commit SHA** (immutable), so rolling back means redeploying an older tag — no rebuild. Three ways, easiest first:
+
+1. **One-click (recommended):** Actions → **Deploy to EC2 → Run workflow**, set the **`rollback_sha`** input to the full commit SHA you want live. The workflow **skips build/push** (verifies the `sha-<…>` image exists in ECR first) and redeploys that image via SSM.
+2. **On the host:**
+   ```bash
+   MARINA_IMAGE=<aws-account-id>.dkr.ecr.us-east-1.amazonaws.com/h2oai-marina:sha-<old-sha> \
+   AWS_REGION=us-east-1 sudo -H bash /home/ubuntu/Marina/scripts/deploy.sh
+   ```
+3. **`git revert`** the bad commit on `main` and let CI build + deploy the revert.
+
+The prior image is usually still cached locally (we only prune *dangling* images), so the rollback pull is instant.
+
+### Running `docker compose` manually on the host
+- The CI deploy runs as **root** via SSM. If you SSH in (as `ubuntu`) and run `docker compose up -d` yourself, Compose resolves the image from `${MARINA_IMAGE:-…/h2oai-marina:latest}` — i.e. **`:latest`** unless you `export MARINA_IMAGE=…:<sha>`. That can differ from the SHA the pipeline last deployed, so prefer setting `MARINA_IMAGE` (or just re-trigger the workflow) to stay deterministic.
+- **Heads-up:** the next CI deploy runs `git reset --hard`, which **overwrites local edits to tracked files** (e.g. a hand-edited `docker-compose.yml`) on the host. Keep host-specific config in `.env` (untracked) and persistent data in the `./marina-data` bind-mount — both survive deploys.
+
+### Image retention
+`deploy.sh`'s `docker image prune -f` only removes **dangling** layers; old `:sha-…` tags are not dangling, so they're kept (on the host, that's deliberate — it makes rollback instant). Registry storage is bounded by an **ECR lifecycle policy** on `h2oai-marina` (`lifecycle_any_30d`: archive images unpulled for 30d → expire 90d after), defined in `terraform/aws/internal-deployments/ecr`. On the host, run `docker image prune -a` on a schedule if disk pressure arises.
+
+### Build details
+The image is built and pushed with `docker/build-push-action` + `docker/metadata-action` (Buildx layer cache via `type=gha`, OCI labels). Tags: `type=sha,format=long` → `sha-<commit-sha>` (immutable; what the deploy pins to) and `latest` on the default branch.

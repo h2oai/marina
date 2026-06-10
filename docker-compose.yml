@@ -1,5 +1,6 @@
 services:
   marina:
+    image: ${MARINA_IMAGE:-<aws-account-id>.dkr.ecr.us-east-1.amazonaws.com/h2oai-marina:latest}
     build: .
     # Pull provider keys / secrets from a local .env file if present.
     # Copy .env.example → .env and fill in what you need.
