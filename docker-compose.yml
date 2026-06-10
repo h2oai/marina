@@ -30,7 +30,16 @@ services:
       # The /v1/* and /api/* LLM endpoints require auth unless you opt out.
       # Set real tokens for any internet-facing deployment:
       # - MODEL_API_KEYS=sk-marina-changeme
-      # Dev-only escape hatch — DO NOT enable on a public host:
+      #
+      # DASHBOARD ACCESS — IMPORTANT. The dashboard/canvas/asset API is gated:
+      # every /api/* read+write needs a session token. A fresh browser has none
+      # (a token is only issued after logging in via the webchat), so WITHOUT one
+      # of the two options below the dashboard shows NO content and the canvas
+      # returns 401 on upload. Pick one:
+      #   • Trusted/internal network → set MARINA_OPEN_API=true (opens the whole
+      #     API with no token — NEVER do this on an internet-facing host).
+      #   • Public host → enable real auth instead: MARINA_AUTH=better-auth
+      #     (see docs/authentication.md), and have users sign in.
       # - MARINA_OPEN_API=true
       # CORS allow-list when the dashboard/clients live on another origin:
       # - ALLOWED_ORIGINS=https://marina.example.com
