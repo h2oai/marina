@@ -5,6 +5,10 @@ import { FEED_EVENT_TYPES, loadFeedSnapshot, useFeedState } from "./use-feed-sta
 import { GRAPH_EVENT_TYPES, loadGraphSnapshot, useGraphState } from "./use-graph-state";
 import { useWorldState } from "./use-world-state";
 
+/** High-frequency per-token streaming events that belong to the live-stream
+ *  projection only, not the discrete event feed. */
+const FEED_EXCLUDED_TYPES = new Set(["agent_text_delta", "agent_thinking_delta"]);
+
 export function useDashboardWebSocket() {
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -85,7 +89,13 @@ export function useDashboardWebSocket() {
           if (msg.type === "snapshot" || msg.type === "state") {
             pendingSnapshotRef.current = msg.data;
           } else if (msg.type === "event") {
-            pendingEventsRef.current.push(msg.data);
+            // Per-token streaming deltas are consumed below by the activity store
+            // (the live snippet/stream). They must NOT enter the raw event feed —
+            // at many tokens/sec they flood the Activity panel with "agent text
+            // delta" rows and drown out discrete events.
+            if (!FEED_EXCLUDED_TYPES.has(msg.data.type)) {
+              pendingEventsRef.current.push(msg.data);
+            }
             if (GRAPH_EVENT_TYPES.has(msg.data.type)) {
               pendingGraphEventsRef.current.push(msg.data);
             }
