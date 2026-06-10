@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type Layout,
   type LayoutItem,
@@ -26,12 +26,6 @@ import { useSystem, useWorld } from "./hooks/use-api";
 import { useGlobalRealtimeInvalidations } from "./hooks/use-realtime-invalidations";
 import { useDashboardWebSocket } from "./hooks/use-websocket";
 import { TimelineStrip } from "./unified/overlays/TimelineStrip";
-
-// Lazy-load the unified canvas — it's heavy (ReactFlow + overlays) and only
-// mounts when the user flips the WorldMap panel to its back face.
-const LazyUnifiedCanvas = lazy(() =>
-  import("./unified/UnifiedCanvas").then((m) => ({ default: m.UnifiedCanvas })),
-);
 
 // Bump the version suffix whenever DEFAULT_LAYOUTS changes shape so existing
 // users pick up the new default instead of a stale auto-persisted copy of the
@@ -320,14 +314,10 @@ export default function App() {
               onDoubleClick={onHeaderDblClick("worldmap")}
               className={panelClass("worldmap")}
             >
-              <WorldMap
-                worldData={worldData}
-                backContent={
-                  <Suspense fallback={null}>
-                    <LazyUnifiedCanvas embedded />
-                  </Suspense>
-                }
-              />
+              {/* The Unified Canvas no longer nests here — it didn't work well
+                  embedded. It's now a standalone alternate interface, off by
+                  default, enabled via MARINA_UNIFIED_CANVAS (see main.tsx). */}
+              <WorldMap worldData={worldData} />
             </div>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
             <div
