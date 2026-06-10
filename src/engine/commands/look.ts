@@ -11,6 +11,19 @@ import {
 import type { CommandDef, EntityId, RoomContext, RoomPerception } from "../../types";
 import type { LoadedRoom } from "../../world/room-manager";
 
+/**
+ * Strip natural-language lead-ins from a look/examine target so "look at the
+ * builder" resolves the same as "look builder". Returns "" when only lead-in
+ * words were given (e.g. "look at").
+ */
+export function normalizeLookTarget(args: string): string {
+  const words = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  while (words.length > 0 && /^(at|in|on|inside|toward|towards|the|a|an)$/.test(words[0]!)) {
+    words.shift();
+  }
+  return words.join(" ");
+}
+
 export function lookCommand(
   getRoom: (entity: EntityId) => LoadedRoom | undefined,
   getRoomBoards?: (roomId: string) => Board[],
@@ -28,22 +41,32 @@ export function lookCommand(
 
       // look at specific item or entity
       if (input.args) {
+        // Strip natural-language lead-ins so "look at builder" / "look at the
+        // fountain" resolve the same as "look builder". Without this the target
+        // was literally "at builder", which never matched.
+        const target = normalizeLookTarget(input.args);
+
+        if (!target) {
+          ctx.send(input.entity, "Look at what?");
+          return;
+        }
+
+        // Check entities in room first — a co-located agent named "builder"
+        // should win over an item substring.
+        const entity = ctx.findEntity(target);
+        if (entity) {
+          ctx.send(input.entity, `${entity.name}: ${entity.long}`);
+          return;
+        }
+
         // Check room items
         const items = room.module.items ?? {};
-        const target = input.args.toLowerCase();
         for (const [name, desc] of Object.entries(items)) {
           if (name.toLowerCase().includes(target)) {
             const text = typeof desc === "function" ? desc(ctx, input.entity) : desc;
             ctx.send(input.entity, text);
             return;
           }
-        }
-
-        // Check entities in room
-        const entity = ctx.findEntity(input.args);
-        if (entity) {
-          ctx.send(input.entity, `${entity.name}: ${entity.long}`);
-          return;
         }
 
         ctx.send(input.entity, "You don't see that here.");
