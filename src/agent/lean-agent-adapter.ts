@@ -149,42 +149,43 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
 }
 
 /**
- * Strip reasoning metadata from a model whose provider demands the assistant's
- * chain-of-thought be echoed back on every subsequent turn — but only when the
- * agent isn't actually using extended thinking.
+ * Call a reasoning model as a plain chat model when the agent isn't using
+ * extended thinking (Marina's default — `thinkingLevel: "off"`). Marina never
+ * consumes reasoning output in that mode, and forcing `reasoning: false` is what
+ * keeps the request clean across providers:
  *
- * DeepSeek's thinking-mode models (`compat.requiresReasoningContentOnAssistant-
- * Messages`) reject a request whose history omits the prior turn's
- * `reasoning_content` (API error 20015). pi-ai gates both the thinking params
- * and that round-trip on `model.reasoning`, but it only ever echoes an *empty*
- * `reasoning_content` placeholder — it never carries the real thoughts — so the
- * upstream 400s. Marina defaults `thinkingLevel: "off"`, so when thinking is off
- * we don't need the reasoning machinery at all: drop `reasoning` and the
- * round-trip flag so the model is called as a plain chat model and the broken
- * echo never fires. Models that don't demand the round-trip are left untouched.
+ *  - OpenRouter / OpenAI: when `model.reasoning` is true but no effort is
+ *    requested, pi-ai sends an explicit reasoning-DISABLE directive
+ *    (`reasoning: { effort: "none" }` / `reasoning_effort: "none"`). Models where
+ *    reasoning is MANDATORY reject it: `400 Reasoning is mandatory for this
+ *    endpoint and cannot be disabled` — common with `openrouter/auto` routing to
+ *    an o-series / thinking model. Both disable branches are gated on
+ *    `model.reasoning`, so clearing it suppresses the directive and the upstream
+ *    falls back to its own (valid) default instead of 400ing.
+ *  - DeepSeek thinking-mode models (`requiresReasoningContentOnAssistantMessages`)
+ *    400 (error 20015) when history omits the prior turn's `reasoning_content`,
+ *    which pi-ai only ever echoes as an empty placeholder. Clearing that flag too
+ *    avoids the broken round-trip.
+ *
+ * When the agent DID opt into thinking, the model is left untouched.
  */
 export function neutralizeUnusedReasoning(
   model: Model<Api>,
   thinkingLevel: string | undefined,
 ): Model<Api> {
-  // The agent opted into thinking — keep reasoning even though the round-trip
-  // may still bite; that's an explicit, separate choice.
+  // The agent opted into thinking — keep reasoning; that's an explicit choice.
   if (thinkingLevel && thinkingLevel !== "off") return model;
   if (!model.reasoning) return model;
-  // `requiresReasoningContentOnAssistantMessages` lives only on the
-  // openai-completions compat variant (the api DeepSeek uses); read it loosely.
   const compat = model.compat as
     | { requiresReasoningContentOnAssistantMessages?: boolean }
     | undefined;
-  const isDeepSeek =
-    model.provider === "deepseek" || (model.baseUrl?.includes("deepseek.com") ?? false);
-  const requiresRoundTrip =
-    compat?.requiresReasoningContentOnAssistantMessages === true || isDeepSeek;
-  if (!requiresRoundTrip) return model;
   return {
     ...model,
     reasoning: false,
-    compat: { ...(model.compat as object), requiresReasoningContentOnAssistantMessages: false },
+    // Also clear DeepSeek's round-trip demand (harmless when absent).
+    compat: compat?.requiresReasoningContentOnAssistantMessages
+      ? { ...(model.compat as object), requiresReasoningContentOnAssistantMessages: false }
+      : model.compat,
   } as Model<Api>;
 }
 
