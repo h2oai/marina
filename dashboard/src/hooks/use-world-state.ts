@@ -144,8 +144,14 @@ export const useWorldState = create<WorldState>((set) => ({
           ranks = presence.agentRanks;
         }
       }
+      // The feed renders newest-first (index 0 at top). A batch arrives in
+      // chronological order (oldest→newest), so it must be reversed before
+      // prepending — otherwise the oldest event in each flush lands at the top
+      // and the panel looks oldest-first under volume. Presence above still
+      // iterates in chronological order.
+      const newestFirst = [...events].reverse();
       return {
-        eventFeed: [...events, ...state.eventFeed].slice(0, 200),
+        eventFeed: [...newestFirst, ...state.eventFeed].slice(0, 200),
         thinkingAgents: thinking,
         agentRanks: ranks,
       };
