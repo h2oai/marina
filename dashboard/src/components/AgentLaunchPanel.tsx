@@ -3,13 +3,8 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAgents, useKeys, useModels, useRoles } from "../hooks/use-api";
 import { postApi } from "../lib/api";
-import {
-  DEFAULT_FALLBACK_MODEL,
-  mergeGroups,
-  pickDefaultModel,
-  providerLabel,
-  totalModelCount,
-} from "../lib/model-catalog";
+import { DEFAULT_FALLBACK_MODEL, mergeGroups, pickDefaultModel } from "../lib/model-catalog";
+import { ModelSelect } from "./ModelSelect";
 import type { AgentStatusFull } from "../lib/types";
 import { cn } from "../lib/utils";
 import { GlassPanel } from "./GlassPanel";
@@ -61,7 +56,6 @@ function SpawnForm() {
     [groups],
   );
   const hasLive = liveGroups.length > 0;
-  const liveModelCount = totalModelCount(liveGroups);
 
   // Default the selection to a callable model once discovery resolves; with no
   // keyed providers, fall back to the custom field so nothing un-callable is preselected.
@@ -114,48 +108,12 @@ function SpawnForm() {
       />
 
       {/* Model */}
-      <label className="block space-y-1">
-        <span className="flex items-center justify-between text-text-dim text-[9px] uppercase tracking-wider">
-          <span>Model</span>
-          <span className="text-text-dim normal-case tracking-normal">
-            {modelsLoading
-              ? "discovering…"
-              : hasLive
-                ? `${liveModelCount} available`
-                : "no API key — add one in Admin → Keys"}
-          </span>
-        </span>
-        <select
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          className="w-full bg-bg-surface border border-border rounded px-1.5 py-0.5 text-[11px] text-text-bright outline-none focus:border-primary"
-        >
-          {liveGroups.map((g) => (
-            <optgroup key={g.provider} label={providerLabel(g.provider)}>
-              {g.models.map((m) => (
-                <option key={m.value} value={m.value} title={m.description}>
-                  {m.label}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-          <option value="__custom">Custom…</option>
-        </select>
-      </label>
-      {!modelsLoading && !hasLive && (
-        <div className="text-text-dim text-[9px]">
-          No keyed providers — add an API key in Admin → Keys, or enter a custom provider/model.
-        </div>
-      )}
-      {model === "__custom" && (
-        <input
-          type="text"
-          placeholder="provider/model-name"
-          value={customModel}
-          onChange={(e) => setCustomModel(e.target.value)}
-          className="w-full bg-bg-surface border border-border rounded px-1.5 py-0.5 text-[11px] text-text outline-none focus:border-primary"
-        />
-      )}
+      <ModelSelect
+        model={model}
+        onModelChange={setModel}
+        customModel={customModel}
+        onCustomModelChange={setCustomModel}
+      />
 
       {/* Role */}
       <label className="block space-y-1">
