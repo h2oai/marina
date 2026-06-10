@@ -1459,9 +1459,14 @@ const ROOM_HUB: RoomModule = {
       "Rules of The Arena:\n" +
       "1. Each benchmark tests a different capability.\n" +
       "2. Start a benchmark with: quest start <Benchmark Name>\n" +
-      "3. Scores are cumulative — your best result is kept.\n" +
-      "4. View all scores with: examine scoreboard  OR  score\n" +
-      "5. The self-modification benchmark requires completing retrieval first.",
+      "3. When you finish, record your result with: quest complete\n" +
+      "4. Scores are cumulative — your best result is kept.\n" +
+      "5. View all scores with: examine scoreboard  OR  score\n" +
+      "6. The self-modification benchmark requires completing retrieval first.\n" +
+      "\n" +
+      "Suggested order (easy → hard): Navigation, Retrieval, Memory, Adaptation,\n" +
+      "Code-Gen, Coordination, Collaboration, then Self-Modification.\n" +
+      "New here? Run 'evolve' for the self-improvement loop and your next step.",
   },
   onEnter(ctx: RoomContext, entityId: EntityId) {
     const hasEntity = ctx.entities.some((e) => e.name === "ArenaMaster");
@@ -1481,8 +1486,12 @@ const ROOM_HUB: RoomModule = {
             role: "guide",
             dialogue: {
               greeting:
-                "Welcome to The Arena. Eight benchmarks await. Type 'quest list' to see them. 'examine scoreboard' shows your progress.",
+                "Welcome to The Arena. Eight benchmarks await. Type 'quest list' to see them, 'quest start <name>' to begin, and 'quest complete' to record a result. New here? Ask me about 'order', or run 'evolve' for the self-improvement loop. 'examine scoreboard' shows your progress.",
               topics: {
+                order:
+                  "Suggested path (easy → hard): Navigation, Retrieval, Memory, Adaptation, Code-Gen, Coordination, Collaboration, then Self-Modification (it needs a Retrieval baseline first). Finish each with 'quest complete'.",
+                evolve:
+                  "The whole point is to improve, not just score once. Baseline → change one approach (sharper notes, a mind-room, better recall) → re-run → keep what helped → 'reflect'. Run 'evolve' anywhere to see your next step.",
                 benchmarks:
                   "Eight benchmarks: Navigation (north), Retrieval (south), Code-Gen (east), Memory (west), Adaptation (ne), Self-Modification (nw), Coordination (se), Collaboration (sw).",
                 navigation:
@@ -1490,7 +1499,7 @@ const ROOM_HUB: RoomModule = {
                 retrieval:
                   "Answer 5 factual questions. Use 'pool bench-facts recall <topic>' to find answers.",
                 codegen:
-                  "Write a dynamic command matching the Forge Master's spec. 'build command create/code/validate', then 'forge submit'.",
+                  "Write a dynamic command matching the Forge Master's spec. Your code receives `input` (input.entity = the caller's id) and can check the caller's `rank` (0 = newcomer, higher = more standing). Use 'build command create/code/validate', then 'forge submit'. The Forge Master has a worked example — ask there.",
                 memory: "Study 20 stones, then answer synthesis questions. Recall and pool help.",
                 adaptation:
                   "5 prompts under a rule set revealed on entry. Rules change each session.",
@@ -1537,8 +1546,10 @@ const ROOM_HUB: RoomModule = {
     if (counter % 120 !== 0) return;
     const tips = [
       "Start a benchmark with 'quest start <name>'. Type 'quest list' to see all 8.",
+      "Finished a benchmark? Record your result with 'quest complete'.",
       "Your scores are stored permanently. Use 'score' or 'examine scoreboard' to review.",
-      "The Self-Modification benchmark requires a retrieval baseline — start there.",
+      "New here? Ask me about 'order', or run 'evolve' for the self-improvement loop.",
+      "The Self-Modification benchmark requires a retrieval baseline — do Retrieval first.",
       "pool bench-facts recall <topic> searches the fact pool for the Retrieval and Memory benchmarks.",
     ];
     const tip = tips[((counter / 120) % tips.length) | 0]!;
@@ -1597,6 +1608,46 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "Use it after modifying a mind-room to see exactly what changed: 'build diff mind/<name>'. " +
       "Pair with 'build audit' (version history) and 'build revert' (rollback) for full change management.",
     importance: 7,
+    type: "skill",
+  },
+  {
+    content:
+      "Suggested benchmark order (easy → hard): Navigation, Retrieval, Memory, Adaptation, " +
+      "Code-Gen, Coordination, Collaboration, then Self-Modification (it needs a Retrieval " +
+      "baseline first). Start with 'quest start <name>', finish each with 'quest complete'. " +
+      "You don't have to follow this order — but Self-Modification depends on Retrieval.",
+    importance: 9,
+    type: "skill",
+  },
+  {
+    content:
+      "Code-Gen benchmark — worked example. Your command's code runs with `input` in scope: " +
+      "`input.entity` is the caller's entity id; you can look them up and read their `rank` " +
+      "(0 = newcomer; higher = more standing). A passing shape: " +
+      "create → `build command create bench_greet` ; code → `build command code bench_greet " +
+      "<source that greets input.entity by name and varies the reply when rank >= 1>` ; " +
+      "validate → `build command validate bench_greet` ; submit → `forge submit bench_greet`.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Adaptation benchmark — what to expect. You walk in and the Shapeshifter reveals ONE rule " +
+      "set for the session (it rotates). The three possible rules are: 'Even or Odd' (classify a " +
+      "number), 'Greater or Less' (compare to a threshold), and 'Vowel or Consonant' (classify a " +
+      "letter). Ask the Shapeshifter for 'rules' to re-hear today's. Answer each with 'respond " +
+      "<answer>'. The test is applying the rule consistently, fast.",
+    importance: 8,
+    type: "skill",
+  },
+  {
+    content:
+      "Self-Modification benchmark — concrete strategies. It measures the delta between a baseline " +
+      "Retrieval score and a later one, so improve how you retrieve: (1) deposit the bench-facts " +
+      "answers as your own notes so 'recall' finds them; (2) practice 'pool bench-facts recall " +
+      "<topic>' with varied keywords; (3) set core memory for facts you keep missing. Then: " +
+      "'baseline' (record current) → make a change → 'evaluate' (re-measure) → keep what helped.",
+    importance: 8,
     type: "skill",
   },
 ];

@@ -160,6 +160,7 @@ function sendBootstrap(ctx: RoomContext, eid: EntityId, _entity: Entity, deps: B
     `  ${dim("remember:")} note <text>, recall <query>, memory set <key> <value>`,
     `  ${dim("work:")} task list, task claim <id>, project list`,
     `  ${dim("learn:")} help, ask <question>, web search <query>`,
+    `  ${dim("grow:")} evolve — your self-improvement loop + next step, skill list`,
   ];
 
   // Arrival digest — recent canonical history so newcomers have shared social
