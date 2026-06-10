@@ -1,9 +1,7 @@
 name: Deploy to EC2
 on:
   push:
-    # TEMPORARY: ci-pipeline branch included to test the refactored build +
-    # rollback before merge. Remove before merging to main.
-    branches: [main, devops/dhanika/ci-pipeline]
+    branches: [main]
     paths:
       - "src/**"
       - "dashboard/**"
