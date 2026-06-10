@@ -173,6 +173,12 @@ export async function handleDashboardApi(
     });
   }
 
+  // Pre-auth UI capability flags. The Unified Canvas is a retired alternate
+  // interface — off unless an operator opts in with MARINA_UNIFIED_CANVAS=true.
+  if (url.pathname === "/api/ui-config" && method === "GET") {
+    return json({ unifiedCanvas: process.env.MARINA_UNIFIED_CANVAS === "true" });
+  }
+
   // Command-native ingress for alternate renderers and external agents.
   // This is intentionally thin: it creates a short-lived connection, logs in
   // or reconnects as a normal entity, executes the raw world command, captures

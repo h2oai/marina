@@ -27,6 +27,10 @@ services:
       # World to load: default | commons | research | personal | evolve | craft | markets | demos | empty
       - MARINA_WORLD=default
 
+      # Unified Canvas (heavy ReactFlow alternate UI) is retired from the standard
+      # dashboard. Set true to expose it as a standalone surface at /?unified.
+      # - MARINA_UNIFIED_CANVAS=true
+
       # Resume Marina-spawned agents on boot (e.g. after a redeploy). Each agent's
       # config is persisted to the DB (on the mounted volume), so with this set
       # they respawn into their rooms at startup. Off by default so a restart

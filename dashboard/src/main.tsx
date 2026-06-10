@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { lazy, type ReactNode, StrictMode, Suspense } from "react";
+import { lazy, type ReactNode, StrictMode, Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { AuthGate } from "./components/AuthGate";
@@ -32,6 +32,33 @@ const isCanvas = window.location.pathname.startsWith("/canvas");
 const isUnified = new URLSearchParams(window.location.search).has("unified");
 const isWho = window.location.pathname.startsWith("/who");
 
+/**
+ * The Unified Canvas is an opt-in ALTERNATE interface, retired from the standard
+ * dashboard. It's only reachable at `?unified` and only when the server enables
+ * it via MARINA_UNIFIED_CANVAS=true (surfaced through the open /api/ui-config).
+ * When disabled (the default), `?unified` bounces back to the standard dashboard.
+ */
+function UnifiedSurface() {
+  const [status, setStatus] = useState<"loading" | "on" | "off">("loading");
+  useEffect(() => {
+    fetch("/api/ui-config")
+      .then((r) => (r.ok ? r.json() : { unifiedCanvas: false }))
+      .then((d) => setStatus(d.unifiedCanvas ? "on" : "off"))
+      .catch(() => setStatus("off"));
+  }, []);
+  if (status === "loading") return null;
+  if (status === "off") {
+    // Not enabled — return to the standard dashboard rather than render it.
+    window.location.replace("/");
+    return null;
+  }
+  return (
+    <Suspense>
+      <LazyUnifiedCanvas />
+    </Suspense>
+  );
+}
+
 function RootContent() {
   // Public per-entity pages are read-only and never gated.
   if (isWho) {
@@ -45,11 +72,7 @@ function RootContent() {
   // auth is off).
   let surface: ReactNode;
   if (isUnified) {
-    surface = (
-      <Suspense>
-        <LazyUnifiedCanvas />
-      </Suspense>
-    );
+    surface = <UnifiedSurface />;
   } else if (isCanvas) {
     surface = (
       <Suspense>
