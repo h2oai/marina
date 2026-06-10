@@ -4,6 +4,7 @@ import type { ChannelManager } from "../coordination/channel-manager";
 import type { Engine } from "../engine/engine";
 import { buildAliasMap } from "./compat-profiles";
 import { corsHeaders } from "./cors";
+import { getEndpointConfig } from "./model-endpoint";
 
 const MODEL_CORS = corsHeaders(null, {
   methods: "GET, POST, OPTIONS",
@@ -490,6 +491,217 @@ async function routeToChannel(
   }
 }
 
+// --- Open / Panel routing (fan-out) ---
+//
+// Open and Panel both fan out a model_request to each selected online member
+// (pinned per-member so they actually answer — no agent-prompt change needed):
+//   - open:  resolve on the FIRST response, ignore the rest ("anyone answers").
+//   - panel: collect up to N, then merge (concat or synthesize).
+
+const FANOUT_CAP = 6;
+const PANEL_GRACE_MS = 8000;
+
+function getModelChannelMembers(
+  engine: Engine,
+  model: string,
+): { cm: ChannelManager; channel: { id: string; name: string }; onlineMembers: string[] } {
+  const cm = engine.channelManager;
+  if (!cm) throw new HttpError(503, "Channel system unavailable");
+  const channel = cm.getChannelByName(modelToChannelName(model));
+  if (!channel) throw new HttpError(404, `Model "${model}" not found`);
+  const onlineIds = new Set(engine.getOnlineAgents().map((e) => e.id));
+  const onlineMembers = cm.getMembers(channel.id).filter((m) => onlineIds.has(m as never));
+  if (onlineMembers.length === 0) {
+    throw new HttpError(503, `No agents online for model "${model}"`);
+  }
+  return { cm, channel, onlineMembers };
+}
+
+/** Parse a member's reply to a fan-out request: JSON model_response or the
+ *  plaintext "[req-id] text" form. Returns the matched requestId + content. */
+function matchFanoutReply(
+  content: string,
+  pending: Set<string>,
+): { id: string; text: string } | null {
+  try {
+    const parsed = JSON.parse(content) as { type?: string; id?: string; content?: string };
+    if (parsed.type === "model_response" && parsed.id && pending.has(parsed.id)) {
+      return { id: parsed.id, text: parsed.content ?? "" };
+    }
+  } catch {
+    // not JSON — try plaintext
+  }
+  for (const id of pending) {
+    const prefix = `[${id}] `;
+    if (content.startsWith(prefix)) return { id, text: content.slice(prefix.length) };
+  }
+  return null;
+}
+
+async function collectResponses(
+  engine: Engine,
+  model: string,
+  userContent: string,
+  opts: RouteOptions | undefined,
+  resolveMode: "first" | "all",
+  maxTargets: number,
+): Promise<{ responses: string[]; conversationId?: string }> {
+  const { cm, channel, onlineMembers } = getModelChannelMembers(engine, model);
+  const targets = onlineMembers.slice(0, Math.min(maxTargets, onlineMembers.length, FANOUT_CAP));
+  const convId = opts?.conversationId ?? undefined;
+  const pending = new Set<string>();
+  const collected: string[] = [];
+
+  return new Promise<{ responses: string[]; conversationId?: string }>((resolve, reject) => {
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+    const overall = setTimeout(() => {
+      cleanup();
+      if (collected.length > 0) resolve({ responses: collected, conversationId: convId });
+      else reject(new HttpError(504, "Response timeout"));
+    }, REQUEST_TIMEOUT_MS);
+
+    function cleanup() {
+      clearTimeout(overall);
+      if (graceTimer) clearTimeout(graceTimer);
+      unsub();
+      for (const t of targets) decrementPending(t);
+    }
+
+    const unsub = cm.onMessage((channelId, senderId, _name, content) => {
+      if (channelId !== channel.id || senderId === "__model_api__") return;
+      const match = matchFanoutReply(content, pending);
+      if (!match) return;
+      pending.delete(match.id);
+      collected.push(match.text);
+      if (resolveMode === "first") {
+        cleanup();
+        resolve({ responses: collected, conversationId: convId });
+        return;
+      }
+      // "all": resolve when every target has replied, or a grace window after the
+      // first reply elapses (so one slow/dead agent can't stall the panel).
+      if (collected.length === 1) {
+        graceTimer = setTimeout(() => {
+          cleanup();
+          resolve({ responses: collected, conversationId: convId });
+        }, PANEL_GRACE_MS);
+      }
+      if (pending.size === 0) {
+        cleanup();
+        resolve({ responses: collected, conversationId: convId });
+      }
+    });
+
+    for (const target of targets) {
+      const requestId = `req-${crypto.randomUUID().slice(0, 8)}`;
+      pending.add(requestId);
+      incrementPending(target);
+      cm.send(
+        channel.id,
+        "__model_api__",
+        "model-api",
+        JSON.stringify({
+          type: "model_request",
+          id: requestId,
+          content: userContent,
+          target,
+          ...(opts?.context ? { context: opts.context } : {}),
+          ...(convId ? { conversation_id: convId } : {}),
+        }),
+      );
+    }
+  });
+}
+
+/** Open mode: first online member to answer wins. */
+async function routeOpen(
+  engine: Engine,
+  model: string,
+  userContent: string,
+  opts?: RouteOptions,
+): Promise<RouteResult> {
+  const { responses, conversationId } = await collectResponses(
+    engine,
+    model,
+    userContent,
+    opts,
+    "first",
+    FANOUT_CAP,
+  );
+  return { content: responses[0] ?? "", conversationId };
+}
+
+/** Panel mode: collect up to N answers, then concat or synthesize. */
+async function routePanel(
+  engine: Engine,
+  model: string,
+  userContent: string,
+  opts: RouteOptions | undefined,
+  panelSize: number,
+  synthesis: "concat" | "synthesize",
+): Promise<RouteResult> {
+  const { responses, conversationId } = await collectResponses(
+    engine,
+    model,
+    userContent,
+    opts,
+    "all",
+    panelSize,
+  );
+  if (responses.length <= 1) {
+    return { content: responses[0] ?? "", conversationId };
+  }
+  if (synthesis === "concat") {
+    const merged = responses.map((r, i) => `### Answer ${i + 1}\n\n${r}`).join("\n\n");
+    return { content: merged, conversationId };
+  }
+  // synthesize: ask the configured upstream model to merge the panel's answers.
+  const mergePrompt =
+    `You are merging ${responses.length} independent expert answers into one best response.\n\n` +
+    `Question:\n${userContent}\n\n` +
+    `${responses.map((r, i) => `Answer ${i + 1}:\n${r}`).join("\n\n")}\n\n` +
+    `Write a single, coherent answer that reconciles and improves on them.`;
+  try {
+    const resp = await proxyToUpstream(engine, {
+      model: "marina/default",
+      messages: [{ role: "user", content: mergePrompt }],
+    });
+    const data = (await resp.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    const text = data.choices?.[0]?.message?.content;
+    if (text) return { content: text, conversationId };
+  } catch {
+    // synthesis upstream unavailable — fall back to concat below
+  }
+  const merged = responses.map((r, i) => `### Answer ${i + 1}\n\n${r}`).join("\n\n");
+  return { content: merged, conversationId };
+}
+
+/** Emit a buffered string as an OpenAI-format SSE stream (used when a stream is
+ *  requested in a mode that can't stream incrementally — open / panel). */
+function bufferedOpenaiStream(model: string, content: string, convId?: string): Response {
+  const id = `chatcmpl-${crypto.randomUUID().slice(0, 8)}`;
+  const enc = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(enc.encode(openaiStreamRoleChunk(id, model)));
+      controller.enqueue(enc.encode(openaiStreamChunk(id, model, content)));
+      controller.enqueue(enc.encode(openaiStreamEnd(id, model)));
+      safeClose(controller);
+    },
+  });
+  const headers: Record<string, string> = {
+    ...MODEL_CORS,
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "x-request-id": generateRequestId(),
+  };
+  if (convId) headers["X-Conversation-Id"] = convId;
+  return new Response(stream, { headers });
+}
+
 // --- Streaming routing ---
 
 type StreamFormat = "openai" | "ollama-chat" | "ollama-generate";
@@ -944,12 +1156,20 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
     const context = contextParts.length > 0 ? contextParts.join("\n") : undefined;
 
     const conversationId = extractConversationId(req, body);
-    const strategy = extractStrategy(req);
-    const opts: RouteOptions = { context, conversationId, strategy };
+    const ec = getEndpointConfig(engine.db);
+
+    // Passthru: Marina is a thin gateway — proxy straight to the configured
+    // upstream model, no agents involved.
+    if (ec.mode === "passthru") {
+      return await proxyToUpstream(engine, body, ec.passthruModel || undefined);
+    }
+
+    const opts: RouteOptions = { context, conversationId, strategy: ec.strategy };
+    const wantStream = body.stream === true;
 
     try {
-      // Streaming mode
-      if (body.stream === true) {
+      // Agents mode streams natively (one coordinator, incremental deltas).
+      if (wantStream && ec.mode === "agents") {
         const { stream, conversationId: convId } = routeToChannelStreaming(
           engine,
           model,
@@ -968,15 +1188,33 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
         return new Response(stream, { headers });
       }
 
-      const result = await routeToChannel(engine, model, userMsg.content, opts);
+      let result: RouteResult;
+      if (ec.mode === "open") {
+        result = await routeOpen(engine, model, userMsg.content, opts);
+      } else if (ec.mode === "panel") {
+        result = await routePanel(
+          engine,
+          model,
+          userMsg.content,
+          opts,
+          ec.panelSize,
+          ec.panelSynthesis,
+        );
+      } else {
+        result = await routeToChannel(engine, model, userMsg.content, opts);
+      }
+
+      // open/panel can't stream incrementally — emit the buffered result as SSE.
+      if (wantStream) return bufferedOpenaiStream(model, result.content, result.conversationId);
+
       const extra: Record<string, string> = {};
       if (result.conversationId) extra["X-Conversation-Id"] = result.conversationId;
       return json(openaiCompletion(model, result.content), 200, extra);
     } catch (routeError) {
-      // If no agents available (503), fall back to direct upstream proxy.
+      // No agent answered (503): fall back to direct upstream proxy when enabled.
       // 404 (unknown model variant) remains an error — caller asked for a specific model.
-      if (routeError instanceof HttpError && routeError.status === 503) {
-        return await proxyToUpstream(engine, body);
+      if (routeError instanceof HttpError && routeError.status === 503 && ec.fallback) {
+        return await proxyToUpstream(engine, body, ec.passthruModel || undefined);
       }
       throw routeError;
     }
@@ -1181,16 +1419,23 @@ async function dispatchOpenAICompatible(
   }
 }
 
-async function proxyToUpstream(engine: Engine, body: Record<string, unknown>): Promise<Response> {
+async function proxyToUpstream(
+  engine: Engine,
+  body: Record<string, unknown>,
+  forceModel?: string,
+): Promise<Response> {
   const wantStream = body.stream === true;
-  const isDefault = isMarinaModel(body.model as string);
+  // `forceModel` (passthru endpoint mode) pins the upstream model regardless of
+  // what the caller requested; otherwise only marina/default models resolve to
+  // the configured default.
+  const isDefault = !!forceModel || isMarinaModel(body.model as string);
 
   // 1) Explicit configured default: when marina/default is requested and an
   //    operator has set `default_model`, honor that exact provider — including
   //    OpenRouter — instead of the first-party priority. The key is resolved from
   //    env or the admin panel. Falls through to (2) only if its key is missing.
   if (isDefault && engine.db) {
-    const dm = engine.db.getDefaultModel();
+    const dm = forceModel || engine.db.getDefaultModel();
     const slash = dm.indexOf("/");
     const provider = slash >= 0 ? dm.slice(0, slash) : dm;
     const upstreamModel = slash >= 0 ? dm.slice(slash + 1) : dm;

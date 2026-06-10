@@ -3,7 +3,8 @@ import { testKeyConnectivity } from "../engine/commands/key";
 import { allRecipeNames, getRecipe } from "../engine/commands/usecase";
 import type { Engine } from "../engine/engine";
 import type { MarinaDB } from "../persistence/database";
-import type { Connection, Perception, RoomId } from "../types";
+import type { Connection, EntityId, Perception, RoomId } from "../types";
+import { type EndpointConfig, getEndpointConfig, setEndpointConfig } from "./model-endpoint";
 import { ORCHESTRATION_PATTERNS } from "../world/templates/orchestration";
 import { authenticateRequest } from "./auth-middleware";
 import { corsHeaders } from "./cors";
@@ -584,6 +585,18 @@ export async function handleDashboardApi(
   if (url.pathname === "/api/default-model" && method === "DELETE" && db) {
     db.deleteSetting("default_model");
     return json({ ok: true, model: db.getDefaultModel(), configured: null });
+  }
+
+  // ─── Model Endpoint API ────────────────────────────────────────────────
+  // How Marina behaves when consumed as an LLM (passthru / agents / open / panel).
+  if (url.pathname === "/api/model-endpoint" && method === "GET" && db) {
+    return json(getEndpointConfig(db));
+  }
+  if (url.pathname === "/api/model-endpoint" && method === "PUT" && db) {
+    const body = (await req.json().catch(() => ({}))) as Partial<EndpointConfig>;
+    const result = setEndpointConfig(db, body);
+    if ("error" in result) return json({ error: result.error }, 400);
+    return json(result.config);
   }
 
   // ─── Model Discovery API ───────────────────────────────────────────────

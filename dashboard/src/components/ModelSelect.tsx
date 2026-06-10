@@ -15,6 +15,7 @@ export function ModelSelect({
   customModel,
   onCustomModelChange,
   label = "Model",
+  placeholderOption,
 }: {
   /** The <select> value: a model value, "__custom", or "" (none). */
   model: string;
@@ -22,6 +23,8 @@ export function ModelSelect({
   customModel: string;
   onCustomModelChange: (value: string) => void;
   label?: string;
+  /** Optional first option (e.g. a "Default Model" sentinel) rendered above the groups. */
+  placeholderOption?: { value: string; label: string };
 }) {
   const { data: modelsData, isLoading } = useModels();
   const groups = useMemo(() => mergeGroups(modelsData?.groups), [modelsData]);
@@ -42,7 +45,8 @@ export function ModelSelect({
     () => new Set(liveGroups.flatMap((g) => g.models.map((m) => m.value))),
     [liveGroups],
   );
-  const showCurrentOption = !!model && model !== "__custom" && !known.has(model);
+  const showCurrentOption =
+    !!model && model !== "__custom" && model !== placeholderOption?.value && !known.has(model);
 
   return (
     <div className="space-y-1">
@@ -62,6 +66,9 @@ export function ModelSelect({
           onChange={(e) => onModelChange(e.target.value)}
           className="w-full bg-bg-surface border border-border rounded px-1.5 py-0.5 text-[11px] text-text-bright outline-none focus:border-primary"
         >
+          {placeholderOption && (
+            <option value={placeholderOption.value}>{placeholderOption.label}</option>
+          )}
           {showCurrentOption && <option value={model}>{model} (current)</option>}
           {liveGroups.map((g) => (
             <optgroup key={g.provider} label={providerLabel(g.provider)}>
