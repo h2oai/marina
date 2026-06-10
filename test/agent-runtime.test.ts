@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { AgentRuntime } from "../src/agent/agent-runtime";
+import { AgentRuntime, getInternalModelToken } from "../src/agent/agent-runtime";
 import {
   applyRankProgression,
   checkRankProgression,
@@ -452,6 +452,27 @@ describe("AgentRuntime", () => {
         else process.env.GEMINI_API_KEY = undefined;
       }
     });
+
+    it("local marina uses the internal token; remote marina (marina@host) does not", () => {
+      // Local: always the auto-generated internal token, ignoring keys.
+      const local = resolveApiKey(runtime, "marina");
+      expect(local).toBe(getInternalModelToken());
+      expect(resolveApiKey(runtime, "marina/default")).toBe(getInternalModelToken());
+
+      // Remote with a named key → resolves the DB key, NOT the internal token.
+      db.saveApiKey({
+        name: "remote-marina",
+        provider: "marina",
+        encryptedValue: "sk-remote-token",
+        setBy: "test",
+      });
+      const remoteKeyed = resolveApiKey(runtime, "marina@https://gpu.box:3300/v1", "remote-marina");
+      expect(remoteKeyed).toBe("sk-remote-token");
+      expect(remoteKeyed).not.toBe(getInternalModelToken());
+
+      // Remote with no key → undefined (works only against an open remote).
+      expect(resolveApiKey(runtime, "marina@https://gpu.box:3300/v1")).toBeUndefined();
+    });
   });
 
   // ─── Provider Extraction ──────────────────────────────────────────────
@@ -471,6 +492,12 @@ describe("AgentRuntime", () => {
 
     it("returns entire string when no slash present", () => {
       expect(extractProvider(runtime, "gpt-4")).toBe("gpt-4");
+    });
+
+    it("strips a remote-Marina @host suffix to the marina provider", () => {
+      expect(extractProvider(runtime, "marina@https://gpu.box:3300/v1")).toBe("marina");
+      expect(extractProvider(runtime, "marina@gpu.box:3300")).toBe("marina");
+      expect(extractProvider(runtime, "marina")).toBe("marina");
     });
   });
 

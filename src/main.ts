@@ -316,6 +316,29 @@ if (
   );
 }
 
+// ─── Marina-as-an-LLM: copy-paste wiring summary ───────────────────────────────
+// Print the exact baseURL / model / auth so the OpenAI-compatible endpoint can be
+// wired into any client (or another Marina instance) without reading the source.
+{
+  const defaultModel = db.getDefaultModel();
+  const hasUpstream = engine.agentRuntime.isAvailable();
+  const authMode = process.env.MODEL_API_KEYS
+    ? "Bearer <token from MODEL_API_KEYS>"
+    : process.env.MARINA_OPEN_API === "true"
+      ? "none (MARINA_OPEN_API=true, dev only)"
+      : "NOT CONFIGURED — set MODEL_API_KEYS or MARINA_OPEN_API=true";
+  logger.info(
+    "model-api",
+    `OpenAI-compatible LLM endpoint: baseURL http://localhost:${WS_PORT}/v1 · model "marina" → ${defaultModel}` +
+      `${hasUpstream ? "" : " · NO upstream key yet (returns 503 until a provider key is set)"} · auth: ${authMode}`,
+  );
+  logger.info(
+    "model-api",
+    `Wire an agent to this instance: \`agent spawn <name> model marina\`. ` +
+      `From another Marina: \`agent spawn <name> model marina@http://<this-host>:${WS_PORT}/v1 key <name>\`.`,
+  );
+}
+
 // ─── Graceful Shutdown ────────────────────────────────────────────────────────
 
 async function shutdown() {
