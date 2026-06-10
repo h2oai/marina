@@ -16,7 +16,13 @@ on:
       - "docker-compose.yml"
       - "scripts/deploy.sh"
       - ".github/workflows/deploy-ec2.yml"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      rollback_sha:
+        description: "Rollback: full commit SHA of an already-built image to redeploy (skips build/push, deploys sha-<this>). Leave empty for a normal build + deploy."
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   group: deploy-ec2
@@ -43,6 +49,27 @@ jobs:
           role-to-assume: ${{ secrets.GH_OIDC_ROLE_H2O_MARINA }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      - name: Resolve deploy target (build vs rollback)
+        id: target
+        env:
+          ROLLBACK_SHA: ${{ inputs.rollback_sha }}
+          REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          if [ -n "${ROLLBACK_SHA:-}" ]; then
+            echo "Rollback requested → redeploying sha-${ROLLBACK_SHA} (build/push skipped)"
+            # Fail fast if that image isn't already in ECR.
+            aws ecr describe-images --region "$REGION" \
+              --registry-id "$ECR_ACCOUNT_ID" --repository-name "$ECR_REPOSITORY" \
+              --image-ids imageTag="sha-${ROLLBACK_SHA}" >/dev/null \
+              || { echo "::error::No image tagged sha-${ROLLBACK_SHA} in ${ECR_REPOSITORY}"; exit 1; }
+            echo "sha=${ROLLBACK_SHA}" >> "$GITHUB_OUTPUT"
+            echo "rollback=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            echo "rollback=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Validate required configuration
         env:
           INSTANCE_ID: ${{ vars.MARINA_INSTANCE_ID }}
@@ -60,10 +87,12 @@ jobs:
           registries: ${{ env.ECR_ACCOUNT_ID }}
 
       - name: Set up Docker Buildx
+        if: steps.target.outputs.rollback != 'true'
         uses: docker/setup-buildx-action@v4
 
       - name: Docker image metadata (tags + labels)
         id: meta
+        if: steps.target.outputs.rollback != 'true'
         uses: docker/metadata-action@v6
         with:
           images: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
@@ -73,6 +102,7 @@ jobs:
 
       - name: Build and push image to ECR
         id: build
+        if: steps.target.outputs.rollback != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -88,8 +118,8 @@ jobs:
           INSTANCE_ID: ${{ vars.MARINA_INSTANCE_ID }}
           APP_DIR: ${{ vars.MARINA_APP_DIR }}
           REGION: ${{ vars.AWS_REGION }}
-          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:sha-${{ github.sha }}
-          GIT_REF: ${{ github.sha }}
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:sha-${{ steps.target.outputs.sha }}
+          GIT_REF: ${{ steps.target.outputs.sha }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
