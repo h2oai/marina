@@ -246,13 +246,24 @@ describe("Canvas — Phase 1: Asset Store", () => {
       expect(text).toContain("not found");
     });
 
-    it("requires rank >= 1 (citizen)", () => {
+    it("allows rank 0 to post/read (canvas is a basic posting capability)", () => {
       const entity = engine.entities.get(entityId);
       if (entity) entity.properties.rank = 0;
       conn.clear();
       engine.processCommand(entityId, "canvas asset list");
       const text = stripAnsi(conn.lastText());
-      expect(text).toContain("rank");
+      // No longer rank-gated — newcomers can list/post. The command runs instead
+      // of returning a rank error.
+      expect(text).not.toContain("must be at least");
+    });
+
+    it("still gates the destructive `canvas delete` above rank 0", () => {
+      const entity = engine.entities.get(entityId);
+      if (entity) entity.properties.rank = 0;
+      conn.clear();
+      engine.processCommand(entityId, "canvas delete some-canvas");
+      const text = stripAnsi(conn.lastText());
+      expect(text).toContain("rank 1+");
     });
   });
 

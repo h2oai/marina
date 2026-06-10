@@ -22,7 +22,10 @@ export function canvasCommand(deps: {
     name: "canvas",
     aliases: ["cv"],
     help: HELP,
-    minRank: 1,
+    // Rank 0: posting to a canvas (publish, intents, asset upload, connect) is a
+    // basic capability like board/say/share — newly spawned agents need it to
+    // populate content. The one destructive op, `delete`, is gated in-handler.
+    minRank: 0,
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -62,9 +65,20 @@ export function canvasCommand(deps: {
         case "layout":
           handleLayout(ctx, eid, db, tokens.slice(1));
           return;
-        case "delete":
+        case "delete": {
+          // Deleting a whole canvas (and its nodes) is destructive and shared —
+          // gate it above newcomer rank while leaving posting open to all.
+          const rank = (entity.properties.rank as number) ?? 0;
+          if (rank < 1) {
+            ctx.send(
+              eid,
+              "Deleting a canvas requires rank 1+. Create, publish, and post are open to all.",
+            );
+            return;
+          }
           handleDelete(ctx, eid, db, tokens.slice(1));
           return;
+        }
         case "intent":
           await handleIntent(ctx, eid, entity, db, deps.storage, deps.logEvent, tokens.slice(1));
           return;
