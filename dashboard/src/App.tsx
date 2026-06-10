@@ -10,7 +10,6 @@ import {
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 
-import { ActivityFeed } from "./components/ActivityFeed";
 import { AdminPanel } from "./components/AdminPanel";
 import { AgentLaunchContent } from "./components/back-faces/AgentLaunchContent";
 import { RoomNeighborhood } from "./components/back-faces/RoomNeighborhood";
@@ -25,35 +24,37 @@ import { WorldMap } from "./components/WorldMap";
 import { useSystem, useWorld } from "./hooks/use-api";
 import { useGlobalRealtimeInvalidations } from "./hooks/use-realtime-invalidations";
 import { useDashboardWebSocket } from "./hooks/use-websocket";
-import { TimelineStrip } from "./unified/overlays/TimelineStrip";
 
 // Bump the version suffix whenever DEFAULT_LAYOUTS changes shape so existing
 // users pick up the new default instead of a stale auto-persisted copy of the
 // old one. (The Header's "Reset layout" button also restores the default.)
-const LAYOUT_KEY = "marina-dashboard-layouts-v2";
+const LAYOUT_KEY = "marina-dashboard-layouts-v3";
 
 type Bp = "lg" | "md";
 
 // Webchat is the tall leftmost column; the other panels stack to its right in
 // two sub-columns across three rows, matching webchat's height.
+// WebChat (left) and Entities (right) are the two prominent, full-height
+// columns — the primary way to observe and control Marina. The World Map (now
+// with the activity timeline anchored inside it), Room, Coordination, and Admin
+// stack in the middle. The Activity panel was retired (entities give richer,
+// per-agent signal).
 const DEFAULT_LAYOUTS: ResponsiveLayouts<Bp> = {
   lg: [
-    { i: "webchat", x: 0, y: 0, w: 5, h: 10, minW: 3, minH: 3 },
-    { i: "worldmap", x: 5, y: 0, w: 4, h: 4, minW: 2, minH: 2 },
-    { i: "entities", x: 9, y: 0, w: 3, h: 4, minW: 2, minH: 2 },
-    { i: "room", x: 5, y: 4, w: 4, h: 3, minW: 2, minH: 2 },
-    { i: "activity", x: 9, y: 4, w: 3, h: 3, minW: 2, minH: 2 },
-    { i: "coordination", x: 5, y: 7, w: 4, h: 3, minW: 2, minH: 2 },
-    { i: "admin", x: 9, y: 7, w: 3, h: 3, minW: 3, minH: 2 },
+    { i: "webchat", x: 0, y: 0, w: 4, h: 10, minW: 3, minH: 3 },
+    { i: "worldmap", x: 4, y: 0, w: 4, h: 4, minW: 2, minH: 2 },
+    { i: "room", x: 4, y: 4, w: 4, h: 2, minW: 2, minH: 2 },
+    { i: "coordination", x: 4, y: 6, w: 4, h: 2, minW: 2, minH: 2 },
+    { i: "admin", x: 4, y: 8, w: 4, h: 2, minW: 3, minH: 2 },
+    { i: "entities", x: 8, y: 0, w: 4, h: 10, minW: 2, minH: 3 },
   ],
   md: [
-    { i: "webchat", x: 0, y: 0, w: 4, h: 10, minW: 3, minH: 3 },
-    { i: "worldmap", x: 4, y: 0, w: 3, h: 4, minW: 2, minH: 2 },
-    { i: "entities", x: 7, y: 0, w: 3, h: 4, minW: 2, minH: 2 },
-    { i: "room", x: 4, y: 4, w: 3, h: 3, minW: 2, minH: 2 },
-    { i: "activity", x: 7, y: 4, w: 3, h: 3, minW: 2, minH: 2 },
-    { i: "coordination", x: 4, y: 7, w: 3, h: 3, minW: 2, minH: 2 },
-    { i: "admin", x: 7, y: 7, w: 3, h: 3, minW: 3, minH: 2 },
+    { i: "webchat", x: 0, y: 0, w: 3, h: 10, minW: 3, minH: 3 },
+    { i: "worldmap", x: 3, y: 0, w: 4, h: 4, minW: 2, minH: 2 },
+    { i: "room", x: 3, y: 4, w: 4, h: 2, minW: 2, minH: 2 },
+    { i: "coordination", x: 3, y: 6, w: 4, h: 2, minW: 2, minH: 2 },
+    { i: "admin", x: 3, y: 8, w: 4, h: 2, minW: 3, minH: 2 },
+    { i: "entities", x: 7, y: 0, w: 3, h: 10, minW: 2, minH: 3 },
   ],
 };
 
@@ -204,7 +205,7 @@ export default function App() {
   // Panel refs for keyboard focus
   const panelRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const PANEL_KEYS = useMemo(
-    () => ["worldmap", "entities", "webchat", "room", "activity", "coordination", "admin"],
+    () => ["worldmap", "entities", "webchat", "room", "coordination", "admin"],
     [],
   );
   const [_activePanelIdx, setActivePanelIdx] = useState<number | null>(null);
@@ -351,17 +352,6 @@ export default function App() {
               className={panelClass("room")}
             >
               <RoomDetail backContent={<RoomNeighborhood />} />
-            </div>
-            {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
-            <div
-              key="activity"
-              ref={(el) => {
-                panelRefs.current.activity = el;
-              }}
-              onDoubleClick={onHeaderDblClick("activity")}
-              className={panelClass("activity")}
-            >
-              <ActivityFeed backContent={<TimelineStrip inline />} />
             </div>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
             <div
