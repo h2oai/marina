@@ -25,7 +25,7 @@ on:
         default: ""
 
 concurrency:
-  group: deploy-ec2
+  group: h2o-marina-ec2-deploy
   cancel-in-progress: false
 
 permissions:
