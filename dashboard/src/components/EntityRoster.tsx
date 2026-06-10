@@ -566,6 +566,12 @@ function EntityExpandedDetail({
           <div className="flex items-center gap-2">
             <span className="text-text-dim">Rank:</span>
             <span className="text-text-bright">{data.rank}</span>
+            {data.standing != null && (
+              <>
+                <span className="text-text-dim">· Standing:</span>
+                <span className="text-text-bright">{data.standing}</span>
+              </>
+            )}
           </div>
 
           {/* Core Memory */}

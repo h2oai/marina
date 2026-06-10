@@ -44,6 +44,7 @@ export interface EntityDetail {
   coreMemory?: CoreMemoryEntry[];
   notes?: NoteEntry[];
   recentActivity?: ActivityEntry[];
+  standing?: number;
 }
 
 export interface CoreMemoryEntry {
