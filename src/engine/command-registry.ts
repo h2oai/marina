@@ -20,6 +20,7 @@ import { conductCommand } from "./commands/conduct";
 import { connectCommand } from "./commands/connect";
 import { crewCommand } from "./commands/crew";
 import { debriefCommand } from "./commands/debrief";
+import { evolveCommand } from "./commands/evolve";
 import { digCommand } from "./commands/dig";
 import { emoteCommand } from "./commands/emote";
 import { examineCommand } from "./commands/examine";
@@ -469,6 +470,12 @@ export function registerBuiltinCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
       taskManager: engine.taskManager,
+    }),
+  );
+  engine.commands.registerBuiltin(
+    evolveCommand({
+      getEntity: (id) => engine.entities.get(id as EntityId),
+      db: engine.db,
     }),
   );
   engine.commands.registerBuiltin(

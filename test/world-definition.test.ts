@@ -272,11 +272,16 @@ describe("seedGuidePool with custom notes", () => {
     expect(recalled.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("should short-circuit on empty notes", () => {
+  it("seeds platform guide notes even when the world provides none", () => {
+    // The platform-wide self-improvement ("evolver") notes are merged into
+    // every world's guide pool, so an empty world-notes array still produces a
+    // pool — it just contains the platform notes.
     seedGuidePool(db, []);
     const pool = db.getMemoryPool("guide");
-    // Pool should not be created if no notes provided
-    expect(pool).toBeUndefined();
+    expect(pool).toBeDefined();
+    const notes = db.getPoolNotes(pool!.id, 50);
+    expect(notes.length).toBeGreaterThan(0);
+    expect(notes.map((n) => n.content).join("\n")).toContain("self-improvement loop");
   });
 
   it("should be idempotent", () => {
