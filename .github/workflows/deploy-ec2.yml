@@ -59,19 +59,28 @@ jobs:
         with:
           registries: ${{ env.ECR_ACCOUNT_ID }}
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker image metadata (tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest,enable={{is_default_branch}}
+
       - name: Build and push image to ECR
         id: build
-        env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
-          GIT_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          IMAGE="${REGISTRY}/${ECR_REPOSITORY}"
-          docker build -t "${IMAGE}:${GIT_SHA}" -t "${IMAGE}:latest" .
-          docker push "${IMAGE}:${GIT_SHA}"
-          docker push "${IMAGE}:latest"
-          echo "image=${IMAGE}:${GIT_SHA}" >> "$GITHUB_OUTPUT"
-          echo "Pushed ${IMAGE}:${GIT_SHA} (and :latest)"
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Trigger deploy via SSM Run Command
         id: send
@@ -79,7 +88,7 @@ jobs:
           INSTANCE_ID: ${{ vars.MARINA_INSTANCE_ID }}
           APP_DIR: ${{ vars.MARINA_APP_DIR }}
           REGION: ${{ vars.AWS_REGION }}
-          IMAGE: ${{ steps.build.outputs.image }}
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:sha-${{ github.sha }}
           GIT_REF: ${{ github.sha }}
           REF_NAME: ${{ github.ref_name }}
         run: |
