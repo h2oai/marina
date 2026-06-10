@@ -19,9 +19,14 @@ export async function handleAssetApi(
   storage: StorageProvider,
   engine: Engine,
 ): Promise<Response> {
-  // Authenticate — all asset API routes require a valid session token
-  const auth = authenticateRequest(req, engine);
-  if ("error" in auth) return auth.error;
+  // Reads are public so canvas assets (image metadata/listing) render for a
+  // fresh, not-yet-logged-in visitor — consistent with public canvas reads and
+  // the open dashboard broadcast. Mutations (POST upload, DELETE) still require
+  // a valid session token.
+  if (method !== "GET") {
+    const auth = authenticateRequest(req, engine);
+    if ("error" in auth) return auth.error;
+  }
   // DELETE /api/assets/:id
   const idMatch = url.pathname.match(/^\/api\/assets\/(.+)$/);
   if (idMatch && method === "DELETE") {
