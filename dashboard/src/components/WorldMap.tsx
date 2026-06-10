@@ -1,4 +1,13 @@
-import { Crosshair, Map as MapIcon } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Crosshair,
+  Map as MapIcon,
+  Minus,
+  Plus,
+} from "lucide-react";
 import { type AnimationPlaybackControlsWithThen, animate, motion } from "motion/react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWorldState } from "../hooks/use-world-state";
@@ -670,21 +679,29 @@ export function WorldMap({ worldData, backContent }: WorldMapProps) {
   const handleRoomLeave = useCallback(() => setTooltip(null), []);
 
   // ── Pan / zoom ────────────────────────────────────────────────────
+  // Plain wheel/trackpad PANS (the predictable, map-standard behavior); zoom is
+  // only on ⌘/Ctrl+wheel. Previously every wheel tick zoomed, which on trackpads
+  // fired rapidly and felt like the map lurched in and out at random.
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
-    const scale = e.deltaY > 0 ? 1.1 : 0.9;
-    setViewBox((vb) => {
-      const cx = vb.x + vb.w / 2;
-      const cy = vb.y + vb.h / 2;
-      const nw = vb.w * scale;
-      const nh = vb.h * scale;
-      return {
-        x: cx - nw / 2,
-        y: cy - nh / 2,
-        w: Math.max(200, Math.min(2000, nw)),
-        h: Math.max(150, Math.min(1500, nh)),
-      };
-    });
+    if (e.ctrlKey || e.metaKey) {
+      const scale = e.deltaY > 0 ? 1.08 : 0.92;
+      setViewBox((vb) => {
+        const cx = vb.x + vb.w / 2;
+        const cy = vb.y + vb.h / 2;
+        const nw = Math.max(200, Math.min(2000, vb.w * scale));
+        const nh = Math.max(150, Math.min(1500, vb.h * scale));
+        return { x: cx - nw / 2, y: cy - nh / 2, w: nw, h: nh };
+      });
+      return;
+    }
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setViewBox((vb) => ({
+      ...vb,
+      x: vb.x + (e.deltaX / rect.width) * vb.w,
+      y: vb.y + (e.deltaY / rect.height) * vb.h,
+    }));
   }, []);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -723,6 +740,12 @@ export function WorldMap({ worldData, backContent }: WorldMapProps) {
       x: px - vb.w / 2,
       y: py - vb.h / 2,
     }));
+  }, []);
+
+  /** Pan by a fraction of the current view — a discrete, predictable step that
+   *  scales with zoom, used by the compass buttons. */
+  const panBy = useCallback((fx: number, fy: number) => {
+    setViewBox((vb) => ({ ...vb, x: vb.x + vb.w * fx, y: vb.y + vb.h * fy }));
   }, []);
 
   const handleKeyDown = useCallback(
@@ -822,371 +845,484 @@ export function WorldMap({ worldData, backContent }: WorldMapProps) {
         </button>
       }
     >
-      <svg
-        ref={svgRef}
-        viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
-        className="h-full w-full cursor-grab outline-none focus:ring-1 focus:ring-primary/40 active:cursor-grabbing"
-        role="img"
-        aria-label="World map"
-        onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        onKeyDown={handleKeyDown}
-      >
-        {/* ── Definitions ─────────────────────────────────── */}
-        <defs>
-          <filter id="glow-sm" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="2" result="b" />
-            <feMerge>
-              <feMergeNode in="b" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-          <filter id="glow-md" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="4" result="b" />
-            <feMerge>
-              <feMergeNode in="b" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
+      <div className="relative h-full w-full">
+        <svg
+          ref={svgRef}
+          viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.w} ${viewBox.h}`}
+          className="h-full w-full cursor-grab outline-none focus:ring-1 focus:ring-primary/40 active:cursor-grabbing"
+          role="img"
+          aria-label="World map"
+          onWheel={handleWheel}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          onKeyDown={handleKeyDown}
+        >
+          {/* ── Definitions ─────────────────────────────────── */}
+          <defs>
+            <filter id="glow-sm" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="2" result="b" />
+              <feMerge>
+                <feMergeNode in="b" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
+            <filter id="glow-md" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="4" result="b" />
+              <feMerge>
+                <feMergeNode in="b" />
+                <feMergeNode in="SourceGraphic" />
+              </feMerge>
+            </filter>
 
-          {/* District zone radial gradients */}
+            {/* District zone radial gradients */}
+            {districtZones.map((z) => (
+              <radialGradient key={`zg-${z.district}`} id={`zg-${z.district}`}>
+                <stop offset="0%" stopColor={z.color} stopOpacity="0.07" />
+                <stop offset="60%" stopColor={z.color} stopOpacity="0.025" />
+                <stop offset="100%" stopColor={z.color} stopOpacity="0" />
+              </radialGradient>
+            ))}
+
+            {/* Cross-district edge linear gradients */}
+            {crossEdges.map((g) => (
+              <linearGradient
+                key={g.id}
+                id={g.id}
+                x1={g.from.x}
+                y1={g.from.y}
+                x2={g.to.x}
+                y2={g.to.y}
+                gradientUnits="userSpaceOnUse"
+              >
+                <stop offset="0%" stopColor={g.fromColor} stopOpacity="0.7" />
+                <stop offset="100%" stopColor={g.toColor} stopOpacity="0.7" />
+              </linearGradient>
+            ))}
+
+            {/* Arrowhead markers for directional edges */}
+            <marker
+              id="arrow-cyan"
+              viewBox="0 0 6 6"
+              refX="5"
+              refY="3"
+              markerWidth="5"
+              markerHeight="5"
+              orient="auto-start-reverse"
+            >
+              <path d="M0,0 L6,3 L0,6 Z" fill="var(--color-primary)" opacity="0.6" />
+            </marker>
+            <marker
+              id="arrow-dim"
+              viewBox="0 0 6 6"
+              refX="5"
+              refY="3"
+              markerWidth="5"
+              markerHeight="5"
+              orient="auto-start-reverse"
+            >
+              <path d="M0,0 L6,3 L0,6 Z" fill="var(--color-text-dim)" opacity="0.5" />
+            </marker>
+          </defs>
+
+          {/* ── Layer 1: District ambient zones ─────────────── */}
           {districtZones.map((z) => (
-            <radialGradient key={`zg-${z.district}`} id={`zg-${z.district}`}>
-              <stop offset="0%" stopColor={z.color} stopOpacity="0.07" />
-              <stop offset="60%" stopColor={z.color} stopOpacity="0.025" />
-              <stop offset="100%" stopColor={z.color} stopOpacity="0" />
-            </radialGradient>
+            <circle
+              key={`zone-${z.district}`}
+              cx={z.cx}
+              cy={z.cy}
+              r={z.radius}
+              fill={`url(#zg-${z.district})`}
+            />
           ))}
 
-          {/* Cross-district edge linear gradients */}
+          {/* ── Layer 2: District labels (watermark) ────────── */}
+          {districtZones.map((z) => (
+            <text
+              key={`dl-${z.district}`}
+              x={z.cx}
+              y={z.cy + 5}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fill={z.color}
+              opacity={0.09}
+              fontSize={22}
+              fontFamily="Orbitron, monospace"
+              fontWeight={700}
+              letterSpacing="0.18em"
+            >
+              {z.label}
+            </text>
+          ))}
+
+          {/* ── Layer 3: Adjacent grid edges (solid, prominent) ── */}
+          {allEdges
+            .filter((e) => e.gridEdge && e.adjacent)
+            .map((edge) => {
+              const from = posMap.get(edge.from);
+              const to = posMap.get(edge.to);
+              if (!from || !to) return null;
+              return (
+                <line
+                  key={`e-${edge.from}-${edge.to}`}
+                  x1={from.x}
+                  y1={from.y}
+                  x2={to.x}
+                  y2={to.y}
+                  stroke={getDistrictColor(from.district)}
+                  strokeWidth={1.2}
+                  opacity={0.35}
+                />
+              );
+            })}
+
+          {/* ── Layer 3a: Non-adjacent grid edges (curved, dashed) ── */}
+          {allEdges
+            .filter((e) => e.gridEdge && !e.adjacent)
+            .map((edge) => {
+              const from = posMap.get(edge.from);
+              const to = posMap.get(edge.to);
+              if (!from || !to) return null;
+              const mx = (from.x + to.x) / 2;
+              const my = (from.y + to.y) / 2;
+              // Curve control point perpendicular to midpoint
+              const dx = to.x - from.x;
+              const dy = to.y - from.y;
+              const len = Math.sqrt(dx * dx + dy * dy) || 1;
+              const cx = mx + (-dy / len) * 30;
+              const cy = my + (dx / len) * 30;
+              return (
+                <path
+                  key={`e-${edge.from}-${edge.to}`}
+                  d={`M${from.x},${from.y} Q${cx},${cy} ${to.x},${to.y}`}
+                  stroke={getDistrictColor(from.district)}
+                  strokeWidth={0.8}
+                  opacity={0.25}
+                  fill="none"
+                  strokeDasharray="6 3"
+                  markerEnd={!edge.bidirectional ? "url(#arrow-dim)" : undefined}
+                />
+              );
+            })}
+
+          {/* ── Layer 3b: Non-grid within-district edges (directional) */}
+          {allEdges
+            .filter((e) => !e.crossDistrict && !e.gridEdge)
+            .map((edge) => {
+              const from = posMap.get(edge.from);
+              const to = posMap.get(edge.to);
+              if (!from || !to) return null;
+              return (
+                <line
+                  key={`e-${edge.from}-${edge.to}`}
+                  x1={from.x}
+                  y1={from.y}
+                  x2={to.x}
+                  y2={to.y}
+                  stroke={getDistrictColor(from.district)}
+                  strokeWidth={0.8}
+                  opacity={0.15}
+                  strokeDasharray="4 4"
+                  markerEnd={!edge.bidirectional ? "url(#arrow-dim)" : undefined}
+                />
+              );
+            })}
+
+          {/* ── Layer 4: Cross-district edges (gradient) ────── */}
           {crossEdges.map((g) => (
-            <linearGradient
-              key={g.id}
-              id={g.id}
+            <line
+              key={`ce-${g.edge.from}-${g.edge.to}`}
               x1={g.from.x}
               y1={g.from.y}
               x2={g.to.x}
               y2={g.to.y}
-              gradientUnits="userSpaceOnUse"
-            >
-              <stop offset="0%" stopColor={g.fromColor} stopOpacity="0.7" />
-              <stop offset="100%" stopColor={g.toColor} stopOpacity="0.7" />
-            </linearGradient>
+              stroke={`url(#${g.id})`}
+              strokeWidth={1.5}
+              opacity={0.5}
+              strokeDasharray="8 4"
+              markerEnd={!g.edge.bidirectional ? "url(#arrow-cyan)" : undefined}
+            />
           ))}
 
-          {/* Arrowhead markers for directional edges */}
-          <marker
-            id="arrow-cyan"
-            viewBox="0 0 6 6"
-            refX="5"
-            refY="3"
-            markerWidth="5"
-            markerHeight="5"
-            orient="auto-start-reverse"
-          >
-            <path d="M0,0 L6,3 L0,6 Z" fill="var(--color-primary)" opacity="0.6" />
-          </marker>
-          <marker
-            id="arrow-dim"
-            viewBox="0 0 6 6"
-            refX="5"
-            refY="3"
-            markerWidth="5"
-            markerHeight="5"
-            orient="auto-start-reverse"
-          >
-            <path d="M0,0 L6,3 L0,6 Z" fill="var(--color-text-dim)" opacity="0.5" />
-          </marker>
-        </defs>
-
-        {/* ── Layer 1: District ambient zones ─────────────── */}
-        {districtZones.map((z) => (
-          <circle
-            key={`zone-${z.district}`}
-            cx={z.cx}
-            cy={z.cy}
-            r={z.radius}
-            fill={`url(#zg-${z.district})`}
-          />
-        ))}
-
-        {/* ── Layer 2: District labels (watermark) ────────── */}
-        {districtZones.map((z) => (
-          <text
-            key={`dl-${z.district}`}
-            x={z.cx}
-            y={z.cy + 5}
-            textAnchor="middle"
-            dominantBaseline="central"
-            fill={z.color}
-            opacity={0.09}
-            fontSize={22}
-            fontFamily="Orbitron, monospace"
-            fontWeight={700}
-            letterSpacing="0.18em"
-          >
-            {z.label}
-          </text>
-        ))}
-
-        {/* ── Layer 3: Adjacent grid edges (solid, prominent) ── */}
-        {allEdges
-          .filter((e) => e.gridEdge && e.adjacent)
-          .map((edge) => {
-            const from = posMap.get(edge.from);
-            const to = posMap.get(edge.to);
-            if (!from || !to) return null;
+          {/* ── Layer 5: Pulse particles on cross edges ─────── */}
+          {crossEdges.map((g, i) => {
+            const dur = 3 + (i % 4);
+            const reverse = i % 2 === 1;
+            const x1 = reverse ? g.to.x : g.from.x;
+            const y1 = reverse ? g.to.y : g.from.y;
+            const x2 = reverse ? g.from.x : g.to.x;
+            const y2 = reverse ? g.from.y : g.to.y;
+            const color = reverse ? g.toColor : g.fromColor;
             return (
-              <line
-                key={`e-${edge.from}-${edge.to}`}
-                x1={from.x}
-                y1={from.y}
-                x2={to.x}
-                y2={to.y}
-                stroke={getDistrictColor(from.district)}
-                strokeWidth={1.2}
-                opacity={0.35}
+              // biome-ignore lint/suspicious/noArrayIndexKey: pulse animation index is the visual identity
+              <circle key={`pulse-${i}`} r={1.8} fill={color} opacity={0} filter="url(#glow-sm)">
+                <animate
+                  attributeName="cx"
+                  from={x1}
+                  to={x2}
+                  dur={`${dur}s`}
+                  repeatCount="indefinite"
+                  begin={`${i * 0.7}s`}
+                />
+                <animate
+                  attributeName="cy"
+                  from={y1}
+                  to={y2}
+                  dur={`${dur}s`}
+                  repeatCount="indefinite"
+                  begin={`${i * 0.7}s`}
+                />
+                <animate
+                  attributeName="opacity"
+                  values="0;0.8;0.8;0"
+                  keyTimes="0;0.1;0.9;1"
+                  dur={`${dur}s`}
+                  repeatCount="indefinite"
+                  begin={`${i * 0.7}s`}
+                />
+              </circle>
+            );
+          })}
+
+          {/* ── Layer 5b: Pulse particles on grid edges ─────── */}
+          {gridEdgesResolved.map((g, i) => {
+            const dur = 4 + (i % 5);
+            const reverse = i % 2 === 1;
+            const x1 = reverse ? g.to.x : g.from.x;
+            const y1 = reverse ? g.to.y : g.from.y;
+            const x2 = reverse ? g.from.x : g.to.x;
+            const y2 = reverse ? g.from.y : g.to.y;
+            return (
+              // biome-ignore lint/suspicious/noArrayIndexKey: gateway pulse index is the visual identity
+              <circle key={`gpulse-${i}`} r={1.2} fill={g.color} opacity={0}>
+                <animate
+                  attributeName="cx"
+                  from={x1}
+                  to={x2}
+                  dur={`${dur}s`}
+                  repeatCount="indefinite"
+                  begin={`${i * 0.5}s`}
+                />
+                <animate
+                  attributeName="cy"
+                  from={y1}
+                  to={y2}
+                  dur={`${dur}s`}
+                  repeatCount="indefinite"
+                  begin={`${i * 0.5}s`}
+                />
+                <animate
+                  attributeName="opacity"
+                  values="0;0.5;0.5;0"
+                  keyTimes="0;0.15;0.85;1"
+                  dur={`${dur}s`}
+                  repeatCount="indefinite"
+                  begin={`${i * 0.5}s`}
+                />
+              </circle>
+            );
+          })}
+
+          {/* ── Layer 6: Room nodes (memoized) ──────────────── */}
+          {allPositions.map((room) => {
+            const pop = roomPops[room.id] ?? 0;
+            const ents = entityPositions.get(room.id);
+            const names = ents?.map((ent) => ent.name) || [];
+            const short = roomShorts.get(room.id) ?? room.id.split("/")[1] ?? room.id;
+            return (
+              <RoomNode
+                key={room.id}
+                room={room}
+                pop={pop}
+                isSelected={selectedRoom === room.id}
+                isHighlighted={highlightedRoom === room.id}
+                isHub={isHub(room.id)}
+                shortName={short}
+                entityNames={names}
+                onSelect={handleRoomSelect}
+                onHover={handleRoomHover}
+                onLeave={handleRoomLeave}
               />
             );
           })}
 
-        {/* ── Layer 3a: Non-adjacent grid edges (curved, dashed) ── */}
-        {allEdges
-          .filter((e) => e.gridEdge && !e.adjacent)
-          .map((edge) => {
-            const from = posMap.get(edge.from);
-            const to = posMap.get(edge.to);
-            if (!from || !to) return null;
-            const mx = (from.x + to.x) / 2;
-            const my = (from.y + to.y) / 2;
-            // Curve control point perpendicular to midpoint
-            const dx = to.x - from.x;
-            const dy = to.y - from.y;
-            const len = Math.sqrt(dx * dx + dy * dy) || 1;
-            const cx = mx + (-dy / len) * 30;
-            const cy = my + (dx / len) * 30;
+          {/* ── Layer 7: Entity orbit dots (memoized) ───────── */}
+          {Array.from(entityPositions.entries()).map(([roomId, ents]) => {
+            const pos = posMap.get(roomId);
+            if (!pos) return null;
             return (
-              <path
-                key={`e-${edge.from}-${edge.to}`}
-                d={`M${from.x},${from.y} Q${cx},${cy} ${to.x},${to.y}`}
-                stroke={getDistrictColor(from.district)}
-                strokeWidth={0.8}
-                opacity={0.25}
-                fill="none"
-                strokeDasharray="6 3"
-                markerEnd={!edge.bidirectional ? "url(#arrow-dim)" : undefined}
+              <EntityDots
+                key={roomId}
+                roomId={roomId}
+                entities={ents}
+                pos={pos}
+                isHub={isHub(roomId)}
+                onSelectEntity={selectEntity}
               />
             );
           })}
 
-        {/* ── Layer 3b: Non-grid within-district edges (directional) */}
-        {allEdges
-          .filter((e) => !e.crossDistrict && !e.gridEdge)
-          .map((edge) => {
-            const from = posMap.get(edge.from);
-            const to = posMap.get(edge.to);
-            if (!from || !to) return null;
-            return (
-              <line
-                key={`e-${edge.from}-${edge.to}`}
-                x1={from.x}
-                y1={from.y}
-                x2={to.x}
-                y2={to.y}
-                stroke={getDistrictColor(from.district)}
-                strokeWidth={0.8}
-                opacity={0.15}
-                strokeDasharray="4 4"
-                markerEnd={!edge.bidirectional ? "url(#arrow-dim)" : undefined}
-              />
-            );
-          })}
+          {/* ── Layer 8: Entity movement trails ─────────────── */}
+          <g ref={trailsRef} />
 
-        {/* ── Layer 4: Cross-district edges (gradient) ────── */}
-        {crossEdges.map((g) => (
-          <line
-            key={`ce-${g.edge.from}-${g.edge.to}`}
-            x1={g.from.x}
-            y1={g.from.y}
-            x2={g.to.x}
-            y2={g.to.y}
-            stroke={`url(#${g.id})`}
-            strokeWidth={1.5}
-            opacity={0.5}
-            strokeDasharray="8 4"
-            markerEnd={!g.edge.bidirectional ? "url(#arrow-cyan)" : undefined}
-          />
-        ))}
+          {/* ── Layer 9: Selection ripples ──────────────────── */}
+          <g ref={rippleRef} />
 
-        {/* ── Layer 5: Pulse particles on cross edges ─────── */}
-        {crossEdges.map((g, i) => {
-          const dur = 3 + (i % 4);
-          const reverse = i % 2 === 1;
-          const x1 = reverse ? g.to.x : g.from.x;
-          const y1 = reverse ? g.to.y : g.from.y;
-          const x2 = reverse ? g.from.x : g.to.x;
-          const y2 = reverse ? g.from.y : g.to.y;
-          const color = reverse ? g.toColor : g.fromColor;
-          return (
-            // biome-ignore lint/suspicious/noArrayIndexKey: pulse animation index is the visual identity
-            <circle key={`pulse-${i}`} r={1.8} fill={color} opacity={0} filter="url(#glow-sm)">
-              <animate
-                attributeName="cx"
-                from={x1}
-                to={x2}
-                dur={`${dur}s`}
-                repeatCount="indefinite"
-                begin={`${i * 0.7}s`}
-              />
-              <animate
-                attributeName="cy"
-                from={y1}
-                to={y2}
-                dur={`${dur}s`}
-                repeatCount="indefinite"
-                begin={`${i * 0.7}s`}
-              />
-              <animate
-                attributeName="opacity"
-                values="0;0.8;0.8;0"
-                keyTimes="0;0.1;0.9;1"
-                dur={`${dur}s`}
-                repeatCount="indefinite"
-                begin={`${i * 0.7}s`}
-              />
-            </circle>
-          );
-        })}
-
-        {/* ── Layer 5b: Pulse particles on grid edges ─────── */}
-        {gridEdgesResolved.map((g, i) => {
-          const dur = 4 + (i % 5);
-          const reverse = i % 2 === 1;
-          const x1 = reverse ? g.to.x : g.from.x;
-          const y1 = reverse ? g.to.y : g.from.y;
-          const x2 = reverse ? g.from.x : g.to.x;
-          const y2 = reverse ? g.from.y : g.to.y;
-          return (
-            // biome-ignore lint/suspicious/noArrayIndexKey: gateway pulse index is the visual identity
-            <circle key={`gpulse-${i}`} r={1.2} fill={g.color} opacity={0}>
-              <animate
-                attributeName="cx"
-                from={x1}
-                to={x2}
-                dur={`${dur}s`}
-                repeatCount="indefinite"
-                begin={`${i * 0.5}s`}
-              />
-              <animate
-                attributeName="cy"
-                from={y1}
-                to={y2}
-                dur={`${dur}s`}
-                repeatCount="indefinite"
-                begin={`${i * 0.5}s`}
-              />
-              <animate
-                attributeName="opacity"
-                values="0;0.5;0.5;0"
-                keyTimes="0;0.15;0.85;1"
-                dur={`${dur}s`}
-                repeatCount="indefinite"
-                begin={`${i * 0.5}s`}
-              />
-            </circle>
-          );
-        })}
-
-        {/* ── Layer 6: Room nodes (memoized) ──────────────── */}
-        {allPositions.map((room) => {
-          const pop = roomPops[room.id] ?? 0;
-          const ents = entityPositions.get(room.id);
-          const names = ents?.map((ent) => ent.name) || [];
-          const short = roomShorts.get(room.id) ?? room.id.split("/")[1] ?? room.id;
-          return (
-            <RoomNode
-              key={room.id}
-              room={room}
-              pop={pop}
-              isSelected={selectedRoom === room.id}
-              isHighlighted={highlightedRoom === room.id}
-              isHub={isHub(room.id)}
-              shortName={short}
-              entityNames={names}
-              onSelect={handleRoomSelect}
-              onHover={handleRoomHover}
-              onLeave={handleRoomLeave}
-            />
-          );
-        })}
-
-        {/* ── Layer 7: Entity orbit dots (memoized) ───────── */}
-        {Array.from(entityPositions.entries()).map(([roomId, ents]) => {
-          const pos = posMap.get(roomId);
-          if (!pos) return null;
-          return (
-            <EntityDots
-              key={roomId}
-              roomId={roomId}
-              entities={ents}
-              pos={pos}
-              isHub={isHub(roomId)}
-              onSelectEntity={selectEntity}
-            />
-          );
-        })}
-
-        {/* ── Layer 8: Entity movement trails ─────────────── */}
-        <g ref={trailsRef} />
-
-        {/* ── Layer 9: Selection ripples ──────────────────── */}
-        <g ref={rippleRef} />
-
-        {/* ── Tooltip ─────────────────────────────────────── */}
-        {tooltip && (
-          <g>
-            {(() => {
-              const lineH = 10;
-              const pad = 6;
-              const maxLen = Math.max(...tooltip.lines.map((l) => l.length));
-              const w = Math.max(maxLen * 5 + pad * 2, 60);
-              const h = tooltip.lines.length * lineH + pad * 2;
-              return (
-                <>
-                  <rect
-                    x={tooltip.x - w / 2}
-                    y={tooltip.y - h / 2}
-                    width={w}
-                    height={h}
-                    rx={4}
-                    fill="var(--color-bg-card)"
-                    stroke="var(--color-border)"
-                    strokeWidth={0.5}
-                    opacity={0.95}
-                  />
-                  {tooltip.lines.map((line, i) => (
-                    <text
-                      // biome-ignore lint/suspicious/noArrayIndexKey: tooltip line position is the line identity
-                      key={i}
-                      x={tooltip.x}
-                      y={tooltip.y - h / 2 + pad + 8 + i * lineH}
-                      textAnchor="middle"
-                      fill={i === 0 ? "var(--color-text)" : "var(--color-text-dim)"}
-                      fontSize={i === 0 ? 8 : 6.5}
-                      fontFamily="Share Tech Mono, monospace"
-                    >
-                      {line}
-                    </text>
-                  ))}
-                </>
-              );
-            })()}
-          </g>
-        )}
-      </svg>
+          {/* ── Tooltip ─────────────────────────────────────── */}
+          {tooltip && (
+            <g>
+              {(() => {
+                const lineH = 10;
+                const pad = 6;
+                const maxLen = Math.max(...tooltip.lines.map((l) => l.length));
+                const w = Math.max(maxLen * 5 + pad * 2, 60);
+                const h = tooltip.lines.length * lineH + pad * 2;
+                return (
+                  <>
+                    <rect
+                      x={tooltip.x - w / 2}
+                      y={tooltip.y - h / 2}
+                      width={w}
+                      height={h}
+                      rx={4}
+                      fill="var(--color-bg-card)"
+                      stroke="var(--color-border)"
+                      strokeWidth={0.5}
+                      opacity={0.95}
+                    />
+                    {tooltip.lines.map((line, i) => (
+                      <text
+                        // biome-ignore lint/suspicious/noArrayIndexKey: tooltip line position is the line identity
+                        key={i}
+                        x={tooltip.x}
+                        y={tooltip.y - h / 2 + pad + 8 + i * lineH}
+                        textAnchor="middle"
+                        fill={i === 0 ? "var(--color-text)" : "var(--color-text-dim)"}
+                        fontSize={i === 0 ? 8 : 6.5}
+                        fontFamily="Share Tech Mono, monospace"
+                      >
+                        {line}
+                      </text>
+                    ))}
+                  </>
+                );
+              })()}
+            </g>
+          )}
+        </svg>
+        <CompassControl
+          onPan={panBy}
+          onZoomIn={() => zoomBy(0.85)}
+          onZoomOut={() => zoomBy(1.15)}
+          onRecenter={() => {
+            setViewBox(DEFAULT_VIEWBOX);
+            setHighlightedRoom(null);
+          }}
+        />
+      </div>
     </GlassPanel>
+  );
+}
+
+/**
+ * Compass navigation overlay — discrete, click-safe map movement. Predictable
+ * steps replace the easy-to-overshoot wheel-zoom + drag-pan that left users
+ * lost. Each button stops propagation so it never registers as a map/room click.
+ */
+function CompassControl({
+  onPan,
+  onZoomIn,
+  onZoomOut,
+  onRecenter,
+}: {
+  onPan: (fx: number, fy: number) => void;
+  onZoomIn: () => void;
+  onZoomOut: () => void;
+  onRecenter: () => void;
+}) {
+  const STEP = 0.35; // pan a third of the view per click
+  const btn =
+    "flex h-6 w-6 items-center justify-center rounded bg-bg-surface/80 text-text-dim backdrop-blur-sm transition-colors hover:bg-bg-hover hover:text-primary border border-border";
+  const stop = (fn: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    fn();
+  };
+  return (
+    <div className="absolute bottom-2 right-2 flex flex-col items-center gap-1 select-none">
+      {/* Directional pad */}
+      <div className="grid grid-cols-3 grid-rows-3 gap-0.5">
+        <span />
+        <button
+          type="button"
+          className={btn}
+          onClick={stop(() => onPan(0, -STEP))}
+          title="Pan up"
+          aria-label="Pan up"
+        >
+          <ChevronUp size={14} />
+        </button>
+        <span />
+        <button
+          type="button"
+          className={btn}
+          onClick={stop(() => onPan(-STEP, 0))}
+          title="Pan left"
+          aria-label="Pan left"
+        >
+          <ChevronLeft size={14} />
+        </button>
+        <button
+          type="button"
+          className={btn}
+          onClick={stop(onRecenter)}
+          title="Recenter (0)"
+          aria-label="Recenter map"
+        >
+          <Crosshair size={12} />
+        </button>
+        <button
+          type="button"
+          className={btn}
+          onClick={stop(() => onPan(STEP, 0))}
+          title="Pan right"
+          aria-label="Pan right"
+        >
+          <ChevronRight size={14} />
+        </button>
+        <span />
+        <button
+          type="button"
+          className={btn}
+          onClick={stop(() => onPan(0, STEP))}
+          title="Pan down"
+          aria-label="Pan down"
+        >
+          <ChevronDown size={14} />
+        </button>
+        <span />
+      </div>
+      {/* Zoom */}
+      <div className="flex gap-0.5">
+        <button
+          type="button"
+          className={btn}
+          onClick={stop(onZoomIn)}
+          title="Zoom in (+)"
+          aria-label="Zoom in"
+        >
+          <Plus size={14} />
+        </button>
+        <button
+          type="button"
+          className={btn}
+          onClick={stop(onZoomOut)}
+          title="Zoom out (-)"
+          aria-label="Zoom out"
+        >
+          <Minus size={14} />
+        </button>
+      </div>
+    </div>
   );
 }
