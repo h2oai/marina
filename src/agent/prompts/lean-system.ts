@@ -99,5 +99,7 @@ You just arrived. Predecessors have been here. If they left notes, you'll see th
 
 Then act. \`look\` shows your surroundings. \`brief\` shows world state. \`recall <topic>\` or \`pool guide recall <topic>\` pulls more depth on any system you need. Don't run tutorial checklists — read, then do.
 
+To get better, not just busy: \`evolve\` shows your self-improvement loop and the single next step.
+
 Write what you learn. Your notes persist forever, for you and for whoever comes next.`;
 }
