@@ -8,7 +8,7 @@ import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getErrorMessage } from "../errors";
 
 const HELP =
-  "Canvas management. Subcommands: canvas create <name> [desc] | canvas list | canvas info <name> | canvas visit <self|entity|name> | canvas publish <type> <asset_id> [canvas] [reply:<node_id>] | canvas nodes <name> | canvas edges <name> | canvas layout <grid|timeline|feed> <name> | canvas delete <name> | canvas asset upload|list|info|delete | canvas intent list [canvas] | canvas intent claim <node_id> | canvas intent fail <node_id> [reason] | canvas intent complete <node_id> [--type <type>] <result> | canvas intent complete-rich <node_id> <json> | canvas connect <src_node_id> <tgt_node_id> <relationship> [canvas] | canvas disconnect <edge_id>";
+  "Canvas management. Subcommands: canvas create <name> [desc] | canvas list | canvas info <name> | canvas visit <self|entity|name> | canvas post [on:<canvas>] [reply:<node_id>] <text> | canvas publish <type> <asset_id> [canvas] [reply:<node_id>] | canvas nodes <name> | canvas edges <name> | canvas layout <grid|timeline|feed> <name> | canvas delete <name> | canvas asset upload|list|info|delete | canvas intent list [canvas] | canvas intent claim <node_id> | canvas intent fail <node_id> [reason] | canvas intent complete <node_id> [--type <type>] <result> | canvas intent complete-rich <node_id> <json> | canvas connect <src_node_id> <tgt_node_id> <relationship> [canvas] | canvas disconnect <edge_id>";
 
 export function canvasCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
@@ -58,6 +58,9 @@ export function canvasCommand(deps: {
           return;
         case "publish":
           handlePublish(ctx, eid, entity, db, deps.storage, deps.logEvent, tokens.slice(1));
+          return;
+        case "post":
+          handlePost(ctx, eid, entity, db, deps.logEvent, tokens.slice(1));
           return;
         case "nodes":
           handleNodes(ctx, eid, db, tokens.slice(1));
@@ -463,6 +466,84 @@ function handlePublish(
   }
 
   ctx.send(eid, `Published ${type} node to canvas "${canvas.name}" (asset: ${asset.filename})`);
+}
+
+/**
+ * One-shot text post: create a text node straight from inline text — no separate
+ * asset-upload step. This is the cheap path agents use to populate canvas content.
+ * Usage: canvas post [on:<canvas>] [reply:<node_id>] <text...>
+ * Leading `on:`/`reply:` flags are optional; everything after them is the body.
+ */
+function handlePost(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  db: MarinaDB,
+  logEvent: ((event: { type: string; entity: EntityId; [k: string]: unknown }) => void) | undefined,
+  tokens: string[],
+): void {
+  let canvasName: string | undefined;
+  let parentNodeId: string | undefined;
+  let i = 0;
+  for (; i < tokens.length; i++) {
+    const t = tokens[i]!;
+    if (t.startsWith("reply:")) parentNodeId = t.slice(6);
+    else if (t.startsWith("on:")) canvasName = t.slice(3);
+    else break;
+  }
+  const text = tokens.slice(i).join(" ").trim();
+  if (!text) {
+    ctx.send(eid, "Usage: canvas post [on:<canvas>] [reply:<node_id>] <text>");
+    return;
+  }
+
+  // Find or create the target canvas — prefer the named one, else "global".
+  let canvas = canvasName
+    ? db.getCanvasByName(canvasName)
+    : (db.getCanvasByName("global") ?? db.listCanvases({ limit: 1 })[0]);
+  if (!canvas) {
+    const id = crypto.randomUUID();
+    db.createCanvas({
+      id,
+      name: canvasName ?? "global",
+      description: "Shared canvas for all entities",
+      creatorName: entity.name,
+    });
+    canvas = db.getCanvas(id)!;
+  }
+
+  // Auto-position below existing nodes.
+  const existingNodes = db.getNodesByCanvas(canvas.id);
+  const maxY = existingNodes.reduce((max, n) => Math.max(max, n.y + n.height), 0);
+
+  const nodeId = crypto.randomUUID();
+  const title = text.length > 60 ? `${text.slice(0, 57)}...` : text;
+  db.createNode({
+    id: nodeId,
+    canvasId: canvas.id,
+    type: "text",
+    x: 0,
+    y: maxY + 20,
+    // No asset — the dashboard text node renders data.content directly.
+    data: {
+      content: text,
+      title,
+      author: entity.name,
+      feedType: parentNodeId ? "conversation" : "manual",
+    },
+    creatorName: entity.name,
+    parentNodeId,
+  });
+
+  logEvent?.({
+    type: "canvas_publish",
+    entity: eid,
+    canvasId: canvas.id,
+    nodeId,
+    timestamp: Date.now(),
+  });
+
+  ctx.send(eid, `Posted to canvas "${canvas.name}" (node ${nodeId.slice(0, 8)}..).`);
 }
 
 function handleNodes(ctx: RoomContext, eid: EntityId, db: MarinaDB, tokens: string[]): void {
