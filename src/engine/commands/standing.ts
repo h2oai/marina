@@ -1,6 +1,7 @@
-import { deriveRankFromStanding } from "../../agent/rank-progression";
+import { deriveRankFromStanding, RANK_THRESHOLDS } from "../../agent/rank-progression";
 import { getStanding, leaderboard, ledgerFor, STANDING_HALF_LIFE_DAYS } from "../../agent/standing";
 import { bold, dim, header, separator } from "../../net/ansi";
+import { getGateProgress } from "../safety-gates";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 
@@ -30,7 +31,9 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       "  standing top [N]        — leaderboard\n" +
       "Standing accrues from task completion, pool notes, crew leadership, and helping acts. " +
       "Decay floors at 0; rank 0–4 is derived from thresholds (5/15/40/100). " +
-      "Above rank 4 standing keeps growing but doesn't auto-promote.",
+      "Above rank 4, capability is earned per-operation via the Capability gates shown in " +
+      "your standing view — keep building standing, then perform each gated action under " +
+      "supervision until it unlocks.",
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, "Standing requires database support.");
@@ -79,6 +82,47 @@ export function standingCommand(deps: StandingDeps): CommandDef {
         `  ${bold(standing.toFixed(1))} ${dim(`(half-life ${STANDING_HALF_LIFE_DAYS}d)`)}`,
         `  ${dim("derived rank:")} ${derived}  ${dim("stored:")} ${currentRank}`,
       ];
+      // ── Path forward ──────────────────────────────────────────────
+      // The rank ladder tops out at 4 (Builder). Below that, show the gap to
+      // the next tier; at/above it, explain that further capability is earned
+      // per-operation (safety gates) — not by more rank — and show that ladder.
+      // This is the fix for "no way to advance past a certain point": the path
+      // past rank 4 was real but invisible.
+      lines.push("", dim("Path forward:"));
+      if (derived < 4) {
+        const next = RANK_THRESHOLDS.find((t) => t.rank === ((derived + 1) as typeof derived));
+        if (next) {
+          const remaining = Math.max(0, next.min - standing);
+          lines.push(
+            `  ${standing.toFixed(1)}/${next.min} standing — ${remaining.toFixed(1)} more to reach rank ${next.rank}.`,
+          );
+        }
+      } else {
+        lines.push(
+          `  ${bold("Rank 4 (Builder)")} is the top auto-rank. Beyond it, capability is earned`,
+          "  per-operation: keep building standing, then perform each gated action under",
+          "  supervision until it unlocks. Ranks 5+ are operator-conferred honorifics.",
+        );
+      }
+
+      // ── Capability gates ──────────────────────────────────────────
+      const gates = getGateProgress(db, target.id);
+      lines.push("", dim("Capability gates:"));
+      for (const g of gates) {
+        if (g.status === "unlocked") {
+          lines.push(`  ✓ ${g.id.padEnd(18)} unlocked — ${dim(g.description)}`);
+        } else if (g.status === "supervised") {
+          lines.push(
+            `  ◐ ${g.id.padEnd(18)} ${g.demonstrations}/${g.demoThreshold} demos — attempt under supervision to unlock ${dim(`(${g.description})`)}`,
+          );
+        } else {
+          const remaining = (g.minStanding - g.standing).toFixed(1);
+          lines.push(
+            `  🔒 ${g.id.padEnd(18)} standing ${g.standing.toFixed(1)}/${g.minStanding} (${remaining} more) ${dim(`— ${g.description}`)}`,
+          );
+        }
+      }
+
       if (ledger.length > 0) {
         lines.push("", dim("Recent ledger entries:"));
         const now = Date.now();

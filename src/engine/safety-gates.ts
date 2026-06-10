@@ -191,6 +191,48 @@ export function listGates(): string[] {
   return Object.keys(SAFETY_GATES);
 }
 
+export interface GateProgress {
+  id: string;
+  description: string;
+  /** unlocked = usable solo; supervised = enough standing, needs demos; locked = needs more standing. */
+  status: "unlocked" | "supervised" | "locked";
+  standing: number;
+  minStanding: number;
+  demonstrations: number;
+  demoThreshold: number;
+}
+
+/**
+ * Per-gate advancement view for an entity — the "what's next past rank 4" ladder.
+ * Surfaces the otherwise-invisible competence path: how much standing each gate
+ * needs and how many supervised demonstrations remain. Ordered by reachability
+ * (lowest standing requirement first).
+ */
+export function getGateProgress(db: MarinaDB, entityId: string, now = Date.now()): GateProgress[] {
+  const standing = getStanding(db, entityId, now);
+  return Object.values(SAFETY_GATES)
+    .map((gate): GateProgress => {
+      const comp = db.getCompetence(entityId, gate.id);
+      const demonstrations = comp?.demonstrations ?? 0;
+      const status: GateProgress["status"] =
+        comp?.supervised_only === 0
+          ? "unlocked"
+          : standing >= gate.minStanding
+            ? "supervised"
+            : "locked";
+      return {
+        id: gate.id,
+        description: gate.description,
+        status,
+        standing,
+        minStanding: gate.minStanding,
+        demonstrations,
+        demoThreshold: gate.demoThreshold,
+      };
+    })
+    .sort((a, b) => a.minStanding - b.minStanding);
+}
+
 /**
  * Map rank tier to the gates an entity at that rank conventionally needs.
  * Lower tiers in the table also include all higher-tier gates above them
