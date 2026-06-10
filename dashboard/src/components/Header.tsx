@@ -24,7 +24,7 @@ export function Header({ connected, uptime, onResetLayout }: HeaderProps) {
   const agents = entities.filter((e) => e.kind === "agent");
 
   return (
-    <header className="glass-panel flex items-center justify-between px-3 py-1">
+    <header className="glass-panel relative z-50 flex items-center justify-between px-3 py-1">
       <div className="flex items-center gap-3">
         <h1 className="gradient-text font-display text-lg font-bold tracking-widest">
           {TITLE_LETTERS.map((letter, i) => (
