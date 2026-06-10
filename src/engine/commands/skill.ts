@@ -11,7 +11,7 @@ export function skillCommand(deps: {
   return {
     name: "skill",
     aliases: [],
-    help: "Skill library. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path>",
+    help: "Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path>. Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -29,9 +29,12 @@ export function skillCommand(deps: {
         if (skills.length === 0) {
           ctx.send(
             input.entity,
-            "Skill library (empty). Store reusable action sequences here.\n" +
-              "Usage: skill store <name> | <description> | <action_sequence>\n\n" +
-              "Looking for help? Try: help, pool guide recall getting started",
+            "Skill library (empty). Store reusable action sequences here — a skill is a\n" +
+              "named procedure you can replay and that outlives you for your successors.\n" +
+              "Usage: skill store <name> | <description> | <action_sequence>\n" +
+              "Example: skill store pool-recall-fanout | find a fact when one keyword misses | " +
+              "recall <topic> ; pool bench-facts recall <synonym> ; note the hit\n\n" +
+              "Looking for help? Try: evolve, help, pool guide recall getting started",
           );
         } else {
           ctx.send(

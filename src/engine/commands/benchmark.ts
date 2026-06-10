@@ -36,6 +36,15 @@ Usage:
                                                      (interleaves reference-model scores)
   benchmark reference [model|benchmark]            — show published reference scores
 
+Benchmarks: mmlu-pro, truthfulqa, arc-challenge, hellaswag, musr, bbh, gsm8k,
+  math, simple-qa, humaneval, ifeval, frames, aime  (run "benchmark list" for status)
+
+--model M format: "marina" = the default local endpoint; "marina:<name>" = a named
+  orchestration (a model-* channel with a live agent). See "benchmark orchestrations".
+
+Note: "run" and "sweep" need rank 4 — they burn real tokens. Discovery commands
+  (list, runs, result, leaderboard, reference, orchestrations) are rank 0.
+
 Examples:
   benchmark list
   benchmark run aime --limit 10 --model marina:answerer
