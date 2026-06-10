@@ -148,6 +148,46 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
   );
 }
 
+/**
+ * Strip reasoning metadata from a model whose provider demands the assistant's
+ * chain-of-thought be echoed back on every subsequent turn — but only when the
+ * agent isn't actually using extended thinking.
+ *
+ * DeepSeek's thinking-mode models (`compat.requiresReasoningContentOnAssistant-
+ * Messages`) reject a request whose history omits the prior turn's
+ * `reasoning_content` (API error 20015). pi-ai gates both the thinking params
+ * and that round-trip on `model.reasoning`, but it only ever echoes an *empty*
+ * `reasoning_content` placeholder — it never carries the real thoughts — so the
+ * upstream 400s. Marina defaults `thinkingLevel: "off"`, so when thinking is off
+ * we don't need the reasoning machinery at all: drop `reasoning` and the
+ * round-trip flag so the model is called as a plain chat model and the broken
+ * echo never fires. Models that don't demand the round-trip are left untouched.
+ */
+export function neutralizeUnusedReasoning(
+  model: Model<Api>,
+  thinkingLevel: string | undefined,
+): Model<Api> {
+  // The agent opted into thinking — keep reasoning even though the round-trip
+  // may still bite; that's an explicit, separate choice.
+  if (thinkingLevel && thinkingLevel !== "off") return model;
+  if (!model.reasoning) return model;
+  // `requiresReasoningContentOnAssistantMessages` lives only on the
+  // openai-completions compat variant (the api DeepSeek uses); read it loosely.
+  const compat = model.compat as
+    | { requiresReasoningContentOnAssistantMessages?: boolean }
+    | undefined;
+  const isDeepSeek =
+    model.provider === "deepseek" || (model.baseUrl?.includes("deepseek.com") ?? false);
+  const requiresRoundTrip =
+    compat?.requiresReasoningContentOnAssistantMessages === true || isDeepSeek;
+  if (!requiresRoundTrip) return model;
+  return {
+    ...model,
+    reasoning: false,
+    compat: { ...(model.compat as object), requiresReasoningContentOnAssistantMessages: false },
+  } as Model<Api>;
+}
+
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface Focus {
@@ -309,7 +349,10 @@ export class LeanAgentAdapter implements AgentHandle {
     // Resolve model (pass WS port for marina/ provider routing)
     const modelStr = config.model ?? MARINA_DEFAULT_MODEL;
     this.wsPort = Number(new URL(wsUrl).port) || 3300;
-    this.model = resolveModel(modelStr, this.wsPort);
+    this.model = neutralizeUnusedReasoning(
+      resolveModel(modelStr, this.wsPort),
+      config.thinkingLevel ?? "off",
+    );
 
     // Create tools — profile controls how much schema goes to the LLM.
     // Smaller models (Haiku and below) can't reliably parse the full 27-tool
@@ -1511,7 +1554,10 @@ The goal is a smaller, sharper memory — not more notes.`;
     // Apply new config
     if (opts.model) {
       this.config.model = opts.model;
-      this.model = resolveModel(opts.model, this.wsPort);
+      this.model = neutralizeUnusedReasoning(
+        resolveModel(opts.model, this.wsPort),
+        this.config.thinkingLevel ?? "off",
+      );
       this.agent.state.model = this.model;
     }
     if (opts.role !== undefined) {
