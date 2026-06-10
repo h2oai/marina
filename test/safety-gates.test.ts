@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   canWitness,
   checkGate,
+  getGateProgress,
   grant,
   grantGatesForRank,
   listGates,
@@ -174,5 +175,40 @@ describe("Safety gates", () => {
     for (const id of listGates()) {
       expect(db.getCompetence("e_sov", id)?.supervised_only).toBe(0);
     }
+  });
+
+  // ── getGateProgress: the visible "what's next past rank 4" ladder ──
+  describe("getGateProgress", () => {
+    it("locks every gate for a fresh entity and reports the standing gap", () => {
+      const progress = getGateProgress(db, "e_fresh");
+      expect(progress.every((g) => g.status === "locked")).toBe(true);
+      // Ordered by reachability — agent.spawn (min 40) before admin.destructive (250).
+      expect(progress[0]!.id).toBe("agent.spawn");
+      expect(progress.at(-1)!.id).toBe("admin.destructive");
+      const spawn = progress.find((g) => g.id === "agent.spawn")!;
+      expect(spawn.standing).toBe(0);
+      expect(spawn.minStanding).toBe(40);
+    });
+
+    it("flips a gate to supervised once standing crosses its threshold", () => {
+      seedStanding(db, "e_org", "org", 50); // ≥ agent.spawn (40), < shell.exec (100)
+      const progress = getGateProgress(db, "e_org");
+      const byId = Object.fromEntries(progress.map((g) => [g.id, g]));
+      expect(byId["agent.spawn"]!.status).toBe("supervised");
+      expect(byId["agent.spawn"]!.demonstrations).toBe(0);
+      expect(byId["shell.exec"]!.status).toBe("locked");
+    });
+
+    it("reports unlocked after enough demonstrations", () => {
+      seedStanding(db, "e_builder", "builder", 120);
+      // Demonstrate agent.spawn to threshold (3) → unlocked.
+      for (let i = 0; i < SAFETY_GATES["agent.spawn"]!.demoThreshold; i++) {
+        recordDemonstration(db, "e_builder", "agent.spawn");
+      }
+      const progress = getGateProgress(db, "e_builder");
+      const spawn = progress.find((g) => g.id === "agent.spawn")!;
+      expect(spawn.status).toBe("unlocked");
+      expect(spawn.demonstrations).toBeGreaterThanOrEqual(3);
+    });
   });
 });
