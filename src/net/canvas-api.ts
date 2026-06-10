@@ -43,8 +43,13 @@ export async function handleCanvasApi(
 ): Promise<Response> {
   const json = jsonWithOrigin(req.headers.get("Origin"));
 
-  // Authenticate — all canvas API routes require a valid session token
-  if (engine) {
+  // Reads are public: the canvas is an observability surface — the same world
+  // content is already streamed to any client over the unauthenticated
+  // /dashboard-ws + canvas WS broadcasts, and /who pages are public. A fresh,
+  // not-yet-logged-in visitor must be able to view the world canvas instead of
+  // getting a 401 (which renders as an empty canvas + raw error). Mutations
+  // (POST/PATCH/DELETE) still require a valid session token.
+  if (engine && method !== "GET") {
     const auth = authenticateRequest(req, engine);
     if ("error" in auth) return auth.error;
   }
