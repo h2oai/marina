@@ -223,7 +223,8 @@ export interface DashboardEvent {
   summary?: string;
   payload?: Record<string, unknown>;
   // Agent streaming fields (agent_turn_start, agent_turn_end,
-  // agent_text_delta, agent_thinking_delta, rank_change)
+  // agent_text_delta, agent_thinking_delta, rank_change, agent_state_change)
+  state?: string;
   hadToolCalls?: boolean;
   toolCount?: number;
   delta?: string;

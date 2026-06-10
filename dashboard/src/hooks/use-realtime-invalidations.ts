@@ -60,7 +60,7 @@ export function useGlobalRealtimeInvalidations(): void {
     useCallback((e: DashboardEvent) => e.type === "key_change", []),
   );
 
-  // ── Agents: lifecycle (spawn/stop/error/rank) ──────────────────────
+  // ── Agents: lifecycle (spawn/stop/error/state/rank) ────────────────
   useInvalidateOnEvent(
     ["agents"],
     useCallback(
@@ -68,6 +68,7 @@ export function useGlobalRealtimeInvalidations(): void {
         e.type === "agent_spawn" ||
         e.type === "agent_stop" ||
         e.type === "agent_error" ||
+        e.type === "agent_state_change" ||
         e.type === "rank_change",
       [],
     ),
