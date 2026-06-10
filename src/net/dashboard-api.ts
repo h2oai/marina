@@ -4,12 +4,12 @@ import { allRecipeNames, getRecipe } from "../engine/commands/usecase";
 import type { Engine } from "../engine/engine";
 import type { MarinaDB } from "../persistence/database";
 import type { Connection, EntityId, Perception, RoomId } from "../types";
-import { type EndpointConfig, getEndpointConfig, setEndpointConfig } from "./model-endpoint";
 import { ORCHESTRATION_PATTERNS } from "../world/templates/orchestration";
 import { authenticateRequest } from "./auth-middleware";
 import { corsHeaders } from "./cors";
 import { formatPerception } from "./formatter";
 import { discoverModels } from "./model-discovery";
+import { type EndpointConfig, getEndpointConfig, setEndpointConfig } from "./model-endpoint";
 
 const ROOMS_DIR = join(import.meta.dir, "../../rooms");
 const PROJECT_ROOT = resolve(import.meta.dir, "../..");
@@ -1127,7 +1127,22 @@ async function handleAgentSpawn(req: Request, engine: Engine): Promise<Response>
       keyName: body.keyName,
     });
 
-    return json(handle.getStatus());
+    const status = handle.getStatus();
+    // Broadcast the lifecycle event so every connected dashboard refreshes its
+    // agent list live. Without this, the HTTP spawn path (used by the dashboard
+    // launch form) never triggers the ["agents"] realtime invalidation, so a
+    // freshly launched agent doesn't appear until the 60s heartbeat or a manual
+    // refetch (e.g. flipping the card). Mirrors the in-world `agent spawn`.
+    engine.logEvent({
+      type: "agent_spawn",
+      entity: (status.entityId ?? "") as EntityId,
+      name: body.name,
+      model: status.model,
+      role: status.role ?? "",
+      timestamp: Date.now(),
+    });
+
+    return json(status);
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : String(error) }, 400);
   }
@@ -1135,7 +1150,20 @@ async function handleAgentSpawn(req: Request, engine: Engine): Promise<Response>
 
 async function handleAgentStop(name: string, engine: Engine): Promise<Response> {
   try {
+    // Snapshot the entity id before stopping (getStatus is unavailable once the
+    // handle is gone), then emit the lifecycle event — same as the in-world
+    // `agent stop`. Besides refreshing dashboards live, logEvent routes
+    // agent_stop to crewManager.onAgentStopped, so an HTTP-path stop also makes
+    // the agent depart its crew (which the old direct-stop path skipped).
+    const status = engine.agentRuntime.get(name)?.getStatus();
     await engine.agentRuntime.stop(name);
+    engine.logEvent({
+      type: "agent_stop",
+      entity: (status?.entityId ?? "") as EntityId,
+      name,
+      reason: "manual",
+      timestamp: Date.now(),
+    });
     return json({ ok: true });
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : String(error) }, 400);
