@@ -78,9 +78,14 @@ export class DashboardBroadcaster {
   private filterEvent(event: EngineEvent): Record<string, unknown> | null {
     switch (event.type) {
       case "connect":
-        return { type: event.type, protocol: event.protocol, timestamp: event.timestamp };
       case "disconnect":
-        return { type: event.type, timestamp: event.timestamp };
+        // Raw transport-level connect/disconnect fire before entity binding and
+        // after teardown, so they carry no entity — only a connectionId, which
+        // we strip as an internal identifier. That leaves nothing to display
+        // (the feed rendered "undefined connected"), and they flood the feed on
+        // reconnect churn. The meaningful arrival/departure signal is the named
+        // entity_enter / entity_leave pair, so drop these entirely.
+        return null;
       case "command":
         // Omit raw input — may contain sensitive data (tokens, keys, passwords)
         return { type: event.type, entity: event.entity, timestamp: event.timestamp };
