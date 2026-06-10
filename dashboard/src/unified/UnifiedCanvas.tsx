@@ -732,10 +732,12 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
           for (const target of others.slice(0, 5)) {
             addInteraction(event.entity, target.name, "broadcast", undefined, undefined, { body });
           }
-        } else if (event.type === "connect") {
-          // Connect: show arc from entity to their room
+        } else if (event.type === "connect" && event.entity) {
+          // Connect: show arc from entity to their room. Transport-level
+          // connects carry no entity (and are dropped server-side); only
+          // render an interaction when one is actually present.
           addInteraction(event.entity, event.entity, "connect", undefined, event.room);
-        } else if (event.type === "disconnect") {
+        } else if (event.type === "disconnect" && event.entity) {
           addInteraction(event.entity, event.entity, "disconnect", event.room, undefined);
         } else if (
           event.type === "command" &&
