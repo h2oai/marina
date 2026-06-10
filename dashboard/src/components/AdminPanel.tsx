@@ -751,11 +751,22 @@ function ConfigTab() {
           <div className="text-accent text-[10px] font-medium mt-1 mb-0.5">{category}</div>
           {vars.map((v) => {
             const displayValue = edits[v.key] ?? v.value;
+            // Vars set via the live environment (shell/docker) can't be
+            // overridden from here — show them read-only with their source.
+            const readOnly = v.editable === false;
             return (
               <div key={v.key} className="mb-1">
                 <div className="flex items-center gap-1">
                   <span className="text-text-bright text-[10px] font-mono">{v.key}</span>
                   {v.isSet && <span className="text-green-400 text-[8px]">set</span>}
+                  {readOnly && (
+                    <span
+                      className="text-text-dim text-[8px] uppercase tracking-wider"
+                      title="Set in the process environment (shell/docker). Edit it there — values written here are shadowed by the live env."
+                    >
+                      env · read-only
+                    </span>
+                  )}
                 </div>
                 {v.description && (
                   <div className="text-text-dim text-[9px] mb-0.5">{v.description}</div>
@@ -764,8 +775,16 @@ function ConfigTab() {
                   type={v.isSecret ? "password" : "text"}
                   value={displayValue}
                   placeholder="(not set)"
+                  disabled={readOnly}
                   onChange={(e) => handleChange(v.key, e.target.value)}
-                  className="w-full bg-bg-surface border border-border rounded px-1.5 py-0.5 text-[10px] text-text font-mono outline-none focus:border-primary/50"
+                  title={
+                    readOnly
+                      ? "Set in the process environment — edit it there, not here."
+                      : undefined
+                  }
+                  className={`w-full rounded border border-border bg-bg-surface px-1.5 py-0.5 font-mono text-[10px] text-text outline-none focus:border-primary/50 ${
+                    readOnly ? "cursor-not-allowed opacity-50" : ""
+                  }`}
                 />
               </div>
             );
