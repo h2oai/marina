@@ -238,6 +238,14 @@ export class AgentRuntime {
           `No API key for provider "${provider}". Add one via dashboard Admin > Keys, or run: bun run init`,
         );
       }
+      // Remote Marina target with no resolvable key: allowed (the remote may run
+      // MARINA_OPEN_API), but warn so a 401 later isn't a surprise.
+      if (provider === "marina" && modelStr.includes("@") && !apiKeyAtSpawn) {
+        console.warn(
+          `[agent-runtime] Spawning "${config.name}" against remote Marina "${modelStr}" with no key. ` +
+            `This works only if the remote runs MARINA_OPEN_API=true; otherwise add a token via Admin > Keys and pass \`key <name>\`.`,
+        );
+      }
       // The provider is known and keyed, but the specific model id may still be
       // absent from the bundled model registry. An unlisted id under a known
       // provider can still be routed ("synthesized" → the upstream validates
@@ -522,9 +530,18 @@ export class AgentRuntime {
   private resolveApiKey(model?: string, keyName?: string): string | undefined {
     const provider = this.extractProvider(model ?? MARINA_DEFAULT_MODEL);
 
-    // Internal Marina model API — always use the startup-generated token
+    // Marina model API. The LOCAL instance accepts the auto-generated internal
+    // token. A REMOTE target ("marina@host") does not — it needs a real
+    // MODEL_API_KEYS bearer token, supplied via `key <name>`. If none is given
+    // we send no auth header, which works against a remote running
+    // MARINA_OPEN_API=true and 401s otherwise (surfaced as a runtime error).
     if (provider === "marina") {
-      return INTERNAL_MODEL_TOKEN;
+      if (!(model ?? "").includes("@")) return INTERNAL_MODEL_TOKEN;
+      if (keyName && this.db) {
+        const dbKey = this.db.getApiKey(keyName);
+        if (dbKey) return dbKey.encrypted_value;
+      }
+      return undefined;
     }
 
     // 1. Explicit key name → DB lookup
@@ -562,8 +579,11 @@ export class AgentRuntime {
   }
 
   private extractProvider(model: string): string {
-    const slash = model.indexOf("/");
-    return slash >= 0 ? model.slice(0, slash) : model;
+    // Strip a remote-Marina "@host" suffix ("marina@https://host/v1" → "marina")
+    // before the slash-based parse so the host can't masquerade as a provider.
+    const head = model.split("@")[0] ?? model;
+    const slash = head.indexOf("/");
+    return slash >= 0 ? head.slice(0, slash) : head;
   }
 
   private hasAnyApiKey(): boolean {

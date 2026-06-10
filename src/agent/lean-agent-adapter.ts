@@ -78,6 +78,20 @@ function synthesizeModel(provider: string, modelId: string): Model<Api> | undefi
 }
 
 /**
+ * Normalize a user-supplied remote-Marina target into an OpenAI-style base URL.
+ * Accepts "host:port", "http(s)://host", or a full ".../v1" URL and always
+ * returns "<scheme>://<host>[:port]/v1". Defaults to http:// when no scheme is
+ * given (operators terminate TLS at a proxy or run on a trusted network).
+ */
+export function normalizeMarinaBaseUrl(raw: string): string {
+  let u = raw.trim();
+  if (!/^https?:\/\//i.test(u)) u = `http://${u}`;
+  u = u.replace(/\/+$/, "");
+  if (!/\/v\d+$/i.test(u)) u = `${u}/v1`;
+  return u;
+}
+
+/**
  * Classify how `resolveModel` will handle `modelStr`, with no side effects —
  * lets the spawn path surface a model problem up front instead of as a
  * downstream 4xx:
@@ -86,9 +100,11 @@ function synthesizeModel(provider: string, modelId: string): Model<Api> | undefi
  *  - "fallback":    provider has no models to route through (silent switch)
  */
 export function classifyModelResolution(modelStr: string): "exact" | "synthesized" | "fallback" {
-  const slash = modelStr.indexOf("/");
-  const provider = slash >= 0 ? modelStr.slice(0, slash) : modelStr;
-  const modelId = slash >= 0 ? modelStr.slice(slash + 1) : modelStr;
+  // Strip a remote-Marina "@host" suffix before parsing the provider/id.
+  const head = modelStr.split("@")[0] ?? modelStr;
+  const slash = head.indexOf("/");
+  const provider = slash >= 0 ? head.slice(0, slash) : head;
+  const modelId = slash >= 0 ? head.slice(slash + 1) : head;
   if (provider === "marina") return "exact";
   if (tryGetModel(provider, modelId)) return "exact";
   if (((piGetModels as (p: string) => Model<Api>[] | undefined)(provider)?.length ?? 0) > 0)
@@ -98,19 +114,31 @@ export function classifyModelResolution(modelStr: string): "exact" | "synthesize
 
 /** Resolve a "provider/model" string to a pi-ai Model. Falls back to MARINA_DEFAULT_MODEL. */
 export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
-  const slash = modelStr.indexOf("/");
-  const provider = slash >= 0 ? modelStr.slice(0, slash) : modelStr;
-  const modelId = slash >= 0 ? modelStr.slice(slash + 1) : modelStr;
+  // A "marina" model may target a REMOTE instance via "marina@<host-or-url>"
+  // (e.g. "marina@https://gpu.box:3300/v1" or "marina@gpu.box:3300"). Split the
+  // remote suffix off before the slash-based provider/id parse so the "@" can't
+  // confuse it.
+  const at = modelStr.indexOf("@");
+  const head = at >= 0 ? modelStr.slice(0, at) : modelStr;
+  const remote = at >= 0 ? modelStr.slice(at + 1) : undefined;
+  const slash = head.indexOf("/");
+  const provider = slash >= 0 ? head.slice(0, slash) : head;
+  const modelId = slash >= 0 ? head.slice(slash + 1) : head;
 
-  // Local Marina model API — room agents use this to route through the server
+  // Marina model API — room agents route through the local server; an explicit
+  // "@host" points the agent at another Marina instance's /v1 endpoint instead.
   if (provider === "marina") {
-    const port = localPort ?? (Number(process.env.WS_PORT) || 3300);
+    const baseUrl = remote
+      ? normalizeMarinaBaseUrl(remote)
+      : `http://localhost:${localPort ?? (Number(process.env.WS_PORT) || 3300)}/v1`;
     return {
       id: modelId || "default",
-      name: `Marina ${modelId || "default"}`,
+      name: remote
+        ? `Marina ${modelId || "default"} @ ${baseUrl}`
+        : `Marina ${modelId || "default"}`,
       api: "openai-completions" as Api,
       provider: "openai",
-      baseUrl: `http://localhost:${port}/v1`,
+      baseUrl,
       reasoning: false,
       input: ["text"] as ("text" | "image")[],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },

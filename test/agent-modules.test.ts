@@ -23,6 +23,7 @@ import { InterruptibleWaiter } from "../src/agent/interruptible-waiter";
 import {
   classifyModelResolution,
   neutralizeUnusedReasoning,
+  normalizeMarinaBaseUrl,
   resolveModel,
 } from "../src/agent/lean-agent-adapter";
 import { applyRankProgression, checkRankProgression } from "../src/agent/rank-progression";
@@ -1260,6 +1261,30 @@ describe("model resolution", () => {
     const m = resolveModel("marina/default", 4321);
     expect(m.baseUrl).toBe("http://localhost:4321/v1");
     expect(classifyModelResolution("marina/default")).toBe("exact");
+  });
+
+  it("routes a remote marina target (marina@host) to that instance's /v1", () => {
+    // Full URL with explicit /v1 — used verbatim.
+    const full = resolveModel("marina@https://gpu.box:3300/v1", 4321);
+    expect(full.baseUrl).toBe("https://gpu.box:3300/v1");
+    expect(full.provider).toBe("openai");
+    expect(classifyModelResolution("marina@https://gpu.box:3300/v1")).toBe("exact");
+
+    // Bare host:port — defaults to http:// and appends /v1.
+    expect(resolveModel("marina@gpu.box:3300").baseUrl).toBe("http://gpu.box:3300/v1");
+
+    // Scheme but no /v1 — /v1 appended, trailing slash trimmed.
+    expect(resolveModel("marina@https://remote/").baseUrl).toBe("https://remote/v1");
+
+    // No "@host" → still the LOCAL port path.
+    expect(resolveModel("marina", 9999).baseUrl).toBe("http://localhost:9999/v1");
+  });
+
+  it("normalizeMarinaBaseUrl handles host/url variants", () => {
+    expect(normalizeMarinaBaseUrl("host:3300")).toBe("http://host:3300/v1");
+    expect(normalizeMarinaBaseUrl("https://host:3300")).toBe("https://host:3300/v1");
+    expect(normalizeMarinaBaseUrl("https://host:3300/v1")).toBe("https://host:3300/v1");
+    expect(normalizeMarinaBaseUrl("http://host/v1/")).toBe("http://host/v1");
   });
 
   // `requiresReasoningContentOnAssistantMessages` lives only on the
