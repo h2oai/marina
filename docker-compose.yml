@@ -27,6 +27,13 @@ services:
       # World to load: default | commons | research | personal | evolve | craft | markets | demos | empty
       - MARINA_WORLD=default
 
+      # Resume Marina-spawned agents on boot (e.g. after a redeploy). Each agent's
+      # config is persisted to the DB (on the mounted volume), so with this set
+      # they respawn into their rooms at startup. Off by default so a restart
+      # doesn't silently resume LLM-consuming agents. Needs the relevant provider
+      # key present (env above or Admin → Keys).
+      # - AGENT_AUTORESPAWN=true
+
       # ── SECURITY (read docs/guides/deployment.md before exposing publicly) ──
       # The /v1/* and /api/* LLM endpoints require auth unless you opt out.
       # Set real tokens for any internet-facing deployment:
