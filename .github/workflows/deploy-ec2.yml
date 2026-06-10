@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.GH_OIDC_ROLE_H2O_MARINA }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -60,11 +60,11 @@ jobs:
           registries: ${{ env.ECR_ACCOUNT_ID }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Docker image metadata (tags + labels)
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
           tags: |
@@ -73,7 +73,7 @@ jobs:
 
       - name: Build and push image to ECR
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
