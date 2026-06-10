@@ -71,7 +71,7 @@ import { skillCommand } from "./commands/skill";
 import { sourceCommand } from "./commands/source";
 import { standingCommand } from "./commands/standing";
 import { taskCommand } from "./commands/task";
-import { tellCommand } from "./commands/tell";
+import { replyCommand, tellCommand } from "./commands/tell";
 import { traitCommand } from "./commands/trait";
 import { usecaseCommand } from "./commands/usecase";
 import { timeCommand, uptimeCommand } from "./commands/utility";
@@ -148,21 +148,27 @@ export function registerBuiltinCommands(engine: Engine): void {
       },
     }),
   );
-  engine.commands.registerBuiltin(
-    tellCommand({
-      getEntity: (id) => engine.entities.get(id),
-      findEntityGlobal: (name) => {
-        const e = engine.findEntityGlobal(name);
-        return e ? { id: e.id, name: e.name } : undefined;
-      },
-      sendGlobal: (target, msg, senderId, tag?, metadata?) => {
-        const targetEntity = engine.entities.get(target);
-        const sender = engine.entities.get(senderId);
-        if (targetEntity && sender && isIgnoring(targetEntity, sender.name)) return;
-        engine.sendToEntity(target, msg, tag, metadata);
-      },
-    }),
-  );
+  const tellDeps = {
+    getEntity: (id: EntityId) => engine.entities.get(id),
+    findEntityGlobal: (name: string) => {
+      const e = engine.findEntityGlobal(name);
+      return e ? { id: e.id, name: e.name } : undefined;
+    },
+    sendGlobal: (
+      target: EntityId,
+      msg: string,
+      senderId: EntityId,
+      tag?: string,
+      metadata?: Record<string, unknown>,
+    ) => {
+      const targetEntity = engine.entities.get(target);
+      const sender = engine.entities.get(senderId);
+      if (targetEntity && sender && isIgnoring(targetEntity, sender.name)) return;
+      engine.sendToEntity(target, msg, tag, metadata);
+    },
+  };
+  engine.commands.registerBuiltin(tellCommand(tellDeps));
+  engine.commands.registerBuiltin(replyCommand(tellDeps));
   engine.commands.registerBuiltin(
     whoCommand(
       () => engine.getOnlineAgents(),

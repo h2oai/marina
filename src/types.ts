@@ -41,6 +41,8 @@ export interface KnownProperties extends Record<string, unknown> {
 
   // ─── Social ─────────────────────────────────────────────────────────────────
   ignore_list?: string[];
+  /** Name of the last entity to send this one a `tell` — powers the `re` reply command. */
+  last_tell_from?: string;
   bookmarks?: { room: RoomId; note?: string }[];
 
   // ─── Quest state ────────────────────────────────────────────────────────────
