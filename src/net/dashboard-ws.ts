@@ -87,8 +87,13 @@ export class DashboardBroadcaster {
         // entity_enter / entity_leave pair, so drop these entirely.
         return null;
       case "command":
-        // Omit raw input — may contain sensitive data (tokens, keys, passwords)
-        return { type: event.type, entity: event.entity, timestamp: event.timestamp };
+        // Drop entirely. Raw input is stripped (it may carry tokens/keys/
+        // passwords), which left a content-free row that rendered as a bare
+        // "> " — and the meaningful commands already surface as their own
+        // richer typed events (say, tell, note_created, recall_trace, task_*).
+        // So the bare command event is either empty noise or a duplicate of a
+        // better row beside it. Same rationale as connect/disconnect above.
+        return null;
       default:
         return event as Record<string, unknown>;
     }
