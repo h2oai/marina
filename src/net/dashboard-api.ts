@@ -1,4 +1,5 @@
 import { join, resolve } from "node:path";
+import { getStanding } from "../agent/standing";
 import { testKeyConnectivity } from "../engine/commands/key";
 import { allRecipeNames, getRecipe } from "../engine/commands/usecase";
 import type { Engine } from "../engine/engine";
@@ -863,6 +864,9 @@ function getEntityDetail(engine: Engine, db: MarinaDB | undefined, name: string)
     result.coreMemory = db.listCoreMemory(entity.name);
     result.notes = db.getNotesByEntity(entity.name, 10);
     result.recentActivity = db.getEventsByEntity(entity.id, 20);
+    // Civic standing — surfaced in the entity view now that Entities is the
+    // primary observe/control surface.
+    result.standing = Math.round(getStanding(db, entity.id) * 10) / 10;
   }
 
   return json(result);
@@ -1442,6 +1446,10 @@ interface EnvEntry {
   category: string;
   isSecret: boolean;
   isSet: boolean;
+  /** False when the value comes from the live process environment (shell/docker)
+   * rather than our managed .env file — editing it here can't override it. */
+  editable: boolean;
+  source: "env" | "file" | "unset";
 }
 
 function parseEnvExample(): Array<{ key: string; description: string; category: string }> {
@@ -1526,17 +1534,30 @@ function parseEnvFile(): Map<string, string> {
 
 function handleEnvGet(): Response {
   const schema = parseEnvExample();
-  const currentVars = parseEnvFile();
+  const fileVars = parseEnvFile();
 
   const entries: EnvEntry[] = schema.map((s) => {
-    const rawValue = currentVars.get(s.key) ?? "";
+    const inFile = fileVars.has(s.key);
+    const procVal = process.env[s.key];
+    const inProc = procVal !== undefined && procVal !== "";
+
+    // A value present in the live environment but NOT in our managed .env file
+    // is set out-of-band (shell export, docker-compose, systemd). The panel
+    // edits .env, but that external value shadows whatever we'd write — so
+    // report it as set-but-read-only, with its live (masked) value, instead of
+    // pretending it's unset and offering a futile editable field.
+    const externallySet = inProc && !inFile;
+    const rawValue = inFile ? (fileVars.get(s.key) ?? "") : (procVal ?? "");
+
     return {
       key: s.key,
       value: maskEnvValue(s.key, rawValue),
       description: s.description,
       category: s.category,
       isSecret: isSecretKey(s.key),
-      isSet: currentVars.has(s.key),
+      isSet: inFile || inProc,
+      editable: !externallySet,
+      source: externallySet ? "env" : inFile ? "file" : "unset",
     };
   });
 
@@ -1595,6 +1616,13 @@ async function handleEnvPut(req: Request): Promise<Response> {
   // Merge: if value contains only mask characters, keep existing value
   const merged = new Map(currentVars);
   for (const [key, value] of Object.entries(body.vars)) {
+    // Skip vars set in the live environment but not in our .env file: writing
+    // .env would be shadowed by the external value, so accepting the edit would
+    // be misleading. The UI disables these, this is the server-side backstop.
+    if (process.env[key] !== undefined && !currentVars.has(key)) {
+      continue;
+    }
+
     if (/^\*+$/.test(value) || /^.{4}\*{4}.{4}$/.test(value)) {
       // Masked value — keep existing
       continue;

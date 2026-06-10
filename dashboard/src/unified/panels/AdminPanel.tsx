@@ -589,6 +589,9 @@ const ConfigTab = memo(function ConfigTab() {
           </div>
           {vars.map((v) => {
             const currentVal = edits[v.key] ?? (v.isSet ? v.value : "");
+            // Set via the live environment (shell/docker) — can't be overridden
+            // from here, so render read-only.
+            const readOnly = v.editable === false;
             return (
               <div
                 key={v.key}
@@ -597,16 +600,26 @@ const ConfigTab = memo(function ConfigTab() {
               >
                 <span className="uc-context-key" style={{ fontSize: "clamp(14px, 0.98vw, 20px)" }}>
                   {v.key}
+                  {readOnly && (
+                    <span style={{ marginLeft: 6, fontSize: "0.7em", opacity: 0.6 }}>env</span>
+                  )}
                 </span>
                 <div style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1 }}>
                   <input
                     type={v.isSecret ? "password" : "text"}
                     value={currentVal}
+                    disabled={readOnly}
+                    title={
+                      readOnly
+                        ? "Set in the process environment — edit it there, not here."
+                        : undefined
+                    }
                     onChange={(e) => handleChange(v.key, e.target.value, v.isSet ? v.value : "")}
                     style={{
                       ...inputStyle,
                       fontSize: "clamp(14px, 0.98vw, 20px)",
                       flex: 1,
+                      ...(readOnly ? { opacity: 0.5, cursor: "not-allowed" } : {}),
                     }}
                   />
                   <div

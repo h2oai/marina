@@ -402,6 +402,10 @@ export interface EnvVar {
   category: string;
   isSecret: boolean;
   isSet: boolean;
+  /** False when set via the live process environment (shell/docker) rather than
+   * the managed .env file — the panel can't override it, so it's read-only. */
+  editable?: boolean;
+  source?: "env" | "file" | "unset";
 }
 
 export interface McpToolInfo {
