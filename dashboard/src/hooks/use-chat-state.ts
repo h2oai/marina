@@ -2,6 +2,9 @@ import { create } from "zustand";
 
 export interface ChatMessage {
   html: string;
+  /** Plain-text form (ANSI stripped) for clipboard copy. Falls back to the
+   * text extracted from `html` when absent. */
+  text?: string;
   kind: string;
   tag?: string;
 }
@@ -78,7 +81,11 @@ export function ensureChatWs(onPerception: (data: unknown) => void): WebSocket {
         listener(parsed);
       }
     } catch {
-      useChatState.getState().appendMessage({ html: e.data as string, kind: "message" });
+      const raw = e.data as string;
+      useChatState
+        .getState()
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: strip ANSI SGR codes for clean clipboard text
+        .appendMessage({ html: raw, text: raw.replace(/\x1b\[[0-9;]*m/g, ""), kind: "message" });
     }
   };
 

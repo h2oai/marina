@@ -1,5 +1,5 @@
-import { MessageSquareText, Send } from "lucide-react";
-import { useCallback, useEffect, useRef } from "react";
+import { Check, Copy, MessageSquareText, Send } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ensureChatWs, getChatWs, useChatState } from "../hooks/use-chat-state";
 import { clearToken, setToken } from "../lib/api";
 import { linkifyHtml } from "../lib/linkify";
@@ -80,8 +80,47 @@ function ansiToHtml(text: string): string {
   return result;
 }
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: strip ANSI SGR codes so copied text is clean
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+
 function appendMsg(text: string, kind: string, tag?: string) {
-  useChatState.getState().appendMessage({ html: ansiToHtml(text), kind, tag });
+  useChatState
+    .getState()
+    .appendMessage({ html: ansiToHtml(text), text: text.replace(ANSI_RE, ""), kind, tag });
+}
+
+/** Plain-text for clipboard: prefer the stored text, else derive it from html. */
+function messageText(m: { text?: string; html: string }): string {
+  if (m.text != null) return m.text;
+  const el = document.createElement("div");
+  el.innerHTML = m.html;
+  return el.textContent ?? "";
+}
+
+/** Best-effort clipboard write — clipboard API first, textarea+execCommand on
+ * insecure contexts (http://…) where navigator.clipboard is unavailable. */
+async function writeClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fall through to legacy path */
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 interface Perception {
@@ -164,6 +203,21 @@ export function WebChat() {
   const nameRef = useRef<HTMLInputElement>(null);
   const historyIdxRef = useRef(-1);
   const cmdValueRef = useRef("");
+
+  // Transient "copied" feedback keyed by message index, or "all" for copy-all.
+  const [copied, setCopied] = useState<number | "all" | null>(null);
+  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copy = useCallback(async (text: string, key: number | "all") => {
+    if (!text || !(await writeClipboard(text))) return;
+    setCopied(key);
+    if (copyResetRef.current) clearTimeout(copyResetRef.current);
+    copyResetRef.current = setTimeout(() => setCopied(null), 1500);
+  }, []);
+  useEffect(() => () => clearTimeout(copyResetRef.current ?? undefined), []);
+
+  const copyAll = useCallback(() => {
+    copy(useChatState.getState().messages.map(messageText).join("\n"), "all");
+  }, [copy]);
 
   // Ensure WebSocket is alive when component mounts (reconnect if closed)
   useEffect(() => {
@@ -255,7 +309,26 @@ export function WebChat() {
   };
 
   return (
-    <GlassPanel title="Web Chat" icon={<MessageSquareText size={14} />}>
+    <GlassPanel
+      title="Web Chat"
+      icon={<MessageSquareText size={14} />}
+      headerExtra={
+        messages.length > 0 ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              copyAll();
+            }}
+            title="Copy whole conversation"
+            className="flex items-center gap-1 text-text-dim text-[10px] transition-colors hover:text-primary"
+          >
+            {copied === "all" ? <Check size={11} /> : <Copy size={11} />}
+            <span>{copied === "all" ? "Copied" : "Copy all"}</span>
+          </button>
+        ) : undefined
+      }
+    >
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Output */}
         <div
@@ -266,10 +339,23 @@ export function WebChat() {
             <div
               // biome-ignore lint/suspicious/noArrayIndexKey: chat messages are append-only; index is the message identity
               key={i}
-              className={`whitespace-pre-wrap break-words rounded-sm my-0.5 py-0.5 ${msgStyle(m.kind, m.tag)}`}
-              // biome-ignore lint/security/noDangerouslySetInnerHtml: defense-in-depth via sanitizeChatHtml — strips all but inline span/style + linkified anchors.
-              dangerouslySetInnerHTML={{ __html: sanitizeChatHtml(linkifyHtml(m.html)) }}
-            />
+              className="group relative"
+            >
+              <div
+                className={`whitespace-pre-wrap break-words rounded-sm my-0.5 py-0.5 pr-6 ${msgStyle(m.kind, m.tag)}`}
+                // biome-ignore lint/security/noDangerouslySetInnerHtml: defense-in-depth via sanitizeChatHtml — strips all but inline span/style + linkified anchors.
+                dangerouslySetInnerHTML={{ __html: sanitizeChatHtml(linkifyHtml(m.html)) }}
+              />
+              <button
+                type="button"
+                onClick={() => copy(messageText(m), i)}
+                title="Copy message"
+                aria-label="Copy message"
+                className="absolute right-0.5 top-0.5 rounded p-0.5 text-text-dim opacity-0 transition-opacity hover:text-primary focus:opacity-100 group-hover:opacity-100"
+              >
+                {copied === i ? <Check size={12} /> : <Copy size={12} />}
+              </button>
+            </div>
           ))}
         </div>
 
