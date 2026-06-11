@@ -1,23 +1,54 @@
 import { bold, category, dim, rank as fmtRank, header, separator } from "../../net/ansi";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
 
-const COMMAND_CATEGORIES: Record<string, string[]> = {
-  Navigation: ["look", "move", "map"],
-  Communication: ["say", "shout", "tell", "emote"],
+// Name→category map for `help` grouping. A command's own `category` field
+// (CommandDef.category) wins over this map; this is the fallback for the
+// built-ins that don't set one. EVERY registered command must resolve to a
+// real category here or via its field — the help-coverage test
+// (test/help-coverage.test.ts) fails on any command that lands in "Other",
+// so adding a new primitive forces a categorization decision.
+//
+// Object insertion order is the display order in the rendered list.
+export const COMMAND_CATEGORIES: Record<string, string[]> = {
+  Navigation: ["look", "move", "ls", "goto", "map"],
+  Communication: ["say", "shout", "tell", "re", "emote"],
   Objects: ["get", "drop", "give", "inventory", "examine"],
-  Information: ["who", "score", "help", "time", "uptime", "next", "brief"],
-  "Identity & Access": ["ignore", "rank", "quest", "link"],
-  Knowledge: ["note", "search", "bookmark", "export"],
-  Cognition: ["memory", "recall", "reflect", "novelty", "orient"],
+  Information: ["who", "score", "help", "brief", "next", "web"],
+  "Identity & Access": ["ignore", "rank", "quest", "link", "role", "trait"],
+  Knowledge: ["note", "feed", "chronicle", "search", "bookmark", "export"],
+  Cognition: ["memory", "recall", "reflect", "novelty", "orient", "ask", "recap", "debrief", "dig"],
   Growth: ["evolve", "skill", "benchmark"],
-  Coordination: ["channel", "board", "group", "task", "macro", "project", "pool"],
-  "Canvas & Media": ["canvas", "usecase"],
+  "Markets & Forecasting": ["market", "scenario", "bankroll", "position", "probe", "watch"],
   Experiments: ["experiment", "observe"],
+  Coordination: [
+    "channel",
+    "board",
+    "group",
+    "task",
+    "macro",
+    "project",
+    "pool",
+    "crew",
+    "recruit",
+    "standing",
+    "conduct",
+    "share",
+  ],
+  "Canvas & Media": ["canvas", "usecase"],
+  Agents: ["agent", "run"],
   Building: ["build", "connect"],
-  Admin: ["admin"],
+  Federation: ["gateway"],
+  "Admin & Security": ["admin", "key", "adapter"],
+  System: ["readiness", "calc", "time", "uptime", "source", "quit", "batch", "shell"],
 };
 
-function categorize(cmd: CommandDef): string {
+/**
+ * Resolve a command's display category. Prefers the command's own `category`
+ * field, then the name→category map, then "Other" (which the coverage test
+ * forbids for any registered command).
+ */
+export function categorizeCommand(cmd: CommandDef): string {
+  if (cmd.category) return cmd.category;
   for (const [cat, names] of Object.entries(COMMAND_CATEGORIES)) {
     if (names.includes(cmd.name)) return cat;
   }
@@ -50,7 +81,7 @@ export function helpCommand(
           const aliases = cmd.aliases?.length
             ? ` ${dim(`(aliases: ${cmd.aliases.join(", ")})`)}`
             : "";
-          const cat = categorize(cmd);
+          const cat = categorizeCommand(cmd);
           ctx.send(
             input.entity,
             `${header(cmd.name)}${aliases}\n${dim(`Category: ${cat}`)}\n${cmd.help}`,
@@ -77,14 +108,19 @@ function renderCommandList(
 ): void {
   const grouped = new Map<string, CommandDef[]>();
   for (const cmd of cmds) {
-    const cat = categorize(cmd);
+    const cat = categorizeCommand(cmd);
     if (!grouped.has(cat)) grouped.set(cat, []);
     grouped.get(cat)!.push(cmd);
   }
 
   const lines: string[] = [header("Available Commands"), separator()];
 
-  const order = [...Object.keys(COMMAND_CATEGORIES), "Other"];
+  // Known categories first (in map order), then any extra categories a command
+  // declared via its `category` field, then the "Other" catch-all last. Driving
+  // the tail off `grouped` keeps self-categorized commands from being dropped.
+  const known = Object.keys(COMMAND_CATEGORIES);
+  const extra = [...grouped.keys()].filter((c) => c !== "Other" && !known.includes(c)).sort();
+  const order = [...known, ...extra, "Other"];
   for (const cat of order) {
     const catCmds = grouped.get(cat);
     if (!catCmds || catCmds.length === 0) continue;
