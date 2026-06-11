@@ -235,7 +235,7 @@ describe("WebSocket Server", () => {
 
     const errMsg = parse(messages[1]!);
     expect(errMsg.kind).toBe("error");
-    expect(errMsg.data.text).toContain("Not logged in");
+    expect(errMsg.data.text).toContain("Enter your name");
 
     await close();
   });

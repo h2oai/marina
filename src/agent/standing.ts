@@ -50,6 +50,7 @@ export type StandingKind =
   | "crew_artifact_deposited"
   | "helping_act"
   | "crew_member_stalled"
+  | "experiment_complete"
   | "chronicled";
 
 /**
@@ -68,6 +69,9 @@ export const STANDING_AMOUNTS: Record<StandingKind, number> = {
   crew_artifact_deposited: 1,
   helping_act: 1,
   crew_member_stalled: -3,
+  // Running a controlled comparison to a decided outcome is real contribution
+  // (designing arms, gathering samples, recording a reusable result).
+  experiment_complete: 3,
   // Default carries no credit; callers pass amount by chronicle entry kind
   // (event ≈ 0.25, narrative ≈ 2.0, digest ≈ 1.0, correction ≈ 0.5).
   // Being chronicled is recognition, not contribution — the entity already
