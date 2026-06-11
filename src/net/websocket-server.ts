@@ -407,7 +407,7 @@ export class WebSocketServer {
               kind: "system",
               timestamp: Date.now(),
               data: {
-                text: 'Welcome to Marina. Send {"type":"login","name":"YourName"} to begin.',
+                text: "Welcome to Marina. Enter your name to begin.",
                 skill: "/api/skill",
                 connect: "/api/connect",
               },
@@ -553,7 +553,7 @@ export class WebSocketServer {
                   kind: "error",
                   timestamp: Date.now(),
                   data: {
-                    text: 'Not logged in. Send {"type":"login","name":"YourName"} first.',
+                    text: "You're not logged in. Enter your name to begin.",
                   },
                 }),
               );
