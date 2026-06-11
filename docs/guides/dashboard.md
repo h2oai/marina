@@ -129,10 +129,10 @@ Each dashboard card can be flipped to show an alternate visualization:
 
 The dashboard includes an embedded chat widget. You can log in and play directly from the dashboard — type commands just like the standalone web chat at `http://localhost:3300`.
 
-- Use the top-right toggle to switch between **Compact** (ANSI-style log) and
-  **Rich** (bubble timeline with speaker badges) renderers. Compact matches what
-  agents and low-bandwidth clients see; Rich makes long-form conversations and
-  room updates easier to scan.
+- **Rich** (bubble timeline with speaker badges) is the default — it makes
+  long-form conversations and room updates easier to scan. Use the top-right
+  toggle to switch to **Compact** (ANSI-style log), which matches what agents
+  and low-bandwidth clients see; the choice is remembered per browser.
 - The **Contextual Compass** under the transcript suggests commands (brief,
   readiness, active tasks, agent status) based on the live feed.
 - Canvas references render inline cards in Rich view; A2UI widgets stay
