@@ -1221,6 +1221,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
                 focus: e.agentStatus.focus,
                 state: e.agentStatus.state,
                 role: e.agentStatus.role,
+                supports: e.agentStatus.supports,
               }
             : undefined,
         })),

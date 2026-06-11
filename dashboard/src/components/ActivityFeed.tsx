@@ -15,6 +15,13 @@ import { GlassPanel } from "./GlassPanel";
  * dashboard jank under high event volume.
  */
 const VISIBLE_EVENTS = 80;
+const MEDIA_FEED_LABELS: Record<string, string> = {
+  media_pending: "queued",
+  media_rendering: "rendering",
+  media_complete: "complete",
+  media_failed: "failed",
+  media_blocked: "blocked",
+};
 
 export function ActivityFeed({ backContent }: { backContent?: React.ReactNode }) {
   const events = useWorldState((s) => s.eventFeed);
@@ -345,6 +352,18 @@ export function formatEvent(
       };
     }
     case "feed_event":
+      if (event.kind && event.kind.startsWith("media_")) {
+        const label = MEDIA_FEED_LABELS[event.kind] ?? event.kind.replace("media_", "");
+        const color =
+          event.kind === "media_failed" || event.kind === "media_blocked"
+            ? "text-warning"
+            : "text-accent";
+        return {
+          color,
+          prefix: entityName ?? "",
+          suffix: ` media ${label}${event.summary ? `: ${clip(event.summary)}` : ""}`,
+        };
+      }
       return {
         color: "text-text",
         prefix: entityName ?? "",

@@ -6,14 +6,48 @@
  */
 
 import { MARINA_DEFAULT_MODEL } from "../engine/constants";
-import { MODEL_DISCOVERY_PROVIDERS } from "../net/model-discovery";
+import { inferModelCapabilities, MODEL_DISCOVERY_PROVIDERS } from "../net/model-discovery";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
-import type { AgentConfig, AgentHandle, AgentStatus } from "./agent-types";
+import type { AgentConfig, AgentHandle, AgentStatus, AgentSupports } from "./agent-types";
 import { classifyModelResolution, LeanAgentAdapter } from "./lean-agent-adapter";
 import { getRolePrompt, inferTaskCategory } from "./roles";
 
 const KNOWN_PROVIDERS = new Set<string>([...MODEL_DISCOVERY_PROVIDERS, "marina"]);
+const DEFAULT_SUPPORTS: AgentSupports = { text: true };
+type SupportsLike = Partial<Record<"text" | "image" | "video", unknown>> | undefined;
+
+function normalizeSupports(supports: SupportsLike): AgentSupports {
+  const normalized: AgentSupports = { text: supports?.text === false ? false : true };
+  if (supports?.image === true) normalized.image = true;
+  if (supports?.video === true) normalized.video = true;
+  return normalized;
+}
+
+function supportsFromModel(model: string | undefined): AgentSupports {
+  if (!model) return DEFAULT_SUPPORTS;
+  const snapshot = inferModelCapabilities(model);
+  return normalizeSupports({
+    text: snapshot.text,
+    image: snapshot.image,
+    video: snapshot.video,
+  });
+}
+
+function resolveSupports(model: string | undefined, provided?: AgentSupports): AgentSupports {
+  if (provided) return normalizeSupports(provided);
+  return supportsFromModel(model);
+}
+
+function parseSupports(raw: string | null | undefined): AgentSupports | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as SupportsLike;
+    return normalizeSupports(parsed);
+  } catch {
+    return undefined;
+  }
+}
 
 // ─── Internal Model Token ───────────────────────────────────────────────────
 // Generated once at startup — room agents use this to authenticate against the
@@ -125,6 +159,7 @@ export class AgentRuntime {
           goal: config.goal || undefined,
           keyName: config.key_name || undefined,
           room: config.room || undefined,
+          supports: parseSupports(config.supports),
           toolProfile: inferToolProfile(config.role),
           crewResponder: inferCrewResponder(config.role),
         });
@@ -209,20 +244,23 @@ export class AgentRuntime {
       // from the role name. Specialist roles (mathematician, scholar, etc.)
       // default to crew responders; coordinator and freeform roles stay
       // false. Explicit values from the caller win.
+      const resolvedModel = config.model ?? this.db?.getDefaultModel() ?? MARINA_DEFAULT_MODEL;
+      const supports = resolveSupports(resolvedModel, config.supports);
       const effectiveConfig: AgentConfig = {
         ...config,
         // No explicit model → use the operator's runtime default (DB), then the
         // env/built-in default. This is what makes "change the default once the
         // world is running" apply to newly spawned agents.
-        model: config.model ?? this.db?.getDefaultModel() ?? MARINA_DEFAULT_MODEL,
+        model: resolvedModel,
         crewResponder: config.crewResponder ?? inferCrewResponder(config.role),
+        supports,
       };
 
       // Validate a key exists at spawn time (fail fast on missing config),
       // but hand the adapter a resolver so rotations in the DB are picked
       // up on every LLM call without restarting the agent.
-      const apiKeyAtSpawn = this.resolveApiKey(effectiveConfig.model, config.keyName);
-      const modelStr = effectiveConfig.model ?? MARINA_DEFAULT_MODEL;
+      const apiKeyAtSpawn = this.resolveApiKey(resolvedModel, config.keyName);
+      const modelStr = resolvedModel;
       const provider = this.extractProvider(modelStr);
       if (!KNOWN_PROVIDERS.has(provider)) {
         // Most common cause: caller passed a bare model id ("claude-opus-4-7")
@@ -361,6 +399,7 @@ export class AgentRuntime {
           keyName: config.keyName,
           room: config.room,
           spawnedBy: config.spawnedBy ?? "system",
+          supports: effectiveConfig.supports ?? supports,
         });
       }
 
@@ -432,7 +471,7 @@ export class AgentRuntime {
    */
   async reconfigure(
     name: string,
-    opts: { model?: string; role?: string; keyName?: string },
+    opts: { model?: string; role?: string; keyName?: string; supports?: AgentSupports },
   ): Promise<void> {
     const agent = this.agents.get(name);
     if (!agent) throw new Error(`Agent "${name}" is not running.`);
@@ -457,11 +496,20 @@ export class AgentRuntime {
     }
     const apiKeyResolver = () => this.resolveApiKey(effectiveModel, opts.keyName);
 
+    const currentStatus = agent.getStatus();
+    const supports =
+      opts.supports !== undefined
+        ? normalizeSupports(opts.supports)
+        : opts.model !== undefined
+          ? supportsFromModel(effectiveModel)
+          : (currentStatus.supports ?? DEFAULT_SUPPORTS);
+
     await agent.reconfigure({
       model: opts.model,
       role: opts.role,
       rolePrompt,
       keyName: opts.keyName,
+      supports,
       apiKey: apiKeyResolver,
     });
 
@@ -475,6 +523,7 @@ export class AgentRuntime {
         goal: status.goal || undefined,
         keyName: opts.keyName,
         spawnedBy: "system",
+        supports,
       });
     }
   }
@@ -503,6 +552,7 @@ export class AgentRuntime {
         errors: 0,
         errorReason: null,
         lastActivity: 0,
+        supports: DEFAULT_SUPPORTS,
       });
     }
     return [...running, ...inFlight];
@@ -520,6 +570,14 @@ export class AgentRuntime {
    */
   get size(): number {
     return this.agents.size;
+  }
+
+  /**
+   * Resolve a provider API key for non-text surfaces (media generation, etc.).
+   */
+  getProviderKey(provider: string, keyName?: string): string | undefined {
+    if (provider === "marina") return INTERNAL_MODEL_TOKEN;
+    return this.resolveApiKey(`${provider}/_`, keyName);
   }
 
   // ─── Uptime Enforcement ────────────────────────────────────────────────

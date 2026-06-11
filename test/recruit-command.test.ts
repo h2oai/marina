@@ -42,6 +42,7 @@ function running(name: string, role = "specialist"): AgentStatus {
     errors: 0,
     errorReason: null,
     lastActivity: Date.now(),
+    supports: { text: true },
   };
 }
 

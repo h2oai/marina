@@ -135,6 +135,7 @@ export function EntityRoster({ backContent }: { backContent?: ReactNode }) {
                       {e.agentStatus.model.split("/")[1] ?? e.agentStatus.model}
                     </span>
                   )}
+                  {e.agentStatus && renderSupportsBadges(e.agentStatus.supports)}
                   <span className="truncate text-text-dim text-[10px]">{e.room.split("/")[1]}</span>
                   {e.agentStatus && (
                     <button
@@ -194,6 +195,30 @@ export function EntityRoster({ backContent }: { backContent?: ReactNode }) {
       </div>
     </GlassPanel>
   );
+}
+
+function renderSupportsBadges(supports: {
+  text: boolean;
+  image?: boolean;
+  video?: boolean;
+}): JSX.Element | null {
+  const badges: JSX.Element[] = [];
+  if (supports.image) {
+    badges.push(
+      <span key="img" className="rounded bg-primary/10 px-1 text-[8px] uppercase text-primary">
+        IMG
+      </span>,
+    );
+  }
+  if (supports.video) {
+    badges.push(
+      <span key="vid" className="rounded bg-primary/10 px-1 text-[8px] uppercase text-primary">
+        VID
+      </span>,
+    );
+  }
+  if (badges.length === 0) return null;
+  return <span className="flex items-center gap-1">{badges}</span>;
 }
 
 /** Symbol + color per activity kind — keeps the row scannable. */

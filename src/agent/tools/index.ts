@@ -18,6 +18,7 @@ import {
 import type { MarinaClient } from "../../sdk/client";
 import { runScore } from "../../sdk/conduct";
 import type { Perception } from "../../types";
+import type { AgentSupports } from "../agent-types";
 import type { GameStateManager } from "../game-state";
 import type { PlatformMemoryBackend } from "../memory-platform";
 
@@ -309,6 +310,73 @@ const examineSchema = Type.Object({
 const inventorySchema = Type.Object({});
 
 const whoSchema = Type.Object({});
+
+const imageGenerateSchema = Type.Object({
+  prompt: Type.String({ description: "Describe the image to generate" }),
+  model: Type.Optional(
+    Type.String({
+      description: "Provider/model ID (default openai/gpt-image-1)",
+    }),
+  ),
+  style: Type.Optional(Type.String({ description: "Style hint (e.g. synthwave, watercolor)" })),
+  width: Type.Optional(
+    Type.Number({
+      description: "Image width in pixels (256-2048)",
+      minimum: 256,
+      maximum: 2048,
+    }),
+  ),
+  height: Type.Optional(
+    Type.Number({
+      description: "Image height in pixels (256-2048)",
+      minimum: 256,
+      maximum: 2048,
+    }),
+  ),
+  canvas: Type.Optional(
+    Type.String({
+      description: "Canvas name or id to publish the result to",
+    }),
+  ),
+});
+
+const videoGenerateSchema = Type.Object({
+  prompt: Type.String({ description: "Describe the video to generate" }),
+  model: Type.Optional(
+    Type.String({
+      description: "Provider/model ID (default runway/gen3-alpha)",
+    }),
+  ),
+  duration: Type.Optional(
+    Type.Number({
+      description: "Video duration in seconds (1-60)",
+      minimum: 1,
+      maximum: 60,
+    }),
+  ),
+  fps: Type.Optional(
+    Type.Number({
+      description: "Frames per second (8-60)",
+      minimum: 8,
+      maximum: 60,
+    }),
+  ),
+  reference: Type.Optional(
+    Type.String({
+      description: "Optional reference image asset id or URL",
+    }),
+  ),
+  aspect: Type.Optional(
+    Type.String({
+      description: "Aspect ratio (e.g. 16:9, 9:16)",
+    }),
+  ),
+  canvas: Type.Optional(
+    Type.String({
+      description: "Canvas name or id to publish the result to",
+    }),
+  ),
+});
 
 function wrap(
   name: string,
@@ -962,6 +1030,58 @@ export function createMemoryTool(
   };
 }
 
+function sanitizePrompt(prompt: string): string {
+  return prompt.replace(/\s+/g, " ").trim();
+}
+
+function createMediaTools(ctx: ToolContext): AgentTool[] {
+  return [
+    {
+      name: "marina_generate_image",
+      label: "Generate Image",
+      description:
+        "Create an image from a text prompt. Requires storage + image-capable model API keys.",
+      parameters: imageGenerateSchema,
+      execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
+        const p = params as Static<typeof imageGenerateSchema>;
+        const prompt = sanitizePrompt(p.prompt);
+        if (!prompt) {
+          throw new Error("Prompt is required to generate an image.");
+        }
+        let command = `image generate ${prompt}`;
+        if (p.model) command += ` --model ${p.model}`;
+        if (p.style) command += ` --style ${p.style}`;
+        if (typeof p.width === "number") command += ` --width ${Math.round(p.width)}`;
+        if (typeof p.height === "number") command += ` --height ${Math.round(p.height)}`;
+        if (p.canvas) command += ` --canvas ${p.canvas}`;
+        return execCommand(ctx, command, signal);
+      },
+    },
+    {
+      name: "marina_generate_video",
+      label: "Generate Video",
+      description:
+        "Create a short video from a text prompt. Requires storage + video-capable provider keys.",
+      parameters: videoGenerateSchema,
+      execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
+        const p = params as Static<typeof videoGenerateSchema>;
+        const prompt = sanitizePrompt(p.prompt);
+        if (!prompt) {
+          throw new Error("Prompt is required to generate a video.");
+        }
+        let command = `video generate ${prompt}`;
+        if (p.model) command += ` --model ${p.model}`;
+        if (typeof p.duration === "number") command += ` --duration ${Math.round(p.duration)}`;
+        if (typeof p.fps === "number") command += ` --fps ${Math.round(p.fps)}`;
+        if (p.reference) command += ` --reference ${p.reference}`;
+        if (p.aspect) command += ` --aspect ${p.aspect}`;
+        if (p.canvas) command += ` --canvas ${p.canvas}`;
+        return execCommand(ctx, command, signal);
+      },
+    },
+  ];
+}
+
 // ─── All Tools ──────────────────────────────────────────────────────────────
 
 export function createAllTools(
@@ -973,6 +1093,7 @@ export function createAllTools(
   return [
     createCommandTool(ctx, rosterMode) as unknown as AgentTool,
     ...createWorldTools(ctx),
+    ...createMediaTools(ctx),
     createThinkTool() as unknown as AgentTool,
     createMemoryTool(platformMemory) as unknown as AgentTool,
   ];
@@ -1038,9 +1159,14 @@ export function createScopedTools(
   ctx: ToolContext,
   platformMemory: PlatformMemoryBackend,
   profile: ToolProfile,
+  supports: AgentSupports = { text: true },
 ): AgentTool[] {
   const rosterMode: "compact" | "verbose" = profile === "full" ? "verbose" : "compact";
-  const all = createAllTools(ctx, platformMemory, rosterMode);
+  const all = createAllTools(ctx, platformMemory, rosterMode).filter((tool) => {
+    if (!supports.image && tool.name === "marina_generate_image") return false;
+    if (!supports.video && tool.name === "marina_generate_video") return false;
+    return true;
+  });
   if (profile === "full") return all;
   const want = new Set(TOOL_PROFILE_NAMES[profile]);
   return all.filter((t) => want.has(t.name));

@@ -22,6 +22,7 @@ const agent = (over: Partial<NonNullable<SnapshotEntity["agentStatus"]>> = {}) =
   toolCalls: 0,
   errors: 0,
   errorReason: null,
+  supports: { text: true },
   ...over,
 });
 
