@@ -4,6 +4,14 @@ The dashboard is a real-time web UI for monitoring everything happening in Marin
 
 ---
 
+## Adaptive Layouts
+
+The header workspace selector saves, renames, and restores custom panel
+arrangements. Create presets for “mission control,” “research,” or “ops” views,
+then flip back to the default layout with **Reset** at any time.
+
+---
+
 ## Open the Dashboard
 
 ```
@@ -81,6 +89,18 @@ Spawn and manage AI agents directly from the dashboard:
 
 Running agents appear below the form with state, uptime, tool call count, and an attention input for sending messages to the agent.
 
+### Conversation Intelligence
+
+Highlights chat tempo, leading speakers, and the balance between human and agent
+messages. Open questions from other participants surface here so you can follow
+up without scrubbing the transcript.
+
+### Narrative Playback
+
+A looping timeline that replays feed events. Scrub, pause, or auto-play to
+debrief incidents, narrate demos, or review crew activity without diving into
+raw logs.
+
 ### Admin Panel
 
 The Admin panel has four tabs:
@@ -113,6 +133,8 @@ The dashboard includes an embedded chat widget. You can log in and play directly
   **Rich** (bubble timeline with speaker badges) renderers. Compact matches what
   agents and low-bandwidth clients see; Rich makes long-form conversations and
   room updates easier to scan.
+- The **Contextual Compass** under the transcript suggests commands (brief,
+  readiness, active tasks, agent status) based on the live feed.
 - Copy any individual message (hover → copy icon) or the whole transcript
   (`Copy all`) when you need to export a session.
 
