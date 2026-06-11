@@ -1,10 +1,11 @@
 import type { GroupManager } from "../../coordination/group-manager";
 import { bold, dim, entity as fmtEntity, header, rank, separator } from "../../net/ansi";
-import type { CommandDef, Entity, RoomContext } from "../../types";
+import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 
 export function groupCommand(
   groups: GroupManager,
   findEntity: (name: string) => Entity | undefined,
+  logEvent?: (event: EngineEvent) => void,
 ): CommandDef {
   return {
     name: "group",
@@ -16,6 +17,18 @@ export function groupCommand(
 
       const tokens = input.tokens;
       const sub = tokens[0]?.toLowerCase() ?? "list";
+
+      // Membership change → coordination_change(update) so the dashboard's
+      // groups list (memberCount) refreshes live, matching channel/pool/board.
+      const emitGroupUpdate = (groupName: string) =>
+        logEvent?.({
+          type: "coordination_change",
+          resource: "group",
+          action: "update",
+          entity: input.entity,
+          name: groupName,
+          timestamp: Date.now(),
+        });
 
       switch (sub) {
         case "list": {
@@ -77,6 +90,14 @@ export function groupCommand(
             name: groupName,
             leaderId: input.entity,
           });
+          logEvent?.({
+            type: "coordination_change",
+            resource: "group",
+            action: "create",
+            entity: input.entity,
+            name: groupName,
+            timestamp: Date.now(),
+          });
           ctx.send(input.entity, `Created group "${groupName}" (${id}). You are the leader.`);
           return;
         }
@@ -97,6 +118,7 @@ export function groupCommand(
             return;
           }
           groups.addMember(group.id, input.entity);
+          emitGroupUpdate(group.name);
           ctx.send(input.entity, `Joined group "${group.name}".`);
           return;
         }
@@ -121,6 +143,7 @@ export function groupCommand(
             return;
           }
           groups.removeMember(group.id, input.entity);
+          emitGroupUpdate(group.name);
           ctx.send(input.entity, `Left group "${group.name}".`);
           return;
         }
@@ -151,6 +174,7 @@ export function groupCommand(
             return;
           }
           groups.addMember(group.id, target.id);
+          emitGroupUpdate(group.name);
           ctx.send(input.entity, `Invited ${target.name} to "${group.name}".`);
           ctx.send(target.id, `You have been invited to group "${group.name}".`);
           return;
@@ -182,6 +206,7 @@ export function groupCommand(
             return;
           }
           groups.removeMember(group.id, target.id);
+          emitGroupUpdate(group.name);
           ctx.send(input.entity, `Kicked ${target.name} from "${group.name}".`);
           ctx.send(target.id, `You have been kicked from group "${group.name}".`);
           return;
@@ -209,6 +234,7 @@ export function groupCommand(
             return;
           }
           if (groups.promote(group.id, target.id)) {
+            emitGroupUpdate(group.name);
             ctx.send(input.entity, `Promoted ${target.name} in "${group.name}".`);
           } else {
             ctx.send(input.entity, `Cannot promote ${target.name} further.`);
@@ -238,6 +264,7 @@ export function groupCommand(
             return;
           }
           if (groups.demote(group.id, target.id)) {
+            emitGroupUpdate(group.name);
             ctx.send(input.entity, `Demoted ${target.name} in "${group.name}".`);
           } else {
             ctx.send(input.entity, `Cannot demote ${target.name} further.`);
@@ -261,6 +288,14 @@ export function groupCommand(
             return;
           }
           groups.delete(group.id);
+          logEvent?.({
+            type: "coordination_change",
+            resource: "group",
+            action: "delete",
+            entity: input.entity,
+            name: group.name,
+            timestamp: Date.now(),
+          });
           ctx.send(input.entity, `Disbanded group "${group.name}".`);
           return;
         }

@@ -168,15 +168,13 @@ export function poolCommand(deps: {
       }
 
       if (!action || action === "list") {
-        // List recent notes in pool
-        const notes = db.recallPoolNotes(pool.id, "*", {
-          weightImportance: 0.5,
-          weightRecency: 0.5,
-          weightRelevance: 0.0,
-        });
-        // Fallback: if FTS "*" doesn't work, show empty
+        // Recent notes in the pool. Use the direct getPoolNotes() reader rather
+        // than recallPoolNotes(pool, "*", …): the FTS "*" query is fragile and
+        // silently returned nothing on some inputs, making a populated pool look
+        // empty. `pool status` already uses getPoolNotes for the same reason.
+        const notes = db.getPoolNotes(pool.id);
         if (notes.length === 0) {
-          ctx.send(input.entity, `Pool "${poolName}" has no matching notes.`);
+          ctx.send(input.entity, `Pool "${poolName}" has no notes yet.`);
           return;
         }
         const lines = [

@@ -23,7 +23,6 @@ import { debriefCommand } from "./commands/debrief";
 import { digCommand } from "./commands/dig";
 import { emoteCommand } from "./commands/emote";
 import { evolveCommand } from "./commands/evolve";
-import { examineCommand } from "./commands/examine";
 import { experimentCommand } from "./commands/experiment";
 import { exportCommand } from "./commands/export-cmd";
 import { feedCommand } from "./commands/feed";
@@ -180,7 +179,6 @@ export function registerBuiltinCommands(engine: Engine): void {
       engine.crewManager ? () => engine.crewManager!.list() : undefined,
     ),
   );
-  engine.commands.registerBuiltin(examineCommand((entityId) => engine.getEntityRoom(entityId)));
   engine.commands.registerBuiltin(
     helpCommand(
       () => engine.commands.allBuiltins(),

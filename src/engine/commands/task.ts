@@ -505,6 +505,9 @@ export function taskCommand(
           if (myStanding > 0) {
             lines.push("", `  Your standing: ${bold(String(myStanding))}`);
           }
+          // Disambiguate: this is the global leaderboard. A single task's bounty
+          // is shown by `task info <id>` (the "Standing: !N" field), not here.
+          lines.push("", dim("A specific task's bounty is shown in `task info <id>`."));
           ctx.send(input.entity, lines.join("\n"));
           return;
         }

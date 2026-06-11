@@ -5,7 +5,9 @@ import {
   dim as fmtDim,
   entity as fmtEntity,
   exits as fmtExits,
+  header as fmtHeader,
   sectionHead as fmtSectionHead,
+  separator as fmtSeparator,
   roomTitle,
 } from "../../net/ansi";
 import type { CommandDef, EntityId, RoomContext, RoomPerception } from "../../types";
@@ -30,8 +32,8 @@ export function lookCommand(
 ): CommandDef {
   return {
     name: "look",
-    aliases: ["l"],
-    help: "Look at the space or examine something. Usage: look [target]",
+    aliases: ["l", "examine", "ex", "x"],
+    help: "Look at the space, or examine something closely. Usage: look [target]",
     handler: (ctx: RoomContext, input) => {
       const room = getRoom(input.entity);
       if (!room) {
@@ -55,7 +57,14 @@ export function lookCommand(
         // should win over an item substring.
         const entity = ctx.findEntity(target);
         if (entity) {
-          ctx.send(input.entity, `${entity.name}: ${entity.long}`);
+          // Rich entity card (folds in the former `examine` command, now an alias).
+          const lines = [
+            fmtHeader(fmtEntity(entity.name)),
+            fmtSeparator(30),
+            entity.long,
+            fmtDim(`Kind: ${entity.kind}`),
+          ];
+          ctx.send(input.entity, lines.join("\n"));
           return;
         }
 
