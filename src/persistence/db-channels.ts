@@ -126,6 +126,13 @@ export function countChannelMessages(db: Database, channelId: string): number {
   return row?.n ?? 0;
 }
 
+export function countBoardPosts(db: Database, boardId: string, archived = false): number {
+  const row = db
+    .query("SELECT COUNT(*) AS n FROM board_posts WHERE board_id = ? AND archived = ?")
+    .get(boardId, archived ? 1 : 0) as { n: number } | undefined;
+  return row?.n ?? 0;
+}
+
 export function pruneExpiredMessages(db: Database, now: number): number {
   const result = db.run(
     `DELETE FROM channel_messages WHERE channel_id IN (

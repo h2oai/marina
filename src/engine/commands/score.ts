@@ -17,7 +17,9 @@ export function scoreCommand(deps: {
 }): CommandDef {
   return {
     name: "score",
-    aliases: ["stats", "status"],
+    // `status` intentionally omitted: it collides with orient's alias, which
+    // registers later and wins, so `status` here was dead. orient owns it.
+    aliases: ["stats"],
     help: "Show your profile — rank, location, session time, and benchmarks.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);

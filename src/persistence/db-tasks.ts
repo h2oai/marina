@@ -87,6 +87,31 @@ export function listTasks(
   return db.query(`SELECT * FROM tasks ${where} ${order} LIMIT ?`).all(...params) as TaskRow[];
 }
 
+export function countTasks(
+  db: Database,
+  opts?: { status?: string; groupId?: string; parentId?: number },
+): number {
+  const conditions: string[] = [];
+  const params: (string | number)[] = [];
+  if (opts?.status) {
+    conditions.push("status = ?");
+    params.push(opts.status);
+  }
+  if (opts?.groupId) {
+    conditions.push("group_id = ?");
+    params.push(opts.groupId);
+  }
+  if (opts?.parentId !== undefined) {
+    conditions.push("parent_task_id = ?");
+    params.push(opts.parentId);
+  }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const row = db.query(`SELECT COUNT(*) AS n FROM tasks ${where}`).get(...params) as
+    | { n: number }
+    | undefined;
+  return row?.n ?? 0;
+}
+
 export function updateTaskStatus(db: Database, id: number, status: string): void {
   db.run("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?", [status, Date.now(), id]);
 }

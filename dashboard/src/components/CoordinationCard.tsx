@@ -15,8 +15,10 @@ import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useState } from "react";
 import {
   useBoardDetail,
+  useBoardPosts,
   useBoards,
   useChannelDetail,
+  useChannelMessages,
   useChannels,
   useConnectors,
   useDynamicCommands,
@@ -25,7 +27,7 @@ import {
   useMemoryPools,
   useProjects,
   useTaskDetail,
-  useTasks,
+  useTasksPaged,
 } from "../hooks/use-api";
 import { useInvalidateOnEvent } from "../hooks/use-realtime";
 import type { DashboardEvent } from "../lib/types";
@@ -361,15 +363,24 @@ function TaskDetailView({
   );
 }
 
+const POSTS_PAGE = 25;
+
 function BoardDetailView({ name }: { name: string }) {
   const { data, isLoading } = useBoardDetail(name);
-  useInvalidateOnEvent(
-    ["boardDetail", name],
-    useCallback((e: DashboardEvent) => e.type === "board_post" && e.ref === name, [name]),
+  const [limit, setLimit] = useState(POSTS_PAGE);
+  const { data: paged } = useBoardPosts(name, limit);
+  const invalidate = useCallback(
+    (e: DashboardEvent) => e.type === "board_post" && e.ref === name,
+    [name],
   );
+  useInvalidateOnEvent(["boardDetail", name], invalidate);
+  useInvalidateOnEvent(["boardPosts", name], invalidate);
 
   if (isLoading) return <LoadingState />;
   if (!data) return <EmptyState text="Board not found" />;
+
+  const posts = paged?.items ?? data.posts;
+  const total = paged?.total ?? data.postCount;
 
   return (
     <div className="flex flex-col gap-2">
@@ -380,11 +391,11 @@ function BoardDetailView({ name }: { name: string }) {
           <span>{data.postCount} posts</span>
         </div>
       </div>
-      {data.posts && data.posts.length > 0 ? (
+      {posts.length > 0 ? (
         <div>
-          <SectionLabel text="Recent Posts" />
+          <SectionLabel text="Posts" />
           <div className="flex flex-col gap-1.5">
-            {data.posts.map((p) => (
+            {posts.map((p) => (
               <div key={p.id} className="border-l-2 border-border pl-2 py-0.5">
                 <div className="text-text-bright text-[10px] font-medium">{p.title}</div>
                 <div className="text-text text-[10px] leading-relaxed line-clamp-3">{p.body}</div>
@@ -395,6 +406,11 @@ function BoardDetailView({ name }: { name: string }) {
               </div>
             ))}
           </div>
+          <LoadMore
+            shown={posts.length}
+            total={total}
+            onMore={() => setLimit((n) => n + POSTS_PAGE)}
+          />
         </div>
       ) : (
         <EmptyState text="No posts yet" />
@@ -460,18 +476,24 @@ function GroupDetailView({ name }: { name: string }) {
   );
 }
 
+const MESSAGES_PAGE = 25;
+
 function ChannelDetailView({ name }: { name: string }) {
   const { data, isLoading } = useChannelDetail(name);
-  useInvalidateOnEvent(
-    ["channelDetail", name],
-    useCallback(
-      (e: DashboardEvent) => e.type === "channel_message" && (e.ref === name || e.kind === name),
-      [name],
-    ),
+  const [limit, setLimit] = useState(MESSAGES_PAGE);
+  const { data: paged } = useChannelMessages(name, limit);
+  const invalidate = useCallback(
+    (e: DashboardEvent) => e.type === "channel_message" && (e.ref === name || e.kind === name),
+    [name],
   );
+  useInvalidateOnEvent(["channelDetail", name], invalidate);
+  useInvalidateOnEvent(["channelMessages", name], invalidate);
 
   if (isLoading) return <LoadingState />;
   if (!data) return <EmptyState text="Channel not found" />;
+
+  const messages = paged?.items ?? data.messages;
+  const total = paged?.total ?? messages.length;
 
   return (
     <div className="flex flex-col gap-2">
@@ -481,11 +503,11 @@ function ChannelDetailView({ name }: { name: string }) {
           <span>{data.type}</span>
         </div>
       </div>
-      {data.messages && data.messages.length > 0 ? (
+      {messages.length > 0 ? (
         <div>
-          <SectionLabel text="Recent Messages" />
+          <SectionLabel text="Messages" />
           <div className="flex flex-col gap-1">
-            {data.messages.map((m) => (
+            {messages.map((m) => (
               <div key={`${m.sender_name}-${m.created_at}`} className="text-[10px]">
                 <div className="flex items-baseline gap-1.5">
                   <span className="text-secondary font-medium shrink-0">{m.sender_name}</span>
@@ -497,6 +519,11 @@ function ChannelDetailView({ name }: { name: string }) {
               </div>
             ))}
           </div>
+          <LoadMore
+            shown={messages.length}
+            total={total}
+            onMore={() => setLimit((n) => n + MESSAGES_PAGE)}
+          />
         </div>
       ) : (
         <EmptyState text="No messages" />
@@ -789,6 +816,23 @@ function StatusDot({ status }: { status: string }) {
   );
 }
 
+/**
+ * "Showing N of M" footer with a Load-more button. Rendered only when more
+ * rows exist than are currently shown; clicking grows the page via onMore.
+ */
+function LoadMore({ shown, total, onMore }: { shown: number; total: number; onMore: () => void }) {
+  if (shown >= total) return null;
+  return (
+    <button
+      type="button"
+      onClick={onMore}
+      className="mt-0.5 w-full rounded px-1 py-0.5 text-left text-[10px] text-secondary hover:bg-bg-hover transition-colors"
+    >
+      Load more — showing {shown} of {total} ▾
+    </button>
+  );
+}
+
 // --- List components (now with onSelect callbacks) ---
 
 function ProjectsList({ onSelect }: { onSelect: (id: string) => void }) {
@@ -817,15 +861,30 @@ function ProjectsList({ onSelect }: { onSelect: (id: string) => void }) {
   );
 }
 
-function TasksList({ onSelect }: { onSelect: (id: number) => void }) {
-  const { data, isLoading } = useTasks();
+const TASKS_PAGE = 50;
 
-  if (isLoading) return <div className="text-text-dim">Loading...</div>;
-  if (!data?.length) return <EmptyHint item="tasks" command="task create <title>" />;
+function TasksList({ onSelect }: { onSelect: (id: number) => void }) {
+  const [limit, setLimit] = useState(TASKS_PAGE);
+  const { data, isLoading } = useTasksPaged(limit);
+  useInvalidateOnEvent(
+    ["tasksPaged"],
+    useCallback(
+      (e: DashboardEvent) =>
+        (e.type === "coordination_change" && e.resource === "project") ||
+        e.type === "task_claimed" ||
+        e.type === "task_submitted" ||
+        e.type === "task_approved" ||
+        e.type === "task_rejected",
+      [],
+    ),
+  );
+
+  if (isLoading && !data) return <div className="text-text-dim">Loading...</div>;
+  if (!data?.items.length) return <EmptyHint item="tasks" command="task create <title>" />;
 
   return (
     <div className="flex flex-col gap-0.5">
-      {data.map((t) => (
+      {data.items.map((t) => (
         <button
           key={t.id}
           type="button"
@@ -840,6 +899,11 @@ function TasksList({ onSelect }: { onSelect: (id: number) => void }) {
           </span>
         </button>
       ))}
+      <LoadMore
+        shown={data.items.length}
+        total={data.total}
+        onMore={() => setLimit((n) => n + TASKS_PAGE)}
+      />
     </div>
   );
 }
