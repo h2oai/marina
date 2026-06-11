@@ -1,5 +1,6 @@
-import { Check, Copy, MessageSquareText, Send } from "lucide-react";
+import { Check, Copy, List, MessageSquareText, PanelsTopLeft, Send } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ChatMessage, StoredPerception } from "../hooks/use-chat-state";
 import { ensureChatWs, getChatWs, useChatState } from "../hooks/use-chat-state";
 import { clearToken, setToken } from "../lib/api";
 import { linkifyHtml } from "../lib/linkify";
@@ -25,12 +26,23 @@ const ANSI_COLORS: Record<string, string> = {
   "97": "#fff",
 };
 
+const MODE_STORAGE_KEY = "marina-chat-mode";
+type ChatViewMode = "compact" | "rich";
+
 function escHtml(ch: string): string {
   if (ch === "&") return "&amp;";
   if (ch === "<") return "&lt;";
   if (ch === ">") return "&gt;";
   if (ch === '"') return "&quot;";
   return ch;
+}
+
+function escapeHtml(text: string): string {
+  let result = "";
+  for (let i = 0; i < text.length; i++) {
+    result += escHtml(text[i]!);
+  }
+  return result;
 }
 
 function ansiToHtml(text: string): string {
@@ -83,10 +95,119 @@ function ansiToHtml(text: string): string {
 // biome-ignore lint/suspicious/noControlCharactersInRegex: strip ANSI SGR codes so copied text is clean
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
-function appendMsg(text: string, kind: string, tag?: string) {
-  useChatState
-    .getState()
-    .appendMessage({ html: ansiToHtml(text), text: text.replace(ANSI_RE, ""), kind, tag });
+function formatTimestamp(ts?: number): string {
+  if (!ts) return "";
+  try {
+    return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
+interface SpeechMeta {
+  speaker?: string;
+  body: string;
+  perspective: "self" | "other";
+  channel?: string;
+  tone?: "emote" | "shout" | "broadcast";
+}
+
+interface RoomPerceptionData {
+  name?: string;
+  short?: string;
+  long?: string;
+  items?: Record<string, unknown>;
+  entities?: { name?: string; short?: string }[];
+  exits?: string[];
+}
+
+function parseSpeech(
+  text: string | undefined,
+  tag: string | undefined,
+  perception?: StoredPerception,
+): SpeechMeta | null {
+  const data = perception?.data as Record<string, unknown> | undefined;
+  if (!text) return null;
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  if (tag === "say") {
+    const youMatch = trimmed.match(/^You say:\s*(.+)$/);
+    if (youMatch) {
+      return { speaker: "You", body: youMatch[1]!, perspective: "self" };
+    }
+    const otherMatch = trimmed.match(/^(.+?) says:\s*(.+)$/);
+    if (otherMatch) {
+      return { speaker: otherMatch[1]!, body: otherMatch[2]!, perspective: "other" };
+    }
+  }
+
+  if (tag === "tell") {
+    const fromMatch = trimmed.match(/^>\s+(.+?) tells you:\s*(.+)$/);
+    if (fromMatch) {
+      return { speaker: fromMatch[1]!, body: fromMatch[2]!, perspective: "other" };
+    }
+    const toMatch = trimmed.match(/^>\s+You tell (.+?):\s*(.+)$/);
+    if (toMatch) {
+      return { speaker: toMatch[1]!, body: toMatch[2]!, perspective: "self" };
+    }
+  }
+
+  if (tag === "shout") {
+    const selfMatch = trimmed.match(/^You shout:\s*(.+)$/i);
+    if (selfMatch) {
+      return { speaker: "You", body: selfMatch[1]!, perspective: "self", tone: "shout" };
+    }
+    const otherMatch = trimmed.match(/^(.+?) shouts:\s*(.+)$/i);
+    if (otherMatch) {
+      return { speaker: otherMatch[1]!, body: otherMatch[2]!, perspective: "other", tone: "shout" };
+    }
+  }
+
+  if (tag === "emote") {
+    const emoteMatch = trimmed.match(/^\*\s*(.+)$/);
+    if (emoteMatch) {
+      return { body: emoteMatch[1]!, perspective: "other", tone: "emote" };
+    }
+  }
+
+  const channel = data && typeof data.channel === "string" ? (data.channel as string) : undefined;
+  if (channel) {
+    const sender =
+      data && typeof data.senderName === "string" ? (data.senderName as string) : undefined;
+    const content = data && typeof data.content === "string" ? (data.content as string) : trimmed;
+    return {
+      speaker: sender,
+      body: content,
+      perspective: sender === "You" ? "self" : "other",
+      channel,
+    };
+  }
+
+  if (perception?.kind === "broadcast") {
+    return { body: trimmed, perspective: "other", tone: "broadcast" };
+  }
+
+  return { body: trimmed, perspective: "other" };
+}
+
+function appendMsg(text: string, kind: string, tag?: string, perception?: StoredPerception) {
+  const storedPerception = perception
+    ? {
+        kind: perception.kind,
+        tag: perception.tag,
+        timestamp: perception.timestamp,
+        data: perception.data,
+      }
+    : undefined;
+  useChatState.getState().appendMessage({
+    html: ansiToHtml(text),
+    text: text.replace(ANSI_RE, ""),
+    kind,
+    tag,
+    timestamp: storedPerception?.timestamp ?? Date.now(),
+    perception: storedPerception,
+  });
 }
 
 /** Plain-text for clipboard: prefer the stored text, else derive it from html. */
@@ -123,22 +244,38 @@ async function writeClipboard(text: string): Promise<boolean> {
   }
 }
 
+type PerceptionKind =
+  | "room"
+  | "message"
+  | "broadcast"
+  | "movement"
+  | "error"
+  | "auth_error"
+  | "system";
+
 interface Perception {
-  kind?: string;
+  kind: PerceptionKind;
+  timestamp?: number;
   tag?: string;
   data?: {
     token?: string;
     entityId?: string;
+    entityName?: string;
+    from?: string;
+    fromName?: string;
     name?: string;
     short?: string;
     long?: string;
     items?: Record<string, unknown>;
-    entities?: { name: string }[];
+    entities?: { name?: string; short?: string }[];
     exits?: string[];
     text?: string;
     entity?: string;
     direction?: string;
     exit?: string;
+    channel?: string;
+    senderName?: string;
+    content?: string;
   };
 }
 
@@ -147,7 +284,7 @@ function handlePerception(raw: unknown) {
   if (p.kind === "auth_error") {
     clearToken();
     useChatState.getState().setLoggedIn(false);
-    appendMsg(p.data?.text ?? "Authentication failed.", "system");
+    appendMsg(p.data?.text ?? "Authentication failed.", "system", p.tag, p);
     return;
   }
   if (p.data?.token) {
@@ -158,10 +295,10 @@ function handlePerception(raw: unknown) {
     useChatState.getState().setLoggedIn(true, p.data.name);
   }
 
-  const kind = p.kind || "message";
+  const kind = p.kind ?? "message";
   const tag = p.tag;
   if (kind === "room") {
-    const d = p.data!;
+    const d = p.data ?? {};
     let text = "";
     if (d.short) text += `${d.short}\n`;
     if (d.long) text += `${d.long}\n`;
@@ -169,22 +306,27 @@ function handlePerception(raw: unknown) {
       text += `\nObjects: ${Object.keys(d.items).join(", ")}\n`;
     }
     if (d.entities && d.entities.length > 0) {
-      text += `Present: ${d.entities.map((e) => e.name).join(", ")}\n`;
+      text += `Present: ${d.entities
+        .map((e) => e.short || e.name)
+        .filter(Boolean)
+        .join(", ")}\n`;
     }
     if (d.exits && d.exits.length > 0) {
       text += `Exits: ${d.exits.join(", ")}\n`;
     }
-    appendMsg(text, "room", tag);
+    appendMsg(text, "room", tag, p);
   } else if (kind === "movement") {
-    const d = p.data!;
-    const name = d.entity ?? "Someone";
+    const d = p.data ?? {};
+    const name = (d.entityName as string) ?? (d.entity as string) ?? "Someone";
     const action =
       d.direction === "arrive"
         ? `${name} arrives.`
         : `${name} leaves${d.exit ? ` ${d.exit}` : ""}.`;
-    appendMsg(action, "movement", tag);
+    appendMsg(action, "movement", tag, p);
   } else {
-    appendMsg(p.data?.text || JSON.stringify(p.data), kind, tag);
+    const fallback =
+      typeof p.data?.text === "string" ? p.data.text : p.data ? JSON.stringify(p.data) : "";
+    appendMsg(fallback, kind, tag, p);
   }
 }
 
@@ -284,6 +426,18 @@ export function WebChat() {
     [commandHistory, doSend],
   );
 
+  const [viewMode, setViewMode] = useState<ChatViewMode>(() => {
+    if (typeof window === "undefined") return "compact";
+    const stored = window.localStorage.getItem(MODE_STORAGE_KEY);
+    return stored === "rich" ? "rich" : "compact";
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(MODE_STORAGE_KEY, viewMode);
+    }
+  }, [viewMode]);
+
   const msgStyle = (kind: string, tag?: string) => {
     if (tag === "tell") return "border-l-2 border-fuchsia-500 pl-2 bg-fuchsia-950/20";
     if (tag === "shout") return "border-l-2 border-yellow-400 pl-2 bg-yellow-950/20";
@@ -308,55 +462,311 @@ export function WebChat() {
     }
   };
 
+  const renderTextContent = (text: string, className = "text-sm leading-relaxed text-text") => (
+    <div
+      className={`whitespace-pre-wrap ${className}`}
+      // biome-ignore lint/security/noDangerouslySetInnerHtml: content is escaped and sanitized before injection
+      dangerouslySetInnerHTML={{
+        __html: sanitizeChatHtml(linkifyHtml(escapeHtml(text))),
+      }}
+    />
+  );
+
+  const renderCompactMessage = (m: ChatMessage, i: number) => (
+    <div key={i} className="group relative">
+      <div
+        className={`whitespace-pre-wrap break-words rounded-sm my-0.5 py-0.5 pr-6 ${msgStyle(m.kind, m.tag)}`}
+        // biome-ignore lint/security/noDangerouslySetInnerHtml: defense-in-depth via sanitizeChatHtml — strips all but inline span/style + linkified anchors.
+        dangerouslySetInnerHTML={{ __html: sanitizeChatHtml(linkifyHtml(m.html)) }}
+      />
+      <button
+        type="button"
+        onClick={() => copy(messageText(m), i)}
+        title="Copy message"
+        aria-label="Copy message"
+        className="absolute right-0.5 top-0.5 rounded p-0.5 text-text-dim opacity-0 transition-opacity hover:text-primary focus:opacity-100 group-hover:opacity-100"
+      >
+        {copied === i ? <Check size={12} /> : <Copy size={12} />}
+      </button>
+    </div>
+  );
+
+  const renderRoomMessage = (m: ChatMessage, i: number, perception: StoredPerception) => {
+    const data = (perception.data ?? {}) as RoomPerceptionData;
+    const title =
+      typeof data.short === "string"
+        ? data.short
+        : typeof data.name === "string"
+          ? data.name
+          : "Room";
+    const description = typeof data.long === "string" ? data.long : "";
+    const objects =
+      data.items && typeof data.items === "object"
+        ? Object.keys(data.items as Record<string, unknown>)
+        : [];
+    const occupants = Array.isArray(data.entities)
+      ? (data.entities as { name?: string; short?: string }[])
+          .map((e) => e.short || e.name)
+          .filter(Boolean)
+      : [];
+    const exits = Array.isArray(data.exits) ? (data.exits as string[]) : [];
+
+    return (
+      <div
+        key={i}
+        className="group relative my-1 rounded-md border border-border bg-bg/70 p-3 shadow-sm"
+      >
+        <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-text-dim">
+          <div className="flex items-center gap-2 text-text">
+            <span className="text-[11px]">{title}</span>
+            {perception.tag && (
+              <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[9px] font-normal text-primary">
+                {perception.tag}
+              </span>
+            )}
+          </div>
+          <span className="text-[9px] font-medium text-text-dim/80">
+            {formatTimestamp(m.timestamp)}
+          </span>
+        </div>
+        {description && <div className="mt-2">{renderTextContent(description)}</div>}
+        {objects.length > 0 && (
+          <div className="mt-3 text-[11px] text-text">
+            <span className="font-semibold text-text-bright">Objects</span>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {objects.map((obj) => (
+                <span
+                  key={obj}
+                  className="rounded border border-border/60 bg-bg px-2 py-0.5 text-[10px] text-text-dim"
+                >
+                  {obj}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {occupants.length > 0 && (
+          <div className="mt-3 text-[11px] text-text">
+            <span className="font-semibold text-text-bright">Present</span>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {occupants.map((entity) => (
+                <span
+                  key={entity}
+                  className="rounded border border-border/60 bg-bg px-2 py-0.5 text-[10px] text-text-dim"
+                >
+                  {entity}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {exits.length > 0 && (
+          <div className="mt-3 text-[11px] text-text">
+            <span className="font-semibold text-text-bright">Exits</span>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {exits.map((exit) => (
+                <span
+                  key={exit}
+                  className="rounded border border-border/60 bg-bg px-2 py-0.5 text-[10px] uppercase tracking-wide text-text-dim"
+                >
+                  {exit}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => copy(messageText(m), i)}
+          title="Copy message"
+          aria-label="Copy message"
+          className="absolute right-2 top-2 rounded p-1 text-text-dim opacity-0 transition-opacity hover:text-primary focus:opacity-100 group-hover:opacity-100"
+        >
+          {copied === i ? <Check size={12} /> : <Copy size={12} />}
+        </button>
+      </div>
+    );
+  };
+
+  const renderMovementMessage = (m: ChatMessage, i: number) => (
+    <div
+      key={i}
+      className="group relative my-1 rounded-md border border-border/60 bg-bg/40 px-3 py-1.5 text-[11px] italic text-text-dim"
+    >
+      <span>{m.text ?? ""}</span>
+      <span className="absolute right-2 top-1 text-[9px] uppercase tracking-wide text-text-dim/70">
+        {formatTimestamp(m.timestamp)}
+      </span>
+      <button
+        type="button"
+        onClick={() => copy(messageText(m), i)}
+        title="Copy message"
+        aria-label="Copy message"
+        className="absolute right-1.5 bottom-1.5 rounded p-0.5 text-text-dim opacity-0 transition-opacity hover:text-primary focus:opacity-100 group-hover:opacity-100"
+      >
+        {copied === i ? <Check size={12} /> : <Copy size={12} />}
+      </button>
+    </div>
+  );
+
+  const renderSystemMessage = (
+    m: ChatMessage,
+    i: number,
+    tone: "system" | "error" | "broadcast",
+  ) => {
+    const baseClass =
+      tone === "error"
+        ? "border-red-500/60 bg-red-950/20 text-red-200"
+        : tone === "broadcast"
+          ? "border-blue-500/60 bg-blue-950/15 text-blue-100"
+          : "border-primary/40 bg-primary/10 text-primary";
+    return (
+      <div
+        key={i}
+        className={`group relative my-1 rounded-md border px-3 py-2 text-sm ${baseClass}`}
+      >
+        <div className="flex items-center justify-between text-[10px] uppercase tracking-wide">
+          <span>{tone === "error" ? "Error" : tone === "broadcast" ? "Broadcast" : "System"}</span>
+          <span className="text-text-dim/70">{formatTimestamp(m.timestamp)}</span>
+        </div>
+        <div className="mt-1 text-sm">
+          {renderTextContent(m.text ?? "", "text-sm text-inherit")}
+        </div>
+        <button
+          type="button"
+          onClick={() => copy(messageText(m), i)}
+          title="Copy message"
+          aria-label="Copy message"
+          className="absolute right-2 top-2 rounded p-0.5 text-current opacity-0 transition-opacity hover:text-text focus:opacity-100 group-hover:opacity-100"
+        >
+          {copied === i ? <Check size={12} /> : <Copy size={12} />}
+        </button>
+      </div>
+    );
+  };
+
+  const renderSpeechMessage = (m: ChatMessage, i: number, perception: StoredPerception) => {
+    const meta = parseSpeech(m.text, m.tag, perception);
+    const timestamp = formatTimestamp(m.timestamp);
+    const bubbleTone =
+      meta?.tone === "shout"
+        ? "border-yellow-500/60 bg-yellow-950/20 text-yellow-50"
+        : meta?.tone === "emote"
+          ? "border-cyan-500/40 bg-cyan-950/10 text-cyan-100"
+          : meta?.tone === "broadcast"
+            ? "border-blue-500/60 bg-blue-950/15 text-blue-100"
+            : meta?.perspective === "self"
+              ? "border-primary/60 bg-primary/10 text-primary"
+              : "border-border bg-bg/70 text-text";
+
+    const badge =
+      meta?.channel ??
+      perception.tag ??
+      (meta?.tone === "broadcast" ? "broadcast" : meta?.tone === "shout" ? "shout" : undefined);
+
+    const heading = meta?.speaker ?? (meta?.tone === "broadcast" ? "Broadcast" : "");
+
+    const body = meta?.body ?? m.text ?? "";
+
+    return (
+      <div
+        key={i}
+        className={`group relative my-1 rounded-md border px-3 py-2 shadow-sm ${bubbleTone}`}
+      >
+        <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-text-dim/80">
+          <div className="flex items-center gap-1.5">
+            {badge && (
+              <span className="rounded bg-bg/40 px-1.5 py-0.5 text-[9px] font-semibold text-current">
+                {badge}
+              </span>
+            )}
+            {heading && <span className="text-[10px] font-semibold text-current">{heading}</span>}
+          </div>
+          <span>{timestamp}</span>
+        </div>
+        <div className="mt-1 text-sm leading-relaxed text-inherit">
+          {renderTextContent(body, "text-sm leading-relaxed text-inherit")}
+        </div>
+        <button
+          type="button"
+          onClick={() => copy(messageText(m), i)}
+          title="Copy message"
+          aria-label="Copy message"
+          className="absolute right-2 top-2 rounded p-0.5 text-current opacity-0 transition-opacity hover:text-text focus:opacity-100 group-hover:opacity-100"
+        >
+          {copied === i ? <Check size={12} /> : <Copy size={12} />}
+        </button>
+      </div>
+    );
+  };
+
+  const renderRichMessage = (m: ChatMessage, i: number) => {
+    const perception = m.perception;
+    if (!perception) return renderCompactMessage(m, i);
+    switch (perception.kind) {
+      case "room":
+        return renderRoomMessage(m, i, perception);
+      case "movement":
+        return renderMovementMessage(m, i);
+      case "system":
+        return renderSystemMessage(m, i, "system");
+      case "error":
+        return renderSystemMessage(m, i, "error");
+      case "broadcast":
+        return renderSystemMessage(m, i, "broadcast");
+      default:
+        return renderSpeechMessage(m, i, perception);
+    }
+  };
+
   return (
     <GlassPanel
       title="Web Chat"
       icon={<MessageSquareText size={14} />}
       headerExtra={
-        messages.length > 0 ? (
+        <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              copyAll();
+              setViewMode((mode) => (mode === "compact" ? "rich" : "compact"));
             }}
-            title="Copy whole conversation"
-            className="flex items-center gap-1 text-text-dim text-[10px] transition-colors hover:text-primary"
+            title={viewMode === "compact" ? "Switch to rich view" : "Switch to compact view"}
+            className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[10px] text-text-dim transition-colors hover:border-primary hover:text-primary"
           >
-            {copied === "all" ? <Check size={11} /> : <Copy size={11} />}
-            <span>{copied === "all" ? "Copied" : "Copy all"}</span>
+            {viewMode === "compact" ? <PanelsTopLeft size={11} /> : <List size={11} />}
+            <span>{viewMode === "compact" ? "Rich view" : "Compact view"}</span>
           </button>
-        ) : undefined
+          {messages.length > 0 ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                copyAll();
+              }}
+              title="Copy whole conversation"
+              className="flex items-center gap-1 text-text-dim text-[10px] transition-colors hover:text-primary"
+            >
+              {copied === "all" ? <Check size={11} /> : <Copy size={11} />}
+              <span>{copied === "all" ? "Copied" : "Copy all"}</span>
+            </button>
+          ) : undefined}
+        </div>
       }
     >
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Output */}
         <div
           ref={outputRef}
-          className="flex-1 overflow-y-auto px-2 py-1 font-mono text-[12px] leading-relaxed"
+          className={`flex-1 overflow-y-auto px-2 py-1 ${
+            viewMode === "compact"
+              ? "font-mono text-[12px] leading-relaxed"
+              : "font-sans text-[13px]"
+          }`}
         >
-          {messages.map((m, i) => (
-            <div
-              // biome-ignore lint/suspicious/noArrayIndexKey: chat messages are append-only; index is the message identity
-              key={i}
-              className="group relative"
-            >
-              <div
-                className={`whitespace-pre-wrap break-words rounded-sm my-0.5 py-0.5 pr-6 ${msgStyle(m.kind, m.tag)}`}
-                // biome-ignore lint/security/noDangerouslySetInnerHtml: defense-in-depth via sanitizeChatHtml — strips all but inline span/style + linkified anchors.
-                dangerouslySetInnerHTML={{ __html: sanitizeChatHtml(linkifyHtml(m.html)) }}
-              />
-              <button
-                type="button"
-                onClick={() => copy(messageText(m), i)}
-                title="Copy message"
-                aria-label="Copy message"
-                className="absolute right-0.5 top-0.5 rounded p-0.5 text-text-dim opacity-0 transition-opacity hover:text-primary focus:opacity-100 group-hover:opacity-100"
-              >
-                {copied === i ? <Check size={12} /> : <Copy size={12} />}
-              </button>
-            </div>
-          ))}
+          {messages.map((m, i) =>
+            viewMode === "compact" ? renderCompactMessage(m, i) : renderRichMessage(m, i),
+          )}
         </div>
 
         {/* Input area */}

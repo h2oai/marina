@@ -1,5 +1,12 @@
 import { create } from "zustand";
 
+export interface StoredPerception {
+  kind: string;
+  timestamp?: number;
+  tag?: string;
+  data?: Record<string, unknown>;
+}
+
 export interface ChatMessage {
   html: string;
   /** Plain-text form (ANSI stripped) for clipboard copy. Falls back to the
@@ -7,6 +14,8 @@ export interface ChatMessage {
   text?: string;
   kind: string;
   tag?: string;
+  timestamp?: number;
+  perception?: StoredPerception;
 }
 
 const MAX_MESSAGES = 500;
