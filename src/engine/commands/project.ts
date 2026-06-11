@@ -12,6 +12,23 @@ import {
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, EntityRank, RoomContext } from "../../types";
 
+/** Emit a coordination_change so the dashboard's Projects list refreshes live. */
+function emitProjectChange(
+  ctx: RoomContext,
+  entity: EntityId,
+  action: "create" | "update",
+  name: string,
+): void {
+  ctx.logEvent?.({
+    type: "coordination_change",
+    resource: "project",
+    action,
+    entity,
+    name,
+    timestamp: Date.now(),
+  });
+}
+
 import {
   HTDAG_TEMPLATE,
   LAZY_EXPANSION_TEMPLATE,
@@ -242,6 +259,7 @@ export function projectCommand(deps: {
           groupId,
           createdBy: entity.name,
         });
+        emitProjectChange(ctx, input.entity, "create", name);
 
         // 5. Seed pool with welcome note
         db.addPoolNote(
@@ -352,6 +370,7 @@ export function projectCommand(deps: {
               return;
             }
             db.updateProjectOrchestration(project.id, "custom");
+            emitProjectChange(ctx, input.entity, "update", project.name);
             if (project.pool_id) {
               db.addPoolNote(
                 project.pool_id,
@@ -374,6 +393,7 @@ export function projectCommand(deps: {
           }
 
           db.updateProjectOrchestration(project.id, pattern);
+          emitProjectChange(ctx, input.entity, "update", project.name);
           const template = getOrchestrationTemplate(pattern);
           if (template && project.pool_id) {
             seedPoolWithNotes(db, project.pool_id, entity.name, template);
@@ -450,6 +470,7 @@ export function projectCommand(deps: {
               return;
             }
             db.updateProjectMemoryArch(project.id, "custom");
+            emitProjectChange(ctx, input.entity, "update", project.name);
             if (project.pool_id) {
               db.addPoolNote(
                 project.pool_id,
@@ -472,6 +493,7 @@ export function projectCommand(deps: {
           }
 
           db.updateProjectMemoryArch(project.id, arch);
+          emitProjectChange(ctx, input.entity, "update", project.name);
           const template = getMemoryTemplate(arch);
           if (template && project.pool_id) {
             seedPoolWithNotes(db, project.pool_id, entity.name, template);

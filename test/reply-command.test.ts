@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "bun:test";
-import { replyCommand, tellCommand, type TellDeps } from "../src/engine/commands/tell";
+import { replyCommand, type TellDeps, tellCommand } from "../src/engine/commands/tell";
 import {
   type CommandInput,
   type Entity,

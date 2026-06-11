@@ -1461,6 +1461,9 @@ export class MarinaDB {
   getChannelHistory(channelId: string, limit = 20): ChannelMessageRow[] {
     return channelsDb.getChannelHistory(this.db, channelId, limit);
   }
+  countChannelMessages(channelId: string): number {
+    return channelsDb.countChannelMessages(this.db, channelId);
+  }
   pruneExpiredMessages(now: number): number {
     return channelsDb.pruneExpiredMessages(this.db, now);
   }

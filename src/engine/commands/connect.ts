@@ -90,6 +90,14 @@ export function connectCommand(deps: {
               args: JSON.stringify(args),
               createdBy: entity.name,
             });
+            ctx.logEvent?.({
+              type: "coordination_change",
+              resource: "connector",
+              action: "create",
+              entity: input.entity,
+              name,
+              timestamp: Date.now(),
+            });
 
             if (runtime?.isAvailable()) {
               try {
@@ -140,6 +148,14 @@ export function connectCommand(deps: {
             url,
             createdBy: entity.name,
           });
+          ctx.logEvent?.({
+            type: "coordination_change",
+            resource: "connector",
+            action: "create",
+            entity: input.entity,
+            name,
+            timestamp: Date.now(),
+          });
 
           if (runtime?.isAvailable()) {
             try {
@@ -181,6 +197,14 @@ export function connectCommand(deps: {
             await runtime.removeServer(name);
           }
           db.deleteConnector(conn.id);
+          ctx.logEvent?.({
+            type: "coordination_change",
+            resource: "connector",
+            action: "delete",
+            entity: input.entity,
+            name,
+            timestamp: Date.now(),
+          });
           ctx.send(input.entity, `Connector "${name}" removed.`);
           return;
         }

@@ -1,4 +1,5 @@
 import type { GroupRow, MarinaDB } from "../persistence/database";
+import type { EngineEvent, EntityId } from "../types";
 import type { BoardManager } from "./board-manager";
 import type { ChannelManager } from "./channel-manager";
 
@@ -36,7 +37,23 @@ export class GroupManager {
     private db: MarinaDB,
     private channels: ChannelManager,
     private boards: BoardManager,
+    private logEvent?: (event: EngineEvent) => void,
   ) {}
+
+  private emitChange(
+    action: "create" | "update" | "delete",
+    group: { id: string; name: string; leaderId: string },
+    actor?: string,
+  ): void {
+    this.logEvent?.({
+      type: "coordination_change",
+      resource: "group",
+      action,
+      entity: (actor ?? group.leaderId) as EntityId,
+      name: group.name,
+      timestamp: Date.now(),
+    });
+  }
 
   create(opts: { id: string; name: string; description?: string; leaderId: string }): Group {
     // Create group record first
@@ -67,6 +84,8 @@ export class GroupManager {
     this.db.addGroupMember(opts.id, opts.leaderId, 2);
     this.channels.addMember(channel.id, opts.leaderId);
 
+    this.emitChange("create", { id: opts.id, name: opts.name, leaderId: opts.leaderId });
+
     return {
       id: opts.id,
       name: opts.name,
@@ -84,6 +103,7 @@ export class GroupManager {
     if (group.channelId) this.channels.deleteChannel(group.channelId);
     if (group.boardId) this.boards.deleteBoard(group.boardId);
     this.db.deleteGroup(id);
+    this.emitChange("delete", group);
   }
 
   get(id: string): Group | undefined {
@@ -106,6 +126,7 @@ export class GroupManager {
     if (group?.channelId) {
       this.channels.addMember(group.channelId, entityId);
     }
+    if (group) this.emitChange("update", group, entityId);
   }
 
   removeMember(groupId: string, entityId: string): void {
@@ -114,6 +135,7 @@ export class GroupManager {
     if (group?.channelId) {
       this.channels.removeMember(group.channelId, entityId);
     }
+    if (group) this.emitChange("update", group, entityId);
   }
 
   getMembers(groupId: string): GroupMember[] {
@@ -142,6 +164,8 @@ export class GroupManager {
     const member = this.db.getGroupMember(groupId, entityId);
     if (!member || member.rank >= 2) return false;
     this.db.updateGroupMemberRank(groupId, entityId, member.rank + 1);
+    const group = this.get(groupId);
+    if (group) this.emitChange("update", group, entityId);
     return true;
   }
 
@@ -149,6 +173,8 @@ export class GroupManager {
     const member = this.db.getGroupMember(groupId, entityId);
     if (!member || member.rank <= 0) return false;
     this.db.updateGroupMemberRank(groupId, entityId, member.rank - 1);
+    const group = this.get(groupId);
+    if (group) this.emitChange("update", group, entityId);
     return true;
   }
 

@@ -338,6 +338,14 @@ export function boardCommand(
             return;
           }
           boards.createBoard({ name });
+          logEvent?.({
+            type: "coordination_change",
+            resource: "board",
+            action: "create",
+            entity: input.entity,
+            name,
+            timestamp: Date.now(),
+          });
           ctx.send(input.entity, `Created board "${name}".`);
           return;
         }

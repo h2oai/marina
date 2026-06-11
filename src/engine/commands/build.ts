@@ -4,6 +4,7 @@ import type {
   CommandDef,
   CommandInput,
   Entity,
+  EntityId,
   RoomContext,
   RoomId,
   RoomModule,
@@ -39,6 +40,23 @@ type SubHandler = (
   rank: number,
   deps: BuildDeps,
 ) => void | Promise<void>;
+
+/** Emit a coordination_change so the dashboard's Commands list refreshes live. */
+function emitCommandChange(
+  ctx: RoomContext,
+  entity: EntityId,
+  action: "create" | "update" | "delete",
+  name: string,
+): void {
+  ctx.logEvent?.({
+    type: "coordination_change",
+    resource: "command",
+    action,
+    entity,
+    name,
+    timestamp: Date.now(),
+  });
+}
 
 // ─── Room subcommands ─────────────────────────────────────────────────────────
 
@@ -704,6 +722,7 @@ function handleCommandCreate(
     source: DEFAULT_COMMAND_SOURCE.replace("mycommand", name),
     createdBy: entity.name,
   });
+  emitCommandChange(ctx, input.entity, "create", name);
   ctx.send(
     input.entity,
     `Created command "${name}" with default source. Use 'build command code ${name} <source>' to set source, then 'build command reload ${name}'.`,
@@ -751,6 +770,7 @@ function handleCommandCode(
     const cmdId = `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     deps.db.saveCommandSource({ id: cmdId, name, source, createdBy: entity.name });
   }
+  emitCommandChange(ctx, input.entity, existing ? "update" : "create", name);
   ctx.send(
     input.entity,
     `Saved source for command "${name}". Use 'build command reload ${name}' to compile and register.`,
@@ -818,6 +838,7 @@ async function handleCommandReload(
       return;
     }
     deps.db.markCommandValid(name);
+    emitCommandChange(ctx, input.entity, "update", name);
     if (deps.registerCommand) {
       deps.unregisterCommand?.(name);
       deps.registerCommand(compiled);
@@ -909,6 +930,7 @@ function handleCommandDestroy(
   }
   deps.unregisterCommand?.(name);
   deps.db.deleteCommand(name);
+  emitCommandChange(ctx, input.entity, "delete", name);
   ctx.send(input.entity, `Command "${name}" destroyed.`);
 }
 

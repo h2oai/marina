@@ -119,6 +119,13 @@ export function getChannelHistory(
     .all(channelId, limit) as ChannelMessageRow[];
 }
 
+export function countChannelMessages(db: Database, channelId: string): number {
+  const row = db
+    .query("SELECT COUNT(*) AS n FROM channel_messages WHERE channel_id = ?")
+    .get(channelId) as { n: number } | undefined;
+  return row?.n ?? 0;
+}
+
 export function pruneExpiredMessages(db: Database, now: number): number {
   const result = db.run(
     `DELETE FROM channel_messages WHERE channel_id IN (

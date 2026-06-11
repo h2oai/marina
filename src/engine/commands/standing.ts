@@ -1,9 +1,9 @@
 import { deriveRankFromStanding, RANK_THRESHOLDS } from "../../agent/rank-progression";
 import { getStanding, leaderboard, ledgerFor, STANDING_HALF_LIFE_DAYS } from "../../agent/standing";
 import { bold, dim, header, separator } from "../../net/ansi";
-import { getGateProgress } from "../safety-gates";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { getGateProgress } from "../safety-gates";
 
 interface StandingDeps {
   db?: MarinaDB;

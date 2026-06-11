@@ -942,8 +942,7 @@ function getBoards(db: MarinaDB): Response {
 
 function getChannels(db: MarinaDB): Response {
   const channels = db.getAllChannels().map((c) => {
-    const history = db.getChannelHistory(c.id, 1);
-    return { ...c, messageCount: history.length > 0 ? "1+" : "0" };
+    return { ...c, messageCount: String(db.countChannelMessages(c.id)) };
   });
   return json(channels);
 }
@@ -1094,7 +1093,6 @@ function getChannelDetail(db: MarinaDB, channelName: string): Response {
   const channel = channels.find((c) => c.name === channelName);
   if (!channel) return json({ error: "Channel not found" }, 404);
 
-  const allHistory = db.getChannelHistory(channel.id, 1);
   const messages = db.getChannelHistory(channel.id, 5).map((m) => ({
     sender_name: m.sender_name,
     content: m.content,
@@ -1105,7 +1103,7 @@ function getChannelDetail(db: MarinaDB, channelName: string): Response {
     id: channel.id,
     name: channel.name,
     type: channel.type,
-    messageCount: allHistory.length > 0 ? "1+" : "0",
+    messageCount: String(db.countChannelMessages(channel.id)),
     messages,
   });
 }
