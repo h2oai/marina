@@ -135,6 +135,8 @@ The dashboard includes an embedded chat widget. You can log in and play directly
   room updates easier to scan.
 - The **Contextual Compass** under the transcript suggests commands (brief,
   readiness, active tasks, agent status) based on the live feed.
+- Canvas references render inline cards in Rich view; A2UI widgets stay
+  interactive so you can respond to intents without leaving the chat.
 - Copy any individual message (hover → copy icon) or the whole transcript
   (`Copy all`) when you need to export a session.
 
