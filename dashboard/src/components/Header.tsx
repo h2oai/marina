@@ -1,6 +1,17 @@
-import { Activity, FolderKanban, Frame, Plug, Radio, RotateCcw } from "lucide-react";
+import {
+  Activity,
+  Edit3,
+  FolderKanban,
+  Frame,
+  Plug,
+  Radio,
+  RotateCcw,
+  Save,
+  Trash2,
+} from "lucide-react";
 import { motion } from "motion/react";
 import { useSystem } from "../hooks/use-api";
+import type { LayoutPreset } from "../hooks/use-layout-presets";
 import { useWorldState } from "../hooks/use-world-state";
 import { formatUptime } from "../lib/utils";
 import { AnimatedNumber } from "./AnimatedNumber";
@@ -10,6 +21,12 @@ interface HeaderProps {
   connected: boolean;
   uptime: number;
   onResetLayout?: () => void;
+  layoutPresets?: LayoutPreset[];
+  activeLayoutId?: string;
+  onSelectLayoutPreset?: (id: string) => void;
+  onSaveLayoutPreset?: () => void;
+  onRenameLayoutPreset?: (id: string) => void;
+  onDeleteLayoutPreset?: (id: string) => void;
 }
 
 const TITLE_LETTERS = "MARINA".split("");
@@ -17,11 +34,23 @@ const TITLE_LETTERS = "MARINA".split("");
 // Stagger from the center outward — middle letters appear first.
 const center = (TITLE_LETTERS.length - 1) / 2;
 
-export function Header({ connected, uptime, onResetLayout }: HeaderProps) {
+export function Header({
+  connected,
+  uptime,
+  onResetLayout,
+  layoutPresets,
+  activeLayoutId,
+  onSelectLayoutPreset,
+  onSaveLayoutPreset,
+  onRenameLayoutPreset,
+  onDeleteLayoutPreset,
+}: HeaderProps) {
   const entities = useWorldState((s) => s.entities);
   const connections = useWorldState((s) => s.connections);
   const { data: systemData } = useSystem();
   const agents = entities.filter((e) => e.kind === "agent");
+  const activePreset = layoutPresets?.find((p) => p.id === activeLayoutId);
+  const presetLocked = !!activePreset?.locked;
 
   return (
     <header className="glass-panel relative z-50 flex items-center justify-between px-3 py-1">
@@ -110,6 +139,56 @@ export function Header({ connected, uptime, onResetLayout }: HeaderProps) {
           <Frame size={11} />
           <span>Canvas</span>
         </a>
+
+        {layoutPresets && layoutPresets.length > 0 && (
+          <div className="flex items-center gap-1.5 text-text-dim">
+            <select
+              value={activeLayoutId ?? ""}
+              onChange={(e) => onSelectLayoutPreset?.(e.target.value)}
+              className="rounded border border-border bg-bg px-2 py-0.5 text-[10px] text-text outline-none focus:border-primary"
+              title="Switch workspace layout"
+            >
+              {layoutPresets.map((preset) => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.name}
+                  {preset.locked ? " •" : ""}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={onSaveLayoutPreset}
+              className="text-text-dim hover:text-primary transition-colors"
+              title="Save current layout as new preset"
+            >
+              <Save size={11} />
+            </button>
+            <button
+              type="button"
+              onClick={() => activeLayoutId && onRenameLayoutPreset?.(activeLayoutId)}
+              disabled={presetLocked || !activeLayoutId}
+              className={`${
+                presetLocked ? "text-border cursor-not-allowed" : "text-text-dim hover:text-primary"
+              } transition-colors`}
+              title={presetLocked ? "Default layout cannot be renamed" : "Rename selected preset"}
+            >
+              <Edit3 size={11} />
+            </button>
+            <button
+              type="button"
+              onClick={() => activeLayoutId && onDeleteLayoutPreset?.(activeLayoutId)}
+              disabled={presetLocked || layoutPresets.length <= 1 || !activeLayoutId}
+              className={`${
+                presetLocked || layoutPresets.length <= 1
+                  ? "text-border cursor-not-allowed"
+                  : "text-text-dim hover:text-danger"
+              } transition-colors`}
+              title={presetLocked ? "Default layout cannot be deleted" : "Delete selected preset"}
+            >
+              <Trash2 size={11} />
+            </button>
+          </div>
+        )}
 
         <ThemeSwitcher />
 
