@@ -15,6 +15,13 @@ export interface ModelEntry {
   contextLength?: number;
   /** Short description if the provider reports one */
   description?: string;
+  /** Modality support advertised by this model */
+  capabilities?: {
+    text?: boolean;
+    image?: boolean;
+    video?: boolean;
+    audio?: boolean;
+  };
 }
 
 export interface ProviderGroup {
@@ -103,6 +110,51 @@ const FETCH_TIMEOUT_MS = 8_000;
 
 let cache: ModelDiscoveryResult | null = null;
 
+interface CapabilityRule {
+  test: (entry: ModelEntry) => boolean;
+  capabilities: ModelEntry["capabilities"];
+}
+
+const CAPABILITY_RULES: CapabilityRule[] = [
+  {
+    test: (entry) =>
+      /^openai\/gpt-image-/i.test(entry.value) || /^openai\/dall-e/i.test(entry.value),
+    capabilities: { image: true },
+  },
+  {
+    test: (entry) => /^openai\/gpt-4o(-mini)?-vision/i.test(entry.value),
+    capabilities: { text: true, image: true },
+  },
+  {
+    test: (entry) => /^openai\/gpt-4o-mini-audio/i.test(entry.value),
+    capabilities: { text: true, audio: true },
+  },
+  {
+    test: (entry) => /^runway\/gen2/i.test(entry.value),
+    capabilities: { video: true },
+  },
+  {
+    test: (entry) =>
+      /^stability\/sdxl/i.test(entry.value) || /stability\/stable-diffusion/i.test(entry.value),
+    capabilities: { image: true },
+  },
+];
+
+function applyCapabilityHints(entry: ModelEntry): void {
+  const base: NonNullable<ModelEntry["capabilities"]> = entry.capabilities
+    ? { ...entry.capabilities }
+    : {};
+  // Default to text=true unless the rule explicitly disables it.
+  if (base.text === undefined) base.text = true;
+  for (const rule of CAPABILITY_RULES) {
+    if (rule.test(entry)) {
+      entry.capabilities = { ...base, ...rule.capabilities };
+      return;
+    }
+  }
+  entry.capabilities = base;
+}
+
 function resolveKey(
   spec: ProviderSpec,
   db?: MarinaDB,
@@ -165,6 +217,7 @@ export function parseProviderResponse(provider: string, body: unknown): ModelEnt
       const label = typeof rec.displayName === "string" ? rec.displayName : id;
       const entry: ModelEntry = { value: `google/${id}`, label };
       if (typeof rec.description === "string") entry.description = rec.description;
+      applyCapabilityHints(entry);
       out.push(entry);
     }
     return out;
@@ -184,6 +237,7 @@ export function parseProviderResponse(provider: string, body: unknown): ModelEnt
       const entry: ModelEntry = { value: `openrouter/${id}`, label };
       if (typeof rec.context_length === "number") entry.contextLength = rec.context_length;
       if (typeof rec.description === "string") entry.description = rec.description;
+      applyCapabilityHints(entry);
       out.push(entry);
     }
     return out;
@@ -200,7 +254,9 @@ export function parseProviderResponse(provider: string, body: unknown): ModelEnt
       const id = typeof rec.id === "string" ? rec.id : null;
       if (!id) continue;
       const label = typeof rec.display_name === "string" ? rec.display_name : id;
-      out.push({ value: `anthropic/${id}`, label });
+      const entry: ModelEntry = { value: `anthropic/${id}`, label };
+      applyCapabilityHints(entry);
+      out.push(entry);
     }
     return out;
   }
@@ -214,7 +270,9 @@ export function parseProviderResponse(provider: string, body: unknown): ModelEnt
     const rec = m as Record<string, unknown>;
     const id = typeof rec.id === "string" ? rec.id : null;
     if (!id) continue;
-    out.push({ value: `${provider}/${id}`, label: id });
+    const entry: ModelEntry = { value: `${provider}/${id}`, label: id };
+    applyCapabilityHints(entry);
+    out.push(entry);
   }
   return out;
 }
