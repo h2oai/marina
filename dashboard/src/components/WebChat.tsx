@@ -8,6 +8,7 @@ import { clearToken, setToken } from "../lib/api";
 import { linkifyHtml } from "../lib/linkify";
 import { parseSpeech } from "../lib/perception";
 import { sanitizeChatHtml } from "../lib/sanitize";
+import { CanvasNodeEmbed } from "./CanvasNodeEmbed";
 import { GlassPanel } from "./GlassPanel";
 
 const ANSI_COLORS: Record<string, string> = {
@@ -204,6 +205,31 @@ interface Perception {
   };
 }
 
+interface CanvasTimelineItem {
+  id: number | string;
+  timestamp: number;
+  canvasId: string;
+  nodeId: string;
+  summary?: string;
+  actor?: string | null;
+  kind: string;
+}
+
+type TimelineItem =
+  | {
+      type: "chat";
+      key: string;
+      timestamp: number;
+      message: ChatMessage;
+      index: number;
+    }
+  | {
+      type: "canvas";
+      key: string;
+      timestamp: number;
+      event: CanvasTimelineItem;
+    };
+
 function handlePerception(raw: unknown) {
   const p = raw as Perception;
   if (p.kind === "auth_error") {
@@ -291,13 +317,6 @@ export function WebChat() {
     ensureChatWs(handlePerception);
   }, []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: only the messages length should retrigger autoscroll
-  useEffect(() => {
-    if (outputRef.current) {
-      outputRef.current.scrollTop = outputRef.current.scrollHeight;
-    }
-  }, [messages]);
-
   const doLogin = useCallback(() => {
     const name = nameRef.current?.value.trim();
     if (!name) return;
@@ -360,6 +379,60 @@ export function WebChat() {
       window.localStorage.setItem(MODE_STORAGE_KEY, viewMode);
     }
   }, [viewMode]);
+
+  const feedEvents = useFeedState((s) => s.events);
+  const canvasTimeline = useMemo<CanvasTimelineItem[]>(() => {
+    const cutoff = Date.now() - 30 * 60 * 1000;
+    const seen = new Set<string>();
+    const entries: CanvasTimelineItem[] = [];
+    for (const event of feedEvents) {
+      if (event.timestamp < cutoff) continue;
+      const payload = event.payload as Record<string, unknown> | null;
+      if (!payload) continue;
+      const canvasId = payload.canvasId;
+      const nodeId = payload.nodeId;
+      if (!canvasId || !nodeId) continue;
+      const entry: CanvasTimelineItem = {
+        id: event.id,
+        timestamp: event.timestamp,
+        canvasId: String(canvasId),
+        nodeId: String(nodeId),
+        summary: event.summary,
+        actor: event.entity ?? null,
+        kind: event.kind,
+      };
+      const dedupeKey = `${entry.canvasId}:${entry.nodeId}:${entry.timestamp}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      entries.push(entry);
+    }
+    return entries.sort((a, b) => a.timestamp - b.timestamp).slice(-40);
+  }, [feedEvents]);
+
+  const timelineItems = useMemo<TimelineItem[]>(() => {
+    if (viewMode !== "rich") return [];
+    const chatItems: TimelineItem[] = messages.map((m, idx) => ({
+      type: "chat",
+      key: `chat-${idx}-${m.timestamp ?? idx}`,
+      timestamp: m.timestamp ?? idx,
+      message: m,
+      index: idx,
+    }));
+    const canvasItems: TimelineItem[] = canvasTimeline.map((event) => ({
+      type: "canvas",
+      key: `canvas-${event.id}-${event.nodeId}`,
+      timestamp: event.timestamp,
+      event,
+    }));
+    return [...chatItems, ...canvasItems].sort((a, b) => a.timestamp - b.timestamp);
+  }, [messages, canvasTimeline, viewMode]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: autoscroll fires on content-length change (and mode switch), keyed on the lengths rather than the ref or full arrays
+  useEffect(() => {
+    if (outputRef.current) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }
+  }, [viewMode, timelineItems.length, messages.length]);
 
   const msgStyle = (kind: string, tag?: string) => {
     if (tag === "tell") return "border-l-2 border-fuchsia-500 pl-2 bg-fuchsia-950/20";
@@ -687,9 +760,23 @@ export function WebChat() {
               : "font-sans text-[13px]"
           }`}
         >
-          {messages.map((m, i) =>
-            viewMode === "compact" ? renderCompactMessage(m, i) : renderRichMessage(m, i),
-          )}
+          {viewMode === "compact"
+            ? messages.map((m, i) => renderCompactMessage(m, i))
+            : timelineItems.map((item) =>
+                item.type === "chat" ? (
+                  renderRichMessage(item.message, item.index)
+                ) : (
+                  <CanvasNodeEmbed
+                    key={item.key}
+                    canvasId={item.event.canvasId}
+                    nodeId={item.event.nodeId}
+                    actor={item.event.actor}
+                    summary={item.event.summary}
+                    kind={item.event.kind}
+                    timestamp={item.event.timestamp}
+                  />
+                ),
+              )}
         </div>
 
         <ContextualCompass />
