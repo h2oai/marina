@@ -1,5 +1,5 @@
 import { Pause, Play, SkipBack, SkipForward, Timeline } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useFeedState } from "../hooks/use-feed-state";
 import { GlassPanel } from "./GlassPanel";
 
@@ -9,8 +9,17 @@ export function NarrativePlayback() {
   const [cursor, setCursor] = useState(ordered.length > 0 ? ordered.length - 1 : 0);
   const [playing, setPlaying] = useState(false);
 
+  // Follow the live edge only when the viewer is already parked at it; if they
+  // scrubbed back, incoming events must not yank the playhead to the end.
+  const prevLenRef = useRef(ordered.length);
   useEffect(() => {
-    setCursor(ordered.length > 0 ? ordered.length - 1 : 0);
+    const prevLen = prevLenRef.current;
+    prevLenRef.current = ordered.length;
+    if (ordered.length === 0) {
+      setCursor(0);
+      return;
+    }
+    setCursor((c) => (c >= prevLen - 1 ? ordered.length - 1 : Math.min(c, ordered.length - 1)));
   }, [ordered.length]);
 
   useEffect(() => {

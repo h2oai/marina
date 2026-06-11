@@ -2,42 +2,12 @@ import { BrainCircuit, Hourglass, MessageCircleQuestion, Users2 } from "lucide-r
 import { useMemo } from "react";
 import { useChatState } from "../hooks/use-chat-state";
 import { useWorldState } from "../hooks/use-world-state";
+import { speakerName } from "../lib/perception";
 import { GlassPanel } from "./GlassPanel";
 
 interface SpeakerInsight {
   name: string;
   count: number;
-}
-
-function parseSpeaker(text: string | undefined, tag: string | undefined): string | null {
-  if (!text) return null;
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-
-  if (tag === "say") {
-    const otherMatch = trimmed.match(/^(.+?) says:/);
-    const selfMatch = trimmed.match(/^You say:/);
-    if (selfMatch) return "You";
-    if (otherMatch) return otherMatch[1] ?? null;
-  }
-  if (tag === "tell") {
-    const fromMatch = trimmed.match(/^>\s+(.+?) tells you:/);
-    const toMatch = trimmed.match(/^>\s+You tell (.+?):/);
-    if (toMatch) return "You";
-    if (fromMatch) return fromMatch[1] ?? null;
-  }
-  if (tag === "shout") {
-    const otherMatch = trimmed.match(/^(.+?) shouts:/i);
-    if (otherMatch) return otherMatch[1] ?? null;
-    if (/^You shout:/i.test(trimmed)) return "You";
-  }
-  if (tag === "emote") {
-    const emoteMatch = trimmed.match(/^\*\s*(.+?)\b/);
-    if (emoteMatch) return emoteMatch[1] ?? null;
-  }
-  if (tag === "say-self") return "You";
-  if (tag === "broadcast") return "System";
-  return null;
 }
 
 export function ConversationInsights() {
@@ -66,7 +36,7 @@ export function ConversationInsights() {
     for (const msg of recent) {
       const ts = msg.timestamp ?? now;
       if (ts > latestTimestamp) latestTimestamp = ts;
-      const speaker = parseSpeaker(msg.text, msg.tag);
+      const speaker = speakerName(msg.text, msg.tag, msg.perception);
       if (speaker) {
         const kind = roleLookup.get(speaker);
         if (kind === "agent") agentLines += 1;
@@ -77,7 +47,8 @@ export function ConversationInsights() {
         const prev = speakerCounts.get(speaker) ?? 0;
         speakerCounts.set(speaker, prev + 1);
 
-        if (!lastQuestion && speaker !== "You" && msg.text?.includes("?")) {
+        // Keep the most recent question (forward scan ⇒ last write wins).
+        if (speaker !== "You" && msg.text?.includes("?")) {
           lastQuestion = { from: speaker, text: msg.text };
         }
       }
