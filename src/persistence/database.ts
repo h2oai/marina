@@ -1464,6 +1464,9 @@ export class MarinaDB {
   countChannelMessages(channelId: string): number {
     return channelsDb.countChannelMessages(this.db, channelId);
   }
+  countBoardPosts(boardId: string, archived = false): number {
+    return channelsDb.countBoardPosts(this.db, boardId, archived);
+  }
   pruneExpiredMessages(now: number): number {
     return channelsDb.pruneExpiredMessages(this.db, now);
   }
@@ -1698,6 +1701,10 @@ export class MarinaDB {
     orderByStanding?: boolean;
   }): TaskRow[] {
     return tasksDb.listTasks(this.db, opts);
+  }
+
+  countTasks(opts?: { status?: string; groupId?: string; parentId?: number }): number {
+    return tasksDb.countTasks(this.db, opts);
   }
 
   updateTaskStatus(id: number, status: string): void {
