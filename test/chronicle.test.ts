@@ -432,6 +432,33 @@ describe("Chronicle — canonical append-only record", () => {
       expect(entries[0]?.source).toBe("chronicler");
     });
 
+    it("passes the gate via AgentConfig role when properties.role is unset (production path)", () => {
+      // The seeded Chronicler's role lives on its AgentConfig — the spawn/login
+      // path never writes entity.properties.role. This is the real-world case
+      // that was blocked before the config-role fallback in isChronicler().
+      db.saveAgentConfig({
+        name: "Scribe",
+        model: "marina/default",
+        role: "chronicler",
+        spawnedBy: "system",
+      });
+      const c = new MockConnection("scribe-conn");
+      engine.addConnection(c);
+      const result = engine.login("scribe-conn", "Scribe");
+      if ("error" in result) throw new Error(result.error);
+      // Sanity: properties.role is genuinely unset, so the gate must rely on
+      // the config-role fallback.
+      expect(engine.entities.get(result.entityId)?.properties.role).toBeUndefined();
+      c.clear();
+
+      engine.processCommand(
+        result.entityId,
+        "chronicle record Spawned write | Body text refs feed:9",
+      );
+      const entries = db.queryChronicle({ kind: "narrative" });
+      expect(entries.some((e) => e.title === "Spawned write")).toBe(true);
+    });
+
     it("refuses a narrative without refs (citation discipline)", () => {
       const chronId = makeChronicler();
       const chronConn = engine.entities.get(chronId);

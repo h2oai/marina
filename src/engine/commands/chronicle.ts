@@ -111,8 +111,14 @@ function weekToken(when: Date): string {
   return `week:${t.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
 }
 
-function isChronicler(entity: Entity): boolean {
-  return entity.properties.role === CHRONICLER_ROLE;
+function isChronicler(entity: Entity, db?: MarinaDB): boolean {
+  // `entity.properties.role` is the nominal source, but the spawn path never
+  // populates it — an agent's role lives on its AgentConfig. So fall back to
+  // the config role, mirroring how entity-api resolves an entity's role. This
+  // is what lets the seeded Chronicler agent (config.role="chronicler")
+  // actually pass the write gate.
+  if (entity.properties.role === CHRONICLER_ROLE) return true;
+  return db?.getAgentConfig(entity.name)?.role === CHRONICLER_ROLE;
 }
 
 export function chronicleCommand(deps: {
@@ -328,7 +334,7 @@ export function chronicleCommand(deps: {
       // free-form interpretation; everything else either auto-emits (engine)
       // or supersedes (correction).
       if (sub === "record") {
-        if (!isChronicler(entity)) {
+        if (!isChronicler(entity, deps.db)) {
           ctx.send(
             input.entity,
             "Only the Chronicler can record narratives. Use `chronicle` to read, `chronicle pending` to see the queue.",
@@ -379,7 +385,7 @@ export function chronicleCommand(deps: {
       // ─── chronicle correct — supersede a prior narrative or digest ──────
       // Append-only: the prior entry is untouched; readers see the chain.
       if (sub === "correct") {
-        if (!isChronicler(entity)) {
+        if (!isChronicler(entity, deps.db)) {
           ctx.send(input.entity, "Only the Chronicler can record corrections.");
           return;
         }
@@ -434,7 +440,7 @@ export function chronicleCommand(deps: {
 
       // ─── chronicle digest — period summary ─────────────────────────────
       if (sub === "digest") {
-        if (!isChronicler(entity)) {
+        if (!isChronicler(entity, deps.db)) {
           ctx.send(input.entity, "Only the Chronicler can record digests.");
           return;
         }
