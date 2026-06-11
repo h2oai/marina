@@ -6,6 +6,7 @@ import { useFeedState } from "../hooks/use-feed-state";
 import { useWorldState } from "../hooks/use-world-state";
 import { clearToken, setToken } from "../lib/api";
 import { linkifyHtml } from "../lib/linkify";
+import { parseSpeech } from "../lib/perception";
 import { sanitizeChatHtml } from "../lib/sanitize";
 import { GlassPanel } from "./GlassPanel";
 
@@ -106,14 +107,6 @@ function formatTimestamp(ts?: number): string {
   }
 }
 
-interface SpeechMeta {
-  speaker?: string;
-  body: string;
-  perspective: "self" | "other";
-  channel?: string;
-  tone?: "emote" | "shout" | "broadcast";
-}
-
 interface RoomPerceptionData {
   name?: string;
   short?: string;
@@ -121,76 +114,6 @@ interface RoomPerceptionData {
   items?: Record<string, unknown>;
   entities?: { name?: string; short?: string }[];
   exits?: string[];
-}
-
-function parseSpeech(
-  text: string | undefined,
-  tag: string | undefined,
-  perception?: StoredPerception,
-): SpeechMeta | null {
-  const data = perception?.data as Record<string, unknown> | undefined;
-  if (!text) return null;
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-
-  if (tag === "say") {
-    const youMatch = trimmed.match(/^You say:\s*(.+)$/);
-    if (youMatch) {
-      return { speaker: "You", body: youMatch[1]!, perspective: "self" };
-    }
-    const otherMatch = trimmed.match(/^(.+?) says:\s*(.+)$/);
-    if (otherMatch) {
-      return { speaker: otherMatch[1]!, body: otherMatch[2]!, perspective: "other" };
-    }
-  }
-
-  if (tag === "tell") {
-    const fromMatch = trimmed.match(/^>\s+(.+?) tells you:\s*(.+)$/);
-    if (fromMatch) {
-      return { speaker: fromMatch[1]!, body: fromMatch[2]!, perspective: "other" };
-    }
-    const toMatch = trimmed.match(/^>\s+You tell (.+?):\s*(.+)$/);
-    if (toMatch) {
-      return { speaker: toMatch[1]!, body: toMatch[2]!, perspective: "self" };
-    }
-  }
-
-  if (tag === "shout") {
-    const selfMatch = trimmed.match(/^You shout:\s*(.+)$/i);
-    if (selfMatch) {
-      return { speaker: "You", body: selfMatch[1]!, perspective: "self", tone: "shout" };
-    }
-    const otherMatch = trimmed.match(/^(.+?) shouts:\s*(.+)$/i);
-    if (otherMatch) {
-      return { speaker: otherMatch[1]!, body: otherMatch[2]!, perspective: "other", tone: "shout" };
-    }
-  }
-
-  if (tag === "emote") {
-    const emoteMatch = trimmed.match(/^\*\s*(.+)$/);
-    if (emoteMatch) {
-      return { body: emoteMatch[1]!, perspective: "other", tone: "emote" };
-    }
-  }
-
-  const channel = data && typeof data.channel === "string" ? (data.channel as string) : undefined;
-  if (channel) {
-    const sender =
-      data && typeof data.senderName === "string" ? (data.senderName as string) : undefined;
-    const content = data && typeof data.content === "string" ? (data.content as string) : trimmed;
-    return {
-      speaker: sender,
-      body: content,
-      perspective: sender === "You" ? "self" : "other",
-      channel,
-    };
-  }
-
-  if (perception?.kind === "broadcast") {
-    return { body: trimmed, perspective: "other", tone: "broadcast" };
-  }
-
-  return { body: trimmed, perspective: "other" };
 }
 
 function appendMsg(text: string, kind: string, tag?: string, perception?: StoredPerception) {
