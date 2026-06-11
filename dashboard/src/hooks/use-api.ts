@@ -22,6 +22,7 @@ import type {
   MacroEntry,
   MarketEntry,
   McpInfo,
+  MediaJob,
   MemoryPool,
   ModelsResponse,
   NoteGraphEntry,
@@ -244,6 +245,18 @@ export function useModels() {
     // Match the server-side 1h cache — dashboard doesn't need to poll more often.
     staleTime: 60 * 60_000,
     gcTime: 2 * 60 * 60_000,
+  });
+}
+
+export function useMediaJobs(entityName?: string, enabled = true) {
+  return useQuery({
+    queryKey: ["media-jobs", entityName ?? "all"],
+    queryFn: () =>
+      fetchApi<MediaJob[]>(
+        `/api/media-jobs${entityName ? `?entity=${encodeURIComponent(entityName)}` : ""}`,
+      ),
+    refetchInterval: enabled ? 15_000 : false,
+    enabled,
   });
 }
 

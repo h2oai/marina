@@ -4,7 +4,7 @@ import { testKeyConnectivity } from "../engine/commands/key";
 import { allRecipeNames, getRecipe } from "../engine/commands/usecase";
 import type { Engine } from "../engine/engine";
 import { computeReadiness } from "../engine/readiness";
-import type { MarinaDB } from "../persistence/database";
+import type { MarinaDB, MediaJobRow } from "../persistence/database";
 import type { Connection, EntityId, Perception, RoomId } from "../types";
 import { ORCHESTRATION_PATTERNS } from "../world/templates/orchestration";
 import { authenticateRequest } from "./auth-middleware";
@@ -333,6 +333,69 @@ export async function handleDashboardApi(
         timestamp: e.created_at,
       })),
     );
+  }
+
+  if (url.pathname === "/api/media-jobs" && method === "GET" && db) {
+    const limitParam = Number.parseInt(url.searchParams.get("limit") ?? "", 10);
+    const entity = url.searchParams.get("entity") ?? undefined;
+    const limit =
+      Number.isFinite(limitParam) && limitParam > 0 && limitParam <= 200 ? limitParam : 100;
+    const jobs = db.listMediaJobs({
+      limit,
+      entityName: entity ?? undefined,
+    });
+    return json(jobs.map((job) => serializeMediaJob(job, engine)));
+  }
+
+  const mediaRetryMatch = url.pathname.match(/^\/api\/media-jobs\/([^/]+)\/retry$/);
+  if (mediaRetryMatch && method === "POST" && db) {
+    if (!engine.mediaManager) return json({ error: "Media pipeline not configured" }, 503);
+    const jobId = decodeURIComponent(mediaRetryMatch[1]!);
+    const job = db.getMediaJob(jobId);
+    if (!job) return json({ error: "Job not found" }, 404);
+    try {
+      const options = safeParse(job.options) as Record<string, unknown> | null;
+      const metadata = safeParse(job.metadata) as Record<string, unknown> | null;
+      const canvasId = typeof options?.canvasId === "string" ? options.canvasId : undefined;
+      const entityId = (job.entity_id ?? job.entity_name) as EntityId;
+      let next: MediaJobRow;
+      if (job.type === "image") {
+        next = await engine.mediaManager.startJob({
+          type: "image",
+          entityId,
+          entityName: job.entity_name,
+          prompt: job.prompt,
+          model: job.model,
+          canvasId,
+          metadata: metadata ?? undefined,
+          width: numberOrNull(options?.width),
+          height: numberOrNull(options?.height),
+          style: typeof options?.style === "string" ? (options.style as string) : undefined,
+        });
+      } else {
+        next = await engine.mediaManager.startJob({
+          type: "video",
+          entityId,
+          entityName: job.entity_name,
+          prompt: job.prompt,
+          model: job.model,
+          canvasId,
+          metadata: metadata ?? undefined,
+          duration: numberOrNull(options?.duration),
+          fps: numberOrNull(options?.fps),
+          referenceImage:
+            typeof options?.referenceImage === "string"
+              ? (options.referenceImage as string)
+              : undefined,
+          aspectRatio:
+            typeof options?.aspectRatio === "string" ? (options.aspectRatio as string) : undefined,
+        });
+      }
+      return json(serializeMediaJob(next, engine), next.status === "succeeded" ? 200 : 202);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return json({ error: message }, 400);
+    }
   }
 
   // ─── Knowledge Graph API ───────────────────────────────────────────────
@@ -1737,6 +1800,50 @@ async function handleEnvPut(req: Request): Promise<Response> {
   }
 
   return json({ ok: true, reloaded, restartRequired });
+}
+
+function serializeMediaJob(job: MediaJobRow, engine: Engine): Record<string, unknown> {
+  const options = safeParse(job.options) as Record<string, unknown> | null;
+  const metadata = safeParse(job.metadata) as Record<string, unknown> | null;
+  const asset =
+    job.asset_id && engine.db ? (engine.db.getAsset(job.asset_id) ?? undefined) : undefined;
+  const assetUrl = asset && engine.storage ? engine.storage.resolve(asset.storage_key) : null;
+  return {
+    id: job.id,
+    type: job.type,
+    status: job.status,
+    provider: job.provider,
+    model: job.model,
+    prompt: job.prompt,
+    entityName: job.entity_name,
+    costEstimate: job.cost_estimate,
+    error: job.error,
+    assetId: job.asset_id,
+    assetUrl,
+    options,
+    metadata,
+    createdAt: job.created_at,
+    updatedAt: job.updated_at,
+    completedAt: job.completed_at,
+  };
+}
+
+function numberOrNull(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function safeParse(raw: string | null): unknown {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 function maskKey(value: string): string {

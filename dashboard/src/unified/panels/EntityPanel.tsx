@@ -420,6 +420,7 @@ const AgentRow = memo(function AgentRow({
             {agent.role && <span style={{ color: "var(--color-accent)" }}>{agent.role}</span>}
             <span>{agent.toolCalls} calls</span>
             {agent.errors > 0 && <span style={{ color: "#ef4444" }}>{agent.errors} err</span>}
+            {renderSupportSummary(agent.supports)}
           </div>
           {agent.goal && (
             <div
@@ -524,6 +525,18 @@ const LaunchTab = memo(function LaunchTab(_props: { sendCommand?: (cmd: string) 
       setError(e instanceof Error ? e.message : "Spawn failed");
     } finally {
       setSpawning(false);
+    }
+
+    function renderSupportSummary(supports: {
+      text: boolean;
+      image?: boolean;
+      video?: boolean;
+    }): JSX.Element | null {
+      const modes: string[] = [];
+      if (supports.image) modes.push("image");
+      if (supports.video) modes.push("video");
+      if (modes.length === 0) return null;
+      return <span style={{ color: "var(--color-accent)" }}>{modes.join(" · ")}</span>;
     }
   }, [name, effectiveModel, role, goal, keyName]);
 

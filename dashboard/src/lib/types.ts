@@ -340,6 +340,12 @@ export interface WorldSnapshot {
 
 // ─── Agent Types ────────────────────────────────────────────────────────────
 
+export interface AgentSupports {
+  text: boolean;
+  image?: boolean;
+  video?: boolean;
+}
+
 export interface AgentStatusInfo {
   state: string;
   model: string;
@@ -349,6 +355,7 @@ export interface AgentStatusInfo {
   toolCalls: number;
   errors: number;
   errorReason: string | null;
+  supports: AgentSupports;
 }
 
 export interface AgentStatusFull {
@@ -364,6 +371,26 @@ export interface AgentStatusFull {
   errors: number;
   errorReason: string | null;
   lastActivity: number;
+  supports: AgentSupports;
+}
+
+export interface MediaJob {
+  id: string;
+  type: "image" | "video";
+  status: "pending" | "running" | "succeeded" | "failed" | "blocked";
+  provider: string;
+  model: string;
+  prompt: string;
+  entityName: string;
+  costEstimate?: number | null;
+  error?: string | null;
+  assetId?: string | null;
+  assetUrl?: string | null;
+  options?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown> | null;
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;
 }
 
 export interface KeyStatus {
@@ -379,6 +406,12 @@ export interface ModelEntry {
   label: string;
   contextLength?: number;
   description?: string;
+  capabilities?: {
+    text: boolean;
+    image?: boolean;
+    video?: boolean;
+    audio?: boolean;
+  };
 }
 
 export interface ProviderGroup {

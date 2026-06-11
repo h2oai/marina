@@ -6,6 +6,13 @@
 
 import type { MarinaDB } from "../persistence/database";
 
+export interface ModelCapabilities {
+  text?: boolean;
+  image?: boolean;
+  video?: boolean;
+  audio?: boolean;
+}
+
 export interface ModelEntry {
   /** Full routable id used by the model API: `<provider>/<model>` */
   value: string;
@@ -16,12 +23,7 @@ export interface ModelEntry {
   /** Short description if the provider reports one */
   description?: string;
   /** Modality support advertised by this model */
-  capabilities?: {
-    text?: boolean;
-    image?: boolean;
-    video?: boolean;
-    audio?: boolean;
-  };
+  capabilities?: ModelCapabilities;
 }
 
 export interface ProviderGroup {
@@ -119,7 +121,7 @@ const CAPABILITY_RULES: CapabilityRule[] = [
   {
     test: (entry) =>
       /^openai\/gpt-image-/i.test(entry.value) || /^openai\/dall-e/i.test(entry.value),
-    capabilities: { image: true },
+    capabilities: { text: false, image: true },
   },
   {
     test: (entry) => /^openai\/gpt-4o(-mini)?-vision/i.test(entry.value),
@@ -131,12 +133,12 @@ const CAPABILITY_RULES: CapabilityRule[] = [
   },
   {
     test: (entry) => /^runway\/gen2/i.test(entry.value),
-    capabilities: { video: true },
+    capabilities: { text: false, video: true },
   },
   {
     test: (entry) =>
       /^stability\/sdxl/i.test(entry.value) || /stability\/stable-diffusion/i.test(entry.value),
-    capabilities: { image: true },
+    capabilities: { text: false, image: true },
   },
 ];
 
@@ -153,6 +155,27 @@ function applyCapabilityHints(entry: ModelEntry): void {
     }
   }
   entry.capabilities = base;
+}
+
+export interface CapabilitySnapshot {
+  text: boolean;
+  image?: boolean;
+  video?: boolean;
+  audio?: boolean;
+}
+
+/** Infer coarse modality support for a model identifier. */
+export function inferModelCapabilities(modelId: string): CapabilitySnapshot {
+  const value = modelId.includes("@") ? modelId.slice(0, modelId.indexOf("@")) : modelId;
+  const entry: ModelEntry = { value, label: value };
+  applyCapabilityHints(entry);
+  const caps = entry.capabilities ?? {};
+  return {
+    text: caps.text !== false,
+    image: caps.image ? true : undefined,
+    video: caps.video ? true : undefined,
+    audio: caps.audio ? true : undefined,
+  };
 }
 
 function resolveKey(

@@ -1,5 +1,11 @@
 import type { EntityId } from "../types";
 
+export interface AgentSupports {
+  text: boolean;
+  image?: boolean;
+  video?: boolean;
+}
+
 // ─── Agent Configuration ────────────────────────────────────────────────────
 
 export interface AgentConfig {
@@ -90,6 +96,12 @@ export interface AgentConfig {
    * Unset = false (backward compatible).
    */
   crewResponder?: boolean;
+  /**
+   * Modalities available to this agent's configured model. Populated at spawn
+   * so humans know whether image or video tools are callable. Defaults to
+   * { text: true } when unknown.
+   */
+  supports?: AgentSupports;
 }
 
 // ─── Agent Status ───────────────────────────────────────────────────────────
@@ -107,6 +119,7 @@ export interface AgentStatus {
   errors: number;
   errorReason: string | null;
   lastActivity: number;
+  supports: AgentSupports;
 }
 
 // ─── Agent Handle ───────────────────────────────────────────────────────────
@@ -125,6 +138,7 @@ export interface AgentHandle {
     role?: string;
     rolePrompt?: string | null;
     keyName?: string;
+    supports?: AgentSupports;
     /** Static key or dynamic resolver called on each LLM call. */
     apiKey?: string | (() => string | undefined | Promise<string | undefined>);
   }): Promise<void>;

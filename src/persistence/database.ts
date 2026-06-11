@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { statSync } from "node:fs";
+import type { AgentSupports } from "../agent/agent-types";
 import type { Session } from "../auth/session-manager";
 import type { NoteTier } from "../engine/constants";
 import type { EngineEvent, Entity, EntityId, RoomId } from "../types";
@@ -11,6 +12,7 @@ import * as competenceDb from "./db-competence";
 import * as crewsDb from "./db-crews";
 import * as entitiesDb from "./db-entities";
 import * as feedDb from "./db-feed";
+import * as mediaDb from "./db-media";
 import * as notesDb from "./db-notes";
 import * as standingDb from "./db-standing";
 import * as tasksDb from "./db-tasks";
@@ -36,6 +38,7 @@ export type {
 } from "./db-channels";
 export type { CompetenceRow } from "./db-competence";
 export type { CrewMemberRow, CrewRow } from "./db-crews";
+export type { MediaJobRow, MediaJobStatus, MediaJobType } from "./db-media";
 export type { StandingCacheRow, StandingLedgerRow } from "./db-standing";
 export type { TaskClaimRow, TaskRow } from "./db-tasks";
 
@@ -1261,6 +1264,40 @@ CREATE TABLE app_settings (
     version: 44,
     sql: `
 ALTER TABLE experiment_results ADD COLUMN arm TEXT NOT NULL DEFAULT '';
+`,
+  },
+  // Migration 45: track modality support for saved agent configs.
+  {
+    version: 45,
+    sql: `
+ALTER TABLE agent_configs ADD COLUMN supports TEXT NOT NULL DEFAULT '{"text":true}';
+UPDATE agent_configs SET supports = '{"text":true}' WHERE supports IS NULL OR supports = '';
+`,
+  },
+  {
+    version: 46,
+    sql: `
+CREATE TABLE media_jobs (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  entity_name TEXT NOT NULL,
+  entity_id TEXT,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  options TEXT NOT NULL DEFAULT '{}',
+  error TEXT,
+  asset_id TEXT,
+  cost_estimate REAL,
+  provider_job_id TEXT,
+  metadata TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  completed_at INTEGER
+);
+CREATE INDEX idx_media_jobs_entity ON media_jobs(entity_name, created_at DESC);
+CREATE INDEX idx_media_jobs_status ON media_jobs(status, created_at DESC);
 `,
   },
 ];
@@ -2894,6 +2931,56 @@ export class MarinaDB {
     return result.changes > 0;
   }
 
+  // ─── Media Jobs ──────────────────────────────────────────────────────────
+
+  createMediaJob(job: {
+    id: string;
+    type: mediaDb.MediaJobType;
+    entityName: string;
+    entityId: string | null;
+    provider: string;
+    model: string;
+    prompt: string;
+    options: Record<string, unknown>;
+    costEstimate?: number | null;
+    providerJobId?: string | null;
+    metadata?: Record<string, unknown> | null;
+  }): void {
+    mediaDb.insertMediaJob(this.db, job);
+  }
+
+  updateMediaJob(
+    id: string,
+    patch: Partial<{
+      status: mediaDb.MediaJobStatus;
+      assetId: string | null;
+      error: string | null;
+      costEstimate: number | null;
+      providerJobId: string | null;
+      metadata: Record<string, unknown> | null;
+      options: Record<string, unknown>;
+      completedAt: number | null;
+    }>,
+  ): void {
+    mediaDb.updateMediaJob(this.db, id, patch);
+  }
+
+  getMediaJob(id: string): mediaDb.MediaJobRow | undefined {
+    return mediaDb.getMediaJob(this.db, id);
+  }
+
+  listMediaJobs(opts: { limit?: number; entityName?: string } = {}): mediaDb.MediaJobRow[] {
+    return mediaDb.listMediaJobs(this.db, opts);
+  }
+
+  countMediaJobsSince(opts: {
+    entityName?: string;
+    type?: mediaDb.MediaJobType;
+    since: number;
+  }): number {
+    return mediaDb.countMediaJobsSince(this.db, opts);
+  }
+
   // ─── Canvases ──────────────────────────────────────────────────────────
 
   createCanvas(canvas: {
@@ -3468,6 +3555,7 @@ export class MarinaDB {
     keyName?: string;
     room?: string;
     spawnedBy: string;
+    supports?: AgentSupports;
   }): void {
     agentsDb.saveAgentConfig(this.db, opts);
   }

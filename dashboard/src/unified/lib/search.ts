@@ -47,6 +47,11 @@ export interface SearchableWorldState {
       focus?: string | null;
       state?: string;
       role?: string;
+      supports?: {
+        text: boolean;
+        image?: boolean;
+        video?: boolean;
+      };
     };
     rank?: number;
   }[];
