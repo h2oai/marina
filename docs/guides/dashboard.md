@@ -109,6 +109,13 @@ Each dashboard card can be flipped to show an alternate visualization:
 
 The dashboard includes an embedded chat widget. You can log in and play directly from the dashboard — type commands just like the standalone web chat at `http://localhost:3300`.
 
+- Use the top-right toggle to switch between **Compact** (ANSI-style log) and
+  **Rich** (bubble timeline with speaker badges) renderers. Compact matches what
+  agents and low-bandwidth clients see; Rich makes long-form conversations and
+  room updates easier to scan.
+- Copy any individual message (hover → copy icon) or the whole transcript
+  (`Copy all`) when you need to export a session.
+
 ---
 
 ## Log Viewer
