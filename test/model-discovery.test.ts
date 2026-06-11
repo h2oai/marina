@@ -10,8 +10,16 @@ describe("parseProviderResponse", () => {
       ],
     };
     expect(parseProviderResponse("anthropic", body)).toEqual([
-      { value: "anthropic/claude-opus-4-6", label: "Claude Opus 4.6" },
-      { value: "anthropic/claude-haiku-4-5", label: "claude-haiku-4-5" },
+      {
+        value: "anthropic/claude-opus-4-6",
+        label: "Claude Opus 4.6",
+        capabilities: { text: true },
+      },
+      {
+        value: "anthropic/claude-haiku-4-5",
+        label: "claude-haiku-4-5",
+        capabilities: { text: true },
+      },
     ]);
   });
 
@@ -24,12 +32,16 @@ describe("parseProviderResponse", () => {
       ],
     };
     expect(parseProviderResponse("openai", body)).toEqual([
-      { value: "openai/gpt-4o", label: "gpt-4o" },
-      { value: "openai/gpt-4o-mini", label: "gpt-4o-mini" },
+      { value: "openai/gpt-4o", label: "gpt-4o", capabilities: { text: true } },
+      { value: "openai/gpt-4o-mini", label: "gpt-4o-mini", capabilities: { text: true } },
     ]);
     // Same shape works for other openai-compatible providers
     expect(parseProviderResponse("groq", { data: [{ id: "llama-3.3-70b-versatile" }] })).toEqual([
-      { value: "groq/llama-3.3-70b-versatile", label: "llama-3.3-70b-versatile" },
+      {
+        value: "groq/llama-3.3-70b-versatile",
+        label: "llama-3.3-70b-versatile",
+        capabilities: { text: true },
+      },
     ]);
   });
 
@@ -51,10 +63,12 @@ describe("parseProviderResponse", () => {
         label: "Anthropic: Claude Sonnet 4",
         contextLength: 200000,
         description: "Strong reasoning",
+        capabilities: { text: true },
       },
       {
         value: "openrouter/google/gemini-2.5-pro-preview",
         label: "Google: Gemini 2.5 Pro",
+        capabilities: { text: true },
       },
     ]);
   });
@@ -80,6 +94,7 @@ describe("parseProviderResponse", () => {
         value: "google/gemini-2.0-flash",
         label: "Gemini 2.0 Flash",
         description: "Fast",
+        capabilities: { text: true },
       },
     ]);
   });

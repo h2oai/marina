@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useModels } from "../hooks/use-api";
 import { mergeGroups, providerLabel, totalModelCount } from "../lib/model-catalog";
+import type { ModelEntry } from "../lib/types";
 
 /**
  * Shared model picker — the single source of truth for how a model is chosen
@@ -73,8 +74,9 @@ export function ModelSelect({
           {liveGroups.map((g) => (
             <optgroup key={g.provider} label={providerLabel(g.provider)}>
               {g.models.map((m) => (
-                <option key={m.value} value={m.value} title={m.description}>
+                <option key={m.value} value={m.value} title={buildOptionTitle(m)}>
                   {m.label}
+                  {formatCapabilitySuffix(m)}
                 </option>
               ))}
             </optgroup>
@@ -98,4 +100,29 @@ export function ModelSelect({
       )}
     </div>
   );
+}
+
+function buildOptionTitle(model: ModelEntry): string {
+  const parts: string[] = [];
+  if (model.description) parts.push(model.description);
+  const cap = describeCapabilities(model.capabilities);
+  if (cap) parts.push(`Capabilities: ${cap}`);
+  return parts.join(" • ");
+}
+
+function formatCapabilitySuffix(model: ModelEntry): string {
+  const cap = describeCapabilities(model.capabilities);
+  if (!cap || cap === "text") return "";
+  return ` (${cap})`;
+}
+
+function describeCapabilities(cap?: ModelEntry["capabilities"]): string | null {
+  if (!cap) return null;
+  const modes: string[] = [];
+  if (cap.text !== false) modes.push("text");
+  if (cap.image) modes.push("image");
+  if (cap.video) modes.push("video");
+  if (cap.audio) modes.push("audio");
+  if (modes.length === 0) return null;
+  return modes.join(", ");
 }

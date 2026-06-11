@@ -10,16 +10,34 @@ export const FALLBACK_GROUPS: ProviderGroup[] = [
     error: null,
     keySource: null,
     models: [
-      { value: "anthropic/claude-opus-4-6", label: "Claude Opus 4.6" },
-      { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-      { value: "anthropic/claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+      {
+        value: "anthropic/claude-opus-4-6",
+        label: "Claude Opus 4.6",
+        capabilities: { text: true },
+      },
+      {
+        value: "anthropic/claude-sonnet-4-6",
+        label: "Claude Sonnet 4.6",
+        capabilities: { text: true },
+      },
+      {
+        value: "anthropic/claude-haiku-4-5-20251001",
+        label: "Claude Haiku 4.5",
+        capabilities: { text: true },
+      },
     ],
   },
   {
     provider: "openai",
     error: null,
     keySource: null,
-    models: [{ value: "openai/gpt-4o", label: "GPT-4o" }],
+    models: [
+      {
+        value: "openai/gpt-4o",
+        label: "GPT-4o",
+        capabilities: { text: true, image: true },
+      },
+    ],
   },
 ];
 

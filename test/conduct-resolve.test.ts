@@ -38,6 +38,7 @@ function running(name: string, role: string): AgentStatus {
     errors: 0,
     errorReason: null,
     lastActivity: Date.now(),
+    supports: { text: true },
   };
 }
 

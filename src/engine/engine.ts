@@ -62,6 +62,7 @@ import { getErrorMessage, tryLog, tryLogAsync } from "./errors";
 import { EventLog } from "./event-log";
 import { GatewayRuntime } from "./gateway-runtime";
 import { Logger } from "./logger";
+import { MediaManager } from "./media/manager";
 import { getRank, rankName, setRank } from "./permissions";
 import { RoomSandbox } from "./room-sandbox";
 import { checkGate, grantGatesForRank, recordDemonstration } from "./safety-gates";
@@ -121,6 +122,7 @@ export class Engine {
   readonly shellRuntime: ShellRuntime;
   readonly storage?: StorageProvider;
   readonly benchmarkRunner?: BenchmarkRunner;
+  readonly mediaManager?: MediaManager;
   /** @internal */ db?: MarinaDB;
   private startedAt = Date.now();
   private fetchLastCall = new Map<string, number>(); // roomId -> timestamp
@@ -242,6 +244,16 @@ export class Engine {
       db: this.db,
       onEvent: (event) => this.logEvent(event),
     });
+
+    if (this.db && this.storage) {
+      this.mediaManager = new MediaManager({
+        engine: this,
+        db: this.db,
+        storage: this.storage,
+        resolveApiKey: (provider) => this.agentRuntime.getProviderKey(provider),
+        logEvent: (event) => this.logEvent(event),
+      });
+    }
 
     this.registerBuiltinCommands();
   }
@@ -935,6 +947,7 @@ export class Engine {
       clearTimeout(timer);
     }
     this.entityEvictionTimers.clear();
+    this.mediaManager?.stop();
     this.logger.info("engine", "Marina engine stopped.");
   }
 
