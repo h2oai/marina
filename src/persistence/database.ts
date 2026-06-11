@@ -1254,6 +1254,15 @@ CREATE TABLE app_settings (
 );
 `,
   },
+  // Migration 44: experiment arms — tag each recorded result with the comparison
+  // arm/condition it belongs to (e.g. "A"/"B"). Empty string = legacy/un-armed
+  // result, so existing data and the flat-results path keep working.
+  {
+    version: 44,
+    sql: `
+ALTER TABLE experiment_results ADD COLUMN arm TEXT NOT NULL DEFAULT '';
+`,
+  },
 ];
 
 // ─── Database Class ──────────────────────────────────────────────────────────
@@ -2784,11 +2793,12 @@ export class MarinaDB {
     entityName: string,
     metricName: string,
     metricValue: number,
+    arm = "",
   ): void {
     this.db.run(
-      `INSERT INTO experiment_results (experiment_id, entity_name, metric_name, metric_value, recorded_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      [experimentId, entityName, metricName, metricValue, Date.now()],
+      `INSERT INTO experiment_results (experiment_id, entity_name, metric_name, metric_value, arm, recorded_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [experimentId, entityName, metricName, metricValue, arm, Date.now()],
     );
   }
 
@@ -3860,6 +3870,7 @@ interface ExperimentResultRow {
   entity_name: string;
   metric_name: string;
   metric_value: number;
+  arm: string;
   recorded_at: number;
 }
 
