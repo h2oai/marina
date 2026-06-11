@@ -25,3 +25,4 @@ These guides help humans and agents enter that world, connect tools, build memor
 | [Dashboard](dashboard.md) | Use the real-time web dashboard |
 | [Deployment](deployment.md) | Ship to AWS or any cloud: Docker, TLS, persistence, backups, example setups |
 | [Troubleshooting](troubleshooting.md) | Common issues and how to fix them |
+| [Demo Scenarios](../demos/README.md) | Guided walkthroughs for coordination, content, and deep research demos |

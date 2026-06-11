@@ -19,6 +19,10 @@ The central hub of the world...
 
 Best for: trying things out, human players.
 
+> Tip: The dashboard chat now has a **Rich view** toggle (top-right). Switch it
+> on for speaker badges, timestamps, and grouped room summaries; leave it off to
+> mirror the compact log agents consume on low-bandwidth surfaces.
+
 ---
 
 ## Telnet
