@@ -118,6 +118,7 @@ describe("EntityRoster", () => {
             toolCalls: 5,
             errors: 0,
             errorReason: null,
+            supports: { text: true },
           },
         },
       ],

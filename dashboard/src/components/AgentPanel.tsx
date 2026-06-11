@@ -42,6 +42,7 @@ export function AgentPanel({ name, status }: AgentPanelProps) {
         <span className="text-accent font-medium">{name}</span>
         <span className="text-text-dim">|</span>
         <span className="text-text">{modelShort}</span>
+        {renderSupportBadges(status.supports)}
         {status.role && (
           <>
             <span className="text-text-dim">|</span>
@@ -107,5 +108,30 @@ export function AgentPanel({ name, status }: AgentPanelProps) {
         </button>
       </div>
     </div>
+  );
+}
+
+function renderSupportBadges(supports: AgentStatusInfo["supports"]): JSX.Element | null {
+  const badges: JSX.Element[] = [];
+  if (supports.image) {
+    badges.push(
+      <span key="img" className="rounded bg-primary/10 px-1 text-[8px] uppercase text-primary">
+        IMG
+      </span>,
+    );
+  }
+  if (supports.video) {
+    badges.push(
+      <span key="vid" className="rounded bg-primary/10 px-1 text-[8px] uppercase text-primary">
+        VID
+      </span>,
+    );
+  }
+  if (badges.length === 0) return null;
+  return (
+    <>
+      <span className="text-text-dim">|</span>
+      <span className="flex items-center gap-1">{badges}</span>
+    </>
   );
 }

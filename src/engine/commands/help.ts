@@ -34,7 +34,7 @@ export const COMMAND_CATEGORIES: Record<string, string[]> = {
     "conduct",
     "share",
   ],
-  "Canvas & Media": ["canvas", "usecase"],
+  "Canvas & Media": ["canvas", "usecase", "image", "video"],
   Agents: ["agent", "run"],
   Building: ["build", "connect"],
   Federation: ["gateway"],

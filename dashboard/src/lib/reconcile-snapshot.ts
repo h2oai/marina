@@ -28,8 +28,17 @@ function agentStatusEqual(a: AgentStatusInfo | undefined, b: AgentStatusInfo | u
     a.focus === b.focus &&
     a.toolCalls === b.toolCalls &&
     a.errors === b.errors &&
-    a.errorReason === b.errorReason
+    a.errorReason === b.errorReason &&
+    supportsEqual(a.supports, b.supports)
     // uptime intentionally omitted — see file header.
+  );
+}
+
+function supportsEqual(a: AgentStatusInfo["supports"], b: AgentStatusInfo["supports"]): boolean {
+  return (
+    a.text === b.text &&
+    Boolean(a.image) === Boolean(b.image) &&
+    Boolean(a.video) === Boolean(b.video)
   );
 }
 

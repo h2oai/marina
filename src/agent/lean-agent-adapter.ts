@@ -20,7 +20,13 @@ import { MARINA_DEFAULT_MODEL } from "../engine/constants";
 import { MarinaClient } from "../sdk/client";
 import type { Perception } from "../types";
 import { ActionHistory } from "./action-history";
-import type { AgentConfig, AgentEvent, AgentHandle, AgentStatus } from "./agent-types";
+import type {
+  AgentConfig,
+  AgentEvent,
+  AgentHandle,
+  AgentStatus,
+  AgentSupports,
+} from "./agent-types";
 import { createContextManager } from "./context-manager";
 import { GameStateManager } from "./game-state";
 import { HookRegistry } from "./hook-registry";
@@ -31,6 +37,14 @@ import { SocialAwareness } from "./social";
 import { createScopedTools } from "./tools";
 
 // ─── Model Resolution ───────────────────────────────────────────────────────
+function normalizeSupports(supports: AgentSupports | undefined): AgentSupports {
+  if (!supports) return { text: true };
+  return {
+    text: supports.text === false ? false : true,
+    ...(supports.image ? { image: true } : {}),
+    ...(supports.video ? { video: true } : {}),
+  };
+}
 
 /**
  * Safe wrapper around pi-ai's `getModel`.
@@ -349,6 +363,7 @@ export class LeanAgentAdapter implements AgentHandle {
     apiKey?: string | (() => string | undefined | Promise<string | undefined>),
     internalToken?: string,
   ) {
+    config.supports = normalizeSupports(config.supports);
     this.name = config.name;
     this.config = config;
     this.rolePrompt = rolePrompt;
@@ -391,7 +406,12 @@ export class LeanAgentAdapter implements AgentHandle {
     // is functionally complete via `marina_command`'s escape hatch.
     const toolContext = { client: this.client, gameState: this.gameState };
     const toolProfile = config.toolProfile ?? "full";
-    const tools = createScopedTools(toolContext, this.platformMemory, toolProfile);
+    const tools = createScopedTools(
+      toolContext,
+      this.platformMemory,
+      toolProfile,
+      config.supports ?? { text: true },
+    );
 
     // Keep the resolver around so the context manager can re-query it
     // each compaction (rotating-credential safe).
@@ -1579,6 +1599,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       errors: this.metrics.errors,
       errorReason: state === "error" ? this.lastErrorReason : null,
       lastActivity: this.metrics.lastActivity || this.metrics.startedAt || 0,
+      supports: this.config.supports ?? { text: true },
     };
   }
 
@@ -1611,6 +1632,7 @@ The goal is a smaller, sharper memory — not more notes.`;
     role?: string;
     rolePrompt?: string | null;
     keyName?: string;
+    supports?: AgentSupports;
     apiKey?: string | (() => string | undefined | Promise<string | undefined>);
   }): Promise<void> {
     // Stop the current loop — abort in-flight prompt immediately.
@@ -1641,6 +1663,9 @@ The goal is a smaller, sharper memory — not more notes.`;
     }
     if (opts.keyName !== undefined) {
       this.config.keyName = opts.keyName;
+    }
+    if (opts.supports !== undefined) {
+      this.config.supports = normalizeSupports(opts.supports);
     }
     if (opts.apiKey !== undefined) {
       const nextKey = opts.apiKey;

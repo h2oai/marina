@@ -10,10 +10,13 @@
  * - All items are clickable and navigate to other objects
  */
 
+import { useQueryClient } from "@tanstack/react-query";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MediaJobsList } from "../../components/MediaJobsList";
 import {
   useEntityBrief,
   useEntityDetail,
+  useMediaJobs,
   useNoteDetail,
   useNoteGraph,
   useRoomDetail,
@@ -21,9 +24,18 @@ import {
 import { useChatState } from "../../hooks/use-chat-state";
 import { useInvalidateOnEvent } from "../../hooks/use-realtime";
 import { useWorldState } from "../../hooks/use-world-state";
-import { postApi } from "../../lib/api";
-import type { AgentStatusInfo, DashboardEvent, EntityDetail, RoomDetail } from "../../lib/types";
+import { authFetch, postApi } from "../../lib/api";
+import type {
+  AgentStatusInfo,
+  AgentSupports,
+  DashboardEvent,
+  EntityDetail,
+  MediaJob,
+  RoomDetail,
+} from "../../lib/types";
 import { getDistrictColor } from "../lib/crown-shapes";
+
+const API_BASE = window.location.origin;
 
 /** Events that meaningfully change an entity's brief aggregate. */
 const BRIEF_MUTATION_TYPES = new Set([
@@ -38,6 +50,14 @@ const BRIEF_MUTATION_TYPES = new Set([
   "agent_spawn",
   "agent_stop",
   "rank_change",
+]);
+
+const MEDIA_FEED_KINDS = new Set([
+  "media_pending",
+  "media_rendering",
+  "media_complete",
+  "media_failed",
+  "media_blocked",
 ]);
 
 /** Events that change the knowledge graph snippet we show per-entity. */
@@ -728,6 +748,14 @@ function formatUptime(seconds: number): string {
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
+function formatSupports(supports: AgentSupports): string {
+  const modes: string[] = [];
+  if (supports.text !== false) modes.push("text");
+  if (supports.image) modes.push("image");
+  if (supports.video) modes.push("video");
+  return modes.length > 0 ? modes.join(", ") : "none";
+}
+
 // ── Compass Section ─────────────────────────────────────────────────────────
 
 const COMPASS_COLORS: Record<string, string> = {
@@ -880,6 +908,92 @@ const KnowledgeGraphSection = memo(function KnowledgeGraphSection({
           </div>
         </div>
       ))}
+    </CascadeSection>
+  );
+});
+
+const MediaSection = memo(function MediaSection({
+  entityName,
+  sendCommand,
+}: {
+  entityName: string;
+  sendCommand?: (command: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const mediaQuery = useMediaJobs(entityName);
+  const { data: jobs, isLoading, isError } = mediaQuery;
+  useInvalidateOnEvent(
+    ["media-jobs", entityName],
+    useCallback(
+      (event: DashboardEvent) =>
+        event.type === "feed_event" && MEDIA_FEED_KINDS.has(event.kind ?? ""),
+      [entityName],
+    ),
+  );
+
+  const invalidate = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["media-jobs", entityName] });
+  }, [entityName, queryClient]);
+
+  const handleRetry = useCallback(
+    async (job: MediaJob) => {
+      try {
+        const res = await authFetch(`${API_BASE}/api/media-jobs/${job.id}/retry`, {
+          method: "POST",
+        });
+        if (!res.ok) {
+          throw new Error(`Retry failed (${res.status})`);
+        }
+        invalidate();
+      } catch (error) {
+        console.error("[media] retry failed", error);
+      }
+    },
+    [invalidate],
+  );
+
+  const handleDeleteAsset = useCallback(
+    async (job: MediaJob) => {
+      if (!job.assetId) return;
+      try {
+        const res = await authFetch(`${API_BASE}/api/assets/${job.assetId}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          throw new Error(`Delete failed (${res.status})`);
+        }
+        invalidate();
+      } catch (error) {
+        console.error("[media] delete asset failed", error);
+      }
+    },
+    [invalidate],
+  );
+
+  return (
+    <CascadeSection title={`Media (${jobs?.length ?? 0})`} defaultOpen={false}>
+      {isLoading && <div style={{ fontSize: "11px", color: "#888" }}>Loading media activity…</div>}
+      {isError && (
+        <div className="flex items-center justify-between gap-2 rounded border border-border bg-bg px-2 py-2 text-[11px] text-danger">
+          <span>Failed to load media jobs.</span>
+          <button
+            type="button"
+            className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
+            onClick={() => void mediaQuery.refetch()}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      {!isLoading && !isError && (
+        <MediaJobsList
+          jobs={jobs ?? []}
+          onRetry={handleRetry}
+          onDeleteAsset={handleDeleteAsset}
+          sendCommand={sendCommand}
+          emptyMessage="No media jobs yet."
+        />
+      )}
     </CascadeSection>
   );
 });
@@ -1092,6 +1206,7 @@ const EntityContextInner = memo(function EntityContextInner({
                 valueColor="var(--color-teal, #2dd4bf)"
               />
             )}
+            <PropRow label="Modalities" value={formatSupports(agentStatus.supports)} />
             <PropRow label="Uptime" value={formatUptime(agentStatus.uptime)} />
             <PropRow label="Tool calls" value={String(agentStatus.toolCalls)} />
             <PropRow
@@ -1112,6 +1227,7 @@ const EntityContextInner = memo(function EntityContextInner({
 
       {/* Compass — brief orientation for the entity */}
       <CompassSection entityName={entity.name} />
+      <MediaSection entityName={entity.name} sendCommand={sendCommand} />
 
       {/* Core Memory */}
       {entity.coreMemory && entity.coreMemory.length > 0 && (

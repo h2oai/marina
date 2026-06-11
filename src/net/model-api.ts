@@ -4,6 +4,7 @@ import type { ChannelManager } from "../coordination/channel-manager";
 import type { Engine } from "../engine/engine";
 import { buildAliasMap } from "./compat-profiles";
 import { corsHeaders } from "./cors";
+import { handleMediaApi } from "./media-api";
 import { getEndpointConfig } from "./model-endpoint";
 
 const MODEL_CORS = corsHeaders(null, {
@@ -1088,6 +1089,10 @@ export async function handleModelApi(
     if (!rateLimiter.consume(`model:${ip}`)) {
       return errorJson(429, "Rate limited. Please slow down.");
     }
+  }
+
+  if (url.pathname.startsWith("/v1/media")) {
+    return await handleMediaApi(url, method, req, engine);
   }
 
   // OpenAI: GET /v1/models

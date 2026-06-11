@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { AgentSupports } from "../agent/agent-types";
 import { MARINA_DEFAULT_MODEL } from "../engine/constants";
 
 // ─── Settings (runtime key→value config) ────────────────────────────────
@@ -136,11 +137,18 @@ export function saveAgentConfig(
     keyName?: string;
     room?: string;
     spawnedBy: string;
+    supports?: AgentSupports;
   },
 ): void {
+  const supports = opts.supports ?? { text: true };
+  const supportsJson = JSON.stringify({
+    text: supports.text === false ? false : true,
+    ...(supports.image ? { image: true } : {}),
+    ...(supports.video ? { video: true } : {}),
+  });
   db.run(
-    `INSERT OR REPLACE INTO agent_configs (name, model, role, goal, key_name, room, spawned_by, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO agent_configs (name, model, role, goal, key_name, room, supports, spawned_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       opts.name,
       opts.model,
@@ -148,6 +156,7 @@ export function saveAgentConfig(
       opts.goal ?? "",
       opts.keyName ?? "",
       opts.room ?? "",
+      supportsJson,
       opts.spawnedBy,
       Date.now(),
     ],
@@ -308,6 +317,7 @@ export interface AgentConfigRow {
   goal: string;
   key_name: string;
   room: string;
+  supports: string;
   spawned_by: string;
   created_at: number;
 }

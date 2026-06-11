@@ -1,5 +1,6 @@
 import { Check, Copy, List, MessageSquareText, PanelsTopLeft, Send } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMediaJobs } from "../hooks/use-api";
 import type { ChatMessage, StoredPerception } from "../hooks/use-chat-state";
 import { ensureChatWs, getChatWs, useChatState } from "../hooks/use-chat-state";
 import { useFeedState } from "../hooks/use-feed-state";
@@ -10,12 +11,14 @@ import {
   useTasksSnapshot,
 } from "../hooks/use-status-cards";
 import { useWorldState } from "../hooks/use-world-state";
-import { clearToken, setToken } from "../lib/api";
+import { authFetch, clearToken, setToken } from "../lib/api";
 import { linkifyHtml } from "../lib/linkify";
 import { parseSpeech } from "../lib/perception";
 import { sanitizeChatHtml } from "../lib/sanitize";
+import type { MediaJob } from "../lib/types";
 import { CanvasNodeEmbed } from "./CanvasNodeEmbed";
 import { GlassPanel } from "./GlassPanel";
+import { MediaJobsList } from "./MediaJobsList";
 import { StatusOverlay } from "./StatusOverlay";
 
 const ANSI_COLORS: Record<string, string> = {
@@ -40,7 +43,7 @@ const ANSI_COLORS: Record<string, string> = {
 const MODE_STORAGE_KEY = "marina-chat-mode";
 type ChatViewMode = "compact" | "rich";
 
-type OverlayType = "tasks" | "boards" | "channels" | "groups";
+type OverlayType = "tasks" | "boards" | "channels" | "groups" | "media";
 
 interface OverlayState {
   type: OverlayType;
@@ -380,6 +383,14 @@ export function WebChat() {
         setOverlay({ type: "groups", issuedFrom: trimmed });
       } else if (lower.startsWith("channel list") || lower.startsWith("channels list")) {
         setOverlay({ type: "channels", issuedFrom: trimmed });
+      } else if (lower.startsWith("media jobs") || lower.startsWith("media status")) {
+        const parts = trimmed.split(/\s+/);
+        const entity = parts.length >= 3 ? parts.slice(2).join(" ").trim() || undefined : undefined;
+        setOverlay({
+          type: "media",
+          issuedFrom: trimmed,
+          params: entity ? { entityName: entity } : undefined,
+        });
       }
     },
     [viewMode],
@@ -496,6 +507,25 @@ export function WebChat() {
   const boardsQuery = useBoardsSnapshot(viewMode === "rich" && overlay?.type === "boards");
   const channelsQuery = useChannelsSnapshot(viewMode === "rich" && overlay?.type === "channels");
   const groupsQuery = useGroupsSnapshot(viewMode === "rich" && overlay?.type === "groups");
+  const mediaEntity =
+    overlay?.type === "media" ? (overlay.params?.entityName as string | undefined) : undefined;
+  const mediaQuery = useMediaJobs(mediaEntity, viewMode === "rich" && overlay?.type === "media");
+  const refetchMediaJobs = mediaQuery.refetch;
+
+  useEffect(() => {
+    if (overlay?.type === "media") {
+      refetchMediaJobs();
+    }
+  }, [overlay, refetchMediaJobs]);
+
+  useEffect(() => {
+    if (overlay?.type === "media") {
+      const latest = feedEvents[0];
+      if (latest && latest.kind?.startsWith("media_")) {
+        refetchMediaJobs();
+      }
+    }
+  }, [feedEvents, overlay, refetchMediaJobs]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: autoscroll fires on content-length change (and mode switch), keyed on the lengths rather than the ref or full arrays
   useEffect(() => {
@@ -1036,11 +1066,73 @@ export function WebChat() {
     );
   };
 
+  const renderMediaOverlay = () => {
+    if (overlay?.type !== "media") return null;
+    const targetEntity = overlay.params?.entityName as string | undefined;
+
+    const handleRetry = async (job: MediaJob) => {
+      try {
+        const res = await authFetch(`${API_BASE}/api/media-jobs/${job.id}/retry`, {
+          method: "POST",
+        });
+        if (!res.ok) throw new Error(`Retry failed (${res.status})`);
+        await mediaQuery.refetch();
+      } catch (error) {
+        console.error("[media] retry failed", error);
+      }
+    };
+
+    const handleDelete = async (job: MediaJob) => {
+      if (!job.assetId) return;
+      try {
+        const res = await authFetch(`${API_BASE}/api/assets/${job.assetId}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) throw new Error(`Delete failed (${res.status})`);
+        await mediaQuery.refetch();
+      } catch (error) {
+        console.error("[media] delete asset failed", error);
+      }
+    };
+
+    return (
+      <div className="space-y-3">
+        {targetEntity && (
+          <div className="text-[10px] uppercase text-text-dim">
+            Jobs for <span className="text-text-bright">{targetEntity}</span>
+          </div>
+        )}
+        {mediaQuery.isLoading && (
+          <div className="rounded border border-border bg-bg px-2 py-3 text-[11px] text-text-dim">
+            Loading media jobs…
+          </div>
+        )}
+        {mediaQuery.isError && (
+          <div className="rounded border border-border bg-bg px-2 py-3 text-[11px] text-danger">
+            Failed to load media jobs.
+          </div>
+        )}
+        {!mediaQuery.isLoading && !mediaQuery.isError && (
+          <MediaJobsList
+            jobs={mediaQuery.data ?? []}
+            max={15}
+            showEntity={!targetEntity}
+            onRetry={handleRetry}
+            onDeleteAsset={handleDelete}
+            sendCommand={sendCommandWithOverlay}
+            emptyMessage="No media jobs recorded yet."
+          />
+        )}
+      </div>
+    );
+  };
+
   const overlayTitle: Record<OverlayType, string> = {
     tasks: "Task Snapshot",
     boards: "Boards Snapshot",
     channels: "Channels Snapshot",
     groups: "Groups Snapshot",
+    media: "Media Jobs",
   };
 
   const renderOverlayContent = () => {
@@ -1054,6 +1146,8 @@ export function WebChat() {
         return renderChannelsOverlay();
       case "groups":
         return renderGroupsOverlay();
+      case "media":
+        return renderMediaOverlay();
       default:
         return null;
     }
@@ -1282,6 +1376,16 @@ function ContextualCompass({ onExecute }: { onExecute: (command: string) => bool
         hint: "Check pending narration",
         mode: "command",
         command: "chronicle pending",
+      });
+    }
+
+    if (recentFeed.some((event) => event.kind?.startsWith("media_"))) {
+      add({
+        key: "media",
+        label: "Media jobs",
+        hint: "Review recent media generations",
+        mode: "command",
+        command: "media jobs",
       });
     }
 

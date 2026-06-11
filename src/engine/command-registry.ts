@@ -31,6 +31,7 @@ import { gotoCommand } from "./commands/goto";
 import { groupCommand } from "./commands/group";
 import { helpCommand } from "./commands/help";
 import { ignoreCommand, isIgnoring } from "./commands/ignore";
+import { imageCommand } from "./commands/image";
 import { inventoryCommand } from "./commands/inventory";
 import { dropCommand, getCommand, giveCommand } from "./commands/items";
 import { keyCommand } from "./commands/key";
@@ -76,6 +77,7 @@ import { replyCommand, tellCommand } from "./commands/tell";
 import { traitCommand } from "./commands/trait";
 import { usecaseCommand } from "./commands/usecase";
 import { timeCommand, uptimeCommand } from "./commands/utility";
+import { videoCommand } from "./commands/video";
 import { watchCommand } from "./commands/watch";
 import { webCommand } from "./commands/web";
 import { whoCommand } from "./commands/who";
@@ -188,6 +190,8 @@ export function registerBuiltinCommands(engine: Engine): void {
       },
     ),
   );
+  engine.commands.registerBuiltin(imageCommand(engine));
+  engine.commands.registerBuiltin(videoCommand(engine));
   engine.commands.registerBuiltin(inventoryCommand((id) => engine.entities.get(id)));
   engine.commands.registerBuiltin(emoteCommand((id) => engine.entities.get(id)));
   engine.commands.registerBuiltin(

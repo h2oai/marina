@@ -1,4 +1,5 @@
 import type { ServerWebSocket } from "bun";
+import type { AgentSupports } from "../agent/agent-types";
 import type { Engine } from "../engine/engine";
 import type { EngineEvent } from "../types";
 
@@ -26,6 +27,7 @@ export interface WorldSnapshot {
       toolCalls: number;
       errors: number;
       errorReason: string | null;
+      supports: AgentSupports;
     };
   }[];
   roomPopulations: Record<string, number>;
@@ -132,6 +134,7 @@ export class DashboardBroadcaster {
               toolCalls: s.toolCalls,
               errors: s.errors,
               errorReason: s.errorReason,
+              supports: s.supports,
             };
           })()
         : undefined;
