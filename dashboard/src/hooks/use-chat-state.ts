@@ -31,6 +31,7 @@ interface ChatState {
   setLoggedIn: (v: boolean, name?: string) => void;
   setConnected: (v: boolean) => void;
   pushCommand: (cmd: string) => void;
+  sendCommand: (cmd: string, recordHistory?: boolean) => boolean;
 }
 
 export const useChatState = create<ChatState>((set) => ({
@@ -46,6 +47,19 @@ export const useChatState = create<ChatState>((set) => ({
   setConnected: (v) =>
     set((_s) => (v ? { connected: v } : { connected: v, loggedIn: false, entityName: null })),
   pushCommand: (cmd) => set((s) => ({ commandHistory: [cmd, ...s.commandHistory.slice(0, 99)] })),
+  sendCommand: (cmd, recordHistory = true) => {
+    const trimmed = cmd.trim();
+    if (!trimmed) return false;
+    const ws = getChatWs();
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify({ type: "command", command: trimmed }));
+    if (recordHistory) {
+      set((s) => ({
+        commandHistory: [trimmed, ...s.commandHistory.filter((c) => c !== trimmed).slice(0, 99)],
+      }));
+    }
+    return true;
+  },
 }));
 
 // ─── Singleton WebSocket (survives component unmount) ───────────────────────
