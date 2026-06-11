@@ -3,6 +3,7 @@ import { getStanding } from "../agent/standing";
 import { testKeyConnectivity } from "../engine/commands/key";
 import { allRecipeNames, getRecipe } from "../engine/commands/usecase";
 import type { Engine } from "../engine/engine";
+import { computeReadiness } from "../engine/readiness";
 import type { MarinaDB } from "../persistence/database";
 import type { Connection, EntityId, Perception, RoomId } from "../types";
 import { ORCHESTRATION_PATTERNS } from "../world/templates/orchestration";
@@ -233,11 +234,31 @@ export async function handleDashboardApi(
   if (url.pathname === "/api/system") {
     return getSystem(engine, db);
   }
+  // Capability readiness — same data as the in-world `status` command. Reports
+  // config presence (never secret values) + remediation per capability.
+  if (url.pathname === "/api/readiness" && method === "GET") {
+    return json(computeReadiness(engine));
+  }
 
   // Parameterized detail routes (check before list routes)
   const taskDetailMatch = url.pathname.match(/^\/api\/coordination\/tasks\/(\d+)$/);
   if (taskDetailMatch && db) {
     return getTaskDetail(db, Number(taskDetailMatch[1]));
+  }
+
+  // Paginated nested collections — must precede the greedy detail matchers
+  // below (their `(.+)` would otherwise swallow the `/posts` and `/messages`
+  // suffixes). `?limit=N` grows the page; response is { items, total }.
+  const boardPostsMatch = url.pathname.match(/^\/api\/coordination\/boards\/(.+)\/posts$/);
+  if (boardPostsMatch && db) {
+    return getBoardPosts(db, decodeURIComponent(boardPostsMatch[1]!), url);
+  }
+
+  const channelMessagesMatch = url.pathname.match(
+    /^\/api\/coordination\/channels\/(.+)\/messages$/,
+  );
+  if (channelMessagesMatch && db) {
+    return getChannelMessages(db, decodeURIComponent(channelMessagesMatch[1]!), url);
   }
 
   const boardDetailMatch = url.pathname.match(/^\/api\/coordination\/boards\/(.+)$/);
@@ -486,6 +507,13 @@ export async function handleDashboardApi(
     return getBoards(db);
   }
   if (url.pathname === "/api/coordination/tasks" && db) {
+    // Paginated variant: `?paged=1&limit=N` returns { items, total } so the
+    // Coordination panel can "load more" without silently dropping rows.
+    // Without `paged`, returns a bare array (back-compat for other consumers).
+    if (url.searchParams.get("paged")) {
+      const limit = clampLimit(url.searchParams.get("limit"), 50);
+      return json({ items: db.listTasks({ limit }), total: db.countTasks() });
+    }
     return json(db.listTasks({ limit: 50 }));
   }
   if (url.pathname === "/api/coordination/channels" && db) {
@@ -1048,7 +1076,6 @@ function getBoardDetail(db: MarinaDB, boardName: string): Response {
   const board = boards.find((b) => b.name === boardName);
   if (!board) return json({ error: "Board not found" }, 404);
 
-  const allPosts = db.listBoardPosts(board.id, { limit: 1000 });
   const posts = db.listBoardPosts(board.id, { limit: 5 }).map((p) => ({
     id: p.id,
     title: p.title,
@@ -1061,10 +1088,43 @@ function getBoardDetail(db: MarinaDB, boardName: string): Response {
     id: board.id,
     name: board.name,
     scope_type: board.scope_type,
-    postCount: allPosts.length,
+    postCount: db.countBoardPosts(board.id),
     created_at: board.created_at,
     posts,
   });
+}
+
+/** Clamp a `?limit=` query param into a sane range (default `dflt`, max 1000). */
+function clampLimit(raw: string | null, dflt: number): number {
+  const n = raw ? Number(raw) : dflt;
+  if (!Number.isFinite(n) || n <= 0) return dflt;
+  return Math.min(Math.floor(n), 1000);
+}
+
+function getBoardPosts(db: MarinaDB, boardName: string, url: URL): Response {
+  const board = db.getAllBoards().find((b) => b.name === boardName);
+  if (!board) return json({ error: "Board not found" }, 404);
+  const limit = clampLimit(url.searchParams.get("limit"), 25);
+  const items = db.listBoardPosts(board.id, { limit }).map((p) => ({
+    id: p.id,
+    title: p.title,
+    body: p.body,
+    author_name: p.author_name,
+    created_at: p.created_at,
+  }));
+  return json({ items, total: db.countBoardPosts(board.id) });
+}
+
+function getChannelMessages(db: MarinaDB, channelName: string, url: URL): Response {
+  const channel = db.getAllChannels().find((c) => c.name === channelName);
+  if (!channel) return json({ error: "Channel not found" }, 404);
+  const limit = clampLimit(url.searchParams.get("limit"), 25);
+  const items = db.getChannelHistory(channel.id, limit).map((m) => ({
+    sender_name: m.sender_name,
+    content: m.content,
+    created_at: m.created_at,
+  }));
+  return json({ items, total: db.countChannelMessages(channel.id) });
 }
 
 function getGroupDetail(db: MarinaDB, groupName: string): Response {
