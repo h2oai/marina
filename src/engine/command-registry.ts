@@ -71,6 +71,7 @@ import { shoutCommand } from "./commands/shout";
 import { skillCommand } from "./commands/skill";
 import { sourceCommand } from "./commands/source";
 import { standingCommand } from "./commands/standing";
+import { readinessCommand } from "./commands/readiness";
 import { taskCommand } from "./commands/task";
 import { replyCommand, tellCommand } from "./commands/tell";
 import { traitCommand } from "./commands/trait";
@@ -80,6 +81,7 @@ import { watchCommand } from "./commands/watch";
 import { webCommand } from "./commands/web";
 import { whoCommand } from "./commands/who";
 import type { Engine } from "./engine";
+import { computeReadiness } from "./readiness";
 
 export function registerBuiltinCommands(engine: Engine): void {
   // Resolver registry is module-scoped; idempotent so multiple engine
@@ -778,6 +780,9 @@ export function registerBuiltinCommands(engine: Engine): void {
       db: engine.db,
     }),
   );
+
+  // Readiness command (aliases doctor/health) — operator-facing capability health.
+  engine.commands.registerBuiltin(readinessCommand({ readiness: () => computeReadiness(engine) }));
 
   // Use-case command (one-shot project + task + agent scaffolding)
   if (engine.db && engine.taskManager && engine.groupManager) {

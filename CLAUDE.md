@@ -162,7 +162,8 @@ cd dashboard && bun run test  # Frontend smoke tests (vitest, ~24 tests)
 - `src/engine/connection-manager.ts` — connection tracking, entity-connection mapping
 - `src/engine/event-log.ts` — event storage, trimming, listener notification
 - `src/engine/brief-manager.ts` — brief subscription lifecycle
-- `src/engine/command-registry.ts` — 70+ built-in command registrations (recent additions: `benchmark`, `skill`)
+- `src/engine/command-registry.ts` — 70+ built-in command registrations (recent additions: `benchmark`, `skill`, `readiness`)
+- `src/engine/readiness.ts` — `computeReadiness(engine)` capability-health report (ok/degraded/off + remediation per capability); backs the rank-0 `readiness` command (aliases `doctor`/`health`). Operator's answer to "what must I spawn/configure for ability X to work?" — see [docs/operations.md](docs/operations.md)
 - `src/engine/constants.ts` — named constants for tick intervals, rate limits, scoring weights
 - `src/engine/parse-input.ts` — shared command input parsing helpers
 - `src/persistence/database.ts` — migrations, MarinaDB class (delegates to modules)
