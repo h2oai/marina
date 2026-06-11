@@ -3,11 +3,11 @@
 The dashboard web chat now supports two rendering modes that share a common
 perception parser but diverge in presentation.
 
-- **Compact (default)** mirrors the existing ANSI-derived layout. Messages are
+- **Compact** mirrors the existing ANSI-derived layout. Messages are
   rendered as minimal monospace lines so the view matches the low-bandwidth log
   other surfaces consume. This mode preserves the current token footprint for
   agents or power users that rely on dense output.
-- **Rich** groups perceptions into timeline blocks with speaker badges,
+- **Rich (default)** groups perceptions into timeline blocks with speaker badges,
   timestamps, and structured room summaries. Movement/system noise is visually
   softened, while room descriptions render as readable sections with chips for
   exits, objects, and occupants.
@@ -26,6 +26,7 @@ Implementation notes:
   consume the WebSocket stream keep receiving the same minimal payload.
 
 This design keeps the machine-facing contract stable while giving humans a
-readable, modern timeline when they opt in. Future enhancements (filters,
+readable, modern timeline by default (Compact stays one toggle away for dense
+or low-bandwidth use). Future enhancements (filters,
 threading) can build on the shared perception parser without touching the
 low-bandwidth compact view.

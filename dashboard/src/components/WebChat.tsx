@@ -369,9 +369,11 @@ export function WebChat() {
   );
 
   const [viewMode, setViewMode] = useState<ChatViewMode>(() => {
-    if (typeof window === "undefined") return "compact";
+    // Rich is the default for web/dashboard consumers; only an explicit
+    // stored "compact" preference opts back into the dense log.
+    if (typeof window === "undefined") return "rich";
     const stored = window.localStorage.getItem(MODE_STORAGE_KEY);
-    return stored === "rich" ? "rich" : "compact";
+    return stored === "compact" ? "compact" : "rich";
   });
 
   useEffect(() => {
