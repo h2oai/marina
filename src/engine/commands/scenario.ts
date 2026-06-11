@@ -41,7 +41,11 @@ Examples:
   scenario personas
   scenario inject fed_rate=cut
   scenario status
-  scenario report`;
+  scenario report
+
+Note: these commands auto-create the boards they use (scenario-graph,
+scenario-personas, scenario-events, scenario-report) and the scenario-feed
+channel on first use.`;
 
 const SCENARIO_GRAPH_BOARD = "scenario-graph";
 const SCENARIO_PERSONAS_BOARD = "scenario-personas";

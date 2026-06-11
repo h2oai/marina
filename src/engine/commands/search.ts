@@ -1,4 +1,4 @@
-import { category, header, separator } from "../../net/ansi";
+import { category, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext, RoomId } from "../../types";
 
@@ -40,7 +40,11 @@ export function searchCommand(deps: {
         }
       }
 
-      // 2. Search DB (boards + channels)
+      // 2. Search DB (boards + channels). Without a DB this surface is
+      // room-only — say so rather than silently omitting board/channel hits.
+      if (!deps.db) {
+        lines.push(dim("(boards & channels not searched — no database backend)"));
+      }
       if (deps.db) {
         const dbResults = deps.db.globalSearch(query);
         const boardResults = dbResults.filter((r) => r.type === "board_post");

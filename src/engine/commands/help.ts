@@ -12,7 +12,7 @@ import type { CommandDef, EntityId, RoomContext } from "../../types";
 export const COMMAND_CATEGORIES: Record<string, string[]> = {
   Navigation: ["look", "move", "ls", "goto", "map"],
   Communication: ["say", "shout", "tell", "re", "emote"],
-  Objects: ["get", "drop", "give", "inventory", "examine"],
+  Objects: ["get", "drop", "give", "inventory"],
   Information: ["who", "score", "help", "brief", "next", "web"],
   "Identity & Access": ["ignore", "rank", "quest", "link", "role", "trait"],
   Knowledge: ["note", "feed", "chronicle", "search", "bookmark", "export"],
