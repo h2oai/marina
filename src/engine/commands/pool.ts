@@ -142,6 +142,14 @@ export function poolCommand(deps: {
         }
         const id = `pool_${name}_${Date.now()}`;
         db.createMemoryPool(id, name, entity.name);
+        deps.logEvent?.({
+          type: "coordination_change",
+          resource: "pool",
+          action: "create",
+          entity: input.entity,
+          name,
+          timestamp: Date.now(),
+        });
         ctx.send(input.entity, `Memory pool "${name}" created.`);
         return;
       }

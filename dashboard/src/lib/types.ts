@@ -248,6 +248,10 @@ export interface DashboardEvent {
   artifactRef?: string;
   resultNoteId?: number;
   owner?: string;
+  // Coordination container lifecycle (coordination_change): project / group /
+  // channel / pool / board / connector / command create / update / delete.
+  resource?: "project" | "group" | "channel" | "pool" | "board" | "connector" | "command";
+  action?: "create" | "update" | "delete";
   timestamp: number;
 }
 

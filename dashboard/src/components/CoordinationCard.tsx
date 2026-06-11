@@ -405,6 +405,14 @@ function BoardDetailView({ name }: { name: string }) {
 
 function GroupDetailView({ name }: { name: string }) {
   const { data, isLoading } = useGroupDetail(name);
+  useInvalidateOnEvent(
+    ["groupDetail", name],
+    useCallback(
+      (e: DashboardEvent) =>
+        e.type === "coordination_change" && e.resource === "group" && e.name === name,
+      [name],
+    ),
+  );
 
   if (isLoading) return <LoadingState />;
   if (!data) return <EmptyState text="Group not found" />;

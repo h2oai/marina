@@ -4,10 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useAgents, useKeys, useModels, useRoles } from "../hooks/use-api";
 import { postApi } from "../lib/api";
 import { DEFAULT_FALLBACK_MODEL, mergeGroups, pickDefaultModel } from "../lib/model-catalog";
-import { ModelSelect } from "./ModelSelect";
 import type { AgentStatusFull } from "../lib/types";
 import { cn } from "../lib/utils";
 import { GlassPanel } from "./GlassPanel";
+import { ModelSelect } from "./ModelSelect";
 
 export function AgentLaunchPanel({ backContent }: { backContent?: ReactNode }) {
   const { data: agents } = useAgents();

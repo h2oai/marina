@@ -828,4 +828,18 @@ export type EngineEvent =
       artifactRef: string;
       kind: "map" | "reduce" | "synthesis" | "draft";
       timestamp: number;
+    }
+  // Lifecycle of a coordination container (project / group / channel / pool /
+  // board / connector / command). These resources have no high-frequency
+  // content event of their own (unlike board_post / channel_message), so the
+  // dashboard's Coordination panel had no way to refresh their lists live on
+  // create/update/delete — it sat on the 30s poll. One generic event keeps the
+  // event surface small while letting every list graduate to realtime.
+  | {
+      type: "coordination_change";
+      resource: "project" | "group" | "channel" | "pool" | "board" | "connector" | "command";
+      action: "create" | "update" | "delete";
+      entity: EntityId;
+      name?: string;
+      timestamp: number;
     };
