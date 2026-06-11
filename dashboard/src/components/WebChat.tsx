@@ -3,6 +3,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatMessage, StoredPerception } from "../hooks/use-chat-state";
 import { ensureChatWs, getChatWs, useChatState } from "../hooks/use-chat-state";
 import { useFeedState } from "../hooks/use-feed-state";
+import {
+  useBoardsSnapshot,
+  useChannelsSnapshot,
+  useGroupsSnapshot,
+  useTasksSnapshot,
+} from "../hooks/use-status-cards";
 import { useWorldState } from "../hooks/use-world-state";
 import { clearToken, setToken } from "../lib/api";
 import { linkifyHtml } from "../lib/linkify";
@@ -10,6 +16,7 @@ import { parseSpeech } from "../lib/perception";
 import { sanitizeChatHtml } from "../lib/sanitize";
 import { CanvasNodeEmbed } from "./CanvasNodeEmbed";
 import { GlassPanel } from "./GlassPanel";
+import { StatusOverlay } from "./StatusOverlay";
 
 const ANSI_COLORS: Record<string, string> = {
   "30": "#4d4d4d",
@@ -32,6 +39,14 @@ const ANSI_COLORS: Record<string, string> = {
 
 const MODE_STORAGE_KEY = "marina-chat-mode";
 type ChatViewMode = "compact" | "rich";
+
+type OverlayType = "tasks" | "boards" | "channels" | "groups";
+
+interface OverlayState {
+  type: OverlayType;
+  issuedFrom: string;
+  params?: Record<string, unknown>;
+}
 
 function escHtml(ch: string): string {
   if (ch === "&") return "&amp;";
@@ -290,6 +305,8 @@ export function WebChat() {
   const connected = useChatState((s) => s.connected);
   const commandHistory = useChatState((s) => s.commandHistory);
   const sendChatCommand = useChatState((s) => s.sendCommand);
+  const [overlay, setOverlay] = useState<OverlayState | null>(null);
+  const closeOverlay = useCallback(() => setOverlay(null), []);
 
   const outputRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -326,10 +343,71 @@ export function WebChat() {
     }
   }, []);
 
+  const [viewMode, setViewMode] = useState<ChatViewMode>(() => {
+    // Rich is the default for web/dashboard consumers; only an explicit
+    // stored "compact" preference opts back into the dense log.
+    if (typeof window === "undefined") return "rich";
+    const stored = window.localStorage.getItem(MODE_STORAGE_KEY);
+    return stored === "compact" ? "compact" : "rich";
+  });
+  const openOverlayForCommand = useCallback(
+    (rawCommand: string) => {
+      if (viewMode !== "rich") return;
+      const trimmed = rawCommand.trim();
+      if (!trimmed) return;
+      const lower = trimmed.toLowerCase();
+      if (lower.startsWith("task list")) {
+        const tokens = lower.split(/\s+/);
+        const scopeToken = tokens[2];
+        const statuses = new Set(["open", "claimed", "completed", "cancelled"]);
+        let scope: string | undefined;
+        let group: string | undefined;
+        if (scopeToken === "mine") {
+          scope = "mine";
+        } else if (scopeToken && statuses.has(scopeToken)) {
+          scope = scopeToken;
+        } else if (scopeToken) {
+          group = scopeToken;
+        }
+        setOverlay({
+          type: "tasks",
+          issuedFrom: trimmed,
+          params: { scope: scope ?? "open", group },
+        });
+      } else if (lower.startsWith("board list")) {
+        setOverlay({ type: "boards", issuedFrom: trimmed });
+      } else if (lower.startsWith("group list")) {
+        setOverlay({ type: "groups", issuedFrom: trimmed });
+      } else if (lower.startsWith("channel list") || lower.startsWith("channels list")) {
+        setOverlay({ type: "channels", issuedFrom: trimmed });
+      }
+    },
+    [viewMode],
+  );
+
+  const sendCommandWithOverlay = useCallback(
+    (cmd: string) => {
+      openOverlayForCommand(cmd);
+      return sendChatCommand(cmd);
+    },
+    [openOverlayForCommand, sendChatCommand],
+  );
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(MODE_STORAGE_KEY, viewMode);
+    }
+  }, [viewMode]);
+  useEffect(() => {
+    if (viewMode !== "rich" && overlay) {
+      setOverlay(null);
+    }
+  }, [viewMode, overlay]);
+
   const doSend = useCallback(() => {
     const cmd = cmdValueRef.current.trim();
     if (!cmd) return;
-    const ok = sendChatCommand(cmd);
+    const ok = sendCommandWithOverlay(cmd);
     if (ok) {
       historyIdxRef.current = -1;
       if (inputRef.current) {
@@ -337,7 +415,7 @@ export function WebChat() {
         cmdValueRef.current = "";
       }
     }
-  }, [sendChatCommand]);
+  }, [sendCommandWithOverlay]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -367,20 +445,6 @@ export function WebChat() {
     },
     [commandHistory, doSend],
   );
-
-  const [viewMode, setViewMode] = useState<ChatViewMode>(() => {
-    // Rich is the default for web/dashboard consumers; only an explicit
-    // stored "compact" preference opts back into the dense log.
-    if (typeof window === "undefined") return "rich";
-    const stored = window.localStorage.getItem(MODE_STORAGE_KEY);
-    return stored === "compact" ? "compact" : "rich";
-  });
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(MODE_STORAGE_KEY, viewMode);
-    }
-  }, [viewMode]);
 
   const feedEvents = useFeedState((s) => s.events);
   const canvasTimeline = useMemo<CanvasTimelineItem[]>(() => {
@@ -428,6 +492,10 @@ export function WebChat() {
     }));
     return [...chatItems, ...canvasItems].sort((a, b) => a.timestamp - b.timestamp);
   }, [messages, canvasTimeline, viewMode]);
+  const tasksQuery = useTasksSnapshot(viewMode === "rich" && overlay?.type === "tasks");
+  const boardsQuery = useBoardsSnapshot(viewMode === "rich" && overlay?.type === "boards");
+  const channelsQuery = useChannelsSnapshot(viewMode === "rich" && overlay?.type === "channels");
+  const groupsQuery = useGroupsSnapshot(viewMode === "rich" && overlay?.type === "groups");
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: autoscroll fires on content-length change (and mode switch), keyed on the lengths rather than the ref or full arrays
   useEffect(() => {
@@ -717,119 +785,421 @@ export function WebChat() {
     }
   };
 
-  return (
-    <GlassPanel
-      title="Web Chat"
-      icon={<MessageSquareText size={14} />}
-      headerExtra={
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setViewMode((mode) => (mode === "compact" ? "rich" : "compact"));
-            }}
-            title={viewMode === "compact" ? "Switch to rich view" : "Switch to compact view"}
-            className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[10px] text-text-dim transition-colors hover:border-primary hover:text-primary"
-          >
-            {viewMode === "compact" ? <PanelsTopLeft size={11} /> : <List size={11} />}
-            <span>{viewMode === "compact" ? "Rich view" : "Compact view"}</span>
-          </button>
-          {messages.length > 0 ? (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                copyAll();
-              }}
-              title="Copy whole conversation"
-              className="flex items-center gap-1 text-text-dim text-[10px] transition-colors hover:text-primary"
+  const renderTasksOverlay = () => {
+    if (overlay?.type !== "tasks") return null;
+    if (tasksQuery.isLoading) return <div className="py-4 text-text-dim">Loading tasks…</div>;
+    if (tasksQuery.isError) {
+      return <div className="py-4 text-danger">Failed to load tasks snapshot.</div>;
+    }
+    const scope = (overlay.params?.scope as string | undefined) ?? "open";
+    const groupId = overlay.params?.group as string | undefined;
+    const items = tasksQuery.data?.items ?? [];
+    const total = tasksQuery.data?.total ?? items.length;
+    const filtered =
+      scope === "mine"
+        ? items
+        : items.filter((item) => item.status?.toLowerCase() === scope.toLowerCase());
+    const counts = items.reduce<Record<string, number>>((acc, item) => {
+      const key = (item.status ?? "unknown").toLowerCase();
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between text-[10px] uppercase text-text-dim">
+          <span>
+            Scope:{" "}
+            {scope === "mine"
+              ? "My claimed tasks (engine output)"
+              : scope === "open"
+                ? "Open"
+                : scope.charAt(0).toUpperCase() + scope.slice(1)}
+            {groupId ? ` · Group ${groupId}` : ""}
+          </span>
+          <span>
+            {filtered.length} shown · total {total}
+          </span>
+        </div>
+        {scope === "mine" && (
+          <div className="rounded border border-warning/40 bg-warning/10 px-2 py-1 text-[10px] text-warning">
+            Overlay filtering for <code>mine</code> mirrors the engine output; snapshot shows all
+            tasks for quick context.
+          </div>
+        )}
+        <div className="flex flex-wrap gap-2 text-[10px] text-text-dim">
+          {Object.entries(counts).map(([status, count]) => (
+            <span
+              key={status}
+              className="rounded border border-border/70 bg-bg px-2 py-0.5 capitalize text-text"
             >
-              {copied === "all" ? <Check size={11} /> : <Copy size={11} />}
-              <span>{copied === "all" ? "Copied" : "Copy all"}</span>
-            </button>
-          ) : undefined}
+              {status}: {count}
+            </span>
+          ))}
         </div>
-      }
-    >
-      <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Output */}
-        <div
-          ref={outputRef}
-          className={`flex-1 overflow-y-auto px-2 py-1 ${
-            viewMode === "compact"
-              ? "font-mono text-[12px] leading-relaxed"
-              : "font-sans text-[13px]"
-          }`}
-        >
-          {viewMode === "compact"
-            ? messages.map((m, i) => renderCompactMessage(m, i))
-            : timelineItems.map((item) =>
-                item.type === "chat" ? (
-                  renderRichMessage(item.message, item.index)
-                ) : (
-                  <CanvasNodeEmbed
-                    key={item.key}
-                    canvasId={item.event.canvasId}
-                    nodeId={item.event.nodeId}
-                    actor={item.event.actor}
-                    summary={item.event.summary}
-                    kind={item.event.kind}
-                    timestamp={item.event.timestamp}
-                  />
-                ),
-              )}
-        </div>
-
-        <ContextualCompass />
-
-        {/* Input area */}
-        <div className="border-t border-border px-2 py-1.5">
-          {!loggedIn ? (
-            <div className="flex items-center gap-2">
-              <input
-                ref={nameRef}
-                type="text"
-                onKeyDown={(e) => e.key === "Enter" && doLogin()}
-                placeholder="Enter your name..."
-                maxLength={20}
-                className="flex-1 rounded border border-border bg-bg px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
-              />
-              <button
-                type="button"
-                onClick={doLogin}
-                className="rounded bg-primary px-2 py-1 text-[11px] font-bold text-bg"
-              >
-                Connect
-              </button>
+        <div className="space-y-2">
+          {filtered.map((task) => (
+            <div key={task.id} className="rounded border border-border bg-bg px-3 py-2 shadow-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate text-[12px] font-semibold text-text-bright">
+                  {task.title}
+                </span>
+                <span className="text-[10px] uppercase text-primary">{task.status}</span>
+              </div>
+              <div className="mt-1 flex flex-wrap items-center justify-between gap-2 text-[10px] text-text-dim">
+                <span>ID #{task.id}</span>
+                <span>Created by {task.creator_name ?? "—"}</span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
+                  onClick={() => sendCommandWithOverlay(`task info ${task.id}`)}
+                >
+                  Info
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
+                  onClick={() => sendCommandWithOverlay(`task claim ${task.id}`)}
+                >
+                  Claim
+                </button>
+              </div>
             </div>
-          ) : (
-            <div className="flex items-center gap-1.5">
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-success" : "bg-danger"}`}
-              />
-              <input
-                ref={inputRef}
-                type="text"
-                onChange={(e) => {
-                  cmdValueRef.current = e.target.value;
-                }}
-                onKeyDown={handleKeyDown}
-                placeholder="Type a command..."
-                className="flex-1 rounded border border-border bg-bg px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
-              />
-              <button
-                type="button"
-                onClick={doSend}
-                className="text-primary transition-colors hover:text-text-bright"
-              >
-                <Send size={14} />
-              </button>
+          ))}
+          {filtered.length === 0 && (
+            <div className="rounded border border-border bg-bg px-2 py-3 text-[11px] text-text-dim">
+              No tasks match this scope.
             </div>
           )}
         </div>
       </div>
-    </GlassPanel>
+    );
+  };
+
+  const renderBoardsOverlay = () => {
+    if (overlay?.type !== "boards") return null;
+    if (boardsQuery.isLoading) return <div className="py-4 text-text-dim">Loading boards…</div>;
+    if (boardsQuery.isError) {
+      return <div className="py-4 text-danger">Failed to load boards snapshot.</div>;
+    }
+    const boards = boardsQuery.data ?? [];
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between text-[10px] uppercase text-text-dim">
+          <span>Boards</span>
+          <span>{boards.length} total</span>
+        </div>
+        <div className="space-y-2">
+          {boards.map((board) => (
+            <div key={board.id} className="rounded border border-border bg-bg px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[12px] font-semibold text-text-bright">{board.name}</span>
+                <span className="text-[10px] uppercase text-primary">
+                  {board.scope_type ?? "general"}
+                </span>
+              </div>
+              <div className="mt-1 flex items-center justify-between text-[10px] text-text-dim">
+                <span>{board.postCount} posts</span>
+                <span>{new Date(board.created_at).toLocaleDateString()}</span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
+                  onClick={() => sendCommandWithOverlay(`board show ${board.name}`)}
+                >
+                  Show board
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
+                  onClick={() => sendCommandWithOverlay(`board posts ${board.name}`)}
+                >
+                  Recent posts
+                </button>
+              </div>
+            </div>
+          ))}
+          {boards.length === 0 && (
+            <div className="rounded border border-border bg-bg px-2 py-3 text-[11px] text-text-dim">
+              No boards available yet.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderChannelsOverlay = () => {
+    if (overlay?.type !== "channels") return null;
+    if (channelsQuery.isLoading) return <div className="py-4 text-text-dim">Loading channels…</div>;
+    if (channelsQuery.isError) {
+      return <div className="py-4 text-danger">Failed to load channels snapshot.</div>;
+    }
+    const channels = channelsQuery.data ?? [];
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between text-[10px] uppercase text-text-dim">
+          <span>Channels</span>
+          <span>{channels.length} total</span>
+        </div>
+        <div className="space-y-2">
+          {channels.map((channel) => (
+            <div key={channel.id} className="rounded border border-border bg-bg px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[12px] font-semibold text-text-bright">{channel.name}</span>
+                <span className="text-[10px] uppercase text-primary">{channel.type}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between text-[10px] text-text-dim">
+                <span>{channel.messageCount} messages</span>
+                <span>ID {channel.id.slice(0, 8)}…</span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
+                  onClick={() => sendCommandWithOverlay(`channel join ${channel.name}`)}
+                >
+                  Join
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
+                  onClick={() => sendCommandWithOverlay(`channel history ${channel.name}`)}
+                >
+                  History
+                </button>
+              </div>
+            </div>
+          ))}
+          {channels.length === 0 && (
+            <div className="rounded border border-border bg-bg px-2 py-3 text-[11px] text-text-dim">
+              No channels available yet.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderGroupsOverlay = () => {
+    if (overlay?.type !== "groups") return null;
+    if (groupsQuery.isLoading) return <div className="py-4 text-text-dim">Loading groups…</div>;
+    if (groupsQuery.isError) {
+      return <div className="py-4 text-danger">Failed to load groups snapshot.</div>;
+    }
+    const groups = groupsQuery.data ?? [];
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between text-[10px] uppercase text-text-dim">
+          <span>Groups</span>
+          <span>{groups.length} total</span>
+        </div>
+        <div className="space-y-2">
+          {groups.map((group) => (
+            <div key={group.id} className="rounded border border-border bg-bg px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[12px] font-semibold text-text-bright">{group.name}</span>
+                <span className="text-[10px] uppercase text-primary">
+                  {group.memberCount} members
+                </span>
+              </div>
+              <div className="mt-1 text-[10px] text-text-dim">
+                Lead: {group.leader_id?.slice(0, 8) ?? "—"}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
+                  onClick={() => sendCommandWithOverlay(`group members ${group.name}`)}
+                >
+                  Members
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
+                  onClick={() => sendCommandWithOverlay(`group info ${group.name}`)}
+                >
+                  Group info
+                </button>
+              </div>
+            </div>
+          ))}
+          {groups.length === 0 && (
+            <div className="rounded border border-border bg-bg px-2 py-3 text-[11px] text-text-dim">
+              No groups defined yet.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const overlayTitle: Record<OverlayType, string> = {
+    tasks: "Task Snapshot",
+    boards: "Boards Snapshot",
+    channels: "Channels Snapshot",
+    groups: "Groups Snapshot",
+  };
+
+  const renderOverlayContent = () => {
+    if (!overlay) return null;
+    switch (overlay.type) {
+      case "tasks":
+        return renderTasksOverlay();
+      case "boards":
+        return renderBoardsOverlay();
+      case "channels":
+        return renderChannelsOverlay();
+      case "groups":
+        return renderGroupsOverlay();
+      default:
+        return null;
+    }
+  };
+
+  const statusOverlay =
+    overlay && viewMode === "rich" ? (
+      <StatusOverlay
+        open
+        title={overlayTitle[overlay.type]}
+        onClose={closeOverlay}
+        footer={
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="truncate text-text-dim">
+              Command: <code className="text-text">{overlay.issuedFrom}</code>
+            </span>
+            <button
+              type="button"
+              onClick={closeOverlay}
+              className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
+            >
+              Close
+            </button>
+          </div>
+        }
+      >
+        {renderOverlayContent()}
+      </StatusOverlay>
+    ) : null;
+
+  return (
+    <>
+      {statusOverlay}
+      <GlassPanel
+        title="Web Chat"
+        icon={<MessageSquareText size={14} />}
+        headerExtra={
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setViewMode((mode) => (mode === "compact" ? "rich" : "compact"));
+              }}
+              title={viewMode === "compact" ? "Switch to rich view" : "Switch to compact view"}
+              className="flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[10px] text-text-dim transition-colors hover:border-primary hover:text-primary"
+            >
+              {viewMode === "compact" ? <PanelsTopLeft size={11} /> : <List size={11} />}
+              <span>{viewMode === "compact" ? "Rich view" : "Compact view"}</span>
+            </button>
+            {messages.length > 0 ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  copyAll();
+                }}
+                title="Copy whole conversation"
+                className="flex items-center gap-1 text-text-dim text-[10px] transition-colors hover:text-primary"
+              >
+                {copied === "all" ? <Check size={11} /> : <Copy size={11} />}
+                <span>{copied === "all" ? "Copied" : "Copy all"}</span>
+              </button>
+            ) : undefined}
+          </div>
+        }
+      >
+        <div className="flex flex-1 flex-col overflow-hidden">
+          {/* Output */}
+          <div
+            ref={outputRef}
+            className={`flex-1 overflow-y-auto px-2 py-1 ${
+              viewMode === "compact"
+                ? "font-mono text-[12px] leading-relaxed"
+                : "font-sans text-[13px]"
+            }`}
+          >
+            {viewMode === "compact"
+              ? messages.map((m, i) => renderCompactMessage(m, i))
+              : timelineItems.map((item) =>
+                  item.type === "chat" ? (
+                    renderRichMessage(item.message, item.index)
+                  ) : (
+                    <CanvasNodeEmbed
+                      key={item.key}
+                      canvasId={item.event.canvasId}
+                      nodeId={item.event.nodeId}
+                      actor={item.event.actor}
+                      summary={item.event.summary}
+                      kind={item.event.kind}
+                      timestamp={item.event.timestamp}
+                    />
+                  ),
+                )}
+          </div>
+
+          <ContextualCompass onExecute={sendCommandWithOverlay} />
+
+          {/* Input area */}
+          <div className="border-t border-border px-2 py-1.5">
+            {!loggedIn ? (
+              <div className="flex items-center gap-2">
+                <input
+                  ref={nameRef}
+                  type="text"
+                  onKeyDown={(e) => e.key === "Enter" && doLogin()}
+                  placeholder="Enter your name..."
+                  maxLength={20}
+                  className="flex-1 rounded border border-border bg-bg px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
+                />
+                <button
+                  type="button"
+                  onClick={doLogin}
+                  className="rounded bg-primary px-2 py-1 text-[11px] font-bold text-bg"
+                >
+                  Connect
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-success" : "bg-danger"}`}
+                />
+                <input
+                  ref={inputRef}
+                  type="text"
+                  onChange={(e) => {
+                    cmdValueRef.current = e.target.value;
+                  }}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Type a command..."
+                  className="flex-1 rounded border border-border bg-bg px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
+                />
+                <button
+                  type="button"
+                  onClick={doSend}
+                  className="text-primary transition-colors hover:text-text-bright"
+                >
+                  <Send size={14} />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </GlassPanel>
+    </>
   );
 }
 
@@ -841,10 +1211,9 @@ interface CompassSuggestion {
   command: string;
 }
 
-function ContextualCompass() {
+function ContextualCompass({ onExecute }: { onExecute: (command: string) => boolean }) {
   const loggedIn = useChatState((s) => s.loggedIn);
   const messages = useChatState((s) => s.messages);
-  const sendCommand = useChatState((s) => s.sendCommand);
   const feedEvents = useFeedState((s) => s.events);
   const thinkingAgents = useWorldState((s) => s.thinkingAgents);
 
@@ -937,7 +1306,7 @@ function ContextualCompass() {
   if (!loggedIn || suggestions.length === 0) return null;
 
   const runCommand = (command: string) => {
-    if (!sendCommand(command)) {
+    if (!onExecute(command)) {
       window.alert("Unable to send command — chat is not connected.");
     }
   };

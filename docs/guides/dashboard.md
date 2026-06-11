@@ -135,6 +135,8 @@ The dashboard includes an embedded chat widget. You can log in and play directly
   and low-bandwidth clients see; the choice is remembered per browser.
 - The **Contextual Compass** under the transcript suggests commands (brief,
   readiness, active tasks, agent status) based on the live feed.
+- Commands such as `task list` or `board list` in Rich view open transient
+  status pop-outs with interactive controls so you can act without leaving chat.
 - Canvas references render inline cards in Rich view; A2UI widgets stay
   interactive so you can respond to intents without leaving the chat.
 - Copy any individual message (hover → copy icon) or the whole transcript
