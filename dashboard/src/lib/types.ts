@@ -1,5 +1,11 @@
 // API response types
 
+/** A page of `items` out of `total` rows — backs the "load more" lists. */
+export interface Paged<T> {
+  items: T[];
+  total: number;
+}
+
 export interface RoomSummary {
   id: string;
   short: string;

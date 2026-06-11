@@ -6,9 +6,11 @@ import type {
   BenchmarkEntry,
   BoardDetail,
   BoardEntry,
+  BoardPostEntry,
   BriefData,
   ChannelDetail,
   ChannelEntry,
+  ChannelMessage,
   ConnectorEntry,
   DynamicCommandEntry,
   EntityDetail,
@@ -23,6 +25,7 @@ import type {
   MemoryPool,
   ModelsResponse,
   NoteGraphEntry,
+  Paged,
   ProjectEntry,
   RecipeEntry,
   RoleEntry,
@@ -173,6 +176,41 @@ export function useChannelDetail(name: string | null) {
     queryKey: ["channelDetail", name],
     queryFn: () =>
       fetchApi<ChannelDetail>(`/api/coordination/channels/${encodeURIComponent(name!)}`),
+    enabled: !!name,
+  });
+}
+
+// ─── Paginated coordination collections ("load more") ──────────────────────
+// Dedicated paged hooks so the Coordination panel can grow a list without
+// silently truncating. Distinct query keys from the unpaged useTasks /
+// useChannelDetail / useBoardDetail (which other panels still consume).
+
+export function useTasksPaged(limit: number) {
+  return useQuery({
+    queryKey: ["tasksPaged", limit],
+    queryFn: () => fetchApi<Paged<TaskEntry>>(`/api/coordination/tasks?paged=1&limit=${limit}`),
+    staleTime: 30_000,
+  });
+}
+
+export function useBoardPosts(name: string | null, limit: number) {
+  return useQuery({
+    queryKey: ["boardPosts", name, limit],
+    queryFn: () =>
+      fetchApi<Paged<BoardPostEntry>>(
+        `/api/coordination/boards/${encodeURIComponent(name!)}/posts?limit=${limit}`,
+      ),
+    enabled: !!name,
+  });
+}
+
+export function useChannelMessages(name: string | null, limit: number) {
+  return useQuery({
+    queryKey: ["channelMessages", name, limit],
+    queryFn: () =>
+      fetchApi<Paged<ChannelMessage>>(
+        `/api/coordination/channels/${encodeURIComponent(name!)}/messages?limit=${limit}`,
+      ),
     enabled: !!name,
   });
 }
