@@ -178,7 +178,7 @@ describe("WebSocket Integration", () => {
 
     const errorMsg = JSON.parse(messages[1]!);
     expect(errorMsg.kind).toBe("error");
-    expect(errorMsg.data.text).toContain("Not logged in");
+    expect(errorMsg.data.text).toContain("Enter your name");
 
     ws.close();
     await Bun.sleep(50);
