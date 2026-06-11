@@ -24,6 +24,7 @@ import { deleteApi, postApi } from "../lib/api";
 import type { DashboardEvent } from "../lib/types";
 import { cn, formatTime } from "../lib/utils";
 import { AgentPanel } from "./AgentPanel";
+import { EntitySymmetryBar } from "./EntitySymmetryBar";
 import { GlassPanel } from "./GlassPanel";
 import { WhoLink } from "./WhoLink";
 
@@ -57,6 +58,7 @@ export function EntityRoster({ backContent }: { backContent?: ReactNode }) {
     <GlassPanel title="Entities" icon={<Users size={14} />} backContent={backContent}>
       {/* biome-ignore lint/a11y/noStaticElementInteractions: list container with roving keyboard nav over child roster rows, not click-activation */}
       <div ref={containerRef} onKeyDown={onKeyDown} className="flex flex-col outline-none">
+        <EntitySymmetryBar />
         {sorted.length === 0 && (
           <div className="p-2 text-text-dim text-[11px]">No entities online</div>
         )}

@@ -15,13 +15,16 @@ import { AgentLaunchContent } from "./components/back-faces/AgentLaunchContent";
 import { RoomNeighborhood } from "./components/back-faces/RoomNeighborhood";
 import { SystemMetricsContent } from "./components/back-faces/SystemMetricsContent";
 import { TaskPipeline } from "./components/back-faces/TaskPipeline";
+import { ConversationInsights } from "./components/ConversationInsights";
 import { CoordinationCard } from "./components/CoordinationCard";
 import { EntityRoster } from "./components/EntityRoster";
 import { Header } from "./components/Header";
+import { NarrativePlayback } from "./components/NarrativePlayback";
 import { RoomDetail } from "./components/RoomDetail";
 import { WebChat } from "./components/WebChat";
 import { WorldMap } from "./components/WorldMap";
 import { useSystem, useWorld } from "./hooks/use-api";
+import { useLayoutPresets } from "./hooks/use-layout-presets";
 import { useGlobalRealtimeInvalidations } from "./hooks/use-realtime-invalidations";
 import { useDashboardWebSocket } from "./hooks/use-websocket";
 
@@ -41,20 +44,24 @@ type Bp = "lg" | "md";
 // per-agent signal).
 const DEFAULT_LAYOUTS: ResponsiveLayouts<Bp> = {
   lg: [
-    { i: "webchat", x: 0, y: 0, w: 4, h: 10, minW: 3, minH: 3 },
-    { i: "worldmap", x: 4, y: 0, w: 4, h: 4, minW: 2, minH: 2 },
-    { i: "room", x: 4, y: 4, w: 4, h: 2, minW: 2, minH: 2 },
+    { i: "webchat", x: 0, y: 0, w: 4, h: 10, minW: 3, minH: 4 },
+    { i: "insights", x: 4, y: 0, w: 4, h: 3, minW: 3, minH: 2 },
+    { i: "worldmap", x: 4, y: 3, w: 4, h: 3, minW: 2, minH: 2 },
     { i: "coordination", x: 4, y: 6, w: 4, h: 2, minW: 2, minH: 2 },
     { i: "admin", x: 4, y: 8, w: 4, h: 2, minW: 3, minH: 2 },
-    { i: "entities", x: 8, y: 0, w: 4, h: 10, minW: 2, minH: 3 },
+    { i: "entities", x: 8, y: 0, w: 4, h: 6, minW: 2, minH: 3 },
+    { i: "playback", x: 8, y: 6, w: 4, h: 2, minW: 3, minH: 2 },
+    { i: "room", x: 8, y: 8, w: 4, h: 2, minW: 2, minH: 2 },
   ],
   md: [
-    { i: "webchat", x: 0, y: 0, w: 3, h: 10, minW: 3, minH: 3 },
-    { i: "worldmap", x: 3, y: 0, w: 4, h: 4, minW: 2, minH: 2 },
-    { i: "room", x: 3, y: 4, w: 4, h: 2, minW: 2, minH: 2 },
-    { i: "coordination", x: 3, y: 6, w: 4, h: 2, minW: 2, minH: 2 },
-    { i: "admin", x: 3, y: 8, w: 4, h: 2, minW: 3, minH: 2 },
-    { i: "entities", x: 7, y: 0, w: 3, h: 10, minW: 2, minH: 3 },
+    { i: "webchat", x: 0, y: 0, w: 4, h: 10, minW: 3, minH: 4 },
+    { i: "insights", x: 4, y: 0, w: 2, h: 3, minW: 2, minH: 2 },
+    { i: "worldmap", x: 4, y: 3, w: 2, h: 3, minW: 2, minH: 2 },
+    { i: "coordination", x: 4, y: 6, w: 2, h: 2, minW: 2, minH: 2 },
+    { i: "admin", x: 4, y: 8, w: 2, h: 2, minW: 2, minH: 2 },
+    { i: "entities", x: 6, y: 0, w: 4, h: 6, minW: 2, minH: 3 },
+    { i: "playback", x: 6, y: 6, w: 4, h: 2, minW: 3, minH: 2 },
+    { i: "room", x: 6, y: 8, w: 4, h: 2, minW: 2, minH: 2 },
   ],
 };
 
@@ -163,10 +170,33 @@ export default function App() {
   const [layouts, setLayouts] = useState<ResponsiveLayouts<Bp>>(
     () => loadLayouts() ?? DEFAULT_LAYOUTS,
   );
+  const {
+    presets: layoutPresets,
+    activeId: activePresetId,
+    applyPreset,
+    savePreset,
+    renamePreset,
+    deletePreset,
+    updateActiveLayouts,
+  } = useLayoutPresets(DEFAULT_LAYOUTS);
+  const presetInitializedRef = useRef(false);
+
   const [focusedPanel, setFocusedPanel] = useState<string | null>(null);
 
   const savedLayoutsRef = useRef<ResponsiveLayouts<Bp> | null>(null);
   const focusedPanelRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (presetInitializedRef.current) return;
+    presetInitializedRef.current = true;
+    const stored = loadLayouts();
+    if (!stored) {
+      const activePreset = layoutPresets.find((p) => p.id === activePresetId);
+      if (activePreset) {
+        setLayouts(activePreset.layouts);
+      }
+    }
+  }, [layoutPresets, activePresetId]);
 
   const handlePanelFocus = useCallback(
     (key: string) => {
@@ -205,7 +235,16 @@ export default function App() {
   // Panel refs for keyboard focus
   const panelRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const PANEL_KEYS = useMemo(
-    () => ["worldmap", "entities", "webchat", "room", "coordination", "admin"],
+    () => [
+      "webchat",
+      "insights",
+      "worldmap",
+      "coordination",
+      "entities",
+      "playback",
+      "room",
+      "admin",
+    ],
     [],
   );
   const [_activePanelIdx, setActivePanelIdx] = useState<number | null>(null);
@@ -261,21 +300,79 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [handleUnfocus, focusPanelByIndex, PANEL_KEYS]);
 
-  const handleLayoutChange = useCallback((_current: Layout, allLayouts: ResponsiveLayouts<Bp>) => {
-    setLayouts(allLayouts);
-    // Don't persist to localStorage while a panel is focused
-    if (!focusedPanelRef.current) {
-      localStorage.setItem(LAYOUT_KEY, JSON.stringify(allLayouts));
-    }
-  }, []);
+  const handleLayoutChange = useCallback(
+    (_current: Layout, allLayouts: ResponsiveLayouts<Bp>) => {
+      setLayouts(allLayouts);
+      // Don't persist to localStorage while a panel is focused
+      if (!focusedPanelRef.current) {
+        localStorage.setItem(LAYOUT_KEY, JSON.stringify(allLayouts));
+      }
+      updateActiveLayouts(allLayouts);
+    },
+    [updateActiveLayouts],
+  );
 
   const handleResetLayout = useCallback(() => {
     localStorage.removeItem(LAYOUT_KEY);
     savedLayoutsRef.current = null;
     focusedPanelRef.current = null;
     setFocusedPanel(null);
-    setLayouts(DEFAULT_LAYOUTS);
-  }, []);
+    const restored = applyPreset("default");
+    setLayouts(restored ?? DEFAULT_LAYOUTS);
+    if (restored) {
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify(restored));
+    }
+  }, [applyPreset]);
+
+  const handleSelectPreset = useCallback(
+    (id: string) => {
+      const presetLayouts = applyPreset(id);
+      if (presetLayouts) {
+        savedLayoutsRef.current = null;
+        focusedPanelRef.current = null;
+        setFocusedPanel(null);
+        setLayouts(presetLayouts);
+        localStorage.setItem(LAYOUT_KEY, JSON.stringify(presetLayouts));
+      }
+    },
+    [applyPreset],
+  );
+
+  const handleSavePreset = useCallback(() => {
+    const name = window.prompt("Name this workspace layout", "New workspace");
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const newId = savePreset(trimmed, layouts);
+    const presetLayouts = applyPreset(newId);
+    if (presetLayouts) {
+      setLayouts(presetLayouts);
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify(presetLayouts));
+    }
+  }, [savePreset, layouts, applyPreset]);
+
+  const handleRenamePreset = useCallback(
+    (id: string) => {
+      const preset = layoutPresets.find((p) => p.id === id);
+      if (!preset || preset.locked) return;
+      const next = window.prompt("Rename workspace", preset.name);
+      if (next === null) return;
+      const trimmed = next.trim();
+      if (!trimmed || trimmed === preset.name) return;
+      renamePreset(id, trimmed);
+    },
+    [layoutPresets, renamePreset],
+  );
+
+  const handleDeletePreset = useCallback(
+    (id: string) => {
+      const preset = layoutPresets.find((p) => p.id === id);
+      if (!preset || preset.locked) return;
+      if (!window.confirm(`Delete workspace "${preset.name}"?`)) return;
+      deletePreset(id);
+    },
+    [layoutPresets, deletePreset],
+  );
 
   const onHeaderDblClick = useCallback(
     (key: string) => (e: React.MouseEvent) => {
@@ -290,7 +387,17 @@ export default function App() {
 
   return (
     <div className="scanlines flex h-screen flex-col gap-1 p-1">
-      <Header connected={connected} uptime={uptime} onResetLayout={handleResetLayout} />
+      <Header
+        connected={connected}
+        uptime={uptime}
+        onResetLayout={handleResetLayout}
+        layoutPresets={layoutPresets}
+        activeLayoutId={activePresetId}
+        onSelectLayoutPreset={handleSelectPreset}
+        onSaveLayoutPreset={handleSavePreset}
+        onRenameLayoutPreset={handleRenamePreset}
+        onDeleteLayoutPreset={handleDeletePreset}
+      />
 
       <div ref={containerRef} className="min-h-0 flex-1">
         {mounted && (
@@ -308,6 +415,28 @@ export default function App() {
           >
             {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
             <div
+              key="webchat"
+              ref={(el) => {
+                panelRefs.current.webchat = el;
+              }}
+              onDoubleClick={onHeaderDblClick("webchat")}
+              className={panelClass("webchat")}
+            >
+              <WebChat />
+            </div>
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
+            <div
+              key="insights"
+              ref={(el) => {
+                panelRefs.current.insights = el;
+              }}
+              onDoubleClick={onHeaderDblClick("insights")}
+              className={panelClass("insights")}
+            >
+              <ConversationInsights />
+            </div>
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
+            <div
               key="worldmap"
               ref={(el) => {
                 panelRefs.current.worldmap = el;
@@ -322,6 +451,17 @@ export default function App() {
             </div>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
             <div
+              key="coordination"
+              ref={(el) => {
+                panelRefs.current.coordination = el;
+              }}
+              onDoubleClick={onHeaderDblClick("coordination")}
+              className={panelClass("coordination")}
+            >
+              <CoordinationCard backContent={<TaskPipeline />} />
+            </div>
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
+            <div
               key="entities"
               ref={(el) => {
                 panelRefs.current.entities = el;
@@ -333,14 +473,14 @@ export default function App() {
             </div>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
             <div
-              key="webchat"
+              key="playback"
               ref={(el) => {
-                panelRefs.current.webchat = el;
+                panelRefs.current.playback = el;
               }}
-              onDoubleClick={onHeaderDblClick("webchat")}
-              className={panelClass("webchat")}
+              onDoubleClick={onHeaderDblClick("playback")}
+              className={panelClass("playback")}
             >
-              <WebChat />
+              <NarrativePlayback />
             </div>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
             <div
@@ -352,17 +492,6 @@ export default function App() {
               className={panelClass("room")}
             >
               <RoomDetail backContent={<RoomNeighborhood />} />
-            </div>
-            {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
-            <div
-              key="coordination"
-              ref={(el) => {
-                panelRefs.current.coordination = el;
-              }}
-              onDoubleClick={onHeaderDblClick("coordination")}
-              className={panelClass("coordination")}
-            >
-              <CoordinationCard backContent={<TaskPipeline />} />
             </div>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
             <div

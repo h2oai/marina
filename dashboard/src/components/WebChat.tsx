@@ -1,7 +1,9 @@
 import { Check, Copy, List, MessageSquareText, PanelsTopLeft, Send } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatMessage, StoredPerception } from "../hooks/use-chat-state";
 import { ensureChatWs, getChatWs, useChatState } from "../hooks/use-chat-state";
+import { useFeedState } from "../hooks/use-feed-state";
+import { useWorldState } from "../hooks/use-world-state";
 import { clearToken, setToken } from "../lib/api";
 import { linkifyHtml } from "../lib/linkify";
 import { sanitizeChatHtml } from "../lib/sanitize";
@@ -338,7 +340,7 @@ export function WebChat() {
   const loggedIn = useChatState((s) => s.loggedIn);
   const connected = useChatState((s) => s.connected);
   const commandHistory = useChatState((s) => s.commandHistory);
-  const pushCommand = useChatState((s) => s.pushCommand);
+  const sendChatCommand = useChatState((s) => s.sendCommand);
 
   const outputRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -385,17 +387,15 @@ export function WebChat() {
   const doSend = useCallback(() => {
     const cmd = cmdValueRef.current.trim();
     if (!cmd) return;
-    const ws = getChatWs();
-    if (ws?.readyState === WebSocket.OPEN) {
-      pushCommand(cmd);
+    const ok = sendChatCommand(cmd);
+    if (ok) {
       historyIdxRef.current = -1;
-      ws.send(JSON.stringify({ type: "command", command: cmd }));
       if (inputRef.current) {
         inputRef.current.value = "";
         cmdValueRef.current = "";
       }
     }
-  }, [pushCommand]);
+  }, [sendChatCommand]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -769,6 +769,8 @@ export function WebChat() {
           )}
         </div>
 
+        <ContextualCompass />
+
         {/* Input area */}
         <div className="border-t border-border px-2 py-1.5">
           {!loggedIn ? (
@@ -816,5 +818,147 @@ export function WebChat() {
         </div>
       </div>
     </GlassPanel>
+  );
+}
+
+interface CompassSuggestion {
+  key: string;
+  label: string;
+  hint?: string;
+  mode: "command" | "prompt";
+  command: string;
+}
+
+function ContextualCompass() {
+  const loggedIn = useChatState((s) => s.loggedIn);
+  const messages = useChatState((s) => s.messages);
+  const sendCommand = useChatState((s) => s.sendCommand);
+  const feedEvents = useFeedState((s) => s.events);
+  const thinkingAgents = useWorldState((s) => s.thinkingAgents);
+
+  const suggestions = useMemo(() => {
+    if (!loggedIn) return [] as CompassSuggestion[];
+    const recentFeed = feedEvents.slice(0, 30);
+    const map = new Map<string, CompassSuggestion>();
+
+    const add = (suggestion: CompassSuggestion) => {
+      if (!map.has(suggestion.key)) {
+        map.set(suggestion.key, suggestion);
+      }
+    };
+
+    add({
+      key: "brief",
+      label: "Brief",
+      hint: "Compass snapshot of entities and tasks",
+      mode: "command",
+      command: "brief",
+    });
+
+    add({
+      key: "readiness",
+      label: "Readiness",
+      hint: "Capability health check",
+      mode: "command",
+      command: "readiness",
+    });
+
+    const agentNames = Object.keys(thinkingAgents);
+    if (agentNames.length > 0) {
+      add({
+        key: `status-${agentNames[0]}`,
+        label: `Status: ${agentNames[0]}`,
+        hint: "Inspect the active agent's loop",
+        mode: "command",
+        command: `agent status ${agentNames[0]}`,
+      });
+    }
+
+    if (recentFeed.some((event) => /task/i.test(event.summary))) {
+      add({
+        key: "tasks",
+        label: "Tasks",
+        hint: "Review coordination pipeline",
+        mode: "command",
+        command: "task list",
+      });
+    }
+
+    if (recentFeed.some((event) => /intent/i.test(event.summary))) {
+      add({
+        key: "intents",
+        label: "Canvas intents",
+        hint: "View open work requests",
+        mode: "command",
+        command: "canvas intent list",
+      });
+    }
+
+    if (recentFeed.some((event) => /chronicle/i.test(event.summary))) {
+      add({
+        key: "chronicle",
+        label: "Chronicle",
+        hint: "Check pending narration",
+        mode: "command",
+        command: "chronicle pending",
+      });
+    }
+
+    const lastOtherMessage = [...messages]
+      .reverse()
+      .map((m) => ({ meta: parseSpeech(m.text, m.tag, m.perception), raw: m }))
+      .find((m) => m.meta && m.meta.perspective === "other");
+    if (lastOtherMessage?.meta?.speaker) {
+      add({
+        key: "reply",
+        label: `Reply to ${lastOtherMessage.meta.speaker}`,
+        hint:
+          lastOtherMessage.meta.body?.slice(0, 80) ?? `Respond to ${lastOtherMessage.meta.speaker}`,
+        mode: "prompt",
+        command: "say ",
+      });
+    }
+
+    return Array.from(map.values());
+  }, [feedEvents, loggedIn, messages, thinkingAgents]);
+
+  if (!loggedIn || suggestions.length === 0) return null;
+
+  const runCommand = (command: string) => {
+    if (!sendCommand(command)) {
+      window.alert("Unable to send command — chat is not connected.");
+    }
+  };
+
+  return (
+    <div className="border-t border-border px-2 py-1.5 text-[11px] text-text">
+      <div className="flex items-center justify-between text-[10px] uppercase text-text-dim">
+        <span>Contextual compass</span>
+        <span>{suggestions.length} suggestions</span>
+      </div>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {suggestions.map((suggestion) => (
+          <button
+            key={suggestion.key}
+            type="button"
+            onClick={() => {
+              if (suggestion.mode === "command") {
+                runCommand(suggestion.command);
+              } else {
+                const reply = window.prompt(suggestion.hint ?? suggestion.label, "");
+                const trimmed = reply?.trim();
+                if (trimmed) {
+                  runCommand(`${suggestion.command}${trimmed}`);
+                }
+              }
+            }}
+            className="rounded border border-border bg-bg px-2 py-0.5 text-[10px] text-text hover:border-primary hover:text-primary transition-colors"
+            title={suggestion.hint}
+          >
+            {suggestion.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
