@@ -141,6 +141,14 @@ export interface CommandDef {
   handler: CommandHandler;
   minRank?: EntityRank;
   /**
+   * Display group for `help`. When set, it wins over the name→category map
+   * in help.ts, letting a command document its own category instead of
+   * relying on that hand-maintained list. Commands with neither a `category`
+   * nor a map entry fall into "Other" — a state the help-coverage test
+   * forbids, so every primitive stays documented.
+   */
+  category?: string;
+  /**
    * Safety gate id (see src/engine/safety-gates.ts SAFETY_GATES). When
    * set, the command-router checks `checkGate(db, entityId, gate)` after
    * the standard `minRank` check. A failed gate refuses the command with
