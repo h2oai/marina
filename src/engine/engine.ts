@@ -196,7 +196,12 @@ export class Engine {
         this.channelManager.createChannel({ type: "model", name: "model" });
       }
       this.boardManager = new BoardManager(this.db);
-      this.groupManager = new GroupManager(this.db, this.channelManager, this.boardManager);
+      this.groupManager = new GroupManager(
+        this.db,
+        this.channelManager,
+        this.boardManager,
+        (event) => this.logEvent(event),
+      );
       this.taskManager = new TaskManager(this.db);
       this.macroManager = new MacroManager(this.db, (entityId, raw) =>
         this.processCommand(entityId, raw),

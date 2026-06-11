@@ -171,6 +171,14 @@ export function channelCommand(
             ownerId: input.entity,
           });
           channels.addMember(ch.id, input.entity);
+          logEvent?.({
+            type: "coordination_change",
+            resource: "channel",
+            action: "create",
+            entity: input.entity,
+            name,
+            timestamp: Date.now(),
+          });
           ctx.send(input.entity, `Created and joined channel "${name}".`);
           return;
         }

@@ -30,22 +30,81 @@ export function useGlobalRealtimeInvalidations(): void {
     ),
   );
 
+  // ── Coordination: containers ───────────────────────────────────────
+  // Every coordination list (projects, groups, channels, pools, boards,
+  // connectors, commands) refreshes on a generic `coordination_change`
+  // (create/update/delete) scoped by `resource`. This is the path that lets
+  // a freshly-created container appear live instead of waiting on the 30s
+  // poll. Content events below stack on top for the resources that have them.
+  useInvalidateOnEvent(
+    ["groups"],
+    useCallback(
+      (e: DashboardEvent) => e.type === "coordination_change" && e.resource === "group",
+      [],
+    ),
+  );
+  useInvalidateOnEvent(
+    ["connectors"],
+    useCallback(
+      (e: DashboardEvent) => e.type === "coordination_change" && e.resource === "connector",
+      [],
+    ),
+  );
+  useInvalidateOnEvent(
+    ["commands"],
+    useCallback(
+      (e: DashboardEvent) => e.type === "coordination_change" && e.resource === "command",
+      [],
+    ),
+  );
+
+  // ── Coordination: projects ─────────────────────────────────────────
+  // A project's bundleProgress is derived from its child tasks' completion
+  // (see getProjects in dashboard-api), so the same task lifecycle events
+  // that move ["tasks"] must also refresh ["projects"]; coordination_change
+  // covers create + orchestration/memory edits.
+  useInvalidateOnEvent(
+    ["projects"],
+    useCallback(
+      (e: DashboardEvent) =>
+        (e.type === "coordination_change" && e.resource === "project") ||
+        e.type === "task_claimed" ||
+        e.type === "task_submitted" ||
+        e.type === "task_approved" ||
+        e.type === "task_rejected",
+      [],
+    ),
+  );
+
   // ── Coordination: boards ───────────────────────────────────────────
   useInvalidateOnEvent(
     ["boards"],
-    useCallback((e: DashboardEvent) => e.type === "board_post", []),
+    useCallback(
+      (e: DashboardEvent) =>
+        e.type === "board_post" || (e.type === "coordination_change" && e.resource === "board"),
+      [],
+    ),
   );
 
   // ── Coordination: channels ─────────────────────────────────────────
   useInvalidateOnEvent(
     ["channels"],
-    useCallback((e: DashboardEvent) => e.type === "channel_message", []),
+    useCallback(
+      (e: DashboardEvent) =>
+        e.type === "channel_message" ||
+        (e.type === "coordination_change" && e.resource === "channel"),
+      [],
+    ),
   );
 
   // ── Coordination: pools ────────────────────────────────────────────
   useInvalidateOnEvent(
     ["pools"],
-    useCallback((e: DashboardEvent) => e.type === "pool_note", []),
+    useCallback(
+      (e: DashboardEvent) =>
+        e.type === "pool_note" || (e.type === "coordination_change" && e.resource === "pool"),
+      [],
+    ),
   );
 
   // ── Admin: adapters ────────────────────────────────────────────────
