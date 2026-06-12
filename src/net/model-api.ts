@@ -1332,6 +1332,7 @@ const BUILTIN_DEFAULT_MODELS: Record<string, string> = {
   GEMINI_API_KEY: "gemini-2.0-flash",
   OPENROUTER_API_KEY: "anthropic/claude-sonnet-4",
   GROQ_API_KEY: "llama-3.3-70b-versatile",
+  LLAMA_API_KEY: "local-model",
 };
 
 function getDefaultUpstreamModel(envKey: string): string {
@@ -1372,12 +1373,20 @@ const PROVIDER_UPSTREAM: Record<string, { url: string; envKeys: string[]; anthro
     url: "https://openrouter.ai/api/v1/chat/completions",
     envKeys: ["OPENROUTER_API_KEY"],
   },
+  // Self-hosted llama.cpp server, OpenAI-compatible (Bearer auth, /chat/completions).
+  // Base URL defaults to the in-cluster service name; override with LLAMA_BASE_URL.
+  llama: {
+    url: `${(process.env.LLAMA_BASE_URL ?? "http://llama:8080/v1").replace(/\/+$/, "")}/chat/completions`,
+    envKeys: ["LLAMA_API_KEY"],
+  },
 };
 
 // First-party providers preferred over OpenRouter on the fallback path, since
 // OpenRouter is an aggregator that re-routes (and adds markup). An explicitly
 // configured default model overrides this order entirely (see proxyToUpstream).
-const FALLBACK_PRIORITY = ["anthropic", "openai", "google", "groq", "openrouter"];
+// `llama` is first: when a local model is configured (LLAMA_API_KEY set) it's the
+// preferred default; deployments without that key skip it (resolveProviderKey → undefined).
+const FALLBACK_PRIORITY = ["llama", "anthropic", "openai", "google", "groq", "openrouter"];
 
 /** Resolve a provider's key from env first, then admin-panel/DB keys. */
 function resolveProviderKey(engine: Engine, provider: string): string | undefined {
