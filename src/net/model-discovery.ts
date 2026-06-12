@@ -105,6 +105,12 @@ const PROVIDERS: ProviderSpec[] = [
     envKey: "DEEPSEEK_API_KEY",
     authStyle: "bearer",
   },
+  {
+    provider: "llama",
+    url: `${(process.env.LLAMA_BASE_URL ?? "http://llama:8080/v1").replace(/\/+$/, "")}/models`,
+    envKey: "LLAMA_API_KEY",
+    authStyle: "bearer",
+  },
 ];
 
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour

@@ -76,3 +76,49 @@ services:
       # - DISCORD_TOKEN=your_token
       # - DISCORD_CHANNEL_IDS=channel1,channel2
     restart: unless-stopped
+
+  # ── Local LLM server (llama.cpp) ───────────────────────────────────────────
+  # Internal-only: there is intentionally NO `ports:` mapping, so this is never
+  # reachable from the host/ALB/internet — only the `marina` container can reach
+  # it on the compose network at http://llama:8080. Hardened per llama.cpp
+  # SECURITY.md + the Synacktiv reference (sandboxed, cap-dropped, read-only
+  # model mount, GPU-pinned, api-key required). Requires the NVIDIA Container
+  # Toolkit on the host. Tunables live in .env (host-local), not hardcoded here.
+  llama:
+    image: ghcr.io/ggml-org/llama.cpp@sha256:e502860c8aa147e74e7cf42568fa2a8407c578dd291c1b231f698a55dd83fef6
+    command:
+      - "-m"
+      - "/models/${LLAMA_MODEL:?set LLAMA_MODEL in .env}"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "-ngl"
+      - "99"                                  # offload all layers to GPU
+      - "-c"
+      - "${LLAMA_CTX:-8192}"
+      - "--api-key"
+      - "${LLAMA_API_KEY:?set LLAMA_API_KEY in .env}"   # required even internally
+    expose:
+      - "8080"                                # network-internal only (NOT published)
+    volumes:
+      - ${LLAMA_MODELS_DIR:-/opt/models}:/models:ro     # read-only; verify gguf sha256 on host
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${LLAMA_GPUS:-0}         # pin to a subset of the 4 A10Gs
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${LLAMA_GPUS:-0}"]
+              capabilities: ["gpu"]
+    cap_drop: ["ALL"]
+    security_opt:
+      - "no-new-privileges:true"
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 24g
+    pids_limit: 1024
+    restart: unless-stopped
