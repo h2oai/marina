@@ -94,9 +94,10 @@ services:
       - "--port"
       - "8080"
       - "-ngl"
-      - "99"                                  # offload all layers to GPU
+      - "99"                                  # offload all layers; split across the visible GPUs
       - "-c"
-      - "${LLAMA_CTX:-8192}"
+      - "${LLAMA_CTX:-16384}"
+      - "--jinja"                             # apply the model's chat template → Hermes <tool_call> tool-calling
       - "--api-key"
       - "${LLAMA_API_KEY:?set LLAMA_API_KEY in .env}"   # required even internally
     expose:
@@ -104,14 +105,14 @@ services:
     volumes:
       - ${LLAMA_MODELS_DIR:-/opt/models}:/models:ro     # read-only; verify gguf sha256 on host
     environment:
-      - NVIDIA_VISIBLE_DEVICES=${LLAMA_GPUS:-0}         # pin to a subset of the 4 A10Gs
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     deploy:
       resources:
         reservations:
           devices:
+            # Pin GPUs 0 + 1 — the 36B Q5 (~26 GB) needs two A10Gs; GPUs 2 & 3 stay free.
             - driver: nvidia
-              device_ids: ["${LLAMA_GPUS:-0}"]
+              device_ids: ["0", "1"]
               capabilities: ["gpu"]
     cap_drop: ["ALL"]
     security_opt:
@@ -119,6 +120,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    mem_limit: 24g
+    mem_limit: 48g
     pids_limit: 1024
     restart: unless-stopped
