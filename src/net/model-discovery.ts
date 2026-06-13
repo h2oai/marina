@@ -49,6 +49,60 @@ interface ProviderSpec {
   authStyle: "bearer" | "anthropic" | "query" | "none";
 }
 
+/**
+ * Self-hosted, OpenAI-compatible local LLM runtimes — the keyless / bring-your-
+ * own-server path for operators without cloud provider keys. Both are addressed
+ * as `<provider>/<model-id>` and routed straight to the local server.
+ *
+ *  - `llama`  — a llama.cpp `--server` instance (default port 8080).
+ *  - `ollama` — Ollama's OpenAI-compatible endpoint (default port 11434).
+ *
+ * Base URLs default to `localhost` (native / bare-metal install). In Docker
+ * compose the service is reached by name, so set `LLAMA_BASE_URL` /
+ * `OLLAMA_BASE_URL` in that deployment (docker-compose.yml does this). A key is
+ * OPTIONAL: llama.cpp may run with `--api-key`, Ollama is typically keyless.
+ */
+export interface LocalProviderSpec {
+  /** Env var that overrides the OpenAI-style base URL (must end with `/v1`). */
+  baseUrlEnv: string;
+  /** Default base URL for a native/localhost install. */
+  defaultBaseUrl: string;
+  /** Env var holding an optional bearer key (absent for keyless servers). */
+  keyEnv: string;
+  /** Built-in model id used when routing `marina/default` to this runtime. */
+  defaultModel: string;
+}
+
+export const LOCAL_PROVIDERS: Record<string, LocalProviderSpec> = {
+  llama: {
+    baseUrlEnv: "LLAMA_BASE_URL",
+    defaultBaseUrl: "http://localhost:8080/v1",
+    keyEnv: "LLAMA_API_KEY",
+    defaultModel: "local-model",
+  },
+  ollama: {
+    baseUrlEnv: "OLLAMA_BASE_URL",
+    defaultBaseUrl: "http://localhost:11434/v1",
+    keyEnv: "OLLAMA_API_KEY",
+    defaultModel: "llama3",
+  },
+};
+
+/** True if `provider` is a self-hosted local runtime (llama.cpp / Ollama). */
+export function isLocalProvider(provider: string): boolean {
+  return provider in LOCAL_PROVIDERS;
+}
+
+/**
+ * Resolve a local provider's OpenAI-style base URL (env override → localhost
+ * default), trailing slashes stripped. Returns undefined for non-local providers.
+ */
+export function localProviderBaseUrl(provider: string): string | undefined {
+  const spec = LOCAL_PROVIDERS[provider];
+  if (!spec) return undefined;
+  return (process.env[spec.baseUrlEnv] ?? spec.defaultBaseUrl).replace(/\/+$/, "");
+}
+
 const PROVIDERS: ProviderSpec[] = [
   {
     provider: "anthropic",
@@ -107,9 +161,20 @@ const PROVIDERS: ProviderSpec[] = [
   },
   {
     provider: "llama",
-    url: `${(process.env.LLAMA_BASE_URL ?? "http://llama:8080/v1").replace(/\/+$/, "")}/models`,
+    url: `${localProviderBaseUrl("llama")}/models`,
     envKey: "LLAMA_API_KEY",
-    authStyle: "bearer",
+    // Keyless-friendly: a bare-metal llama.cpp may run without `--api-key`. We
+    // still send LLAMA_API_KEY when set (the `none` branch forwards a present
+    // key), so a hardened server with `--api-key` is discovered too.
+    authStyle: "none",
+  },
+  {
+    provider: "ollama",
+    url: `${localProviderBaseUrl("ollama")}/models`,
+    envKey: "OLLAMA_API_KEY",
+    // Ollama's OpenAI-compatible endpoint is keyless; discovery still works
+    // (the /v1/models list is public on a local server).
+    authStyle: "none",
   },
 ];
 

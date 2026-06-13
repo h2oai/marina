@@ -5,6 +5,7 @@ import type { Engine } from "../engine/engine";
 import { buildAliasMap } from "./compat-profiles";
 import { corsHeaders } from "./cors";
 import { handleMediaApi } from "./media-api";
+import { isLocalProvider, LOCAL_PROVIDERS, localProviderBaseUrl } from "./model-discovery";
 import { getEndpointConfig } from "./model-endpoint";
 
 const MODEL_CORS = corsHeaders(null, {
@@ -1332,7 +1333,8 @@ const BUILTIN_DEFAULT_MODELS: Record<string, string> = {
   GEMINI_API_KEY: "gemini-2.0-flash",
   OPENROUTER_API_KEY: "anthropic/claude-sonnet-4",
   GROQ_API_KEY: "llama-3.3-70b-versatile",
-  LLAMA_API_KEY: "local-model",
+  LLAMA_API_KEY: LOCAL_PROVIDERS.llama!.defaultModel,
+  OLLAMA_API_KEY: LOCAL_PROVIDERS.ollama!.defaultModel,
 };
 
 function getDefaultUpstreamModel(envKey: string): string {
@@ -1373,11 +1375,17 @@ const PROVIDER_UPSTREAM: Record<string, { url: string; envKeys: string[]; anthro
     url: "https://openrouter.ai/api/v1/chat/completions",
     envKeys: ["OPENROUTER_API_KEY"],
   },
-  // Self-hosted llama.cpp server, OpenAI-compatible (Bearer auth, /chat/completions).
-  // Base URL defaults to the in-cluster service name; override with LLAMA_BASE_URL.
+  // Self-hosted local runtimes, OpenAI-compatible (/chat/completions). Base URL
+  // defaults to localhost (native install); override with LLAMA_BASE_URL /
+  // OLLAMA_BASE_URL (docker-compose sets the in-cluster service name). Keys are
+  // optional — see resolveProviderKey / the fallback loop's local handling.
   llama: {
-    url: `${(process.env.LLAMA_BASE_URL ?? "http://llama:8080/v1").replace(/\/+$/, "")}/chat/completions`,
+    url: `${localProviderBaseUrl("llama")}/chat/completions`,
     envKeys: ["LLAMA_API_KEY"],
+  },
+  ollama: {
+    url: `${localProviderBaseUrl("ollama")}/chat/completions`,
+    envKeys: ["OLLAMA_API_KEY"],
   },
 };
 
@@ -1386,7 +1394,25 @@ const PROVIDER_UPSTREAM: Record<string, { url: string; envKeys: string[]; anthro
 // configured default model overrides this order entirely (see proxyToUpstream).
 // `llama` is first: when a local model is configured (LLAMA_API_KEY set) it's the
 // preferred default; deployments without that key skip it (resolveProviderKey → undefined).
-const FALLBACK_PRIORITY = ["llama", "anthropic", "openai", "google", "groq", "openrouter"];
+const FALLBACK_PRIORITY = [
+  "llama",
+  "ollama",
+  "anthropic",
+  "openai",
+  "google",
+  "groq",
+  "openrouter",
+];
+
+/**
+ * True if an operator has opted into a self-hosted local runtime by setting
+ * either its key or its base URL. Gates the (keyless) fallback attempt so a
+ * cloud-only deployment doesn't pay a failed localhost fetch on every request.
+ */
+function localProviderConfigured(provider: string): boolean {
+  const spec = LOCAL_PROVIDERS[provider];
+  return !!spec && (!!process.env[spec.keyEnv] || !!process.env[spec.baseUrlEnv]);
+}
 
 /** Resolve a provider's key from env first, then admin-panel/DB keys. */
 function resolveProviderKey(engine: Engine, provider: string): string | undefined {
@@ -1408,9 +1434,13 @@ async function dispatchOpenAICompatible(
   wantStream: boolean,
 ): Promise<Response | null> {
   try {
+    // Omit the Authorization header entirely when keyless (local servers) — an
+    // empty `Bearer ` confuses some OpenAI-compatible implementations.
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      headers,
       body: JSON.stringify(body),
     });
     if (!resp.ok) return null;
@@ -1455,11 +1485,14 @@ async function proxyToUpstream(
     const upstreamModel = slash >= 0 ? dm.slice(slash + 1) : dm;
     const cfg = PROVIDER_UPSTREAM[provider];
     const key = cfg ? resolveProviderKey(engine, provider) : undefined;
-    if (cfg && key && upstreamModel) {
-      if (cfg.anthropic) return await proxyToAnthropic(body, key, upstreamModel, wantStream);
+    // Local runtimes route keyless when configured (base URL set); cloud
+    // providers still require a key.
+    const localReady = isLocalProvider(provider) && localProviderConfigured(provider);
+    if (cfg && (key || localReady) && upstreamModel) {
+      if (cfg.anthropic) return await proxyToAnthropic(body, key!, upstreamModel, wantStream);
       const r = await dispatchOpenAICompatible(
         cfg.url,
-        key,
+        key ?? "",
         { ...body, model: upstreamModel },
         wantStream,
       );
@@ -1471,15 +1504,18 @@ async function proxyToUpstream(
   for (const provider of FALLBACK_PRIORITY) {
     const cfg = PROVIDER_UPSTREAM[provider]!;
     const key = resolveProviderKey(engine, provider);
-    if (!key) continue;
+    // Skip cloud providers with no key, and local runtimes the operator hasn't
+    // opted into — otherwise a keyless local server would be probed every call.
+    const localReady = isLocalProvider(provider) && localProviderConfigured(provider);
+    if (!key && !localReady) continue;
     const envKey = cfg.envKeys[0]!;
     if (cfg.anthropic) {
-      return await proxyToAnthropic(body, key, getDefaultUpstreamModel(envKey), wantStream);
+      return await proxyToAnthropic(body, key!, getDefaultUpstreamModel(envKey), wantStream);
     }
     const requestModel = isDefault ? getDefaultUpstreamModel(envKey) : (body.model as string);
     const r = await dispatchOpenAICompatible(
       cfg.url,
-      key,
+      key ?? "",
       { ...body, model: requestModel },
       wantStream,
     );
