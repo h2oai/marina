@@ -1280,6 +1280,38 @@ describe("model resolution", () => {
     expect(resolveModel("marina", 9999).baseUrl).toBe("http://localhost:9999/v1");
   });
 
+  it("routes self-hosted local runtimes (llama.cpp / Ollama) to their base URL", () => {
+    // Any model id under a local provider is valid — routed verbatim, classified
+    // "exact" so the spawn path doesn't reject it as unroutable.
+    const llama = resolveModel("llama/local-model");
+    expect(llama.id).toBe("local-model");
+    expect(llama.api).toBe("openai-completions");
+    expect(llama.baseUrl).toBe("http://localhost:8080/v1");
+    expect(classifyModelResolution("llama/local-model")).toBe("exact");
+
+    const ollama = resolveModel("ollama/mistral");
+    expect(ollama.id).toBe("mistral");
+    expect(ollama.baseUrl).toBe("http://localhost:11434/v1");
+    expect(classifyModelResolution("ollama/mistral")).toBe("exact");
+  });
+
+  it("honors LLAMA_BASE_URL / OLLAMA_BASE_URL overrides (docker / remote hosts)", () => {
+    const prevLlama = process.env.LLAMA_BASE_URL;
+    const prevOllama = process.env.OLLAMA_BASE_URL;
+    try {
+      process.env.LLAMA_BASE_URL = "http://llama:8080/v1";
+      process.env.OLLAMA_BASE_URL = "http://host.docker.internal:11434/v1/";
+      expect(resolveModel("llama/foo").baseUrl).toBe("http://llama:8080/v1");
+      // Trailing slash trimmed.
+      expect(resolveModel("ollama/foo").baseUrl).toBe("http://host.docker.internal:11434/v1");
+    } finally {
+      if (prevLlama === undefined) delete process.env.LLAMA_BASE_URL;
+      else process.env.LLAMA_BASE_URL = prevLlama;
+      if (prevOllama === undefined) delete process.env.OLLAMA_BASE_URL;
+      else process.env.OLLAMA_BASE_URL = prevOllama;
+    }
+  });
+
   it("normalizeMarinaBaseUrl handles host/url variants", () => {
     expect(normalizeMarinaBaseUrl("host:3300")).toBe("http://host:3300/v1");
     expect(normalizeMarinaBaseUrl("https://host:3300")).toBe("https://host:3300/v1");
