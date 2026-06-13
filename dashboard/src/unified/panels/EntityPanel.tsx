@@ -7,6 +7,7 @@
  * - Roles: role browser with detail drill-down
  */
 
+import type { ReactElement } from "react";
 import { memo, useCallback, useMemo, useState } from "react";
 import { useAgents, useKeys, useRoles } from "../../hooks/use-api";
 import { useWorldState } from "../../hooks/use-world-state";
@@ -252,6 +253,18 @@ const AgentsTab = memo(function AgentsTab({
     </div>
   );
 });
+
+function renderSupportSummary(supports: {
+  text: boolean;
+  image?: boolean;
+  video?: boolean;
+}): ReactElement | null {
+  const modes: string[] = [];
+  if (supports.image) modes.push("image");
+  if (supports.video) modes.push("video");
+  if (modes.length === 0) return null;
+  return <span style={{ color: "var(--color-accent)" }}>{modes.join(" · ")}</span>;
+}
 
 const AgentRow = memo(function AgentRow({
   agent,
@@ -525,18 +538,6 @@ const LaunchTab = memo(function LaunchTab(_props: { sendCommand?: (cmd: string) 
       setError(e instanceof Error ? e.message : "Spawn failed");
     } finally {
       setSpawning(false);
-    }
-
-    function renderSupportSummary(supports: {
-      text: boolean;
-      image?: boolean;
-      video?: boolean;
-    }): JSX.Element | null {
-      const modes: string[] = [];
-      if (supports.image) modes.push("image");
-      if (supports.video) modes.push("video");
-      if (modes.length === 0) return null;
-      return <span style={{ color: "var(--color-accent)" }}>{modes.join(" · ")}</span>;
     }
   }, [name, effectiveModel, role, goal, keyName]);
 

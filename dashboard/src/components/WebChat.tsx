@@ -21,6 +21,8 @@ import { GlassPanel } from "./GlassPanel";
 import { MediaJobsList } from "./MediaJobsList";
 import { StatusOverlay } from "./StatusOverlay";
 
+const API_BASE = window.location.origin;
+
 const ANSI_COLORS: Record<string, string> = {
   "30": "#4d4d4d",
   "31": "#f44",

@@ -1,4 +1,5 @@
 import { Bot, Send, Square, TriangleAlert } from "lucide-react";
+import type { ReactElement } from "react";
 import { useState } from "react";
 import { postApi } from "../lib/api";
 import type { AgentStatusInfo } from "../lib/types";
@@ -111,8 +112,8 @@ export function AgentPanel({ name, status }: AgentPanelProps) {
   );
 }
 
-function renderSupportBadges(supports: AgentStatusInfo["supports"]): JSX.Element | null {
-  const badges: JSX.Element[] = [];
+function renderSupportBadges(supports: AgentStatusInfo["supports"]): ReactElement | null {
+  const badges: ReactElement[] = [];
   if (supports.image) {
     badges.push(
       <span key="img" className="rounded bg-primary/10 px-1 text-[8px] uppercase text-primary">
