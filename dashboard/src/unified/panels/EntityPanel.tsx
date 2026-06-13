@@ -58,7 +58,32 @@ const MODEL_GROUPS = [
   { provider: "xAI", models: [{ value: "xai/grok-3-mini", label: "Grok 3 Mini" }] },
   { provider: "Cerebras", models: [{ value: "cerebras/llama3.1-8b", label: "Llama 3.1 8B" }] },
   { provider: "DeepSeek", models: [{ value: "deepseek/deepseek-chat", label: "DeepSeek Chat" }] },
+  {
+    provider: "Local (self-hosted)",
+    models: [
+      { value: "ollama/llama3", label: "Ollama (llama3)" },
+      { value: "llama/local-model", label: "llama.cpp (local-model)" },
+    ],
+  },
 ];
+
+/**
+ * Providers served by a local OpenAI-compatible runtime. Selecting one needs no
+ * cloud API key — point Marina at the server with an env var instead. The model
+ * id after the slash must match a model the server actually has loaded; use
+ * "Custom…" to set a different one (e.g. "ollama/mistral").
+ */
+const LOCAL_PROVIDER_HINTS: Record<string, string> = {
+  ollama: "Ollama — set OLLAMA_BASE_URL (default http://localhost:11434/v1). No API key needed.",
+  llama:
+    "llama.cpp — set LLAMA_BASE_URL (default http://localhost:8080/v1); LLAMA_API_KEY if the server requires one.",
+};
+
+/** Provider prefix of a "provider/model" string (or the whole string if no slash). */
+function modelProvider(value: string): string {
+  const slash = value.indexOf("/");
+  return slash >= 0 ? value.slice(0, slash) : value;
+}
 
 const DEFAULT_MODEL = MODEL_GROUPS[0]!.models[0]!.value;
 
@@ -603,6 +628,18 @@ const LaunchTab = memo(function LaunchTab(_props: { sendCommand?: (cmd: string) 
             onChange={(e) => setCustomModel(e.target.value)}
             style={{ ...inputStyle, marginTop: "3px" }}
           />
+        )}
+        {LOCAL_PROVIDER_HINTS[modelProvider(effectiveModel)] && (
+          <div
+            style={{
+              fontSize: "clamp(9px, 0.6vw, 11px)",
+              color: "var(--color-accent)",
+              marginTop: "3px",
+              lineHeight: 1.35,
+            }}
+          >
+            {LOCAL_PROVIDER_HINTS[modelProvider(effectiveModel)]}
+          </div>
         )}
       </div>
       <div>

@@ -71,6 +71,16 @@ services:
       # - OPENROUTER_API_KEY=sk-or-...
       # Behind a corporate proxy, also set HTTPS_PROXY / HTTP_PROXY here.
 
+      # ── Local LLM (the in-cluster `llama` service defined below) ──
+      # The code defaults base URLs to localhost (native installs); in compose,
+      # marina reaches the llama.cpp container by service name, so pin it here.
+      # LLAMA_API_KEY/LLAMA_MODEL come from .env (required by the llama service).
+      # Address models as `llama/<model>`, or leave agents on `marina/default`.
+      - LLAMA_BASE_URL=http://llama:8080/v1
+      - LLAMA_API_KEY=${LLAMA_API_KEY}
+      # Running Ollama on the host instead of the llama service? Point at it
+      # (Docker Desktop): - OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
+
       # ── Optional chat adapters ──
       # - TELEGRAM_TOKEN=your_token
       # - DISCORD_TOKEN=your_token

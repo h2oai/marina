@@ -17,6 +17,7 @@ import {
   type TextContent,
 } from "@mariozechner/pi-ai";
 import { MARINA_DEFAULT_MODEL } from "../engine/constants";
+import { isLocalProvider, localProviderBaseUrl } from "../net/model-discovery";
 import { MarinaClient } from "../sdk/client";
 import type { Perception } from "../types";
 import { ActionHistory } from "./action-history";
@@ -120,6 +121,9 @@ export function classifyModelResolution(modelStr: string): "exact" | "synthesize
   const provider = slash >= 0 ? head.slice(0, slash) : head;
   const modelId = slash >= 0 ? head.slice(slash + 1) : head;
   if (provider === "marina") return "exact";
+  // Self-hosted local runtimes (llama.cpp / Ollama) are routed by base URL, not
+  // by the bundled registry — any model id is valid (the local server decides).
+  if (isLocalProvider(provider)) return "exact";
   if (tryGetModel(provider, modelId)) return "exact";
   if (((piGetModels as (p: string) => Model<Api>[] | undefined)(provider)?.length ?? 0) > 0)
     return "synthesized";
@@ -150,6 +154,27 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
       name: remote
         ? `Marina ${modelId || "default"} @ ${baseUrl}`
         : `Marina ${modelId || "default"}`,
+      api: "openai-completions" as Api,
+      provider: "openai",
+      baseUrl,
+      reasoning: false,
+      input: ["text"] as ("text" | "image")[],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128_000,
+      maxTokens: 4096,
+    };
+  }
+
+  // Self-hosted local runtime (llama.cpp / Ollama). Route the literal model id
+  // straight to the local OpenAI-compatible server; the server validates the id
+  // (it must match a loaded GGUF / pulled model). No bundled registry entry —
+  // pi-ai ships none for these — so build the transport here, like `marina`.
+  if (isLocalProvider(provider)) {
+    const baseUrl = localProviderBaseUrl(provider)!;
+    const id = modelId || "default";
+    return {
+      id,
+      name: `${provider}/${id}`,
       api: "openai-completions" as Api,
       provider: "openai",
       baseUrl,

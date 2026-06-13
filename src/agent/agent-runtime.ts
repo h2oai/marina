@@ -6,7 +6,12 @@
  */
 
 import { MARINA_DEFAULT_MODEL } from "../engine/constants";
-import { inferModelCapabilities, MODEL_DISCOVERY_PROVIDERS } from "../net/model-discovery";
+import {
+  inferModelCapabilities,
+  isLocalProvider,
+  LOCAL_PROVIDERS,
+  MODEL_DISCOVERY_PROVIDERS,
+} from "../net/model-discovery";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
 import type { AgentConfig, AgentHandle, AgentStatus, AgentSupports } from "./agent-types";
@@ -271,7 +276,10 @@ export class AgentRuntime {
           : `Model "${modelStr}" is missing the provider prefix. Use "<provider>/<model-id>" (e.g. "anthropic/claude-sonnet-4-5-20250929"). Known providers: ${[...KNOWN_PROVIDERS].join(", ")}.`;
         throw new Error(hint);
       }
-      if (!apiKeyAtSpawn && provider !== "marina") {
+      // Local runtimes (llama.cpp / Ollama) are key-optional — a self-hosted
+      // server may be keyless. `marina` uses the internal token. Every other
+      // provider needs a key up front so we fail fast instead of at first call.
+      if (!apiKeyAtSpawn && provider !== "marina" && !isLocalProvider(provider)) {
         throw new Error(
           `No API key for provider "${provider}". Add one via dashboard Admin > Keys, or run: bun run init`,
         );
@@ -638,6 +646,11 @@ export class AgentRuntime {
       xai: ["XAI_API_KEY"],
       mistral: ["MISTRAL_API_KEY"],
       deepseek: ["DEEPSEEK_API_KEY"],
+      // Self-hosted local runtimes. The key is optional (Ollama is keyless, a
+      // bare-metal llama.cpp may omit `--api-key`); when the server requires one
+      // it's read from here. Key-optional spawn is enforced separately below.
+      llama: [LOCAL_PROVIDERS.llama!.keyEnv],
+      ollama: [LOCAL_PROVIDERS.ollama!.keyEnv],
     };
 
     const vars = envMap[provider] ?? [];
@@ -675,6 +688,11 @@ export class AgentRuntime {
       "DEEPSEEK_API_KEY",
     ];
     if (keyVars.some((v) => !!process.env[v])) return true;
+    // A local-only operator (no cloud keys) opts in by configuring a self-hosted
+    // runtime — either a key or an explicit base URL counts as "LLM available".
+    for (const spec of Object.values(LOCAL_PROVIDERS)) {
+      if (process.env[spec.keyEnv] || process.env[spec.baseUrlEnv]) return true;
+    }
     if (this.db) {
       try {
         if (this.db.getAllApiKeys().length > 0) return true;
