@@ -9,7 +9,7 @@ import {
   Users,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { useCallback, useMemo, useState } from "react";
 import { useEntityBrief, useEntityDetail } from "../hooks/use-api";
 import {
@@ -201,8 +201,8 @@ function renderSupportsBadges(supports: {
   text: boolean;
   image?: boolean;
   video?: boolean;
-}): JSX.Element | null {
-  const badges: JSX.Element[] = [];
+}): ReactElement | null {
+  const badges: ReactElement[] = [];
   if (supports.image) {
     badges.push(
       <span key="img" className="rounded bg-primary/10 px-1 text-[8px] uppercase text-primary">
