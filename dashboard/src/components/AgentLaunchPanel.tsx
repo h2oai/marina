@@ -1,5 +1,5 @@
 import { Bot, Play, Send, Square } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useAgents, useKeys, useModels, useRoles } from "../hooks/use-api";
 import { postApi } from "../lib/api";
@@ -303,8 +303,8 @@ function renderSupportBadges(supports: {
   text: boolean;
   image?: boolean;
   video?: boolean;
-}): JSX.Element | null {
-  const badges: JSX.Element[] = [];
+}): ReactElement | null {
+  const badges: ReactElement[] = [];
   if (supports.image) {
     badges.push(
       <span key="img" className="rounded bg-primary/10 px-1 text-[8px] uppercase text-primary">

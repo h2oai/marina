@@ -1,4 +1,5 @@
 import { ExternalLink, Loader2, RefreshCcw, TriangleAlert, Video, Volume2 } from "lucide-react";
+import type { ReactElement } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CanvasNodeData } from "../canvas/lib/types";
 import { A2UIRenderer } from "../canvas/nodes/a2ui/A2UIRenderer";
@@ -77,7 +78,7 @@ export function CanvasNodeEmbed({
     </div>
   );
 
-  let body: JSX.Element;
+  let body: ReactElement;
 
   if (isLoading || !node) {
     body = (
@@ -136,7 +137,7 @@ export function CanvasNodeEmbed({
 function renderNodePreview(
   node: CanvasNodeData & { data: Record<string, unknown> },
   onA2UIAction: (action: A2UIAction) => void,
-): JSX.Element {
+): ReactElement {
   const data = node.data ?? {};
   const title = (data.title as string) ?? (data.name as string) ?? node.type;
 
@@ -260,7 +261,7 @@ function renderNodePreview(
   }
 }
 
-function placeholder(text: string): JSX.Element {
+function placeholder(text: string): ReactElement {
   return (
     <div className="rounded border border-border bg-bg px-2 py-2 text-[10px] text-text-dim">
       {text}
