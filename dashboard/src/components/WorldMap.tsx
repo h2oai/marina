@@ -19,7 +19,7 @@ import {
   type RoomPosition,
 } from "../lib/world-graph";
 import { TimelineStrip } from "../unified/overlays/TimelineStrip";
-import { GlassPanel } from "./GlassPanel";
+import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 
 const DEFAULT_VIEWBOX = { x: 50, y: 10, w: 900, h: 730 };
 
@@ -280,12 +280,12 @@ const EntityDots = React.memo(function EntityDots({
 });
 
 // ── Main WorldMap Component ───────────────────────────────────────────
-interface WorldMapProps {
+interface WorldMapProps extends PanelFocusProps {
   worldData?: WorldData;
   backContent?: React.ReactNode;
 }
 
-export function WorldMap({ worldData, backContent }: WorldMapProps) {
+export function WorldMap({ worldData, backContent, isFocused, onToggleFocus }: WorldMapProps) {
   const selectedRoom = useWorldState((s) => s.selectedRoom);
   const selectRoom = useWorldState((s) => s.selectRoom);
   const selectEntity = useWorldState((s) => s.selectEntity);
@@ -830,6 +830,8 @@ export function WorldMap({ worldData, backContent }: WorldMapProps) {
       title={worldName ? `World Map — ${worldName}` : "World Map"}
       icon={<MapIcon size={14} />}
       backContent={backContent}
+      isFocused={isFocused}
+      onToggleFocus={onToggleFocus}
       headerExtra={
         <button
           type="button"

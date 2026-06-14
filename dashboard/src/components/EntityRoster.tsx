@@ -25,10 +25,14 @@ import type { DashboardEvent } from "../lib/types";
 import { cn, formatTime } from "../lib/utils";
 import { AgentPanel } from "./AgentPanel";
 import { EntitySymmetryBar } from "./EntitySymmetryBar";
-import { GlassPanel } from "./GlassPanel";
+import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { WhoLink } from "./WhoLink";
 
-export function EntityRoster({ backContent }: { backContent?: ReactNode }) {
+export function EntityRoster({
+  backContent,
+  isFocused,
+  onToggleFocus,
+}: { backContent?: ReactNode } & PanelFocusProps) {
   const entities = useWorldState((s) => s.entities);
   const thinkingAgents = useWorldState((s) => s.thinkingAgents);
   const selectedEntity = useWorldState((s) => s.selectedEntity);
@@ -55,7 +59,13 @@ export function EntityRoster({ backContent }: { backContent?: ReactNode }) {
   });
 
   return (
-    <GlassPanel title="Entities" icon={<Users size={14} />} backContent={backContent}>
+    <GlassPanel
+      title="Entities"
+      icon={<Users size={14} />}
+      backContent={backContent}
+      isFocused={isFocused}
+      onToggleFocus={onToggleFocus}
+    >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: list container with roving keyboard nav over child roster rows, not click-activation */}
       <div ref={containerRef} onKeyDown={onKeyDown} className="flex flex-col outline-none">
         <EntitySymmetryBar />

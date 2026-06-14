@@ -17,7 +17,7 @@ import { parseSpeech } from "../lib/perception";
 import { sanitizeChatHtml } from "../lib/sanitize";
 import type { MediaJob } from "../lib/types";
 import { CanvasNodeEmbed } from "./CanvasNodeEmbed";
-import { GlassPanel } from "./GlassPanel";
+import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { MediaJobsList } from "./MediaJobsList";
 import { StatusOverlay } from "./StatusOverlay";
 
@@ -304,7 +304,7 @@ function handlePerception(raw: unknown) {
 // Initialize WebSocket once at module level (survives component unmount)
 ensureChatWs(handlePerception);
 
-export function WebChat() {
+export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
   const messages = useChatState((s) => s.messages);
   const loggedIn = useChatState((s) => s.loggedIn);
   const connected = useChatState((s) => s.connected);
@@ -1186,6 +1186,9 @@ export function WebChat() {
       <GlassPanel
         title="Web Chat"
         icon={<MessageSquareText size={14} />}
+        isFocused={isFocused}
+        onToggleFocus={onToggleFocus}
+        bodyScroll={false}
         headerExtra={
           <div className="flex items-center gap-2">
             <button
