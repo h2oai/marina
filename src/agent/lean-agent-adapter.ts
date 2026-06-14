@@ -17,7 +17,11 @@ import {
   type TextContent,
 } from "@mariozechner/pi-ai";
 import { MARINA_DEFAULT_MODEL } from "../engine/constants";
-import { isLocalProvider, localProviderBaseUrl } from "../net/model-discovery";
+import {
+  isLocalProvider,
+  localProviderBaseUrl,
+  localProviderContextWindow,
+} from "../net/model-discovery";
 import { MarinaClient } from "../sdk/client";
 import type { Perception } from "../types";
 import { ActionHistory } from "./action-history";
@@ -28,7 +32,7 @@ import type {
   AgentStatus,
   AgentSupports,
 } from "./agent-types";
-import { createContextManager } from "./context-manager";
+import { createContextManager, hardTrimMessages } from "./context-manager";
 import { GameStateManager } from "./game-state";
 import { HookRegistry } from "./hook-registry";
 import { InterruptibleWaiter } from "./interruptible-waiter";
@@ -38,6 +42,51 @@ import { SocialAwareness } from "./social";
 import { createScopedTools } from "./tools";
 
 // ─── Model Resolution ───────────────────────────────────────────────────────
+
+/** Parse a positive integer env value, or undefined if unset/invalid. */
+function parsePositiveInt(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** Lowest context window we'll ever shrink to during overflow recovery. */
+const MIN_EFFECTIVE_CONTEXT = 4096;
+
+/** Max characters of any single recalled note / skill / orient block in the prompt. */
+const RECALL_BLOCK_MAX_CHARS = 600;
+
+/** Clamp recalled text so one oversized note can't balloon the continuation prompt. */
+function clampText(text: string, maxChars = RECALL_BLOCK_MAX_CHARS): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)} […+${text.length - maxChars} chars]`;
+}
+
+/**
+ * Does an upstream error message describe a context-length / token-budget
+ * overflow? These are NOT cured by waiting — only by shrinking the request —
+ * so they take the recovery path (hard-trim + window shrink) instead of a plain
+ * backoff-and-retry that would loop forever on the same oversized history.
+ * Matches the common phrasings across Anthropic / OpenAI / llama.cpp / Ollama.
+ */
+function isContextOverflowError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("context length") ||
+    m.includes("context window") ||
+    m.includes("context size") ||
+    m.includes("maximum context") ||
+    m.includes("context_length_exceeded") ||
+    m.includes("too many tokens") ||
+    m.includes("token limit") ||
+    m.includes("reduce the length") ||
+    m.includes("prompt is too long") ||
+    (m.includes("exceed") && m.includes("token")) ||
+    // llama.cpp: "the request exceeds the available context size"
+    (m.includes("exceeds") && m.includes("context"))
+  );
+}
+
 function normalizeSupports(supports: AgentSupports | undefined): AgentSupports {
   if (!supports) return { text: true };
   return {
@@ -160,7 +209,10 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
       reasoning: false,
       input: ["text"] as ("text" | "image")[],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 128_000,
+      // marina/default proxies to whatever upstream is configured. Default to a
+      // large window (cloud) but let a local-first operator pin the real ceiling
+      // so the compactor fires before a small local server 400s.
+      contextWindow: parsePositiveInt(process.env.MARINA_DEFAULT_CONTEXT_WINDOW) ?? 128_000,
       maxTokens: 4096,
     };
   }
@@ -181,7 +233,9 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
       reasoning: false,
       input: ["text"] as ("text" | "image")[],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 128_000,
+      // Honest local ceiling (env override → conservative default) so the
+      // compactor fires before the small local server rejects the request.
+      contextWindow: localProviderContextWindow(provider) ?? 16384,
       maxTokens: 4096,
     };
   }
@@ -276,6 +330,16 @@ export class LeanAgentAdapter implements AgentHandle {
   private platformMemory: PlatformMemoryBackend;
   private hookRegistry = new HookRegistry();
   private model: Model<Api>;
+  /**
+   * Working context-window ceiling the compactor budgets against. Starts at the
+   * model's nominal window and self-calibrates: it shrinks on a context-overflow
+   * error (the real server is smaller than we believed) and relaxes slowly back
+   * toward nominal on sustained success. This is what makes an agent survive an
+   * unknown/small local-model window without an operator tuning it by hand.
+   */
+  private effectiveContextWindow: number;
+  /** Highest real prompt-token count (usage.input + cacheRead) the server has accepted. */
+  private peakAcceptedInputTokens = 0;
 
   private focus: Focus | null = null;
   private autonomousMode = false;
@@ -424,6 +488,7 @@ export class LeanAgentAdapter implements AgentHandle {
       resolveModel(modelStr, this.wsPort),
       config.thinkingLevel ?? "off",
     );
+    this.effectiveContextWindow = this.model.contextWindow;
 
     // Create tools — profile controls how much schema goes to the LLM.
     // Smaller models (Haiku and below) can't reliably parse the full 27-tool
@@ -536,7 +601,9 @@ export class LeanAgentAdapter implements AgentHandle {
     // when over threshold, and (critically) consolidates dropped history
     // into pool reflections via onBeforeCompact.
     const contextTransform = createContextManager({
-      getModel: () => this.model,
+      // Budget against the self-calibrating effective window, not the nominal
+      // one — this is how the compactor tracks a smaller-than-advertised server.
+      getModel: () => ({ ...this.model, contextWindow: this.effectiveContextWindow }) as Model<Api>,
       getSystemPrompt: () => this.agent?.state.systemPrompt ?? "",
       summarizeWithLLM,
       onBeforeCompact,
@@ -880,14 +947,38 @@ export class LeanAgentAdapter implements AgentHandle {
           "stopReason" in lastMsg &&
           (lastMsg as unknown as Record<string, unknown>).stopReason === "error"
         ) {
+          const errorMessage = String(
+            (lastMsg as unknown as Record<string, unknown>).errorMessage ?? "unknown",
+          );
+          const model = this.config.model ?? MARINA_DEFAULT_MODEL;
+
+          // Context overflow is a SHRINK-don't-wait error: backing off and
+          // retrying the same oversized history loops forever. Recover by
+          // hard-trimming the conversation and lowering the effective window so
+          // future turns compact earlier — then retry promptly, not on the long
+          // error backoff. This self-calibrates to a smaller-than-advertised
+          // server (the classic local-model failure mode).
+          if (isContextOverflowError(errorMessage)) {
+            this.recoverFromContextOverflow();
+            this.lastErrorReason = `context overflow [${model}] — trimmed, window→${this.effectiveContextWindow}`;
+            console.warn(
+              `[lean-agent] "${this.name}" context overflow [${model}]: ${errorMessage}. ` +
+                `Hard-trimmed history, effective window → ${this.effectiveContextWindow}.`,
+            );
+            this.emitEvent({
+              type: "error",
+              error: `Context overflow recovered (window → ${this.effectiveContextWindow})`,
+              context: "autonomous_loop",
+            });
+            await this.sleep(1000);
+            continue;
+          }
+
           consecutiveErrors++;
           this.consecutiveLoopErrors = consecutiveErrors;
-          const errorMessage =
-            (lastMsg as unknown as Record<string, unknown>).errorMessage ?? "unknown";
           // Include the model so the dashboard error line names the failing
           // model — upstream 4xx (e.g. OpenRouter "404 No allowed providers")
           // are model-specific, and "which model?" is the first question.
-          const model = this.config.model ?? MARINA_DEFAULT_MODEL;
           this.lastErrorReason = `LLM error [${model}]: ${errorMessage}`;
           const backoff = Math.min(30000, 5000 * 2 ** (consecutiveErrors - 1));
           console.warn(
@@ -906,6 +997,10 @@ export class LeanAgentAdapter implements AgentHandle {
         this.consecutiveLoopErrors = 0;
         this.lastErrorReason = null;
         this.metrics.lastActivity = Date.now();
+        // Calibrate the effective window from the real token usage the server
+        // just reported — catches estimator undercount before it 400s, and
+        // relaxes the window back toward nominal after overflow recovery.
+        this.calibrateContextWindow(lastMsg as unknown as Record<string, unknown>);
 
         // Periodic heartbeat every 50 cycles
         if (this.loopIterationCount % 50 === 0 && this.loopIterationCount > 0) {
@@ -920,10 +1015,22 @@ export class LeanAgentAdapter implements AgentHandle {
             .catch(() => {});
         }
       } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        // A thrown overflow (some providers reject before the stream opens)
+        // takes the same shrink-and-recover path as the streamed error.
+        if (isContextOverflowError(msg)) {
+          this.recoverFromContextOverflow();
+          this.lastErrorReason = `context overflow (thrown) — trimmed, window→${this.effectiveContextWindow}`;
+          console.warn(
+            `[lean-agent] "${this.name}" context overflow (thrown): ${msg}. ` +
+              `Hard-trimmed history, effective window → ${this.effectiveContextWindow}.`,
+          );
+          await this.sleep(1000);
+          continue;
+        }
         consecutiveErrors++;
         this.consecutiveLoopErrors = consecutiveErrors;
         const backoff = Math.min(30000, 5000 * 2 ** (consecutiveErrors - 1));
-        const msg = error instanceof Error ? error.message : String(error);
         this.lastErrorReason = msg;
         console.warn(
           `[lean-agent] "${this.name}" loop exception (attempt ${consecutiveErrors}, backoff ${backoff}ms): ${msg}`,
@@ -935,6 +1042,63 @@ export class LeanAgentAdapter implements AgentHandle {
         });
         await this.sleep(backoff);
       }
+    }
+  }
+
+  /**
+   * Recover from a context-overflow error: shrink the effective window (the real
+   * server is smaller than we believed) and hard-trim the conversation so the
+   * next request fits. Idempotent and bounded by MIN_EFFECTIVE_CONTEXT.
+   */
+  private recoverFromContextOverflow(): void {
+    // Shrink toward the real ceiling. If we have a peak-accepted size, target
+    // just under it; otherwise cut the current window by 30%.
+    const fromPeak =
+      this.peakAcceptedInputTokens > 0
+        ? Math.floor(this.peakAcceptedInputTokens * 0.9)
+        : Math.floor(this.effectiveContextWindow * 0.7);
+    this.effectiveContextWindow = Math.max(
+      MIN_EFFECTIVE_CONTEXT,
+      Math.min(this.effectiveContextWindow, fromPeak),
+    );
+    // Hard-trim live history so the retry fits even before the transform reruns.
+    try {
+      this.agent.state.messages = hardTrimMessages(this.agent.state.messages, 6);
+    } catch {
+      // Non-critical — the transform will still compact on the next call.
+    }
+  }
+
+  /**
+   * After a successful turn, calibrate the effective window from the server's
+   * real token usage: record the peak accepted prompt size, shrink if real
+   * usage outran our estimate (pre-empts the next overflow), and relax slowly
+   * back toward the model's nominal window once we're comfortably under it.
+   */
+  private calibrateContextWindow(lastMsg: Record<string, unknown>): void {
+    const usage = lastMsg.usage as { input?: number; cacheRead?: number } | undefined;
+    if (!usage || typeof usage.input !== "number") return;
+    const realInput = usage.input + (typeof usage.cacheRead === "number" ? usage.cacheRead : 0);
+    if (realInput <= 0) return;
+    this.peakAcceptedInputTokens = Math.max(this.peakAcceptedInputTokens, realInput);
+
+    // Real prompt outran the budget the compactor thought it had → tighten so
+    // the next transform compacts harder. Leave ~12% headroom for output+margin.
+    if (realInput > this.effectiveContextWindow * 0.85) {
+      this.effectiveContextWindow = Math.max(MIN_EFFECTIVE_CONTEXT, Math.floor(realInput / 0.85));
+      return;
+    }
+
+    // Comfortably under budget → relax 5% back toward nominal (recover capacity
+    // after an overflow once the server proves it can take more).
+    if (
+      this.effectiveContextWindow < this.model.contextWindow &&
+      realInput < this.effectiveContextWindow * 0.6
+    ) {
+      this.effectiveContextWindow = Math.min(
+        this.model.contextWindow,
+        Math.floor(this.effectiveContextWindow * 1.05),
+      );
     }
   }
 
@@ -1131,14 +1295,15 @@ export class LeanAgentAdapter implements AgentHandle {
             const exampleBlocks = skillResult.results
               .slice(0, 2)
               .map(
-                (s) => `<example skill="#${s.id}" imp="${s.importance}">\n${s.content}\n</example>`,
+                (s) =>
+                  `<example skill="#${s.id}" imp="${s.importance}">\n${clampText(s.content)}\n</example>`,
               );
             blocks.push(exampleBlocks.join("\n"));
           }
           if (recallResult.results && recallResult.results.length > 0) {
             const top = recallResult.results
               .slice(0, 5)
-              .map((r) => `- [#${r.id} imp=${r.importance}] ${r.content}`);
+              .map((r) => `- [#${r.id} imp=${r.importance}] ${clampText(r.content)}`);
             blocks.push(top.join("\n"));
           }
           this.cachedNotes = blocks.join("\n\n");
@@ -1174,8 +1339,9 @@ export class LeanAgentAdapter implements AgentHandle {
         try {
           const orientResult = await this.platformMemory.orient();
           if (orientResult.success && orientResult.text) {
-            if (this.shouldIncludeSection("memory_health", orientResult.text)) {
-              parts.push(`[Memory Health]\n${orientResult.text}`);
+            const orientText = clampText(orientResult.text, 800);
+            if (this.shouldIncludeSection("memory_health", orientText)) {
+              parts.push(`[Memory Health]\n${orientText}`);
             }
           }
         } catch {
@@ -1676,6 +1842,9 @@ The goal is a smaller, sharper memory — not more notes.`;
         this.config.thinkingLevel ?? "off",
       );
       this.agent.state.model = this.model;
+      // New model → new ceiling; reset the self-calibrating window.
+      this.effectiveContextWindow = this.model.contextWindow;
+      this.peakAcceptedInputTokens = 0;
     }
     if (opts.role !== undefined) {
       this.config.role = opts.role;
