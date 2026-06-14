@@ -71,6 +71,16 @@ export interface LocalProviderSpec {
   keyEnv: string;
   /** Built-in model id used when routing `marina/default` to this runtime. */
   defaultModel: string;
+  /** Env var that overrides the assumed context window (prompt+output, tokens). */
+  contextWindowEnv: string;
+  /**
+   * Conservative default context window. Local servers are small and the
+   * compactor MUST know the real ceiling or it never fires while the server
+   * 400s. llama.cpp defaults to a 16k `-c`; Ollama's `num_ctx` is model- and
+   * config-dependent (often 8k or less). These are deliberately low — raise
+   * via the env override to match a server started with a bigger window.
+   */
+  defaultContextWindow: number;
 }
 
 export const LOCAL_PROVIDERS: Record<string, LocalProviderSpec> = {
@@ -79,12 +89,16 @@ export const LOCAL_PROVIDERS: Record<string, LocalProviderSpec> = {
     defaultBaseUrl: "http://localhost:8080/v1",
     keyEnv: "LLAMA_API_KEY",
     defaultModel: "local-model",
+    contextWindowEnv: "LLAMA_CONTEXT_WINDOW",
+    defaultContextWindow: 16384,
   },
   ollama: {
     baseUrlEnv: "OLLAMA_BASE_URL",
     defaultBaseUrl: "http://localhost:11434/v1",
     keyEnv: "OLLAMA_API_KEY",
     defaultModel: "llama3",
+    contextWindowEnv: "OLLAMA_CONTEXT_WINDOW",
+    defaultContextWindow: 8192,
   },
 };
 
@@ -101,6 +115,20 @@ export function localProviderBaseUrl(provider: string): string | undefined {
   const spec = LOCAL_PROVIDERS[provider];
   if (!spec) return undefined;
   return (process.env[spec.baseUrlEnv] ?? spec.defaultBaseUrl).replace(/\/+$/, "");
+}
+
+/**
+ * Assumed context window (tokens) for a local provider: env override →
+ * conservative default. The compactor uses this as its ceiling, so an honest
+ * (even slightly low) value is what keeps a small local server from 400ing.
+ * Returns undefined for non-local providers.
+ */
+export function localProviderContextWindow(provider: string): number | undefined {
+  const spec = LOCAL_PROVIDERS[provider];
+  if (!spec) return undefined;
+  const raw = process.env[spec.contextWindowEnv];
+  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : spec.defaultContextWindow;
 }
 
 const PROVIDERS: ProviderSpec[] = [

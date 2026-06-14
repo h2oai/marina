@@ -13,6 +13,7 @@ import { inferCrewResponder } from "../src/agent/agent-runtime";
 import {
   createContextManager,
   estimateMessageTokens,
+  hardTrimMessages,
   stripOrphanedToolResults,
   summarizeMessages,
   truncateOversizedToolResults,
@@ -930,6 +931,72 @@ describe("context-manager", () => {
     expect(result).toEqual([]);
   });
 
+  it("createContextManager reserves output budget — compacts before the raw window", async () => {
+    // 4k window, 2k reserved for output. ~1.4k prompt tokens is <80% of the raw
+    // window but >80% of the (4k-2k-margin) effective budget → must compact.
+    const transform = createContextManager({
+      getModel: () => ({ contextWindow: 4096, maxTokens: 2048 }) as unknown as Model<string>,
+      getSystemPrompt: () => "sys",
+      pruneThreshold: 0.8,
+      minRecentMessages: 2,
+    });
+    const messages: AgentMessage[] = [];
+    for (let i = 0; i < 30; i++) {
+      messages.push({
+        role: "user",
+        content: `Message ${i} ${"x".repeat(180)}`,
+        timestamp: Date.now(),
+      });
+    }
+    const result = await transform(messages);
+    expect(result.length).toBeLessThan(messages.length);
+  });
+
+  // ── hardTrimMessages — overflow-recovery last resort ─────────────────────
+
+  it("hardTrimMessages keeps first + recent and drops the middle behind a notice", () => {
+    const msgs: AgentMessage[] = [];
+    for (let i = 0; i < 20; i++) {
+      msgs.push({ role: "user", content: `m${i}`, timestamp: i } as unknown as AgentMessage);
+    }
+    const result = hardTrimMessages(msgs, 4);
+    // first + notice + 4 recent
+    expect(result.length).toBe(6);
+    expect((result[0] as { content: string }).content).toBe("m0");
+    expect((result[1] as { content: string }).content).toContain("context-overflow recovery");
+    expect((result[5] as { content: string }).content).toBe("m19");
+  });
+
+  it("hardTrimMessages is a no-op when already small", () => {
+    const msgs = [
+      { role: "user", content: "a", timestamp: 1 },
+      { role: "user", content: "b", timestamp: 2 },
+    ] as unknown as AgentMessage[];
+    expect(hardTrimMessages(msgs, 6).length).toBe(2);
+  });
+
+  it("hardTrimMessages strips a toolResult orphaned by the cut", () => {
+    const msgs: AgentMessage[] = [
+      { role: "user", content: "start", timestamp: 0 },
+      // middle (will be dropped): the assistant toolCall lives here
+      ...Array.from({ length: 8 }, (_, i) => ({
+        role: "user" as const,
+        content: `mid${i}`,
+        timestamp: i + 1,
+      })),
+      // recent window opens with an orphaned toolResult (its toolCall was cut)
+      {
+        role: "toolResult",
+        toolCallId: "gone",
+        toolName: "recall",
+        content: [{ type: "text", text: "x" }],
+      },
+      { role: "user", content: "end", timestamp: 99 },
+    ] as unknown as AgentMessage[];
+    const result = hardTrimMessages(msgs, 3);
+    expect(result.some((m) => (m as { role: string }).role === "toolResult")).toBe(false);
+  });
+
   // ── stripOrphanedToolResults — prevents Anthropic 400 retry-storm ────────
 
   it("stripOrphanedToolResults keeps matched pairs intact", () => {
@@ -1055,19 +1122,21 @@ describe("context-manager", () => {
       minRecentMessages: 2,
     });
     const msgs: AgentMessage[] = [{ role: "user", content: "start", timestamp: 1 } as AgentMessage];
-    // Middle chunk (will be summarized): an assistant with a toolCall
-    for (let i = 0; i < 10; i++) {
+    // toolCall lives near the FRONT so it always lands in the summarized middle
+    // regardless of which keep-recent tier the budget math selects.
+    msgs.push({
+      role: "assistant",
+      content: [{ type: "toolCall", id: "orphaned_call", name: "recall", arguments: {} }],
+    } as unknown as AgentMessage);
+    // Padding chunk (also summarized) to push the toolResult into the recent window.
+    for (let i = 0; i < 12; i++) {
       msgs.push({
         role: "user",
         content: `padding message ${i} to consume context tokens reliably`,
         timestamp: 1,
       } as AgentMessage);
     }
-    msgs.push({
-      role: "assistant",
-      content: [{ type: "toolCall", id: "orphaned_call", name: "recall", arguments: {} }],
-    } as unknown as AgentMessage);
-    // Recent window (will be kept): the toolResult that references the now-gone call
+    // Recent window (kept): the toolResult that references the now-summarized call.
     msgs.push({
       role: "toolResult",
       toolCallId: "orphaned_call",
@@ -1293,6 +1362,29 @@ describe("model resolution", () => {
     expect(ollama.id).toBe("mistral");
     expect(ollama.baseUrl).toBe("http://localhost:11434/v1");
     expect(classifyModelResolution("ollama/mistral")).toBe("exact");
+  });
+
+  it("gives local runtimes a small, honest context window (not the 128k cloud default)", () => {
+    // The compactor budgets against this — an inflated window is what lets a
+    // small local server silently overflow. Defaults must be conservative.
+    expect(resolveModel("llama/local-model").contextWindow).toBe(16384);
+    expect(resolveModel("ollama/mistral").contextWindow).toBe(8192);
+  });
+
+  it("honors LLAMA_CONTEXT_WINDOW / OLLAMA_CONTEXT_WINDOW overrides", () => {
+    const prevLlama = process.env.LLAMA_CONTEXT_WINDOW;
+    const prevOllama = process.env.OLLAMA_CONTEXT_WINDOW;
+    try {
+      process.env.LLAMA_CONTEXT_WINDOW = "32768";
+      process.env.OLLAMA_CONTEXT_WINDOW = "4096";
+      expect(resolveModel("llama/foo").contextWindow).toBe(32768);
+      expect(resolveModel("ollama/foo").contextWindow).toBe(4096);
+    } finally {
+      if (prevLlama === undefined) delete process.env.LLAMA_CONTEXT_WINDOW;
+      else process.env.LLAMA_CONTEXT_WINDOW = prevLlama;
+      if (prevOllama === undefined) delete process.env.OLLAMA_CONTEXT_WINDOW;
+      else process.env.OLLAMA_CONTEXT_WINDOW = prevOllama;
+    }
   });
 
   it("honors LLAMA_BASE_URL / OLLAMA_BASE_URL overrides (docker / remote hosts)", () => {
