@@ -34,6 +34,19 @@ export interface ContextManagerOptions {
   summarizeWithLLM?: (messages: AgentMessage[], ruleBasedFallback: string) => Promise<string>;
 }
 
+/**
+ * Tokens the compactor holds back from the context window so the model's
+ * completion (output) and per-request framing overhead have room. Without this,
+ * compaction targets a ratio of the FULL window and the output tokens push the
+ * real request over the edge — exactly the small-context-server failure mode.
+ * Reserve = the model's output budget + a 2% (min 256-token) safety margin.
+ */
+function reservedTokens(model: Model<string>, contextWindow: number): number {
+  const output = Number.isFinite(model.maxTokens) && model.maxTokens > 0 ? model.maxTokens : 0;
+  const margin = Math.max(256, Math.floor(contextWindow * 0.02));
+  return output + margin;
+}
+
 // ─── Context Manager Factory ────────────────────────────────────────────────
 
 export function createContextManager(options: ContextManagerOptions) {
@@ -54,11 +67,19 @@ export function createContextManager(options: ContextManagerOptions) {
 
       const model = getModel();
       const systemPrompt = getSystemPrompt();
-      const contextWindow = model.contextWindow;
+      const rawWindow = model.contextWindow;
 
-      if (!contextWindow || contextWindow <= 0 || !Number.isFinite(contextWindow)) {
+      if (!rawWindow || rawWindow <= 0 || !Number.isFinite(rawWindow)) {
         return messages;
       }
+
+      // Budget the PROMPT against the window minus what the completion + framing
+      // will consume. All ratio/budget math below works against this effective
+      // window so prompt + output stays under the real ceiling. The reservation
+      // is capped at half the window so a large output budget can't starve the
+      // prompt entirely on a small server.
+      const reserved = Math.min(Math.floor(rawWindow / 2), reservedTokens(model, rawWindow));
+      const contextWindow = Math.max(1, rawWindow - reserved);
 
       const systemTokens = estimateTokens(systemPrompt || "");
       const messageTokens = messages.reduce((sum, msg) => sum + estimateMessageTokens(msg), 0);
@@ -227,6 +248,27 @@ export function stripOrphanedToolResults(messages: AgentMessage[]): AgentMessage
     }
   }
   return result;
+}
+
+/**
+ * Last-resort history shrink for the overflow-recovery path. The normal
+ * transform is budget-driven and can still leave a too-large history when the
+ * server's real window is smaller than we believe; this one is unconditional —
+ * keep the first message (identity/bootstrap), drop the middle behind a notice,
+ * and keep the last `keepRecent`. Always strips orphaned tool results so the
+ * retry can't 400 on a split toolCall/toolResult pair.
+ */
+export function hardTrimMessages(messages: AgentMessage[], keepRecent: number): AgentMessage[] {
+  if (messages.length <= keepRecent + 1) return stripOrphanedToolResults(messages);
+  const first = messages[0]!;
+  const recent = messages.slice(-keepRecent);
+  const droppedCount = messages.length - recent.length - 1;
+  const notice: AgentMessage = {
+    role: "user",
+    content: `[${droppedCount} earlier messages dropped — context-overflow recovery]`,
+    timestamp: Date.now(),
+  } as AgentMessage;
+  return stripOrphanedToolResults([first, notice, ...recent]);
 }
 
 // ─── Token Estimation for Messages ──────────────────────────────────────────
