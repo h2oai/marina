@@ -3,14 +3,14 @@ import { useMemo } from "react";
 import { useChatState } from "../hooks/use-chat-state";
 import { useWorldState } from "../hooks/use-world-state";
 import { speakerName } from "../lib/perception";
-import { GlassPanel } from "./GlassPanel";
+import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 
 interface SpeakerInsight {
   name: string;
   count: number;
 }
 
-export function ConversationInsights() {
+export function ConversationInsights({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
   const messages = useChatState((s) => s.messages);
   const entities = useWorldState((s) => s.entities);
   const roleLookup = useMemo(() => {
@@ -81,7 +81,12 @@ export function ConversationInsights() {
   }, [messages, roleLookup]);
 
   return (
-    <GlassPanel title="Conversation Intelligence" icon={<BrainCircuit size={14} />}>
+    <GlassPanel
+      title="Conversation Intelligence"
+      icon={<BrainCircuit size={14} />}
+      isFocused={isFocused}
+      onToggleFocus={onToggleFocus}
+    >
       <div className="flex flex-1 flex-col gap-2 overflow-y-auto px-3 py-2 text-[11px] text-text">
         <div className="flex items-center gap-2 text-text-dim">
           <Hourglass size={12} className="text-primary" />

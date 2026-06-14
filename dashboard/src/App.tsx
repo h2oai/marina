@@ -422,7 +422,10 @@ export default function App() {
               onDoubleClick={onHeaderDblClick("webchat")}
               className={panelClass("webchat")}
             >
-              <WebChat />
+              <WebChat
+                isFocused={focusedPanel === "webchat"}
+                onToggleFocus={() => handlePanelFocus("webchat")}
+              />
             </div>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
             <div
@@ -433,7 +436,10 @@ export default function App() {
               onDoubleClick={onHeaderDblClick("insights")}
               className={panelClass("insights")}
             >
-              <ConversationInsights />
+              <ConversationInsights
+                isFocused={focusedPanel === "insights"}
+                onToggleFocus={() => handlePanelFocus("insights")}
+              />
             </div>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
             <div
@@ -447,7 +453,11 @@ export default function App() {
               {/* The Unified Canvas no longer nests here — it didn't work well
                   embedded. It's now a standalone alternate interface, off by
                   default, enabled via MARINA_UNIFIED_CANVAS (see main.tsx). */}
-              <WorldMap worldData={worldData} />
+              <WorldMap
+                worldData={worldData}
+                isFocused={focusedPanel === "worldmap"}
+                onToggleFocus={() => handlePanelFocus("worldmap")}
+              />
             </div>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
             <div
@@ -458,7 +468,11 @@ export default function App() {
               onDoubleClick={onHeaderDblClick("coordination")}
               className={panelClass("coordination")}
             >
-              <CoordinationCard backContent={<TaskPipeline />} />
+              <CoordinationCard
+                backContent={<TaskPipeline />}
+                isFocused={focusedPanel === "coordination"}
+                onToggleFocus={() => handlePanelFocus("coordination")}
+              />
             </div>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
             <div
@@ -469,7 +483,11 @@ export default function App() {
               onDoubleClick={onHeaderDblClick("entities")}
               className={panelClass("entities")}
             >
-              <EntityRoster backContent={<AgentLaunchContent />} />
+              <EntityRoster
+                backContent={<AgentLaunchContent />}
+                isFocused={focusedPanel === "entities"}
+                onToggleFocus={() => handlePanelFocus("entities")}
+              />
             </div>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
             <div
@@ -480,7 +498,10 @@ export default function App() {
               onDoubleClick={onHeaderDblClick("playback")}
               className={panelClass("playback")}
             >
-              <NarrativePlayback />
+              <NarrativePlayback
+                isFocused={focusedPanel === "playback"}
+                onToggleFocus={() => handlePanelFocus("playback")}
+              />
             </div>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
             <div
@@ -491,7 +512,11 @@ export default function App() {
               onDoubleClick={onHeaderDblClick("room")}
               className={panelClass("room")}
             >
-              <RoomDetail backContent={<RoomNeighborhood />} />
+              <RoomDetail
+                backContent={<RoomNeighborhood />}
+                isFocused={focusedPanel === "room"}
+                onToggleFocus={() => handlePanelFocus("room")}
+              />
             </div>
             {/* biome-ignore lint/a11y/noStaticElementInteractions: react-grid-layout panel container; double-click toggles focus, wraps nested interactive content */}
             <div
@@ -502,7 +527,11 @@ export default function App() {
               onDoubleClick={onHeaderDblClick("admin")}
               className={panelClass("admin")}
             >
-              <AdminPanel backContent={<SystemMetricsContent uptime={uptime} />} />
+              <AdminPanel
+                backContent={<SystemMetricsContent uptime={uptime} />}
+                isFocused={focusedPanel === "admin"}
+                onToggleFocus={() => handlePanelFocus("admin")}
+              />
             </div>
           </ResponsiveGridLayout>
         )}

@@ -10,7 +10,7 @@ import {
   useTraits,
 } from "../hooks/use-api";
 import { deleteApi, describeApiError, fetchApi, patchApi, postApi, putApi } from "../lib/api";
-import { GlassPanel } from "./GlassPanel";
+import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { ModelSelect } from "./ModelSelect";
 
 const SUPPORTED_PROVIDERS = [
@@ -29,11 +29,21 @@ const SUPPORTED_ADAPTERS = ["telegram", "discord"];
 
 type Tab = "keys" | "endpoint" | "adapters" | "roles" | "mcp" | "config" | "security";
 
-export function AdminPanel({ backContent }: { backContent?: React.ReactNode }) {
+export function AdminPanel({
+  backContent,
+  isFocused,
+  onToggleFocus,
+}: { backContent?: React.ReactNode } & PanelFocusProps) {
   const [tab, setTab] = useState<Tab>("keys");
 
   return (
-    <GlassPanel title="Admin" icon={<Shield size={14} />} backContent={backContent}>
+    <GlassPanel
+      title="Admin"
+      icon={<Shield size={14} />}
+      backContent={backContent}
+      isFocused={isFocused}
+      onToggleFocus={onToggleFocus}
+    >
       <div className="flex border-b border-border text-[10px]">
         {(["keys", "endpoint", "adapters", "roles", "mcp", "config", "security"] as Tab[]).map(
           (t) => (
