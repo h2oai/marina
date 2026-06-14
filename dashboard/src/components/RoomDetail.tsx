@@ -8,7 +8,7 @@ import type { DashboardEvent } from "../lib/types";
 import { cn } from "../lib/utils";
 import { getDistrictColor } from "../lib/world-graph";
 import { EventLine } from "./EventLine";
-import { GlassPanel } from "./GlassPanel";
+import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { WhoLink } from "./WhoLink";
 
 /** Events whose arrival means a room inspector's cached payload is stale. */
@@ -30,7 +30,11 @@ const ROOM_ACTIVITY_TYPES = new Set([
 
 type ViewMode = "view" | "source";
 
-export function RoomDetail({ backContent }: { backContent?: React.ReactNode }) {
+export function RoomDetail({
+  backContent,
+  isFocused,
+  onToggleFocus,
+}: { backContent?: React.ReactNode } & PanelFocusProps) {
   const selectedRoom = useWorldState((s) => s.selectedRoom);
   const selectRoom = useWorldState((s) => s.selectRoom);
   const selectEntity = useWorldState((s) => s.selectEntity);
@@ -107,14 +111,26 @@ export function RoomDetail({ backContent }: { backContent?: React.ReactNode }) {
 
   if (!selectedRoom) {
     return (
-      <GlassPanel title="Room Detail" icon={<DoorOpen size={14} />} backContent={backContent}>
+      <GlassPanel
+        title="Room Detail"
+        icon={<DoorOpen size={14} />}
+        backContent={backContent}
+        isFocused={isFocused}
+        onToggleFocus={onToggleFocus}
+      >
         <div className="p-2 text-text-dim text-[11px]">Click a room on the map to inspect it.</div>
       </GlassPanel>
     );
   }
 
   return (
-    <GlassPanel title="Room Detail" icon={<DoorOpen size={14} />} backContent={backContent}>
+    <GlassPanel
+      title="Room Detail"
+      icon={<DoorOpen size={14} />}
+      backContent={backContent}
+      isFocused={isFocused}
+      onToggleFocus={onToggleFocus}
+    >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: scroll container with roving keyboard nav over child rows, not click-activation */}
       <div
         ref={navContainerRef}

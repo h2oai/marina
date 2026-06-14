@@ -104,7 +104,8 @@ select optgroup {
   border-color: var(--color-border-glow);
 }
 
-.panel-focused .glass-panel {
+.panel-focused .glass-panel,
+.glass-panel-focused {
   border-color: var(--color-primary);
   box-shadow:
     0 0 20px var(--glow-rgba, rgba(255, 221, 0, 0.15)),

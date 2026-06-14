@@ -32,7 +32,7 @@ import {
 import { useInvalidateOnEvent } from "../hooks/use-realtime";
 import type { DashboardEvent } from "../lib/types";
 import { cn, formatTime } from "../lib/utils";
-import { GlassPanel } from "./GlassPanel";
+import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 
 type Section =
   | "projects"
@@ -68,7 +68,11 @@ type DetailView =
   | { type: "pool"; id: string }
   | null;
 
-export function CoordinationCard({ backContent }: { backContent?: React.ReactNode }) {
+export function CoordinationCard({
+  backContent,
+  isFocused,
+  onToggleFocus,
+}: { backContent?: React.ReactNode } & PanelFocusProps) {
   const [expanded, setExpanded] = useState<Section>(null);
   const [highlightedSection, setHighlightedSection] = useState<number | null>(null);
   const [detail, setDetail] = useState<DetailView>(null);
@@ -133,7 +137,13 @@ export function CoordinationCard({ backContent }: { backContent?: React.ReactNod
   );
 
   return (
-    <GlassPanel title="Coordination" icon={<Layers size={14} />} backContent={backContent}>
+    <GlassPanel
+      title="Coordination"
+      icon={<Layers size={14} />}
+      backContent={backContent}
+      isFocused={isFocused}
+      onToggleFocus={onToggleFocus}
+    >
       {/* biome-ignore lint/a11y/noStaticElementInteractions: scroll container with roving keyboard nav over child section rows, not click-activation */}
       <div
         onKeyDown={onKeyDown}

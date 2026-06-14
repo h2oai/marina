@@ -1,9 +1,9 @@
 import { Pause, Play, SkipBack, SkipForward, Timeline } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFeedState } from "../hooks/use-feed-state";
-import { GlassPanel } from "./GlassPanel";
+import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 
-export function NarrativePlayback() {
+export function NarrativePlayback({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
   const events = useFeedState((s) => s.events);
   const ordered = useMemo(() => [...events].reverse(), [events]);
   const [cursor, setCursor] = useState(ordered.length > 0 ? ordered.length - 1 : 0);
@@ -36,7 +36,12 @@ export function NarrativePlayback() {
   const current = ordered[cursor] ?? null;
 
   return (
-    <GlassPanel title="Narrative Playback" icon={<Timeline size={14} />}>
+    <GlassPanel
+      title="Narrative Playback"
+      icon={<Timeline size={14} />}
+      isFocused={isFocused}
+      onToggleFocus={onToggleFocus}
+    >
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-3 py-2 text-[11px] text-text">
         {/* Transport controls — fixed; never scroll out of reach. */}
         <div className="shrink-0 space-y-2">

@@ -1,7 +1,16 @@
-import { RefreshCw } from "lucide-react";
+import { Maximize2, Minimize2, RefreshCw } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { type ReactNode, useState } from "react";
 import { cn } from "../lib/utils";
+
+/**
+ * Focus/pop-out wiring a grid panel forwards to its GlassPanel. App owns the
+ * focused-panel state and the enlarge/restore layout; panels just relay it.
+ */
+export interface PanelFocusProps {
+  isFocused?: boolean;
+  onToggleFocus?: () => void;
+}
 
 interface GlassPanelProps {
   title?: string;
@@ -11,7 +20,14 @@ interface GlassPanelProps {
   className?: string;
   isFocused?: boolean;
   onDoubleClick?: () => void;
+  /** When provided, renders an explicit pop-out/restore button in the header. */
+  onToggleFocus?: () => void;
   headerExtra?: ReactNode;
+  /**
+   * Whether the front face scrolls its own overflow (default true). Panels that
+   * own their scroll regions (e.g. Web Chat) pass false to avoid a nested bar.
+   */
+  bodyScroll?: boolean;
 }
 
 const FLIP_TRANSITION = { duration: 0.4, ease: [0.4, 0, 0.2, 1] as const };
@@ -24,7 +40,9 @@ export function GlassPanel({
   className,
   isFocused,
   onDoubleClick,
+  onToggleFocus,
   headerExtra,
+  bodyScroll = true,
 }: GlassPanelProps) {
   const [isFlipped, setIsFlipped] = useState(false);
 
@@ -65,11 +83,25 @@ export function GlassPanel({
               <RefreshCw size={10} />
             </motion.button>
           )}
+          {onToggleFocus && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleFocus();
+              }}
+              className="text-text-dim transition-colors hover:text-primary"
+              title={isFocused ? "Restore panel size (Esc)" : "Pop out — enlarge this panel"}
+            >
+              {isFocused ? <Minimize2 size={10} /> : <Maximize2 size={10} />}
+            </button>
+          )}
         </div>
       )}
       {/* Body — 3D card flip on isFlipped toggle. Perspective on the
-          parent gives the rotation depth. */}
-      <div className="flex flex-1 flex-col overflow-hidden" style={{ perspective: 1200 }}>
+          parent gives the rotation depth. min-h-0 lets the flex children
+          shrink below their content height so the face can scroll. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ perspective: 1200 }}>
         <AnimatePresence mode="wait" initial={false}>
           {isFlipped ? (
             <motion.div
@@ -91,7 +123,10 @@ export function GlassPanel({
               exit={{ rotateY: -90, opacity: 0 }}
               transition={FLIP_TRANSITION}
               style={{ backfaceVisibility: "hidden", transformOrigin: "center" }}
-              className="flex flex-1 flex-col overflow-hidden"
+              className={cn(
+                "flex min-h-0 flex-1 flex-col overflow-x-hidden",
+                bodyScroll ? "overflow-y-auto" : "overflow-y-hidden",
+              )}
             >
               {children}
             </motion.div>
