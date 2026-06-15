@@ -1404,6 +1404,25 @@ describe("model resolution", () => {
     }
   });
 
+  it("detectModelLimits returns null for cloud providers (no probe attempted)", async () => {
+    const { detectModelLimits } = await import("../src/agent/model-probe");
+    expect(await detectModelLimits("anthropic/claude-sonnet-4-6")).toBeNull();
+    expect(await detectModelLimits("openrouter/some/model")).toBeNull();
+  });
+
+  it("detectModelLimits fails soft for an unreachable local server", async () => {
+    const { detectModelLimits } = await import("../src/agent/model-probe");
+    const prev = process.env.LLAMA_BASE_URL;
+    try {
+      // Unroutable port → fetch fails → graceful null, never throws.
+      process.env.LLAMA_BASE_URL = "http://127.0.0.1:1/v1";
+      expect(await detectModelLimits("llama/local-model")).toBeNull();
+    } finally {
+      if (prev === undefined) delete process.env.LLAMA_BASE_URL;
+      else process.env.LLAMA_BASE_URL = prev;
+    }
+  });
+
   it("normalizeMarinaBaseUrl handles host/url variants", () => {
     expect(normalizeMarinaBaseUrl("host:3300")).toBe("http://host:3300/v1");
     expect(normalizeMarinaBaseUrl("https://host:3300")).toBe("https://host:3300/v1");

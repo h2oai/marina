@@ -14,6 +14,7 @@ import {
   type Model,
   getModel as piGetModel,
   getModels as piGetModels,
+  streamSimple,
   type TextContent,
 } from "@mariozechner/pi-ai";
 import { MARINA_DEFAULT_MODEL } from "../engine/constants";
@@ -337,9 +338,16 @@ export class LeanAgentAdapter implements AgentHandle {
    * toward nominal on sustained success. This is what makes an agent survive an
    * unknown/small local-model window without an operator tuning it by hand.
    */
-  private effectiveContextWindow: number;
+  private effectiveContextWindow!: number;
   /** Highest real prompt-token count (usage.input + cacheRead) the server has accepted. */
   private peakAcceptedInputTokens = 0;
+  /**
+   * Output (completion) token cap injected into every request via the streamFn.
+   * Bounds generation so it can't itself overflow a small window. Undefined =
+   * pass through to the provider's own default (cloud models without an explicit
+   * override). Recomputed on a model change.
+   */
+  private outputMaxTokens: number | undefined;
 
   private focus: Focus | null = null;
   private autonomousMode = false;
@@ -488,7 +496,7 @@ export class LeanAgentAdapter implements AgentHandle {
       resolveModel(modelStr, this.wsPort),
       config.thinkingLevel ?? "off",
     );
-    this.effectiveContextWindow = this.model.contextWindow;
+    this.applyModelLimits(modelStr);
 
     // Create tools — profile controls how much schema goes to the LLM.
     // Smaller models (Haiku and below) can't reliably parse the full 27-tool
@@ -623,6 +631,17 @@ export class LeanAgentAdapter implements AgentHandle {
       maxRetryDelayMs: config.maxRetryDelayMs,
       thinkingBudgets: config.thinkingBudgets,
       transformContext: contextTransform,
+      // Inject the output cap into every request. pi-agent-core never sets
+      // `maxTokens`, and the openai-completions path only sends `max_tokens`
+      // when it's present — so without this a local server uses its own
+      // (often unbounded) default. Reads the field live so a model change
+      // (reconnect) takes effect without rebuilding the Agent.
+      streamFn: (model, context, options) =>
+        streamSimple(
+          model,
+          context,
+          this.outputMaxTokens ? { ...options, maxTokens: this.outputMaxTokens } : options,
+        ),
       // Dynamic resolver if a function was passed in; pi-agent-core will
       // re-invoke this for every LLM call, picking up rotated credentials.
       getApiKey: apiKey
@@ -1043,6 +1062,37 @@ export class LeanAgentAdapter implements AgentHandle {
         await this.sleep(backoff);
       }
     }
+  }
+
+  /**
+   * Apply per-agent / autodetected model limits to `this.model`: an optional
+   * context-window override and the output (completion) cap. Sets the output cap
+   * the streamFn injects, resets the adaptive window, and clears the usage peak.
+   * Run at construction and whenever the model changes.
+   */
+  private applyModelLimits(modelStr: string): void {
+    const provider = (modelStr.split("@")[0] ?? modelStr).split("/")[0] ?? "";
+    const isLocal = isLocalProvider(provider);
+    if (this.config.contextWindow && this.config.contextWindow > 0) {
+      this.model = {
+        ...this.model,
+        contextWindow: this.config.contextWindow,
+      } as Model<Api>;
+    }
+    // Output cap: explicit config wins; otherwise local models get a quarter of
+    // the window (512..4096) so a long completion can't overflow a small server,
+    // while cloud models keep the provider's own default (undefined → not sent).
+    this.outputMaxTokens =
+      this.config.maxTokens && this.config.maxTokens > 0
+        ? this.config.maxTokens
+        : isLocal
+          ? Math.max(512, Math.min(4096, Math.floor(this.model.contextWindow / 4)))
+          : undefined;
+    if (this.outputMaxTokens) {
+      this.model = { ...this.model, maxTokens: this.outputMaxTokens } as Model<Api>;
+    }
+    this.effectiveContextWindow = this.model.contextWindow;
+    this.peakAcceptedInputTokens = 0;
   }
 
   /**
@@ -1791,6 +1841,10 @@ The goal is a smaller, sharper memory — not more notes.`;
       errorReason: state === "error" ? this.lastErrorReason : null,
       lastActivity: this.metrics.lastActivity || this.metrics.startedAt || 0,
       supports: this.config.supports ?? { text: true },
+      contextWindow: this.model.contextWindow,
+      effectiveContextWindow: this.effectiveContextWindow,
+      maxOutputTokens: this.outputMaxTokens ?? this.model.maxTokens,
+      peakInputTokens: this.peakAcceptedInputTokens,
     };
   }
 
@@ -1841,10 +1895,12 @@ The goal is a smaller, sharper memory — not more notes.`;
         resolveModel(opts.model, this.wsPort),
         this.config.thinkingLevel ?? "off",
       );
+      // New model → drop the prior model's autodetected window override so the
+      // freshly resolved (registry/env/default) window applies, then reapply the
+      // output cap and reset the adaptive window.
+      this.config.contextWindow = undefined;
+      this.applyModelLimits(opts.model);
       this.agent.state.model = this.model;
-      // New model → new ceiling; reset the self-calibrating window.
-      this.effectiveContextWindow = this.model.contextWindow;
-      this.peakAcceptedInputTokens = 0;
     }
     if (opts.role !== undefined) {
       this.config.role = opts.role;

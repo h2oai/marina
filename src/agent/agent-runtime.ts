@@ -16,6 +16,7 @@ import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
 import type { AgentConfig, AgentHandle, AgentStatus, AgentSupports } from "./agent-types";
 import { classifyModelResolution, LeanAgentAdapter } from "./lean-agent-adapter";
+import { detectModelLimits } from "./model-probe";
 import { getRolePrompt, inferTaskCategory } from "./roles";
 
 const KNOWN_PROVIDERS = new Set<string>([...MODEL_DISCOVERY_PROVIDERS, "marina"]);
@@ -251,6 +252,28 @@ export class AgentRuntime {
       // false. Explicit values from the caller win.
       const resolvedModel = config.model ?? this.db?.getDefaultModel() ?? MARINA_DEFAULT_MODEL;
       const supports = resolveSupports(resolvedModel, config.supports);
+
+      // Autodetect the real context window for local models so the compactor
+      // budgets against the truth. Best-effort: skipped when the caller pinned a
+      // value or an env override exists (operator intent wins), and a failed /
+      // unreachable probe silently falls back to the conservative default.
+      let detectedContextWindow: number | undefined;
+      const spawnProvider = this.extractProvider(resolvedModel);
+      const ctxEnv = LOCAL_PROVIDERS[spawnProvider]?.contextWindowEnv;
+      if (
+        config.contextWindow === undefined &&
+        isLocalProvider(spawnProvider) &&
+        !(ctxEnv && process.env[ctxEnv])
+      ) {
+        const limits = await detectModelLimits(resolvedModel).catch(() => null);
+        if (limits?.contextWindow) {
+          detectedContextWindow = limits.contextWindow;
+          console.log(
+            `[agent-runtime] Autodetected context window ${limits.contextWindow} for "${config.name}" (${resolvedModel}, ${limits.source}).`,
+          );
+        }
+      }
+
       const effectiveConfig: AgentConfig = {
         ...config,
         // No explicit model → use the operator's runtime default (DB), then the
@@ -259,6 +282,9 @@ export class AgentRuntime {
         model: resolvedModel,
         crewResponder: config.crewResponder ?? inferCrewResponder(config.role),
         supports,
+        ...((config.contextWindow ?? detectedContextWindow)
+          ? { contextWindow: config.contextWindow ?? detectedContextWindow }
+          : {}),
       };
 
       // Validate a key exists at spawn time (fail fast on missing config),
@@ -561,6 +587,10 @@ export class AgentRuntime {
         errorReason: null,
         lastActivity: 0,
         supports: DEFAULT_SUPPORTS,
+        contextWindow: 0,
+        effectiveContextWindow: 0,
+        maxOutputTokens: 0,
+        peakInputTokens: 0,
       });
     }
     return [...running, ...inFlight];
