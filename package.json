@@ -39,7 +39,8 @@
     "clean": "rm -f marina.db marina.db-shm marina.db-wal data/marina.db && rm -rf data/scratch/*",
     "bench": "bun run benchmarks/harness.ts",
     "bench:ui": "bun run benchmarks/server.ts",
-    "init": "bun run scripts/init.ts"
+    "init": "bun run scripts/init.ts",
+    "prune-agent-users": "bun run scripts/prune-agent-users.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
