@@ -46,6 +46,13 @@ const AUTH_ENABLED = process.env.MARINA_AUTH === "better-auth";
 
 const logger = new Logger();
 const db = new MarinaDB(DB_PATH);
+// Encrypt any plaintext API keys at rest once MARINA_KEY_SECRET is configured.
+try {
+  const migrated = db.migrateApiKeysToEncrypted();
+  if (migrated > 0) logger.info("security", `Encrypted ${migrated} API key(s) at rest`);
+} catch (err) {
+  logger.error("security", "API-key encryption migration failed", { err });
+}
 const rateLimiter = new RateLimiter({ maxTokens: 200, refillRate: 50, refillInterval: 1000 });
 // Login-attempt throttle: N attempts/min per client IP with a burst of N.
 const loginRateLimiter =
