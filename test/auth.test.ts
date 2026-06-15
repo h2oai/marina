@@ -604,6 +604,13 @@ describe("User DB operations", () => {
     db.deleteUser("u_1");
     expect(db.getUser("u_1")).toBeUndefined();
   });
+
+  it("should list all users name-ordered", () => {
+    db.createUser({ id: "u_2", name: "Bob" });
+    db.createUser({ id: "u_1", name: "Alice" });
+    const names = db.listUsers().map((u) => u.name);
+    expect(names).toEqual(["Alice", "Bob"]);
+  });
 });
 
 describe("Ban DB operations", () => {

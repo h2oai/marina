@@ -1987,6 +1987,11 @@ export class MarinaDB {
     );
   }
 
+  /** All user rows, name-ordered. For maintenance/admin tooling. */
+  listUsers(): UserRow[] {
+    return this.db.query("SELECT * FROM users ORDER BY name").all() as UserRow[];
+  }
+
   updateUserLastLogin(id: string): void {
     this.db.run("UPDATE users SET last_login = ? WHERE id = ?", [Date.now(), id]);
   }
