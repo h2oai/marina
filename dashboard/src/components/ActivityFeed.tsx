@@ -352,7 +352,7 @@ export function formatEvent(
       };
     }
     case "feed_event":
-      if (event.kind && event.kind.startsWith("media_")) {
+      if (event.kind?.startsWith("media_")) {
         const label = MEDIA_FEED_LABELS[event.kind] ?? event.kind.replace("media_", "");
         const color =
           event.kind === "media_failed" || event.kind === "media_blocked"

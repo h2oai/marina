@@ -1,9 +1,4 @@
-import type {
-  MarinaDB,
-  MediaJobRow,
-  MediaJobStatus,
-  MediaJobType,
-} from "../../persistence/database";
+import type { MarinaDB, MediaJobRow, MediaJobType } from "../../persistence/database";
 import type { StorageProvider } from "../../storage/provider";
 import type { EngineEvent, EntityId } from "../../types";
 import type { Engine } from "../engine";

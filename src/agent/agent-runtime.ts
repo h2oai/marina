@@ -25,7 +25,7 @@ const DEFAULT_SUPPORTS: AgentSupports = { text: true };
 type SupportsLike = Partial<Record<"text" | "image" | "video", unknown>> | undefined;
 
 function normalizeSupports(supports: SupportsLike): AgentSupports {
-  const normalized: AgentSupports = { text: supports?.text === false ? false : true };
+  const normalized: AgentSupports = { text: supports?.text !== false };
   if (supports?.image === true) normalized.image = true;
   if (supports?.video === true) normalized.video = true;
   return normalized;
