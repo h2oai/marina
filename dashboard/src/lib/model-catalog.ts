@@ -43,6 +43,9 @@ export const FALLBACK_GROUPS: ProviderGroup[] = [
 
 export const DEFAULT_FALLBACK_MODEL = FALLBACK_GROUPS[0]!.models[0]!.value;
 
+/** Self-hosted, OpenAI-compatible local runtimes, surfaced first in pickers. */
+const LOCAL_PROVIDERS = new Set(["llama", "ollama"]);
+
 /**
  * Merge live discovery with fallback. If a provider returned models, use those;
  * otherwise fill in from the fallback so the picker is never empty. Providers
@@ -74,7 +77,12 @@ export function mergeGroups(liveGroups: ProviderGroup[] | undefined): ProviderGr
     if (!seen.has(fb.provider)) out.push(fb);
   }
 
-  return out;
+  // Hoist self-hosted local runtimes to the top — operators running local-first
+  // shouldn't have to scroll past every cloud provider to pick their model.
+  // Stable: preserves relative order within the local and non-local partitions.
+  const local = out.filter((g) => LOCAL_PROVIDERS.has(g.provider));
+  const rest = out.filter((g) => !LOCAL_PROVIDERS.has(g.provider));
+  return [...local, ...rest];
 }
 
 /** Total model count across groups — for UI status text. */
