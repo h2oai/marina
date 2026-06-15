@@ -9,20 +9,30 @@ chat — click it to view full-size.
 
 Generation calls out to a provider, so you need that provider's key:
 
-| Media | Provider | Key | Default model |
-|-------|----------|-----|---------------|
-| Image | OpenAI Images | `OPENAI_API_KEY` | `openai/gpt-image-1` |
+| Media | Provider | Key | Example models |
+|-------|----------|-----|----------------|
+| Image | OpenAI Images | `OPENAI_API_KEY` | `openai/gpt-image-1`, `openai/dall-e-3` |
+| Image | Stability AI (Stable Image v2) | `STABILITY_API_KEY` | `stability/core`, `stability/sd3`, `stability/ultra` |
+| Image | Google Imagen | `GEMINI_API_KEY` *(reused)* | `google/imagen-3.0-generate-002` |
 | Video | Runway | `RUNWAY_API_KEY` | `runway/gen3-alpha` |
 
-Optional daily caps (0 = unlimited):
+Pick a provider per request with `--model` (default image model is
+`openai/gpt-image-1`; override the instance default in Admin → Model). Optional
+daily caps (0 = unlimited):
 
 ```bash
 MAX_IMAGE_JOBS_PER_DAY=0
 MAX_VIDEO_JOBS_PER_DAY=0
 ```
 
-> Other providers (Stability for images, non-Runway video) are **not yet
-> implemented** — requesting them returns a clear "not supported" error.
+Notes:
+- **Prompt moderation** runs against OpenAI when an `OPENAI_API_KEY` is present,
+  regardless of the image provider; without one it's skipped (generation still
+  works).
+- **Sizes** snap to each provider's supported aspect ratios — `--width/--height`
+  are a hint, not exact pixels, for Stability/Imagen.
+- Non-Runway **video** providers are not yet implemented (a clear "not supported"
+  error is returned).
 
 ## Generate
 
@@ -91,8 +101,8 @@ Video is asynchronous: Runway is polled every few seconds and the job's
 
 ## Troubleshooting
 
-- **"Provider not yet supported"** — only `openai` (image) and `runway` (video)
-  are implemented; pick one of those models.
+- **"Provider not yet supported"** — image providers are `openai`, `stability`,
+  `google`; video is `runway`. Pick one of those models.
 - **Job stuck `pending` / errors immediately** — the provider key is missing
   (`OPENAI_API_KEY` / `RUNWAY_API_KEY`) or the daily cap is hit.
 - **Agent has no generate tool** — its model isn't image/video-capable. Spawn it

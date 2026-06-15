@@ -231,12 +231,18 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     capabilities: { text: true, audio: true },
   },
   {
-    test: (entry) => /^runway\/gen2/i.test(entry.value),
+    // Any Runway gen model (gen2/gen3/…) generates video.
+    test: (entry) => /^runway\/gen/i.test(entry.value),
     capabilities: { text: false, video: true },
   },
   {
-    test: (entry) =>
-      /^stability\/sdxl/i.test(entry.value) || /stability\/stable-diffusion/i.test(entry.value),
+    // Any Stability model generates images (ultra/core/sd3/sdxl/…).
+    test: (entry) => /^stability\//i.test(entry.value),
+    capabilities: { text: false, image: true },
+  },
+  {
+    // Google Imagen generates images.
+    test: (entry) => /^google\/imagen/i.test(entry.value),
     capabilities: { text: false, image: true },
   },
 ];
