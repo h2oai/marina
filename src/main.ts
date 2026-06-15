@@ -368,16 +368,26 @@ if (
 
 // ─── Graceful Shutdown ────────────────────────────────────────────────────────
 
-async function shutdown() {
+let shuttingDown = false;
+async function shutdown(code = 0) {
+  if (shuttingDown) return; // re-entrancy guard (e.g. SIGTERM during a crash unwind)
+  shuttingDown = true;
   logger.info("engine", "Shutting down...");
+
+  // Hard watchdog: if graceful cleanup stalls (a hung upstream during an
+  // agent's checkpoint flush, say), force-exit so a restart isn't blocked.
+  const watchdog = setTimeout(() => process.exit(code), 10_000);
+  watchdog.unref?.();
+
   clearInterval(stateInterval);
   clearInterval(sessionCleanupInterval);
 
   // Stop external adapters first
-  await adapterManager.stopAll();
+  await adapterManager.stopAll().catch(() => {});
 
-  // Stop spawned agents (graceful checkpoint + disconnect)
-  await engine.agentRuntime.stopAll();
+  // Stop spawned agents (graceful checkpoint + disconnect). stopAll preserves
+  // each agent's saved config so they respawn on the next boot.
+  await engine.agentRuntime.stopAll().catch(() => {});
 
   engine.shutdown(); // saves state + stops tick loop
   logServer.stop();
@@ -385,14 +395,18 @@ async function shutdown() {
   telnetServer.stop();
   mcpServer.stop();
   db.close();
-  process.exit(0);
+  process.exit(code);
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => shutdown(0));
+process.on("SIGTERM", () => shutdown(0));
 process.on("uncaughtException", (err) => {
   logger.error("fatal", "Uncaught exception", { error: String(err) });
   console.error("[fatal] Uncaught exception:", err);
+  // Best-effort: run graceful shutdown so agents flush checkpoints before the
+  // process dies — otherwise a crash loses everything since the last periodic
+  // save. The watchdog inside shutdown() bounds how long this can hang.
+  void shutdown(1);
 });
 process.on("unhandledRejection", (reason) => {
   logger.error("fatal", "Unhandled rejection", { error: String(reason) });
