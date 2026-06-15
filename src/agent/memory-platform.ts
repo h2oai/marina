@@ -177,6 +177,36 @@ export class PlatformMemoryBackend {
     }
   }
 
+  /**
+   * Persist the agent's live focus to core memory so its current task survives
+   * a focus timeout AND a restart. Written on change (not at shutdown), so even
+   * a crash preserves it. `null` clears the key so a completed/abandoned focus
+   * isn't resurrected on the next boot.
+   */
+  async saveFocus(
+    focus: { description: string; startedAt: number } | null,
+  ): Promise<PlatformMemoryResult> {
+    const cmd = focus ? `memory set focus ${JSON.stringify(focus)}` : "memory delete focus";
+    const perceptions = await this.client.command(cmd);
+    return { success: true, text: extractText(perceptions) };
+  }
+
+  async getFocus(): Promise<{ description: string; startedAt: number } | null> {
+    const perceptions = await this.client.command("memory get focus");
+    const text = extractText(perceptions);
+    const valueMatch = text.match(/\(v\d+\):\s*(.+)/s);
+    if (!valueMatch?.[1]) return null;
+    try {
+      const parsed = JSON.parse(valueMatch[1].trim());
+      if (parsed && typeof parsed.description === "string") {
+        return { description: parsed.description, startedAt: Number(parsed.startedAt) || 0 };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   async orient(): Promise<PlatformMemoryResult> {
     const perceptions = await this.client.command("orient");
     const text = extractText(perceptions);

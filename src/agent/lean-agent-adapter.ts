@@ -833,16 +833,33 @@ export class LeanAgentAdapter implements AgentHandle {
     // Load checkpoint
     const checkpointSummary = await this.loadCheckpointSummary();
 
+    // Restore the last persisted focus so the agent resumes its actual task
+    // across a restart (or after a focus timeout). It reflects the agent's
+    // evolved intent, so it wins over the original config goal start() seeded.
+    // Reset the timer so the resumed focus gets a fresh window instead of
+    // instantly expiring on the first loop check.
+    const persistedFocus = await this.platformMemory.getFocus();
+    if (persistedFocus?.description) {
+      this.focus = { description: persistedFocus.description, startedAt: Date.now() };
+    } else if (this.focus) {
+      // First run with a config goal — record it so a later restart resumes it.
+      this.platformMemory.saveFocus(this.focus).catch(() => {});
+    }
+
     // Inherited wisdom: pull the top guide-pool notes so successor agents
     // start with what predecessors learned, not a blank slate. Skipped for
-    // checkpoint resumes — the agent already has its own threads to pick up.
+    // checkpoint resumes — there we instead recall the agent's OWN recent notes
+    // so it reconstructs its task context on turn one, rather than waiting for
+    // the continuation prompt's recall to surface them over later turns.
     const inheritedWisdom = checkpointSummary ? "" : await this.recallInheritedWisdom();
+    const ownContext = checkpointSummary ? await this.recallOwnRecentContext() : "";
 
     const discoveryPrompt = getLeanDiscoveryPrompt();
     const wisdomPart = inheritedWisdom ? `\n# INHERITED WISDOM\n\n${inheritedWisdom}\n` : "";
     const checkpointPart = checkpointSummary
       ? `\n# RESUMING FROM CHECKPOINT\n\n${checkpointSummary}\n\n**Continue from where you left off.**\n`
       : "";
+    const ownContextPart = ownContext ? `\n# YOUR RECENT NOTES\n\n${ownContext}\n` : "";
     const focusPart = this.focus
       ? `\nYour current focus: ${this.focus.description}`
       : "\nExplore the world, discover its systems, and find interesting things to do.";
@@ -851,7 +868,7 @@ export class LeanAgentAdapter implements AgentHandle {
       `[lean-agent] "${this.name}" starting discovery prompt (model: ${this.model.id}, provider: ${this.model.provider})`,
     );
     await this.agent.prompt(
-      `${discoveryPrompt}${wisdomPart}${checkpointPart}${focusPart}\n\nBegin.`,
+      `${discoveryPrompt}${wisdomPart}${checkpointPart}${ownContextPart}${focusPart}\n\nBegin.`,
     );
     console.log(`[lean-agent] "${this.name}" discovery prompt completed, starting autonomous loop`);
 
@@ -1472,7 +1489,7 @@ The goal is a smaller, sharper memory — not more notes.`;
 
       if (elapsed > this.focusTimeoutMs) {
         const expiredFocus = this.focus.description;
-        this.focus = null;
+        this.updateFocus(null);
         parts.push(
           `[Focus Completed] "${expiredFocus}" has run its course. Before picking a new one, pause:\n- What did you learn? \`reflect\` on it.\n- What does your memory suggest? \`recall\` your goal or recent themes.\n- What does the world need? \`brief\` shows pending work.\nChoose what matters to you, not what's merely available.`,
         );
@@ -1571,7 +1588,7 @@ The goal is a smaller, sharper memory — not more notes.`;
 
   private getStuckRecovery(): string {
     if (this.stuckCycles >= 3) {
-      this.focus = null;
+      this.updateFocus(null);
       this.stuckCycles = 0;
       return (
         "[STUCK — RESETTING] Focus cleared. Your approach wasn't working.\n\n" +
@@ -1777,6 +1794,25 @@ The goal is a smaller, sharper memory — not more notes.`;
     }
   }
 
+  /**
+   * On resume, recall the agent's OWN most-relevant recent notes so it
+   * reconstructs task context on the first turn instead of waiting for the
+   * continuation prompt's per-cycle recall to surface them. Query is the
+   * (restored) focus, falling back to recent work. Best-effort — failure
+   * returns "" and boot proceeds unchanged.
+   */
+  private async recallOwnRecentContext(): Promise<string> {
+    try {
+      const query = this.focus?.description?.trim() || "recent work";
+      const result = await this.platformMemory.search(query, { mode: "recent" });
+      const notes = result.results?.slice(0, 5) ?? [];
+      if (notes.length === 0) return "";
+      return notes.map((n, i) => `${i + 1}. ${clampText(n.content)}`).join("\n\n");
+    } catch {
+      return "";
+    }
+  }
+
   private async loadCheckpointSummary(): Promise<string> {
     try {
       const checkpoint = await this.platformMemory.getCheckpoint();
@@ -1868,7 +1904,18 @@ The goal is a smaller, sharper memory — not more notes.`;
   }
 
   setFocus(description: string): void {
-    this.focus = { description, startedAt: Date.now() };
+    this.updateFocus({ description, startedAt: Date.now() });
+  }
+
+  /**
+   * Set (or clear) the live focus AND persist it to core memory so the agent's
+   * current task survives a focus timeout and a restart. Persistence is
+   * fire-and-forget — it must never block the autonomous loop or the
+   * continuation-prompt build that calls this on focus expiry.
+   */
+  private updateFocus(focus: Focus | null): void {
+    this.focus = focus;
+    this.platformMemory.saveFocus(focus).catch(() => {});
   }
 
   setSystemPrompt(prompt: string | undefined): void {
