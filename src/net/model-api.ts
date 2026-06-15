@@ -1,11 +1,17 @@
 import { getInternalModelToken } from "../agent/agent-runtime";
 import type { RateLimiter } from "../auth/rate-limiter";
 import type { ChannelManager } from "../coordination/channel-manager";
+import { DEFAULT_LOCAL_MAX_OUTPUT_TOKENS } from "../engine/constants";
 import type { Engine } from "../engine/engine";
 import { buildAliasMap } from "./compat-profiles";
 import { corsHeaders } from "./cors";
 import { handleMediaApi } from "./media-api";
-import { isLocalProvider, LOCAL_PROVIDERS, localProviderBaseUrl } from "./model-discovery";
+import {
+  isLocalProvider,
+  LOCAL_PROVIDERS,
+  localProviderBaseUrl,
+  localProviderContextWindow,
+} from "./model-discovery";
 import { getEndpointConfig } from "./model-endpoint";
 import {
   normalizeTextualToolCalls,
@@ -1597,17 +1603,43 @@ function normalizeToolCallSSE(
 }
 
 /**
- * Inject llama.cpp-specific chat template kwargs into the request body when
- * the provider is `llama`. `enable_thinking: false` suppresses Qwen3's
- * `<think>` blocks at the Jinja template level — without it, reasoning models
- * spend their output budget reasoning and produce no tool calls on large prompts.
+ * Resolve the completion-token budget for the local `llama` upstream: the
+ * configured ceiling (DEFAULT_LOCAL_MAX_OUTPUT_TOKENS), clamped to a quarter of
+ * the server's context window so it can't crowd out the prompt on a small box.
  */
-function injectLlamaKwargs(
+function llamaOutputBudget(): number {
+  const ctx = localProviderContextWindow("llama");
+  const ctxCap = ctx && ctx > 0 ? Math.floor(ctx / 4) : DEFAULT_LOCAL_MAX_OUTPUT_TOKENS;
+  return Math.max(512, Math.min(DEFAULT_LOCAL_MAX_OUTPUT_TOKENS, ctxCap));
+}
+
+/**
+ * Prepare a request body bound for the local `llama` upstream. Two concerns,
+ * both aimed at the "agent connects but never acts" failure on reasoning
+ * models (Qwen3):
+ *   1. Suppress `<think>` blocks at the Jinja template level
+ *      (`enable_thinking: false`). Only honored when llama.cpp runs with
+ *      `--jinja`, so it's a best-effort hint, not the load-bearing fix.
+ *   2. Guarantee a generous completion budget. `marina/default` agents send no
+ *      `max_tokens` (the agent layer can't see which upstream the proxy will
+ *      pick), so without this the reasoning model spends the server-default
+ *      budget on `<think>` and returns no tool call. A larger caller-supplied
+ *      value is always preserved.
+ * Other providers pass through untouched.
+ */
+export function prepareLlamaBody(
   body: Record<string, unknown>,
   provider: string,
 ): Record<string, unknown> {
   if (provider !== "llama") return body;
-  return { ...body, chat_template_kwargs: { enable_thinking: false } };
+  const prepared: Record<string, unknown> = {
+    ...body,
+    chat_template_kwargs: { enable_thinking: false },
+  };
+  const budget = llamaOutputBudget();
+  const current = typeof body.max_tokens === "number" ? body.max_tokens : 0;
+  if (current < budget) prepared.max_tokens = budget;
+  return prepared;
 }
 
 async function proxyToUpstream(
@@ -1640,7 +1672,7 @@ async function proxyToUpstream(
       const r = await dispatchOpenAICompatible(
         cfg.url,
         key ?? "",
-        injectLlamaKwargs({ ...body, model: upstreamModel }, provider),
+        prepareLlamaBody({ ...body, model: upstreamModel }, provider),
         wantStream,
       );
       if (r) return r;
@@ -1663,7 +1695,7 @@ async function proxyToUpstream(
     const r = await dispatchOpenAICompatible(
       cfg.url,
       key ?? "",
-      injectLlamaKwargs({ ...body, model: requestModel }, provider),
+      prepareLlamaBody({ ...body, model: requestModel }, provider),
       wantStream,
     );
     if (r) return r;
