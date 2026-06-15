@@ -807,9 +807,22 @@ function ConfigTab() {
 
 // ─── Security Tab ───────────────────────────────────────────────────────────
 
+interface SecurityStatus {
+  authRequired: boolean;
+  openApi: boolean;
+  keyEncryption: boolean;
+  dbKeyCount: number;
+}
+
 function SecurityTab() {
-  const { data: keys } = useKeys();
   const { data: agents } = useAgents();
+  const [status, setStatus] = useState<SecurityStatus | null>(null);
+
+  useEffect(() => {
+    fetchApi<SecurityStatus>("/api/security-status")
+      .then(setStatus)
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="space-y-2">
@@ -819,23 +832,51 @@ function SecurityTab() {
       <div className="space-y-1 text-[10px]">
         <div className="flex gap-2">
           <span className="text-text-dim">Dashboard auth:</span>
-          <span className="text-warning">Not configured</span>
+          {status?.authRequired ? (
+            <span className="text-emerald-400">Enabled (better-auth)</span>
+          ) : (
+            <span className="text-warning">Off — sign-in not required</span>
+          )}
         </div>
+        {status?.openApi && (
+          <div className="flex gap-2">
+            <span className="text-text-dim">Open API:</span>
+            <span className="text-red-400">
+              MARINA_OPEN_API=true — API auth disabled (dev only)
+            </span>
+          </div>
+        )}
         <div className="flex gap-2">
           <span className="text-text-dim">Key encryption:</span>
-          <span className="text-warning">Not configured</span>
+          {status?.keyEncryption ? (
+            <span className="text-emerald-400">On (AES-256-GCM at rest)</span>
+          ) : (
+            <span className="text-warning">Off — DB keys stored in plaintext</span>
+          )}
         </div>
         <div className="flex gap-2">
           <span className="text-text-dim">API keys:</span>
-          <span className="text-text">{keys?.length ?? 0} in database</span>
+          <span className="text-text">{status?.dbKeyCount ?? 0} in database</span>
         </div>
         <div className="flex gap-2">
           <span className="text-text-dim">Active agents:</span>
           <span className="text-text">{agents?.length ?? 0} running</span>
         </div>
       </div>
-      <div className="text-text-dim text-[9px] mt-2">
-        Set DASHBOARD_PASSWORD and MARINA_SECRET env vars to harden security.
+      <div className="text-text-dim text-[9px] mt-2 space-y-1">
+        {!status?.authRequired && (
+          <div>
+            Enable sign-in with <span className="text-primary">MARINA_AUTH=better-auth</span> — see{" "}
+            <span className="text-primary">docs/authentication.md</span>.
+          </div>
+        )}
+        {!status?.keyEncryption && status?.dbKeyCount ? (
+          <div>
+            Keys in the DB are unencrypted. Prefer provider{" "}
+            <span className="text-primary">env vars</span> (never persisted) or encrypt the data
+            volume.
+          </div>
+        ) : null}
       </div>
     </div>
   );
