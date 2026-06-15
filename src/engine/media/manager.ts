@@ -9,12 +9,8 @@ import {
 } from "./providers/image-registry";
 import type { ImageGenerator } from "./providers/image-util";
 import { moderateOpenAIText } from "./providers/openai";
-import {
-  pollRunwayVideoJob,
-  type RunwayPollResult,
-  type RunwayStartResult,
-  startRunwayVideoJob,
-} from "./providers/runway";
+import { getVideoProvider, knownVideoProviders } from "./providers/video-registry";
+import type { VideoResult } from "./providers/video-util";
 import { publishGeneratedAsset, storeGeneratedAsset } from "./publish";
 
 const POLL_INTERVAL_MS = 5_000;
@@ -140,8 +136,11 @@ export class MediaManager {
         }
         await this.handleImageJob(jobId, apiKey ?? "", params, generate);
       } else {
-        if (provider !== "runway") {
-          throw new Error(`Provider "${provider}" not yet supported for video generation.`);
+        const vp = getVideoProvider(provider);
+        if (!vp) {
+          throw new Error(
+            `Provider "${provider}" not yet supported for video generation. Supported: ${knownVideoProviders().join(", ")}.`,
+          );
         }
         await this.handleVideoJob(jobId, apiKey ?? "", params);
       }
@@ -286,7 +285,12 @@ export class MediaManager {
     apiKey: string,
     params: VideoJobParams,
   ): Promise<void> {
-    const start: RunwayStartResult = await startRunwayVideoJob({
+    const provider = this.extractProvider(params.model);
+    const vp = getVideoProvider(provider);
+    if (!vp) {
+      throw new Error(`Provider "${provider}" not yet supported for video generation.`);
+    }
+    const start: VideoResult = await vp.start({
       apiKey,
       model: params.model,
       prompt: params.prompt,
@@ -344,14 +348,14 @@ export class MediaManager {
       clearInterval(this.polls.get(jobId)!.timer);
     }
 
+    const provider = this.extractProvider(params.model);
     const timer = setInterval(async () => {
       try {
-        const apiKey = this.resolveApiKey(this.extractProvider(params.model));
+        const apiKey = this.resolveApiKey(provider);
         if (!apiKey) throw new Error("Missing provider key during polling.");
-        const poll: RunwayPollResult = await pollRunwayVideoJob({
-          apiKey,
-          providerJobId,
-        });
+        const vp = getVideoProvider(provider);
+        if (!vp) throw new Error(`Provider "${provider}" no longer supported.`);
+        const poll: VideoResult = await vp.poll({ apiKey, providerJobId });
 
         if (poll.status === "running") {
           this.db.updateMediaJob(jobId, {
@@ -407,7 +411,7 @@ export class MediaManager {
       }
     }, POLL_INTERVAL_MS);
 
-    this.polls.set(jobId, { provider: "runway", timer });
+    this.polls.set(jobId, { provider, timer });
   }
 
   private async completeVideoJob(
@@ -537,9 +541,13 @@ function estimateCost(params: StartJobParams): number | null {
     }
   }
   if (params.type === "video") {
+    const duration = (params as VideoJobParams).duration ?? 10;
     if (provider === "runway") {
-      const duration = (params as VideoJobParams).duration ?? 10;
       return Number((0.015 * duration).toFixed(3));
+    }
+    if (provider === "google") {
+      // Veo is priced per second; rough order-of-magnitude estimate.
+      return Number((0.4 * duration).toFixed(2));
     }
   }
   return null;
