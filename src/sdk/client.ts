@@ -179,7 +179,11 @@ export class MarinaClient {
           this.reconnectAttempts = 0;
           this.session = {
             entityId: p.data.entityId as EntityId,
-            token,
+            // The engine rotates the session token on every reconnect (revokes
+            // the old, issues a new one) and returns it here. Capture it —
+            // reusing the stale closure `token` makes the *next* reconnect
+            // present a revoked token and fail permanently.
+            token: (p.data.token as string) ?? token,
             name: (p.data?.text as string)?.match(/as (\w+)/)?.[1] ?? "",
           };
           this.startPing();
@@ -332,15 +336,23 @@ export class MarinaClient {
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      this.ensureWebSocket()
-        .then(() => {
-          if (this.session?.token) {
-            this.send({ type: "auth", token: this.session.token });
-          }
-        })
-        .catch(() => {
-          // scheduleReconnect will be called again via onclose
-        });
+      const token = this.session?.token;
+      if (!token) return;
+      // Route through reconnect() rather than a bare auth send. The bare send
+      // omitted internalToken — which stripped internal/room agents of their
+      // login-cap and rate-limit exemption (resolveInternal returns false
+      // without it), letting them be rejected at capacity or silently lose
+      // their conn.internal flag — and never captured the server-rotated
+      // session token. Both made internal agents fall off the engine's
+      // connection registry after the first WS blip while their process
+      // stayed alive, so they showed as "not connected". reconnect() sends
+      // internalToken and captures the rotated token.
+      this.reconnect(token).catch(() => {
+        // auth_error/timeout: the server may keep the socket open (no onclose
+        // to retrigger us), so reschedule explicitly. Bounded by
+        // maxReconnectAttempts; a successful reconnect resets the counter.
+        this.scheduleReconnect();
+      });
     }, delay);
   }
 
