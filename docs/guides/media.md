@@ -14,7 +14,27 @@ Generation calls out to a provider, so you need that provider's key:
 | Image | OpenAI Images | `OPENAI_API_KEY` | `openai/gpt-image-1`, `openai/dall-e-3` |
 | Image | Stability AI (Stable Image v2) | `STABILITY_API_KEY` | `stability/core`, `stability/sd3`, `stability/ultra` |
 | Image | Google Imagen | `GEMINI_API_KEY` *(reused)* | `google/imagen-3.0-generate-002` |
+| Image | **Local Stable Diffusion** (Automatic1111 / SD.Next) | — *(keyless; `A1111_API_KEY` optional)* | `automatic1111/<checkpoint>`, `a1111` |
+| Image | **Any OpenAI-compatible image server** (Together, Fireworks, DeepInfra, LocalAI, …) | `<PROVIDER>_API_KEY` *(optional)* | `<provider>/<model>` |
 | Video | Runway | `RUNWAY_API_KEY` | `runway/gen3-alpha` |
+
+### Local & custom image models
+
+You can use **any** image model, including local ones — no code change:
+
+- **Automatic1111 / SD.Next** (the common local SD WebUI): point Marina at it with
+  `A1111_BASE_URL` (default `http://localhost:7860`) and use `automatic1111/<checkpoint>`
+  (or just `a1111` for the loaded checkpoint). Keyless.
+- **Any OpenAI-compatible `/v1/images/generations` server** (hosted or local): set
+  `<PROVIDER>_IMAGE_BASE_URL` (and `<PROVIDER>_API_KEY` if it needs auth), then address
+  models as `<provider>/<model>`. Example:
+  ```bash
+  TOGETHER_IMAGE_BASE_URL=https://api.together.xyz/v1
+  TOGETHER_API_KEY=...
+  # image generate a fox in snow --model together/black-forest-labs/FLUX.1-schnell
+  ```
+  Local servers (LocalAI, vLLM image, etc.) work the same way — just point the base URL at
+  `http://localhost:<port>/v1`.
 
 Pick a provider per request with `--model` (default image model is
 `openai/gpt-image-1`; override the instance default in Admin → Model). Optional
@@ -101,8 +121,9 @@ Video is asynchronous: Runway is polled every few seconds and the job's
 
 ## Troubleshooting
 
-- **"Provider not yet supported"** — image providers are `openai`, `stability`,
-  `google`; video is `runway`. Pick one of those models.
+- **"Provider not yet supported"** — built-in image providers are `openai`,
+  `stability`, `google`, `automatic1111`; video is `runway`. For any other image
+  provider, set `<PROVIDER>_IMAGE_BASE_URL` first (see *Local & custom*).
 - **Job stuck `pending` / errors immediately** — the provider key is missing
   (`OPENAI_API_KEY` / `RUNWAY_API_KEY`) or the daily cap is hit.
 - **Agent has no generate tool** — its model isn't image/video-capable. Spawn it
