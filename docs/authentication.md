@@ -133,20 +133,31 @@ human session token is issued, then point the agent at it. Only *human passwordl
 
 ## API keys at rest
 
-Provider API keys added through the **Admin → Keys** panel (or the `key` command) are stored
-**in plaintext** in the SQLite database (`api_keys` table). Authentication gates *who can reach*
-the panel; it does **not** encrypt what's stored.
+Provider API keys added through the **Admin → Keys** panel (or the `key` command) are stored in the
+SQLite database (`api_keys` table). Authentication gates *who can reach* the panel; encryption
+protects what's stored if the DB/volume leaks.
 
-- **Prefer env vars.** Set provider keys via environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-  …, `LLAMA_API_KEY`). They're read live, take precedence on the `marina/default` proxy path, and
-  are **never written to the database** — so a DB/volume leak doesn't expose them.
-- **If you store keys in the DB**, keep the data volume on encrypted storage and restrict file
-  permissions. **Admin → Security** shows whether key-at-rest encryption is active.
+**Enable encryption at rest** by setting a secret (≥ 16 chars):
+
+```bash
+# .env
+MARINA_KEY_SECRET=$(openssl rand -base64 32)
+```
+
+When set, key values are encrypted with **AES-256-GCM** before they touch the database and
+decrypted transparently on read. On startup any existing plaintext rows are migrated to encrypted
+(logged as `Encrypted N API key(s) at rest`). **Admin → Security** shows the live state.
+
+- The secret is the **only** thing that can decrypt stored keys. If you lose or change it, existing
+  encrypted keys become unreadable and must be re-entered. Back it up with the same care as the DB.
+- **Without `MARINA_KEY_SECRET`, keys are stored in plaintext.** In that case prefer the provider
+  **env vars** (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …, `LLAMA_API_KEY`) — they're read live, take
+  precedence on the `marina/default` proxy path, and are **never written to the database**.
 
 ## Notes / current scope
 
-- Implemented: email/password + social OAuth, identity→named-entity bridge, admin-by-verified-email.
-- **Not yet implemented: API-key encryption at rest** — DB-stored keys are plaintext (see above).
+- Implemented: email/password + social OAuth, identity→named-entity bridge, admin-by-verified-email,
+  **opt-in API-key encryption at rest** (`MARINA_KEY_SECRET`, see above).
 - Enforcement currently targets the **web surfaces** (webchat/dashboard + HTTP). Telnet/MCP remain
   token-or-open in public mode; gate them at the network layer if exposed.
 - Roadmap: enterprise SSO (OIDC/SAML via better-auth's SSO plugin), a dashboard sign-out control, and an

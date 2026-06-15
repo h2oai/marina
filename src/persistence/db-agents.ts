@@ -1,6 +1,12 @@
 import type { Database } from "bun:sqlite";
 import type { AgentSupports } from "../agent/agent-types";
 import { MARINA_DEFAULT_MODEL } from "../engine/constants";
+import {
+  decryptSecret,
+  encryptSecret,
+  isEncryptedValue,
+  isKeyEncryptionEnabled,
+} from "./key-crypto";
 
 // ─── Settings (runtime key→value config) ────────────────────────────────
 
@@ -199,27 +205,62 @@ export function saveApiKey(
   },
 ): void {
   const now = Date.now();
+  // Encrypt at rest when a secret is configured (unless the caller already
+  // handed us a blob). Otherwise store as given, preserving any caller-set flag.
+  const alreadyBlob = isEncryptedValue(opts.encryptedValue);
+  const encrypt = isKeyEncryptionEnabled() && !alreadyBlob;
+  const storedValue = encrypt ? encryptSecret(opts.encryptedValue) : opts.encryptedValue;
+  const isEnc = encrypt || alreadyBlob || opts.isEncrypted ? 1 : 0;
   db.run(
     `INSERT OR REPLACE INTO api_keys (name, provider, encrypted_value, is_encrypted, set_by, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [opts.name, opts.provider, opts.encryptedValue, opts.isEncrypted ? 1 : 0, opts.setBy, now, now],
+    [opts.name, opts.provider, storedValue, isEnc, opts.setBy, now, now],
   );
+}
+
+/** Decrypt a row's value so every caller sees plaintext, regardless of at-rest state. */
+function decryptRow(row: ApiKeyRow): ApiKeyRow {
+  if (!isEncryptedValue(row.encrypted_value)) return row;
+  return { ...row, encrypted_value: decryptSecret(row.encrypted_value), is_encrypted: 0 };
 }
 
 export function getApiKey(db: Database, name: string): ApiKeyRow | undefined {
-  return (
-    (db.query("SELECT * FROM api_keys WHERE name = ?").get(name) as ApiKeyRow | null) ?? undefined
-  );
+  const row = db.query("SELECT * FROM api_keys WHERE name = ?").get(name) as ApiKeyRow | null;
+  return row ? decryptRow(row) : undefined;
 }
 
 export function getApiKeysByProvider(db: Database, provider: string): ApiKeyRow[] {
-  return db
-    .query("SELECT * FROM api_keys WHERE provider = ? ORDER BY name")
-    .all(provider) as ApiKeyRow[];
+  return (
+    db.query("SELECT * FROM api_keys WHERE provider = ? ORDER BY name").all(provider) as ApiKeyRow[]
+  ).map(decryptRow);
 }
 
 export function getAllApiKeys(db: Database): ApiKeyRow[] {
-  return db.query("SELECT * FROM api_keys ORDER BY provider, name").all() as ApiKeyRow[];
+  return (db.query("SELECT * FROM api_keys ORDER BY provider, name").all() as ApiKeyRow[]).map(
+    decryptRow,
+  );
+}
+
+/**
+ * One-time migration: encrypt any plaintext rows once a secret is configured.
+ * No-op when encryption is off. Returns the number of rows re-encrypted.
+ */
+export function migrateApiKeysToEncrypted(db: Database): number {
+  if (!isKeyEncryptionEnabled()) return 0;
+  const rows = db
+    .query("SELECT name, encrypted_value FROM api_keys WHERE is_encrypted = 0")
+    .all() as { name: string; encrypted_value: string }[];
+  let migrated = 0;
+  const now = Date.now();
+  for (const r of rows) {
+    if (isEncryptedValue(r.encrypted_value)) continue;
+    db.run(
+      "UPDATE api_keys SET encrypted_value = ?, is_encrypted = 1, updated_at = ? WHERE name = ?",
+      [encryptSecret(r.encrypted_value), now, r.name],
+    );
+    migrated++;
+  }
+  return migrated;
 }
 
 export function deleteApiKey(db: Database, name: string): void {
