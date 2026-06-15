@@ -39,6 +39,10 @@ function running(name: string, role: string): AgentStatus {
     errorReason: null,
     lastActivity: Date.now(),
     supports: { text: true },
+    contextWindow: 128000,
+    effectiveContextWindow: 128000,
+    maxOutputTokens: 4096,
+    peakInputTokens: 0,
   };
 }
 
