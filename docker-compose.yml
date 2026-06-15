@@ -108,7 +108,8 @@ services:
       - "-c"
       - "${LLAMA_CTX:-16384}"
       - "--jinja"                             # apply the model's Jinja2 chat template (required for OpenAI-standard tool calling)
-      - "-fa"                                 # flash attention — cuts KV-cache memory at long contexts; A10G (Ampere SM 8.6) supported
+      - "--flash-attn"                        # flash attention — explicit on; this build requires a value, bare -fa is rejected
+      - "on"                                  #   (A10G / Ampere SM 8.6 supported; already auto-enabled, making it explicit)
       - "--api-key"
       - "${LLAMA_API_KEY:?set LLAMA_API_KEY in .env}"   # required even internally
     expose:
