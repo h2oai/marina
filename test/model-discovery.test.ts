@@ -1,5 +1,9 @@
-import { describe, expect, it } from "bun:test";
-import { parseProviderResponse } from "../src/net/model-discovery";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import {
+  detectLocalContextWindow,
+  localProviderContextWindow,
+  parseProviderResponse,
+} from "../src/net/model-discovery";
 
 describe("parseProviderResponse", () => {
   it("parses Anthropic /v1/models shape", () => {
@@ -104,5 +108,46 @@ describe("parseProviderResponse", () => {
     expect(parseProviderResponse("openai", {})).toEqual([]);
     expect(parseProviderResponse("anthropic", { data: "nope" })).toEqual([]);
     expect(parseProviderResponse("google", { models: [{}, { name: 42 }] })).toEqual([]);
+  });
+});
+
+describe("detectLocalContextWindow", () => {
+  const realFetch = globalThis.fetch;
+  let prevEnv: string | undefined;
+  beforeEach(() => {
+    prevEnv = process.env.LLAMA_CONTEXT_WINDOW;
+    delete process.env.LLAMA_CONTEXT_WINDOW;
+  });
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    if (prevEnv === undefined) delete process.env.LLAMA_CONTEXT_WINDOW;
+    else process.env.LLAMA_CONTEXT_WINDOW = prevEnv;
+  });
+
+  it("detects n_ctx from llama.cpp /props and feeds the context window", async () => {
+    globalThis.fetch = (async (url: string | URL) => {
+      expect(String(url)).toContain("/props");
+      expect(String(url)).not.toContain("/v1");
+      return new Response(JSON.stringify({ default_generation_settings: { n_ctx: 262144 } }), {
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+    expect(await detectLocalContextWindow("llama")).toBe(262144);
+    // The detected value now feeds the context-window resolver (no env set).
+    expect(localProviderContextWindow("llama")).toBe(262144);
+  });
+
+  it("lets an explicit env override win over detection", async () => {
+    process.env.LLAMA_CONTEXT_WINDOW = "8000";
+    // Detection short-circuits when the operator pinned the value.
+    expect(await detectLocalContextWindow("llama")).toBeUndefined();
+    expect(localProviderContextWindow("llama")).toBe(8000);
+  });
+
+  it("returns undefined on a failed probe (default stands)", async () => {
+    globalThis.fetch = (async () => {
+      throw new Error("connection refused");
+    }) as unknown as typeof fetch;
+    expect(await detectLocalContextWindow("ollama")).toBeUndefined();
   });
 });

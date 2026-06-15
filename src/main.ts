@@ -15,6 +15,7 @@ import { formatPerception } from "./net/formatter";
 import { LogServer } from "./net/log-server";
 import { McpServerAdapter } from "./net/mcp-server";
 import { TelnetServer } from "./net/telnet-server";
+import { detectLocalContextWindow } from "./net/model-discovery";
 import { WebSocketServer } from "./net/websocket-server";
 import { MarinaDB } from "./persistence/database";
 import { isKeyEncryptionEnabled } from "./persistence/key-crypto";
@@ -293,6 +294,16 @@ for (const platform of ["telegram", "discord"] as const) {
     });
   }
 }
+
+// Auto-detect local-server context windows (llama.cpp /props) before agents
+// spawn, so their completion budget scales to the real window instead of the
+// conservative default. Best-effort; an explicit *_CONTEXT_WINDOW env wins.
+await Promise.all(
+  (["llama", "ollama"] as const).map(async (provider) => {
+    const n = await detectLocalContextWindow(provider);
+    if (n) logger.info("model", `Detected ${provider} context window: ${n} tokens`);
+  }),
+);
 
 // Initialize agent runtime (auto-respawns saved configs, requires WS server ready)
 await engine.initAgents(WS_PORT);
