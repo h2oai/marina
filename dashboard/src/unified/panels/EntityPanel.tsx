@@ -27,6 +27,13 @@ type EntityTab = "online" | "agents" | "launch" | "roles";
 
 const MODEL_GROUPS = [
   {
+    provider: "Local (self-hosted)",
+    models: [
+      { value: "ollama/llama3", label: "Ollama (llama3)" },
+      { value: "llama/local-model", label: "llama.cpp (local-model)" },
+    ],
+  },
+  {
     provider: "Anthropic",
     models: [
       { value: "anthropic/claude-opus-4-6", label: "Claude Opus 4.6" },
@@ -58,13 +65,6 @@ const MODEL_GROUPS = [
   { provider: "xAI", models: [{ value: "xai/grok-3-mini", label: "Grok 3 Mini" }] },
   { provider: "Cerebras", models: [{ value: "cerebras/llama3.1-8b", label: "Llama 3.1 8B" }] },
   { provider: "DeepSeek", models: [{ value: "deepseek/deepseek-chat", label: "DeepSeek Chat" }] },
-  {
-    provider: "Local (self-hosted)",
-    models: [
-      { value: "ollama/llama3", label: "Ollama (llama3)" },
-      { value: "llama/local-model", label: "llama.cpp (local-model)" },
-    ],
-  },
 ];
 
 /**
@@ -93,7 +93,11 @@ function fmtTokens(n: number | undefined): string {
   return `${k >= 10 ? Math.round(k) : k.toFixed(1)}k`;
 }
 
-const DEFAULT_MODEL = MODEL_GROUPS[0]!.models[0]!.value;
+// Default the picker to a cloud model, not the (now first-listed) local group —
+// local needs a configured server, so it's the wrong out-of-the-box default.
+const DEFAULT_MODEL =
+  MODEL_GROUPS.find((g) => g.provider === "Anthropic")?.models[0]?.value ??
+  MODEL_GROUPS[0]!.models[0]!.value;
 
 const STATE_COLORS: Record<string, string> = {
   thinking: "#FFDD00",
