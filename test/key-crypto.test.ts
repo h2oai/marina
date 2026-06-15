@@ -95,4 +95,25 @@ describe("api_keys encryption at rest (DB)", () => {
     expect(db.migrateApiKeysToEncrypted()).toBe(0);
     expect(db.getApiKey("k3")?.encrypted_value).toBe("sk-plain");
   });
+
+  it("auditEncryptedKeys flags encrypted rows the current secret can't read", () => {
+    process.env.MARINA_KEY_SECRET = SECRET;
+    db.saveApiKey({ name: "k4", provider: "openai", encryptedValue: "sk-live", setBy: "test" });
+    // Readable under the right secret.
+    expect(db.auditEncryptedKeys()).toEqual({ encrypted: 1, unreadable: 0 });
+
+    // Secret removed → the blob is now unreadable (the loud misconfig).
+    delete process.env.MARINA_KEY_SECRET;
+    expect(db.auditEncryptedKeys()).toEqual({ encrypted: 1, unreadable: 1 });
+
+    // Wrong secret → also unreadable.
+    process.env.MARINA_KEY_SECRET = "another-secret-16chars-min";
+    expect(db.auditEncryptedKeys()).toEqual({ encrypted: 1, unreadable: 1 });
+  });
+
+  it("auditEncryptedKeys reports zero for plaintext rows", () => {
+    delete process.env.MARINA_KEY_SECRET;
+    db.saveApiKey({ name: "k5", provider: "openai", encryptedValue: "sk-plain", setBy: "test" });
+    expect(db.auditEncryptedKeys()).toEqual({ encrypted: 0, unreadable: 0 });
+  });
 });

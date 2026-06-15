@@ -17,6 +17,7 @@ import { McpServerAdapter } from "./net/mcp-server";
 import { TelnetServer } from "./net/telnet-server";
 import { WebSocketServer } from "./net/websocket-server";
 import { MarinaDB } from "./persistence/database";
+import { isKeyEncryptionEnabled } from "./persistence/key-crypto";
 import { LocalStorageProvider } from "./storage/local-provider";
 import type { RoomId } from "./types";
 import { loadRooms } from "./world/room-loader";
@@ -46,10 +47,29 @@ const AUTH_ENABLED = process.env.MARINA_AUTH === "better-auth";
 
 const logger = new Logger();
 const db = new MarinaDB(DB_PATH);
-// Encrypt any plaintext API keys at rest once MARINA_KEY_SECRET is configured.
+// Encrypt any plaintext API keys at rest once MARINA_KEY_SECRET is configured,
+// then surface the "encrypted but can't decrypt" misconfiguration loudly —
+// otherwise those keys silently read as missing.
 try {
   const migrated = db.migrateApiKeysToEncrypted();
   if (migrated > 0) logger.info("security", `Encrypted ${migrated} API key(s) at rest`);
+
+  const audit = db.auditEncryptedKeys();
+  if (audit.encrypted > 0 && !isKeyEncryptionEnabled()) {
+    logger.warn(
+      "security",
+      `${audit.encrypted} API key(s) are encrypted at rest but MARINA_KEY_SECRET is NOT set — ` +
+        `they cannot be decrypted and will read as MISSING. Set the secret they were encrypted ` +
+        `with, or delete and re-enter the keys.`,
+    );
+  } else if (audit.unreadable > 0) {
+    logger.warn(
+      "security",
+      `${audit.unreadable} encrypted API key(s) could not be decrypted with the current ` +
+        `MARINA_KEY_SECRET — the secret may have changed. Restore the original secret, or delete ` +
+        `and re-enter the keys.`,
+    );
+  }
 } catch (err) {
   logger.error("security", "API-key encryption migration failed", { err });
 }

@@ -812,6 +812,7 @@ interface SecurityStatus {
   openApi: boolean;
   keyEncryption: boolean;
   dbKeyCount: number;
+  unreadableKeys?: number;
 }
 
 function SecurityTab() {
@@ -863,6 +864,13 @@ function SecurityTab() {
           <span className="text-text">{agents?.length ?? 0} running</span>
         </div>
       </div>
+      {status?.unreadableKeys ? (
+        <div className="mt-2 rounded border border-red-400/40 bg-red-400/10 p-1.5 text-[10px] text-red-400">
+          ⚠ {status.unreadableKeys} stored key(s) are encrypted but can't be decrypted —
+          MARINA_KEY_SECRET is missing or changed. They read as missing until you restore the
+          original secret or re-enter the keys.
+        </div>
+      ) : null}
       <div className="text-text-dim text-[9px] mt-2 space-y-1">
         {!status?.authRequired && (
           <div>
