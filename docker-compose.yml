@@ -107,7 +107,7 @@ services:
       - "99"                                  # offload all layers; split across the visible GPUs
       - "-c"
       - "${LLAMA_CTX:-16384}"
-      - "--jinja"                             # apply the model's chat template → Hermes <tool_call> tool-calling
+      - "--jinja"                             # apply the model's Jinja2 chat template (required for OpenAI-standard tool calling)
       - "--api-key"
       - "${LLAMA_API_KEY:?set LLAMA_API_KEY in .env}"   # required even internally
     expose:
@@ -120,7 +120,7 @@ services:
       resources:
         reservations:
           devices:
-            # Pin GPUs 0 + 1 — the 36B Q5 (~26 GB) needs two A10Gs; GPUs 2 & 3 stay free.
+            # Pin GPUs 0 + 1 — the 27B Q4_K_M (~17 GB) needs two A10Gs; GPUs 2 & 3 stay free.
             - driver: nvidia
               device_ids: ["0", "1"]
               capabilities: ["gpu"]
