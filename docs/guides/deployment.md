@@ -90,6 +90,8 @@ Marina's HTTP API requires authentication **by default** — but it's easy to we
 - [ ] **Set `MODEL_API_KEYS`** (comma-separated bearer tokens) for the `/v1/*` and `/api/*` LLM endpoints. Clients send `Authorization: Bearer <token>`.
 - [ ] **Set `MEM_API_KEYS`** (comma-separated `secret:agent` pairs) if you expose the `/mem` Memory API.
 - [ ] **Never set `MARINA_OPEN_API=true`** on a public host — it disables API auth entirely. It's a local-dev convenience only.
+- [ ] **Enable dashboard sign-in** with `MARINA_AUTH=better-auth` (+ `BETTER_AUTH_SECRET`) for any human-facing public host — see [authentication.md](../authentication.md). Without it the dashboard is open to anyone who can reach it.
+- [ ] **Mind API keys at rest.** Keys added via the Admin → Keys panel are stored **in plaintext** in the SQLite DB (`api_keys` table). Prefer the provider **env vars** (`ANTHROPIC_API_KEY`, …, `LLAMA_API_KEY`) — they're read live and never persisted. If you must store keys in the DB, keep the data volume on encrypted storage and restrict file access. Admin → Security shows whether key encryption is active.
 - [ ] **Set `ALLOWED_ORIGINS`** to your real dashboard origin(s) if clients run cross-origin. Unset = same-origin only (no CORS header), which is the safe default.
 - [ ] **Don't publish ports 4000 (telnet) and 3302 (log viewer)** — neither is authenticated. Keep them off your public load balancer / security group. The shipped Compose maps `4000` for local convenience; drop that line for a public host.
 - [ ] **Set `GATEWAY_SECRET`** if (and only if) you use [federation](federation.md). Otherwise leave it unset.

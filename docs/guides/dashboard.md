@@ -18,7 +18,11 @@ then flip back to the default layout with **Reset** at any time.
 http://localhost:3300/dashboard
 ```
 
-It connects via WebSocket and updates live every 2 seconds. No login required.
+It connects via WebSocket and updates live every 2 seconds. No login is required
+by default — for a public deployment, turn on sign-in with
+`MARINA_AUTH=better-auth` (see [authentication.md](../authentication.md)). The
+**Admin → Security** tab shows the live state of auth, key encryption, and the
+`MARINA_OPEN_API` flag.
 
 ---
 
@@ -105,10 +109,10 @@ raw logs.
 
 The Admin panel has four tabs:
 
-- **Keys** — manage LLM API keys. Click "+ Add" to store a key by selecting a provider from the dropdown and pasting the key value. Keys are stored in the database and shown masked. Falls back to environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `XAI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`) when no database keys exist.
+- **Keys** — manage LLM API keys. Click "+ Add" to store a key by selecting a provider from the dropdown and pasting the key value. Keys are shown masked. **Note: DB-stored keys are kept in plaintext** unless key encryption is enabled (Admin → Security shows the state). For sensitive deployments, prefer the environment-variable fallback (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `XAI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`, `LLAMA_API_KEY`) — env keys are read live and never written to the database.
 - **Adapters** — view platform adapter status (Telegram, Discord, etc.)
 - **Roles** — browse defined roles and their traits
-- **Security** — security status overview (auth, encryption, key/agent counts)
+- **Security** — live posture overview: dashboard auth (`MARINA_AUTH`), API-key encryption at rest, the `MARINA_OPEN_API` dev flag, and key/agent counts. It reads the real server state — if auth is off it points you to [authentication.md](../authentication.md).
 
 ---
 

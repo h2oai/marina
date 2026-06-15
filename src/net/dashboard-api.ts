@@ -5,6 +5,7 @@ import { allRecipeNames, getRecipe } from "../engine/commands/usecase";
 import type { Engine } from "../engine/engine";
 import { computeReadiness } from "../engine/readiness";
 import type { MarinaDB, MediaJobRow } from "../persistence/database";
+import { isKeyEncryptionEnabled } from "../persistence/key-crypto";
 import type { Connection, EntityId, Perception, RoomId } from "../types";
 import { ORCHESTRATION_PATTERNS } from "../world/templates/orchestration";
 import { authenticateRequest } from "./auth-middleware";
@@ -233,6 +234,17 @@ export async function handleDashboardApi(
   }
   if (url.pathname === "/api/system") {
     return getSystem(engine, db);
+  }
+  // Security posture for the Admin → Security panel. Reports the real state of
+  // the hardening knobs (never secret values) so the panel can stop guessing.
+  if (url.pathname === "/api/security-status" && method === "GET") {
+    return json({
+      authRequired: !!engine.config.authRequired,
+      openApi: process.env.MARINA_OPEN_API === "true",
+      // Key-at-rest encryption: stored API keys are plaintext unless this is on.
+      keyEncryption: isKeyEncryptionEnabled(),
+      dbKeyCount: db ? db.getAllApiKeys().length : 0,
+    });
   }
   // Capability readiness — same data as the in-world `status` command. Reports
   // config presence (never secret values) + remediation per capability.
