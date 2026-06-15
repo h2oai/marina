@@ -17,7 +17,7 @@ import {
   streamSimple,
   type TextContent,
 } from "@mariozechner/pi-ai";
-import { MARINA_DEFAULT_MODEL } from "../engine/constants";
+import { DEFAULT_LOCAL_MAX_OUTPUT_TOKENS, MARINA_DEFAULT_MODEL } from "../engine/constants";
 import {
   isLocalProvider,
   localProviderBaseUrl,
@@ -214,7 +214,10 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
       // large window (cloud) but let a local-first operator pin the real ceiling
       // so the compactor fires before a small local server 400s.
       contextWindow: parsePositiveInt(process.env.MARINA_DEFAULT_CONTEXT_WINDOW) ?? 128_000,
-      maxTokens: 4096,
+      // Reported ceiling. The actual budget sent to a local upstream is enforced
+      // at the proxy (prepareLlamaBody); this keeps the dashboard honest instead
+      // of showing a starving 4096 for a large-context reasoning model.
+      maxTokens: DEFAULT_LOCAL_MAX_OUTPUT_TOKENS,
     };
   }
 
@@ -237,7 +240,9 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
       // Honest local ceiling (env override → conservative default) so the
       // compactor fires before the small local server rejects the request.
       contextWindow: localProviderContextWindow(provider) ?? 16384,
-      maxTokens: 4096,
+      // applyModelLimits recomputes the real output cap from the context window;
+      // this default is only a placeholder until then.
+      maxTokens: DEFAULT_LOCAL_MAX_OUTPUT_TOKENS,
     };
   }
 
@@ -1080,13 +1085,20 @@ export class LeanAgentAdapter implements AgentHandle {
       } as Model<Api>;
     }
     // Output cap: explicit config wins; otherwise local models get a quarter of
-    // the window (512..4096) so a long completion can't overflow a small server,
-    // while cloud models keep the provider's own default (undefined → not sent).
+    // the window (512..DEFAULT_LOCAL_MAX_OUTPUT_TOKENS) so a long completion
+    // can't overflow a small server, while cloud models keep the provider's own
+    // default (undefined → not sent). The ceiling must leave room for reasoning
+    // models (Qwen3) to finish `<think>` AND emit a tool call — the prior 4096
+    // ceiling truncated them mid-reasoning, so the agent connected but never
+    // acted.
     this.outputMaxTokens =
       this.config.maxTokens && this.config.maxTokens > 0
         ? this.config.maxTokens
         : isLocal
-          ? Math.max(512, Math.min(4096, Math.floor(this.model.contextWindow / 4)))
+          ? Math.max(
+              512,
+              Math.min(DEFAULT_LOCAL_MAX_OUTPUT_TOKENS, Math.floor(this.model.contextWindow / 4)),
+            )
           : undefined;
     if (this.outputMaxTokens) {
       this.model = { ...this.model, maxTokens: this.outputMaxTokens } as Model<Api>;
