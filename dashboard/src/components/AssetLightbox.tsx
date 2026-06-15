@@ -166,7 +166,9 @@ function AssetLightbox({ asset, onClose }: { asset: ViewableAsset | null; onClos
                 </video>
               )}
               {kind === "audio" && (
-                <audio src={asset.url} controls className="w-[min(640px,90%)]" />
+                <audio src={asset.url} controls className="w-[min(640px,90%)]">
+                  <track kind="captions" />
+                </audio>
               )}
               {(kind === "pdf" || kind === "document" || kind === "embed") && (
                 <iframe
