@@ -18,6 +18,7 @@ import type { AgentConfig, AgentHandle, AgentStatus, AgentSupports } from "./age
 import { classifyModelResolution, LeanAgentAdapter } from "./lean-agent-adapter";
 import { detectModelLimits } from "./model-probe";
 import { getRolePrompt, inferTaskCategory } from "./roles";
+import { isSeedDisabled } from "./seed-registry";
 
 const KNOWN_PROVIDERS = new Set<string>([...MODEL_DISCOVERY_PROVIDERS, "marina"]);
 const DEFAULT_SUPPORTS: AgentSupports = { text: true };
@@ -147,7 +148,10 @@ export class AgentRuntime {
   async init(): Promise<number> {
     if (!this.db) return 0;
 
-    const configs = this.db.getAllAgentConfigs();
+    // Skip operator-retired agents so a disable survives even if a stale config
+    // row lingers in the DB (it normally won't — disable deletes it — but env
+    // overlays and user-saved configs can both name a disabled agent).
+    const configs = this.db.getAllAgentConfigs().filter((c) => !isSeedDisabled(this.db, c.name));
 
     // Spawn in parallel with a 1.1s stagger between starts. Awaiting
     // spawn() sequentially blocks on each agent's discovery prompt (which

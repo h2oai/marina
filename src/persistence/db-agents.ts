@@ -32,6 +32,17 @@ export function deleteSetting(db: Database, key: string): void {
   db.run("DELETE FROM app_settings WHERE key = ?", [key]);
 }
 
+/** All settings whose key starts with `prefix` (e.g. seed-disable markers). */
+export function listSettingsByPrefix(
+  db: Database,
+  prefix: string,
+): { key: string; value: string }[] {
+  return db.query("SELECT key, value FROM app_settings WHERE key LIKE ?").all(`${prefix}%`) as {
+    key: string;
+    value: string;
+  }[];
+}
+
 /**
  * The effective default model ("provider/model-id") for marina/default routing
  * and for agents spawned without an explicit model. Runtime DB setting wins over

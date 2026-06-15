@@ -1,5 +1,6 @@
 import type { AgentRuntime } from "../../agent/agent-runtime";
 import { MAX_AGENTS } from "../../agent/agent-runtime";
+import { isSeedDisabled, listDisabledSeedAgents, setSeedDisabled } from "../../agent/seed-registry";
 import { getStanding } from "../../agent/standing";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
@@ -23,7 +24,9 @@ Usage:
   agent list                                 — list running agents
   agent status <name>                        — detailed agent status
   agent spawn <name> [model <m>] [role <r>] [goal <g>] [key <k>]
-  agent stop <name>                          — stop a running agent
+  agent stop <name>                          — stop a running agent (transient; reseeds on restart)
+  agent disable <name>                        — retire a seeded agent so it stays gone across restarts
+  agent enable <name>                         — clear a disable; the agent returns on next restart/room entry
   agent attention <name> <message>           — send attention to agent
   agent focus <name> <description>           — set agent focus
   agent config <name> model|role|key <value> — reconfigure agent`,
@@ -55,6 +58,22 @@ Usage:
             return;
           }
           return handleStop(ctx, input.entity, tokens[1], deps);
+        }
+
+        case "disable": {
+          if (rank < 4) {
+            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            return;
+          }
+          return handleDisable(ctx, input.entity, tokens[1], deps);
+        }
+
+        case "enable": {
+          if (rank < 4) {
+            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            return;
+          }
+          return handleEnable(ctx, input.entity, tokens[1], deps);
         }
 
         case "attention": {
@@ -105,9 +124,14 @@ Usage:
 
 // ─── Subcommand Handlers ────────────────────────────────────────────────────
 
-function handleList(ctx: RoomContext, eid: EntityId, deps: { agentRuntime: AgentRuntime }): void {
+function handleList(
+  ctx: RoomContext,
+  eid: EntityId,
+  deps: { agentRuntime: AgentRuntime; db?: MarinaDB },
+): void {
   const agents = deps.agentRuntime.list();
-  if (agents.length === 0) {
+  const disabled = listDisabledSeedAgents(deps.db);
+  if (agents.length === 0 && disabled.length === 0) {
     ctx.send(eid, "No agents running.");
     return;
   }
@@ -121,6 +145,13 @@ function handleList(ctx: RoomContext, eid: EntityId, deps: { agentRuntime: Agent
     if (a.focus) lines.push(`  ${dim(`focus: ${a.focus}`)}`);
   }
   lines.push(separator(), dim(`${agents.length} agent(s) running`));
+  if (disabled.length > 0) {
+    lines.push(
+      dim(
+        `disabled (won't reseed): ${disabled.join(", ")} — re-enable with \`agent enable <name>\``,
+      ),
+    );
+  }
   ctx.send(eid, lines.join("\n"));
 }
 
@@ -370,6 +401,68 @@ async function handleStop(
   } catch (error) {
     ctx.send(eid, `Failed to stop agent: ${error instanceof Error ? error.message : error}`);
   }
+}
+
+/**
+ * Retire a seeded agent durably: persist a disable marker (so the world seed,
+ * autorespawn, and room-agent spawn all skip it across restarts) and stop the
+ * running instance. The opposite of `stop`, which is transient.
+ */
+async function handleDisable(
+  ctx: RoomContext,
+  eid: EntityId,
+  name: string | undefined,
+  deps: { agentRuntime: AgentRuntime; logEvent: (event: EngineEvent) => void; db?: MarinaDB },
+): Promise<void> {
+  if (!name) {
+    ctx.send(eid, "Usage: agent disable <name>");
+    return;
+  }
+  if (!deps.db) {
+    ctx.send(eid, "Disable requires a database (persisted markers).");
+    return;
+  }
+  setSeedDisabled(deps.db, name, true);
+  // Stop the running instance if present (this also deletes its saved config).
+  const agent = deps.agentRuntime.get(name);
+  if (agent) {
+    try {
+      await deps.agentRuntime.stop(name);
+    } catch {
+      // Marker is set regardless — it won't come back on the next boot.
+    }
+  }
+  ctx.send(
+    eid,
+    `Agent ${bold(name)} disabled — it won't be reseeded or respawned. Re-enable with ${bold(`agent enable ${name}`)}.`,
+  );
+}
+
+/** Clear a disable marker; the agent returns on the next restart / room entry. */
+function handleEnable(
+  ctx: RoomContext,
+  eid: EntityId,
+  name: string | undefined,
+  deps: { db?: MarinaDB },
+): void {
+  if (!name) {
+    ctx.send(eid, "Usage: agent enable <name>");
+    return;
+  }
+  if (!deps.db) {
+    ctx.send(eid, "Enable requires a database (persisted markers).");
+    return;
+  }
+  if (!isSeedDisabled(deps.db, name)) {
+    ctx.send(eid, `Agent ${bold(name)} is not disabled.`);
+    return;
+  }
+  setSeedDisabled(deps.db, name, false);
+  ctx.send(
+    eid,
+    `Agent ${bold(name)} enabled — it returns on the next restart (seeded agents) or room entry (room hosts). ` +
+      `If disabled via MARINA_DISABLED_AGENTS, remove it from that env too.`,
+  );
 }
 
 async function handleAttention(
