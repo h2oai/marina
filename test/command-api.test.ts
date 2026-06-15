@@ -100,6 +100,41 @@ describe("Command API", () => {
     expect(body.text).toContain("Ask: where should I start");
   });
 
+  it("reports real security posture via /api/security-status", async () => {
+    db.saveApiKey({
+      name: "openai-default",
+      provider: "openai",
+      encryptedValue: "sk-test",
+      isEncrypted: false,
+      setBy: "test",
+    });
+    // The endpoint is behind the API auth gate — get a session token first.
+    const [lu, lm, lr] = makeRequest("/api/command", { name: "SecAdmin", command: "look" });
+    const token = (
+      (await (await handleDashboardApi(lr, lu, lm, engine, db))!.json()) as {
+        token: string;
+      }
+    ).token;
+
+    const url = new URL("http://localhost:3300/api/security-status");
+    const req = new Request(url.toString(), {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const resp = await handleDashboardApi(req, url, "GET", engine, db);
+    expect(resp?.status).toBe(200);
+    const body = (await resp!.json()) as {
+      authRequired: boolean;
+      openApi: boolean;
+      keyEncryption: boolean;
+      dbKeyCount: number;
+    };
+    // Test engine has no auth configured and no encryption implemented yet.
+    expect(body.authRequired).toBe(false);
+    expect(body.keyEncryption).toBe(false);
+    expect(body.dbKeyCount).toBe(1);
+  });
+
   it("can list usecase recipes from a fresh API session", async () => {
     const [url, method, req] = makeRequest("/api/command", {
       name: "ApiUsecase",

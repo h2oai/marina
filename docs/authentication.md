@@ -131,9 +131,22 @@ human session token is issued, then point the agent at it. Only *human passwordl
 - **Going back to open/local mode** — unset `MARINA_AUTH`. For local dev that still wants the dashboard
   admin APIs without a login, `MARINA_OPEN_API=true` bypasses the gate (development only).
 
+## API keys at rest
+
+Provider API keys added through the **Admin → Keys** panel (or the `key` command) are stored
+**in plaintext** in the SQLite database (`api_keys` table). Authentication gates *who can reach*
+the panel; it does **not** encrypt what's stored.
+
+- **Prefer env vars.** Set provider keys via environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+  …, `LLAMA_API_KEY`). They're read live, take precedence on the `marina/default` proxy path, and
+  are **never written to the database** — so a DB/volume leak doesn't expose them.
+- **If you store keys in the DB**, keep the data volume on encrypted storage and restrict file
+  permissions. **Admin → Security** shows whether key-at-rest encryption is active.
+
 ## Notes / current scope
 
 - Implemented: email/password + social OAuth, identity→named-entity bridge, admin-by-verified-email.
+- **Not yet implemented: API-key encryption at rest** — DB-stored keys are plaintext (see above).
 - Enforcement currently targets the **web surfaces** (webchat/dashboard + HTTP). Telnet/MCP remain
   token-or-open in public mode; gate them at the network layer if exposed.
 - Roadmap: enterprise SSO (OIDC/SAML via better-auth's SSO plugin), a dashboard sign-out control, and an
