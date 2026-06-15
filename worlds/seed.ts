@@ -1682,14 +1682,38 @@ function isAnswererCrewAgent(name: string): boolean {
  * `seedAnswererCrew` runs at DB-seed time when neither exists yet.
  */
 export function registerAnswererCrew(engine: Engine): void {
-  const cm = engine.crewManager;
-  if (!cm) return;
-  if (cm.getByName("answerer")) return;
-
   const candidates = engine.entities
     .all()
     .filter((e) => e.kind === "agent" && isAnswererCrewAgent(e.name));
   if (candidates.length === 0) return;
+
+  // Wire channel membership deterministically, EVERY boot — before the crew
+  // early-return below. The marina:answerer endpoint routes a request only to
+  // ONLINE members of the `model-answerer` channel; membership is otherwise
+  // established solely by each agent running `channel join` on its first LLM
+  // turn. If that turn is slow or fails (e.g. a starved local model), the
+  // endpoint silently 503s "No agents online" with no obvious cause. And since
+  // channel membership is keyed by the transient entity id, it must be
+  // re-applied on every restart with the freshly-spawned ids — which the
+  // persisted-crew early-return would otherwise skip. This makes the endpoint
+  // functional the moment the crew is online; idempotent with the agents' own
+  // joins.
+  const chans = engine.channelManager;
+  if (chans) {
+    const join = (channelName: string, entityId: string) => {
+      const ch = chans.getChannelByName(channelName);
+      if (ch) chans.addMember(ch.id, entityId);
+    };
+    for (const e of candidates) {
+      join("crew-bench", e.id);
+      if (/^Answerer\d*$/.test(e.name)) join("model-answerer", e.id);
+      if (e.name === "Translator") join("model-translator", e.id);
+    }
+  }
+
+  const cm = engine.crewManager;
+  if (!cm) return;
+  if (cm.getByName("answerer")) return;
 
   // Lead = the unsuffixed Answerer when present; otherwise first by name.
   const lead = candidates.find((e) => e.name === "Answerer") ?? candidates[0]!;
