@@ -12,12 +12,12 @@
  * active agent and is skipped (deleting it would just be recreated on next
  * login, losing its stored rank). Dry-run by default — pass --apply to delete.
  *
- * Usage:
- *   bun scripts/prune-agent-users.ts                      # list candidates (orphaned answerer-crew rows), dry-run
- *   bun scripts/prune-agent-users.ts --orphaned --apply   # delete orphaned answerer-crew rows
- *   bun scripts/prune-agent-users.ts Answerer2 Answerer3   # target explicit names (dry-run)
- *   bun scripts/prune-agent-users.ts Answerer2 --apply     # delete explicit names
- *   DB_PATH=/path/to/marina.db bun scripts/prune-agent-users.ts ...
+ * Usage (or via the `bun run prune-agent-users` alias):
+ *   bun run prune-agent-users                      # list candidates (orphaned answerer-crew rows), dry-run
+ *   bun run prune-agent-users --orphaned --apply   # delete orphaned answerer-crew rows
+ *   bun run prune-agent-users Answerer2 Answerer3   # target explicit names (dry-run)
+ *   bun run prune-agent-users Answerer2 --apply     # delete explicit names
+ *   DB_PATH=/path/to/marina.db bun run prune-agent-users ...
  */
 import { listDisabledSeedAgents } from "../src/agent/seed-registry";
 import { MarinaDB } from "../src/persistence/database";
