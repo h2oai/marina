@@ -137,18 +137,39 @@ export const MARINA_LOGIN_ATTEMPTS_PER_MIN = Number.parseInt(
  *  match the provider you actually hold a key for. */
 export const MARINA_DEFAULT_MODEL = process.env.MARINA_DEFAULT_MODEL ?? "google/gemini-2.0-flash";
 
-/** Completion-token ceiling for self-hosted local models (llama.cpp / Ollama)
- *  and the `marina/default` self-proxy when it routes to one. Reasoning models
- *  (e.g. Qwen3) spend output tokens on `<think>` before the tool call, so a
- *  small budget truncates mid-reasoning and the agent returns no action
- *  ("connected but nothing happens"). The old 4096 cap starved them; 16384
- *  leaves ample room. The effective value is still clamped to a quarter of the
- *  model's context window so it can't crowd out the prompt on a small server.
- *  Override with MARINA_LOCAL_MAX_OUTPUT_TOKENS. */
-export const DEFAULT_LOCAL_MAX_OUTPUT_TOKENS =
-  Number.parseInt(process.env.MARINA_LOCAL_MAX_OUTPUT_TOKENS ?? "", 10) > 0
-    ? Number.parseInt(process.env.MARINA_LOCAL_MAX_OUTPUT_TOKENS!, 10)
-    : 16384;
+/** Fraction of a local model's context window reserved for the completion.
+ *  Default 1/2 — the compactor (`context-manager.ts`) already reserves at most
+ *  half the window for output and gives the rest to input, so half is the
+ *  natural ceiling: advertising more (e.g. 2/3) over-promises beyond what the
+ *  compactor reserves, so input + output would exceed the window and the server
+ *  clamps it anyway. Clamped to (0, 0.5]. Override with
+ *  MARINA_LOCAL_OUTPUT_FRACTION. */
+export const LOCAL_OUTPUT_BUDGET_FRACTION = (() => {
+  const raw = Number.parseFloat(process.env.MARINA_LOCAL_OUTPUT_FRACTION ?? "");
+  return Number.isFinite(raw) && raw > 0 && raw <= 0.5 ? raw : 0.5;
+})();
+
+/** Optional hard cap (tokens) on the local-model completion budget. Unset by
+ *  default, so the budget is purely the context-window fraction above. Set it
+ *  to bound output on a shared or cost-sensitive box. */
+export const LOCAL_MAX_OUTPUT_TOKENS_CAP = (() => {
+  const raw = Number.parseInt(process.env.MARINA_LOCAL_MAX_OUTPUT_TOKENS ?? "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : Number.POSITIVE_INFINITY;
+})();
+
+/** Completion-token budget for a self-hosted local model (llama.cpp / Ollama),
+ *  and the `marina/default` self-proxy when it routes to one. Half the context
+ *  window by default (see LOCAL_OUTPUT_BUDGET_FRACTION), floored at 512 and
+ *  bounded by the optional hard cap. Reasoning models (e.g. Qwen3) spend output
+ *  tokens on `<think>` before the tool call, so too small a budget truncates
+ *  mid-reasoning and the agent returns no action ("connected but nothing
+ *  happens"). NOTE: this scales with the *configured* context window — set
+ *  LLAMA_CONTEXT_WINDOW to your server's real size (e.g. 262144) or the
+ *  conservative 16384 default keeps the budget small. */
+export function localOutputBudget(contextWindow: number): number {
+  const fraction = Math.floor(contextWindow * LOCAL_OUTPUT_BUDGET_FRACTION);
+  return Math.max(512, Math.min(LOCAL_MAX_OUTPUT_TOKENS_CAP, fraction));
+}
 
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
