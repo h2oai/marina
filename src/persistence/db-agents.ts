@@ -242,6 +242,27 @@ export function getAllApiKeys(db: Database): ApiKeyRow[] {
 }
 
 /**
+ * Inspect stored keys for the "encrypted at rest but unreadable" failure mode:
+ * `encrypted` = rows that are AES-GCM blobs; `unreadable` = blobs that don't
+ * decrypt under the current `MARINA_KEY_SECRET` (secret missing, or changed
+ * since they were written). Lets startup / the Security panel make a silent
+ * key-blanking obvious instead of mysterious.
+ */
+export function auditEncryptedKeys(db: Database): { encrypted: number; unreadable: number } {
+  const rows = db.query("SELECT encrypted_value FROM api_keys").all() as {
+    encrypted_value: string;
+  }[];
+  let encrypted = 0;
+  let unreadable = 0;
+  for (const r of rows) {
+    if (!isEncryptedValue(r.encrypted_value)) continue;
+    encrypted++;
+    if (decryptSecret(r.encrypted_value) === "") unreadable++;
+  }
+  return { encrypted, unreadable };
+}
+
+/**
  * One-time migration: encrypt any plaintext rows once a secret is configured.
  * No-op when encryption is off. Returns the number of rows re-encrypted.
  */

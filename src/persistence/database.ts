@@ -3615,6 +3615,10 @@ export class MarinaDB {
   migrateApiKeysToEncrypted(): number {
     return agentsDb.migrateApiKeysToEncrypted(this.db);
   }
+  /** Count encrypted vs. currently-undecryptable API-key rows. */
+  auditEncryptedKeys(): { encrypted: number; unreadable: number } {
+    return agentsDb.auditEncryptedKeys(this.db);
+  }
 
   // ─── Adapters (delegated to db-agents.ts) ──────────────────────────────
 
