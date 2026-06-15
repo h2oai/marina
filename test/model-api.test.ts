@@ -1013,10 +1013,11 @@ describe("prepareLlamaBody (llama upstream prep)", () => {
     expect(huge.max_tokens).toBe(999_999);
   });
 
-  it("clamps the budget to a quarter of a small server's context window", () => {
-    // A genuinely small server must not be starved of prompt space.
+  it("scales the budget to half a small server's context window", () => {
+    // Budget tracks the context window so a small server isn't starved of
+    // prompt space (the compactor reserves at most half the window for output).
     process.env.LLAMA_CONTEXT_WINDOW = "16384";
     const out = prepareLlamaBody({ messages: [] }, "llama");
-    expect(out.max_tokens).toBe(4096); // 16384 / 4
+    expect(out.max_tokens).toBe(8192); // 16384 / 2
   });
 });

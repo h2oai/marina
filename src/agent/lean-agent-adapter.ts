@@ -17,7 +17,7 @@ import {
   streamSimple,
   type TextContent,
 } from "@mariozechner/pi-ai";
-import { DEFAULT_LOCAL_MAX_OUTPUT_TOKENS, MARINA_DEFAULT_MODEL } from "../engine/constants";
+import { localOutputBudget, MARINA_DEFAULT_MODEL } from "../engine/constants";
 import {
   isLocalProvider,
   localProviderBaseUrl,
@@ -217,7 +217,9 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
       // Reported ceiling. The actual budget sent to a local upstream is enforced
       // at the proxy (prepareLlamaBody); this keeps the dashboard honest instead
       // of showing a starving 4096 for a large-context reasoning model.
-      maxTokens: DEFAULT_LOCAL_MAX_OUTPUT_TOKENS,
+      maxTokens: localOutputBudget(
+        parsePositiveInt(process.env.MARINA_DEFAULT_CONTEXT_WINDOW) ?? 128_000,
+      ),
     };
   }
 
@@ -241,8 +243,8 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
       // compactor fires before the small local server rejects the request.
       contextWindow: localProviderContextWindow(provider) ?? 16384,
       // applyModelLimits recomputes the real output cap from the context window;
-      // this default is only a placeholder until then.
-      maxTokens: DEFAULT_LOCAL_MAX_OUTPUT_TOKENS,
+      // this matches it so the value is right even before that runs.
+      maxTokens: localOutputBudget(localProviderContextWindow(provider) ?? 16384),
     };
   }
 
@@ -1084,21 +1086,18 @@ export class LeanAgentAdapter implements AgentHandle {
         contextWindow: this.config.contextWindow,
       } as Model<Api>;
     }
-    // Output cap: explicit config wins; otherwise local models get a quarter of
-    // the window (512..DEFAULT_LOCAL_MAX_OUTPUT_TOKENS) so a long completion
-    // can't overflow a small server, while cloud models keep the provider's own
-    // default (undefined → not sent). The ceiling must leave room for reasoning
-    // models (Qwen3) to finish `<think>` AND emit a tool call — the prior 4096
-    // ceiling truncated them mid-reasoning, so the agent connected but never
-    // acted.
+    // Output cap: explicit config wins; otherwise local models get half the
+    // window (see localOutputBudget) so a reasoning model (Qwen3) can finish
+    // `<think>` AND emit a tool call — the prior 4096 ceiling truncated them
+    // mid-reasoning, so the agent connected but never acted. The compactor
+    // already reserves at most half the window for output, so half is the
+    // natural split. Cloud models keep the provider's own default (undefined →
+    // not sent).
     this.outputMaxTokens =
       this.config.maxTokens && this.config.maxTokens > 0
         ? this.config.maxTokens
         : isLocal
-          ? Math.max(
-              512,
-              Math.min(DEFAULT_LOCAL_MAX_OUTPUT_TOKENS, Math.floor(this.model.contextWindow / 4)),
-            )
+          ? localOutputBudget(this.model.contextWindow)
           : undefined;
     if (this.outputMaxTokens) {
       this.model = { ...this.model, maxTokens: this.outputMaxTokens } as Model<Api>;
