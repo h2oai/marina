@@ -927,7 +927,7 @@ const MediaSection = memo(function MediaSection({
     useCallback(
       (event: DashboardEvent) =>
         event.type === "feed_event" && MEDIA_FEED_KINDS.has(event.kind ?? ""),
-      [entityName],
+      [],
     ),
   );
 

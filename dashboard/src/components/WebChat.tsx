@@ -523,7 +523,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
   useEffect(() => {
     if (overlay?.type === "media") {
       const latest = feedEvents[0];
-      if (latest && latest.kind?.startsWith("media_")) {
+      if (latest?.kind?.startsWith("media_")) {
         refetchMediaJobs();
       }
     }

@@ -19,12 +19,6 @@ interface RunwayPollOptions extends RunwayBaseOptions {
   providerJobId: string;
 }
 
-interface RunwayAsset {
-  url: string;
-  mimeType: string;
-  filename: string;
-}
-
 export interface RunwayStartResult {
   status: "running" | "succeeded" | "failed";
   providerJobId?: string;

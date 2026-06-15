@@ -159,7 +159,7 @@ export function saveAgentConfig(
 ): void {
   const supports = opts.supports ?? { text: true };
   const supportsJson = JSON.stringify({
-    text: supports.text === false ? false : true,
+    text: supports.text !== false,
     ...(supports.image ? { image: true } : {}),
     ...(supports.video ? { video: true } : {}),
   });

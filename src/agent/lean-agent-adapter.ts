@@ -91,7 +91,7 @@ function isContextOverflowError(message: string): boolean {
 function normalizeSupports(supports: AgentSupports | undefined): AgentSupports {
   if (!supports) return { text: true };
   return {
-    text: supports.text === false ? false : true,
+    text: supports.text !== false,
     ...(supports.image ? { image: true } : {}),
     ...(supports.video ? { video: true } : {}),
   };
