@@ -7,6 +7,11 @@ import { corsHeaders } from "./cors";
 import { handleMediaApi } from "./media-api";
 import { isLocalProvider, LOCAL_PROVIDERS, localProviderBaseUrl } from "./model-discovery";
 import { getEndpointConfig } from "./model-endpoint";
+import {
+  normalizeTextualToolCalls,
+  type StreamEvent,
+  ToolCallStreamParser,
+} from "./tool-call-normalize";
 
 const MODEL_CORS = corsHeaders(null, {
   methods: "GET, POST, OPTIONS",
@@ -1426,7 +1431,24 @@ function resolveProviderKey(engine: Engine, provider: string): string | undefine
   return engine.db?.getApiKeysByProvider(provider)[0]?.encrypted_value;
 }
 
-/** POST to an OpenAI-compatible upstream. Returns null on network error / non-OK so the caller can try the next provider. */
+const SSE_HEADERS = {
+  ...MODEL_CORS,
+  "Content-Type": "text/event-stream",
+  "Cache-Control": "no-cache",
+  Connection: "keep-alive",
+} as const;
+
+/**
+ * POST to an OpenAI-compatible upstream and normalize textual tool calls.
+ *
+ * Marina serves ANY model, so this runs on every openai-completions upstream
+ * (cloud or self-hosted) and is passthrough-by-default: structured `tool_calls`
+ * and ordinary content stream through verbatim; only literal `<tool_call>`
+ * blocks in content are rewritten into structured calls, with a streaming parser
+ * that holds back at most a tag's width so surrounding prose still streams
+ * token-by-token. Returns null on network error / non-OK so the caller can try
+ * the next provider.
+ */
 async function dispatchOpenAICompatible(
   url: string,
   apiKey: string,
@@ -1438,29 +1460,140 @@ async function dispatchOpenAICompatible(
     // empty `Bearer ` confuses some OpenAI-compatible implementations.
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-    const resp = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    });
+    const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
     if (!resp.ok) return null;
+    const model = String((body.model as string) ?? "marina");
     if (wantStream) {
-      return new Response(resp.body, {
-        headers: {
-          ...MODEL_CORS,
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        },
-      });
+      if (!resp.body) return null;
+      return new Response(normalizeToolCallSSE(resp.body, model), { headers: SSE_HEADERS });
     }
     const data = await resp.json();
+    normalizeTextualToolCalls(data);
     return new Response(JSON.stringify(data), {
       headers: { ...MODEL_CORS, "Content-Type": "application/json" },
     });
   } catch {
     return null;
   }
+}
+
+/**
+ * Stream-transform an upstream OpenAI SSE response, repairing textual tool calls
+ * inline. Content streams through (≤ one tag's width of holdback); structured
+ * `tool_calls` and other deltas pass through verbatim; a single authoritative
+ * finish chunk is emitted at the end (`tool_calls` when any textual call was
+ * converted). pi-ai's accumulator reads `delta.tool_calls` by index.
+ */
+function normalizeToolCallSSE(
+  upstream: ReadableStream<Uint8Array>,
+  fallbackModel: string,
+): ReadableStream<Uint8Array> {
+  const reader = upstream.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const parser = new ToolCallStreamParser();
+  const created = Math.floor(Date.now() / 1000);
+  let sseBuf = "";
+  let id = `chatcmpl-${crypto.randomUUID().slice(0, 8)}`;
+  let model = fallbackModel;
+  let toolIndex = 0;
+  let roleSent = false;
+  let pendingFinish: string | null = null;
+  let finishEmitted = false;
+
+  const send = (c: ReadableStreamDefaultController<Uint8Array>, frame: string) =>
+    c.enqueue(encoder.encode(frame));
+  const chunk = (delta: unknown, finishReason: string | null = null) =>
+    `data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`;
+
+  const flushEvents = (c: ReadableStreamDefaultController<Uint8Array>, events: StreamEvent[]) => {
+    for (const ev of events) {
+      if (!roleSent) {
+        send(c, openaiStreamRoleChunk(id, model));
+        roleSent = true;
+      }
+      if (ev.type === "content") {
+        send(c, openaiStreamChunk(id, model, ev.text));
+      } else {
+        send(c, chunk({ tool_calls: [{ index: toolIndex++, ...ev.call }] }));
+      }
+    }
+  };
+
+  const emitFinish = (c: ReadableStreamDefaultController<Uint8Array>) => {
+    if (finishEmitted) return;
+    flushEvents(c, parser.finish());
+    if (!roleSent) {
+      send(c, openaiStreamRoleChunk(id, model));
+      roleSent = true;
+    }
+    send(c, chunk({}, parser.sawToolCall ? "tool_calls" : (pendingFinish ?? "stop")));
+    send(c, "data: [DONE]\n\n");
+    finishEmitted = true;
+  };
+
+  const processLine = (line: string, c: ReadableStreamDefaultController<Uint8Array>) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) return;
+    const payload = trimmed.slice(5).trim();
+    if (payload === "[DONE]") return emitFinish(c);
+    let parsed: {
+      id?: string;
+      model?: string;
+      choices?: { delta?: Record<string, unknown>; finish_reason?: string | null }[];
+    };
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      return;
+    }
+    if (typeof parsed.id === "string") id = parsed.id;
+    if (typeof parsed.model === "string") model = parsed.model;
+    const choice = parsed.choices?.[0];
+    const delta = choice?.delta ?? {};
+    if (choice?.finish_reason) pendingFinish = choice.finish_reason;
+
+    if (typeof delta.content === "string" && delta.content.length > 0) {
+      flushEvents(c, parser.push(delta.content));
+    }
+    const toolCalls = delta.tool_calls as unknown[] | undefined;
+    if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+      // Structured tool calls — flush any held text, then forward verbatim
+      // (preserving the upstream's index/id/argument fragments).
+      flushEvents(c, parser.finish());
+      const fwd: Record<string, unknown> = { tool_calls: toolCalls };
+      if (delta.role) fwd.role = delta.role;
+      send(c, chunk(fwd));
+      roleSent = true;
+    } else if (delta.role && delta.content === undefined) {
+      send(c, openaiStreamRoleChunk(id, model));
+      roleSent = true;
+    }
+    if (choice?.finish_reason) emitFinish(c);
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          if (sseBuf.trim()) processLine(sseBuf, controller);
+          emitFinish(controller);
+          controller.close();
+          return;
+        }
+        sseBuf += decoder.decode(value, { stream: true });
+        const parts = sseBuf.split("\n");
+        sseBuf = parts.pop() ?? "";
+        for (const part of parts) processLine(part, controller);
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+    cancel(reason) {
+      reader.cancel(reason).catch(() => {});
+    },
+  });
 }
 
 async function proxyToUpstream(
