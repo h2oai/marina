@@ -17,6 +17,7 @@ Generation calls out to a provider, so you need that provider's key:
 | Image | **Local Stable Diffusion** (Automatic1111 / SD.Next) | — *(keyless; `A1111_API_KEY` optional)* | `automatic1111/<checkpoint>`, `a1111` |
 | Image | **Any OpenAI-compatible image server** (Together, Fireworks, DeepInfra, LocalAI, …) | `<PROVIDER>_API_KEY` *(optional)* | `<provider>/<model>` |
 | Video | Runway | `RUNWAY_API_KEY` | `runway/gen3-alpha` |
+| Video | Google Veo | `GEMINI_API_KEY` *(reused)* | `google/veo-3.0-generate-preview` |
 
 ### Local & custom image models
 
@@ -51,8 +52,8 @@ Notes:
   works).
 - **Sizes** snap to each provider's supported aspect ratios — `--width/--height`
   are a hint, not exact pixels, for Stability/Imagen.
-- Non-Runway **video** providers are not yet implemented (a clear "not supported"
-  error is returned).
+- **Video** is async (rendered server-side, then polled) — Runway and Google Veo
+  are supported; other providers return a clear "not supported" error.
 
 ## Generate
 
@@ -122,8 +123,9 @@ Video is asynchronous: Runway is polled every few seconds and the job's
 ## Troubleshooting
 
 - **"Provider not yet supported"** — built-in image providers are `openai`,
-  `stability`, `google`, `automatic1111`; video is `runway`. For any other image
-  provider, set `<PROVIDER>_IMAGE_BASE_URL` first (see *Local & custom*).
+  `stability`, `google`, `automatic1111`; video providers are `runway` and
+  `google` (Veo). For any other image provider, set `<PROVIDER>_IMAGE_BASE_URL`
+  first (see *Local & custom*).
 - **Job stuck `pending` / errors immediately** — the provider key is missing
   (`OPENAI_API_KEY` / `RUNWAY_API_KEY`) or the daily cap is hit.
 - **Agent has no generate tool** — its model isn't image/video-capable. Spawn it
