@@ -12,6 +12,7 @@ import { memo, useCallback, useMemo, useState } from "react";
 import { useAgents, useKeys, useRoles } from "../../hooks/use-api";
 import { useWorldState } from "../../hooks/use-world-state";
 import { postApi } from "../../lib/api";
+import { mediaCapability } from "../../lib/model-catalog";
 import type { AgentStatusFull, RoleEntry } from "../../lib/types";
 
 /** Props for the EntityPanel component. */
@@ -682,6 +683,27 @@ const LaunchTab = memo(function LaunchTab(_props: { sendCommand?: (cmd: string) 
             {LOCAL_PROVIDER_HINTS[modelProvider(effectiveModel)]}
           </div>
         )}
+        <div
+          style={{
+            fontSize: "clamp(9px, 0.55vw, 10px)",
+            color: "#888",
+            marginTop: "3px",
+            lineHeight: 1.35,
+          }}
+        >
+          {(() => {
+            const cap = mediaCapability(effectiveModel);
+            const kinds =
+              cap.image && cap.video ? "images + video" : cap.image ? "images" : "video";
+            return cap.image || cap.video ? (
+              <span style={{ color: "var(--color-primary)" }}>
+                ✓ generates {kinds} — the agent gets a generate tool.
+              </span>
+            ) : (
+              "Image/video models (openai/gpt-image-1, runway/gen3-alpha) give the agent a generate tool. Or run `image generate <prompt>`."
+            );
+          })()}
+        </div>
       </div>
       <div>
         <div style={labelStyle}>API KEY</div>
