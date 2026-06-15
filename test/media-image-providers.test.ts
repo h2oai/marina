@@ -4,7 +4,6 @@ import { generateGoogleImage } from "../src/engine/media/providers/google-image"
 import {
   getImageProvider,
   imageProviderRequiresKey,
-  knownImageProviders,
 } from "../src/engine/media/providers/image-registry";
 import { bareModel, nearestAspectRatio } from "../src/engine/media/providers/image-util";
 import { generateOpenAICompatibleImage } from "../src/engine/media/providers/openai-compatible-image";
