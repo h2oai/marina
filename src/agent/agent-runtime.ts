@@ -452,7 +452,7 @@ export class AgentRuntime {
    * reservation under the same name — without that, a hung discovery
    * prompt would leave the name permanently unbookable.
    */
-  async stop(name: string): Promise<void> {
+  async stop(name: string, opts?: { keepConfig?: boolean }): Promise<void> {
     // Resolve to the canonical map key so `agent stop alice` finds "Alice".
     // Falls back to the raw name for the in-flight-only path (a spawn still
     // reserving the name, not yet in the agents map).
@@ -481,14 +481,21 @@ export class AgentRuntime {
       this.agentUnsubscribers.delete(key);
     }
 
-    // Remove saved config
-    if (this.db) {
+    // Remove saved config — unless the caller is winding the agent down to
+    // restart it (graceful shutdown). An explicit `agent stop` / entity
+    // removal means "this agent is gone", so the config is deleted and it
+    // won't respawn. A shutdown means "see you on the next boot", so the
+    // config must survive for AgentRuntime.init() to respawn it — otherwise
+    // user-spawned agents silently vanish on every restart.
+    if (this.db && !opts?.keepConfig) {
       this.db.deleteAgentConfig(key);
     }
   }
 
   /**
-   * Stop all running agents (for graceful shutdown).
+   * Stop all running agents (for graceful shutdown). Preserves saved configs
+   * so every agent — system-seeded AND user-spawned — respawns on the next
+   * boot. Each agent's stop() still flushes its checkpoint first.
    */
   async stopAll(): Promise<void> {
     if (this.uptimeCheckInterval) {
@@ -496,7 +503,7 @@ export class AgentRuntime {
       this.uptimeCheckInterval = null;
     }
     const names = [...this.agents.keys()];
-    await Promise.allSettled(names.map((name) => this.stop(name)));
+    await Promise.allSettled(names.map((name) => this.stop(name, { keepConfig: true })));
   }
 
   /**
