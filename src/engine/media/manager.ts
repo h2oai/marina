@@ -2,7 +2,11 @@ import type { MarinaDB, MediaJobRow, MediaJobType } from "../../persistence/data
 import type { StorageProvider } from "../../storage/provider";
 import type { EngineEvent, EntityId } from "../../types";
 import type { Engine } from "../engine";
-import { getImageProvider, knownImageProviders } from "./providers/image-registry";
+import {
+  getImageProvider,
+  imageProviderRequiresKey,
+  knownImageProviders,
+} from "./providers/image-registry";
 import type { ImageGenerator } from "./providers/image-util";
 import { moderateOpenAIText } from "./providers/openai";
 import {
@@ -81,7 +85,11 @@ export class MediaManager {
     const jobId = crypto.randomUUID();
     const provider = this.extractProvider(params.model);
     const apiKey = this.resolveApiKey(provider);
-    if (!apiKey) {
+    // Video always needs a key; image needs one only for built-in cloud
+    // providers — local/operator-configured endpoints (Automatic1111, any
+    // `<PROVIDER>_IMAGE_BASE_URL`) are key-optional.
+    const keyRequired = params.type === "video" || imageProviderRequiresKey(provider);
+    if (keyRequired && !apiKey) {
       throw new Error(`No API key configured for provider "${provider}".`);
     }
 
@@ -130,12 +138,12 @@ export class MediaManager {
             `Provider "${provider}" not yet supported for image generation. Supported: ${knownImageProviders().join(", ")}.`,
           );
         }
-        await this.handleImageJob(jobId, apiKey, params, generate);
+        await this.handleImageJob(jobId, apiKey ?? "", params, generate);
       } else {
         if (provider !== "runway") {
           throw new Error(`Provider "${provider}" not yet supported for video generation.`);
         }
-        await this.handleVideoJob(jobId, apiKey, params);
+        await this.handleVideoJob(jobId, apiKey ?? "", params);
       }
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);

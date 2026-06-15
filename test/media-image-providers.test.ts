@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { generateAutomatic1111Image } from "../src/engine/media/providers/automatic1111";
 import { generateGoogleImage } from "../src/engine/media/providers/google-image";
 import {
   getImageProvider,
+  imageProviderRequiresKey,
   knownImageProviders,
 } from "../src/engine/media/providers/image-registry";
 import { bareModel, nearestAspectRatio } from "../src/engine/media/providers/image-util";
+import { generateOpenAICompatibleImage } from "../src/engine/media/providers/openai-compatible-image";
 import { generateStabilityImage } from "../src/engine/media/providers/stability";
 
 const realFetch = globalThis.fetch;
@@ -44,12 +47,30 @@ describe("image-util helpers", () => {
 });
 
 describe("image-registry", () => {
-  it("resolves the implemented providers and nothing else", () => {
-    expect(knownImageProviders().sort()).toEqual(["google", "openai", "stability"]);
+  const prev = process.env.TOGETHER_IMAGE_BASE_URL;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.TOGETHER_IMAGE_BASE_URL;
+    else process.env.TOGETHER_IMAGE_BASE_URL = prev;
+  });
+
+  it("resolves built-ins + Automatic1111; cloud needs a key, local doesn't", () => {
     expect(typeof getImageProvider("openai")).toBe("function");
     expect(typeof getImageProvider("stability")).toBe("function");
     expect(typeof getImageProvider("google")).toBe("function");
-    expect(getImageProvider("midjourney")).toBeUndefined();
+    expect(typeof getImageProvider("automatic1111")).toBe("function");
+    expect(typeof getImageProvider("a1111")).toBe("function");
+
+    expect(imageProviderRequiresKey("openai")).toBe(true);
+    expect(imageProviderRequiresKey("stability")).toBe(true);
+    expect(imageProviderRequiresKey("automatic1111")).toBe(false);
+  });
+
+  it("resolves an arbitrary provider once <PROVIDER>_IMAGE_BASE_URL is set", () => {
+    delete process.env.TOGETHER_IMAGE_BASE_URL;
+    expect(getImageProvider("together")).toBeUndefined();
+    process.env.TOGETHER_IMAGE_BASE_URL = "https://api.together.xyz/v1";
+    expect(typeof getImageProvider("together")).toBe("function");
+    expect(imageProviderRequiresKey("together")).toBe(false);
   });
 });
 
@@ -127,5 +148,82 @@ describe("generateGoogleImage", () => {
     expect(body.instances[0]!.prompt).toBe("a city");
     expect(res.status).toBe("succeeded");
     expect(Buffer.from(res.asset!.data).toString()).toBe("hello");
+  });
+});
+
+describe("generateAutomatic1111Image (local SD)", () => {
+  const prev = process.env.A1111_BASE_URL;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.A1111_BASE_URL;
+    else process.env.A1111_BASE_URL = prev;
+  });
+
+  it("posts txt2img to the configured base and decodes the first image", async () => {
+    process.env.A1111_BASE_URL = "http://localhost:7860/";
+    const cap = mockFetch(() => Response.json({ images: [Buffer.from("png").toString("base64")] }));
+    const res = await generateAutomatic1111Image({
+      apiKey: "",
+      model: "automatic1111/realvisxl",
+      prompt: "a cat",
+      width: 768,
+      height: 768,
+    });
+    expect(cap.url()).toBe("http://localhost:7860/sdapi/v1/txt2img");
+    const body = JSON.parse(String(cap.init()?.body)) as {
+      prompt: string;
+      override_settings?: { sd_model_checkpoint?: string };
+    };
+    expect(body.prompt).toBe("a cat");
+    expect(body.override_settings?.sd_model_checkpoint).toBe("realvisxl");
+    expect(res.status).toBe("succeeded");
+    expect(Buffer.from(res.asset!.data).toString()).toBe("png");
+  });
+
+  it("omits the checkpoint override for a bare provider id", async () => {
+    const cap = mockFetch(() => Response.json({ images: [Buffer.from("x").toString("base64")] }));
+    await generateAutomatic1111Image({ apiKey: "", model: "a1111", prompt: "p" });
+    const body = JSON.parse(String(cap.init()?.body)) as { override_settings?: unknown };
+    expect(body.override_settings).toBeUndefined();
+  });
+});
+
+describe("generateOpenAICompatibleImage (generic endpoint)", () => {
+  const prev = process.env.TOGETHER_IMAGE_BASE_URL;
+  const prevKey = process.env.TOGETHER_API_KEY;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.TOGETHER_IMAGE_BASE_URL;
+    else process.env.TOGETHER_IMAGE_BASE_URL = prev;
+    if (prevKey === undefined) delete process.env.TOGETHER_API_KEY;
+    else process.env.TOGETHER_API_KEY = prevKey;
+  });
+
+  it("fails clearly when no endpoint is configured", async () => {
+    delete process.env.TOGETHER_IMAGE_BASE_URL;
+    const res = await generateOpenAICompatibleImage({
+      apiKey: "",
+      model: "together/flux",
+      prompt: "p",
+    });
+    expect(res.status).toBe("failed");
+    expect(res.error).toContain("TOGETHER_IMAGE_BASE_URL");
+  });
+
+  it("posts /images/generations with the bare model + env key", async () => {
+    process.env.TOGETHER_IMAGE_BASE_URL = "https://api.together.xyz/v1";
+    process.env.TOGETHER_API_KEY = "tok";
+    const cap = mockFetch(() =>
+      Response.json({ data: [{ b64_json: Buffer.from("img").toString("base64") }] }),
+    );
+    const res = await generateOpenAICompatibleImage({
+      apiKey: "",
+      model: "together/black-forest-labs/FLUX.1-schnell",
+      prompt: "a tree",
+    });
+    expect(cap.url()).toBe("https://api.together.xyz/v1/images/generations");
+    expect((cap.init()?.headers as Record<string, string>).Authorization).toBe("Bearer tok");
+    const body = JSON.parse(String(cap.init()?.body)) as { model: string };
+    expect(body.model).toBe("black-forest-labs/FLUX.1-schnell");
+    expect(res.status).toBe("succeeded");
+    expect(Buffer.from(res.asset!.data).toString()).toBe("img");
   });
 });
