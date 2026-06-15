@@ -1,7 +1,7 @@
 import { getInternalModelToken } from "../agent/agent-runtime";
 import type { RateLimiter } from "../auth/rate-limiter";
 import type { ChannelManager } from "../coordination/channel-manager";
-import { DEFAULT_LOCAL_MAX_OUTPUT_TOKENS } from "../engine/constants";
+import { localOutputBudget } from "../engine/constants";
 import type { Engine } from "../engine/engine";
 import { buildAliasMap } from "./compat-profiles";
 import { corsHeaders } from "./cors";
@@ -1603,14 +1603,13 @@ function normalizeToolCallSSE(
 }
 
 /**
- * Resolve the completion-token budget for the local `llama` upstream: the
- * configured ceiling (DEFAULT_LOCAL_MAX_OUTPUT_TOKENS), clamped to a quarter of
- * the server's context window so it can't crowd out the prompt on a small box.
+ * Resolve the completion-token budget for the local `llama` upstream: half the
+ * server's context window by default (see localOutputBudget). Reads the window
+ * from LLAMA_CONTEXT_WINDOW (16384 default), so set that to your server's real
+ * size or the budget stays small.
  */
 function llamaOutputBudget(): number {
-  const ctx = localProviderContextWindow("llama");
-  const ctxCap = ctx && ctx > 0 ? Math.floor(ctx / 4) : DEFAULT_LOCAL_MAX_OUTPUT_TOKENS;
-  return Math.max(512, Math.min(DEFAULT_LOCAL_MAX_OUTPUT_TOKENS, ctxCap));
+  return localOutputBudget(localProviderContextWindow("llama") ?? 16384);
 }
 
 /**
