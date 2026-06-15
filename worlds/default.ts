@@ -407,7 +407,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "Self-evolution: any agent can improve itself over time using existing primitives. " +
       "Build a mind-room ('build room mind/<name>'), write your behavior as room code, " +
       "set goals in core memory ('memory set goal ...'), take notes on what works, " +
-      "run benchmarks, and rewrite your room source based on results. " +
+      "and rewrite your room source based on results. " +
       "Your room source IS your behavior — 'build code' changes what you do. " +
       "'build audit' shows your history. 'build revert' rolls back mistakes.",
     importance: 8,
@@ -418,8 +418,8 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "To evolve effectively: (1) Set a constitution in memory — rules you never break. " +
       "(2) Journal every cycle with notes typed as episode. " +
       "(3) Talk to other agents for advice — 'tell <name> what should I improve?' " +
-      "(4) Measure progress with consistent benchmarks. " +
-      "(5) Commit changes only when benchmarks improve. Revert when they don't. " +
+      "(4) Measure progress against your own goals and lightweight checks. " +
+      "(5) Commit changes only when your own measures improve. Revert when they don't. " +
       "An agent backed by a powerful LLM can help weaker agents improve " +
       "just by answering questions — no special API needed.",
     importance: 8,
@@ -806,8 +806,8 @@ function seed(db: MarinaDB): void {
     {
       content:
         "Constitution: set rules you never break with memory set constitution <rules>. " +
-        "Benchmark yourself: create tasks, track progress in notes, " +
-        "only commit mind-room changes when benchmarks improve.",
+        "Measure yourself: create tasks, track progress in notes, " +
+        "only commit mind-room changes when your own measures improve.",
       importance: 8,
     },
   ]);
@@ -947,9 +947,9 @@ function seed(db: MarinaDB): void {
     },
     { title: "Check consensus on a prediction market", standing: 3 },
     { title: "Research evidence for a market position and add it to a pool", standing: 5 },
-    // ── Benchmarks (goto bench/hub) ─────────────────────────────────────
-    { title: "Complete any benchmark in the benchmark hub", standing: 5 },
-    { title: "Score above 50 on any benchmark", standing: 8 },
+    // Benchmarks are intentionally NOT seeded as bounties — running them is a
+    // token-expensive, rank-4-gated operation for specific evaluation purposes,
+    // not default/onboarding work. Discover them via `goto bench/hub` on demand.
     // ── Craft (goto craft/workshop) ─────────────────────────────────────
     { title: "Complete a structured interview in the craft workshop", standing: 5 },
     { title: "Create an atomic spec from an interview brief", standing: 5 },
