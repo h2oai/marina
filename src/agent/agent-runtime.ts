@@ -453,33 +453,37 @@ export class AgentRuntime {
    * prompt would leave the name permanently unbookable.
    */
   async stop(name: string): Promise<void> {
-    const agent = this.agents.get(name);
-    const inFlight = this.spawnsInFlight.has(name);
+    // Resolve to the canonical map key so `agent stop alice` finds "Alice".
+    // Falls back to the raw name for the in-flight-only path (a spawn still
+    // reserving the name, not yet in the agents map).
+    const key = this.resolveKey(name) ?? name;
+    const agent = this.agents.get(key);
+    const inFlight = this.spawnsInFlight.has(key);
     if (!agent && !inFlight) {
       throw new Error(`Agent "${name}" is not running.`);
     }
 
     if (agent) {
       await agent.stop();
-      this.agents.delete(name);
+      this.agents.delete(key);
     }
 
     // Free the in-flight slot so a fresh spawn with the same name can
     // proceed. The original spawn() finally block will also try to
     // delete this on its way out — that's harmless (Set.delete is
     // idempotent on missing keys).
-    this.spawnsInFlight.delete(name);
+    this.spawnsInFlight.delete(key);
 
     // Clean up event subscriber
-    const unsub = this.agentUnsubscribers.get(name);
+    const unsub = this.agentUnsubscribers.get(key);
     if (unsub) {
       unsub();
-      this.agentUnsubscribers.delete(name);
+      this.agentUnsubscribers.delete(key);
     }
 
     // Remove saved config
     if (this.db) {
-      this.db.deleteAgentConfig(name);
+      this.db.deleteAgentConfig(key);
     }
   }
 
@@ -496,10 +500,28 @@ export class AgentRuntime {
   }
 
   /**
-   * Get an agent handle by name.
+   * Resolve a caller-supplied name to the canonical agent-map key.
+   *
+   * Exact match wins; otherwise a *unique* case-insensitive match is used.
+   * Returns undefined when nothing matches or the case-insensitive match is
+   * ambiguous (two agents differing only in case — vanishingly rare, but we
+   * refuse to guess rather than act on the wrong one). Keeps lookups
+   * (`agent status alice`) in step with `agent list` and the engine's own
+   * case-insensitive name resolution, instead of failing on a case mismatch.
+   */
+  private resolveKey(name: string): string | undefined {
+    if (this.agents.has(name)) return name;
+    const lower = name.toLowerCase();
+    const matches = [...this.agents.keys()].filter((k) => k.toLowerCase() === lower);
+    return matches.length === 1 ? matches[0] : undefined;
+  }
+
+  /**
+   * Get an agent handle by name. Case-insensitive (see resolveKey).
    */
   get(name: string): AgentHandle | undefined {
-    return this.agents.get(name);
+    const key = this.resolveKey(name);
+    return key ? this.agents.get(key) : undefined;
   }
 
   /**
@@ -511,8 +533,9 @@ export class AgentRuntime {
     name: string,
     opts: { model?: string; role?: string; keyName?: string; supports?: AgentSupports },
   ): Promise<void> {
-    const agent = this.agents.get(name);
-    if (!agent) throw new Error(`Agent "${name}" is not running.`);
+    const key = this.resolveKey(name);
+    const agent = key ? this.agents.get(key) : undefined;
+    if (!agent || !key) throw new Error(`Agent "${name}" is not running.`);
 
     // Resolve role prompt from DB if role is changing. Re-infer task
     // category from the agent's current goal so trait gating stays
@@ -555,7 +578,7 @@ export class AgentRuntime {
     if (this.db) {
       const status = agent.getStatus();
       this.db.saveAgentConfig({
-        name,
+        name: key,
         model: status.model,
         role: status.role || undefined,
         goal: status.goal || undefined,
