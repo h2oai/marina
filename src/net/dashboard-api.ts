@@ -238,12 +238,16 @@ export async function handleDashboardApi(
   // Security posture for the Admin → Security panel. Reports the real state of
   // the hardening knobs (never secret values) so the panel can stop guessing.
   if (url.pathname === "/api/security-status" && method === "GET") {
+    const audit = db ? db.auditEncryptedKeys() : { encrypted: 0, unreadable: 0 };
     return json({
       authRequired: !!engine.config.authRequired,
       openApi: process.env.MARINA_OPEN_API === "true",
       // Key-at-rest encryption: stored API keys are plaintext unless this is on.
       keyEncryption: isKeyEncryptionEnabled(),
       dbKeyCount: db ? db.getAllApiKeys().length : 0,
+      // Encrypted rows that won't decrypt under the current secret — a loud
+      // signal the secret is missing/changed and those keys read as gone.
+      unreadableKeys: audit.unreadable,
     });
   }
   // Capability readiness — same data as the in-world `status` command. Reports

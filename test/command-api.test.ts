@@ -128,11 +128,13 @@ describe("Command API", () => {
       openApi: boolean;
       keyEncryption: boolean;
       dbKeyCount: number;
+      unreadableKeys: number;
     };
-    // Test engine has no auth configured and no encryption implemented yet.
+    // Test engine has no auth and no key secret; the plaintext key is readable.
     expect(body.authRequired).toBe(false);
     expect(body.keyEncryption).toBe(false);
     expect(body.dbKeyCount).toBe(1);
+    expect(body.unreadableKeys).toBe(0);
   });
 
   it("can list usecase recipes from a fresh API session", async () => {
