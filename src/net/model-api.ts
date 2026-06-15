@@ -1596,6 +1596,20 @@ function normalizeToolCallSSE(
   });
 }
 
+/**
+ * Inject llama.cpp-specific chat template kwargs into the request body when
+ * the provider is `llama`. `enable_thinking: false` suppresses Qwen3's
+ * `<think>` blocks at the Jinja template level — without it, reasoning models
+ * spend their output budget reasoning and produce no tool calls on large prompts.
+ */
+function injectLlamaKwargs(
+  body: Record<string, unknown>,
+  provider: string,
+): Record<string, unknown> {
+  if (provider !== "llama") return body;
+  return { ...body, chat_template_kwargs: { enable_thinking: false } };
+}
+
 async function proxyToUpstream(
   engine: Engine,
   body: Record<string, unknown>,
@@ -1626,7 +1640,7 @@ async function proxyToUpstream(
       const r = await dispatchOpenAICompatible(
         cfg.url,
         key ?? "",
-        { ...body, model: upstreamModel },
+        injectLlamaKwargs({ ...body, model: upstreamModel }, provider),
         wantStream,
       );
       if (r) return r;
@@ -1649,7 +1663,7 @@ async function proxyToUpstream(
     const r = await dispatchOpenAICompatible(
       cfg.url,
       key ?? "",
-      { ...body, model: requestModel },
+      injectLlamaKwargs({ ...body, model: requestModel }, provider),
       wantStream,
     );
     if (r) return r;
