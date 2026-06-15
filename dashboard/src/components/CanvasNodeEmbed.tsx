@@ -7,6 +7,7 @@ import type { A2UIAction, A2UINodeData } from "../canvas/nodes/a2ui/types";
 import { useCanvasNode } from "../hooks/use-canvas-node";
 import { authFetch } from "../lib/api";
 import { formatTime } from "../lib/utils";
+import { useAssetViewer, type ViewableAsset } from "./AssetLightbox";
 
 const API_BASE = window.location.origin;
 
@@ -31,6 +32,7 @@ export function CanvasNodeEmbed({
 }: CanvasNodeEmbedProps) {
   const { data, isLoading, isError, refetch } = useCanvasNode(canvasId, nodeId);
   const [localData, setLocalData] = useState<NodeData | null>(null);
+  const { open: openAsset } = useAssetViewer();
 
   useEffect(() => {
     if (data) {
@@ -102,7 +104,7 @@ export function CanvasNodeEmbed({
     body = (
       <div className="mt-2 space-y-2">
         {summary && <div className="text-[12px] text-text-bright">{summary}</div>}
-        {renderNodePreview(node, handleA2UIAction)}
+        {renderNodePreview(node, handleA2UIAction, openAsset)}
       </div>
     );
   }
@@ -137,9 +139,18 @@ export function CanvasNodeEmbed({
 function renderNodePreview(
   node: CanvasNodeData & { data: Record<string, unknown> },
   onA2UIAction: (action: A2UIAction) => void,
+  openAsset: (asset: ViewableAsset) => void,
 ): ReactElement {
   const data = node.data ?? {};
   const title = (data.title as string) ?? (data.name as string) ?? node.type;
+  const viewable = (url: string): ViewableAsset => ({
+    url,
+    kind: node.type,
+    title,
+    prompt: data.prompt as string | undefined,
+    model: data.model as string | undefined,
+    mime: data.mime as string | undefined,
+  });
 
   switch (node.type) {
     case "text": {
@@ -156,7 +167,14 @@ function renderNodePreview(
       if (!url) return placeholder("Image asset not available.");
       return (
         <figure className="overflow-hidden rounded border border-border/70">
-          <img src={url} alt={title} className="max-h-48 w-full object-cover" />
+          <button
+            type="button"
+            onClick={() => openAsset(viewable(url))}
+            className="block w-full cursor-zoom-in"
+            title="Click to view full size"
+          >
+            <img src={url} alt={title} className="max-h-48 w-full object-cover" />
+          </button>
           <figcaption className="bg-bg/80 px-2 py-1 text-[10px] text-text-dim">{title}</figcaption>
         </figure>
       );
@@ -165,40 +183,36 @@ function renderNodePreview(
       const url = (data.url as string) ?? (data.preview_url as string);
       if (!url) return placeholder("Video asset not available.");
       return (
-        <div className="flex items-center justify-between rounded border border-border/70 bg-bg px-2 py-2">
+        <button
+          type="button"
+          onClick={() => openAsset(viewable(url))}
+          className="flex w-full items-center justify-between rounded border border-border/70 bg-bg px-2 py-2 text-left transition-colors hover:border-primary"
+          title="Click to play"
+        >
           <div className="flex items-center gap-2 text-text">
             <Video size={14} className="text-primary" />
             <span className="truncate text-[11px] text-text-bright">{title}</span>
           </div>
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-[10px] text-primary hover:underline"
-          >
-            Open video
-          </a>
-        </div>
+          <span className="text-[10px] text-primary">Play ▸</span>
+        </button>
       );
     }
     case "audio": {
       const url = (data.url as string) ?? (data.preview_url as string);
       if (!url) return placeholder("Audio asset not available.");
       return (
-        <div className="flex items-center justify-between rounded border border-border/70 bg-bg px-2 py-2">
+        <button
+          type="button"
+          onClick={() => openAsset(viewable(url))}
+          className="flex w-full items-center justify-between rounded border border-border/70 bg-bg px-2 py-2 text-left transition-colors hover:border-primary"
+          title="Click to play"
+        >
           <div className="flex items-center gap-2 text-text">
             <Volume2 size={14} className="text-primary" />
             <span className="truncate text-[11px] text-text-bright">{title}</span>
           </div>
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="text-[10px] text-primary hover:underline"
-          >
-            Play audio
-          </a>
-        </div>
+          <span className="text-[10px] text-primary">Play ▸</span>
+        </button>
       );
     }
     case "pdf":
@@ -207,18 +221,15 @@ function renderNodePreview(
       const filename = (data.filename as string) ?? title;
       if (!url) return placeholder("Document asset not available.");
       return (
-        <div className="rounded border border-border bg-bg px-2 py-2">
-          <div className="text-[11px] font-semibold text-text-bright">{filename}</div>
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-1 inline-flex items-center gap-1 text-[10px] text-primary hover:underline"
-          >
-            <ExternalLink size={11} />
-            View document
-          </a>
-        </div>
+        <button
+          type="button"
+          onClick={() => openAsset(viewable(url))}
+          className="flex w-full items-center gap-1 rounded border border-border bg-bg px-2 py-2 text-left transition-colors hover:border-primary"
+          title="Click to view"
+        >
+          <ExternalLink size={11} className="shrink-0 text-primary" />
+          <span className="truncate text-[11px] font-semibold text-text-bright">{filename}</span>
+        </button>
       );
     }
     case "embed": {

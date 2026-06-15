@@ -4,11 +4,12 @@ import { useAgents, useKeys, useModels, useRoles } from "../../hooks/use-api";
 import { postApi } from "../../lib/api";
 import {
   DEFAULT_FALLBACK_MODEL,
+  mediaCapability,
   mergeGroups,
   providerLabel,
   totalModelCount,
 } from "../../lib/model-catalog";
-import type { AgentStatusFull } from "../../lib/types";
+import type { AgentStatusFull, ProviderGroup } from "../../lib/types";
 import { cn } from "../../lib/utils";
 
 /** Agent launch + running agents — used as back-face content inside EntityRoster. */
@@ -132,6 +133,7 @@ function SpawnForm() {
           className="w-full bg-bg-surface border border-border rounded px-1.5 py-0.5 text-[11px] text-text-bright outline-none focus:border-primary"
         />
       )}
+      <MediaCapabilityHint model={effectiveModel} groups={groups} />
 
       {/* Role */}
       <label className="block space-y-1">
@@ -195,6 +197,32 @@ function SpawnForm() {
         <Play size={10} />
         {spawning ? "Spawning..." : "Launch Agent"}
       </button>
+    </div>
+  );
+}
+
+/**
+ * Discoverability hint under the model picker: tells the operator whether the
+ * chosen model can generate media (so the agent gains a generate tool), and how
+ * anyone can generate + view media regardless.
+ */
+function MediaCapabilityHint({ model, groups }: { model: string; groups: ProviderGroup[] }) {
+  const cap = mediaCapability(model, groups);
+  const kinds = cap.image && cap.video ? "images + video" : cap.image ? "images" : "video";
+  return (
+    <div className="text-text-dim text-[9px] leading-snug">
+      {cap.image || cap.video ? (
+        <span className="text-primary">✓ generates {kinds} — the agent gets a generate tool. </span>
+      ) : (
+        <span>
+          Pick an image (<span className="text-primary">openai/gpt-image-1</span>) or video (
+          <span className="text-primary">runway/gen3-alpha</span>) model to give the agent a
+          generate tool.{" "}
+        </span>
+      )}
+      Anyone can also run <span className="text-primary">image generate &lt;prompt&gt;</span> /{" "}
+      <span className="text-primary">video generate &lt;prompt&gt;</span> — output appears in Rich
+      chat; click it to view.
     </div>
   );
 }

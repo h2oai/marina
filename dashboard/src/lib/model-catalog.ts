@@ -90,6 +90,32 @@ export function totalModelCount(groups: ProviderGroup[]): number {
   return groups.reduce((n, g) => n + g.models.length, 0);
 }
 
+// Heuristics mirroring the server's capability inference (model-discovery.ts),
+// used as a fallback when a model isn't in the discovered catalog (e.g. a
+// custom-typed id). Keep loosely in sync.
+const IMAGE_MODEL_RE = /(gpt-image|dall-?e|stability|sdxl|stable-diffusion)/i;
+const VIDEO_MODEL_RE = /(runway|gen-?[23]|sora|veo|kling|luma)/i;
+
+/**
+ * Whether a model can generate images / video — drives the launch-panel hint so
+ * an operator knows which model to pick for media generation. Prefers the
+ * discovered capabilities from `/api/models`; falls back to id heuristics.
+ */
+export function mediaCapability(
+  value: string,
+  groups?: ProviderGroup[],
+): { image: boolean; video: boolean } {
+  if (groups) {
+    for (const g of groups) {
+      const m = g.models.find((x) => x.value === value);
+      if (m?.capabilities) {
+        return { image: !!m.capabilities.image, video: !!m.capabilities.video };
+      }
+    }
+  }
+  return { image: IMAGE_MODEL_RE.test(value), video: VIDEO_MODEL_RE.test(value) };
+}
+
 /**
  * Substrings of well-known, broadly-available models, best-first. Used to pick a
  * sane launch default instead of whatever sorts alphabetically first — which for
