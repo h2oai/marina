@@ -102,6 +102,19 @@ export interface AgentConfig {
    * { text: true } when unknown.
    */
   supports?: AgentSupports;
+  /**
+   * Override the model's context window (tokens, prompt+output) the compactor
+   * budgets against. Normally autodetected at spawn for local models (see
+   * model-probe) or taken from the registry/env; set this only to pin a value.
+   */
+  contextWindow?: number;
+  /**
+   * Per-agent output (completion) token cap. Bounds how much the model may
+   * generate per turn — critical on small local windows where an unbounded
+   * completion would itself overflow. Unset → a sensible per-model default
+   * (local: a fraction of the window; cloud: the provider default).
+   */
+  maxTokens?: number;
 }
 
 // ─── Agent Status ───────────────────────────────────────────────────────────
@@ -120,6 +133,18 @@ export interface AgentStatus {
   errorReason: string | null;
   lastActivity: number;
   supports: AgentSupports;
+  /** Nominal model context window (tokens) — registry/probe/env value. */
+  contextWindow: number;
+  /**
+   * Working window the compactor currently budgets against. Equals
+   * contextWindow normally; drops below it after overflow recovery and recovers
+   * over time. The gap is the visible signal that an agent is under pressure.
+   */
+  effectiveContextWindow: number;
+  /** Output (completion) token cap applied to each turn. */
+  maxOutputTokens: number;
+  /** Highest real prompt-token count the server has accepted (0 until first reply). */
+  peakInputTokens: number;
 }
 
 // ─── Agent Handle ───────────────────────────────────────────────────────────

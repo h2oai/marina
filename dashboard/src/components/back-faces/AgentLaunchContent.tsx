@@ -201,6 +201,14 @@ function SpawnForm() {
 
 // ─── Running Agent Row ─────────────────────────────────────────────────────
 
+/** Compact token count: 16384 → "16k", 1500 → "1.5k", 900 → "900". */
+function fmtTokens(n: number | undefined): string {
+  if (!n || n <= 0) return "—";
+  if (n < 1000) return String(n);
+  const k = n / 1000;
+  return `${k >= 10 ? Math.round(k) : k.toFixed(1)}k`;
+}
+
 function RunningAgent({ agent }: { agent: AgentStatusFull }) {
   const [attention, setAttention] = useState("");
   const [sending, setSending] = useState(false);
@@ -278,6 +286,31 @@ function RunningAgent({ agent }: { agent: AgentStatusFull }) {
               </span>
             )}
           </div>
+          {agent.contextWindow ? (
+            <div className="flex gap-3 text-text-dim">
+              <span title="Context window the compactor is budgeting against / the model's nominal window. A lower effective value means the agent compacted under pressure.">
+                <span className="text-primary">ctx</span>{" "}
+                <span
+                  className={cn(
+                    agent.effectiveContextWindow &&
+                      agent.effectiveContextWindow < agent.contextWindow &&
+                      "text-amber-400",
+                  )}
+                >
+                  {fmtTokens(agent.effectiveContextWindow ?? agent.contextWindow)}
+                </span>
+                /{fmtTokens(agent.contextWindow)}
+              </span>
+              <span title="Output (completion) token cap per turn">
+                <span className="text-primary">out</span> {fmtTokens(agent.maxOutputTokens)}
+              </span>
+              {agent.peakInputTokens ? (
+                <span title="Highest real prompt size the server has accepted">
+                  <span className="text-primary">peak</span> {fmtTokens(agent.peakInputTokens)}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           {agent.focus && (
             <div className="text-text-dim truncate">
               <span className="text-primary">Focus:</span> {agent.focus}

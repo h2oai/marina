@@ -372,6 +372,14 @@ export interface AgentStatusFull {
   errorReason: string | null;
   lastActivity: number;
   supports: AgentSupports;
+  /** Nominal model context window (tokens). */
+  contextWindow?: number;
+  /** Working window the compactor budgets against (drops below nominal under pressure). */
+  effectiveContextWindow?: number;
+  /** Output (completion) token cap per turn. */
+  maxOutputTokens?: number;
+  /** Highest real prompt-token count the server has accepted. */
+  peakInputTokens?: number;
 }
 
 export interface MediaJob {

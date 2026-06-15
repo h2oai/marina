@@ -85,6 +85,14 @@ function modelProvider(value: string): string {
   return slash >= 0 ? value.slice(0, slash) : value;
 }
 
+/** Compact token count: 16384 → "16k", 1500 → "1.5k", 900 → "900". */
+function fmtTokens(n: number | undefined): string {
+  if (!n || n <= 0) return "—";
+  if (n < 1000) return String(n);
+  const k = n / 1000;
+  return `${k >= 10 ? Math.round(k) : k.toFixed(1)}k`;
+}
+
 const DEFAULT_MODEL = MODEL_GROUPS[0]!.models[0]!.value;
 
 const STATE_COLORS: Record<string, string> = {
@@ -460,6 +468,35 @@ const AgentRow = memo(function AgentRow({
             {agent.errors > 0 && <span style={{ color: "#ef4444" }}>{agent.errors} err</span>}
             {renderSupportSummary(agent.supports)}
           </div>
+          {agent.contextWindow ? (
+            <div
+              style={{
+                display: "flex",
+                gap: "8px",
+                fontSize: "clamp(10px, 0.7vw, 14px)",
+                color: "#888",
+              }}
+              title="Effective / nominal context window · output cap · peak accepted prompt"
+            >
+              <span>
+                ctx{" "}
+                <span
+                  style={{
+                    color:
+                      agent.effectiveContextWindow &&
+                      agent.effectiveContextWindow < agent.contextWindow
+                        ? "#fbbf24"
+                        : "#888",
+                  }}
+                >
+                  {fmtTokens(agent.effectiveContextWindow ?? agent.contextWindow)}
+                </span>
+                /{fmtTokens(agent.contextWindow)}
+              </span>
+              <span>out {fmtTokens(agent.maxOutputTokens)}</span>
+              {agent.peakInputTokens ? <span>peak {fmtTokens(agent.peakInputTokens)}</span> : null}
+            </div>
+          ) : null}
           {agent.goal && (
             <div
               style={{
