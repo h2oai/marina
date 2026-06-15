@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { AgentRuntime } from "../agent/agent-runtime";
 import { applyRankProgression } from "../agent/rank-progression";
+import { isSeedDisabled } from "../agent/seed-registry";
 import {
   recomputeAll as recomputeStanding,
   recordFromEvent as recordStandingEvent,
@@ -1226,6 +1227,9 @@ export class Engine {
       spawnRoomAgent:
         this.agentRuntime.isAvailable() && process.env.MARINA_ROOM_AGENTS !== "false"
           ? async (config) => {
+              // Operator retired this seeded host — don't respawn it on room
+              // entry (same disable registry the agent seeders honor).
+              if (isSeedDisabled(this.db, config.name)) return null;
               // Idempotency: skip if entity with this name already exists
               const existing =
                 this.entities.findByName(config.name, roomId) ??

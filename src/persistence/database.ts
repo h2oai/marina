@@ -3583,6 +3583,9 @@ export class MarinaDB {
   deleteSetting(key: string): void {
     agentsDb.deleteSetting(this.db, key);
   }
+  listSettingsByPrefix(prefix: string): { key: string; value: string }[] {
+    return agentsDb.listSettingsByPrefix(this.db, prefix);
+  }
   /** Effective default model — DB `default_model` setting, else MARINA_DEFAULT_MODEL. */
   getDefaultModel(): string {
     return agentsDb.getDefaultModel(this.db);
