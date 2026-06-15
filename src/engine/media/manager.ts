@@ -2,7 +2,9 @@ import type { MarinaDB, MediaJobRow, MediaJobType } from "../../persistence/data
 import type { StorageProvider } from "../../storage/provider";
 import type { EngineEvent, EntityId } from "../../types";
 import type { Engine } from "../engine";
-import { generateOpenAIImage, moderateOpenAIText } from "./providers/openai";
+import { getImageProvider, knownImageProviders } from "./providers/image-registry";
+import type { ImageGenerator } from "./providers/image-util";
+import { moderateOpenAIText } from "./providers/openai";
 import {
   pollRunwayVideoJob,
   type RunwayPollResult,
@@ -122,10 +124,13 @@ export class MediaManager {
 
     try {
       if (params.type === "image") {
-        if (provider !== "openai") {
-          throw new Error(`Provider "${provider}" not yet supported for image generation.`);
+        const generate = getImageProvider(provider);
+        if (!generate) {
+          throw new Error(
+            `Provider "${provider}" not yet supported for image generation. Supported: ${knownImageProviders().join(", ")}.`,
+          );
         }
-        await this.handleImageJob(jobId, apiKey, params);
+        await this.handleImageJob(jobId, apiKey, params, generate);
       } else {
         if (provider !== "runway") {
           throw new Error(`Provider "${provider}" not yet supported for video generation.`);
@@ -160,26 +165,33 @@ export class MediaManager {
     jobId: string,
     apiKey: string,
     params: ImageJobParams,
+    generate: ImageGenerator,
   ): Promise<void> {
-    const moderation = await moderateOpenAIText({
-      apiKey,
-      prompt: params.prompt,
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (moderation?.blocked) {
-      this.db.updateMediaJob(jobId, {
-        status: "blocked",
-        error: moderation.reason ?? "Prompt flagged by moderation.",
-        completedAt: Date.now(),
+    // Moderation runs against OpenAI regardless of the image provider — best
+    // effort, only when an OpenAI key is available (a non-OpenAI provider key
+    // can't call it). A failed/absent moderation never blocks generation.
+    const moderationKey = this.resolveApiKey("openai");
+    if (moderationKey) {
+      const moderation = await moderateOpenAIText({
+        apiKey: moderationKey,
+        prompt: params.prompt,
+        signal: AbortSignal.timeout(10_000),
       });
-      this.emitFeedEvent("media_blocked", params, jobId, {
-        status: "blocked",
-        message: "Prompt was blocked by provider moderation.",
-      });
-      return;
+      if (moderation?.blocked) {
+        this.db.updateMediaJob(jobId, {
+          status: "blocked",
+          error: moderation.reason ?? "Prompt flagged by moderation.",
+          completedAt: Date.now(),
+        });
+        this.emitFeedEvent("media_blocked", params, jobId, {
+          status: "blocked",
+          message: "Prompt was blocked by provider moderation.",
+        });
+        return;
+      }
     }
 
-    const result = await generateOpenAIImage({
+    const result = await generate({
       apiKey,
       model: params.model,
       prompt: params.prompt,
@@ -510,7 +522,10 @@ function estimateCost(params: StartJobParams): number | null {
       return Number((0.04 * megapixels).toFixed(3));
     }
     if (provider === "stability") {
-      return 0.02;
+      return 0.04;
+    }
+    if (provider === "google") {
+      return 0.04;
     }
   }
   if (params.type === "video") {

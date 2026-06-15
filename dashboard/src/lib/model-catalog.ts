@@ -93,7 +93,7 @@ export function totalModelCount(groups: ProviderGroup[]): number {
 // Heuristics mirroring the server's capability inference (model-discovery.ts),
 // used as a fallback when a model isn't in the discovered catalog (e.g. a
 // custom-typed id). Keep loosely in sync.
-const IMAGE_MODEL_RE = /(gpt-image|dall-?e|stability|sdxl|stable-diffusion)/i;
+const IMAGE_MODEL_RE = /(gpt-image|dall-?e|stability|sdxl|stable-diffusion|imagen)/i;
 const VIDEO_MODEL_RE = /(runway|gen-?[23]|sora|veo|kling|luma)/i;
 
 /**

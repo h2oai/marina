@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { bareModel } from "./image-util";
 
 const OPENAI_IMAGE_URL = "https://api.openai.com/v1/images/generations";
 const OPENAI_MODERATION_URL = "https://api.openai.com/v1/moderations";
@@ -82,7 +83,7 @@ export async function generateOpenAIImage(opts: OpenAIImageOptions): Promise<Ope
         Authorization: `Bearer ${opts.apiKey}`,
       },
       body: JSON.stringify({
-        model: opts.model,
+        model: bareModel(opts.model),
         prompt: opts.prompt,
         size,
         style: opts.style ?? undefined,
