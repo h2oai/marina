@@ -3611,6 +3611,10 @@ export class MarinaDB {
   deleteApiKey(name: string): void {
     agentsDb.deleteApiKey(this.db, name);
   }
+  /** Encrypt any plaintext API-key rows once MARINA_KEY_SECRET is set. */
+  migrateApiKeysToEncrypted(): number {
+    return agentsDb.migrateApiKeysToEncrypted(this.db);
+  }
 
   // ─── Adapters (delegated to db-agents.ts) ──────────────────────────────
 
