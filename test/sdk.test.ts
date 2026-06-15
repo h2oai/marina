@@ -99,6 +99,41 @@ describe("MarinaClient SDK", () => {
     }
     client.disconnect();
   });
+
+  it("reconnect captures the server-rotated session token", async () => {
+    // The engine rotates the session token on every reconnect (revokes the
+    // old, issues a new one). If reconnect() reused the stale token instead of
+    // capturing the rotated one, a SECOND reconnect would present a revoked
+    // token and fail — which is how long-lived agents silently fell off the
+    // connection registry and showed as "not connected".
+    const client = new MarinaClient(TEST_URL, { autoReconnect: false });
+    const first = await client.connect("RotateUser");
+    const t1 = first.token;
+
+    // Simulate an involuntary WS drop (network blip) — NOT disconnect(), which
+    // nulls the session/token. The client keeps its session across an
+    // involuntary close so it can reconnect; the engine unbinds the entity on
+    // a transient close but keeps it in memory for the reconnect grace window.
+    const dropSocket = () => (client as unknown as { ws: WebSocket | null }).ws?.close();
+    dropSocket();
+    await Bun.sleep(100); // let the server process the close and unbind
+
+    const second = await client.reconnect(t1);
+    // Token was rotated by the engine, not the stale closure value.
+    expect(second.token).toBeTruthy();
+    expect(second.token).not.toBe(t1);
+    expect(second.entityId).toBe(first.entityId);
+
+    // Drop again; the captured (rotated) token must itself be valid for a
+    // further reconnect — proving we kept the server's token, not the old one.
+    dropSocket();
+    await Bun.sleep(100);
+
+    const third = await client.reconnect(second.token);
+    expect(third.entityId).toBe(first.entityId);
+
+    client.disconnect();
+  });
 });
 
 describe("MarinaAgent SDK", () => {

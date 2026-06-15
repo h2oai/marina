@@ -264,6 +264,40 @@ describe("AgentRuntime", () => {
       expect(inFlight.has("StuckAgent")).toBe(false);
       expect(runtime.list().find((a) => a.name === "StuckAgent")).toBeUndefined();
     });
+
+    it("stops an agent by a case-mismatched name", async () => {
+      const agents = (runtime as unknown as { agents: Map<string, unknown> }).agents;
+      let stopped = false;
+      agents.set("Alice", { stop: async () => void (stopped = true) } as unknown);
+      // `agent stop alice` must resolve to the canonical "Alice" key.
+      await runtime.stop("alice");
+      expect(stopped).toBe(true);
+      expect(agents.has("Alice")).toBe(false);
+    });
+  });
+
+  // ─── get() name resolution ────────────────────────────────────────────
+
+  describe("get()", () => {
+    it("resolves a name case-insensitively", () => {
+      const agents = (runtime as unknown as { agents: Map<string, unknown> }).agents;
+      const handle = { marker: "alice-handle" };
+      agents.set("Alice", handle as unknown);
+      // Exact, lower, and upper all resolve to the same handle.
+      expect(runtime.get("Alice")).toBe(handle as never);
+      expect(runtime.get("alice")).toBe(handle as never);
+      expect(runtime.get("ALICE")).toBe(handle as never);
+      expect(runtime.get("bob")).toBeUndefined();
+    });
+
+    it("refuses an ambiguous case-insensitive match rather than guessing", () => {
+      const agents = (runtime as unknown as { agents: Map<string, unknown> }).agents;
+      agents.set("Bot", { id: 1 } as unknown);
+      agents.set("bot", { id: 2 } as unknown);
+      // Exact match still works; ambiguous case-fold does not.
+      expect(runtime.get("Bot")).toEqual({ id: 1 } as never);
+      expect(runtime.get("BOT")).toBeUndefined();
+    });
   });
 
   // ─── list() ───────────────────────────────────────────────────────────
