@@ -5,6 +5,7 @@ import { getActiveAliases } from "../src/net/compat-profiles";
 import {
   handleModelApi,
   pendingRequests,
+  prepareLlamaBody,
   roundRobinCounters,
   selectAgent,
 } from "../src/net/model-api";
@@ -970,5 +971,52 @@ describe("Model API", () => {
       const resp = await handleModelApi(url, method, req, engine);
       expect(resp!.status).toBe(400);
     });
+  });
+});
+
+describe("prepareLlamaBody (llama upstream prep)", () => {
+  // Simulate a large-context reasoning server (Qwen3.5-27B @ 262K) so the
+  // budget isn't clamped down by the small-server default (16K → 4096).
+  let prevCtx: string | undefined;
+  beforeEach(() => {
+    prevCtx = process.env.LLAMA_CONTEXT_WINDOW;
+    process.env.LLAMA_CONTEXT_WINDOW = "262144";
+  });
+  afterEach(() => {
+    if (prevCtx === undefined) delete process.env.LLAMA_CONTEXT_WINDOW;
+    else process.env.LLAMA_CONTEXT_WINDOW = prevCtx;
+  });
+
+  it("leaves non-llama provider bodies untouched", () => {
+    const body = { model: "gpt-4", messages: [], max_tokens: 100 };
+    expect(prepareLlamaBody(body, "openai")).toBe(body);
+  });
+
+  it("suppresses Qwen3 thinking for the llama provider", () => {
+    const out = prepareLlamaBody({ model: "qwen", messages: [] }, "llama");
+    expect(out.chat_template_kwargs).toEqual({ enable_thinking: false });
+  });
+
+  it("injects a generous output budget when the caller sends none", () => {
+    // marina/default agents send no max_tokens; without a floor a reasoning
+    // model spends the server default on <think> and emits no tool call.
+    const out = prepareLlamaBody({ model: "qwen", messages: [] }, "llama");
+    expect(typeof out.max_tokens).toBe("number");
+    expect(out.max_tokens as number).toBeGreaterThan(4096);
+  });
+
+  it("raises a too-small caller budget but preserves a larger one", () => {
+    const bumped = prepareLlamaBody({ messages: [], max_tokens: 4096 }, "llama");
+    expect(bumped.max_tokens as number).toBeGreaterThan(4096);
+
+    const huge = prepareLlamaBody({ messages: [], max_tokens: 999_999 }, "llama");
+    expect(huge.max_tokens).toBe(999_999);
+  });
+
+  it("clamps the budget to a quarter of a small server's context window", () => {
+    // A genuinely small server must not be starved of prompt space.
+    process.env.LLAMA_CONTEXT_WINDOW = "16384";
+    const out = prepareLlamaBody({ messages: [] }, "llama");
+    expect(out.max_tokens).toBe(4096); // 16384 / 4
   });
 });

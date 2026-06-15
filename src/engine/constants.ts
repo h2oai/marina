@@ -137,6 +137,19 @@ export const MARINA_LOGIN_ATTEMPTS_PER_MIN = Number.parseInt(
  *  match the provider you actually hold a key for. */
 export const MARINA_DEFAULT_MODEL = process.env.MARINA_DEFAULT_MODEL ?? "google/gemini-2.0-flash";
 
+/** Completion-token ceiling for self-hosted local models (llama.cpp / Ollama)
+ *  and the `marina/default` self-proxy when it routes to one. Reasoning models
+ *  (e.g. Qwen3) spend output tokens on `<think>` before the tool call, so a
+ *  small budget truncates mid-reasoning and the agent returns no action
+ *  ("connected but nothing happens"). The old 4096 cap starved them; 16384
+ *  leaves ample room. The effective value is still clamped to a quarter of the
+ *  model's context window so it can't crowd out the prompt on a small server.
+ *  Override with MARINA_LOCAL_MAX_OUTPUT_TOKENS. */
+export const DEFAULT_LOCAL_MAX_OUTPUT_TOKENS =
+  Number.parseInt(process.env.MARINA_LOCAL_MAX_OUTPUT_TOKENS ?? "", 10) > 0
+    ? Number.parseInt(process.env.MARINA_LOCAL_MAX_OUTPUT_TOKENS!, 10)
+    : 16384;
+
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
 /** Dashboard state broadcast interval (ms) */
