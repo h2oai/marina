@@ -245,6 +245,11 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     test: (entry) => /^google\/imagen/i.test(entry.value),
     capabilities: { text: false, image: true },
   },
+  {
+    // Local Stable Diffusion (Automatic1111 / SD.Next) generates images.
+    test: (entry) => /^(automatic1111|a1111|sd|sdnext)\//i.test(entry.value),
+    capabilities: { text: false, image: true },
+  },
 ];
 
 function applyCapabilityHints(entry: ModelEntry): void {
