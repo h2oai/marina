@@ -117,10 +117,18 @@ export function localProviderBaseUrl(provider: string): string | undefined {
   return (process.env[spec.baseUrlEnv] ?? spec.defaultBaseUrl).replace(/\/+$/, "");
 }
 
+/** Context windows probed from a live local server at startup (see
+ *  detectLocalContextWindow). An explicit env override still wins over this. */
+const detectedContextWindow = new Map<string, number>();
+
 /**
- * Assumed context window (tokens) for a local provider: env override →
- * conservative default. The compactor uses this as its ceiling, so an honest
- * (even slightly low) value is what keeps a small local server from 400ing.
+ * Assumed context window (tokens) for a local provider. Precedence:
+ *   1. explicit env override (operator pinned it),
+ *   2. value auto-detected from the running server at startup,
+ *   3. conservative default.
+ * The compactor uses this as its ceiling and the completion budget scales off
+ * it, so an honest value keeps a small server from 400ing AND stops a large
+ * reasoning server from being starved to a tiny output budget.
  * Returns undefined for non-local providers.
  */
 export function localProviderContextWindow(provider: string): number | undefined {
@@ -128,7 +136,47 @@ export function localProviderContextWindow(provider: string): number | undefined
   if (!spec) return undefined;
   const raw = process.env[spec.contextWindowEnv];
   const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : spec.defaultContextWindow;
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  const detected = detectedContextWindow.get(provider);
+  if (detected && detected > 0) return detected;
+  return spec.defaultContextWindow;
+}
+
+/**
+ * Probe a running local server for its loaded context size and cache it so
+ * localProviderContextWindow() returns the real value — without the operator
+ * having to set LLAMA_CONTEXT_WINDOW. Otherwise a 262K-context reasoning server
+ * is assumed to be 16K and agents get a starving completion budget.
+ *
+ * llama.cpp exposes `GET /props` with the per-slot `n_ctx`. Best-effort: an
+ * explicit env override short-circuits it, and any network/parse failure leaves
+ * the conservative default in place. Returns the detected value or undefined.
+ */
+export async function detectLocalContextWindow(provider: string): Promise<number | undefined> {
+  const spec = LOCAL_PROVIDERS[provider];
+  if (!spec) return undefined;
+  // Operator pinned it — don't override an explicit choice.
+  if (process.env[spec.contextWindowEnv]) return undefined;
+  const base = localProviderBaseUrl(provider);
+  if (!base) return undefined;
+  // /props lives at the server root, not under /v1.
+  const url = `${base.replace(/\/v\d+$/, "")}/props`;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as {
+      default_generation_settings?: { n_ctx?: number };
+      n_ctx?: number;
+    };
+    const n = data?.default_generation_settings?.n_ctx ?? data?.n_ctx;
+    if (typeof n === "number" && n > 0) {
+      detectedContextWindow.set(provider, n);
+      return n;
+    }
+  } catch {
+    // Server down / not llama.cpp / unexpected shape — default stands.
+  }
+  return undefined;
 }
 
 const PROVIDERS: ProviderSpec[] = [
