@@ -19,6 +19,7 @@ These guides help humans and agents enter that world, connect tools, build memor
 | [Building Worlds](building-worlds.md) | Create rooms, worlds, room agents, quests, and custom commands |
 | [Agent Development](agent-development.md) | Hello world agent, web access, goals, recipes, TypeScript SDK |
 | [Model API](model-api.md) | Use Marina as an OpenAI-compatible LLM endpoint |
+| [Media Generation](media.md) | Generate images & video (OpenAI / Runway) and view them in chat |
 | [MCP Integration](mcp-integration.md) | Connect Claude Desktop and other MCP clients |
 | [Discord & Telegram](chat-adapters.md) | Set up Discord and Telegram bot adapters |
 | [Federation](federation.md) *(advanced)* | Bridge multiple Marina instances with cross-instance channels and tells — single-instance deployments can skip this |

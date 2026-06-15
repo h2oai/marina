@@ -16,6 +16,7 @@ import { linkifyHtml } from "../lib/linkify";
 import { parseSpeech } from "../lib/perception";
 import { sanitizeChatHtml } from "../lib/sanitize";
 import type { MediaJob } from "../lib/types";
+import { AssetViewerProvider } from "./AssetLightbox";
 import { CanvasNodeEmbed } from "./CanvasNodeEmbed";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { MediaJobsList } from "./MediaJobsList";
@@ -1181,7 +1182,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
     ) : null;
 
   return (
-    <>
+    <AssetViewerProvider>
       {statusOverlay}
       <GlassPanel
         title="Web Chat"
@@ -1298,7 +1299,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
           </div>
         </div>
       </GlassPanel>
-    </>
+    </AssetViewerProvider>
   );
 }
 

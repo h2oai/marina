@@ -1,5 +1,6 @@
 import { memo } from "react";
 import type { MediaJob } from "../lib/types";
+import { useAssetViewer } from "./AssetLightbox";
 
 const STATUS_STYLE: Record<
   MediaJob["status"],
@@ -71,6 +72,7 @@ const MediaJobItem = memo(function MediaJobItem({
   onDeleteAsset,
   sendCommand,
 }: MediaJobItemProps) {
+  const { open: openAsset } = useAssetViewer();
   const status = STATUS_STYLE[job.status];
   const metadata = job.metadata as Record<string, unknown> | null;
   const progressValue = metadata?.progress;
@@ -124,7 +126,15 @@ const MediaJobItem = memo(function MediaJobItem({
           <button
             type="button"
             className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
-            onClick={() => window.open(job.assetUrl ?? "#", "_blank")}
+            onClick={() =>
+              openAsset({
+                url: job.assetUrl ?? "",
+                kind: job.type,
+                title: `${job.type} · ${job.model}`,
+                prompt: job.prompt,
+                model: job.model,
+              })
+            }
           >
             Open
           </button>
