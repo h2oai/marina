@@ -274,6 +274,22 @@ describe("AgentRuntime", () => {
       expect(stopped).toBe(true);
       expect(agents.has("Alice")).toBe(false);
     });
+
+    it("explicit stop deletes the saved config (agent is gone, not restarting)", async () => {
+      const agents = (runtime as unknown as { agents: Map<string, unknown> }).agents;
+      db.saveAgentConfig({ name: "deeper", model: "openai/gpt-4", spawnedBy: "user" });
+      agents.set("deeper", { stop: async () => {} } as unknown);
+      await runtime.stop("deeper");
+      expect(db.getAgentConfig("deeper")).toBeFalsy();
+    });
+
+    it("keepConfig stop preserves the saved config", async () => {
+      const agents = (runtime as unknown as { agents: Map<string, unknown> }).agents;
+      db.saveAgentConfig({ name: "deeper", model: "openai/gpt-4", spawnedBy: "user" });
+      agents.set("deeper", { stop: async () => {} } as unknown);
+      await runtime.stop("deeper", { keepConfig: true });
+      expect(db.getAgentConfig("deeper")).toBeTruthy();
+    });
   });
 
   // ─── get() name resolution ────────────────────────────────────────────
@@ -375,6 +391,16 @@ describe("AgentRuntime", () => {
     it("is safe to call when no agents are running", async () => {
       await runtime.stopAll();
       expect(runtime.size).toBe(0);
+    });
+
+    it("preserves saved configs so agents respawn on the next boot", async () => {
+      // Graceful shutdown must NOT wipe user-spawned agents — they have to come
+      // back via AgentRuntime.init() on restart.
+      const agents = (runtime as unknown as { agents: Map<string, unknown> }).agents;
+      db.saveAgentConfig({ name: "deeper", model: "openai/gpt-4", spawnedBy: "user" });
+      agents.set("deeper", { stop: async () => {} } as unknown);
+      await runtime.stopAll();
+      expect(db.getAgentConfig("deeper")).toBeTruthy();
     });
   });
 
