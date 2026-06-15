@@ -6,9 +6,38 @@
  * or pools should import from here instead of re-implementing locally.
  */
 
+import { isSeedDisabled } from "../src/agent/seed-registry";
 import { discoverSkillFiles, formatSkillContent, loadSkillFile } from "../src/agent/skill-import";
 import type { Engine } from "../src/engine/engine";
 import type { MarinaDB } from "../src/persistence/database";
+
+const SYSTEM_OWNER = "system";
+
+/**
+ * Upsert a system-seeded persistent agent config — the single policy for every
+ * boot-seeded agent (Chronicler, the Answerer/orchestration crews):
+ *  - skip if an operator retired it (`isSeedDisabled`) — the removal sticks
+ *  - skip if a user customized it (`spawned_by !== "system"`) — edits survive
+ *  - otherwise refresh the system-owned fields (model/role/goal) from the seed,
+ *    preserving operator-set `key_name` and `room`.
+ */
+export function seedSystemAgent(
+  db: MarinaDB,
+  config: { name: string; model: string; role: string; goal: string },
+): void {
+  if (isSeedDisabled(db, config.name)) return;
+  const existing = db.getAgentConfig(config.name);
+  if (existing && existing.spawned_by !== SYSTEM_OWNER) return;
+  db.saveAgentConfig({
+    name: config.name,
+    model: config.model,
+    role: config.role,
+    goal: config.goal,
+    keyName: existing?.key_name || undefined,
+    room: existing?.room || undefined,
+    spawnedBy: SYSTEM_OWNER,
+  });
+}
 
 // ─── Seed Helpers ───────────────────────────────────────────────────────────
 
@@ -1156,10 +1185,7 @@ export function seedChroniclerRole(db: MarinaDB): void {
  * non-system Chronicler config already exists (so user-edited configs survive).
  */
 export function seedChroniclerAgent(db: MarinaDB): void {
-  const SYSTEM = "system";
-  const existing = db.getAgentConfig("Chronicler");
-  if (existing && existing.spawned_by !== SYSTEM) return;
-  db.saveAgentConfig({
+  seedSystemAgent(db, {
     name: "Chronicler",
     model: "marina/default",
     role: "chronicler",
@@ -1177,7 +1203,6 @@ export function seedChroniclerAgent(db: MarinaDB): void {
       "never praise, never criticize. You record; you do not interpret beyond what the " +
       "evidence supports. The chronicle is the truth of this place — successors will " +
       "trust it, so earn that trust with accuracy and restraint.",
-    spawnedBy: SYSTEM,
   });
 }
 
@@ -1610,26 +1635,12 @@ export function seedAnswererCrew(
     },
   );
 
-  // For system-owned crew agents, refresh goal + role + model on every boot.
-  // The seed file is the source of truth for these — if we tune the Answerer's
-  // dispatch policy or update a specialist's goal, booting from a snapshot
-  // must adopt the new text, not keep the stale version from when the DB was
-  // written. User-created configs (spawned_by != "system") are untouched.
-  // Only `key_name` and `room` are preserved from the DB row so operator-set
-  // API keys and room assignments don't get wiped on boot.
-  const existingBySource = new Map(db.getAllAgentConfigs().map((c) => [c.name, c]));
+  // Refresh system-owned crew agents on every boot via the shared policy: the
+  // seed file is the source of truth for model/role/goal, operator-set
+  // key_name/room are preserved, user-customized and operator-disabled configs
+  // are left alone (see seedSystemAgent).
   for (const cfg of configs) {
-    const existing = existingBySource.get(cfg.name);
-    if (existing && existing.spawned_by !== SYSTEM) continue;
-    db.saveAgentConfig({
-      name: cfg.name,
-      model: cfg.model,
-      role: cfg.role,
-      goal: cfg.goal,
-      keyName: existing?.key_name || undefined,
-      room: existing?.room || undefined,
-      spawnedBy: SYSTEM,
-    });
+    seedSystemAgent(db, cfg);
   }
 
   // model-answerer is the Answerer crew's outward face. Specialists coordinate
@@ -1693,11 +1704,7 @@ export function registerAnswererCrew(engine: Engine): void {
       members: candidates.map((e) => ({
         agentName: e.name,
         role:
-          e.name === "Answerer"
-            ? "lead"
-            : /^Answerer\d+$/.test(e.name)
-              ? "answerer"
-              : "specialist",
+          e.name === "Answerer" ? "lead" : /^Answerer\d+$/.test(e.name) ? "answerer" : "specialist",
       })),
     });
   } catch {
@@ -1976,10 +1983,9 @@ export function seedOrchestrationCrews(
   // ── Agent configs. Models default to `marina/default` — callers pick. ──
   // System-owned crew configs are refreshed from the seed on every boot so
   // tuning goals or swapping crew models (via opts.models / MARINA_CREW_MODEL)
-  // propagates to snapshots without a manual DB edit. User-spawned configs
-  // (spawned_by != "system") are preserved unchanged. Same pattern as
-  // seedAnswererCrew — mirrored here so the whole crew stays coherent.
-  const existingBySource = new Map(db.getAllAgentConfigs().map((c) => [c.name, c]));
+  // propagates to snapshots without a manual DB edit. User-spawned and
+  // operator-disabled configs are preserved/skipped by seedSystemAgent — same
+  // policy as seedAnswererCrew so the whole crew stays coherent.
   const configs: {
     name: string;
     model: string;
@@ -2059,17 +2065,7 @@ export function seedOrchestrationCrews(
 
   if (seedAgentConfigs) {
     for (const cfg of configs) {
-      const existing = existingBySource.get(cfg.name);
-      if (existing && existing.spawned_by !== SYSTEM) continue;
-      db.saveAgentConfig({
-        name: cfg.name,
-        model: cfg.model,
-        role: cfg.role,
-        goal: cfg.goal,
-        keyName: existing?.key_name || undefined,
-        room: existing?.room || undefined,
-        spawnedBy: SYSTEM,
-      });
+      seedSystemAgent(db, cfg);
     }
   }
 
