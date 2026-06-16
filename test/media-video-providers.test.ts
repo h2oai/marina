@@ -22,10 +22,11 @@ function mockFetch(handler: (url: string, init?: RequestInit) => Response): {
 }
 
 describe("video-registry", () => {
-  it("resolves runway + google (Veo), nothing else", () => {
-    expect(knownVideoProviders().sort()).toEqual(["google", "runway"]);
+  it("resolves runway + google (Veo) + luma, nothing else", () => {
+    expect(knownVideoProviders().sort()).toEqual(["google", "luma", "runway"]);
     expect(typeof getVideoProvider("runway")?.start).toBe("function");
     expect(typeof getVideoProvider("google")?.poll).toBe("function");
+    expect(typeof getVideoProvider("luma")?.start).toBe("function");
     expect(getVideoProvider("pika")).toBeUndefined();
   });
 });
@@ -106,5 +107,55 @@ describe("Veo poll", () => {
     mockFetch(() => Response.json({ done: true, response: {} }));
     const res = await pollVeoVideoJob({ apiKey: "k", providerJobId: "models/x/operations/1" });
     expect(res.status).toBe("failed");
+  });
+});
+
+import { pollLumaVideoJob, startLumaVideoJob } from "../src/engine/media/providers/luma";
+
+describe("Luma video", () => {
+  it("creates a generation and returns its id", async () => {
+    let capturedUrl = "";
+    let body: Record<string, unknown> = {};
+    mockFetch((url, init) => {
+      capturedUrl = url;
+      body = JSON.parse(String(init?.body));
+      return Response.json({ id: "gen_123", state: "queued" });
+    });
+    const res = await startLumaVideoJob({
+      apiKey: "luma-key",
+      model: "luma/ray-2",
+      prompt: "ocean waves",
+      aspectRatio: "9:16",
+    });
+    expect(capturedUrl).toBe("https://api.lumalabs.ai/dream-machine/v1/generations");
+    expect(body.model).toBe("ray-2");
+    expect(body.aspect_ratio).toBe("9:16");
+    expect(res.status).toBe("running");
+    expect(res.providerJobId).toBe("gen_123");
+  });
+
+  it("polls until completed, then downloads the video", async () => {
+    const cap = mockFetch((url) => {
+      if (url.endsWith("/generations/gen_123")) {
+        return Response.json({ state: "completed", assets: { video: "https://cdn.luma/v.mp4" } });
+      }
+      return new Response(new Uint8Array([7, 7]), {
+        status: 200,
+        headers: { "content-type": "video/mp4" },
+      });
+    });
+    const res = await pollLumaVideoJob({ apiKey: "k", providerJobId: "gen_123" });
+    expect(cap.calls()).toBe(2);
+    expect(res.status).toBe("succeeded");
+    expect(res.asset?.data.byteLength).toBe(2);
+  });
+
+  it("reports running while dreaming and fails on failure", async () => {
+    mockFetch(() => Response.json({ state: "dreaming" }));
+    expect((await pollLumaVideoJob({ apiKey: "k", providerJobId: "x" })).status).toBe("running");
+    mockFetch(() => Response.json({ state: "failed", failure_reason: "nsfw" }));
+    const failed = await pollLumaVideoJob({ apiKey: "k", providerJobId: "x" });
+    expect(failed.status).toBe("failed");
+    expect(failed.error).toContain("nsfw");
   });
 });

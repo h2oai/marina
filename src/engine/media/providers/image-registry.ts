@@ -8,6 +8,7 @@
  */
 
 import { generateAutomatic1111Image } from "./automatic1111";
+import { generateFluxImage } from "./flux";
 import { generateGoogleImage } from "./google-image";
 import { isAutomatic1111, isLocalImageProvider } from "./image-endpoints";
 import type { ImageGenerator } from "./image-util";
@@ -19,6 +20,7 @@ const BUILTIN: Record<string, ImageGenerator> = {
   openai: generateOpenAIImage,
   stability: generateStabilityImage,
   google: generateGoogleImage,
+  flux: generateFluxImage,
 };
 
 /** The generator for a provider id, or undefined if unsupported/unconfigured. */
