@@ -15,19 +15,22 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-/** Install a fetch mock; returns a capture of the last call. */
+/** Install a fetch mock; returns a capture of the last call + a call count. */
 function mockFetch(handler: (url: string, init?: RequestInit) => Response): {
   url: () => string;
   init: () => RequestInit | undefined;
+  calls: () => number;
 } {
   let lastUrl = "";
   let lastInit: RequestInit | undefined;
+  let count = 0;
   globalThis.fetch = ((url: string, init?: RequestInit) => {
+    count += 1;
     lastUrl = String(url);
     lastInit = init;
     return Promise.resolve(handler(lastUrl, init));
   }) as unknown as typeof fetch;
-  return { url: () => lastUrl, init: () => lastInit };
+  return { url: () => lastUrl, init: () => lastInit, calls: () => count };
 }
 
 describe("image-util helpers", () => {
@@ -57,11 +60,13 @@ describe("image-registry", () => {
     expect(typeof getImageProvider("openai")).toBe("function");
     expect(typeof getImageProvider("stability")).toBe("function");
     expect(typeof getImageProvider("google")).toBe("function");
+    expect(typeof getImageProvider("flux")).toBe("function");
     expect(typeof getImageProvider("automatic1111")).toBe("function");
     expect(typeof getImageProvider("a1111")).toBe("function");
 
     expect(imageProviderRequiresKey("openai")).toBe(true);
     expect(imageProviderRequiresKey("stability")).toBe(true);
+    expect(imageProviderRequiresKey("flux")).toBe(true);
     expect(imageProviderRequiresKey("automatic1111")).toBe(false);
   });
 
@@ -225,5 +230,76 @@ describe("generateOpenAICompatibleImage (generic endpoint)", () => {
     expect(body.model).toBe("black-forest-labs/FLUX.1-schnell");
     expect(res.status).toBe("succeeded");
     expect(Buffer.from(res.asset!.data).toString()).toBe("img");
+  });
+});
+
+import { generateFluxImage } from "../src/engine/media/providers/flux";
+
+describe("generateFluxImage (Black Forest Labs)", () => {
+  const prevKey = process.env.BFL_API_KEY;
+  afterEach(() => {
+    if (prevKey === undefined) delete process.env.BFL_API_KEY;
+    else process.env.BFL_API_KEY = prevKey;
+  });
+
+  it("submits to the model endpoint, polls get_result, and downloads the sample", async () => {
+    const seen: string[] = [];
+    const cap = mockFetch((url, init) => {
+      seen.push(url);
+      if (url.includes("/v1/get_result")) {
+        return Response.json({ status: "Ready", result: { sample: "https://bfl.cdn/img.jpg" } });
+      }
+      if (url.endsWith("/v1/flux-pro-1.1")) {
+        expect((init?.headers as Record<string, string>)["x-key"]).toBe("bfl-key");
+        return Response.json({ id: "task-1" });
+      }
+      // sample download
+      return new Response(new Uint8Array([5, 5, 5]), {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      });
+    });
+    const res = await generateFluxImage({
+      apiKey: "bfl-key",
+      model: "flux/flux-pro-1.1",
+      prompt: "a dragon",
+    });
+    expect(seen[0]).toBe("https://api.bfl.ml/v1/flux-pro-1.1");
+    expect(cap.calls()).toBe(3); // submit + poll + download
+    expect(res.status).toBe("succeeded");
+    expect(res.asset?.mimeType).toBe("image/jpeg");
+    expect(res.asset?.data.byteLength).toBe(3);
+  });
+
+  it("defaults a bare 'flux' to flux-pro-1.1 and uses BFL_API_KEY from env", async () => {
+    process.env.BFL_API_KEY = "env-key";
+    let submitUrl = "";
+    mockFetch((url) => {
+      if (url.includes("/v1/get_result"))
+        return Response.json({ status: "Ready", result: { sample: "https://x/y.jpg" } });
+      if (!url.includes("get_result") && url.includes("/v1/")) {
+        submitUrl = url;
+        return Response.json({ id: "t" });
+      }
+      return new Response(new Uint8Array([1]), { status: 200 });
+    });
+    await generateFluxImage({ apiKey: "", model: "flux", prompt: "p" });
+    expect(submitUrl).toBe("https://api.bfl.ml/v1/flux-pro-1.1");
+  });
+
+  it("fails clearly without a key, and surfaces moderation", async () => {
+    delete process.env.BFL_API_KEY;
+    const noKey = await generateFluxImage({ apiKey: "", model: "flux/flux-dev", prompt: "p" });
+    expect(noKey.status).toBe("failed");
+    expect(noKey.error).toContain("BFL_API_KEY");
+
+    mockFetch((url) =>
+      url.includes("get_result")
+        ? Response.json({ status: "Content Moderated" })
+        : Response.json({ id: "t" }),
+    );
+    const moderated = await generateFluxImage({ apiKey: "k", model: "flux/flux-dev", prompt: "p" });
+    expect(moderated.status).toBe("failed");
+    expect(moderated.error).toContain("Content Moderated");
   });
 });
