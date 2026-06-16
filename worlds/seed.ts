@@ -2087,9 +2087,43 @@ export function seedOrchestrationCrews(
     },
   ];
 
+  // Which orchestration endpoints to seed. Each coordinator (Councilor /
+  // Debater / Decomposer) is an AUTONOMOUS loop — unlike the crew-responder
+  // specialists, it keeps running (and spending tokens) even when its
+  // marina:<name> endpoint is never called. An operator who only consumes
+  // marina:answerer shouldn't pay for council/debate/decompose. Default
+  // (MARINA_ENDPOINTS unset) = all three, backward-compatible. Set it to a
+  // comma list (e.g. "decompose") to seed only those; "" or "none" seeds none.
+  // Specialists (Historian/Scholar/Skeptic/Verifier) always seed — they're
+  // cheap when idle and shared with the answerer crew.
+  const COORD_ENDPOINT: Record<string, string> = {
+    Councilor: "council",
+    Debater: "debate",
+    Decomposer: "decompose",
+  };
+  const endpointsRaw = process.env.MARINA_ENDPOINTS;
+  const enabledOrch = new Set<string>(
+    endpointsRaw === undefined
+      ? ["council", "debate", "decompose"]
+      : endpointsRaw
+          .split(",")
+          .map((s) => s.trim().toLowerCase())
+          .filter((s) => s && s !== "none"),
+  );
+  const isEnabled = (name: string): boolean => {
+    const ep = COORD_ENDPOINT[name];
+    return ep ? enabledOrch.has(ep) : true; // specialists always on
+  };
+
   if (seedAgentConfigs) {
     for (const cfg of configs) {
-      seedSystemAgent(db, cfg);
+      if (isEnabled(cfg.name)) seedSystemAgent(db, cfg);
+    }
+    // Remove configs for disabled coordinators so a previously-seeded one
+    // doesn't get respawned by AgentRuntime.init() on the next boot. (Seed runs
+    // before initAgents, so this takes effect the same boot.)
+    for (const name of Object.keys(COORD_ENDPOINT)) {
+      if (!isEnabled(name)) db.deleteAgentConfig(name);
     }
   }
 
@@ -2098,7 +2132,9 @@ export function seedOrchestrationCrews(
   // reach the orchestrator via `tell`. Without this, specialists that have
   // drifted onto the model-* channels race the orchestrator to answer, which
   // collapses council/debate/decompose into "whichever specialist is fastest".
-  pruneChannelToAuthorized(db, "model-council", ["Councilor"]);
-  pruneChannelToAuthorized(db, "model-debate", ["Debater"]);
-  pruneChannelToAuthorized(db, "model-decompose", ["Decomposer"]);
+  // Only prune channels whose endpoint is enabled; a disabled one has no
+  // coordinator, so its model-* endpoint simply returns 503 (no agents online).
+  if (enabledOrch.has("council")) pruneChannelToAuthorized(db, "model-council", ["Councilor"]);
+  if (enabledOrch.has("debate")) pruneChannelToAuthorized(db, "model-debate", ["Debater"]);
+  if (enabledOrch.has("decompose")) pruneChannelToAuthorized(db, "model-decompose", ["Decomposer"]);
 }

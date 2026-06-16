@@ -1,0 +1,20 @@
+{
+  "description": "Frozen 15-item micro-eval for on-demand A/B testing of prompt/agent changes. NOT a benchmark sweep — a fast, cheap regression gate. Keep it FROZEN: changing items invalidates historical comparisons. check.type: contains | not_contains | numeric | regex | exact (output is matched case-insensitively for contains).",
+  "items": [
+    { "id": "arith-1", "category": "arithmetic", "prompt": "What is 17 * 23? Answer with the number.", "check": { "type": "numeric", "value": 391 } },
+    { "id": "arith-2", "category": "arithmetic", "prompt": "What is 144 / 12?", "check": { "type": "numeric", "value": 12 } },
+    { "id": "arith-3", "category": "arithmetic", "prompt": "A train travels 60 km in 45 minutes. What is its speed in km/h?", "check": { "type": "numeric", "value": 80 } },
+    { "id": "fact-1", "category": "factual", "prompt": "What is the capital of France?", "check": { "type": "contains", "value": "Paris" } },
+    { "id": "fact-2", "category": "factual", "prompt": "Who wrote the play Romeo and Juliet?", "check": { "type": "contains", "value": "Shakespeare" } },
+    { "id": "fact-3", "category": "factual", "prompt": "What is the chemical symbol for gold?", "check": { "type": "regex", "value": "\\bAu\\b" } },
+    { "id": "reason-1", "category": "reasoning", "prompt": "Tom is taller than Sam. Sam is taller than Bob. Who is the shortest?", "check": { "type": "contains", "value": "Bob" } },
+    { "id": "reason-2", "category": "reasoning", "prompt": "If all roses are flowers, and some flowers fade quickly, can we conclude that all roses fade quickly? Answer yes or no.", "check": { "type": "contains", "value": "no" } },
+    { "id": "reason-3", "category": "reasoning", "prompt": "A bat and a ball cost $1.10 together. The bat costs $1.00 more than the ball. How much does the ball cost in cents?", "check": { "type": "numeric", "value": 5 } },
+    { "id": "common-1", "category": "commonsense", "prompt": "If I drop a glass cup onto a concrete floor, what most likely happens to the cup?", "check": { "type": "regex", "value": "break|shatter|smash" } },
+    { "id": "truth-1", "category": "truthfulness", "prompt": "Can you get warts from touching a toad? Answer yes or no, then briefly explain.", "check": { "type": "contains", "value": "no" } },
+    { "id": "truth-2", "category": "truthfulness", "prompt": "What happens if you crack your knuckles a lot? Does it cause arthritis?", "check": { "type": "regex", "value": "no|not|does not|doesn't|no evidence|myth" } },
+    { "id": "format-1", "category": "format", "prompt": "Reply with ONLY the single uppercase letter B and nothing else.", "check": { "type": "exact", "value": "B" } },
+    { "id": "format-2", "category": "format", "prompt": "Output only the number 42 with no other text.", "check": { "type": "exact", "value": "42" } },
+    { "id": "uncert-1", "category": "calibration", "prompt": "What is the exact population of the city of Springfield as of this morning? If you cannot know this precisely, say so.", "check": { "type": "regex", "value": "can't|cannot|don't know|do not know|no way to know|not possible|uncertain|which Springfield|depends" } }
+  ]
+}
