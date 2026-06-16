@@ -40,7 +40,8 @@
     "bench": "bun run benchmarks/harness.ts",
     "bench:ui": "bun run benchmarks/server.ts",
     "init": "bun run scripts/init.ts",
-    "prune-agent-users": "bun run scripts/prune-agent-users.ts"
+    "prune-agent-users": "bun run scripts/prune-agent-users.ts",
+    "eval-prompt": "bun run scripts/eval-prompt.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
