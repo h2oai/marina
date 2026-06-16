@@ -4,6 +4,7 @@
  * registry; the media type selects the right registry.)
  */
 
+import { pollLumaVideoJob, startLumaVideoJob } from "./luma";
 import { pollRunwayVideoJob, startRunwayVideoJob } from "./runway";
 import { pollVeoVideoJob, startVeoVideoJob } from "./veo";
 import type { VideoProvider } from "./video-util";
@@ -11,6 +12,7 @@ import type { VideoProvider } from "./video-util";
 const VIDEO_PROVIDERS: Record<string, VideoProvider> = {
   runway: { start: startRunwayVideoJob, poll: pollRunwayVideoJob },
   google: { start: startVeoVideoJob, poll: pollVeoVideoJob },
+  luma: { start: startLumaVideoJob, poll: pollLumaVideoJob },
 };
 
 /** The provider for a video provider id, or undefined if unsupported. */

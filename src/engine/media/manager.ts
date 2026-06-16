@@ -539,6 +539,9 @@ function estimateCost(params: StartJobParams): number | null {
     if (provider === "google") {
       return 0.04;
     }
+    if (provider === "flux") {
+      return 0.05;
+    }
   }
   if (params.type === "video") {
     const duration = (params as VideoJobParams).duration ?? 10;
@@ -548,6 +551,9 @@ function estimateCost(params: StartJobParams): number | null {
     if (provider === "google") {
       // Veo is priced per second; rough order-of-magnitude estimate.
       return Number((0.4 * duration).toFixed(2));
+    }
+    if (provider === "luma") {
+      return Number((0.35 * duration).toFixed(2));
     }
   }
   return null;

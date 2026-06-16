@@ -303,6 +303,16 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     test: (entry) => /^(automatic1111|a1111|sd|sdnext)\//i.test(entry.value),
     capabilities: { text: false, image: true },
   },
+  {
+    // Flux (Black Forest Labs) generates images.
+    test: (entry) => /^flux\//i.test(entry.value),
+    capabilities: { text: false, image: true },
+  },
+  {
+    // Luma Dream Machine generates video.
+    test: (entry) => /^luma\//i.test(entry.value),
+    capabilities: { text: false, video: true },
+  },
 ];
 
 function applyCapabilityHints(entry: ModelEntry): void {

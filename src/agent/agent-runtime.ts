@@ -710,10 +710,12 @@ export class AgentRuntime {
       xai: ["XAI_API_KEY"],
       mistral: ["MISTRAL_API_KEY"],
       deepseek: ["DEEPSEEK_API_KEY"],
-      // Media generation. Stability + Runway have their own keys; Google Imagen
-      // reuses the google entry above.
+      // Media generation. Stability/Runway/Flux/Luma have their own keys; Google
+      // Imagen + Veo reuse the google entry above.
       stability: ["STABILITY_API_KEY"],
       runway: ["RUNWAY_API_KEY"],
+      flux: ["BFL_API_KEY"],
+      luma: ["LUMA_API_KEY"],
       // Self-hosted local runtimes. The key is optional (Ollama is keyless, a
       // bare-metal llama.cpp may omit `--api-key`); when the server requires one
       // it's read from here. Key-optional spawn is enforced separately below.
