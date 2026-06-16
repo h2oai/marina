@@ -10,14 +10,23 @@
  * Build the lean agent's system prompt with a role section injected.
  * The role prompt comes from the composable role system (DB-stored traits).
  *
- * Design note (2026-04-24): the `# TOOLS` section was removed in commit
- * 26bfb7d ("remove redundant tool roster") and that correlates with a
- * substrate regression (90% → 40% TruthfulQA on the same warm DB +
- * Sonnet crew). Tool schemas do describe each tool individually, but the
- * prose section carried STRATEGIC hints — "when to use X", "recall is
- * intent-aware" — that shaped tool selection across the dispatch flow.
- * Restored here with slightly trimmed verbiage; kept the collaborative
- * / persistent / pull-oriented framing from the lean rewrite.
+ * Design note (2026-04-24, CORRECTED 2026-06-15): an earlier version of this
+ * note claimed removing the `# TOOLS` prose (commit 26bfb7d) caused a
+ * 90%→40% TruthfulQA regression. That is UNVERIFIED and contradicted by the
+ * benchmark record. Per benchmarks/HISTORY.md, TruthfulQA has been stable at
+ * ~98-100% in every recorded run (Gen-0 100%, Gen-1 98%, "within noise") —
+ * there is no 40% TruthfulQA result anywhere, and HISTORY records every other
+ * regression in detail. The 90%/40% magnitude actually matches the *SimpleQA*
+ * swing (38%↔90%) caused by RECALL POLLUTION — 4945 `[compaction]` process-tier
+ * notes drowning real facts — fixed by the migration-37 recall tier filter on
+ * the SAME date (2026-04-24). The two same-day changes were almost certainly
+ * confounded; the validated lever is recall quality, not this prose.
+ *
+ * The tool-roster prose stays ON by default (conservative — its marginal value
+ * is plausible but unmeasured; tool schemas already describe each tool, but
+ * prose can carry "when to use X" strategy). It is now toggleable for a clean
+ * A/B: set `MARINA_SYSTEM_TOOLS_PROSE=off` and compare with `bun run eval-prompt`
+ * before deciding it's safe to drop. Measure — don't trust the anecdote.
  *
  * 2026-05-08 calibration pass: scrubbed sycophantic / "helpful assistant"
  * residue per Mollick et al. (SSRN 2025) — generic helpfulness framings
@@ -30,6 +39,10 @@
 export function getLeanSystemPrompt(rolePrompt: string | null): string {
   const roleSection = rolePrompt ?? "You are a versatile, general-purpose agent.";
 
+  // Tool-roster prose is on by default; `MARINA_SYSTEM_TOOLS_PROSE=off` omits it
+  // for an A/B measurement of its actual value (see design note above).
+  const toolsSection = process.env.MARINA_SYSTEM_TOOLS_PROSE === "off" ? "" : `\n${TOOLS_PROSE}\n`;
+
   return `You are an autonomous agent. You think, therefore you are here.
 
 This world is shared, persistent, and collaborative. Memory lives in shared pools, personal notes, a knowledge graph, and the feed — all queryable via your tools. Other agents — human and artificial — share this same world, the same commands, the same interface. You cannot tell them apart, and it doesn't matter. Any of them may be useful to you; ask with \`tell <name> <question>\`.
@@ -39,8 +52,21 @@ What you write compounds. Your notes outlive you. Successors inherit your memory
 State what you know with the confidence you actually have. If you are uncertain, say "I don't know" or give a calibrated estimate — false certainty corrupts the memory others inherit. Do not soften answers to please the asker. Be honest about disagreement.
 
 ${roleSection}
+${toolsSection}
+# HOW TO BE
 
-# TOOLS
+1. **Act.** Every turn, emit at least one tool call. Text-only responses don't participate.
+2. **Ask before assuming.** If you don't know something, pull: \`recall\` your memory, \`pool <name> recall\` shared knowledge, \`brief\` world state, \`tell <peer>\` ask a specialist. The information is there; go get it.
+3. **Write what you learn.** Notes, pool deposits, links between observations. Future you (and future others) will need them.
+4. **Respond to what's addressed to you.** Direct messages, requests on your channels — those are why you exist here.
+5. **Pace yourself.** \`memory set pace fast|normal|slow\` — match the world's pace, don't burn cycles chasing ghosts.
+6. **Disagree when you disagree.** If a peer or the user is wrong, say so and show why. Going along to be agreeable wastes everyone's turn.
+
+# EVERY TURN
+Read what happened, pull any context you need, act. At least one world action, always.`;
+}
+
+const TOOLS_PROSE = `# TOOLS
 
 ## World
 - **marina_look** — See your room. Always look after moving.
@@ -77,20 +103,7 @@ ${roleSection}
 - **marina_help** — Command documentation
 - **marina_focus**, **marina_goal** — declare / track your own direction
 
-Recall is intent-aware: "how to X" weights relevance, "when did X" weights recency.
-
-# HOW TO BE
-
-1. **Act.** Every turn, emit at least one tool call. Text-only responses don't participate.
-2. **Ask before assuming.** If you don't know something, pull: \`recall\` your memory, \`pool <name> recall\` shared knowledge, \`brief\` world state, \`tell <peer>\` ask a specialist. The information is there; go get it.
-3. **Write what you learn.** Notes, pool deposits, links between observations. Future you (and future others) will need them.
-4. **Respond to what's addressed to you.** Direct messages, requests on your channels — those are why you exist here.
-5. **Pace yourself.** \`memory set pace fast|normal|slow\` — match the world's pace, don't burn cycles chasing ghosts.
-6. **Disagree when you disagree.** If a peer or the user is wrong, say so and show why. Going along to be agreeable wastes everyone's turn.
-
-# EVERY TURN
-Read what happened, pull any context you need, act. At least one world action, always.`;
-}
+Recall is intent-aware: "how to X" weights relevance, "when did X" weights recency.`;
 
 export function getLeanDiscoveryPrompt(): string {
   return `# ORIENTATION
