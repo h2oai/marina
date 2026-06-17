@@ -2,13 +2,20 @@
 # Marina Full Build Script
 # Builds all parts of the Marina platform: server + dashboard
 # Usage: ./scripts/build.sh [--skip-tests] [--skip-dashboard]
+#
+# Independent steps within each phase run in parallel, and each step's output
+# is buffered — only printed if that step fails. A clean build is quiet; a
+# broken one shows exactly the failing step's log.
 
-set -euo pipefail
+# Note: intentionally NOT using `set -e`. We run steps as background jobs and
+# aggregate their exit codes explicitly (see launch/collect), so a single
+# failure must not abort the script before the summary prints.
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
-cd "$PROJECT_DIR"
+cd "$PROJECT_DIR" || { echo "ERROR: cannot cd to $PROJECT_DIR"; exit 1; }
 
 # Prefer user-local bun (system bun may have Date.now() overflow bug)
 if [ -x "$HOME/.bun/bin/bun" ]; then
@@ -50,8 +57,26 @@ for arg in "$@"; do
   esac
 done
 
+HAS_DASHBOARD=false
+if [ "$SKIP_DASHBOARD" = false ] && [ -d "$PROJECT_DIR/dashboard" ]; then
+  HAS_DASHBOARD=true
+fi
+
 PASS=0
 FAIL=0
+
+# Buffered, parallel step machinery ───────────────────────────────────────────
+# Logs for in-flight jobs land here; only failing logs are ever printed.
+LOGDIR="$(mktemp -d)"
+trap 'rm -rf "$LOGDIR"' EXIT
+
+# Parallel arrays tracking the jobs launched since the last collect().
+# Initialized empty; accessed only via C-style loops guarded by ${#...[@]}
+# so they stay safe under `set -u` on bash 3.2.
+JOB_PIDS=()
+JOB_LABELS=()
+JOB_LOGS=()
+JOB_COUNT=0
 
 step() {
   echo ""
@@ -68,95 +93,100 @@ fail() {
   FAIL=$((FAIL + 1))
 }
 
-# ── 1. Install dependencies ─────────────────────────────────────────────────
+# launch "<label>" <function-name> [args...]
+# Runs the function in the background, redirecting its output to a per-job log.
+launch() {
+  local label=$1
+  shift
+  JOB_COUNT=$((JOB_COUNT + 1))
+  local log="$LOGDIR/job_${JOB_COUNT}.log"
+  ( "$@" ) >"$log" 2>&1 &
+  JOB_PIDS+=("$!")
+  JOB_LABELS+=("$label")
+  JOB_LOGS+=("$log")
+}
 
-step "Installing server dependencies"
-if bun install --frozen-lockfile 2>&1; then
-  pass "Server dependencies"
-else
-  fail "Server dependencies"
+# collect — wait on every launched job, report pass/fail, dump only failing logs,
+# then reset the job arrays for the next phase.
+collect() {
+  local n=${#JOB_PIDS[@]}
+  local i
+  for ((i = 0; i < n; i++)); do
+    if wait "${JOB_PIDS[$i]}"; then
+      pass "${JOB_LABELS[$i]}"
+    else
+      fail "${JOB_LABELS[$i]}"
+      echo ""
+      echo "  ── output: ${JOB_LABELS[$i]} ──────────────────────────────"
+      cat "${JOB_LOGS[$i]}"
+      echo "  ───────────────────────────────────────────────────────────"
+    fi
+  done
+  JOB_PIDS=()
+  JOB_LABELS=()
+  JOB_LOGS=()
+}
+
+# Step bodies (each is a single command/subshell so it can run as a job) ───────
+install_server()      { bun install --frozen-lockfile; }
+install_dashboard()   { (cd dashboard && bun install --frozen-lockfile); }
+lint_all()            { bun run lint; }
+typecheck_server()    { bun run typecheck; }
+# bunx resolves the dashboard's local tsc without re-hitting the npm resolver
+# the way `npx` does.
+typecheck_dashboard() { (cd dashboard && bunx tsc --noEmit); }
+test_server()         { bun run test; }
+test_dashboard()      { (cd dashboard && bun run test); }
+# `bun build`/`vite build` are emit-only — neither type-checks. The tsc passes
+# above are the sole type gate; don't add a second type pass here.
+build_server()        { bun run build; }
+build_dashboard()     { bun run dashboard:build; }
+
+# ── 1. Install dependencies (parallel) ────────────────────────────────────────
+
+step "Installing dependencies"
+launch "Server dependencies" install_server
+if [ "$HAS_DASHBOARD" = true ]; then
+  launch "Dashboard dependencies" install_dashboard
 fi
+collect
 
-if [ "$SKIP_DASHBOARD" = false ] && [ -d "$PROJECT_DIR/dashboard" ]; then
-  step "Installing dashboard dependencies"
-  if (cd dashboard && bun install --frozen-lockfile 2>&1); then
-    pass "Dashboard dependencies"
-  else
-    fail "Dashboard dependencies"
-  fi
+# ── 2. Verify: lint + typecheck (parallel) ────────────────────────────────────
+
+step "Verifying (lint + typecheck)"
+launch "Lint" lint_all
+launch "Server typecheck" typecheck_server
+if [ "$HAS_DASHBOARD" = true ]; then
+  launch "Dashboard typecheck" typecheck_dashboard
 fi
+collect
 
-# ── 2. Lint ──────────────────────────────────────────────────────────────────
-
-step "Linting (biome)"
-if bun run lint 2>&1; then
-  pass "Lint"
-else
-  fail "Lint"
-fi
-
-# ── 3. Type check ───────────────────────────────────────────────────────────
-
-step "Type checking server"
-if bun run typecheck 2>&1; then
-  pass "Server typecheck"
-else
-  fail "Server typecheck"
-fi
-
-if [ "$SKIP_DASHBOARD" = false ] && [ -d "$PROJECT_DIR/dashboard" ]; then
-  step "Type checking dashboard"
-  if (cd dashboard && npx tsc --noEmit 2>&1); then
-    pass "Dashboard typecheck"
-  else
-    fail "Dashboard typecheck"
-  fi
-fi
-
-# ── 4. Tests ─────────────────────────────────────────────────────────────────
+# ── 3. Tests (parallel) ───────────────────────────────────────────────────────
 
 if [ "$SKIP_TESTS" = false ]; then
-  step "Running server tests"
-  if bun run test 2>&1; then
-    pass "Server tests"
-  else
-    fail "Server tests"
+  step "Running tests"
+  launch "Server tests" test_server
+  if [ "$HAS_DASHBOARD" = true ]; then
+    launch "Dashboard tests" test_dashboard
   fi
-
-  if [ "$SKIP_DASHBOARD" = false ] && [ -d "$PROJECT_DIR/dashboard" ]; then
-    step "Running dashboard tests"
-    if (cd dashboard && bun run test 2>&1); then
-      pass "Dashboard tests"
-    else
-      fail "Dashboard tests"
-    fi
-  fi
+  collect
 else
   echo ""
   echo "━━━ Tests (skipped) ━━━"
 fi
 
-# ── 5. Build server bundle ──────────────────────────────────────────────────
+# ── 4. Build bundles (parallel) ───────────────────────────────────────────────
 
-step "Building server bundle"
-if bun run build 2>&1; then
-  pass "Server build → dist/"
-else
-  fail "Server build"
+step "Building bundles"
+launch "Server build → dist/" build_server
+if [ "$HAS_DASHBOARD" = true ]; then
+  launch "Dashboard build → dist/dashboard/" build_dashboard
 fi
+collect
 
-# ── 6. Build dashboard ──────────────────────────────────────────────────────
-
-if [ "$SKIP_DASHBOARD" = false ] && [ -d "$PROJECT_DIR/dashboard" ]; then
-  step "Building dashboard"
-  if bun run dashboard:build 2>&1; then
-    pass "Dashboard build → dist/dashboard/"
-  else
-    fail "Dashboard build"
-  fi
-else
+if [ "$SKIP_DASHBOARD" = true ] || [ ! -d "$PROJECT_DIR/dashboard" ]; then
   echo ""
-  echo "━━━ Dashboard build (skipped) ━━━"
+  echo "━━━ Dashboard steps (skipped) ━━━"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────────────────
