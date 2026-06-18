@@ -204,6 +204,16 @@ export class LocalWorkspace {
     };
   }
 
+  async reversePatch(patch: string, checkOnly = false): Promise<PatchCheck> {
+    const paths = validatePatchPaths(this.root, patch);
+    const result = await runGitApply(this.root, patch, checkOnly, true);
+    return {
+      ok: result.exitCode === 0,
+      paths,
+      output: result.content.trim(),
+    };
+  }
+
   async run(
     command: string[],
     timeoutMs = DEFAULT_RUN_TIMEOUT_MS,
@@ -424,6 +434,7 @@ async function runGitApply(
   cwd: string,
   patch: string,
   checkOnly: boolean,
+  reverse = false,
 ): Promise<{ content: string; truncated: boolean; exitCode: number }> {
   const dir = mkdtempSync(join(tmpdir(), "marina-code-patch-"));
   const patchPath = join(dir, "change.patch");
@@ -431,6 +442,7 @@ async function runGitApply(
     writeFileSync(patchPath, patch);
     const args = ["git", "apply", "--whitespace=nowarn"];
     if (checkOnly) args.push("--check");
+    if (reverse) args.push("--reverse");
     args.push(patchPath);
     return await runCapture(args, cwd, DEFAULT_MAX_OUTPUT_BYTES);
   } finally {

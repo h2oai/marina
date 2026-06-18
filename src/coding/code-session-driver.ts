@@ -8,6 +8,7 @@ const CODE_PROFILE_KEY = "code_profile";
 
 export interface CodePromptRequest {
   actor: string;
+  modelTarget?: string;
   profile: string;
   prompt: string;
   sessionId: string;
@@ -18,6 +19,15 @@ export type CodePromptAnswerer = (request: CodePromptRequest) => Promise<string 
 
 export interface CodingAgentRuntime {
   get(name: string): AgentHandle | undefined;
+  isAvailable?(): boolean;
+  list?(): { name: string }[];
+  spawn?(config: {
+    goal?: string;
+    model?: string;
+    name: string;
+    role?: string;
+    spawnedBy?: string;
+  }): Promise<AgentHandle>;
 }
 
 export interface CodeSessionDriverDeps {
@@ -32,6 +42,7 @@ export class CodeSessionDriver {
 
   async runDirect(opts: {
     actor: string;
+    modelTarget?: string;
     profile: string;
     prompt: string;
     session: CodingSessionRow;
@@ -47,12 +58,13 @@ export class CodeSessionDriver {
       sessionId: opts.session.id,
       actor: opts.actor,
       kind: "code_prompt_started",
-      payload: { strategy: "direct", profile: opts.profile, prompt },
+      payload: { strategy: "direct", profile: opts.profile, prompt, modelTarget: opts.modelTarget },
     });
 
     try {
       const answer = await this.deps.answerPrompt({
         actor: opts.actor,
+        modelTarget: opts.modelTarget,
         profile: opts.profile,
         prompt,
         sessionId: opts.session.id,
@@ -65,14 +77,24 @@ export class CodeSessionDriver {
         title: formatPromptTitle("Direct answer", prompt),
         status: "complete",
         contentText: text,
-        metadata: { strategy: "direct", profile: opts.profile, prompt },
+        metadata: {
+          strategy: "direct",
+          profile: opts.profile,
+          prompt,
+          modelTarget: opts.modelTarget,
+        },
         createdBy: opts.actor,
       });
       this.deps.db.createCodingEvent({
         sessionId: opts.session.id,
         actor: opts.actor,
         kind: "code_prompt_completed",
-        payload: { strategy: "direct", profile: opts.profile, artifactId: artifact.id },
+        payload: {
+          strategy: "direct",
+          profile: opts.profile,
+          artifactId: artifact.id,
+          modelTarget: opts.modelTarget,
+        },
       });
       return artifact;
     } catch (err) {
@@ -83,14 +105,25 @@ export class CodeSessionDriver {
         title: formatPromptTitle("Direct answer failed", prompt),
         status: "failed",
         contentText: message,
-        metadata: { strategy: "direct", profile: opts.profile, prompt },
+        metadata: {
+          strategy: "direct",
+          profile: opts.profile,
+          prompt,
+          modelTarget: opts.modelTarget,
+        },
         createdBy: opts.actor,
       });
       this.deps.db.createCodingEvent({
         sessionId: opts.session.id,
         actor: opts.actor,
         kind: "code_prompt_failed",
-        payload: { strategy: "direct", profile: opts.profile, artifactId: artifact.id, message },
+        payload: {
+          strategy: "direct",
+          profile: opts.profile,
+          artifactId: artifact.id,
+          message,
+          modelTarget: opts.modelTarget,
+        },
       });
       throw err;
     }
@@ -99,6 +132,7 @@ export class CodeSessionDriver {
   async assignAgent(opts: {
     actor: string;
     agentName: string;
+    modelTarget?: string;
     profile: string;
     prompt: string;
     session: CodingSessionRow;
@@ -117,6 +151,7 @@ export class CodeSessionDriver {
       `You have been assigned to Marina coding session ${opts.session.id}.`,
       `Requester: ${opts.actor}`,
       `Profile: ${opts.profile}`,
+      opts.modelTarget ? `Model target: ${opts.modelTarget}` : undefined,
       `Workspace: ${opts.session.workspace_root}`,
       boundEntity
         ? `Your active Code Mode session has been bound to ${opts.session.id}.`
@@ -131,7 +166,9 @@ export class CodeSessionDriver {
       "Record durable progress with code plan, code summary, code handoff, and code decision.",
       "",
       `Request: ${prompt}`,
-    ].join("\n");
+    ]
+      .filter((line): line is string => typeof line === "string")
+      .join("\n");
 
     this.deps.db.updateCodingSession(opts.session.id, { mode: "agent" });
     this.deps.db.createCodingEvent({
@@ -141,6 +178,7 @@ export class CodeSessionDriver {
       payload: {
         agent: agent.name,
         boundEntityId: boundEntity?.id ?? null,
+        modelTarget: opts.modelTarget,
         profile: opts.profile,
         prompt,
       },
@@ -157,6 +195,7 @@ export class CodeSessionDriver {
         strategy: "agent",
         agent: agent.name,
         boundEntityId: boundEntity?.id ?? null,
+        modelTarget: opts.modelTarget,
         profile: opts.profile,
         prompt,
       },
