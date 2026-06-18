@@ -37,7 +37,12 @@ import {
   resolveRole,
 } from "../src/agent/roles";
 import { SocialAwareness } from "../src/agent/social";
-import { COMMAND_ROSTER, createCommandTool, TOOL_PROFILE_NAMES } from "../src/agent/tools";
+import {
+  COMMAND_ROSTER,
+  createCommandTool,
+  createScopedTools,
+  TOOL_PROFILE_NAMES,
+} from "../src/agent/tools";
 import type { MarinaDB } from "../src/persistence/database";
 import type { EntityId, EntityRank, KnownProperties, Perception, RoomId } from "../src/types";
 
@@ -1187,6 +1192,7 @@ describe("tool profiles", () => {
     // brief world state, channel management. Still ~1/4 of full.
     const crew = TOOL_PROFILE_NAMES.crew;
     expect(crew).toContain("marina_command");
+    expect(crew).toContain("marina_code");
     expect(crew).toContain("marina_tell");
     expect(crew).toContain("marina_pool");
     expect(crew).toContain("marina_brief");
@@ -1209,6 +1215,7 @@ describe("tool profiles", () => {
     expect(COMMAND_ROSTER).toContain("recall");
     expect(COMMAND_ROSTER).toContain("brief");
     expect(COMMAND_ROSTER).toContain("pool");
+    expect(COMMAND_ROSTER).toContain("code status");
     expect(COMMAND_ROSTER).toContain("focus");
     expect(COMMAND_ROSTER).toContain("watch");
     // Compact: under 1.5KB so the schema bump is negligible.
@@ -1228,6 +1235,161 @@ describe("tool profiles", () => {
     expect(tool.description).toContain("Common world commands");
     expect(tool.description).toContain("recall");
     expect(tool.description).toContain("intent-aware");
+  });
+
+  it("code tool is available to full and crew agents", () => {
+    const ctx = {} as never;
+    const memory = {} as never;
+    expect(createScopedTools(ctx, memory, "full").some((tool) => tool.name === "marina_code")).toBe(
+      true,
+    );
+    expect(createScopedTools(ctx, memory, "crew").some((tool) => tool.name === "marina_code")).toBe(
+      true,
+    );
+    expect(
+      createScopedTools(ctx, memory, "minimal").some((tool) => tool.name === "marina_code"),
+    ).toBe(false);
+  });
+
+  it("code tool maps typed coding actions to Marina code commands", async () => {
+    const commands: string[] = [];
+    const ctx = {
+      client: {
+        isConnected: () => true,
+        command: async (command: string) => {
+          commands.push(command);
+          return [{ kind: "text", data: { text: "ok" } }];
+        },
+      },
+      gameState: {
+        handlePerception: () => {},
+      },
+    } as never;
+    const memory = {} as never;
+    const tool = createScopedTools(ctx, memory, "full").find(
+      (candidate) => candidate.name === "marina_code",
+    );
+    expect(tool).toBeTruthy();
+
+    await tool!.execute("call-1", { action: "verify" });
+    await tool!.execute("call-2", { action: "observe", text: "app printed localhost" });
+    await tool!.execute("call-3", { action: "reject", artifactId: "patch_123", text: "too broad" });
+    await tool!.execute("call-4", { action: "show", artifactId: "command_output_123" });
+    await tool!.execute("call-5", { action: "patches", status: "pending" });
+    await tool!.execute("call-6", { action: "artifacts", kind: "command_output" });
+    await tool!.execute("call-7", { action: "workspace", command: "list" });
+    await tool!.execute("call-8", { action: "workspace", command: "use", path: "dashboard" });
+    await tool!.execute("call-9", { action: "doctor" });
+
+    expect(commands).toEqual([
+      "code verify",
+      "code observe app printed localhost",
+      "code reject patch_123 too broad",
+      "code show command_output_123",
+      "code patches pending",
+      "code artifacts kind command_output",
+      "code workspace list",
+      "code workspace use dashboard",
+      "code doctor",
+    ]);
+
+    const result = await tool!.execute("call-10", { action: "read" });
+    const resultText = result.content[0]?.type === "text" ? result.content[0].text : "";
+    expect(resultText).toContain("Invalid marina_code request");
+    expect(resultText).toContain("action=read requires path");
+    expect(commands).toHaveLength(9);
+  });
+
+  it("typed code tools map directly to Marina code commands", async () => {
+    const commands: string[] = [];
+    const ctx = {
+      client: {
+        isConnected: () => true,
+        command: async (command: string) => {
+          commands.push(command);
+          return [{ kind: "text", data: { text: "ok" } }];
+        },
+      },
+      gameState: {
+        handlePerception: () => {},
+      },
+    } as never;
+    const memory = {} as never;
+    const tools = createScopedTools(ctx, memory, "full");
+    const status = tools.find((tool) => tool.name === "marina_code_session_status");
+    const read = tools.find((tool) => tool.name === "marina_code_read_file");
+    const run = tools.find((tool) => tool.name === "marina_code_run");
+    const patch = tools.find((tool) => tool.name === "marina_code_patch");
+    const apply = tools.find((tool) => tool.name === "marina_code_apply_patch");
+    const reject = tools.find((tool) => tool.name === "marina_code_reject_patch");
+    const observe = tools.find((tool) => tool.name === "marina_code_observe");
+    const plan = tools.find((tool) => tool.name === "marina_code_plan");
+    const summary = tools.find((tool) => tool.name === "marina_code_summary");
+    const handoff = tools.find((tool) => tool.name === "marina_code_handoff");
+    const decision = tools.find((tool) => tool.name === "marina_code_decision");
+    const history = tools.find((tool) => tool.name === "marina_code_history");
+    const workspace = tools.find((tool) => tool.name === "marina_code_workspace");
+    const doctor = tools.find((tool) => tool.name === "marina_code_doctor");
+    expect(status).toBeTruthy();
+    expect(read).toBeTruthy();
+    expect(run).toBeTruthy();
+    expect(patch).toBeTruthy();
+    expect(apply).toBeTruthy();
+    expect(reject).toBeTruthy();
+    expect(observe).toBeTruthy();
+    expect(plan).toBeTruthy();
+    expect(summary).toBeTruthy();
+    expect(handoff).toBeTruthy();
+    expect(decision).toBeTruthy();
+    expect(history).toBeTruthy();
+    expect(workspace).toBeTruthy();
+    expect(doctor).toBeTruthy();
+
+    await status!.execute("call-1", {});
+    await read!.execute("call-2", { path: "README.md" });
+    await run!.execute("call-3", { command: "git status --short" });
+    await patch!.execute("call-4", {
+      title: "Tighten parser",
+      diff: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n",
+    });
+    await apply!.execute("call-5", { artifactId: "patch_123" });
+    await reject!.execute("call-6", { artifactId: "patch_456", text: "too broad" });
+    await observe!.execute("call-7", { text: "server rendered the page" });
+    await plan!.execute("call-8", { text: "inspect before editing" });
+    await summary!.execute("call-9", { text: "fixed wrapper coverage" });
+    await handoff!.execute("call-10", { text: "tests are focused" });
+    await decision!.execute("call-11", { text: "keep command implementation unchanged" });
+    await history!.execute("call-12", { sessionId: "code_123" });
+    await workspace!.execute("call-13", { command: "list" });
+    await workspace!.execute("call-14", { command: "use", path: "dashboard" });
+    await workspace!.execute("call-15", {});
+    await doctor!.execute("call-16", {});
+
+    expect(commands).toEqual([
+      "code status",
+      "code read README.md",
+      "code run git status --short",
+      "code patch Tighten parser\ndiff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-old\n+new\n",
+      "code apply patch_123",
+      "code reject patch_456 too broad",
+      "code observe server rendered the page",
+      "code plan inspect before editing",
+      "code summary fixed wrapper coverage",
+      "code handoff tests are focused",
+      "code decision keep command implementation unchanged",
+      "code history code_123",
+      "code workspace list",
+      "code workspace use dashboard",
+      "code workspace",
+      "code doctor",
+    ]);
+
+    await expect(observe!.execute("call-17", { text: "two\nlines" })).rejects.toThrow(
+      "text must be a single line",
+    );
+    await expect(workspace!.execute("call-18", { command: "use" })).rejects.toThrow(
+      "path is required",
+    );
   });
 });
 
