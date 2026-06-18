@@ -61,6 +61,47 @@ describe("reconcileEntities", () => {
     expect(out[0]?.agentStatus?.state).toBe("error");
   });
 
+  it("detects active modal changes for prompt updates", () => {
+    const prev = [ent("a", { properties: {} })];
+    const next = [ent("a", { properties: { active_modal: "code" } })];
+    const out = reconcileEntities(prev, next);
+    expect(out).not.toBe(prev);
+    expect(out[0]?.properties?.active_modal).toBe("code");
+  });
+
+  it("detects code profile changes for prompt updates", () => {
+    const prev = [ent("a", { properties: { active_modal: "code", code_profile: "marina" } })];
+    const next = [ent("a", { properties: { active_modal: "code", code_profile: "codex" } })];
+    const out = reconcileEntities(prev, next);
+    expect(out).not.toBe(prev);
+    expect(out[0]?.properties?.code_profile).toBe("codex");
+  });
+
+  it("detects code context changes for prompt strip updates", () => {
+    const prev = [
+      ent("a", {
+        properties: {
+          active_modal: "code",
+          code_context: { sessionId: "code_session_old", pendingPatches: 0 },
+        },
+      }),
+    ];
+    const next = [
+      ent("a", {
+        properties: {
+          active_modal: "code",
+          code_context: { sessionId: "code_session_new", pendingPatches: 1 },
+        },
+      }),
+    ];
+    const out = reconcileEntities(prev, next);
+    expect(out).not.toBe(prev);
+    expect(out[0]?.properties?.code_context).toMatchObject({
+      sessionId: "code_session_new",
+      pendingPatches: 1,
+    });
+  });
+
   it("handles additions and removals", () => {
     const prev = [ent("a")];
     const added = reconcileEntities(prev, [ent("a"), ent("b")]);

@@ -324,6 +324,7 @@ export interface WorldSnapshot {
     name: string;
     kind: string;
     room: string;
+    properties?: Record<string, unknown>;
     agentStatus?: AgentStatusInfo;
   }[];
   roomPopulations: Record<string, number>;

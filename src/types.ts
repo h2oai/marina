@@ -37,6 +37,9 @@ export interface KnownProperties extends Record<string, unknown> {
   _owner?: EntityId;
 
   // ─── Misc ───────────────────────────────────────────────────────────────────
+  active_modal?: string;
+  code_profile?: string;
+  coding_session_id?: string;
   fragment?: string;
 
   // ─── Social ─────────────────────────────────────────────────────────────────
@@ -166,7 +169,7 @@ export interface RoomContext {
   entities: Entity[];
 
   /** Send a message to a specific entity */
-  send(target: EntityId, message: string, tag?: string): void;
+  send(target: EntityId, message: string, tag?: string, metadata?: Record<string, unknown>): void;
 
   /** Broadcast a message to all entities in the room */
   broadcast(message: string, tag?: string): void;

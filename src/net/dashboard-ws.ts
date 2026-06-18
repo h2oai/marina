@@ -18,6 +18,7 @@ export interface WorldSnapshot {
     name: string;
     kind: string;
     room: string;
+    properties: Record<string, unknown>;
     agentStatus?: {
       state: string;
       model: string;
@@ -144,6 +145,7 @@ export class DashboardBroadcaster {
         name: e.name,
         kind: e.kind,
         room: e.room as string,
+        properties: e.properties,
         agentStatus,
       };
     });

@@ -1,4 +1,19 @@
-import { Check, Copy, List, MessageSquareText, PanelsTopLeft, Send } from "lucide-react";
+import {
+  Check,
+  CheckCircle2,
+  Code2,
+  Copy,
+  FileText,
+  GitBranch,
+  GitPullRequest,
+  List,
+  MessageSquareText,
+  PanelsTopLeft,
+  Send,
+  Terminal,
+  XCircle,
+} from "lucide-react";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMediaJobs } from "../hooks/use-api";
 import type { ChatMessage, StoredPerception } from "../hooks/use-chat-state";
@@ -129,6 +144,35 @@ function formatTimestamp(ts?: number): string {
   }
 }
 
+function codeStatusTone(status?: string): string {
+  if (!status) return "border-border/70 bg-bg/45 text-text";
+  if (["failed", "denied", "rejected"].includes(status)) {
+    return "border-red-500/40 bg-red-950/15 text-red-200";
+  }
+  if (["pending", "warn", "planned"].includes(status)) {
+    return "border-yellow-500/40 bg-yellow-950/15 text-yellow-100";
+  }
+  if (["applied", "complete", "completed", "ok", "passed", "pinned"].includes(status)) {
+    return "border-emerald-500/30 bg-emerald-950/10 text-emerald-100";
+  }
+  return "border-border/70 bg-bg/45 text-text";
+}
+
+function diffStats(
+  content: string,
+): { additions: number; deletions: number; files: number } | null {
+  if (!content.startsWith("diff --git")) return null;
+  let additions = 0;
+  let deletions = 0;
+  let files = 0;
+  for (const line of content.split("\n")) {
+    if (line.startsWith("diff --git ")) files++;
+    else if (line.startsWith("+") && !line.startsWith("+++")) additions++;
+    else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
+  }
+  return { additions, deletions, files };
+}
+
 interface RoomPerceptionData {
   name?: string;
   short?: string;
@@ -136,6 +180,92 @@ interface RoomPerceptionData {
   items?: Record<string, unknown>;
   entities?: { name?: string; short?: string }[];
   exits?: string[];
+}
+
+interface CodeTreeNode {
+  active?: boolean;
+  children?: CodeTreeNode[];
+  id?: string;
+  status?: string;
+  title?: string;
+}
+
+interface CodeMessageData {
+  artifactId?: string;
+  artifactKind?: string;
+  checks?: {
+    detail?: string;
+    label?: string;
+    status?: "fail" | "info" | "ok" | "warn";
+  }[];
+  command?: string[];
+  commands?: string[];
+  content?: string;
+  durationMs?: number;
+  event?: string;
+  events?: {
+    actor?: string;
+    kind?: string;
+    payload?: string;
+    timestamp?: number;
+  }[];
+  exitCode?: number;
+  parentSessionId?: string;
+  paths?: string[];
+  query?: string;
+  rows?: {
+    action?: string;
+    canonical?: string;
+    detail?: string;
+    grade?: string;
+    id?: string;
+    kind?: string;
+    line?: number;
+    portability?: string;
+    path?: string;
+    size?: number;
+    status?: string;
+    text?: string;
+    title?: string;
+    type?: string;
+  }[];
+  sessionId?: string;
+  status?: string;
+  timedOut?: boolean;
+  title?: string;
+  tree?: CodeTreeNode[];
+  truncated?: boolean;
+  type?:
+    | "artifact"
+    | "command"
+    | "diff"
+    | "file"
+    | "history"
+    | "list"
+    | "note"
+    | "patch"
+    | "profile"
+    | "readiness"
+    | "search"
+    | "session"
+    | "tree"
+    | "verification";
+  workspace?: string;
+}
+
+interface CodeContextData {
+  assignedAgent?: string;
+  latestArtifactId?: string;
+  latestArtifactKind?: string;
+  latestArtifactLifecycle?: string;
+  latestArtifactStatus?: string;
+  pendingPatches?: number;
+  profile?: string;
+  sessionId?: string;
+  sessionMode?: string;
+  sessionStatus?: string;
+  sessionTitle?: string;
+  workspace?: string;
 }
 
 function appendMsg(text: string, kind: string, tag?: string, perception?: StoredPerception) {
@@ -309,8 +439,20 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
   const messages = useChatState((s) => s.messages);
   const loggedIn = useChatState((s) => s.loggedIn);
   const connected = useChatState((s) => s.connected);
+  const entityName = useChatState((s) => s.entityName);
   const commandHistory = useChatState((s) => s.commandHistory);
   const sendChatCommand = useChatState((s) => s.sendCommand);
+  const codePrompt = useWorldState((s) => {
+    const self = entityName ? s.entities.find((entity) => entity.name === entityName) : undefined;
+    const modal = self?.properties?.active_modal;
+    if (modal !== "code") return null;
+    return codePromptForProfile(self?.properties?.code_profile);
+  });
+  const codeContextRaw = useWorldState((s) => {
+    const self = entityName ? s.entities.find((entity) => entity.name === entityName) : undefined;
+    return self?.properties?.active_modal === "code" ? self.properties.code_context : null;
+  });
+  const codeContext = useMemo(() => codeContextFromProperty(codeContextRaw), [codeContextRaw]);
   const [overlay, setOverlay] = useState<OverlayState | null>(null);
   const closeOverlay = useCallback(() => setOverlay(null), []);
 
@@ -799,9 +941,423 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
     );
   };
 
+  const renderCodeContextStrip = () => {
+    if (!codePrompt || !codeContext) return null;
+    const chips: {
+      key: string;
+      label: string;
+      title: string;
+      value: string;
+      tone?: "accent" | "warn";
+    }[] = [
+      {
+        key: "session",
+        label: "session",
+        title: codeContext.sessionId ? `Session ${codeContext.sessionId}` : "No code session",
+        value: codeContext.sessionId ?? "none",
+      },
+      codeContext.sessionStatus
+        ? {
+            key: "status",
+            label: "status",
+            title: `Session status ${codeContext.sessionStatus}`,
+            value: codeContext.sessionStatus,
+            tone: "accent",
+          }
+        : null,
+      codeContext.workspace
+        ? {
+            key: "workspace",
+            label: "cwd",
+            title: `Workspace ${codeContext.workspace}`,
+            value: codeContext.workspace,
+          }
+        : null,
+      {
+        key: "artifact",
+        label: codeContext.latestArtifactKind ?? "artifact",
+        title: codeContext.latestArtifactId
+          ? `Latest ${codeContext.latestArtifactKind ?? "artifact"} ${codeContext.latestArtifactId}${
+              codeContext.latestArtifactStatus ? ` (${codeContext.latestArtifactStatus})` : ""
+            }${codeContext.latestArtifactLifecycle ? ` lifecycle ${codeContext.latestArtifactLifecycle}` : ""}`
+          : "No artifacts",
+        value: codeContext.latestArtifactId
+          ? `${codeContext.latestArtifactId}${
+              codeContext.latestArtifactStatus ? `:${codeContext.latestArtifactStatus}` : ""
+            }${codeContext.latestArtifactLifecycle ? `:${codeContext.latestArtifactLifecycle}` : ""}`
+          : "none",
+      },
+      typeof codeContext.pendingPatches === "number" && codeContext.pendingPatches > 0
+        ? {
+            key: "patches",
+            label: "patches",
+            title: `${codeContext.pendingPatches} pending patch${
+              codeContext.pendingPatches === 1 ? "" : "es"
+            }`,
+            value: String(codeContext.pendingPatches),
+            tone: "warn",
+          }
+        : null,
+      codeContext.assignedAgent
+        ? {
+            key: "agent",
+            label: "agent",
+            title: `Assigned agent ${codeContext.assignedAgent}`,
+            value: codeContext.assignedAgent,
+          }
+        : null,
+    ].filter(Boolean);
+    return (
+      <div className="mb-1 grid min-h-7 grid-cols-[auto_minmax(0,1fr)] items-center gap-1.5 font-mono text-[10px] text-text-dim">
+        <span
+          className="flex h-6 shrink-0 select-text items-center rounded border border-primary/40 bg-primary/10 px-1.5 font-semibold text-primary"
+          title={`${codePrompt} mode prompt`}
+        >
+          {codePrompt}&gt;
+        </span>
+        <div className="flex min-w-0 select-text items-center gap-1 overflow-x-auto pb-0.5">
+          {chips.map((chip) => (
+            <span
+              key={chip.key}
+              className={`flex h-6 min-w-0 max-w-[10rem] shrink-0 items-center gap-1 rounded border px-1.5 sm:max-w-[14rem] ${
+                chip.tone === "warn"
+                  ? "border-yellow-500/40 bg-yellow-950/15 text-yellow-200"
+                  : chip.tone === "accent"
+                    ? "border-emerald-500/35 bg-emerald-950/15 text-emerald-200"
+                    : "border-border/60 bg-bg/70 text-text-dim"
+              }`}
+              title={chip.title}
+            >
+              <span className="shrink-0 text-[8px] font-semibold uppercase tracking-wide text-text-dim/80">
+                {chip.label}
+              </span>
+              <span className="min-w-0 truncate text-[10px] text-current">{chip.value}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderCodeActions = (commands?: string[]) => {
+    const actionable = (commands ?? []).filter((cmd) => cmd && !cmd.includes("<"));
+    if (actionable.length === 0) return null;
+    return (
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {actionable.map((cmd) => (
+          <button
+            key={cmd}
+            type="button"
+            onClick={() => sendCommandWithOverlay(cmd)}
+            className="rounded border border-primary/40 bg-primary/10 px-2 py-0.5 font-mono text-[10px] text-primary transition-colors hover:border-primary hover:bg-primary/20"
+          >
+            {cmd}
+          </button>
+        ))}
+      </div>
+    );
+  };
+
+  const renderCodeBlock = (content: string, variant: "diff" | "output" | "text") => {
+    const lines = content.trimEnd().split("\n");
+    const stats = diffStats(content);
+    return (
+      <div className="mt-2 overflow-hidden rounded border border-border/70 bg-black/30">
+        <div className="flex items-center justify-between gap-2 border-border/60 border-b px-2 py-1 font-mono text-[10px] text-text-dim">
+          <span>{variant === "diff" ? "patch" : variant === "output" ? "output" : "text"}</span>
+          <span>
+            {stats
+              ? `${stats.files} file${stats.files === 1 ? "" : "s"} +${stats.additions} -${stats.deletions}`
+              : `${lines.length} line${lines.length === 1 ? "" : "s"}`}
+          </span>
+        </div>
+        <pre className="max-h-[420px] overflow-auto p-2 font-mono text-[11px] leading-relaxed text-text">
+          {lines.map((line, idx) => {
+            const color =
+              variant === "diff" && line.startsWith("+") && !line.startsWith("+++")
+                ? "text-emerald-300"
+                : variant === "diff" && line.startsWith("-") && !line.startsWith("---")
+                  ? "text-red-300"
+                  : variant === "diff" && line.startsWith("@@")
+                    ? "text-cyan-300"
+                    : variant === "diff" &&
+                        (line.startsWith("diff --git") ||
+                          line.startsWith("---") ||
+                          line.startsWith("+++"))
+                      ? "text-primary"
+                      : variant === "output" && line === "--- stderr ---"
+                        ? "text-yellow-200"
+                        : "text-text";
+            return (
+              <div
+                // biome-ignore lint/suspicious/noArrayIndexKey: rendered terminal blocks preserve line order; content has no stable ids
+                key={idx}
+                className={`grid grid-cols-[3ch_minmax(0,1fr)] gap-2 whitespace-pre-wrap break-words ${color}`}
+              >
+                <span className="select-none text-right text-text-dim/50">{idx + 1}</span>
+                <span>{line || " "}</span>
+              </div>
+            );
+          })}
+        </pre>
+      </div>
+    );
+  };
+
+  const renderCodeTree = (nodes: CodeTreeNode[] | undefined, depth = 0): ReactNode => {
+    if (!nodes || nodes.length === 0) return null;
+    return (
+      <div className={depth === 0 ? "mt-2 space-y-1" : "mt-1 space-y-1"}>
+        {nodes.map((node) => (
+          <div key={node.id ?? `${depth}-${node.title}`} className="font-mono text-[11px]">
+            <div
+              className={`flex items-center gap-1.5 rounded px-2 py-1 ${
+                node.active ? "border border-primary/50 bg-primary/10 text-primary" : "text-text"
+              }`}
+              style={{ marginLeft: depth * 14 }}
+            >
+              <GitBranch size={12} />
+              <span className="font-semibold">{node.id}</span>
+              <span className="rounded bg-bg-hover px-1 py-0.5 text-[9px] text-text-dim">
+                {node.status}
+              </span>
+              <span className="truncate">{node.title}</span>
+            </div>
+            {renderCodeTree(node.children, depth + 1)}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderCodeChecks = (checks: CodeMessageData["checks"]) => {
+    if (!checks || checks.length === 0) return null;
+    return (
+      <div className="mt-2 grid gap-1 sm:grid-cols-2">
+        {checks.map((check) => {
+          const tone =
+            check.status === "fail"
+              ? "border-red-500/40 bg-red-950/15 text-red-200"
+              : check.status === "warn"
+                ? "border-yellow-500/40 bg-yellow-950/15 text-yellow-100"
+                : check.status === "ok"
+                  ? "border-emerald-500/30 bg-emerald-950/10 text-emerald-100"
+                  : "border-border/70 bg-bg/60 text-text";
+          return (
+            <div
+              key={`${check.label}-${check.detail}`}
+              className={`rounded border px-2 py-1 text-[11px] ${tone}`}
+            >
+              <div className="font-semibold">{check.label}</div>
+              {check.detail && (
+                <div className="mt-0.5 break-words text-text-dim">{check.detail}</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderCodeRows = (rows: CodeMessageData["rows"]) => {
+    if (!rows || rows.length === 0) return null;
+    return (
+      <div className="mt-2 overflow-hidden rounded border border-border/70">
+        {rows.map((row, idx) => (
+          <div
+            // biome-ignore lint/suspicious/noArrayIndexKey: command result rows are display-only and preserve server order
+            key={`${row.id ?? row.path ?? row.title ?? row.text}-${idx}`}
+            className={`grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b px-2 py-1.5 last:border-b-0 ${codeStatusTone(
+              row.status,
+            )}`}
+          >
+            <div className="min-w-0">
+              <div className="truncate font-mono text-[11px] text-text">
+                {row.action
+                  ? `${row.action}: ${row.title ?? row.text ?? ""}`
+                  : row.path
+                    ? `${row.path}${row.line ? `:${row.line}` : ""}`
+                    : row.title || row.id}
+              </div>
+              {(row.text || row.detail) && (
+                <div className="mt-0.5 break-words text-[11px] text-text-dim">
+                  {row.text || row.detail}
+                </div>
+              )}
+              {(row.canonical || row.portability) && (
+                <div className="mt-0.5 break-words font-mono text-[10px] text-text-dim">
+                  {[row.canonical, row.portability].filter(Boolean).join(" | ")}
+                </div>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-1 text-[9px] uppercase tracking-wide text-text-dim">
+              {row.kind && <span>{row.kind}</span>}
+              {row.grade && <span>{row.grade}</span>}
+              {row.status && <span className="rounded bg-bg-hover px-1 py-0.5">{row.status}</span>}
+              {typeof row.size === "number" && <span>{row.size}b</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderCodeEvents = (events: CodeMessageData["events"]) => {
+    if (!events || events.length === 0) return null;
+    return (
+      <div className="mt-2 space-y-1 rounded border border-border/70 bg-bg/40 p-2">
+        {events.map((event, idx) => (
+          <div
+            // biome-ignore lint/suspicious/noArrayIndexKey: event rows preserve chronological server order
+            key={`${event.kind}-${event.timestamp}-${idx}`}
+            className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-2 font-mono text-[10px] text-text-dim"
+          >
+            <span>{event.timestamp ? formatTimestamp(event.timestamp) : ""}</span>
+            <span className="truncate text-text">{event.kind}</span>
+            <span className="truncate">{event.actor}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderCodeMessage = (
+    m: ChatMessage,
+    i: number,
+    _perception: StoredPerception,
+    code: CodeMessageData,
+  ) => {
+    const type = code.type ?? "artifact";
+    const status = code.status ?? (code.exitCode === 0 ? "complete" : undefined);
+    const failed =
+      status === "failed" ||
+      code.event?.includes("failed") ||
+      (typeof code.exitCode === "number" && code.exitCode !== 0);
+    const Icon =
+      type === "command"
+        ? Terminal
+        : type === "verification"
+          ? failed
+            ? XCircle
+            : CheckCircle2
+          : type === "readiness"
+            ? CheckCircle2
+            : type === "patch"
+              ? GitPullRequest
+              : type === "tree"
+                ? GitBranch
+                : type === "session"
+                  ? Code2
+                  : type === "profile"
+                    ? List
+                    : FileText;
+    const title =
+      type === "command"
+        ? `$ ${(code.command ?? []).join(" ")}`
+        : (code.title ?? code.event?.replaceAll("_", " ") ?? "Code");
+    const content = typeof code.content === "string" ? code.content : "";
+    const blockVariant =
+      type === "patch" || content.startsWith("diff --git")
+        ? "diff"
+        : type === "command"
+          ? "output"
+          : "text";
+
+    return (
+      <div
+        key={i}
+        className={`group relative my-1 rounded-md border px-3 py-2 shadow-sm ${
+          failed ? "border-red-500/50 bg-red-950/15" : "border-primary/35 bg-primary/5"
+        }`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-wide text-text-dim">
+              <span className="flex items-center gap-1 text-primary">
+                <Icon size={12} />
+                {type}
+              </span>
+              {status && (
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[9px] ${
+                    failed
+                      ? "bg-red-500/15 text-red-300"
+                      : status === "pending" || status === "planned"
+                        ? "bg-yellow-500/15 text-yellow-200"
+                        : "bg-emerald-500/15 text-emerald-300"
+                  }`}
+                >
+                  {status}
+                </span>
+              )}
+              {code.artifactId && (
+                <span className="font-mono text-text-dim">{code.artifactId}</span>
+              )}
+              {code.sessionId && <span className="font-mono text-text-dim">{code.sessionId}</span>}
+            </div>
+            <div className="mt-1 truncate text-sm font-semibold text-text-bright">{title}</div>
+          </div>
+          <span className="shrink-0 text-[9px] uppercase tracking-wide text-text-dim/70">
+            {formatTimestamp(m.timestamp)}
+          </span>
+        </div>
+
+        {code.parentSessionId && (
+          <div className="mt-1 font-mono text-[10px] text-text-dim">
+            parent {code.parentSessionId}
+          </div>
+        )}
+        {code.workspace && (
+          <div className="mt-1 truncate font-mono text-[10px] text-text-dim">{code.workspace}</div>
+        )}
+        {code.paths && code.paths.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1">
+            {code.paths.map((path) => (
+              <span
+                key={path}
+                className="rounded border border-border/60 bg-bg px-1.5 py-0.5 font-mono text-[10px] text-text-dim"
+              >
+                {path}
+              </span>
+            ))}
+          </div>
+        )}
+        {type === "tree" ? renderCodeTree(code.tree) : null}
+        {renderCodeChecks(code.checks)}
+        {renderCodeRows(code.rows)}
+        {renderCodeEvents(code.events)}
+        {content.trim()
+          ? renderCodeBlock(content, blockVariant)
+          : type !== "tree" && type !== "profile"
+            ? renderTextContent(m.text ?? "", "mt-2 text-sm text-text")
+            : null}
+        {(typeof code.exitCode === "number" || typeof code.durationMs === "number") && (
+          <div className="mt-2 flex flex-wrap gap-2 font-mono text-[10px] text-text-dim">
+            {typeof code.exitCode === "number" && <span>exit {code.exitCode}</span>}
+            {typeof code.durationMs === "number" && <span>{code.durationMs}ms</span>}
+            {code.timedOut && <span className="text-red-300">timed out</span>}
+            {code.truncated && <span>truncated</span>}
+          </div>
+        )}
+        {renderCodeActions(code.commands)}
+        <button
+          type="button"
+          onClick={() => copy(messageText(m), i)}
+          title="Copy message"
+          aria-label="Copy message"
+          className="absolute right-2 top-2 rounded p-0.5 text-text-dim opacity-0 transition-opacity hover:text-primary focus:opacity-100 group-hover:opacity-100"
+        >
+          {copied === i ? <Check size={12} /> : <Copy size={12} />}
+        </button>
+      </div>
+    );
+  };
+
   const renderRichMessage = (m: ChatMessage, i: number) => {
     const perception = m.perception;
     if (!perception) return renderCompactMessage(m, i);
+    const code = perception.data?.code as CodeMessageData | undefined;
+    if (code?.type) return renderCodeMessage(m, i, perception, code);
     switch (perception.kind) {
       case "room":
         return renderRoomMessage(m, i, perception);
@@ -1273,34 +1829,71 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
                 </button>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-success" : "bg-danger"}`}
-                />
-                <input
-                  ref={inputRef}
-                  type="text"
-                  onChange={(e) => {
-                    cmdValueRef.current = e.target.value;
-                  }}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Type a command..."
-                  className="flex-1 rounded border border-border bg-bg px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
-                />
-                <button
-                  type="button"
-                  onClick={doSend}
-                  className="text-primary transition-colors hover:text-text-bright"
-                >
-                  <Send size={14} />
-                </button>
-              </div>
+              <>
+                {renderCodeContextStrip()}
+                <div className="flex items-center gap-1.5">
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-success" : "bg-danger"}`}
+                  />
+                  {codePrompt && (
+                    <span className="rounded border border-primary/50 bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-primary">
+                      {codePrompt}&gt;
+                    </span>
+                  )}
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    onChange={(e) => {
+                      cmdValueRef.current = e.target.value;
+                    }}
+                    onKeyDown={handleKeyDown}
+                    placeholder={
+                      codePrompt ? `Type a ${codePrompt} command...` : "Type a command..."
+                    }
+                    className="flex-1 rounded border border-border bg-bg px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
+                  />
+                  <button
+                    type="button"
+                    onClick={doSend}
+                    className="text-primary transition-colors hover:text-text-bright"
+                  >
+                    <Send size={14} />
+                  </button>
+                </div>
+              </>
             )}
           </div>
         </div>
       </GlassPanel>
     </AssetViewerProvider>
   );
+}
+
+function codePromptForProfile(profile: unknown): string {
+  if (profile === "pi" || profile === "claude" || profile === "codex") return profile;
+  return "code";
+}
+
+function codeContextFromProperty(value: unknown): CodeContextData | null {
+  if (!value || typeof value !== "object") return null;
+  const data = value as Record<string, unknown>;
+  return {
+    assignedAgent: typeof data.assignedAgent === "string" ? data.assignedAgent : undefined,
+    latestArtifactId: typeof data.latestArtifactId === "string" ? data.latestArtifactId : undefined,
+    latestArtifactKind:
+      typeof data.latestArtifactKind === "string" ? data.latestArtifactKind : undefined,
+    latestArtifactLifecycle:
+      typeof data.latestArtifactLifecycle === "string" ? data.latestArtifactLifecycle : undefined,
+    latestArtifactStatus:
+      typeof data.latestArtifactStatus === "string" ? data.latestArtifactStatus : undefined,
+    pendingPatches: typeof data.pendingPatches === "number" ? data.pendingPatches : undefined,
+    profile: typeof data.profile === "string" ? data.profile : undefined,
+    sessionId: typeof data.sessionId === "string" ? data.sessionId : undefined,
+    sessionMode: typeof data.sessionMode === "string" ? data.sessionMode : undefined,
+    sessionStatus: typeof data.sessionStatus === "string" ? data.sessionStatus : undefined,
+    sessionTitle: typeof data.sessionTitle === "string" ? data.sessionTitle : undefined,
+    workspace: typeof data.workspace === "string" ? data.workspace : undefined,
+  };
 }
 
 interface CompassSuggestion {

@@ -716,7 +716,8 @@ export class Engine {
     const entity = this.entities.get(entityId);
     if (!entity) return;
 
-    const input = this.commands.parse(raw, entityId, entity.room);
+    const routedRaw = this.routeModalCommand(entity, raw);
+    const input = this.commands.parse(routedRaw, entityId, entity.room);
 
     if (!input.verb) return;
 
@@ -807,7 +808,7 @@ export class Engine {
     }
 
     // Track quest progress based on command type
-    this.trackQuest(entityId, input.verb, raw);
+    this.trackQuest(entityId, input.verb, routedRaw);
 
     // Track activity for novelty scoring (with success)
     if (this.db) {
@@ -829,7 +830,27 @@ export class Engine {
       });
     }
 
-    this.logEvent({ type: "command", entity: entityId, input: raw, timestamp: Date.now() });
+    this.logEvent({ type: "command", entity: entityId, input: routedRaw, timestamp: Date.now() });
+  }
+
+  private routeModalCommand(entity: Entity, raw: string): string {
+    const activeModal = entity.properties.active_modal;
+    if (activeModal !== "code") return raw;
+
+    const trimmed = raw.trim();
+    if (!trimmed) return raw;
+
+    const verb = trimmed.split(/\s+/, 1)[0]?.toLowerCase();
+    if (!verb || verb === "code") return raw;
+
+    if (verb === "exit" || verb === "back" || verb === "world") {
+      return "code exit";
+    }
+    if (verb === "help" || verb === "?") {
+      return "code help";
+    }
+
+    return `code ${trimmed}`;
   }
 
   private trackQuest(entityId: EntityId, verb: string, raw?: string): void {
@@ -1189,7 +1210,7 @@ export class Engine {
   buildContext(roomId: RoomId): RoomContext | undefined {
     const emitEvent = (event: EngineEvent) => this.logEvent(event);
     return this.rooms.buildContext(roomId, {
-      send: (target, msg, tag?) => this.sendToEntity(target, msg, tag),
+      send: (target, msg, tag?, metadata?) => this.sendToEntity(target, msg, tag, metadata),
       broadcast: (room, msg, tag?) => this.broadcastToRoom(room, msg, tag),
       broadcastExcept: (room, exclude, msg, tag?) =>
         this.broadcastToRoomExcept(room, exclude, msg, tag),
