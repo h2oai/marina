@@ -16,6 +16,7 @@ import { calcCommand } from "./commands/calc";
 import { canvasCommand } from "./commands/canvas";
 import { channelCommand } from "./commands/channel";
 import { chronicleCommand } from "./commands/chronicle";
+import { codeCommand } from "./commands/code";
 import { conductCommand } from "./commands/conduct";
 import { connectCommand } from "./commands/connect";
 import { crewCommand } from "./commands/crew";
@@ -746,6 +747,14 @@ export function registerBuiltinCommands(engine: Engine): void {
       logEvent: (event) => engine.logEvent(event),
     }),
   );
+  engine.commands.registerBuiltin(
+    codeCommand({
+      agentRuntime: engine.agentRuntime,
+      answerPrompt: answerCodeViaLocalModel,
+      getEntity: (id) => engine.entities.get(id as EntityId),
+      db: engine.db,
+    }),
+  );
 
   // Admin command (only if db-backed)
   if (engine.db) {
@@ -868,6 +877,65 @@ async function answerViaLocalModel(query: string, context: string): Promise<stri
         messages,
         temperature: 0.2,
         max_tokens: 600,
+      }),
+      signal: controller.signal,
+    });
+    if (!resp.ok) return undefined;
+
+    const data = (await resp.json()) as {
+      choices?: Array<{ message?: { content?: unknown } }>;
+    };
+    const content = data.choices?.[0]?.message?.content;
+    return typeof content === "string" ? content : undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function answerCodeViaLocalModel(request: {
+  actor: string;
+  profile: string;
+  prompt: string;
+  sessionId: string;
+  workspaceRoot: string;
+}): Promise<string | undefined> {
+  const port = Number(process.env.WS_PORT) || 3300;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 90_000);
+
+  try {
+    const messages = [
+      {
+        role: "system",
+        content:
+          "You are Marina Code Mode running through Marina's vendor-neutral model surface. " +
+          "Help with software work inside a persistent coding session. Be concrete and concise. " +
+          "You do not have direct workspace tools in this direct path; ask the user to use code read/search/diff/run/patch when needed, " +
+          "or suggest assigning the session to a live Marina agent for tool-using work.",
+      },
+      {
+        role: "system",
+        content: [
+          `Coding session: ${request.sessionId}`,
+          `Requester: ${request.actor}`,
+          `Profile: ${request.profile}`,
+          `Workspace: ${request.workspaceRoot}`,
+        ].join("\n"),
+      },
+      { role: "user", content: request.prompt },
+    ];
+
+    const resp = await fetch(`http://localhost:${port}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${getInternalModelToken()}`,
+      },
+      body: JSON.stringify({
+        model: "marina",
+        messages,
+        temperature: 0.2,
+        max_tokens: 1000,
       }),
       signal: controller.signal,
     });

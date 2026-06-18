@@ -37,7 +37,12 @@ export interface LoadedRoom {
   store: KeyValueStore;
 }
 
-export type SendFn = (target: EntityId, message: string, tag?: string) => void;
+export type SendFn = (
+  target: EntityId,
+  message: string,
+  tag?: string,
+  metadata?: Record<string, unknown>,
+) => void;
 export type BroadcastFn = (room: RoomId, message: string, tag?: string) => void;
 export type BroadcastExceptFn = (
   room: RoomId,

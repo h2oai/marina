@@ -134,7 +134,7 @@ export class TelnetServer {
 
           // Show prompt after processing
           if (socket.data.name) {
-            socket.write("\r\n> ");
+            socket.write(`\r\n${formatPrompt(engine, socket.data.entity)}`);
           }
         },
 
@@ -159,6 +159,18 @@ export class TelnetServer {
       this.server = null;
     }
   }
+}
+
+function formatPrompt(engine: Engine, entityId: EntityId | null): string {
+  const entity = entityId ? engine.entities.get(entityId) : undefined;
+  if (entity?.properties.active_modal !== "code") return "> ";
+  const prompt = codePromptForProfile(entity.properties.code_profile);
+  return `${A.green}${prompt}>${A.reset} `;
+}
+
+function codePromptForProfile(profile: unknown): string {
+  if (profile === "pi" || profile === "claude" || profile === "codex") return profile;
+  return "code";
 }
 
 interface TelnetData {

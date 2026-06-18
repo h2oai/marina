@@ -92,6 +92,7 @@ Talk: say <msg>, tell <name> <msg>, channel send <name> <msg>, channel list.
 Memory: note <text>, recall <query>, reflect [topic], pool <name> add <content>, pool <name> recall <query>, skill search <query>, skill store <name> | <desc> | <actions>.
 Self: brief, brief full, focus set <desc>, focus clear, task goal <title> | <desc>, task progress <id> +N, novelty stats, novelty suggest.
 Coordination: project list, canvas intent list, canvas intent claim <id>, canvas intent complete <id> <result>, feed list [--kind X --since 30m].
+Code: code status, code files [path], code read <path>, code search <query>, code diff, code verify, code run allowlist, code run test, code observe <note>, code patch <title>, code artifacts, code pin <id>, code unpin <id>, code archive <id>.
 Web: web search <query>, web fetch <url>.
 Probe / watch (resolvers): probe <kind> <args>, watch list, watch create <kind> <args>.
 Bettor / markets: market list, market info <id>, market forecast <id>, position open <leg>, position confirm <id>.
@@ -177,6 +178,115 @@ const buildSchema = Type.Object({
 const canvasSchema = Type.Object({
   action: Type.String({ description: "Action: list, create, publish, info, nodes" }),
   args: Type.Optional(Type.String({ description: "Arguments for the action" })),
+});
+
+const codeSchema = Type.Object({
+  action: Type.Union(
+    [
+      Type.Literal("status"),
+      Type.Literal("files"),
+      Type.Literal("read"),
+      Type.Literal("search"),
+      Type.Literal("diff"),
+      Type.Literal("run"),
+      Type.Literal("verify"),
+      Type.Literal("observe"),
+      Type.Literal("patch"),
+      Type.Literal("apply"),
+      Type.Literal("reject"),
+      Type.Literal("show"),
+      Type.Literal("patches"),
+      Type.Literal("artifacts"),
+      Type.Literal("history"),
+      Type.Literal("plan"),
+      Type.Literal("summary"),
+      Type.Literal("handoff"),
+      Type.Literal("decision"),
+      Type.Literal("workspace"),
+      Type.Literal("doctor"),
+    ],
+    {
+      description:
+        "Coding action. Assigned agents normally have an active coding session already bound.",
+    },
+  ),
+  path: Type.Optional(Type.String({ description: "Relative workspace path for files/read/diff" })),
+  query: Type.Optional(Type.String({ description: "Search query for action=search" })),
+  command: Type.Optional(
+    Type.String({
+      description:
+        "Allowed command for action=run, or workspace subcommand for action=workspace: show, list, or use",
+    }),
+  ),
+  title: Type.Optional(Type.String({ description: "Artifact title for action=patch" })),
+  diff: Type.Optional(Type.String({ description: "Unified diff for action=patch" })),
+  artifactId: Type.Optional(
+    Type.String({ description: "Artifact id for action=apply/reject/show" }),
+  ),
+  kind: Type.Optional(Type.String({ description: "Artifact kind filter for action=artifacts" })),
+  status: Type.Optional(
+    Type.String({
+      description: "Patch status filter for action=patches: pending, applied, rejected",
+    }),
+  ),
+  text: Type.Optional(
+    Type.String({ description: "Text for plan/summary/handoff/decision/observe/reject" }),
+  ),
+});
+
+const codeEmptySchema = Type.Object({});
+
+const codePathSchema = Type.Object({
+  path: Type.Optional(Type.String({ description: "Relative workspace path" })),
+});
+
+const codeReadFileSchema = Type.Object({
+  path: Type.String({ description: "Relative workspace file path" }),
+});
+
+const codeSearchSchema = Type.Object({
+  query: Type.String({ description: "Search query" }),
+});
+
+const codeRunSchema = Type.Object({
+  command: Type.String({
+    description: "Allowed workspace command, for example test or git status --short",
+  }),
+});
+
+const codePatchSchema = Type.Object({
+  title: Type.Optional(Type.String({ description: "Patch artifact title" })),
+  diff: Type.String({ description: "Unified diff to propose" }),
+});
+
+const codeArtifactsSchema = Type.Object({
+  kind: Type.Optional(Type.String({ description: "Artifact kind filter" })),
+});
+
+const codePatchRefSchema = Type.Object({
+  artifactId: Type.String({ description: "Patch or artifact id" }),
+});
+
+const codeRejectPatchSchema = Type.Object({
+  artifactId: Type.String({ description: "Patch artifact id" }),
+  text: Type.Optional(Type.String({ description: "Optional rejection reason" })),
+});
+
+const codeTextSchema = Type.Object({
+  text: Type.String({ description: "Single-line note text" }),
+});
+
+const codeHistorySchema = Type.Object({
+  sessionId: Type.Optional(Type.String({ description: "Optional coding session id" })),
+});
+
+const codeWorkspaceSchema = Type.Object({
+  command: Type.Optional(
+    Type.Union([Type.Literal("show"), Type.Literal("list"), Type.Literal("use")], {
+      description: "Workspace action: show, list, or use",
+    }),
+  ),
+  path: Type.Optional(Type.String({ description: "Workspace path/name for command=use" })),
 });
 
 const webSchema = Type.Object({
@@ -638,6 +748,8 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
       (p) => `canvas ${p.action}${p.args ? ` ${p.args}` : ""}`,
       ctx,
     ),
+    createCodeTool(ctx),
+    ...createTypedCodeTools(ctx),
     wrap(
       "marina_web",
       "Web",
@@ -775,6 +887,317 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
       ctx,
     ),
   ];
+}
+
+function createCodeTool(ctx: ToolContext): AgentTool<typeof codeSchema> {
+  return {
+    name: "marina_code",
+    label: "Code",
+    description:
+      "Work inside the active Marina coding session: inspect files, read, search, diff, run allowed checks, propose/apply patches, and record durable coding artifacts.",
+    parameters: codeSchema,
+    execute: async (_id, params: Static<typeof codeSchema>, signal) => {
+      try {
+        return await execCommand(ctx, buildCodeCommand(params), signal);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          content: [{ type: "text" as const, text: `Invalid marina_code request: ${message}` }],
+          details: { error: message },
+        };
+      }
+    },
+  };
+}
+
+function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
+  return [
+    wrap(
+      "marina_code_session_status",
+      "Code Session Status",
+      "Show the active Marina coding session, workspace, latest artifact, and pending patches.",
+      codeEmptySchema,
+      () => "code status",
+      ctx,
+    ),
+    wrap(
+      "marina_code_list_files",
+      "Code List Files",
+      "List files in the active coding session workspace.",
+      codePathSchema,
+      (p) => `code files ${singleLineCodeParam((p.path as string | undefined) ?? ".", "path")}`,
+      ctx,
+    ),
+    wrap(
+      "marina_code_read_file",
+      "Code Read File",
+      "Read one relative file from the active coding session workspace.",
+      codeReadFileSchema,
+      (p) =>
+        `code read ${requiredSingleLineCodeParam(p.path as string | undefined, "path", "path is required")}`,
+      ctx,
+    ),
+    wrap(
+      "marina_code_search",
+      "Code Search",
+      "Search text in the active coding session workspace.",
+      codeSearchSchema,
+      (p) =>
+        `code search ${requiredSingleLineCodeParam(p.query as string | undefined, "query", "query is required")}`,
+      ctx,
+    ),
+    wrap(
+      "marina_code_diff",
+      "Code Diff",
+      "Show git diff for the active coding session workspace, optionally scoped to a path.",
+      codePathSchema,
+      (p) => (p.path ? `code diff ${singleLineCodeParam(p.path as string, "path")}` : "code diff"),
+      ctx,
+    ),
+    wrap(
+      "marina_code_run",
+      "Code Run",
+      "Run one allowed workspace command and store the command-output artifact.",
+      codeRunSchema,
+      (p) =>
+        `code run ${requiredSingleLineCodeParam(p.command as string | undefined, "command", "command is required")}`,
+      ctx,
+    ),
+    wrap(
+      "marina_code_verify",
+      "Code Verify",
+      "Run the detected verification chain and store a verification artifact.",
+      codeEmptySchema,
+      () => "code verify",
+      ctx,
+    ),
+    wrap(
+      "marina_code_artifacts",
+      "Code Artifacts",
+      "List coding artifacts for the active session, optionally filtered by kind.",
+      codeArtifactsSchema,
+      (p) =>
+        p.kind
+          ? `code artifacts kind ${singleLineCodeParam(p.kind as string, "kind")}`
+          : "code artifacts",
+      ctx,
+    ),
+    wrap(
+      "marina_code_patch",
+      "Code Patch",
+      "Propose a unified-diff patch artifact in the active coding session.",
+      codePatchSchema,
+      (p) =>
+        `code patch ${singleLineCodeParam((p.title as string | undefined) ?? "Proposed change", "title")}\n${requiredCodeDiff(p.diff as string | undefined)}`,
+      ctx,
+    ),
+    wrap(
+      "marina_code_apply_patch",
+      "Code Apply Patch",
+      "Apply a pending patch artifact in the active coding session.",
+      codePatchRefSchema,
+      (p) =>
+        `code apply ${requiredSingleLineCodeParam(p.artifactId as string | undefined, "artifactId", "artifactId is required")}`,
+      ctx,
+    ),
+    wrap(
+      "marina_code_reject_patch",
+      "Code Reject Patch",
+      "Reject a pending patch artifact in the active coding session.",
+      codeRejectPatchSchema,
+      (p) =>
+        `code reject ${requiredSingleLineCodeParam(
+          p.artifactId as string | undefined,
+          "artifactId",
+          "artifactId is required",
+        )}${
+          typeof p.text === "string" && p.text.trim()
+            ? ` ${singleLineCodeParam(p.text, "text")}`
+            : ""
+        }`,
+      ctx,
+    ),
+    wrap(
+      "marina_code_observe",
+      "Code Observe",
+      "Store an app or workspace observation artifact in the active coding session.",
+      codeTextSchema,
+      (p) =>
+        `code observe ${requiredSingleLineCodeParam(p.text as string | undefined, "text", "text is required")}`,
+      ctx,
+    ),
+    wrap(
+      "marina_code_plan",
+      "Code Plan",
+      "Store a plan artifact in the active coding session.",
+      codeTextSchema,
+      (p) =>
+        `code plan ${requiredSingleLineCodeParam(p.text as string | undefined, "text", "text is required")}`,
+      ctx,
+    ),
+    wrap(
+      "marina_code_summary",
+      "Code Summary",
+      "Store a summary artifact in the active coding session.",
+      codeTextSchema,
+      (p) =>
+        `code summary ${requiredSingleLineCodeParam(p.text as string | undefined, "text", "text is required")}`,
+      ctx,
+    ),
+    wrap(
+      "marina_code_handoff",
+      "Code Handoff",
+      "Store a handoff artifact in the active coding session.",
+      codeTextSchema,
+      (p) =>
+        `code handoff ${requiredSingleLineCodeParam(p.text as string | undefined, "text", "text is required")}`,
+      ctx,
+    ),
+    wrap(
+      "marina_code_decision",
+      "Code Decision",
+      "Store a decision artifact in the active coding session.",
+      codeTextSchema,
+      (p) =>
+        `code decision ${requiredSingleLineCodeParam(p.text as string | undefined, "text", "text is required")}`,
+      ctx,
+    ),
+    wrap(
+      "marina_code_history",
+      "Code History",
+      "Show recent coding events for the active or specified coding session.",
+      codeHistorySchema,
+      (p) =>
+        p.sessionId
+          ? `code history ${singleLineCodeParam(p.sessionId as string, "sessionId")}`
+          : "code history",
+      ctx,
+    ),
+    wrap(
+      "marina_code_workspace",
+      "Code Workspace",
+      "Show, list, or select the active coding workspace.",
+      codeWorkspaceSchema,
+      (p) => {
+        if (p.command === "list") return "code workspace list";
+        if (p.command === "use") {
+          return `code workspace use ${requiredSingleLineCodeParam(
+            p.path as string | undefined,
+            "path",
+            "path is required",
+          )}`;
+        }
+        return "code workspace";
+      },
+      ctx,
+    ),
+    wrap(
+      "marina_code_doctor",
+      "Code Doctor",
+      "Diagnose Code Mode setup for the current entity and workspace.",
+      codeEmptySchema,
+      () => "code doctor",
+      ctx,
+    ),
+  ];
+}
+
+function buildCodeCommand(params: Record<string, unknown>): string {
+  const action = params.action as string;
+  const path = params.path as string | undefined;
+  const query = params.query as string | undefined;
+  const command = params.command as string | undefined;
+  const title = params.title as string | undefined;
+  const diff = params.diff as string | undefined;
+  const artifactId = params.artifactId as string | undefined;
+  const kind = params.kind as string | undefined;
+  const status = params.status as string | undefined;
+  const text = params.text as string | undefined;
+
+  switch (action) {
+    case "status":
+      return "code status";
+    case "files":
+      return `code files ${singleLineCodeParam(path ?? ".", "path")}`;
+    case "read":
+      return `code read ${requiredSingleLineCodeParam(path, "path", "action=read requires path")}`;
+    case "search":
+      return `code search ${requiredSingleLineCodeParam(query, "query", "action=search requires query")}`;
+    case "diff":
+      return path ? `code diff ${singleLineCodeParam(path, "path")}` : "code diff";
+    case "run":
+      return `code run ${requiredSingleLineCodeParam(command, "command", "action=run requires command")}`;
+    case "verify":
+      return "code verify";
+    case "observe":
+      return `code observe ${requiredSingleLineCodeParam(text, "text", "action=observe requires text")}`;
+    case "patch":
+      return `code patch ${singleLineCodeParam(title ?? "Proposed change", "title")}\n${requiredCodeDiff(diff)}`;
+    case "apply":
+      return `code apply ${requiredSingleLineCodeParam(artifactId, "artifactId", "action=apply requires artifactId")}`;
+    case "reject":
+      return `code reject ${requiredSingleLineCodeParam(
+        artifactId,
+        "artifactId",
+        "action=reject requires artifactId",
+      )}${text ? ` ${singleLineCodeParam(text, "text")}` : ""}`;
+    case "show":
+      return `code show ${requiredSingleLineCodeParam(artifactId, "artifactId", "action=show requires artifactId")}`;
+    case "patches":
+      return status ? `code patches ${validatedPatchStatus(status)}` : "code patches";
+    case "artifacts":
+      return kind ? `code artifacts kind ${singleLineCodeParam(kind, "kind")}` : "code artifacts";
+    case "history":
+      return "code history";
+    case "workspace":
+      if (command === "list") return "code workspace list";
+      if (command === "use" && path)
+        return `code workspace use ${singleLineCodeParam(path, "path")}`;
+      return "code workspace";
+    case "doctor":
+      return "code doctor";
+    case "plan":
+    case "summary":
+    case "handoff":
+    case "decision":
+      return `code ${action} ${requiredSingleLineCodeParam(
+        text,
+        "text",
+        `action=${action} requires text`,
+      )}`;
+    default:
+      return "code status";
+  }
+}
+
+function requiredSingleLineCodeParam(
+  value: string | undefined,
+  name: string,
+  message: string,
+): string {
+  if (!value?.trim()) throw new Error(message);
+  return singleLineCodeParam(value, name);
+}
+
+function singleLineCodeParam(value: string, name: string): string {
+  const normalized = value.trim();
+  if (normalized.includes("\n") || normalized.includes("\r")) {
+    throw new Error(`${name} must be a single line`);
+  }
+  return normalized;
+}
+
+function requiredCodeDiff(value: string | undefined): string {
+  if (!value?.trim()) throw new Error("action=patch requires diff");
+  return value.endsWith("\n") ? value : `${value}\n`;
+}
+
+function validatedPatchStatus(value: string): string {
+  const status = singleLineCodeParam(value, "status").toLowerCase();
+  if (status !== "pending" && status !== "applied" && status !== "rejected") {
+    throw new Error("action=patches status must be pending, applied, or rejected");
+  }
+  return status;
 }
 
 // ─── Think Tool (zero side effects) ────────────────────────────────────────
@@ -1135,6 +1558,7 @@ export const TOOL_PROFILE_NAMES: Record<ToolProfile, string[]> = {
   full: [], // empty = all tools
   crew: [
     "marina_command",
+    "marina_code",
     "marina_tell",
     "marina_pool",
     "marina_brief",
