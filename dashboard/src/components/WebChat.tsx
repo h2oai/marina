@@ -8,8 +8,10 @@ import {
   GitPullRequest,
   List,
   MessageSquareText,
+  Network,
   PanelsTopLeft,
   Send,
+  Sparkles,
   Terminal,
   XCircle,
 } from "lucide-react";
@@ -210,6 +212,7 @@ interface CodeMessageData {
     timestamp?: number;
   }[];
   exitCode?: number;
+  modelTarget?: string;
   parentSessionId?: string;
   paths?: string[];
   query?: string;
@@ -242,12 +245,14 @@ interface CodeMessageData {
     | "file"
     | "history"
     | "list"
+    | "model"
     | "note"
     | "patch"
     | "profile"
     | "readiness"
     | "search"
     | "session"
+    | "skill"
     | "tree"
     | "verification";
   workspace?: string;
@@ -259,6 +264,7 @@ interface CodeContextData {
   latestArtifactKind?: string;
   latestArtifactLifecycle?: string;
   latestArtifactStatus?: string;
+  modelTarget?: string;
   pendingPatches?: number;
   profile?: string;
   sessionId?: string;
@@ -973,6 +979,14 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
             value: codeContext.workspace,
           }
         : null,
+      codeContext.modelTarget
+        ? {
+            key: "model",
+            label: "model",
+            title: `Code model target ${codeContext.modelTarget}`,
+            value: codeContext.modelTarget,
+          }
+        : null,
       {
         key: "artifact",
         label: codeContext.latestArtifactKind ?? "artifact",
@@ -1248,9 +1262,13 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
                 ? GitBranch
                 : type === "session"
                   ? Code2
-                  : type === "profile"
-                    ? List
-                    : FileText;
+                  : type === "model"
+                    ? Network
+                    : type === "skill"
+                      ? Sparkles
+                      : type === "profile"
+                        ? List
+                        : FileText;
     const title =
       type === "command"
         ? `$ ${(code.command ?? []).join(" ")}`
@@ -1294,6 +1312,11 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
                 <span className="font-mono text-text-dim">{code.artifactId}</span>
               )}
               {code.sessionId && <span className="font-mono text-text-dim">{code.sessionId}</span>}
+              {code.modelTarget && (
+                <span className="rounded bg-bg-hover px-1.5 py-0.5 font-mono text-[9px] text-text-dim">
+                  {code.modelTarget}
+                </span>
+              )}
             </div>
             <div className="mt-1 truncate text-sm font-semibold text-text-bright">{title}</div>
           </div>

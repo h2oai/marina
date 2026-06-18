@@ -43,6 +43,7 @@ import {
   createScopedTools,
   TOOL_PROFILE_NAMES,
 } from "../src/agent/tools";
+import { LOCAL_PROVIDERS } from "../src/net/model-discovery";
 import type { MarinaDB } from "../src/persistence/database";
 import type { EntityId, EntityRank, KnownProperties, Perception, RoomId } from "../src/types";
 
@@ -1330,6 +1331,14 @@ describe("tool profiles", () => {
     const history = tools.find((tool) => tool.name === "marina_code_history");
     const workspace = tools.find((tool) => tool.name === "marina_code_workspace");
     const doctor = tools.find((tool) => tool.name === "marina_code_doctor");
+    const recipe = tools.find((tool) => tool.name === "marina_code_recipe");
+    const checkpoint = tools.find((tool) => tool.name === "marina_code_checkpoint");
+    const approval = tools.find((tool) => tool.name === "marina_code_approval");
+    const model = tools.find((tool) => tool.name === "marina_code_model");
+    const skill = tools.find((tool) => tool.name === "marina_code_skill");
+    const thread = tools.find((tool) => tool.name === "marina_code_thread");
+    const crew = tools.find((tool) => tool.name === "marina_code_crew");
+    const external = tools.find((tool) => tool.name === "marina_code_external");
     expect(status).toBeTruthy();
     expect(read).toBeTruthy();
     expect(run).toBeTruthy();
@@ -1344,6 +1353,14 @@ describe("tool profiles", () => {
     expect(history).toBeTruthy();
     expect(workspace).toBeTruthy();
     expect(doctor).toBeTruthy();
+    expect(recipe).toBeTruthy();
+    expect(checkpoint).toBeTruthy();
+    expect(approval).toBeTruthy();
+    expect(model).toBeTruthy();
+    expect(skill).toBeTruthy();
+    expect(thread).toBeTruthy();
+    expect(crew).toBeTruthy();
+    expect(external).toBeTruthy();
 
     await status!.execute("call-1", {});
     await read!.execute("call-2", { path: "README.md" });
@@ -1364,6 +1381,34 @@ describe("tool profiles", () => {
     await workspace!.execute("call-14", { command: "use", path: "dashboard" });
     await workspace!.execute("call-15", {});
     await doctor!.execute("call-16", {});
+    await recipe!.execute("call-17", {
+      command: "save",
+      name: "quick",
+      text: "typecheck then lint",
+    });
+    await recipe!.execute("call-18", { command: "run", name: "quick" });
+    await checkpoint!.execute("call-19", { command: "create", title: "before edit" });
+    await checkpoint!.execute("call-20", { command: "revert", artifactId: "checkpoint_123" });
+    await approval!.execute("call-21", {
+      command: "request",
+      kind: "shell",
+      text: "run extended tests",
+    });
+    await approval!.execute("call-22", { command: "approve", artifactId: "approval_123" });
+    await model!.execute("call-23", { command: "set", target: "anthropic/claude-sonnet-4" });
+    await skill!.execute("call-24", {
+      command: "add",
+      name: "review",
+      text: "prefer small diffs",
+    });
+    await skill!.execute("call-25", { command: "use", name: "review" });
+    await thread!.execute("call-26", {});
+    await crew!.execute("call-27", { text: "review and verify the change" });
+    await external!.execute("call-28", {
+      command: "link",
+      system: "acp",
+      externalId: "zed-session",
+    });
 
     expect(commands).toEqual([
       "code status",
@@ -1382,12 +1427,24 @@ describe("tool profiles", () => {
       "code workspace use dashboard",
       "code workspace",
       "code doctor",
+      "code recipe save quick typecheck then lint",
+      "code recipe run quick",
+      "code checkpoint before edit",
+      "code revert checkpoint_123",
+      "code approval request shell run extended tests",
+      "code approve approval_123",
+      "code model set anthropic/claude-sonnet-4",
+      "code skill add review prefer small diffs",
+      "code skill use review",
+      "code thread",
+      "code crew review and verify the change",
+      "code external link acp zed-session",
     ]);
 
-    await expect(observe!.execute("call-17", { text: "two\nlines" })).rejects.toThrow(
+    await expect(observe!.execute("call-29", { text: "two\nlines" })).rejects.toThrow(
       "text must be a single line",
     );
-    await expect(workspace!.execute("call-18", { command: "use" })).rejects.toThrow(
+    await expect(workspace!.execute("call-30", { command: "use" })).rejects.toThrow(
       "path is required",
     );
   });
@@ -1529,8 +1586,8 @@ describe("model resolution", () => {
   it("gives local runtimes a small, honest context window (not the 128k cloud default)", () => {
     // The compactor budgets against this — an inflated window is what lets a
     // small local server silently overflow. Defaults must be conservative.
-    expect(resolveModel("llama/local-model").contextWindow).toBe(16384);
-    expect(resolveModel("ollama/mistral").contextWindow).toBe(8192);
+    expect(LOCAL_PROVIDERS.llama!.defaultContextWindow).toBe(16384);
+    expect(LOCAL_PROVIDERS.ollama!.defaultContextWindow).toBe(8192);
   });
 
   it("honors LLAMA_CONTEXT_WINDOW / OLLAMA_CONTEXT_WINDOW overrides", () => {
