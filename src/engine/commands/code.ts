@@ -1,4 +1,4 @@
-import { accessSync, constants as fsConstants } from "node:fs";
+import { accessSync, constants as fsConstants, readdirSync, statSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import {
   type CodePromptAnswerer,
@@ -15,6 +15,7 @@ const ACTIVE_SESSION_KEY = "coding_session_id";
 const ACTIVE_MODAL_KEY = "active_modal";
 const CODE_CONTEXT_KEY = "code_context";
 const CODE_PROFILE_KEY = "code_profile";
+const CODE_PROFILE_ALIASES_KEY = "code_profile_aliases";
 const CODE_WORKSPACE_KEY = "code_workspace_root";
 
 type CodeProfileName = "marina" | "pi" | "claude" | "codex";
@@ -32,6 +33,7 @@ interface CodeMessageMetadata {
   event: string;
   events?: CodeEventRow[];
   exitCode?: number;
+  modelTarget?: string;
   parentSessionId?: string;
   paths?: string[];
   query?: string;
@@ -49,12 +51,14 @@ interface CodeMessageMetadata {
     | "file"
     | "history"
     | "list"
+    | "model"
     | "note"
     | "patch"
     | "profile"
     | "readiness"
     | "search"
     | "session"
+    | "skill"
     | "tree"
     | "verification";
   workspace?: string;
@@ -96,6 +100,7 @@ interface CodeContextSnapshot {
   latestArtifactKind?: string;
   latestArtifactLifecycle?: string;
   latestArtifactStatus?: string;
+  modelTarget?: string;
   pendingPatches: number;
   profile: CodeProfileName;
   sessionId?: string;
@@ -431,6 +436,97 @@ const PROFILE_COMPARISON_ROWS: ProfileComparisonRow[] = [
     status: "planned",
   },
   {
+    action: "Project run recipes",
+    marina: "recipe list/save/run; verify uses default",
+    pi: "exec recipe",
+    claude: "custom command/checklist",
+    codex: "check recipe",
+    canonical: "run_recipe artifact",
+    grade: "native",
+    portability: "allowlisted command chain",
+    behavior: "Recipes are durable session artifacts and never bypass host-local policy.",
+    status: "implemented",
+  },
+  {
+    action: "Checkpoint / revert",
+    marina: "checkpoint; revert",
+    pi: "checkpoint/tree",
+    claude: "checkpoint/revert",
+    codex: "checkpoint/revert",
+    canonical: "checkpoint artifact",
+    grade: "native",
+    portability: "reverse-applied workspace diff",
+    status: "implemented",
+  },
+  {
+    action: "Coding approvals",
+    marina: "approval request; approve; deny",
+    pi: "approval card",
+    claude: "permission prompt",
+    codex: "approval request",
+    canonical: "approval artifact",
+    grade: "native",
+    portability: "multiuser decision artifact",
+    status: "implemented",
+  },
+  {
+    action: "Coding crew plan",
+    marina: "roles; crew; spawn request",
+    pi: "crew/tree",
+    claude: "subagents",
+    codex: "assign/review",
+    canonical: "crew_plan / spawn_request artifacts",
+    grade: "adapter",
+    portability: "Marina agent orchestration",
+    behavior: "Live assignment is implemented; spawning is represented as a supervised request.",
+    status: "implemented",
+  },
+  {
+    action: "Code skills",
+    marina: "skill list/add/use",
+    pi: "skills",
+    claude: "skills/commands",
+    codex: "instructions/profile",
+    canonical: "code_skill artifact",
+    grade: "native",
+    portability: "session-local skill registry",
+    status: "implemented",
+  },
+  {
+    action: "Model target",
+    marina: "model show/set/clear",
+    pi: "model target",
+    claude: "model selector",
+    codex: "model switch",
+    canonical: "model_setting artifact",
+    grade: "adapter",
+    portability: "Marina model routing intent",
+    behavior: "Stored per-session now; execution still uses configured Marina model surface.",
+    status: "implemented",
+  },
+  {
+    action: "External/editor link",
+    marina: "external link/show/unlink",
+    pi: "external session",
+    claude: "IDE session",
+    codex: "ACP/MCP session",
+    canonical: "external_link artifact",
+    grade: "adapter",
+    portability: "future ACP/MCP routing handle",
+    status: "implemented",
+  },
+  {
+    action: "Artifact thread",
+    marina: "thread",
+    pi: "tree/thread",
+    claude: "transcript summary",
+    codex: "session summary",
+    canonical: "typed artifact timeline",
+    grade: "native",
+    portability: "WebChat rich metadata",
+    status: "implemented",
+  },
+  {
     action: "Propose edit",
     marina: "patch/propose",
     pi: "proposal",
@@ -586,13 +682,34 @@ Usage:
   code profile compare        Compare profiles to Marina primitives
   code profile help [name]    Show migration help for a profile
   code profile use <name>     Use a code profile
+  code profile alias <a> <b>  Add a personal Code Mode alias
   code workspace              Show active/default code workspace
   code workspace list         List configured code workspace roots
+  code workspace discover     Find likely projects under configured roots
   code workspace use <path>   Select a workspace root for new sessions
   code doctor                 Inspect Code Mode workspace readiness
   code onboard                Show workspace/session readiness guidance
   code ask <request>          Ask the default Marina code model for this session
   code assign <agent> <req>   Assign this coding session to a live Marina agent
+  code roles                  Show suggested coding-agent roles
+  code crew <goal>            Store a coding crew orchestration plan
+  code spawn <role> <goal>    Store a reviewed agent-spawn request
+  code model                  Show per-session code model target
+  code model set <target>     Set per-session code model target
+  code recipe                 List detected/stored verification recipes
+  code recipe save <n> <cmds> Store a verification recipe (use "then" between commands)
+  code recipe run <name>      Run a stored or detected recipe
+  code checkpoint [title]     Store current workspace diff as a checkpoint
+  code revert <checkpoint>    Reverse-apply a checkpoint diff
+  code approvals              List pending coding approvals
+  code approval request <k> <desc> Store an approval request
+  code approve|deny <id>      Decide a pending coding approval
+  code skill                  List code-modal skills
+  code skill add <name> <text> Store a code-modal skill
+  code skill use <name>       Record skill use in this session
+  code thread                 Show a compact artifact thread
+  code external               Show external session links
+  code external link <system> <id> Link an external coding surface
   code start [title]          Start a coding session for the server workspace
   code branch [title]         Branch the active coding session
   code tree                   Show session branch lineage
@@ -719,6 +836,48 @@ export function codeCommand(deps: CodeDeps): CommandDef {
             return;
           case "assign":
             await assignCode(ctx, input.entity, entity, depsWithDb, driver, args);
+            return;
+          case "roles":
+            roles(ctx, input.entity);
+            return;
+          case "crew":
+            crewPlan(ctx, input.entity, entity, depsWithDb, rawAfterSub);
+            return;
+          case "spawn":
+            await spawnRequest(ctx, input.entity, entity, depsWithDb, args);
+            return;
+          case "model":
+            modelSetting(ctx, input.entity, entity, depsWithDb, args);
+            return;
+          case "recipe":
+            await recipe(ctx, input.entity, entity, depsWithDb, args);
+            return;
+          case "checkpoint":
+            await checkpoint(ctx, input.entity, entity, depsWithDb, rawAfterSub);
+            return;
+          case "revert":
+            await revertCheckpoint(ctx, input.entity, entity, depsWithDb, args.join(" "));
+            return;
+          case "approvals":
+            approvals(ctx, input.entity, entity, depsWithDb);
+            return;
+          case "approval":
+            approval(ctx, input.entity, entity, depsWithDb, args);
+            return;
+          case "approve":
+            decideApproval(ctx, input.entity, entity, depsWithDb, args.join(" "), "approved");
+            return;
+          case "deny":
+            decideApproval(ctx, input.entity, entity, depsWithDb, args.join(" "), "denied");
+            return;
+          case "skill":
+            skill(ctx, input.entity, entity, depsWithDb, args);
+            return;
+          case "thread":
+            thread(ctx, input.entity, entity, depsWithDb);
+            return;
+          case "external":
+            externalLink(ctx, input.entity, entity, depsWithDb, args);
             return;
           case "list":
           case "sessions":
@@ -936,7 +1095,45 @@ function handleProfile(
   }
   if (action === "aliases") {
     const profile = getCodeProfile(entity);
-    ctx.send(eid, `${header(`Aliases: ${profile.name}`)}\n${formatAliases(profile)}`);
+    ctx.send(
+      eid,
+      `${header(`Aliases: ${profile.name}`)}\n${formatAliases(profile)}\n${dim(
+        "Use: code profile alias <alias> <command> | code profile alias clear <alias>",
+      )}`,
+    );
+    return;
+  }
+  if (action === "alias") {
+    const aliasAction = args[1]?.toLowerCase();
+    if (!aliasAction) {
+      ctx.send(
+        eid,
+        "Usage: code profile alias <alias> <command> | code profile alias clear <alias>",
+      );
+      return;
+    }
+    const aliases = getCustomProfileAliases(entity);
+    if (aliasAction === "clear") {
+      const alias = args[2]?.toLowerCase();
+      if (!alias) {
+        ctx.send(eid, "Usage: code profile alias clear <alias>");
+        return;
+      }
+      delete aliases[alias];
+      entity.properties[CODE_PROFILE_ALIASES_KEY] = aliases;
+      deps.db.saveEntity(entity);
+      ctx.send(eid, success(`Code alias cleared: ${alias}`));
+      return;
+    }
+    const target = args[2]?.toLowerCase();
+    if (!target) {
+      ctx.send(eid, "Usage: code profile alias <alias> <command>");
+      return;
+    }
+    aliases[aliasAction] = target;
+    entity.properties[CODE_PROFILE_ALIASES_KEY] = aliases;
+    deps.db.saveEntity(entity);
+    ctx.send(eid, success(`Code alias saved: ${aliasAction} -> ${target}`));
     return;
   }
   if (action !== "show") {
@@ -991,6 +1188,34 @@ function handleWorkspace(
     });
     return;
   }
+  if (action === "discover" || action === "scan") {
+    const active = getSelectedWorkspaceRoot(entity, deps);
+    const choices = discoverWorkspaceChoices(registry);
+    if (choices.length === 0) {
+      ctx.send(eid, "No likely code workspaces found under configured roots.");
+      return;
+    }
+    const lines = [header("Discovered Code Workspaces"), separator()];
+    for (const choice of choices) {
+      const mark = choice.root === active ? "*" : " ";
+      lines.push(`${mark} ${choice.label} ${dim(choice.root)} ${dim(choice.reason)}`);
+    }
+    sendCode(ctx, eid, lines.join("\n"), {
+      commands: ["code workspace use <path>", "code workspace", "code doctor"],
+      event: "workspace_discovered",
+      rows: choices.map((choice) => ({
+        detail: choice.reason,
+        path: choice.root,
+        status: choice.root === active ? "active" : undefined,
+        title: choice.label,
+        type: "workspace",
+      })),
+      title: "Discovered Code Workspaces",
+      type: "list",
+      workspace: active,
+    });
+    return;
+  }
   if (action === "use" || action === "set") {
     const raw = args.slice(1).join(" ");
     if (!raw.trim()) {
@@ -1027,7 +1252,7 @@ function handleWorkspace(
     return;
   }
   if (action !== "show") {
-    ctx.send(eid, "Usage: code workspace [show|list|use <path>]");
+    ctx.send(eid, "Usage: code workspace [show|list|discover|use <path>]");
     return;
   }
   const root = getSelectedWorkspaceRoot(entity, deps);
@@ -1040,10 +1265,17 @@ function handleWorkspace(
       `Selected: ${root}`,
       `Default: ${registry.defaultRoot}`,
       `Allowed roots: ${registry.roots.join(", ")}`,
-      dim("Use: code workspace list | code workspace use <path> | code doctor"),
+      dim(
+        "Use: code workspace list | code workspace discover | code workspace use <path> | code doctor",
+      ),
     ].join("\n"),
     {
-      commands: ["code workspace list", "code workspace use <path>", "code doctor"],
+      commands: [
+        "code workspace list",
+        "code workspace discover",
+        "code workspace use <path>",
+        "code doctor",
+      ],
       event: "workspace_shown",
       rows: registry.roots.map((choiceRoot) => ({
         path: choiceRoot,
@@ -1299,8 +1531,10 @@ async function askCode(
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const profile = getCodeProfile(entity);
+  const modelTarget = getSessionModelTarget(deps.db, session.id);
   const artifact = await driver.runDirect({
     actor: entity.name,
+    modelTarget,
     profile: profile.name,
     prompt,
     session,
@@ -1321,10 +1555,11 @@ async function askCode(
       commands: [`code show ${artifact.id}`, "code status"],
       content: artifact.content_text,
       event: "code_response_stored",
+      modelTarget,
       sessionId: session.id,
       status: artifact.status,
       title: artifact.title,
-      type: "artifact",
+      type: "skill",
       workspace: session.workspace_root,
     },
   );
@@ -1343,9 +1578,11 @@ async function assignCode(
   const agentName = args[0];
   const prompt = args.slice(1).join(" ");
   const profile = getCodeProfile(entity);
+  const modelTarget = getSessionModelTarget(deps.db, session.id);
   const artifact = await driver.assignAgent({
     actor: entity.name,
     agentName: agentName ?? "",
+    modelTarget,
     profile: profile.name,
     prompt,
     session,
@@ -1366,6 +1603,7 @@ async function assignCode(
       commands: [`code show ${artifact.id}`, "code status", "code history"],
       content: artifact.content_text,
       event: "code_agent_assigned",
+      modelTarget,
       rows: [
         {
           detail: prompt,
@@ -1384,6 +1622,417 @@ async function assignCode(
   );
 }
 
+const CODING_ROLES = [
+  ["planner", "Turns the goal into a small ordered plan and acceptance criteria."],
+  ["implementer", "Makes the smallest coherent patch against the workspace."],
+  ["reviewer", "Reviews diffs for correctness, regressions, and missing tests."],
+  ["tester", "Runs allowed checks and records verification artifacts."],
+  ["security", "Looks for path, secret, network, auth, and data risks."],
+  ["release", "Writes summary, handoff, and operator-facing notes."],
+] as const;
+
+function roles(ctx: RoomContext, eid: EntityId): void {
+  const lines = [header("Coding Roles"), separator()];
+  for (const [role, detail] of CODING_ROLES) {
+    lines.push(`  ${role} ${dim(detail)}`);
+  }
+  sendCode(ctx, eid, lines.join("\n"), {
+    commands: ["code crew <goal>", "code spawn <role> <goal>", "code assign <agent> <request>"],
+    event: "coding_roles_shown",
+    rows: CODING_ROLES.map(([role, detail]) => ({
+      id: role,
+      detail,
+      title: role,
+      type: "role",
+    })),
+    title: "Coding Roles",
+    type: "list",
+  });
+}
+
+function crewPlan(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  goal: string,
+): void {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const text = goal.trim();
+  if (!text) {
+    ctx.send(eid, "Usage: code crew <goal>");
+    return;
+  }
+  const body = [
+    `Goal: ${text}`,
+    "",
+    "Suggested crew:",
+    ...CODING_ROLES.map(([role, detail]) => `- ${role}: ${detail}`),
+    "",
+    "Next: assign live agents with code assign, or request supervised spawns with code spawn.",
+  ].join("\n");
+  const artifact = deps.db.createCodingArtifact({
+    sessionId: session.id,
+    kind: "crew_plan",
+    title: formatCodingNoteTitle("plan", text).replace("Plan:", "Crew plan:"),
+    status: "planned",
+    contentText: body,
+    metadata: { goal: text, roles: CODING_ROLES.map(([role]) => role) },
+    createdBy: entity.name,
+  });
+  deps.db.createCodingEvent({
+    sessionId: session.id,
+    actor: entity.name,
+    kind: "coding_crew_planned",
+    payload: { id: artifact.id, goal: text },
+  });
+  updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+  sendCode(ctx, eid, `${success(`Coding crew plan stored: ${artifact.id}`)}\n${body}`, {
+    artifactId: artifact.id,
+    artifactKind: artifact.kind,
+    commands: [`code show ${artifact.id}`, "code roles", "code assign <agent> <request>"],
+    content: body,
+    event: "coding_crew_planned",
+    rows: CODING_ROLES.map(([role, detail]) => ({ id: role, detail, title: role, type: "role" })),
+    sessionId: session.id,
+    status: artifact.status,
+    title: artifact.title,
+    type: "artifact",
+    workspace: session.workspace_root,
+  });
+}
+
+async function spawnRequest(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  args: string[],
+): Promise<void> {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const action = args[0]?.toLowerCase();
+  if (!action || action === "list") {
+    listSpawnRequests(ctx, eid, deps.db, session);
+    return;
+  }
+  if (action === "run" || action === "approved" || action === "launch") {
+    await runApprovedSpawnRequest(ctx, eid, entity, deps, session, args.slice(1));
+    return;
+  }
+
+  const role = action;
+  const goal = args.slice(1).join(" ").trim();
+  if (!role || !goal) {
+    ctx.send(eid, "Usage: code spawn <role> <goal> | code spawn run <spawn_request>");
+    return;
+  }
+  const artifact = deps.db.createCodingArtifact({
+    sessionId: session.id,
+    kind: "spawn_request",
+    title: `Spawn request: ${role}`,
+    status: "pending",
+    contentText: `Role: ${role}\nGoal: ${goal}\n\nThis is a supervised spawn request. Approve it, then launch locally with code spawn run ${role}.`,
+    metadata: { role, goal, requiredGate: "agent.spawn", launch: "code spawn run <id>" },
+    createdBy: entity.name,
+  });
+  deps.db.createCodingEvent({
+    sessionId: session.id,
+    actor: entity.name,
+    kind: "coding_spawn_requested",
+    payload: { id: artifact.id, role, goal },
+  });
+  updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+  sendCode(ctx, eid, success(`Coding spawn request stored: ${artifact.id}`), {
+    artifactId: artifact.id,
+    artifactKind: artifact.kind,
+    commands: [
+      `code show ${artifact.id}`,
+      `code approve ${artifact.id}`,
+      `code deny ${artifact.id}`,
+      `code spawn run ${artifact.id}`,
+    ],
+    event: "coding_spawn_requested",
+    sessionId: session.id,
+    status: artifact.status,
+    title: artifact.title,
+    type: "artifact",
+    workspace: session.workspace_root,
+  });
+}
+
+function listSpawnRequests(
+  ctx: RoomContext,
+  eid: EntityId,
+  db: MarinaDB,
+  session: CodingSessionRow,
+): void {
+  const requests = db
+    .listCodingArtifacts(session.id, 50)
+    .filter((artifact) => artifact.kind === "spawn_request" && artifact.status !== "archived");
+  if (requests.length === 0) {
+    ctx.send(eid, "No coding spawn requests for this session.");
+    return;
+  }
+  const lines = [header("Coding Spawn Requests"), separator()];
+  for (const artifact of requests) {
+    const meta = parseJsonObject(artifact.metadata_json);
+    lines.push(
+      `  ${artifact.id} ${dim(artifact.status)} ${meta.role ?? "agent"} ${dim(String(meta.goal ?? artifact.title))}`,
+    );
+  }
+  sendCode(ctx, eid, lines.join("\n"), {
+    commands: ["code spawn run <id>", "code approve <id>", "code deny <id>"],
+    event: "coding_spawn_requests_listed",
+    rows: requests.map((artifact) => {
+      const meta = parseJsonObject(artifact.metadata_json);
+      return {
+        detail: typeof meta.goal === "string" ? meta.goal : artifact.content_text,
+        id: artifact.id,
+        status: artifact.status,
+        title: typeof meta.role === "string" ? meta.role : artifact.title,
+        type: "spawn_request",
+      };
+    }),
+    sessionId: session.id,
+    title: "Coding Spawn Requests",
+    type: "list",
+    workspace: session.workspace_root,
+  });
+}
+
+async function runApprovedSpawnRequest(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+  args: string[],
+): Promise<void> {
+  if (!deps.agentRuntime?.spawn) {
+    ctx.send(eid, "Agent spawning is not available in this Marina process.");
+    return;
+  }
+  if (deps.agentRuntime.isAvailable && !deps.agentRuntime.isAvailable()) {
+    ctx.send(eid, "No LLM runtime is available for local agent spawning.");
+    return;
+  }
+
+  const parsed = parseSpawnRunArgs(args);
+  const artifact = resolveKindArtifact(
+    ctx,
+    eid,
+    deps.db,
+    session.id,
+    parsed.ref,
+    "spawn_request",
+    "last spawn request",
+  );
+  if (!artifact) return;
+  if (artifact.status !== "approved") {
+    ctx.send(eid, `Spawn request ${artifact.id} is ${artifact.status}, not approved.`);
+    return;
+  }
+
+  const meta = parseJsonObject(artifact.metadata_json);
+  const role = typeof meta.role === "string" ? meta.role : "implementer";
+  const goal = typeof meta.goal === "string" ? meta.goal : artifact.content_text;
+  const modelTarget =
+    parsed.model ?? modelTargetForAgentSpawn(getSessionModelTarget(deps.db, session.id));
+  const agentName =
+    parsed.name ?? uniqueSpawnAgentName(deps.agentRuntime.list?.() ?? [], role, session.id);
+
+  sendCode(ctx, eid, `Spawning ${agentName} for ${role}...`, {
+    artifactId: artifact.id,
+    artifactKind: artifact.kind,
+    commands: ["code status"],
+    event: "coding_spawn_started",
+    modelTarget,
+    sessionId: session.id,
+    status: "running",
+    title: `Spawn ${agentName}`,
+    type: "session",
+    workspace: session.workspace_root,
+  });
+
+  try {
+    const handle = await deps.agentRuntime.spawn({
+      goal: `${goal}\n\nCoding session: ${session.id}\nWorkspace: ${session.workspace_root}`,
+      model: modelTarget,
+      name: agentName,
+      role,
+      spawnedBy: entity.name,
+    });
+    bindSpawnedAgentEntity(handle, session, getCodeProfile(entity).name, deps);
+    const attention = [
+      `You were launched for Marina coding session ${session.id}.`,
+      `Role: ${role}`,
+      `Workspace: ${session.workspace_root}`,
+      modelTarget ? `Model target: ${modelTarget}` : undefined,
+      "",
+      "Start with marina_code status, then inspect files/read/search/diff. Use patch for edits, verify for checks, and summary/handoff for durable progress.",
+      "",
+      `Goal: ${goal}`,
+    ]
+      .filter((line): line is string => typeof line === "string")
+      .join("\n");
+    await handle.sendAttention(attention);
+
+    deps.db.updateCodingArtifact(artifact.id, {
+      status: "launched",
+      metadata: {
+        ...meta,
+        agent: handle.name,
+        launchedAt: Date.now(),
+        launchedBy: entity.name,
+        modelTarget,
+      },
+    });
+    const assignment = deps.db.createCodingArtifact({
+      sessionId: session.id,
+      kind: "spawn_assignment",
+      title: `Spawned ${handle.name}: ${role}`,
+      status: "complete",
+      contentText: attention,
+      metadata: { agent: handle.name, role, goal, sourceArtifactId: artifact.id, modelTarget },
+      createdBy: entity.name,
+    });
+    deps.db.updateCodingSession(session.id, { mode: "agent" });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "coding_spawn_launched",
+      payload: {
+        id: artifact.id,
+        assignmentId: assignment.id,
+        agent: handle.name,
+        role,
+        modelTarget,
+      },
+    });
+    updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+    sendCode(ctx, eid, success(`Coding agent launched: ${handle.name}`), {
+      artifactId: assignment.id,
+      artifactKind: assignment.kind,
+      commands: [`code show ${assignment.id}`, "code status", "code history"],
+      content: attention,
+      event: "coding_spawn_launched",
+      modelTarget,
+      rows: [{ id: handle.name, detail: goal, status: "launched", title: role, type: "agent" }],
+      sessionId: session.id,
+      status: assignment.status,
+      title: assignment.title,
+      type: "artifact",
+      workspace: session.workspace_root,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "coding_spawn_failed",
+      payload: { id: artifact.id, role, message },
+    });
+    sendCode(ctx, eid, fmtError(`Coding spawn failed: ${message}`), {
+      artifactId: artifact.id,
+      artifactKind: artifact.kind,
+      content: message,
+      event: "coding_spawn_failed",
+      modelTarget,
+      sessionId: session.id,
+      status: "failed",
+      title: artifact.title,
+      type: "artifact",
+      workspace: session.workspace_root,
+    });
+  }
+}
+
+function modelSetting(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  args: string[],
+): void {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const action = args[0]?.toLowerCase() ?? "show";
+  if (action === "set") {
+    const target = args.slice(1).join(" ").trim();
+    if (!target) {
+      ctx.send(eid, "Usage: code model set <provider/model|agent|crew|direct>");
+      return;
+    }
+    for (const previous of deps.db
+      .listCodingArtifacts(session.id, 50)
+      .filter((artifact) => artifact.kind === "model_setting" && artifact.status === "active")) {
+      deps.db.updateCodingArtifact(previous.id, { status: "superseded" });
+    }
+    const artifact = deps.db.createCodingArtifact({
+      sessionId: session.id,
+      kind: "model_setting",
+      title: `Code model: ${target}`,
+      status: "active",
+      contentText: `Code model target: ${target}`,
+      metadata: { target, profile: getCodeProfile(entity).name },
+      createdBy: entity.name,
+    });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "code_model_set",
+      payload: { id: artifact.id, target },
+    });
+    updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+    sendCode(ctx, eid, success(`Code model target set: ${target}`), {
+      artifactId: artifact.id,
+      artifactKind: artifact.kind,
+      commands: ["code model", "code ask <request>"],
+      event: "code_model_set",
+      modelTarget: target,
+      sessionId: session.id,
+      status: artifact.status,
+      title: artifact.title,
+      type: "model",
+      workspace: session.workspace_root,
+    });
+    return;
+  }
+  if (action === "clear") {
+    for (const previous of deps.db
+      .listCodingArtifacts(session.id, 50)
+      .filter((artifact) => artifact.kind === "model_setting" && artifact.status === "active")) {
+      deps.db.updateCodingArtifact(previous.id, { status: "superseded" });
+    }
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "code_model_cleared",
+      payload: {},
+    });
+    updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+    ctx.send(eid, success("Code model target cleared."));
+    return;
+  }
+  const current = latestActiveArtifact(deps.db, session.id, "model_setting");
+  const meta = current ? parseJsonObject(current.metadata_json) : {};
+  const target = typeof meta.target === "string" ? meta.target : "default Marina code route";
+  sendCode(ctx, eid, `${header("Code Model")}\n${separator()}\nTarget: ${target}`, {
+    artifactId: current?.id,
+    artifactKind: current?.kind,
+    commands: ["code model set <target>", "code model clear"],
+    event: "code_model_shown",
+    modelTarget: target,
+    sessionId: session.id,
+    status: current?.status,
+    title: "Code Model",
+    type: "model",
+    workspace: session.workspace_root,
+  });
+}
+
 function status(
   ctx: RoomContext,
   eid: EntityId,
@@ -1396,6 +2045,10 @@ function status(
   const events = deps.db.listCodingEvents(session.id, 5);
   const artifacts = deps.db.listCodingArtifacts(session.id, 50);
   const latestArtifact = artifacts[0];
+  const model = latestActiveArtifact(deps.db, session.id, "model_setting");
+  const modelMeta = model ? parseJsonObject(model.metadata_json) : {};
+  const modelTarget =
+    typeof modelMeta.target === "string" ? modelMeta.target : "default Marina code route";
   const pendingPatches = artifacts.filter(
     (artifact) => artifact.kind === "patch" && artifact.status === "pending",
   );
@@ -1407,6 +2060,7 @@ function status(
     `Title: ${session.title}`,
     `Status: ${session.status}`,
     `Mode: ${session.mode}`,
+    `Model target: ${modelTarget}`,
     `Workspace: ${session.workspace_root}`,
     `Latest artifact: ${latestArtifact ? `${latestArtifact.id} (${latestArtifact.kind}, ${latestArtifact.status})` : dim("none")}`,
     `Pending patches: ${pendingPatches.length}`,
@@ -1427,9 +2081,11 @@ function status(
       payload: ev.payload_json,
       timestamp: ev.created_at,
     })),
+    modelTarget,
     rows: [
       { id: session.id, status: session.status, title: session.title, type: "session" },
       { detail: session.mode, title: "Mode", type: "field" },
+      { detail: modelTarget, title: "Model target", type: "field" },
       { path: session.workspace_root, title: "Workspace", type: "field" },
       ...(latestArtifact
         ? [
@@ -1485,6 +2141,7 @@ async function doctor(
   const nextSteps = [
     session ? "code status" : "code start <title>",
     verify.length > 0 ? "code verify" : "code run git diff --check",
+    "code workspace discover",
     roots.length > 1 ? "code workspace list" : "",
   ].filter(Boolean);
   const lines = [
@@ -1506,7 +2163,7 @@ async function doctor(
     `Local policy: host-safe allowlist`,
     `Next: ${nextSteps.join(" | ")}`,
     dim("Configure roots with MARINA_CODE_ROOTS and MARINA_CODE_DEFAULT_ROOT."),
-    dim("Use: code workspace list | code workspace use <path> | code start <title>"),
+    dim("Use: code workspace discover | code workspace use <path> | code start <title>"),
   ];
   sendCode(ctx, eid, lines.join("\n"), {
     checks: [
@@ -1906,6 +2563,139 @@ async function runApp(
   });
 }
 
+async function recipe(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  args: string[],
+): Promise<void> {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const action = args[0]?.toLowerCase() ?? "list";
+  if (action === "save" || action === "set") {
+    const name = args[1]?.toLowerCase();
+    const body = args.slice(2).join(" ").trim();
+    if (!name || !body) {
+      ctx.send(eid, "Usage: code recipe save <name> <command> [then <command>...]");
+      return;
+    }
+    const commands = parseRecipeCommands(body);
+    if (commands.length === 0) {
+      ctx.send(
+        eid,
+        "Recipe needs at least one command, for example: code recipe save quick typecheck then lint",
+      );
+      return;
+    }
+    const artifact = deps.db.createCodingArtifact({
+      sessionId: session.id,
+      kind: "run_recipe",
+      title: `Recipe: ${name}`,
+      status: "active",
+      contentText: commands.join("\n"),
+      metadata: { name, commands, profile: getCodeProfile(entity).name },
+      createdBy: entity.name,
+    });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "run_recipe_saved",
+      payload: { id: artifact.id, name, commands },
+    });
+    updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+    sendCode(ctx, eid, success(`Recipe saved: ${name} (${artifact.id})`), {
+      artifactId: artifact.id,
+      artifactKind: artifact.kind,
+      commands: [`code recipe run ${name}`, `code show ${artifact.id}`],
+      content: artifact.content_text,
+      event: "run_recipe_saved",
+      rows: commands.map((command) => ({ title: command, type: "command" })),
+      sessionId: session.id,
+      status: artifact.status,
+      title: artifact.title,
+      type: "verification",
+      workspace: session.workspace_root,
+    });
+    return;
+  }
+  if (action === "run") {
+    const name = args[1]?.toLowerCase();
+    if (!name) {
+      ctx.send(eid, "Usage: code recipe run <name>");
+      return;
+    }
+    const commands = await resolveRecipeCommands(
+      deps.db,
+      session,
+      workspaceForSession(deps, session),
+      name,
+    );
+    if (!commands) {
+      ctx.send(eid, `Recipe not found: ${name}`);
+      return;
+    }
+    await runVerificationCommands(ctx, eid, entity, deps, session, commands, `Recipe ${name}`);
+    return;
+  }
+  if (action === "show") {
+    const name = args[1]?.toLowerCase();
+    if (!name) {
+      ctx.send(eid, "Usage: code recipe show <name>");
+      return;
+    }
+    const found = findStoredRecipe(deps.db, session.id, name);
+    if (!found) {
+      ctx.send(eid, `Stored recipe not found: ${name}`);
+      return;
+    }
+    showArtifact(ctx, eid, entity, deps, found.id);
+    return;
+  }
+  if (action !== "list") {
+    ctx.send(eid, "Usage: code recipe [list|save|show|run]");
+    return;
+  }
+  const workspace = workspaceForSession(deps, session);
+  const packageJson = await workspace.read("package.json").catch(() => null);
+  const scripts = packageJson ? detectPackageScripts(packageJson.content) : [];
+  const detected = recommendedVerify(scripts);
+  const stored = deps.db
+    .listCodingArtifacts(session.id, 50)
+    .filter((artifact) => artifact.kind === "run_recipe" && artifact.status === "active");
+  const lines = [header("Code Recipes"), separator()];
+  lines.push(
+    `Detected verify: ${detected.length > 0 ? detected.join(" then ") : "git diff --check"}`,
+  );
+  for (const artifact of stored) {
+    const meta = parseJsonObject(artifact.metadata_json);
+    const name = typeof meta.name === "string" ? meta.name : artifact.title;
+    const commands = Array.isArray(meta.commands) ? meta.commands.map(String) : [];
+    lines.push(`  ${name}: ${commands.join(" then ")}`);
+  }
+  sendCode(ctx, eid, lines.join("\n"), {
+    commands: ["code recipe save quick typecheck then lint", "code recipe run detected"],
+    event: "run_recipes_listed",
+    rows: [
+      { id: "detected", title: "detected", detail: detected.join(" then "), type: "recipe" },
+      ...stored.map((artifact) => {
+        const meta = parseJsonObject(artifact.metadata_json);
+        return {
+          id: artifact.id,
+          title: typeof meta.name === "string" ? meta.name : artifact.title,
+          detail: artifact.content_text.replace(/\n/g, " then "),
+          status: artifact.status,
+          type: "recipe",
+        };
+      }),
+    ],
+    sessionId: session.id,
+    title: "Code Recipes",
+    type: "list",
+    workspace: session.workspace_root,
+  });
+}
+
 async function verifyWorkspace(
   ctx: RoomContext,
   eid: EntityId,
@@ -1916,13 +2706,21 @@ async function verifyWorkspace(
   if (!session) return;
 
   const workspace = workspaceForSession(deps, session);
-  const packageJson = await workspace.read("package.json").catch(() => null);
-  const scripts = packageJson ? detectPackageScripts(packageJson.content) : [];
-  const commands = recommendedVerify(scripts);
-  if (commands.length === 0) {
-    commands.push("git diff --check");
-  }
+  const commands = (await resolveRecipeCommands(deps.db, session, workspace, "default")) ??
+    (await resolveRecipeCommands(deps.db, session, workspace, "detected")) ?? ["git diff --check"];
 
+  await runVerificationCommands(ctx, eid, entity, deps, session, commands, "Verification");
+}
+
+async function runVerificationCommands(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+  commands: string[],
+  titlePrefix: string,
+): Promise<void> {
   const results: StoredCommandResult[] = [];
   for (const commandText of commands) {
     const command = normalizeCodeRunArgs(commandText.split(/\s+/).filter(Boolean));
@@ -1937,7 +2735,7 @@ async function verifyWorkspace(
   const artifact = deps.db.createCodingArtifact({
     sessionId: session.id,
     kind: "verification",
-    title: failed ? "Verification failed" : "Verification passed",
+    title: failed ? `${titlePrefix} failed` : `${titlePrefix} passed`,
     status,
     contentText: summary,
     metadata: {
@@ -2438,6 +3236,256 @@ function rejectPatch(
   });
 }
 
+async function checkpoint(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  titleArg: string,
+): Promise<void> {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const workspace = workspaceForSession(deps, session);
+  const result = await workspace.diff();
+  const title = titleArg.trim() || "Workspace checkpoint";
+  const artifact = deps.db.createCodingArtifact({
+    sessionId: session.id,
+    kind: "checkpoint",
+    title,
+    status: "complete",
+    contentText: result.content,
+    metadata: { empty: result.content.trim().length === 0, exitCode: result.exitCode },
+    createdBy: entity.name,
+  });
+  deps.db.createCodingEvent({
+    sessionId: session.id,
+    actor: entity.name,
+    kind: "checkpoint_created",
+    payload: { id: artifact.id, title, empty: result.content.trim().length === 0 },
+  });
+  updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+  sendCode(ctx, eid, success(`Checkpoint stored: ${artifact.id}`), {
+    artifactId: artifact.id,
+    artifactKind: artifact.kind,
+    commands: [`code show ${artifact.id}`, `code revert ${artifact.id}`],
+    content: artifact.content_text,
+    event: "checkpoint_created",
+    exitCode: result.exitCode,
+    sessionId: session.id,
+    status: artifact.status,
+    title: artifact.title,
+    type: "diff",
+    workspace: session.workspace_root,
+  });
+}
+
+async function revertCheckpoint(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  ref: string | undefined,
+): Promise<void> {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  if (session.created_by !== entity.name) {
+    ctx.send(eid, "Only the session creator can revert checkpoints in this local workspace mode.");
+    return;
+  }
+  const artifact = resolveKindArtifact(
+    ctx,
+    eid,
+    deps.db,
+    session.id,
+    ref,
+    "checkpoint",
+    "last checkpoint",
+  );
+  if (!artifact) return;
+  if (!artifact.content_text.trim()) {
+    ctx.send(eid, `Checkpoint ${artifact.id} has no diff to reverse.`);
+    return;
+  }
+  const workspace = workspaceForSession(deps, session);
+  const result = await workspace.reversePatch(artifact.content_text);
+  deps.db.createCodingEvent({
+    sessionId: session.id,
+    actor: entity.name,
+    kind: result.ok ? "checkpoint_reverted" : "checkpoint_revert_failed",
+    payload: { id: artifact.id, paths: result.paths, output: result.output },
+  });
+  if (!result.ok) {
+    ctx.send(
+      eid,
+      [fmtError(`Checkpoint ${artifact.id} did not reverse cleanly.`), result.output].join("\n"),
+    );
+    return;
+  }
+  deps.db.updateCodingArtifact(artifact.id, {
+    metadata: {
+      ...parseJsonObject(artifact.metadata_json),
+      revertedAt: Date.now(),
+      revertedBy: entity.name,
+    },
+  });
+  updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+  sendCode(ctx, eid, success(`Checkpoint reverted: ${artifact.id}`), {
+    artifactId: artifact.id,
+    artifactKind: artifact.kind,
+    commands: ["code diff", `code show ${artifact.id}`],
+    event: "checkpoint_reverted",
+    paths: result.paths,
+    sessionId: session.id,
+    status: artifact.status,
+    title: artifact.title,
+    type: "patch",
+    workspace: session.workspace_root,
+  });
+}
+
+function approvals(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+): void {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const items = deps.db
+    .listCodingArtifacts(session.id, 50)
+    .filter((artifact) => artifact.kind === "approval");
+  if (items.length === 0) {
+    ctx.send(eid, "No coding approvals for this session.");
+    return;
+  }
+  const lines = [header("Coding Approvals"), separator()];
+  for (const artifact of items) {
+    const meta = parseJsonObject(artifact.metadata_json);
+    lines.push(
+      `  ${artifact.id} ${dim(artifact.status)} ${meta.kind ?? "approval"} ${artifact.title}`,
+    );
+  }
+  sendCode(ctx, eid, lines.join("\n"), {
+    commands: ["code approval request shell <description>", "code approve <id>", "code deny <id>"],
+    event: "coding_approvals_listed",
+    rows: items.map((artifact) => ({
+      id: artifact.id,
+      kind: artifact.kind,
+      status: artifact.status,
+      title: artifact.title,
+      type: "approval",
+    })),
+    sessionId: session.id,
+    title: "Coding Approvals",
+    type: "list",
+    workspace: session.workspace_root,
+  });
+}
+
+function approval(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  args: string[],
+): void {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const action = args[0]?.toLowerCase();
+  if (action === "request") {
+    const kind = args[1]?.toLowerCase();
+    const description = args.slice(2).join(" ").trim();
+    if (!kind || !description) {
+      ctx.send(
+        eid,
+        "Usage: code approval request <shell|network|secret|commit|spawn|other> <description>",
+      );
+      return;
+    }
+    const artifact = deps.db.createCodingArtifact({
+      sessionId: session.id,
+      kind: "approval",
+      title: `Approval: ${kind}`,
+      status: "pending",
+      contentText: description,
+      metadata: { kind, requestedBy: entity.name },
+      createdBy: entity.name,
+    });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "coding_approval_requested",
+      payload: { id: artifact.id, kind, description },
+    });
+    updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+    sendCode(ctx, eid, success(`Approval requested: ${artifact.id}`), {
+      artifactId: artifact.id,
+      artifactKind: artifact.kind,
+      commands: [`code approve ${artifact.id}`, `code deny ${artifact.id}`],
+      content: description,
+      event: "coding_approval_requested",
+      sessionId: session.id,
+      status: artifact.status,
+      title: artifact.title,
+      type: "artifact",
+      workspace: session.workspace_root,
+    });
+    return;
+  }
+  if (action === "list" || !action) {
+    approvals(ctx, eid, entity, deps);
+    return;
+  }
+  ctx.send(eid, "Usage: code approval [list|request]");
+}
+
+function decideApproval(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  ref: string | undefined,
+  status: "approved" | "denied",
+): void {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const artifact = resolveDecisionArtifact(ctx, eid, deps.db, session.id, ref);
+  if (!artifact) return;
+  if (artifact.status !== "pending") {
+    ctx.send(eid, `${artifact.kind} ${artifact.id} is ${artifact.status}, not pending.`);
+    return;
+  }
+  deps.db.updateCodingArtifact(artifact.id, {
+    status,
+    metadata: {
+      ...parseJsonObject(artifact.metadata_json),
+      decidedAt: Date.now(),
+      decidedBy: entity.name,
+    },
+  });
+  deps.db.createCodingEvent({
+    sessionId: session.id,
+    actor: entity.name,
+    kind: `coding_approval_${status}`,
+    payload: { id: artifact.id },
+  });
+  updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+  sendCode(ctx, eid, success(`Approval ${status}: ${artifact.id}`), {
+    artifactId: artifact.id,
+    artifactKind: artifact.kind,
+    commands:
+      artifact.kind === "spawn_request" && status === "approved"
+        ? [`code spawn run ${artifact.id}`, `code show ${artifact.id}`]
+        : [`code show ${artifact.id}`, "code approvals"],
+    event: `coding_approval_${status}`,
+    sessionId: session.id,
+    status,
+    title: artifact.title,
+    type: "artifact",
+    workspace: session.workspace_root,
+  });
+}
+
 function history(
   ctx: RoomContext,
   eid: EntityId,
@@ -2542,6 +3590,308 @@ function observe(
     status: artifact.status,
     title: artifact.title,
     type: "note",
+    workspace: session.workspace_root,
+  });
+}
+
+function skill(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  args: string[],
+): void {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const action = args[0]?.toLowerCase() ?? "list";
+  if (action === "add" || action === "store") {
+    const name = args[1]?.toLowerCase();
+    const text = args.slice(2).join(" ").trim();
+    if (!name || !text) {
+      ctx.send(eid, "Usage: code skill add <name> <instructions>");
+      return;
+    }
+    const artifact = deps.db.createCodingArtifact({
+      sessionId: session.id,
+      kind: "code_skill",
+      title: `Code skill: ${name}`,
+      status: "active",
+      contentText: text,
+      metadata: { name, profile: getCodeProfile(entity).name },
+      createdBy: entity.name,
+    });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "code_skill_added",
+      payload: { id: artifact.id, name },
+    });
+    updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+    sendCode(ctx, eid, success(`Code skill stored: ${name} (${artifact.id})`), {
+      artifactId: artifact.id,
+      artifactKind: artifact.kind,
+      commands: [`code skill use ${name}`, `code show ${artifact.id}`],
+      content: text,
+      event: "code_skill_added",
+      sessionId: session.id,
+      status: artifact.status,
+      title: artifact.title,
+      type: "artifact",
+      workspace: session.workspace_root,
+    });
+    return;
+  }
+  if (action === "use") {
+    const name = args[1]?.toLowerCase();
+    if (!name) {
+      ctx.send(eid, "Usage: code skill use <name>");
+      return;
+    }
+    const artifact = findNamedArtifact(deps.db, session.id, "code_skill", name);
+    if (!artifact) {
+      ctx.send(eid, `Code skill not found: ${name}`);
+      return;
+    }
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "code_skill_used",
+      payload: { id: artifact.id, name },
+    });
+    sendCode(
+      ctx,
+      eid,
+      `${success(`Code skill active for next work: ${name}`)}\n${artifact.content_text}`,
+      {
+        artifactId: artifact.id,
+        artifactKind: artifact.kind,
+        commands: [`code show ${artifact.id}`, "code plan <next step>"],
+        content: artifact.content_text,
+        event: "code_skill_used",
+        sessionId: session.id,
+        status: artifact.status,
+        title: artifact.title,
+        type: "skill",
+        workspace: session.workspace_root,
+      },
+    );
+    return;
+  }
+  if (action !== "list") {
+    ctx.send(eid, "Usage: code skill [list|add|use]");
+    return;
+  }
+  const skills = deps.db
+    .listCodingArtifacts(session.id, 50)
+    .filter((artifact) => artifact.kind === "code_skill" && artifact.status === "active");
+  if (skills.length === 0) {
+    ctx.send(eid, "No code-modal skills for this session.");
+    return;
+  }
+  const lines = [header("Code Skills"), separator()];
+  for (const artifact of skills) {
+    const meta = parseJsonObject(artifact.metadata_json);
+    lines.push(`  ${meta.name ?? artifact.id} ${dim(artifact.id)} ${artifact.title}`);
+  }
+  sendCode(ctx, eid, lines.join("\n"), {
+    commands: ["code skill add <name> <instructions>", "code skill use <name>"],
+    event: "code_skills_listed",
+    rows: skills.map((artifact) => {
+      const meta = parseJsonObject(artifact.metadata_json);
+      return {
+        id: artifact.id,
+        title: typeof meta.name === "string" ? meta.name : artifact.title,
+        detail: artifact.content_text,
+        status: artifact.status,
+        type: "skill",
+      };
+    }),
+    sessionId: session.id,
+    title: "Code Skills",
+    type: "list",
+    workspace: session.workspace_root,
+  });
+}
+
+function thread(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+): void {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const artifacts = deps.db.listCodingArtifacts(session.id, 80);
+  const important = artifacts.filter((artifact) =>
+    [
+      "plan",
+      "decision",
+      "summary",
+      "handoff",
+      "checkpoint",
+      "verification",
+      "patch",
+      "approval",
+      "crew_plan",
+      "model_setting",
+      "external_link",
+    ].includes(artifact.kind),
+  );
+  if (important.length === 0) {
+    ctx.send(eid, "No thread artifacts for this coding session yet.");
+    return;
+  }
+  const lines = [header(`Code Thread: ${session.id}`), separator()];
+  for (const artifact of important.slice(0, 20)) {
+    lines.push(`  ${artifact.id} ${dim(artifact.kind)} ${dim(artifact.status)} ${artifact.title}`);
+  }
+  sendCode(ctx, eid, lines.join("\n"), {
+    commands: ["code show <artifact_id>", "code artifacts", "code status"],
+    event: "code_thread_shown",
+    rows: important.slice(0, 20).map((artifact) => ({
+      id: artifact.id,
+      kind: artifact.kind,
+      status: artifact.status,
+      title: artifact.title,
+      type: "artifact",
+    })),
+    sessionId: session.id,
+    title: `Code Thread: ${session.id}`,
+    type: "history",
+    workspace: session.workspace_root,
+  });
+}
+
+function externalLink(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  args: string[],
+): void {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const action = args[0]?.toLowerCase() ?? "show";
+  if (action === "link") {
+    const system = args[1]?.toLowerCase();
+    const externalId = args.slice(2).join(" ").trim();
+    if (!system || !externalId) {
+      ctx.send(eid, "Usage: code external link <acp|mcp|cursor|zed|vscode|other> <external_id>");
+      return;
+    }
+    const artifact = deps.db.createCodingArtifact({
+      sessionId: session.id,
+      kind: "external_link",
+      title: `External link: ${system}`,
+      status: "active",
+      contentText: `${system}: ${externalId}`,
+      metadata: { system, externalId },
+      createdBy: entity.name,
+    });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "external_session_linked",
+      payload: { id: artifact.id, system, externalId },
+    });
+    updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+    sendCode(ctx, eid, success(`External coding link stored: ${system} ${externalId}`), {
+      artifactId: artifact.id,
+      artifactKind: artifact.kind,
+      commands: ["code external", `code show ${artifact.id}`],
+      event: "external_session_linked",
+      sessionId: session.id,
+      status: artifact.status,
+      title: artifact.title,
+      type: "artifact",
+      workspace: session.workspace_root,
+    });
+    return;
+  }
+  if (action === "unlink") {
+    const ref = args.slice(1).join(" ");
+    const artifact = resolveKindArtifact(
+      ctx,
+      eid,
+      deps.db,
+      session.id,
+      ref,
+      "external_link",
+      "last external",
+    );
+    if (!artifact) return;
+    deps.db.updateCodingArtifact(artifact.id, { status: "archived" });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "external_session_unlinked",
+      payload: { id: artifact.id },
+    });
+    updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+    ctx.send(eid, success(`External coding link archived: ${artifact.id}`));
+    return;
+  }
+  if (action !== "show" && action !== "list") {
+    ctx.send(eid, "Usage: code external [show|link|unlink]");
+    return;
+  }
+  const links = deps.db
+    .listCodingArtifacts(session.id, 50)
+    .filter((artifact) => artifact.kind === "external_link" && artifact.status === "active");
+  if (links.length === 0) {
+    const lines = [
+      header("External Coding Links"),
+      separator(),
+      "No external coding links for this session.",
+      "",
+      "Useful local link forms:",
+      "  code external link acp <session-id>",
+      "  code external link mcp <client-or-session-id>",
+      "  code external link cursor <workspace-or-thread-id>",
+      "  code external link vscode <workspace-or-thread-id>",
+      "",
+      dim("Links are durable handles. They do not bypass Marina permissions or routing."),
+    ];
+    sendCode(ctx, eid, lines.join("\n"), {
+      commands: [
+        `code external link acp ${session.id}`,
+        `code external link mcp ${session.id}`,
+        "code external link vscode <id>",
+      ],
+      event: "external_sessions_listed",
+      rows: [
+        { detail: "Agent Client Protocol session handle", title: "acp", type: "external_link" },
+        {
+          detail: "Model Context Protocol client/session handle",
+          title: "mcp",
+          type: "external_link",
+        },
+        { detail: "Editor or IDE workspace handle", title: "vscode", type: "external_link" },
+      ],
+      sessionId: session.id,
+      title: "External Coding Links",
+      type: "list",
+      workspace: session.workspace_root,
+    });
+    return;
+  }
+  const lines = [header("External Coding Links"), separator()];
+  for (const artifact of links) {
+    lines.push(`  ${artifact.id} ${artifact.content_text}`);
+  }
+  sendCode(ctx, eid, lines.join("\n"), {
+    commands: ["code external link acp <id>", "code external unlink <id>"],
+    event: "external_sessions_listed",
+    rows: links.map((artifact) => ({
+      id: artifact.id,
+      title: artifact.title,
+      detail: artifact.content_text,
+      status: artifact.status,
+      type: "external_link",
+    })),
+    sessionId: session.id,
+    title: "External Coding Links",
+    type: "list",
     workspace: session.workspace_root,
   });
 }
@@ -2704,6 +4054,150 @@ function workspaceForSession(deps: CodeDeps, session: CodingSessionRow): LocalWo
   return getWorkspaceRegistry(deps).workspaceForRoot(session.workspace_root);
 }
 
+interface DiscoveredWorkspace {
+  label: string;
+  reason: string;
+  root: string;
+}
+
+function discoverWorkspaceChoices(registry: WorkspaceRegistry): DiscoveredWorkspace[] {
+  const found = new Map<string, DiscoveredWorkspace>();
+  for (const root of registry.roots) {
+    addDiscoveredWorkspace(found, root, "configured root");
+    let entries: string[];
+    try {
+      entries = readdirSync(root);
+    } catch {
+      continue;
+    }
+    for (const entry of entries.slice(0, 200)) {
+      const path = join(root, entry);
+      try {
+        if (!statSync(path).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      const reason = workspaceDiscoveryReason(path);
+      if (reason) addDiscoveredWorkspace(found, path, reason);
+    }
+  }
+  return [...found.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function addDiscoveredWorkspace(
+  found: Map<string, DiscoveredWorkspace>,
+  root: string,
+  reason: string,
+): void {
+  const candidateReason = workspaceDiscoveryReason(root) ?? reason;
+  found.set(root, { label: basename(root) || root, reason: candidateReason, root });
+}
+
+function workspaceDiscoveryReason(root: string): string | undefined {
+  const checks: [string, string][] = [
+    [".git", "git repo"],
+    ["package.json", "package.json"],
+    ["bun.lock", "bun workspace"],
+    ["pnpm-lock.yaml", "pnpm workspace"],
+    ["yarn.lock", "yarn workspace"],
+    ["Cargo.toml", "cargo workspace"],
+    ["pyproject.toml", "python project"],
+    ["go.mod", "go module"],
+  ];
+  for (const [name, reason] of checks) {
+    try {
+      accessSync(join(root, name), fsConstants.F_OK);
+      return reason;
+    } catch {
+      // keep looking
+    }
+  }
+  return undefined;
+}
+
+function getSessionModelTarget(db: MarinaDB, sessionId: string): string | undefined {
+  const artifact = latestActiveArtifact(db, sessionId, "model_setting");
+  if (!artifact) return undefined;
+  const meta = parseJsonObject(artifact.metadata_json);
+  return typeof meta.target === "string" ? meta.target : undefined;
+}
+
+function modelTargetForAgentSpawn(target: string | undefined): string | undefined {
+  if (!target) return undefined;
+  const normalized = target.trim().toLowerCase();
+  if (!normalized || ["agent", "crew", "direct", "default", "marina"].includes(normalized)) {
+    return undefined;
+  }
+  return target;
+}
+
+function parseSpawnRunArgs(args: string[]): { model?: string; name?: string; ref?: string } {
+  const parsed: { model?: string; name?: string; ref?: string } = {};
+  for (let i = 0; i < args.length; i++) {
+    const token = args[i];
+    const key = token?.toLowerCase();
+    if ((key === "name" || key === "as") && args[i + 1]) {
+      parsed.name = sanitizeAgentName(args[i + 1] ?? "");
+      i++;
+      continue;
+    }
+    if (key === "model" && args[i + 1]) {
+      parsed.model = args[i + 1];
+      i++;
+      continue;
+    }
+    if (!parsed.ref && token) parsed.ref = token;
+  }
+  return parsed;
+}
+
+function sanitizeAgentName(value: string): string {
+  return value
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+function uniqueSpawnAgentName(
+  liveAgents: { name: string }[],
+  role: string,
+  sessionId: string,
+): string {
+  const live = new Set(liveAgents.map((agent) => agent.name.toLowerCase()));
+  const base =
+    sanitizeAgentName(`code-${role}-${sessionId.replace(/^code_session_?/, "").slice(0, 6)}`) ||
+    "code-agent";
+  if (!live.has(base.toLowerCase())) return base;
+  for (let i = 2; i < 50; i++) {
+    const candidate = `${base}-${i}`;
+    if (!live.has(candidate.toLowerCase())) return candidate;
+  }
+  return `${base}-${Date.now().toString(36).slice(-4)}`;
+}
+
+function bindSpawnedAgentEntity(
+  agent: { getStatus(): { entityId: string | null }; name: string },
+  session: CodingSessionRow,
+  profile: string,
+  deps: CodeDeps & { db: MarinaDB },
+): void {
+  const entityId = agent.getStatus().entityId;
+  if (!entityId) return;
+  const spawned = deps.getEntity(entityId);
+  if (!spawned) return;
+  spawned.properties[ACTIVE_MODAL_KEY] = "code";
+  spawned.properties[ACTIVE_SESSION_KEY] = session.id;
+  spawned.properties[CODE_PROFILE_KEY] = profile;
+  deps.db.saveEntity(spawned);
+  deps.db.createCodingEvent({
+    sessionId: session.id,
+    actor: agent.name,
+    kind: "code_agent_bound",
+    payload: { agent: agent.name, entityId: spawned.id, profile },
+  });
+}
+
 function getActiveSessionId(entity: Entity): string | undefined {
   const value = entity.properties[ACTIVE_SESSION_KEY];
   return typeof value === "string" ? value : undefined;
@@ -2720,6 +4214,11 @@ function updateCodeContext(entity: Entity, db: MarinaDB, session?: CodingSession
   const assignment = artifacts.find((artifact) => artifact.kind === "agent_assignment");
   const assignmentMeta = assignment ? parseJsonObject(assignment.metadata_json) : {};
   const assignedAgent = typeof assignmentMeta.agent === "string" ? assignmentMeta.agent : undefined;
+  const model = artifacts.find(
+    (artifact) => artifact.kind === "model_setting" && artifact.status === "active",
+  );
+  const modelMeta = model ? parseJsonObject(model.metadata_json) : {};
+  const modelTarget = typeof modelMeta.target === "string" ? modelMeta.target : undefined;
   const selectedWorkspace =
     typeof entity.properties[CODE_WORKSPACE_KEY] === "string"
       ? entity.properties[CODE_WORKSPACE_KEY]
@@ -2730,6 +4229,7 @@ function updateCodeContext(entity: Entity, db: MarinaDB, session?: CodingSession
     latestArtifactKind: latestArtifact?.kind,
     latestArtifactLifecycle: latestMeta?.lifecycle,
     latestArtifactStatus: latestArtifact?.status,
+    modelTarget,
     pendingPatches,
     profile: profile.name,
     sessionId: session?.id,
@@ -2744,7 +4244,20 @@ function updateCodeContext(entity: Entity, db: MarinaDB, session?: CodingSession
 
 function getCodeProfile(entity: Entity): CodeProfile {
   const name = normalizeProfileName(entity.properties[CODE_PROFILE_KEY]);
-  return CODE_PROFILES[name ?? "marina"];
+  const base = CODE_PROFILES[name ?? "marina"];
+  return { ...base, aliases: { ...base.aliases, ...getCustomProfileAliases(entity) } };
+}
+
+function getCustomProfileAliases(entity: Entity): Record<string, string> {
+  const raw = entity.properties[CODE_PROFILE_ALIASES_KEY];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const aliases: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === "string" && key.trim() && value.trim()) {
+      aliases[key.toLowerCase()] = value.toLowerCase();
+    }
+  }
+  return aliases;
 }
 
 function normalizeProfileName(value: unknown): CodeProfileName | null {
@@ -3092,6 +4605,129 @@ function latestSessionArtifact(
 
 function latestFailureArtifact(db: MarinaDB, sessionId: string): CodingArtifactRow | undefined {
   return db.listCodingArtifacts(sessionId, 50).find((artifact) => isFailureArtifact(artifact));
+}
+
+function latestActiveArtifact(
+  db: MarinaDB,
+  sessionId: string,
+  kind: string,
+): CodingArtifactRow | undefined {
+  return db
+    .listCodingArtifacts(sessionId, 50)
+    .find((artifact) => artifact.kind === kind && artifact.status === "active");
+}
+
+function findNamedArtifact(
+  db: MarinaDB,
+  sessionId: string,
+  kind: string,
+  name: string,
+): CodingArtifactRow | undefined {
+  return db.listCodingArtifacts(sessionId, 80).find((artifact) => {
+    if (artifact.kind !== kind || artifact.status === "archived") return false;
+    const meta = parseJsonObject(artifact.metadata_json);
+    return meta.name === name;
+  });
+}
+
+function findStoredRecipe(
+  db: MarinaDB,
+  sessionId: string,
+  name: string,
+): CodingArtifactRow | undefined {
+  return findNamedArtifact(db, sessionId, "run_recipe", name);
+}
+
+async function resolveRecipeCommands(
+  db: MarinaDB,
+  session: CodingSessionRow,
+  workspace: LocalWorkspace,
+  name: string,
+): Promise<string[] | null> {
+  if (name === "detected") {
+    const packageJson = await workspace.read("package.json").catch(() => null);
+    const scripts = packageJson ? detectPackageScripts(packageJson.content) : [];
+    const commands = recommendedVerify(scripts);
+    return commands.length > 0 ? commands : ["git diff --check"];
+  }
+  const stored = findStoredRecipe(db, session.id, name);
+  if (!stored) {
+    if (name === "default") return null;
+    return null;
+  }
+  const meta = parseJsonObject(stored.metadata_json);
+  const commands = Array.isArray(meta.commands) ? meta.commands.map(String).filter(Boolean) : [];
+  return commands.length > 0 ? commands : null;
+}
+
+function parseRecipeCommands(raw: string): string[] {
+  return raw
+    .split(/\s+then\s+|[|]/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function resolveKindArtifact(
+  ctx: RoomContext,
+  eid: EntityId,
+  db: MarinaDB,
+  sessionId: string,
+  ref: string | undefined,
+  kind: string,
+  lastPhrase: string,
+): CodingArtifactRow | null {
+  const normalized = ref?.trim().toLowerCase();
+  if (!normalized || normalized === "last" || normalized === lastPhrase) {
+    const latest = latestSessionArtifact(db, sessionId, kind);
+    if (!latest) {
+      ctx.send(eid, `No ${kind} artifacts for this coding session.`);
+      return null;
+    }
+    return latest;
+  }
+  const artifact = db.getCodingArtifact(ref!.trim());
+  if (!artifact || artifact.kind !== kind) {
+    ctx.send(eid, `${capitalize(kind.replace(/_/g, " "))} not found: ${ref}`);
+    return null;
+  }
+  if (artifact.session_id !== sessionId) {
+    ctx.send(eid, `Artifact ${artifact.id} does not belong to the active coding session.`);
+    return null;
+  }
+  return artifact;
+}
+
+function resolveDecisionArtifact(
+  ctx: RoomContext,
+  eid: EntityId,
+  db: MarinaDB,
+  sessionId: string,
+  ref: string | undefined,
+): CodingArtifactRow | undefined {
+  const normalized = ref?.trim();
+  if (!normalized || normalized === "last" || normalized === "last approval") {
+    const artifact = db
+      .listCodingArtifacts(sessionId, 80)
+      .find(
+        (candidate) =>
+          ["approval", "spawn_request"].includes(candidate.kind) && candidate.status === "pending",
+      );
+    if (!artifact) {
+      ctx.send(eid, "No pending approvals or spawn requests for this coding session.");
+      return undefined;
+    }
+    return artifact;
+  }
+  const artifact = db.getCodingArtifact(normalized);
+  if (!artifact || !["approval", "spawn_request"].includes(artifact.kind)) {
+    ctx.send(eid, `Approval or spawn request not found: ${normalized}`);
+    return undefined;
+  }
+  if (artifact.session_id !== sessionId) {
+    ctx.send(eid, `Artifact ${artifact.id} does not belong to the active coding session.`);
+    return undefined;
+  }
+  return artifact;
 }
 
 function parsePatchActionArgs(args: string[]): { ref: string | undefined; reason: string } {

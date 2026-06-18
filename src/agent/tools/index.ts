@@ -92,7 +92,7 @@ Talk: say <msg>, tell <name> <msg>, channel send <name> <msg>, channel list.
 Memory: note <text>, recall <query>, reflect [topic], pool <name> add <content>, pool <name> recall <query>, skill search <query>, skill store <name> | <desc> | <actions>.
 Self: brief, brief full, focus set <desc>, focus clear, task goal <title> | <desc>, task progress <id> +N, novelty stats, novelty suggest.
 Coordination: project list, canvas intent list, canvas intent claim <id>, canvas intent complete <id> <result>, feed list [--kind X --since 30m].
-Code: code status, code files [path], code read <path>, code search <query>, code diff, code verify, code run allowlist, code run test, code observe <note>, code patch <title>, code artifacts, code pin <id>, code unpin <id>, code archive <id>.
+Code: code status, code files [path], code read <path>, code search <query>, code diff, code verify, code recipe list/run/save, code checkpoint, code revert <id>, code approvals, code approval request <kind> <desc>, code model set <target>, code skill list/add/use, code crew <goal>, code external link <system> <id>, code observe <note>, code patch <title>, code artifacts, code pin <id>, code unpin <id>, code archive <id>.
 Web: web search <query>, web fetch <url>.
 Probe / watch (resolvers): probe <kind> <args>, watch list, watch create <kind> <args>.
 Bettor / markets: market list, market info <id>, market forecast <id>, position open <leg>, position confirm <id>.
@@ -204,6 +204,18 @@ const codeSchema = Type.Object({
       Type.Literal("decision"),
       Type.Literal("workspace"),
       Type.Literal("doctor"),
+      Type.Literal("recipe"),
+      Type.Literal("checkpoint"),
+      Type.Literal("revert"),
+      Type.Literal("approval"),
+      Type.Literal("approve"),
+      Type.Literal("deny"),
+      Type.Literal("model"),
+      Type.Literal("skill"),
+      Type.Literal("thread"),
+      Type.Literal("crew"),
+      Type.Literal("roles"),
+      Type.Literal("external"),
     ],
     {
       description:
@@ -287,6 +299,48 @@ const codeWorkspaceSchema = Type.Object({
     }),
   ),
   path: Type.Optional(Type.String({ description: "Workspace path/name for command=use" })),
+});
+
+const codeRecipeSchema = Type.Object({
+  command: Type.Union([Type.Literal("list"), Type.Literal("save"), Type.Literal("run")]),
+  name: Type.Optional(Type.String({ description: "Recipe name" })),
+  text: Type.Optional(Type.String({ description: "Commands separated by then" })),
+});
+
+const codeCheckpointSchema = Type.Object({
+  command: Type.Union([Type.Literal("create"), Type.Literal("revert")]),
+  title: Type.Optional(Type.String({ description: "Checkpoint title" })),
+  artifactId: Type.Optional(Type.String({ description: "Checkpoint artifact id for revert" })),
+});
+
+const codeApprovalSchema = Type.Object({
+  command: Type.Union([
+    Type.Literal("list"),
+    Type.Literal("request"),
+    Type.Literal("approve"),
+    Type.Literal("deny"),
+  ]),
+  kind: Type.Optional(Type.String({ description: "Approval kind for request" })),
+  text: Type.Optional(Type.String({ description: "Approval description" })),
+  artifactId: Type.Optional(Type.String({ description: "Approval artifact id" })),
+});
+
+const codeModelSchema = Type.Object({
+  command: Type.Union([Type.Literal("show"), Type.Literal("set"), Type.Literal("clear")]),
+  target: Type.Optional(Type.String({ description: "Model/provider/agent/crew target" })),
+});
+
+const codeSkillSchema = Type.Object({
+  command: Type.Union([Type.Literal("list"), Type.Literal("add"), Type.Literal("use")]),
+  name: Type.Optional(Type.String({ description: "Skill name" })),
+  text: Type.Optional(Type.String({ description: "Skill instructions" })),
+});
+
+const codeExternalSchema = Type.Object({
+  command: Type.Union([Type.Literal("show"), Type.Literal("link"), Type.Literal("unlink")]),
+  system: Type.Optional(Type.String({ description: "External system name" })),
+  externalId: Type.Optional(Type.String({ description: "External session id" })),
+  artifactId: Type.Optional(Type.String({ description: "External link artifact id" })),
 });
 
 const webSchema = Type.Object({
@@ -1099,6 +1153,179 @@ function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
       () => "code doctor",
       ctx,
     ),
+    wrap(
+      "marina_code_recipe",
+      "Code Recipe",
+      "List, save, or run Code Mode verification recipes.",
+      codeRecipeSchema,
+      (p) => {
+        if (p.command === "save") {
+          return `code recipe save ${requiredSingleLineCodeParam(
+            p.name as string | undefined,
+            "name",
+            "name is required",
+          )} ${requiredSingleLineCodeParam(
+            p.text as string | undefined,
+            "text",
+            "text is required",
+          )}`;
+        }
+        if (p.command === "run") {
+          return `code recipe run ${requiredSingleLineCodeParam(
+            p.name as string | undefined,
+            "name",
+            "name is required",
+          )}`;
+        }
+        return "code recipe list";
+      },
+      ctx,
+    ),
+    wrap(
+      "marina_code_checkpoint",
+      "Code Checkpoint",
+      "Create or revert a workspace diff checkpoint in the active coding session.",
+      codeCheckpointSchema,
+      (p) => {
+        if (p.command === "revert") {
+          return `code revert ${requiredSingleLineCodeParam(
+            p.artifactId as string | undefined,
+            "artifactId",
+            "artifactId is required",
+          )}`;
+        }
+        return p.title
+          ? `code checkpoint ${singleLineCodeParam(p.title as string, "title")}`
+          : "code checkpoint";
+      },
+      ctx,
+    ),
+    wrap(
+      "marina_code_approval",
+      "Code Approval",
+      "Create or decide Code Mode approval artifacts.",
+      codeApprovalSchema,
+      (p) => {
+        if (p.command === "request") {
+          return `code approval request ${requiredSingleLineCodeParam(
+            p.kind as string | undefined,
+            "kind",
+            "kind is required",
+          )} ${requiredSingleLineCodeParam(
+            p.text as string | undefined,
+            "text",
+            "text is required",
+          )}`;
+        }
+        if (p.command === "approve") {
+          return `code approve ${requiredSingleLineCodeParam(
+            p.artifactId as string | undefined,
+            "artifactId",
+            "artifactId is required",
+          )}`;
+        }
+        if (p.command === "deny") {
+          return `code deny ${requiredSingleLineCodeParam(
+            p.artifactId as string | undefined,
+            "artifactId",
+            "artifactId is required",
+          )}`;
+        }
+        return "code approvals";
+      },
+      ctx,
+    ),
+    wrap(
+      "marina_code_model",
+      "Code Model",
+      "Show or set the per-session code model/provider target.",
+      codeModelSchema,
+      (p) => {
+        if (p.command === "set") {
+          return `code model set ${requiredSingleLineCodeParam(
+            p.target as string | undefined,
+            "target",
+            "target is required",
+          )}`;
+        }
+        if (p.command === "clear") return "code model clear";
+        return "code model";
+      },
+      ctx,
+    ),
+    wrap(
+      "marina_code_skill",
+      "Code Skill",
+      "List, add, or activate Code Mode session skills.",
+      codeSkillSchema,
+      (p) => {
+        if (p.command === "add") {
+          return `code skill add ${requiredSingleLineCodeParam(
+            p.name as string | undefined,
+            "name",
+            "name is required",
+          )} ${requiredSingleLineCodeParam(
+            p.text as string | undefined,
+            "text",
+            "text is required",
+          )}`;
+        }
+        if (p.command === "use") {
+          return `code skill use ${requiredSingleLineCodeParam(
+            p.name as string | undefined,
+            "name",
+            "name is required",
+          )}`;
+        }
+        return "code skill list";
+      },
+      ctx,
+    ),
+    wrap(
+      "marina_code_thread",
+      "Code Thread",
+      "Show the compact artifact thread for the active coding session.",
+      codeEmptySchema,
+      () => "code thread",
+      ctx,
+    ),
+    wrap(
+      "marina_code_crew",
+      "Code Crew",
+      "Store a coding crew orchestration plan for the active session.",
+      codeTextSchema,
+      (p) =>
+        `code crew ${requiredSingleLineCodeParam(p.text as string | undefined, "text", "text is required")}`,
+      ctx,
+    ),
+    wrap(
+      "marina_code_external",
+      "Code External Link",
+      "Show, create, or archive an external coding-session link.",
+      codeExternalSchema,
+      (p) => {
+        if (p.command === "link") {
+          return `code external link ${requiredSingleLineCodeParam(
+            p.system as string | undefined,
+            "system",
+            "system is required",
+          )} ${requiredSingleLineCodeParam(
+            p.externalId as string | undefined,
+            "externalId",
+            "externalId is required",
+          )}`;
+        }
+        if (p.command === "unlink") {
+          return `code external unlink ${requiredSingleLineCodeParam(
+            p.artifactId as string | undefined,
+            "artifactId",
+            "artifactId is required",
+          )}`;
+        }
+        return "code external";
+      },
+      ctx,
+    ),
   ];
 }
 
@@ -1156,6 +1383,72 @@ function buildCodeCommand(params: Record<string, unknown>): string {
       return "code workspace";
     case "doctor":
       return "code doctor";
+    case "recipe":
+      if (command === "run") {
+        return `code recipe run ${requiredSingleLineCodeParam(kind, "name", "action=recipe run requires kind/name")}`;
+      }
+      if (command === "save") {
+        return `code recipe save ${requiredSingleLineCodeParam(
+          kind,
+          "name",
+          "action=recipe save requires kind/name",
+        )} ${requiredSingleLineCodeParam(text, "text", "action=recipe save requires text")}`;
+      }
+      return "code recipe list";
+    case "checkpoint":
+      return text ? `code checkpoint ${singleLineCodeParam(text, "text")}` : "code checkpoint";
+    case "revert":
+      return `code revert ${requiredSingleLineCodeParam(artifactId, "artifactId", "action=revert requires artifactId")}`;
+    case "approval":
+      return `code approval request ${requiredSingleLineCodeParam(
+        kind,
+        "kind",
+        "action=approval requires kind",
+      )} ${requiredSingleLineCodeParam(text, "text", "action=approval requires text")}`;
+    case "approve":
+      return `code approve ${requiredSingleLineCodeParam(artifactId, "artifactId", "action=approve requires artifactId")}`;
+    case "deny":
+      return `code deny ${requiredSingleLineCodeParam(artifactId, "artifactId", "action=deny requires artifactId")}`;
+    case "model":
+      if (command === "set") {
+        return `code model set ${requiredSingleLineCodeParam(text, "text", "action=model command=set requires text target")}`;
+      }
+      if (command === "clear") return "code model clear";
+      return "code model";
+    case "skill":
+      if (command === "add") {
+        return `code skill add ${requiredSingleLineCodeParam(
+          kind,
+          "name",
+          "action=skill command=add requires kind/name",
+        )} ${requiredSingleLineCodeParam(text, "text", "action=skill command=add requires text")}`;
+      }
+      if (command === "use") {
+        return `code skill use ${requiredSingleLineCodeParam(kind, "name", "action=skill command=use requires kind/name")}`;
+      }
+      return "code skill list";
+    case "thread":
+      return "code thread";
+    case "crew":
+      return `code crew ${requiredSingleLineCodeParam(text, "text", "action=crew requires text")}`;
+    case "roles":
+      return "code roles";
+    case "external":
+      if (command === "link") {
+        return `code external link ${requiredSingleLineCodeParam(
+          kind,
+          "system",
+          "action=external command=link requires kind/system",
+        )} ${requiredSingleLineCodeParam(text, "text", "action=external command=link requires text external id")}`;
+      }
+      if (command === "unlink") {
+        return `code external unlink ${requiredSingleLineCodeParam(
+          artifactId,
+          "artifactId",
+          "action=external command=unlink requires artifactId",
+        )}`;
+      }
+      return "code external";
     case "plan":
     case "summary":
     case "handoff":
