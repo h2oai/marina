@@ -1300,6 +1300,57 @@ CREATE INDEX idx_media_jobs_entity ON media_jobs(entity_name, created_at DESC);
 CREATE INDEX idx_media_jobs_status ON media_jobs(status, created_at DESC);
 `,
   },
+  // Migration 47: Coding sessions — local workspace coding loop substrate.
+  {
+    version: 47,
+    sql: `
+CREATE TABLE coding_sessions (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  workspace_root TEXT NOT NULL,
+  status TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE coding_events (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES coding_sessions(id) ON DELETE CASCADE,
+  actor TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_coding_sessions_created_by ON coding_sessions(created_by, updated_at DESC);
+CREATE INDEX idx_coding_events_session ON coding_events(session_id, created_at ASC);
+`,
+  },
+  // Migration 48: Coding patch artifacts — explicit review/apply loop.
+  {
+    version: 48,
+    sql: `
+CREATE TABLE coding_artifacts (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES coding_sessions(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL,
+  content_text TEXT NOT NULL,
+  metadata_json TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  applied_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  applied_at INTEGER
+);
+
+CREATE INDEX idx_coding_artifacts_session ON coding_artifacts(session_id, created_at DESC);
+CREATE INDEX idx_coding_artifacts_status ON coding_artifacts(status, updated_at DESC);
+`,
+  },
 ];
 
 // ─── Database Class ──────────────────────────────────────────────────────────
@@ -3333,6 +3384,226 @@ export class MarinaDB {
       .all(limit) as ShellLogRow[];
   }
 
+  // ─── Coding Sessions ───────────────────────────────────────────────────
+
+  createCodingSession(session: {
+    id: string;
+    title: string;
+    workspaceRoot: string;
+    status?: string;
+    mode?: string;
+    createdBy: string;
+  }): CodingSessionRow {
+    const now = Date.now();
+    const row: CodingSessionRow = {
+      id: session.id,
+      title: session.title,
+      workspace_root: session.workspaceRoot,
+      status: session.status ?? "active",
+      mode: session.mode ?? "ask",
+      created_by: session.createdBy,
+      created_at: now,
+      updated_at: now,
+    };
+    this.db.run(
+      `INSERT INTO coding_sessions
+        (id, title, workspace_root, status, mode, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id,
+        row.title,
+        row.workspace_root,
+        row.status,
+        row.mode,
+        row.created_by,
+        row.created_at,
+        row.updated_at,
+      ],
+    );
+    return row;
+  }
+
+  getCodingSession(id: string): CodingSessionRow | null {
+    return this.db
+      .query("SELECT * FROM coding_sessions WHERE id = ?")
+      .get(id) as CodingSessionRow | null;
+  }
+
+  listCodingSessions(createdBy?: string, limit = 10): CodingSessionRow[] {
+    if (createdBy) {
+      return this.db
+        .query(
+          "SELECT * FROM coding_sessions WHERE created_by = ? ORDER BY updated_at DESC LIMIT ?",
+        )
+        .all(createdBy, limit) as CodingSessionRow[];
+    }
+    return this.db
+      .query("SELECT * FROM coding_sessions ORDER BY updated_at DESC LIMIT ?")
+      .all(limit) as CodingSessionRow[];
+  }
+
+  updateCodingSession(
+    id: string,
+    patch: Partial<{ status: string; mode: string; title: string }>,
+  ): void {
+    const sets: string[] = [];
+    const values: Array<string | number> = [];
+    if (patch.status !== undefined) {
+      sets.push("status = ?");
+      values.push(patch.status);
+    }
+    if (patch.mode !== undefined) {
+      sets.push("mode = ?");
+      values.push(patch.mode);
+    }
+    if (patch.title !== undefined) {
+      sets.push("title = ?");
+      values.push(patch.title);
+    }
+    if (sets.length === 0) return;
+    sets.push("updated_at = ?");
+    values.push(Date.now(), id);
+    this.db.run(`UPDATE coding_sessions SET ${sets.join(", ")} WHERE id = ?`, values);
+  }
+
+  createCodingEvent(event: {
+    id?: string;
+    sessionId: string;
+    actor: string;
+    kind: string;
+    payload: unknown;
+  }): CodingEventRow {
+    const row: CodingEventRow = {
+      id: event.id ?? crypto.randomUUID(),
+      session_id: event.sessionId,
+      actor: event.actor,
+      kind: event.kind,
+      payload_json: JSON.stringify(event.payload ?? {}),
+      created_at: Date.now(),
+    };
+    this.db.run(
+      `INSERT INTO coding_events
+        (id, session_id, actor, kind, payload_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [row.id, row.session_id, row.actor, row.kind, row.payload_json, row.created_at],
+    );
+    this.db.run("UPDATE coding_sessions SET updated_at = ? WHERE id = ?", [
+      row.created_at,
+      row.session_id,
+    ]);
+    return row;
+  }
+
+  listCodingEvents(sessionId: string, limit = 50): CodingEventRow[] {
+    return this.db
+      .query(
+        `SELECT * FROM (
+         SELECT * FROM coding_events
+         WHERE session_id = ?
+           ORDER BY created_at DESC
+           LIMIT ?
+         )
+         ORDER BY created_at ASC`,
+      )
+      .all(sessionId, limit) as CodingEventRow[];
+  }
+
+  createCodingArtifact(artifact: {
+    id?: string;
+    sessionId: string;
+    kind: string;
+    title: string;
+    status?: string;
+    contentText: string;
+    metadata?: unknown;
+    createdBy: string;
+  }): CodingArtifactRow {
+    const now = Date.now();
+    const idPrefix =
+      artifact.kind === "patch" ? "patch" : artifact.kind.replace(/[^a-z0-9]+/gi, "_");
+    const row: CodingArtifactRow = {
+      id: artifact.id ?? `${idPrefix}_${crypto.randomUUID().slice(0, 12)}`,
+      session_id: artifact.sessionId,
+      kind: artifact.kind,
+      title: artifact.title,
+      status: artifact.status ?? "pending",
+      content_text: artifact.contentText,
+      metadata_json: JSON.stringify(artifact.metadata ?? {}),
+      created_by: artifact.createdBy,
+      applied_by: null,
+      created_at: now,
+      updated_at: now,
+      applied_at: null,
+    };
+    this.db.run(
+      `INSERT INTO coding_artifacts
+        (id, session_id, kind, title, status, content_text, metadata_json, created_by,
+         applied_by, created_at, updated_at, applied_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id,
+        row.session_id,
+        row.kind,
+        row.title,
+        row.status,
+        row.content_text,
+        row.metadata_json,
+        row.created_by,
+        row.applied_by,
+        row.created_at,
+        row.updated_at,
+        row.applied_at,
+      ],
+    );
+    this.db.run("UPDATE coding_sessions SET updated_at = ? WHERE id = ?", [now, row.session_id]);
+    return row;
+  }
+
+  getCodingArtifact(id: string): CodingArtifactRow | null {
+    return this.db
+      .query("SELECT * FROM coding_artifacts WHERE id = ?")
+      .get(id) as CodingArtifactRow | null;
+  }
+
+  listCodingArtifacts(sessionId: string, limit = 20): CodingArtifactRow[] {
+    return this.db
+      .query("SELECT * FROM coding_artifacts WHERE session_id = ? ORDER BY created_at DESC LIMIT ?")
+      .all(sessionId, limit) as CodingArtifactRow[];
+  }
+
+  updateCodingArtifact(
+    id: string,
+    patch: Partial<{
+      appliedAt: number | null;
+      appliedBy: string | null;
+      metadata: unknown;
+      status: string;
+    }>,
+  ): void {
+    const sets: string[] = [];
+    const values: Array<string | number | null> = [];
+    if (patch.status !== undefined) {
+      sets.push("status = ?");
+      values.push(patch.status);
+    }
+    if (patch.appliedBy !== undefined) {
+      sets.push("applied_by = ?");
+      values.push(patch.appliedBy);
+    }
+    if (patch.appliedAt !== undefined) {
+      sets.push("applied_at = ?");
+      values.push(patch.appliedAt);
+    }
+    if (patch.metadata !== undefined) {
+      sets.push("metadata_json = ?");
+      values.push(JSON.stringify(patch.metadata));
+    }
+    if (sets.length === 0) return;
+    sets.push("updated_at = ?");
+    values.push(Date.now(), id);
+    this.db.run(`UPDATE coding_artifacts SET ${sets.join(", ")} WHERE id = ?`, values);
+  }
+
   // ─── Entity Migration (delegated to db-entities.ts) ─────────────────────
 
   migrateEntityId(oldId: string, newId: string): void {
@@ -4085,6 +4356,41 @@ interface ShellLogRow {
   exit_code: number | null;
   output_length: number;
   created_at: number;
+}
+
+export interface CodingSessionRow {
+  id: string;
+  title: string;
+  workspace_root: string;
+  status: string;
+  mode: string;
+  created_by: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface CodingEventRow {
+  id: string;
+  session_id: string;
+  actor: string;
+  kind: string;
+  payload_json: string;
+  created_at: number;
+}
+
+export interface CodingArtifactRow {
+  id: string;
+  session_id: string;
+  kind: string;
+  title: string;
+  status: string;
+  content_text: string;
+  metadata_json: string;
+  created_by: string;
+  applied_by: string | null;
+  created_at: number;
+  updated_at: number;
+  applied_at: number | null;
 }
 
 interface GatewayRow {

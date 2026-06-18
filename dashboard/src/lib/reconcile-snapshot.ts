@@ -42,12 +42,21 @@ function supportsEqual(a: AgentStatusInfo["supports"], b: AgentStatusInfo["suppo
   );
 }
 
+function propertyValueEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 function entityEqual(a: SnapshotEntity, b: SnapshotEntity): boolean {
   return (
     a.id === b.id &&
     a.name === b.name &&
     a.kind === b.kind &&
     a.room === b.room &&
+    a.properties?.active_modal === b.properties?.active_modal &&
+    a.properties?.code_profile === b.properties?.code_profile &&
+    propertyValueEqual(a.properties?.code_context, b.properties?.code_context) &&
     agentStatusEqual(a.agentStatus, b.agentStatus)
   );
 }

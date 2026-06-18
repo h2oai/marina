@@ -131,4 +131,34 @@ describe("MarinaDB", () => {
       expect(db.getEventCount()).toBe(3);
     });
   });
+
+  describe("coding events", () => {
+    it("returns the most recent limited coding events in chronological order", async () => {
+      db.createCodingSession({
+        id: "code_session_events",
+        title: "Event Ordering",
+        workspaceRoot: "/tmp/marina-code-events",
+        createdBy: "Alice",
+      });
+
+      for (let i = 0; i < 12; i++) {
+        db.createCodingEvent({
+          sessionId: "code_session_events",
+          actor: "Alice",
+          kind: `event_${i}`,
+          payload: { index: i },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 2));
+      }
+
+      const events = db.listCodingEvents("code_session_events", 5);
+      expect(events.map((event) => event.kind)).toEqual([
+        "event_7",
+        "event_8",
+        "event_9",
+        "event_10",
+        "event_11",
+      ]);
+    });
+  });
 });
