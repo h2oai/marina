@@ -438,7 +438,9 @@ describe("code command", () => {
       mkdirSync(app);
       mkdirSync(docs);
       writeFileSync(join(app, "app.txt"), "app workspace\n");
+      writeFileSync(join(app, "package.json"), JSON.stringify({ scripts: { test: "bun test" } }));
       writeFileSync(join(docs, "notes.txt"), "docs workspace\n");
+      writeFileSync(join(docs, "package.json"), JSON.stringify({ scripts: { lint: "echo ok" } }));
       const entity = engine.entities.get(conn.entity!)!;
       const sent: string[] = [];
       const command = codeCommand({
@@ -451,6 +453,11 @@ describe("code command", () => {
 
       await command.handler(ctx, inputFor(entity, "code workspace"));
       expect(sent.at(-1) ?? "").toContain(app);
+
+      await command.handler(ctx, inputFor(entity, "code workspace discover"));
+      expect(sent.at(-1) ?? "").toContain("Discovered Code Workspaces");
+      expect(sent.at(-1) ?? "").toContain("app");
+      expect(sent.at(-1) ?? "").toContain("docs");
 
       await command.handler(ctx, inputFor(entity, "code workspace use docs"));
       expect(sent.at(-1) ?? "").toContain("Code workspace selected: docs");
@@ -612,7 +619,9 @@ describe("code command", () => {
       getEntity: () => entity,
       workspace: new LocalWorkspace(),
       answerPrompt: async (request) => {
-        prompts.push(`${request.sessionId}:${request.profile}:${request.prompt}`);
+        prompts.push(
+          `${request.sessionId}:${request.profile}:${request.modelTarget ?? "default"}:${request.prompt}`,
+        );
         return "Inspect, patch, and verify through Code Mode.";
       },
     });
@@ -620,13 +629,16 @@ describe("code command", () => {
 
     await command.handler(ctx, inputFor(entity, "code start Direct Strategy"));
     const sessionId = entity.properties.coding_session_id as string;
+    await command.handler(ctx, inputFor(entity, "code model set anthropic/claude-sonnet-4"));
     await command.handler(ctx, inputFor(entity, "code ask how should we fix this?"));
 
     const response = sent.at(-1) ?? "";
     expect(response).toContain("Code response stored:");
     expect(response).toContain("Strategy: direct model");
     expect(response).toContain("Inspect, patch, and verify through Code Mode.");
-    expect(prompts).toEqual([`${sessionId}:marina:how should we fix this?`]);
+    expect(prompts).toEqual([
+      `${sessionId}:marina:anthropic/claude-sonnet-4:how should we fix this?`,
+    ]);
 
     const session = db.getCodingSession(sessionId);
     expect(session?.mode).toBe("direct");
@@ -634,6 +646,7 @@ describe("code command", () => {
     const artifact = artifacts.find((candidate) => candidate.kind === "agent_response");
     expect(artifact?.status).toBe("complete");
     expect(artifact?.content_text).toContain("Inspect, patch, and verify");
+    expect(artifact?.metadata_json).toContain('"modelTarget":"anthropic/claude-sonnet-4"');
     const events = db.listCodingEvents(sessionId, 20);
     expect(events.some((event) => event.kind === "code_prompt_started")).toBe(true);
     expect(events.some((event) => event.kind === "code_prompt_completed")).toBe(true);
@@ -1072,6 +1085,202 @@ diff --git a/../outside.txt b/../outside.txt
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("stores recipes, uses them for verification, and records model/thread metadata", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      writeFileSync(
+        join(root, "package.json"),
+        JSON.stringify({
+          scripts: {
+            lint: "true",
+            test: "true",
+            typecheck: "true",
+          },
+        }),
+      );
+      const entity = engine.entities.get(conn.entity!)!;
+      const sent: string[] = [];
+      const metadata: Record<string, unknown>[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+      });
+      const ctx = testRoomContext(sent, metadata);
+
+      await command.handler(ctx, inputFor(entity, "code start Recipe Session"));
+      const sessionId = entity.properties.coding_session_id as string;
+      await command.handler(ctx, inputFor(entity, "code recipe save default typecheck then lint"));
+      expect(stripAnsi(sent.at(-1) ?? "")).toContain("Recipe saved: default");
+      expect(db.listCodingArtifacts(sessionId, 10).some((a) => a.kind === "run_recipe")).toBe(true);
+
+      await command.handler(ctx, inputFor(entity, "code recipe list"));
+      expect(stripAnsi(sent.at(-1) ?? "")).toContain("default: typecheck then lint");
+
+      await command.handler(ctx, inputFor(entity, "code verify"));
+      const verify = stripAnsi(sent.at(-1) ?? "");
+      expect(verify).toContain("$ bun run typecheck");
+      expect(verify).toContain("$ bun run lint");
+      expect(verify).not.toContain("$ bun run test");
+
+      await command.handler(ctx, inputFor(entity, "code model set anthropic/claude-sonnet-4"));
+      expect(stripAnsi(sent.at(-1) ?? "")).toContain(
+        "Code model target set: anthropic/claude-sonnet-4",
+      );
+      expect(entity.properties.code_context).toMatchObject({
+        modelTarget: "anthropic/claude-sonnet-4",
+      });
+
+      await command.handler(ctx, inputFor(entity, "code thread"));
+      expect(stripAnsi(sent.at(-1) ?? "")).toContain("Code Thread:");
+      expect(metadata.at(-1)?.code).toMatchObject({
+        event: "code_thread_shown",
+        type: "history",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("creates and reverts checkpoints", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const add = Bun.spawnSync(["git", "add", "example.txt"], { cwd: root });
+      expect(add.exitCode).toBe(0);
+      writeFileSync(join(root, "example.txt"), "hello checkpoint\n");
+      const entity = engine.entities.get(conn.entity!)!;
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+      });
+      const ctx = testRoomContext(sent);
+
+      await command.handler(ctx, inputFor(entity, "code start Checkpoint Session"));
+      await command.handler(ctx, inputFor(entity, "code checkpoint before revert"));
+      const output = stripAnsi(sent.at(-1) ?? "");
+      expect(output).toContain("Checkpoint stored:");
+      const checkpointId = output.match(/checkpoint_[a-f0-9-]+/)?.[0];
+      expect(checkpointId).toBeTruthy();
+      expect(db.getCodingArtifact(checkpointId!)?.content_text).toContain("hello checkpoint");
+
+      await command.handler(ctx, inputFor(entity, `code revert ${checkpointId}`));
+      expect(stripAnsi(sent.at(-1) ?? "")).toContain(`Checkpoint reverted: ${checkpointId}`);
+      expect(readFileSync(join(root, "example.txt"), "utf8")).toBe("hello\n");
+      expect(
+        db
+          .listCodingEvents(entity.properties.coding_session_id as string, 20)
+          .some((event) => event.kind === "checkpoint_reverted"),
+      ).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stores approvals, code skills, crew plans, spawn requests, and external links", async () => {
+    const entity = engine.entities.get(conn.entity!)!;
+    const spawnedEntity = makeAgentEntity("agent_spawned_reviewer", "SpawnedReviewer");
+    db.saveEntity(spawnedEntity);
+    const sent: string[] = [];
+    const metadata: Record<string, unknown>[] = [];
+    const attention: string[] = [];
+    const spawned = fakeAgent("code-reviewer-test", attention, spawnedEntity.id);
+    const spawnedConfigs: Record<string, unknown>[] = [];
+    const command = codeCommand({
+      agentRuntime: {
+        get: (name) => (name === spawned.name ? spawned : undefined),
+        isAvailable: () => true,
+        list: () => [],
+        spawn: async (config) => {
+          spawnedConfigs.push(config);
+          return spawned;
+        },
+      },
+      db,
+      getEntity: (id) => (id === spawnedEntity.id ? spawnedEntity : entity),
+      workspace: new LocalWorkspace(),
+    });
+    const ctx = testRoomContext(sent, metadata);
+
+    await command.handler(ctx, inputFor(entity, "code start Collaboration Session"));
+    const sessionId = entity.properties.coding_session_id as string;
+
+    await command.handler(ctx, inputFor(entity, "code roles"));
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain("planner");
+
+    await command.handler(ctx, inputFor(entity, "code crew implement the profile migration"));
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain("Coding crew plan stored:");
+
+    await command.handler(ctx, inputFor(entity, "code spawn reviewer inspect the diff"));
+    const spawnRequest = stripAnsi(sent.at(-1) ?? "");
+    expect(spawnRequest).toContain("Coding spawn request stored:");
+    const spawnId = spawnRequest.match(/spawn_request_[a-f0-9-]+/)?.[0];
+    expect(spawnId).toBeTruthy();
+    expect(db.getCodingArtifact(spawnId!)?.status).toBe("pending");
+
+    await command.handler(ctx, inputFor(entity, `code approve ${spawnId}`));
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain(`Approval approved: ${spawnId}`);
+    expect(db.getCodingArtifact(spawnId!)?.status).toBe("approved");
+
+    await command.handler(
+      ctx,
+      inputFor(entity, `code spawn run ${spawnId} name code-reviewer-test model local/tester`),
+    );
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain("Coding agent launched: code-reviewer-test");
+    expect(spawnedConfigs).toHaveLength(1);
+    expect(spawnedConfigs[0]).toMatchObject({
+      model: "local/tester",
+      name: "code-reviewer-test",
+      role: "reviewer",
+      spawnedBy: "Alice",
+    });
+    expect(attention.at(-1)).toContain(`coding session ${sessionId}`);
+    expect(attention.at(-1)).toContain("Goal: inspect the diff");
+    expect(spawnedEntity.properties.active_modal).toBe("code");
+    expect(spawnedEntity.properties.coding_session_id).toBe(sessionId);
+    expect(db.getCodingArtifact(spawnId!)?.status).toBe("launched");
+
+    await command.handler(ctx, inputFor(entity, "code approval request shell run extended tests"));
+    const approvalOutput = stripAnsi(sent.at(-1) ?? "");
+    expect(approvalOutput).toContain("Approval requested:");
+    const approvalId = approvalOutput.match(/approval_[a-f0-9-]+/)?.[0];
+    expect(approvalId).toBeTruthy();
+
+    await command.handler(ctx, inputFor(entity, `code approve ${approvalId}`));
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain(`Approval approved: ${approvalId}`);
+    expect(db.getCodingArtifact(approvalId!)?.status).toBe("approved");
+
+    await command.handler(
+      ctx,
+      inputFor(entity, "code skill add review prefer small focused diffs"),
+    );
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain("Code skill stored: review");
+
+    await command.handler(ctx, inputFor(entity, "code skill use review"));
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain("Code skill active for next work: review");
+
+    await command.handler(ctx, inputFor(entity, "code external link acp zed-session-1"));
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain(
+      "External coding link stored: acp zed-session-1",
+    );
+
+    await command.handler(ctx, inputFor(entity, "code external"));
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain("zed-session-1");
+    expect(metadata.at(-1)?.code).toMatchObject({
+      event: "external_sessions_listed",
+      type: "list",
+    });
+
+    const kinds = db.listCodingArtifacts(sessionId, 50).map((artifact) => artifact.kind);
+    expect(kinds).toContain("crew_plan");
+    expect(kinds).toContain("spawn_request");
+    expect(kinds).toContain("spawn_assignment");
+    expect(kinds).toContain("approval");
+    expect(kinds).toContain("code_skill");
+    expect(kinds).toContain("external_link");
   });
 });
 
