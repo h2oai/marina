@@ -583,6 +583,8 @@ export interface CodingSessionEntry {
   workspace_root: string;
   status: string;
   mode: string;
+  /** Single-writer lock holder (agent name), or null when the session is open. */
+  writer: string | null;
   created_by: string;
   created_at: number;
   updated_at: number;
