@@ -949,13 +949,14 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
 
   const renderCodeContextStrip = () => {
     if (!codePrompt || !codeContext) return null;
-    const chips: {
+    type Chip = {
       key: string;
       label: string;
       title: string;
       value: string;
       tone?: "accent" | "warn";
-    }[] = [
+    };
+    const chips: Chip[] = ([
       {
         key: "session",
         label: "session",
@@ -1020,7 +1021,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
             value: codeContext.assignedAgent,
           }
         : null,
-    ].filter(Boolean);
+    ] as (Chip | null)[]).filter((chip): chip is Chip => chip !== null);
     return (
       <div className="mb-1 grid min-h-7 grid-cols-[auto_minmax(0,1fr)] items-center gap-1.5 font-mono text-[10px] text-text-dim">
         <span
@@ -1272,7 +1273,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
     const title =
       type === "command"
         ? `$ ${(code.command ?? []).join(" ")}`
-        : (code.title ?? code.event?.replaceAll("_", " ") ?? "Code");
+        : (code.title ?? code.event?.replace(/_/g, " ") ?? "Code");
     const content = typeof code.content === "string" ? code.content : "";
     const blockVariant =
       type === "patch" || content.startsWith("diff --git")
