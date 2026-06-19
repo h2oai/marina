@@ -751,6 +751,10 @@ export function registerBuiltinCommands(engine: Engine): void {
     codeCommand({
       agentRuntime: engine.agentRuntime,
       answerPrompt: answerCodeViaLocalModel,
+      channelManager: engine.channelManager,
+      crewManager: engine.crewManager,
+      findAgentByName: (name) => engine.entities.findAgentByName(name),
+      listAgents: () => engine.agentRuntime.list(),
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
     }),
