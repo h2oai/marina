@@ -15,6 +15,7 @@ import { LocalWorkspace } from "../src/coding/local-workspace";
 import { WorkspaceRegistry } from "../src/coding/workspace-registry";
 import { codeCommand } from "../src/engine/commands/code";
 import { Engine } from "../src/engine/engine";
+import { grant } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
 import {
   type CommandInput,
@@ -1235,6 +1236,8 @@ diff --git a/../outside.txt b/../outside.txt
     expect(stripAnsi(sent.at(-1) ?? "")).toContain(`Approval approved: ${spawnId}`);
     expect(db.getCodingArtifact(spawnId!)?.status).toBe("approved");
 
+    // Launching a coding agent goes through the agent.spawn safety gate.
+    grant(db, entity.id, "agent.spawn");
     await command.handler(
       ctx,
       inputFor(entity, `code spawn run ${spawnId} name code-reviewer-test model local/tester`),
@@ -1291,6 +1294,43 @@ diff --git a/../outside.txt b/../outside.txt
     expect(kinds).toContain("approval");
     expect(kinds).toContain("code_skill");
     expect(kinds).toContain("external_link");
+  });
+
+  it("blocks code spawn run when the entity lacks the agent.spawn gate", async () => {
+    const entity = engine.entities.get(conn.entity!)!;
+    const spawnedEntity = makeAgentEntity("agent_blocked_reviewer", "BlockedReviewer");
+    db.saveEntity(spawnedEntity);
+    const sent: string[] = [];
+    const attention: string[] = [];
+    const spawned = fakeAgent("blocked-reviewer-test", attention, spawnedEntity.id);
+    const spawnedConfigs: Record<string, unknown>[] = [];
+    const command = codeCommand({
+      agentRuntime: {
+        get: (name) => (name === spawned.name ? spawned : undefined),
+        isAvailable: () => true,
+        list: () => [],
+        spawn: async (config) => {
+          spawnedConfigs.push(config);
+          return spawned;
+        },
+      },
+      db,
+      getEntity: (id) => (id === spawnedEntity.id ? spawnedEntity : entity),
+      workspace: new LocalWorkspace(),
+    });
+    const ctx = testRoomContext(sent);
+
+    await command.handler(ctx, inputFor(entity, "code start Gated Session"));
+    await command.handler(ctx, inputFor(entity, "code spawn reviewer inspect the diff"));
+    const spawnId = stripAnsi(sent.at(-1) ?? "").match(/spawn_request_[a-f0-9-]+/)?.[0];
+    expect(spawnId).toBeTruthy();
+    await command.handler(ctx, inputFor(entity, `code approve ${spawnId}`));
+
+    // Approved by a human reviewer, but the entity has no agent.spawn competence:
+    // the safety gate must refuse and no agent may be spawned.
+    await command.handler(ctx, inputFor(entity, `code spawn run ${spawnId}`));
+    expect(spawnedConfigs).toHaveLength(0);
+    expect(db.getCodingArtifact(spawnId!)?.status).toBe("approved");
   });
 });
 
