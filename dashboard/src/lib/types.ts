@@ -575,6 +575,49 @@ export interface RecipeEntry {
   agentRole: string | null;
 }
 
+// ─── Web Coding Sessions ────────────────────────────────────────────────────
+
+export interface CodingSessionEntry {
+  id: string;
+  title: string;
+  workspace_root: string;
+  status: string;
+  mode: string;
+  created_by: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface CodingArtifactEntry {
+  id: string;
+  session_id: string;
+  kind: string;
+  title: string;
+  status: string;
+  content_text: string;
+  metadata_json: string;
+  created_by: string;
+  applied_by: string | null;
+  created_at: number;
+  updated_at: number;
+  applied_at: number | null;
+}
+
+export interface CodingEventEntry {
+  id: string;
+  session_id: string;
+  actor: string;
+  kind: string;
+  payload_json: string;
+  created_at: number;
+}
+
+export interface CodingSessionDetail {
+  session: CodingSessionEntry;
+  events: CodingEventEntry[];
+  artifacts: CodingArtifactEntry[];
+}
+
 export type WSMessage =
   | { type: "snapshot"; data: WorldSnapshot }
   | { type: "state"; data: WorldSnapshot }
