@@ -29,12 +29,16 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 # sqlite3 CLI enables WAL-safe backups (scripts/backup.sh, admin snapshots).
+# git + ripgrep back Code Mode (the `code` command): git powers checkpoint /
+# revert / diff and workspace git-state detection, ripgrep powers `code search`
+# (without it `code doctor` reports rg=missing and search degrades to the slow
+# built-in fallback).
 # Also pull in Debian security updates for the base-image packages Trivy flags
 # (libc6, libcap2, libsystemd0/libudev1, sed) so the runtime layer ships
 # patched OS libraries even when the base tag lags behind.
 USER root
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends sqlite3 \
+  && apt-get install -y --no-install-recommends sqlite3 git ripgrep \
   && apt-get upgrade -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
