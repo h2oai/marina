@@ -1,5 +1,5 @@
-import { existsSync, realpathSync, statSync } from "node:fs";
-import { basename, isAbsolute, resolve } from "node:path";
+import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { LocalWorkspace } from "./local-workspace";
 
 export interface WorkspaceChoice {
@@ -79,6 +79,53 @@ function splitEnvList(value: string | undefined): string[] {
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean);
+}
+
+/**
+ * Ensure operator-configured code roots exist and are git working trees, to be
+ * called once at boot. Two reasons this can't be left to the Dockerfile:
+ *   - The registry canonicalizes each root with realpathSync, which THROWS if
+ *     the directory doesn't exist — so a configured-but-missing root breaks the
+ *     first `code` command.
+ *   - A `mkdir` baked into the image is shadowed by the /app/data bind mount at
+ *     runtime, so the directory must be created after the volume is mounted.
+ * git init makes checkpoint/revert/diff (which shell out to git) work; without
+ * a repo those report "unavailable". No-op when no roots are configured, so the
+ * cwd-fallback path is unchanged. Best-effort: problems are returned as
+ * warnings for the caller to log, never thrown — boot must not fail on this.
+ */
+export function ensureConfiguredRoots(env: NodeJS.ProcessEnv = process.env): {
+  ensured: string[];
+  warnings: string[];
+} {
+  const configured = splitEnvList(env.MARINA_CODE_ROOTS);
+  if (env.MARINA_CODE_DEFAULT_ROOT) configured.push(env.MARINA_CODE_DEFAULT_ROOT.trim());
+  const ensured: string[] = [];
+  const warnings: string[] = [];
+  for (const root of unique(configured.filter(Boolean))) {
+    try {
+      mkdirSync(root, { recursive: true });
+      if (!existsSync(join(root, ".git"))) {
+        const res = Bun.spawnSync(["git", "init", "-q"], {
+          cwd: root,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        if (res.exitCode !== 0) {
+          warnings.push(
+            `git init failed for ${root}: ${new TextDecoder().decode(res.stderr).trim()}`,
+          );
+          continue;
+        }
+      }
+      ensured.push(root);
+    } catch (err) {
+      warnings.push(
+        `could not prepare code root ${root}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return { ensured, warnings };
 }
 
 function canonicalDirectory(path: string): string {

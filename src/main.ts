@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { getInternalModelToken } from "./agent/agent-runtime";
 import { RateLimiter } from "./auth/rate-limiter";
+import { ensureConfiguredRoots } from "./coding/workspace-registry";
 import {
   DASHBOARD_BROADCAST_INTERVAL_MS,
   MARINA_LOGIN_ATTEMPTS_PER_MIN,
@@ -90,6 +91,16 @@ const assetsDir = process.env.ASSETS_DIR || "data/assets";
 const storage = new LocalStorageProvider(assetsDir);
 await storage.init();
 logger.info("storage", `Asset storage initialized at ${assetsDir}`);
+
+// Prepare any operator-configured Code Mode workspace roots (MARINA_CODE_ROOTS
+// / MARINA_CODE_DEFAULT_ROOT): create the dirs (the data volume shadows an
+// image-time mkdir) and git init them so checkpoint/revert/diff work. No-op
+// when unset.
+const codeRoots = ensureConfiguredRoots();
+for (const warning of codeRoots.warnings) logger.warn("code", warning);
+if (codeRoots.ensured.length > 0) {
+  logger.info("code", `Code Mode workspace roots ready: ${codeRoots.ensured.join(", ")}`);
+}
 
 const engine = new Engine({
   tickInterval: TICK_MS,
