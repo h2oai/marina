@@ -262,6 +262,40 @@ export async function handleDashboardApi(
     return getTaskDetail(db, Number(taskDetailMatch[1]));
   }
 
+  // ─── Coding snapshot API ───────────────────────────────────────────────
+  // Read-only snapshots of coding sessions/events/artifacts, mirroring the
+  // /api/coordination/* shape. The live transcript flows over WS; these back
+  // the StatusOverlay "navigate state that scrolled off" views. The coding
+  // rows carry no connection/IP/token fields, so they're returned as-is.
+  // Nested /artifacts must precede the bare session/:id matcher below.
+  const codingArtifactsMatch = url.pathname.match(/^\/api\/coding\/session\/([^/]+)\/artifacts$/);
+  if (codingArtifactsMatch && method === "GET" && db) {
+    const sessionId = decodeURIComponent(codingArtifactsMatch[1]!);
+    const kind = url.searchParams.get("kind") ?? undefined;
+    const limit = clampLimit(url.searchParams.get("limit"), 100);
+    const artifacts = db.listCodingArtifacts(sessionId, limit);
+    return json(kind ? artifacts.filter((a) => a.kind === kind) : artifacts);
+  }
+
+  const codingSessionDetailMatch = url.pathname.match(/^\/api\/coding\/session\/([^/]+)$/);
+  if (codingSessionDetailMatch && method === "GET" && db) {
+    const sessionId = decodeURIComponent(codingSessionDetailMatch[1]!);
+    const session = db.getCodingSession(sessionId);
+    if (!session) return json({ error: "Coding session not found" }, 404);
+    return json({
+      session,
+      events: db.listCodingEvents(sessionId, clampLimit(null, 200)),
+      artifacts: db.listCodingArtifacts(sessionId, clampLimit(null, 100)),
+    });
+  }
+
+  if (url.pathname === "/api/coding/sessions" && method === "GET" && db) {
+    const createdBy = url.searchParams.get("createdBy") || undefined;
+    const limit = clampLimit(url.searchParams.get("limit"), 10);
+    const items = db.listCodingSessions(createdBy, limit);
+    return json({ items, total: items.length });
+  }
+
   // Paginated nested collections — must precede the greedy detail matchers
   // below (their `(.+)` would otherwise swallow the `/posts` and `/messages`
   // suffixes). `?limit=N` grows the page; response is { items, total }.

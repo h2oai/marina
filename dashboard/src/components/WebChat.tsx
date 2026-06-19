@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMediaJobs } from "../hooks/use-api";
 import type { ChatMessage, StoredPerception } from "../hooks/use-chat-state";
 import { ensureChatWs, getChatWs, useChatState } from "../hooks/use-chat-state";
+import { useCodingSessionDetail, useCodingSessionsSnapshot } from "../hooks/use-coding";
 import { useFeedState } from "../hooks/use-feed-state";
 import {
   useBoardsSnapshot,
@@ -61,9 +62,22 @@ const ANSI_COLORS: Record<string, string> = {
 };
 
 const MODE_STORAGE_KEY = "marina-chat-mode";
+const CODING_SESSION_STORAGE_PREFIX = "marina-coding-session:";
 type ChatViewMode = "compact" | "rich";
 
-type OverlayType = "tasks" | "boards" | "channels" | "groups" | "media";
+/** Active coding session id is persisted per instance, like the tour-seen flag. */
+function codingSessionStorageKey(instanceName: string | null | undefined): string {
+  return `${CODING_SESSION_STORAGE_PREFIX}${instanceName ?? "default"}`;
+}
+
+type OverlayType =
+  | "tasks"
+  | "boards"
+  | "channels"
+  | "groups"
+  | "media"
+  | "coding-sessions"
+  | "coding-artifacts";
 
 interface OverlayState {
   type: OverlayType;
@@ -459,8 +473,26 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
     return self?.properties?.active_modal === "code" ? self.properties.code_context : null;
   });
   const codeContext = useMemo(() => codeContextFromProperty(codeContextRaw), [codeContextRaw]);
+  const instanceName = useWorldState((s) => s.instanceName);
   const [overlay, setOverlay] = useState<OverlayState | null>(null);
   const closeOverlay = useCallback(() => setOverlay(null), []);
+
+  // Active coding session id, persisted per instance so a reload keeps the
+  // active session visible in the chip bar even before the entity property
+  // round-trips back over the WS snapshot.
+  const [persistedSessionId, setPersistedSessionId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return window.localStorage.getItem(codingSessionStorageKey(instanceName));
+    } catch {
+      return null;
+    }
+  });
+  // The live entity property wins; fall back to the restored value on reload.
+  const activeCodingSessionId = codeContext?.sessionId ?? persistedSessionId;
+
+  // Artifact id whose full content is expanded in the coding-artifacts overlay.
+  const [inspectedArtifactId, setInspectedArtifactId] = useState<string | null>(null);
 
   const outputRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -542,6 +574,10 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
           issuedFrom: trimmed,
           params: entity ? { entityName: entity } : undefined,
         });
+      } else if (lower === "code sessions" || lower === "code list") {
+        setOverlay({ type: "coding-sessions", issuedFrom: trimmed });
+      } else if (lower === "code artifacts" || lower.startsWith("code artifacts ")) {
+        setOverlay({ type: "coding-artifacts", issuedFrom: trimmed });
       }
     },
     [viewMode],
@@ -560,11 +596,37 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
       window.localStorage.setItem(MODE_STORAGE_KEY, viewMode);
     }
   }, [viewMode]);
+
+  // Persist the active coding session id whenever the code-context (driven by
+  // `session`-typed code events) reports a session. Clearing the modal — e.g.
+  // via `code exit` — drops `code_context`, which clears the stored id too.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sessionId = codeContext?.sessionId ?? null;
+    const key = codingSessionStorageKey(instanceName);
+    try {
+      if (sessionId) {
+        window.localStorage.setItem(key, sessionId);
+      } else if (codeContext === null) {
+        // Code modal closed (code exit): forget the active session.
+        window.localStorage.removeItem(key);
+      }
+    } catch {
+      // ignore storage failures (private mode, quota)
+    }
+    setPersistedSessionId(sessionId);
+  }, [codeContext, instanceName]);
   useEffect(() => {
     if (viewMode !== "rich" && overlay) {
       setOverlay(null);
     }
   }, [viewMode, overlay]);
+  useEffect(() => {
+    // Drop any expanded artifact when the artifacts overlay closes.
+    if (overlay?.type !== "coding-artifacts") {
+      setInspectedArtifactId(null);
+    }
+  }, [overlay]);
 
   const doSend = useCallback(() => {
     const cmd = cmdValueRef.current.trim();
@@ -662,6 +724,13 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
     overlay?.type === "media" ? (overlay.params?.entityName as string | undefined) : undefined;
   const mediaQuery = useMediaJobs(mediaEntity, viewMode === "rich" && overlay?.type === "media");
   const refetchMediaJobs = mediaQuery.refetch;
+  const codingSessionsQuery = useCodingSessionsSnapshot(
+    viewMode === "rich" && overlay?.type === "coding-sessions",
+  );
+  const codingDetailQuery = useCodingSessionDetail(
+    activeCodingSessionId,
+    viewMode === "rich" && overlay?.type === "coding-artifacts",
+  );
 
   useEffect(() => {
     if (overlay?.type === "media") {
@@ -956,72 +1025,74 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
       value: string;
       tone?: "accent" | "warn";
     };
-    const chips: Chip[] = ([
-      {
-        key: "session",
-        label: "session",
-        title: codeContext.sessionId ? `Session ${codeContext.sessionId}` : "No code session",
-        value: codeContext.sessionId ?? "none",
-      },
-      codeContext.sessionStatus
-        ? {
-            key: "status",
-            label: "status",
-            title: `Session status ${codeContext.sessionStatus}`,
-            value: codeContext.sessionStatus,
-            tone: "accent",
-          }
-        : null,
-      codeContext.workspace
-        ? {
-            key: "workspace",
-            label: "cwd",
-            title: `Workspace ${codeContext.workspace}`,
-            value: codeContext.workspace,
-          }
-        : null,
-      codeContext.modelTarget
-        ? {
-            key: "model",
-            label: "model",
-            title: `Code model target ${codeContext.modelTarget}`,
-            value: codeContext.modelTarget,
-          }
-        : null,
-      {
-        key: "artifact",
-        label: codeContext.latestArtifactKind ?? "artifact",
-        title: codeContext.latestArtifactId
-          ? `Latest ${codeContext.latestArtifactKind ?? "artifact"} ${codeContext.latestArtifactId}${
-              codeContext.latestArtifactStatus ? ` (${codeContext.latestArtifactStatus})` : ""
-            }${codeContext.latestArtifactLifecycle ? ` lifecycle ${codeContext.latestArtifactLifecycle}` : ""}`
-          : "No artifacts",
-        value: codeContext.latestArtifactId
-          ? `${codeContext.latestArtifactId}${
-              codeContext.latestArtifactStatus ? `:${codeContext.latestArtifactStatus}` : ""
-            }${codeContext.latestArtifactLifecycle ? `:${codeContext.latestArtifactLifecycle}` : ""}`
-          : "none",
-      },
-      typeof codeContext.pendingPatches === "number" && codeContext.pendingPatches > 0
-        ? {
-            key: "patches",
-            label: "patches",
-            title: `${codeContext.pendingPatches} pending patch${
-              codeContext.pendingPatches === 1 ? "" : "es"
-            }`,
-            value: String(codeContext.pendingPatches),
-            tone: "warn",
-          }
-        : null,
-      codeContext.assignedAgent
-        ? {
-            key: "agent",
-            label: "agent",
-            title: `Assigned agent ${codeContext.assignedAgent}`,
-            value: codeContext.assignedAgent,
-          }
-        : null,
-    ] as (Chip | null)[]).filter((chip): chip is Chip => chip !== null);
+    const chips: Chip[] = (
+      [
+        {
+          key: "session",
+          label: "session",
+          title: codeContext.sessionId ? `Session ${codeContext.sessionId}` : "No code session",
+          value: codeContext.sessionId ?? "none",
+        },
+        codeContext.sessionStatus
+          ? {
+              key: "status",
+              label: "status",
+              title: `Session status ${codeContext.sessionStatus}`,
+              value: codeContext.sessionStatus,
+              tone: "accent",
+            }
+          : null,
+        codeContext.workspace
+          ? {
+              key: "workspace",
+              label: "cwd",
+              title: `Workspace ${codeContext.workspace}`,
+              value: codeContext.workspace,
+            }
+          : null,
+        codeContext.modelTarget
+          ? {
+              key: "model",
+              label: "model",
+              title: `Code model target ${codeContext.modelTarget}`,
+              value: codeContext.modelTarget,
+            }
+          : null,
+        {
+          key: "artifact",
+          label: codeContext.latestArtifactKind ?? "artifact",
+          title: codeContext.latestArtifactId
+            ? `Latest ${codeContext.latestArtifactKind ?? "artifact"} ${codeContext.latestArtifactId}${
+                codeContext.latestArtifactStatus ? ` (${codeContext.latestArtifactStatus})` : ""
+              }${codeContext.latestArtifactLifecycle ? ` lifecycle ${codeContext.latestArtifactLifecycle}` : ""}`
+            : "No artifacts",
+          value: codeContext.latestArtifactId
+            ? `${codeContext.latestArtifactId}${
+                codeContext.latestArtifactStatus ? `:${codeContext.latestArtifactStatus}` : ""
+              }${codeContext.latestArtifactLifecycle ? `:${codeContext.latestArtifactLifecycle}` : ""}`
+            : "none",
+        },
+        typeof codeContext.pendingPatches === "number" && codeContext.pendingPatches > 0
+          ? {
+              key: "patches",
+              label: "patches",
+              title: `${codeContext.pendingPatches} pending patch${
+                codeContext.pendingPatches === 1 ? "" : "es"
+              }`,
+              value: String(codeContext.pendingPatches),
+              tone: "warn",
+            }
+          : null,
+        codeContext.assignedAgent
+          ? {
+              key: "agent",
+              label: "agent",
+              title: `Assigned agent ${codeContext.assignedAgent}`,
+              value: codeContext.assignedAgent,
+            }
+          : null,
+      ] as (Chip | null)[]
+    ).filter((chip): chip is Chip => chip !== null);
     return (
       <div className="mb-1 grid min-h-7 grid-cols-[auto_minmax(0,1fr)] items-center gap-1.5 font-mono text-[10px] text-text-dim">
         <span
@@ -1710,12 +1781,167 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
     );
   };
 
+  const renderCodingSessionsOverlay = () => {
+    if (overlay?.type !== "coding-sessions") return null;
+    if (codingSessionsQuery.isLoading) {
+      return <div className="py-4 text-text-dim">Loading coding sessions…</div>;
+    }
+    if (codingSessionsQuery.isError) {
+      return <div className="py-4 text-danger">Failed to load coding sessions snapshot.</div>;
+    }
+    const sessions = codingSessionsQuery.data?.items ?? [];
+    const total = codingSessionsQuery.data?.total ?? sessions.length;
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between text-[10px] uppercase text-text-dim">
+          <span>Coding sessions</span>
+          <span>{total} total</span>
+        </div>
+        <div className="space-y-2">
+          {sessions.map((session) => (
+            <button
+              key={session.id}
+              type="button"
+              onClick={() => {
+                sendCommandWithOverlay(`code resume ${session.id}`);
+                closeOverlay();
+              }}
+              className="block w-full rounded border border-border bg-bg px-3 py-2 text-left shadow-sm transition-colors hover:border-primary"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate text-[12px] font-semibold text-text-bright">
+                  {session.title || session.id}
+                </span>
+                <span
+                  className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] uppercase ${codeStatusTone(
+                    session.status,
+                  )}`}
+                >
+                  {session.status}
+                </span>
+              </div>
+              <div className="mt-1 truncate font-mono text-[10px] text-text-dim">
+                {session.workspace_root}
+              </div>
+              <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-text-dim">
+                <span className="font-mono">{session.id}</span>
+                <span>updated {formatTimestamp(session.updated_at)}</span>
+              </div>
+            </button>
+          ))}
+          {sessions.length === 0 && (
+            <div className="rounded border border-border bg-bg px-2 py-3 text-[11px] text-text-dim">
+              No coding sessions yet. Run <code>code start</code> to begin one.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderCodingArtifactsOverlay = () => {
+    if (overlay?.type !== "coding-artifacts") return null;
+    if (!activeCodingSessionId) {
+      return (
+        <div className="rounded border border-border bg-bg px-2 py-3 text-[11px] text-text-dim">
+          No active coding session. Resume or start one to inspect its artifacts.
+        </div>
+      );
+    }
+    if (codingDetailQuery.isLoading) {
+      return <div className="py-4 text-text-dim">Loading artifacts…</div>;
+    }
+    if (codingDetailQuery.isError) {
+      return <div className="py-4 text-danger">Failed to load coding session detail.</div>;
+    }
+    const artifacts = codingDetailQuery.data?.artifacts ?? [];
+    const session = codingDetailQuery.data?.session;
+    const inspected = artifacts.find((a) => a.id === inspectedArtifactId) ?? null;
+    const grouped = artifacts.reduce<Record<string, typeof artifacts>>((acc, artifact) => {
+      (acc[artifact.kind] ??= []).push(artifact);
+      return acc;
+    }, {});
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between text-[10px] uppercase text-text-dim">
+          <span>Artifacts · {session?.title || activeCodingSessionId}</span>
+          <span>{artifacts.length} total</span>
+        </div>
+        {inspected && (
+          <div className="rounded border border-primary/40 bg-primary/5 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate text-[11px] font-semibold text-text-bright">
+                {inspected.title || inspected.id}
+              </span>
+              <button
+                type="button"
+                onClick={() => setInspectedArtifactId(null)}
+                className="shrink-0 rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
+              >
+                Collapse
+              </button>
+            </div>
+            {renderCodeBlock(
+              inspected.content_text,
+              inspected.content_text.startsWith("diff --git") ? "diff" : "text",
+            )}
+          </div>
+        )}
+        <div className="space-y-3">
+          {Object.entries(grouped).map(([kind, group]) => (
+            <div key={kind} className="space-y-1">
+              <div className="text-[9px] font-semibold uppercase tracking-wide text-text-dim">
+                {kind} · {group.length}
+              </div>
+              {group.map((artifact) => (
+                <button
+                  key={artifact.id}
+                  type="button"
+                  onClick={() =>
+                    setInspectedArtifactId((cur) => (cur === artifact.id ? null : artifact.id))
+                  }
+                  className={`block w-full rounded border bg-bg px-3 py-2 text-left transition-colors hover:border-primary ${
+                    inspectedArtifactId === artifact.id ? "border-primary" : "border-border"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-[12px] font-semibold text-text-bright">
+                      {artifact.title || artifact.id}
+                    </span>
+                    <span
+                      className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] uppercase ${codeStatusTone(
+                        artifact.status,
+                      )}`}
+                    >
+                      {artifact.status}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-text-dim">
+                    <span className="font-mono">{artifact.id}</span>
+                    <span>{formatTimestamp(artifact.updated_at)}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ))}
+          {artifacts.length === 0 && (
+            <div className="rounded border border-border bg-bg px-2 py-3 text-[11px] text-text-dim">
+              No artifacts in this session yet.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const overlayTitle: Record<OverlayType, string> = {
     tasks: "Task Snapshot",
     boards: "Boards Snapshot",
     channels: "Channels Snapshot",
     groups: "Groups Snapshot",
     media: "Media Jobs",
+    "coding-sessions": "Coding Sessions",
+    "coding-artifacts": "Coding Artifacts",
   };
 
   const renderOverlayContent = () => {
@@ -1731,6 +1957,10 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
         return renderGroupsOverlay();
       case "media":
         return renderMediaOverlay();
+      case "coding-sessions":
+        return renderCodingSessionsOverlay();
+      case "coding-artifacts":
+        return renderCodingArtifactsOverlay();
       default:
         return null;
     }
@@ -1830,6 +2060,13 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
                 )}
           </div>
 
+          {codePrompt && (
+            <CodingPalette
+              prompt={codePrompt}
+              hasSession={Boolean(activeCodingSessionId)}
+              onExecute={sendCommandWithOverlay}
+            />
+          )}
           <ContextualCompass onExecute={sendCommandWithOverlay} />
 
           {/* Input area */}
@@ -1918,6 +2155,79 @@ function codeContextFromProperty(value: unknown): CodeContextData | null {
     sessionTitle: typeof data.sessionTitle === "string" ? data.sessionTitle : undefined,
     workspace: typeof data.workspace === "string" ? data.workspace : undefined,
   };
+}
+
+interface CodingVerb {
+  verb: string;
+  hint: string;
+  /** When true, the verb needs an argument: prompt for it before sending. */
+  arg?: string;
+}
+
+// Canonical Code Mode verbs (MVP). The per-profile alias map lives server-side
+// in the entity's `code_profile_aliases` property and is not exposed to the
+// dashboard client, so we surface the canonical verbs that every profile maps
+// onto — the profile prompt itself (claude>/codex>/pi>/code>) signals vocab.
+const CODING_PALETTE_VERBS: CodingVerb[] = [
+  { verb: "start", hint: "Start a coding session", arg: "title" },
+  { verb: "files", hint: "List workspace files" },
+  { verb: "read", hint: "Read a file", arg: "path" },
+  { verb: "search", hint: "Search the workspace", arg: "query" },
+  { verb: "diff", hint: "Review pending changes" },
+  { verb: "run", hint: "Run a command", arg: "command" },
+  { verb: "verify", hint: "Run verification checks" },
+  { verb: "patch", hint: "Propose a patch", arg: "instruction" },
+  { verb: "approve", hint: "Approve a pending artifact", arg: "id" },
+  { verb: "deny", hint: "Deny a pending artifact", arg: "id" },
+  { verb: "status", hint: "Show session status" },
+  { verb: "exit", hint: "Leave Code Mode" },
+];
+
+function CodingPalette({
+  prompt,
+  hasSession,
+  onExecute,
+}: {
+  prompt: string;
+  hasSession: boolean;
+  onExecute: (command: string) => boolean;
+}) {
+  const run = (command: string) => {
+    if (!onExecute(command)) {
+      window.alert("Unable to send command — chat is not connected.");
+    }
+  };
+  // In Code Mode the "code" prefix is omitted; commands are sent bare.
+  return (
+    <div className="border-t border-border px-2 py-1.5 text-[11px] text-text">
+      <div className="flex items-center justify-between text-[10px] uppercase text-text-dim">
+        <span>{prompt}&gt; palette</span>
+        <span>{hasSession ? "session active" : "no session"}</span>
+      </div>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {CODING_PALETTE_VERBS.map((entry) => (
+          <button
+            key={entry.verb}
+            type="button"
+            title={entry.hint}
+            onClick={() => {
+              if (entry.arg) {
+                const value = window.prompt(`${entry.verb} — ${entry.hint}`, "");
+                const trimmed = value?.trim();
+                if (trimmed) run(`${entry.verb} ${trimmed}`);
+              } else {
+                run(entry.verb);
+              }
+            }}
+            className="rounded border border-primary/30 bg-primary/5 px-2 py-0.5 font-mono text-[10px] text-primary transition-colors hover:border-primary hover:bg-primary/15"
+          >
+            {entry.verb}
+            {entry.arg ? <span className="text-text-dim">…</span> : null}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 interface CompassSuggestion {
