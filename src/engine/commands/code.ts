@@ -7,9 +7,11 @@ import {
 } from "../../coding/code-session-driver";
 import type { LocalWorkspace, WorkspaceRunResult } from "../../coding/local-workspace";
 import { WorkspaceRegistry } from "../../coding/workspace-registry";
+import type { ChannelManager } from "../../coordination/channel-manager";
+import { CrewError, type CrewManager } from "../../coordination/crew-manager";
 import { dim, error as fmtError, header, separator, success } from "../../net/ansi";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../persistence/database";
-import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import type { CommandDef, CrewFormation, Entity, EntityId, RoomContext } from "../../types";
 import { checkGate, recordDemonstration } from "../safety-gates";
 
 const ACTIVE_SESSION_KEY = "coding_session_id";
@@ -34,6 +36,7 @@ interface CodeMessageMetadata {
   event: string;
   events?: CodeEventRow[];
   exitCode?: number;
+  metadata?: Record<string, unknown>;
   modelTarget?: string;
   parentSessionId?: string;
   paths?: string[];
@@ -693,7 +696,8 @@ Usage:
   code ask <request>          Ask the default Marina code model for this session
   code assign <agent> <req>   Assign this coding session to a live Marina agent
   code roles                  Show suggested coding-agent roles
-  code crew <goal>            Store a coding crew orchestration plan
+  code crew <goal> [with <a,b>] Plan a crew; dispatch a real crew when members named
+  code task <title>           Create a task linked to this coding session
   code spawn <role> <goal>    Store a reviewed agent-spawn request
   code model                  Show per-session code model target
   code model set <target>     Set per-session code model target
@@ -752,7 +756,11 @@ This first cut is local-CWD only and path-confined. Writes happen only by applyi
 export interface CodeDeps {
   agentRuntime?: CodingAgentRuntime;
   answerPrompt?: CodePromptAnswerer;
+  channelManager?: ChannelManager;
+  crewManager?: CrewManager;
   db?: MarinaDB;
+  findAgentByName?: (name: string) => Entity | undefined;
+  listAgents?: () => { name: string }[];
   workspace?: LocalWorkspace;
   workspaceRegistry?: WorkspaceRegistry;
   getEntity: (id: string) => Entity | undefined;
@@ -842,7 +850,10 @@ export function codeCommand(deps: CodeDeps): CommandDef {
             roles(ctx, input.entity);
             return;
           case "crew":
-            crewPlan(ctx, input.entity, entity, depsWithDb, rawAfterSub);
+            await crewPlan(ctx, input.entity, entity, depsWithDb, rawAfterSub);
+            return;
+          case "task":
+            sessionTask(ctx, input.entity, entity, depsWithDb, rawAfterSub);
             return;
           case "spawn":
             await spawnRequest(ctx, input.entity, entity, depsWithDb, args);
@@ -1651,18 +1662,37 @@ function roles(ctx: RoomContext, eid: EntityId): void {
   });
 }
 
-function crewPlan(
+/**
+ * Parse `code crew <goal> [with <agentA,agentB,...>]`. The optional trailing
+ * `with <members>` clause names live agents who should join the crew; the goal
+ * is everything before it.
+ */
+function parseCrewArgs(raw: string): { goal: string; members: string[] } {
+  const match = raw.match(/\bwith\b/i);
+  if (!match || match.index === undefined) {
+    return { goal: raw.trim(), members: [] };
+  }
+  const goal = raw.slice(0, match.index).trim();
+  const memberPart = raw.slice(match.index + match[0].length).trim();
+  const members = memberPart
+    .split(/[,\s]+/)
+    .map((m) => m.trim())
+    .filter(Boolean);
+  return { goal, members };
+}
+
+async function crewPlan(
   ctx: RoomContext,
   eid: EntityId,
   entity: Entity,
   deps: CodeDeps & { db: MarinaDB },
-  goal: string,
-): void {
+  rawGoal: string,
+): Promise<void> {
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
-  const text = goal.trim();
+  const { goal: text, members } = parseCrewArgs(rawGoal);
   if (!text) {
-    ctx.send(eid, "Usage: code crew <goal>");
+    ctx.send(eid, "Usage: code crew <goal> [with <agentA,agentB,...>]");
     return;
   }
   const body = [
@@ -1671,31 +1701,271 @@ function crewPlan(
     "Suggested crew:",
     ...CODING_ROLES.map(([role, detail]) => `- ${role}: ${detail}`),
     "",
-    "Next: assign live agents with code assign, or request supervised spawns with code spawn.",
+    members.length > 0
+      ? `Members requested: ${members.join(", ")}`
+      : "Next: name members with code crew <goal> with <agentA,agentB,...>, assign live agents with code assign, or request supervised spawns with code spawn.",
   ].join("\n");
-  const artifact = deps.db.createCodingArtifact({
+  // Always write the crew_plan proposal trail.
+  const planArtifact = deps.db.createCodingArtifact({
     sessionId: session.id,
     kind: "crew_plan",
     title: formatCodingNoteTitle("plan", text).replace("Plan:", "Crew plan:"),
     status: "planned",
     contentText: body,
-    metadata: { goal: text, roles: CODING_ROLES.map(([role]) => role) },
+    metadata: { goal: text, roles: CODING_ROLES.map(([role]) => role), members },
     createdBy: entity.name,
   });
   deps.db.createCodingEvent({
     sessionId: session.id,
     actor: entity.name,
     kind: "coding_crew_planned",
-    payload: { id: artifact.id, goal: text },
+    payload: { id: planArtifact.id, goal: text, members },
   });
+
+  // When members are named AND the crew/channel managers are wired, dispatch a
+  // real ephemeral crew. Otherwise degrade to the proposal-only behavior.
+  if (members.length > 0 && deps.crewManager && deps.channelManager) {
+    const dispatched = await dispatchCodingCrew(
+      ctx,
+      eid,
+      entity,
+      deps,
+      session,
+      text,
+      members,
+      planArtifact.id,
+    );
+    if (dispatched) return;
+  } else if (members.length > 0) {
+    ctx.send(
+      eid,
+      dim(
+        "Live crew dispatch is unavailable in this Marina process; stored the crew plan instead.",
+      ),
+    );
+  }
+
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
-  sendCode(ctx, eid, `${success(`Coding crew plan stored: ${artifact.id}`)}\n${body}`, {
-    artifactId: artifact.id,
-    artifactKind: artifact.kind,
-    commands: [`code show ${artifact.id}`, "code roles", "code assign <agent> <request>"],
+  sendCode(ctx, eid, `${success(`Coding crew plan stored: ${planArtifact.id}`)}\n${body}`, {
+    artifactId: planArtifact.id,
+    artifactKind: planArtifact.kind,
+    commands: [
+      `code show ${planArtifact.id}`,
+      "code roles",
+      "code crew <goal> with <agentA,agentB>",
+      "code assign <agent> <request>",
+    ],
     content: body,
     event: "coding_crew_planned",
     rows: CODING_ROLES.map(([role, detail]) => ({ id: role, detail, title: role, type: "role" })),
+    sessionId: session.id,
+    status: planArtifact.status,
+    title: planArtifact.title,
+    type: "artifact",
+    workspace: session.workspace_root,
+  });
+}
+
+/**
+ * Create + dispatch a real ephemeral crew from named members. Returns true on
+ * success (a `crew_dispatched` artifact was emitted), false to fall back to the
+ * crew_plan-only path. Never throws — CrewError and missing-manager cases
+ * degrade gracefully.
+ */
+async function dispatchCodingCrew(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+  goal: string,
+  members: string[],
+  planArtifactId: string,
+): Promise<boolean> {
+  const crewManager = deps.crewManager;
+  const channelManager = deps.channelManager;
+  if (!crewManager || !channelManager) return false;
+
+  // Resolve each named member to a live agent. Skip the live path if any are
+  // unknown — surface which ones so the user can fix the names.
+  const resolved: { agentName: string; id: EntityId }[] = [];
+  const missing: string[] = [];
+  for (const name of members) {
+    const agent = deps.findAgentByName?.(name);
+    if (agent) resolved.push({ agentName: agent.name, id: agent.id });
+    else missing.push(name);
+  }
+  if (resolved.length === 0) {
+    ctx.send(
+      eid,
+      `Could not resolve any named agents (${missing.join(", ")}). Stored the crew plan instead.`,
+    );
+    return false;
+  }
+  if (missing.length > 0) {
+    ctx.send(eid, dim(`Skipping unknown agents: ${missing.join(", ")}`));
+  }
+
+  const formation: CrewFormation = "swarm";
+  const crewName = `code-${session.id}-${crypto.randomUUID().slice(0, 6)}`;
+  try {
+    const crew = crewManager.create({
+      name: crewName,
+      goal,
+      formation,
+      lifetime: "ephemeral",
+      owner: entity.id,
+      members: resolved.map((m) => ({ agentName: m.agentName })),
+    });
+    crewManager.dispatch(crew.id, goal, { id: entity.id, name: entity.name });
+    // The first dispatch lazily provisions the crew channel; mirror the crew
+    // command's behavior and ensure all members + the owner are joined.
+    if (crew.channelId) {
+      for (const member of resolved) {
+        if (!channelManager.isMember(crew.channelId, member.id)) {
+          channelManager.addMember(crew.channelId, member.id);
+        }
+      }
+      if (!channelManager.isMember(crew.channelId, eid)) {
+        channelManager.addMember(crew.channelId, eid);
+      }
+    }
+
+    const memberRoles = crew.members.map((m) => ({ agentName: m.agentName, role: m.role }));
+    const dispatchedArtifact = deps.db.createCodingArtifact({
+      sessionId: session.id,
+      kind: "crew_dispatched",
+      title: `Crew dispatched: ${crew.name}`,
+      status: "active",
+      contentText: [
+        `Crew: ${crew.name} (${crew.formation})`,
+        `Channel: ${crew.channelId ?? "(pending)"}`,
+        `Members: ${memberRoles.map((m) => `${m.agentName} (${m.role})`).join(", ")}`,
+        "",
+        `Goal: ${goal}`,
+      ].join("\n"),
+      metadata: {
+        crewId: crew.id,
+        crewName: crew.name,
+        channelId: crew.channelId,
+        members: memberRoles,
+        formation: crew.formation,
+        goal,
+        sourceArtifactId: planArtifactId,
+      },
+      createdBy: entity.name,
+    });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "coding_crew_dispatched",
+      payload: {
+        id: dispatchedArtifact.id,
+        crewId: crew.id,
+        crewName: crew.name,
+        channelId: crew.channelId,
+        goal,
+      },
+    });
+    deps.db.updateCodingSession(session.id, { mode: "agent" });
+    updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+    sendCode(
+      ctx,
+      eid,
+      [
+        success(`Coding crew dispatched: ${crew.name}`),
+        `Crew: ${crew.id}`,
+        `Channel: ${crew.channelId ?? "(pending)"}`,
+        `Members: ${memberRoles.map((m) => `${m.agentName} (${m.role})`).join(", ")}`,
+        dim("The crew is working in its channel; track progress via code status."),
+      ].join("\n"),
+      {
+        artifactId: dispatchedArtifact.id,
+        artifactKind: dispatchedArtifact.kind,
+        commands: [`code show ${dispatchedArtifact.id}`, "code status", "code history"],
+        content: dispatchedArtifact.content_text,
+        event: "coding_crew_dispatched",
+        metadata: {
+          crewId: crew.id,
+          crewName: crew.name,
+          channelId: crew.channelId,
+          members: memberRoles,
+          formation: crew.formation,
+          goal,
+          sourceArtifactId: planArtifactId,
+        },
+        rows: memberRoles.map((m) => ({
+          id: m.agentName,
+          detail: m.role,
+          status: "active",
+          title: m.agentName,
+          type: "agent",
+        })),
+        sessionId: session.id,
+        status: dispatchedArtifact.status,
+        title: dispatchedArtifact.title,
+        type: "artifact",
+        workspace: session.workspace_root,
+      },
+    );
+    return true;
+  } catch (err) {
+    const message =
+      err instanceof CrewError ? err.message : err instanceof Error ? err.message : String(err);
+    ctx.send(
+      eid,
+      `${fmtError(`Crew dispatch failed: ${message}`)}\n${dim(
+        "Stored the crew plan instead. Re-run with distinct, online agent names.",
+      )}`,
+    );
+    return false;
+  }
+}
+
+function sessionTask(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  rawTitle: string,
+): void {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const title = rawTitle.trim();
+  if (!title) {
+    ctx.send(eid, "Usage: code task <title>");
+    return;
+  }
+  const taskId = deps.db.createTask({
+    title,
+    description: `from coding session ${session.id}`,
+    creatorId: entity.id,
+    creatorName: entity.name,
+  });
+  const artifact = deps.db.createCodingArtifact({
+    sessionId: session.id,
+    kind: "session_task",
+    title: `Linked task: ${title}`,
+    status: "active",
+    contentText: `Task #${taskId}: ${title}\n\nLinked from coding session ${session.id}.`,
+    metadata: { taskId, title },
+    createdBy: entity.name,
+  });
+  deps.db.createCodingEvent({
+    sessionId: session.id,
+    actor: entity.name,
+    kind: "coding_task_linked",
+    payload: { id: artifact.id, taskId, title },
+  });
+  updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+  sendCode(ctx, eid, success(`Linked task #${taskId}: ${title}`), {
+    artifactId: artifact.id,
+    artifactKind: artifact.kind,
+    commands: [`code show ${artifact.id}`, "code status", "code history"],
+    content: artifact.content_text,
+    event: "coding_task_linked",
+    metadata: { taskId, title },
+    rows: [{ id: String(taskId), detail: title, status: "open", title, type: "task" }],
     sessionId: session.id,
     status: artifact.status,
     title: artifact.title,
@@ -3442,6 +3712,7 @@ function approval(
       commands: [`code approve ${artifact.id}`, `code deny ${artifact.id}`],
       content: description,
       event: "coding_approval_requested",
+      metadata: { kind, requestedBy: entity.name },
       sessionId: session.id,
       status: artifact.status,
       title: artifact.title,
@@ -3473,12 +3744,15 @@ function decideApproval(
     ctx.send(eid, `${artifact.kind} ${artifact.id} is ${artifact.status}, not pending.`);
     return;
   }
+  const decidedAt = Date.now();
+  const decidedBy = entity.name;
+  const priorMetadata = parseJsonObject(artifact.metadata_json);
   deps.db.updateCodingArtifact(artifact.id, {
     status,
     metadata: {
-      ...parseJsonObject(artifact.metadata_json),
-      decidedAt: Date.now(),
-      decidedBy: entity.name,
+      ...priorMetadata,
+      decidedAt,
+      decidedBy,
     },
   });
   deps.db.createCodingEvent({
@@ -3496,6 +3770,12 @@ function decideApproval(
         ? [`code spawn run ${artifact.id}`, `code show ${artifact.id}`]
         : [`code show ${artifact.id}`, "code approvals"],
     event: `coding_approval_${status}`,
+    metadata: {
+      ...priorMetadata,
+      decidedAt,
+      decidedBy,
+      requestedBy: priorMetadata.requestedBy ?? artifact.created_by,
+    },
     sessionId: session.id,
     status,
     title: artifact.title,
@@ -3934,6 +4214,9 @@ function completeSession(
     createdBy: entity.name,
   });
   deps.db.updateCodingSession(session.id, { status: "complete", mode: "done" });
+  // Persist the closing summary into the bound project pool (if any) + a
+  // personal note, so the session's takeaways outlive the ephemeral artifacts.
+  if (summary.trim()) depositSessionSummary(deps, entity, session, text);
   deps.db.createCodingEvent({
     sessionId: session.id,
     actor: entity.name,
@@ -3963,6 +4246,47 @@ function completeSession(
   );
 }
 
+/**
+ * Resolve a memory pool bound to this coding session, if any. Binding is by
+ * convention: a project whose name matches the session workspace basename and
+ * carries a pool_id. Returns undefined when nothing is bound (degrade silently).
+ */
+function resolveSessionPoolId(
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+): string | undefined {
+  const projectName = basename(session.workspace_root);
+  const project = deps.db.getProjectByName(projectName);
+  return project?.pool_id ?? undefined;
+}
+
+/**
+ * Deposit a session summary into the bound project pool (when present) AND a
+ * personal note. Both writes are best-effort — failures never block the
+ * session flow. Returns the pool id when a pool deposit happened.
+ */
+function depositSessionSummary(
+  deps: CodeDeps & { db: MarinaDB },
+  entity: Entity,
+  session: CodingSessionRow,
+  text: string,
+): string | undefined {
+  const content = `[coding ${session.id}] ${text}`;
+  try {
+    deps.db.createNote(entity.name, content, undefined, { noteType: "summary" });
+  } catch {
+    // Personal note is best-effort.
+  }
+  const poolId = resolveSessionPoolId(deps, session);
+  if (!poolId) return undefined;
+  try {
+    deps.db.addPoolNote(poolId, entity.name, content, undefined, "summary");
+    return poolId;
+  } catch {
+    return undefined;
+  }
+}
+
 function recordCodingNote(
   ctx: RoomContext,
   eid: EntityId,
@@ -3985,13 +4309,20 @@ function recordCodingNote(
   }
 
   const profile = getCodeProfile(entity);
+  // Handoffs link to the active dispatched crew when one exists, so a reader of
+  // the handoff can find who picked up the work. Minimal, best-effort.
+  const noteMetadata: Record<string, unknown> = { profile: profile.name };
+  if (noteKind === "handoff") {
+    const activeCrew = latestActiveArtifact(deps.db, session.id, "crew_dispatched");
+    if (activeCrew) noteMetadata.sourceArtifactId = activeCrew.id;
+  }
   const artifact = deps.db.createCodingArtifact({
     sessionId: session.id,
     kind: noteKind,
     title: formatCodingNoteTitle(noteKind, text),
     status: "complete",
     contentText: text,
-    metadata: { profile: profile.name },
+    metadata: noteMetadata,
     createdBy: entity.name,
   });
   deps.db.createCodingEvent({
@@ -4006,6 +4337,9 @@ function recordCodingNote(
     kind: "session_steered",
     payload: { text, profile: profile.name, artifactId: artifact.id, artifactKind: noteKind },
   });
+  // A summary is the durable session takeaway — deposit it into the bound
+  // project pool (when present) and a personal note. Degrades silently.
+  if (noteKind === "summary") depositSessionSummary(deps, entity, session, text);
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
   sendCode(ctx, eid, success(`${capitalize(noteKind)} stored: ${artifact.id}`), {
     artifactId: artifact.id,

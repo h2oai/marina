@@ -13,6 +13,7 @@ import {
   Send,
   Sparkles,
   Terminal,
+  Users,
   XCircle,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -189,6 +190,53 @@ function diffStats(
   return { additions, deletions, files };
 }
 
+/** Parse a metadata blob that may arrive as a JSON string or an already-parsed
+ * object (events vs. artifact rows differ). Never throws. */
+function parseMetadata(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "object") return value as Record<string, unknown>;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+/** Approve/deny status badge classes. pending=amber, approved=emerald, denied/rejected=red. */
+function approvalBadgeTone(status?: string): string {
+  const s = (status ?? "").toLowerCase();
+  if (s === "approved" || s === "applied")
+    return "border-emerald-500/40 bg-emerald-500/15 text-emerald-300";
+  if (s === "denied" || s === "rejected" || s === "failed")
+    return "border-red-500/40 bg-red-500/15 text-red-300";
+  return "border-yellow-500/40 bg-yellow-500/15 text-yellow-200";
+}
+
+/** Crew member rows arrive as [{ agentName, role }]; tolerate partial/loose shapes. */
+function parseCrewMembers(value: unknown): { agentName: string; role?: string }[] {
+  if (!Array.isArray(value)) return [];
+  const members: { agentName: string; role?: string }[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") continue;
+    const m = raw as Record<string, unknown>;
+    const agentName =
+      typeof m.agentName === "string"
+        ? m.agentName
+        : typeof m.name === "string"
+          ? m.name
+          : typeof m.agent === "string"
+            ? m.agent
+            : undefined;
+    if (!agentName) continue;
+    members.push({ agentName, role: typeof m.role === "string" ? m.role : undefined });
+  }
+  return members;
+}
+
 interface RoomPerceptionData {
   name?: string;
   short?: string;
@@ -207,8 +255,12 @@ interface CodeTreeNode {
 }
 
 interface CodeMessageData {
+  appliedAt?: number | null;
+  appliedBy?: string | null;
   artifactId?: string;
   artifactKind?: string;
+  createdBy?: string;
+  metadata?: Record<string, unknown> | string | null;
   checks?: {
     detail?: string;
     label?: string;
@@ -253,8 +305,10 @@ interface CodeMessageData {
   tree?: CodeTreeNode[];
   truncated?: boolean;
   type?:
+    | "approval"
     | "artifact"
     | "command"
+    | "crew"
     | "diff"
     | "file"
     | "history"
@@ -1307,6 +1361,147 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
     );
   };
 
+  // ── Phase 3/4 cards ──────────────────────────────────────────────
+  // Interactive approve/deny card. Used for `approval` + `spawn_request`
+  // artifacts in both the transcript and the artifacts overlay. Decision
+  // buttons send through the existing command path; once decided the card
+  // shows a read-only, multiuser-aware decision line.
+  const renderApprovalCard = (props: {
+    id: string;
+    kind: string;
+    title?: string;
+    status?: string;
+    requestedBy?: string;
+    decidedBy?: string | null;
+    decidedAt?: number | null;
+    description?: string;
+  }) => {
+    const status = (props.status ?? "pending").toLowerCase();
+    const pending = status === "pending";
+    const Icon = props.kind === "spawn_request" ? Users : GitPullRequest;
+    return (
+      <div className="mt-2 rounded-md border border-border/70 bg-bg/50 p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold text-text-bright">
+            <Icon size={13} className="shrink-0 text-primary" />
+            <span className="truncate">{props.title || `Approval ${props.id}`}</span>
+          </div>
+          <span
+            className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-wide ${approvalBadgeTone(status)}`}
+          >
+            {status}
+          </span>
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-2 font-mono text-[10px] text-text-dim">
+          <span>{props.id}</span>
+          <span className="rounded bg-bg-hover px-1 py-0.5">{props.kind}</span>
+          {props.requestedBy && <span>by {props.requestedBy}</span>}
+        </div>
+        {props.description && (
+          <div className="mt-1.5 whitespace-pre-wrap break-words text-[11px] text-text">
+            {props.description}
+          </div>
+        )}
+        {pending ? (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => sendCommandWithOverlay(`code approve ${props.id}`)}
+              className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-300 transition-colors hover:border-emerald-400 hover:bg-emerald-500/20"
+            >
+              Approve
+            </button>
+            <button
+              type="button"
+              onClick={() => sendCommandWithOverlay(`code deny ${props.id}`)}
+              className="rounded border border-red-500/40 bg-red-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-red-300 transition-colors hover:border-red-400 hover:bg-red-500/20"
+            >
+              Deny
+            </button>
+          </div>
+        ) : (
+          <div className="mt-2 text-[10px] text-text-dim">
+            {status === "denied" || status === "rejected" ? "denied" : "approved"}
+            {props.decidedBy ? ` by ${props.decidedBy}` : ""}
+            {props.decidedAt ? ` · ${formatTimestamp(props.decidedAt)}` : ""}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // "Crew dispatched" card — a real crew was created + the goal posted.
+  const renderCrewDispatchedCard = (meta: Record<string, unknown>, fallbackTitle?: string) => {
+    const crewName =
+      typeof meta.crewName === "string"
+        ? meta.crewName
+        : typeof meta.crewId === "string"
+          ? meta.crewId
+          : fallbackTitle || "Crew";
+    const goal = typeof meta.goal === "string" ? meta.goal : undefined;
+    const formation = typeof meta.formation === "string" ? meta.formation : undefined;
+    const channelId = typeof meta.channelId === "string" ? meta.channelId : undefined;
+    const members = parseCrewMembers(meta.members);
+    return (
+      <div className="mt-2 rounded-md border border-border/70 bg-bg/50 p-3">
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-text-bright">
+          <Network size={13} className="shrink-0 text-primary" />
+          <span className="truncate">Crew dispatched · {crewName}</span>
+          {formation && (
+            <span className="rounded bg-bg-hover px-1 py-0.5 font-mono text-[9px] text-text-dim">
+              {formation}
+            </span>
+          )}
+        </div>
+        {goal && <div className="mt-1.5 break-words text-[11px] text-text">{goal}</div>}
+        {members.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {members.map((member) => (
+              <span
+                key={member.agentName}
+                className="flex items-center gap-1 rounded border border-border/60 bg-bg px-2 py-0.5 text-[10px] text-text-dim"
+              >
+                <Code2 size={10} className="text-primary" />
+                <span className="text-text">{member.agentName}</span>
+                {member.role && <span className="text-text-dim">· {member.role}</span>}
+              </span>
+            ))}
+          </div>
+        )}
+        {channelId && (
+          <div className="mt-2 font-mono text-[10px] text-text-dim">channel {channelId}</div>
+        )}
+      </div>
+    );
+  };
+
+  // "Linked task #<id>" chip for session_task artifacts.
+  const renderSessionTaskChip = (meta: Record<string, unknown>, fallbackTitle?: string) => {
+    const taskId =
+      typeof meta.taskId === "number" || typeof meta.taskId === "string"
+        ? String(meta.taskId)
+        : undefined;
+    const title = typeof meta.title === "string" ? meta.title : fallbackTitle;
+    return (
+      <div className="mt-2 inline-flex max-w-full items-center gap-1.5 rounded-md border border-primary/35 bg-primary/5 px-2.5 py-1 text-[11px] text-text">
+        <List size={12} className="shrink-0 text-primary" />
+        <span className="truncate">
+          Linked task{taskId ? ` #${taskId}` : ""}
+          {title ? `: ${title}` : ""}
+        </span>
+        {taskId && (
+          <button
+            type="button"
+            onClick={() => sendCommandWithOverlay(`task info ${taskId}`)}
+            className="shrink-0 rounded border border-border/70 bg-bg px-1.5 py-0.5 text-[9px] text-text-dim transition-colors hover:border-primary hover:text-primary"
+          >
+            Info
+          </button>
+        )}
+      </div>
+    );
+  };
+
   const renderCodeMessage = (
     m: ChatMessage,
     i: number,
@@ -1352,6 +1547,16 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
         : type === "command"
           ? "output"
           : "text";
+
+    // Phase 3/4: route by artifact kind (the reliable discriminator the backend
+    // sets on every code message), falling back to the type union. These kinds
+    // get a dedicated interactive/structured card instead of the default chips.
+    const artifactKind = code.artifactKind ?? (type === "approval" || type === "crew" ? type : "");
+    const cardMeta = parseMetadata(code.metadata);
+    const isApprovalCard =
+      (artifactKind === "approval" || artifactKind === "spawn_request") && Boolean(code.artifactId);
+    const isCrewDispatchedCard = artifactKind === "crew_dispatched";
+    const isSessionTaskCard = artifactKind === "session_task";
 
     return (
       <div
@@ -1417,24 +1622,49 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
             ))}
           </div>
         )}
-        {type === "tree" ? renderCodeTree(code.tree) : null}
-        {renderCodeChecks(code.checks)}
-        {renderCodeRows(code.rows)}
-        {renderCodeEvents(code.events)}
-        {content.trim()
-          ? renderCodeBlock(content, blockVariant)
-          : type !== "tree" && type !== "profile"
-            ? renderTextContent(m.text ?? "", "mt-2 text-sm text-text")
-            : null}
-        {(typeof code.exitCode === "number" || typeof code.durationMs === "number") && (
-          <div className="mt-2 flex flex-wrap gap-2 font-mono text-[10px] text-text-dim">
-            {typeof code.exitCode === "number" && <span>exit {code.exitCode}</span>}
-            {typeof code.durationMs === "number" && <span>{code.durationMs}ms</span>}
-            {code.timedOut && <span className="text-red-300">timed out</span>}
-            {code.truncated && <span>truncated</span>}
-          </div>
+        {isApprovalCard ? (
+          renderApprovalCard({
+            id: code.artifactId ?? "",
+            kind: artifactKind,
+            title: code.title,
+            status,
+            requestedBy:
+              code.createdBy ??
+              (typeof cardMeta.requestedBy === "string" ? cardMeta.requestedBy : undefined),
+            decidedBy:
+              code.appliedBy ??
+              (typeof cardMeta.decidedBy === "string" ? cardMeta.decidedBy : undefined),
+            decidedAt:
+              code.appliedAt ??
+              (typeof cardMeta.decidedAt === "number" ? cardMeta.decidedAt : undefined),
+            description: content.trim() || (m.text ?? "").trim() || undefined,
+          })
+        ) : isCrewDispatchedCard ? (
+          renderCrewDispatchedCard(cardMeta, code.title)
+        ) : isSessionTaskCard ? (
+          renderSessionTaskChip(cardMeta, code.title)
+        ) : (
+          <>
+            {type === "tree" ? renderCodeTree(code.tree) : null}
+            {renderCodeChecks(code.checks)}
+            {renderCodeRows(code.rows)}
+            {renderCodeEvents(code.events)}
+            {content.trim()
+              ? renderCodeBlock(content, blockVariant)
+              : type !== "tree" && type !== "profile"
+                ? renderTextContent(m.text ?? "", "mt-2 text-sm text-text")
+                : null}
+            {(typeof code.exitCode === "number" || typeof code.durationMs === "number") && (
+              <div className="mt-2 flex flex-wrap gap-2 font-mono text-[10px] text-text-dim">
+                {typeof code.exitCode === "number" && <span>exit {code.exitCode}</span>}
+                {typeof code.durationMs === "number" && <span>{code.durationMs}ms</span>}
+                {code.timedOut && <span className="text-red-300">timed out</span>}
+                {code.truncated && <span>truncated</span>}
+              </div>
+            )}
+            {renderCodeActions(code.commands)}
+          </>
         )}
-        {renderCodeActions(code.commands)}
         <button
           type="button"
           onClick={() => copy(messageText(m), i)}
@@ -1893,35 +2123,68 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
               <div className="text-[9px] font-semibold uppercase tracking-wide text-text-dim">
                 {kind} · {group.length}
               </div>
-              {group.map((artifact) => (
-                <button
-                  key={artifact.id}
-                  type="button"
-                  onClick={() =>
-                    setInspectedArtifactId((cur) => (cur === artifact.id ? null : artifact.id))
-                  }
-                  className={`block w-full rounded border bg-bg px-3 py-2 text-left transition-colors hover:border-primary ${
-                    inspectedArtifactId === artifact.id ? "border-primary" : "border-border"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-[12px] font-semibold text-text-bright">
-                      {artifact.title || artifact.id}
-                    </span>
-                    <span
-                      className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] uppercase ${codeStatusTone(
-                        artifact.status,
-                      )}`}
-                    >
-                      {artifact.status}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-text-dim">
-                    <span className="font-mono">{artifact.id}</span>
-                    <span>{formatTimestamp(artifact.updated_at)}</span>
-                  </div>
-                </button>
-              ))}
+              {group.map((artifact) => {
+                const meta = parseMetadata(artifact.metadata_json);
+                if (kind === "approval" || kind === "spawn_request") {
+                  return (
+                    <div key={artifact.id}>
+                      {renderApprovalCard({
+                        id: artifact.id,
+                        kind: artifact.kind,
+                        title: artifact.title,
+                        status: artifact.status,
+                        requestedBy:
+                          artifact.created_by ??
+                          (typeof meta.requestedBy === "string" ? meta.requestedBy : undefined),
+                        decidedBy:
+                          artifact.applied_by ??
+                          (typeof meta.decidedBy === "string" ? meta.decidedBy : undefined),
+                        decidedAt:
+                          artifact.applied_at ??
+                          (typeof meta.decidedAt === "number" ? meta.decidedAt : undefined),
+                        description: artifact.content_text?.trim() || undefined,
+                      })}
+                    </div>
+                  );
+                }
+                if (kind === "crew_dispatched") {
+                  return (
+                    <div key={artifact.id}>{renderCrewDispatchedCard(meta, artifact.title)}</div>
+                  );
+                }
+                if (kind === "session_task") {
+                  return <div key={artifact.id}>{renderSessionTaskChip(meta, artifact.title)}</div>;
+                }
+                return (
+                  <button
+                    key={artifact.id}
+                    type="button"
+                    onClick={() =>
+                      setInspectedArtifactId((cur) => (cur === artifact.id ? null : artifact.id))
+                    }
+                    className={`block w-full rounded border bg-bg px-3 py-2 text-left transition-colors hover:border-primary ${
+                      inspectedArtifactId === artifact.id ? "border-primary" : "border-border"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-[12px] font-semibold text-text-bright">
+                        {artifact.title || artifact.id}
+                      </span>
+                      <span
+                        className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] uppercase ${codeStatusTone(
+                          artifact.status,
+                        )}`}
+                      >
+                        {artifact.status}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between gap-2 text-[10px] text-text-dim">
+                      <span className="font-mono">{artifact.id}</span>
+                      <span>{formatTimestamp(artifact.updated_at)}</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           ))}
           {artifacts.length === 0 && (
