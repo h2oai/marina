@@ -10,6 +10,7 @@ import { WorkspaceRegistry } from "../../coding/workspace-registry";
 import { dim, error as fmtError, header, separator, success } from "../../net/ansi";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { checkGate, recordDemonstration } from "../safety-gates";
 
 const ACTIVE_SESSION_KEY = "coding_session_id";
 const ACTIVE_MODAL_KEY = "active_modal";
@@ -1835,6 +1836,17 @@ async function runApprovedSpawnRequest(
     return;
   }
 
+  // Spawning a coding agent is the same governed capability as `agent spawn`:
+  // enforce the agent.spawn safety gate here rather than bypassing it from
+  // inside Code Mode. The session-level approval artifact is a human review
+  // step; the gate is the civic-substrate competence proof.
+  const gate = checkGate(deps.db, eid, "agent.spawn");
+  if (!gate.ok) {
+    ctx.send(eid, gate.reason ?? "Not permitted to spawn agents.");
+    return;
+  }
+  const pendingDemo = gate.supervisedOnly === true;
+
   const meta = parseJsonObject(artifact.metadata_json);
   const role = typeof meta.role === "string" ? meta.role : "implementer";
   const goal = typeof meta.goal === "string" ? meta.goal : artifact.content_text;
@@ -1926,6 +1938,12 @@ async function runApprovedSpawnRequest(
       type: "artifact",
       workspace: session.workspace_root,
     });
+
+    // Supervised-only entities prove competence by completing a real spawn.
+    // After demoThreshold demonstrations, agent.spawn flips to unsupervised.
+    if (pendingDemo) {
+      recordDemonstration(deps.db, eid, "agent.spawn");
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     deps.db.createCodingEvent({
