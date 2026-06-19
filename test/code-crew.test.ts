@@ -209,8 +209,8 @@ describe("code crew dispatch (Phase 4a)", () => {
     expect(meta.crewId).toBeTruthy();
     expect(meta.channelId).toBeTruthy();
     expect(meta.members).toEqual([
-      { agentName: "bob", role: "specialist" },
-      { agentName: "carol", role: "specialist" },
+      { agentName: "bob", role: "specialist", source: "recruited" },
+      { agentName: "carol", role: "specialist", source: "recruited" },
     ]);
     // Proposal trail is linked to the dispatched artifact.
     expect(meta.sourceArtifactId).toBeTruthy();

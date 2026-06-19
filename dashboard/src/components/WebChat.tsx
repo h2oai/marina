@@ -7,6 +7,7 @@ import {
   GitBranch,
   GitPullRequest,
   List,
+  Lock,
   MessageSquareText,
   Network,
   PanelsTopLeft,
@@ -216,10 +217,12 @@ function approvalBadgeTone(status?: string): string {
   return "border-yellow-500/40 bg-yellow-500/15 text-yellow-200";
 }
 
-/** Crew member rows arrive as [{ agentName, role }]; tolerate partial/loose shapes. */
-function parseCrewMembers(value: unknown): { agentName: string; role?: string }[] {
+/** Crew member rows arrive as [{ agentName, role, source }]; tolerate partial/loose shapes. */
+function parseCrewMembers(
+  value: unknown,
+): { agentName: string; role?: string; source?: "recruited" | "spawned" }[] {
   if (!Array.isArray(value)) return [];
-  const members: { agentName: string; role?: string }[] = [];
+  const members: { agentName: string; role?: string; source?: "recruited" | "spawned" }[] = [];
   for (const raw of value) {
     if (!raw || typeof raw !== "object") continue;
     const m = raw as Record<string, unknown>;
@@ -232,7 +235,12 @@ function parseCrewMembers(value: unknown): { agentName: string; role?: string }[
             ? m.agent
             : undefined;
     if (!agentName) continue;
-    members.push({ agentName, role: typeof m.role === "string" ? m.role : undefined });
+    const source = m.source === "recruited" || m.source === "spawned" ? m.source : undefined;
+    members.push({
+      agentName,
+      role: typeof m.role === "string" ? m.role : undefined,
+      source,
+    });
   }
   return members;
 }
@@ -340,6 +348,7 @@ interface CodeContextData {
   sessionStatus?: string;
   sessionTitle?: string;
   workspace?: string;
+  writer?: string;
 }
 
 function appendMsg(text: string, kind: string, tag?: string, perception?: StoredPerception) {
@@ -1077,8 +1086,13 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
       label: string;
       title: string;
       value: string;
-      tone?: "accent" | "warn";
+      tone?: "accent" | "warn" | "lock";
+      icon?: ReactNode;
     };
+    // Write-lock holder. The entity `code_context` property is the always-live
+    // source; the loaded session detail (when the artifacts overlay is open)
+    // is a fallback. Both are read defensively — `writer` may be absent.
+    const writer = codeContext.writer ?? codingDetailQuery.data?.session?.writer ?? undefined;
     const chips: Chip[] = (
       [
         {
@@ -1145,6 +1159,16 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
               value: codeContext.assignedAgent,
             }
           : null,
+        writer
+          ? {
+              key: "writer",
+              label: "writer",
+              title: `${writer} holds the write lock for this session`,
+              value: writer,
+              tone: "lock",
+              icon: <Lock size={9} className="shrink-0" />,
+            }
+          : null,
       ] as (Chip | null)[]
     ).filter((chip): chip is Chip => chip !== null);
     return (
@@ -1164,10 +1188,13 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
                   ? "border-yellow-500/40 bg-yellow-950/15 text-yellow-200"
                   : chip.tone === "accent"
                     ? "border-emerald-500/35 bg-emerald-950/15 text-emerald-200"
-                    : "border-border/60 bg-bg/70 text-text-dim"
+                    : chip.tone === "lock"
+                      ? "border-amber-500/45 bg-amber-950/20 text-amber-200"
+                      : "border-border/60 bg-bg/70 text-text-dim"
               }`}
               title={chip.title}
             >
+              {chip.icon}
               <span className="shrink-0 text-[8px] font-semibold uppercase tracking-wide text-text-dim/80">
                 {chip.label}
               </span>
@@ -1464,6 +1491,22 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
                 <Code2 size={10} className="text-primary" />
                 <span className="text-text">{member.agentName}</span>
                 {member.role && <span className="text-text-dim">· {member.role}</span>}
+                {member.source && (
+                  <span
+                    className={`rounded px-1 py-px text-[8px] font-semibold uppercase tracking-wide ${
+                      member.source === "spawned"
+                        ? "bg-violet-500/15 text-violet-300"
+                        : "bg-sky-500/15 text-sky-300"
+                    }`}
+                    title={
+                      member.source === "spawned"
+                        ? "Spawned via the agent.spawn safety gate"
+                        : "Recruited from an existing coding agent"
+                    }
+                  >
+                    {member.source}
+                  </span>
+                )}
               </span>
             ))}
           </div>
@@ -2417,6 +2460,7 @@ function codeContextFromProperty(value: unknown): CodeContextData | null {
     sessionStatus: typeof data.sessionStatus === "string" ? data.sessionStatus : undefined,
     sessionTitle: typeof data.sessionTitle === "string" ? data.sessionTitle : undefined,
     workspace: typeof data.workspace === "string" ? data.workspace : undefined,
+    writer: typeof data.writer === "string" ? data.writer : undefined,
   };
 }
 
