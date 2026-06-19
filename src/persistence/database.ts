@@ -1351,6 +1351,10 @@ CREATE INDEX idx_coding_artifacts_session ON coding_artifacts(session_id, create
 CREATE INDEX idx_coding_artifacts_status ON coding_artifacts(status, updated_at DESC);
 `,
   },
+  {
+    version: 49,
+    sql: `ALTER TABLE coding_sessions ADD COLUMN writer TEXT;`,
+  },
 ];
 
 // ─── Database Class ──────────────────────────────────────────────────────────
@@ -3404,6 +3408,7 @@ export class MarinaDB {
       created_by: session.createdBy,
       created_at: now,
       updated_at: now,
+      writer: null,
     };
     this.db.run(
       `INSERT INTO coding_sessions
@@ -3444,10 +3449,10 @@ export class MarinaDB {
 
   updateCodingSession(
     id: string,
-    patch: Partial<{ status: string; mode: string; title: string }>,
+    patch: Partial<{ status: string; mode: string; title: string; writer: string | null }>,
   ): void {
     const sets: string[] = [];
-    const values: Array<string | number> = [];
+    const values: Array<string | number | null> = [];
     if (patch.status !== undefined) {
       sets.push("status = ?");
       values.push(patch.status);
@@ -3459,6 +3464,10 @@ export class MarinaDB {
     if (patch.title !== undefined) {
       sets.push("title = ?");
       values.push(patch.title);
+    }
+    if (patch.writer !== undefined) {
+      sets.push("writer = ?");
+      values.push(patch.writer);
     }
     if (sets.length === 0) return;
     sets.push("updated_at = ?");
@@ -4367,6 +4376,7 @@ export interface CodingSessionRow {
   created_by: string;
   created_at: number;
   updated_at: number;
+  writer: string | null;
 }
 
 export interface CodingEventRow {
