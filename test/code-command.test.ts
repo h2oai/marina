@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentHandle, AgentStatus } from "../src/agent/agent-types";
@@ -431,7 +439,9 @@ describe("code command", () => {
   });
 
   it("selects an explicit workspace root for new sessions", async () => {
-    const root = mkdtempSync(join(tmpdir(), "marina-code-roots-"));
+    // realpathSync: on macOS tmpdir() is /var/... which canonicalizes to
+    // /private/var/...; the product resolves the real path, so the test must too.
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "marina-code-roots-")));
     const app = join(root, "app");
     const docs = join(root, "docs");
     try {
@@ -1285,7 +1295,9 @@ diff --git a/../outside.txt b/../outside.txt
 });
 
 function makeTempGitWorkspace(): string {
-  const root = mkdtempSync(join(tmpdir(), "marina-code-test-"));
+  // realpathSync: macOS tmpdir() (/var/...) canonicalizes to /private/var/...;
+  // the product resolves the real path, so the helper must return it too.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "marina-code-test-")));
   writeFileSync(join(root, "example.txt"), "hello\n");
   const proc = Bun.spawnSync(["git", "init"], { cwd: root, stdout: "pipe", stderr: "pipe" });
   if (proc.exitCode !== 0) {
