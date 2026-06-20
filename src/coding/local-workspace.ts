@@ -78,7 +78,46 @@ export interface CodeRunPolicy {
   timeoutMs: number;
 }
 
-export class LocalWorkspace {
+/**
+ * Host-side filesystem surface of a workspace. These operations read/mutate the
+ * workspace tree directly; for a sandboxed runtime they stay host-side over the
+ * shared mount (virtio-fs) rather than crossing into the guest — see
+ * docs/design/web-coding-guest-agent-protocol.md (host/guest split).
+ */
+export interface WorkspaceFiles {
+  displayRoot(): string;
+  list(input?: string, limit?: number): WorkspaceEntry[];
+  read(
+    input: string,
+    maxBytes?: number,
+  ): Promise<{ path: string; content: string; truncated: boolean; size: number }>;
+  search(query: string, limit?: number): Promise<SearchHit[]>;
+  diff(
+    input?: string,
+    maxBytes?: number,
+  ): Promise<{ content: string; truncated: boolean; exitCode: number }>;
+  checkPatch(patch: string): Promise<PatchCheck>;
+  applyPatch(patch: string): Promise<PatchCheck>;
+  reversePatch(patch: string, checkOnly?: boolean): Promise<PatchCheck>;
+}
+
+/**
+ * Command-execution surface of a workspace. This is the part a sandboxed runtime
+ * sends across the guest boundary; the local runtime runs it on the host.
+ */
+export interface WorkspaceExec {
+  run(command: string[], timeoutMs?: number, maxBytes?: number): Promise<WorkspaceRunResult>;
+  runPolicy(): CodeRunPolicy;
+}
+
+/**
+ * The full workspace contract consumed by the `code` command. `LocalWorkspace`
+ * is the default (host-process) implementation; future sandboxed runtimes
+ * implement the same contract (overriding exec, delegating files to the share).
+ */
+export type WorkspaceRuntime = WorkspaceFiles & WorkspaceExec;
+
+export class LocalWorkspace implements WorkspaceRuntime {
   readonly root: string;
 
   constructor(root = process.cwd()) {
