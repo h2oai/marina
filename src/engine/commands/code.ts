@@ -5,7 +5,7 @@ import {
   CodeSessionDriver,
   type CodingAgentRuntime,
 } from "../../coding/code-session-driver";
-import type { LocalWorkspace, WorkspaceRunResult } from "../../coding/local-workspace";
+import type { WorkspaceRunResult, WorkspaceRuntime } from "../../coding/local-workspace";
 import { WorkspaceRegistry } from "../../coding/workspace-registry";
 import type { ChannelManager } from "../../coordination/channel-manager";
 import { CrewError, type CrewManager } from "../../coordination/crew-manager";
@@ -763,7 +763,7 @@ export interface CodeDeps {
   db?: MarinaDB;
   findAgentByName?: (name: string) => Entity | undefined;
   listAgents?: () => { name: string }[];
-  workspace?: LocalWorkspace;
+  workspace?: WorkspaceRuntime;
   workspaceRegistry?: WorkspaceRegistry;
   getEntity: (id: string) => Entity | undefined;
 }
@@ -3053,7 +3053,7 @@ async function showRunAllowlist(
   ctx: RoomContext,
   eid: EntityId,
   session: CodingSessionRow,
-  workspace: LocalWorkspace,
+  workspace: WorkspaceRuntime,
 ): Promise<void> {
   const policy = workspace.runPolicy();
   const packageJson = await workspace.read("package.json").catch(() => null);
@@ -4751,7 +4751,7 @@ function getWorkspaceRegistry(deps: CodeDeps): WorkspaceRegistry {
   return deps.workspaceRegistry ?? new WorkspaceRegistry({ defaultRoot: root, roots: [root] });
 }
 
-function getSelectedWorkspace(entity: Entity, deps: CodeDeps): LocalWorkspace {
+function getSelectedWorkspace(entity: Entity, deps: CodeDeps): WorkspaceRuntime {
   return getWorkspaceRegistry(deps).workspaceForRoot(getSelectedWorkspaceRoot(entity, deps));
 }
 
@@ -4764,7 +4764,7 @@ function getSelectedWorkspaceRoot(entity: Entity, deps: CodeDeps): string {
   return registry.defaultRoot;
 }
 
-function workspaceForSession(deps: CodeDeps, session: CodingSessionRow): LocalWorkspace {
+function workspaceForSession(deps: CodeDeps, session: CodingSessionRow): WorkspaceRuntime {
   return getWorkspaceRegistry(deps).workspaceForRoot(session.workspace_root);
 }
 
@@ -5007,7 +5007,7 @@ function detectPackageScripts(packageJson: string): string[] {
   }
 }
 
-async function detectPackageManager(workspace: LocalWorkspace): Promise<string> {
+async function detectPackageManager(workspace: WorkspaceRuntime): Promise<string> {
   const lockfiles = [
     ["bun.lock", "bun"],
     ["bun.lockb", "bun"],
@@ -5358,7 +5358,7 @@ function findStoredRecipe(
 async function resolveRecipeCommands(
   db: MarinaDB,
   session: CodingSessionRow,
-  workspace: LocalWorkspace,
+  workspace: WorkspaceRuntime,
   name: string,
 ): Promise<string[] | null> {
   if (name === "detected") {

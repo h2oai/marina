@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import { LocalWorkspace } from "./local-workspace";
+import { LocalWorkspace, type WorkspaceRuntime } from "./local-workspace";
 
 export interface WorkspaceChoice {
   label: string;
@@ -34,11 +34,11 @@ export class WorkspaceRegistry {
     });
   }
 
-  defaultWorkspace(): LocalWorkspace {
+  defaultWorkspace(): WorkspaceRuntime {
     return new LocalWorkspace(this.defaultRoot);
   }
 
-  workspaceForRoot(root: string): LocalWorkspace {
+  workspaceForRoot(root: string): WorkspaceRuntime {
     return new LocalWorkspace(this.resolveRoot(root).root);
   }
 
