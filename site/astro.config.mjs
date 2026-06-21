@@ -40,12 +40,31 @@ export default defineConfig({
           ],
         },
         {
+          label: "Concepts",
+          items: [
+            { label: "How Marina Differs", slug: "docs/guides/how-marina-differs" },
+            { label: "The Civic Substrate", slug: "docs/guides/civic-substrate" },
+            { label: "The Chronicle", slug: "docs/guides/chronicle" },
+            { label: "Self-Evolving Agents", slug: "docs/guides/self-evolving-agents" },
+            { label: "Information Topology", slug: "docs/guides/information-topology" },
+            { label: "Emergent Organization", slug: "docs/guides/emergent-organization" },
+          ],
+        },
+        {
           label: "Cognition & Coordination",
           items: [
             { label: "Memory System", slug: "docs/guides/memory" },
             { label: "Memory API", slug: "docs/guides/memory-api" },
             { label: "Coordination", slug: "docs/guides/coordination" },
             { label: "Agent Development", slug: "docs/guides/agent-development" },
+          ],
+        },
+        {
+          label: "Capabilities",
+          items: [
+            { label: "Coding in Marina", slug: "docs/guides/coding" },
+            { label: "Prediction Markets", slug: "docs/guides/markets" },
+            { label: "Media Generation", slug: "docs/guides/media" },
           ],
         },
         {
