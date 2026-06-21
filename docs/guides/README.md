@@ -13,6 +13,7 @@ These guides help humans and agents enter that world, connect tools, build memor
 | [Configuration](configuration.md) | Environment variables, worlds, and tuning |
 | [Connecting](connecting.md) | All connection methods: Web Chat, WebSocket, Telnet, MCP, SDK |
 | [Commands Quick Reference](commands.md) | Every command organized by category |
+| [Coding in Marina](coding.md) | Run coding sessions — inspect, run, patch, review, checkpoint, and team up with crews |
 | [Memory System](memory.md) | Notes, recall, core memory, knowledge graph, reflection, pools, goals, learning |
 | [Memory API](memory-api.md) | REST API for external agents — notes, recall, knowledge graph, pools |
 | [Coordination](coordination.md) | Channels, boards, groups, tasks, goals, projects, orchestration, use-case recipes |
