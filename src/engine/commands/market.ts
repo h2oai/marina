@@ -13,6 +13,10 @@ const HELP =
  * "1w", "1mo", "30d". Returns 0 if unparseable.
  */
 export function parseDurationMs(s: string): number {
+  // NOTE: the `m`-prefix here means MONTHS (mo/month/months) — deliberately
+  // distinct from feed/chronicle's parseSince where `m` = minutes. The regex
+  // rejects a bare "m"/"1m", so the two grammars don't collide; don't promote
+  // this as a general duration parser alongside the minute-based ones.
   const m = s.match(
     /^(\d+)\s*(h|hr|hrs|hour|hours|d|day|days|w|wk|wks|week|weeks|mo|month|months)$/i,
   );
