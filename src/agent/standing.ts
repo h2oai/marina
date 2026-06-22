@@ -151,8 +151,17 @@ export function recomputeAll(db: MarinaDB, now = Date.now()): number {
   return entityIds.length;
 }
 
-/** Top-N leaderboard by current standing (cached). */
-export function leaderboard(db: MarinaDB, limit = 10): { entityId: string; standing: number }[] {
+/** Top-N leaderboard by current standing. Refreshes stale / just-invalidated
+ *  cache rows first so a freshly-earned entity isn't shown as 0 (or dropped
+ *  below the cutoff) until the hourly recompute pass. */
+export function leaderboard(
+  db: MarinaDB,
+  limit = 10,
+  now = Date.now(),
+): { entityId: string; standing: number }[] {
+  for (const entityId of db.staleStandingEntities(now - CACHE_TTL_MS)) {
+    db.setStandingCache(entityId, computeFromLedger(db, entityId, now), now);
+  }
   return db.standingLeaderboard(limit);
 }
 

@@ -1052,9 +1052,23 @@ export class Engine {
         const ctx = this.buildContext(room.id);
         if (ctx) {
           const roomStart = performance.now();
-          tryLog(this.logger, "tick", `Room tick error in ${room.id}`, () =>
-            room.module.onTick!(ctx),
-          );
+          try {
+            const result = room.module.onTick!(ctx);
+            // async onTick: capture post-await rejections so a throw after an
+            // `await` doesn't escape as an unhandled rejection (sync throws are
+            // caught below). Work after the first await isn't counted in roomMs.
+            if (result instanceof Promise) {
+              result.catch((err) =>
+                this.logger.warn("tick", `Async room tick error in ${room.id}`, {
+                  error: getErrorMessage(err),
+                }),
+              );
+            }
+          } catch (err) {
+            this.logger.warn("tick", `Room tick error in ${room.id}`, {
+              error: getErrorMessage(err),
+            });
+          }
           const roomMs = performance.now() - roomStart;
           if (roomMs > SLOW_ROOM_THRESHOLD_MS) {
             slowRooms.push({ room: room.id, ms: Math.round(roomMs) });
