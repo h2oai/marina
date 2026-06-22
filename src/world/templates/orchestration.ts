@@ -32,6 +32,101 @@ export type OrchestrationPattern = (typeof ORCHESTRATION_PATTERNS)[number];
 /** Human-facing help string listing patterns, pipe-separated. */
 export const ORCHESTRATION_HELP = ORCHESTRATION_PATTERNS.join("|");
 
+// ─── Pattern fit (the agent-facing recognition loop) ────────────────────────
+// The templates below carry the *prose* of each pattern. This is the
+// machine-readable counterpart: which coordination *shapes* a goal can take,
+// and which patterns fit each. It powers `suggestPatterns()` — the bridge that
+// lets an agent recognize "this goal looks like a debate" instead of waiting
+// for an operator to seed a pattern. See docs/design/emergent-orchestration.md.
+
+/** Coordination shapes a goal can take. */
+export type TaskShape =
+  | "decomposable"
+  | "contested"
+  | "parallel"
+  | "sequential"
+  | "hierarchical"
+  | "shared-artifact"
+  | "open-ended";
+
+/** Which shapes each built-in pattern fits, with a one-line "why". */
+export const PATTERN_FIT: Record<
+  Exclude<OrchestrationPattern, "custom">,
+  { shapes: TaskShape[]; why: string }
+> = {
+  nsed: { shapes: ["contested", "open-ended"], why: "propose → cross-evaluate → converge" },
+  chorus: { shapes: ["parallel", "shared-artifact"], why: "parallel phases + crossfire review" },
+  foundry: { shapes: ["hierarchical", "decomposable"], why: "overseer → workers → merge gate" },
+  swarm: { shapes: ["parallel", "open-ended"], why: "self-organizing expertise matching" },
+  pipeline: { shapes: ["sequential"], why: "stage-by-stage with handoff gates" },
+  debate: { shapes: ["contested"], why: "adversarial positions, judged" },
+  mapreduce: { shapes: ["decomposable", "parallel"], why: "fan out independent chunks, merge" },
+  blackboard: { shapes: ["shared-artifact"], why: "incremental refinement on one workspace" },
+  symbiosis: { shapes: ["open-ended"], why: "mutual benefit, frontier scanning" },
+  research: { shapes: ["open-ended"], why: "hypothesis → act → measure → record loop" },
+};
+
+const SHAPE_PATTERNS: { shape: TaskShape; re: RegExp }[] = [
+  {
+    shape: "contested",
+    re: /\b(debate|argue|disagree|pros and cons|which is better|decide between|trade-?off|controvers|for or against)\b/,
+  },
+  {
+    shape: "decomposable",
+    re: /\b(break (it|this) down|decompose|sub-?tasks?|multiple (parts|pieces|files|modules)|several (parts|components)|each (file|module|section))\b/,
+  },
+  {
+    shape: "parallel",
+    re: /\b(in parallel|simultaneous|at the same time|independently|fan out|across (many|several|all))\b/,
+  },
+  {
+    shape: "sequential",
+    re: /\b(step by step|stages?|pipeline|first.*then|in sequence|in order)\b/,
+  },
+  {
+    shape: "hierarchical",
+    re: /\b(oversee|coordinate a team|delegate|manage the work|merge queue|sub-?lead)\b/,
+  },
+  {
+    shape: "shared-artifact",
+    re: /\b(shared (doc|document|workspace|artifact)|collaborat\w* on (one|a single)|co-?author|build (it )?together)\b/,
+  },
+  {
+    shape: "open-ended",
+    re: /\b(explore|research|investigate|figure out|open-?ended|brainstorm|discover|experiment)\b/,
+  },
+];
+
+/** Keyword pass classifying a goal/focus string into coordination shapes. */
+export function detectTaskShapes(text: string | undefined): TaskShape[] {
+  if (!text) return [];
+  const lower = text.toLowerCase();
+  return [...new Set(SHAPE_PATTERNS.filter(({ re }) => re.test(lower)).map(({ shape }) => shape))];
+}
+
+/**
+ * Suggest orchestration patterns that fit a goal/focus, ranked by how many of
+ * its detected shapes they cover. Returns `[]` when the goal shows no
+ * coordination shape (solo work) — the recognition loop stays quiet then.
+ */
+export function suggestPatterns(
+  text: string | undefined,
+  limit = 2,
+): { pattern: string; why: string }[] {
+  const shapes = detectTaskShapes(text);
+  if (shapes.length === 0) return [];
+  return (Object.entries(PATTERN_FIT) as [string, { shapes: TaskShape[]; why: string }][])
+    .map(([pattern, fit]) => ({
+      pattern,
+      why: fit.why,
+      score: fit.shapes.filter((s) => shapes.includes(s)).length,
+    }))
+    .filter((p) => p.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(({ pattern, why }) => ({ pattern, why }));
+}
+
 export const NSED_TEMPLATE: TemplateNote[] = [
   {
     content:
