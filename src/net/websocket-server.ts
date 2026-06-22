@@ -248,6 +248,7 @@ export class WebSocketServer {
             req,
             engine,
             self.modelRateLimiter,
+            server,
           );
           if (modelResp) return modelResp;
         }
@@ -262,6 +263,7 @@ export class WebSocketServer {
             req,
             engine,
             self.modelRateLimiter,
+            server,
           );
           if (modelResp) return modelResp;
         }
@@ -457,7 +459,15 @@ export class WebSocketServer {
           }
 
           if (parsed.type === "login" && parsed.name) {
-            // If GATEWAY_SECRET is set and the login looks like a gateway, require auth
+            // If GATEWAY_SECRET is set, a connection logging in under a Gateway_
+            // name must have completed gateway_auth. NOTE: this authenticates the
+            // gateway *handshake* only — it does NOT fence participation in
+            // bridged channels or cross-instance tells, which are rank-0 commands
+            // available to any logged-in entity. With passwordless name-login
+            // (the default unless MARINA_AUTH=better-auth), a remote peer can
+            // still act as an ordinary local entity. Treat GATEWAY_SECRET as
+            // "who may present as a gateway peer," and rely on MARINA_AUTH +
+            // not exposing open login for a hard federation boundary.
             const gatewaySecret = process.env.GATEWAY_SECRET;
             if (
               gatewaySecret &&

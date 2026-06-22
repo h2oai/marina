@@ -1,4 +1,4 @@
-import { validateFetchUrl } from "../net/url-guard";
+import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import type { MarinaDB } from "../persistence/database";
 import {
   CONNECTOR_HTTP_RATE_MS,
@@ -200,7 +200,7 @@ export class ConnectorRuntime {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), CONNECTOR_HTTP_TIMEOUT_MS);
-      const response = await fetch(url, { method: "GET", signal: controller.signal });
+      const response = await guardedFetch(url, { method: "GET", signal: controller.signal });
       clearTimeout(timeout);
       const body = await response.text();
       return {
@@ -236,7 +236,7 @@ export class ConnectorRuntime {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), CONNECTOR_HTTP_TIMEOUT_MS);
-      const response = await fetch(url, {
+      const response = await guardedFetch(url, {
         method: "POST",
         body,
         headers: { "Content-Type": "application/json" },

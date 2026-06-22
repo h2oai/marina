@@ -252,6 +252,12 @@ try {
   if (removed > 0) {
     console.log(`[feed] trimmed ${removed} feed_events older than 7d`);
   }
+  // Bound the gated-exec audit trail too (90d retention — longer than the feed
+  // since it's a security log, but still finite so it can't grow forever).
+  const shellRemoved = db.trimShellLog(90 * 86_400_000);
+  if (shellRemoved > 0) {
+    console.log(`[shell] trimmed ${shellRemoved} shell_log rows older than 90d`);
+  }
 } catch (err) {
   console.warn("[feed] startup trim failed:", (err as Error).message);
 }

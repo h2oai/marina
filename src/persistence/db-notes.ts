@@ -147,12 +147,16 @@ function enforceProcessQuota(db: Database, entityName: string): void {
 
   const placeholders = victims.map(() => "?").join(",");
   const ids = victims.map((v) => v.id);
-  db.run(
-    `DELETE FROM note_links WHERE source_id IN (${placeholders}) OR target_id IN (${placeholders})`,
-    [...ids, ...ids],
-  );
-  db.run(`UPDATE notes SET supersedes_id = NULL WHERE supersedes_id IN (${placeholders})`, ids);
-  db.run(`DELETE FROM notes WHERE id IN (${placeholders})`, ids);
+  // Atomic: link cleanup, supersedes nulling, and the delete must commit
+  // together so an interruption can't leave dangling supersedes_id pointers.
+  db.transaction(() => {
+    db.run(
+      `DELETE FROM note_links WHERE source_id IN (${placeholders}) OR target_id IN (${placeholders})`,
+      [...ids, ...ids],
+    );
+    db.run(`UPDATE notes SET supersedes_id = NULL WHERE supersedes_id IN (${placeholders})`, ids);
+    db.run(`DELETE FROM notes WHERE id IN (${placeholders})`, ids);
+  })();
 }
 
 export function getNotesByEntity(db: Database, entityName: string, limit = 50): NoteRow[] {

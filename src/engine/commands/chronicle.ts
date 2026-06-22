@@ -4,6 +4,7 @@ import type { MarinaDB } from "../../persistence/database";
 import type { ChronicleEntry, ChronicleKind } from "../../persistence/db-chronicle";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { extractModifiers, splitOn } from "../parse-input";
+import { formatAge, parseSince } from "./format-duration";
 
 const CHRONICLER_ROLE = "chronicler";
 
@@ -23,34 +24,6 @@ Write (Chronicler role only):
 
 The chronicle is parallel to (and longer-lived than) the feed: feed events
 are ephemeral, the chronicle is permanent. See docs/chronicle.md.`;
-
-const SINCE_UNITS: Record<string, number> = {
-  s: 1000,
-  m: 60_000,
-  h: 3_600_000,
-  d: 86_400_000,
-  w: 604_800_000,
-};
-
-function parseSince(arg: string | undefined): number | undefined {
-  if (!arg) return undefined;
-  const m = arg.match(/^(\d+)\s*([smhdw])$/i);
-  if (!m) return undefined;
-  const n = Number.parseInt(m[1]!, 10);
-  const unit = SINCE_UNITS[m[2]!.toLowerCase()];
-  if (!unit) return undefined;
-  return n * unit;
-}
-
-function formatAge(ms: number): string {
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.round(h / 24)}d`;
-}
 
 function kindLabel(kind: ChronicleKind): string {
   switch (kind) {
