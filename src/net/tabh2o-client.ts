@@ -100,7 +100,7 @@ export async function tabh2oPredict(
   }
 
   const endpoint = opts.endpoint ?? process.env.TABH2O_ENDPOINT ?? DEFAULT_ENDPOINT;
-  const urlErr = validateFetchUrl(endpoint);
+  const urlErr = await validateFetchUrl(endpoint);
   if (urlErr) return { ok: false, error: `TabH2O endpoint rejected: ${urlErr}` };
 
   const controller = new AbortController();
