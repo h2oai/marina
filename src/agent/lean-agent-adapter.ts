@@ -1401,6 +1401,21 @@ export class LeanAgentAdapter implements AgentHandle {
       }
     }
 
+    // ── 2c. Active objective progress (every 20th cycle, offset 5) ──
+    // Surface the agent's quest progress in-context so it doesn't re-discover
+    // it by repeatedly running `quest status`. Skipped when no quest is active
+    // (the common case), so it adds nothing for goal-less worlds.
+    if (cycle % 20 === 5) {
+      try {
+        const quest = await this.platformMemory.questStatus();
+        if (quest.active) {
+          parts.push(`[Active Objective]\n${clampText(quest.text, 500)}`);
+        }
+      } catch {
+        // best-effort — quest status unavailable this cycle
+      }
+    }
+
     // ── 3. Novelty suggestions (every 5th cycle) ──
     if (cycle % 5 === 0) {
       try {
