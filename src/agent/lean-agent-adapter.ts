@@ -25,6 +25,7 @@ import {
 } from "../net/model-discovery";
 import { MarinaClient } from "../sdk/client";
 import type { Perception } from "../types";
+import { suggestPatterns } from "../world/templates/orchestration";
 import { ActionHistory } from "./action-history";
 import type {
   AgentConfig,
@@ -1333,17 +1334,44 @@ export class LeanAgentAdapter implements AgentHandle {
     }
 
     // ── 2b. Coordination opportunity (every 20th cycle, offset by 10) ──
-    if (cycle % 20 === 10 && this.socialAwareness.getEntitiesInRoom().length > 0) {
-      const known = this.socialAwareness.getKnownEntities(3);
+    // Two signals, either of which can fire: known collaborators nearby
+    // (relationship-aware) and — when the current goal has a coordination shape
+    // — orchestration patterns that fit it (the goal-aware recognition loop).
+    // Surfacing is a discoverable option the agent may take or ignore, never a
+    // mandate; it stays quiet for plain solo goals.
+    if (cycle % 20 === 10) {
+      const lines: string[] = [];
+
       const nearby = this.socialAwareness.getEntitiesInRoom();
-      const knownNearby = known.filter((k) => nearby.includes(k.name));
-      if (knownNearby.length > 0) {
-        const lines = knownNearby.map(
-          (k) => `- ${k.name} (${k.interactions} interactions) is nearby`,
-        );
-        lines.push(
-          "Consider: coordinate on a shared goal, share knowledge via pool, or propose a task",
-        );
+      if (nearby.length > 0) {
+        const knownNearby = this.socialAwareness
+          .getKnownEntities(3)
+          .filter((k) => nearby.includes(k.name));
+        for (const k of knownNearby) {
+          lines.push(`- ${k.name} (${k.interactions} interactions) is nearby`);
+        }
+        if (knownNearby.length > 0) {
+          lines.push(
+            "Consider: coordinate on a shared goal, share knowledge via pool, or propose a task",
+          );
+        }
+      }
+
+      // Goal-aware: does the current focus look like it wants a coordination
+      // pattern? If so, name the fitting ones and how to assemble a crew.
+      if (this.focus) {
+        const fits = suggestPatterns(this.focus.description);
+        if (fits.length > 0) {
+          lines.push(
+            `Your goal looks like it could use a coordination pattern — fitting: ${fits
+              .map((f) => `${f.pattern} (${f.why})`)
+              .join("; ")}.`,
+            "Assemble a crew (`code crew <goal> with <agents>`, or `recruit` idle agents) and adopt one — or keep going solo.",
+          );
+        }
+      }
+
+      if (lines.length > 0) {
         parts.push(`[Coordination Opportunity]\n${lines.join("\n")}`);
       }
     }
