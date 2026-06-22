@@ -801,6 +801,21 @@ export class LeanAgentAdapter implements AgentHandle {
 
     if (goal) {
       this.focus = { description: goal, startedAt: Date.now() };
+    } else {
+      // No explicit goal (e.g. a room agent or an autonomous spawn): seed a
+      // default initial focus so the agent has direction from cycle 1 instead of
+      // churning on the repeated "[No Focus] what interests you?" prompt with no
+      // recall context (recall is gated on focus). This focus expires after
+      // focusTimeoutMs and hands off to memory-driven goal formation, and the
+      // agent can replace it any time via `task goal` / `memory set goal`. A
+      // persisted focus from a prior session still overrides it below.
+      const roleHint = this.config.role
+        ? `Settle into your role as ${this.config.role}: get oriented, then take a first useful action`
+        : "Get oriented in the world, then pick something that matters and pursue it";
+      this.focus = {
+        description: `${roleHint} — set your own goal with \`task goal\` or \`memory set goal\` once you know what you want to work on.`,
+        startedAt: Date.now(),
+      };
     }
 
     this.setupActionTracking();
