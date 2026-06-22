@@ -18,7 +18,7 @@ import { TaskManager } from "../coordination/task-manager";
 import type { AdapterManager } from "../net/adapter-manager";
 import { connects, disconnects } from "../net/ansi";
 import { cleanupStaleConversationChannels } from "../net/model-api";
-import { validateFetchUrl } from "../net/url-guard";
+import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import type { MarinaDB } from "../persistence/database";
 import { writeSample } from "../resolvers/sample-writer";
 import type { StorageProvider } from "../storage/provider";
@@ -1576,7 +1576,7 @@ export class Engine {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), ROOM_FETCH_TIMEOUT_MS);
-      const response = await fetch(url, {
+      const response = await guardedFetch(url, {
         method: "GET",
         signal: controller.signal,
       });
