@@ -120,7 +120,10 @@ export interface RoomModule {
   commands?: Record<string, CommandHandler>;
   onEnter?: (ctx: RoomContext, entity: EntityId) => void;
   onLeave?: (ctx: RoomContext, entity: EntityId) => void;
-  onTick?: (ctx: RoomContext) => void;
+  // May be async. The engine captures rejections so they don't escape as
+  // unhandled rejections, but work after the first `await` is NOT counted
+  // toward the 200ms tick budget (which guards the synchronous portion).
+  onTick?: (ctx: RoomContext) => void | Promise<void>;
   canEnter?: (ctx: RoomContext, entity: EntityId) => true | string;
 }
 

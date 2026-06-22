@@ -1793,6 +1793,9 @@ export class MarinaDB {
   listStandingEntities(): string[] {
     return standingDb.listStandingEntities(this.db);
   }
+  staleStandingEntities(cutoff: number): string[] {
+    return standingDb.staleStandingEntities(this.db, cutoff);
+  }
   standingLeaderboard(limit: number) {
     return standingDb.standingLeaderboard(this.db, limit);
   }
@@ -3420,6 +3423,15 @@ export class MarinaDB {
     return this.db
       .query("SELECT * FROM shell_log ORDER BY created_at DESC LIMIT ?")
       .all(limit) as ShellLogRow[];
+  }
+
+  /** Drop shell_log rows older than `keepMs`. Returns rows removed. Mirrors
+   *  trimFeedEvents — bounds the gated-exec audit trail so it can't grow
+   *  unbounded for the life of the DB. (idx_shell_log_created makes this cheap.) */
+  trimShellLog(keepMs: number): number {
+    const cutoff = Date.now() - keepMs;
+    const res = this.db.run("DELETE FROM shell_log WHERE created_at < ?", [cutoff]);
+    return res.changes;
   }
 
   // ─── Coding Sessions ───────────────────────────────────────────────────

@@ -769,6 +769,20 @@ function routeToChannelStreaming(
 
   incrementPending(target);
 
+  // Hoisted so cancel() (client disconnect) runs the same cleanup as the
+  // success/timeout paths. `settled` guards decrementPending against running
+  // more than once across {end, single-response, timeout, cancel}.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let unsub: (() => void) | undefined;
+  let settled = false;
+  const cleanup = () => {
+    if (settled) return;
+    settled = true;
+    if (timer) clearTimeout(timer);
+    unsub?.();
+    decrementPending(target);
+  };
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       // OpenAI streams must begin with a role-only chunk
@@ -776,13 +790,12 @@ function routeToChannelStreaming(
         controller.enqueue(encoder.encode(openaiStreamRoleChunk(streamId, model)));
       }
 
-      const timer = setTimeout(() => {
-        unsub();
-        decrementPending(target);
+      timer = setTimeout(() => {
+        cleanup();
         safeClose(controller);
       }, REQUEST_TIMEOUT_MS);
 
-      const unsub = cm.onMessage((channelId, senderId, _senderName, content) => {
+      unsub = cm.onMessage((channelId, senderId, _senderName, content) => {
         if (channelId !== channel.id) return;
         if (senderId === "__model_api__") return;
         // Orchestration boundary: only the designated target may fulfill the
@@ -813,9 +826,7 @@ function routeToChannelStreaming(
 
         // Streaming end
         if (parsed.type === "model_response_end" && parsed.id === reqId) {
-          clearTimeout(timer);
-          unsub();
-          decrementPending(target);
+          cleanup();
           let endChunk: string;
           if (format === "openai") {
             endChunk = openaiStreamEnd(streamId, model);
@@ -834,9 +845,7 @@ function routeToChannelStreaming(
 
         // Phase 1 compat: single model_response → wrap as one chunk + end
         if (parsed.type === "model_response" && parsed.id === reqId) {
-          clearTimeout(timer);
-          unsub();
-          decrementPending(target);
+          cleanup();
           collectedContent.push(text);
           if (format === "openai") {
             controller.enqueue(encoder.encode(openaiStreamChunk(streamId, model, text)));
@@ -856,6 +865,12 @@ function routeToChannelStreaming(
       });
 
       cm.send(channel.id, "__model_api__", "model-api", payload);
+    },
+    cancel() {
+      // Client disconnected mid-stream — release the channel listener and the
+      // pending-request slot now instead of leaking them until the timeout
+      // (which otherwise skews least-busy load-balancing for up to REQUEST_TIMEOUT_MS).
+      cleanup();
     },
   });
 
@@ -964,11 +979,18 @@ async function handleResponsesCreate(req: Request, engine: Engine): Promise<Resp
       previous_response_id?: string;
       conversation_id?: string;
       store?: boolean;
+      stream?: boolean;
     };
 
     const model = body.model ?? "marina";
     const userInput = extractInputText(body.input);
     if (!userInput) return errorJson(400, "`input` is required");
+    // Streaming isn't implemented on this surface yet. Fail fast with a clear
+    // error rather than silently returning a JSON body to an SSE-expecting
+    // client (which would stall its parser). See docs/compat for status.
+    if (body.stream === true) {
+      return errorJson(400, "streaming is not supported on /v1/responses; use stream:false");
+    }
 
     // Resolve conversation: previous_response_id > explicit conversation_id > new
     let conversationId: string;
