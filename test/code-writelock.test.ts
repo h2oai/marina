@@ -184,6 +184,9 @@ describe("code write-lock enforcement (Phase 4 B2/B3)", () => {
   it("set writer refuses a non-writer and allows the writer to apply", async () => {
     const entity = engine.entities.get(conn.entity!)!;
     const writerEntity = makeAgentEntity("agent_impl", "impl");
+    // Both actors hold code.exec so the write-lock (not the exec gate) is what's tested.
+    grant(db, entity.id, "code.exec");
+    grant(db, writerEntity.id, "code.exec");
     const workspace = new LocalWorkspace();
     const sent: string[] = [];
     const command = codeCommand({

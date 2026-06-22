@@ -56,6 +56,19 @@ export const SAFETY_GATES: Record<string, GateDef> = {
     demoThreshold: 3,
     description: "execute world commands as another entity",
   },
+  "code.exec": {
+    id: "code.exec",
+    // Running or applying code in a workspace can execute arbitrary processes
+    // on the host (e.g. `code run bun test <file>` runs that file's JS), so it
+    // is a host-execution capability and must be earned — never available to a
+    // freshly-spawned, zero-standing (untrusted) agent. Kept low (rank-1) so it
+    // stays usable for established collaborators; supervised-first. Full
+    // containment of executed code is the workspace-sandbox roadmap; this gate
+    // closes the ungated drive-by path in the meantime.
+    minStanding: 5,
+    demoThreshold: 3,
+    description: "run or apply code in a workspace",
+  },
   "agent.spawn": {
     id: "agent.spawn",
     // Deliberately below the rank-4 (standing 100) ceiling: assembling a
@@ -245,7 +258,7 @@ export function getGateProgress(db: MarinaDB, entityId: string, now = Date.now()
  * of the historical rank ladder without the runtime short-circuit.
  */
 const RANK_GATES: Record<number, string[]> = {
-  5: ["shell.exec", "agent.spawn"],
+  5: ["shell.exec", "agent.spawn", "code.exec"],
   6: ["agent.run"],
   7: ["adapter.enable", "connect.manage", "gateway.connect"],
   8: ["key.manage"],

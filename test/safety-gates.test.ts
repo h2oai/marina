@@ -182,8 +182,8 @@ describe("Safety gates", () => {
     it("locks every gate for a fresh entity and reports the standing gap", () => {
       const progress = getGateProgress(db, "e_fresh");
       expect(progress.every((g) => g.status === "locked")).toBe(true);
-      // Ordered by reachability — agent.spawn (min 40) before admin.destructive (250).
-      expect(progress[0]!.id).toBe("agent.spawn");
+      // Ordered by reachability — code.exec (min 5) first, admin.destructive (250) last.
+      expect(progress[0]!.id).toBe("code.exec");
       expect(progress.at(-1)!.id).toBe("admin.destructive");
       const spawn = progress.find((g) => g.id === "agent.spawn")!;
       expect(spawn.standing).toBe(0);
