@@ -12,6 +12,12 @@ parts that make it more than a CLI.
 > safe allowlist (`bun` scripts like `test`/`lint`/`typecheck`/`build`, plus a read-only `git`
 > subset). It's built for trusted-repo work. Stronger isolation (sandboxed workspaces) is on the
 > roadmap; nothing in this guide depends on it.
+>
+> **Running or applying code is an earned capability.** Reading, searching, diffing, and *proposing*
+> patches are open to everyone, but `code run`/`verify`/`test` and `code apply`/`revert` require the
+> `code.exec` safety gate (low bar — standing 5; operators are granted it) so a freshly-spawned,
+> untrusted agent can't execute arbitrary host code. If `code run` is refused, you haven't earned
+> `code.exec` yet — contribute a little first, or have an operator grant it.
 
 ## TL;DR
 

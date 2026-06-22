@@ -388,9 +388,13 @@ The system also performs **intent detection**, automatically adjusting signal we
 | Intent | Detection Signal | Weight Adjustment |
 |--------|-----------------|-------------------|
 | Episodic | "when", "last time" | Boost recency |
-| Procedural | "how to", "steps" | Boost type:skill |
-| Decision | "should", "whether" | Boost type:decision |
+| Procedural | "how to", "steps" | Boost importance |
+| Decision | "should", "whether" | Boost importance |
 | Semantic | "what is", "define" | Boost BM25 |
+
+Intent detection shifts the **numeric signal weights** above; it does not filter or boost by note
+`type` (an earlier draft implied a `type:skill`/`type:decision` boost that the implementation does
+not apply).
 
 ### 4.6 Shared Memory Pools
 
@@ -439,7 +443,7 @@ Reflection aggregates the recent high-importance notes by theme into new episode
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Figure 3.** Memory architecture feature matrix. Marina synthesizes capabilities from all four reference architectures while adding shared memory pools, intent-aware retrieval, and human-usable interfaces. Critically, Marina achieves competitive retrieval quality without requiring embedding models — using SQLite FTS5 BM25 scoring combined with graph-based spreading activation.
+**Figure 3.** Memory architecture feature matrix. Marina synthesizes capabilities from all four reference architectures while adding shared memory pools, intent-aware retrieval, and human-usable interfaces. Critically, Marina provides retrieval **without requiring embedding models** — using SQLite FTS5 BM25 scoring combined with graph-based spreading activation. (Retrieval quality relative to embedding-based systems is unbenchmarked; the design trades that comparison for operational simplicity — no vector DB, no embedding drift.)
 
 ---
 
@@ -1050,7 +1054,7 @@ Same state, different projections. No mode switching — all lenses are active s
 
 ### 11.4 No Embedding Requirement
 
-Most agentic memory systems require embedding models for retrieval (vector similarity search). Marina achieves competitive retrieval quality using:
+Most agentic memory systems require embedding models for retrieval (vector similarity search). Marina retrieves **without embedding models** using:
 
 - **SQLite FTS5** for BM25 text relevance scoring
 - **Exponential decay** for recency weighting
