@@ -147,8 +147,11 @@ explicit handoff — so a reviewer testing the code never clobbers the implement
 > code handoff "ready for review" to alice   # hand the lock to alice
 ```
 
-**It's reviewed by default.** Risky actions surface as **approvals** rather than happening
-silently. In the dashboard they render as cards with Approve/Deny buttons; from any surface:
+**Approvals are first-class, auditable artifacts.** Risky actions can be surfaced as **approvals** —
+request/approve/deny artifacts that leave a visible decision trail and render as cards with
+Approve/Deny buttons in the dashboard. *(Today these are advisory: they record the decision but don't
+yet block the underlying action, and the requester can decide their own — enforced approvals with
+separation-of-duties are on the roadmap.)* From any surface:
 
 ```
 > code approvals                 # pending requests

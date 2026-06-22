@@ -52,7 +52,8 @@ Venues: **kalshi** and **polymarket**.
 **Hard rules enforced at the data layer** (not just prompts):
 - A bankroll, position cap, and daily-loss floor must be set before any open.
 - **No self-hedge** — it refuses an opposing-side order on a ticker you already hold.
-- A single position can't exceed the bankroll cap; daily realized loss can't breach the floor.
+- A single position can't exceed the bankroll cap. *(A daily-loss floor is configurable but not yet
+  enforced — realized-P&L tracking is still being wired, so treat the floor as advisory for now.)*
 - **Paper is the default.** Live trading requires `MARINA_TRADING_ENABLED=true` plus venue
   credentials.
 
