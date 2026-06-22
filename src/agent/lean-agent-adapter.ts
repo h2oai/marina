@@ -1371,6 +1371,28 @@ export class LeanAgentAdapter implements AgentHandle {
               .join("; ")}.`,
             "Adopt one with `project <name> orchestrate <pattern>` (works solo — it seeds the conventions you'll `recall`). Bring in other agents (`code crew` / `recruit`) only if the work needs more hands — or keep going solo.",
           );
+          // Track record: surface what PRIOR runs of the top-fitting pattern
+          // learned, from its `orchestration:<pattern>` tradition pool (crews
+          // deposit reflections there on completion). This closes the evolution
+          // loop on the selection side — choose informed by outcomes, not just
+          // static fit. Best-effort; the pool may not exist yet.
+          try {
+            const top = fits[0]!.pattern;
+            const record = await this.platformMemory.importShared(
+              `orchestration:${top}`,
+              this.focus.description,
+            );
+            if (record.results && record.results.length > 0) {
+              lines.push(
+                `Prior ${top} runs left ${record.results.length} learning(s) — ${clampText(
+                  record.text,
+                  300,
+                )}`,
+              );
+            }
+          } catch {
+            // tradition pool absent or recall failed — selection still works
+          }
         }
       }
 

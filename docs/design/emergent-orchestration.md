@@ -139,13 +139,30 @@ crew only if the work needs more hands."* A crew is one consumer of a pattern, n
 (If a crew *is* assembled, its members share the crew's `crew:<name>` pool via the existing
 `code crew`/`recruit` flow — no new seeding command required.)
 
-### Phase 3 — Amendment + Evolution (defer)
-- **Amendment:** when an agent improves a convention mid-run, record it as an attributable amendment
-  note on the crew pool.
-- **Evolution:** pair an orchestration run with its outcome — the calibration-finder registry +
-  standing already close this loop for forecasts/crews — to reinforce adaptations that correlate with
-  success and **promote winners into the shared pattern library** (the "Score" direction). Largest,
-  latest piece.
+### Phase 3 — Amendment + Evolution (mostly already exists)
+**Finding (2026-06-22):** like Phase 2, the bulk of this was already built — the evolution loop
+closes for the crew path today:
+- **Tradition pools** `orchestration:<pattern>` exist (`crew-manager.ts:458`); a crew **deposits its
+  completion reflection** into both its own pool and the pattern's tradition pool.
+- New crews **recall the tradition pool on orientation** (`crew-manager.ts:747`) — inheritance.
+- A **`conductorScoreFinder`** is registered in the calibration registry (`src/resolvers/calibration.ts:290`),
+  pairing orchestration scores with outcomes.
+- **Amendment** needs no new mechanism: an agent that improves a convention just adds a note to the
+  pattern's pool (`pool <name> add` / `share`), where successors `recall` it.
+
+So the one genuine gap was **feedback into selection**: the Phase-1 recognition loop suggested
+patterns by *static fit only*, blind to what actually worked. **Built:** the recognition section now
+recalls the top-fitting pattern's `orchestration:<pattern>` tradition pool and surfaces its prior
+learnings (`lean-agent-adapter.ts`), so selection is informed by outcomes — closing the loop
+recognize → select(**informed by track record**) → instantiate → run → reflect → (feeds the next
+selection). Reuses `importShared` + the existing tradition pools; no new tables, commands, or
+coordination-layer changes.
+
+**Deferred (genuinely optional, not built):** auto-feeding the *project*-orchestrated (crew-optional)
+completions into the tradition pool (today only crews deposit; project users can `share` manually),
+and *auto-promotion* of winning adaptations into the canonical seeded templates (auto-editing the
+pattern library is risky — the recallable track record already lets selection prefer what works
+without rewriting the library). These are the true "Score" frontier; left for a deliberate later call.
 
 ### Reuse vs net-new
 | Piece | Status |
@@ -163,7 +180,9 @@ crew only if the work needs more hands."* A crew is one consumer of a pattern, n
   closes recognition+selection.
 - **Phase 2** — essentially free: instantiation already exists (`project orchestrate`, rank 0);
   the recognition loop just points there (crew-optional). No new command.
-- **Phase 3** — larger, later (amendment tracking + outcome correlation + promotion).
+- **Phase 3** — mostly already existed (tradition pools + completion reflections + orientation
+  recall + conductorScoreFinder); built the one gap (track-record-aware selection). Auto-promotion
+  to the canonical library is the deferred "Score" frontier.
 
 ### Litmus test (restated)
 Give an agent a coordination-worthy goal and **no** operator pattern selection. Phase 1+2 make it
