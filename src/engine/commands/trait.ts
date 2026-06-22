@@ -2,6 +2,7 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB, TraitCapabilities } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getRank } from "../permissions";
+import { renderEditHistory } from "./role";
 
 /**
  * Parse optional capabilities from the end of a trait create command.
@@ -61,7 +62,7 @@ export function traitCommand(deps: {
     name: "trait",
     aliases: [],
     minRank: 0,
-    help: "Manage composable agent traits.\nUsage: trait list | trait view <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] | trait delete <name>\n\nTraits are atomic prompt fragments used to compose roles.\nOptional capabilities metadata enables semantic composition (synergies/tensions).",
+    help: "Manage composable agent traits.\nUsage: trait list | trait view <name> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] | trait delete <name>\n\nTraits are atomic prompt fragments used to compose roles.\nOptional capabilities metadata enables semantic composition (synergies/tensions).\n`trait history <name>` shows the audited edit trail.",
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, "Traits require database support.");
@@ -136,6 +137,21 @@ export function traitCommand(deps: {
           return;
         }
 
+        case "history": {
+          const name = tokens[1];
+          if (!name) {
+            ctx.send(input.entity, "Usage: trait history <name>");
+            return;
+          }
+          const hist = db.getTraitHistory(name);
+          if (hist.length === 0) {
+            ctx.send(input.entity, `No edit history for trait "${name}".`);
+            return;
+          }
+          ctx.send(input.entity, renderEditHistory(`Trait "${name}"`, hist));
+          return;
+        }
+
         case "create": {
           const entity = deps.getEntity?.(input.entity);
           if (entity && getRank(entity) < 3) {
@@ -202,7 +218,7 @@ export function traitCommand(deps: {
         default:
           ctx.send(
             input.entity,
-            "Usage: trait list | trait view <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] | trait delete <name>",
+            "Usage: trait list | trait view <name> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] | trait delete <name>",
           );
       }
     },
