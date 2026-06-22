@@ -52,6 +52,58 @@ export function getDefaultModel(db: Database): string {
   return getSetting(db, "default_model") ?? MARINA_DEFAULT_MODEL;
 }
 
+// ─── Trait / Role edit history (audit trail) ────────────────────────────
+
+export interface EditHistoryRow {
+  id: number;
+  name: string;
+  old_value: string;
+  new_value: string;
+  changed_by: string;
+  changed_at: number;
+}
+
+/**
+ * Append an audit entry for a trait/role edit — only when the serialized
+ * definition actually changed, so re-seeding identical world definitions on
+ * every boot doesn't spam history. `old` is "" for a first creation. The
+ * `table` argument is a controlled literal union (never user input).
+ */
+function recordEditHistory(
+  db: Database,
+  table: "trait_history" | "role_history",
+  name: string,
+  changedBy: string,
+  value: { old: string; new: string },
+): void {
+  if (value.old === value.new) return;
+  db.run(
+    `INSERT INTO ${table} (name, old_value, new_value, changed_by, changed_at) VALUES (?, ?, ?, ?, ?)`,
+    [name, value.old, value.new, changedBy, Date.now()],
+  );
+}
+
+function getEditHistory(
+  db: Database,
+  table: "trait_history" | "role_history",
+  name: string,
+  limit = 10,
+): EditHistoryRow[] {
+  return db
+    .query(`SELECT * FROM ${table} WHERE name = ? ORDER BY id DESC LIMIT ?`)
+    .all(name, limit) as EditHistoryRow[];
+}
+
+/** Most-recent-first edit history for a trait. */
+export function getTraitHistory(db: Database, name: string, limit = 10): EditHistoryRow[] {
+  return getEditHistory(db, "trait_history", name, limit);
+}
+
+/** Most-recent-first edit history for a role. */
+export function getRoleHistory(db: Database, name: string, limit = 10): EditHistoryRow[] {
+  return getEditHistory(db, "role_history", name, limit);
+}
+
 // ─── Traits ─────────────────────────────────────────────────────────────
 
 export function saveTrait(
@@ -64,17 +116,26 @@ export function saveTrait(
     createdBy: string;
   },
 ): void {
+  const newCapabilities = JSON.stringify(opts.capabilities ?? {});
+  const previous = getTrait(db, opts.name);
+  recordEditHistory(db, "trait_history", opts.name, opts.createdBy, {
+    old: previous
+      ? JSON.stringify({
+          category: previous.category,
+          prompt: previous.prompt,
+          capabilities: previous.capabilities,
+        })
+      : "",
+    new: JSON.stringify({
+      category: opts.category,
+      prompt: opts.prompt,
+      capabilities: newCapabilities,
+    }),
+  });
   db.run(
     `INSERT OR REPLACE INTO traits (name, category, prompt, capabilities, created_by, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [
-      opts.name,
-      opts.category,
-      opts.prompt,
-      JSON.stringify(opts.capabilities ?? {}),
-      opts.createdBy,
-      Date.now(),
-    ],
+    [opts.name, opts.category, opts.prompt, newCapabilities, opts.createdBy, Date.now()],
   );
 }
 
@@ -113,6 +174,25 @@ export function saveRole(
     createdBy: string;
   },
 ): void {
+  const previous = getRole(db, opts.name);
+  recordEditHistory(db, "role_history", opts.name, opts.createdBy, {
+    old: previous
+      ? JSON.stringify({
+          description: previous.description,
+          traits: previous.traits,
+          guidelines: previous.guidelines,
+          focus: previous.focus,
+          tone: previous.tone,
+        })
+      : "",
+    new: JSON.stringify({
+      description: opts.description ?? "",
+      traits: JSON.stringify(opts.traits ?? []),
+      guidelines: JSON.stringify(opts.guidelines ?? []),
+      focus: JSON.stringify(opts.focus ?? []),
+      tone: opts.tone ?? "",
+    }),
+  });
   db.run(
     `INSERT OR REPLACE INTO roles (name, description, traits, guidelines, focus, tone, origin, created_by, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,

@@ -21,6 +21,7 @@ export type {
   AdapterRow,
   AgentConfigRow,
   ApiKeyRow,
+  EditHistoryRow,
   RoleRow,
   TraitCapabilities,
   TraitRow,
@@ -42,7 +43,14 @@ export type { MediaJobRow, MediaJobStatus, MediaJobType } from "./db-media";
 export type { StandingCacheRow, StandingLedgerRow } from "./db-standing";
 export type { TaskClaimRow, TaskRow } from "./db-tasks";
 
-import type { AdapterRow, AgentConfigRow, ApiKeyRow, RoleRow, TraitRow } from "./db-agents";
+import type {
+  AdapterRow,
+  AgentConfigRow,
+  ApiKeyRow,
+  EditHistoryRow,
+  RoleRow,
+  TraitRow,
+} from "./db-agents";
 import type {
   BoardPostRow,
   BoardRow,
@@ -1354,6 +1362,32 @@ CREATE INDEX idx_coding_artifacts_status ON coding_artifacts(status, updated_at 
   {
     version: 49,
     sql: `ALTER TABLE coding_sessions ADD COLUMN writer TEXT;`,
+  },
+  // Migration 50: edit history for traits and roles (audit trail), mirroring
+  // core_memory_history — so trait/role edits are attributable and reviewable.
+  {
+    version: 50,
+    sql: `
+CREATE TABLE trait_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  old_value TEXT NOT NULL,
+  new_value TEXT NOT NULL,
+  changed_by TEXT NOT NULL,
+  changed_at INTEGER NOT NULL
+);
+CREATE INDEX idx_trait_history_name ON trait_history(name, id DESC);
+
+CREATE TABLE role_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  old_value TEXT NOT NULL,
+  new_value TEXT NOT NULL,
+  changed_by TEXT NOT NULL,
+  changed_at INTEGER NOT NULL
+);
+CREATE INDEX idx_role_history_name ON role_history(name, id DESC);
+`,
   },
 ];
 
@@ -3828,6 +3862,14 @@ export class MarinaDB {
   }
   deleteRole(name: string): void {
     agentsDb.deleteRole(this.db, name);
+  }
+
+  getTraitHistory(name: string, limit = 10): EditHistoryRow[] {
+    return agentsDb.getTraitHistory(this.db, name, limit);
+  }
+
+  getRoleHistory(name: string, limit = 10): EditHistoryRow[] {
+    return agentsDb.getRoleHistory(this.db, name, limit);
   }
 
   // ─── Agent Configs (delegated to db-agents.ts) ─────────────────────────
