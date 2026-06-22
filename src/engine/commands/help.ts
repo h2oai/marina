@@ -14,7 +14,7 @@ export const COMMAND_CATEGORIES: Record<string, string[]> = {
   Communication: ["say", "shout", "tell", "re", "emote"],
   Objects: ["get", "drop", "give", "inventory"],
   Information: ["who", "score", "help", "brief", "next", "web"],
-  "Identity & Access": ["ignore", "rank", "quest", "link", "role", "trait"],
+  "Identity & Access": ["ignore", "rank", "quest", "link", "role", "trait", "system-prompt"],
   Knowledge: ["note", "feed", "chronicle", "search", "bookmark", "export"],
   Cognition: ["memory", "recall", "reflect", "novelty", "orient", "ask", "recap", "debrief", "dig"],
   Growth: ["evolve", "skill", "benchmark"],
