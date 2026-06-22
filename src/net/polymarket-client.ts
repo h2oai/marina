@@ -24,7 +24,7 @@
 //   - CLOB (write): https://clob.polymarket.com
 
 import { CONNECTOR_HTTP_TIMEOUT_MS } from "../engine/constants";
-import { validateFetchUrl } from "./url-guard";
+import { guardedFetch, validateFetchUrl } from "./url-guard";
 
 const DEFAULT_GAMMA_BASE = "https://gamma-api.polymarket.com";
 const _DEFAULT_CLOB_BASE = "https://clob.polymarket.com";
@@ -291,7 +291,7 @@ async function jsonGet<T>(url: string, opts: PolymarketClientOpts): Promise<Poly
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(url, { method: "GET", signal: controller.signal });
+    const res = await guardedFetch(url, { method: "GET", signal: controller.signal });
     clearTimeout(timer);
 
     if (!res.ok) {
