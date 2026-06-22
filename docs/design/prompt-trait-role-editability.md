@@ -1,8 +1,10 @@
 # Editing Prompts, Traits & Roles inside Marina — edit · propagate · audit · test
 
-Status: **gaps #1–#2 built** (audit history + goal-conditional preview); #3–#4 sequenced. Goal:
-traits, roles, and the prompts they compose should be editable *inside the world*, with changes that
-**propagate** to running agents, are **audited** (history), and can be **tested** before going live.
+Status: **all four gaps built** — audit history, goal-conditional preview, propagate-on-edit
+(`role reload`), and read-only `system-prompt` preview. Goal (now met): traits, roles, and the
+prompts they compose are editable *inside the world*, with changes that **propagate** to running
+agents (`role reload`), are **audited** (`trait`/`role history`), and can be **tested** before going
+live (`role view … goal`, `system-prompt`).
 
 ## The reassuring finding: most of this already exists
 A code audit (file:line below) shows the capability is largely present — the instinct to build a big
@@ -48,9 +50,14 @@ rank 3 today.
    `inferTaskCategory` + `composeRolePrompt` PRISM gating an agent gets at spawn, prints the inferred
    task category, lists suppressed (out-of-scope) traits, and shows the effective prompt. *Test*
    behavior before assigning.
-3. **Propagation on edit** *(next)* — optionally refresh running agents bound to a role when it's
-   edited (or a `role reload <name>` that reconfigures them). Reuses the existing `reconfigure` path.
-4. *(Optional)* read-only `system-prompt view`.
+3. ✅ **Propagation on edit** *(built)* — `role reload <name>` (rank 3) finds running agents bound to
+   the role (live states only) and calls `agentRuntime.reconfigure(agent, { role })`, which re-derives
+   each agent's system prompt from the now-edited DB role (re-inferring task category from the agent's
+   current goal). Reports which agents reloaded / failed. Edit → reload is the explicit propagate step.
+4. ✅ **Read-only `system-prompt` preview** *(built)* — `system-prompt [role <name>] [goal <text>]`
+   (alias `sysprompt`, rank 0) shows the fully assembled `getLeanSystemPrompt` output: base prompt with
+   no role, or with a role's composed (and optionally goal-gated) section spliced in. Makes the
+   otherwise-invisible system-prompt assembly inspectable without making it editable.
 
 ## Principles (so this stays Marina-shaped, not a bolted-on CMS)
 - **Reuse the audit pattern** (`core_memory_history`), not a new versioning system.
