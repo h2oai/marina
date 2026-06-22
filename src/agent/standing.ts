@@ -42,6 +42,7 @@ const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
  */
 export type StandingKind =
   | "task_complete"
+  | "quest_complete"
   | "pool_note"
   | "reflection_recalled"
   | "crew_complete_member"
@@ -61,6 +62,11 @@ export type StandingKind =
  */
 export const STANDING_AMOUNTS: Record<StandingKind, number> = {
   task_complete: 0, // overridden per-task by caller
+  // Completing an onboarding/tutorial quest is a real (if modest) first act of
+  // engagement — it should advance progression so the obvious onboarding path
+  // isn't a dead end. Kept small: it moves a newcomer toward Citizen (rank 1 =
+  // 5) without, on its own, clearing capability gates (e.g. code.exec = 5).
+  quest_complete: 3,
   pool_note: 1,
   reflection_recalled: 0.5,
   crew_complete_member: 5,
