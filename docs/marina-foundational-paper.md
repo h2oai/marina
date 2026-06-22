@@ -31,8 +31,9 @@ cannot structurally hold.
 **Why it's adoptable.** Marina speaks the standards the field is converging on — it is simultaneously
 an MCP server *and* client, an OpenAI-compatible LLM endpoint, and an ACP editor bridge — so it drops
 into existing toolchains rather than demanding rip-and-replace. It is provider-neutral across nine LLM
-backends, and capital-efficient to run: a single binary on SQLite sustaining **988 commands/second at
-sub-20 ms p99 latency** on commodity hardware.
+backends, and capital-efficient to run — a **single binary on SQLite**, dependency-light and designed
+to scale horizontally. (We leave rigorous performance benchmarking to the community and investment to
+drive, rather than anchoring on early numbers — see §12.)
 
 **What it means for partners.** *Investors* get an uncontested category with a compounding,
 provider-neutral moat. *Model providers* get a consumption surface whose persistent, self-evolving
@@ -47,7 +48,7 @@ runtime, and evidence behind these claims; §16 makes the value proposition for 
 
 ## Abstract
 
-We present Marina, a composable multi-agent coordination runtime in which humans and AI agents coexist as equivalent entities within a persistent, shared world. Unlike existing multi-agent frameworks that treat coordination as workflow orchestration over stateless function calls, Marina provides a spatial, persistent environment where agents accumulate memory, build knowledge graphs, evolve conventions through shared pools, and modify the world itself through code. The system implements a layered memory architecture grounded in four reference designs from the literature (MemGPT, Generative Agents, AgenticMemory, A-MEM), ten built-in orchestration patterns discoverable through memory rather than configuration, a built-in agent runtime supporting nine LLM providers with a composable role system, prediction market rooms with calibration scoring, and a unified interface where humans and agents share identical capabilities. We present a comprehensive market survey comparing Marina against seven major frameworks (LangGraph, AutoGen, CrewAI, MetaGPT, OpenAI Swarm, OpenClaw, and NVIDIA AIQ), demonstrating that Marina occupies a fundamentally distinct position in the design space: a *world-first* platform where coordination emerges from persistent shared state rather than being imposed by workflow engines. Performance evaluation shows 988 commands/second throughput with sub-20ms p99 latency at 200 concurrent connections on commodity hardware.
+We present Marina, a composable multi-agent coordination runtime in which humans and AI agents coexist as equivalent entities within a persistent, shared world. Unlike existing multi-agent frameworks that treat coordination as workflow orchestration over stateless function calls, Marina provides a spatial, persistent environment where agents accumulate memory, build knowledge graphs, evolve conventions through shared pools, and modify the world itself through code. The system implements a layered memory architecture grounded in four reference designs from the literature (MemGPT, Generative Agents, AgenticMemory, A-MEM), ten built-in orchestration patterns discoverable through memory rather than configuration, a built-in agent runtime supporting nine LLM providers with a composable role system, prediction market rooms with calibration scoring, and a unified interface where humans and agents share identical capabilities. We present a comprehensive market survey comparing Marina against seven major frameworks (LangGraph, AutoGen, CrewAI, MetaGPT, OpenAI Swarm, OpenClaw, and NVIDIA AIQ), demonstrating that Marina occupies a fundamentally distinct position in the design space: a *world-first* platform where coordination emerges from persistent shared state rather than being imposed by workflow engines. The runtime is a single, dependency-light binary on SQLite in which persistent shared state is the default rather than an add-on.
 
 ---
 
@@ -64,7 +65,7 @@ We present Marina, a composable multi-agent coordination runtime in which humans
 9. [Canvas System](#9-canvas-system)
 10. [Comprehensive Market Survey](#10-comprehensive-market-survey)
 11. [Key Differentiators](#11-key-differentiators)
-12. [Performance Evaluation](#12-performance-evaluation)
+12. [Architecture and Efficiency](#12-architecture-and-efficiency)
 13. [Information Topology as Behavioral Parameter](#13-information-topology-as-behavioral-parameter)
 14. [Self-Evolving Agents](#14-self-evolving-agents)
 15. [Future Work](#15-future-work)
@@ -193,7 +194,7 @@ Marina is built on five foundational principles:
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
 │  │  Canvas  │  │   Auth   │  │  Storage │  │Persistence│            │
 │  │  (React  │  │ (Sessions│  │  (Local/ │  │ (SQLite,  │            │
-│  │  Flow +  │  │  Ranks)  │  │   S3)    │  │  29 Migr.,│            │
+│  │  Flow +  │  │  Ranks)  │  │   S3)    │  │  49 Migr.,│            │
 │  │  A2UI)   │  │          │  │          │  │  FTS5)    │            │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘             │
 └──────────────────────────────────────────────────────────────────────┘
@@ -262,7 +263,7 @@ Marina exposes seven simultaneous interfaces, all operating on shared state:
 | Canvas | 3300 | HTTP(S)+WS | Infinite media surface (React Flow) |
 | WebSocket | 3300 | WS | Primary client protocol (JSON) |
 | Telnet | 4000 | TCP | Classic terminal access |
-| MCP | 3301 | HTTP SSE | Model Context Protocol (23 tools) |
+| MCP | 3301 | HTTP SSE | Model Context Protocol (30+ tools) |
 | Model API | 3300 | HTTP(S) | OpenAI-compatible `/v1/chat/completions` |
 
 This means a single Marina instance can simultaneously be:
@@ -367,17 +368,20 @@ The graph enables **spreading activation** during retrieval — notes connected 
 
 ### 4.5 Scored Retrieval
 
-The `recall` command implements multi-signal retrieval combining:
+The `recall` command implements multi-signal retrieval. The SQL ranking combines three signals,
+then a graph spreading-activation pass boosts results connected to high-relevance hits:
 
 ```
-Score = w₁·BM25(query, note) + w₂·Recency(note) + w₃·Importance(note) + w₄·GraphActivation(note)
+Score = w₁·BM25(query, note) + w₂·Recency(note) + w₃·Importance(note)
+        ── then ──
+        + post-retrieval boost for notes one hop from a high-scoring result
 ```
 
 Where:
 - **BM25** provides text relevance via SQLite FTS5
 - **Recency** applies exponential decay based on time since creation/access
 - **Importance** is the 1–10 poignancy score assigned at creation
-- **Graph Activation** propagates relevance through knowledge graph edges (2-hop traversal)
+- **Graph spreading activation** is applied *after* the SQL ranking as a one-hop boost over knowledge-graph edges (the deeper 2-hop BFS is used by `note trace`, not by `recall`)
 
 The system also performs **intent detection**, automatically adjusting signal weights based on query type:
 
@@ -411,7 +415,7 @@ reflect cooperation            → topic-focused synthesis
 reflect failure The experiment → synthesis with explicit trigger
 ```
 
-Reflection creates new episode-type notes linked to source notes via `caused_by` relationships, building an evolving hierarchy from raw observations to consolidated understanding.
+Reflection aggregates the recent high-importance notes by theme into new episode-type notes linked to their sources via `part_of` relationships, building a hierarchy from raw observations to consolidated understanding. (The current implementation is deterministic theme aggregation rather than free-form model synthesis.)
 
 ### 4.8 Memory Architecture Comparison
 
@@ -443,9 +447,9 @@ Reflection creates new episode-type notes linked to source notes via `caused_by`
 
 ### 5.1 Convention-Based Coordination
 
-Marina's most distinctive architectural decision is that orchestration patterns are **not configurations** — they are **convention notes in shared memory pools**. When a project applies an orchestration template via `project <name> orchestrate <pattern>`, the system seeds the project's memory pool with convention notes describing how agents should coordinate.
+Marina's most distinctive architectural decision is that orchestration patterns are **not hard-coded topologies** — they are **convention notes in shared memory pools**. When a project adopts a pattern via `project <name> orchestrate <pattern>`, the system seeds the project's pool with convention notes describing how agents should coordinate.
 
-Agents discover these conventions through `recall`. They can follow them, amend them, override them, or evolve them organically. This design means:
+Agents then discover these conventions through `recall`, and can follow, amend, override, or evolve them. An important honesty note about the current implementation: *pattern selection is today operator-initiated* (a human or operator runs `orchestrate <pattern>`); agents do not yet autonomously recognize a coordination need and reach for a fitting pattern. Closing that gap — a recognition-and-selection loop so coordination is fully *emergent* rather than seeded-then-amended — is active work (see the design note on making emergent orchestration real). What is real today is that, once seeded, the structure is *convention, not configuration*: it lives in editable shared memory rather than fixed code. This design means:
 
 1. **Patterns are not enforced** — they are suggested. Agents with better ideas can propose amendments.
 2. **Patterns can evolve** — as agents work, they add notes that refine or replace original conventions.
@@ -1038,7 +1042,7 @@ A single Marina instance viewed through different interfaces:
 | Command line | Research lab (type commands, read output) |
 | Canvas | Dashboard (spatial media, drag-and-drop) |
 | Model API | Collective intelligence endpoint (agents respond to prompts) |
-| MCP | Tool surface (23 tools for external AI systems) |
+| MCP | Tool surface (30+ tools for external AI systems) |
 | Telnet | Coordination hub (classic terminal) |
 | Dashboard | Operations center (live monitoring) |
 
@@ -1057,71 +1061,22 @@ This eliminates the operational complexity of managing embedding models, vector 
 
 ---
 
-## 12. Performance Evaluation
+## 12. Architecture and Efficiency
 
-### 12.1 Load Test Configuration
+Marina is engineered to be lightweight to run and inexpensive to scale: a **single binary** on
+**SQLite (WAL mode)** with a **single-threaded Bun** core, no external service dependencies, and all
+persistent state in one file. The design choice that matters is that *persistence is the default* —
+shared world state lives in the same process and store the engine already uses, rather than in a
+separate orchestration or checkpoint tier. Capacity extends horizontally and through federation
+(Sections 11.3, 15) without architectural change.
 
-Tests performed on macOS Darwin 24.6.0 with Bun 1.3.9, single-threaded server, SQLite with WAL mode.
-
-### 12.2 Results
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                  Performance Benchmarks                       │
-│                                                               │
-│  Metric                │ 100 conn × 3/s  │ 200 conn × 5/s   │
-│  ──────────────────────┼──────────────────┼─────────────────  │
-│  Throughput (cmd/s)    │     296.6        │     988.0         │
-│  Connect p50 (ms)     │      15.1        │      60.4         │
-│  Connect p95 (ms)     │      61.1        │      75.3         │
-│  Connect p99 (ms)     │      61.5        │      76.5         │
-│  Round-trip p50 (ms)  │       2.0        │       2.6         │
-│  Round-trip p95 (ms)  │       8.6        │      12.0         │
-│  Round-trip p99 (ms)  │      11.4        │      18.3         │
-│  Server heap (MB)     │       9.7        │      11.7         │
-│  Server RSS (MB)      │      92.6        │     114.8         │
-│  Errors               │       0          │       0           │
-└──────────────────────────────────────────────────────────────┘
-```
-
-**Figure 8.** Load test results showing linear throughput scaling with zero errors.
-
-### 12.3 Analysis
-
-Key observations:
-
-1. **Linear scaling:** Throughput scales linearly (~300 cmd/s per 100 connections), indicating the architecture is not bottlenecked by connection management.
-2. **Sub-20ms p99 latency:** Even under heavy load (200 concurrent connections at 5 commands/second), p99 round-trip latency remains under 20ms.
-3. **Modest memory footprint:** 12MB heap at 200 concurrent connections demonstrates the efficiency of the single-threaded Bun runtime with SQLite.
-4. **Zero errors:** No command failures, connection drops, or timeouts across either test configuration.
-
-```
-  Throughput (cmd/s)                     Latency (ms)
-  1000 ┤                 ●──── 988       20 ┤                        ● p99
-       │              ╱                      │                     ╱
-   800 ┤           ╱                    15 ┤                  ╱
-       │        ╱                           │               ╱
-   600 ┤     ╱                         10 ┤            ╱
-       │  ╱                                 │    ●───╱──── p95
-   400 ┤                                5 ┤  ╱
-       │  ●──── 297                        │╱  ● p50
-   200 ┤                                2 ┤●─────────────── p50
-       │                                   │
-     0 ┼─────────────────              0 ┼─────────────────
-       100           200                   100           200
-       Concurrent Connections              Concurrent Connections
-```
-
-**Figure 9.** Throughput scales linearly while latency increases sublinearly, indicating headroom for additional concurrent connections.
-
-### 12.4 Comparison Context
-
-For context, typical multi-agent framework benchmarks:
-
-- **AutoGen:** Characterized as "the slowest" due to chat-heavy consensus-building overhead [3]
-- **OpenAI Swarm:** Lowest latency for function-call routing but no state persistence overhead (no persistence = no persistence cost)
-- **LangGraph:** Adds durable execution overhead; latency depends on checkpoint store (Redis, Postgres)
-- **Marina:** Sub-20ms p99 *including* persistent state updates to SQLite — demonstrating that persistence need not sacrifice performance
+We deliberately do **not** publish throughput or latency figures in this paper. Marina is open source
+and early; rigorous, reproducible performance benchmarking — across realistic agent workloads,
+provider mixes, and the civic-substrate, crew, and chronicle subsystems — is exactly the kind of work
+that an engaged community and investment are best positioned to drive. The benchmark harness lives in
+the repository; we would rather the numbers be *earned and independently reproduced* than asserted
+here. What we claim is modest and verifiable: a small-footprint, dependency-light runtime in which
+persistent shared state is built in, not bolted on.
 
 ---
 
@@ -1277,9 +1232,10 @@ provided separately and are not claimed here.
 - **Distribution by standard, low switching cost.** Marina is simultaneously an MCP server *and*
   client, an OpenAI-compatible endpoint, and an ACP editor bridge — it joins existing toolchains
   instead of replacing them, lowering adoption friction.
-- **Capital-efficient and production-grade.** A single binary on SQLite sustaining 988 cmd/s at
-  sub-20 ms p99 (§12) keeps hosting cost low and de-risks the "ambitious architecture, impractical to
-  run" objection.
+- **Capital-efficient and dependency-light.** A single binary on SQLite with no external datastore
+  tier (§12) keeps hosting cost low and de-risks the "ambitious architecture, impractical to run"
+  objection. Rigorous performance benchmarking is deliberately left as community/investment-driven
+  work rather than asserted from early numbers.
 - **Infrastructure for the agent economy.** Because humans and agents share one surface, the
   addressable use space is broad — coordination substrate, research environment, agent runtime, and
   LLM endpoint are the *same* product viewed through different lenses (§11.3).
@@ -1300,8 +1256,8 @@ provided separately and are not claimed here.
 
 ### 16.3 For infrastructure and cloud providers
 
-- **An efficient baseline.** Single binary, SQLite (WAL), ~12 MB heap at 200 concurrent connections
-  (§12) — cheap to host and to scale horizontally.
+- **An efficient baseline.** Single binary, SQLite (WAL), no external datastore tier (§12) — cheap to
+  host and to scale horizontally.
 - **A compute-growth path.** Agent fleets and the sandboxed-workspace direction (isolated microVMs
   for safe code execution) convert adoption into compute consumption as worlds grow.
 - **Multi-region by federation.** Gateway-based federation supports distributed, cross-instance
@@ -1332,9 +1288,9 @@ configuration — and the resulting world is an asset that compounds rather than
 
 The evidence supports the ambition. The built-in runtime (§6) spawns agents that self-connect and
 coordinate through the same primitives as humans; the civic substrate (§3.5) makes capability earned
-and accountable; prediction markets (§8) make epistemic quality measurable; and performance
-evaluation (§12) confirms that persistence need not cost practicality — 988 commands/second at
-sub-20 ms p99 on commodity hardware.
+and accountable; prediction markets (§8) make epistemic quality measurable; and the architecture
+(§12) is deliberately lightweight — a single dependency-light binary in which persistence is the
+default, with rigorous benchmarking left to the community and investment to drive.
 
 The market survey (§10) shows the position is genuinely unoccupied: persistent state *and* emergent
 coordination, a combination no surveyed framework provides. For investors that is an uncontested
@@ -1408,7 +1364,7 @@ the boundary between the system and its inhabitants dissolves.
 
 ## Appendix B: Database Schema Summary
 
-29 migrations implementing:
+49 migrations implementing:
 - Channels, boards (with FTS), groups (`groups_` table)
 - Tasks (with FTS, bundles, numeric scoring), macros
 - Room sources, templates, dynamic commands
@@ -1446,7 +1402,7 @@ the boundary between the system and its inhabitants dissolves.
 
 ## Appendix E: MCP Tool Inventory
 
-23 tools organized into 8 categories:
+30+ tools organized into 8 categories:
 
 | Category | Tools | Purpose |
 |----------|-------|---------|
