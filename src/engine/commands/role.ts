@@ -8,13 +8,15 @@ import { getRank } from "../permissions";
 export function roleCommand(deps: {
   db?: MarinaDB;
   getEntity?: (id: EntityId) => Entity | undefined;
+  listAgents?: () => { name: string; role: string; state: string }[];
+  reconfigureAgent?: (name: string, opts: { role?: string }) => Promise<void>;
 }): CommandDef {
   return {
     name: "role",
     aliases: [],
     minRank: 0,
-    help: "Manage composable agent roles.\nUsage: role list | role view <name> [goal <text>] | role history <name> | role create <name> [traits <t1,t2,...>] [guidelines <g1|g2|...>] [focus <f1,f2,...>] [tone <tone>] | role edit <name> ... | role delete <name>\n\nRoles are compositions of traits plus guidelines, focus areas, and tone.\n`role view <name> goal <text>` previews the PRISM-gated prompt an agent with that goal actually receives. `role history <name>` shows the audited edit trail.",
-    handler: (ctx: RoomContext, input) => {
+    help: "Manage composable agent roles.\nUsage: role list | role view <name> [goal <text>] | role history <name> | role create <name> [traits <t1,t2,...>] [guidelines <g1|g2|...>] [focus <f1,f2,...>] [tone <tone>] | role edit <name> ... | role reload <name> | role delete <name>\n\nRoles are compositions of traits plus guidelines, focus areas, and tone.\n`role view <name> goal <text>` previews the PRISM-gated prompt an agent with that goal actually receives. `role history <name>` shows the audited edit trail. `role reload <name>` propagates the current definition into running agents bound to it.",
+    handler: async (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, "Roles require database support.");
         return;
@@ -129,6 +131,52 @@ export function roleCommand(deps: {
           return;
         }
 
+        case "reload": {
+          // Propagate an edited role into agents already running it — reuses the
+          // agent reconfigure path, which re-derives the system prompt from the
+          // (now-edited) DB role. Gated like edit, since it changes live behavior.
+          const entity = deps.getEntity?.(input.entity);
+          if (entity && getRank(entity) < 3) {
+            ctx.send(input.entity, "Requires organizer rank (3) or higher.");
+            return;
+          }
+          const name = tokens[1];
+          if (!name) {
+            ctx.send(input.entity, "Usage: role reload <name>");
+            return;
+          }
+          if (!db.getRole(name)) {
+            ctx.send(input.entity, `Role "${name}" not found.`);
+            return;
+          }
+          if (!deps.listAgents || !deps.reconfigureAgent) {
+            ctx.send(input.entity, "Agent runtime unavailable — cannot reload running agents.");
+            return;
+          }
+          const live = new Set(["starting", "connected", "autonomous", "idle"]);
+          const targets = deps.listAgents().filter((a) => a.role === name && live.has(a.state));
+          if (targets.length === 0) {
+            ctx.send(input.entity, `No running agents are bound to role "${name}".`);
+            return;
+          }
+          const reloaded: string[] = [];
+          const failed: string[] = [];
+          for (const a of targets) {
+            try {
+              await deps.reconfigureAgent(a.name, { role: name });
+              reloaded.push(a.name);
+            } catch {
+              failed.push(a.name);
+            }
+          }
+          let msg = `Reloaded role "${name}" into ${reloaded.length} running agent(s)${
+            reloaded.length > 0 ? `: ${reloaded.join(", ")}` : ""
+          }.`;
+          if (failed.length > 0) msg += ` Failed: ${failed.join(", ")}.`;
+          ctx.send(input.entity, msg);
+          return;
+        }
+
         case "create":
         case "edit": {
           const entity = deps.getEntity?.(input.entity);
@@ -192,7 +240,7 @@ export function roleCommand(deps: {
         default:
           ctx.send(
             input.entity,
-            "Usage: role list | role view <name> [goal <text>] | role history <name> | role create <name> ... | role edit <name> ... | role delete <name>",
+            "Usage: role list | role view <name> [goal <text>] | role history <name> | role create <name> ... | role edit <name> ... | role reload <name> | role delete <name>",
           );
       }
     },
