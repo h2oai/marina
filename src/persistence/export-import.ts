@@ -15,7 +15,7 @@ export interface MarinaSnapshot {
 // Tables in foreign-key-safe insertion order.
 // FTS virtual tables (board_posts_fts, notes_fts), sessions, and
 // schema_version are excluded — they are rebuilt or irrelevant on import.
-const EXPORT_TABLES = [
+export const EXPORT_TABLES = [
   "entities",
   "room_store",
   "event_log",
@@ -63,17 +63,76 @@ const EXPORT_TABLES = [
   "market_positions",
   "market_scores",
   "mem_api_keys",
+  // Civic substrate + agent identity (added 2026-06 — previously dropped on
+  // export/import, permanently losing standing/ranks/competence/roles on restore).
+  "entity_standing",
+  "entity_standing_cache",
+  "entity_competence",
+  "traits",
+  "roles",
+  "trait_history",
+  "role_history",
+  "agent_configs",
+  "crews",
+  "crew_members",
+  "feed_events",
+  "canvas_edges",
+  "benchmark_runs",
+  "adapters",
+  "adapter_user_mappings",
+  "app_settings",
+  "media_jobs",
+  // Secret-bearing tables — only emitted when ExportOptions.includeSecrets is set
+  // (see SECRET_TABLES). api_keys is encrypted at rest; the rest may carry creds.
+  "api_keys",
+  "connectors",
+  "gateways",
+  "gateway_bridges",
 ] as const;
+
+/**
+ * Tables that hold credentials / PII. Omitted from exports unless
+ * `ExportOptions.includeSecrets` is explicitly set, so a snapshot is safe to
+ * share by default. (`mem_api_keys.secret` is a plaintext Bearer token;
+ * `api_keys` is encrypted provider keys; `connectors` / `gateways` may carry
+ * auth material.) Note: the `users` table is just the name→rank registry (no
+ * credentials — better-auth stores those separately), so it is NOT secret and
+ * stays exported by default; it is essential for a faithful restore.
+ */
+const SECRET_TABLES = new Set<string>([
+  "api_keys",
+  "mem_api_keys",
+  "connectors",
+  "gateways",
+  "gateway_bridges",
+]);
+
+/**
+ * Tables intentionally never exported: migration scratch (`*_new`), FTS5 virtual
+ * + shadow tables (anything containing `_fts`), ephemeral sessions, and the
+ * schema-version marker. The drift test in test/export-import.test.ts asserts
+ * every real table is either in EXPORT_TABLES or matches one of these.
+ */
+export function isExcludedFromExport(table: string): boolean {
+  return (
+    table === "sessions" ||
+    table === "schema_version" ||
+    table.endsWith("_new") ||
+    table.includes("_fts")
+  );
+}
 
 // ─── Export ─────────────────────────────────────────────────────────────────
 
 export interface ExportOptions {
   /** Skip the event_log table (can be very large). Default: false */
   skipEventLog?: boolean;
-  /** Skip connectors (may contain auth secrets). Default: false */
-  skipConnectors?: boolean;
-  /** Skip API key tables (api_keys, mem_api_keys) to avoid leaking secrets. Default: false */
-  skipSecrets?: boolean;
+  /**
+   * Include secret-bearing tables (SECRET_TABLES: api_keys, mem_api_keys, users,
+   * connectors, gateways, gateway_bridges). Default: false — snapshots are safe
+   * to share by default; pass true only for a full operational backup.
+   */
+  includeSecrets?: boolean;
   /** World name to include in the snapshot (informational). */
   worldName?: string;
 }
@@ -87,8 +146,8 @@ export function exportState(dbPath: string, opts?: ExportOptions): MarinaSnapsho
 
   for (const table of EXPORT_TABLES) {
     if (opts?.skipEventLog && table === "event_log") continue;
-    if (opts?.skipConnectors && table === "connectors") continue;
-    if (opts?.skipSecrets && table === "mem_api_keys") continue;
+    // Secret-bearing tables are omitted unless explicitly requested.
+    if (!opts?.includeSecrets && SECRET_TABLES.has(table)) continue;
 
     // Only export tables that exist (older schemas may lack some)
     if (!tableExists(db, table)) continue;
