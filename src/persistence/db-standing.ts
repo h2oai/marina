@@ -131,6 +131,17 @@ export function listStandingEntities(db: Database): string[] {
   ).map((r) => r.entity_id);
 }
 
+/** Entity ids whose cached standing is stale (older than `cutoff`) or was just
+ *  invalidated to last_recomputed=0 by a fresh ledger write — i.e. needs a
+ *  recompute before being read on the leaderboard. */
+export function staleStandingEntities(db: Database, cutoff: number): string[] {
+  return (
+    db
+      .query("SELECT entity_id FROM entity_standing_cache WHERE last_recomputed < ?")
+      .all(cutoff) as { entity_id: string }[]
+  ).map((r) => r.entity_id);
+}
+
 export function standingLeaderboard(
   db: Database,
   limit: number,

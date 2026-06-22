@@ -223,12 +223,14 @@ export class AgentRuntime {
       );
     }
 
-    // Spawn cooldown — prevent thundering herd
+    // Spawn cooldown — prevent thundering herd. Only the *check* runs here;
+    // lastSpawnAt is set on the success path (after start) so a spawn that
+    // fails validation/start doesn't burn the window and reject the operator's
+    // immediate corrected retry.
     const now = Date.now();
     if (now - this.lastSpawnAt < 1000) {
       throw new Error("Spawn cooldown — wait 1 second between spawns.");
     }
-    this.lastSpawnAt = now;
 
     // Reserve the name synchronously, before any awaits, so a second
     // concurrent spawn with the same name fails fast at the guard above
@@ -421,6 +423,9 @@ export class AgentRuntime {
       // in the background (see LeanAgentAdapter.start), so this resolves as soon
       // as the agent is connected instead of after the whole first turn.
       await adapter.start(config.goal);
+
+      // Spawn succeeded — now consume the cooldown window.
+      this.lastSpawnAt = Date.now();
 
       // Track it
       this.agents.set(config.name, adapter);

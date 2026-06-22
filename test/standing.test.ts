@@ -133,6 +133,17 @@ describe("Standing — civic-contribution ledger", () => {
     expect(bob?.standing).toBeGreaterThan(alice?.standing ?? 0);
   });
 
+  it("leaderboard shows a freshly-earned entity's real standing without waiting for recomputeAll", () => {
+    // record() invalidates the cache (last_recomputed=0). Previously the
+    // leaderboard read the raw cache and showed 0 until the hourly pass; now
+    // leaderboard() refreshes stale rows first.
+    record(db, "e_carol", "Carol", "pool_note", "1");
+    const board = leaderboard(db); // NOTE: no recomputeAll() between earn and read
+    const carol = board.find((r) => r.entityId === "e_carol");
+    expect(carol).toBeDefined();
+    expect(carol?.standing).toBeGreaterThan(0);
+  });
+
   it("ledgerFor returns rows newest-first", () => {
     db.appendStandingEvent({
       entityId: "e_alice",

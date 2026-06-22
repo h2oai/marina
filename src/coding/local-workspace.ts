@@ -117,6 +117,26 @@ export interface WorkspaceExec {
  */
 export type WorkspaceRuntime = WorkspaceFiles & WorkspaceExec;
 
+// Serialize mutating git/run operations per workspace root. Two concurrent
+// `code apply` commands (or apply + run) from the same write-lock holder would
+// otherwise launch overlapping `git apply` / build processes against one
+// working tree + index — an index.lock collision / partial-apply. Keyed by the
+// realpath root so it holds even across separate LocalWorkspace instances.
+const rootLocks = new Map<string, Promise<unknown>>();
+function withRootLock<T>(root: string, fn: () => Promise<T>): Promise<T> {
+  const prev = rootLocks.get(root) ?? Promise.resolve();
+  const next = prev.then(fn, fn); // run after the prior op settles (either way)
+  // Store a rejection-swallowed tail so one failure can't break the chain.
+  rootLocks.set(
+    root,
+    next.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return next;
+}
+
 export class LocalWorkspace implements WorkspaceRuntime {
   readonly root: string;
 
@@ -235,22 +255,26 @@ export class LocalWorkspace implements WorkspaceRuntime {
 
   async applyPatch(patch: string): Promise<PatchCheck> {
     const paths = validatePatchPaths(this.root, patch);
-    const result = await runGitApply(this.root, patch, false);
-    return {
-      ok: result.exitCode === 0,
-      paths,
-      output: result.content.trim(),
-    };
+    return withRootLock(this.root, async () => {
+      const result = await runGitApply(this.root, patch, false);
+      return {
+        ok: result.exitCode === 0,
+        paths,
+        output: result.content.trim(),
+      };
+    });
   }
 
   async reversePatch(patch: string, checkOnly = false): Promise<PatchCheck> {
     const paths = validatePatchPaths(this.root, patch);
-    const result = await runGitApply(this.root, patch, checkOnly, true);
-    return {
-      ok: result.exitCode === 0,
-      paths,
-      output: result.content.trim(),
-    };
+    return withRootLock(this.root, async () => {
+      const result = await runGitApply(this.root, patch, checkOnly, true);
+      return {
+        ok: result.exitCode === 0,
+        paths,
+        output: result.content.trim(),
+      };
+    });
   }
 
   async run(
@@ -259,14 +283,16 @@ export class LocalWorkspace implements WorkspaceRuntime {
     maxBytes = DEFAULT_MAX_OUTPUT_BYTES,
   ): Promise<WorkspaceRunResult> {
     const normalized = normalizeAllowedCodeCommand(this.root, command);
-    const started = Date.now();
-    const result = await runWorkspaceCommand(
-      normalized,
-      this.root,
-      Math.min(timeoutMs, MAX_RUN_TIMEOUT_MS),
-      maxBytes,
-    );
-    return { ...result, command: normalized, durationMs: Math.max(0, Date.now() - started) };
+    return withRootLock(this.root, async () => {
+      const started = Date.now();
+      const result = await runWorkspaceCommand(
+        normalized,
+        this.root,
+        Math.min(timeoutMs, MAX_RUN_TIMEOUT_MS),
+        maxBytes,
+      );
+      return { ...result, command: normalized, durationMs: Math.max(0, Date.now() - started) };
+    });
   }
 
   runPolicy(): CodeRunPolicy {
@@ -509,15 +535,32 @@ async function runWorkspaceCommand(
 
   try {
     const proc = Bun.spawn(cmd, { cwd, env, stdout: "pipe", stderr: "pipe" });
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
     const result = await Promise.race([
       proc.exited,
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), timeoutMs)),
+      new Promise<"timeout">((resolve) => {
+        timeoutTimer = setTimeout(() => resolve("timeout"), timeoutMs);
+      }),
     ]);
+    if (timeoutTimer) clearTimeout(timeoutTimer); // don't leak the timer on the fast-exit path
 
     if (result === "timeout") {
       timedOut = true;
-      proc.kill();
-      await proc.exited;
+      proc.kill(); // SIGTERM
+      // Escalate to SIGKILL if the child ignores/traps SIGTERM and doesn't exit
+      // within a short grace window — otherwise `await proc.exited` could hang.
+      let graceTimer: ReturnType<typeof setTimeout> | undefined;
+      const exitedInGrace = await Promise.race([
+        proc.exited.then(() => true),
+        new Promise<boolean>((resolve) => {
+          graceTimer = setTimeout(() => resolve(false), 3000);
+        }),
+      ]);
+      if (graceTimer) clearTimeout(graceTimer);
+      if (!exitedInGrace) {
+        proc.kill("SIGKILL");
+        await proc.exited;
+      }
     }
 
     exitCode = proc.exitCode ?? -1;
