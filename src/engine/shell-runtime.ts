@@ -223,15 +223,33 @@ export class ShellRuntime {
         stderr: "pipe",
       });
 
+      let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
       const result = await Promise.race([
         proc.exited,
-        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), timeoutMs)),
+        new Promise<"timeout">((resolve) => {
+          timeoutTimer = setTimeout(() => resolve("timeout"), timeoutMs);
+        }),
       ]);
+      if (timeoutTimer) clearTimeout(timeoutTimer); // don't leak the timer on the fast-exit path
 
       if (result === "timeout") {
         timedOut = true;
-        proc.kill();
-        await proc.exited;
+        proc.kill(); // SIGTERM
+        // Escalate to SIGKILL if the child ignores/traps SIGTERM and doesn't
+        // exit within a short grace window — otherwise `await proc.exited`
+        // could hang forever, defeating the timeout we just enforced.
+        let graceTimer: ReturnType<typeof setTimeout> | undefined;
+        const exitedInGrace = await Promise.race([
+          proc.exited.then(() => true),
+          new Promise<boolean>((resolve) => {
+            graceTimer = setTimeout(() => resolve(false), 3000);
+          }),
+        ]);
+        if (graceTimer) clearTimeout(graceTimer);
+        if (!exitedInGrace) {
+          proc.kill("SIGKILL");
+          await proc.exited;
+        }
       }
 
       exitCode = proc.exitCode ?? -1;
