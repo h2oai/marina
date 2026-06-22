@@ -1358,7 +1358,10 @@ export class LeanAgentAdapter implements AgentHandle {
       }
 
       // Goal-aware: does the current focus look like it wants a coordination
-      // pattern? If so, name the fitting ones and how to assemble a crew.
+      // pattern? If so, name the fitting ones and how to adopt one. A pattern is
+      // just recallable conventions in a pool — it does NOT require a crew. Most
+      // patterns can also guide solo work, so suggest the lightweight path first
+      // and bring in other agents only when the work genuinely needs them.
       if (this.focus) {
         const fits = suggestPatterns(this.focus.description);
         if (fits.length > 0) {
@@ -1366,7 +1369,7 @@ export class LeanAgentAdapter implements AgentHandle {
             `Your goal looks like it could use a coordination pattern — fitting: ${fits
               .map((f) => `${f.pattern} (${f.why})`)
               .join("; ")}.`,
-            "Assemble a crew (`code crew <goal> with <agents>`, or `recruit` idle agents) and adopt one — or keep going solo.",
+            "Adopt one with `project <name> orchestrate <pattern>` (works solo — it seeds the conventions you'll `recall`). Bring in other agents (`code crew` / `recruit`) only if the work needs more hands — or keep going solo.",
           );
         }
       }
