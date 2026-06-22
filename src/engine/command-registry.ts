@@ -73,6 +73,7 @@ import { shoutCommand } from "./commands/shout";
 import { skillCommand } from "./commands/skill";
 import { sourceCommand } from "./commands/source";
 import { standingCommand } from "./commands/standing";
+import { systemPromptCommand } from "./commands/system-prompt";
 import { taskCommand } from "./commands/task";
 import { replyCommand, tellCommand } from "./commands/tell";
 import { traitCommand } from "./commands/trait";
@@ -819,6 +820,8 @@ export function registerBuiltinCommands(engine: Engine): void {
     roleCommand({
       db: engine.db,
       getEntity: (id) => engine.entities.get(id as EntityId),
+      listAgents: () => engine.agentRuntime.list(),
+      reconfigureAgent: (name, opts) => engine.agentRuntime.reconfigure(name, opts),
     }),
   );
   engine.commands.registerBuiltin(
@@ -827,6 +830,7 @@ export function registerBuiltinCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
     }),
   );
+  engine.commands.registerBuiltin(systemPromptCommand({ db: engine.db }));
 
   // Key and Adapter commands (security & administration)
   engine.commands.registerBuiltin(

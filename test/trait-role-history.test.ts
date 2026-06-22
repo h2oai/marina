@@ -1,8 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { roleCommand } from "../src/engine/commands/role";
+import { systemPromptCommand } from "../src/engine/commands/system-prompt";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+
+// Minimal stubs for direct handler invocation (no running engine needed).
+const rank3Ctx = () => {
+  let sent = "";
+  // biome-ignore lint/suspicious/noExplicitAny: test stub
+  const ctx: any = { send: (_e: unknown, t: string) => (sent = t) };
+  return { ctx, get: () => sent };
+};
+// biome-ignore lint/suspicious/noExplicitAny: test stub
+const inp = (tokens: string[]): any => ({ entity: "e1", tokens });
 
 const TEST_DB = "test_trait_role_history.db";
 
@@ -133,6 +145,96 @@ describe("Trait/role edit history (audit trail)", () => {
       expect(out).toContain("preview for goal");
       expect(out).toContain("Inferred task category");
       expect(out).toContain("Effective Prompt");
+    });
+  });
+
+  describe("role reload (propagate-on-edit)", () => {
+    // biome-ignore lint/suspicious/noExplicitAny: test stub
+    const rank3 = () => ({ properties: { rank: 3 } }) as any;
+
+    it("reconfigures only running agents bound to the role", async () => {
+      db.saveRole({ name: "scout", traits: [], createdBy: "ada" });
+      const calls: string[] = [];
+      const cmd = roleCommand({
+        db,
+        getEntity: rank3,
+        listAgents: () => [
+          { name: "alice", role: "scout", state: "autonomous" },
+          { name: "bob", role: "other", state: "autonomous" }, // different role
+          { name: "carol", role: "scout", state: "stopped" }, // not live
+        ],
+        reconfigureAgent: async (name) => {
+          calls.push(name);
+        },
+      });
+      const { ctx, get } = rank3Ctx();
+      await cmd.handler(ctx, inp(["reload", "scout"]));
+      expect(calls).toEqual(["alice"]);
+      expect(stripAnsi(get())).toContain("Reloaded role");
+      expect(stripAnsi(get())).toContain("alice");
+    });
+
+    it("reports when no running agents are bound to the role", async () => {
+      db.saveRole({ name: "scout", traits: [], createdBy: "ada" });
+      const cmd = roleCommand({
+        db,
+        getEntity: rank3,
+        listAgents: () => [{ name: "bob", role: "other", state: "autonomous" }],
+        reconfigureAgent: async () => {},
+      });
+      const { ctx, get } = rank3Ctx();
+      await cmd.handler(ctx, inp(["reload", "scout"]));
+      expect(stripAnsi(get())).toContain("No running agents");
+    });
+
+    it("requires rank 3", async () => {
+      db.saveRole({ name: "scout", traits: [], createdBy: "ada" });
+      const cmd = roleCommand({
+        db,
+        // biome-ignore lint/suspicious/noExplicitAny: test stub
+        getEntity: () => ({ properties: { rank: 0 } }) as any,
+        listAgents: () => [{ name: "alice", role: "scout", state: "autonomous" }],
+        reconfigureAgent: async () => {},
+      });
+      const { ctx, get } = rank3Ctx();
+      await cmd.handler(ctx, inp(["reload", "scout"]));
+      expect(stripAnsi(get())).toContain("organizer rank");
+    });
+  });
+
+  describe("system-prompt preview (read-only)", () => {
+    it("shows the base prompt when no role is given", () => {
+      const cmd = systemPromptCommand({ db });
+      const { ctx, get } = rank3Ctx();
+      cmd.handler(ctx, inp([]));
+      const out = stripAnsi(get());
+      expect(out).toContain("System Prompt");
+      expect(out).toContain("autonomous agent");
+      expect(out).toContain("base general-purpose prompt");
+    });
+
+    it("includes the composed role section for `role <name>`", () => {
+      db.saveTrait({
+        name: "curious",
+        category: "cognitive",
+        prompt: "Ask why.",
+        createdBy: "ada",
+      });
+      db.saveRole({ name: "scout", traits: ["curious"], createdBy: "ada" });
+      const cmd = systemPromptCommand({ db });
+      const { ctx, get } = rank3Ctx();
+      cmd.handler(ctx, inp(["role", "scout"]));
+      const out = stripAnsi(get());
+      expect(out).toContain("YOUR ROLE: SCOUT");
+      expect(out).toContain("Ask why");
+    });
+
+    it("reports an inferred category when a goal is given", () => {
+      db.saveRole({ name: "scout", traits: [], createdBy: "ada" });
+      const cmd = systemPromptCommand({ db });
+      const { ctx, get } = rank3Ctx();
+      cmd.handler(ctx, inp(["role", "scout", "goal", "fix the parser bug"]));
+      expect(stripAnsi(get())).toContain("inferred category");
     });
   });
 });
