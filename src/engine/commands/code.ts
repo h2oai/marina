@@ -755,6 +755,21 @@ Usage:
 In Code Mode, omit the "code" prefix: start, files, read <path>, run test, exit.
 This first cut is local-CWD only and path-confined. Writes happen only by applying a stored patch.`;
 
+// Subcommands that execute host processes or mutate the workspace. These are
+// gated behind the `code.exec` safety gate (earned competence) so a freshly
+// spawned, zero-standing agent cannot reach arbitrary host code execution via
+// `code apply` + `code run`. Read/inspect/propose subcommands stay ungated.
+const CODE_EXEC_SUBCOMMANDS = new Set<string>([
+  "run",
+  "verify",
+  "test",
+  "lint",
+  "typecheck",
+  "recipe",
+  "apply",
+  "revert",
+]);
+
 export interface CodeDeps {
   agentRuntime?: CodingAgentRuntime;
   answerPrompt?: CodePromptAnswerer;
@@ -813,6 +828,27 @@ export function codeCommand(deps: CodeDeps): CommandDef {
 
         const profile = getCodeProfile(entity);
         const canonicalSub = canonicalCodeSubcommand(profile, sub);
+
+        // Gate the host-execution / workspace-mutation surface behind code.exec.
+        // The `code` command is rank 0 (read/inspect/propose stay open), but
+        // running or applying code can execute arbitrary host processes, so it
+        // requires earned competence — closing the ungated `code apply` + `code
+        // run` path to host code execution.
+        if (CODE_EXEC_SUBCOMMANDS.has(canonicalSub)) {
+          const gate = checkGate(depsWithDb.db, input.entity, "code.exec");
+          if (!gate.ok) {
+            ctx.send(
+              input.entity,
+              gate.reason ??
+                "Running or applying code requires the code.exec capability, which is earned through contribution.",
+            );
+            return;
+          }
+          if (gate.supervisedOnly) {
+            recordDemonstration(depsWithDb.db, input.entity, "code.exec");
+          }
+        }
+
         switch (canonicalSub) {
           case "help":
             ctx.send(input.entity, formatHelp(profile));

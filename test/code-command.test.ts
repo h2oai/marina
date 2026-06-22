@@ -68,12 +68,36 @@ describe("code command", () => {
     conn = new MockConnection("c1");
     engine.addConnection(conn);
     engine.spawnEntity("c1", "Alice");
+    // Running/applying code is gated behind code.exec; grant it so these tests
+    // exercise behavior past the gate (gate enforcement is covered separately).
+    grant(db, conn.entity!, "code.exec");
     conn.clear();
   });
 
   afterEach(() => {
     db.close();
     cleanupDb(TEST_DB);
+  });
+
+  it("refuses code run/apply for an entity without the code.exec gate", async () => {
+    // A zero-standing agent that has NOT earned code.exec must not be able to
+    // execute host processes or apply patches (closes the ungated RCE path).
+    const ungated = makeAgentEntity("agent_ungated", "Ungated");
+    db.saveEntity(ungated);
+    const sent: string[] = [];
+    const command = codeCommand({
+      db,
+      getEntity: (id) => (id === ungated.id ? ungated : undefined),
+      workspace: new LocalWorkspace(),
+    });
+    const ctx = testRoomContext(sent);
+    await command.handler(ctx, inputFor(ungated, "code start Gated"));
+    sent.length = 0;
+    await command.handler(ctx, inputFor(ungated, "code run test"));
+    expect(stripAnsi(sent.join("\n")).toLowerCase()).toContain("run or apply code");
+    sent.length = 0;
+    await command.handler(ctx, inputFor(ungated, "code apply last patch"));
+    expect(stripAnsi(sent.join("\n")).toLowerCase()).toContain("run or apply code");
   });
 
   it("starts and lists a local coding session", async () => {

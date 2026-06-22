@@ -2,8 +2,15 @@
 //
 // Blocks fetch() requests to private/internal networks and cloud metadata endpoints.
 
+import { lookup } from "node:dns/promises";
+
 /** Hostnames that must never be accessed from user-initiated requests. */
 const BLOCKED_HOSTS = new Set(["localhost", "metadata.google.internal", "metadata.goog"]);
+
+/** True if `hostname` is already a literal IP (v4 or v6) — no DNS needed. */
+function isIpLiteral(hostname: string): boolean {
+  return /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) || hostname.includes(":");
+}
 
 /**
  * Check if an IP address belongs to a private, loopback, or link-local range.
@@ -56,10 +63,14 @@ function isPrivateIp(hostname: string): boolean {
 }
 
 /**
- * Validate a URL for SSRF safety. Returns an error string if the URL is blocked,
- * or `null` if it's safe to fetch.
+ * Synchronous SSRF check: protocol allowlist, blocked hostnames, and literal
+ * private-IP ranges. Returns an error string if blocked, or `null`.
+ *
+ * Use this at *registration* time (e.g. storing a connector URL) where a cheap
+ * literal check is enough. Use the async {@link validateFetchUrl} at *fetch*
+ * time, which additionally resolves DNS to defend against rebinding.
  */
-export function validateFetchUrl(urlStr: string): string | null {
+export function validateFetchUrlSync(urlStr: string): string | null {
   let parsed: URL;
   try {
     parsed = new URL(urlStr);
@@ -79,9 +90,49 @@ export function validateFetchUrl(urlStr: string): string | null {
     return `Blocked host: ${hostname}`;
   }
 
-  // Block private/internal IPs
+  // Literal IPs: check directly.
   if (isPrivateIp(hostname)) {
     return `Blocked private/internal IP: ${hostname}`;
+  }
+
+  return null;
+}
+
+/**
+ * Validate a URL for SSRF safety at fetch time. Returns an error string if the
+ * URL is blocked, or `null` if it's safe to fetch.
+ *
+ * Runs the synchronous checks, then for non-literal hostnames resolves DNS and
+ * re-checks every resolved address against the private-range list — otherwise a
+ * public-looking hostname that resolves to 127.0.0.1 / 169.254.169.254
+ * (DNS-rebinding SSRF) would slip past a string-only check.
+ */
+export async function validateFetchUrl(urlStr: string): Promise<string | null> {
+  const syncError = validateFetchUrlSync(urlStr);
+  if (syncError) return syncError;
+
+  // Re-parse (already validated as parseable by the sync pass).
+  const hostname = new URL(urlStr).hostname.toLowerCase();
+
+  // Named hosts: resolve and re-check every resolved address (anti-rebinding).
+  if (!isIpLiteral(hostname)) {
+    let addresses: { address: string }[];
+    try {
+      addresses = await lookup(hostname, { all: true });
+    } catch {
+      // Fail OPEN on resolution failure: a host we can't resolve can't reach a
+      // private resource (the fetch itself will fail), and failing closed would
+      // break legitimate fetches in restricted-DNS environments. The real
+      // protection is the resolve→private→block path below. (Residual limit:
+      // this does not defend against TOCTOU re-binding between check and the
+      // actual fetch — that needs connect-time IP pinning, a larger change.)
+      return null;
+    }
+    for (const { address } of addresses) {
+      if (isPrivateIp(address.toLowerCase())) {
+        return `Blocked host ${hostname} — resolves to private/internal IP: ${address}`;
+      }
+    }
   }
 
   return null;

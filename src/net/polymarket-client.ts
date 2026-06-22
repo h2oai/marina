@@ -283,7 +283,7 @@ function validatePlaceOrder(req: PlacePolymarketOrderRequest): string | null {
 // ─── Low-level HTTP ─────────────────────────────────────────────────────────
 
 async function jsonGet<T>(url: string, opts: PolymarketClientOpts): Promise<PolymarketResult<T>> {
-  const urlErr = validateFetchUrl(url);
+  const urlErr = await validateFetchUrl(url);
   if (urlErr) return { ok: false, error: `Polymarket endpoint rejected: ${urlErr}` };
 
   const controller = new AbortController();

@@ -232,7 +232,7 @@ function validatePlaceOrder(req: PlaceOrderRequest): string | null {
 // ─── Low-level HTTP ─────────────────────────────────────────────────────────
 
 async function jsonGet<T>(url: string, opts: KalshiClientOpts): Promise<KalshiResult<T>> {
-  const urlErr = validateFetchUrl(url);
+  const urlErr = await validateFetchUrl(url);
   if (urlErr) return { ok: false, error: `Kalshi endpoint rejected: ${urlErr}` };
 
   const controller = new AbortController();
@@ -267,7 +267,7 @@ async function jsonPost<T>(
   body: unknown,
   opts: KalshiClientOpts,
 ): Promise<KalshiResult<T>> {
-  const urlErr = validateFetchUrl(url);
+  const urlErr = await validateFetchUrl(url);
   if (urlErr) return { ok: false, error: `Kalshi endpoint rejected: ${urlErr}` };
 
   const controller = new AbortController();
@@ -306,7 +306,7 @@ async function jsonPost<T>(
 }
 
 async function jsonDelete<T>(url: string, opts: KalshiClientOpts): Promise<KalshiResult<T>> {
-  const urlErr = validateFetchUrl(url);
+  const urlErr = await validateFetchUrl(url);
   if (urlErr) return { ok: false, error: `Kalshi endpoint rejected: ${urlErr}` };
 
   const controller = new AbortController();
