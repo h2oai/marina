@@ -14,12 +14,16 @@ const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 const outputPath = positional[1] ?? `marina-export-${timestamp}.json`;
 
 const skipEventLog = flags.includes("--skip-events");
-const skipConnectors = flags.includes("--skip-connectors");
+// Secrets (api_keys, mem_api_keys, users, connectors, gateways) omitted by
+// default so the snapshot is safe to share; pass --include-secrets for a full backup.
+const includeSecrets = flags.includes("--include-secrets");
 
 console.log(`Exporting from: ${dbPath}`);
-console.log(`Options: ${skipEventLog ? "skip-events " : ""}${skipConnectors ? "skip-connectors" : ""}`);
+console.log(
+  `Options: ${skipEventLog ? "skip-events " : ""}${includeSecrets ? "include-secrets" : "secrets-excluded"}`,
+);
 
-const snapshot = exportState(dbPath, { skipEventLog, skipConnectors });
+const snapshot = exportState(dbPath, { skipEventLog, includeSecrets });
 
 const tableNames = Object.keys(snapshot.tables);
 let totalRows = 0;
