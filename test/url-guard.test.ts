@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test";
-import { validateFetchUrl } from "../src/net/url-guard";
+import { afterEach, describe, expect, it } from "bun:test";
+import { guardedFetch, validateFetchUrl } from "../src/net/url-guard";
 
 describe("validateFetchUrl", async () => {
   // 1. Valid public URLs pass
@@ -188,5 +188,44 @@ describe("validateFetchUrl", async () => {
     it("should block fc-prefix unique-local IPv6", async () => {
       expect(await validateFetchUrl("http://[fc00::1]")).not.toBeNull();
     });
+  });
+});
+
+describe("guardedFetch (redirect-aware SSRF guard)", () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it("throws on a blocked initial URL without ever fetching", async () => {
+    let called = false;
+    globalThis.fetch = (async () => {
+      called = true;
+      return new Response("");
+    }) as unknown as typeof fetch;
+    await expect(guardedFetch("http://169.254.169.254/latest/meta-data/")).rejects.toThrow(
+      /SSRF blocked/,
+    );
+    expect(called).toBe(false);
+  });
+
+  it("refuses a redirect that points at a private/metadata IP", async () => {
+    // Public host 302s to the cloud-metadata endpoint — the classic redirect bypass.
+    globalThis.fetch = (async (input: string | URL) => {
+      const u = typeof input === "string" ? input : input.toString();
+      if (u.includes("169.254.169.254")) return new Response("SECRET", { status: 200 });
+      return new Response(null, {
+        status: 302,
+        headers: { location: "http://169.254.169.254/latest/meta-data/" },
+      });
+    }) as unknown as typeof fetch;
+    await expect(guardedFetch("http://example.com/redir")).rejects.toThrow(/SSRF blocked/);
+  });
+
+  it("passes a normal non-redirect response through", async () => {
+    globalThis.fetch = (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch;
+    const resp = await guardedFetch("http://example.com");
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("ok");
   });
 });

@@ -1,5 +1,6 @@
 import { getInternalModelToken } from "../agent/agent-runtime";
 import type { RateLimiter } from "../auth/rate-limiter";
+import { secretsEqual } from "../auth/secret-compare";
 import type { ChannelManager } from "../coordination/channel-manager";
 import { localOutputBudget } from "../engine/constants";
 import type { Engine } from "../engine/engine";
@@ -49,7 +50,9 @@ function authenticate(req: Request): Response | null {
   const auth = req.headers.get("Authorization");
   if (auth?.startsWith("Bearer ")) {
     const token = auth.slice(7);
-    if (token === getInternalModelToken()) return null;
+    const internal = getInternalModelToken();
+    // Constant-time compare, consistent with GATEWAY_SECRET / internal-WS-token.
+    if (internal && secretsEqual(token, internal)) return null;
   }
 
   const keys = getApiKeys();
@@ -65,7 +68,11 @@ function authenticate(req: Request): Response | null {
     return errorJson(401, "Missing or invalid Authorization header");
   }
   const token = auth.slice(7);
-  if (!keys.has(token)) {
+  // Non-short-circuiting constant-time membership check (all comparisons run
+  // regardless of an early match) so timing doesn't leak which/whether a key matched.
+  let ok = false;
+  for (const k of keys) ok = secretsEqual(token, k) || ok;
+  if (!ok) {
     return errorJson(401, "Invalid API key");
   }
   return null;
@@ -75,9 +82,18 @@ function generateRequestId(): string {
   return `req-${crypto.randomUUID().slice(0, 8)}`;
 }
 
-function extractIp(req: Request): string {
-  const fwd = req.headers.get("x-forwarded-for");
-  return (fwd ? fwd.split(",")[0]!.trim() : null) ?? req.headers.get("x-real-ip") ?? "unknown";
+type PeerAddr = { requestIP?: (req: Request) => { address: string } | null };
+
+function extractIp(req: Request, server?: PeerAddr): string {
+  // Trust forwarding headers only behind an explicit trusted proxy; otherwise
+  // use the real socket peer so a direct caller can't spoof X-Forwarded-For to
+  // land in a fresh rate-limit bucket and evade the per-IP throttle.
+  if (process.env.MARINA_TRUST_PROXY === "true") {
+    const fwd = req.headers.get("x-forwarded-for");
+    const hdr = (fwd ? fwd.split(",")[0]!.trim() : null) ?? req.headers.get("x-real-ip");
+    if (hdr) return hdr;
+  }
+  return server?.requestIP?.(req)?.address ?? "unknown";
 }
 
 function json(data: unknown, status = 200, extra?: Record<string, string>): Response {
@@ -1088,6 +1104,7 @@ export async function handleModelApi(
   req: Request,
   engine: Engine,
   rateLimiter?: RateLimiter,
+  server?: PeerAddr,
 ): Promise<Response | undefined> {
   // Authenticate (skipped for CORS preflight)
   if (method !== "OPTIONS") {
@@ -1097,7 +1114,7 @@ export async function handleModelApi(
 
   // Per-IP rate limiting for mutation endpoints
   if (rateLimiter && method === "POST") {
-    const ip = extractIp(req);
+    const ip = extractIp(req, server);
     if (!rateLimiter.consume(`model:${ip}`)) {
       return errorJson(429, "Rate limited. Please slow down.");
     }

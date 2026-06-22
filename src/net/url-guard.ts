@@ -137,3 +137,58 @@ export async function validateFetchUrl(urlStr: string): Promise<string | null> {
 
   return null;
 }
+
+/**
+ * SSRF-safe `fetch`. Validates the initial URL, then fetches with
+ * `redirect: "manual"` and re-validates every redirect hop before following —
+ * closing the bypass where a public host returns `302 Location:
+ * http://169.254.169.254/...` and the default `redirect: "follow"` would walk
+ * straight to a private/metadata target with no re-check.
+ *
+ * Throws on a blocked URL (initial or any hop), an uninspectable redirect, or
+ * exceeding `maxHops` (default 5). Otherwise returns the final `Response`.
+ * Callers that already pre-validate keep their clean initial-URL error; the
+ * thrown SSRF error surfaces through their existing fetch try/catch.
+ */
+export async function guardedFetch(
+  urlStr: string,
+  init?: RequestInit,
+  opts?: { maxHops?: number },
+): Promise<Response> {
+  const maxHops = opts?.maxHops ?? 5;
+  let currentUrl = urlStr;
+  let method = (init?.method ?? "GET").toString().toUpperCase();
+  let body = init?.body;
+
+  for (let hop = 0; ; hop++) {
+    const err = await validateFetchUrl(currentUrl);
+    if (err) throw new Error(`SSRF blocked: ${err}`);
+
+    const resp = await fetch(currentUrl, { ...init, method, body, redirect: "manual" });
+
+    // A real (non-3xx) response — including the opaque case we can't inspect —
+    // is handled here. Server-side Bun returns readable 3xx under
+    // redirect:"manual"; if it ever yields an opaque redirect we cannot
+    // re-validate the target, so fail closed.
+    if (resp.type === "opaqueredirect") {
+      throw new Error("SSRF blocked: redirect target not inspectable");
+    }
+    if (resp.status < 300 || resp.status >= 400) return resp;
+
+    if (hop >= maxHops) throw new Error(`SSRF blocked: too many redirects (>${maxHops})`);
+    const location = resp.headers.get("location");
+    if (!location) return resp; // 3xx without Location — nothing to follow
+
+    try {
+      currentUrl = new URL(location, currentUrl).toString();
+    } catch {
+      throw new Error(`SSRF blocked: invalid redirect target: ${location}`);
+    }
+    // Match fetch redirect semantics: 301/302/303 drop to GET with no body;
+    // 307/308 preserve method and body.
+    if (resp.status === 301 || resp.status === 302 || resp.status === 303) {
+      method = "GET";
+      body = undefined;
+    }
+  }
+}
