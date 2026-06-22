@@ -1340,7 +1340,7 @@ async function handleAsset(
         ctx.send(eid, "HTTP fetch not available in this context.");
         return;
       }
-      const ssrfError = validateFetchUrl(url);
+      const ssrfError = await validateFetchUrl(url);
       if (ssrfError) {
         ctx.send(eid, `Upload blocked: ${ssrfError}`);
         return;

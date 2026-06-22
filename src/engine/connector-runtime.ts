@@ -184,7 +184,7 @@ export class ConnectorRuntime {
     entityId?: string,
   ): Promise<{ status: number; body: string } | { error: string }> {
     // SSRF protection
-    const urlError = validateFetchUrl(url);
+    const urlError = await validateFetchUrl(url);
     if (urlError) return { error: urlError };
 
     if (entityId) {
@@ -220,7 +220,7 @@ export class ConnectorRuntime {
     entityId?: string,
   ): Promise<{ status: number; body: string } | { error: string }> {
     // SSRF protection
-    const urlError = validateFetchUrl(url);
+    const urlError = await validateFetchUrl(url);
     if (urlError) return { error: urlError };
 
     if (entityId) {

@@ -1570,7 +1570,7 @@ export class Engine {
     this.fetchLastCall.set(room, now);
 
     // SSRF protection: block private/internal URLs
-    const urlError = validateFetchUrl(url);
+    const urlError = await validateFetchUrl(url);
     if (urlError) return { error: urlError };
 
     try {
