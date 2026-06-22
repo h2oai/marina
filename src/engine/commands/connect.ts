@@ -1,5 +1,5 @@
 import { header, separator } from "../../net/ansi";
-import { validateFetchUrl } from "../../net/url-guard";
+import { validateFetchUrlSync } from "../../net/url-guard";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import type { ConnectorRuntime } from "../connector-runtime";
@@ -134,7 +134,7 @@ export function connectCommand(deps: {
           }
 
           // SSRF protection: block private/internal URLs
-          const urlError = validateFetchUrl(url);
+          const urlError = validateFetchUrlSync(url);
           if (urlError) {
             ctx.send(input.entity, `Blocked URL: ${urlError}`);
             return;
