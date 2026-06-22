@@ -197,13 +197,18 @@ export function adminCommand(deps: AdminDeps): CommandDef {
             input.tokens[1] ??
             `marina-export-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.json`;
           const skipEvents = input.tokens.includes("--skip-events");
-          const skipConnectors = input.tokens.includes("--skip-connectors");
+          // Secrets (api_keys, mem_api_keys, users, connectors, gateways) are
+          // omitted by default so a snapshot is safe to share; opt in explicitly.
+          const includeSecrets = input.tokens.includes("--include-secrets");
 
           try {
-            ctx.send(input.entity, `Exporting state from ${dbPath}...`);
+            ctx.send(
+              input.entity,
+              `Exporting state from ${dbPath}...${includeSecrets ? " (including secrets)" : ""}`,
+            );
             const snapshot = exportState(dbPath, {
               skipEventLog: skipEvents,
-              skipConnectors,
+              includeSecrets,
               worldName: deps.worldName,
             });
 

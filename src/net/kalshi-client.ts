@@ -20,7 +20,7 @@
 // Kalshi REST docs: https://trading-api.readme.io/reference/getexchangestatus
 
 import { CONNECTOR_HTTP_TIMEOUT_MS } from "../engine/constants";
-import { validateFetchUrl } from "./url-guard";
+import { guardedFetch, validateFetchUrl } from "./url-guard";
 
 const DEFAULT_BASE = "https://api.elections.kalshi.com/trade-api/v2";
 
@@ -241,7 +241,7 @@ async function jsonGet<T>(url: string, opts: KalshiClientOpts): Promise<KalshiRe
 
   try {
     const headers = await authHeaders("GET", urlPath(url), opts);
-    const res = await fetch(url, { method: "GET", headers, signal: controller.signal });
+    const res = await guardedFetch(url, { method: "GET", headers, signal: controller.signal });
     clearTimeout(timer);
 
     if (!res.ok) {
@@ -279,7 +279,7 @@ async function jsonPost<T>(
   try {
     const headers = await authHeaders("POST", urlPath(url), opts);
     headers["Content-Type"] = "application/json";
-    const res = await fetch(url, {
+    const res = await guardedFetch(url, {
       method: "POST",
       headers,
       body: bodyStr,
@@ -315,7 +315,7 @@ async function jsonDelete<T>(url: string, opts: KalshiClientOpts): Promise<Kalsh
 
   try {
     const headers = await authHeaders("DELETE", urlPath(url), opts);
-    const res = await fetch(url, { method: "DELETE", headers, signal: controller.signal });
+    const res = await guardedFetch(url, { method: "DELETE", headers, signal: controller.signal });
     clearTimeout(timer);
 
     if (!res.ok) {

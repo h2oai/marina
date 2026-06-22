@@ -1,5 +1,6 @@
 import { getInternalModelToken } from "../agent/agent-runtime";
 import type { RateLimiter } from "../auth/rate-limiter";
+import { secretsEqual } from "../auth/secret-compare";
 import type { ChannelManager } from "../coordination/channel-manager";
 import { localOutputBudget } from "../engine/constants";
 import type { Engine } from "../engine/engine";
@@ -49,7 +50,9 @@ function authenticate(req: Request): Response | null {
   const auth = req.headers.get("Authorization");
   if (auth?.startsWith("Bearer ")) {
     const token = auth.slice(7);
-    if (token === getInternalModelToken()) return null;
+    const internal = getInternalModelToken();
+    // Constant-time compare, consistent with GATEWAY_SECRET / internal-WS-token.
+    if (internal && secretsEqual(token, internal)) return null;
   }
 
   const keys = getApiKeys();
@@ -65,7 +68,11 @@ function authenticate(req: Request): Response | null {
     return errorJson(401, "Missing or invalid Authorization header");
   }
   const token = auth.slice(7);
-  if (!keys.has(token)) {
+  // Non-short-circuiting constant-time membership check (all comparisons run
+  // regardless of an early match) so timing doesn't leak which/whether a key matched.
+  let ok = false;
+  for (const k of keys) ok = secretsEqual(token, k) || ok;
+  if (!ok) {
     return errorJson(401, "Invalid API key");
   }
   return null;
@@ -75,9 +82,18 @@ function generateRequestId(): string {
   return `req-${crypto.randomUUID().slice(0, 8)}`;
 }
 
-function extractIp(req: Request): string {
-  const fwd = req.headers.get("x-forwarded-for");
-  return (fwd ? fwd.split(",")[0]!.trim() : null) ?? req.headers.get("x-real-ip") ?? "unknown";
+type PeerAddr = { requestIP?: (req: Request) => { address: string } | null };
+
+function extractIp(req: Request, server?: PeerAddr): string {
+  // Trust forwarding headers only behind an explicit trusted proxy; otherwise
+  // use the real socket peer so a direct caller can't spoof X-Forwarded-For to
+  // land in a fresh rate-limit bucket and evade the per-IP throttle.
+  if (process.env.MARINA_TRUST_PROXY === "true") {
+    const fwd = req.headers.get("x-forwarded-for");
+    const hdr = (fwd ? fwd.split(",")[0]!.trim() : null) ?? req.headers.get("x-real-ip");
+    if (hdr) return hdr;
+  }
+  return server?.requestIP?.(req)?.address ?? "unknown";
 }
 
 function json(data: unknown, status = 200, extra?: Record<string, string>): Response {
@@ -769,6 +785,20 @@ function routeToChannelStreaming(
 
   incrementPending(target);
 
+  // Hoisted so cancel() (client disconnect) runs the same cleanup as the
+  // success/timeout paths. `settled` guards decrementPending against running
+  // more than once across {end, single-response, timeout, cancel}.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let unsub: (() => void) | undefined;
+  let settled = false;
+  const cleanup = () => {
+    if (settled) return;
+    settled = true;
+    if (timer) clearTimeout(timer);
+    unsub?.();
+    decrementPending(target);
+  };
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       // OpenAI streams must begin with a role-only chunk
@@ -776,13 +806,12 @@ function routeToChannelStreaming(
         controller.enqueue(encoder.encode(openaiStreamRoleChunk(streamId, model)));
       }
 
-      const timer = setTimeout(() => {
-        unsub();
-        decrementPending(target);
+      timer = setTimeout(() => {
+        cleanup();
         safeClose(controller);
       }, REQUEST_TIMEOUT_MS);
 
-      const unsub = cm.onMessage((channelId, senderId, _senderName, content) => {
+      unsub = cm.onMessage((channelId, senderId, _senderName, content) => {
         if (channelId !== channel.id) return;
         if (senderId === "__model_api__") return;
         // Orchestration boundary: only the designated target may fulfill the
@@ -813,9 +842,7 @@ function routeToChannelStreaming(
 
         // Streaming end
         if (parsed.type === "model_response_end" && parsed.id === reqId) {
-          clearTimeout(timer);
-          unsub();
-          decrementPending(target);
+          cleanup();
           let endChunk: string;
           if (format === "openai") {
             endChunk = openaiStreamEnd(streamId, model);
@@ -834,9 +861,7 @@ function routeToChannelStreaming(
 
         // Phase 1 compat: single model_response → wrap as one chunk + end
         if (parsed.type === "model_response" && parsed.id === reqId) {
-          clearTimeout(timer);
-          unsub();
-          decrementPending(target);
+          cleanup();
           collectedContent.push(text);
           if (format === "openai") {
             controller.enqueue(encoder.encode(openaiStreamChunk(streamId, model, text)));
@@ -856,6 +881,12 @@ function routeToChannelStreaming(
       });
 
       cm.send(channel.id, "__model_api__", "model-api", payload);
+    },
+    cancel() {
+      // Client disconnected mid-stream — release the channel listener and the
+      // pending-request slot now instead of leaking them until the timeout
+      // (which otherwise skews least-busy load-balancing for up to REQUEST_TIMEOUT_MS).
+      cleanup();
     },
   });
 
@@ -964,11 +995,18 @@ async function handleResponsesCreate(req: Request, engine: Engine): Promise<Resp
       previous_response_id?: string;
       conversation_id?: string;
       store?: boolean;
+      stream?: boolean;
     };
 
     const model = body.model ?? "marina";
     const userInput = extractInputText(body.input);
     if (!userInput) return errorJson(400, "`input` is required");
+    // Streaming isn't implemented on this surface yet. Fail fast with a clear
+    // error rather than silently returning a JSON body to an SSE-expecting
+    // client (which would stall its parser). See docs/compat for status.
+    if (body.stream === true) {
+      return errorJson(400, "streaming is not supported on /v1/responses; use stream:false");
+    }
 
     // Resolve conversation: previous_response_id > explicit conversation_id > new
     let conversationId: string;
@@ -1088,6 +1126,7 @@ export async function handleModelApi(
   req: Request,
   engine: Engine,
   rateLimiter?: RateLimiter,
+  server?: PeerAddr,
 ): Promise<Response | undefined> {
   // Authenticate (skipped for CORS preflight)
   if (method !== "OPTIONS") {
@@ -1097,7 +1136,7 @@ export async function handleModelApi(
 
   // Per-IP rate limiting for mutation endpoints
   if (rateLimiter && method === "POST") {
-    const ip = extractIp(req);
+    const ip = extractIp(req, server);
     if (!rateLimiter.consume(`model:${ip}`)) {
       return errorJson(429, "Rate limited. Please slow down.");
     }

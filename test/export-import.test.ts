@@ -1,8 +1,11 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { MarinaDB } from "../src/persistence/database";
 import {
+  EXPORT_TABLES,
   exportState,
   importState,
+  isExcludedFromExport,
   type MarinaSnapshot,
   validateSnapshot,
 } from "../src/persistence/export-import";
@@ -190,7 +193,8 @@ describe("Export/Import", () => {
       expect(snapshot.tables.room_sources).toHaveLength(1);
       expect(snapshot.tables.projects).toHaveLength(1);
       expect(snapshot.tables.dynamic_commands).toHaveLength(1);
-      expect(snapshot.tables.connectors).toHaveLength(1);
+      // connectors is secret-gated — omitted by default (see the dedicated secrets test)
+      expect(snapshot.tables.connectors).toBeUndefined();
       expect(snapshot.tables.room_store).toHaveLength(1);
 
       // FTS tables should NOT be in the export
@@ -214,7 +218,7 @@ describe("Export/Import", () => {
       expect(snapshot.tables.event_log).toBeUndefined();
     });
 
-    it("should skip connectors when requested", () => {
+    it("omits secret-bearing tables (connectors) by default, includes them with includeSecrets", () => {
       srcDb.createConnector({
         id: "conn_1",
         name: "secret",
@@ -224,8 +228,10 @@ describe("Export/Import", () => {
       });
       srcDb.close();
 
-      const snapshot = exportState(SRC_DB, { skipConnectors: true });
-      expect(snapshot.tables.connectors).toBeUndefined();
+      // Default export is safe to share — secrets omitted.
+      expect(exportState(SRC_DB).tables.connectors).toBeUndefined();
+      // Explicit opt-in includes them (full operational backup).
+      expect(exportState(SRC_DB, { includeSecrets: true }).tables.connectors).toBeDefined();
     });
 
     it("should export an empty database without errors", () => {
@@ -593,6 +599,80 @@ describe("Export/Import", () => {
       expect(result.errors).toHaveLength(0);
       expect(result.tablesImported).toBe(0);
       expect(result.rowsImported).toBe(0);
+    });
+  });
+
+  // ─── Coverage / drift guard ────────────────────────────────────────
+
+  describe("table coverage", () => {
+    it("every persistent table is either in EXPORT_TABLES or explicitly excluded", () => {
+      // Drift guard: a new migration that adds a table must also add it to
+      // EXPORT_TABLES (or it'll be silently dropped on backup/restore) or to
+      // the documented exclusions (sessions / schema_version / *_new / *_fts).
+      const raw = new Database(SRC_DB, { readonly: true });
+      const names = (
+        raw.query("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]
+      ).map((r) => r.name);
+      raw.close();
+
+      const exported = new Set<string>(EXPORT_TABLES);
+      const uncovered = names.filter(
+        (n) => !n.startsWith("sqlite_") && !exported.has(n) && !isExcludedFromExport(n),
+      );
+      expect(uncovered).toEqual([]);
+    });
+  });
+
+  describe("civic substrate survives a round-trip", () => {
+    it("preserves standing ledger, competence, roles, and agent configs", () => {
+      // Standing ledger (source of truth for ranks) + a competence proof.
+      srcDb.appendStandingEvent({
+        entityId: "e_1",
+        entityName: "Alice",
+        kind: "pool_note",
+        ref: "note:1",
+        amount: 5,
+        earnedAt: 1000,
+      });
+      srcDb.recordDemonstration("e_1", "code.exec", 0, 1000);
+      // Custom role + trait.
+      srcDb.saveTrait({
+        name: "curious",
+        category: "cognitive",
+        prompt: "Ask why.",
+        createdBy: "Alice",
+      });
+      srcDb.saveRole({ name: "scout", traits: ["curious"], createdBy: "Alice" });
+      // Persistent agent config.
+      srcDb.saveAgentConfig({
+        name: "scout-bot",
+        model: "marina/default",
+        role: "scout",
+        spawnedBy: "system",
+      });
+      srcDb.close();
+
+      // Default export (no secrets) must still carry the civic substrate.
+      const snapshot = exportState(SRC_DB);
+      expect(snapshot.tables.entity_standing).toBeDefined();
+      expect(snapshot.tables.entity_competence).toBeDefined();
+      expect(snapshot.tables.roles).toBeDefined();
+      expect(snapshot.tables.traits).toBeDefined();
+      expect(snapshot.tables.agent_configs).toBeDefined();
+
+      const dstDb = new MarinaDB(DST_DB);
+      dstDb.close();
+      const result = importState(DST_DB, snapshot);
+      expect(result.errors).toHaveLength(0);
+
+      const restored = new MarinaDB(DST_DB);
+      expect(restored.getRole("scout")?.name).toBe("scout");
+      expect(restored.getTrait("curious")?.prompt).toContain("Ask why");
+      expect(restored.getAgentConfig("scout-bot")?.role).toBe("scout");
+      // Standing recomputes from the restored ledger (it was the omitted source of truth before).
+      const ledger = restored.ledgerForEntity("e_1", 10);
+      expect(ledger.length).toBeGreaterThan(0);
+      restored.close();
     });
   });
 });

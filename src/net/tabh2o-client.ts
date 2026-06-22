@@ -14,7 +14,7 @@
 //   (MCP tools use runCmd's per-entity limiter; commands use runCmd as well).
 
 import { CONNECTOR_HTTP_TIMEOUT_MS } from "../engine/constants";
-import { validateFetchUrl } from "./url-guard";
+import { guardedFetch, validateFetchUrl } from "./url-guard";
 
 /** Override with env var for self-hosted deployments. */
 const DEFAULT_ENDPOINT = "https://tabh2o.h2oai.com/api/v1/predict";
@@ -108,7 +108,7 @@ export async function tabh2oPredict(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(endpoint, {
+    const res = await guardedFetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
