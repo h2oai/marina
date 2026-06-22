@@ -2,6 +2,7 @@ import { bold, category, dim, id as fmtId, header, separator, status } from "../
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { extractModifiers } from "../parse-input";
+import { formatAge, parseSince } from "./format-duration";
 
 const HELP = `Activity feed — queryable timeline of world events.
 Usage:
@@ -14,36 +15,6 @@ Examples:
   feed list --kind market_position --limit 10
   feed list --entity alice --since 2h
   feed list --since 1h                      — all events in the last hour`;
-
-const SINCE_UNITS: Record<string, number> = {
-  s: 1000,
-  m: 60_000,
-  h: 3_600_000,
-  d: 86_400_000,
-  w: 604_800_000,
-};
-
-/** Parse a "30m" / "2h" / "1d" duration into ms. Returns undefined on failure. */
-function parseSince(arg: string | undefined): number | undefined {
-  if (!arg) return undefined;
-  const m = arg.match(/^(\d+)\s*([smhdw])$/i);
-  if (!m) return undefined;
-  const n = Number.parseInt(m[1]!, 10);
-  const unit = SINCE_UNITS[m[2]!.toLowerCase()];
-  if (!unit) return undefined;
-  return n * unit;
-}
-
-/** Friendly relative timestamp: "42s ago", "3m ago", "5h ago". */
-function formatAge(ms: number): string {
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.round(h / 24)}d`;
-}
 
 export function feedCommand(deps: {
   getEntity: (id: string) => Entity | undefined;

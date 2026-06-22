@@ -347,6 +347,10 @@ export class LeanAgentAdapter implements AgentHandle {
    * unknown/small local-model window without an operator tuning it by hand.
    */
   private effectiveContextWindow!: number;
+  /** Consecutive context-overflow recoveries that made no progress (window
+   *  already at MIN_EFFECTIVE_CONTEXT). Escalates the retry off the flat 1s
+   *  spin onto normal backoff once it can't shrink further. */
+  private overflowStallCount = 0;
   /** Highest real prompt-token count (usage.input + cacheRead) the server has accepted. */
   private peakAcceptedInputTokens = 0;
   /**
@@ -908,6 +912,10 @@ export class LeanAgentAdapter implements AgentHandle {
     this.autonomousMode = false;
     this.stopCheckpointTimer();
     this.pendingPerceptions = [];
+    // Wake a parked cycle-delay sleep so the loop re-checks the cleared run
+    // flags immediately, instead of blocking shutdown for up to the idle delay
+    // (~15s). agent.abort() below only cancels an in-flight prompt, not this sleep.
+    this.cycleWaiter.wake();
 
     // Abort any in-flight prompt() call immediately, then wait for the
     // framework to settle event listeners before continuing shutdown.
@@ -1018,7 +1026,28 @@ export class LeanAgentAdapter implements AgentHandle {
           // error backoff. This self-calibrates to a smaller-than-advertised
           // server (the classic local-model failure mode).
           if (isContextOverflowError(errorMessage)) {
-            this.recoverFromContextOverflow();
+            const progressed = this.recoverFromContextOverflow();
+            this.overflowStallCount = progressed ? 0 : this.overflowStallCount + 1;
+            // Floored at MIN_EFFECTIVE_CONTEXT and still overflowing (server
+            // window below the floor): stop spinning at 1s. Escalate onto normal
+            // exponential backoff and surface a hard error so an operator notices
+            // rather than letting the loop hammer the same oversized request.
+            if (this.overflowStallCount >= 3) {
+              consecutiveErrors++;
+              this.consecutiveLoopErrors = consecutiveErrors;
+              this.lastErrorReason = `context overflow unrecoverable [${model}] — server window below floor (${MIN_EFFECTIVE_CONTEXT}); check the model's real context size`;
+              const backoff = Math.min(30000, 5000 * 2 ** (consecutiveErrors - 1));
+              console.warn(
+                `[lean-agent] "${this.name}" context overflow unrecoverable [${model}] — backing off ${backoff}ms`,
+              );
+              this.emitEvent({
+                type: "error",
+                error: this.lastErrorReason,
+                context: "autonomous_loop",
+              });
+              await this.sleep(backoff);
+              continue;
+            }
             this.lastErrorReason = `context overflow [${model}] — trimmed, window→${this.effectiveContextWindow}`;
             console.warn(
               `[lean-agent] "${this.name}" context overflow [${model}]: ${errorMessage}. ` +
@@ -1054,6 +1083,7 @@ export class LeanAgentAdapter implements AgentHandle {
 
         consecutiveErrors = 0;
         this.consecutiveLoopErrors = 0;
+        this.overflowStallCount = 0;
         this.lastErrorReason = null;
         this.metrics.lastActivity = Date.now();
         // Calibrate the effective window from the real token usage the server
@@ -1078,7 +1108,19 @@ export class LeanAgentAdapter implements AgentHandle {
         // A thrown overflow (some providers reject before the stream opens)
         // takes the same shrink-and-recover path as the streamed error.
         if (isContextOverflowError(msg)) {
-          this.recoverFromContextOverflow();
+          const progressed = this.recoverFromContextOverflow();
+          this.overflowStallCount = progressed ? 0 : this.overflowStallCount + 1;
+          if (this.overflowStallCount >= 3) {
+            consecutiveErrors++;
+            this.consecutiveLoopErrors = consecutiveErrors;
+            this.lastErrorReason = `context overflow unrecoverable (thrown) — server window below floor (${MIN_EFFECTIVE_CONTEXT})`;
+            const backoff = Math.min(30000, 5000 * 2 ** (consecutiveErrors - 1));
+            console.warn(
+              `[lean-agent] "${this.name}" context overflow unrecoverable (thrown) — backing off ${backoff}ms`,
+            );
+            await this.sleep(backoff);
+            continue;
+          }
           this.lastErrorReason = `context overflow (thrown) — trimmed, window→${this.effectiveContextWindow}`;
           console.warn(
             `[lean-agent] "${this.name}" context overflow (thrown): ${msg}. ` +
@@ -1144,7 +1186,8 @@ export class LeanAgentAdapter implements AgentHandle {
    * server is smaller than we believed) and hard-trim the conversation so the
    * next request fits. Idempotent and bounded by MIN_EFFECTIVE_CONTEXT.
    */
-  private recoverFromContextOverflow(): void {
+  private recoverFromContextOverflow(): boolean {
+    const before = this.effectiveContextWindow;
     // Shrink toward the real ceiling. If we have a peak-accepted size, target
     // just under it; otherwise cut the current window by 30%.
     const fromPeak =
@@ -1161,6 +1204,9 @@ export class LeanAgentAdapter implements AgentHandle {
     } catch {
       // Non-critical — the transform will still compact on the next call.
     }
+    // Progress = the window actually shrank. Once it's floored at
+    // MIN_EFFECTIVE_CONTEXT, further recoveries make no progress.
+    return this.effectiveContextWindow < before;
   }
 
   /**
@@ -1616,7 +1662,7 @@ The goal is a smaller, sharper memory — not more notes.`;
     // After one silent turn, nudge. After 3+, require a tool call.
     if (this.silentTurns >= 3) {
       parts.push(
-        `[FORCED ACTION REQUIRED]\nYou have returned ${this.silentTurns} consecutive turns with zero tool calls. Text-only responses are not acceptable. You MUST emit at least one tool call this turn. If nothing else, use marina_think with your current thought, or marina_command with "look". Pure prose responses cannot participate in the world.`,
+        `[FORCED ACTION REQUIRED]\nYou have returned ${this.silentTurns} consecutive turns with zero tool calls. Text-only responses are not acceptable. You MUST emit at least one tool call this turn. If nothing else, use the \`think\` tool with your current thought, or marina_command with "look". Pure prose responses cannot participate in the world.`,
       );
     } else if (this.silentTurns > 0) {
       parts.push(
@@ -1647,9 +1693,10 @@ The goal is a smaller, sharper memory — not more notes.`;
     // Pattern 2: No world actions in last 6 calls
     if (toolActions.length >= 6) {
       const last6 = toolActions.slice(-6);
-      const hasWorldAction = last6.some(
-        (a) => a.toolName?.startsWith("marina_") && a.toolName !== "marina_state",
-      );
+      // Any marina_* tool counts as a world action. (No `marina_state` tool
+      // exists — that exclusion was dead code; think-only loops are caught by
+      // Pattern 3 and identical-call repetition by Pattern 1.)
+      const hasWorldAction = last6.some((a) => a.toolName?.startsWith("marina_"));
       if (!hasWorldAction) {
         this.stuckCycles++;
         return this.getStuckRecovery();
@@ -1751,7 +1798,7 @@ The goal is a smaller, sharper memory — not more notes.`;
                 "[FORCED ACTION] Your previous turn emitted no tool calls. " +
                 "You only participate in the world through tool calls — pure text " +
                 "is not delivered anywhere. This turn, emit at least one tool call. " +
-                "Minimal choices: marina_think with your current thought, or " +
+                "Minimal choices: the `think` tool with your current thought, or " +
                 'marina_command with "look" to sense the world around you. ' +
                 "What will you do?",
               timestamp: Date.now(),
@@ -1803,7 +1850,10 @@ The goal is a smaller, sharper memory — not more notes.`;
 
         // Track note creation and reflection for cognitive scheduling
         const resultStr = typeof event.result === "string" ? event.result : "";
-        if (resultStr.includes("Note #")) this.notesSinceReflection++;
+        // Count only genuine note creation ("Note #N saved") — not deletes,
+        // not-found errors, or evolve/supersede, which also contain "Note #"
+        // and would inflate the reflection-scheduling counter.
+        if (/Note #\d+ saved/.test(resultStr)) this.notesSinceReflection++;
         if (resultStr.includes("Reflection Created")) {
           this.notesSinceReflection = 0;
           this.lastReflectionCycle = this.loopIterationCount;
