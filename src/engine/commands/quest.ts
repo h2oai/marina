@@ -1,3 +1,4 @@
+import { record } from "../../agent/standing";
 import {
   bold,
   category,
@@ -229,6 +230,14 @@ export function questCommand(deps: {
 
           // Run quest-specific completion callback
           quest.onComplete?.(entity, deps.db);
+
+          // Completing a quest advances standing (and therefore rank). Without
+          // this, the onboarding/tutorial path was a decoy — quests granted only
+          // a cosmetic title while promotion was standing-only, so the obvious
+          // path advanced nothing. Idempotent per quest via the ref.
+          if (deps.db) {
+            record(deps.db, entity.id, entity.name, "quest_complete", `quest:${quest.id}`);
+          }
 
           ctx.send(
             input.entity,
