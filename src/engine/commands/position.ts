@@ -21,7 +21,9 @@ import { type BankrollState, readBankrollState } from "./bankroll";
  *      on the opposite side, refuse the new order. Sizing up the SAME side
  *      is allowed (increasing conviction). Different markets are independent.
  *   3. Single position size ≤ bankroll cap
- *   4. Daily realized loss ≤ bankroll floor (computed from board history)
+ *   4. Daily realized loss ≤ bankroll floor — NOT YET ENFORCED. The gate exists
+ *      but computeRealizedLossToday() is a stub returning 0 (realized-P&L
+ *      tracking pending), so the floor is advisory only. (Invariants 1-3 are live.)
  *
  * Paper mode is the default. Live trading requires
  *   MARINA_TRADING_ENABLED=true
@@ -326,7 +328,8 @@ interface OpenResult {
  *   1. Bankroll readiness (set/cap/floor/kelly all > 0)
  *   2. No-self-hedge invariant
  *   3. Per-position cap
- *   4. Daily floor
+ *   4. Daily floor — currently a no-op (computeRealizedLossToday is a stub
+ *      returning 0); the branch never fires until realized-P&L is wired.
  * Returns a structured result so callers can decide how to format output.
  */
 export async function attemptOpen(
