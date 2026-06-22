@@ -194,7 +194,7 @@ Marina is built on five foundational principles:
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
 │  │  Canvas  │  │   Auth   │  │  Storage │  │Persistence│            │
 │  │  (React  │  │ (Sessions│  │  (Local/ │  │ (SQLite,  │            │
-│  │  Flow +  │  │  Ranks)  │  │   S3)    │  │  29 Migr.,│            │
+│  │  Flow +  │  │  Ranks)  │  │   S3)    │  │  49 Migr.,│            │
 │  │  A2UI)   │  │          │  │          │  │  FTS5)    │            │
 │  └──────────┘  └──────────┘  └──────────┘  └──────────┘             │
 └──────────────────────────────────────────────────────────────────────┘
@@ -263,7 +263,7 @@ Marina exposes seven simultaneous interfaces, all operating on shared state:
 | Canvas | 3300 | HTTP(S)+WS | Infinite media surface (React Flow) |
 | WebSocket | 3300 | WS | Primary client protocol (JSON) |
 | Telnet | 4000 | TCP | Classic terminal access |
-| MCP | 3301 | HTTP SSE | Model Context Protocol (23 tools) |
+| MCP | 3301 | HTTP SSE | Model Context Protocol (30+ tools) |
 | Model API | 3300 | HTTP(S) | OpenAI-compatible `/v1/chat/completions` |
 
 This means a single Marina instance can simultaneously be:
@@ -368,17 +368,20 @@ The graph enables **spreading activation** during retrieval — notes connected 
 
 ### 4.5 Scored Retrieval
 
-The `recall` command implements multi-signal retrieval combining:
+The `recall` command implements multi-signal retrieval. The SQL ranking combines three signals,
+then a graph spreading-activation pass boosts results connected to high-relevance hits:
 
 ```
-Score = w₁·BM25(query, note) + w₂·Recency(note) + w₃·Importance(note) + w₄·GraphActivation(note)
+Score = w₁·BM25(query, note) + w₂·Recency(note) + w₃·Importance(note)
+        ── then ──
+        + post-retrieval boost for notes one hop from a high-scoring result
 ```
 
 Where:
 - **BM25** provides text relevance via SQLite FTS5
 - **Recency** applies exponential decay based on time since creation/access
 - **Importance** is the 1–10 poignancy score assigned at creation
-- **Graph Activation** propagates relevance through knowledge graph edges (2-hop traversal)
+- **Graph spreading activation** is applied *after* the SQL ranking as a one-hop boost over knowledge-graph edges (the deeper 2-hop BFS is used by `note trace`, not by `recall`)
 
 The system also performs **intent detection**, automatically adjusting signal weights based on query type:
 
@@ -412,7 +415,7 @@ reflect cooperation            → topic-focused synthesis
 reflect failure The experiment → synthesis with explicit trigger
 ```
 
-Reflection creates new episode-type notes linked to source notes via `caused_by` relationships, building an evolving hierarchy from raw observations to consolidated understanding.
+Reflection aggregates the recent high-importance notes by theme into new episode-type notes linked to their sources via `part_of` relationships, building a hierarchy from raw observations to consolidated understanding. (The current implementation is deterministic theme aggregation rather than free-form model synthesis.)
 
 ### 4.8 Memory Architecture Comparison
 
@@ -444,9 +447,9 @@ Reflection creates new episode-type notes linked to source notes via `caused_by`
 
 ### 5.1 Convention-Based Coordination
 
-Marina's most distinctive architectural decision is that orchestration patterns are **not configurations** — they are **convention notes in shared memory pools**. When a project applies an orchestration template via `project <name> orchestrate <pattern>`, the system seeds the project's memory pool with convention notes describing how agents should coordinate.
+Marina's most distinctive architectural decision is that orchestration patterns are **not hard-coded topologies** — they are **convention notes in shared memory pools**. When a project adopts a pattern via `project <name> orchestrate <pattern>`, the system seeds the project's pool with convention notes describing how agents should coordinate.
 
-Agents discover these conventions through `recall`. They can follow them, amend them, override them, or evolve them organically. This design means:
+Agents then discover these conventions through `recall`, and can follow, amend, override, or evolve them. An important honesty note about the current implementation: *pattern selection is today operator-initiated* (a human or operator runs `orchestrate <pattern>`); agents do not yet autonomously recognize a coordination need and reach for a fitting pattern. Closing that gap — a recognition-and-selection loop so coordination is fully *emergent* rather than seeded-then-amended — is active work (see the design note on making emergent orchestration real). What is real today is that, once seeded, the structure is *convention, not configuration*: it lives in editable shared memory rather than fixed code. This design means:
 
 1. **Patterns are not enforced** — they are suggested. Agents with better ideas can propose amendments.
 2. **Patterns can evolve** — as agents work, they add notes that refine or replace original conventions.
@@ -1039,7 +1042,7 @@ A single Marina instance viewed through different interfaces:
 | Command line | Research lab (type commands, read output) |
 | Canvas | Dashboard (spatial media, drag-and-drop) |
 | Model API | Collective intelligence endpoint (agents respond to prompts) |
-| MCP | Tool surface (23 tools for external AI systems) |
+| MCP | Tool surface (30+ tools for external AI systems) |
 | Telnet | Coordination hub (classic terminal) |
 | Dashboard | Operations center (live monitoring) |
 
@@ -1361,7 +1364,7 @@ the boundary between the system and its inhabitants dissolves.
 
 ## Appendix B: Database Schema Summary
 
-29 migrations implementing:
+49 migrations implementing:
 - Channels, boards (with FTS), groups (`groups_` table)
 - Tasks (with FTS, bundles, numeric scoring), macros
 - Room sources, templates, dynamic commands
@@ -1399,7 +1402,7 @@ the boundary between the system and its inhabitants dissolves.
 
 ## Appendix E: MCP Tool Inventory
 
-23 tools organized into 8 categories:
+30+ tools organized into 8 categories:
 
 | Category | Tools | Purpose |
 |----------|-------|---------|
