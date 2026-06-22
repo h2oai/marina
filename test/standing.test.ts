@@ -133,6 +133,34 @@ describe("Standing — civic-contribution ledger", () => {
     expect(bob?.standing).toBeGreaterThan(alice?.standing ?? 0);
   });
 
+  it("getStanding serves the cache within the TTL and recomputes after it expires", () => {
+    const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // mirrors standing.ts
+    const t0 = 1_700_000_000_000;
+    db.appendStandingEvent({
+      entityId: "e_ttl",
+      entityName: "Ttl",
+      kind: "pool_note",
+      ref: "1",
+      amount: 10,
+      earnedAt: t0,
+    });
+    const seeded = getStanding(db, "e_ttl", t0); // populates cache at t0
+    // Within the TTL: returns the cached value verbatim (no recompute → no decay).
+    expect(getStanding(db, "e_ttl", t0 + CACHE_TTL_MS - 1)).toBe(seeded);
+    // Past the TTL: recomputes with additional decay, so strictly less.
+    expect(getStanding(db, "e_ttl", t0 + CACHE_TTL_MS + 1)).toBeLessThan(seeded);
+  });
+
+  it("a fresh ledger write invalidates the cache so the next read reflects it (gate-relevant)", () => {
+    record(db, "e_inv", "Inv", "pool_note", "a");
+    const first = getStanding(db, "e_inv"); // seeds a fresh cache row
+    record(db, "e_inv", "Inv", "pool_note", "b"); // 2nd event must invalidate the cache
+    // If the write didn't invalidate, this would return the stale `first` within
+    // the 6h TTL. checkGate reads standing via getStanding, so this is the path
+    // that keeps a freshly-earned (or penalized) entity's gate decisions current.
+    expect(getStanding(db, "e_inv")).toBeGreaterThan(first);
+  });
+
   it("ledgerFor returns rows newest-first", () => {
     db.appendStandingEvent({
       entityId: "e_alice",
