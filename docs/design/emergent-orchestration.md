@@ -114,24 +114,30 @@ Three small pieces:
    peer-refine→nsed, etc.
 3. **Goal-aware extension of `[Coordination Opportunity]`** *(net-new, the core)* — when the agent's
    focus/goal shape matches a pattern, surface (cadenced + deduped): *"Your goal looks <shape>.
-   Patterns that fit: <X, Y>. You could assemble a crew (`code crew … with …` / `recruit`) and adopt
-   one (`crew orchestrate <pattern>`), or keep going solo."* **The agent decides** — it's a
-   discoverable option, not a mandate, so surfacing is **ungated**.
+   Patterns that fit: <X, Y>. Adopt one with `project orchestrate <pattern>` (works solo); bring in a
+   crew (`code crew` / `recruit`) only if the work needs more hands — or keep going solo."* **The
+   agent decides** — a discoverable option, not a mandate, so surfacing is **ungated**.
 
 This moves the system from *operator-configured* to *agent-recognized + agent-selected* — most of the
 honesty gap, in roughly one focused change.
 
-### Phase 2 — Instantiation, self-service (small)
-- Add **`crew orchestrate <pattern>`** (or extend `code crew`): seed a pattern's template notes into
-  the **crew's** pool by reusing `getOrchestrationTemplate` + `seedPoolWithNotes`
-  (`src/engine/commands/project.ts:72`/`:131` — promote them to a shared util). Today
-  `project orchestrate` seeds a *project* pool on the operator path; this is the crew-pool equivalent
-  an agent can call itself.
-- **Gate:** reuse the **recruit-level** gate (rank ≥ 2 / `RECRUIT_MIN_STANDING`) — instantiating a
-  coordination structure is the same organizer-ish act as recruiting. Assembling members still flows
-  through the existing `agent.spawn` / `recruit` gates (unchanged).
-- Net result: an agent that recognizes "this is a debate" can `code crew <goal> with <members>`
-  (assemble) **+** `crew orchestrate debate` (seed conventions) — fully self-service.
+### Phase 2 — Instantiation (already exists; do NOT build a crew-specific command)
+**Correction (2026-06-22):** an earlier draft proposed a `crew orchestrate` command + a public
+`CrewManager.ensurePool`. That is **redundant and over-complex.** Two facts collapse it:
+
+1. **A pattern is just recallable convention-notes in a pool — it is not crew-bound.** Most patterns
+   (research loop, pipeline, even self-debate via sealed positions) can guide a *solo* agent or a
+   *project*. Routing instantiation through a crew is over-narrow.
+2. **The instantiation primitive already exists and is already agent-usable.**
+   `project <name> orchestrate <pattern>` (`src/engine/commands/project.ts`) seeds the pattern's
+   conventions into the project pool, and the `project` command is **rank 0** — an agent can
+   `project create` then `project <name> orchestrate <pattern>` today, no operator needed.
+
+So Phase 2 is **not a new command**. It is just: the recognition loop (Phase 1) points the agent at
+the existing, crew-optional path — *"adopt it with `project orchestrate` (works solo); bring in a
+crew only if the work needs more hands."* A crew is one consumer of a pattern, not a prerequisite.
+(If a crew *is* assembled, its members share the crew's `crew:<name>` pool via the existing
+`code crew`/`recruit` flow — no new seeding command required.)
 
 ### Phase 3 — Amendment + Evolution (defer)
 - **Amendment:** when an agent improves a convention mid-run, record it as an attributable amendment
@@ -150,12 +156,13 @@ honesty gap, in roughly one focused change.
 | Goal-shape detector | net-new (small) |
 | Pattern `taskShapes` metadata | net-new (small) |
 | Goal-aware section extension | net-new (the core) |
-| `crew orchestrate` seeding | net-new (small) |
+| Pattern instantiation (`project orchestrate`, rank 0) | **reuse** (already agent-usable; no new command) |
 
 ### Effort & sequencing
 - **Phase 1** — one focused pass (detector + metadata + section extension + tests). Highest leverage;
   closes recognition+selection.
-- **Phase 2** — small (crew-pool seeding + gate + test); makes it self-service.
+- **Phase 2** — essentially free: instantiation already exists (`project orchestrate`, rank 0);
+  the recognition loop just points there (crew-optional). No new command.
 - **Phase 3** — larger, later (amendment tracking + outcome correlation + promotion).
 
 ### Litmus test (restated)
