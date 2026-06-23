@@ -326,6 +326,11 @@ export interface WorldSnapshot {
     room: string;
     properties?: Record<string, unknown>;
     agentStatus?: AgentStatusInfo;
+    /** AgentConfig.spawned_by for agent entities: "system" (world-seeded),
+     *  "operator" (launched from the dashboard/CLI), or a spawning agent's
+     *  name (crew sub-agent). Absent for humans / externally-connected agents.
+     *  Drives the origin grouping in the Entities roster. */
+    spawnedBy?: string;
   }[];
   roomPopulations: Record<string, number>;
   rooms: {

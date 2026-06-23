@@ -30,6 +30,9 @@ export interface WorldSnapshot {
       errorReason: string | null;
       supports: AgentSupports;
     };
+    /** AgentConfig.spawned_by — "system" (seeded), "operator" (dashboard/CLI),
+     *  or a spawning agent's name (crew). Undefined for non-runtime entities. */
+    spawnedBy?: string;
   }[];
   roomPopulations: Record<string, number>;
   rooms: {
@@ -140,6 +143,11 @@ export class DashboardBroadcaster {
           })()
         : undefined;
 
+      // Origin: world-seeded ("system"), operator-launched ("operator"), or a
+      // spawning agent's name (crew). Read from the persisted AgentConfig; only
+      // meaningful for agent entities (humans / external agents have no config).
+      const spawnedBy = agentHandle ? engine.db?.getAgentConfig(e.name)?.spawned_by : undefined;
+
       return {
         id: e.id,
         name: e.name,
@@ -147,6 +155,7 @@ export class DashboardBroadcaster {
         room: e.room as string,
         properties: e.properties,
         agentStatus,
+        spawnedBy,
       };
     });
 

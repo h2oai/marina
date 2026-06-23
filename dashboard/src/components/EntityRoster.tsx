@@ -21,6 +21,7 @@ import { useKeyboardNav } from "../hooks/use-keyboard-nav";
 import { useInvalidateOnEvent } from "../hooks/use-realtime";
 import { useWorldState } from "../hooks/use-world-state";
 import { deleteApi, postApi } from "../lib/api";
+import { entityOrigin, ORIGIN_META } from "../lib/entity-origin";
 import type { DashboardEvent } from "../lib/types";
 import { cn, formatTime } from "../lib/utils";
 import { AgentPanel } from "./AgentPanel";
@@ -39,8 +40,13 @@ export function EntityRoster({
   const selectEntity = useWorldState((s) => s.selectEntity);
   const selectRoom = useWorldState((s) => s.selectRoom);
 
+  // Agents first, then clustered by origin (manual → crew → system → player →
+  // joined) so the roster visually groups "what I launched" vs "the default
+  // system" vs "who wandered in", then alphabetical within a group.
   const sorted = [...entities].sort((a, b) => {
     if (a.kind !== b.kind) return a.kind === "agent" ? -1 : 1;
+    const rankDelta = ORIGIN_META[entityOrigin(a)].rank - ORIGIN_META[entityOrigin(b)].rank;
+    if (rankDelta !== 0) return rankDelta;
     return a.name.localeCompare(b.name);
   });
 
@@ -63,6 +69,7 @@ export function EntityRoster({
       title="Entities"
       icon={<Users size={14} />}
       backContent={backContent}
+      flipMode="create"
       isFocused={isFocused}
       onToggleFocus={onToggleFocus}
     >
@@ -76,6 +83,7 @@ export function EntityRoster({
           {sorted.map((e, idx) => {
             const isSelected = selectedEntity === e.name;
             const isHighlighted = highlightedIndex === idx;
+            const originMeta = ORIGIN_META[entityOrigin(e)];
             return (
               <motion.div
                 key={e.id}
@@ -106,23 +114,27 @@ export function EntityRoster({
                   )}
                 >
                   {e.agentStatus ? (
-                    <span title="AI Agent">
-                      <Bot size={10} className="text-accent shrink-0" />
+                    <span title={`AI Agent · ${originMeta.title}`}>
+                      <Bot size={10} className="shrink-0" style={{ color: originMeta.color }} />
                     </span>
                   ) : (
                     <span
                       className="inline-block h-2 w-2 shrink-0 rounded-full"
-                      style={{
-                        backgroundColor:
-                          e.kind === "agent"
-                            ? "var(--color-primary)"
-                            : e.kind === "npc"
-                              ? "var(--color-warning)"
-                              : "var(--color-text-dim)",
-                      }}
+                      title={originMeta.title}
+                      style={{ backgroundColor: originMeta.color }}
                     />
                   )}
                   <span className="flex-1 truncate text-text-bright">{e.name}</span>
+                  <span
+                    className="shrink-0 rounded px-1 text-[8px] uppercase leading-tight tracking-wide"
+                    title={originMeta.title}
+                    style={{
+                      color: originMeta.color,
+                      backgroundColor: `color-mix(in oklab, ${originMeta.color} 15%, transparent)`,
+                    }}
+                  >
+                    {originMeta.label}
+                  </span>
                   <WhoLink name={e.name} size={10} />
                   {thinkingAgents[e.name] && (
                     <span

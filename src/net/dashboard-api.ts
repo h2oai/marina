@@ -1300,6 +1300,10 @@ async function handleAgentSpawn(req: Request, engine: Engine): Promise<Response>
       role: body.role,
       goal: body.goal,
       keyName: body.keyName,
+      // Mark operator/dashboard launches distinctly so the roster can tell them
+      // apart from world-seeded ("system") agents. (Crew sub-agents record the
+      // spawning agent's name.)
+      spawnedBy: "operator",
     });
 
     const status = handle.getStatus();

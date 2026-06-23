@@ -1,4 +1,4 @@
-import { Maximize2, Minimize2, RefreshCw } from "lucide-react";
+import { Maximize2, Minimize2, Plus, RefreshCw, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { type ReactNode, useState } from "react";
 import { cn } from "../lib/utils";
@@ -28,6 +28,12 @@ interface GlassPanelProps {
    * own their scroll regions (e.g. Web Chat) pass false to avoid a nested bar.
    */
   bodyScroll?: boolean;
+  /**
+   * What the flip affordance means. "data" (default) shows a refresh icon for a
+   * back-face data view; "create" shows a "+" (and "×" when open) so it reads as
+   * an explicit create action rather than a cryptic flip.
+   */
+  flipMode?: "data" | "create";
 }
 
 const FLIP_TRANSITION = { duration: 0.4, ease: [0.4, 0, 0.2, 1] as const };
@@ -43,6 +49,7 @@ export function GlassPanel({
   onToggleFocus,
   headerExtra,
   bodyScroll = true,
+  flipMode = "data",
 }: GlassPanelProps) {
   const [isFlipped, setIsFlipped] = useState(false);
 
@@ -68,21 +75,38 @@ export function GlassPanel({
             {title}
           </h2>
           {headerExtra}
-          {backContent && (
-            <motion.button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsFlipped((f) => !f);
-              }}
-              animate={{ rotate: isFlipped ? 180 : 0 }}
-              transition={FLIP_TRANSITION}
-              className="text-text-dim hover:text-primary transition-colors"
-              title={isFlipped ? "Show front" : "Show data"}
-            >
-              <RefreshCw size={10} />
-            </motion.button>
-          )}
+          {backContent &&
+            (flipMode === "create" ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsFlipped((f) => !f);
+                }}
+                className={cn(
+                  "transition-colors",
+                  isFlipped ? "text-primary" : "text-text-dim hover:text-primary",
+                )}
+                title={isFlipped ? "Close" : "New agent"}
+                aria-label={isFlipped ? "Close create form" : "New agent"}
+              >
+                {isFlipped ? <X size={13} /> : <Plus size={13} />}
+              </button>
+            ) : (
+              <motion.button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsFlipped((f) => !f);
+                }}
+                animate={{ rotate: isFlipped ? 180 : 0 }}
+                transition={FLIP_TRANSITION}
+                className="text-text-dim hover:text-primary transition-colors"
+                title={isFlipped ? "Show front" : "Show data"}
+              >
+                <RefreshCw size={10} />
+              </motion.button>
+            ))}
           {onToggleFocus && (
             <button
               type="button"
