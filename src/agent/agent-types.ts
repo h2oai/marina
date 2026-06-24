@@ -145,6 +145,12 @@ export interface AgentStatus {
   maxOutputTokens: number;
   /** Highest real prompt-token count the server has accepted (0 until first reply). */
   peakInputTokens: number;
+  /** Wall-clock of the most recent completed LLM turn (ms); 0 until the first turn. */
+  lastTurnMs: number;
+  /** Exponential moving average of turn latency (ms) — the "is the model slow?" signal. */
+  avgTurnMs: number;
+  /** Consecutive turns the model returned zero tool calls — the "stuck" signal. */
+  silentTurns: number;
 }
 
 // ─── Agent Handle ───────────────────────────────────────────────────────────
