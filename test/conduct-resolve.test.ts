@@ -43,6 +43,9 @@ function running(name: string, role: string): AgentStatus {
     effectiveContextWindow: 128000,
     maxOutputTokens: 4096,
     peakInputTokens: 0,
+    lastTurnMs: 0,
+    avgTurnMs: 0,
+    silentTurns: 0,
   };
 }
 

@@ -29,6 +29,12 @@ export interface WorldSnapshot {
       errors: number;
       errorReason: string | null;
       supports: AgentSupports;
+      /** ms-since-epoch of the agent's last activity (liveness). */
+      lastActivity?: number;
+      /** EMA of LLM turn latency in ms — the "is the model slow?" signal. */
+      avgTurnMs?: number;
+      /** Consecutive zero-tool-call turns — the "stuck" signal. */
+      silentTurns?: number;
     };
     /** AgentConfig.spawned_by — "system" (seeded), "operator" (dashboard/CLI),
      *  or a spawning agent's name (crew). Undefined for non-runtime entities. */
@@ -139,6 +145,11 @@ export class DashboardBroadcaster {
               errors: s.errors,
               errorReason: s.errorReason,
               supports: s.supports,
+              // Liveness signals (observability): "last acted", model latency,
+              // and the stuck counter — let the roster show alive/idle/stuck/dead.
+              lastActivity: s.lastActivity,
+              avgTurnMs: s.avgTurnMs,
+              silentTurns: s.silentTurns,
             };
           })()
         : undefined;

@@ -392,7 +392,12 @@ export class LeanAgentAdapter implements AgentHandle {
     lastActivity: 0,
     silentTurns: 0,
     totalSilentTurns: 0,
+    lastTurnMs: 0,
+    avgTurnMs: 0,
   };
+  /** Wall-clock when the current LLM turn began (turn_start); 0 when none in flight.
+   *  Observability only — used to time turn_start→turn_end latency. */
+  private turnStartedAt = 0;
   private consecutiveLoopErrors = 0;
   private lastErrorReason: string | null = null;
   private checkpointInterval: ReturnType<typeof setInterval> | null = null;
@@ -1768,6 +1773,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       // Turn boundaries — relay to our observers so dashboards and other
       // subscribers can show "agent is mid-thought" vs idle state.
       if (event.type === "turn_start") {
+        this.turnStartedAt = Date.now();
         this.emitEvent({ type: "turn_start" });
       }
 
@@ -1787,6 +1793,15 @@ The goal is a smaller, sharper memory — not more notes.`;
       // indistinguishable from success in agent.state.messages. turn_end
       // gives us the signal directly (toolResults is empty array).
       if (event.type === "turn_end") {
+        // Observability: record turn latency (turn_start→turn_end wall-clock).
+        // Pure measurement — does not affect when or how the agent acts.
+        if (this.turnStartedAt > 0) {
+          const dur = Date.now() - this.turnStartedAt;
+          this.turnStartedAt = 0;
+          this.metrics.lastTurnMs = dur;
+          this.metrics.avgTurnMs =
+            this.metrics.avgTurnMs > 0 ? Math.round(this.metrics.avgTurnMs * 0.7 + dur * 0.3) : dur;
+        }
         this.emitEvent({
           type: "turn_end",
           hadToolCalls: event.toolResults.length > 0,
@@ -2060,6 +2075,9 @@ The goal is a smaller, sharper memory — not more notes.`;
       effectiveContextWindow: this.effectiveContextWindow,
       maxOutputTokens: this.outputMaxTokens ?? this.model.maxTokens,
       peakInputTokens: this.peakAcceptedInputTokens,
+      lastTurnMs: this.metrics.lastTurnMs,
+      avgTurnMs: this.metrics.avgTurnMs,
+      silentTurns: this.metrics.silentTurns,
     };
   }
 
