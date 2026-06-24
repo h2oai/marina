@@ -378,6 +378,11 @@ export class LeanAgentAdapter implements AgentHandle {
   /** In-run followUp-based silent recoveries. Resets on agent_start. */
   private inRunRecoveries = 0;
   private static readonly MAX_IN_RUN_RECOVERIES = 1;
+  /** Consecutive silent turns past which the loop stops re-prompting at full
+   *  cadence and backs off (circuit-breaker). A persistently-silent model
+   *  (often a reasoning model exhausting its output budget before a tool call)
+   *  would otherwise burn tokens forever with no recovery and no surfaced cause. */
+  private static readonly SILENT_TURN_BACKOFF_THRESHOLD = 6;
   private recentCommands: string[] = [];
 
   private metrics = {
@@ -1246,6 +1251,19 @@ export class LeanAgentAdapter implements AgentHandle {
 
   private computeDynamicDelay(): number {
     const rate = this.getTickRate();
+
+    // Circuit-breaker: a persistently-silent agent (model returns prose, no
+    // tool calls — typically a reasoning model spending its output budget on
+    // <think> before any tool call) would otherwise re-prompt at full cadence
+    // forever, burning tokens. Back off hard (ramping to 2 min) so it goes
+    // near-dormant; the periodic retry recovers it once the cause (output
+    // budget / context window) is addressed. Takes precedence over perceptions
+    // because the failure is structural, not a lack of stimulus.
+    if (this.silentTurns >= LeanAgentAdapter.SILENT_TURN_BACKOFF_THRESHOLD) {
+      const over = this.silentTurns - LeanAgentAdapter.SILENT_TURN_BACKOFF_THRESHOLD + 1;
+      return Math.min(120_000, 15_000 * over);
+    }
+
     const hasPerceptions = this.pendingPerceptions.length > 0;
 
     // Events incoming — fast tick
@@ -1782,6 +1800,23 @@ The goal is a smaller, sharper memory — not more notes.`;
             `[lean-agent] "${this.name}" silent turn #${this.silentTurns} ` +
               `(LLM returned 0 tool calls; model=${this.model.id})`,
           );
+
+          // Crossing the circuit-breaker threshold: surface the likely cause
+          // once (instead of every cycle) so an operator sees WHY the agent
+          // went dormant rather than just "stuck". computeDynamicDelay() then
+          // backs the loop off so it stops burning tokens on a doomed retry.
+          if (this.silentTurns === LeanAgentAdapter.SILENT_TURN_BACKOFF_THRESHOLD) {
+            this.lastErrorReason =
+              `${this.silentTurns}+ silent turns (model returning prose, no tool calls) — backing off. ` +
+              `Most likely the output-token budget: a reasoning model (e.g. Qwen via llama.cpp) can spend its ` +
+              `whole completion on <think> before reaching a tool call. Check the model's context window / output budget.`;
+            console.warn(`[lean-agent] "${this.name}" ${this.lastErrorReason}`);
+            this.emitEvent({
+              type: "error",
+              error: this.lastErrorReason,
+              context: "autonomous_loop",
+            });
+          }
 
           // In-run recovery: the agent would otherwise stop here. Queue a
           // followUp message that triggers one more turn with an explicit

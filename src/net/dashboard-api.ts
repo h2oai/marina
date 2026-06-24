@@ -3,12 +3,14 @@ import { getStanding } from "../agent/standing";
 import { testKeyConnectivity } from "../engine/commands/key";
 import { allRecipeNames, getRecipe } from "../engine/commands/usecase";
 import type { Engine } from "../engine/engine";
+import { getRank } from "../engine/permissions";
 import { computeReadiness } from "../engine/readiness";
+import { checkGate } from "../engine/safety-gates";
 import type { MarinaDB, MediaJobRow } from "../persistence/database";
 import { isKeyEncryptionEnabled } from "../persistence/key-crypto";
 import type { Connection, EntityId, Perception, RoomId } from "../types";
 import { ORCHESTRATION_PATTERNS } from "../world/templates/orchestration";
-import { authenticateRequest } from "./auth-middleware";
+import { authenticateRequest, OPEN_API_ENTITY_ID } from "./auth-middleware";
 import { corsHeaders } from "./cors";
 import { formatPerception } from "./formatter";
 import { discoverModels } from "./model-discovery";
@@ -154,6 +156,34 @@ async function handleCommandIngress(
   }
 }
 
+/**
+ * Authorization gate for privileged dashboard mutations (spawn / stop /
+ * reconfigure agents, delete entities, manage keys). The dashboard
+ * authenticates the request but historically discarded the identity, so any
+ * signed-in user — or, under MARINA_OPEN_API, anyone — could spawn agents,
+ * bypassing the `agent.spawn` safety gate the in-world command enforces.
+ *
+ * Returns null when allowed, or a 403 Response when not. Allowed if: the dev
+ * open-API bypass is active (operator opted into MARINA_OPEN_API), OR the
+ * caller is a sovereign admin (rank 9), OR the caller has earned/been-granted
+ * the relevant safety gate. Mirrors "admin, or granted to a user".
+ */
+function authorizePrivileged(
+  engine: Engine,
+  db: MarinaDB | undefined,
+  callerId: EntityId,
+  gateId: string,
+): Response | null {
+  if (callerId === OPEN_API_ENTITY_ID) return null; // dev bypass — operator's choice
+  const entity = engine.entities.get(callerId);
+  if (entity && getRank(entity) >= 9) return null; // sovereign admin
+  if (db && checkGate(db, callerId, gateId).ok) return null; // granted / earned the gate
+  return json(
+    { error: `Not authorized: this action requires an admin or the "${gateId}" capability.` },
+    403,
+  );
+}
+
 export async function handleDashboardApi(
   req: Request,
   url: URL,
@@ -213,6 +243,7 @@ export async function handleDashboardApi(
   // before this check.
   const auth = authenticateRequest(req, engine);
   if ("error" in auth) return auth.error;
+  const callerId = auth.entityId;
 
   // Logout: revoke the bearer token used for this request. Only affects the
   // token presented; other sessions for the same entity (e.g. another device)
@@ -558,7 +589,10 @@ export async function handleDashboardApi(
   if (entityMatch) {
     const entityName = decodeURIComponent(entityMatch[1]!);
     if (method === "DELETE") {
-      return deleteEntity(engine, entityName);
+      return (
+        authorizePrivileged(engine, db, callerId, "admin.destructive") ??
+        deleteEntity(engine, entityName)
+      );
     }
     return getEntityDetail(engine, db, entityName);
   }
@@ -650,7 +684,9 @@ export async function handleDashboardApi(
     return json(engine.agentRuntime.list());
   }
   if (url.pathname === "/api/agents/spawn" && method === "POST") {
-    return handleAgentSpawn(req, engine);
+    return (
+      authorizePrivileged(engine, db, callerId, "agent.spawn") ?? handleAgentSpawn(req, engine)
+    );
   }
   const agentMatch = url.pathname.match(/^\/api\/agents\/([^/]+)$/);
   if (agentMatch) {
@@ -663,15 +699,24 @@ export async function handleDashboardApi(
   }
   const agentStopMatch = url.pathname.match(/^\/api\/agents\/([^/]+)\/stop$/);
   if (agentStopMatch && method === "POST") {
-    return handleAgentStop(decodeURIComponent(agentStopMatch[1]!), engine);
+    return (
+      authorizePrivileged(engine, db, callerId, "agent.spawn") ??
+      handleAgentStop(decodeURIComponent(agentStopMatch[1]!), engine)
+    );
   }
   const agentAttentionMatch = url.pathname.match(/^\/api\/agents\/([^/]+)\/attention$/);
   if (agentAttentionMatch && method === "POST") {
-    return handleAgentAttention(req, decodeURIComponent(agentAttentionMatch[1]!), engine);
+    return (
+      authorizePrivileged(engine, db, callerId, "agent.spawn") ??
+      handleAgentAttention(req, decodeURIComponent(agentAttentionMatch[1]!), engine)
+    );
   }
   const agentConfigMatch = url.pathname.match(/^\/api\/agents\/([^/]+)\/config$/);
   if (agentConfigMatch && method === "POST") {
-    return handleAgentConfig(req, decodeURIComponent(agentConfigMatch[1]!), engine);
+    return (
+      authorizePrivileged(engine, db, callerId, "agent.spawn") ??
+      handleAgentConfig(req, decodeURIComponent(agentConfigMatch[1]!), engine)
+    );
   }
 
   // ─── Key API ──────────────────────────────────────────────────────────
@@ -686,10 +731,12 @@ export async function handleDashboardApi(
     return json(keys);
   }
   if (url.pathname === "/api/keys" && method === "POST" && db) {
-    return handleKeyAdd(req, db);
+    return authorizePrivileged(engine, db, callerId, "key.manage") ?? handleKeyAdd(req, db);
   }
   const keyDeleteMatch = url.pathname.match(/^\/api\/keys\/([^/]+)$/);
   if (keyDeleteMatch && method === "DELETE" && db) {
+    const denied = authorizePrivileged(engine, db, callerId, "key.manage");
+    if (denied) return denied;
     const name = decodeURIComponent(keyDeleteMatch[1]!);
     const key = db.getApiKey(name);
     if (!key) return json({ error: "Key not found" }, 404);
