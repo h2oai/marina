@@ -1,9 +1,36 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   detectLocalContextWindow,
+  isLocalProvider,
+  localProviderBaseUrl,
   localProviderContextWindow,
+  MODEL_DISCOVERY_PROVIDERS,
   parseProviderResponse,
 } from "../src/net/model-discovery";
+
+describe("vibethinker local provider", () => {
+  const prevBase = process.env.VIBETHINKER_BASE_URL;
+  afterEach(() => {
+    if (prevBase === undefined) delete process.env.VIBETHINKER_BASE_URL;
+    else process.env.VIBETHINKER_BASE_URL = prevBase;
+  });
+
+  it("is registered as a local provider", () => {
+    expect(isLocalProvider("vibethinker")).toBe(true);
+    expect(MODEL_DISCOVERY_PROVIDERS).toContain("vibethinker");
+  });
+
+  it("defaults to the vLLM port and honors VIBETHINKER_BASE_URL", () => {
+    delete process.env.VIBETHINKER_BASE_URL;
+    expect(localProviderBaseUrl("vibethinker")).toBe("http://localhost:8000/v1");
+    process.env.VIBETHINKER_BASE_URL = "http://vibethinker:8000/v1/";
+    expect(localProviderBaseUrl("vibethinker")).toBe("http://vibethinker:8000/v1");
+  });
+
+  it("uses VibeThinker's 40960 default context window", () => {
+    expect(localProviderContextWindow("vibethinker")).toBe(40960);
+  });
+});
 
 describe("parseProviderResponse", () => {
   it("parses Anthropic /v1/models shape", () => {
