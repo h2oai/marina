@@ -1437,6 +1437,12 @@ const PROVIDER_UPSTREAM: Record<string, { url: string; envKeys: string[]; anthro
     url: `${localProviderBaseUrl("ollama")}/chat/completions`,
     envKeys: ["OLLAMA_API_KEY"],
   },
+  // VibeThinker served via vLLM/SGLang (OpenAI-compatible). Override the base
+  // URL with VIBETHINKER_BASE_URL (compose sets the in-cluster service name).
+  vibethinker: {
+    url: `${localProviderBaseUrl("vibethinker")}/chat/completions`,
+    envKeys: ["VIBETHINKER_API_KEY"],
+  },
 };
 
 // First-party providers preferred over OpenRouter on the fallback path, since
