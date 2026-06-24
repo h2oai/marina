@@ -630,6 +630,9 @@ export class AgentRuntime {
         effectiveContextWindow: 0,
         maxOutputTokens: 0,
         peakInputTokens: 0,
+        lastTurnMs: 0,
+        avgTurnMs: 0,
+        silentTurns: 0,
       });
     }
     return [...running, ...inFlight];
