@@ -15,10 +15,23 @@ import type {
 
 // ─── Token Estimation ───────────────────────────────────────────────────────
 
+// Characters per token. ~4 holds for English prose, but agent transcripts are
+// dominated by code, JSON tool arguments, and structured reasoning, which BPE
+// tokenizers split far more finely (~3 chars/token or less). The old chars/4 +
+// 10% (~3.64 chars/token) under-counted real tokens by 20-30% on production
+// traffic, so the compactor under-budgeted and the local server SILENTLY
+// rejected the oversized prompt — a zero-token "wedged" turn. Estimate
+// conservatively: over-counting only compacts slightly early; under-counting
+// overflows the context window. Operators with real tokenizer data can tune
+// this via MARINA_TOKEN_CHARS_PER_TOKEN.
+const CHARS_PER_TOKEN = (() => {
+  const raw = Number.parseFloat(process.env.MARINA_TOKEN_CHARS_PER_TOKEN ?? "");
+  return Number.isFinite(raw) && raw > 0 ? raw : 3;
+})();
+
 function estimateTokens(text: string): number {
   if (!text) return 0;
-  const baseTokens = Math.ceil(text.length / 4);
-  return baseTokens + Math.ceil(baseTokens * 0.1);
+  return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
 // ─── Options ────────────────────────────────────────────────────────────────
