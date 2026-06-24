@@ -159,12 +159,20 @@ services:
   #     matching VibeThinker's template; the right parser is model-specific,
   #   - vLLM writes caches and uses shared memory, so it can't run `read_only`
   #     like llama.cpp; a writable HF cache + shm_size are provided instead.
+  #
+  # VIBETHINKER_MODEL and VIBETHINKER_API_KEY are REQUIRED when you enable this
+  # profile, but they use `:-` (not `:?`) defaults on purpose: `docker compose`
+  # interpolates EVERY service on any command, even ones excluded by profile, so
+  # a `:?` here would abort all compose operations (including the default
+  # `marina`-only deploy) whenever these are unset. With `:-`, the file always
+  # parses; only `--profile vibethinker up` needs the values set (vLLM errors
+  # clearly on an empty --model if you forget).
   vibethinker:
     profiles: ["vibethinker"]
     image: vllm/vllm-openai:latest # pin a digest in production
     command:
       - "--model"
-      - "${VIBETHINKER_MODEL:?set VIBETHINKER_MODEL in .env (HF id or /models path)}"
+      - "${VIBETHINKER_MODEL:-}"
       - "--served-model-name"
       - "vibethinker"
       - "--host"
@@ -174,7 +182,7 @@ services:
       - "--max-model-len"
       - "${VIBETHINKER_CTX:-40960}"
       - "--api-key"
-      - "${VIBETHINKER_API_KEY:?set VIBETHINKER_API_KEY in .env}"
+      - "${VIBETHINKER_API_KEY:-}"
     expose:
       - "8000" # network-internal only (NOT published)
     volumes:
