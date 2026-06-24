@@ -798,9 +798,19 @@ describe("context-manager", () => {
   it("estimateMessageTokens for a user message", () => {
     const msg = { role: "user", content: "Hello world" } as unknown as AgentMessage;
     const tokens = estimateMessageTokens(msg);
-    // "Hello world" = 11 chars, ~3 base tokens, +10% overhead + 4 overhead
+    // "Hello world" = 11 chars at ~3 chars/token + 4 message overhead
     expect(tokens).toBeGreaterThan(0);
     expect(tokens).toBeLessThan(50);
+  });
+
+  it("estimateMessageTokens is conservative for dense code/JSON content", () => {
+    // Regression guard for the silent-prompt-rejection wedge: a chars/4 estimate
+    // under-counts BPE tokens on dense content, so the estimate must be at least
+    // chars/3.5 (excluding the fixed 4-token message overhead).
+    const dense = JSON.stringify({ fn: "calc", args: Array.from({ length: 40 }, (_, i) => i) });
+    const msg = { role: "user", content: dense } as unknown as AgentMessage;
+    const tokens = estimateMessageTokens(msg) - 4;
+    expect(tokens).toBeGreaterThanOrEqual(Math.ceil(dense.length / 3.5));
   });
 
   it("estimateMessageTokens for empty message returns minimal overhead", () => {
