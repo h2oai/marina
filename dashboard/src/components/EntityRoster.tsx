@@ -20,6 +20,7 @@ import {
 import { useKeyboardNav } from "../hooks/use-keyboard-nav";
 import { useInvalidateOnEvent } from "../hooks/use-realtime";
 import { useWorldState } from "../hooks/use-world-state";
+import { agentHealth, agentHealthTooltip, HEALTH_META } from "../lib/agent-health";
 import { deleteApi, postApi } from "../lib/api";
 import { entityOrigin, ORIGIN_META } from "../lib/entity-origin";
 import type { DashboardEvent } from "../lib/types";
@@ -84,6 +85,9 @@ export function EntityRoster({
             const isSelected = selectedEntity === e.name;
             const isHighlighted = highlightedIndex === idx;
             const originMeta = ORIGIN_META[entityOrigin(e)];
+            const health = e.agentStatus
+              ? agentHealth(e.agentStatus, { thinking: !!thinkingAgents[e.name] })
+              : null;
             return (
               <motion.div
                 key={e.id}
@@ -136,6 +140,13 @@ export function EntityRoster({
                     {originMeta.label}
                   </span>
                   <WhoLink name={e.name} size={10} />
+                  {e.agentStatus && health && (
+                    <span
+                      className="inline-block h-1.5 w-1.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: HEALTH_META[health].color }}
+                      title={agentHealthTooltip(e.agentStatus, health)}
+                    />
+                  )}
                   {thinkingAgents[e.name] && (
                     <span
                       className="text-accent text-[10px] animate-pulse"

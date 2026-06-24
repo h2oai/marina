@@ -362,6 +362,12 @@ export interface AgentStatusInfo {
   errors: number;
   errorReason: string | null;
   supports: AgentSupports;
+  /** ms-since-epoch of last activity — drives the roster liveness dot. */
+  lastActivity?: number;
+  /** EMA of LLM turn latency (ms) — surfaced so a slow model is visible. */
+  avgTurnMs?: number;
+  /** Consecutive zero-tool-call turns — the "stuck" signal. */
+  silentTurns?: number;
 }
 
 export interface AgentStatusFull {

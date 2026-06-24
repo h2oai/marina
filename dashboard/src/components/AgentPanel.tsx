@@ -1,6 +1,7 @@
 import { Bot, Send, Square, TriangleAlert } from "lucide-react";
 import type { ReactElement } from "react";
 import { useState } from "react";
+import { formatSince } from "../lib/agent-health";
 import { postApi } from "../lib/api";
 import type { AgentStatusInfo } from "../lib/types";
 
@@ -54,6 +55,25 @@ export function AgentPanel({ name, status }: AgentPanelProps) {
         <span className="text-text-dim">{upMin}m</span>
         <span className="text-text-dim">|</span>
         <span className="text-text-dim">{status.toolCalls} calls</span>
+        {status.avgTurnMs && status.avgTurnMs > 0 ? (
+          <>
+            <span className="text-text-dim">|</span>
+            <span className="text-text-dim" title="Average LLM turn latency">
+              ~{formatSince(status.avgTurnMs)}/turn
+            </span>
+          </>
+        ) : null}
+        {status.silentTurns && status.silentTurns > 0 ? (
+          <>
+            <span className="text-text-dim">|</span>
+            <span
+              className="text-warning"
+              title="Consecutive turns with no tool call (stuck signal)"
+            >
+              {status.silentTurns} silent
+            </span>
+          </>
+        ) : null}
         {status.errors > 0 && (
           <>
             <span className="text-text-dim">|</span>
