@@ -100,6 +100,18 @@ export const LOCAL_PROVIDERS: Record<string, LocalProviderSpec> = {
     contextWindowEnv: "OLLAMA_CONTEXT_WINDOW",
     defaultContextWindow: 8192,
   },
+  // VibeThinker (WeiboAI) — a small reasoning model (1.5B / 3B). No GGUF is
+  // published, so it's served via vLLM/SGLang's OpenAI-compatible endpoint
+  // (default port 8000) rather than llama.cpp. In compose it runs as its own
+  // GPU-pinned service; set VIBETHINKER_BASE_URL to the in-cluster service.
+  vibethinker: {
+    baseUrlEnv: "VIBETHINKER_BASE_URL",
+    defaultBaseUrl: "http://localhost:8000/v1",
+    keyEnv: "VIBETHINKER_API_KEY",
+    defaultModel: "vibethinker",
+    contextWindowEnv: "VIBETHINKER_CONTEXT_WINDOW",
+    defaultContextWindow: 40960,
+  },
 };
 
 /** True if `provider` is a self-hosted local runtime (llama.cpp / Ollama). */
@@ -250,6 +262,14 @@ const PROVIDERS: ProviderSpec[] = [
     envKey: "OLLAMA_API_KEY",
     // Ollama's OpenAI-compatible endpoint is keyless; discovery still works
     // (the /v1/models list is public on a local server).
+    authStyle: "none",
+  },
+  {
+    provider: "vibethinker",
+    url: `${localProviderBaseUrl("vibethinker")}/models`,
+    envKey: "VIBETHINKER_API_KEY",
+    // vLLM/SGLang expose /v1/models; the api-key (if the server is started with
+    // one) is forwarded by the `none` branch when VIBETHINKER_API_KEY is set.
     authStyle: "none",
   },
 ];
