@@ -86,6 +86,10 @@ services:
       - LLAMA_API_KEY=${LLAMA_API_KEY}
       # Running Ollama on the host instead of the llama service? Point at it
       # (Docker Desktop): - OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
+      # VibeThinker (optional, `--profile vibethinker`). Reaches the vLLM service
+      # by name; address models as `vibethinker/<model>`. Key comes from .env.
+      - VIBETHINKER_BASE_URL=http://vibethinker:8000/v1
+      - VIBETHINKER_API_KEY=${VIBETHINKER_API_KEY:-}
 
       # ── Optional chat adapters ──
       # - TELEGRAM_TOKEN=your_token
@@ -140,4 +144,55 @@ services:
       - /tmp
     mem_limit: 48g
     pids_limit: 1024
+    restart: unless-stopped
+
+  # ── VibeThinker reasoning model (vLLM, OpenAI-compatible) ────────────────────
+  # Optional secondary model (WeiboAI VibeThinker, 1.5B/3B). No GGUF is published,
+  # so it's served by vLLM rather than llama.cpp. Internal-only (no `ports:`) —
+  # only `marina` reaches it at http://vibethinker:8000. Pinned to GPU 2, leaving
+  # llama on GPUs 0+1 and GPU 3 free (the model needs <10 GB; an A10G has 24 GB).
+  # Enable by running `--profile vibethinker`; otherwise this service stays down.
+  #
+  # NOT YET VALIDATED ON THE GPU HOST — confirm before relying on it:
+  #   - pin a specific vllm/vllm-openai digest (the tag below floats),
+  #   - tool calling needs `--enable-auto-tool-choice` + a `--tool-call-parser`
+  #     matching VibeThinker's template; the right parser is model-specific,
+  #   - vLLM writes caches and uses shared memory, so it can't run `read_only`
+  #     like llama.cpp; a writable HF cache + shm_size are provided instead.
+  vibethinker:
+    profiles: ["vibethinker"]
+    image: vllm/vllm-openai:latest # pin a digest in production
+    command:
+      - "--model"
+      - "${VIBETHINKER_MODEL:?set VIBETHINKER_MODEL in .env (HF id or /models path)}"
+      - "--served-model-name"
+      - "vibethinker"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--max-model-len"
+      - "${VIBETHINKER_CTX:-40960}"
+      - "--api-key"
+      - "${VIBETHINKER_API_KEY:?set VIBETHINKER_API_KEY in .env}"
+    expose:
+      - "8000" # network-internal only (NOT published)
+    volumes:
+      # Optional local model dir (read-only) + a writable HF cache for downloads.
+      - ${VIBETHINKER_MODELS_DIR:-/opt/models}:/models:ro
+      - ${HF_CACHE_DIR:-./marina-data/hf-cache}:/root/.cache/huggingface
+    environment:
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-0}
+    shm_size: "8gb"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            # Pin GPU 2 — single free A10G; the 1.5B/3B model fits with room to spare.
+            - driver: nvidia
+              device_ids: ["2"]
+              capabilities: ["gpu"]
+    security_opt:
+      - "no-new-privileges:true"
     restart: unless-stopped
