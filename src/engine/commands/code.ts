@@ -1,5 +1,6 @@
 import { accessSync, constants as fsConstants, readdirSync, statSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
+import type { AgentEvent, AgentHandle } from "../../agent/agent-types";
 import {
   type CodePromptAnswerer,
   CodeSessionDriver,
@@ -781,6 +782,9 @@ export interface CodeDeps {
   workspace?: WorkspaceRuntime;
   workspaceRegistry?: WorkspaceRegistry;
   getEntity: (id: string) => Entity | undefined;
+  /** Send a line to a specific entity's connection — used to stream a bound
+   *  coding agent's live activity back to the human who dispatched the task. */
+  notify?: (entityId: string, message: string) => void;
 }
 
 export function codeCommand(deps: CodeDeps): CommandDef {
@@ -1101,6 +1105,7 @@ function exitCodeMode(
     delete entity.properties[CODE_CONTEXT_KEY];
     deps.db.saveEntity(entity);
   }
+  stopCodeStreamsFor(eid); // stop forwarding the bound agent's activity
   ctx.send(eid, success("Exited Code Mode."));
 }
 
@@ -2043,6 +2048,103 @@ async function assembleCodingCrew(
  * here, so we treat any untaken online agent as recruitable.)
  */
 /**
+ * Code Mode dispatch strategies. The registry is the extensibility seam — a new
+ * strategy (multi-agent swarm, heterogeneous multi-backend, emergent grouping)
+ * is a registry entry + a branch in doCode, nothing else. The *backend* for any
+ * strategy is orthogonal: `code model <target>` sets the session's model, which
+ * the single agent (and crew members) spawn against — so different sessions can
+ * run on different models/providers today.
+ */
+const CODE_DRIVERS: Record<string, string> = {
+  single: "one coding agent bound to the session (Codex/Claude/Cursor-style)",
+  crew: "implementer + reviewer + tester working in parallel",
+};
+
+// Live streams from a bound coding agent → the human in Code Mode for that
+// session. Keyed `${sessionId}:${dispatcherId}` so we subscribe at most once.
+const codeStreams = new Map<string, () => void>();
+
+/** Subscribe the dispatcher to a bound agent's activity and forward the
+ *  high-signal events (tool actions, prose, errors) to their connection, so
+ *  Code Mode shows the agent working instead of going quiet. */
+function streamSessionAgent(
+  deps: CodeDeps,
+  dispatcherId: EntityId,
+  handle: AgentHandle,
+  sessionId: string,
+): void {
+  const notify = deps.notify;
+  if (!notify) return;
+  const key = `${sessionId}:${dispatcherId}`;
+  if (codeStreams.has(key)) return; // already streaming this session to this watcher
+  let buffer = "";
+  const flush = () => {
+    const text = buffer.trim();
+    buffer = "";
+    if (text) notify(dispatcherId, `${handle.name}: ${text}`);
+  };
+  const unsub = handle.subscribe((ev: AgentEvent) => {
+    switch (ev.type) {
+      case "tool_call":
+        notify(dispatcherId, dim(`  ▸ ${formatAgentToolCall(ev.toolName, ev.args)}`));
+        break;
+      case "tool_result":
+        if (ev.isError)
+          notify(dispatcherId, `  ✗ ${ev.toolName}: ${clipLine(stringifyResult(ev.result))}`);
+        break;
+      case "text_delta":
+        buffer += ev.delta;
+        break;
+      case "turn_end":
+        flush();
+        break;
+      case "error":
+        notify(dispatcherId, `  ⚠ ${clipLine(ev.error)}`);
+        break;
+    }
+  });
+  codeStreams.set(key, unsub);
+}
+
+/** Tear down all live streams a dispatcher is watching (on exit / disconnect). */
+function stopCodeStreamsFor(entityId: EntityId): void {
+  const suffix = `:${entityId}`;
+  for (const [key, unsub] of codeStreams) {
+    if (!key.endsWith(suffix)) continue;
+    try {
+      unsub();
+    } catch {
+      /* best-effort */
+    }
+    codeStreams.delete(key);
+  }
+}
+
+function formatAgentToolCall(toolName: string, args: Record<string, unknown>): string {
+  if (toolName === "marina_code") {
+    const action = typeof args.action === "string" ? args.action : "";
+    const detail = (args.path ?? args.query ?? args.command ?? "") as unknown;
+    const detailStr = typeof detail === "string" && detail ? ` ${clipLine(detail, 60)}` : "";
+    return `code ${action}${detailStr}`.trim();
+  }
+  return toolName;
+}
+
+function clipLine(value: unknown, max = 120): string {
+  const flat = String(value).replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
+function stringifyResult(result: unknown): string {
+  if (typeof result === "string") return result;
+  try {
+    return JSON.stringify(result);
+  } catch {
+    return String(result);
+  }
+}
+
+/**
  * Code Mode's default agentic dispatch (Codex/Claude/Cursor-style): take a
  * natural-language task and drive autonomous work on the active session via the
  * session's *driver*. "single" (default) binds one coding agent to the session;
@@ -2088,14 +2190,16 @@ async function doCode(
       prompt: task,
       session,
     });
+    // Stream the bound agent's live work back to this human so Code Mode shows
+    // it working (reads, edits, test runs, prose) rather than going quiet.
+    const handle = deps.agentRuntime?.get?.(agentName);
+    if (handle) streamSessionAgent(deps, eid, handle, session.id);
     ctx.send(
       eid,
       [
         success(`→ ${agentName} is on it.`),
         dim(`"${task.length > 80 ? `${task.slice(0, 77)}...` : task}"`),
-        dim(
-          "It explores, edits, and runs checks autonomously. Type to steer · `code status` to watch.",
-        ),
+        dim("It explores, edits, and runs checks autonomously — streaming below. Type to steer."),
       ].join("\n"),
     );
   } catch (err) {
@@ -2190,20 +2294,29 @@ function driverCommand(
 ): void {
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
+  const current = session.driver ?? "single";
   const want = args[0]?.toLowerCase();
+  const names = Object.keys(CODE_DRIVERS);
   if (!want) {
+    const lines = names.map(
+      (n) => `  ${n === current ? bold(`${n} ✓`) : n} ${dim(`— ${CODE_DRIVERS[n]}`)}`,
+    );
     ctx.send(
       eid,
-      `Driver: ${bold(session.driver ?? "single")}. Set with: code driver <single|crew>.\n${dim("single = one bound agent (Codex/Claude-style) · crew = implementer/reviewer/tester")}`,
+      [
+        `Driver: ${bold(current)}`,
+        ...lines,
+        dim("Set with: code driver <name>. Backend per session: code model <target>."),
+      ].join("\n"),
     );
     return;
   }
-  if (want !== "single" && want !== "crew") {
-    ctx.send(eid, "Usage: code driver <single|crew>");
+  if (!names.includes(want)) {
+    ctx.send(eid, `Unknown driver "${want}". Available: ${names.join(", ")}.`);
     return;
   }
   deps.db.updateCodingSession(session.id, { driver: want });
-  ctx.send(eid, success(`Driver set to ${want}.`));
+  ctx.send(eid, success(`Driver set to ${want}. ${dim(CODE_DRIVERS[want] ?? "")}`));
 }
 
 function recruitCodingAgent(
