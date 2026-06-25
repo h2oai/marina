@@ -9,10 +9,10 @@ import type { WorkspaceRunResult, WorkspaceRuntime } from "../../coding/local-wo
 import { WorkspaceRegistry } from "../../coding/workspace-registry";
 import type { ChannelManager } from "../../coordination/channel-manager";
 import { CrewError, type CrewManager } from "../../coordination/crew-manager";
-import { dim, error as fmtError, header, separator, success } from "../../net/ansi";
+import { bold, dim, error as fmtError, header, separator, success } from "../../net/ansi";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, CrewFormation, Entity, EntityId, RoomContext } from "../../types";
-import { checkGate, recordDemonstration } from "../safety-gates";
+import { checkGate, grant, recordDemonstration } from "../safety-gates";
 
 const ACTIVE_SESSION_KEY = "coding_session_id";
 const ACTIVE_MODAL_KEY = "active_modal";
@@ -1016,8 +1016,25 @@ export function codeCommand(deps: CodeDeps): CommandDef {
           case "observe":
             observe(ctx, input.entity, entity, depsWithDb, args);
             return;
-          default:
-            ctx.send(input.entity, formatHelp(profile));
+          case "do":
+            // Explicit agentic dispatch: hand a natural-language task to the
+            // session's driver (default: a single bound coding agent).
+            await doCode(ctx, input.entity, entity, depsWithDb, driver, rawAfterSub);
+            return;
+          case "driver":
+            driverCommand(ctx, input.entity, entity, depsWithDb, args);
+            return;
+          default: {
+            // In Code Mode, anything that isn't a known subcommand is a
+            // natural-language task — route it to the driver (Codex/Claude-style)
+            // instead of dumping help. Outside the modal, fall back to help.
+            const line = input.tokens.join(" ").trim();
+            if (entity.properties[ACTIVE_MODAL_KEY] === "code" && line) {
+              await doCode(ctx, input.entity, entity, depsWithDb, driver, line);
+            } else {
+              ctx.send(input.entity, formatHelp(profile));
+            }
+          }
         }
       } catch (err) {
         ctx.send(input.entity, fmtError(err instanceof Error ? err.message : String(err)));
@@ -1039,15 +1056,33 @@ function enterCodeMode(
   const profile = getCodeProfile(entity);
   const registry = getWorkspaceRegistry(deps);
   const selectedRoot = session?.workspace_root ?? getSelectedWorkspaceRoot(entity, deps);
+
+  // Evaluate the current directory on entry — a quick top-level listing so it's
+  // clear Code Mode is looking at the workspace (orient now, act on the task).
+  let overview = "";
+  try {
+    const entries = registry.workspaceForRoot(selectedRoot).list(".", 14);
+    if (entries.length > 0) {
+      const names = entries.map((e) => (e.type === "dir" ? `${e.path}/` : e.path));
+      overview = `Contents: ${dim(names.join("  "))}`;
+    }
+  } catch {
+    // Unlistable root (permissions / missing) — skip the overview, not fatal.
+  }
+
   ctx.send(
     eid,
     [
       success("Code Mode active."),
       `Profile: ${profile.name} ${dim(`prompt: ${profile.prompt}>`)}`,
       `Workspace: ${selectedRoot}${registry.usesCwdFallback ? dim(" (process cwd fallback)") : ""}`,
+      overview,
       session ? `Session: ${session.id} ${dim(session.status)}` : dim("No active session yet."),
-      "Commands now route to local coding sessions.",
-      dim(`Try: ${formatProfileTry(profile)} | onboard | exit`),
+      "",
+      bold("Just say what you want done") +
+        dim(' — e.g. "add a health check endpoint and a test for it".'),
+      dim("A coding agent will explore, edit, and run checks autonomously. Or use commands:"),
+      dim(`  ${formatProfileTry(profile)} | code crew <goal> | onboard | exit`),
       registry.usesCwdFallback ? dim("Configure MARINA_CODE_ROOTS for production workspaces.") : "",
     ]
       .filter(Boolean)
@@ -2007,6 +2042,170 @@ async function assembleCodingCrew(
  * already taken. (Idle/assigned distinction is not surfaced by the runtime list
  * here, so we treat any untaken online agent as recruitable.)
  */
+/**
+ * Code Mode's default agentic dispatch (Codex/Claude/Cursor-style): take a
+ * natural-language task and drive autonomous work on the active session via the
+ * session's *driver*. "single" (default) binds one coding agent to the session;
+ * "crew" fans out to implementer/reviewer/tester. The driver is a seam — new
+ * strategies (multi-agent, multi-backend) slot in here without touching callers.
+ */
+async function doCode(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  driver: CodeSessionDriver,
+  rawTask: string,
+): Promise<void> {
+  const task = rawTask.trim();
+  if (!task) {
+    ctx.send(eid, 'Describe what you want done, e.g. "fix the off-by-one in the tokenizer".');
+    return;
+  }
+
+  // Auto-start a session on the first task so entering Code Mode + typing just
+  // works — no explicit `code start` required.
+  if (!getActiveSessionId(entity)) startSession(ctx, eid, entity, deps, "");
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+
+  const strategy = (session.driver ?? "single").toLowerCase();
+  if (strategy === "crew") {
+    await crewPlan(ctx, eid, entity, deps, task);
+    return;
+  }
+
+  // Single-agent driver (default): ensure one bound coder, hand it the task.
+  const agentName = await ensureSessionAgent(ctx, eid, entity, deps, session);
+  if (!agentName) return; // ensureSessionAgent already explained why
+  const profile = getCodeProfile(entity);
+  try {
+    await driver.assignAgent({
+      actor: entity.name,
+      agentName,
+      modelTarget: getSessionModelTarget(deps.db, session.id),
+      profile: profile.name,
+      prompt: task,
+      session,
+    });
+    ctx.send(
+      eid,
+      [
+        success(`→ ${agentName} is on it.`),
+        dim(`"${task.length > 80 ? `${task.slice(0, 77)}...` : task}"`),
+        dim(
+          "It explores, edits, and runs checks autonomously. Type to steer · `code status` to watch.",
+        ),
+      ].join("\n"),
+    );
+  } catch (err) {
+    ctx.send(eid, fmtError(err instanceof Error ? err.message : String(err)));
+  }
+}
+
+/**
+ * Ensure the session has a live autonomous coding agent bound to it (the
+ * single-agent default driver). Reuses the bound agent if still running, else
+ * recruits an idle coding agent or spawns a fresh one. The bound agent is
+ * granted code.exec for the session so it can actually run/apply — the operator
+ * entering Code Mode is the responsible party (spawning itself is agent.spawn-
+ * gated). Returns the agent name, or null after sending an explanation.
+ */
+async function ensureSessionAgent(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+): Promise<string | null> {
+  // 1) Reuse the already-bound agent if it's still running.
+  if (session.agent && deps.agentRuntime?.get?.(session.agent)) return session.agent;
+
+  // 2) Recruit an idle coding agent already in the world.
+  const recruited = recruitCodingAgent(deps, new Set());
+  if (recruited) {
+    grant(deps.db, recruited.id, "code.exec");
+    deps.db.updateCodingSession(session.id, { agent: recruited.name, driver: "single" });
+    return recruited.name;
+  }
+
+  // 3) Spawn a fresh coder (agent.spawn-gated).
+  if (!deps.agentRuntime?.spawn) {
+    ctx.send(eid, "No agent runtime available to drive this session.");
+    return null;
+  }
+  if (deps.agentRuntime.isAvailable && !deps.agentRuntime.isAvailable()) {
+    ctx.send(eid, "No LLM provider configured — set a provider key, then a coding agent can run.");
+    return null;
+  }
+  const gate = checkGate(deps.db, eid, "agent.spawn");
+  if (!gate.ok) {
+    ctx.send(eid, gate.reason ?? "Not permitted to launch a coding agent (requires agent.spawn).");
+    return null;
+  }
+  const name = uniqueSpawnAgentName(deps.agentRuntime.list?.() ?? [], "coder", session.id);
+  const modelTarget = modelTargetForAgentSpawn(getSessionModelTarget(deps.db, session.id));
+  try {
+    const handle = await deps.agentRuntime.spawn({
+      goal: [
+        `You are the autonomous coder for Marina coding session ${session.id}.`,
+        `Workspace: ${session.workspace_root}`,
+        "Use the marina_code tool to inspect (status/files/read/search/diff), edit (patch then apply), and verify (run the test/lint/typecheck chain). Drive each task to completion, then summarize.",
+      ].join("\n"),
+      model: modelTarget,
+      name,
+      role: "implementer",
+      spawnedBy: entity.name,
+    });
+    bindSpawnedAgentEntity(handle, session, getCodeProfile(entity).name, deps);
+    const spawnedId = handle.getStatus().entityId;
+    if (spawnedId) grant(deps.db, spawnedId as EntityId, "code.exec");
+    if (gate.supervisedOnly) recordDemonstration(deps.db, eid, "agent.spawn");
+    deps.db.updateCodingSession(session.id, { agent: handle.name, driver: "single" });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "code_session_agent_launched",
+      payload: { agent: handle.name, modelTarget },
+    });
+    return handle.name;
+  } catch (err) {
+    ctx.send(
+      eid,
+      fmtError(
+        `Could not launch a coding agent: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+    );
+    return null;
+  }
+}
+
+/** `code driver [single|crew]` — view or set the session's dispatch strategy. */
+function driverCommand(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  args: string[],
+): void {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const want = args[0]?.toLowerCase();
+  if (!want) {
+    ctx.send(
+      eid,
+      `Driver: ${bold(session.driver ?? "single")}. Set with: code driver <single|crew>.\n${dim("single = one bound agent (Codex/Claude-style) · crew = implementer/reviewer/tester")}`,
+    );
+    return;
+  }
+  if (want !== "single" && want !== "crew") {
+    ctx.send(eid, "Usage: code driver <single|crew>");
+    return;
+  }
+  deps.db.updateCodingSession(session.id, { driver: want });
+  ctx.send(eid, success(`Driver set to ${want}.`));
+}
+
 function recruitCodingAgent(
   deps: CodeDeps & { db: MarinaDB },
   taken: Set<string>,

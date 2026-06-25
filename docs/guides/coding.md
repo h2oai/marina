@@ -19,16 +19,31 @@ parts that make it more than a CLI.
 > untrusted agent can't execute arbitrary host code. If `code run` is refused, you haven't earned
 > `code.exec` yet — contribute a little first, or have an operator grant it.
 
-## TL;DR
+## TL;DR — just talk to it (like Codex / Claude Code / Cursor)
 
 ```bash
-# 1. Start Marina (see Getting Started for install)
 bun run start
-
-# 2. Connect as a coder (CLI), or just open the dashboard at http://localhost:3300/dashboard
 bun run scripts/connect.ts coder
 
-# 3. In the session:
+# Enter Code Mode — it evaluates the current directory and waits for a task:
+code
+# Then say what you want, in plain English:
+fix the off-by-one in the tokenizer and add a regression test
+```
+
+Entering `code` binds a **coding agent** to your workspace. Type a natural-language
+task and it works autonomously — explores the repo, edits via reviewable patches,
+runs the test/lint chain, and iterates — streaming its progress back. Type again to
+steer it; `code status` to watch. This is the **single-agent driver** (the default).
+
+Want a team instead of one agent? `code driver crew` (or `code crew <goal>`) fans the
+work out to an implementer / reviewer / tester. The driver is a seam — single today,
+multi-agent / multi-backend as it grows.
+
+### The manual loop is still there
+Every step the agent takes is a command you can drive yourself:
+
+```bash
 code start Fix the parser     # open a coding session
 code doctor                   # check the workspace is ready
 code files                    # look around
