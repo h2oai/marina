@@ -1389,6 +1389,17 @@ CREATE TABLE role_history (
 CREATE INDEX idx_role_history_name ON role_history(name, id DESC);
 `,
   },
+  // Migration 51: code-mode driver seam. `agent` = the autonomous coding agent
+  // bound to the session (the single-agent default driver); `driver` = the
+  // strategy name (single | crew | …) so code mode can grow to multi-agent /
+  // multi-backend dispatch without another schema change.
+  {
+    version: 51,
+    sql: `
+ALTER TABLE coding_sessions ADD COLUMN agent TEXT;
+ALTER TABLE coding_sessions ADD COLUMN driver TEXT;
+`,
+  },
 ];
 
 // ─── Database Class ──────────────────────────────────────────────────────────
@@ -3455,6 +3466,8 @@ export class MarinaDB {
       created_at: now,
       updated_at: now,
       writer: null,
+      agent: null,
+      driver: null,
     };
     this.db.run(
       `INSERT INTO coding_sessions
@@ -3495,13 +3508,28 @@ export class MarinaDB {
 
   updateCodingSession(
     id: string,
-    patch: Partial<{ status: string; mode: string; title: string; writer: string | null }>,
+    patch: Partial<{
+      status: string;
+      mode: string;
+      title: string;
+      writer: string | null;
+      agent: string | null;
+      driver: string | null;
+    }>,
   ): void {
     const sets: string[] = [];
     const values: Array<string | number | null> = [];
     if (patch.status !== undefined) {
       sets.push("status = ?");
       values.push(patch.status);
+    }
+    if (patch.agent !== undefined) {
+      sets.push("agent = ?");
+      values.push(patch.agent);
+    }
+    if (patch.driver !== undefined) {
+      sets.push("driver = ?");
+      values.push(patch.driver);
     }
     if (patch.mode !== undefined) {
       sets.push("mode = ?");
@@ -4431,6 +4459,10 @@ export interface CodingSessionRow {
   created_at: number;
   updated_at: number;
   writer: string | null;
+  /** The autonomous coding agent bound to this session (single-agent driver). */
+  agent: string | null;
+  /** Dispatch strategy: "single" (default) | "crew" | future multi-agent. */
+  driver: string | null;
 }
 
 export interface CodingEventRow {
