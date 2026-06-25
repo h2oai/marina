@@ -26,6 +26,7 @@
   },
   "scripts": {
     "start": "bun run src/main.ts",
+    "code": "bun run scripts/code.ts",
     "dev": "bun run src/main.ts",
     "build": "bun build src/main.ts --outdir dist --target bun",
     "test": "bun test --path-ignore-patterns '**/dashboard/**'",

@@ -21,6 +21,18 @@ parts that make it more than a CLI.
 
 ## TL;DR — just talk to it (like Codex / Claude Code / Cursor)
 
+**Zero-config, in any folder** — boots an ephemeral folder-scoped Marina and drops
+you straight into agentic Code Mode (needs an LLM provider key in your env):
+
+```bash
+bun run code            # the current directory
+bun run code ~/projects/acme   # …or any directory
+# It evaluates the directory, then you say what you want, in plain English:
+» fix the off-by-one in the tokenizer and add a regression test
+```
+
+Or inside an already-running Marina:
+
 ```bash
 bun run start
 bun run scripts/connect.ts coder
