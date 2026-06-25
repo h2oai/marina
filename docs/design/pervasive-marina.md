@@ -42,10 +42,12 @@ to `default`), and the **civic substrate** you bolt on only when you want
 persistence/memory/standing.
 
 ## The gaps, sequenced (each independently shippable)
-1. **Zero-config `marina <dir>` ("claude in a folder").** A launch mode that, given
-   a cwd, starts a minimal instance (`empty`/`personal` world) scoped to that
-   folder with Code Mode ready and a bound agent — no ports/world ceremony. The
-   `MARINA_CODE_ROOTS`/cwd-fallback already gets close; this makes it the front door.
+1. ✅ **Zero-config `marina <dir>` ("claude in a folder") — first cut shipped.**
+   `bun run code [dir]` (`scripts/code.ts`) boots an ephemeral folder-scoped
+   instance (empty world, no room agents, throwaway DB, local user = operator via
+   `MARINA_ADMINS`) and drops straight into agentic Code Mode for that directory.
+   Next: bind it to the `marina` bin as `marina code <dir>`, and an option to
+   persist/resume per-folder sessions instead of ephemeral.
 2. **`SandboxWorkspace` (the FS/exec isolation impl).** Implement the
    `WorkspaceRuntime` contract over a microVM (vfkit on macOS, crosvm on
    Linux/WSL2) with a virtio-fs/FUSE share. Then `code workspace use sandbox:<id>`
