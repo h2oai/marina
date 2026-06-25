@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentHandle, AgentStatus } from "../src/agent/agent-types";
+import type { AgentEvent, AgentHandle, AgentStatus } from "../src/agent/agent-types";
 import { LocalWorkspace } from "../src/coding/local-workspace";
 import { WorkspaceRegistry } from "../src/coding/workspace-registry";
 import { codeCommand } from "../src/engine/commands/code";
@@ -1505,6 +1505,55 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
     expect(session.mode).toBe("agent");
     expect(attention.join("\n")).toContain("add a health check endpoint");
     expect(stripAnsi(sent.join("\n"))).toContain("Coder is on it");
+  });
+
+  it("streams the bound agent's activity back to the dispatcher", async () => {
+    const alice = makeAgentEntity("u_alice", "Alice");
+    db.saveEntity(alice);
+    const coderEntity = makeAgentEntity("agent_coder", "Coder");
+    db.saveEntity(coderEntity);
+    let handler: ((ev: AgentEvent) => void) | null = null;
+    const handle: AgentHandle = {
+      ...fakeAgent("Coder", [], "agent_coder" as EntityId),
+      subscribe: (h) => {
+        handler = h;
+        return () => {
+          handler = null;
+        };
+      },
+    };
+    const notified: string[] = [];
+    const command = codeCommand({
+      db,
+      getEntity: (id) =>
+        id === "u_alice" ? alice : id === "agent_coder" ? coderEntity : undefined,
+      workspace: new LocalWorkspace(),
+      agentRuntime: {
+        get: (n: string) => (n === "Coder" ? handle : undefined),
+        isAvailable: () => true,
+        list: () => [{ name: "Coder" }],
+      },
+      listAgents: () => [{ name: "Coder" }],
+      findAgentByName: (n: string) => (n === "Coder" ? coderEntity : undefined),
+      notify: (id: string, message: string) => notified.push(`${id}:${stripAnsi(message)}`),
+    });
+    const ctx = testRoomContext([]);
+    await command.handler(ctx, inputFor(alice, "code do explore the repo"));
+
+    expect(handler).not.toBeNull();
+    // The bound agent works; its activity is forwarded to the dispatcher.
+    handler?.({
+      type: "tool_call",
+      toolName: "marina_code",
+      args: { action: "read", path: "src/x.ts" },
+    });
+    handler?.({ type: "text_delta", delta: "Found the issue." });
+    handler?.({ type: "turn_end", hadToolCalls: true, toolCount: 1 });
+
+    const joined = notified.join("\n");
+    expect(joined).toContain("u_alice:");
+    expect(joined).toContain("code read src/x.ts");
+    expect(joined).toContain("Coder: Found the issue.");
   });
 
   it("`code driver crew` switches the session's dispatch strategy", async () => {

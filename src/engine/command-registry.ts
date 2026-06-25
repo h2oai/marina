@@ -757,6 +757,8 @@ export function registerBuiltinCommands(engine: Engine): void {
       findAgentByName: (name) => engine.entities.findAgentByName(name),
       listAgents: () => engine.agentRuntime.list(),
       getEntity: (id) => engine.entities.get(id as EntityId),
+      // Forward a bound coding agent's live activity to the human in Code Mode.
+      notify: (id, message) => engine.sendToEntity(id as EntityId, message, "code"),
       db: engine.db,
     }),
   );
