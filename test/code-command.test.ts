@@ -1457,3 +1457,71 @@ function testRoomContext(sent: string[], metadata: Record<string, unknown>[] = [
     },
   } as unknown as RoomContext;
 }
+
+describe("code mode — agentic dispatch (single-agent driver)", () => {
+  const DO_DB = "test_code_do.db";
+  let db: MarinaDB;
+
+  beforeEach(() => {
+    db = new MarinaDB(DO_DB);
+  });
+  afterEach(() => {
+    db.close();
+    cleanupDb(DO_DB);
+  });
+
+  it("routes a natural-language task to a bound coding agent and records it on the session", async () => {
+    const alice = makeAgentEntity("u_alice", "Alice");
+    db.saveEntity(alice);
+    const coderEntity = makeAgentEntity("agent_coder", "Coder");
+    db.saveEntity(coderEntity);
+    const attention: string[] = [];
+    const handle = fakeAgent("Coder", attention, "agent_coder" as EntityId);
+    const sent: string[] = [];
+    const command = codeCommand({
+      db,
+      getEntity: (id) =>
+        id === "u_alice" ? alice : id === "agent_coder" ? coderEntity : undefined,
+      workspace: new LocalWorkspace(),
+      agentRuntime: {
+        get: (n: string) => (n === "Coder" ? handle : undefined),
+        isAvailable: () => true,
+        list: () => [{ name: "Coder" }],
+      },
+      listAgents: () => [{ name: "Coder" }],
+      findAgentByName: (n: string) => (n === "Coder" ? coderEntity : undefined),
+    });
+    const ctx = testRoomContext(sent);
+
+    // A plain task with no explicit `code start` — auto-starts a session and
+    // dispatches to a recruited bound agent (the default single-agent driver).
+    await command.handler(ctx, inputFor(alice, "code do add a health check endpoint"));
+
+    const sid = alice.properties.coding_session_id as string;
+    expect(sid).toBeTruthy();
+    const session = db.getCodingSession(sid)!;
+    expect(session.agent).toBe("Coder");
+    expect(session.driver).toBe("single");
+    expect(session.mode).toBe("agent");
+    expect(attention.join("\n")).toContain("add a health check endpoint");
+    expect(stripAnsi(sent.join("\n"))).toContain("Coder is on it");
+  });
+
+  it("`code driver crew` switches the session's dispatch strategy", async () => {
+    const alice = makeAgentEntity("u_alice", "Alice");
+    db.saveEntity(alice);
+    const sent: string[] = [];
+    const command = codeCommand({
+      db,
+      getEntity: (id) => (id === "u_alice" ? alice : undefined),
+      workspace: new LocalWorkspace(),
+    });
+    const ctx = testRoomContext(sent);
+    await command.handler(ctx, inputFor(alice, "code start X"));
+    const sid = alice.properties.coding_session_id as string;
+    sent.length = 0;
+    await command.handler(ctx, inputFor(alice, "code driver crew"));
+    expect(db.getCodingSession(sid)!.driver).toBe("crew");
+    expect(stripAnsi(sent.join("\n")).toLowerCase()).toContain("driver set to crew");
+  });
+});
