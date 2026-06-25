@@ -1512,13 +1512,15 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
     db.saveEntity(alice);
     const coderEntity = makeAgentEntity("agent_coder", "Coder");
     db.saveEntity(coderEntity);
-    let handler: ((ev: AgentEvent) => void) | null = null;
+    // Holder (not a `let`) so the captured handler keeps its function type after
+    // the dispatch call — a bare reassigned local narrows to `null` under tsc.
+    const sub: { fn: ((ev: AgentEvent) => void) | null } = { fn: null };
     const handle: AgentHandle = {
       ...fakeAgent("Coder", [], "agent_coder" as EntityId),
       subscribe: (h) => {
-        handler = h;
+        sub.fn = h;
         return () => {
-          handler = null;
+          sub.fn = null;
         };
       },
     };
@@ -1540,15 +1542,15 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
     const ctx = testRoomContext([]);
     await command.handler(ctx, inputFor(alice, "code do explore the repo"));
 
-    expect(handler).not.toBeNull();
+    expect(sub.fn).not.toBeNull();
     // The bound agent works; its activity is forwarded to the dispatcher.
-    handler?.({
+    sub.fn?.({
       type: "tool_call",
       toolName: "marina_code",
       args: { action: "read", path: "src/x.ts" },
     });
-    handler?.({ type: "text_delta", delta: "Found the issue." });
-    handler?.({ type: "turn_end", hadToolCalls: true, toolCount: 1 });
+    sub.fn?.({ type: "text_delta", delta: "Found the issue." });
+    sub.fn?.({ type: "turn_end", hadToolCalls: true, toolCount: 1 });
 
     const joined = notified.join("\n");
     expect(joined).toContain("u_alice:");
