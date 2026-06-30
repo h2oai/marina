@@ -35,9 +35,25 @@ interface ComposedCapabilities {
   strengths: string[];
   preferences: string[];
   avoids: string[];
+  domains: string[];
+  behaviors: string[];
+  antiBehaviors: string[];
+  successSignals: string[];
+  riskSignals: string[];
+  /** Free-text activation cues, with control tokens (always/task-category) stripped. */
+  activationCues: string[];
   synergies: string[];
   tensions: string[];
 }
+
+/**
+ * Activation tokens that control gating rather than describe it. They are
+ * recognized by `filterTraitsByTask` and stripped before activation cues are
+ * rendered as agent-facing guidance.
+ */
+const ACTIVATION_ALWAYS = "always";
+const ACTIVATION_TASK_CATEGORY = "task-category";
+const CONTROL_ACTIVATION_TOKENS = new Set([ACTIVATION_ALWAYS, ACTIVATION_TASK_CATEGORY]);
 
 // ─── Capability Composition ─────────────────────────────────────────────────
 
@@ -57,6 +73,12 @@ export function composeCapabilities(
   const allStrengths = new Set<string>();
   const allPreferences = new Set<string>();
   const allAvoids = new Set<string>();
+  const allDomains = new Set<string>();
+  const allBehaviors = new Set<string>();
+  const allAntiBehaviors = new Set<string>();
+  const allSuccessSignals = new Set<string>();
+  const allRiskSignals = new Set<string>();
+  const allActivationCues = new Set<string>();
 
   // Per-trait sets for cross-trait analysis
   const perTrait: {
@@ -64,6 +86,8 @@ export function composeCapabilities(
     strengths: Set<string>;
     preferences: Set<string>;
     avoids: Set<string>;
+    behaviors: Set<string>;
+    antiBehaviors: Set<string>;
   }[] = [];
 
   for (let i = 0; i < caps.length; i++) {
@@ -71,10 +95,27 @@ export function composeCapabilities(
     const s = new Set(c.strengths ?? []);
     const p = new Set(c.preferences ?? []);
     const a = new Set(c.avoids ?? []);
-    perTrait.push({ name: traitNames[i] ?? `trait-${i}`, strengths: s, preferences: p, avoids: a });
+    const b = new Set(c.behaviors ?? []);
+    const ab = new Set(c.antiBehaviors ?? []);
+    perTrait.push({
+      name: traitNames[i] ?? `trait-${i}`,
+      strengths: s,
+      preferences: p,
+      avoids: a,
+      behaviors: b,
+      antiBehaviors: ab,
+    });
     for (const v of s) allStrengths.add(v);
     for (const v of p) allPreferences.add(v);
     for (const v of a) allAvoids.add(v);
+    for (const v of c.domains ?? []) allDomains.add(v);
+    for (const v of b) allBehaviors.add(v);
+    for (const v of ab) allAntiBehaviors.add(v);
+    for (const v of c.successSignals ?? []) allSuccessSignals.add(v);
+    for (const v of c.riskSignals ?? []) allRiskSignals.add(v);
+    for (const v of c.activation ?? []) {
+      if (!CONTROL_ACTIVATION_TOKENS.has(v.toLowerCase())) allActivationCues.add(v);
+    }
   }
 
   const synergies: string[] = [];
@@ -82,7 +123,12 @@ export function composeCapabilities(
 
   // Cross-trait analysis (only meaningful with 2+ traits that have capabilities)
   const withCaps = perTrait.filter(
-    (t) => t.strengths.size > 0 || t.preferences.size > 0 || t.avoids.size > 0,
+    (t) =>
+      t.strengths.size > 0 ||
+      t.preferences.size > 0 ||
+      t.avoids.size > 0 ||
+      t.behaviors.size > 0 ||
+      t.antiBehaviors.size > 0,
   );
 
   if (withCaps.length >= 2) {
@@ -144,6 +190,18 @@ export function composeCapabilities(
             );
           }
         }
+
+        // Tension: a behavior one trait practices is another's anti-behavior
+        for (const beh of a.behaviors) {
+          if (b.antiBehaviors.has(beh)) {
+            tensions.push(`${a.name} practices ${beh} but ${b.name} treats it as an anti-pattern`);
+          }
+        }
+        for (const beh of b.behaviors) {
+          if (a.antiBehaviors.has(beh)) {
+            tensions.push(`${b.name} practices ${beh} but ${a.name} treats it as an anti-pattern`);
+          }
+        }
       }
     }
   }
@@ -152,6 +210,12 @@ export function composeCapabilities(
     strengths: [...allStrengths],
     preferences: [...allPreferences],
     avoids: [...allAvoids],
+    domains: [...allDomains],
+    behaviors: [...allBehaviors],
+    antiBehaviors: [...allAntiBehaviors],
+    successSignals: [...allSuccessSignals],
+    riskSignals: [...allRiskSignals],
+    activationCues: [...allActivationCues],
     synergies: [...new Set(synergies)],
     tensions: [...new Set(tensions)],
   };
@@ -162,11 +226,17 @@ export function composeCapabilities(
  * Returns empty string if no capabilities data exists.
  */
 export function formatCapabilitiesSection(composed: ComposedCapabilities): string {
-  if (
-    composed.strengths.length === 0 &&
-    composed.preferences.length === 0 &&
-    composed.avoids.length === 0
-  ) {
+  const hasAny =
+    composed.strengths.length > 0 ||
+    composed.preferences.length > 0 ||
+    composed.avoids.length > 0 ||
+    composed.domains.length > 0 ||
+    composed.behaviors.length > 0 ||
+    composed.antiBehaviors.length > 0 ||
+    composed.successSignals.length > 0 ||
+    composed.riskSignals.length > 0 ||
+    composed.activationCues.length > 0;
+  if (!hasAny) {
     return "";
   }
 
@@ -180,6 +250,27 @@ export function formatCapabilitiesSection(composed: ComposedCapabilities): strin
   }
   if (composed.avoids.length > 0) {
     lines.push(`Avoids: ${composed.avoids.join(", ")}`);
+  }
+  if (composed.domains.length > 0) {
+    lines.push(`Domains: ${composed.domains.join(", ")}`);
+  }
+  // Behavioral guidance for self-orientation: what to do, what to avoid, and
+  // how to tell it's working. Surfaced (not enforced) so agents choose, per the
+  // autonomy principle — these inform, they don't control.
+  if (composed.behaviors.length > 0) {
+    lines.push(`Practices: ${composed.behaviors.join(", ")}`);
+  }
+  if (composed.antiBehaviors.length > 0) {
+    lines.push(`Anti-patterns: ${composed.antiBehaviors.join(", ")}`);
+  }
+  if (composed.activationCues.length > 0) {
+    lines.push(`Lean in when: ${composed.activationCues.join(", ")}`);
+  }
+  if (composed.successSignals.length > 0) {
+    lines.push(`Working well when: ${composed.successSignals.join(", ")}`);
+  }
+  if (composed.riskSignals.length > 0) {
+    lines.push(`Watch for: ${composed.riskSignals.join(", ")}`);
   }
 
   if (composed.synergies.length > 0) {
@@ -238,15 +329,49 @@ export function resolveRole(db: MarinaDB, roleName: string): ResolvedRole | null
 }
 
 /**
- * Filter trait prompts + capabilities by task category. Traits without
- * `applicableTasks` declared are always kept (silent = always relevant).
- * Traits with `applicableTasks` declared are kept only when the current
- * `taskCategory` is in their list — otherwise the trait is suppressed
- * for the duration of this composition.
+ * The set of task categories a trait scopes itself to, if any. Two typed
+ * sources contribute:
+ *   - `applicableTasks` — the original whitelist; always defines scope.
+ *   - `domains` — the typed metadata field, but only when the trait opts into
+ *     category gating via `activation: ["task-category"]`. Otherwise `domains`
+ *     is purely descriptive (rendered, not gated) so adding it never silently
+ *     suppresses a trait.
+ * An empty result means "no declared scope" → the trait is always relevant.
+ */
+function traitTaskScope(caps: TraitCapabilities): string[] {
+  const scope = [...(caps.applicableTasks ?? [])];
+  const activation = new Set((caps.activation ?? []).map((a) => a.toLowerCase()));
+  if (activation.has(ACTIVATION_TASK_CATEGORY)) {
+    scope.push(...(caps.domains ?? []));
+  }
+  return scope;
+}
+
+/**
+ * Decide whether a trait stays active for the current inferred task category.
  *
- * Backward-compatible: when `taskCategory` is undefined, every trait is
- * kept regardless of `applicableTasks`. Existing seeded traits don't
- * declare the field yet, so the default behavior is unchanged.
+ * Conservative by design (false-positive suppression silences a useful trait,
+ * which is worse than leaving it always-on):
+ *   - `activation: ["always"]` is an explicit escape hatch — never suppressed.
+ *   - A trait with no declared scope (no `applicableTasks`, and no `domains`
+ *     opted into via `task-category` activation) is always kept.
+ *   - Otherwise the trait is kept only when `taskCategory` is in its scope.
+ */
+function isTraitActiveForCategory(caps: TraitCapabilities, taskCategory: string): boolean {
+  const activation = new Set((caps.activation ?? []).map((a) => a.toLowerCase()));
+  if (activation.has(ACTIVATION_ALWAYS)) return true;
+  const scope = traitTaskScope(caps);
+  if (scope.length === 0) return true;
+  return scope.includes(taskCategory);
+}
+
+/**
+ * Filter trait prompts + capabilities by task category (PRISM-style gating).
+ * Gating is driven by typed `activation`/`domains` where present, falling back
+ * to the original `applicableTasks` whitelist — see {@link isTraitActiveForCategory}.
+ *
+ * Backward-compatible: when `taskCategory` is undefined, every trait is kept.
+ * Traits that declare no scope are always kept regardless of category.
  */
 function filterTraitsByTask(
   role: ResolvedRole,
@@ -264,8 +389,7 @@ function filterTraitsByTask(
   const keptCaps: TraitCapabilities[] = [];
   for (let i = 0; i < role.traitNames.length; i++) {
     const caps = role.traitCapabilities[i] ?? {};
-    const applicable = caps.applicableTasks;
-    if (applicable && applicable.length > 0 && !applicable.includes(taskCategory)) {
+    if (!isTraitActiveForCategory(caps, taskCategory)) {
       continue; // suppress: trait declared scope and current task isn't in it
     }
     keptNames.push(role.traitNames[i] ?? "");

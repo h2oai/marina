@@ -717,6 +717,12 @@ describe("roles", () => {
       strengths: [],
       preferences: [],
       avoids: [],
+      domains: [],
+      behaviors: [],
+      antiBehaviors: [],
+      successSignals: [],
+      riskSignals: [],
+      activationCues: [],
       synergies: [],
       tensions: [],
     });
@@ -790,6 +796,107 @@ describe("roles", () => {
     );
     expect(prompt).toContain("Adapt to anything.");
     expect(prompt).not.toContain("Only useful for code.");
+  });
+
+  it("activation:[always] keeps a trait even when its declared scope misses the category", () => {
+    const prompt = composeRolePrompt(
+      {
+        name: "principled",
+        description: "",
+        traitNames: ["honest", "scoped"],
+        missingTraitNames: [],
+        traitPrompts: ["Always flag uncertainty.", "Only useful for code."],
+        traitCapabilities: [
+          // declares a scope that excludes "writing" but opts out of gating
+          { domains: ["research"], activation: ["always", "task-category"] },
+          { strengths: ["coding"], applicableTasks: ["code"] },
+        ],
+        guidelines: [],
+        focus: [],
+        tone: "",
+        origin: "test",
+      },
+      "writing",
+    );
+    expect(prompt).toContain("Always flag uncertainty."); // always wins over scope
+    expect(prompt).not.toContain("Only useful for code.");
+  });
+
+  it("activation:[task-category] gates a trait by its typed domains", () => {
+    const role = {
+      name: "specialist",
+      description: "",
+      traitNames: ["calc"],
+      missingTraitNames: [],
+      traitPrompts: ["Route arithmetic through the tool."],
+      traitCapabilities: [{ domains: ["math"], activation: ["task-category"] }],
+      guidelines: [],
+      focus: [],
+      tone: "",
+      origin: "test",
+    };
+    expect(composeRolePrompt(role, "math")).toContain("Route arithmetic through the tool.");
+    expect(composeRolePrompt(role, "writing")).not.toContain("Route arithmetic through the tool.");
+  });
+
+  it("domains alone (no task-category activation) is descriptive and never gates", () => {
+    const role = {
+      name: "descriptive",
+      description: "",
+      traitNames: ["calc"],
+      missingTraitNames: [],
+      traitPrompts: ["Route arithmetic through the tool."],
+      // domains present but trait did NOT opt into task-category activation
+      traitCapabilities: [{ domains: ["math"] }],
+      guidelines: [],
+      focus: [],
+      tone: "",
+      origin: "test",
+    };
+    // kept regardless of category — autonomy-preserving default
+    expect(composeRolePrompt(role, "writing")).toContain("Route arithmetic through the tool.");
+  });
+
+  it("composeRolePrompt renders typed metadata as guidance, stripping control tokens", () => {
+    const prompt = composeRolePrompt({
+      name: "typed",
+      description: "",
+      traitNames: ["honest"],
+      missingTraitNames: [],
+      traitPrompts: ["State your confidence."],
+      traitCapabilities: [
+        {
+          domains: ["research"],
+          behaviors: ["cite-sources"],
+          antiBehaviors: ["overclaim"],
+          successSignals: ["calibrated-confidence"],
+          riskSignals: ["false-certainty"],
+          activation: ["always", "when-evidence-is-thin"],
+        },
+      ],
+      guidelines: [],
+      focus: [],
+      tone: "",
+      origin: "test",
+    });
+    expect(prompt).toContain("Domains: research");
+    expect(prompt).toContain("Practices: cite-sources");
+    expect(prompt).toContain("Anti-patterns: overclaim");
+    expect(prompt).toContain("Working well when: calibrated-confidence");
+    expect(prompt).toContain("Watch for: false-certainty");
+    // free-text activation cue surfaces; control token does not leak to the agent
+    expect(prompt).toContain("Lean in when: when-evidence-is-thin");
+    expect(prompt).not.toContain("Lean in when: always");
+  });
+
+  it("composeCapabilities flags a behavior that another trait treats as an anti-pattern", () => {
+    const composed = composeCapabilities(
+      ["fast-mover", "careful"],
+      [{ behaviors: ["ship-fast"] }, { antiBehaviors: ["ship-fast"] }],
+    );
+    expect(
+      composed.tensions.some((t) => t.includes("ship-fast") && t.includes("anti-pattern")),
+    ).toBe(true);
   });
 
   it("inferCrewResponder is true for specialist roles, false for coordinators", () => {

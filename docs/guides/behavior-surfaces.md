@@ -100,6 +100,26 @@ Good trait metadata helps composition without controlling the agent:
 }
 ```
 
+All of this renders into the agent's composed role prompt as plain guidance
+(Domains, Practices, Anti-patterns, Working-well-when, Watch-for). It steers
+judgment; it never forces an action.
+
+`activation` controls *when* a trait is composed in, and is deliberately
+conservative — silencing a useful trait is worse than leaving it on:
+
+- `"always"` — never gated out. Use for enduring principles (honesty,
+  thoroughness) that apply regardless of the task at hand.
+- `"task-category"` — opt the trait's `domains` into PRISM-style gating, so it is
+  suppressed when the agent's inferred task category isn't one of its domains.
+  Use only for true specialists whose host agent reliably works in that domain.
+- No `activation` (the default) — `domains` stay purely descriptive and the trait
+  is always composed in. A trait is only ever suppressed when it explicitly
+  declares a scope that the current task misses.
+
+Prefer the default. Reach for `task-category` gating only when a trait would
+actively mislead an agent working outside its domain — and never on a trait that
+a generalist role also composes.
+
 ## Skills
 
 Skills answer: **what procedure has worked before?**
