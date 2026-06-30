@@ -384,6 +384,20 @@ describe("Organization Primitives", () => {
   // ─── Task Invalid State Transitions ──────────────────────────────────────
 
   describe("Task Invalid State Transitions", () => {
+    it("should remove non-bounty claimed tasks from open work", () => {
+      engine.processCommand(conn1.entity!, "task create Single owner task | Desc");
+      const taskId = conn1.lastText().match(/#(\d+)/)?.[1];
+      conn1.clear();
+
+      engine.processCommand(conn2.entity!, `task claim ${taskId}`);
+
+      const task = db.getTask(Number(taskId));
+      expect(task?.status).toBe("claimed");
+      expect(
+        engine.taskManager?.list({ status: "open" }).some((t) => t.id === Number(taskId)),
+      ).toBe(false);
+    });
+
     it("should reject submit without claiming first", () => {
       engine.processCommand(conn1.entity!, "task create Unclaimed task | Desc");
       const taskId = conn1.lastText().match(/#(\d+)/)?.[1];
@@ -418,6 +432,20 @@ describe("Organization Primitives", () => {
       // Bob (non-creator) tries to approve his own submission
       engine.processCommand(conn2.entity!, `task approve ${taskId} Bob`);
       expect(conn2.lastText()).toContain("Cannot approve");
+    });
+
+    it("should notify the creator when a task is submitted", () => {
+      engine.processCommand(conn1.entity!, "task create Review me | Desc");
+      const taskId = conn1.lastText().match(/#(\d+)/)?.[1];
+      conn1.clear();
+
+      engine.processCommand(conn2.entity!, `task claim ${taskId}`);
+      engine.processCommand(conn2.entity!, `task submit ${taskId} Done`);
+
+      const notice = stripAnsi(conn1.lastText());
+      expect(notice).toContain("Bob submitted task");
+      expect(notice).toContain(`task approve ${taskId} Bob`);
+      expect(notice).toContain(`task reject ${taskId} Bob`);
     });
 
     it("should reject cancellation by non-creator", () => {

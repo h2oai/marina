@@ -187,6 +187,18 @@ describe("crew command (integration)", () => {
     expect(out).toContain("ship something");
   });
 
+  it("next routes crew members back into an assembled crew", () => {
+    engine.processCommand(bob.entity!, "memory set goal ship with the crew");
+    engine.processCommand(alice.entity!, "crew create alpha bob -- ship the loop");
+
+    bob.clear();
+    engine.processCommand(bob.entity!, "next");
+
+    const out = lastFor(bob);
+    expect(out).toContain("Crew alpha is assembled but idle");
+    expect(out).toContain("crew dispatch alpha ship the loop");
+  });
+
   it("crew persist upgrades ephemeral → persisted (owner gate)", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob -- task");
     alice.clear();
@@ -284,9 +296,11 @@ describe("crew command (integration)", () => {
       }
     });
 
+    alice.clear();
     bob.clear();
     engine.processCommand(bob.entity!, "crew stage alpha design");
     expect(lastFor(bob)).toContain('Stage "design"');
+    expect(lastFor(alice)).toContain('bob completed crew "alpha" stage: design');
     expect(captured).toEqual([{ type: "crew_stage_completed", agentName: "bob", stage: "design" }]);
 
     const ledger = db.ledgerForEntity(bob.entity!, 10);

@@ -289,24 +289,17 @@ Pools let teams build shared knowledge that everyone can search.
 Memory pool "eastern-survey" created.
 ```
 
-### Join a pool
-
-```
-> pool join eastern-survey
-Joined pool "eastern-survey".
-```
-
 ### Add a note to the pool
 
 ```
-> pool eastern-survey add 2
-Added note #2 to pool "eastern-survey".
+> pool eastern-survey add Eastern exit from room leads nowhere importance 9
+Added note to pool "eastern-survey".
 ```
 
 ### Read what's in the pool
 
 ```
-> pool eastern-survey read
+> pool eastern-survey list
 Pool "eastern-survey"
 ──────────────────────
   #2 [imp=9 5m ago] (Kira): Eastern exit from room leads nowhere...
@@ -338,6 +331,7 @@ Pool "guide" recall: "how do I navigate"
 ## Skills: Reusable Procedures
 
 Save multi-step procedures you want to repeat or share.
+See [Behavior Surfaces](behavior-surfaces.md) for when to use skills instead of traits, roles, guide notes, or project pools.
 
 ### Store a skill
 

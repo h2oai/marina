@@ -3289,6 +3289,269 @@ export class MarinaDB {
     return true;
   }
 
+  listCanvasIntents(options?: {
+    statuses?: CanvasIntentStatus[];
+    canvasName?: string;
+    limit?: number;
+    expireActiveMs?: number;
+    now?: number;
+  }): CanvasIntentSummary[] {
+    const now = options?.now ?? Date.now();
+    if (options?.expireActiveMs) {
+      this.expireCanvasIntentClaims(options.expireActiveMs, now);
+    }
+
+    const statuses = new Set(options?.statuses ?? ["pending", "active"]);
+    const limit = options?.limit ?? 100;
+    const rows = options?.canvasName
+      ? this.db
+          .query(
+            `SELECT n.*, c.name AS canvas_name
+             FROM canvas_nodes n
+             JOIN canvases c ON c.id = n.canvas_id
+             WHERE c.name = ?
+             ORDER BY n.created_at ASC`,
+          )
+          .all(options.canvasName)
+      : this.db
+          .query(
+            `SELECT n.*, c.name AS canvas_name
+             FROM canvas_nodes n
+             JOIN canvases c ON c.id = n.canvas_id
+             ORDER BY n.created_at ASC`,
+          )
+          .all();
+
+    const intents: CanvasIntentSummary[] = [];
+    for (const row of rows as (CanvasNodeRow & { canvas_name: string })[]) {
+      const intent = parseCanvasIntent(row.data);
+      if (!intent || !statuses.has(intent.status)) continue;
+      intents.push({
+        nodeId: row.id,
+        canvasId: row.canvas_id,
+        canvasName: row.canvas_name,
+        type: row.type,
+        creatorName: row.creator_name,
+        assetId: row.asset_id,
+        parentNodeId: row.parent_node_id,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        intent,
+      });
+      if (intents.length >= limit) break;
+    }
+    return intents;
+  }
+
+  expireCanvasIntentClaims(timeoutMs: number, now = Date.now()): number {
+    const rows = this.db
+      .query("SELECT * FROM canvas_nodes ORDER BY updated_at ASC")
+      .all() as CanvasNodeRow[];
+    let expired = 0;
+    for (const row of rows) {
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(row.data);
+      } catch {
+        continue;
+      }
+      const intent = readCanvasIntent(parsed);
+      if (intent?.status !== "active") continue;
+      const claimedAt = intent.claimedAt ?? row.updated_at;
+      if (now - claimedAt <= timeoutMs) continue;
+
+      parsed.intent = {
+        ...intent,
+        status: "pending",
+        claimedBy: undefined,
+        claimedAt: undefined,
+      };
+      if (this.updateNodeDataIfUnchanged(row, JSON.stringify(parsed), now)) expired++;
+    }
+    return expired;
+  }
+
+  claimCanvasIntent(
+    idOrPrefix: string,
+    claimantName: string,
+    now = Date.now(),
+  ): CanvasIntentClaimResult {
+    const node = this.resolveCanvasNode(idOrPrefix);
+    if (!node) return { ok: false, reason: "not_found" };
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(node.data);
+    } catch {
+      return { ok: false, reason: "no_intent" };
+    }
+
+    const intent = readCanvasIntent(parsed);
+    if (!intent) return { ok: false, reason: "no_intent" };
+    if (intent.status !== "pending") {
+      return { ok: false, reason: "not_pending", status: intent.status };
+    }
+
+    const claimed: CanvasIntentData = {
+      ...intent,
+      status: "active",
+      claimedBy: claimantName,
+      claimedAt: now,
+    };
+    parsed.intent = claimed;
+
+    if (!this.updateNodeDataIfUnchanged(node, JSON.stringify(parsed), now)) {
+      const latest = this.getNode(node.id);
+      const latestIntent = latest ? parseCanvasIntent(latest.data) : undefined;
+      return {
+        ok: false,
+        reason: latestIntent ? "not_pending" : "no_intent",
+        status: latestIntent?.status,
+      };
+    }
+
+    const updated = this.getNode(node.id) ?? node;
+    return { ok: true, node: updated, intent: claimed };
+  }
+
+  completeCanvasIntent(
+    idOrPrefix: string,
+    params: {
+      result: string;
+      resultType?: string;
+      resultData?: Record<string, unknown>;
+      completerName: string;
+      now?: number;
+    },
+  ): CanvasIntentCompleteResult {
+    const now = params.now ?? Date.now();
+    const node = this.resolveCanvasNode(idOrPrefix);
+    if (!node) return { ok: false, reason: "not_found" };
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(node.data);
+    } catch {
+      return { ok: false, reason: "no_intent" };
+    }
+
+    const intent = readCanvasIntent(parsed);
+    if (!intent) return { ok: false, reason: "no_intent" };
+    if (intent.status !== "active") {
+      return { ok: false, reason: "not_active", status: intent.status };
+    }
+
+    const resultNodeId = crypto.randomUUID();
+    const resultType = params.resultType ?? "text";
+    let ok = false;
+    try {
+      this.db.transaction(() => {
+        const baseResultData = params.resultData ?? { body: params.result };
+        const resultData = {
+          ...baseResultData,
+          author: params.completerName,
+          feedType: "intent_result",
+          sourceNodeId: node.id,
+          sourcePrompt: intent.prompt,
+        };
+        this.createNode({
+          id: resultNodeId,
+          canvasId: node.canvas_id,
+          type: resultType,
+          data: resultData,
+          creatorName: params.completerName,
+          parentNodeId: node.id,
+        });
+
+        parsed.intent = { ...intent, status: "done", result: params.result, resultNodeId };
+        ok = this.updateNodeDataIfUnchanged(node, JSON.stringify(parsed), now);
+        if (!ok) {
+          throw new Error("canvas_intent_conflict");
+        }
+      })();
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "canvas_intent_conflict") {
+        throw error;
+      }
+    }
+
+    if (!ok) {
+      const latest = this.getNode(node.id);
+      const latestIntent = latest ? parseCanvasIntent(latest.data) : undefined;
+      return {
+        ok: false,
+        reason: latestIntent ? "not_active" : "no_intent",
+        status: latestIntent?.status,
+      };
+    }
+
+    return {
+      ok: true,
+      node: this.getNode(node.id) ?? node,
+      intent: { ...intent, status: "done", result: params.result, resultNodeId },
+      resultNode: this.getNode(resultNodeId)!,
+    };
+  }
+
+  failCanvasIntent(idOrPrefix: string, reason: string, now = Date.now()): CanvasIntentFailResult {
+    const node = this.resolveCanvasNode(idOrPrefix);
+    if (!node) return { ok: false, reason: "not_found" };
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(node.data);
+    } catch {
+      return { ok: false, reason: "no_intent" };
+    }
+
+    const intent = readCanvasIntent(parsed);
+    if (!intent) return { ok: false, reason: "no_intent" };
+    if (intent.status !== "active") {
+      return { ok: false, reason: "not_active", status: intent.status };
+    }
+
+    const failed: CanvasIntentData = { ...intent, status: "failed", failReason: reason };
+    parsed.intent = failed;
+    if (!this.updateNodeDataIfUnchanged(node, JSON.stringify(parsed), now)) {
+      const latest = this.getNode(node.id);
+      const latestIntent = latest ? parseCanvasIntent(latest.data) : undefined;
+      return {
+        ok: false,
+        reason: latestIntent ? "not_active" : "no_intent",
+        status: latestIntent?.status,
+      };
+    }
+
+    return { ok: true, node: this.getNode(node.id) ?? node, intent: failed };
+  }
+
+  resolveCanvasNode(idOrPrefix: string): CanvasNodeRow | undefined {
+    const node = this.getNode(idOrPrefix);
+    if (node) return node;
+    if (idOrPrefix.length < 4) return undefined;
+    const escapedPrefix = idOrPrefix
+      .replaceAll("\\", "\\\\")
+      .replaceAll("%", "\\%")
+      .replaceAll("_", "\\_");
+    return (
+      (this.db
+        .query(
+          "SELECT * FROM canvas_nodes WHERE id LIKE ? ESCAPE '\\' ORDER BY created_at ASC LIMIT 1",
+        )
+        .get(`${escapedPrefix}%`) as CanvasNodeRow | null) ?? undefined
+    );
+  }
+
+  private updateNodeDataIfUnchanged(node: CanvasNodeRow, data: string, now: number): boolean {
+    const result = this.db.run(
+      "UPDATE canvas_nodes SET data = ?, updated_at = ? WHERE id = ? AND data = ?",
+      [data, now, node.id, node.data],
+    );
+    if ((result.changes ?? 0) === 0) return false;
+    this.db.run("UPDATE canvases SET updated_at = ? WHERE id = ?", [now, node.canvas_id]);
+    return true;
+  }
+
   getChildNodes(parentNodeId: string): CanvasNodeRow[] {
     return this.db
       .query("SELECT * FROM canvas_nodes WHERE parent_node_id = ? ORDER BY created_at ASC")
@@ -4396,7 +4659,7 @@ interface CanvasRow {
   updated_at: number;
 }
 
-interface CanvasNodeRow {
+export interface CanvasNodeRow {
   id: string;
   canvas_id: string;
   type: string;
@@ -4410,6 +4673,78 @@ interface CanvasNodeRow {
   parent_node_id: string | null;
   created_at: number;
   updated_at: number;
+}
+
+export type CanvasIntentStatus = "pending" | "active" | "done" | "failed";
+
+export interface CanvasIntentData {
+  prompt: string;
+  status: CanvasIntentStatus;
+  claimedBy?: string;
+  claimedAt?: number;
+  result?: string;
+  resultNodeId?: string;
+  failReason?: string;
+}
+
+export interface CanvasIntentSummary {
+  nodeId: string;
+  canvasId: string;
+  canvasName: string;
+  type: string;
+  creatorName: string;
+  assetId: string | null;
+  parentNodeId: string | null;
+  createdAt: number;
+  updatedAt: number;
+  intent: CanvasIntentData;
+}
+
+export type CanvasIntentClaimResult =
+  | { ok: true; node: CanvasNodeRow; intent: CanvasIntentData }
+  | {
+      ok: false;
+      reason: "not_found" | "no_intent" | "not_pending";
+      status?: CanvasIntentStatus;
+    };
+
+export type CanvasIntentCompleteResult =
+  | {
+      ok: true;
+      node: CanvasNodeRow;
+      resultNode: CanvasNodeRow;
+      intent: CanvasIntentData;
+    }
+  | {
+      ok: false;
+      reason: "not_found" | "no_intent" | "not_active";
+      status?: CanvasIntentStatus;
+    };
+
+export type CanvasIntentFailResult =
+  | { ok: true; node: CanvasNodeRow; intent: CanvasIntentData }
+  | {
+      ok: false;
+      reason: "not_found" | "no_intent" | "not_active";
+      status?: CanvasIntentStatus;
+    };
+
+export function parseCanvasIntent(data: string): CanvasIntentData | undefined {
+  try {
+    return readCanvasIntent(JSON.parse(data));
+  } catch {
+    return undefined;
+  }
+}
+
+function readCanvasIntent(value: unknown): CanvasIntentData | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const intent = (value as { intent?: unknown }).intent;
+  if (!intent || typeof intent !== "object") return undefined;
+  const raw = intent as Record<string, unknown>;
+  if (typeof raw.prompt !== "string" || !raw.prompt.trim()) return undefined;
+  if (!["pending", "active", "done", "failed"].includes(String(raw.status))) return undefined;
+  return raw as unknown as CanvasIntentData;
 }
 
 export interface CanvasEdgeRow {

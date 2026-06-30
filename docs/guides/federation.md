@@ -1,6 +1,6 @@
 # Federation Setup Guide
 
-> **Advanced feature.** Gateway federation links multiple Marina instances. Most deployments run a single instance and never need this — skip it unless you specifically intend to bridge separate instances. It requires a shared secret, open WebSocket ports between hosts, and rank 7+ (steward) on each instance.
+> **Advanced feature.** Gateway federation links multiple Marina instances. Most deployments run a single instance and never need this — skip it unless you specifically intend to bridge separate instances. It requires a shared secret, open WebSocket ports between hosts, and the `gateway.connect` safety gate on each instance.
 
 Connect two or more Marina instances so they can relay channel messages and direct tells across instance boundaries.
 
@@ -9,7 +9,7 @@ Connect two or more Marina instances so they can relay channel messages and dire
 - Two or more Marina instances running (`bun run start` on each)
 - `GATEWAY_SECRET` environment variable set to the **same value** on all instances
 - Network access between instances (WebSocket port open, default 3300)
-- Rank 7+ (steward) on both instances to run gateway commands
+- `gateway.connect` safety gate on both instances to run gateway commands
 
 ## Setup
 
@@ -111,7 +111,7 @@ Gateways and bridges are persisted to the database. On restart, the engine autom
 
 - **Always use `wss://` in production.** Terminate TLS with a reverse proxy (nginx, Caddy) in front of each instance.
 - **Set a strong `GATEWAY_SECRET`.** This is a pre-shared key -- all instances in the federation must share it. Without it, anyone who can reach the WebSocket port can impersonate a gateway.
-- **Gateway commands require rank 7+** (steward). Only the creator or a sovereign (rank 9) can remove a gateway.
+- **Gateway commands require the `gateway.connect` safety gate.** Only the creator or an operator with the relevant administrative authority can remove a gateway.
 - **Rate limiting.** Channel relay is throttled to 1 message per channel per second. Tell relay has the same 1/sec limit. This prevents message floods across the federation.
 - **Gateway loop prevention.** Messages from other `Gateway_` entities are never relayed, preventing cross-gateway amplification loops.
 

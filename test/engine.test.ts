@@ -226,6 +226,45 @@ describe("Engine", () => {
     });
   });
 
+  describe("actionable event notices", () => {
+    it("routes pending canvas intents to running agents as message perceptions", () => {
+      const alice = engine.spawnEntity("c1", "Alice")!;
+      const bobConn = new MockConnection("c2");
+      engine.addConnection(bobConn);
+      const bob = engine.spawnEntity("c2", "Bob")!;
+      bobConn.clear();
+
+      (engine.agentRuntime as unknown as { list: () => unknown[] }).list = () => [
+        {
+          name: "Bob",
+          entityId: bob.id,
+          state: "idle",
+          model: "test",
+          role: "",
+          focus: null,
+          goal: null,
+          uptime: 0,
+          toolCalls: 0,
+          errors: 0,
+        },
+      ];
+
+      engine.logEvent({
+        type: "canvas_intent",
+        entity: alice.id,
+        canvasId: "canvas-1",
+        nodeId: "node-intent-1",
+        prompt: "Inspect this dataset.",
+        status: "pending",
+        timestamp: Date.now(),
+      });
+
+      const text = stripAnsi(bobConn.lastText());
+      expect(text).toContain("Pending canvas intent");
+      expect(text).toContain("canvas intent claim node-int");
+    });
+  });
+
   describe("disconnect", () => {
     it("unbinds connection immediately and defers entity removal for reconnect grace", () => {
       const entity = engine.spawnEntity("c1", "TestAgent")!;

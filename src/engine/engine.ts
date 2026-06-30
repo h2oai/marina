@@ -1669,6 +1669,120 @@ export class Engine {
         // event log. Cache invalidation happens on the next read regardless.
       }
     }
+    this.notifyActionableEvent(event);
+  }
+
+  private notifyActionableEvent(event: EngineEvent): void {
+    if (event.type === "canvas_intent" && event.status === "pending") {
+      const prompt = event.prompt.length > 120 ? `${event.prompt.slice(0, 117)}...` : event.prompt;
+      const message = `Pending canvas intent: "${prompt}" -> canvas intent claim ${event.nodeId.slice(0, 8)} or next`;
+      for (const agent of this.agentRuntime.list()) {
+        if (!agent.entityId || !["connected", "autonomous", "idle"].includes(agent.state)) {
+          continue;
+        }
+        if (agent.entityId === event.entity || agent.name === event.entity) continue;
+        this.sendToEntity(agent.entityId as EntityId, message, "canvas_intent", {
+          canvasId: event.canvasId,
+          nodeId: event.nodeId,
+        });
+      }
+      return;
+    }
+
+    if (event.type === "canvas_intent" && event.status !== "pending" && this.db) {
+      const node = this.db.getNode(event.nodeId);
+      const requester = node?.creator_name ? this.findEntityGlobal(node.creator_name) : undefined;
+      if (requester && requester.id !== event.entity) {
+        const actor = this.entities.get(event.entity)?.name ?? String(event.entity);
+        const prompt = event.prompt.length > 100 ? `${event.prompt.slice(0, 97)}...` : event.prompt;
+        const message =
+          event.status === "active"
+            ? `${actor} claimed your canvas intent ${event.nodeId.slice(0, 8)}: "${prompt}"`
+            : event.status === "done"
+              ? `${actor} completed your canvas intent ${event.nodeId.slice(0, 8)}.`
+              : `${actor} marked your canvas intent ${event.nodeId.slice(0, 8)} failed.`;
+        this.sendToEntity(requester.id, message, "canvas_intent", {
+          canvasId: event.canvasId,
+          nodeId: event.nodeId,
+          status: event.status,
+        });
+      }
+      return;
+    }
+
+    if (event.type === "task_claimed" && this.taskManager) {
+      const task = this.taskManager.get(event.taskId);
+      if (!task || task.creatorId === event.entity) return;
+      const claimant = this.entities.get(event.entity)?.name ?? "Someone";
+      this.sendToEntity(
+        task.creatorId as EntityId,
+        `${claimant} claimed task #${event.taskId}: ${task.title}`,
+        "task",
+        { taskId: event.taskId },
+      );
+      return;
+    }
+
+    if (
+      event.type === "crew_created" ||
+      event.type === "crew_member_joined" ||
+      event.type === "crew_state_changed" ||
+      event.type === "crew_completed" ||
+      event.type === "crew_dissolved" ||
+      event.type === "crew_member_stalled" ||
+      event.type === "crew_stage_completed" ||
+      event.type === "crew_artifact_deposited"
+    ) {
+      this.notifyCrewEvent(event);
+    }
+  }
+
+  private notifyCrewEvent(
+    event: Extract<
+      EngineEvent,
+      {
+        type:
+          | "crew_created"
+          | "crew_member_joined"
+          | "crew_state_changed"
+          | "crew_completed"
+          | "crew_dissolved"
+          | "crew_member_stalled"
+          | "crew_stage_completed"
+          | "crew_artifact_deposited";
+      }
+    >,
+  ): void {
+    if (!this.crewManager) return;
+    const crew = this.crewManager.get(event.crew);
+    if (!crew) return;
+
+    const message =
+      event.type === "crew_created"
+        ? `Crew "${crew.name}" created for: ${crew.goal || "(no goal)"}`
+        : event.type === "crew_member_joined"
+          ? `${event.agentName} joined crew "${crew.name}" as ${event.role}.`
+          : event.type === "crew_state_changed"
+            ? `Crew "${crew.name}" state changed: ${event.from} -> ${event.to}.`
+            : event.type === "crew_completed"
+              ? `Crew "${crew.name}" completed.${event.resultNoteId ? ` Note ${event.resultNoteId}.` : ""}`
+              : event.type === "crew_dissolved"
+                ? `Crew "${crew.name}" dissolved: ${event.reason}.`
+                : event.type === "crew_member_stalled"
+                  ? `${event.agentName} was flagged stalled in crew "${crew.name}": ${event.reason}.`
+                  : event.type === "crew_stage_completed"
+                    ? `${event.agentName} completed crew "${crew.name}" stage: ${event.stage}.`
+                    : `${event.agentName} deposited ${event.kind} artifact for crew "${crew.name}": ${event.artifactRef}.`;
+
+    const targets = new Set<EntityId>();
+    for (const member of crew.members) {
+      const entity = this.findEntityGlobal(member.agentName);
+      if (entity) targets.add(entity.id);
+    }
+    targets.add(crew.ownerId);
+    for (const target of targets) {
+      this.sendToEntity(target, message, "crew", { crewId: crew.id, eventType: event.type });
+    }
   }
 
   // ─── Persistence ────────────────────────────────────────────────────────

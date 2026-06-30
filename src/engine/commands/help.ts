@@ -133,6 +133,10 @@ function renderCommandList(
   }
 
   lines.push("", dim('Type "help <command>" for details.'));
+  lines.push(dim('Use "next" for one concrete action, "brief social" for live peers.'));
+  lines.push(
+    dim('Use "pool guide recall behavior surfaces" when deciding role vs trait vs skill.'),
+  );
   if (showAllHint) {
     lines.push(dim('Type "help all" for all commands including advanced.'));
   }
