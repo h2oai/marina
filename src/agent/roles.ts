@@ -357,7 +357,7 @@ function traitTaskScope(caps: TraitCapabilities): string[] {
  *     opted into via `task-category` activation) is always kept.
  *   - Otherwise the trait is kept only when `taskCategory` is in its scope.
  */
-function isTraitActiveForCategory(caps: TraitCapabilities, taskCategory: string): boolean {
+export function isTraitActiveForCategory(caps: TraitCapabilities, taskCategory: string): boolean {
   const activation = new Set((caps.activation ?? []).map((a) => a.toLowerCase()));
   if (activation.has(ACTIVATION_ALWAYS)) return true;
   const scope = traitTaskScope(caps);

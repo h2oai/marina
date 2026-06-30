@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { roleCommand } from "../src/engine/commands/role";
 import { systemPromptCommand } from "../src/engine/commands/system-prompt";
+import { traitCommand } from "../src/engine/commands/trait";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
@@ -354,6 +355,91 @@ describe("Trait/role edit history (audit trail)", () => {
       expect(out).toContain("Suppressed traits: writer");
       expect(out).toContain("Inferred task category: code");
       expect(out).toContain("Role history: 1 change(s) available");
+    });
+  });
+
+  describe("role/trait diff (read-only)", () => {
+    it("role diff reports added/removed traits, focus, guidelines, and tone", () => {
+      db.saveRole({
+        name: "before",
+        traits: ["curious", "steady"],
+        focus: ["explore"],
+        guidelines: ["keep notes"],
+        tone: "calm",
+        createdBy: "ada",
+      });
+      db.saveRole({
+        name: "after",
+        traits: ["curious", "bold"],
+        focus: ["explore", "ship"],
+        guidelines: ["keep notes"],
+        tone: "urgent",
+        createdBy: "ada",
+      });
+      const cmd = roleCommand({ db });
+      const { ctx, get } = rank3Ctx();
+      cmd.handler(ctx, inp(["diff", "before", "after"]));
+      const out = stripAnsi(get());
+      expect(out).toContain("Role diff: before → after");
+      expect(out).toContain("+bold");
+      expect(out).toContain("-steady");
+      expect(out).toContain("+ship");
+      expect(out).toContain("calm");
+      expect(out).toContain("urgent");
+      // unchanged guidelines should not produce a line
+      expect(out).not.toContain("Guidelines:");
+    });
+
+    it("role diff reports no differences for identical roles", () => {
+      db.saveRole({ name: "x", traits: ["curious"], createdBy: "ada" });
+      db.saveRole({ name: "y", traits: ["curious"], createdBy: "ada" });
+      const cmd = roleCommand({ db });
+      const { ctx, get } = rank3Ctx();
+      cmd.handler(ctx, inp(["diff", "x", "y"]));
+      expect(stripAnsi(get())).toContain("No differences.");
+    });
+
+    it("role diff reports a missing role", () => {
+      db.saveRole({ name: "x", traits: ["curious"], createdBy: "ada" });
+      const cmd = roleCommand({ db });
+      const { ctx, get } = rank3Ctx();
+      cmd.handler(ctx, inp(["diff", "x", "ghost"]));
+      expect(stripAnsi(get())).toContain('Role "ghost" not found.');
+    });
+
+    it("trait diff reports prompt and capability-field changes", () => {
+      db.saveTrait({
+        name: "t-before",
+        category: "cognitive",
+        prompt: "Ask why.",
+        capabilities: { domains: ["research"], behaviors: ["retrieve-first"] },
+        createdBy: "ada",
+      });
+      db.saveTrait({
+        name: "t-after",
+        category: "cognitive",
+        prompt: "Ask why, then verify.",
+        capabilities: { domains: ["research", "math"], behaviors: ["cite-sources"] },
+        createdBy: "ada",
+      });
+      const cmd = traitCommand({ db });
+      const { ctx, get } = rank3Ctx();
+      cmd.handler(ctx, inp(["diff", "t-before", "t-after"]));
+      const out = stripAnsi(get());
+      expect(out).toContain("Trait diff: t-before → t-after");
+      expect(out).toContain("Ask why."); // old prompt
+      expect(out).toContain("then verify"); // new prompt
+      expect(out).toContain("+math"); // domain added
+      expect(out).toContain("+cite-sources"); // behavior added
+      expect(out).toContain("-retrieve-first"); // behavior removed
+    });
+
+    it("trait diff reports a missing trait", () => {
+      db.saveTrait({ name: "t1", category: "cognitive", prompt: "Ask.", createdBy: "ada" });
+      const cmd = traitCommand({ db });
+      const { ctx, get } = rank3Ctx();
+      cmd.handler(ctx, inp(["diff", "t1", "ghost"]));
+      expect(stripAnsi(get())).toContain('Trait "ghost" not found.');
     });
   });
 });
