@@ -254,8 +254,24 @@ Orchestration patterns: `nsed`, `chorus`, `foundry`, `swarm`, `pipeline`, `debat
 > pool shared-knowledge add Finding text importance 7
 > pool shared-knowledge list         Read recent entries
 > pool shared-knowledge recall query Search the pool and update recall telemetry
-> pool shared-knowledge audit        Check pool notes for duplicates, length, and stale command refs
+> pool shared-knowledge audit        Check notes for duplicates, length, stale commands, unsupported claims, and stale notes
 > pool guide recall how do I move    Search the built-in guide pool
+```
+
+`pool <name> audit` reports five hygiene findings: duplicate notes, overlong
+notes, stale command references, unsupported empirical claims (a claim with no
+citation), and stale notes (untouched for ~90 days).
+
+## The Guide
+
+The platform `guide` pool holds the orientation knowledge every world seeds. It
+has its own read-only command so the most-read pool is easy to reach:
+
+```
+> guide                              Overview (note count + hints)
+> guide how do I move                Recall guide notes about a topic
+> guide list                         Browse all guide notes
+> guide audit                        Lint the guide pool (alias: guide lint)
 ```
 
 ## Guided Objectives
