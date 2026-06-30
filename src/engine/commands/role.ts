@@ -1,6 +1,7 @@
 import {
   composeRolePrompt,
   inferTaskCategory,
+  isTraitActiveForCategory,
   type ResolvedRole,
   resolveRole,
 } from "../../agent/roles";
@@ -24,8 +25,12 @@ function isTraitSuppressed(
   index: number,
   category: string | undefined,
 ): boolean {
-  const applicable = role.traitCapabilities[index]?.applicableTasks;
-  return !!(category && applicable && applicable.length > 0 && !applicable.includes(category));
+  if (!category) return false;
+  const caps = role.traitCapabilities[index];
+  if (!caps) return false;
+  // Mirror the real gating in filterTraitsByTask so the preview matches reality
+  // (activation:[always], task-category domain gating, applicableTasks).
+  return !isTraitActiveForCategory(caps, category);
 }
 
 export function getRoleInspectionMetadata(
@@ -75,6 +80,60 @@ export function renderRoleInspectionMetadata(meta: RoleInspectionMetadata): stri
   ];
 }
 
+/** Items in `b` not in `a` (added) and items in `a` not in `b` (removed). */
+export function listDiff(a: string[], b: string[]): { added: string[]; removed: string[] } {
+  const aSet = new Set(a);
+  const bSet = new Set(b);
+  return {
+    added: b.filter((x) => !aSet.has(x)),
+    removed: a.filter((x) => !bSet.has(x)),
+  };
+}
+
+export function renderListDiffLine(label: string, a: string[], b: string[]): string | null {
+  const { added, removed } = listDiff(a, b);
+  if (added.length === 0 && removed.length === 0) return null;
+  const parts: string[] = [];
+  if (added.length > 0) parts.push(`+${added.join(", +")}`);
+  if (removed.length > 0) parts.push(`-${removed.join(", -")}`);
+  return `${bold(`${label}:`)} ${parts.join("  ")}`;
+}
+
+export function renderRoleDiff(a: RoleRow, b: RoleRow): string {
+  const lines = [header(`Role diff: ${a.name} → ${b.name}`), separator()];
+
+  if (a.description !== b.description) {
+    lines.push(
+      `${bold("Description:")}`,
+      `  - ${a.description || dim("(none)")}`,
+      `  + ${b.description || dim("(none)")}`,
+    );
+  }
+  const traitLine = renderListDiffLine("Traits", JSON.parse(a.traits), JSON.parse(b.traits));
+  if (traitLine) lines.push(traitLine);
+  const focusLine = renderListDiffLine("Focus", JSON.parse(a.focus), JSON.parse(b.focus));
+  if (focusLine) lines.push(focusLine);
+  const guideLine = renderListDiffLine(
+    "Guidelines",
+    JSON.parse(a.guidelines),
+    JSON.parse(b.guidelines),
+  );
+  if (guideLine) lines.push(guideLine);
+  if (a.tone !== b.tone) {
+    lines.push(
+      `${bold("Tone:")}`,
+      `  - ${a.tone || dim("(none)")}`,
+      `  + ${b.tone || dim("(none)")}`,
+    );
+  }
+
+  // Only the header + separator means no structural differences.
+  if (lines.length === 2) {
+    lines.push(dim("No differences."));
+  }
+  return lines.join("\n");
+}
+
 export function roleCommand(deps: {
   db?: MarinaDB;
   getEntity?: (id: EntityId) => Entity | undefined;
@@ -85,7 +144,7 @@ export function roleCommand(deps: {
     name: "role",
     aliases: [],
     minRank: 0,
-    help: "Manage composable agent roles.\nUsage: role list | role view <name> [goal <text>] | role lint <name> | role history <name> | role create <name> [traits <t1,t2,...>] [guidelines <g1|g2|...>] [focus <f1,f2,...>] [tone <tone>] | role edit <name> ... | role reload <name> | role delete <name>\n\nRoles are compositions of traits plus guidelines, focus areas, and tone.\n`role view <name> goal <text>` previews the PRISM-gated prompt an agent with that goal actually receives. `role lint <name>` reports pragmatic prompt-shaping warnings without changing the role. `role history <name>` shows the audited edit trail. `role reload <name>` propagates the current definition into running agents bound to it.",
+    help: "Manage composable agent roles.\nUsage: role list | role view <name> [goal <text>] | role lint <name> | role diff <a> <b> | role history <name> | role create <name> [traits <t1,t2,...>] [guidelines <g1|g2|...>] [focus <f1,f2,...>] [tone <tone>] | role edit <name> ... | role reload <name> | role delete <name>\n\nRoles are compositions of traits plus guidelines, focus areas, and tone.\n`role view <name> goal <text>` previews the PRISM-gated prompt an agent with that goal actually receives. `role lint <name>` reports pragmatic prompt-shaping warnings without changing the role. `role history <name>` shows the audited edit trail. `role reload <name>` propagates the current definition into running agents bound to it.",
     handler: async (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, "Roles require database support.");
@@ -208,6 +267,27 @@ export function roleCommand(deps: {
           return;
         }
 
+        case "diff": {
+          const a = tokens[1];
+          const b = tokens[2];
+          if (!a || !b) {
+            ctx.send(input.entity, "Usage: role diff <a> <b>");
+            return;
+          }
+          const roleA = db.getRole(a);
+          const roleB = db.getRole(b);
+          if (!roleA) {
+            ctx.send(input.entity, `Role "${a}" not found.`);
+            return;
+          }
+          if (!roleB) {
+            ctx.send(input.entity, `Role "${b}" not found.`);
+            return;
+          }
+          ctx.send(input.entity, renderRoleDiff(roleA, roleB));
+          return;
+        }
+
         case "reload": {
           // Propagate an edited role into agents already running it — reuses the
           // agent reconfigure path, which re-derives the system prompt from the
@@ -317,7 +397,7 @@ export function roleCommand(deps: {
         default:
           ctx.send(
             input.entity,
-            "Usage: role list | role view <name> [goal <text>] | role lint <name> | role history <name> | role create <name> ... | role edit <name> ... | role reload <name> | role delete <name>",
+            "Usage: role list | role view <name> [goal <text>] | role lint <name> | role diff <a> <b> | role history <name> | role create <name> ... | role edit <name> ... | role reload <name> | role delete <name>",
           );
       }
     },
