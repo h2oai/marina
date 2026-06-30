@@ -14,6 +14,7 @@ import type {
   ConnectorEntry,
   DynamicCommandEntry,
   EntityDetail,
+  EntityWorkResponse,
   EnvVar,
   ExperimentEntry,
   GroupDetail,
@@ -81,6 +82,15 @@ export function useEntityDetail(name: string | null) {
     queryKey: ["entity", name],
     queryFn: () => fetchApi<EntityDetail>(`/api/entities/${encodeURIComponent(name!)}`),
     enabled: !!name,
+  });
+}
+
+export function useEntityWork(name: string | null) {
+  return useQuery({
+    queryKey: ["entityWork", name],
+    queryFn: () => fetchApi<EntityWorkResponse>(`/api/entities/${encodeURIComponent(name!)}/work`),
+    enabled: !!name,
+    staleTime: 10_000,
   });
 }
 

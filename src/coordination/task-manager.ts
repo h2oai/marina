@@ -140,6 +140,9 @@ export class TaskManager {
     if (existing) return null;
 
     this.db.createTaskClaim(taskId, entityId, entityName);
+    if (task.validationMode !== "bounty") {
+      this.db.updateTaskStatus(taskId, "claimed");
+    }
     return this.getClaim(taskId, entityId);
   }
 
@@ -190,6 +193,9 @@ export class TaskManager {
     if (claim?.status !== "submitted") return false;
 
     this.db.updateTaskClaimStatus(taskId, claimantId, "rejected");
+    if (task.validationMode !== "bounty") {
+      this.db.updateTaskStatus(taskId, "open");
+    }
     return true;
   }
 

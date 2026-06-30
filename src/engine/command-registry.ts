@@ -83,6 +83,7 @@ import { videoCommand } from "./commands/video";
 import { watchCommand } from "./commands/watch";
 import { webCommand } from "./commands/web";
 import { whoCommand } from "./commands/who";
+import { workCommand } from "./commands/work";
 import type { Engine } from "./engine";
 import { computeReadiness } from "./readiness";
 
@@ -382,6 +383,7 @@ export function registerBuiltinCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
       logEvent: (event) => engine.logEvent(event),
+      getCommandNames: () => engine.commands.allBuiltins().map((cmd) => cmd.name),
     }),
   );
   engine.commands.registerBuiltin(
@@ -447,6 +449,17 @@ export function registerBuiltinCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
       taskManager: engine.taskManager,
+      crewManager: engine.crewManager,
+      quests: engine.world?.quests ?? [],
+      startRoom: engine.config.startRoom,
+    }),
+  );
+  engine.commands.registerBuiltin(
+    workCommand({
+      getEntity: (id) => engine.entities.get(id as EntityId),
+      db: engine.db,
+      taskManager: engine.taskManager,
+      crewManager: engine.crewManager,
       quests: engine.world?.quests ?? [],
       startRoom: engine.config.startRoom,
     }),
@@ -507,6 +520,7 @@ export function registerBuiltinCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
       logEvent: (event) => engine.logEvent(event),
+      getCommandNames: () => engine.commands.allBuiltins().map((cmd) => cmd.name),
     }),
   );
   engine.commands.registerBuiltin(

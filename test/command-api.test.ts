@@ -152,4 +152,38 @@ describe("Command API", () => {
     expect(body.text).toContain("research");
     expect(body.text).toContain("predict");
   });
+
+  it("serves the shared work inbox for an authenticated entity", async () => {
+    const [loginUrl, loginMethod, loginReq] = makeRequest("/api/command", {
+      name: "ApiWorker",
+      command: "memory set goal respond to requests",
+    });
+    const loginResp = await handleDashboardApi(loginReq, loginUrl, loginMethod, engine, db);
+    const loginBody = (await loginResp!.json()) as { token: string };
+
+    db.createCanvas({ id: "canvas-work-api", name: "requests", creatorName: "Human" });
+    db.createNode({
+      id: "node-intent-api",
+      canvasId: "canvas-work-api",
+      type: "text",
+      creatorName: "Human",
+      data: {
+        intent: { status: "pending", prompt: "Plan the next release." },
+      },
+    });
+
+    const url = new URL("http://localhost:3300/api/entities/ApiWorker/work");
+    const req = new Request(url.toString(), {
+      method: "GET",
+      headers: { Authorization: `Bearer ${loginBody.token}` },
+    });
+    const resp = await handleDashboardApi(req, url, "GET", engine, db);
+
+    expect(resp?.status).toBe(200);
+    const body = (await resp!.json()) as { items: { kind: string; action: string }[] };
+    expect(body.items.some((item) => item.kind === "canvas_intent")).toBe(true);
+    expect(body.items.some((item) => item.action.includes("canvas intent claim node-int"))).toBe(
+      true,
+    );
+  });
 });

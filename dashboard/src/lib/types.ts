@@ -526,6 +526,36 @@ export interface BriefData {
   topTask: { id: number; title: string; progress: number } | null;
 }
 
+export type WorkItemKind =
+  | "quest_step"
+  | "claimed_task"
+  | "review_task"
+  | "crew_active"
+  | "crew_idle"
+  | "canvas_intent"
+  | "goal_missing"
+  | "bounty"
+  | "open_task"
+  | "social"
+  | "channel_join"
+  | "memory_seed"
+  | "explore"
+  | "canvas_contribute"
+  | "default";
+
+export interface WorkItem {
+  kind: WorkItemKind;
+  title: string;
+  detail?: string;
+  action: string;
+  priority: number;
+  ref?: string;
+}
+
+export interface EntityWorkResponse {
+  items: WorkItem[];
+}
+
 // ─── Room Templates, Macros, Experiments, Markets, Benchmarks ──────────────
 
 export interface RoomTemplateEntry {

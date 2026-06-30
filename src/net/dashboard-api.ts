@@ -1,5 +1,6 @@
 import { join, resolve } from "node:path";
 import { getStanding } from "../agent/standing";
+import { listWorkItems } from "../coordination/work-loop";
 import { testKeyConnectivity } from "../engine/commands/key";
 import { allRecipeNames, getRecipe } from "../engine/commands/usecase";
 import type { Engine } from "../engine/engine";
@@ -552,18 +553,10 @@ export async function handleDashboardApi(
     const goalEntry = db.getCoreMemory(entityName, "goal");
     const focusEntry = db.getCoreMemory(entityName, "focus");
 
-    // Count pending intents across canvases
-    let pendingIntents = 0;
-    for (const canvas of db.listCanvases({ limit: 50 })) {
-      for (const node of db.getNodesByCanvas(canvas.id)) {
-        try {
-          const parsed = JSON.parse(node.data);
-          if (parsed.intent?.status === "pending") pendingIntents++;
-        } catch {
-          /* skip unparseable data */
-        }
-      }
-    }
+    const pendingIntents = db.listCanvasIntents({
+      statuses: ["pending"],
+      expireActiveMs: 5 * 60 * 1000,
+    }).length;
 
     return json({
       onlineCount,
@@ -582,6 +575,24 @@ export async function handleDashboardApi(
             progress: myClaims[0].progress,
           }
         : null,
+    });
+  }
+
+  const workMatch = url.pathname.match(/^\/api\/entities\/([^/]+)\/work$/);
+  if (workMatch && method === "GET" && db) {
+    const entityName = decodeURIComponent(workMatch[1]!);
+    const entity = engine.findEntityGlobal(entityName);
+    if (!entity) return json({ error: "Entity not found" }, 404);
+
+    return json({
+      items: listWorkItems(entity, {
+        db,
+        taskManager: engine.taskManager,
+        crewManager: engine.crewManager,
+        quests: engine.world?.quests ?? [],
+        startRoom: engine.config.startRoom,
+        peers: engine.entities.inRoom(entity.room),
+      }),
     });
   }
 

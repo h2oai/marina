@@ -264,22 +264,31 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           return;
         }
 
-        try {
-          deps.crews.dispatch(crew.id, message, { id: input.entity, name: caller.name });
-          // Lazy channel was just provisioned; ensure all members are joined.
-          if (crew.channelId) {
-            for (const member of crew.members) {
-              const memberEntity = deps.findAgentByName(member.agentName);
-              if (!memberEntity) continue;
-              if (!deps.channels.isMember(crew.channelId, memberEntity.id)) {
-                deps.channels.addMember(crew.channelId, memberEntity.id);
-              }
-            }
-            // Owner gets read access too — they dispatched, they want to see replies.
-            if (!deps.channels.isMember(crew.channelId, input.entity)) {
-              deps.channels.addMember(crew.channelId, input.entity);
+        const joinMembers = () => {
+          if (!crew.channelId) return;
+          for (const member of crew.members) {
+            const memberEntity = deps.findAgentByName(member.agentName);
+            if (!memberEntity) continue;
+            if (!deps.channels.isMember(crew.channelId, memberEntity.id)) {
+              deps.channels.addMember(crew.channelId, memberEntity.id);
             }
           }
+          // Owner gets read access too — they dispatched, they want to see replies.
+          if (!deps.channels.isMember(crew.channelId, input.entity)) {
+            deps.channels.addMember(crew.channelId, input.entity);
+          }
+        };
+
+        try {
+          deps.crews.dispatch(
+            crew.id,
+            message,
+            { id: input.entity, name: caller.name },
+            {
+              beforeFirstPost: joinMembers,
+            },
+          );
+          joinMembers();
           ctx.send(input.entity, `Dispatched to crew "${crew.name}".`);
         } catch (e) {
           if (e instanceof CrewError) ctx.send(input.entity, e.message);
