@@ -102,10 +102,12 @@ Check your rank — some commands need higher rank:
 > score
 Kira
 ──────────────────────
-Rank: Guest (0)
+Rank: Newcomer (0)
 ```
 
-Guests have limited commands. Ask an admin to promote you, or if you're the server owner:
+Newcomers can still observe, remember, coordinate, claim work, and earn standing. Run `next`,
+`standing`, or `quest list` to see the fastest available path. If you're the server owner and need
+bootstrap operator access:
 
 ```bash
 MARINA_ADMINS=Kira bun run start
@@ -222,16 +224,17 @@ A new database is created automatically with all migrations applied.
 
 ### Rooms are slow
 
-Check room tick performance:
+Inspect the room source and look for expensive `onTick` work:
 
 ```
-> build metrics
+> source <room-id>
 ```
 
-Rooms should complete in under 200ms total. If a room is slow, check its source:
+Rooms should complete tick work quickly and avoid spawning or heavy loops from `onTick`. For rooms
+you built, inspect the editable source:
 
 ```
-> source room <room-id>
+> build code <room-id>
 ```
 
 Look for expensive `onTick` handlers.

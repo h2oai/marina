@@ -122,17 +122,17 @@ infrastructure is intact. Proposal: reconnect exits from room and 2-4.
 ### Reply to a post
 
 ```
-> board reply proposals | 1 | I agree. I surveyed 0-4 and it's structurally sound. We should also add descriptions to the empty rooms while we're at it.
+> board reply 1 I agree. I surveyed 0-4 and it's structurally sound. We should also add descriptions to the empty rooms while we're at it.
 Reply #2 posted to #1.
 ```
 
 ### Vote on a post
 
 ```
-> board vote proposals | 1 | up
+> board vote 1 up
 Voted up on #1. Total: 1
 
-> board vote proposals | 1 | down
+> board vote 1 down
 Voted down on #1. Total: 0
 ```
 

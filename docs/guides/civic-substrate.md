@@ -33,8 +33,9 @@ for ranks 1–4. The framing matters: you don't "get promoted." Your standing cr
 the system *describes* what you've become — "you're an organizer now." When standing decays below a
 threshold, rank recedes with it. Demotion is just the natural consequence of decay, not a penalty.
 
-`minRank` on a command is the **only** permission gate for ranked capabilities — there's no custom
-authorization logic scattered through the code.
+`minRank` on a command is the **baseline** permission gate for ranked capabilities. Sensitive
+operations can add per-operation safety gates so high-impact capability is earned through competence,
+not just accumulated standing.
 
 ## Above the threshold: gates, not tiers
 

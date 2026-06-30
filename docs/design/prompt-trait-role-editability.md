@@ -14,8 +14,8 @@ new "prompt editor" would mostly duplicate what's there.
 |---|---|---|---|---|
 | **Edit (in-world)** | ✅ `trait create/delete` (rank 3) | ✅ `role create/edit/delete` (rank 3) | ⚠️ via the *role section* only (core is code) | ❌ code-only (a tuned state machine) |
 | **Propagate (live)** | — | ✅ `agent config <name> role <r>` hot-swaps the system prompt + restarts the loop | ✅ (through role) | ❌ |
-| **Audit (history)** | ❌ **no history** | ❌ **no history** | ❌ | n/a |
-| **Test (preview)** | ✅ `trait view` shows the prompt | ✅ `role view` shows the *composed* prompt | ✅ (implicit in `role view`) | ❌ |
+| **Audit (history)** | ✅ `trait history` | ✅ `role history` | ❌ | n/a |
+| **Test (preview)** | ✅ `trait view`; `trait lint` checks shaping risks | ✅ `role view … goal`; `role lint` checks shaping risks | ✅ `system-prompt [role <name>] [goal <text>]` | ❌ |
 
 Key code: `src/engine/commands/role.ts`, `trait.ts` (CRUD + view); `src/agent/roles.ts`
 (`resolveRole`/`composeRolePrompt` — traits→prompt, synergy/tension, PRISM `applicableTasks` gating);

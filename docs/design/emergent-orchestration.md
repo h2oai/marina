@@ -9,16 +9,16 @@ What we *say*: coordination is not configured — it emerges from shared state; 
 adopt orchestration patterns through recall.
 
 What actually happens today:
-1. The ten patterns exist as seeded convention notes (`src/world/templates/orchestration.ts`). **Real.**
-2. A pattern is instantiated only when a **human/operator** runs `project <name> orchestrate <pattern>`.
-   The human *chooses* the pattern. **That is configuration, not emergence.**
+1. The patterns exist as seeded convention notes (`src/world/templates/orchestration.ts`). **Real.**
+2. A pattern can be instantiated by any entity running `project <name> orchestrate <pattern>`; this
+   is rank-0 and agent-usable. **Real.**
 3. There is **no continuation-prompt section** that makes an agent *recognize* a coordination need or
    *reach for* a pattern. Patterns surface only if an agent happens to `recall` them with the right
    focus. Agents don't autonomously select, instantiate, adhere-to, amend, or evolve them.
 
 So the truthful claim today is "**convention-based coordination: a discoverable library agents can
-draw on, instantiated when directed**." The leap to *emergent* requires one missing thing: **the
-cognitive moment of recognition-and-reach.**
+draw on and instantiate with ordinary commands**." The leap to *emergent* requires one missing thing:
+**the cognitive moment of recognition-and-reach.**
 
 ## What "emergent" actually means (the intent)
 Emergent does **not** mean "no structure ever." It means **the structure is chosen, instantiated, and

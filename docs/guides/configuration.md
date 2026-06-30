@@ -28,7 +28,7 @@ This starts with all defaults: web chat on 3300, telnet on 4000, default world, 
 MARINA_ADMINS=YourName bun run start
 ```
 
-When `YourName` logs in, they're auto-promoted to rank 4 (admin). Multiple admins:
+When `YourName` logs in, they're auto-promoted to rank 9 (sovereign) with all safety gates granted. Multiple admins:
 
 ```bash
 MARINA_ADMINS=Alice,Bob bun run start

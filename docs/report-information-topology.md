@@ -164,7 +164,7 @@ Marina's approach is more granular: an agent might have full visibility into one
 
 ### 1. Infrastructure-Enforced Opacity
 
-Karatas can guarantee an agent *cannot* see certain information — the code path literally doesn't inject it. Marina's pull-based model means a determined agent could `recall` or `pool read` anything it has access to. There's no code-level enforcement preventing an agent from reading a pool it's a member of.
+Karatas can guarantee an agent *cannot* see certain information — the code path literally doesn't inject it. Marina's pull-based model means a determined agent could `recall`, `pool <name> recall`, or `pool <name> list` anything it has access to. There's no code-level enforcement preventing an agent from reading a pool it can query.
 
 **Assessment:** This is a design choice, not a gap. Marina's model is collaborative — entities are equal participants, not subjects of a controlled experiment. If you need hard information barriers, you'd use separate pools/channels. The infrastructure already supports it: private notes, channel membership, group-scoped boards. An agent can only read pools and channels it has joined.
 

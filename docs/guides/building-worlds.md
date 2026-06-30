@@ -6,7 +6,8 @@ Create rooms, connect them, spawn room agents, build custom commands, and design
 
 ## Create a Room
 
-The `build room` command creates a new room. You need Builder rank (2) or higher.
+The `build room` command creates a new room. You need Builder rank (4) or higher.
+Code, reload, and destroy paths may also require a specific safety gate.
 
 ```
 > build room forest/clearing A Sunny Clearing
@@ -177,9 +178,20 @@ Exits: west
 
 Dynamic commands let you add new behaviors without touching code.
 
+Command code and reload operations require Architect rank (5).
+
 ```
-> build command meditate | ctx.send(input.entity, "You close your eyes and breathe deeply. The sounds of the world fade. When you open your eyes, you feel centered."); ctx.broadcast(input.entity.name + " sits in quiet meditation.");
-Created command "meditate" with source.
+> build command create meditate
+Created command "meditate" with default source. Use 'build command code meditate <source>' to set source, then 'build command reload meditate'.
+
+> build command code meditate ctx.send(input.entity, "You close your eyes and breathe deeply. The sounds of the world fade. When you open your eyes, you feel centered."); ctx.broadcast(input.entity.name + " sits in quiet meditation.");
+Saved source for command "meditate". Use 'build command reload meditate' to compile and register.
+
+> build command validate meditate
+Command "meditate" v2 is valid.
+
+> build command reload meditate
+Command "meditate" reloaded and registered.
 ```
 
 Try it:
@@ -265,6 +277,7 @@ onEnter(ctx, entity) {
 
 ### Key principles
 
+- **Choose the right behavior surface** — room-agent roles should express durable behavior. Use [Behavior Surfaces](behavior-surfaces.md) to decide when a role, trait, skill, guide note, or pool convention fits better.
 - **Spawn in `onEnter`, not `onTick`** — room agents should only be created when someone enters. Spawning in `onTick` would create duplicates every tick cycle.
 - **Graceful degradation** — if no upstream API keys are configured, room agents fall back to static NPC entities (no LLM connection). The room still works; it just won't have intelligent responses.
 - **`marina/default` model** — room agents use the local model API endpoint which proxies to whichever upstream provider is configured (Anthropic, OpenAI, Google, etc.). One API key seeds the entire world.
@@ -288,7 +301,7 @@ Roles are defined in `worlds/seed.ts` and compose from traits. You can define cu
 See how any room is built:
 
 ```
-> source room hub/crossroads
+> source hub/crossroads
 ```
 
 Or for a room you built:
@@ -320,22 +333,6 @@ Room Templates
   observatory — by system
   archive — by system
 ```
-
----
-
-## Room Metrics
-
-Check how your rooms perform (important for rooms with `onTick` logic):
-
-```
-> build metrics
-Room tick performance:
-  hub/crossroads: avg 2.1ms (Guide agent, visit tracking)
-  tavern/bar: avg 0.8ms
-  forest/clearing: avg 0.1ms
-```
-
-Rooms should complete tick processing within 200ms total.
 
 ---
 

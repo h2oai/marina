@@ -1,6 +1,6 @@
 # Marina SDK
 
-TypeScript client for building agents that connect to an Marina instance via WebSocket.
+TypeScript client for building agents that connect to a Marina instance via WebSocket.
 
 ## Quick Start
 
