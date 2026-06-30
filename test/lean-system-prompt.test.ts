@@ -1,5 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { getLeanSystemPrompt } from "../src/agent/prompts/lean-system";
+import { composeRolePrompt } from "../src/agent/roles";
+
+/** Every markdown heading (`#`/`##`) that appears more than once in `text`. */
+function duplicateHeadings(text: string): string[] {
+  const counts = new Map<string, number>();
+  for (const h of text.match(/^#{1,2} .+$/gm) ?? []) {
+    counts.set(h, (counts.get(h) ?? 0) + 1);
+  }
+  return [...counts.entries()].filter(([, n]) => n > 1).map(([h]) => h);
+}
 
 describe("getLeanSystemPrompt", () => {
   let prev: string | undefined;
@@ -48,5 +58,39 @@ describe("getLeanSystemPrompt", () => {
         return getLeanSystemPrompt("ROLE_MARKER").length;
       })(),
     );
+  });
+
+  // Prompt-surface guardrails (Phase 1 inspectability) — these are bloat/
+  // duplication tripwires, deliberately NOT linked to any eval or benchmark.
+  describe("prompt-surface guardrails", () => {
+    it("has no duplicated section headings in the base prompt", () => {
+      expect(duplicateHeadings(getLeanSystemPrompt(null))).toEqual([]);
+    });
+
+    it("keeps headings unique when a composed role section is spliced in", () => {
+      // A role section carries its own ## headings (Capabilities Profile, Focus
+      // Areas, Behavioral Guidelines, Tone) — none may collide with the base.
+      const roleSection = composeRolePrompt({
+        name: "scout",
+        description: "Explore and report.",
+        traitNames: ["curious"],
+        missingTraitNames: [],
+        traitPrompts: ["Ask why."],
+        traitCapabilities: [{ strengths: ["exploration"], behaviors: ["retrieve-first"] }],
+        guidelines: ["Keep notes"],
+        focus: ["explore"],
+        tone: "calm",
+        origin: "test",
+      });
+      expect(duplicateHeadings(getLeanSystemPrompt(roleSection))).toEqual([]);
+    });
+
+    it("keeps the base prompt within a compact length budget", () => {
+      // Current base prompt (with tool prose) is ~4k chars. The budget is a
+      // tripwire against prompt bloat — if a change legitimately needs more
+      // room, raise this deliberately rather than letting it drift.
+      const BUDGET = 6000;
+      expect(getLeanSystemPrompt(null).length).toBeLessThan(BUDGET);
+    });
   });
 });
