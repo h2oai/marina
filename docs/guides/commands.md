@@ -413,6 +413,7 @@ Models use `provider/model` format. Supported providers: anthropic, openai, goog
 > role view researcher                        View role details and composed prompt
 > role view researcher goal investigate logs  Preview goal-conditional trait gating
 > role lint researcher                        Check role shaping risks
+> role diff researcher analyst                 Compare two roles (traits, focus, guidelines, tone)
 > role create analyst traits careful,logical guidelines Be precise|Cite sources focus data,metrics tone professional
 > role edit analyst tone concise               Edit role properties
 > role delete analyst                         Delete a role
@@ -420,6 +421,7 @@ Models use `provider/model` format. Supported providers: anthropic, openai, goog
 > trait list                                  List all traits by category
 > trait view careful                          View trait details
 > trait lint careful                          Check trait shaping risks
+> trait diff careful methodical               Compare two traits (prompt + capability fields)
 > trait create methodical behavior Check assumptions before acting applicableTasks reasoning
 > trait delete methodical                     Delete a trait
 ```

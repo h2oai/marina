@@ -1,13 +1,50 @@
 import { bold, dim, header, separator } from "../../net/ansi";
-import type { MarinaDB, TraitCapabilities } from "../../persistence/database";
+import type { MarinaDB, TraitCapabilities, TraitRow } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getRank } from "../permissions";
 import {
   hasTraitCapabilities,
   parseTraitCapabilities,
   renderEditHistory,
+  renderListDiffLine,
   renderTraitLint,
 } from "./role";
+
+const CAPABILITY_FIELDS: { key: keyof TraitCapabilities; label: string }[] = [
+  { key: "strengths", label: "Strengths" },
+  { key: "preferences", label: "Preferences" },
+  { key: "avoids", label: "Avoids" },
+  { key: "domains", label: "Domains" },
+  { key: "behaviors", label: "Behaviors" },
+  { key: "antiBehaviors", label: "Anti-behaviors" },
+  { key: "activation", label: "Activation" },
+  { key: "successSignals", label: "Success signals" },
+  { key: "riskSignals", label: "Risk signals" },
+  { key: "applicableTasks", label: "Applicable tasks" },
+];
+
+export function renderTraitDiff(a: TraitRow, b: TraitRow): string {
+  const lines = [header(`Trait diff: ${a.name} → ${b.name}`), separator()];
+
+  if (a.category !== b.category) {
+    lines.push(`${bold("Category:")} ${a.category} → ${b.category}`);
+  }
+  if (a.prompt.trim() !== b.prompt.trim()) {
+    lines.push(`${bold("Prompt:")}`, `  - ${a.prompt}`, `  + ${b.prompt}`);
+  }
+
+  const capsA = parseTraitCapabilities(a.capabilities);
+  const capsB = parseTraitCapabilities(b.capabilities);
+  for (const { key, label } of CAPABILITY_FIELDS) {
+    const line = renderListDiffLine(label, capsA[key] ?? [], capsB[key] ?? []);
+    if (line) lines.push(line);
+  }
+
+  if (lines.length === 2) {
+    lines.push(dim("No differences."));
+  }
+  return lines.join("\n");
+}
 
 /**
  * Parse optional capabilities from the end of a trait create command.
@@ -104,7 +141,7 @@ export function traitCommand(deps: {
     name: "trait",
     aliases: [],
     minRank: 0,
-    help: "Manage composable agent traits.\nUsage: trait list | trait view <name> | trait lint <name> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] | trait delete <name>\n\nTraits are atomic prompt fragments used to compose roles.\nOptional capabilities metadata enables semantic composition (synergies/tensions), task gating, and typed behavioral hints.\n`trait lint <name>` reports pragmatic prompt-shaping warnings without changing the trait. `trait history <name>` shows the audited edit trail.",
+    help: "Manage composable agent traits.\nUsage: trait list | trait view <name> | trait lint <name> | trait diff <a> <b> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] | trait delete <name>\n\nTraits are atomic prompt fragments used to compose roles.\nOptional capabilities metadata enables semantic composition (synergies/tensions), task gating, and typed behavioral hints.\n`trait lint <name>` reports pragmatic prompt-shaping warnings without changing the trait. `trait history <name>` shows the audited edit trail.",
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, "Traits require database support.");
@@ -205,6 +242,27 @@ export function traitCommand(deps: {
           return;
         }
 
+        case "diff": {
+          const a = tokens[1];
+          const b = tokens[2];
+          if (!a || !b) {
+            ctx.send(input.entity, "Usage: trait diff <a> <b>");
+            return;
+          }
+          const traitA = db.getTrait(a);
+          const traitB = db.getTrait(b);
+          if (!traitA) {
+            ctx.send(input.entity, `Trait "${a}" not found.`);
+            return;
+          }
+          if (!traitB) {
+            ctx.send(input.entity, `Trait "${b}" not found.`);
+            return;
+          }
+          ctx.send(input.entity, renderTraitDiff(traitA, traitB));
+          return;
+        }
+
         case "create": {
           const entity = deps.getEntity?.(input.entity);
           if (entity && getRank(entity) < 3) {
@@ -267,7 +325,7 @@ export function traitCommand(deps: {
         default:
           ctx.send(
             input.entity,
-            "Usage: trait list | trait view <name> | trait lint <name> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] | trait delete <name>",
+            "Usage: trait list | trait view <name> | trait lint <name> | trait diff <a> <b> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] | trait delete <name>",
           );
       }
     },
