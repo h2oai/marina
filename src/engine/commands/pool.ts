@@ -10,6 +10,7 @@ import {
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { DAY_MS } from "../constants";
+import { auditKnowledgeNotes, renderKnowledgeHygieneReport } from "./knowledge-hygiene";
 
 const STOP_WORDS = new Set([
   "the",
@@ -90,11 +91,12 @@ export function poolCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
   db?: MarinaDB;
   logEvent?: (event: EngineEvent) => void;
+  getCommandNames?: () => string[];
 }): CommandDef {
   return {
     name: "pool",
     aliases: [],
-    help: "Shared memory pools for collaborative knowledge.\nUsage: pool create <name> | pool <name> add|recall|list|status | pool list\n\nExamples:\n  pool create findings\n  pool findings add The decode room responds to binary input importance 7\n  pool findings recall binary\n  pool findings list\n  pool findings status",
+    help: "Shared memory pools for collaborative knowledge.\nUsage: pool create <name> | pool <name> add|recall|list|status|audit | pool list\n\nExamples:\n  pool create findings\n  pool findings add The decode room responds to binary input importance 7\n  pool findings recall binary\n  pool findings list\n  pool findings status\n  pool findings audit",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -109,7 +111,7 @@ export function poolCommand(deps: {
       if (!sub) {
         ctx.send(
           input.entity,
-          "Usage: pool create <name> | pool <name> add|recall|list|status | pool list",
+          "Usage: pool create <name> | pool <name> add|recall|list|status|audit | pool list",
         );
         return;
       }
@@ -240,6 +242,13 @@ export function poolCommand(deps: {
           return;
         }
 
+        case "audit": {
+          const notes = db.getPoolNotes(pool.id, 500);
+          const report = auditKnowledgeNotes(notes, { knownCommands: deps.getCommandNames?.() });
+          ctx.send(input.entity, renderKnowledgeHygieneReport(`Pool "${poolName}"`, report));
+          return;
+        }
+
         case "add": {
           const text = tokens.slice(2).join(" ");
           if (!text) {
@@ -312,7 +321,7 @@ export function poolCommand(deps: {
         default:
           ctx.send(
             input.entity,
-            `Usage: pool ${poolName} add <text> | pool ${poolName} recall <query> | pool ${poolName} list | pool ${poolName} status`,
+            `Usage: pool ${poolName} add <text> | pool ${poolName} recall <query> | pool ${poolName} list | pool ${poolName} status | pool ${poolName} audit`,
           );
       }
     },

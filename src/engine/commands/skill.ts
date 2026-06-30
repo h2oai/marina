@@ -2,16 +2,18 @@ import { formatSkillContent, loadSkillFile } from "../../agent/skill-import";
 import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { auditKnowledgeNotes, renderKnowledgeHygieneReport } from "./knowledge-hygiene";
 
 export function skillCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
   db?: MarinaDB;
   logEvent?: (event: EngineEvent) => void;
+  getCommandNames?: () => string[];
 }): CommandDef {
   return {
     name: "skill",
     aliases: [],
-    help: "Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path>. Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.",
+    help: "Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path>. Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -39,7 +41,7 @@ export function skillCommand(deps: {
         } else {
           ctx.send(
             input.entity,
-            "Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill share <id> <pool> | skill compose <id1> <id2> ...",
+            "Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path>",
           );
         }
         return;
@@ -190,6 +192,15 @@ export function skillCommand(deps: {
             }),
           ];
           ctx.send(input.entity, lines.join("\n"));
+          return;
+        }
+
+        case "audit": {
+          const notes = db
+            .getNotesByEntity(entity.name, 500)
+            .filter((n) => n.note_type === "skill");
+          const report = auditKnowledgeNotes(notes, { knownCommands: deps.getCommandNames?.() });
+          ctx.send(input.entity, renderKnowledgeHygieneReport("Skill library", report));
           return;
         }
 
@@ -358,7 +369,7 @@ export function skillCommand(deps: {
         default: {
           ctx.send(
             input.entity,
-            "Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path>",
+            "Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path>",
           );
         }
       }
