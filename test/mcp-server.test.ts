@@ -8,12 +8,7 @@ import { cleanupDb, makeTestRoom } from "./helpers";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-let portCounter = 14500;
 let dbCounter = 0;
-
-function nextPort(): number {
-  return portCounter++;
-}
 
 function nextDbPath(): string {
   return `/tmp/marina-mcp-test-${process.pid}-${++dbCounter}.db`;
@@ -139,8 +134,6 @@ describe("MCP Server", () => {
 
   beforeEach(() => {
     dbPath = nextDbPath();
-    port = nextPort();
-    url = `http://localhost:${port}`;
     db = new MarinaDB(dbPath);
     engine = new Engine({
       startRoom: roomId("test/start"),
@@ -165,8 +158,10 @@ describe("MCP Server", () => {
       }),
     );
 
-    adapter = new McpServerAdapter(engine, port);
+    adapter = new McpServerAdapter(engine, 0);
     adapter.start();
+    port = adapter.getPort();
+    url = `http://localhost:${port}`;
     engine.start();
   });
 
@@ -743,8 +738,6 @@ describe("MCP Server with rate limiting", () => {
 
   beforeEach(() => {
     dbPath = nextDbPath();
-    port = nextPort();
-    rlUrl = `http://localhost:${port}`;
     db = new MarinaDB(dbPath);
     const rateLimiter = new RateLimiter({ maxTokens: 3, refillRate: 0, refillInterval: 60_000 });
     engine = new Engine({
@@ -755,8 +748,10 @@ describe("MCP Server with rate limiting", () => {
 
     engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
 
-    adapter = new McpServerAdapter(engine, port, rateLimiter);
+    adapter = new McpServerAdapter(engine, 0, rateLimiter);
     adapter.start();
+    port = adapter.getPort();
+    rlUrl = `http://localhost:${port}`;
     engine.start();
   });
 

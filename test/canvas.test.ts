@@ -292,6 +292,90 @@ describe("Canvas — Phase 1: Asset Store", () => {
     });
   });
 
+  describe("canvas intent loop", () => {
+    it("claims a pending intent once through the guarded DB helper", () => {
+      db.createCanvas({ id: "intent-canvas", name: "requests", creatorName: "Requester" });
+      db.createNode({
+        id: "intent-node-1234",
+        canvasId: "intent-canvas",
+        type: "text",
+        creatorName: "Requester",
+        data: {
+          body: "Need help",
+          intent: { status: "pending", prompt: "Summarize this source." },
+        },
+      });
+
+      const first = db.claimCanvasIntent("intent-node", "Worker");
+      const second = db.claimCanvasIntent("intent-node", "Other");
+
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(false);
+      if (!first.ok) throw new Error("first claim unexpectedly failed");
+      expect(first.intent.claimedBy).toBe("Worker");
+
+      const stored = JSON.parse(db.getNode("intent-node-1234")!.data);
+      expect(stored.intent.status).toBe("active");
+      expect(stored.intent.claimedBy).toBe("Worker");
+    });
+
+    it("shared intent listing expires stale active claims back to pending", () => {
+      const now = Date.now();
+      db.createCanvas({ id: "expiry-canvas", name: "requests", creatorName: "Requester" });
+      db.createNode({
+        id: "intent-node-expired",
+        canvasId: "expiry-canvas",
+        type: "text",
+        creatorName: "Requester",
+        data: {
+          intent: {
+            status: "active",
+            prompt: "Pick this back up.",
+            claimedBy: "Worker",
+            claimedAt: now - 10 * 60 * 1000,
+          },
+        },
+      });
+
+      const pending = db.listCanvasIntents({
+        statuses: ["pending"],
+        expireActiveMs: 5 * 60 * 1000,
+        now,
+      });
+
+      expect(pending.map((i) => i.nodeId)).toContain("intent-node-expired");
+      const stored = JSON.parse(db.getNode("intent-node-expired")!.data);
+      expect(stored.intent.status).toBe("pending");
+      expect(stored.intent.claimedBy).toBeUndefined();
+      expect(stored.intent.claimedAt).toBeUndefined();
+    });
+
+    it("notifies the requester when another entity claims their intent", async () => {
+      const requesterConn = new MockConnection("c-requester");
+      engine.addConnection(requesterConn);
+      const requesterLogin = engine.login("c-requester", "Requester");
+      if ("error" in requesterLogin) throw new Error(requesterLogin.error);
+
+      db.createCanvas({ id: "notify-canvas", name: "requests", creatorName: "Requester" });
+      db.createNode({
+        id: "intent-node-notify",
+        canvasId: "notify-canvas",
+        type: "text",
+        creatorName: "Requester",
+        data: {
+          intent: { status: "pending", prompt: "Review this draft." },
+        },
+      });
+
+      conn.clear();
+      requesterConn.clear();
+      await engine.processCommand(entityId, "canvas intent claim intent-node-notify");
+
+      expect(stripAnsi(conn.lastText())).toContain("Claimed intent");
+      expect(stripAnsi(requesterConn.lastText())).toContain("Tester claimed your canvas intent");
+    });
+  });
+
   // ─── Export includes assets ────────────────────────────────────────────
 
   describe("export-import", () => {

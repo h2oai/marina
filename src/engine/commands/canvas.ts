@@ -2,7 +2,8 @@ import { join } from "node:path";
 import { record as recordStanding } from "../../agent/standing";
 import { header, separator } from "../../net/ansi";
 import { validateFetchUrl } from "../../net/url-guard";
-import type { MarinaDB } from "../../persistence/database";
+import type { CanvasIntentData, MarinaDB } from "../../persistence/database";
+import { parseCanvasIntent } from "../../persistence/database";
 import type { StorageProvider } from "../../storage/provider";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getErrorMessage } from "../errors";
@@ -682,26 +683,10 @@ function handleEdges(ctx: RoomContext, eid: EntityId, db: MarinaDB, tokens: stri
 
 // ─── Intent ─────────────────────────────────────────────────────────────
 
-interface IntentData {
-  prompt: string;
-  status: "pending" | "active" | "done" | "failed";
-  claimedBy?: string;
-  claimedAt?: number;
-  result?: string;
-  resultNodeId?: string;
-  failReason?: string;
-}
+const INTENT_TIMEOUT_MS = 5 * 60 * 1000;
 
-function parseIntent(node: { data: string }): IntentData | undefined {
-  try {
-    const parsed = JSON.parse(node.data);
-    if (parsed.intent && typeof parsed.intent.prompt === "string") {
-      return parsed.intent as IntentData;
-    }
-  } catch {
-    // ignore
-  }
-  return undefined;
+function parseIntent(node: { data: string }): CanvasIntentData | undefined {
+  return parseCanvasIntent(node.data);
 }
 
 async function handleIntent(
@@ -726,36 +711,12 @@ async function handleIntent(
   switch (action) {
     case "list": {
       const canvasName = tokens[1];
-      // Gather nodes with pending or active intents
-      const canvases = canvasName
-        ? [db.getCanvasByName(canvasName)].filter(Boolean)
-        : db.listCanvases({ limit: 50 });
-
-      const results: {
-        nodeId: string;
-        canvasName: string;
-        type: string;
-        intent: IntentData;
-        creator: string;
-      }[] = [];
-
-      for (const canvas of canvases) {
-        if (!canvas) continue;
-        const canvasRow = db.getCanvas(canvas.id);
-        const cName = canvasRow?.name ?? canvas.id;
-        for (const node of db.getNodesByCanvas(canvas.id)) {
-          const intent = parseIntent(node);
-          if (intent && (intent.status === "pending" || intent.status === "active")) {
-            results.push({
-              nodeId: node.id,
-              canvasName: cName,
-              type: node.type,
-              intent,
-              creator: node.creator_name,
-            });
-          }
-        }
-      }
+      const results = db.listCanvasIntents({
+        canvasName,
+        statuses: ["pending", "active"],
+        limit: 100,
+        expireActiveMs: INTENT_TIMEOUT_MS,
+      });
 
       if (results.length === 0) {
         ctx.send(eid, "No pending or active intents found.");
@@ -783,30 +744,21 @@ async function handleIntent(
         return;
       }
 
-      const node = resolveNode(db, nodeId);
-      if (!node) {
-        ctx.send(eid, `Node "${nodeId}" not found.`);
+      const claim = db.claimCanvasIntent(nodeId, entity.name);
+      if (!claim.ok) {
+        if (claim.reason === "not_found") {
+          ctx.send(eid, `Node "${nodeId}" not found.`);
+          return;
+        }
+        if (claim.reason === "no_intent") {
+          ctx.send(eid, "This node has no intent.");
+          return;
+        }
+        ctx.send(eid, `Intent is already "${claim.status ?? "not pending"}", cannot claim.`);
         return;
       }
 
-      const intent = parseIntent(node);
-      if (!intent) {
-        ctx.send(eid, "This node has no intent.");
-        return;
-      }
-      if (intent.status !== "pending") {
-        ctx.send(eid, `Intent is already "${intent.status}", cannot claim.`);
-        return;
-      }
-
-      const parsed = JSON.parse(node.data);
-      parsed.intent = {
-        ...intent,
-        status: "active",
-        claimedBy: entity.name,
-        claimedAt: Date.now(),
-      };
-      db.updateNode(node.id, { data: JSON.stringify(parsed) });
+      const { node, intent } = claim;
 
       logEvent?.({
         type: "canvas_intent",
@@ -1026,6 +978,9 @@ async function handleIntent(
         status: "done",
         timestamp: Date.now(),
       });
+      if (node.creator_name && node.creator_name !== entity.name) {
+        recordStanding(db, eid, entity.name, "helping_act", `intent:${node.id}`);
+      }
 
       // Record rich completion in agent memory (see note above in `complete`).
       try {
@@ -1058,15 +1013,7 @@ async function handleIntent(
 
 /** Resolve a node by full or prefix ID. */
 function resolveNode(db: MarinaDB, idOrPrefix: string) {
-  const node = db.getNode(idOrPrefix);
-  if (node) return node;
-  // Try prefix match across all canvases
-  for (const canvas of db.listCanvases({ limit: 50 })) {
-    for (const n of db.getNodesByCanvas(canvas.id)) {
-      if (n.id.startsWith(idOrPrefix)) return n;
-    }
-  }
-  return undefined;
+  return db.resolveCanvasNode(idOrPrefix);
 }
 
 /**
