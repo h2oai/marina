@@ -324,6 +324,8 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["adaptability", "gap-filling", "exploration"],
       preferences: ["breadth-over-depth", "collaborative"],
       avoids: ["over-specialization"],
+      behaviors: ["inspect-before-acting", "ask-peer"],
+      antiBehaviors: ["scope-creep"],
     },
     createdBy: SYSTEM,
   });
@@ -338,6 +340,9 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["systematic-analysis", "documentation", "verification"],
       preferences: ["depth-over-breadth", "evidence-based"],
       avoids: ["hasty-decisions", "unsupported-claims"],
+      domains: ["research", "retrieval"],
+      behaviors: ["inspect-before-acting", "verify-with-tool", "cite-sources"],
+      antiBehaviors: ["guess-without-tool", "overclaim"],
     },
     createdBy: SYSTEM,
   });
@@ -352,6 +357,9 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["experimentation", "scientific-method", "analysis"],
       preferences: ["evidence-based", "controlled-variables"],
       avoids: ["confirmation-bias", "unsupported-claims"],
+      domains: ["research", "reasoning"],
+      behaviors: ["verify-with-tool", "inspect-before-acting"],
+      antiBehaviors: ["guess-without-tool", "overclaim"],
     },
     createdBy: SYSTEM,
   });
@@ -367,6 +375,9 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["spatial-reasoning", "design", "infrastructure-planning"],
       preferences: ["plan-before-build", "integration"],
       avoids: ["isolated-builds", "untested-designs"],
+      domains: ["building"],
+      behaviors: ["inspect-before-acting", "verify-with-tool"],
+      antiBehaviors: ["scope-creep"],
     },
     createdBy: SYSTEM,
   });
@@ -384,6 +395,9 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["coordination", "conflict-resolution", "information-flow"],
       preferences: ["collaborative", "group-oriented"],
       avoids: ["isolation", "information-hoarding"],
+      domains: ["coordination"],
+      behaviors: ["ask-peer", "write-pool-note"],
+      antiBehaviors: ["ignore-direct-message"],
     },
     createdBy: SYSTEM,
   });
@@ -399,6 +413,9 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["explanation", "knowledge-sharing", "mentoring"],
       preferences: ["clarity", "step-by-step", "collaborative"],
       avoids: ["jargon-heavy", "gatekeeping"],
+      domains: ["teaching"],
+      behaviors: ["explain-the-why", "cite-sources"],
+      antiBehaviors: ["gatekeeping", "overclaim"],
     },
     createdBy: SYSTEM,
   });
@@ -413,6 +430,9 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["negotiation", "value-assessment", "deal-making"],
       preferences: ["fairness", "mutual-benefit"],
       avoids: ["zero-sum-thinking", "exploitation"],
+      domains: ["coordination", "trading"],
+      behaviors: ["ask-peer"],
+      antiBehaviors: ["exploitation", "overclaim"],
     },
     createdBy: SYSTEM,
   });
@@ -430,6 +450,9 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["typescript", "room-design", "interactive-objects"],
       preferences: ["plan-before-build", "thorough-testing"],
       avoids: ["untested-designs", "minimal-descriptions"],
+      domains: ["building", "code"],
+      behaviors: ["verify-with-tool", "inspect-before-acting"],
+      antiBehaviors: ["scope-creep"],
     },
     createdBy: SYSTEM,
   });
@@ -445,6 +468,9 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["categorization", "pattern-recognition", "knowledge-management"],
       preferences: ["structured-data", "collaborative"],
       avoids: ["unstructured-dumps", "information-hoarding"],
+      domains: ["retrieval", "research"],
+      behaviors: ["write-pool-note", "cite-sources"],
+      antiBehaviors: ["duplicate-note"],
     },
     createdBy: SYSTEM,
   });
@@ -460,6 +486,9 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["market-analysis", "resource-optimization", "arbitrage"],
       preferences: ["data-driven", "opportunity-seeking"],
       avoids: ["waste", "uninformed-trades"],
+      domains: ["trading"],
+      behaviors: ["retrieve-first", "verify-with-tool"],
+      antiBehaviors: ["guess-without-tool"],
     },
     createdBy: SYSTEM,
   });
@@ -485,6 +514,9 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["intent-monitoring", "task-fulfillment", "responsiveness"],
       preferences: ["role-aligned-work", "timely-delivery"],
       avoids: ["ignoring-intents", "overcommitting"],
+      domains: ["coordination"],
+      behaviors: ["one-task-at-a-time"],
+      antiBehaviors: ["ignore-direct-message", "scope-creep"],
     },
     createdBy: SYSTEM,
   });
@@ -812,6 +844,9 @@ export function seedDecompositionTraitsAndRoles(db: MarinaDB): void {
         strengths: ["hierarchical-thinking", "dependency-analysis", "scope-definition"],
         preferences: ["shallow-trees", "explicit-dependencies", "replan-on-feedback"],
         avoids: ["premature-depth", "overlapping-scope", "mixing-plan-with-execution"],
+        domains: ["reasoning", "coordination"],
+        behaviors: ["inspect-before-acting", "write-pool-note"],
+        antiBehaviors: ["scope-creep"],
       },
       createdBy: SYSTEM,
     });
@@ -830,6 +865,9 @@ export function seedDecompositionTraitsAndRoles(db: MarinaDB): void {
         strengths: ["focused-execution", "scope-discipline", "result-delivery"],
         preferences: ["one-task-at-a-time", "explicit-scope"],
         avoids: ["scope-creep", "parallel-claims", "silent-expansion"],
+        domains: ["coordination"],
+        behaviors: ["one-task-at-a-time", "inspect-before-acting"],
+        antiBehaviors: ["scope-creep"],
       },
       createdBy: SYSTEM,
     });
@@ -848,6 +886,9 @@ export function seedDecompositionTraitsAndRoles(db: MarinaDB): void {
         strengths: ["criterion-checking", "regression-detection", "concrete-feedback"],
         preferences: ["explicit-criteria", "fast-cycles"],
         avoids: ["vague-rejection", "mixing-verification-with-execution"],
+        domains: ["coordination", "safety"],
+        behaviors: ["verify-with-tool", "inspect-before-acting"],
+        antiBehaviors: ["overclaim", "scope-creep"],
       },
       createdBy: SYSTEM,
     });
@@ -1077,6 +1118,9 @@ export function seedWatchingRole(db: MarinaDB): void {
           "reformatting-suggested-commands",
           "rate-limit-pressure",
         ],
+        domains: ["research", "forecasting"],
+        behaviors: ["one-task-at-a-time", "verify-with-tool"],
+        antiBehaviors: ["scope-creep"],
       },
       createdBy: SYSTEM,
     });
@@ -1176,6 +1220,11 @@ export function seedChroniclerRole(db: MarinaDB): void {
           "mutating-prior-entries",
           "repeated-interviews-of-same-agent",
         ],
+        domains: ["writing", "retrieval"],
+        behaviors: ["cite-sources", "ask-peer"],
+        antiBehaviors: ["overclaim", "duplicate-note"],
+        successSignals: ["every-claim-cited"],
+        riskSignals: ["uncited-claims"],
       },
       createdBy: SYSTEM,
     });
@@ -1414,6 +1463,9 @@ export function seedAnswererCrew(
         strengths: ["channel-protocol", "tool-orchestration", "pool-recall-first"],
         preferences: ["delegate-to-specialists", "verify-before-commit", "reflect-after"],
         avoids: ["raw-LLM-guessing", "ignoring-accumulated-wisdom"],
+        domains: ["research", "retrieval"],
+        behaviors: ["retrieve-first", "ask-peer", "verify-with-tool", "write-pool-note"],
+        antiBehaviors: ["guess-without-tool"],
       },
       createdBy: SYSTEM,
     });
@@ -1439,6 +1491,9 @@ export function seedAnswererCrew(
         strengths: ["format-fidelity", "target-spec-matching", "verbatim-preservation"],
         preferences: ["minimal-transformation", "learn-from-pool-patterns", "match-exact-spec"],
         avoids: ["adding-prose-wrapping", "explaining-the-translation", "rewording-clean-content"],
+        domains: ["writing"],
+        behaviors: ["write-pool-note"],
+        antiBehaviors: ["scope-creep"],
       },
       createdBy: SYSTEM,
     });
@@ -1460,6 +1515,9 @@ export function seedAnswererCrew(
         strengths: ["pattern-recognition", "post-run-synthesis", "pool-curation"],
         preferences: ["wait-then-analyze", "find-categorical-gaps"],
         avoids: ["per-item-noise", "repeating-what-the-runner-already-wrote"],
+        domains: ["retrieval", "research"],
+        behaviors: ["write-pool-note", "inspect-before-acting"],
+        antiBehaviors: ["duplicate-note"],
       },
       createdBy: SYSTEM,
     });
@@ -1834,6 +1892,9 @@ export function seedOrchestrationCrews(
         strengths: ["web-research", "source-citation", "dates-places-names"],
         preferences: ["primary-sources", "grounded-answers"],
         avoids: ["unsourced-confidence", "training-data-guessing"],
+        domains: ["research", "retrieval"],
+        behaviors: ["retrieve-first", "cite-sources"],
+        antiBehaviors: ["guess-without-tool", "overclaim"],
       },
       createdBy: SYSTEM,
     });
@@ -1852,6 +1913,9 @@ export function seedOrchestrationCrews(
         strengths: ["spotting-errors", "assumption-testing", "red-teaming"],
         preferences: ["precision", "minimal-concern-count"],
         avoids: ["stating-own-answer", "excessive-hedging"],
+        domains: ["reasoning", "safety"],
+        behaviors: ["inspect-before-acting"],
+        antiBehaviors: ["scope-creep", "overclaim"],
       },
       createdBy: SYSTEM,
     });
@@ -1870,6 +1934,9 @@ export function seedOrchestrationCrews(
         strengths: ["format-pattern-matching", "answer-extraction", "terse-feedback"],
         preferences: ["letter-or-number-only", "final-trim"],
         avoids: ["restating-reasoning", "evaluating-correctness"],
+        domains: ["writing"],
+        behaviors: ["verify-with-tool"],
+        antiBehaviors: ["scope-creep"],
       },
       createdBy: SYSTEM,
     });
@@ -1889,6 +1956,9 @@ export function seedOrchestrationCrews(
         strengths: ["vote-tallying", "majority-rule", "crew-broadcast"],
         preferences: ["consensus-first", "tie-break-by-domain"],
         avoids: ["unilateral-decisions", "ignoring-dissent"],
+        domains: ["coordination"],
+        behaviors: ["ask-peer"],
+        antiBehaviors: ["overclaim"],
       },
       createdBy: SYSTEM,
     });
@@ -1907,6 +1977,9 @@ export function seedOrchestrationCrews(
         strengths: ["adversarial-framing", "disagreement-detection", "judge-arbitration"],
         preferences: ["parallel-proposers", "explicit-judge"],
         avoids: ["premature-consensus", "silencing-dissent"],
+        domains: ["coordination", "reasoning"],
+        behaviors: ["ask-peer"],
+        antiBehaviors: ["overclaim"],
       },
       createdBy: SYSTEM,
     });
@@ -1925,6 +1998,9 @@ export function seedOrchestrationCrews(
         strengths: ["decomposition", "specialist-routing", "answer-composition"],
         preferences: ["parallel-subquestions", "chain-final-synthesis"],
         avoids: ["monolithic-reasoning", "over-decomposition"],
+        domains: ["coordination", "reasoning"],
+        behaviors: ["ask-peer", "inspect-before-acting"],
+        antiBehaviors: ["scope-creep"],
       },
       createdBy: SYSTEM,
     });
