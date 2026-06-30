@@ -244,7 +244,12 @@ export function poolCommand(deps: {
 
         case "audit": {
           const notes = db.getPoolNotes(pool.id, 500);
-          const report = auditKnowledgeNotes(notes, { knownCommands: deps.getCommandNames?.() });
+          const report = auditKnowledgeNotes(notes, {
+            knownCommands: deps.getCommandNames?.(),
+            // Flag shared-pool notes nothing has touched in ~3 months as stale —
+            // a prune signal for guide and other high-impact pools.
+            maxAgeMs: 90 * DAY_MS,
+          });
           ctx.send(input.entity, renderKnowledgeHygieneReport(`Pool "${poolName}"`, report));
           return;
         }

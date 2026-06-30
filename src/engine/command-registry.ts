@@ -30,6 +30,7 @@ import { feedCommand } from "./commands/feed";
 import { gatewayCommand } from "./commands/gateway";
 import { gotoCommand } from "./commands/goto";
 import { groupCommand } from "./commands/group";
+import { guideCommand } from "./commands/guide";
 import { helpCommand } from "./commands/help";
 import { ignoreCommand, isIgnoring } from "./commands/ignore";
 import { imageCommand } from "./commands/image";
@@ -383,6 +384,13 @@ export function registerBuiltinCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
       logEvent: (event) => engine.logEvent(event),
+      getCommandNames: () => engine.commands.allBuiltins().map((cmd) => cmd.name),
+    }),
+  );
+  engine.commands.registerBuiltin(
+    guideCommand({
+      getEntity: (id) => engine.entities.get(id as EntityId),
+      db: engine.db,
       getCommandNames: () => engine.commands.allBuiltins().map((cmd) => cmd.name),
     }),
   );
