@@ -87,7 +87,7 @@ const KNOWN_SUBCOMMANDS: Record<string, Set<string>> = {
 };
 
 export interface KnowledgeHygieneFinding {
-  kind: "duplicate" | "overlong" | "stale-command";
+  kind: "duplicate" | "overlong" | "stale-command" | "unsupported-claim" | "stale";
   noteIds: number[];
   detail: string;
 }
@@ -97,6 +97,8 @@ export interface KnowledgeHygieneReport {
   duplicateGroups: KnowledgeHygieneFinding[];
   overlong: KnowledgeHygieneFinding[];
   staleCommands: KnowledgeHygieneFinding[];
+  unsupportedClaims: KnowledgeHygieneFinding[];
+  stale: KnowledgeHygieneFinding[];
 }
 
 export function auditKnowledgeNotes(
@@ -104,6 +106,10 @@ export function auditKnowledgeNotes(
   opts?: {
     knownCommands?: Iterable<string>;
     maxNoteLength?: number;
+    /** When set, notes untouched for longer than this are flagged `stale`. */
+    maxAgeMs?: number;
+    /** Reference time for stale detection; defaults to Date.now(). */
+    now?: number;
   },
 ): KnowledgeHygieneReport {
   const maxNoteLength = opts?.maxNoteLength ?? DEFAULT_MAX_NOTE_LENGTH;
@@ -126,11 +132,21 @@ export function auditKnowledgeNotes(
       detail,
     })),
   );
+  const unsupportedClaims = notes
+    .filter((note) => isUnsupportedClaim(note.content))
+    .map((note) => ({
+      kind: "unsupported-claim" as const,
+      noteIds: [note.id],
+      detail: `empirical claim with no citation: "${preview(note.content)}"`,
+    }));
+  const stale = findStaleNotes(notes, opts?.maxAgeMs, opts?.now);
   return {
     total: notes.length,
     duplicateGroups,
     overlong,
     staleCommands,
+    unsupportedClaims,
+    stale,
   };
 }
 
@@ -144,12 +160,16 @@ export function renderKnowledgeHygieneReport(
     `Duplicate groups: ${report.duplicateGroups.length}`,
     `Overlong notes: ${report.overlong.length}`,
     `Stale command refs: ${report.staleCommands.length}`,
+    `Unsupported claims: ${report.unsupportedClaims.length}`,
+    `Stale notes: ${report.stale.length}`,
   ];
 
   const findings = [
     ...report.duplicateGroups.slice(0, 5),
     ...report.overlong.slice(0, 5),
     ...report.staleCommands.slice(0, 5),
+    ...report.unsupportedClaims.slice(0, 5),
+    ...report.stale.slice(0, 5),
   ];
   if (findings.length === 0) {
     lines.push("No hygiene findings.");
@@ -160,6 +180,59 @@ export function renderKnowledgeHygieneReport(
     }
   }
   return lines.join("\n");
+}
+
+// Strong empirical-assertion markers — a note making one of these reads as a
+// factual claim that should be backed by a source. Kept deliberately tight:
+// instructional how-to notes ("recall searches the pool") must NOT trip this,
+// so common words like "always"/"never"/"best" are excluded.
+const CLAIM_MARKERS: RegExp[] = [
+  /\b\d{1,3}(?:\.\d+)?\s?%/, // percentages
+  /\b(stud(?:y|ies)|research|evidence|data|experiments?)\s+(?:show|shows|showed|suggest|suggests|prove|proves|proven|indicate|indicates|confirm|confirms)\b/i,
+  /\b(?:scientifically|clinically|statistically)\s+(?:proven|significant|shown)\b/i,
+  /\bguarantee(?:s|d)?\b/i,
+  /\b\d+(?:\.\d+)?x\s+(?:faster|slower|better|worse|more|less|higher|lower)\b/i,
+];
+
+// Citation/provenance markers — presence of any means the claim is sourced.
+const CITATION_MARKERS: RegExp[] = [
+  /https?:\/\//i,
+  /\[[^\]]+\]/, // [ref], [1], [TabH2O forecast 3]
+  /\bsources?\b/i,
+  /\bcite[ds]?\b/i,
+  /\b(?:doi|arxiv)\b/i,
+  /#\d+/, // note-id reference
+];
+
+function isUnsupportedClaim(content: string): boolean {
+  const hasClaim = CLAIM_MARKERS.some((re) => re.test(content));
+  if (!hasClaim) return false;
+  const hasCitation = CITATION_MARKERS.some((re) => re.test(content));
+  return !hasCitation;
+}
+
+function findStaleNotes(
+  notes: NoteRow[],
+  maxAgeMs: number | undefined,
+  now: number | undefined,
+): KnowledgeHygieneFinding[] {
+  if (!maxAgeMs || maxAgeMs <= 0) return []; // opt-in only
+  const ref = now ?? Date.now();
+  const findings: KnowledgeHygieneFinding[] = [];
+  for (const note of notes) {
+    // "Stale" = nobody has touched it in maxAgeMs (last_accessed, else created).
+    const lastTouched = note.last_accessed ?? note.created_at;
+    const ageMs = ref - lastTouched;
+    if (ageMs > maxAgeMs) {
+      const ageDays = Math.floor(ageMs / 86_400_000);
+      findings.push({
+        kind: "stale",
+        noteIds: [note.id],
+        detail: `untouched ${ageDays}d: "${preview(note.content)}"`,
+      });
+    }
+  }
+  return findings;
 }
 
 function findDuplicateGroups(notes: NoteRow[]): KnowledgeHygieneFinding[] {
