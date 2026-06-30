@@ -1,5 +1,5 @@
 /**
- * Entity profile API — the public per-entity view of an Marina's history.
+ * Entity profile API — the public per-entity view of a Marina's history.
  *
  * Projects existing per-event data (chronicle, standing ledger, entity_activity,
  * entity_competence) onto a per-actor axis. Read-only, no auth, generous rate

@@ -604,8 +604,45 @@ describe("roles", () => {
       "Search the web for information.",
       "Analyze data carefully.",
     ]);
+    expect(role.missingTraitNames).toEqual([]);
     expect(role.guidelines).toEqual(["Be thorough"]);
     expect(role.focus).toEqual(["knowledge"]);
+  });
+
+  it("resolveRole keeps trait prompts and capabilities aligned when a trait is missing", () => {
+    const db = makeRolesDb({
+      role: {
+        name: "mixed",
+        description: "",
+        traits: '["present","deleted","scoped"]',
+        guidelines: "[]",
+        focus: "[]",
+        tone: "",
+        origin: "test",
+      },
+      traits: {
+        present: {
+          prompt: "Present prompt.",
+          capabilities: '{"strengths":["presence"]}',
+        },
+        scoped: {
+          prompt: "Scoped prompt.",
+          capabilities: '{"applicableTasks":["code"]}',
+        },
+      },
+    });
+
+    const role = resolveRole(db, "mixed")!;
+
+    expect(role.traitNames).toEqual(["present", "scoped"]);
+    expect(role.missingTraitNames).toEqual(["deleted"]);
+    expect(role.traitPrompts).toEqual(["Present prompt.", "Scoped prompt."]);
+    expect(role.traitCapabilities).toEqual([
+      { strengths: ["presence"] },
+      { applicableTasks: ["code"] },
+    ]);
+    expect(composeRolePrompt(role, "writing")).toContain("Present prompt.");
+    expect(composeRolePrompt(role, "writing")).not.toContain("Scoped prompt.");
   });
 
   it("getRolePrompt returns null for missing role", () => {
@@ -618,6 +655,7 @@ describe("roles", () => {
       name: "builder",
       description: "Builds things",
       traitNames: ["construct"],
+      missingTraitNames: [],
       traitPrompts: ["Build rooms and objects."],
       traitCapabilities: [{ strengths: ["creation"], preferences: ["efficiency"] }],
       guidelines: ["Build safely"],
@@ -692,6 +730,7 @@ describe("roles", () => {
       name: "mixed",
       description: "",
       traitNames: ["forecasting", "harvesting"],
+      missingTraitNames: [],
       traitPrompts: ["Make calibrated predictions.", "Extract entities and link them."],
       traitCapabilities: [
         { strengths: ["calibration"], applicableTasks: ["forecasting"] },
@@ -712,6 +751,7 @@ describe("roles", () => {
         name: "mixed",
         description: "",
         traitNames: ["forecasting", "harvesting"],
+        missingTraitNames: [],
         traitPrompts: ["Make calibrated predictions.", "Extract entities and link them."],
         traitCapabilities: [
           { strengths: ["calibration"], applicableTasks: ["forecasting"] },
@@ -735,6 +775,7 @@ describe("roles", () => {
         name: "mixed",
         description: "",
         traitNames: ["versatile", "scoped"],
+        missingTraitNames: [],
         traitPrompts: ["Adapt to anything.", "Only useful for code."],
         traitCapabilities: [
           { strengths: ["adaptability"] }, // no applicableTasks → always kept

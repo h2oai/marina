@@ -175,7 +175,12 @@ export class McpServerAdapter {
     // Periodic cleanup of stale MCP sessions (every 5 minutes)
     this.cleanupTimer = setInterval(() => this.cleanupStaleSessions(), 300_000);
 
+    this.port = this.server.port;
     console.log(`MCP server listening on http://localhost:${this.port}/mcp`);
+  }
+
+  getPort(): number {
+    return this.port;
   }
 
   /** Remove MCP sessions whose connections are no longer in the engine. */

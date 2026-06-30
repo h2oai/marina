@@ -7,8 +7,9 @@
  * Both are seedable by world definitions and discoverable via commands.
  *
  * Semantic composition: traits carry optional structured capabilities
- * (strengths, preferences, avoids). When composed, the system detects
- * synergies (overlapping strengths/preferences) and tensions (a trait's
+ * (strengths, preferences, avoids, domains, behaviors, activation cues,
+ * success/risk signals, and task applicability). When composed, the system
+ * detects synergies (overlapping strengths/preferences) and tensions (a trait's
  * strength overlapping another's avoids) to give agents structured
  * reasoning signals.
  */
@@ -21,6 +22,7 @@ export interface ResolvedRole {
   name: string;
   description: string;
   traitNames: string[];
+  missingTraitNames: string[];
   traitPrompts: string[];
   traitCapabilities: TraitCapabilities[];
   guidelines: string[];
@@ -203,16 +205,21 @@ export function resolveRole(db: MarinaDB, roleName: string): ResolvedRole | null
   const row = db.getRole(roleName);
   if (!row) return null;
 
-  const traitNames: string[] = JSON.parse(row.traits);
+  const requestedTraitNames: string[] = JSON.parse(row.traits);
+  const traitNames: string[] = [];
+  const missingTraitNames: string[] = [];
   const traitPrompts: string[] = [];
   const traitCapabilities: TraitCapabilities[] = [];
 
-  for (const traitName of traitNames) {
+  for (const traitName of requestedTraitNames) {
     const trait = db.getTrait(traitName);
     if (trait) {
+      traitNames.push(traitName);
       traitPrompts.push(trait.prompt);
       const caps: TraitCapabilities = JSON.parse(trait.capabilities || "{}");
       traitCapabilities.push(caps);
+    } else {
+      missingTraitNames.push(traitName);
     }
   }
 
@@ -220,6 +227,7 @@ export function resolveRole(db: MarinaDB, roleName: string): ResolvedRole | null
     name: row.name,
     description: row.description,
     traitNames,
+    missingTraitNames,
     traitPrompts,
     traitCapabilities,
     guidelines: JSON.parse(row.guidelines),

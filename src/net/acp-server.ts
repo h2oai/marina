@@ -22,7 +22,7 @@
  *   - stdout is SACRED — only ACP messages. All logging goes to stderr.
  *   - capability checks first; never call fs/* or terminal/* without advertisement.
  *
- * Proxy model: this server uses an MarinaAgent SDK client (WebSocket) so each
+ * Proxy model: this server uses a MarinaAgent SDK client (WebSocket) so each
  * ACP session maps to one Marina entity in a running world. No new commands.
  */
 

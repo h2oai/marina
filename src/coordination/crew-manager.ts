@@ -229,7 +229,12 @@ export class CrewManager {
    * dispatch message. Idempotent on re-dispatch — appends a new message but
    * does not duplicate channel/membership setup or re-post the brief.
    */
-  dispatch(id: CrewId, message: string, sender?: { id: string; name: string }): void {
+  dispatch(
+    id: CrewId,
+    message: string,
+    sender?: { id: string; name: string },
+    opts?: { beforeFirstPost?: (crew: Crew) => void },
+  ): void {
     const crew = this.requireCrew(id);
     if (crew.state === "dissolved") {
       throw new CrewError(`Crew ${crew.name} is dissolved`, "dissolved");
@@ -246,6 +251,7 @@ export class CrewManager {
       // Members get added by name lookup at the engine layer where we know
       // EntityIds. The manager keeps EntityId-agnostic member refs — engine
       // wiring resolves agentName → EntityId before joining.
+      opts?.beforeFirstPost?.(crew);
     }
 
     if (firstActivation) {

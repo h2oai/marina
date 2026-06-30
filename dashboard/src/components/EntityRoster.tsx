@@ -1,8 +1,11 @@
 import {
   Bot,
+  Check,
   ChevronDown,
   ChevronRight,
+  Clipboard,
   Compass,
+  Send,
   Square,
   Trash2,
   TriangleAlert,
@@ -11,7 +14,8 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import type { ReactElement, ReactNode } from "react";
 import { useCallback, useMemo, useState } from "react";
-import { useEntityBrief, useEntityDetail } from "../hooks/use-api";
+import { useEntityBrief, useEntityDetail, useEntityWork } from "../hooks/use-api";
+import { useChatState } from "../hooks/use-chat-state";
 import {
   type ActivityItem,
   type ActivityKind,
@@ -23,7 +27,7 @@ import { useWorldState } from "../hooks/use-world-state";
 import { agentHealth, agentHealthTooltip, HEALTH_META } from "../lib/agent-health";
 import { deleteApi, postApi } from "../lib/api";
 import { entityOrigin, ORIGIN_META } from "../lib/entity-origin";
-import type { DashboardEvent } from "../lib/types";
+import type { DashboardEvent, WorkItemKind } from "../lib/types";
 import { cn, formatTime } from "../lib/utils";
 import { AgentPanel } from "./AgentPanel";
 import { EntitySymmetryBar } from "./EntitySymmetryBar";
@@ -212,6 +216,7 @@ export function EntityRoster({
                   <>
                     {e.agentStatus && <AgentPanel name={e.name} status={e.agentStatus} />}
                     {e.agentStatus && <AgentIntent name={e.name} />}
+                    {e.agentStatus && <AgentWorkInbox name={e.name} />}
                     <EntityLiveStream name={e.name} />
                     <EntityMessageThread name={e.name} onEntityClick={selectEntity} />
                     <EntityExpandedDetail
@@ -501,6 +506,152 @@ function TaskProgressBar({ progress }: { progress: number }) {
         style={{ width: `${pct}%`, backgroundColor: color, opacity: 0.8 }}
       />
     </span>
+  );
+}
+
+const WORK_KIND_LABEL: Record<WorkItemKind, string> = {
+  quest_step: "Quest",
+  claimed_task: "Claim",
+  review_task: "Review",
+  crew_active: "Crew",
+  crew_idle: "Crew",
+  canvas_intent: "Intent",
+  goal_missing: "Goal",
+  bounty: "Bounty",
+  open_task: "Task",
+  social: "Social",
+  channel_join: "Channel",
+  memory_seed: "Memory",
+  explore: "Explore",
+  canvas_contribute: "Canvas",
+  default: "Default",
+};
+
+const WORK_KIND_TONE: Partial<Record<WorkItemKind, string>> = {
+  quest_step: "text-primary bg-primary/10",
+  claimed_task: "text-success bg-success/10",
+  review_task: "text-warning bg-warning/10",
+  crew_active: "text-secondary bg-secondary/10",
+  crew_idle: "text-warning bg-warning/10",
+  canvas_intent: "text-accent bg-accent/10",
+  goal_missing: "text-warning bg-warning/10",
+  bounty: "text-success bg-success/10",
+  open_task: "text-primary bg-primary/10",
+};
+
+function isRunnableWorkAction(action: string): boolean {
+  return action.trim().length > 0 && !action.includes("<") && !action.includes(" or ");
+}
+
+function AgentWorkInbox({ name }: { name: string }) {
+  const { data, isLoading } = useEntityWork(name);
+  const chatEntityName = useChatState((s) => s.entityName);
+  const chatReady = useChatState((s) => s.connected && s.loggedIn);
+  const sendCommand = useChatState((s) => s.sendCommand);
+  const [copiedAction, setCopiedAction] = useState<string | null>(null);
+
+  useInvalidateOnEvent(
+    ["entityWork", name],
+    useCallback(
+      (e: DashboardEvent) =>
+        e.entity === name ||
+        e.name === name ||
+        e.agentName === name ||
+        e.authorName === name ||
+        e.type === "canvas_intent" ||
+        e.type === "task_claimed" ||
+        e.type === "task_submitted" ||
+        e.type === "task_approved" ||
+        e.type === "task_rejected" ||
+        e.type === "crew_created" ||
+        e.type === "crew_state_changed" ||
+        e.type === "crew_completed" ||
+        e.type === "crew_dissolved",
+      [name],
+    ),
+  );
+
+  const items = data?.items ?? [];
+  const visible = items.filter((item) => item.kind !== "default").slice(0, 6);
+
+  if (isLoading) {
+    return (
+      <div className="border-t border-border bg-bg-card px-2 py-1 text-[10px] text-text-dim">
+        Loading work...
+      </div>
+    );
+  }
+
+  if (visible.length === 0) return null;
+
+  const canSendAsSelectedAgent = chatReady && chatEntityName === name;
+
+  return (
+    <div className="border-t border-border bg-bg-card px-2 py-1 text-[11px]">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1 text-primary text-[10px] uppercase tracking-wider">
+          <Clipboard size={9} />
+          <span>Work Inbox</span>
+        </div>
+        <span className="text-[9px] text-text-dim tabular-nums">{visible.length}</span>
+      </div>
+      <div className="flex flex-col gap-1">
+        {visible.map((item) => {
+          const runnable = isRunnableWorkAction(item.action);
+          const canSend = canSendAsSelectedAgent && runnable;
+          const tone = WORK_KIND_TONE[item.kind] ?? "text-text-dim bg-bg-hover";
+          return (
+            <div key={`${item.kind}:${item.ref ?? item.title}`} className="rounded bg-bg/70 p-1.5">
+              <div className="flex items-start gap-1.5">
+                <span
+                  className={cn(
+                    "mt-0.5 shrink-0 rounded px-1 py-px text-[8px] uppercase leading-tight",
+                    tone,
+                  )}
+                >
+                  {WORK_KIND_LABEL[item.kind]}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[10px] font-medium text-text-bright">
+                    {item.title}
+                  </div>
+                  {item.detail && (
+                    <div className="mt-0.5 line-clamp-2 text-[10px] leading-tight text-text">
+                      {item.detail}
+                    </div>
+                  )}
+                </div>
+                {canSend && (
+                  <button
+                    type="button"
+                    title={`Send command as ${name}`}
+                    onClick={() => sendCommand(item.action)}
+                    className="shrink-0 text-text-dim transition-colors hover:text-primary"
+                  >
+                    <Send size={10} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  title="Copy suggested command"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(item.action);
+                    setCopiedAction(item.action);
+                    window.setTimeout(() => setCopiedAction(null), 1200);
+                  }}
+                  className="shrink-0 text-text-dim transition-colors hover:text-text-bright"
+                >
+                  {copiedAction === item.action ? <Check size={10} /> : <Clipboard size={10} />}
+                </button>
+              </div>
+              <code className="mt-1 block truncate rounded bg-bg-hover px-1 py-0.5 text-[9px] text-accent">
+                {item.action}
+              </code>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

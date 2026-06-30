@@ -21,6 +21,40 @@ function resolveNodeUrl(
   return asset ? storage.resolve(asset.storage_key) : undefined;
 }
 
+function encodeNodeDataForUpdate(data: unknown): string | undefined {
+  if (data === undefined) return undefined;
+  if (typeof data !== "string") return JSON.stringify(data);
+  try {
+    JSON.parse(data);
+    return data;
+  } catch {
+    return JSON.stringify({ content: data });
+  }
+}
+
+function actorNameForRequest(
+  body: Record<string, unknown>,
+  engine: Engine | undefined,
+  entityId: EntityId | undefined,
+): string {
+  const explicit = body.actorName ?? body.claimantName ?? body.completerName;
+  if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
+  if (engine && entityId) {
+    const entity = engine.entities.get(entityId);
+    if (entity) return entity.name;
+  }
+  return "api";
+}
+
+function intentErrorResponse(
+  json: (data: unknown, status?: number) => Response,
+  result: { reason: string; status?: string },
+): Response {
+  if (result.reason === "not_found") return json({ error: "Node not found" }, 404);
+  if (result.reason === "no_intent") return json({ error: "Node has no intent" }, 400);
+  return json({ error: `Intent is ${result.status ?? "not in the required state"}` }, 409);
+}
+
 export interface CanvasNodeCreatedEvent {
   nodeId: string;
   canvasId: string;
@@ -42,6 +76,7 @@ export async function handleCanvasApi(
   onNodeCreated?: (event: CanvasNodeCreatedEvent) => void,
 ): Promise<Response> {
   const json = jsonWithOrigin(req.headers.get("Origin"));
+  let authenticatedEntityId: EntityId | undefined;
 
   // Reads are public: the canvas is an observability surface — the same world
   // content is already streamed to any client over the unauthenticated
@@ -52,6 +87,97 @@ export async function handleCanvasApi(
   if (engine && method !== "GET") {
     const auth = authenticateRequest(req, engine);
     if ("error" in auth) return auth.error;
+    authenticatedEntityId = auth.entityId;
+  }
+
+  const intentActionMatch = url.pathname.match(
+    /^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)\/intent\/(claim|complete|fail)$/,
+  );
+  if (intentActionMatch && method === "POST") {
+    const canvasId = decodeURIComponent(intentActionMatch[1]!);
+    const nodeId = decodeURIComponent(intentActionMatch[2]!);
+    const action = intentActionMatch[3]!;
+    const node = db.getNode(nodeId);
+    if (!node || node.canvas_id !== canvasId) return json({ error: "Node not found" }, 404);
+
+    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    const actorName = actorNameForRequest(body, engine, authenticatedEntityId);
+
+    if (action === "claim") {
+      const result = db.claimCanvasIntent(node.id, actorName);
+      if (!result.ok) return intentErrorResponse(json, result);
+      const parsed = JSON.parse(result.node.data);
+      const responseNode = { ...result.node, data: parsed };
+      broadcaster?.broadcast({ type: "node_updated", canvasId, nodeId, changes: responseNode });
+      engine?.logEvent({
+        type: "canvas_intent",
+        entity: (authenticatedEntityId ?? result.node.creator_name) as EntityId,
+        canvasId,
+        nodeId,
+        prompt: result.intent.prompt,
+        status: "active",
+        timestamp: Date.now(),
+      });
+      return json({ ok: true, node: responseNode, intent: result.intent });
+    }
+
+    if (action === "complete") {
+      const resultText = typeof body.result === "string" ? body.result.trim() : "";
+      if (!resultText) return json({ error: "Missing result" }, 400);
+      const resultData =
+        body.data && typeof body.data === "object" && !Array.isArray(body.data)
+          ? (body.data as Record<string, unknown>)
+          : undefined;
+      const result = db.completeCanvasIntent(node.id, {
+        result: resultText,
+        resultType: typeof body.type === "string" ? body.type : undefined,
+        resultData,
+        completerName: actorName,
+      });
+      if (!result.ok) return intentErrorResponse(json, result);
+      const responseNode = { ...result.node, data: JSON.parse(result.node.data) };
+      const responseResultNode = { ...result.resultNode, data: JSON.parse(result.resultNode.data) };
+      broadcaster?.broadcast({ type: "node_updated", canvasId, nodeId, changes: responseNode });
+      broadcaster?.broadcast({
+        type: "node_added",
+        canvasId,
+        node: responseResultNode,
+      });
+      engine?.logEvent({
+        type: "canvas_intent",
+        entity: (authenticatedEntityId ?? result.node.creator_name) as EntityId,
+        canvasId,
+        nodeId,
+        prompt: result.intent.prompt,
+        status: "done",
+        timestamp: Date.now(),
+      });
+      return json({
+        ok: true,
+        node: responseNode,
+        resultNode: responseResultNode,
+        intent: result.intent,
+      });
+    }
+
+    const reason =
+      typeof body.reason === "string" && body.reason.trim()
+        ? body.reason.trim()
+        : "No reason given";
+    const result = db.failCanvasIntent(node.id, reason);
+    if (!result.ok) return intentErrorResponse(json, result);
+    const responseNode = { ...result.node, data: JSON.parse(result.node.data) };
+    broadcaster?.broadcast({ type: "node_updated", canvasId, nodeId, changes: responseNode });
+    engine?.logEvent({
+      type: "canvas_intent",
+      entity: (authenticatedEntityId ?? result.node.creator_name) as EntityId,
+      canvasId,
+      nodeId,
+      prompt: result.intent.prompt,
+      status: "failed",
+      timestamp: Date.now(),
+    });
+    return json({ ok: true, node: responseNode, intent: result.intent });
   }
   // DELETE /api/canvases/:id/nodes/:nodeId
   const nodeMatch = url.pathname.match(/^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)$/);
@@ -84,7 +210,7 @@ export async function handleCanvasApi(
         y: body.y as number | undefined,
         width: body.width as number | undefined,
         height: body.height as number | undefined,
-        data: body.data ? JSON.stringify(body.data) : undefined,
+        data: encodeNodeDataForUpdate(body.data),
       });
       if (!updated) return json({ error: "Node not found" }, 404);
       const node = db.getNode(nodeId)!;
@@ -190,6 +316,23 @@ export async function handleCanvasApi(
       parentNodeId: (body.parent_node_id as string) ?? null,
       data: parsed,
     });
+    if (
+      engine &&
+      parsed.intent &&
+      typeof parsed.intent === "object" &&
+      typeof parsed.intent.prompt === "string" &&
+      parsed.intent.status === "pending"
+    ) {
+      engine.logEvent({
+        type: "canvas_intent",
+        entity: node.creator_name as EntityId,
+        canvasId,
+        nodeId: id,
+        prompt: parsed.intent.prompt,
+        status: "pending",
+        timestamp: Date.now(),
+      });
+    }
     return json(enriched, 201);
   }
 

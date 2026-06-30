@@ -427,6 +427,12 @@ export interface TraitCapabilities {
   strengths?: string[];
   preferences?: string[];
   avoids?: string[];
+  domains?: string[];
+  behaviors?: string[];
+  antiBehaviors?: string[];
+  activation?: string[];
+  successSignals?: string[];
+  riskSignals?: string[];
   /**
    * Optional whitelist of task categories where this trait is useful.
    * When the agent's current task category is set AND a trait declares

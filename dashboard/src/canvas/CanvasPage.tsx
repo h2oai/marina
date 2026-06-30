@@ -212,6 +212,17 @@ function CanvasInner() {
     [persistNodePosition],
   );
 
+  const applyNodeDataSnapshot = useCallback(
+    (nodeId: string, data: Record<string, unknown>) => {
+      setNodes((cur) =>
+        cur.map((node) =>
+          node.id === nodeId ? { ...node, data: { ...node.data, ...data } } : node,
+        ),
+      );
+    },
+    [setNodes],
+  );
+
   // Persist resize when a dimension change is completed
   const resizeTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const handleNodesChange = useCallback(
@@ -540,6 +551,7 @@ function CanvasInner() {
         }}
         canvasId={selectedId}
         onSetIntent={persistNodeData}
+        onIntentActionResult={applyNodeDataSnapshot}
         nodes={nodes}
         suggestedPrompt={suggestedPrompt}
       />

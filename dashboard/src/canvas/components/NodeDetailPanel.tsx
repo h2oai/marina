@@ -1,7 +1,11 @@
 import type { Node } from "@xyflow/react";
+import { CheckCircle2, Hand, XCircle } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
+import { authFetch } from "../../lib/api";
 import { resolveAuthor, resolveTitle } from "../lib/node-fields";
+
+const API_BASE = window.location.origin;
 
 function formatTimestamp(ts: unknown): string {
   if (!ts) return "—";
@@ -49,6 +53,7 @@ interface Props {
   onClose: () => void;
   canvasId: string | null;
   onSetIntent: (nodeId: string, data: Record<string, unknown>) => Promise<void>;
+  onIntentActionResult?: (nodeId: string, data: Record<string, unknown>) => void;
   nodes: Node[];
   suggestedPrompt?: string;
 }
@@ -66,12 +71,16 @@ function NodeDetailPanelInner({
   onClose,
   canvasId,
   onSetIntent,
+  onIntentActionResult,
   nodes,
   suggestedPrompt,
 }: Props & { node: Node }) {
   const [promptText, setPromptText] = useState("");
   const [editText, setEditText] = useState("");
   const [chatText, setChatText] = useState("");
+  const [completeText, setCompleteText] = useState("");
+  const [failReason, setFailReason] = useState("");
+  const [intentError, setIntentError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   // Pre-fill prompt from drop suggestion
@@ -125,12 +134,49 @@ function NodeDetailPanelInner({
     }
   }, [node, canvasId, d, onSetIntent]);
 
+  const handleIntentAction = useCallback(
+    async (action: "claim" | "complete" | "fail") => {
+      if (!node || !canvasId) return;
+      setSubmitting(true);
+      setIntentError(null);
+      try {
+        const body =
+          action === "complete"
+            ? { result: completeText.trim() }
+            : action === "fail"
+              ? { reason: failReason.trim() || "Unable to complete from dashboard" }
+              : {};
+        const res = await authFetch(
+          `${API_BASE}/api/canvases/${encodeURIComponent(canvasId)}/nodes/${encodeURIComponent(
+            node.id,
+          )}/intent/${action}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          },
+        );
+        const payload = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          node?: { data?: Record<string, unknown> };
+        };
+        if (!res.ok) throw new Error(payload.error ?? `Intent ${action} failed`);
+        if (payload.node?.data) onIntentActionResult?.(node.id, payload.node.data);
+        if (action === "complete") setCompleteText("");
+        if (action === "fail") setFailReason("");
+      } catch (err) {
+        setIntentError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [node, canvasId, completeText, failReason, onIntentActionResult],
+  );
+
   const handleSendMessage = useCallback(async () => {
     if (!node || !chatText.trim() || !canvasId) return;
     setSubmitting(true);
     try {
-      const API_BASE = window.location.origin;
-      const { authFetch } = await import("../../lib/api");
       await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -272,6 +318,73 @@ function NodeDetailPanelInner({
                 <div className="rounded bg-bg-hover px-2 py-1.5">
                   <div className="text-[10px] uppercase text-text-dim mb-0.5">Prompt</div>
                   <div className="text-text text-xs whitespace-pre-wrap">{intent.prompt}</div>
+                </div>
+              )}
+
+              {intent.status === "pending" && (
+                <button
+                  type="button"
+                  onClick={() => handleIntentAction("claim")}
+                  disabled={submitting}
+                  className="flex w-full items-center justify-center gap-1.5 rounded bg-blue-900/30 px-3 py-1.5 text-xs font-medium text-blue-300 transition-colors hover:bg-blue-900/45 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Hand size={13} />
+                  {submitting ? "Claiming..." : "Claim Intent"}
+                </button>
+              )}
+
+              {intent.status === "active" && (
+                <div className="space-y-2 rounded border border-border bg-bg/60 p-2">
+                  <div>
+                    <div className="mb-1 text-[10px] uppercase text-text-dim">Result</div>
+                    <textarea
+                      value={completeText}
+                      onChange={(e) => setCompleteText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                          handleIntentAction("complete");
+                        }
+                      }}
+                      placeholder="Deliver the result for this intent..."
+                      className="w-full resize-none rounded border border-border bg-bg-hover px-2 py-1.5 text-xs text-text-bright placeholder-text-dim focus:border-primary focus:outline-none"
+                      rows={3}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleIntentAction("complete")}
+                      disabled={submitting || !completeText.trim()}
+                      className="mt-1 flex w-full items-center justify-center gap-1.5 rounded bg-green-900/25 px-3 py-1.5 text-xs font-medium text-green-300 transition-colors hover:bg-green-900/40 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <CheckCircle2 size={13} />
+                      {submitting ? "Completing..." : "Complete Intent"}
+                    </button>
+                  </div>
+
+                  <div>
+                    <div className="mb-1 text-[10px] uppercase text-text-dim">Failure reason</div>
+                    <textarea
+                      value={failReason}
+                      onChange={(e) => setFailReason(e.target.value)}
+                      placeholder="Why can this intent not be completed?"
+                      className="w-full resize-none rounded border border-border bg-bg-hover px-2 py-1.5 text-xs text-text-bright placeholder-text-dim focus:border-red-500 focus:outline-none"
+                      rows={2}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleIntentAction("fail")}
+                      disabled={submitting}
+                      className="mt-1 flex w-full items-center justify-center gap-1.5 rounded bg-red-900/20 px-3 py-1.5 text-xs font-medium text-red-300 transition-colors hover:bg-red-900/35 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <XCircle size={13} />
+                      {submitting ? "Updating..." : "Fail Intent"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {intentError && (
+                <div className="rounded bg-red-900/20 px-2 py-1.5 text-xs text-red-300">
+                  {intentError}
                 </div>
               )}
 
