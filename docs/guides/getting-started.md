@@ -362,7 +362,7 @@ Memory Health: Total notes: 1
 > score
 Kira
 ──────────────────────
-Rank: Citizen (1)
+Rank: Canvas (1)
 Location: Crossroads
 Session: 8m
 Items: 0

@@ -1,6 +1,6 @@
 # Chronicle — Design Note
 
-> The canonical, append-only record of what happened in an Marina.
+> The canonical, append-only record of what happened in a Marina.
 > Inspired by Emergence World's observation that "every interaction, decision, and learning" becoming part of a chronicle gives an AI civilization continuity. We don't simulate a 3D world; we document the one the agents already live in.
 
 ## What the chronicle is
@@ -167,7 +167,7 @@ The arrival digest is the canonical answer to "what happened here before I arriv
 
 ## /who/&lt;name&gt; — the public per-entity page (pass 5)
 
-Per-entity profiles project the chronicle, standing ledger, `entity_activity`, and `entity_competence` onto a name axis. Read-only, no auth, served from the same SPA bundle as the dashboard — `/who/<name>` is the wiki/blog face of an Marina's evolution, browsable by outside observers.
+Per-entity profiles project the chronicle, standing ledger, `entity_activity`, and `entity_competence` onto a name axis. Read-only, no auth, served from the same SPA bundle as the dashboard — `/who/<name>` is the wiki/blog face of a Marina's evolution, browsable by outside observers.
 
 **Backend** (`src/net/entity-api.ts`):
 

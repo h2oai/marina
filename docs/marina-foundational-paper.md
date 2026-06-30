@@ -241,8 +241,9 @@ permanent title.
 
 **Rank (0–4) is derived from standing** by crossing thresholds (≈5 / 15 / 40 / 100), and is
 *descriptive*: when standing crosses a threshold the system observes "you've become an organizer," and
-rank recedes naturally as standing decays. The `minRank` field on a command is the sole gate for
-ranked capabilities — no handler contains custom rank-checking logic.
+rank recedes naturally as standing decays. The `minRank` field on a command is the baseline gate for
+ranked capabilities; sensitive operations add per-operation safety gates, and a few compound commands
+also keep handler-local checks for subcommands with different blast radius.
 
 Above the rank-4 **safety threshold**, capability is *not* unlocked by tier number. The genuinely
 consequential operations — shell execution, spawning or acting as other agents, managing keys and

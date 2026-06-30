@@ -38,7 +38,7 @@ You:  Explorer
 Bot:  Welcome, Explorer! Type 'help' to get started.
 ```
 
-After that, every message is an Marina command:
+After that, every message is a Marina command:
 
 ```
 You:  look

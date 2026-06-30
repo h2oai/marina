@@ -7,7 +7,7 @@
  * writes a compact Q→A note so future queries benefit from accumulated
  * reasoning. All features are composable via env flags.
  *
- * This proves: "does wrapping any LLM in an Marina memory-using agent
+ * This proves: "does wrapping any LLM in a Marina memory-using agent
  * make it better?" Swap PROVIDER_URL/KEY/MODEL to aim at any substrate
  * (Anthropic, OpenAI, Gemini, OpenRouter, local Ollama, etc.).
  *
