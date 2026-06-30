@@ -617,11 +617,19 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["web-search", "source-citation", "cross-referencing"],
       preferences: ["evidence-based", "multi-source"],
       avoids: ["unsupported-claims", "single-source-conclusions"],
+      // Descriptive metadata only — no `task-category` activation, so this is
+      // rendered as guidance but never gates the trait out.
+      domains: ["research", "retrieval"],
+      behaviors: ["retrieve-first", "cite-sources", "cross-reference"],
+      antiBehaviors: ["guess-without-tool", "single-source-conclusion"],
     },
     createdBy: SYSTEM,
   });
 
   // ── Principle traits (cognition) ───────────────────────────────────
+  // These encode enduring epistemic discipline. They are marked
+  // `activation: ["always"]` so PRISM-style task gating never suppresses them
+  // regardless of the inferred task category.
 
   db.saveTrait({
     name: "thoroughness",
@@ -634,6 +642,11 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["deep-reasoning", "completeness", "persistence"],
       preferences: ["depth-over-breadth", "exhaustive-search"],
       avoids: ["shallow-analysis", "premature-conclusions"],
+      activation: ["always"],
+      behaviors: ["retrieve-first", "inspect-before-acting"],
+      antiBehaviors: ["premature-conclusion", "shallow-analysis"],
+      successSignals: ["open-questions-resolved"],
+      riskSignals: ["concluding-on-thin-evidence"],
     },
     createdBy: SYSTEM,
   });
@@ -649,6 +662,12 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["source-verification", "contradiction-detection", "provenance-tracking"],
       preferences: ["evidence-based", "transparent-sourcing"],
       avoids: ["unsupported-claims", "source-conflation"],
+      activation: ["always"],
+      domains: ["research", "retrieval"],
+      behaviors: ["cite-sources", "note-contradictions"],
+      antiBehaviors: ["guess-without-tool", "source-conflation"],
+      successSignals: ["claims-traceable-to-sources"],
+      riskSignals: ["uncited-claims"],
     },
     createdBy: SYSTEM,
   });
@@ -663,6 +682,11 @@ export function seedTraitsAndRoles(db: MarinaDB): void {
       strengths: ["self-awareness", "calibration", "intellectual-courage"],
       preferences: ["transparency", "evidence-based"],
       avoids: ["overconfidence", "unsupported-claims"],
+      activation: ["always"],
+      behaviors: ["state-confidence", "update-on-evidence"],
+      antiBehaviors: ["overclaim", "present-guess-as-fact"],
+      successSignals: ["calibrated-confidence"],
+      riskSignals: ["false-certainty"],
     },
     createdBy: SYSTEM,
   });
@@ -972,6 +996,14 @@ export function seedTabH2OForecasting(db: MarinaDB): void {
         strengths: ["tabular-reasoning", "calibrated-prediction", "evidence-grounding"],
         preferences: ["data-driven", "prior-anchored", "cite-the-model"],
         avoids: ["blind-copying", "unsupported-guesses"],
+        // Descriptive only (no `task-category` activation): an oracle's goal can
+        // infer "research" or "trading" as readily as "forecasting", so gating
+        // here would risk silencing the trait. Domains stay informational.
+        domains: ["forecasting", "trading"],
+        behaviors: ["cite-the-model", "quantify-uncertainty"],
+        antiBehaviors: ["blind-copying", "overclaim"],
+        successSignals: ["calibrated-prediction"],
+        riskSignals: ["unsupported-guesses"],
       },
       createdBy: SYSTEM,
     });
@@ -1349,6 +1381,15 @@ export function seedAnswererCrew(
         strengths: ["exact-arithmetic", "symbolic-math", "numerical-verification"],
         preferences: ["use-the-tool", "double-check", "cite-the-calculation"],
         avoids: ["mental-arithmetic", "rounding-errors", "confident-guessing"],
+        // Descriptive only — deliberately NOT `task-category` gated. Besides the
+        // math specialist, the generalist answerer role also composes this trait
+        // and must keep it available for per-request math even when its own goal
+        // infers no (or a non-math) category. Domains stay informational.
+        domains: ["math"],
+        behaviors: ["verify-with-tool", "double-check"],
+        antiBehaviors: ["mental-arithmetic", "confident-guessing"],
+        successSignals: ["independently-verified-result"],
+        riskSignals: ["unverified-multi-step-arithmetic"],
       },
       createdBy: SYSTEM,
     });
