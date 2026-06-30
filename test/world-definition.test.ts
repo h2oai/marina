@@ -292,4 +292,21 @@ describe("seedGuidePool with custom notes", () => {
     const pool = db.getMemoryPool("guide");
     expect(pool).toBeDefined();
   });
+
+  it("adds new guide notes to an existing guide pool without duplicating old ones", () => {
+    const oldNote = { content: "Existing guide note", importance: 5, type: "fact" };
+    const newNote = { content: "New guide note", importance: 7, type: "skill" };
+
+    seedGuidePool(db, [oldNote]);
+    const pool = db.getMemoryPool("guide");
+    expect(pool).toBeDefined();
+    const before = db.getPoolNotes(pool!.id, 1_000).length;
+
+    seedGuidePool(db, [oldNote, newNote]);
+    const afterNotes = db.getPoolNotes(pool!.id, 1_000);
+
+    expect(afterNotes.length).toBe(before + 1);
+    expect(afterNotes.filter((note) => note.content === oldNote.content)).toHaveLength(1);
+    expect(afterNotes.filter((note) => note.content === newNote.content)).toHaveLength(1);
+  });
 });

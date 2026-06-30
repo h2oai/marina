@@ -3,6 +3,7 @@ import { composeRolePrompt, inferTaskCategory, resolveRole } from "../../agent/r
 import { dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, RoomContext } from "../../types";
+import { getRoleInspectionMetadata, renderRoleInspectionMetadata } from "./role";
 
 /**
  * Read-only preview of the assembled agent system prompt. The system prompt
@@ -40,6 +41,7 @@ export function systemPromptCommand(deps: { db?: MarinaDB }): CommandDef {
 
       let rolePrompt: string | null = null;
       const notes: string[] = [];
+      const inspectionLines: string[] = [];
       if (roleName) {
         if (!deps.db) {
           ctx.send(input.entity, "Roles require database support.");
@@ -53,6 +55,9 @@ export function systemPromptCommand(deps: { db?: MarinaDB }): CommandDef {
         const category = goalText ? inferTaskCategory(goalText) : undefined;
         rolePrompt = composeRolePrompt(resolved, category);
         notes.push(`role: ${roleName}`);
+        inspectionLines.push(
+          ...renderRoleInspectionMetadata(getRoleInspectionMetadata(deps.db, resolved, category)),
+        );
         if (goalText) {
           notes.push(`goal: ${goalText}`, `inferred category: ${category ?? "(none)"}`);
         }
@@ -63,6 +68,7 @@ export function systemPromptCommand(deps: { db?: MarinaDB }): CommandDef {
       const lines = [
         header("System Prompt (read-only preview)"),
         dim(notes.join(" · ")),
+        ...inspectionLines,
         separator(),
         getLeanSystemPrompt(rolePrompt),
       ];

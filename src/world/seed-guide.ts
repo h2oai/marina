@@ -46,6 +46,37 @@ export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
   },
   {
     type: "fact",
+    importance: 8,
+    content:
+      "behavior surfaces — choose the smallest durable surface that fits. Use roles for enduring " +
+      "agent identity and duty; traits for reusable behavior atoms; skills for repeatable " +
+      "procedures; guide notes for stable system orientation; project pools for local findings " +
+      "and handoffs; tradition pools for recurring patterns. Preview roles with " +
+      "`role view <name> goal <text>`, check shaping risks with `role lint` / `trait lint`, and " +
+      "bank reliable workflows with `skill store`.",
+  },
+  {
+    type: "fact",
+    importance: 8,
+    content:
+      "real-time communication — humans and agents share one live world. Before working alone, " +
+      "run `brief social` or `who`; ask directly with `tell <name> <question>`; join shared " +
+      "channels with `channel join general`; broadcast findings with `channel send <name> " +
+      "<message>`. Communication is productive action when it unblocks work.",
+  },
+  {
+    type: "skill",
+    importance: 9,
+    content:
+      "faster loop — collapse discovery into action. After setting a goal, run `next`; if it " +
+      "points at a canvas intent, claim it with `canvas intent claim <node>`; if it points at " +
+      "a crew, activate or read the crew channel with `crew dispatch <name> <message>` or " +
+      "`channel history crew:<id>`; if it points at a peer, ask directly with `tell <name> " +
+      "<question>`. When the result matters, finish the loop with a note, pool deposit, " +
+      "crew artifact, task submit, or intent complete.",
+  },
+  {
+    type: "fact",
     importance: 7,
     content:
       "Two benchmark systems — don't confuse them. (1) Evolve-world quests are in-world " +
@@ -75,13 +106,12 @@ export function seedGuidePool(db: MarinaDB, notes: GuideNote[]): void {
   }
   if (!pool) return;
 
-  // Skip when the pool already has any notes. The previous check used an
-  // FTS5 search for "bootstrap getting started" which returned zero hits
-  // unless that exact phrase appeared in the seed text — so every reboot
-  // re-seeded and duplicates piled up. Existence is what we actually want.
-  if (db.getPoolNotes(pool.id, 1).length > 0) return;
+  // Idempotent per note, not per pool. Existing worlds should inherit new
+  // platform guide notes without duplicating older seed content on every boot.
+  const existing = new Set(db.getPoolNotes(pool.id, 1_000).map((note) => note.content));
 
   for (const note of all) {
+    if (existing.has(note.content)) continue;
     db.addPoolNote(pool.id, AUTHOR, note.content, note.importance, note.type);
   }
 }

@@ -2,11 +2,18 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB, TraitCapabilities } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getRank } from "../permissions";
-import { renderEditHistory } from "./role";
+import {
+  hasTraitCapabilities,
+  parseTraitCapabilities,
+  renderEditHistory,
+  renderTraitLint,
+} from "./role";
 
 /**
  * Parse optional capabilities from the end of a trait create command.
  * Syntax: trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2]
+ *   [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2]
+ *   [successSignals s1,s2] [riskSignals r1,r2]
  *
  * Returns { prompt, capabilities } where prompt has the capability tokens stripped.
  */
@@ -16,19 +23,33 @@ function parseCapabilities(tokens: string[]): {
 } {
   const caps: TraitCapabilities = {};
   const promptTokens: string[] = [];
+  const fields = new Map<string, keyof TraitCapabilities>([
+    ["strengths", "strengths"],
+    ["preferences", "preferences"],
+    ["avoids", "avoids"],
+    ["domains", "domains"],
+    ["behaviors", "behaviors"],
+    ["antibehaviors", "antiBehaviors"],
+    ["antiBehaviors", "antiBehaviors"],
+    ["activation", "activation"],
+    ["successsignals", "successSignals"],
+    ["successSignals", "successSignals"],
+    ["risksignals", "riskSignals"],
+    ["riskSignals", "riskSignals"],
+    ["applicabletasks", "applicableTasks"],
+    ["applicableTasks", "applicableTasks"],
+  ]);
   let i = 0;
 
   while (i < tokens.length) {
-    const lower = tokens[i]!.toLowerCase();
-    if (
-      (lower === "strengths" || lower === "preferences" || lower === "avoids") &&
-      i + 1 < tokens.length
-    ) {
+    const token = tokens[i]!;
+    const field = fields.get(token) ?? fields.get(token.toLowerCase());
+    if (field && i + 1 < tokens.length) {
       const values = tokens[i + 1]!.split(",")
         .map((v) => v.trim())
         .filter(Boolean);
       if (values.length > 0) {
-        caps[lower] = values;
+        caps[field] = values;
       }
       i += 2;
     } else {
@@ -51,6 +72,27 @@ function formatCapabilities(caps: TraitCapabilities): string[] {
   if (caps.avoids && caps.avoids.length > 0) {
     lines.push(`${bold("Avoids:")} ${caps.avoids.join(", ")}`);
   }
+  if (caps.domains && caps.domains.length > 0) {
+    lines.push(`${bold("Domains:")} ${caps.domains.join(", ")}`);
+  }
+  if (caps.behaviors && caps.behaviors.length > 0) {
+    lines.push(`${bold("Behaviors:")} ${caps.behaviors.join(", ")}`);
+  }
+  if (caps.antiBehaviors && caps.antiBehaviors.length > 0) {
+    lines.push(`${bold("Anti-behaviors:")} ${caps.antiBehaviors.join(", ")}`);
+  }
+  if (caps.activation && caps.activation.length > 0) {
+    lines.push(`${bold("Activation:")} ${caps.activation.join(", ")}`);
+  }
+  if (caps.successSignals && caps.successSignals.length > 0) {
+    lines.push(`${bold("Success signals:")} ${caps.successSignals.join(", ")}`);
+  }
+  if (caps.riskSignals && caps.riskSignals.length > 0) {
+    lines.push(`${bold("Risk signals:")} ${caps.riskSignals.join(", ")}`);
+  }
+  if (caps.applicableTasks && caps.applicableTasks.length > 0) {
+    lines.push(`${bold("Applicable tasks:")} ${caps.applicableTasks.join(", ")}`);
+  }
   return lines;
 }
 
@@ -62,7 +104,7 @@ export function traitCommand(deps: {
     name: "trait",
     aliases: [],
     minRank: 0,
-    help: "Manage composable agent traits.\nUsage: trait list | trait view <name> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] | trait delete <name>\n\nTraits are atomic prompt fragments used to compose roles.\nOptional capabilities metadata enables semantic composition (synergies/tensions).\n`trait history <name>` shows the audited edit trail.",
+    help: "Manage composable agent traits.\nUsage: trait list | trait view <name> | trait lint <name> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] | trait delete <name>\n\nTraits are atomic prompt fragments used to compose roles.\nOptional capabilities metadata enables semantic composition (synergies/tensions), task gating, and typed behavioral hints.\n`trait lint <name>` reports pragmatic prompt-shaping warnings without changing the trait. `trait history <name>` shows the audited edit trail.",
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, "Traits require database support.");
@@ -90,12 +132,8 @@ export function traitCommand(deps: {
           lines.push(bold(category));
           for (const t of categoryTraits) {
             const preview = t.prompt.slice(0, 60).replace(/\n/g, " ");
-            const caps: TraitCapabilities = JSON.parse(t.capabilities || "{}");
-            const hasCaps =
-              (caps.strengths?.length ?? 0) > 0 ||
-              (caps.preferences?.length ?? 0) > 0 ||
-              (caps.avoids?.length ?? 0) > 0;
-            const capTag = hasCaps ? " [caps]" : "";
+            const caps = parseTraitCapabilities(t.capabilities);
+            const capTag = hasTraitCapabilities(caps) ? " [caps]" : "";
             lines.push(
               `  ${bold(t.name)}${dim(capTag)} ${dim(`— ${preview}${t.prompt.length > 60 ? "..." : ""}`)}`,
             );
@@ -118,7 +156,7 @@ export function traitCommand(deps: {
             ctx.send(input.entity, `Trait "${name}" not found.`);
             return;
           }
-          const caps: TraitCapabilities = JSON.parse(trait.capabilities || "{}");
+          const caps = parseTraitCapabilities(trait.capabilities);
           const capLines = formatCapabilities(caps);
           const lines = [
             header(`Trait: ${trait.name}`),
@@ -152,6 +190,21 @@ export function traitCommand(deps: {
           return;
         }
 
+        case "lint": {
+          const name = tokens[1];
+          if (!name) {
+            ctx.send(input.entity, "Usage: trait lint <name>");
+            return;
+          }
+          const trait = db.getTrait(name);
+          if (!trait) {
+            ctx.send(input.entity, `Trait "${name}" not found.`);
+            return;
+          }
+          ctx.send(input.entity, renderTraitLint(trait));
+          return;
+        }
+
         case "create": {
           const entity = deps.getEntity?.(input.entity);
           if (entity && getRank(entity) < 3) {
@@ -164,7 +217,7 @@ export function traitCommand(deps: {
           if (!name || !category || remaining.length === 0) {
             ctx.send(
               input.entity,
-              "Usage: trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2]",
+              "Usage: trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2]",
             );
             return;
           }
@@ -185,11 +238,7 @@ export function traitCommand(deps: {
             capabilities,
             createdBy: deps.getEntity?.(input.entity)?.name ?? "unknown",
           });
-          const hasCaps =
-            (capabilities.strengths?.length ?? 0) > 0 ||
-            (capabilities.preferences?.length ?? 0) > 0 ||
-            (capabilities.avoids?.length ?? 0) > 0;
-          const suffix = hasCaps ? " with capabilities" : "";
+          const suffix = hasTraitCapabilities(capabilities) ? " with capabilities" : "";
           ctx.send(input.entity, `Trait "${name}" created (${category})${suffix}.`);
           return;
         }
@@ -218,7 +267,7 @@ export function traitCommand(deps: {
         default:
           ctx.send(
             input.entity,
-            "Usage: trait list | trait view <name> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] | trait delete <name>",
+            "Usage: trait list | trait view <name> | trait lint <name> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] | trait delete <name>",
           );
       }
     },
