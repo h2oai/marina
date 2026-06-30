@@ -312,8 +312,15 @@ export function taskCommand(
             return;
           }
           const id = Number.parseInt(idStr, 10);
+          const task = tasks.get(id);
           if (tasks.submit(id, input.entity, text)) {
             ctx.send(input.entity, `Submitted work for task #${id}.`);
+            if (task && task.creatorId !== input.entity) {
+              ctx.send(
+                task.creatorId as EntityId,
+                `${fmtEntity(self.name)} submitted task ${fmtId(id)}: ${task.title}\n${dim(`Review: task info ${id}  ·  task approve ${id} ${self.name}  ·  task reject ${id} ${self.name}`)}`,
+              );
+            }
             logEvent?.({
               type: "task_submitted",
               entity: input.entity,

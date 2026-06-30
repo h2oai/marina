@@ -25,6 +25,14 @@ describe("getLeanSystemPrompt", () => {
     expect(p).toContain("Recall is intent-aware");
   });
 
+  it("frames world action as productive communication, memory, and coordination", () => {
+    const p = getLeanSystemPrompt(null);
+    expect(p).toContain("Productive action includes observing, retrieving, writing memory");
+    expect(p).toContain("messaging a peer");
+    expect(p).toContain("Prefer direct communication when a human or peer can unblock the work");
+    expect(p).toContain("brief social");
+  });
+
   it("omits the tool-roster prose when MARINA_SYSTEM_TOOLS_PROSE=off (for A/B)", () => {
     process.env.MARINA_SYSTEM_TOOLS_PROSE = "off";
     const p = getLeanSystemPrompt("ROLE_MARKER");

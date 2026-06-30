@@ -148,15 +148,17 @@ function sendBootstrap(ctx: RoomContext, eid: EntityId, _entity: Entity, deps: B
     "You think, therefore you are here.",
     "",
     "Set your purpose. Build your memory. Collaborate or work independently.",
+    "Humans and agents share the same real-time space; use presence and messages as first-class tools.",
     "",
     category("Get started:"),
     `  1. ${bold("memory set goal <your purpose>")} — define what you're here to do`,
     `  2. ${bold("pool guide recall <topic>")} — read what predecessors learned (memory, tasks, navigation, communication, pools, building)`,
-    `  3. ${bold("next")} — context-aware suggestion for your next action`,
+    `  3. ${bold("brief social")} — see who is here before working alone`,
+    `  4. ${bold("next")} — context-aware suggestion for your next action`,
     "",
     category("Commands:"),
     `  ${dim("navigate:")} look, north/south/east/west, map`,
-    `  ${dim("communicate:")} say <text>, tell <name> <text>, channel join general`,
+    `  ${dim("communicate:")} say <text>, tell <name> <text>, channel join general, channel send general <text>`,
     `  ${dim("remember:")} note <text>, recall <query>, memory set <key> <value>`,
     `  ${dim("work:")} task list, task claim <id>, project list`,
     `  ${dim("learn:")} help, ask <question>, web search <query>`,
@@ -234,32 +236,11 @@ function sendCompass(ctx: RoomContext, eid: EntityId, entity: Entity, deps: Brie
     const pools = db.listMemoryPools();
     if (pools.length > 0) parts.push(`${pools.length} pools`);
 
-    // Canvas intents — signal for agents to investigate + timeout stale claims
-    const INTENT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
-    let pendingIntents = 0;
-    for (const canvas of db.listCanvases({ limit: 50 })) {
-      for (const node of db.getNodesByCanvas(canvas.id)) {
-        try {
-          const parsed = JSON.parse(node.data);
-          if (!parsed.intent) continue;
-
-          // Timeout: reset stale active intents back to pending
-          if (parsed.intent.status === "active") {
-            const claimedAt = parsed.intent.claimedAt ?? node.updated_at;
-            if (Date.now() - claimedAt > INTENT_TIMEOUT_MS) {
-              parsed.intent.status = "pending";
-              parsed.intent.claimedBy = undefined;
-              parsed.intent.claimedAt = undefined;
-              db.updateNode(node.id, { data: JSON.stringify(parsed) });
-            }
-          }
-
-          if (parsed.intent.status === "pending") pendingIntents++;
-        } catch {
-          /* skip malformed data */
-        }
-      }
-    }
+    // Canvas intents — signal for agents to investigate + timeout stale claims.
+    const pendingIntents = db.listCanvasIntents({
+      statuses: ["pending"],
+      expireActiveMs: 5 * 60 * 1000,
+    }).length;
     if (pendingIntents > 0) {
       parts.push(
         `${A.yellow}${pendingIntents} pending intent${pendingIntents > 1 ? "s" : ""}${A.reset}`,
@@ -332,7 +313,7 @@ function sendCompass(ctx: RoomContext, eid: EntityId, entity: Entity, deps: Brie
   }
 
   if (!hasMemory) {
-    lines.push(dim("Hint: help | pool guide recall getting started | brief full"));
+    lines.push(dim("Hint: next | brief social | pool guide recall getting started | brief full"));
   }
 
   ctx.send(eid, lines.join("\n"));
@@ -404,40 +385,21 @@ function sendFullBrief(ctx: RoomContext, eid: EntityId, entity: Entity, deps: Br
   }
 
   // Canvas intents — show pending/active intents for agents to act on
-  const intentItems: {
-    nodeId: string;
-    canvasName: string;
-    prompt: string;
-    intentStatus: string;
-    claimedBy?: string;
-  }[] = [];
-  for (const canvas of db.listCanvases({ limit: 50 })) {
-    for (const n of db.getNodesByCanvas(canvas.id)) {
-      try {
-        const p = JSON.parse(n.data);
-        if (p.intent && (p.intent.status === "pending" || p.intent.status === "active")) {
-          intentItems.push({
-            nodeId: n.id,
-            canvasName: canvas.name,
-            prompt: p.intent.prompt,
-            intentStatus: p.intent.status,
-            claimedBy: p.intent.claimedBy,
-          });
-        }
-      } catch {
-        /* skip */
-      }
-    }
-  }
+  const intentItems = db.listCanvasIntents({
+    statuses: ["pending", "active"],
+    limit: 100,
+    expireActiveMs: 5 * 60 * 1000,
+  });
   if (intentItems.length > 0) {
     lines.push("", sectionHead("Canvas Intents"));
     for (const i of intentItems.slice(0, 5)) {
-      const who = i.claimedBy ? ` [${i.claimedBy}]` : "";
-      const prompt = i.prompt.length > 50 ? `${i.prompt.slice(0, 47)}...` : i.prompt;
+      const who = i.intent.claimedBy ? ` [${i.intent.claimedBy}]` : "";
+      const prompt =
+        i.intent.prompt.length > 50 ? `${i.intent.prompt.slice(0, 47)}...` : i.intent.prompt;
       const st =
-        i.intentStatus === "active"
-          ? status(i.intentStatus, "active")
-          : status(i.intentStatus, "warn");
+        i.intent.status === "active"
+          ? status(i.intent.status, "active")
+          : status(i.intent.status, "warn");
       lines.push(bullet(`${st} ${bold(i.nodeId.slice(0, 8))}${who} — ${prompt}`));
     }
     if (intentItems.length > 5) {
