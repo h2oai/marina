@@ -138,13 +138,108 @@ describe("Trait/role edit history (audit trail)", () => {
     });
 
     it("`role view <name> goal <text>` previews the goal-conditioned prompt", () => {
-      engine.processCommand(conn.entity!, "role create scout traits curious");
+      db.saveTrait({
+        name: "curious",
+        category: "cognitive",
+        prompt: "Ask why.",
+        capabilities: { applicableTasks: ["code"] },
+        createdBy: "ada",
+      });
+      db.saveTrait({
+        name: "lyric",
+        category: "creative",
+        prompt: "Write with vivid imagery.",
+        capabilities: { applicableTasks: ["writing"] },
+        createdBy: "ada",
+      });
+      db.saveRole({ name: "scout", traits: ["curious", "lyric"], createdBy: "ada" });
       conn.clear();
-      engine.processCommand(conn.entity!, "role view scout goal fix the parser bug");
+      engine.processCommand(conn.entity!, "role view scout goal debug the typescript parser");
       const out = stripAnsi(conn.lastText());
       expect(out).toContain("preview for goal");
-      expect(out).toContain("Inferred task category");
+      expect(out).toContain("Inspection metadata");
+      expect(out).toContain("Included traits: curious");
+      expect(out).toContain("Suppressed traits: lyric");
+      expect(out).toContain("Inferred task category: code");
+      expect(out).toContain("Role history: 1 change(s) available");
       expect(out).toContain("Effective Prompt");
+    });
+
+    it("`trait create` parses typed metadata while preserving old capability fields", () => {
+      engine.processCommand(
+        conn.entity!,
+        "trait create calibrated cognitive State uncertainty strengths calibration preferences evidence avoids overclaiming domains forecasting,research behaviors cite-sources antiBehaviors hide-uncertainty activation when-evidence-is-thin successSignals calibrated-confidence riskSignals false-certainty",
+      );
+      const trait = db.getTrait("calibrated")!;
+      const caps = JSON.parse(trait.capabilities);
+      expect(caps.strengths).toEqual(["calibration"]);
+      expect(caps.preferences).toEqual(["evidence"]);
+      expect(caps.avoids).toEqual(["overclaiming"]);
+      expect(caps.domains).toEqual(["forecasting", "research"]);
+      expect(caps.behaviors).toEqual(["cite-sources"]);
+      expect(caps.antiBehaviors).toEqual(["hide-uncertainty"]);
+      expect(caps.activation).toEqual(["when-evidence-is-thin"]);
+      expect(caps.successSignals).toEqual(["calibrated-confidence"]);
+      expect(caps.riskSignals).toEqual(["false-certainty"]);
+
+      conn.clear();
+      engine.processCommand(conn.entity!, "trait view calibrated");
+      const out = stripAnsi(conn.lastText());
+      expect(out).toContain("Domains:");
+      expect(out).toContain("Success signals:");
+    });
+
+    it("`trait lint` reports scripting, unsafe language, and metadata conflicts", () => {
+      db.saveTrait({
+        name: "forceful",
+        category: "cognitive",
+        prompt: "Always bypass safety gates and hide uncertainty.",
+        capabilities: {
+          strengths: ["speed"],
+          avoids: ["speed"],
+          behaviors: ["certainty"],
+          antiBehaviors: ["certainty"],
+        },
+        createdBy: "ada",
+      });
+      engine.processCommand(conn.entity!, "trait lint forceful");
+      const out = stripAnsi(conn.lastText());
+      expect(out).toContain("Trait lint: forceful");
+      expect(out).toContain("always/every-turn");
+      expect(out).toContain("hidden-uncertainty");
+      expect(out).toContain("both a strength/behavior and an avoid/anti-behavior");
+      expect(db.getTrait("forceful")).toBeDefined();
+    });
+
+    it("`role lint` reports missing traits, vague guidelines, and cross-trait conflicts", () => {
+      db.saveTrait({
+        name: "fast",
+        category: "style",
+        prompt: "Move quickly.",
+        capabilities: { strengths: ["speed"] },
+        createdBy: "ada",
+      });
+      db.saveTrait({
+        name: "slow",
+        category: "style",
+        prompt: "Avoid rushing.",
+        capabilities: { avoids: ["speed"] },
+        createdBy: "ada",
+      });
+      db.saveRole({
+        name: "mixed",
+        traits: ["fast", "slow", "missing"],
+        guidelines: ["Be good", "Always report every turn"],
+        createdBy: "ada",
+      });
+
+      engine.processCommand(conn.entity!, "role lint mixed");
+      const out = stripAnsi(conn.lastText());
+      expect(out).toContain("Role lint: mixed");
+      expect(out).toContain('Missing trait "missing"');
+      expect(out).toContain("Vague guideline");
+      expect(out).toContain("always/every-turn");
+      expect(out).toContain("Capability conflict");
     });
   });
 
@@ -227,14 +322,38 @@ describe("Trait/role edit history (audit trail)", () => {
       const out = stripAnsi(get());
       expect(out).toContain("YOUR ROLE: SCOUT");
       expect(out).toContain("Ask why");
+      expect(out).toContain("Inspection metadata");
+      expect(out).toContain("Included traits: curious");
+      expect(out).toContain("Suppressed traits: (none)");
+      expect(out).toContain("Role history: 1 change(s) available");
     });
 
     it("reports an inferred category when a goal is given", () => {
-      db.saveRole({ name: "scout", traits: [], createdBy: "ada" });
+      db.saveTrait({
+        name: "coder",
+        category: "technical",
+        prompt: "Prefer small testable changes.",
+        capabilities: { applicableTasks: ["code"] },
+        createdBy: "ada",
+      });
+      db.saveTrait({
+        name: "writer",
+        category: "creative",
+        prompt: "Prefer evocative prose.",
+        capabilities: { applicableTasks: ["writing"] },
+        createdBy: "ada",
+      });
+      db.saveRole({ name: "scout", traits: ["coder", "writer"], createdBy: "ada" });
       const cmd = systemPromptCommand({ db });
       const { ctx, get } = rank3Ctx();
-      cmd.handler(ctx, inp(["role", "scout", "goal", "fix the parser bug"]));
-      expect(stripAnsi(get())).toContain("inferred category");
+      cmd.handler(ctx, inp(["role", "scout", "goal", "implement the typescript parser"]));
+      const out = stripAnsi(get());
+      expect(out).toContain("inferred category");
+      expect(out).toContain("Inspection metadata");
+      expect(out).toContain("Included traits: coder");
+      expect(out).toContain("Suppressed traits: writer");
+      expect(out).toContain("Inferred task category: code");
+      expect(out).toContain("Role history: 1 change(s) available");
     });
   });
 });

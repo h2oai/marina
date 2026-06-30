@@ -151,6 +151,10 @@ describe("platform guide notes", () => {
     expect(joined).toContain("self-improvement loop");
     expect(joined).toContain("skill store");
     expect(joined).toContain("Two benchmark systems");
+    expect(joined).toContain("behavior surfaces");
+    expect(joined).toContain("real-time communication");
+    expect(joined).toContain("faster loop");
+    expect(joined).toContain("brief social");
     expect(notes.length).toBeGreaterThanOrEqual(PLATFORM_GUIDE_NOTES.length);
   });
 
