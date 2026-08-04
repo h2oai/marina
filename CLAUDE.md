@@ -102,7 +102,7 @@ cd dashboard && bun run test  # Frontend smoke tests (vitest, ~24 tests)
 ## World Templates
 - World definitions live in `worlds/` — each is a TypeScript file exporting a `WorldDefinition`
 - `MARINA_WORLD` env var selects which world to load (default: `default`)
-- Available worlds: `default` (full-featured launchpad — 3 projects, 9 templates, markets, benchmarks, craft), `commons` (coordination-ready), `research` (research lab), `personal` (self-evolving agent), `evolve` (8 capability benchmarks), `craft` (spec-driven dev — interview/spec/verify/ship), `markets` (prediction markets — confidence forecasting, Brier scoring, research-driven positions), `demos` (interactive demonstrations — lobby, workshop, bridge), `empty` (minimal)
+- Available worlds: `default` (intent-first Workbench), `showcase` (full 25-room launchpad — projects, templates, markets, benchmarks, craft, specialist crews), `commons` (coordination-ready), `research` (research lab), `personal` (self-evolving agent), `evolve` (8 capability benchmarks), `craft` (spec-driven dev — interview/spec/verify/ship), `markets` (prediction markets — confidence forecasting, Brier scoring, research-driven positions), `demos` (interactive demonstrations — lobby, workshop, bridge), `empty` (minimal)
 - `WorldDefinition.seed?(db)` runs once on first boot, seeds DB with templates/projects/tasks (must be idempotent)
 - `RoomContext.brief?(entityId)` lets rooms push compass signals to entities
 - `brief watch [N]` / `brief unwatch` — periodic compass subscription (30-600 ticks)
@@ -190,7 +190,8 @@ cd dashboard && bun run test  # Frontend smoke tests (vitest, ~24 tests)
 - `src/agent/social.ts` — relationship tracking, adaptive social response, coordination signals
 - `src/world/world-definition.ts` — WorldDefinition interface (includes `seed`)
 - `src/world/templates/orchestration.ts` — 10 orchestration pattern templates (5 notes each)
-- `worlds/default.ts` — default world definition (full-featured launchpad)
+- `worlds/default.ts` — compact intent-first Workbench (the default)
+- `worlds/showcase.ts` — full-featured 25-room capability showcase
 - `worlds/seed.ts` — shared seed utilities, trait/role definitions with capabilities
 - `src/engine/commands/canvas.ts` — canvas CRUD, asset management, layout, intent system, per-entity canvas (`canvas visit`), typed edges (`canvas connect/disconnect/edges`)
 - `src/engine/commands/feed.ts` — `feed list --kind X --entity Y --since 30m` querying the `feed_events` timeline

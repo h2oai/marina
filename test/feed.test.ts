@@ -325,6 +325,23 @@ describe("Feed Canvas System", () => {
       expect(db.getCanvasByName("feed")).toBeUndefined();
     });
 
+    it("records request lifecycle as a causal feed timeline without canvas noise", () => {
+      publisher.handleEvent({
+        type: "model_request_lifecycle",
+        phase: "completed",
+        requestId: "req-demo",
+        model: "marina:answerer",
+        target: "Answerer",
+        durationMs: 1234,
+        timestamp: Date.now(),
+      });
+      const [event] = db.queryFeedEvents({ limit: 1 });
+      expect(event?.kind).toBe("model_request_completed");
+      expect(event?.ref).toBe("request:req-demo");
+      expect(event?.summary).toContain("1234ms");
+      expect(db.getCanvasByName("feed")).toBeUndefined();
+    });
+
     // ─── Crew lifecycle bookends ────────────────────────────────────────
 
     it("publishes crew_created as a feed-canvas node", () => {

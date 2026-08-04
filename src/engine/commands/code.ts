@@ -39,6 +39,7 @@ interface CodeMessageMetadata {
   exitCode?: number;
   metadata?: Record<string, unknown>;
   modelTarget?: string;
+  phase?: string;
   parentSessionId?: string;
   paths?: string[];
   query?: string;
@@ -56,6 +57,7 @@ interface CodeMessageMetadata {
     | "file"
     | "history"
     | "list"
+    | "lifecycle"
     | "model"
     | "note"
     | "patch"
@@ -784,7 +786,7 @@ export interface CodeDeps {
   getEntity: (id: string) => Entity | undefined;
   /** Send a line to a specific entity's connection — used to stream a bound
    *  coding agent's live activity back to the human who dispatched the task. */
-  notify?: (entityId: string, message: string) => void;
+  notify?: (entityId: string, message: string, metadata?: Record<string, unknown>) => void;
 }
 
 export function codeCommand(deps: CodeDeps): CommandDef {
@@ -2078,6 +2080,30 @@ function streamSessionAgent(
   const key = `${sessionId}:${dispatcherId}`;
   if (codeStreams.has(key)) return; // already streaming this session to this watcher
   let buffer = "";
+  let currentPhase = "received";
+  const emitLifecycle = (phase: string, detail: string, extra: Record<string, unknown> = {}) => {
+    if (phase === currentPhase && phase !== "failed") return;
+    const previous = currentPhase;
+    currentPhase = phase;
+    const payload = { agent: handle.name, detail, phase, previous, ...extra };
+    deps.db?.createCodingEvent({
+      sessionId,
+      actor: handle.name,
+      kind: "code_lifecycle",
+      payload,
+    });
+    notify(dispatcherId, detail, {
+      code: {
+        event: "code_lifecycle",
+        metadata: payload,
+        phase,
+        sessionId,
+        status: phase === "failed" ? "failed" : phase === "completed" ? "complete" : "active",
+        title: `${handle.name}: ${phase.replace(/_/g, " ")}`,
+        type: "lifecycle",
+      },
+    });
+  };
   const flush = () => {
     const text = buffer.trim();
     buffer = "";
@@ -2086,11 +2112,17 @@ function streamSessionAgent(
   const unsub = handle.subscribe((ev: AgentEvent) => {
     switch (ev.type) {
       case "tool_call":
+        {
+          const lifecycle = lifecycleForToolCall(ev.toolName, ev.args);
+          if (lifecycle) emitLifecycle(lifecycle.phase, lifecycle.detail, { tool: ev.toolName });
+        }
         notify(dispatcherId, dim(`  ▸ ${formatAgentToolCall(ev.toolName, ev.args)}`));
         break;
       case "tool_result":
-        if (ev.isError)
+        if (ev.isError) {
+          emitLifecycle("failed", `${handle.name} hit a tool error`, { tool: ev.toolName });
           notify(dispatcherId, `  ✗ ${ev.toolName}: ${clipLine(stringifyResult(ev.result))}`);
+        }
         break;
       case "text_delta":
         buffer += ev.delta;
@@ -2104,6 +2136,37 @@ function streamSessionAgent(
     }
   });
   codeStreams.set(key, unsub);
+}
+
+function lifecycleForToolCall(
+  toolName: string,
+  args: Record<string, unknown>,
+): { detail: string; phase: string } | undefined {
+  const typed = toolName.replace(/^marina_code_/, "");
+  const action =
+    toolName === "marina_code" && typeof args.action === "string" ? args.action : typed;
+  if (/^(session_status|list_files|read_file|search|diff|status|files|read)$/.test(action)) {
+    return { phase: "inspecting", detail: "Inspecting the workspace and current changes" };
+  }
+  if (action === "plan") return { phase: "planning", detail: "Recording an implementation plan" };
+  if (/^(patch|apply_patch|reject_patch|apply|reject)$/.test(action)) {
+    return {
+      phase: action.includes("apply") ? "applying" : "patching",
+      detail: action.includes("apply")
+        ? "Applying the reviewed patch"
+        : "Preparing a reviewable patch",
+    };
+  }
+  if (action === "approval") {
+    return { phase: "awaiting_approval", detail: "Waiting for a recorded approval decision" };
+  }
+  if (/^(verify|run)$/.test(action)) {
+    return { phase: "verifying", detail: "Running workspace verification" };
+  }
+  if (action === "summary") {
+    return { phase: "completed", detail: "Work completed with a durable summary" };
+  }
+  return undefined;
 }
 
 /** Tear down all live streams a dispatcher is watching (on exit / disconnect). */
@@ -2182,6 +2245,21 @@ async function doCode(
   if (!agentName) return; // ensureSessionAgent already explained why
   const profile = getCodeProfile(entity);
   try {
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "code_lifecycle",
+      payload: { phase: "received", task },
+    });
+    sendCode(ctx, eid, "Task received and queued for the coding agent.", {
+      event: "code_lifecycle",
+      metadata: { phase: "received", task },
+      phase: "received",
+      sessionId: session.id,
+      status: "active",
+      title: "Task received",
+      type: "lifecycle",
+    });
     await driver.assignAgent({
       actor: entity.name,
       agentName,
@@ -2254,11 +2332,12 @@ async function ensureSessionAgent(
       goal: [
         `You are the autonomous coder for Marina coding session ${session.id}.`,
         `Workspace: ${session.workspace_root}`,
-        "Use the marina_code tool to inspect (status/files/read/search/diff), edit (patch then apply), and verify (run the test/lint/typecheck chain). Drive each task to completion, then summarize.",
+        "Follow this operating contract for every task: inspect status and relevant files first; record a short plan; make the smallest reviewable patch; inspect the resulting diff; run the relevant verification chain; fix failures within the task scope; then record a summary citing changed paths and successful checks.",
+        "Do not claim completion before verification succeeds. Do not modify unrelated files, install dependencies, launch applications, or expand scope without a user decision. Prefer one bounded tool action at a time so progress remains observable and steerable.",
       ].join("\n"),
       model: modelTarget,
       name,
-      role: "implementer",
+      role: "coding-agent",
       spawnedBy: entity.name,
     });
     bindSpawnedAgentEntity(handle, session, getCodeProfile(entity).name, deps);

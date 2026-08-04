@@ -190,9 +190,39 @@ export class FeedPublisher {
       case "crew_dissolved":
         this.publishCrewDissolved(event);
         break;
+      case "model_request_lifecycle":
+        this.publishModelRequestLifecycle(event);
+        break;
       default:
         break;
     }
+  }
+
+  private publishModelRequestLifecycle(
+    event: EngineEvent & { type: "model_request_lifecycle" },
+  ): void {
+    const target = event.target ? ` → ${event.target}` : "";
+    const duration = event.durationMs === undefined ? "" : ` in ${event.durationMs}ms`;
+    const summaries: Record<typeof event.phase, string> = {
+      received: `Request received for ${event.model}`,
+      routed: `Request routed${target}`,
+      fast_path: `Verified fast path selected for ${event.model}`,
+      completed: `Response completed${target}${duration}`,
+      failed: `Request failed${target}${duration}${event.detail ? ` — ${event.detail}` : ""}`,
+    };
+    this.recordFeedEvent({
+      kind: `model_request_${event.phase}`,
+      entity: event.target,
+      ref: `request:${event.requestId}`,
+      summary: summaries[event.phase],
+      payload: {
+        requestId: event.requestId,
+        model: event.model,
+        phase: event.phase,
+        target: event.target,
+        durationMs: event.durationMs,
+      },
+    });
   }
 
   private publishRankChange(event: EngineEvent & { type: "rank_change" }): void {

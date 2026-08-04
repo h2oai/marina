@@ -34,6 +34,14 @@ export interface ReadinessReport {
   world: string;
   generatedAt: number;
   checks: ReadinessCheck[];
+  demo: {
+    score: number;
+    status: "ready" | "warming" | "degraded";
+    warmAgents: number;
+    expectedAgents: number;
+    recentMeaningfulEvents: number;
+    medianResponseMs?: number;
+  };
 }
 
 /** Upstream LLM provider env vars (NOT MODEL_API_KEYS — that's caller auth). */
@@ -64,7 +72,8 @@ export function computeReadiness(engine: Engine): ReadinessReport {
   }
   const hasKey = PROVIDER_ENV.some((v) => !!env[v]) || dbKeyCount > 0;
   const agents = engine.agentRuntime.list();
-  const running = (name: string) => agents.some((a) => a.name === name && a.state !== "stopped");
+  const activeAgent = (name: string) =>
+    agents.find((agent) => agent.name === name && agent.state !== "stopped");
   const runningRole = (role: string) =>
     agents.some((a) => a.role === role && a.state !== "stopped");
 
@@ -110,12 +119,29 @@ export function computeReadiness(engine: Engine): ReadinessReport {
 
   // ── Chronicler — reads + auto `event` rows always work; this is synthesis ─
   const chroniclerConfig = engine.db?.getAgentConfig("Chronicler");
-  if (running("Chronicler")) {
+  const chronicler = activeAgent("Chronicler");
+  const chroniclerDegraded =
+    chronicler !== undefined && (chronicler.state === "error" || chronicler.silentTurns >= 3);
+  if (chronicler && chroniclerDegraded) {
+    checks.push({
+      id: "chronicler",
+      label: "Chronicler",
+      status: "degraded",
+      detail:
+        chronicler.errorReason ??
+        `running but non-participating — ${chronicler.silentTurns} consecutive silent turns`,
+      remediation:
+        "Check the configured model/provider and the agent error log before relying on synthesis.",
+    });
+  } else if (chronicler) {
     checks.push({
       id: "chronicler",
       label: "Chronicler",
       status: "ok",
-      detail: "running — narrative & digest synthesis active (reads + auto event rows always work)",
+      detail:
+        chronicler.toolCalls > 0
+          ? "running and participating — narrative/digest synthesis is available"
+          : "running and warming up — no successful world action recorded yet",
     });
   } else if (chroniclerConfig) {
     checks.push({
@@ -213,7 +239,8 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       id: "model-api",
       label: "Model API (/v1)",
       status: "ok",
-      detail: "caller auth configured and an upstream is reachable — Marina-as-LLM works",
+      detail:
+        "caller auth and an upstream key are configured — use a model probe to verify live reachability",
     });
   } else if (apiAuth) {
     checks.push({
@@ -234,10 +261,91 @@ export function computeReadiness(engine: Engine): ReadinessReport {
     });
   }
 
+  // ── Demo pulse — measured participation, activity, and request latency ───
+  const demoNames = ["Host", "Builder", "Critic", "Chronicler"].filter((name) =>
+    engine.db?.getAgentConfig(name),
+  );
+  const expectedNames = demoNames.length > 0 ? demoNames : agents.map((agent) => agent.name);
+  const warmAgents = expectedNames.filter((name) => {
+    const agent = activeAgent(name);
+    return (
+      agent?.state === "autonomous" &&
+      !agent.errorReason &&
+      agent.silentTurns < 3 &&
+      (agent.toolCalls > 0 || agent.lastTurnMs > 0)
+    );
+  }).length;
+  let recentMeaningfulEvents = 0;
+  const responseDurations: number[] = [];
+  try {
+    const recent = engine.db?.queryFeedEvents({ since: Date.now() - 5 * 60_000, limit: 200 }) ?? [];
+    const durableEvents = recent.filter(
+      (event) =>
+        event.kind !== "channel_message" &&
+        !event.kind.endsWith("_received") &&
+        !event.kind.endsWith("_routed") &&
+        event.kind !== "agent_turn_start" &&
+        event.kind !== "agent_turn_end",
+    ).length;
+    // Conversation demonstrates presence, but a lively loop is not equivalent
+    // to durable progress. At most two chat events contribute to the pulse.
+    recentMeaningfulEvents =
+      durableEvents + Math.min(2, recent.filter((e) => e.kind === "channel_message").length);
+    for (const event of recent) {
+      if (event.kind !== "model_request_completed" || !event.payload) continue;
+      const duration = (JSON.parse(event.payload) as { durationMs?: unknown }).durationMs;
+      if (typeof duration === "number" && Number.isFinite(duration))
+        responseDurations.push(duration);
+    }
+  } catch {
+    // A closed/new database should degrade the score, never readiness itself.
+  }
+  responseDurations.sort((a, b) => a - b);
+  const medianResponseMs =
+    responseDurations.length > 0
+      ? responseDurations[Math.floor(responseDurations.length / 2)]
+      : undefined;
+  const warmRatio = expectedNames.length > 0 ? warmAgents / expectedNames.length : 0;
+  const score = Math.round(
+    (hasKey ? 20 : 0) +
+      (env.AGENT_AUTORESPAWN === "true" ? 10 : 0) +
+      warmRatio * 30 +
+      Math.min(20, recentMeaningfulEvents * 4) +
+      (medianResponseMs === undefined
+        ? 5
+        : medianResponseMs < 5000
+          ? 20
+          : medianResponseMs < 20_000
+            ? 15
+            : 8),
+  );
+  const demo = {
+    score,
+    status:
+      score >= 70 ? ("ready" as const) : score >= 40 ? ("warming" as const) : ("degraded" as const),
+    warmAgents,
+    expectedAgents: expectedNames.length,
+    recentMeaningfulEvents,
+    ...(medianResponseMs !== undefined ? { medianResponseMs } : {}),
+  };
+  checks.push({
+    id: "demo-pulse",
+    label: "Demo pulse",
+    status: demo.status === "ready" ? "ok" : "degraded",
+    detail: `${demo.score}/100 — ${warmAgents}/${expectedNames.length} agents warm, ${recentMeaningfulEvents} meaningful events in 5m${medianResponseMs === undefined ? "" : `, ${medianResponseMs}ms median response`}`,
+    ...(demo.status === "ready"
+      ? {}
+      : {
+          remediation:
+            "Enable AGENT_AUTORESPAWN, wait for seeded agents to warm, then run one demo scenario or model probe.",
+        }),
+  });
+
   return {
     instanceName: engine.instanceName,
     world: engine.world?.name ?? "unknown",
     generatedAt: Date.now(),
     checks,
+    demo,
   };
 }

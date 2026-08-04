@@ -449,6 +449,22 @@ async function routeToChannel(
   }
 
   const requestId = `req-${crypto.randomUUID().slice(0, 8)}`;
+  const startedAt = Date.now();
+  engine.logEvent({
+    type: "model_request_lifecycle",
+    phase: "received",
+    requestId,
+    model,
+    timestamp: startedAt,
+  });
+  engine.logEvent({
+    type: "model_request_lifecycle",
+    phase: "routed",
+    requestId,
+    model,
+    target,
+    timestamp: Date.now(),
+  });
 
   // Build request payload
   const payload = JSON.stringify({
@@ -514,7 +530,28 @@ async function routeToChannel(
       cm.send(convChannel.id, target, "agent", result.content);
     }
 
+    engine.logEvent({
+      type: "model_request_lifecycle",
+      phase: "completed",
+      requestId,
+      model,
+      target,
+      durationMs: Date.now() - startedAt,
+      timestamp: Date.now(),
+    });
     return result;
+  } catch (error) {
+    engine.logEvent({
+      type: "model_request_lifecycle",
+      phase: "failed",
+      requestId,
+      model,
+      target,
+      durationMs: Date.now() - startedAt,
+      detail: error instanceof Error ? error.message : "unknown error",
+      timestamp: Date.now(),
+    });
+    throw error;
   } finally {
     decrementPending(target);
   }
@@ -1193,6 +1230,44 @@ export async function handleModelApi(
   return undefined;
 }
 
+/** Resolve only an explicit, single binary arithmetic expression. This is
+ * intentionally conservative: no precedence, variables, units, or inferred
+ * operations. Those remain agent work. */
+export function tryVerifiedArithmetic(input: unknown): string | undefined {
+  if (typeof input !== "string" || input.length > 300) return undefined;
+  const question = input.split("?")[0]!.trim();
+  const match = question.match(
+    /^(?:(?:what\s+is|calculate|compute)\s+)?(-?\d+(?:\.\d+)?)\s*(multiplied\s+by|times|plus|minus|divided\s+by|[+*/-])\s*(-?\d+(?:\.\d+)?)$/i,
+  );
+  if (!match) return undefined;
+  const left = Number(match[1]);
+  const right = Number(match[3]);
+  const operator = match[2]!.toLowerCase().replace(/\s+/g, " ");
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return undefined;
+
+  let result: number;
+  let symbol: string;
+  if (operator === "multiplied by" || operator === "times" || operator === "*") {
+    result = left * right;
+    symbol = "×";
+  } else if (operator === "plus" || operator === "+") {
+    result = left + right;
+    symbol = "+";
+  } else if (operator === "minus" || operator === "-") {
+    result = left - right;
+    symbol = "−";
+  } else {
+    if (right === 0) return undefined;
+    result = left / right;
+    symbol = "÷";
+  }
+  if (!Number.isFinite(result)) return undefined;
+  const rendered = Number.isInteger(result)
+    ? String(result)
+    : String(Number(result.toPrecision(12)));
+  return `${rendered}. Verified directly: ${left} ${symbol} ${right} = ${rendered}.`;
+}
+
 async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response> {
   try {
     const body = await req.json();
@@ -1222,6 +1297,47 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
 
     const opts: RouteOptions = { context, conversationId, strategy: ec.strategy };
     const wantStream = body.stream === true;
+
+    // A deliberately tiny verified fast path keeps the demo reactive without
+    // pretending arbitrary language tasks are deterministic. Everything that
+    // is not one explicit binary arithmetic expression still goes through the
+    // autonomous endpoint crew.
+    const fastAnswer =
+      ec.mode === "agents" &&
+      modelToChannelName(model) === "model-answerer" &&
+      process.env.MARINA_MODEL_FAST_PATH !== "false"
+        ? tryVerifiedArithmetic(userMsg.content)
+        : undefined;
+    if (fastAnswer) {
+      const requestId = `req-${crypto.randomUUID().slice(0, 8)}`;
+      const startedAt = Date.now();
+      engine.logEvent({
+        type: "model_request_lifecycle",
+        phase: "received",
+        requestId,
+        model,
+        timestamp: startedAt,
+      });
+      engine.logEvent({
+        type: "model_request_lifecycle",
+        phase: "fast_path",
+        requestId,
+        model,
+        target: "verified-arithmetic",
+        timestamp: Date.now(),
+      });
+      engine.logEvent({
+        type: "model_request_lifecycle",
+        phase: "completed",
+        requestId,
+        model,
+        target: "verified-arithmetic",
+        durationMs: Date.now() - startedAt,
+        timestamp: Date.now(),
+      });
+      if (wantStream) return bufferedOpenaiStream(model, fastAnswer, conversationId);
+      return json(openaiCompletion(model, fastAnswer));
+    }
 
     try {
       // Agents mode streams natively (one coordinator, incremental deltas).
@@ -1381,7 +1497,7 @@ const BUILTIN_DEFAULT_MODELS: Record<string, string> = {
   ANTHROPIC_API_KEY: "claude-sonnet-4-5-20250929",
   OPENAI_API_KEY: "gpt-4o",
   GEMINI_API_KEY: "gemini-2.0-flash",
-  OPENROUTER_API_KEY: "anthropic/claude-sonnet-4",
+  OPENROUTER_API_KEY: "openai/gpt-4o-mini",
   GROQ_API_KEY: "llama-3.3-70b-versatile",
   LLAMA_API_KEY: LOCAL_PROVIDERS.llama!.defaultModel,
   OLLAMA_API_KEY: LOCAL_PROVIDERS.ollama!.defaultModel,
@@ -1512,7 +1628,26 @@ async function dispatchOpenAICompatible(
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
-    if (!resp.ok) return null;
+    if (!resp.ok) {
+      let detail = "";
+      try {
+        const payload = (await resp.clone().json()) as {
+          error?: { message?: string } | string;
+          message?: string;
+        };
+        const message =
+          typeof payload.error === "string"
+            ? payload.error
+            : (payload.error?.message ?? payload.message ?? "");
+        detail = message ? `: ${message.slice(0, 300)}` : "";
+      } catch {
+        // Status and provider host are still enough to distinguish routing failures.
+      }
+      console.warn(
+        `[model-api] upstream ${new URL(url).host} returned HTTP ${resp.status}${detail}`,
+      );
+      return null;
+    }
     const model = String((body.model as string) ?? "marina");
     if (wantStream) {
       if (!resp.body) return null;
@@ -1523,7 +1658,10 @@ async function dispatchOpenAICompatible(
     return new Response(JSON.stringify(data), {
       headers: { ...MODEL_CORS, "Content-Type": "application/json" },
     });
-  } catch {
+  } catch (error) {
+    console.warn(
+      `[model-api] upstream request failed: ${error instanceof Error ? error.message : "unknown error"}`,
+    );
     return null;
   }
 }
@@ -1686,12 +1824,30 @@ export function prepareLlamaBody(
   return prepared;
 }
 
+/** Keep a caller's provider-specific completion budget from poisoning a
+ * fallback request. For example, Gemini-oriented agents may request 32k output
+ * while gpt-4o accepts at most 16,384 and otherwise rejects the whole turn. */
+export function prepareUpstreamBody(
+  body: Record<string, unknown>,
+  provider: string,
+): Record<string, unknown> {
+  const prepared = prepareLlamaBody(body, provider);
+  if (provider !== "openai") return prepared;
+  const bounded = { ...prepared };
+  for (const field of ["max_tokens", "max_completion_tokens"] as const) {
+    const value = bounded[field];
+    if (typeof value === "number" && value > 16_384) bounded[field] = 16_384;
+  }
+  return bounded;
+}
+
 async function proxyToUpstream(
   engine: Engine,
   body: Record<string, unknown>,
   forceModel?: string,
 ): Promise<Response> {
   const wantStream = body.stream === true;
+  let attemptedUpstream = false;
   // `forceModel` (passthru endpoint mode) pins the upstream model regardless of
   // what the caller requested; otherwise only marina/default models resolve to
   // the configured default.
@@ -1712,11 +1868,12 @@ async function proxyToUpstream(
     // providers still require a key.
     const localReady = isLocalProvider(provider) && localProviderConfigured(provider);
     if (cfg && (key || localReady) && upstreamModel) {
+      attemptedUpstream = true;
       if (cfg.anthropic) return await proxyToAnthropic(body, key!, upstreamModel, wantStream);
       const r = await dispatchOpenAICompatible(
         cfg.url,
         key ?? "",
-        prepareLlamaBody({ ...body, model: upstreamModel }, provider),
+        prepareUpstreamBody({ ...body, model: upstreamModel }, provider),
         wantStream,
       );
       if (r) return r;
@@ -1731,6 +1888,7 @@ async function proxyToUpstream(
     // opted into — otherwise a keyless local server would be probed every call.
     const localReady = isLocalProvider(provider) && localProviderConfigured(provider);
     if (!key && !localReady) continue;
+    attemptedUpstream = true;
     const envKey = cfg.envKeys[0]!;
     if (cfg.anthropic) {
       return await proxyToAnthropic(body, key!, getDefaultUpstreamModel(envKey), wantStream);
@@ -1739,10 +1897,17 @@ async function proxyToUpstream(
     const r = await dispatchOpenAICompatible(
       cfg.url,
       key ?? "",
-      prepareLlamaBody({ ...body, model: requestModel }, provider),
+      prepareUpstreamBody({ ...body, model: requestModel }, provider),
       wantStream,
     );
     if (r) return r;
+  }
+
+  if (attemptedUpstream) {
+    return errorJson(
+      502,
+      "Configured upstream LLM providers were reachable by configuration but rejected or could not complete the request. Check provider status, quota, model access, and server logs.",
+    );
   }
 
   return errorJson(

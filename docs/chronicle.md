@@ -109,7 +109,7 @@ Defined in `worlds/seed.ts`:
 
 - **`chronicling` trait** (methodology) — the loop and the epistemology in one prompt: every cycle, `chronicle pending`; cite always; never embellish; restraint over performance.
 - **`chronicler` role** — `chronicling` + `methodical-observation` + `intellectual-honesty`. Origin: `civic`.
-- **`seedChroniclerAgent(db)`** — persists a `Chronicler` agent config (model: `marina/default`, role: `chronicler`, goal that orients the loop). Worlds opt in by calling this — default world does.
+- **`seedChroniclerAgent(db)`** — persists a `Chronicler` agent config (model: `marina/default`, role: `chronicler`, goal that orients the loop). Worlds opt in by calling this — the showcase world does.
 
 The agent uses the existing `lean-agent-adapter` continuation prompt + its role/goal prompt to drive the loop. No new runtime — the Chronicler IS just another autonomous agent with a specialized brain and a tools surface (the write commands) that no other agent can call.
 

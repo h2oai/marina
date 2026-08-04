@@ -78,7 +78,7 @@ export const DISTRICT_CROWNS: Record<string, ShapeFn> = {
   exchange: diamondPath,
   organic: circlePath,
   sense: eyePath,
-  // Actual Marina default world districts
+  // Marina showcase-grid districts
   world: hexagonPath, // hub/grid rooms
   mode: octagonPath, // agent mode rooms
   craft: diamondPath, // craft/build rooms
@@ -99,7 +99,7 @@ export const DISTRICT_COLORS: Record<string, string> = {
   exchange: "#FF9500",
   organic: "#555555",
   sense: "#FFB800",
-  // Actual Marina default world districts (derived from room ID prefix)
+  // Marina showcase-grid districts (derived from room ID prefix)
   world: "#FFDD00", // gold — hub/grid rooms
   mode: "#06b6d4", // cyan — agent mode rooms
   craft: "#FFB800", // amber — craft/build rooms

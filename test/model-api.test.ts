@@ -6,8 +6,10 @@ import {
   handleModelApi,
   pendingRequests,
   prepareLlamaBody,
+  prepareUpstreamBody,
   roundRobinCounters,
   selectAgent,
+  tryVerifiedArithmetic,
 } from "../src/net/model-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
@@ -152,6 +154,21 @@ describe("Model API", () => {
     expect(ids).toContain("marina");
     for (const alias of aliases) expect(ids).toContain(alias);
     expect(data.data[0].owned_by).toBe("marina");
+  });
+
+  it("serves explicit binary arithmetic through the verified fast path", async () => {
+    const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+      model: "marina:answerer",
+      messages: [{ role: "user", content: "What is 19 multiplied by 37? Reply briefly." }],
+    });
+    const resp = await handleModelApi(url, method, req, engine);
+    expect(resp?.status).toBe(200);
+    const data = await resp!.json();
+    expect(data.choices[0].message.content).toContain("703");
+    const lifecycle = engine
+      .getEventLog()
+      .filter((event) => event.type === "model_request_lifecycle");
+    expect(lifecycle.map((event) => event.phase)).toEqual(["received", "fast_path", "completed"]);
   });
 
   it("GET /v1/models lists channels matching model* pattern", async () => {
@@ -1019,5 +1036,29 @@ describe("prepareLlamaBody (llama upstream prep)", () => {
     process.env.LLAMA_CONTEXT_WINDOW = "16384";
     const out = prepareLlamaBody({ messages: [] }, "llama");
     expect(out.max_tokens).toBe(8192); // 16384 / 2
+  });
+});
+
+describe("prepareUpstreamBody (cloud fallback prep)", () => {
+  it("clamps completion budgets when falling back to OpenAI", () => {
+    expect(prepareUpstreamBody({ max_tokens: 32_000 }, "openai").max_tokens).toBe(16_384);
+    expect(
+      prepareUpstreamBody({ max_completion_tokens: 32_000 }, "openai").max_completion_tokens,
+    ).toBe(16_384);
+  });
+
+  it("preserves valid OpenAI and non-OpenAI budgets", () => {
+    expect(prepareUpstreamBody({ max_tokens: 4_096 }, "openai").max_tokens).toBe(4_096);
+    expect(prepareUpstreamBody({ max_tokens: 32_000 }, "google").max_tokens).toBe(32_000);
+  });
+});
+
+describe("tryVerifiedArithmetic", () => {
+  it("handles one explicit operation and rejects ambiguous work", () => {
+    expect(tryVerifiedArithmetic("compute 12 plus 8")).toContain("20");
+    expect(tryVerifiedArithmetic("What is 19 multiplied by 37? Reply briefly.")).toContain("703");
+    expect(tryVerifiedArithmetic("compute 2 + 3 * 4")).toBeUndefined();
+    expect(tryVerifiedArithmetic("Explain whether 2 + 2 is always 4")).toBeUndefined();
+    expect(tryVerifiedArithmetic("calculate 1 divided by 0")).toBeUndefined();
   });
 });

@@ -19,9 +19,11 @@ import evolve from "../../../worlds/evolve";
 import markets from "../../../worlds/markets";
 import personal from "../../../worlds/personal";
 import research from "../../../worlds/research";
+import showcase from "../../../worlds/showcase";
 
 export const WORLDS: Record<string, WorldDefinition> = {
   default: defaultWorld,
+  showcase,
   commons,
   research,
   personal,

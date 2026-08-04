@@ -39,7 +39,7 @@ export const ORIGIN_META: Record<
   system: {
     label: "system",
     color: "var(--color-secondary)",
-    title: "Part of the default world — seeded on boot",
+    title: "Part of the selected world — seeded on boot",
     rank: 2,
   },
   player: {

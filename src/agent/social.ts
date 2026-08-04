@@ -42,40 +42,44 @@ export class SocialAwareness {
       case "message": {
         const data = p.data as {
           from?: string;
+          senderName?: string;
           to?: string;
           message?: string;
+          content?: string;
           type?: string;
           channel?: string;
         };
+        const speaker = data.from ?? data.senderName;
+        const message = data.message ?? data.content;
 
         if (data.channel) {
           events.push({
             type: "channel_message",
-            speaker: data.from,
-            message: data.message,
+            speaker,
+            message,
             channel: data.channel,
             timestamp,
           });
         } else if (data.to) {
           events.push({
             type: "player_tells",
-            speaker: data.from,
-            message: data.message,
+            speaker,
+            message,
             target: data.to,
             timestamp,
           });
         } else {
           events.push({
             type: "player_says",
-            speaker: data.from,
-            message: data.message,
+            speaker,
+            message,
             timestamp,
           });
         }
 
-        if (data.from) {
-          this.recentSpeakers.set(data.from, timestamp);
-          this.trackInteraction(data.from);
+        if (speaker) {
+          this.recentSpeakers.set(speaker, timestamp);
+          this.trackInteraction(speaker);
         }
         break;
       }

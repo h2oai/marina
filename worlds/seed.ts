@@ -1,7 +1,8 @@
 /**
  * Shared seed helpers, constants, and reusable quest definitions.
  *
- * Extracted from worlds/default.ts to eliminate duplication across world files.
+ * Extracted from the original full world (now worlds/showcase.ts) to eliminate
+ * duplication across world files.
  * Every world that needs traits, room templates, projects, boards, channels,
  * or pools should import from here instead of re-implementing locally.
  */
@@ -144,7 +145,12 @@ export function seedProject(
     name: string;
     description: string;
     orchestration: string;
-    tasks: { title: string; description: string; standing?: number }[];
+    tasks: {
+      title: string;
+      description: string;
+      standing?: number;
+      validationMode?: "single" | "bounty";
+    }[];
     poolNotes: { content: string; importance?: number }[];
   },
 ): void {
@@ -187,7 +193,7 @@ export function seedProject(
       description: t.description,
       creatorId: "system",
       creatorName: "system",
-      validationMode: "bounty",
+      validationMode: t.validationMode ?? "bounty",
       standing: t.standing ?? 5,
     });
   }

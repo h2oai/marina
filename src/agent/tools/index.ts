@@ -162,7 +162,12 @@ const boardSchema = Type.Object({
 
 const taskSchema = Type.Object({
   action: Type.String({ description: "Action: list, create, claim, submit, info" }),
-  args: Type.Optional(Type.String({ description: "Arguments for the action" })),
+  args: Type.Optional(
+    Type.String({
+      description:
+        "Arguments for the action. Submissions must cite inspectable evidence such as note/pool/canvas IDs, command results, source URLs, or artifact paths.",
+    }),
+  ),
 });
 
 const projectSchema = Type.Object({
@@ -773,7 +778,7 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
     wrap(
       "marina_task",
       "Task",
-      "Task management: list, create, goal (create+auto-claim), progress, claim, submit. Use 'goal' for personal goals, 'progress <id> +N' to track.",
+      "Task management: list, create, goal (create+auto-claim), progress, claim, submit. Before submit, verify the outcome and cite inspectable evidence; a plan or intention is not completed work.",
       taskSchema,
       (p) => `task ${p.action}${p.args ? ` ${p.args}` : ""}`,
       ctx,

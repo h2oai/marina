@@ -76,6 +76,8 @@ Covered now:
 - Core local coding loop: inspect, read, search, diff, run, patch, apply, reject, history.
 - Strategy routing for direct model prompts and assignment to existing live Marina agents.
 - Assigned live agents are bound into the coding session when their adapter exposes an entity id.
+- The default single-agent driver uses a compact `coding-agent` role with a persisted, live-streamed
+  inspect → plan → patch → verify → summary lifecycle.
 - Full and crew agents have a structured `marina_code` tool; minimal agents keep
   `marina_command` as the compact fallback.
 - Workspace onboarding does not assume Marina was launched inside a repo; `code workspace` and

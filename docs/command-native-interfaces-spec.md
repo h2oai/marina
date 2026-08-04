@@ -343,7 +343,7 @@ Acceptance criterion:
 
 ### 5. Removed room modes still represented as macros
 
-`worlds/default.ts` says mode rooms were removed and replaced by guide notes and
+`worlds/showcase.ts` says mode rooms were removed and replaced by guide notes and
 macros. This matches the command-native direction. The cleanup task is to ensure
 docs and UI do not treat removed rooms as first-class places.
 
@@ -473,7 +473,7 @@ Deliverables:
   events produced during the command?
 - Should renderer tags be encoded in perception `tag`, event payloads, or
   textual conventions?
-- Should `ask` be seeded as a system macro in `worlds/default.ts`, a dynamic
+- Should `ask` be seeded as a system macro in `worlds/showcase.ts`, a dynamic
   command in the DB seed, or a built-in only after benchmarking?
 - Is unified canvas intended to replace classic dashboard, or remain an
   alternate operator renderer?

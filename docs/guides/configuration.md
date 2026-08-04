@@ -44,7 +44,8 @@ Available worlds:
 
 | World | What You Get |
 |-------|-------------|
-| `default` | 5x5 grid, Guide assistant, onboarding checklist. Good for getting started. |
+| `default` | Four-room reactive Workbench with Host/Builder/Critic/Chronicler, Demo Pulse tasks, and progressive complexity. |
+| `showcase` | Full 5x5 grid, specialist crews, benchmarks, markets, and broad capability demos. |
 | `commons` | Pre-seeded projects and templates. Good for team coordination. |
 | `research` | Lab, observatory, archive spaces. Good for structured experimentation. |
 | `personal` | Privacy-focused workspaces. Good for a solo agent evolving itself. |
