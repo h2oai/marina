@@ -2,6 +2,7 @@ import { join, resolve } from "node:path";
 import { getStanding } from "../agent/standing";
 import { listWorkItems } from "../coordination/work-loop";
 import { testKeyConnectivity } from "../engine/commands/key";
+import { syncOperationalAlerts } from "../engine/commands/ops";
 import { allRecipeNames, getRecipe } from "../engine/commands/usecase";
 import type { Engine } from "../engine/engine";
 import { getRank } from "../engine/permissions";
@@ -286,6 +287,29 @@ export async function handleDashboardApi(
   // config presence (never secret values) + remediation per capability.
   if (url.pathname === "/api/readiness" && method === "GET") {
     return json(computeReadiness(engine));
+  }
+  if (url.pathname === "/api/operations/alerts" && method === "GET" && db) {
+    if (engine.taskManager)
+      syncOperationalAlerts({
+        db,
+        tasks: engine.taskManager,
+        runtime: engine.agentRuntime,
+        readiness: () => computeReadiness(engine),
+      });
+    return json(db.listOperationalAlerts(undefined, 100));
+  }
+  const opsAlertMatch = url.pathname.match(/^\/api\/operations\/alerts\/(\d+)\/(ack|resolve)$/);
+  if (opsAlertMatch && method === "POST" && db) {
+    const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
+    if (denied) return denied;
+    const ok = db.setOperationalAlertStatus(
+      Number(opsAlertMatch[1]),
+      opsAlertMatch[2] === "ack" ? "acknowledged" : "resolved",
+    );
+    return ok ? json({ ok: true }) : json({ error: "Alert not found" }, 404);
+  }
+  if (url.pathname === "/api/memory/quality" && method === "GET" && db) {
+    return json(db.getMemoryQualitySummary(url.searchParams.get("entity") ?? undefined));
   }
 
   // Parameterized detail routes (check before list routes)
@@ -649,6 +673,10 @@ export async function handleDashboardApi(
       roomId: note.room_id,
       poolId: note.pool_id,
       supersedesId: note.supersedes_id,
+      confidence: note.confidence ?? 0.5,
+      verificationStatus: note.verification_status ?? "unverified",
+      claimKey: note.claim_key ?? null,
+      sources: db.getNoteSources(id),
       links: hydratedLinks,
     });
   }
@@ -1170,11 +1198,29 @@ async function deleteEntity(engine: Engine, name: string): Promise<Response> {
 
 function getProjects(db: MarinaDB): Response {
   const projects = db.listProjects().map((p) => {
-    let bundleProgress: { total: number; done: number } | undefined;
+    let bundleProgress:
+      | { total: number; done: number; recoveries: number; meanTaskCycleMs?: number }
+      | undefined;
     if (p.bundle_id) {
       const children = db.listTasks({ parentId: p.bundle_id, limit: 200 });
       const done = children.filter((t) => t.status === "completed").length;
-      bundleProgress = { total: children.length, done };
+      const claims = children.flatMap((task) => db.getTaskClaims(task.id));
+      const resolvedMs = claims
+        .filter((claim) => claim.resolved_at !== null)
+        .map((claim) => claim.resolved_at! - claim.claimed_at)
+        .filter((duration) => duration >= 0);
+      bundleProgress = {
+        total: children.length,
+        done,
+        recoveries: claims.filter((claim) => claim.release_reason === "lease_expired").length,
+        ...(resolvedMs.length > 0
+          ? {
+              meanTaskCycleMs: Math.round(
+                resolvedMs.reduce((a, b) => a + b, 0) / resolvedMs.length,
+              ),
+            }
+          : {}),
+      };
     }
     return {
       id: p.id,
@@ -1187,6 +1233,12 @@ function getProjects(db: MarinaDB): Response {
       pool_id: p.pool_id,
       group_id: p.group_id,
       created_by: p.created_by,
+      budget_tokens: p.budget_tokens,
+      budget_cost: p.budget_cost,
+      budget_duration_ms: p.budget_duration_ms,
+      used_tokens: p.used_tokens,
+      used_cost: p.used_cost,
+      created_at: p.created_at,
       bundleProgress,
     };
   });

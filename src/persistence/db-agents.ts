@@ -244,8 +244,10 @@ export function saveAgentConfig(
     ...(supports.video ? { video: true } : {}),
   });
   db.run(
-    `INSERT OR REPLACE INTO agent_configs (name, model, role, goal, key_name, room, supports, spawned_by, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO agent_configs (name, model, role, goal, key_name, room, supports, spawned_by, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET model=excluded.model, role=excluded.role, goal=excluded.goal,
+       key_name=excluded.key_name, room=excluded.room, supports=excluded.supports, spawned_by=excluded.spawned_by`,
     [
       opts.name,
       opts.model,
@@ -281,6 +283,37 @@ export function getAgentConfigsBySpawnedBy(db: Database, spawnedBy: string): Age
 
 export function deleteAgentConfig(db: Database, name: string): void {
   db.run("DELETE FROM agent_configs WHERE name = ?", [name]);
+}
+
+export function updateAttentionPolicy(
+  db: Database,
+  name: string,
+  mode: "focused" | "balanced" | "open",
+  threshold?: number,
+): boolean {
+  const bounded =
+    threshold === undefined ? null : Math.max(10, Math.min(90, Math.round(threshold)));
+  return (
+    db.run(
+      "UPDATE agent_configs SET attention_mode = ?, attention_threshold = COALESCE(?, attention_threshold) WHERE name = ?",
+      [mode, bounded, name],
+    ).changes > 0
+  );
+}
+
+export function recordAttentionFeedback(
+  db: Database,
+  name: string,
+  feedback: "useful" | "noise",
+): AgentConfigRow | undefined {
+  const delta = feedback === "useful" ? -5 : 5;
+  const column = feedback === "useful" ? "attention_useful" : "attention_noise";
+  db.run(
+    `UPDATE agent_configs SET ${column} = ${column} + 1,
+       attention_threshold = MAX(10, MIN(90, attention_threshold + ?)) WHERE name = ?`,
+    [delta, name],
+  );
+  return getAgentConfig(db, name);
 }
 
 // ─── API Keys ──────────────────────────────────────────────────────────
@@ -479,6 +512,10 @@ export interface AgentConfigRow {
   supports: string;
   spawned_by: string;
   created_at: number;
+  attention_mode: "focused" | "balanced" | "open";
+  attention_threshold: number;
+  attention_useful: number;
+  attention_noise: number;
 }
 
 export interface ApiKeyRow {

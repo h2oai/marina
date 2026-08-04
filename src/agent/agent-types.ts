@@ -26,6 +26,8 @@ export interface AgentConfig {
   loopCycleDelay?: number;
   focusTimeout?: number;
   perceptionBufferCap?: number;
+  attentionMode?: "focused" | "balanced" | "open";
+  attentionThreshold?: number;
   /**
    * Reasoning effort hint for models that support it (Claude thinking,
    * GPT-5 reasoning tiers, etc.). Non-reasoning models ignore this.
@@ -151,6 +153,13 @@ export interface AgentStatus {
   avgTurnMs: number;
   /** Consecutive turns the model returned zero tool calls — the "stuck" signal. */
   silentTurns: number;
+  /** Operator-facing lifecycle interpretation layered over transport state. */
+  healthState?: "starting" | "ready" | "busy" | "waiting" | "degraded" | "recovering" | "stopped";
+  diagnosis?: string | null;
+  attentionMode?: "focused" | "balanced" | "open";
+  attentionThreshold?: number;
+  queuedPerceptions?: number;
+  droppedPerceptions?: number;
 }
 
 // ─── Agent Handle ───────────────────────────────────────────────────────────
@@ -161,6 +170,8 @@ export interface AgentHandle {
   sendAttention(message: string): Promise<void>;
   setFocus(description: string): void;
   setSystemPrompt(prompt: string | undefined): void;
+  setAttentionMode?(mode: "focused" | "balanced" | "open"): void;
+  setAttentionThreshold?(threshold: number): void;
   stop(): Promise<void>;
   subscribe(handler: (event: AgentEvent) => void): () => void;
   /** Reconfigure the agent (restarts LLM loop, preserves entity state). */

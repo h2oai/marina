@@ -152,6 +152,7 @@ export class FeedPublisher {
       case "task_submitted":
       case "task_approved":
       case "task_rejected":
+      case "task_released":
         this.publishTaskEvent(event);
         break;
       case "board_post":

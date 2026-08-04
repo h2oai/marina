@@ -193,6 +193,13 @@ export class LogServer {
           text: `Task #${event.taskId} rejected`,
         };
 
+      case "task_released":
+        return {
+          timestamp: event.timestamp,
+          category: "task",
+          text: `Task #${event.taskId} released (${event.reason})`,
+        };
+
       case "canvas_publish":
         return {
           timestamp: event.timestamp,

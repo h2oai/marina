@@ -625,6 +625,7 @@ Copy `.env.example` to `.env` and customize as needed. All variables are optiona
 | `MAX_AGENTS` | `30` | Maximum concurrent spawned agents |
 | `MAX_AGENT_UPTIME_MS` | `86400000` | Max agent uptime before auto-stop (24h) |
 | `AGENT_AUTORESPAWN` | `false` | Auto-respawn saved agents on server boot |
+| `MARINA_TASK_LEASE_MS` | `900000` | Renewable task-claim lease; expired ordinary work reopens automatically |
 | **LLM Providers** | | |
 | `ANTHROPIC_API_KEY` | *(none)* | Anthropic API key |
 | `OPENAI_API_KEY` | *(none)* | OpenAI API key |

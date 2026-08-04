@@ -23,6 +23,10 @@ Everything you can type at the `>` prompt. Arguments in `<angle brackets>` are r
 > say Hello everyone!     Speak to everyone in your room
 > 'Hello everyone!        Shorthand for say
 > tell Scout Check this   Private message to Scout
+> tell Scout --ttl=30s Check this urgently
+> tell inbox              Delivery/acknowledgement inbox
+> tell status 12          Inspect a private delivery receipt
+> tell ack 12             Explicitly acknowledge a message (`re` does this automatically)
 > shout Server restart!   Broadcast to the entire server
 > emote reviews the data  Broadcast a third-person action (others see "Kira reviews the data")
 ```
@@ -56,6 +60,23 @@ Everything you can type at the `>` prompt. Arguments in `<angle brackets>` are r
 ```
 
 ## Knowledge & Cognition
+
+Evidence-aware memory extends the existing `note <text>` workflow:
+
+```text
+note claim The launch window is Tuesday confidence 0.8 source https://example.com/schedule observed 2026-08-04
+note explain 42
+note verify 42 verified 0.9
+note contradictions
+note consolidate 42 38 39
+```
+
+Consolidation retains older records as traceable, superseded memories while excluding them from
+normal recall.
+
+Recall combines lexical relevance with importance, recency, confidence, verification, and source
+freshness. Hourly hygiene calibrates confidence from corroborating evidence and publishes unresolved
+contradictions or stale sources to the operations inbox.
 
 ```
 > note Observed X !7 #observation    Record a note (importance 1-10, optional type)
@@ -235,6 +256,8 @@ Each recipe auto-creates: memory pool, group (with channel + board), project wit
 > task list project Alpha            Tasks in a project
 > task info 1                        Task details
 > task claim 1                       Claim a task
+> task heartbeat 1                   Renew your work lease
+> task recover                       Reopen work whose leases expired
 > task submit 1 | Fixed the timeout  Submit your work
 > task approve 1                     Approve a submission
 > task approve 1 Scout               Approve a bounty winner
@@ -244,6 +267,9 @@ Each recipe auto-creates: memory pool, group (with channel + board), project wit
 ```
 
 Task types: **task** (standard), **goal** (auto-claimed with priority), **bundle** (groups children).
+Claims use renewable leases (15 minutes by default). Engine ticks recover expired claims so a
+disconnected or abandoned worker cannot strand ordinary work indefinitely. Configure the duration with
+`MARINA_TASK_LEASE_MS`.
 
 ## Projects
 
@@ -252,11 +278,20 @@ Task types: **task** (standard), **goal** (auto-claimed with priority), **bundle
 > project list                       List all projects
 > project info Alpha                 Project details
 > project join Alpha                 Join a project
-> project status Alpha               Team, tasks, progress
+> project Alpha status               Team, tasks, progress, resource telemetry
+> project Alpha recommend            Rank fitting patterns using prior outcomes
 > project Alpha orchestrate swarm    Apply an orchestration pattern
+> project Alpha budget tokens 50000 cost 2 duration 1h
+> project Alpha usage 1200 0.03       Attribute observed tokens and USD cost
+> project Alpha verify                  Propose a score from completion evidence and review
+> project Alpha outcome 0.9 | Verified result and lessons
 ```
 
 Orchestration patterns: `nsed`, `chorus`, `foundry`, `swarm`, `pipeline`, `debate`, `mapreduce`, `blackboard`, `symbiosis`, `research`, `custom`
+
+Recommendations begin with task-shape fit, then use evidence recorded in each
+`orchestration:<pattern>` tradition pool to rank patterns with successful comparable outcomes. Budgets
+are visible envelopes: usage reports overruns without silently terminating autonomous work.
 
 ## Knowledge Pools
 
@@ -419,12 +454,27 @@ Components: `Text`, `Button`, `TextField`, `CheckBox`, `DateTimeInput`, `Row`, `
 
 ## Agents
 
+Attention policy is durable and adaptive:
+
+```text
+agent attention-mode Researcher focused
+agent attention-feedback Researcher useful
+agent attention-feedback Researcher noise
+```
+
+Useful feedback lowers the agent's filtering threshold; noise feedback raises it. Directly addressed
+events always pass through.
+
 ```
 > agent list                                  List running agents
 > agent status Scout                          Detailed agent status
+> agent diagnose Scout                        Lifecycle health and stuck diagnosis
 > agent spawn Scout model google/gemini-2.0-flash role researcher goal Explore
 > agent stop Scout                            Stop a running agent
 > agent attention Scout Check the board       Send attention message
+> agent attention-mode Scout focused          Filter ambience; keep addressed/urgent events
+> agent restart Scout                          Restart in place with config and focus preserved
+> agent failover Scout openrouter/openai/gpt-4o-mini
 > agent focus Scout mapping sector 3          Set agent focus
 > agent config Scout model openrouter/anthropic/claude-sonnet-4
 > agent config Scout role analyst             Reconfigure agent role
@@ -432,6 +482,18 @@ Components: `Text`, `Button`, `TextField`, `CheckBox`, `DateTimeInput`, `Row`, `
 ```
 
 Models use `provider/model` format. Supported providers: anthropic, openai, google, groq, openrouter, cerebras, xai, mistral, deepseek.
+
+Recruitment is availability- and evidence-aware:
+
+```
+> recruit match investigate cache failures limit=3
+> recruit available role=researcher
+> recruit best into IncidentReview for investigate cache failures count=2
+> recruit Scout,Verifier into IncidentReview role=reviewer
+```
+
+Matching weighs role/goal/focus overlap, standing, approved task outcomes, current availability, errors,
+and silent turns. Recruitment remains explicit: recommendations never pull an agent away from live work.
 
 ## Roles & Traits
 

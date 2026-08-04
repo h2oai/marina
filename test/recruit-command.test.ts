@@ -148,6 +148,14 @@ describe("recruit command", () => {
     expect(out).not.toContain("bob");
   });
 
+  it("capability-matches and recruits the strongest available fit", () => {
+    const cmd = recruitCommand(makeDeps());
+    cmd.handler(ctx(), input(alice, "best into alpha for scholar research count=1"));
+    expect(sent.join("\n")).toContain("carol");
+    expect(crews.getByName("alpha")!.members.some((m) => m.agentName === "carol")).toBe(true);
+    expect(crews.getByName("alpha")!.members.some((m) => m.agentName === "dave")).toBe(false);
+  });
+
   it("refuses callers below organizer rank/standing", () => {
     const cmd = recruitCommand(makeDeps());
     cmd.handler(ctx(), input(newbie, "bob into alpha"));

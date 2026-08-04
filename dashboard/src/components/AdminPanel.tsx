@@ -1,4 +1,4 @@
-import { Key, Plug, Radio, Settings, Shield, Tags, Wrench } from "lucide-react";
+import { Bell, Key, Plug, Radio, Settings, Shield, Tags, Wrench } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   useAdapters,
@@ -27,7 +27,7 @@ const SUPPORTED_PROVIDERS = [
 
 const SUPPORTED_ADAPTERS = ["telegram", "discord"];
 
-type Tab = "keys" | "endpoint" | "adapters" | "roles" | "mcp" | "config" | "security";
+type Tab = "keys" | "endpoint" | "adapters" | "roles" | "mcp" | "config" | "security" | "ops";
 
 export function AdminPanel({
   backContent,
@@ -45,20 +45,20 @@ export function AdminPanel({
       onToggleFocus={onToggleFocus}
     >
       <div className="flex border-b border-border text-[10px]">
-        {(["keys", "endpoint", "adapters", "roles", "mcp", "config", "security"] as Tab[]).map(
-          (t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={`flex-1 px-2 py-1 capitalize transition-colors ${
-                tab === t ? "text-primary border-b border-primary" : "text-text-dim hover:text-text"
-              }`}
-            >
-              {t}
-            </button>
-          ),
-        )}
+        {(
+          ["keys", "endpoint", "adapters", "roles", "mcp", "config", "security", "ops"] as Tab[]
+        ).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={`flex-1 px-2 py-1 capitalize transition-colors ${
+              tab === t ? "text-primary border-b border-primary" : "text-text-dim hover:text-text"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
       </div>
       <div className="flex-1 overflow-auto p-2">
         {tab === "keys" && <KeysTab />}
@@ -68,8 +68,88 @@ export function AdminPanel({
         {tab === "mcp" && <McpTab />}
         {tab === "config" && <ConfigTab />}
         {tab === "security" && <SecurityTab />}
+        {tab === "ops" && <OperationsTab />}
       </div>
     </GlassPanel>
+  );
+}
+
+interface OperationalAlert {
+  id: number;
+  severity: "critical" | "warning" | "info";
+  category: string;
+  title: string;
+  detail: string;
+  remedy: string;
+  status: "open" | "acknowledged" | "resolved";
+  occurrences: number;
+}
+
+function OperationsTab() {
+  const [alerts, setAlerts] = useState<OperationalAlert[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const refresh = () =>
+    fetchApi<OperationalAlert[]>("/api/operations/alerts")
+      .then(setAlerts)
+      .catch((e) => setError(describeApiError(e)));
+  useEffect(refresh, []);
+  const act = async (id: number, action: "ack" | "resolve") => {
+    try {
+      await postApi(`/api/operations/alerts/${id}/${action}`);
+      await refresh();
+    } catch (e) {
+      setError(describeApiError(e));
+    }
+  };
+  const active = alerts.filter((a) => a.status !== "resolved");
+  return (
+    <div className="space-y-2 text-[10px]">
+      <div className="flex items-center justify-between">
+        <span className="flex items-center gap-1 text-primary uppercase tracking-wider">
+          <Bell size={10} /> Operations Inbox
+        </span>
+        <button type="button" className="text-primary hover:underline" onClick={refresh}>
+          Refresh
+        </button>
+      </div>
+      {error && <div className="text-red-400">{error}</div>}
+      {active.length === 0 && (
+        <div className="rounded border border-emerald-400/30 bg-emerald-400/10 p-2 text-emerald-400">
+          No actionable alerts.
+        </div>
+      )}
+      {active.map((alert) => (
+        <div
+          key={alert.id}
+          className={`rounded border p-2 ${alert.severity === "critical" ? "border-red-400/40" : "border-warning/40"}`}
+        >
+          <div className="flex justify-between gap-2">
+            <strong>{alert.title}</strong>
+            <span className="uppercase text-text-dim">{alert.severity}</span>
+          </div>
+          <div className="mt-1 text-text-dim">{alert.detail}</div>
+          <div className="mt-1 font-mono text-primary">{alert.remedy}</div>
+          <div className="mt-2 flex gap-2">
+            {alert.status === "open" && (
+              <button
+                type="button"
+                onClick={() => act(alert.id, "ack")}
+                className="text-primary hover:underline"
+              >
+                Acknowledge
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => act(alert.id, "resolve")}
+              className="text-primary hover:underline"
+            >
+              Resolve
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 

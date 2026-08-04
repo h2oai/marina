@@ -21,6 +21,7 @@ import { conductCommand } from "./commands/conduct";
 import { connectCommand } from "./commands/connect";
 import { crewCommand } from "./commands/crew";
 import { debriefCommand } from "./commands/debrief";
+import { demoCommand } from "./commands/demo";
 import { digCommand } from "./commands/dig";
 import { emoteCommand } from "./commands/emote";
 import { evolveCommand } from "./commands/evolve";
@@ -49,6 +50,7 @@ import { nextCommand } from "./commands/next";
 import { noteCommand } from "./commands/note";
 import { noveltyCommand } from "./commands/novelty";
 import { observeCommand } from "./commands/observe";
+import { opsCommand } from "./commands/ops";
 import { orientCommand } from "./commands/orient";
 import { poolCommand } from "./commands/pool";
 import { positionCommand } from "./commands/position";
@@ -174,6 +176,7 @@ export function registerBuiltinCommands(engine: Engine): void {
       if (targetEntity && sender && isIgnoring(targetEntity, sender.name)) return;
       engine.sendToEntity(target, msg, tag, metadata);
     },
+    db: engine.db,
   };
   engine.commands.registerBuiltin(tellCommand(tellDeps));
   engine.commands.registerBuiltin(replyCommand(tellDeps));
@@ -824,6 +827,25 @@ export function registerBuiltinCommands(engine: Engine): void {
 
   // Readiness command (aliases doctor/health) — operator-facing capability health.
   engine.commands.registerBuiltin(readinessCommand({ readiness: () => computeReadiness(engine) }));
+  if (engine.db && engine.taskManager) {
+    engine.commands.registerBuiltin(
+      opsCommand({
+        db: engine.db,
+        tasks: engine.taskManager,
+        runtime: engine.agentRuntime,
+        readiness: () => computeReadiness(engine),
+      }),
+    );
+    engine.commands.registerBuiltin(
+      demoCommand({
+        db: engine.db,
+        tasks: engine.taskManager,
+        runtime: engine.agentRuntime,
+        readiness: () => computeReadiness(engine),
+        getEntity: (id) => engine.entities.get(id),
+      }),
+    );
+  }
 
   // Use-case command (one-shot project + task + agent scaffolding)
   if (engine.db && engine.taskManager && engine.groupManager) {

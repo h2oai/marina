@@ -160,7 +160,7 @@ export function noteCommand(deps: {
   return {
     name: "note",
     aliases: [],
-    help: "Personal notes. Usage: note <text> [importance N] [type T] | note list | note room | note search <query> | note delete <id> | note link <id1> <id2> <rel> | note unlink <id1> <id2> <rel> | note correct <id> <text> | note trace <id> | note graph | note evolve <id> | note types",
+    help: "Evidence-aware memory. Usage: note <text> | note claim <text> [confidence 0..1] [source URL] | note explain|verify|source|contradictions|consolidate ...",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -181,6 +181,156 @@ export function noteCommand(deps: {
       }
 
       switch (sub) {
+        case "claim": {
+          const { text, modifiers } = extractModifiers(tokens.slice(1).join(" "), [
+            "confidence",
+            "source",
+            "observed",
+          ]);
+          if (!text) {
+            ctx.send(
+              input.entity,
+              "Usage: note claim <text> [confidence 0..1] [source URL] [observed YYYY-MM-DD]",
+            );
+            return;
+          }
+          const confidence =
+            modifiers.confidence === undefined ? 0.5 : Number(modifiers.confidence);
+          if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+            ctx.send(input.entity, "Confidence must be between 0 and 1.");
+            return;
+          }
+          const id = db.createNote(entity.name, text, input.room, {
+            noteType: "fact",
+            confidence,
+            verificationStatus: "unverified",
+          });
+          if (modifiers.source) {
+            const observedAt = modifiers.observed ? Date.parse(modifiers.observed) : undefined;
+            db.addNoteSource(id, {
+              url: modifiers.source,
+              observedAt:
+                observedAt !== undefined && Number.isFinite(observedAt) ? observedAt : undefined,
+            });
+          }
+          ctx.send(
+            input.entity,
+            `Claim #${id} saved (confidence=${confidence.toFixed(2)}, ${modifiers.source ? "sourced, unverified" : "unverified"}).`,
+          );
+          return;
+        }
+
+        case "source": {
+          const id = Number.parseInt(tokens[1] ?? "", 10);
+          const url = tokens[2];
+          const note = db.getNote(id);
+          if (!note || note.entity_name !== entity.name || !url) {
+            ctx.send(input.entity, "Usage: note source <your-note-id> <url> [observed YYYY-MM-DD]");
+            return;
+          }
+          const observedIndex = tokens.indexOf("observed");
+          const observedAt =
+            observedIndex >= 0 ? Date.parse(tokens[observedIndex + 1] ?? "") : undefined;
+          db.addNoteSource(id, {
+            url,
+            observedAt: Number.isFinite(observedAt) ? observedAt : undefined,
+          });
+          ctx.send(input.entity, `Source attached to note #${id}.`);
+          return;
+        }
+
+        case "verify": {
+          const id = Number.parseInt(tokens[1] ?? "", 10);
+          const verification = tokens[2]?.toLowerCase() ?? "";
+          const note = db.getNote(id);
+          const confidence =
+            tokens[3] === undefined ? (note?.confidence ?? 0.5) : Number(tokens[3]);
+          if (
+            !note ||
+            note.entity_name !== entity.name ||
+            !Number.isFinite(confidence) ||
+            !["unverified", "verified", "disputed"].includes(verification)
+          ) {
+            ctx.send(
+              input.entity,
+              "Usage: note verify <your-note-id> unverified|verified|disputed [confidence 0..1]",
+            );
+            return;
+          }
+          db.updateNoteQuality(id, entity.name, confidence, verification);
+          ctx.send(
+            input.entity,
+            `Note #${id} marked ${verification} (confidence=${Math.max(0, Math.min(1, confidence)).toFixed(2)}).`,
+          );
+          return;
+        }
+
+        case "explain": {
+          const id = Number.parseInt(tokens[1] ?? "", 10);
+          const note = db.getNote(id);
+          if (!note || note.entity_name !== entity.name) {
+            ctx.send(input.entity, `Note #${tokens[1] ?? "?"} not found or not yours.`);
+            return;
+          }
+          const sources = db.getNoteSources(id);
+          const links = db.getNoteLinks(id);
+          const lines = [
+            header(`Memory #${id}`),
+            separator(),
+            note.content,
+            `Type: ${note.note_type} · confidence: ${(note.confidence ?? 0.5).toFixed(2)} · ${note.verification_status ?? "unverified"}`,
+            `Created: ${new Date(note.created_at).toISOString()} · sources: ${sources.length} · links: ${links.length}`,
+          ];
+          for (const source of sources)
+            lines.push(
+              `  source ${source.url}${source.observed_at ? ` (observed ${new Date(source.observed_at).toISOString().slice(0, 10)})` : ""}`,
+            );
+          for (const link of links)
+            lines.push(
+              `  ${link.relationship}: #${link.source_id === id ? link.target_id : link.source_id}`,
+            );
+          ctx.send(input.entity, lines.join("\n"));
+          return;
+        }
+
+        case "contradictions": {
+          const candidates = db.findMemoryContradictions(entity.name);
+          if (candidates.length === 0) {
+            ctx.send(input.entity, "No unresolved contradiction candidates found.");
+            return;
+          }
+          ctx.send(
+            input.entity,
+            [
+              header("Contradiction candidates"),
+              separator(),
+              ...candidates.map(
+                (c) =>
+                  `  #${c.left.id} ↔ #${c.right.id}: ${c.reason}\n    ${c.left.content.slice(0, 48)} / ${c.right.content.slice(0, 48)}`,
+              ),
+            ].join("\n"),
+          );
+          return;
+        }
+
+        case "consolidate": {
+          const keeper = Number.parseInt(tokens[1] ?? "", 10);
+          const duplicates = tokens.slice(2).map(Number).filter(Number.isInteger);
+          if (!Number.isInteger(keeper) || duplicates.length === 0) {
+            ctx.send(
+              input.entity,
+              "Usage: note consolidate <keeper-id> <duplicate-id> [duplicate-id ...]",
+            );
+            return;
+          }
+          const changed = db.consolidateNotes(entity.name, keeper, duplicates);
+          ctx.send(
+            input.entity,
+            `${changed} memory record(s) safely superseded by #${keeper}; provenance was retained.`,
+          );
+          return;
+        }
+
         case "list": {
           const notes = db.getNotesByEntity(entity.name);
           if (notes.length === 0) {
@@ -195,7 +345,12 @@ export function noteCommand(deps: {
               const date = dim(new Date(n.created_at).toISOString().slice(0, 10));
               const imp = n.importance !== 5 ? ` ${importance(n.importance)}` : "";
               const type = n.note_type !== "observation" ? ` ${status(n.note_type, "info")}` : "";
-              return `  ${fmtId(n.id)} ${date}${room}${imp}${type} ${n.content.slice(0, 60)}`;
+              const verification = n.verification_status ?? "unverified";
+              const quality =
+                verification !== "unverified"
+                  ? ` ${status(verification, verification === "verified" ? "done" : "warn")}`
+                  : "";
+              return `  ${fmtId(n.id)} ${date}${room}${imp}${type}${quality} c${(n.confidence ?? 0.5).toFixed(2)} ${n.content.slice(0, 60)}`;
             }),
           ];
           ctx.send(input.entity, lines.join("\n"));

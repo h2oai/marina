@@ -44,6 +44,7 @@ import { BriefManager } from "./brief-manager";
 import { registerBuiltinCommands } from "./command-registry";
 import { CommandRouter } from "./command-router";
 import { isIgnoring } from "./commands/ignore";
+import { syncOperationalAlerts } from "./commands/ops";
 import { trackQuestProgress } from "./commands/quest";
 import { ConnectionManager } from "./connection-manager";
 import { ConnectorRuntime } from "./connector-runtime";
@@ -65,6 +66,7 @@ import { GatewayRuntime } from "./gateway-runtime";
 import { Logger } from "./logger";
 import { MediaManager } from "./media/manager";
 import { getRank, rankName, setRank } from "./permissions";
+import { computeReadiness } from "./readiness";
 import { RoomSandbox } from "./room-sandbox";
 import { checkGate, grantGatesForRank, recordDemonstration } from "./safety-gates";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
@@ -988,6 +990,19 @@ export class Engine {
     this.tickCount++;
     this.sandbox.tick();
 
+    // Lease expiry is persisted coordination state. Recover abandoned work
+    // before entities inspect the queue on this tick.
+    for (const claim of this.taskManager?.recoverExpired() ?? []) {
+      this.logEvent({
+        type: "task_released",
+        entity: claim.entityId as EntityId,
+        taskId: claim.taskId,
+        reason: "lease_expired",
+        timestamp: Date.now(),
+      });
+    }
+    this.db?.expireDirectMessages();
+
     // 1. Process queued commands — per-entity round-robin for fairness
     //    No single entity can monopolize a tick; each gets one command per round.
     if (this.commandQueue.length > 0) {
@@ -1115,6 +1130,19 @@ export class Engine {
       const db = this.db;
       tryLog(this.logger, "tick", "Note importance adjustment failed", () =>
         db.adjustNoteImportance(),
+      );
+      tryLog(this.logger, "tick", "Memory confidence calibration failed", () =>
+        db.calibrateMemoryConfidence(),
+      );
+    }
+    if (this.tickCount % NOTE_IMPORTANCE_INTERVAL === 0 && this.db && this.taskManager) {
+      tryLog(this.logger, "tick", "Operational alert sync failed", () =>
+        syncOperationalAlerts({
+          db: this.db!,
+          tasks: this.taskManager!,
+          runtime: this.agentRuntime,
+          readiness: () => computeReadiness(this),
+        }),
       );
     }
 

@@ -1400,7 +1400,133 @@ ALTER TABLE coding_sessions ADD COLUMN agent TEXT;
 ALTER TABLE coding_sessions ADD COLUMN driver TEXT;
 `,
   },
+  // Migration 52: recoverable task ownership and project-scoped resource
+  // envelopes. Existing claims remain valid indefinitely until renewed or a
+  // lease is explicitly assigned by the TaskManager.
+  {
+    version: 52,
+    sql: `
+ALTER TABLE task_claims ADD COLUMN heartbeat_at INTEGER;
+ALTER TABLE task_claims ADD COLUMN lease_expires_at INTEGER;
+ALTER TABLE task_claims ADD COLUMN release_reason TEXT;
+ALTER TABLE projects ADD COLUMN budget_tokens INTEGER;
+ALTER TABLE projects ADD COLUMN budget_cost REAL;
+ALTER TABLE projects ADD COLUMN budget_duration_ms INTEGER;
+ALTER TABLE projects ADD COLUMN used_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE projects ADD COLUMN used_cost REAL NOT NULL DEFAULT 0;
+CREATE INDEX idx_task_claims_lease ON task_claims(status, lease_expires_at);
+`,
+  },
+  // Migration 53: durable point-to-point delivery receipts. World delivery
+  // remains immediate; this table adds correlation, deduplication, deadlines,
+  // acknowledgement, and post-hoc inspection without replacing `tell`.
+  {
+    version: 53,
+    sql: `
+CREATE TABLE direct_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  correlation_id TEXT NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  sender_id TEXT NOT NULL,
+  sender_name TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  target_name TEXT NOT NULL,
+  content TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'delivered',
+  created_at INTEGER NOT NULL,
+  delivered_at INTEGER,
+  deadline_at INTEGER,
+  acknowledged_at INTEGER,
+  reply_message_id INTEGER
+);
+CREATE UNIQUE INDEX idx_direct_messages_correlation ON direct_messages(correlation_id);
+CREATE INDEX idx_direct_messages_inbox ON direct_messages(target_id, status, created_at DESC);
+CREATE INDEX idx_direct_messages_dedupe ON direct_messages(sender_id, target_id, dedupe_key, created_at DESC);
+`,
+  },
+  // Migration 54: evidence-aware memory and durable per-agent attention.
+  {
+    version: 54,
+    sql: `
+ALTER TABLE notes ADD COLUMN confidence REAL NOT NULL DEFAULT 0.5;
+ALTER TABLE notes ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'unverified';
+ALTER TABLE notes ADD COLUMN claim_key TEXT;
+CREATE INDEX idx_notes_claim_key ON notes(entity_name, claim_key);
+CREATE INDEX idx_notes_verification ON notes(entity_name, verification_status);
+CREATE TABLE note_sources (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  title TEXT,
+  publisher TEXT,
+  observed_at INTEGER,
+  retrieved_at INTEGER NOT NULL,
+  content_hash TEXT,
+  UNIQUE(note_id, url)
+);
+CREATE INDEX idx_note_sources_note ON note_sources(note_id);
+ALTER TABLE agent_configs ADD COLUMN attention_mode TEXT NOT NULL DEFAULT 'balanced';
+ALTER TABLE agent_configs ADD COLUMN attention_threshold INTEGER NOT NULL DEFAULT 50;
+ALTER TABLE agent_configs ADD COLUMN attention_useful INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE agent_configs ADD COLUMN attention_noise INTEGER NOT NULL DEFAULT 0;
+`,
+  },
+  // Migration 55: durable, acknowledgeable operator remediation inbox.
+  {
+    version: 55,
+    sql: `
+CREATE TABLE operational_alerts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  alert_key TEXT NOT NULL UNIQUE,
+  severity TEXT NOT NULL,
+  category TEXT NOT NULL,
+  title TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  remedy TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  occurrences INTEGER NOT NULL DEFAULT 1,
+  first_seen_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  acknowledged_at INTEGER,
+  resolved_at INTEGER
+);
+CREATE INDEX idx_operational_alerts_status ON operational_alerts(status, severity, last_seen_at DESC);
+`,
+  },
 ];
+
+export interface OperationalAlertRow {
+  id: number;
+  alert_key: string;
+  severity: "critical" | "warning" | "info";
+  category: string;
+  title: string;
+  detail: string;
+  remedy: string;
+  status: "open" | "acknowledged" | "resolved";
+  occurrences: number;
+  first_seen_at: number;
+  last_seen_at: number;
+  acknowledged_at: number | null;
+  resolved_at: number | null;
+}
+
+export interface DirectMessageRow {
+  id: number;
+  correlation_id: string;
+  dedupe_key: string;
+  sender_id: string;
+  sender_name: string;
+  target_id: string;
+  target_name: string;
+  content: string;
+  status: "delivered" | "acknowledged" | "expired";
+  created_at: number;
+  delivered_at: number | null;
+  deadline_at: number | null;
+  acknowledged_at: number | null;
+  reply_message_id: number | null;
+}
 
 // ─── Database Class ──────────────────────────────────────────────────────────
 
@@ -1860,8 +1986,13 @@ export class MarinaDB {
     tasksDb.updateTaskStatus(this.db, id, status);
   }
 
-  createTaskClaim(taskId: number, entityId: string, entityName: string): void {
-    tasksDb.createTaskClaim(this.db, taskId, entityId, entityName);
+  createTaskClaim(
+    taskId: number,
+    entityId: string,
+    entityName: string,
+    leaseExpiresAt?: number,
+  ): void {
+    tasksDb.createTaskClaim(this.db, taskId, entityId, entityName, leaseExpiresAt);
   }
 
   getTaskClaim(taskId: number, entityId: string): TaskClaimRow | undefined {
@@ -1883,6 +2014,96 @@ export class MarinaDB {
     submissionText?: string,
   ): void {
     tasksDb.updateTaskClaimStatus(this.db, taskId, entityId, status, submissionText);
+  }
+
+  renewTaskClaim(taskId: number, entityId: string, leaseExpiresAt: number): boolean {
+    return tasksDb.renewTaskClaim(this.db, taskId, entityId, leaseExpiresAt);
+  }
+
+  recoverExpiredTaskClaims(now = Date.now()): TaskClaimRow[] {
+    return tasksDb.recoverExpiredTaskClaims(this.db, now);
+  }
+
+  // ─── Durable direct-message receipts ─────────────────────────────────
+
+  createDirectMessage(message: {
+    correlationId: string;
+    dedupeKey: string;
+    senderId: string;
+    senderName: string;
+    targetId: string;
+    targetName: string;
+    content: string;
+    deadlineAt?: number;
+  }): DirectMessageRow {
+    const now = Date.now();
+    this.expireDirectMessages(now);
+    const duplicate = this.db
+      .query(
+        `SELECT * FROM direct_messages WHERE sender_id = ? AND target_id = ? AND dedupe_key = ?
+         AND created_at >= ? AND status IN ('delivered', 'acknowledged') ORDER BY id DESC LIMIT 1`,
+      )
+      .get(
+        message.senderId,
+        message.targetId,
+        message.dedupeKey,
+        now - 30_000,
+      ) as DirectMessageRow | null;
+    if (duplicate) return duplicate;
+    const result = this.db.run(
+      `INSERT INTO direct_messages
+       (correlation_id, dedupe_key, sender_id, sender_name, target_id, target_name, content,
+        status, created_at, delivered_at, deadline_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'delivered', ?, ?, ?)`,
+      [
+        message.correlationId,
+        message.dedupeKey,
+        message.senderId,
+        message.senderName,
+        message.targetId,
+        message.targetName,
+        message.content,
+        now,
+        now,
+        message.deadlineAt ?? now + 5 * 60_000,
+      ],
+    );
+    return this.getDirectMessage(Number(result.lastInsertRowid))!;
+  }
+
+  getDirectMessage(id: number): DirectMessageRow | undefined {
+    this.expireDirectMessages();
+    return (
+      (this.db
+        .query("SELECT * FROM direct_messages WHERE id = ?")
+        .get(id) as DirectMessageRow | null) ?? undefined
+    );
+  }
+
+  listDirectMessageInbox(targetId: string, limit = 20): DirectMessageRow[] {
+    this.expireDirectMessages();
+    return this.db
+      .query("SELECT * FROM direct_messages WHERE target_id = ? ORDER BY id DESC LIMIT ?")
+      .all(targetId, limit) as DirectMessageRow[];
+  }
+
+  acknowledgeDirectMessage(id: number, targetId: string, replyMessageId?: number): boolean {
+    const result = this.db.run(
+      `UPDATE direct_messages SET status = 'acknowledged', acknowledged_at = ?,
+       reply_message_id = COALESCE(?, reply_message_id)
+       WHERE id = ? AND target_id = ? AND status = 'delivered'`,
+      [Date.now(), replyMessageId ?? null, id, targetId],
+    );
+    return result.changes > 0;
+  }
+
+  expireDirectMessages(now = Date.now()): number {
+    const result = this.db.run(
+      `UPDATE direct_messages SET status = 'expired'
+       WHERE status = 'delivered' AND deadline_at IS NOT NULL AND deadline_at <= ?`,
+      [now],
+    );
+    return result.changes;
   }
 
   getChildTaskCount(parentId: number): { total: number; completed: number } {
@@ -2239,6 +2460,9 @@ export class MarinaDB {
       supersedesId?: number;
       tier?: NoteTier;
       skipDedup?: boolean;
+      confidence?: number;
+      verificationStatus?: string;
+      claimKey?: string;
     },
   ): number {
     return notesDb.createNote(this.db, entityName, content, roomId, opts);
@@ -2262,6 +2486,147 @@ export class MarinaDB {
 
   getNote(id: number): NoteRow | undefined {
     return notesDb.getNote(this.db, id);
+  }
+
+  addNoteSource(noteId: number, source: notesDb.NoteSourceInput): number {
+    return notesDb.addNoteSource(this.db, noteId, source);
+  }
+  getNoteSources(noteId: number): notesDb.NoteSourceRow[] {
+    return notesDb.getNoteSources(this.db, noteId);
+  }
+  updateNoteQuality(
+    id: number,
+    entityName: string,
+    confidence: number,
+    verification: string,
+  ): boolean {
+    return notesDb.updateNoteQuality(this.db, id, entityName, confidence, verification);
+  }
+  findMemoryContradictions(entityName: string): notesDb.ContradictionCandidate[] {
+    return notesDb.findMemoryContradictions(this.db, entityName);
+  }
+  consolidateNotes(entityName: string, keeperId: number, duplicateIds: number[]): number {
+    return notesDb.consolidateNotes(this.db, entityName, keeperId, duplicateIds);
+  }
+  getMemoryQualitySummary(entityName?: string): {
+    total: number;
+    unverified: number;
+    disputed: number;
+    superseded: number;
+    staleSources: number;
+    contradictions: number;
+  } {
+    const where = entityName ? "WHERE entity_name = ?" : "";
+    const args = entityName ? [entityName] : [];
+    const row = this.db
+      .query(
+        `SELECT COUNT(*) total,
+       SUM(CASE WHEN verification_status='unverified' THEN 1 ELSE 0 END) unverified,
+       SUM(CASE WHEN verification_status='disputed' THEN 1 ELSE 0 END) disputed,
+       SUM(CASE WHEN verification_status='superseded' THEN 1 ELSE 0 END) superseded
+       FROM notes ${where}`,
+      )
+      .get(...args) as { total: number; unverified: number; disputed: number; superseded: number };
+    const sourceWhere = entityName ? "AND n.entity_name = ?" : "";
+    const staleSources = (
+      this.db
+        .query(
+          `SELECT COUNT(DISTINCT ns.note_id) c FROM note_sources ns JOIN notes n ON n.id=ns.note_id
+       WHERE COALESCE(ns.observed_at, ns.retrieved_at) < ? ${sourceWhere}`,
+        )
+        .get(Date.now() - 90 * 86_400_000, ...args) as { c: number }
+    ).c;
+    const entities = entityName
+      ? [entityName]
+      : (
+          this.db.query("SELECT DISTINCT entity_name FROM notes").all() as { entity_name: string }[]
+        ).map((r) => r.entity_name);
+    const contradictions = entities.reduce(
+      (sum, name) => sum + this.findMemoryContradictions(name).length,
+      0,
+    );
+    return {
+      total: row.total,
+      unverified: row.unverified ?? 0,
+      disputed: row.disputed ?? 0,
+      superseded: row.superseded ?? 0,
+      staleSources,
+      contradictions,
+    };
+  }
+
+  upsertOperationalAlert(alert: {
+    key: string;
+    severity: "critical" | "warning" | "info";
+    category: string;
+    title: string;
+    detail: string;
+    remedy: string;
+  }): OperationalAlertRow {
+    const now = Date.now();
+    this.db.run(
+      `INSERT INTO operational_alerts
+       (alert_key,severity,category,title,detail,remedy,status,first_seen_at,last_seen_at)
+       VALUES (?,?,?,?,?,?,'open',?,?)
+       ON CONFLICT(alert_key) DO UPDATE SET severity=excluded.severity, title=excluded.title,
+       detail=excluded.detail, remedy=excluded.remedy, last_seen_at=excluded.last_seen_at,
+       occurrences=operational_alerts.occurrences+1,
+       status=CASE WHEN operational_alerts.status='resolved' THEN 'open' ELSE operational_alerts.status END,
+       resolved_at=NULL`,
+      [
+        alert.key,
+        alert.severity,
+        alert.category,
+        alert.title,
+        alert.detail,
+        alert.remedy,
+        now,
+        now,
+      ],
+    );
+    return this.db
+      .query("SELECT * FROM operational_alerts WHERE alert_key=?")
+      .get(alert.key) as OperationalAlertRow;
+  }
+  listOperationalAlerts(
+    status?: "open" | "acknowledged" | "resolved",
+    limit = 100,
+  ): OperationalAlertRow[] {
+    if (status)
+      return this.db
+        .query(
+          "SELECT * FROM operational_alerts WHERE status=? ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,last_seen_at DESC LIMIT ?",
+        )
+        .all(status, limit) as OperationalAlertRow[];
+    return this.db
+      .query(
+        "SELECT * FROM operational_alerts ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END,last_seen_at DESC LIMIT ?",
+      )
+      .all(limit) as OperationalAlertRow[];
+  }
+  setOperationalAlertStatus(id: number, status: "acknowledged" | "resolved"): boolean {
+    const now = Date.now();
+    const column = status === "acknowledged" ? "acknowledged_at" : "resolved_at";
+    return (
+      this.db.run(`UPDATE operational_alerts SET status=?, ${column}=? WHERE id=?`, [
+        status,
+        now,
+        id,
+      ]).changes > 0
+    );
+  }
+  resolveOperationalAlertsExcept(category: string, activeKeys: string[]): number {
+    const now = Date.now();
+    if (activeKeys.length === 0)
+      return this.db.run(
+        "UPDATE operational_alerts SET status='resolved',resolved_at=? WHERE category=? AND status!='resolved'",
+        [now, category],
+      ).changes;
+    const placeholders = activeKeys.map(() => "?").join(",");
+    return this.db.run(
+      `UPDATE operational_alerts SET status='resolved',resolved_at=? WHERE category=? AND status!='resolved' AND alert_key NOT IN (${placeholders})`,
+      [now, category, ...activeKeys],
+    ).changes;
   }
 
   touchNote(id: number): void {
@@ -2305,6 +2670,9 @@ export class MarinaDB {
    *  bridge notes (connecting different clusters) are protected. */
   adjustNoteImportance(): { boosted: number; decayed: number } {
     return notesDb.adjustNoteImportance(this.db);
+  }
+  calibrateMemoryConfidence(): number {
+    return notesDb.calibrateMemoryConfidence(this.db);
   }
 
   // ─── Entity Activity Tracking (delegated to db-entities.ts) ─────────────
@@ -2613,6 +2981,13 @@ export class MarinaDB {
     return tasksDb.countCompletedTasks(this.db, entityName);
   }
 
+  countApprovedTaskClaims(entityId: string): number {
+    const row = this.db
+      .query("SELECT COUNT(*) AS n FROM task_claims WHERE entity_id = ? AND status = 'approved'")
+      .get(entityId) as { n: number } | null;
+    return row?.n ?? 0;
+  }
+
   // ─── Project Persistence (delegated to db-tasks.ts) ────────────────────
 
   createProject(project: {
@@ -2651,6 +3026,21 @@ export class MarinaDB {
 
   updateProjectMemoryArch(id: string, memoryArch: string): void {
     tasksDb.updateProjectMemoryArch(this.db, id, memoryArch);
+  }
+
+  updateProjectBudget(
+    id: string,
+    budget: { tokens?: number | null; cost?: number | null; durationMs?: number | null },
+  ): void {
+    tasksDb.updateProjectBudget(this.db, id, budget);
+  }
+
+  addProjectUsage(id: string, tokens: number, cost: number): void {
+    tasksDb.addProjectUsage(this.db, id, tokens, cost);
+  }
+
+  resetProjectTasks(bundleId: number): number {
+    return tasksDb.resetProjectTasks(this.db, bundleId);
   }
 
   // ─── Dynamic Command Persistence ─────────────────────────────────────
@@ -4200,6 +4590,16 @@ export class MarinaDB {
   }
   deleteAgentConfig(name: string): void {
     agentsDb.deleteAgentConfig(this.db, name);
+  }
+  updateAttentionPolicy(
+    name: string,
+    mode: "focused" | "balanced" | "open",
+    threshold?: number,
+  ): boolean {
+    return agentsDb.updateAttentionPolicy(this.db, name, mode, threshold);
+  }
+  recordAttentionFeedback(name: string, feedback: "useful" | "noise"): AgentConfigRow | undefined {
+    return agentsDb.recordAttentionFeedback(this.db, name, feedback);
   }
 
   // ─── Settings (delegated to db-agents.ts) ──────────────────────────────

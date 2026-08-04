@@ -255,6 +255,7 @@ export class AgentRuntime {
     // the finally block — on success the name moves into `agents`, on
     // failure it's freed for retry.
     this.spawnsInFlight.add(config.name);
+    const savedPolicy = this.db?.getAgentConfig(config.name);
     try {
       // Resolve role prompt from DB. PRISM-style task-conditional
       // gating: infer the agent's primary task category from its goal
@@ -299,6 +300,8 @@ export class AgentRuntime {
 
       const effectiveConfig: AgentConfig = {
         ...config,
+        attentionMode: config.attentionMode ?? savedPolicy?.attention_mode,
+        attentionThreshold: config.attentionThreshold ?? savedPolicy?.attention_threshold,
         // No explicit model → use the operator's runtime default (DB), then the
         // env/built-in default. This is what makes "change the default once the
         // world is running" apply to newly spawned agents.
@@ -616,6 +619,57 @@ export class AgentRuntime {
         supports,
       });
     }
+  }
+
+  setAttentionMode(name: string, mode: "focused" | "balanced" | "open"): void {
+    const agent = this.get(name);
+    if (!agent) throw new Error(`Agent "${name}" is not running.`);
+    if (!agent.setAttentionMode)
+      throw new Error(`Agent "${name}" does not support attention modes.`);
+    agent.setAttentionMode(mode);
+    this.db?.updateAttentionPolicy(name, mode);
+  }
+
+  recordAttentionFeedback(name: string, feedback: "useful" | "noise"): number {
+    const agent = this.get(name);
+    if (!agent) throw new Error(`Agent "${name}" is not running.`);
+    const saved = this.db?.recordAttentionFeedback(name, feedback);
+    const threshold =
+      saved?.attention_threshold ??
+      Math.max(
+        10,
+        Math.min(
+          90,
+          (agent.getStatus().attentionThreshold ?? 50) + (feedback === "useful" ? -5 : 5),
+        ),
+      );
+    agent.setAttentionThreshold?.(threshold);
+    return threshold;
+  }
+
+  /** Restart in place while preserving the saved config and current focus. */
+  async restart(name: string, opts?: { model?: string }): Promise<AgentHandle> {
+    const key = this.resolveKey(name);
+    const agent = key ? this.agents.get(key) : undefined;
+    if (!key || !agent) throw new Error(`Agent "${name}" is not running.`);
+    const status = agent.getStatus();
+    const saved = this.db?.getAgentConfig(key);
+    await this.stop(key, { keepConfig: true });
+    const cooldownRemaining = 1_000 - (Date.now() - this.lastSpawnAt);
+    if (cooldownRemaining > 0) {
+      await new Promise((resolve) => setTimeout(resolve, cooldownRemaining));
+    }
+    const restarted = await this.spawn({
+      name: key,
+      model: opts?.model || saved?.model || status.model,
+      role: saved?.role || status.role || undefined,
+      goal: saved?.goal || status.goal || undefined,
+      keyName: saved?.key_name || undefined,
+      room: saved?.room || undefined,
+      spawnedBy: saved?.spawned_by || "system",
+    });
+    if (status.focus) restarted.setFocus(status.focus);
+    return restarted;
   }
 
   /**

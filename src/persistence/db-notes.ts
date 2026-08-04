@@ -49,6 +49,9 @@ export function createNote(
      *  automatically for pool notes and process-tier notes (they are
      *  expected to be noisy and shouldn't merge with real insights). */
     skipDedup?: boolean;
+    confidence?: number;
+    verificationStatus?: string;
+    claimKey?: string;
   },
 ): number {
   const noteType = opts?.noteType ?? "observation";
@@ -65,7 +68,7 @@ export function createNote(
   }
 
   const result = db.run(
-    "INSERT INTO notes (entity_name, room_id, content, importance, note_type, pool_id, supersedes_id, tier, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO notes (entity_name, room_id, content, importance, note_type, pool_id, supersedes_id, tier, confidence, verification_status, claim_key, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     [
       entityName,
       roomId ?? null,
@@ -75,6 +78,9 @@ export function createNote(
       opts?.poolId ?? null,
       opts?.supersedesId ?? null,
       tier,
+      Math.max(0, Math.min(1, opts?.confidence ?? 0.5)),
+      opts?.verificationStatus ?? "unverified",
+      opts?.claimKey ?? normalizeClaim(content),
       Date.now(),
     ],
   );
@@ -234,6 +240,143 @@ export function getNote(db: Database, id: number): NoteRow | undefined {
   return (db.query("SELECT * FROM notes WHERE id = ?").get(id) as NoteRow | null) ?? undefined;
 }
 
+function normalizeClaim(content: string): string {
+  return content
+    .toLowerCase()
+    .replace(/\b(not|never|no)\b/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .slice(0, 12)
+    .join(" ");
+}
+
+export interface NoteSourceInput {
+  url: string;
+  title?: string;
+  publisher?: string;
+  observedAt?: number;
+  contentHash?: string;
+}
+
+export interface NoteSourceRow {
+  id: number;
+  note_id: number;
+  url: string;
+  title: string | null;
+  publisher: string | null;
+  observed_at: number | null;
+  retrieved_at: number;
+  content_hash: string | null;
+}
+
+export function addNoteSource(db: Database, noteId: number, source: NoteSourceInput): number {
+  const result = db.run(
+    `INSERT INTO note_sources (note_id, url, title, publisher, observed_at, retrieved_at, content_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(note_id, url) DO UPDATE SET title=excluded.title, publisher=excluded.publisher,
+       observed_at=excluded.observed_at, retrieved_at=excluded.retrieved_at, content_hash=excluded.content_hash`,
+    [
+      noteId,
+      source.url,
+      source.title ?? null,
+      source.publisher ?? null,
+      source.observedAt ?? null,
+      Date.now(),
+      source.contentHash ?? null,
+    ],
+  );
+  return Number(result.lastInsertRowid);
+}
+
+export function getNoteSources(db: Database, noteId: number): NoteSourceRow[] {
+  return db
+    .query("SELECT * FROM note_sources WHERE note_id = ? ORDER BY retrieved_at DESC")
+    .all(noteId) as NoteSourceRow[];
+}
+
+export function updateNoteQuality(
+  db: Database,
+  id: number,
+  entityName: string,
+  confidence: number,
+  verification: string,
+): boolean {
+  if (!["unverified", "verified", "disputed", "superseded"].includes(verification)) return false;
+  return (
+    db.run(
+      "UPDATE notes SET confidence = ?, verification_status = ? WHERE id = ? AND entity_name = ?",
+      [Math.max(0, Math.min(1, confidence)), verification, id, entityName],
+    ).changes > 0
+  );
+}
+
+export interface ContradictionCandidate {
+  left: NoteRow;
+  right: NoteRow;
+  reason: string;
+}
+
+export function findMemoryContradictions(
+  db: Database,
+  entityName: string,
+): ContradictionCandidate[] {
+  const notes = db
+    .query(
+      `SELECT * FROM notes WHERE entity_name = ? AND pool_id IS NULL AND verification_status != 'superseded' ORDER BY id DESC LIMIT 500`,
+    )
+    .all(entityName) as NoteRow[];
+  const groups = new Map<string, NoteRow[]>();
+  for (const note of notes) {
+    if (!note.claim_key) continue;
+    const group = groups.get(note.claim_key) ?? [];
+    group.push(note);
+    groups.set(note.claim_key, group);
+  }
+  const found: ContradictionCandidate[] = [];
+  for (const group of groups.values()) {
+    for (let i = 0; i < group.length; i++)
+      for (let j = i + 1; j < group.length; j++) {
+        const a = group[i]!;
+        const b = group[j]!;
+        const aNeg = /\b(no|not|never|cannot|isn't|doesn't)\b/i.test(a.content);
+        const bNeg = /\b(no|not|never|cannot|isn't|doesn't)\b/i.test(b.content);
+        if (aNeg !== bNeg)
+          found.push({ left: a, right: b, reason: "same claim with opposite polarity" });
+      }
+  }
+  return found.slice(0, 50);
+}
+
+export function consolidateNotes(
+  db: Database,
+  entityName: string,
+  keeperId: number,
+  duplicateIds: number[],
+): number {
+  const keeper = getNote(db, keeperId);
+  if (!keeper || keeper.entity_name !== entityName) return 0;
+  let changed = 0;
+  db.transaction(() => {
+    for (const id of [...new Set(duplicateIds)]) {
+      if (id === keeperId) continue;
+      const note = getNote(db, id);
+      if (!note || note.entity_name !== entityName || note.verification_status === "superseded")
+        continue;
+      db.run(
+        "UPDATE notes SET verification_status = 'superseded', supersedes_id = ? WHERE id = ?",
+        [keeperId, id],
+      );
+      db.run(
+        "INSERT OR IGNORE INTO note_links (source_id, target_id, relationship, created_at) VALUES (?, ?, 'supersedes', ?)",
+        [keeperId, id, Date.now()],
+      );
+      changed++;
+    }
+  })();
+  return changed;
+}
+
 export function touchNote(db: Database, id: number): void {
   db.run("UPDATE notes SET last_accessed = ?, recall_count = recall_count + 1 WHERE id = ?", [
     Date.now(),
@@ -260,7 +403,7 @@ export function recallNotes(
   const ftsQuery = safeQuery
     .split(/\s+/)
     .map((term) => `"${term}"`)
-    .join(" ");
+    .join(" OR ");
   const alpha = opts?.weightImportance ?? DEFAULT_WEIGHT_IMPORTANCE;
   const beta = opts?.weightRecency ?? DEFAULT_WEIGHT_RECENCY;
   const gamma = opts?.weightRelevance ?? DEFAULT_WEIGHT_RELEVANCE;
@@ -271,15 +414,18 @@ export function recallNotes(
       `SELECT n.*,
         (? * (n.importance / 10.0)) +
         (? * (1.0 / (1.0 + (? - COALESCE(n.last_accessed, n.created_at)) / 86400000.0))) +
-        (? * (-fts.rank))
+        (? * (-fts.rank)) + (0.10 * n.confidence) +
+        CASE n.verification_status WHEN 'verified' THEN 0.10 WHEN 'disputed' THEN -0.10 ELSE 0 END +
+        COALESCE((SELECT 0.05 / (1.0 + (? - COALESCE(MAX(ns.observed_at), MAX(ns.retrieved_at))) / 2592000000.0)
+          FROM note_sources ns WHERE ns.note_id=n.id), 0)
         AS score
       FROM notes n
       JOIN notes_fts fts ON n.id = fts.rowid
-      WHERE n.entity_name = ? AND n.pool_id IS NULL ${tierClause} AND notes_fts MATCH ?
+      WHERE n.entity_name = ? AND n.pool_id IS NULL AND n.verification_status != 'superseded' ${tierClause} AND notes_fts MATCH ?
       ORDER BY score DESC
       LIMIT 20`,
     )
-    .all(alpha, beta, now, gamma, entityName, ftsQuery) as ScoredNoteRow[];
+    .all(alpha, beta, now, gamma, now, entityName, ftsQuery) as ScoredNoteRow[];
 }
 
 export function recallNotesWithType(
@@ -294,7 +440,7 @@ export function recallNotesWithType(
   const ftsQuery = safeQuery
     .split(/\s+/)
     .map((term) => `"${term}"`)
-    .join(" ");
+    .join(" OR ");
   const alpha = opts?.weightImportance ?? DEFAULT_WEIGHT_IMPORTANCE;
   const beta = opts?.weightRecency ?? DEFAULT_WEIGHT_RECENCY;
   const gamma = opts?.weightRelevance ?? DEFAULT_WEIGHT_RELEVANCE;
@@ -304,15 +450,18 @@ export function recallNotesWithType(
       `SELECT n.*,
         (? * (n.importance / 10.0)) +
         (? * (1.0 / (1.0 + (? - COALESCE(n.last_accessed, n.created_at)) / 86400000.0))) +
-        (? * (-fts.rank))
+        (? * (-fts.rank)) + (0.10 * n.confidence) +
+        CASE n.verification_status WHEN 'verified' THEN 0.10 WHEN 'disputed' THEN -0.10 ELSE 0 END +
+        COALESCE((SELECT 0.05 / (1.0 + (? - COALESCE(MAX(ns.observed_at), MAX(ns.retrieved_at))) / 2592000000.0)
+          FROM note_sources ns WHERE ns.note_id=n.id), 0)
         AS score
       FROM notes n
       JOIN notes_fts fts ON n.id = fts.rowid
-      WHERE n.entity_name = ? AND n.pool_id IS NULL AND n.note_type = ? AND notes_fts MATCH ?
+      WHERE n.entity_name = ? AND n.pool_id IS NULL AND n.note_type = ? AND n.verification_status != 'superseded' AND notes_fts MATCH ?
       ORDER BY score DESC
       LIMIT 20`,
     )
-    .all(alpha, beta, now, gamma, entityName, noteType, ftsQuery) as ScoredNoteRow[];
+    .all(alpha, beta, now, gamma, now, entityName, noteType, ftsQuery) as ScoredNoteRow[];
 }
 
 export function findSimilarNotes(
@@ -426,6 +575,21 @@ export function adjustNoteImportance(db: Database): { boosted: number; decayed: 
   })();
 
   return { boosted: boostedCount, decayed: decayedCount };
+}
+
+export function calibrateMemoryConfidence(db: Database): number {
+  const verified = db.run(
+    `UPDATE notes SET confidence=MAX(confidence,0.75) WHERE verification_status='verified'
+     AND EXISTS (SELECT 1 FROM note_sources ns WHERE ns.note_id=notes.id)`,
+  ).changes;
+  const disputed = db.run(
+    "UPDATE notes SET confidence=MIN(confidence,0.25) WHERE verification_status='disputed'",
+  ).changes;
+  const corroborated = db.run(
+    `UPDATE notes SET confidence=MAX(confidence,0.60) WHERE verification_status='unverified'
+     AND (SELECT COUNT(*) FROM note_sources ns WHERE ns.note_id=notes.id) >= 2`,
+  ).changes;
+  return verified + disputed + corroborated;
 }
 
 // ─── Core Memory Persistence ───────────────────────────────────────────
@@ -663,7 +827,7 @@ export function recallPoolNotes(
   const ftsQuery = safeQuery
     .split(/\s+/)
     .map((term) => `"${term}"`)
-    .join(" ");
+    .join(" OR ");
   const alpha = opts?.weightImportance ?? DEFAULT_WEIGHT_IMPORTANCE;
   const beta = opts?.weightRecency ?? DEFAULT_WEIGHT_RECENCY;
   const gamma = opts?.weightRelevance ?? DEFAULT_WEIGHT_RELEVANCE;
@@ -673,15 +837,18 @@ export function recallPoolNotes(
       `SELECT n.*,
         (? * (n.importance / 10.0)) +
         (? * (1.0 / (1.0 + (? - COALESCE(n.last_accessed, n.created_at)) / 86400000.0))) +
-        (? * (-fts.rank))
+        (? * (-fts.rank)) + (0.10 * n.confidence) +
+        CASE n.verification_status WHEN 'verified' THEN 0.10 WHEN 'disputed' THEN -0.10 ELSE 0 END +
+        COALESCE((SELECT 0.05 / (1.0 + (? - COALESCE(MAX(ns.observed_at), MAX(ns.retrieved_at))) / 2592000000.0)
+          FROM note_sources ns WHERE ns.note_id=n.id), 0)
         AS score
       FROM notes n
       JOIN notes_fts fts ON n.id = fts.rowid
-      WHERE n.pool_id = ? AND notes_fts MATCH ?
+      WHERE n.pool_id = ? AND n.verification_status != 'superseded' AND notes_fts MATCH ?
       ORDER BY score DESC
       LIMIT 20`,
     )
-    .all(alpha, beta, now, gamma, poolId, ftsQuery) as ScoredNoteRow[];
+    .all(alpha, beta, now, gamma, now, poolId, ftsQuery) as ScoredNoteRow[];
 }
 
 // ─── Memory API Keys ────────────────────────────────────────────────
@@ -772,6 +939,9 @@ export interface NoteRow {
   supersedes_id: number | null;
   tier: NoteTier;
   created_at: number;
+  confidence?: number;
+  verification_status?: "unverified" | "verified" | "disputed" | "superseded";
+  claim_key?: string | null;
 }
 
 export interface ScoredNoteRow extends NoteRow {
