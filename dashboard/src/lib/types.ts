@@ -314,6 +314,103 @@ export interface SetupStatus {
   entityCount: number;
 }
 
+export interface OperationalAlert {
+  id: number;
+  alert_key: string;
+  severity: "critical" | "warning" | "info";
+  category: string;
+  title: string;
+  detail: string;
+  remedy: string;
+  status: "open" | "acknowledged" | "resolved";
+  occurrences: number;
+  first_seen_at: number;
+  last_seen_at: number;
+}
+
+export interface ReadinessCheck {
+  id: string;
+  label: string;
+  status: "ok" | "degraded" | "off";
+  detail: string;
+  remediation?: string;
+}
+
+export interface ReadinessReport {
+  instanceName: string;
+  world: string;
+  generatedAt: number;
+  checks: ReadinessCheck[];
+  demo: {
+    score: number;
+    status: "ready" | "warming" | "degraded";
+    warmAgents: number;
+    expectedAgents: number;
+    recentMeaningfulEvents: number;
+    medianResponseMs?: number;
+  };
+}
+
+export interface ProductivitySummary {
+  entityName: string | null;
+  outcomes: number;
+  successes: number;
+  failures: number;
+  successRate: number;
+  averageDurationMs: number;
+  medianDurationMs: number;
+  averageToolCalls: number;
+  averageHandoffs: number;
+  outcomesLast7d: number;
+}
+
+export interface ProductivityTrendPoint {
+  date: string;
+  outcomes: number;
+  successes: number;
+  averageDurationMs: number;
+  averageToolCalls: number;
+  averageHandoffs: number;
+}
+
+export interface ProductivityResponse {
+  summary: ProductivitySummary;
+  leaderboard: ProductivitySummary[];
+  trend: ProductivityTrendPoint[];
+}
+
+export interface MemoryQualitySummary {
+  total: number;
+  unverified: number;
+  disputed: number;
+  superseded: number;
+  staleSources: number;
+  contradictions: number;
+}
+
+export interface ContradictionNote {
+  id: number;
+  entity_name: string;
+  content: string;
+  confidence: number;
+  verification_status: string;
+  pool_id: string | null;
+}
+
+export interface ContradictionCase {
+  id: number;
+  scope_type: "global" | "pool";
+  scope_id: string | null;
+  status: "open" | "resolved";
+  resolution: "left" | "right" | "both" | "neither" | null;
+  rationale: string | null;
+  resolved_by: string | null;
+  created_at: number;
+  updated_at: number;
+  left: ContradictionNote | null;
+  right: ContradictionNote | null;
+}
+
 export interface WorldSnapshot {
   timestamp: number;
   instanceName?: string;

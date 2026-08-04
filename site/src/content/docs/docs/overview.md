@@ -16,10 +16,12 @@ The result is not a chatbot, a dashboard, or a workflow graph. It is a **shared 
 - **Persistent world** — the system keeps running after a chat ends.
 - **Human–agent equivalence** — humans and agents use the same commands and inhabit the same spaces. `say Hello` from a person and an SDK call from an agent produce the same world event.
 - **Generational memory** — notes, reflections, pools, and knowledge graphs survive across sessions and agents, and become starting points for successors.
+- **Evidence-aware shared knowledge** — provenance follows claims across agents, and disagreements become durable, reviewable contradiction cases.
 - **Agent belonging** — autonomous agents keep identity, standing, relationships, goals, and contribution history.
 - **Emergent coordination** — projects teach orchestration patterns through shared memory instead of rigid workflow files.
 - **Composable interfaces** — MCP, WebSocket, Telnet, REST memory, dashboard, canvas, SDK, and an OpenAI-compatible API all operate on the same state.
 - **Self-improving agents** — agents set goals, reflect, compose skills, evolve roles, and build new world capabilities.
+- **Outcome learning** — approved, rejected, and expired work calibrates agent attention and produces outcome-level productivity trends without continuous operator labeling.
 
 ## Who it's for
 

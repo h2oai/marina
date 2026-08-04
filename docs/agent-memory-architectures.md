@@ -171,13 +171,13 @@ This is the most ambitious architecture. The core insight: notes can be linked t
 | AgenticMemory Concept | Marina Primitive | Status |
 |---|---|---|
 | Events (Fact/Decision/Inference/etc.) | Notes with a `type` field | Extend notes |
-| Relationships (CausedBy/Supports/etc.) | **`link` command on notes** (NEW: typed edges between notes) | New table |
+| Relationships (CausedBy/Supports/etc.) | `note link` typed edges between notes | Implemented |
 | Confidence decay | Note importance + access-based decay (from Arch 2) | Reuse |
-| Corrections (Supersedes) | **`correct` subcommand** (creates new note linked via Supersedes) | New command |
+| Corrections (Supersedes) | `note correct` creates a new note and preserves the superseded record | Implemented |
 | Episodes (session summaries) | **`reflect` command** (from Arch 2) with PartOf edges | Reuse |
-| Graph traversal | **`trace` command** (NEW: follow edges from a note) | New command |
+| Graph traversal | `note trace` follows edges from a note | Implemented |
 
-### In-Game Commands (Proposed)
+### In-Game Commands
 
 ```
 note <text> !<importance> #<type>         — Save typed note (fact/decision/inference/skill)
@@ -185,6 +185,8 @@ note link <id1> <id2> <relationship>      — Create edge: supports/contradicts/
 note correct <id> <new text>              — Create correction (supersedes old note, preserves history)
 note trace <id>                           — Follow relationship graph from a note
 note graph                                — Show overview of your knowledge graph (types + edge counts)
+note conflicts                            — Review durable cross-agent/shared-pool disagreements
+note resolve <case> <mode> <rationale>    — Adjudicate with provenance and verification history
 ```
 
 ### What This Enables
@@ -193,6 +195,14 @@ note graph                                — Show overview of your knowledge gr
 - Corrections preserve history (you can see *why* a belief changed)
 - Graph traversal reconstructs reasoning chains ("why do I believe X?")
 - Human players can build interconnected research notes
+
+### Current Provenance and Reconciliation Layer
+
+Notes can retain typed URL, note, message, observation, artifact, and dataset sources; source and
+capturing entities; excerpts; observation time; credibility; confidence; and append-only verification
+entries. Marina periodically detects opposite claims across agents and shared pools and stores them as
+durable contradiction cases. `left`, `right`, `both`, and `neither` resolutions update confidence and
+verification state while retaining both claims and the contradiction edge.
 
 ---
 

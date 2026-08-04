@@ -15,6 +15,7 @@ import { AgentLaunchContent } from "./components/back-faces/AgentLaunchContent";
 import { RoomNeighborhood } from "./components/back-faces/RoomNeighborhood";
 import { SystemMetricsContent } from "./components/back-faces/SystemMetricsContent";
 import { TaskPipeline } from "./components/back-faces/TaskPipeline";
+import { WorldMapHeatmap } from "./components/back-faces/WorldMapHeatmap";
 import { ConversationInsights } from "./components/ConversationInsights";
 import { CoordinationCard } from "./components/CoordinationCard";
 import { EntityRoster } from "./components/EntityRoster";
@@ -397,6 +398,10 @@ export default function App() {
         onSaveLayoutPreset={handleSavePreset}
         onRenameLayoutPreset={handleRenamePreset}
         onDeleteLayoutPreset={handleDeletePreset}
+        onOpenOperations={() => {
+          if (focusedPanelRef.current !== "admin") handlePanelFocus("admin");
+          window.dispatchEvent(new CustomEvent("marina:open-operations"));
+        }}
       />
 
       <div ref={containerRef} className="min-h-0 flex-1">
@@ -455,6 +460,7 @@ export default function App() {
                   default, enabled via MARINA_UNIFIED_CANVAS (see main.tsx). */}
               <WorldMap
                 worldData={worldData}
+                backContent={<WorldMapHeatmap worldData={worldData} />}
                 isFocused={focusedPanel === "worldmap"}
                 onToggleFocus={() => handlePanelFocus("worldmap")}
               />

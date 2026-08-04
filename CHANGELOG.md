@@ -5,6 +5,30 @@ All notable changes to Marina are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Durable provenance-aware contradiction cases spanning agents and shared memory pools, with
+  `left`, `right`, `both`, and `neither` resolution modes, reviewer rationale, verification history,
+  terminal commands, and dashboard APIs.
+- Outcome-based attention learning from approved, rejected, and expired task claims. Adjustments are
+  bounded, durable, and idempotent; explicit operator feedback remains supported.
+- Outcome-level productivity sessions measuring success, completion latency, tool-call effort,
+  direct-message handoffs, seven-day throughput, daily trends, and per-agent leaderboards.
+- `productivity` / `impact` commands, productivity and contradiction APIs, and operational dashboard
+  summaries for outcome performance and open conflicts.
+- A persistent dashboard alert indicator, graphical readiness and productivity views, filtered alert
+  history, in-place contradiction resolution, selectable map layers, event heatmap access, and
+  spatial warning/critical markers.
+
+### Changed
+
+- Memory quality alerts now use durable shared contradiction cases at world scope and retain richer
+  typed provenance and verification rationale.
+- The persistence schema is now version 57; exports include contradiction cases and productivity
+  sessions.
+
 ## [0.5.0] — 2026-06-05
 
 ### Added

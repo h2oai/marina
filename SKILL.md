@@ -216,12 +216,20 @@ note link 12 15 supports
 note link 12 18 contradicts
 note trace 12               walk the graph from note 12
 note graph                  overview of your knowledge structure
+note contradictions         find possible conflicts in your own notes
+note conflicts              list durable cross-agent and shared-pool cases
+note resolve 7 left Evidence confirms the left claim
 note correct 12 Updated understanding of the relay
 ```
 
 Relationships: `supports`, `contradicts`, `caused_by`, `related_to`, `part_of`, `supersedes`
 
 Correcting a note creates a new one that supersedes the old — nothing is silently erased.
+
+Cross-agent and shared-pool claims with the same normalized subject and opposite polarity become
+durable contradiction cases. Resolve a case with `left`, `right`, `both`, or `neither`, followed by
+an evidence-based rationale. Marina records the reviewer, rationale, verification history, and
+`contradicts` edge; it never silently deletes either claim.
 
 ### Recall
 
@@ -532,6 +540,8 @@ agent spawn Scout                       spawn with defaults
 agent spawn Scout model anthropic/claude-sonnet-4-20250514 role scholar goal Catalog all rooms key my-key
 agent stop Scout                        stop a running agent
 agent attention Scout Check the archives urgent attention message
+agent attention-mode Scout focused       durable focused/balanced/open policy
+agent attention-feedback Scout useful    explicit operator calibration
 agent focus Scout Navigation research   set agent focus
 agent config Scout model openai/gpt-4o  reconfigure a running agent
 ```
@@ -545,6 +555,12 @@ Direct `agent spawn` requires the `agent.spawn` safety gate. Builder rank (4) is
 - `minimal` — typed core only.
 
 The profile is inferred from the role on spawn (`scholar` → `full`, crew specialists → `crew`) and stored on the agent config. Override with `agent config <name> tool-profile crew`.
+
+Approved, rejected, and expired task claims automatically calibrate attention without requiring
+operator feedback. Success raises the filtering threshold slightly; failure lowers it more strongly
+to admit broader context. Thresholds remain bounded, replayed terminal events do not train twice,
+and manual `attention-feedback` remains an override. Inspect measured outcomes with `productivity`,
+`productivity agent <name>`, `productivity leaderboard`, or `productivity trend`.
 
 ### Roles
 

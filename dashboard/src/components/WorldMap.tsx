@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { type AnimationPlaybackControlsWithThen, animate, motion } from "motion/react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useOperationalAlerts } from "../hooks/use-api";
 import { useWorldState } from "../hooks/use-world-state";
 import type { DashboardEvent, WorldData } from "../lib/types";
 import {
@@ -294,6 +295,7 @@ export function WorldMap({ worldData, backContent, isFocused, onToggleFocus }: W
   const roomPops = useWorldState((s) => s.roomPopulations);
   const wsStartRoom = useWorldState((s) => s.startRoom);
   const wsWorldName = useWorldState((s) => s.worldName);
+  const { data: operationalAlerts = [] } = useOperationalAlerts();
   // NOTE: eventFeed is intentionally NOT subscribed reactively. It changes on
   // every event batch; subscribing here re-rendered this entire ~1150-line SVG
   // map on every event. The two effects that need it read it imperatively
@@ -314,6 +316,8 @@ export function WorldMap({ worldData, backContent, isFocused, onToggleFocus }: W
     lines: string[];
   } | null>(null);
   const [highlightedRoom, setHighlightedRoom] = useState<string | null>(null);
+  const [layers, setLayers] = useState({ activity: true, alerts: true, entities: true });
+  const [activityCounts, setActivityCounts] = useState<Map<string, number>>(new Map());
 
   // Animation refs
   const hasInitializedRef = useRef(false);
@@ -398,6 +402,25 @@ export function WorldMap({ worldData, backContent, isFocused, onToggleFocus }: W
     }
     return byRoom;
   }, [wsEntities]);
+
+  const alertRooms = useMemo(() => {
+    const grouped = new Map<string, { count: number; critical: number; titles: string[] }>();
+    for (const alert of operationalAlerts) {
+      if (alert.status === "resolved") continue;
+      let roomId = startRoom;
+      if (alert.alert_key.startsWith("agent:")) {
+        const name = alert.alert_key.split(":")[1];
+        roomId = wsEntities.find((entity) => entity.name === name)?.room ?? startRoom;
+      }
+      if (!roomId || !posMap.has(roomId)) continue;
+      const current = grouped.get(roomId) ?? { count: 0, critical: 0, titles: [] };
+      current.count++;
+      if (alert.severity === "critical") current.critical++;
+      current.titles.push(alert.title);
+      grouped.set(roomId, current);
+    }
+    return grouped;
+  }, [operationalAlerts, posMap, startRoom, wsEntities]);
 
   // ── Room short name lookup ────────────────────────────────────────
   const roomShorts = useMemo(() => {
@@ -561,6 +584,7 @@ export function WorldMap({ worldData, backContent, isFocused, onToggleFocus }: W
       }
 
       const maxActivity = Math.max(1, ...roomActivity.values());
+      setActivityCounts(roomActivity);
 
       for (const [roomId, count] of roomActivity) {
         const halo = svgRef.current!.querySelector(`[data-room-halo="${roomId}"]`);
@@ -961,6 +985,27 @@ export function WorldMap({ worldData, backContent, isFocused, onToggleFocus }: W
               </text>
             ))}
 
+            {/* Recent activity heat, sampled every five seconds. */}
+            {layers.activity &&
+              allPositions.map((room) => {
+                const count = activityCounts.get(room.id) ?? 0;
+                if (!count) return null;
+                const max = Math.max(1, ...activityCounts.values());
+                const intensity = count / max;
+                return (
+                  <circle
+                    key={`heat-${room.id}`}
+                    cx={room.x}
+                    cy={room.y}
+                    r={26 + intensity * 24}
+                    fill={getDistrictColor(room.district)}
+                    opacity={0.04 + intensity * 0.1}
+                    filter="url(#glow-md)"
+                    style={{ pointerEvents: "none" }}
+                  />
+                );
+              })}
+
             {/* ── Layer 3: Adjacent grid edges (solid, prominent) ── */}
             {allEdges
               .filter((e) => e.gridEdge && e.adjacent)
@@ -1152,21 +1197,72 @@ export function WorldMap({ worldData, backContent, isFocused, onToggleFocus }: W
               );
             })}
 
+            {/* Spatial operations markers. Agent alerts follow the agent;
+                world-level readiness/memory/project alerts anchor at the hub. */}
+            {layers.alerts &&
+              Array.from(alertRooms.entries()).map(([roomId, alert]) => {
+                const pos = posMap.get(roomId);
+                if (!pos) return null;
+                const color = alert.critical ? "var(--color-danger)" : "var(--color-warning)";
+                return (
+                  // biome-ignore lint/a11y/noStaticElementInteractions: SVG group marker mirrors room-node pointer interaction; keyboard room navigation remains available
+                  <g
+                    key={`alert-${roomId}`}
+                    className="cursor-pointer"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      selectRoom(roomId);
+                    }}
+                  >
+                    <circle
+                      cx={pos.x + 18}
+                      cy={pos.y - 18}
+                      r={9}
+                      fill="var(--color-bg-card)"
+                      stroke={color}
+                      strokeWidth={1.5}
+                      filter="url(#glow-sm)"
+                    >
+                      {alert.critical > 0 && (
+                        <animate
+                          attributeName="r"
+                          values="8;11;8"
+                          dur="1.4s"
+                          repeatCount="indefinite"
+                        />
+                      )}
+                    </circle>
+                    <text
+                      x={pos.x + 18}
+                      y={pos.y - 15}
+                      textAnchor="middle"
+                      fill={color}
+                      fontSize={8}
+                      fontWeight={700}
+                    >
+                      {alert.count}
+                    </text>
+                    <title>{alert.titles.join(" · ")}</title>
+                  </g>
+                );
+              })}
+
             {/* ── Layer 7: Entity orbit dots (memoized) ───────── */}
-            {Array.from(entityPositions.entries()).map(([roomId, ents]) => {
-              const pos = posMap.get(roomId);
-              if (!pos) return null;
-              return (
-                <EntityDots
-                  key={roomId}
-                  roomId={roomId}
-                  entities={ents}
-                  pos={pos}
-                  isHub={isHub(roomId)}
-                  onSelectEntity={selectEntity}
-                />
-              );
-            })}
+            {layers.entities &&
+              Array.from(entityPositions.entries()).map(([roomId, ents]) => {
+                const pos = posMap.get(roomId);
+                if (!pos) return null;
+                return (
+                  <EntityDots
+                    key={roomId}
+                    roomId={roomId}
+                    entities={ents}
+                    pos={pos}
+                    isHub={isHub(roomId)}
+                    onSelectEntity={selectEntity}
+                  />
+                );
+              })}
 
             {/* ── Layer 8: Entity movement trails ─────────────── */}
             <g ref={trailsRef} />
@@ -1216,6 +1312,42 @@ export function WorldMap({ worldData, backContent, isFocused, onToggleFocus }: W
               </g>
             )}
           </svg>
+          <div className="absolute left-2 top-2 flex items-center gap-1 rounded border border-border bg-bg-surface/85 p-1 text-[9px] backdrop-blur-sm">
+            {(
+              [
+                ["activity", "Heat"],
+                ["alerts", "Alerts"],
+                ["entities", "Presence"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={layers[key]}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setLayers((current) => ({ ...current, [key]: !current[key] }));
+                }}
+                className={`rounded px-1.5 py-0.5 transition-colors ${layers[key] ? "bg-primary/15 text-primary" : "text-text-dim hover:text-text"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="pointer-events-none absolute bottom-2 left-2 flex items-center gap-2 rounded border border-border bg-bg-surface/80 px-2 py-1 text-[8px] text-text-dim backdrop-blur-sm">
+            <span>
+              <i className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-primary" />
+              agent
+            </span>
+            <span>
+              <i className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-warning" />
+              warning
+            </span>
+            <span>
+              <i className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-danger" />
+              critical
+            </span>
+          </div>
           <CompassControl
             onPan={panBy}
             onZoomIn={() => zoomBy(0.85)}

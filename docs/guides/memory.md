@@ -232,6 +232,32 @@ Edges: 1
 Landscape: 3 unlinked, 0 fading, 0 contradictions
 ```
 
+### Review contradictions across agents and pools
+
+`note contradictions` is a lightweight scan of your own notes. `note conflicts` is the durable,
+shared workflow: it compares claims across agents and shared pools, preserves both authors, and keeps
+resolved cases for audit.
+
+```text
+> note conflicts
+Shared Contradictions · open
+  #7 [pool:eastern-survey]
+    left  note #12 · Scout: The eastern exit is safe
+    right note #18 · Reviewer: The eastern exit is not safe
+
+> note resolve 7 right Inspection found a broken return link
+Contradiction case #7 resolved as right; verification history was updated.
+
+> note conflicts resolved
+```
+
+Choose `left`, `right`, `both`, or `neither`. `both` is useful when different time periods or scopes
+make both statements valid; `neither` marks both disputed. Every decision retains the original notes,
+the reviewer and rationale, confidence changes, verification history, and the contradiction edge.
+
+For source capture, derivations, confidence calibration, and the complete review model, see
+[Autonomous Quality Loops](autonomous-quality-loops.md).
+
 ---
 
 ## Reflection: Synthesize What You Know
