@@ -12,6 +12,7 @@ import type {
   ChannelEntry,
   ChannelMessage,
   ConnectorEntry,
+  ContradictionCase,
   DynamicCommandEntry,
   EntityDetail,
   EntityWorkResponse,
@@ -25,10 +26,14 @@ import type {
   McpInfo,
   MediaJob,
   MemoryPool,
+  MemoryQualitySummary,
   ModelsResponse,
   NoteGraphEntry,
+  OperationalAlert,
   Paged,
+  ProductivityResponse,
   ProjectEntry,
+  ReadinessReport,
   RecipeEntry,
   RoleEntry,
   RoomDetail,
@@ -65,6 +70,46 @@ export function useSystem() {
   return useQuery({
     queryKey: ["system"],
     queryFn: () => fetchApi<SystemData>("/api/system"),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useOperationalAlerts() {
+  return useQuery({
+    queryKey: ["operations", "alerts"],
+    queryFn: () => fetchApi<OperationalAlert[]>("/api/operations/alerts"),
+    refetchInterval: 15_000,
+  });
+}
+
+export function useReadiness() {
+  return useQuery({
+    queryKey: ["operations", "readiness"],
+    queryFn: () => fetchApi<ReadinessReport>("/api/readiness"),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useProductivity() {
+  return useQuery({
+    queryKey: ["operations", "productivity"],
+    queryFn: () => fetchApi<ProductivityResponse>("/api/productivity"),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useMemoryQuality() {
+  return useQuery({
+    queryKey: ["operations", "memory-quality"],
+    queryFn: () => fetchApi<MemoryQualitySummary>("/api/memory/quality"),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useContradictions(status: "open" | "resolved" = "open") {
+  return useQuery({
+    queryKey: ["operations", "contradictions", status],
+    queryFn: () => fetchApi<ContradictionCase[]>(`/api/memory/contradictions?status=${status}`),
     refetchInterval: 30_000,
   });
 }

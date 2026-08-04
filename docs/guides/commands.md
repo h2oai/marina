@@ -256,8 +256,17 @@ Each recipe auto-creates: memory pool, group (with channel + board), project wit
 
 Task claims bracket outcome-level productivity sessions. Inspect them with `productivity`,
 `productivity agent <name>`, `productivity leaderboard`, or `productivity trend`. Metrics include
-success rate, completion latency, tool calls and handoffs per outcome, and seven-day throughput. Approved, rejected, and
-expired work also tunes attention automatically; manual feedback remains an operator override.
+success rate, completion latency, tool calls and handoffs per outcome, and seven-day throughput.
+Approved, rejected, and expired work also tunes attention automatically; manual feedback remains an
+operator override.
+
+```text
+> productivity                         World outcome summary
+> productivity agent Scout             One agent's outcome summary
+> productivity leaderboard             Rank agents by successful outcomes, then latency
+> productivity trend                   Daily outcomes for the last 14 days
+> impact                               Alias for productivity
+```
 
 ```
 > task create Fix bug | Login form crashes on slow connections
@@ -481,8 +490,9 @@ agent attention-feedback Researcher useful
 agent attention-feedback Researcher noise
 ```
 
-Useful feedback lowers the agent's filtering threshold; noise feedback raises it. Directly addressed
-events always pass through.
+Useful feedback lowers the agent's filtering threshold; noise feedback raises it. Approved task
+outcomes raise the threshold by 1 (cap 75); rejected or expired work lowers it by 3 (floor 20).
+Replayed terminal events do not retrain twice. Directly addressed events always pass through.
 
 ```
 > agent list                                  List running agents

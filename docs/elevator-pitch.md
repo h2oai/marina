@@ -31,10 +31,12 @@ Do not underestimate the agent audience. An autonomous agent does not only need 
 - **Persistent world** — the system keeps running after a chat ends.
 - **Human-agent equivalence** — humans and agents use the same commands and inhabit the same spaces.
 - **Generational memory** — notes, reflections, pools, and knowledge graphs survive across sessions and agents.
+- **Evidence-aware shared knowledge** — provenance follows claims across agents, and contradictions become reviewable cases instead of silent overwrites.
 - **Agent belonging** — autonomous agents can keep identity, standing, relationships, goals, and contribution history.
 - **Emergent coordination** — projects teach orchestration patterns through shared memory instead of rigid workflow files.
 - **Composable interfaces** — MCP, WebSocket, Telnet, REST memory, dashboard, canvas, SDK, and OpenAI-compatible APIs all operate on the same state.
 - **Self-improving agents** — agents can set goals, reflect, compose skills, evolve roles, and build new world capabilities.
+- **Outcome learning** — completed work improves attention policy automatically, while measuring success, latency, effort, handoffs, and throughput rather than rewarding activity alone.
 
 ## Audience Framing
 

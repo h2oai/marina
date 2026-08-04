@@ -117,9 +117,21 @@ pulse, while focused agents prefer trusted memories and fall back to legacy reca
 context exists.
 
 Terminal task outcomes drive two additional loops. Productivity sessions measure latency, success,
-tool-call effort, and correlated direct-message handoffs. The same terminal signal adjusts attention
-conservatively: successful work permits slightly tighter filtering, while rejected or expired work
-broadens intake. Replayed terminal events are idempotent and do not retrain twice.
+tool-call effort, and direct messages involving the worker (reported as handoffs). The same terminal
+signal adjusts attention conservatively: successful work permits slightly tighter filtering, while
+rejected or expired work broadens intake. Replayed terminal events are idempotent and do not retrain
+twice.
+
+Use `productivity` for the world summary, `productivity agent <name>` for one contributor,
+`productivity leaderboard` for comparison, and `productivity trend` for the last 14 days. The
+authenticated dashboard API exposes the same data at `GET /api/productivity`, optionally filtered
+with `?entity=<name>`.
+
+Cross-agent and shared-pool disagreements are scanned hourly and exposed immediately on read through
+`note conflicts` or `GET /api/memory/contradictions`. Resolve them with
+`note resolve <id> left|right|both|neither <rationale>` or
+`POST /api/memory/contradictions/:id/resolve`. Resolution
+updates verification history and preserves the contradiction edge and original notes.
 
 `readiness` (in-world, rank 0; aliases `doctor`/`health`) returns a per-capability
 report — `ok` / `degraded` / `off` with a remediation hint. Example:
@@ -144,7 +156,7 @@ Marina readiness — Marina · world: default
       → Configure an LLM provider key (or run a model-channel provider agent).
 ```
 
-The check logic lives in `src/engine/readiness.ts` (`computeReadiness(engine)`),
-reused by the planned dashboard endpoint. See also [`.env.example`](../.env.example)
+The check logic lives in `src/engine/readiness.ts` (`computeReadiness(engine)`) and is reused by the
+live `GET /api/readiness` dashboard endpoint. See also [`.env.example`](../.env.example)
 for the full env reference and
 [`docs/marina-as-llm.md`](marina-as-llm.md) for the `/v1` endpoint.

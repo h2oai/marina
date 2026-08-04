@@ -32,6 +32,12 @@ by default — for a public deployment, turn on sign-in with
 
 A visual graph of all rooms as nodes and exits as edges. Click any room to see its details — description, occupants, exits, and items. Rooms with more activity glow brighter.
 
+The map includes independent **Heat**, **Alerts**, and **Presence** layers. Heat shows recent room
+activity, Presence shows entity orbits, and Alerts places warning or critical badges in affected
+rooms. Agent alerts follow the agent's current room; world-level readiness, memory, and project
+alerts anchor at the starting hub. Hover an alert marker for its titles or click it to inspect that
+room. Flip the panel to open the full event heatmap.
+
 ### Entity Roster
 
 Everyone currently online:
@@ -107,12 +113,19 @@ raw logs.
 
 ### Admin Panel
 
-The Admin panel has four tabs:
+The Admin panel has eight tabs:
 
 - **Keys** — manage LLM API keys. Click "+ Add" to store a key by selecting a provider from the dropdown and pasting the key value. Keys are shown masked. **Note: DB-stored keys are kept in plaintext** unless key encryption is enabled (Admin → Security shows the state). For sensitive deployments, prefer the environment-variable fallback (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `XAI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`, `LLAMA_API_KEY`) — env keys are read live and never written to the database.
+- **Endpoint** — configure the runtime default model and model endpoint.
 - **Adapters** — view platform adapter status (Telegram, Discord, etc.)
 - **Roles** — browse defined roles and their traits
+- **MCP** — inspect MCP connectivity and configuration.
+- **Config** — inspect and edit supported runtime environment settings.
+- **Ops** — inspect graphical readiness, outcome trends and leaderboard, latency and effort metrics, memory health, alert history and filters, and open contradictions. Alerts can be acknowledged or resolved; contradictions can be adjudicated with rationale in place.
 - **Security** — live posture overview: dashboard auth (`MARINA_AUTH`), API-key encryption at rest, the `MARINA_OPEN_API` dev flag, and key/agent counts. It reads the real server state — if auth is off it points you to [authentication.md](../authentication.md).
+
+The header alert indicator remains visible from every dashboard layout. Its severity color and pulse
+show whether actionable warnings or critical failures exist; click it to focus Admin → Ops.
 
 ---
 

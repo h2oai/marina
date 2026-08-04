@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -56,5 +56,11 @@ describe("App", () => {
   it("renders the grid layout container", () => {
     renderWithProviders(<App />);
     expect(screen.getByTestId("grid-layout")).toBeInTheDocument();
+  });
+
+  it("opens the operations command center from the header alert indicator", () => {
+    renderWithProviders(<App />);
+    fireEvent.click(screen.getByTitle("Operations clear"));
+    expect(screen.getByText("Operations Inbox")).toBeInTheDocument();
   });
 });

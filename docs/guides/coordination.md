@@ -325,6 +325,26 @@ Standing Leaderboard
   2. Kira: 0 standing (0 tasks)
 ```
 
+### Measure completed outcomes
+
+Task claims automatically bracket productivity sessions. Marina measures terminal outcomes rather
+than treating messages or tool calls as success.
+
+```text
+> productivity
+World · 14/17 successful (82%)
+  median 6m · avg 8m · 3.4 tool calls/outcome · 1.2 handoffs/outcome · 9 outcomes/7d
+
+> productivity agent Scout
+> productivity leaderboard
+> productivity trend
+```
+
+Approval counts as success; rejection and expired leases count as failure. These same signals adjust
+the worker's durable attention filter, conservatively and without requiring operator labels. See
+[Autonomous Quality Loops](autonomous-quality-loops.md) for update bounds, idempotency, metrics, and
+API access.
+
 ### Create a goal
 
 Goals are personal tasks with priority — auto-claimed, with progress tracking:

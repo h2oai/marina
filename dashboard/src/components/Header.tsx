@@ -1,5 +1,6 @@
 import {
   Activity,
+  Bell,
   Edit3,
   FolderKanban,
   Frame,
@@ -10,7 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useSystem } from "../hooks/use-api";
+import { useOperationalAlerts, useSystem } from "../hooks/use-api";
 import type { LayoutPreset } from "../hooks/use-layout-presets";
 import { useWorldState } from "../hooks/use-world-state";
 import { formatUptime } from "../lib/utils";
@@ -27,6 +28,7 @@ interface HeaderProps {
   onSaveLayoutPreset?: () => void;
   onRenameLayoutPreset?: (id: string) => void;
   onDeleteLayoutPreset?: (id: string) => void;
+  onOpenOperations?: () => void;
 }
 
 const TITLE_LETTERS = "MARINA".split("");
@@ -44,10 +46,14 @@ export function Header({
   onSaveLayoutPreset,
   onRenameLayoutPreset,
   onDeleteLayoutPreset,
+  onOpenOperations,
 }: HeaderProps) {
   const entities = useWorldState((s) => s.entities);
   const connections = useWorldState((s) => s.connections);
   const { data: systemData } = useSystem();
+  const { data: alerts = [] } = useOperationalAlerts();
+  const activeAlerts = alerts.filter((alert) => alert.status !== "resolved");
+  const criticalAlerts = activeAlerts.filter((alert) => alert.severity === "critical").length;
   const agents = entities.filter((e) => e.kind === "agent");
   const activePreset = layoutPresets?.find((p) => p.id === activeLayoutId);
   const presetLocked = !!activePreset?.locked;
@@ -78,6 +84,30 @@ export function Header({
       </div>
 
       <div className="flex items-center gap-3 text-[11px]">
+        <button
+          type="button"
+          onClick={onOpenOperations}
+          className={`relative flex items-center gap-1.5 rounded border px-2 py-0.5 transition-colors ${
+            criticalAlerts
+              ? "border-danger/50 bg-danger/10 text-danger"
+              : activeAlerts.length
+                ? "border-warning/40 bg-warning/10 text-warning"
+                : "border-success/30 bg-success/5 text-success"
+          }`}
+          title={
+            activeAlerts.length
+              ? `${activeAlerts.length} actionable alert${activeAlerts.length === 1 ? "" : "s"}`
+              : "Operations clear"
+          }
+        >
+          <Bell size={11} className={criticalAlerts ? "animate-pulse" : ""} />
+          <AnimatedNumber value={activeAlerts.length} className="tabular-nums" />
+          <span className="hidden xl:inline">alerts</span>
+          {criticalAlerts > 0 && (
+            <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-danger shadow-[0_0_8px_var(--color-danger)]" />
+          )}
+        </button>
+
         <div className="flex items-center gap-1.5">
           <Radio size={12} className={connected ? "text-success" : "text-danger"} />
           <span className={connected ? "text-success" : "text-danger"}>

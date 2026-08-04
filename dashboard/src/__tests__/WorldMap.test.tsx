@@ -91,4 +91,16 @@ describe("WorldMap", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reset map view" }));
     expect(svg.getAttribute("viewBox")).toBe(defaultViewBox);
   });
+
+  it("offers independently toggleable activity, alert, and presence layers", () => {
+    renderWithProviders(<WorldMap worldData={SAMPLE_WORLD_DATA} />);
+    const heat = screen.getByRole("button", { name: "Heat" });
+    const alerts = screen.getByRole("button", { name: "Alerts" });
+    const presence = screen.getByRole("button", { name: "Presence" });
+    expect(heat).toHaveAttribute("aria-pressed", "true");
+    expect(alerts).toHaveAttribute("aria-pressed", "true");
+    expect(presence).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(heat);
+    expect(heat).toHaveAttribute("aria-pressed", "false");
+  });
 });
