@@ -316,6 +316,21 @@ export function recordAttentionFeedback(
   return getAgentConfig(db, name);
 }
 
+export function recordAutomaticAttentionOutcome(
+  db: Database,
+  name: string,
+  outcome: "success" | "failure",
+): AgentConfigRow | undefined {
+  const column = outcome === "success" ? "attention_auto_success" : "attention_auto_failure";
+  const delta = outcome === "success" ? 1 : -3;
+  db.run(
+    `UPDATE agent_configs SET ${column}=${column}+1,
+     attention_threshold=MAX(20,MIN(75,attention_threshold+?)) WHERE name=?`,
+    [delta, name],
+  );
+  return getAgentConfig(db, name);
+}
+
 // ─── API Keys ──────────────────────────────────────────────────────────
 
 export function saveApiKey(
@@ -516,6 +531,8 @@ export interface AgentConfigRow {
   attention_threshold: number;
   attention_useful: number;
   attention_noise: number;
+  attention_auto_success: number;
+  attention_auto_failure: number;
 }
 
 export interface ApiKeyRow {

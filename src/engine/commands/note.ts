@@ -389,6 +389,56 @@ export function noteCommand(deps: {
           return;
         }
 
+        case "conflicts": {
+          const filter = tokens[1] === "resolved" ? "resolved" : "open";
+          db.refreshContradictionCases();
+          const cases = db.listContradictionCases(filter, 50);
+          if (cases.length === 0) {
+            ctx.send(input.entity, `No ${filter} shared contradiction cases.`);
+            return;
+          }
+          const lines = [header(`Shared Contradictions · ${filter}`), separator()];
+          for (const conflict of cases) {
+            const left = db.getNote(conflict.left_note_id);
+            const right = db.getNote(conflict.right_note_id);
+            if (!left || !right) continue;
+            lines.push(
+              `  #${conflict.id} [${conflict.scope_type}${conflict.scope_id ? `:${conflict.scope_id}` : ""}]`,
+              `    left  note #${left.id} · ${left.entity_name}: ${left.content.slice(0, 70)}`,
+              `    right note #${right.id} · ${right.entity_name}: ${right.content.slice(0, 70)}`,
+              dim(`    resolve: note resolve ${conflict.id} left|right|both|neither <rationale>`),
+            );
+          }
+          ctx.send(input.entity, lines.join("\n"));
+          return;
+        }
+
+        case "resolve": {
+          const caseId = Number(tokens[1]);
+          const resolution = tokens[2] as "left" | "right" | "both" | "neither" | undefined;
+          const rationale = tokens.slice(3).join(" ");
+          if (
+            !Number.isInteger(caseId) ||
+            !resolution ||
+            !["left", "right", "both", "neither"].includes(resolution) ||
+            !rationale
+          ) {
+            ctx.send(
+              input.entity,
+              "Usage: note resolve <case-id> left|right|both|neither <evidence-backed rationale>",
+            );
+            return;
+          }
+          const ok = db.resolveContradictionCase(caseId, resolution, entity.name, rationale);
+          ctx.send(
+            input.entity,
+            ok
+              ? `Contradiction case #${caseId} resolved as ${resolution}; verification history was updated.`
+              : `Open contradiction case #${caseId} not found.`,
+          );
+          return;
+        }
+
         case "consolidate": {
           const keeper = Number.parseInt(tokens[1] ?? "", 10);
           const duplicates = tokens.slice(2).map(Number).filter(Number.isInteger);

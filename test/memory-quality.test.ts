@@ -112,4 +112,38 @@ describe("evidence-aware memory", () => {
     expect(db.getNoteVerifications(claim)[0]?.rationale).toBe("Confirmed against the observation");
     expect(db.getNote(claim)?.verification_status).toBe("verified");
   });
+
+  test("opens and resolves contradictions across agents in a shared pool", () => {
+    db.createMemoryPool("shared", "Shared", "Ada");
+    const left = db.addPoolNote("shared", "Ada", "The launch is approved", 7, "fact");
+    const right = db.addPoolNote("shared", "Grace", "The launch is not approved", 7, "fact");
+    expect(db.refreshContradictionCases()).toBe(1);
+    const conflict = db.listContradictionCases("open")[0]!;
+    expect(conflict.scope_type).toBe("pool");
+    expect(
+      db.resolveContradictionCase(conflict.id, "left", "Reviewer", "Approval record inspected"),
+    ).toBe(true);
+    expect(db.getNote(left)?.verification_status).toBe("verified");
+    expect(db.getNote(right)?.verification_status).toBe("disputed");
+    expect(db.listContradictionCases("resolved")).toHaveLength(1);
+  });
+
+  test("learns attention and productivity from terminal outcomes", () => {
+    db.saveAgentConfig({ name: "Ada", model: "openai/test", spawnedBy: "system" });
+    expect(db.recordAutomaticAttentionOutcome("Ada", "success")?.attention_threshold).toBe(51);
+    expect(db.recordAutomaticAttentionOutcome("Ada", "failure")?.attention_threshold).toBe(48);
+    const startedAt = Date.now() - 60_000;
+    db.startProductivitySession("agent-ada", "Ada", 42, startedAt, 10);
+    expect(
+      db.finishProductivitySession("agent-ada", "Ada", 42, "approved", startedAt + 60_000, 14),
+    ).toBe(true);
+    const summary = db.getProductivitySummary("Ada");
+    expect(summary.successRate).toBe(1);
+    expect(summary.medianDurationMs).toBe(60_000);
+    expect(summary.averageToolCalls).toBe(4);
+    const trend = db.getProductivityTrend("Ada");
+    expect(trend).toHaveLength(1);
+    expect(trend[0]?.outcomes).toBe(1);
+    expect(trend[0]?.successes).toBe(1);
+  });
 });

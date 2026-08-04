@@ -1134,6 +1134,9 @@ export class Engine {
       tryLog(this.logger, "tick", "Memory confidence calibration failed", () =>
         db.calibrateMemoryConfidence(),
       );
+      tryLog(this.logger, "tick", "Shared contradiction scan failed", () =>
+        db.refreshContradictionCases(),
+      );
     }
     if (this.tickCount % NOTE_IMPORTANCE_INTERVAL === 0 && this.db && this.taskManager) {
       tryLog(this.logger, "tick", "Operational alert sync failed", () =>
@@ -1695,6 +1698,58 @@ export class Engine {
       } catch {
         // Non-critical — standing accounting failures must never break the
         // event log. Cache invalidation happens on the next read regardless.
+      }
+      try {
+        if (event.type === "task_claimed") {
+          const entity = this.entities.get(event.entity);
+          if (entity) {
+            const toolCalls = this.agentRuntime.get(entity.name)?.getStatus().toolCalls ?? 0;
+            db.startProductivitySession(
+              String(event.entity),
+              entity.name,
+              event.taskId,
+              event.timestamp,
+              toolCalls,
+            );
+          }
+        } else if (
+          event.type === "task_approved" ||
+          event.type === "task_rejected" ||
+          event.type === "task_released"
+        ) {
+          const kind = event.type;
+          const desired =
+            kind === "task_approved"
+              ? "approved"
+              : kind === "task_rejected"
+                ? "rejected"
+                : "expired";
+          const claims = db.getTaskClaims(event.taskId);
+          const claim =
+            kind === "task_released"
+              ? claims.find((row) => row.entity_id === String(event.entity))
+              : ([...claims].reverse().find((row) => row.status === desired) ??
+                claims.find((row) => row.entity_id === String(event.entity)));
+          if (claim) {
+            const toolCalls = this.agentRuntime.get(claim.entity_name)?.getStatus().toolCalls ?? 0;
+            const recorded = db.finishProductivitySession(
+              claim.entity_id,
+              claim.entity_name,
+              event.taskId,
+              desired,
+              event.timestamp,
+              toolCalls,
+            );
+            if (recorded) {
+              this.agentRuntime.recordAttentionOutcome(
+                claim.entity_name,
+                desired === "approved" ? "success" : "failure",
+              );
+            }
+          }
+        }
+      } catch {
+        // Outcome learning is telemetry: never interrupt the underlying work event.
       }
     }
     this.notifyActionableEvent(event);

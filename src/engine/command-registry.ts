@@ -55,6 +55,7 @@ import { orientCommand } from "./commands/orient";
 import { poolCommand } from "./commands/pool";
 import { positionCommand } from "./commands/position";
 import { probeCommand } from "./commands/probe";
+import { productivityCommand } from "./commands/productivity";
 import { projectCommand } from "./commands/project";
 import { questCommand } from "./commands/quest";
 import { quitCommand } from "./commands/quit";
@@ -828,6 +829,7 @@ export function registerBuiltinCommands(engine: Engine): void {
   // Readiness command (aliases doctor/health) — operator-facing capability health.
   engine.commands.registerBuiltin(readinessCommand({ readiness: () => computeReadiness(engine) }));
   if (engine.db && engine.taskManager) {
+    engine.commands.registerBuiltin(productivityCommand(engine.db));
     engine.commands.registerBuiltin(
       opsCommand({
         db: engine.db,

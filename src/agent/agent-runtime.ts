@@ -647,6 +647,13 @@ export class AgentRuntime {
     return threshold;
   }
 
+  recordAttentionOutcome(name: string, outcome: "success" | "failure"): number | undefined {
+    const saved = this.db?.recordAutomaticAttentionOutcome(name, outcome);
+    if (!saved) return undefined;
+    this.get(name)?.setAttentionThreshold?.(saved.attention_threshold);
+    return saved.attention_threshold;
+  }
+
   /** Restart in place while preserving the saved config and current focus. */
   async restart(name: string, opts?: { model?: string }): Promise<AgentHandle> {
     const key = this.resolveKey(name);
