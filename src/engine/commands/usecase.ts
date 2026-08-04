@@ -4,6 +4,7 @@ import type { TaskManager } from "../../coordination/task-manager";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, EntityRank, RoomContext } from "../../types";
+import { checkGate, recordDemonstration } from "../safety-gates";
 
 /**
  * Use-case recipes — one-command scaffolding that creates a project,
@@ -255,6 +256,144 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
     ],
     agentCount: 1,
     agentRole: "researcher",
+  }),
+
+  debate: (topic) => ({
+    name: "debate",
+    description: `Evidence-backed adversarial deliberation: ${topic}`,
+    orchestration: "debate",
+    tasks: [
+      {
+        title: "Frame the decision",
+        description: `Define the exact contested question, decision criteria, known constraints, and what evidence would change the conclusion for: ${topic}.`,
+      },
+      {
+        title: "Develop opposing cases",
+        description: `Build the strongest evidence-cited cases for the major opposing positions on: ${topic}. Record uncertainties and rebuttals without collapsing disagreement early.`,
+      },
+      {
+        title: "Cross-examine the evidence",
+        description: `Test each position against the same criteria. Identify unsupported claims, contradictions, missing evidence, and points of genuine agreement.`,
+      },
+      {
+        title: "Publish a judged synthesis",
+        description: `Publish the winning conclusion—or an explicit unresolved split—with evidence references, confidence, minority view, and conditions that would reverse the judgment.`,
+      },
+    ],
+    poolNotes: [
+      {
+        content: `Debate question: ${topic}. Preserve competing hypotheses until they have been evaluated against shared evidence and criteria.`,
+        importance: 10,
+        type: "principle",
+      },
+      {
+        content:
+          "Debate outcome contract: conclusion, confidence, cited evidence, strongest counterargument, unresolved uncertainty, and reversal conditions.",
+        importance: 9,
+        type: "skill",
+      },
+    ],
+    agentCount: 1,
+    agentRole: "scholar",
+  }),
+
+  solve: (topic) => ({
+    name: "solve",
+    description: `Blackboard problem-solving project: ${topic}`,
+    orchestration: "blackboard",
+    tasks: [
+      {
+        title: "State constraints and acceptance checks",
+        description: `Turn the problem into explicit constraints, inputs, unknowns, and observable acceptance checks: ${topic}.`,
+      },
+      {
+        title: "Generate candidate approaches",
+        description: `Produce several materially different solution approaches. Add assumptions, expected failure modes, and required evidence to the shared project surface.`,
+      },
+      {
+        title: "Test and refine",
+        description: `Test the strongest candidates against the acceptance checks. Record failed approaches as evidence rather than silently discarding them.`,
+      },
+      {
+        title: "Deliver the verified solution",
+        description: `Publish the selected solution with verification evidence, remaining risks, and a reproducible next action.`,
+      },
+    ],
+    poolNotes: [
+      {
+        content: `Problem: ${topic}. Convergence requires evidence against explicit acceptance checks, not agreement alone.`,
+        importance: 10,
+        type: "principle",
+      },
+    ],
+    agentCount: 1,
+    agentRole: "general",
+  }),
+
+  explore: (topic) => ({
+    name: "explore",
+    description: `Open-ended frontier exploration: ${topic}`,
+    orchestration: "symbiosis",
+    tasks: [
+      {
+        title: "Map the known frontier",
+        description: `Survey existing internal and external knowledge about ${topic}; distinguish established facts, active uncertainty, and unexplored directions.`,
+      },
+      {
+        title: "Probe diverse directions",
+        description: `Investigate several high-information directions without forcing premature convergence. Record surprising links, contradictions, and dead ends.`,
+      },
+      {
+        title: "Select promising frontiers",
+        description: `Rank the most promising discoveries by novelty, evidence, tractability, and expected value.`,
+      },
+      {
+        title: "Publish a frontier map",
+        description: `Publish what is known, what changed during exploration, the strongest opportunities, and concrete next experiments.`,
+      },
+    ],
+    poolNotes: [
+      {
+        content: `Exploration domain: ${topic}. Breadth is useful only when it leaves a traceable frontier map and actionable next probes.`,
+        importance: 10,
+        type: "principle",
+      },
+    ],
+    agentCount: 1,
+    agentRole: "researcher",
+  }),
+
+  plan: (topic) => ({
+    name: "plan",
+    description: `Multi-perspective decision plan: ${topic}`,
+    orchestration: "nsed",
+    tasks: [
+      {
+        title: "Define outcome and constraints",
+        description: `Define the desired outcome, constraints, stakeholders, dependencies, and measurable completion criteria for: ${topic}.`,
+      },
+      {
+        title: "Propose candidate plans",
+        description: `Develop alternative plans with sequencing, ownership, risks, costs, and rollback points.`,
+      },
+      {
+        title: "Evaluate and converge",
+        description: `Evaluate alternatives against the shared criteria, record dissent, and select or synthesize the strongest plan.`,
+      },
+      {
+        title: "Publish executable plan",
+        description: `Publish milestones, dependencies, owners or roles, decision gates, verification criteria, and the first executable action.`,
+      },
+    ],
+    poolNotes: [
+      {
+        content: `Planning goal: ${topic}. A plan is complete only when its decisions, dependencies, verification gates, and first action are explicit.`,
+        importance: 10,
+        type: "principle",
+      },
+    ],
+    agentCount: 1,
+    agentRole: "guide",
   }),
 
   bet: (topic) => {
@@ -995,7 +1134,7 @@ function detectIntent(text: string): string | null {
 
 // ─── Command ───────────────────────────────────────────────────────────────
 
-export function usecaseCommand(deps: {
+export interface UseCaseCommandDeps {
   getEntity: (id: string) => Entity | undefined;
   db?: MarinaDB;
   taskManager?: TaskManager;
@@ -1008,7 +1147,9 @@ export function usecaseCommand(deps: {
     [k: string]: unknown;
   }) => void;
   promote?: (entityId: EntityId, rank: EntityRank) => void;
-}): CommandDef {
+}
+
+export function usecaseCommand(deps: UseCaseCommandDeps): CommandDef {
   return {
     name: "usecase",
     aliases: ["uc"],
@@ -1151,19 +1292,30 @@ Examples:
           leaderId: input.entity,
         });
 
-        // 3. Create project
+        // 3. Create the project task bundle. Child tasks link to it so
+        // `project status` and `project tasks` report honest progress.
+        const bundle = deps.taskManager.create({
+          title: projectName,
+          description: recipe.description,
+          creatorId: input.entity,
+          creatorName: entity.name,
+          priority: 8,
+        });
+
+        // 4. Create project
         const projectId = `uc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         db.createProject({
           id: projectId,
           name: projectName,
           description: recipe.description,
+          bundleId: bundle.id,
           poolId,
           groupId,
           orchestration: recipe.orchestration,
           createdBy: entity.name,
         });
 
-        // 4. Create tasks with parent linkage
+        // 5. Create tasks with parent linkage
         const taskIds: number[] = [];
         for (const t of recipe.tasks) {
           const taskId = db.createTask({
@@ -1172,11 +1324,12 @@ Examples:
             description: t.description,
             creatorId: input.entity,
             creatorName: entity.name,
+            parentTaskId: bundle.id,
           });
           taskIds.push(taskId);
         }
 
-        // 5. Seed pool with recipe knowledge + delivery instruction
+        // 6. Seed pool with recipe knowledge + delivery instruction
         for (const note of recipe.poolNotes) {
           db.addPoolNote(poolId, entity.name, note.content, note.importance, note.type);
         }
@@ -1188,7 +1341,7 @@ Examples:
           "principle",
         );
 
-        // 5b. Pre-configure requester's core memory (e.g., bankroll for the
+        // 6b. Pre-configure requester's core memory (e.g., bankroll for the
         //     bet recipe). The user's own commands run against these values
         //     — `position confirm` opens against the requester's bankroll.
         if (recipe.requesterCoreMemory) {
@@ -1197,9 +1350,18 @@ Examples:
           }
         }
 
-        // 6. Spawn agent(s) — team takes precedence over agentCount/agentRole.
+        // 7. Spawn agent(s) — team takes precedence over agentCount/agentRole.
         const agentNames: string[] = [];
-        if (deps.agentRuntime.isAvailable()) {
+        let noAgentReason = "none (no model provider configured)";
+        const spawnGate = checkGate(db, input.entity, "agent.spawn");
+        if (deps.agentRuntime.isAvailable() && !spawnGate.ok) {
+          noAgentReason = "none (spawn unavailable; project open for existing agents)";
+          ctx.send(
+            input.entity,
+            `Project created without new agents: ${spawnGate.reason ?? "agent.spawn capability is not available"}. Existing agents may still join and claim its tasks.`,
+          );
+        } else if (deps.agentRuntime.isAvailable()) {
+          noAgentReason = "none (spawn failed; project open for existing agents)";
           if (recipe.team && recipe.team.length > 0) {
             // Multi-agent team mode
             for (let i = 0; i < recipe.team.length; i++) {
@@ -1265,11 +1427,14 @@ Examples:
               }
             }
           }
+          if (spawnGate.supervisedOnly && agentNames.length > 0) {
+            recordDemonstration(db, input.entity, "agent.spawn");
+          }
         }
 
         deps.promote?.(input.entity, 2);
 
-        // 7. Report
+        // 8. Report
         const lines = [
           "",
           header(`Use case launched: ${recipeName}`),
@@ -1278,7 +1443,7 @@ Examples:
           `  ${bold("Tasks:")} ${taskIds.length} created (#${taskIds[0]}–#${taskIds[taskIds.length - 1]})`,
           `  ${bold("Pool:")} usecase:${projectName}`,
           `  ${bold("Orchestration:")} ${recipe.orchestration}`,
-          `  ${bold("Agents:")} ${agentNames.length > 0 ? agentNames.join(", ") : dim("none (no API key configured)")}`,
+          `  ${bold("Agents:")} ${agentNames.length > 0 ? agentNames.join(", ") : dim(noAgentReason)}`,
           "",
           dim(`Monitor: project info ${projectName}`),
           dim("Tasks:   task list"),
@@ -1293,4 +1458,31 @@ Examples:
       }
     },
   };
+}
+
+const UNIVERSAL_INTENTS = ["research", "debate", "solve", "explore", "plan", "monitor"] as const;
+
+/** Direct, memorable front doors over the same durable use-case substrate. */
+export function universalIntentCommands(deps: UseCaseCommandDeps): CommandDef[] {
+  const usecase = usecaseCommand(deps);
+  return UNIVERSAL_INTENTS.map((intent) => ({
+    name: intent,
+    aliases: [],
+    category: "Agents",
+    help: `${intent} <goal> — launch an observable ${intent} project with tasks, shared memory, a fitting orchestration pattern, and an agent.`,
+    handler: (ctx, input) => {
+      const topic = input.args.trim();
+      if (!topic) {
+        ctx.send(input.entity, `Usage: ${intent} <goal>`);
+        return;
+      }
+      return usecase.handler(ctx, {
+        ...input,
+        raw: `usecase ${intent} ${topic}`,
+        verb: "usecase",
+        args: `${intent} ${topic}`,
+        tokens: [intent, ...input.tokens],
+      });
+    },
+  }));
 }

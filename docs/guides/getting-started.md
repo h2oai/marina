@@ -113,7 +113,7 @@ Check on your agents anytime:
 > agent status research-17125056001
 ```
 
-Direct spawning — `agent spawn <name> model <m> role <r> goal <g>` — is protected by the `agent.spawn` safety gate (earned standing plus supervised demonstrations), so as a brand-new arrival you'll use `usecase` or the dashboard first and grow into direct spawning.
+Direct spawning — `agent spawn <name> model <m> role <r> goal <g>` — is protected by the `agent.spawn` safety gate (earned standing plus supervised demonstrations). Universal intents such as `research <topic>` remain open to a brand-new arrival: they create the full project and task surface immediately, recruit existing agents through ordinary coordination, and add a new worker only after the requester earns spawning competence.
 
 ## Hello World
 
