@@ -78,7 +78,7 @@ import { systemPromptCommand } from "./commands/system-prompt";
 import { taskCommand } from "./commands/task";
 import { replyCommand, tellCommand } from "./commands/tell";
 import { traitCommand } from "./commands/trait";
-import { usecaseCommand } from "./commands/usecase";
+import { universalIntentCommands, usecaseCommand } from "./commands/usecase";
 import { timeCommand, uptimeCommand } from "./commands/utility";
 import { videoCommand } from "./commands/video";
 import { watchCommand } from "./commands/watch";
@@ -827,17 +827,21 @@ export function registerBuiltinCommands(engine: Engine): void {
 
   // Use-case command (one-shot project + task + agent scaffolding)
   if (engine.db && engine.taskManager && engine.groupManager) {
-    engine.commands.registerBuiltin(
-      usecaseCommand({
-        getEntity: (id) => engine.entities.get(id as EntityId),
-        db: engine.db,
-        taskManager: engine.taskManager,
-        groupManager: engine.groupManager,
-        agentRuntime: engine.agentRuntime,
-        logEvent: (event) => engine.logEvent(event as import("../types").EngineEvent),
-        promote: (eid, rank) => engine.maybePromote(eid, rank),
-      }),
-    );
+    const usecaseDeps = {
+      getEntity: (id: string) => engine.entities.get(id as EntityId),
+      db: engine.db,
+      taskManager: engine.taskManager,
+      groupManager: engine.groupManager,
+      agentRuntime: engine.agentRuntime,
+      logEvent: (event: { type: string; entity: EntityId; timestamp: number }) =>
+        engine.logEvent(event as import("../types").EngineEvent),
+      promote: (eid: EntityId, rank: import("../types").EntityRank) =>
+        engine.maybePromote(eid, rank),
+    };
+    engine.commands.registerBuiltin(usecaseCommand(usecaseDeps));
+    for (const command of universalIntentCommands(usecaseDeps)) {
+      engine.commands.registerBuiltin(command);
+    }
   }
 
   // Role and Trait commands (composable agent identity)

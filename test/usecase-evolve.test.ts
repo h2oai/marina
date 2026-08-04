@@ -61,6 +61,13 @@ describe("usecase evolve recipe", () => {
     expect(recipe.poolNotes.some((n) => n.content.includes("Prompt budget policy"))).toBe(true);
   });
 
+  it("ships direct universal-intent recipes with fitting orchestration", () => {
+    expect(getRecipe("debate")!("A or B").orchestration).toBe("debate");
+    expect(getRecipe("solve")!("hard problem").orchestration).toBe("blackboard");
+    expect(getRecipe("explore")!("new domain").orchestration).toBe("symbiosis");
+    expect(getRecipe("plan")!("launch").orchestration).toBe("nsed");
+  });
+
   it("appears in recipe list and info with team-aware display", async () => {
     await engine.processCommand(entityId, "usecase list");
     let text = stripAnsi(conn.allTextJoined());
@@ -80,21 +87,48 @@ describe("usecase evolve recipe", () => {
 
     const text = stripAnsi(conn.allTextJoined());
     expect(text).toContain("Use case launched: evolve");
-    expect(text).toContain("none (no API key configured)");
+    expect(text).toContain("none (spawn unavailable; project open for existing agents)");
 
     const project = db.getProjectByName("evolve: improve autonomous research synthesis");
     expect(project).toBeDefined();
     expect(project!.orchestration).toBe("swarm");
     expect(project!.group_id).toBeTruthy();
+    expect(project!.bundle_id).toBeTruthy();
 
     const pool = db.getMemoryPool("usecase:evolve: improve autonomous research synthesis");
     expect(pool).toBeDefined();
     const tasks = db.listTasks({ groupId: project!.group_id ?? undefined, limit: 10 });
     expect(tasks.length).toBe(5);
     expect(tasks.some((t) => t.title === "Publish lineage")).toBe(true);
+    expect(engine.taskManager!.listChildren(project!.bundle_id!)).toHaveLength(5);
 
     expect(db.getCoreMemory("Tester", "goal")?.value).toBe("improve autonomous research synthesis");
     expect(db.getCoreMemory("Tester", "constitution")?.value).toContain("Improve one thing");
+  });
+
+  it("launches universal intents directly and exposes project progress", async () => {
+    await engine.processCommand(entityId, "debate whether local-first systems age better");
+    const text = stripAnsi(conn.allTextJoined());
+    expect(text).toContain("Use case launched: debate");
+
+    const project = db.getProjectByName("debate: whether local-first systems age better");
+    expect(project?.orchestration).toBe("debate");
+    expect(project?.bundle_id).toBeTruthy();
+
+    conn.clear();
+    await engine.processCommand(entityId, `project ${project!.name} status`);
+    expect(stripAnsi(conn.allTextJoined())).toContain("Tasks: 0/4 (4 open)");
+
+    conn.clear();
+    await engine.processCommand(
+      entityId,
+      `project ${project!.name} outcome 0.82 | Evidence: board #7 captured a judged synthesis; dissent remained explicit.`,
+    );
+    expect(stripAnsi(conn.allTextJoined())).toContain("Recorded outcome 0.82");
+    expect(db.getProject(project!.id)?.status).toBe("completed");
+    const tradition = db.getMemoryPool("orchestration:debate");
+    expect(tradition).toBeDefined();
+    expect(db.recallPoolNotes(tradition!.id, "judged synthesis")).toHaveLength(1);
   });
 
   it("detects natural-language evolution requests", async () => {

@@ -150,7 +150,18 @@ Security: SSRF protection (blocks private IPs), 5s rate limit per entity, 10s ti
 > usecase build <feature>                 Launch build recipe (3 tasks, pipeline orchestration)
 > usecase benchmark <focus>               Launch benchmark recipe (3 tasks, pipeline orchestration)
 > usecase <natural language>              Auto-detect recipe from intent (no explicit recipe name needed)
+> research <topic>                        Direct research-project entry point
+> debate <question>                       Direct evidence-backed debate entry point
+> solve <problem>                         Direct blackboard problem-solving entry point
+> explore <domain>                        Direct open-ended frontier exploration entry point
+> plan <goal>                             Direct multi-perspective planning entry point
+> monitor <target>                        Direct persistent monitoring entry point
 ```
+
+Each direct intent creates a project bundle, linked tasks, shared memory, and a fitting orchestration
+pattern. It spawns a worker only when the requester has the existing `agent.spawn` capability;
+otherwise the project remains open for existing agents to join. Close the learning loop with
+`project <name> outcome <0..1> | <evidence and lessons>`.
 
 Each recipe auto-creates: memory pool, group (with channel + board), project with orchestration, tasks, and a spawned agent.
 

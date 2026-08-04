@@ -42,7 +42,7 @@ describe("WorldDefinition: default world", () => {
   });
 
   it("should have guide notes", () => {
-    expect(defaultWorld.guideNotes.length).toBe(10);
+    expect(defaultWorld.guideNotes.length).toBe(11);
   });
 
   it("should have canvas config", () => {

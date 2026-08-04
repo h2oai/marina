@@ -42,6 +42,15 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   },
   {
     content:
+      "Outcome shortcuts: `research <question>`, `debate <question>`, `solve <problem>`, " +
+      "`explore <domain>`, `plan <goal>`, and `monitor <target>` create an inspectable project with a " +
+      "fitting collaboration pattern. Report verified results with " +
+      "`project <name> outcome <0..1> | <evidence and lessons>` so future work can learn from them.",
+    importance: 9,
+    type: "skill",
+  },
+  {
+    content:
       "The Workbench has four rooms. `workbench/start` is for defining and executing work. " +
       "`workbench/library` is for evidence and durable knowledge. `workbench/review` is for verification. " +
       "`workbench/commons` is for coordination. Use directions, `goto <room>`, or `rooms` to navigate.",

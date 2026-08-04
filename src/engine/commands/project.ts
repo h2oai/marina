@@ -68,6 +68,16 @@ const VALID_DECOMPOSITIONS = new Set([
   "workload-tiers",
   "custom",
 ]);
+const PROJECT_ACTIONS = new Set([
+  "orchestrate",
+  "decompose",
+  "memory",
+  "join",
+  "status",
+  "propose",
+  "tasks",
+  "outcome",
+]);
 
 function getOrchestrationTemplate(name: string): TemplateNote[] | undefined {
   switch (name) {
@@ -333,9 +343,15 @@ export function projectCommand(deps: {
       }
 
       // ─── project <name> <action> [args] ───────────────────────────
-      // Everything else: first token is project name, second is action
-      const projectName = rawFirst!;
-      const action = tokens[1]?.toLowerCase();
+      // Everything else: resolve the first known action so project names may
+      // contain spaces (all use-case projects do).
+      const actionIndex = tokens.findIndex(
+        (token, index) => index > 0 && PROJECT_ACTIONS.has(token.toLowerCase()),
+      );
+      const projectName = actionIndex > 0 ? tokens.slice(0, actionIndex).join(" ") : rawFirst!;
+      const action =
+        actionIndex > 0 ? tokens[actionIndex]?.toLowerCase() : tokens[1]?.toLowerCase();
+      const actionArgs = actionIndex > 0 ? tokens.slice(actionIndex + 1) : tokens.slice(2);
       const project = db.getProjectByName(projectName);
 
       if (!project) {
@@ -354,7 +370,7 @@ export function projectCommand(deps: {
 
       switch (action) {
         case "orchestrate": {
-          const pattern = tokens[2]?.toLowerCase();
+          const pattern = actionArgs[0]?.toLowerCase();
           if (!pattern) {
             ctx.send(
               input.entity,
@@ -364,7 +380,7 @@ export function projectCommand(deps: {
           }
 
           if (pattern === "custom") {
-            const desc = tokens.slice(3).join(" ");
+            const desc = actionArgs.slice(1).join(" ");
             if (!desc) {
               ctx.send(input.entity, "Usage: project <name> orchestrate custom <description>");
               return;
@@ -406,7 +422,7 @@ export function projectCommand(deps: {
         }
 
         case "decompose": {
-          const pattern = tokens[2]?.toLowerCase();
+          const pattern = actionArgs[0]?.toLowerCase();
           if (!pattern) {
             ctx.send(
               input.entity,
@@ -416,7 +432,7 @@ export function projectCommand(deps: {
           }
 
           if (pattern === "custom") {
-            const desc = tokens.slice(3).join(" ");
+            const desc = actionArgs.slice(1).join(" ");
             if (!desc) {
               ctx.send(input.entity, "Usage: project <name> decompose custom <description>");
               return;
@@ -454,7 +470,7 @@ export function projectCommand(deps: {
         }
 
         case "memory": {
-          const arch = tokens[2]?.toLowerCase();
+          const arch = actionArgs[0]?.toLowerCase();
           if (!arch) {
             ctx.send(
               input.entity,
@@ -464,7 +480,7 @@ export function projectCommand(deps: {
           }
 
           if (arch === "custom") {
-            const desc = tokens.slice(3).join(" ");
+            const desc = actionArgs.slice(1).join(" ");
             if (!desc) {
               ctx.send(input.entity, "Usage: project <name> memory custom <description>");
               return;
@@ -587,7 +603,7 @@ export function projectCommand(deps: {
         }
 
         case "propose": {
-          const text = tokens.slice(2).join(" ");
+          const text = actionArgs.join(" ");
           if (!text) {
             ctx.send(input.entity, "Usage: project <name> propose <text>");
             return;
@@ -611,6 +627,51 @@ export function projectCommand(deps: {
             tags: ["proposal"],
           });
           ctx.send(input.entity, `Proposal posted to project board (post #${postId}).`);
+          return;
+        }
+
+        case "outcome": {
+          const score = Number(actionArgs[0]);
+          const separatorIndex = actionArgs.indexOf("|");
+          const evidence = actionArgs
+            .slice(separatorIndex >= 0 ? separatorIndex + 1 : 1)
+            .join(" ")
+            .trim();
+          if (!Number.isFinite(score) || score < 0 || score > 1 || !evidence) {
+            ctx.send(
+              input.entity,
+              "Usage: project <name> outcome <0..1> | <evidence-backed result and lessons>",
+            );
+            return;
+          }
+          const pattern = project.orchestration || "custom";
+          const content =
+            `[project-outcome:${project.id} orchestration:${pattern}] score=${score.toFixed(2)} ` +
+            evidence;
+          if (project.pool_id) {
+            db.addPoolNote(project.pool_id, entity.name, content, 9, "reflection");
+          }
+          if (pattern !== "custom") {
+            const traditionName = `orchestration:${pattern}`;
+            let tradition = db.getMemoryPool(traditionName);
+            if (!tradition) {
+              db.createMemoryPool(
+                `pool_orchestration_${pattern}_${Date.now()}`,
+                traditionName,
+                "system",
+              );
+              tradition = db.getMemoryPool(traditionName);
+            }
+            if (tradition) {
+              db.addPoolNote(tradition.id, entity.name, content, 8, "reflection");
+            }
+          }
+          db.updateProjectStatus(project.id, "completed");
+          emitProjectChange(ctx, input.entity, "update", project.name);
+          ctx.send(
+            input.entity,
+            `Recorded outcome ${score.toFixed(2)} for "${project.name}" and shared the lesson with ${pattern} successors.`,
+          );
           return;
         }
 
@@ -641,7 +702,7 @@ export function projectCommand(deps: {
         default:
           ctx.send(
             input.entity,
-            `Unknown project action "${action}". Use: orchestrate, decompose, memory, join, status, propose, tasks`,
+            `Unknown project action "${action}". Use: orchestrate, decompose, memory, join, status, propose, tasks, outcome`,
           );
       }
     },

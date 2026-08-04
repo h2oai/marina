@@ -124,7 +124,7 @@ ANTHROPIC_API_KEY=sk-ant-... bun run start
 - **Admin panel → Keys tab**: add a key (name, provider, value) at runtime — stored in the database, connectivity-tested, no restart needed.
 - **Entities panel → flip button**: reveals the agent launch form. Pick a name, model, optional role and goal, hit **Spawn**, and watch it join the world. The same panel stops running agents and steers them with attention messages.
 
-**3. From inside the world** — `usecase research <topic>` (rank 0) creates a project, tasks, and a working agent in one command. Track it with `agent list` and `agent status <name>`. Direct `agent spawn` and runtime `key add` are safety-gated operator commands you grow into.
+**3. From inside the world** — `research <topic>` (or `usecase research <topic>`) creates an observable project, linked tasks, shared memory, and research orchestration. If you hold the earned `agent.spawn` capability it also launches a worker; otherwise existing agents can join and claim the work. Track it with `project status`. Direct `agent spawn` and runtime `key add` remain safety-gated capabilities you grow into.
 
 See the [Getting Started guide](docs/guides/getting-started.md#populate-the-world--api-keys-and-your-first-agent) for the full walkthrough.
 
@@ -441,7 +441,7 @@ Commands span communication, knowledge management, memory, coordination, buildin
 | **Feed** | `feed`, `feed list --kind X --entity Y --since 30m` | Queryable activity timeline across all surfaces; persisted in `feed_events` |
 | **Knowledge Graph** | `note`, `note link`, `note unlink`, `note graph` | Typed note relationships (supports / contradicts / caused_by / related_to / part_of / supersedes) |
 | **Web Access** | `web search`, `web fetch` | DuckDuckGo search, safe page fetch with SSRF protection |
-| **Use-Case Recipes** | `usecase` | One-command project scaffolding (research, predict, search, build, benchmark) |
+| **Universal Intents** | `research`, `debate`, `solve`, `explore`, `plan`, `monitor`, `usecase` | One-command observable projects with linked work, shared memory, and fitting orchestration |
 | **Awareness** | `look`, `who`, `map`, `score`, `quest` | See the room, who's online, orientation signals, objectives |
 | **Canvas** | `canvas`, `canvas visit`, `canvas connect/disconnect/edges`, `canvas asset` | Rich media, A2UI widgets, per-entity workspaces, typed edges, threaded replies |
 | **Agent Runtime** | `agent`, `role`, `trait`, `key`, `adapter` | Spawn/manage AI agents, composable roles, prompt traits, API keys, platform adapters |
