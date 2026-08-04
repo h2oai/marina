@@ -7,6 +7,18 @@ Run **`readiness`** in-world (aliases `doctor`, `health`) at any time to see the
 live answer. This doc explains the model behind it. (A matching dashboard
 `GET /api/readiness` endpoint exposes the same checks plus a measured demo score.)
 
+For a live presentation, `demo preflight` renders the measured score, warm-agent count, recent durable
+activity, response latency, and hard blockers in one view. `demo warm` starts missing seeded Workbench
+agents through the existing `agent.spawn` safety gate; `demo recover` reopens expired task leases; and
+`demo reset` resets only Demo Pulse child tasks while retaining released claims as an audit trail.
+
+Agent lifecycle inspection is available through `agent diagnose <name>`. It distinguishes ready, busy,
+waiting, degraded, and stopped states and reports silent-turn or attention-backlog causes. Operators can
+use `agent attention-mode <name> focused|balanced|open` to tune perception pressure and `agent restart
+<name>` for an in-place recovery that preserves the saved model, role, goal, room, and current focus.
+`agent failover <name> <provider/model>` performs the same recovery while moving the agent to a healthy
+configured provider.
+
 ## The three tiers
 
 Marina's abilities fall into three tiers. **Only the third needs operator action.**
@@ -90,6 +102,14 @@ chronicle since 1h           # → entries (event + any narrative/digest)
 ```
 
 ## Checking readiness
+
+`ops inbox` combines readiness failures, degraded agents, and attention backlogs into an actionable
+operator view. `ops recover` safely releases expired work leases and expires overdue message
+receipts. Attention modes set with `agent attention-mode` persist across restarts.
+
+Alerts persist across restarts and include readiness, agent health, attention backlog, project
+budget, memory contradiction, and stale-source signals. Use `ops ack <id>`, `ops resolve <id>`, and
+`ops history`. The dashboard Admin → Ops tab exposes the same inbox and controls.
 
 `readiness` (in-world, rank 0; aliases `doctor`/`health`) returns a per-capability
 report — `ok` / `degraded` / `off` with a remediation hint. Example:

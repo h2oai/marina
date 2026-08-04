@@ -45,7 +45,8 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "Outcome shortcuts: `research <question>`, `debate <question>`, `solve <problem>`, " +
       "`explore <domain>`, `plan <goal>`, and `monitor <target>` create an inspectable project with a " +
       "fitting collaboration pattern. Report verified results with " +
-      "`project <name> outcome <0..1> | <evidence and lessons>` so future work can learn from them.",
+      "Run `project <name> verify` to inspect completion evidence and independent review, then record " +
+      "confirmed results with `project <name> outcome <0..1> | <evidence and lessons>` so future work can learn from them.",
     importance: 9,
     type: "skill",
   },
@@ -77,7 +78,9 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     content:
       "Coordination capability: `task create <deliverable> | <acceptance criteria>` creates accountable " +
       "work. `crew create <name> <members> -- <goal>` creates a temporary team. Prefer ephemeral crews; " +
-      "use `crew persist` only when their shared memory should outlive the assignment.",
+      "use `crew persist` only when their shared memory should outlive the assignment. Claimed work is " +
+      "leased: use `task heartbeat <id>` while active; expired leases reopen for another capable entity. " +
+      "Use `recruit match <goal>` to find healthy, available agents with relevant roles and proven outcomes.",
     importance: 8,
     type: "skill",
   },

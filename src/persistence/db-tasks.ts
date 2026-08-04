@@ -121,12 +121,63 @@ export function createTaskClaim(
   taskId: number,
   entityId: string,
   entityName: string,
+  leaseExpiresAt?: number,
 ): void {
+  const now = Date.now();
   db.run(
-    `INSERT INTO task_claims (task_id, entity_id, entity_name, status, claimed_at)
-     VALUES (?, ?, ?, 'claimed', ?)`,
-    [taskId, entityId, entityName, Date.now()],
+    `INSERT INTO task_claims (task_id, entity_id, entity_name, status, claimed_at, heartbeat_at, lease_expires_at)
+     VALUES (?, ?, ?, 'claimed', ?, ?, ?)
+     ON CONFLICT(task_id, entity_id) DO UPDATE SET entity_name = excluded.entity_name,
+       status = 'claimed', submission_text = NULL, claimed_at = excluded.claimed_at,
+       submitted_at = NULL, resolved_at = NULL, heartbeat_at = excluded.heartbeat_at,
+       lease_expires_at = excluded.lease_expires_at, release_reason = NULL`,
+    [taskId, entityId, entityName, now, now, leaseExpiresAt ?? null],
   );
+}
+
+export function renewTaskClaim(
+  db: Database,
+  taskId: number,
+  entityId: string,
+  leaseExpiresAt: number,
+): boolean {
+  const result = db.run(
+    `UPDATE task_claims SET heartbeat_at = ?, lease_expires_at = ?
+     WHERE task_id = ? AND entity_id = ? AND status = 'claimed'`,
+    [Date.now(), leaseExpiresAt, taskId, entityId],
+  );
+  return result.changes > 0;
+}
+
+export function recoverExpiredTaskClaims(db: Database, now: number): TaskClaimRow[] {
+  const expired = db
+    .query(
+      `SELECT * FROM task_claims
+       WHERE status = 'claimed' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?`,
+    )
+    .all(now) as TaskClaimRow[];
+  if (expired.length === 0) return [];
+  const transaction = db.transaction(() => {
+    for (const claim of expired) {
+      db.run(
+        `UPDATE task_claims SET status = 'released', resolved_at = ?, release_reason = 'lease_expired'
+         WHERE task_id = ? AND entity_id = ? AND status = 'claimed'`,
+        [now, claim.task_id, claim.entity_id],
+      );
+      db.run(
+        `UPDATE tasks SET status = 'open', updated_at = ?
+         WHERE id = ? AND validation_mode != 'bounty' AND status = 'claimed'`,
+        [now, claim.task_id],
+      );
+    }
+  });
+  transaction();
+  return expired.map((claim) => ({
+    ...claim,
+    status: "released",
+    resolved_at: now,
+    release_reason: "lease_expired",
+  }));
 }
 
 export function getTaskClaim(
@@ -376,6 +427,47 @@ export function updateProjectMemoryArch(db: Database, id: string, memoryArch: st
   db.run("UPDATE projects SET memory_arch = ? WHERE id = ?", [memoryArch, id]);
 }
 
+export function updateProjectBudget(
+  db: Database,
+  id: string,
+  budget: { tokens?: number | null; cost?: number | null; durationMs?: number | null },
+): void {
+  db.run(
+    `UPDATE projects SET budget_tokens = COALESCE(?, budget_tokens),
+       budget_cost = COALESCE(?, budget_cost), budget_duration_ms = COALESCE(?, budget_duration_ms)
+     WHERE id = ?`,
+    [budget.tokens ?? null, budget.cost ?? null, budget.durationMs ?? null, id],
+  );
+}
+
+export function addProjectUsage(db: Database, id: string, tokens: number, cost: number): void {
+  db.run(
+    `UPDATE projects SET used_tokens = used_tokens + ?, used_cost = used_cost + ? WHERE id = ?`,
+    [Math.max(0, Math.round(tokens)), Math.max(0, cost), id],
+  );
+}
+
+export function resetProjectTasks(db: Database, bundleId: number, now = Date.now()): number {
+  const children = db
+    .query("SELECT id FROM tasks WHERE parent_task_id = ?")
+    .all(bundleId) as Array<{ id: number }>;
+  const transaction = db.transaction(() => {
+    for (const { id } of children) {
+      db.run(
+        `UPDATE task_claims SET status = 'released', resolved_at = ?, release_reason = 'demo_reset'
+         WHERE task_id = ? AND status IN ('claimed', 'submitted')`,
+        [now, id],
+      );
+      db.run("UPDATE tasks SET status = 'open', progress = 0, updated_at = ? WHERE id = ?", [
+        now,
+        id,
+      ]);
+    }
+  });
+  transaction();
+  return children.length;
+}
+
 // ─── Row Types ──────────────────────────────────────────────────────────
 
 export interface TaskRow {
@@ -407,6 +499,9 @@ export interface TaskClaimRow {
   claimed_at: number;
   submitted_at: number | null;
   resolved_at: number | null;
+  heartbeat_at: number | null;
+  lease_expires_at: number | null;
+  release_reason: string | null;
 }
 
 export interface ProjectRow {
@@ -421,4 +516,9 @@ export interface ProjectRow {
   status: string;
   created_by: string;
   created_at: number;
+  budget_tokens: number | null;
+  budget_cost: number | null;
+  budget_duration_ms: number | null;
+  used_tokens: number;
+  used_cost: number;
 }

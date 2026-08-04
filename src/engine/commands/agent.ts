@@ -23,11 +23,15 @@ export function agentCommand(deps: {
 Usage:
   agent list                                 — list running agents
   agent status <name>                        — detailed agent status
+  agent diagnose <name>                      — lifecycle health and remediation
   agent spawn <name> [model <m>] [role <r>] [goal <g>] [key <k>]
   agent stop <name>                          — stop a running agent (transient; reseeds on restart)
   agent disable <name>                        — retire a seeded agent so it stays gone across restarts
   agent enable <name>                         — clear a disable; the agent returns on next restart/room entry
   agent attention <name> <message>           — send attention to agent
+  agent attention-mode <name> focused|balanced|open
+  agent restart <name>                       — restart in place, preserving config/focus
+  agent failover <name> <provider/model>     — restart on a fallback provider/model
   agent focus <name> <description>           — set agent focus
   agent config <name> model|role|key <value> — reconfigure agent`,
     handler: async (ctx: RoomContext, input) => {
@@ -45,6 +49,9 @@ Usage:
         case "status":
           return handleStatus(ctx, input.entity, tokens[1], deps);
 
+        case "diagnose":
+          return handleStatus(ctx, input.entity, tokens[1], deps);
+
         case "spawn":
           // Permission is the `agent.spawn` safety gate (standing + supervised
           // demonstrations), checked inside handleSpawn so a demonstration can
@@ -58,6 +65,106 @@ Usage:
             return;
           }
           return handleStop(ctx, input.entity, tokens[1], deps);
+        }
+
+        case "restart": {
+          if (rank < 4) {
+            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            return;
+          }
+          const name = tokens[1];
+          if (!name) {
+            ctx.send(input.entity, "Usage: agent restart <name>");
+            return;
+          }
+          try {
+            await deps.agentRuntime.restart(name);
+            ctx.send(
+              input.entity,
+              `Agent ${bold(name)} restarted with configuration and focus preserved.`,
+            );
+          } catch (error) {
+            ctx.send(
+              input.entity,
+              `Restart failed: ${error instanceof Error ? error.message : error}`,
+            );
+          }
+          return;
+        }
+
+        case "failover": {
+          if (rank < 4) {
+            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            return;
+          }
+          const name = tokens[1];
+          const model = tokens[2];
+          if (!name || !model?.includes("/")) {
+            ctx.send(input.entity, "Usage: agent failover <name> <provider/model>");
+            return;
+          }
+          try {
+            await deps.agentRuntime.restart(name, { model });
+            ctx.send(
+              input.entity,
+              `Agent ${bold(name)} failed over to ${model}; role, goal, room, and focus were preserved.`,
+            );
+          } catch (error) {
+            ctx.send(
+              input.entity,
+              `Failover failed: ${error instanceof Error ? error.message : error}`,
+            );
+          }
+          return;
+        }
+
+        case "attention-mode": {
+          if (rank < 4) {
+            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            return;
+          }
+          const name = tokens[1];
+          const mode = tokens[2] as "focused" | "balanced" | "open" | undefined;
+          if (!name || !mode || !["focused", "balanced", "open"].includes(mode)) {
+            ctx.send(input.entity, "Usage: agent attention-mode <name> focused|balanced|open");
+            return;
+          }
+          try {
+            deps.agentRuntime.setAttentionMode(name, mode);
+            ctx.send(input.entity, `Agent ${bold(name)} attention mode set to ${mode}.`);
+          } catch (error) {
+            ctx.send(
+              input.entity,
+              `Attention update failed: ${error instanceof Error ? error.message : error}`,
+            );
+          }
+          return;
+        }
+
+        case "attention-feedback": {
+          if (rank < 4) {
+            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            return;
+          }
+          const name = tokens[1];
+          const feedback = tokens[2] as "useful" | "noise" | undefined;
+          if (!name || !feedback || !["useful", "noise"].includes(feedback)) {
+            ctx.send(input.entity, "Usage: agent attention-feedback <name> useful|noise");
+            return;
+          }
+          try {
+            const threshold = deps.agentRuntime.recordAttentionFeedback(name, feedback);
+            ctx.send(
+              input.entity,
+              `Agent ${bold(name)} learned from ${feedback}; attention threshold is now ${threshold}.`,
+            );
+          } catch (error) {
+            ctx.send(
+              input.entity,
+              `Attention feedback failed: ${error instanceof Error ? error.message : error}`,
+            );
+          }
+          return;
         }
 
         case "disable": {
@@ -115,7 +222,7 @@ Usage:
         default:
           ctx.send(
             input.entity,
-            "Usage: agent list | agent status <name> | agent spawn <name> ... | agent stop <name> | agent attention <name> <msg> | agent focus <name> <desc> | agent config <name> ...",
+            "Usage: agent list | agent status|diagnose <name> | agent spawn|stop|restart <name> ... | agent failover <name> <provider/model> | agent attention <name> <msg> | agent attention-mode <name> focused|balanced|open | agent focus <name> <desc> | agent config <name> ...",
           );
       }
     },
@@ -140,7 +247,7 @@ function handleList(
   for (const a of agents) {
     const upMin = Math.round(a.uptime / 60000);
     lines.push(
-      `${bold(a.name)} ${dim(`[${a.state}]`)} ${a.model} ${a.role ? `role:${a.role}` : ""} ${dim(`${upMin}m · ${a.toolCalls} calls`)}`,
+      `${bold(a.name)} ${dim(`[${a.healthState ?? a.state}]`)} ${a.model} ${a.role ? `role:${a.role}` : ""} ${dim(`${upMin}m · ${a.toolCalls} calls`)}`,
     );
     if (a.focus) lines.push(`  ${dim(`focus: ${a.focus}`)}`);
   }
@@ -177,6 +284,7 @@ function handleStatus(
     header(`Agent: ${s.name}`),
     separator(),
     `${bold("State:")} ${s.state}`,
+    `${bold("Health:")} ${s.healthState ?? s.state}${s.diagnosis ? ` — ${s.diagnosis}` : ""}`,
     `${bold("Model:")} ${s.model}`,
     `${bold("Role:")} ${s.role || dim("none")}`,
     `${bold("Focus:")} ${s.focus || dim("none")}`,
@@ -184,6 +292,7 @@ function handleStatus(
     `${bold("Uptime:")} ${upMin}m`,
     `${bold("Tool calls:")} ${s.toolCalls}`,
     `${bold("Errors:")} ${s.errors}`,
+    `${bold("Attention:")} ${s.attentionMode ?? "balanced"} · ${s.queuedPerceptions ?? 0} queued · ${s.droppedPerceptions ?? 0} dropped`,
     `${bold("Entity ID:")} ${s.entityId || dim("not connected")}`,
   ];
   ctx.send(eid, lines.join("\n"));

@@ -39,7 +39,18 @@ export const COMMAND_CATEGORIES: Record<string, string[]> = {
   Building: ["build", "connect"],
   Federation: ["gateway"],
   "Admin & Security": ["admin", "key", "adapter"],
-  System: ["readiness", "calc", "time", "uptime", "source", "quit", "batch", "shell"],
+  System: [
+    "readiness",
+    "demo",
+    "ops",
+    "calc",
+    "time",
+    "uptime",
+    "source",
+    "quit",
+    "batch",
+    "shell",
+  ],
 };
 
 /**

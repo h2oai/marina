@@ -55,6 +55,7 @@ import {
   RESEARCH_TEMPLATE,
   SWARM_TEMPLATE,
   SYMBIOSIS_TEMPLATE,
+  suggestPatterns,
   type TemplateNote,
 } from "../../world/templates/orchestration";
 
@@ -77,7 +78,27 @@ const PROJECT_ACTIONS = new Set([
   "propose",
   "tasks",
   "outcome",
+  "budget",
+  "usage",
+  "recommend",
+  "verify",
 ]);
+
+function learnedPatternScore(db: MarinaDB, pattern: string): { average?: number; samples: number } {
+  const pool = db.getMemoryPool(`orchestration:${pattern}`);
+  if (!pool) return { samples: 0 };
+  const notes = db.getPoolNotes(pool.id, 200);
+  const scores = notes
+    .map((note) => /score=(0(?:\.\d+)?|1(?:\.0+)?)/.exec(note.content)?.[1])
+    .filter((score): score is string => score !== undefined)
+    .map(Number);
+  return {
+    samples: scores.length,
+    ...(scores.length > 0
+      ? { average: scores.reduce((sum, score) => sum + score, 0) / scores.length }
+      : {}),
+  };
+}
 
 function getOrchestrationTemplate(name: string): TemplateNote[] | undefined {
   switch (name) {
@@ -159,7 +180,7 @@ export function projectCommand(deps: {
   return {
     name: "project",
     aliases: ["proj"],
-    help: "Projects combine tasks, groups, pools, and orchestration.\nUsage: project create|list|info | project <name> orchestrate|decompose|memory|join|status|propose|tasks\n\nExamples:\n  project create Alpha | Investigate grid patterns\n  project Alpha orchestrate nsed\n  project Alpha memory tiered\n  project Alpha join\n  project Alpha status",
+    help: "Projects combine tasks, groups, pools, orchestration, verification, and resource envelopes.\nUsage: project create|list|info | project <name> orchestrate|recommend|decompose|memory|join|status|propose|tasks|budget|usage|verify|outcome\n\nExamples:\n  project create Alpha | Investigate grid patterns\n  project Alpha recommend\n  project Alpha orchestrate nsed\n  project Alpha budget tokens 50000 cost 2 duration 1h\n  project Alpha usage 1200 0.03\n  project Alpha verify\n  project Alpha status",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -572,25 +593,79 @@ export function projectCommand(deps: {
         }
 
         case "status": {
+          const elapsedMs = Date.now() - project.created_at;
           const lines = [
             header(`${project.name} Status`),
             separator(),
             `  Status: ${fmtStatus(project.status, "active")}`,
             `  Orchestration: ${fmtStatus(project.orchestration, "info")}`,
             `  Memory: ${bold(project.memory_arch)}`,
+            `  Elapsed: ${Math.max(0, Math.round(elapsedMs / 1000))}s`,
           ];
 
           // Bundle progress
           if (project.bundle_id && deps.taskManager) {
             const bundleStatus = deps.taskManager.getBundleStatus(project.bundle_id);
             if (bundleStatus.total > 0) {
+              const children = deps.taskManager.listChildren(project.bundle_id);
+              const claims = children.flatMap((task) => deps.taskManager!.getClaims(task.id));
+              const recovered = claims.filter(
+                (claim) => claim.releaseReason === "lease_expired",
+              ).length;
+              const resolvedMs = claims
+                .filter((claim) => claim.resolvedAt !== null)
+                .map((claim) => claim.resolvedAt! - claim.claimedAt)
+                .filter((duration) => duration >= 0);
               lines.push(
                 `  Tasks: ${bundleStatus.completed}/${bundleStatus.total} (${bundleStatus.open} open)`,
+                `  Recoveries: ${recovered}`,
               );
+              if (resolvedMs.length > 0) {
+                lines.push(
+                  `  Mean task cycle: ${Math.round(resolvedMs.reduce((a, b) => a + b, 0) / resolvedMs.length)}ms`,
+                );
+              }
+              const byWorker = new Map<string, { claims: number; recoveries: number }>();
+              for (const claim of claims) {
+                const current = byWorker.get(claim.entityName) ?? { claims: 0, recoveries: 0 };
+                current.claims++;
+                if (claim.releaseReason === "lease_expired") current.recoveries++;
+                byWorker.set(claim.entityName, current);
+              }
+              if (byWorker.size > 0) {
+                lines.push(
+                  `  Workers: ${[...byWorker.entries()]
+                    .map(
+                      ([name, metrics]) =>
+                        `${name} ${metrics.claims} claim${metrics.claims === 1 ? "" : "s"}${metrics.recoveries > 0 ? `/${metrics.recoveries} recovered` : ""}`,
+                    )
+                    .join(" · ")}`,
+                );
+              }
             } else {
               lines.push("  Tasks: none yet");
             }
           }
+
+          const tokenBudget = project.budget_tokens
+            ? `${project.used_tokens}/${project.budget_tokens}`
+            : `${project.used_tokens}/unbounded`;
+          const costBudget = project.budget_cost
+            ? `$${project.used_cost.toFixed(3)}/$${project.budget_cost.toFixed(3)}`
+            : `$${project.used_cost.toFixed(3)}/unbounded`;
+          lines.push(`  Resources: ${tokenBudget} tokens · ${costBudget}`);
+          if (project.budget_duration_ms) {
+            lines.push(
+              `  Time budget: ${Math.round(elapsedMs / 1000)}/${Math.round(project.budget_duration_ms / 1000)}s`,
+            );
+          }
+          const budgetExceeded =
+            (project.budget_tokens !== null && project.used_tokens > project.budget_tokens) ||
+            (project.budget_cost !== null && project.used_cost > project.budget_cost) ||
+            (project.budget_duration_ms !== null && elapsedMs > project.budget_duration_ms);
+          lines.push(
+            `  Budget state: ${budgetExceeded ? fmtStatus("exceeded — pause or revise", "warn") : fmtStatus("within envelope", "done")}`,
+          );
 
           // Team
           if (project.group_id && deps.groupManager) {
@@ -598,6 +673,162 @@ export function projectCommand(deps: {
             lines.push(`  Team: ${members.length} member(s)`);
           }
 
+          ctx.send(input.entity, lines.join("\n"));
+          return;
+        }
+
+        case "budget": {
+          const budget: { tokens?: number; cost?: number; durationMs?: number } = {};
+          for (let i = 0; i < actionArgs.length; i += 2) {
+            const key = actionArgs[i]?.toLowerCase();
+            const raw = actionArgs[i + 1];
+            if (!key || !raw) continue;
+            if (key === "tokens") budget.tokens = Number(raw);
+            if (key === "cost") budget.cost = Number(raw);
+            if (key === "duration") {
+              const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/.exec(raw.toLowerCase());
+              if (match) {
+                const scale = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 }[match[2]!]!;
+                budget.durationMs = Number(match[1]) * scale;
+              }
+            }
+          }
+          if (
+            Object.keys(budget).length === 0 ||
+            Object.values(budget).some((value) => !Number.isFinite(value) || value! <= 0)
+          ) {
+            ctx.send(
+              input.entity,
+              "Usage: project <name> budget [tokens <n>] [cost <usd>] [duration <n>ms|s|m|h]",
+            );
+            return;
+          }
+          db.updateProjectBudget(project.id, budget);
+          emitProjectChange(ctx, input.entity, "update", project.name);
+          ctx.send(input.entity, `Updated resource budget for "${project.name}".`);
+          return;
+        }
+
+        case "usage": {
+          const tokens = Number(actionArgs[0]);
+          const cost = Number(actionArgs[1] ?? 0);
+          if (!Number.isFinite(tokens) || tokens < 0 || !Number.isFinite(cost) || cost < 0) {
+            ctx.send(input.entity, "Usage: project <name> usage <tokens> [cost-usd]");
+            return;
+          }
+          db.addProjectUsage(project.id, tokens, cost);
+          const updated = db.getProject(project.id)!;
+          const exceeded =
+            (updated.budget_tokens !== null && updated.used_tokens > updated.budget_tokens) ||
+            (updated.budget_cost !== null && updated.used_cost > updated.budget_cost);
+          ctx.send(
+            input.entity,
+            `Recorded ${Math.round(tokens)} tokens and $${cost.toFixed(3)} for "${project.name}"${exceeded ? "; budget exceeded — pause or revise the plan" : ""}.`,
+          );
+          return;
+        }
+
+        case "recommend": {
+          const candidates = suggestPatterns(`${project.name} ${project.description}`, 5);
+          if (candidates.length === 0) {
+            ctx.send(
+              input.entity,
+              "No coordination-heavy shape detected; keep the smallest workflow.",
+            );
+            return;
+          }
+          const ranked = candidates
+            .map((candidate, index) => {
+              const learned = learnedPatternScore(db, candidate.pattern);
+              const fit = candidates.length - index;
+              const score = fit + (learned.average ?? 0.5) * Math.min(3, learned.samples);
+              return { ...candidate, ...learned, score };
+            })
+            .sort((a, b) => b.score - a.score);
+          const lines = [header(`${project.name} Orchestration Recommendation`), separator()];
+          for (const [index, candidate] of ranked.entries()) {
+            const evidence =
+              candidate.average === undefined
+                ? "no recorded outcomes"
+                : `${candidate.samples} outcomes, mean ${candidate.average.toFixed(2)}`;
+            lines.push(
+              `  ${index + 1}. ${bold(candidate.pattern)} — ${candidate.why} (${evidence})`,
+            );
+          }
+          lines.push("", dim(`Apply: project ${project.name} orchestrate ${ranked[0]!.pattern}`));
+          ctx.send(input.entity, lines.join("\n"));
+          return;
+        }
+
+        case "verify": {
+          if (!project.bundle_id || !deps.taskManager) {
+            ctx.send(input.entity, "No project tasks are available to verify.");
+            return;
+          }
+          const children = deps.taskManager.listChildren(project.bundle_id);
+          if (children.length === 0) {
+            ctx.send(input.entity, "No project tasks are available to verify.");
+            return;
+          }
+          const completed = children.filter((task) => task.status === "completed");
+          const claims = children.flatMap((task) => deps.taskManager!.getClaims(task.id));
+          const approved = claims.filter((claim) => claim.status === "approved");
+          const evidenceClaims = approved.filter((claim) =>
+            /https?:\/\/|(?:note|artifact|test|citation|verified|evidence)\b|#\d+/i.test(
+              claim.submissionText ?? "",
+            ),
+          );
+          const independentlyReviewed = approved.filter((claim) => {
+            const task = children.find((candidate) => candidate.id === claim.taskId);
+            return task !== undefined && task.creatorId !== claim.entityId;
+          });
+          const completionRatio = completed.length / children.length;
+          const evidenceRatio = completed.length > 0 ? evidenceClaims.length / completed.length : 0;
+          const reviewRatio =
+            completed.length > 0 ? independentlyReviewed.length / completed.length : 0;
+          const score = Math.max(
+            0,
+            Math.min(
+              1,
+              completionRatio * 0.6 +
+                Math.min(1, evidenceRatio) * 0.25 +
+                Math.min(1, reviewRatio) * 0.15,
+            ),
+          );
+          const blockers: string[] = [];
+          if (completed.length < children.length)
+            blockers.push(`${children.length - completed.length} task(s) incomplete`);
+          if (evidenceClaims.length < completed.length)
+            blockers.push(
+              `${completed.length - evidenceClaims.length} completion(s) lack inspectable evidence`,
+            );
+          if (independentlyReviewed.length < completed.length)
+            blockers.push(
+              `${completed.length - independentlyReviewed.length} completion(s) lack independent review`,
+            );
+          const summary =
+            `[verification-proposal:${project.id}] score=${score.toFixed(2)} ` +
+            `completed=${completed.length}/${children.length} evidence=${evidenceClaims.length}/${Math.max(1, completed.length)} ` +
+            `reviewed=${independentlyReviewed.length}/${Math.max(1, completed.length)}`;
+          if (project.pool_id) {
+            db.addPoolNote(project.pool_id, entity.name, summary, 8, "observation");
+          }
+          const lines = [
+            header(`${project.name} Verification Proposal`),
+            separator(),
+            `  Proposed outcome: ${bold(score.toFixed(2))}`,
+            `  Completion: ${completed.length}/${children.length}`,
+            `  Evidence-backed: ${evidenceClaims.length}/${completed.length}`,
+            `  Independently reviewed: ${independentlyReviewed.length}/${completed.length}`,
+          ];
+          if (blockers.length > 0)
+            lines.push("", "  Blockers:", ...blockers.map((b) => `    - ${b}`));
+          lines.push(
+            "",
+            dim(
+              `Confirm only after inspection: project ${project.name} outcome ${score.toFixed(2)} | <verified evidence and lessons>`,
+            ),
+          );
           ctx.send(input.entity, lines.join("\n"));
           return;
         }
@@ -702,7 +933,7 @@ export function projectCommand(deps: {
         default:
           ctx.send(
             input.entity,
-            `Unknown project action "${action}". Use: orchestrate, decompose, memory, join, status, propose, tasks, outcome`,
+            `Unknown project action "${action}". Use: orchestrate, recommend, decompose, memory, join, status, propose, tasks, budget, usage, verify, outcome`,
           );
       }
     },

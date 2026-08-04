@@ -34,6 +34,7 @@ import type {
   AgentStatus,
   AgentSupports,
 } from "./agent-types";
+
 import { createContextManager, hardTrimMessages } from "./context-manager";
 import { GameStateManager } from "./game-state";
 import { HookRegistry } from "./hook-registry";
@@ -42,6 +43,46 @@ import { PlatformMemoryBackend } from "./memory-platform";
 import { getLeanDiscoveryPrompt, getLeanSystemPrompt } from "./prompts/lean-system";
 import { SocialAwareness } from "./social";
 import { createScopedTools } from "./tools";
+
+export function shouldKeepPerception(
+  mode: "focused" | "balanced" | "open",
+  priority: number,
+  shouldRespond: boolean,
+  threshold = 50,
+): boolean {
+  if (shouldRespond) return true;
+  if (mode !== "focused") return true;
+  return priority >= threshold;
+}
+
+export function deriveAgentHealth(input: {
+  state: "connected" | "autonomous" | "stopped" | "error";
+  silentTurns: number;
+  streaming: boolean;
+  queued: number;
+  capacity: number;
+  errorReason?: string | null;
+}): { healthState: NonNullable<AgentStatus["healthState"]>; diagnosis: string | null } {
+  const healthState: NonNullable<AgentStatus["healthState"]> =
+    input.state === "error" || input.silentTurns >= 3
+      ? "degraded"
+      : input.state === "stopped"
+        ? "stopped"
+        : input.streaming
+          ? "busy"
+          : input.queued > 0
+            ? "waiting"
+            : "ready";
+  const diagnosis =
+    input.state === "error"
+      ? (input.errorReason ?? "agent loop error")
+      : input.silentTurns >= 3
+        ? `${input.silentTurns} consecutive silent turns`
+        : input.queued >= input.capacity
+          ? `attention backlog ${input.queued}/${input.capacity}`
+          : null;
+  return { healthState, diagnosis };
+}
 
 // ─── Model Resolution ───────────────────────────────────────────────────────
 
@@ -415,6 +456,9 @@ export class LeanAgentAdapter implements AgentHandle {
   private readonly loopCycleDelay: number;
   private readonly focusTimeoutMs: number;
   private readonly perceptionBufferCap: number;
+  private attentionMode: "focused" | "balanced" | "open";
+  private attentionThreshold: number;
+  private droppedPerceptions = 0;
   private readonly promptTimeoutMs: number;
 
   // ─── Cognition State ────────────────────────────────────────────────
@@ -498,6 +542,8 @@ export class LeanAgentAdapter implements AgentHandle {
     this.loopCycleDelay = config.loopCycleDelay ?? 2000;
     this.focusTimeoutMs = config.focusTimeout ?? 5 * 60 * 1000;
     this.perceptionBufferCap = config.perceptionBufferCap ?? 20;
+    this.attentionMode = config.attentionMode ?? "balanced";
+    this.attentionThreshold = Math.max(10, Math.min(90, config.attentionThreshold ?? 50));
     this.promptTimeoutMs = config.promptTimeoutMs ?? 120_000;
 
     // Initialize components
@@ -745,6 +791,13 @@ export class LeanAgentAdapter implements AgentHandle {
               priority >= 80 ||
               (this.config.role === "guide" && lastEvent?.type === "player_entered_room") ||
               (lastEvent ? this.socialAwareness.shouldRespond(lastEvent, this.name) : false);
+            if (
+              !shouldKeepPerception(this.attentionMode, priority, respond, this.attentionThreshold)
+            ) {
+              this.droppedPerceptions++;
+              return;
+            }
+            if (this.attentionMode === "open") priority = Math.max(priority, 35);
             if (lastEvent?.type === "channel_message" && lastEvent.speaker && priority < 90) {
               const cooldownMs = Number(process.env.AGENT_CHANNEL_REPLY_COOLDOWN_MS) || 30_000;
               if (Date.now() - this.lastChannelResponseAt < cooldownMs) {
@@ -774,6 +827,7 @@ export class LeanAgentAdapter implements AgentHandle {
                 }
               }
               const dropped = all.length - merged.length;
+              this.droppedPerceptions += Math.max(0, dropped);
               this.pendingPerceptions = merged;
               if (dropped > 0) {
                 console.warn(
@@ -2143,6 +2197,14 @@ The goal is a smaller, sharper memory — not more notes.`;
       state = "stopped";
     }
 
+    const { healthState, diagnosis } = deriveAgentHealth({
+      state,
+      silentTurns: this.silentTurns,
+      streaming: this.agent.state.isStreaming,
+      queued: this.pendingPerceptions.length,
+      capacity: this.perceptionBufferCap,
+      errorReason: this.lastErrorReason,
+    });
     return {
       name: this.name,
       entityId: this.gameState.getState().connection.entityId ?? null,
@@ -2164,7 +2226,28 @@ The goal is a smaller, sharper memory — not more notes.`;
       lastTurnMs: this.metrics.lastTurnMs,
       avgTurnMs: this.metrics.avgTurnMs,
       silentTurns: this.metrics.silentTurns,
+      healthState,
+      diagnosis,
+      attentionMode: this.attentionMode,
+      attentionThreshold: this.attentionThreshold,
+      queuedPerceptions: this.pendingPerceptions.length,
+      droppedPerceptions: this.droppedPerceptions,
     };
+  }
+
+  setAttentionMode(mode: "focused" | "balanced" | "open"): void {
+    this.attentionMode = mode;
+    if (mode === "focused") {
+      const before = this.pendingPerceptions.length;
+      this.pendingPerceptions = this.pendingPerceptions.filter(
+        (perception) => perception.priority >= this.attentionThreshold || perception.shouldRespond,
+      );
+      this.droppedPerceptions += before - this.pendingPerceptions.length;
+    }
+  }
+
+  setAttentionThreshold(threshold: number): void {
+    this.attentionThreshold = Math.max(10, Math.min(90, Math.round(threshold)));
   }
 
   async sendAttention(message: string): Promise<void> {

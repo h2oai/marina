@@ -46,6 +46,8 @@ export interface KnownProperties extends Record<string, unknown> {
   ignore_list?: string[];
   /** Name of the last entity to send this one a `tell` — powers the `re` reply command. */
   last_tell_from?: string;
+  /** Durable receipt id for acknowledgement/correlation when replying. */
+  last_tell_id?: number;
   bookmarks?: { room: RoomId; note?: string }[];
 
   // ─── Quest state ────────────────────────────────────────────────────────────
@@ -564,6 +566,13 @@ export type EngineEvent =
   | { type: "task_submitted"; entity: EntityId; taskId: number; timestamp: number }
   | { type: "task_approved"; entity: EntityId; taskId: number; timestamp: number }
   | { type: "task_rejected"; entity: EntityId; taskId: number; timestamp: number }
+  | {
+      type: "task_released";
+      entity: EntityId;
+      taskId: number;
+      reason: "lease_expired";
+      timestamp: number;
+    }
   | {
       type: "canvas_publish";
       entity: EntityId;

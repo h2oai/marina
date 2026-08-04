@@ -29,6 +29,9 @@ export interface TaskClaim {
   claimedAt: number;
   submittedAt: number | null;
   resolvedAt: number | null;
+  heartbeatAt: number | null;
+  leaseExpiresAt: number | null;
+  releaseReason: string | null;
 }
 
 function rowToTask(row: TaskRow): Task {
@@ -63,11 +66,22 @@ function rowToClaim(row: TaskClaimRow): TaskClaim {
     claimedAt: row.claimed_at,
     submittedAt: row.submitted_at,
     resolvedAt: row.resolved_at,
+    heartbeatAt: row.heartbeat_at,
+    leaseExpiresAt: row.lease_expires_at,
+    releaseReason: row.release_reason,
   };
 }
 
 export class TaskManager {
-  constructor(private db: MarinaDB) {}
+  private readonly leaseMs: number;
+
+  constructor(
+    private db: MarinaDB,
+    opts?: { leaseMs?: number },
+  ) {
+    const configured = opts?.leaseMs ?? Number(process.env.MARINA_TASK_LEASE_MS ?? 15 * 60_000);
+    this.leaseMs = Number.isFinite(configured) && configured > 0 ? configured : 15 * 60_000;
+  }
 
   create(opts: {
     title: string;
@@ -135,11 +149,12 @@ export class TaskManager {
     const task = this.get(taskId);
     if (task?.status !== "open") return null;
 
-    // Check if already claimed by this entity
+    // Check if already actively claimed by this entity. Released/expired claims
+    // may be reacquired without losing their audit row.
     const existing = this.db.getTaskClaim(taskId, entityId);
-    if (existing) return null;
+    if (existing?.status === "claimed" || existing?.status === "submitted") return null;
 
-    this.db.createTaskClaim(taskId, entityId, entityName);
+    this.db.createTaskClaim(taskId, entityId, entityName, Date.now() + this.leaseMs);
     if (task.validationMode !== "bounty") {
       this.db.updateTaskStatus(taskId, "claimed");
     }
@@ -155,9 +170,22 @@ export class TaskManager {
     return this.db.getTaskClaims(taskId).map(rowToClaim);
   }
 
+  heartbeat(taskId: number, entityId: string): TaskClaim | null {
+    if (!this.db.renewTaskClaim(taskId, entityId, Date.now() + this.leaseMs)) return null;
+    return this.getClaim(taskId, entityId);
+  }
+
+  recoverExpired(now = Date.now()): TaskClaim[] {
+    return this.db.recoverExpiredTaskClaims(now).map(rowToClaim);
+  }
+
   submit(taskId: number, entityId: string, submissionText: string): boolean {
     const claim = this.getClaim(taskId, entityId);
     if (claim?.status !== "claimed") return false;
+    if (claim.leaseExpiresAt !== null && claim.leaseExpiresAt <= Date.now()) {
+      this.recoverExpired();
+      return false;
+    }
     this.db.updateTaskClaimStatus(taskId, entityId, "submitted", submissionText);
     return true;
   }

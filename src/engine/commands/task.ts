@@ -28,7 +28,7 @@ export function taskCommand(
   return {
     name: "task",
     aliases: [],
-    help: "Manage tasks with create/claim/submit workflow.\nUsage: task list|info|create|goal|progress|claim|submit|approve|reject|cancel|bundle|assign|children|standing\n\nExamples:\n  task create Map the grid | Explore all sectors and document exits\n  task goal Explore the world | Visit every sector !p7\n  task progress 3 +20\n  task claim 3\n  task submit 3 All sectors documented\n  task standing\n  task list mine",
+    help: "Manage tasks with leased create/claim/submit workflow.\nUsage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing\n\nExamples:\n  task create Map the grid | Explore all sectors and document exits\n  task goal Explore the world | Visit every sector !p7\n  task progress 3 +20\n  task claim 3\n  task heartbeat 3\n  task submit 3 All sectors documented\n  task standing\n  task list mine",
     handler: (ctx: RoomContext, input) => {
       const self = ctx.getEntity(input.entity);
       if (!self) return;
@@ -136,8 +136,14 @@ export function taskCommand(
           if (claims.length > 0) {
             lines.push("", "Claims:");
             for (const c of claims) {
+              const lease =
+                c.status === "claimed" && c.leaseExpiresAt
+                  ? ` — lease ${Math.max(0, Math.ceil((c.leaseExpiresAt - Date.now()) / 1000))}s`
+                  : c.releaseReason
+                    ? ` — ${c.releaseReason}`
+                    : "";
               lines.push(
-                `  ${c.entityName}: ${c.status}${c.submissionText ? ` — "${c.submissionText}"` : ""}`,
+                `  ${c.entityName}: ${c.status}${c.submissionText ? ` — "${c.submissionText}"` : ""}${lease}`,
               );
             }
           }
@@ -263,6 +269,8 @@ export function taskCommand(
             return;
           }
           tasks.updateProgress(taskId, newProgress);
+          // Progress is an implicit liveness signal for the current worker.
+          tasks.heartbeat(taskId, input.entity);
           const clamped = Math.max(0, Math.min(100, newProgress));
           if (clamped >= 100) {
             ctx.send(input.entity, `Task ${fmtId(taskId)} completed!`);
@@ -301,6 +309,42 @@ export function taskCommand(
             taskId: id,
             timestamp: Date.now(),
           });
+          return;
+        }
+
+        case "heartbeat": {
+          const id = Number.parseInt(tokens[1] ?? "", 10);
+          if (!Number.isFinite(id)) {
+            ctx.send(input.entity, "Usage: task heartbeat <id>");
+            return;
+          }
+          const claim = tasks.heartbeat(id, input.entity);
+          if (!claim?.leaseExpiresAt) {
+            ctx.send(input.entity, `Cannot renew task #${id}; no active claim was found.`);
+            return;
+          }
+          const seconds = Math.max(1, Math.ceil((claim.leaseExpiresAt - Date.now()) / 1000));
+          ctx.send(input.entity, `Renewed task #${id} lease for ${seconds}s.`);
+          return;
+        }
+
+        case "recover": {
+          const recovered = tasks.recoverExpired();
+          for (const claim of recovered) {
+            logEvent?.({
+              type: "task_released",
+              entity: claim.entityId as EntityId,
+              taskId: claim.taskId,
+              reason: "lease_expired",
+              timestamp: Date.now(),
+            });
+          }
+          ctx.send(
+            input.entity,
+            recovered.length === 0
+              ? "No expired task leases."
+              : `Recovered ${recovered.length} expired task lease(s); work is open for reallocation.`,
+          );
           return;
         }
 
