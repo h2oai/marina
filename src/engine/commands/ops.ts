@@ -50,6 +50,7 @@ export function syncOperationalAlerts(deps: OpsDependencies): void {
         remedy: `agent attention-mode ${agent.name} focused`,
       });
   }
+  deps.db.refreshContradictionCases();
   const memory = deps.db.getMemoryQualitySummary();
   if (memory.contradictions > 0)
     add("memory", {
@@ -58,7 +59,7 @@ export function syncOperationalAlerts(deps: OpsDependencies): void {
       category: "memory",
       title: "Contradictory memories",
       detail: `${memory.contradictions} unresolved candidate(s)`,
-      remedy: "note contradictions",
+      remedy: "note conflicts",
     });
   if (memory.staleSources > 0)
     add("memory", {

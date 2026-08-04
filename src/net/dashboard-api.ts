@@ -311,6 +311,49 @@ export async function handleDashboardApi(
   if (url.pathname === "/api/memory/quality" && method === "GET" && db) {
     return json(db.getMemoryQualitySummary(url.searchParams.get("entity") ?? undefined));
   }
+  if (url.pathname === "/api/memory/contradictions" && method === "GET" && db) {
+    db.refreshContradictionCases();
+    const status = url.searchParams.get("status") === "resolved" ? "resolved" : "open";
+    return json(
+      db.listContradictionCases(status, 100).map((conflict) => ({
+        ...conflict,
+        left: db.getNote(conflict.left_note_id),
+        right: db.getNote(conflict.right_note_id),
+      })),
+    );
+  }
+  const contradictionResolveMatch = url.pathname.match(
+    /^\/api\/memory\/contradictions\/(\d+)\/resolve$/,
+  );
+  if (contradictionResolveMatch && method === "POST" && db) {
+    const body = (await req.json().catch(() => null)) as {
+      resolution?: string;
+      rationale?: string;
+    } | null;
+    const resolution = body?.resolution;
+    if (
+      !resolution ||
+      !["left", "right", "both", "neither"].includes(resolution) ||
+      !body?.rationale
+    )
+      return json({ error: "resolution and rationale required" }, 400);
+    const actor = engine.entities.get(callerId)?.name ?? String(callerId);
+    const ok = db.resolveContradictionCase(
+      Number(contradictionResolveMatch[1]),
+      resolution as "left" | "right" | "both" | "neither",
+      actor,
+      body.rationale,
+    );
+    return ok ? json({ ok: true }) : json({ error: "Open case not found" }, 404);
+  }
+  if (url.pathname === "/api/productivity" && method === "GET" && db) {
+    const entityName = url.searchParams.get("entity") ?? undefined;
+    return json({
+      summary: db.getProductivitySummary(entityName),
+      leaderboard: db.getProductivityLeaderboard(),
+      trend: db.getProductivityTrend(entityName),
+    });
+  }
 
   // Parameterized detail routes (check before list routes)
   const taskDetailMatch = url.pathname.match(/^\/api\/coordination\/tasks\/(\d+)$/);

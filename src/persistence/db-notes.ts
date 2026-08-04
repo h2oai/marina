@@ -413,6 +413,139 @@ export function findMemoryContradictions(
   return found.slice(0, 50);
 }
 
+export interface ContradictionCaseRow {
+  id: number;
+  case_key: string;
+  claim_key: string;
+  scope_type: "global" | "pool";
+  scope_id: string | null;
+  left_note_id: number;
+  right_note_id: number;
+  status: "open" | "resolved";
+  resolution: "left" | "right" | "both" | "neither" | null;
+  winner_note_id: number | null;
+  rationale: string | null;
+  resolved_by: string | null;
+  created_at: number;
+  updated_at: number;
+  resolved_at: number | null;
+}
+
+export function refreshContradictionCases(db: Database): number {
+  const notes = db
+    .query(
+      `SELECT * FROM notes WHERE verification_status!='superseded' AND claim_key IS NOT NULL
+     ORDER BY id DESC LIMIT 2000`,
+    )
+    .all() as NoteRow[];
+  const groups = new Map<string, NoteRow[]>();
+  for (const note of notes)
+    groups.set(note.claim_key!, [...(groups.get(note.claim_key!) ?? []), note]);
+  let created = 0;
+  const now = Date.now();
+  for (const group of groups.values()) {
+    for (let i = 0; i < group.length; i++)
+      for (let j = i + 1; j < group.length; j++) {
+        const left = group[i]!;
+        const right = group[j]!;
+        if (left.entity_name === right.entity_name && !left.pool_id && !right.pool_id) continue;
+        const leftNeg = /\b(no|not|never|cannot|isn't|doesn't)\b/i.test(left.content);
+        const rightNeg = /\b(no|not|never|cannot|isn't|doesn't)\b/i.test(right.content);
+        if (leftNeg === rightNeg) continue;
+        const [a, b] = [left.id, right.id].sort((x, y) => x - y);
+        const key = `notes:${a}:${b}`;
+        const scopeId = left.pool_id && left.pool_id === right.pool_id ? left.pool_id : null;
+        const result = db.run(
+          `INSERT OR IGNORE INTO contradiction_cases
+         (case_key,claim_key,scope_type,scope_id,left_note_id,right_note_id,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,?,?)`,
+          [key, left.claim_key!, scopeId ? "pool" : "global", scopeId, a!, b!, now, now],
+        );
+        created += result.changes;
+      }
+  }
+  return created;
+}
+
+export function listContradictionCases(
+  db: Database,
+  status?: "open" | "resolved",
+  limit = 100,
+): ContradictionCaseRow[] {
+  if (status)
+    return db
+      .query("SELECT * FROM contradiction_cases WHERE status=? ORDER BY updated_at DESC LIMIT ?")
+      .all(status, limit) as ContradictionCaseRow[];
+  return db
+    .query(
+      "SELECT * FROM contradiction_cases ORDER BY CASE status WHEN 'open' THEN 0 ELSE 1 END,updated_at DESC LIMIT ?",
+    )
+    .all(limit) as ContradictionCaseRow[];
+}
+
+export function resolveContradictionCase(
+  db: Database,
+  id: number,
+  resolution: "left" | "right" | "both" | "neither",
+  resolvedBy: string,
+  rationale: string,
+): boolean {
+  const row = db
+    .query("SELECT * FROM contradiction_cases WHERE id=? AND status='open'")
+    .get(id) as ContradictionCaseRow | null;
+  if (!row) return false;
+  const left = getNote(db, row.left_note_id);
+  const right = getNote(db, row.right_note_id);
+  if (!left || !right) return false;
+  const winners =
+    resolution === "left"
+      ? [left]
+      : resolution === "right"
+        ? [right]
+        : resolution === "both"
+          ? [left, right]
+          : [];
+  const winner = winners.length === 1 ? winners[0] : undefined;
+  const losers =
+    resolution === "left"
+      ? [right]
+      : resolution === "right"
+        ? [left]
+        : resolution === "neither"
+          ? [left, right]
+          : [];
+  db.transaction(() => {
+    for (const accepted of winners)
+      recordNoteVerification(
+        db,
+        accepted.id,
+        resolvedBy,
+        "verified",
+        Math.max(0.75, accepted.confidence ?? 0.5),
+        rationale,
+      );
+    for (const loser of losers)
+      recordNoteVerification(
+        db,
+        loser.id,
+        resolvedBy,
+        "disputed",
+        Math.min(0.25, loser.confidence ?? 0.5),
+        rationale,
+      );
+    db.run(
+      "INSERT OR IGNORE INTO note_links (source_id,target_id,relationship,created_at) VALUES (?,?,'contradicts',?)",
+      [left.id, right.id, Date.now()],
+    );
+    db.run(
+      `UPDATE contradiction_cases SET status='resolved',resolution=?,winner_note_id=?,rationale=?,
+       resolved_by=?,updated_at=?,resolved_at=? WHERE id=?`,
+      [resolution, winner?.id ?? null, rationale, resolvedBy, Date.now(), Date.now(), id],
+    );
+  })();
+  return true;
+}
+
 export function consolidateNotes(
   db: Database,
   entityName: string,

@@ -165,7 +165,7 @@ describe("Export/Import", () => {
 
       expect(snapshot.format).toBe("marina-snapshot");
       expect(snapshot.version).toBe(1);
-      expect(snapshot.schema_version).toBe(56);
+      expect(snapshot.schema_version).toBe(57);
       expect(snapshot.exported_at).toBeTruthy();
 
       // Verify key tables are present

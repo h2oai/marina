@@ -70,6 +70,8 @@ note source 42 note:17 credibility 0.8
 note derive 42 17
 note verify 42 verified 0.9 Confirmed against the primary observation
 note contradictions
+note conflicts
+note resolve 7 left The signed approval record confirms the left claim
 note consolidate 42 38 39
 ```
 
@@ -81,6 +83,10 @@ their origin entity, capturing agent, excerpt, observation time, and credibility
 append-only history: later decisions update the current status without erasing earlier judgments.
 Use `recall <topic> trusted` to require verified or strongly supported memories and `explain` to show
 why each result ranked.
+
+Cross-agent and shared-pool claims with matching subjects but opposite polarity become durable
+contradiction cases. `note conflicts` shows both authors and scopes; `note resolve` records an
+evidence-backed decision, updates both verification histories, and retains the contradiction edge.
 
 Recall combines lexical relevance with importance, recency, confidence, verification, and source
 freshness. Hourly hygiene calibrates confidence from corroborating evidence and publishes unresolved
@@ -247,6 +253,11 @@ Each recipe auto-creates: memory pool, group (with channel + board), project wit
 ```
 
 ## Tasks
+
+Task claims bracket outcome-level productivity sessions. Inspect them with `productivity`,
+`productivity agent <name>`, `productivity leaderboard`, or `productivity trend`. Metrics include
+success rate, completion latency, tool calls and handoffs per outcome, and seven-day throughput. Approved, rejected, and
+expired work also tunes attention automatically; manual feedback remains an operator override.
 
 ```
 > task create Fix bug | Login form crashes on slow connections

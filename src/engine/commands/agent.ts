@@ -292,7 +292,7 @@ function handleStatus(
     `${bold("Uptime:")} ${upMin}m`,
     `${bold("Tool calls:")} ${s.toolCalls}`,
     `${bold("Errors:")} ${s.errors}`,
-    `${bold("Attention:")} ${s.attentionMode ?? "balanced"} · ${s.queuedPerceptions ?? 0} queued · ${s.droppedPerceptions ?? 0} dropped`,
+    `${bold("Attention:")} ${s.attentionMode ?? "balanced"} · threshold ${s.attentionThreshold ?? 50} · ${s.queuedPerceptions ?? 0} queued · ${s.droppedPerceptions ?? 0} dropped`,
     `${bold("Entity ID:")} ${s.entityId || dim("not connected")}`,
   ];
   ctx.send(eid, lines.join("\n"));

@@ -84,13 +84,32 @@ interface OperationalAlert {
   status: "open" | "acknowledged" | "resolved";
   occurrences: number;
 }
+interface ProductivitySummary {
+  outcomes: number;
+  successes: number;
+  successRate: number;
+  medianDurationMs: number;
+  averageToolCalls: number;
+  averageHandoffs: number;
+  outcomesLast7d: number;
+}
 
 function OperationsTab() {
   const [alerts, setAlerts] = useState<OperationalAlert[]>([]);
+  const [productivity, setProductivity] = useState<ProductivitySummary | null>(null);
+  const [conflicts, setConflicts] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const refresh = () =>
-    fetchApi<OperationalAlert[]>("/api/operations/alerts")
-      .then(setAlerts)
+    Promise.all([
+      fetchApi<OperationalAlert[]>("/api/operations/alerts"),
+      fetchApi<{ summary: ProductivitySummary }>("/api/productivity"),
+      fetchApi<unknown[]>("/api/memory/contradictions"),
+    ])
+      .then(([nextAlerts, nextProductivity, nextConflicts]) => {
+        setAlerts(nextAlerts);
+        setProductivity(nextProductivity.summary);
+        setConflicts(nextConflicts.length);
+      })
       .catch((e) => setError(describeApiError(e)));
   useEffect(refresh, []);
   const act = async (id: number, action: "ack" | "resolve") => {
@@ -113,6 +132,38 @@ function OperationsTab() {
         </button>
       </div>
       {error && <div className="text-red-400">{error}</div>}
+      {productivity && (
+        <div className="grid grid-cols-3 gap-1 rounded border border-border bg-bg-surface/50 p-2">
+          <div>
+            <div className="text-text-dim">Success</div>
+            <strong>{Math.round(productivity.successRate * 100)}%</strong>
+          </div>
+          <div>
+            <div className="text-text-dim">Outcomes / 7d</div>
+            <strong>{productivity.outcomesLast7d}</strong>
+          </div>
+          <div>
+            <div className="text-text-dim">Open conflicts</div>
+            <strong>{conflicts}</strong>
+          </div>
+          <div>
+            <div className="text-text-dim">Median time</div>
+            <strong>
+              {productivity.medianDurationMs
+                ? `${Math.round(productivity.medianDurationMs / 60000)}m`
+                : "n/a"}
+            </strong>
+          </div>
+          <div>
+            <div className="text-text-dim">Tools / outcome</div>
+            <strong>{productivity.averageToolCalls.toFixed(1)}</strong>
+          </div>
+          <div>
+            <div className="text-text-dim">Handoffs / outcome</div>
+            <strong>{productivity.averageHandoffs.toFixed(1)}</strong>
+          </div>
+        </div>
+      )}
       {active.length === 0 && (
         <div className="rounded border border-emerald-400/30 bg-emerald-400/10 p-2 text-emerald-400">
           No actionable alerts.

@@ -116,6 +116,11 @@ complete verification history. Idle autonomous agents also receive a deduplicate
 pulse, while focused agents prefer trusted memories and fall back to legacy recall when no trusted
 context exists.
 
+Terminal task outcomes drive two additional loops. Productivity sessions measure latency, success,
+tool-call effort, and correlated direct-message handoffs. The same terminal signal adjusts attention
+conservatively: successful work permits slightly tighter filtering, while rejected or expired work
+broadens intake. Replayed terminal events are idempotent and do not retrain twice.
+
 `readiness` (in-world, rank 0; aliases `doctor`/`health`) returns a per-capability
 report — `ok` / `degraded` / `off` with a remediation hint. Example:
 

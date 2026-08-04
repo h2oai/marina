@@ -1518,6 +1518,50 @@ CREATE TABLE note_verifications (
 CREATE INDEX idx_note_verifications_note ON note_verifications(note_id, created_at DESC);
 `,
   },
+  // Migration 57: shared contradiction review, automatic attention learning,
+  // and outcome-level productivity telemetry.
+  {
+    version: 57,
+    sql: `
+CREATE TABLE contradiction_cases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  case_key TEXT NOT NULL UNIQUE,
+  claim_key TEXT NOT NULL,
+  scope_type TEXT NOT NULL,
+  scope_id TEXT,
+  left_note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  right_note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'open',
+  resolution TEXT,
+  winner_note_id INTEGER REFERENCES notes(id) ON DELETE SET NULL,
+  rationale TEXT,
+  resolved_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  resolved_at INTEGER
+);
+CREATE INDEX idx_contradiction_cases_status ON contradiction_cases(status, updated_at DESC);
+ALTER TABLE agent_configs ADD COLUMN attention_auto_success INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE agent_configs ADD COLUMN attention_auto_failure INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE productivity_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_id TEXT NOT NULL,
+  entity_name TEXT NOT NULL,
+  task_id INTEGER NOT NULL,
+  started_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  outcome TEXT,
+  quality REAL,
+  start_tool_calls INTEGER NOT NULL DEFAULT 0,
+  end_tool_calls INTEGER,
+  handoffs INTEGER NOT NULL DEFAULT 0,
+  metadata TEXT,
+  UNIQUE(entity_id, task_id, started_at)
+);
+CREATE INDEX idx_productivity_entity ON productivity_sessions(entity_name, completed_at DESC);
+CREATE INDEX idx_productivity_outcome ON productivity_sessions(outcome, completed_at DESC);
+`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -1534,6 +1578,27 @@ export interface OperationalAlertRow {
   last_seen_at: number;
   acknowledged_at: number | null;
   resolved_at: number | null;
+}
+
+export interface ProductivitySummary {
+  entityName: string | null;
+  outcomes: number;
+  successes: number;
+  failures: number;
+  successRate: number;
+  averageDurationMs: number;
+  medianDurationMs: number;
+  averageToolCalls: number;
+  averageHandoffs: number;
+  outcomesLast7d: number;
+}
+export interface ProductivityTrendPoint {
+  date: string;
+  outcomes: number;
+  successes: number;
+  averageDurationMs: number;
+  averageToolCalls: number;
+  averageHandoffs: number;
 }
 
 export interface DirectMessageRow {
@@ -2540,6 +2605,23 @@ export class MarinaDB {
   getNoteVerifications(noteId: number): notesDb.NoteVerificationRow[] {
     return notesDb.getNoteVerifications(this.db, noteId);
   }
+  refreshContradictionCases(): number {
+    return notesDb.refreshContradictionCases(this.db);
+  }
+  listContradictionCases(
+    status?: "open" | "resolved",
+    limit = 100,
+  ): notesDb.ContradictionCaseRow[] {
+    return notesDb.listContradictionCases(this.db, status, limit);
+  }
+  resolveContradictionCase(
+    id: number,
+    resolution: "left" | "right" | "both" | "neither",
+    resolvedBy: string,
+    rationale: string,
+  ): boolean {
+    return notesDb.resolveContradictionCase(this.db, id, resolution, resolvedBy, rationale);
+  }
   updateNoteQuality(
     id: number,
     entityName: string,
@@ -2587,10 +2669,9 @@ export class MarinaDB {
       : (
           this.db.query("SELECT DISTINCT entity_name FROM notes").all() as { entity_name: string }[]
         ).map((r) => r.entity_name);
-    const contradictions = entities.reduce(
-      (sum, name) => sum + this.findMemoryContradictions(name).length,
-      0,
-    );
+    const contradictions = entityName
+      ? entities.reduce((sum, name) => sum + this.findMemoryContradictions(name).length, 0)
+      : this.listContradictionCases("open", 10_000).length;
     return {
       total: row.total,
       unverified: row.unverified ?? 0,
@@ -2673,6 +2754,164 @@ export class MarinaDB {
       `UPDATE operational_alerts SET status='resolved',resolved_at=? WHERE category=? AND status!='resolved' AND alert_key NOT IN (${placeholders})`,
       [now, category, ...activeKeys],
     ).changes;
+  }
+
+  startProductivitySession(
+    entityId: string,
+    entityName: string,
+    taskId: number,
+    startedAt: number,
+    toolCalls = 0,
+  ): void {
+    this.db.run(
+      `INSERT OR IGNORE INTO productivity_sessions
+       (entity_id,entity_name,task_id,started_at,start_tool_calls) VALUES (?,?,?,?,?)`,
+      [entityId, entityName, taskId, startedAt, toolCalls],
+    );
+  }
+  finishProductivitySession(
+    entityId: string,
+    entityName: string,
+    taskId: number,
+    outcome: "approved" | "rejected" | "expired",
+    completedAt: number,
+    endToolCalls = 0,
+  ): boolean {
+    let session = this.db
+      .query(
+        "SELECT * FROM productivity_sessions WHERE entity_id=? AND task_id=? AND completed_at IS NULL ORDER BY started_at DESC LIMIT 1",
+      )
+      .get(entityId, taskId) as { id: number; started_at: number; start_tool_calls: number } | null;
+    if (!session) {
+      const claim = this.getTaskClaim(taskId, entityId);
+      this.startProductivitySession(
+        entityId,
+        entityName,
+        taskId,
+        claim?.claimed_at ?? completedAt,
+        0,
+      );
+      session = this.db
+        .query(
+          "SELECT * FROM productivity_sessions WHERE entity_id=? AND task_id=? AND completed_at IS NULL ORDER BY started_at DESC LIMIT 1",
+        )
+        .get(entityId, taskId) as typeof session;
+    }
+    if (!session) return false;
+    const handoffs = (
+      this.db
+        .query(
+          `SELECT COUNT(*) c FROM direct_messages WHERE created_at BETWEEN ? AND ?
+       AND (sender_name=? OR target_name=?)`,
+        )
+        .get(session.started_at, completedAt, entityName, entityName) as { c: number }
+    ).c;
+    return (
+      this.db.run(
+        `UPDATE productivity_sessions SET completed_at=?,outcome=?,quality=?,end_tool_calls=?,handoffs=? WHERE id=?`,
+        [completedAt, outcome, outcome === "approved" ? 1 : 0, endToolCalls, handoffs, session.id],
+      ).changes > 0
+    );
+  }
+  getProductivitySummary(entityName?: string): ProductivitySummary {
+    const rows = (
+      entityName
+        ? this.db
+            .query(
+              "SELECT * FROM productivity_sessions WHERE completed_at IS NOT NULL AND entity_name=? ORDER BY completed_at",
+            )
+            .all(entityName)
+        : this.db
+            .query(
+              "SELECT * FROM productivity_sessions WHERE completed_at IS NOT NULL ORDER BY completed_at",
+            )
+            .all()
+    ) as Array<{
+      outcome: string;
+      quality: number;
+      started_at: number;
+      completed_at: number;
+      start_tool_calls: number;
+      end_tool_calls: number | null;
+      handoffs: number;
+    }>;
+    const durations = rows
+      .map((r) => Math.max(0, r.completed_at - r.started_at))
+      .sort((a, b) => a - b);
+    const successes = rows.filter((r) => r.outcome === "approved").length;
+    const average = (values: number[]) =>
+      values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+    return {
+      entityName: entityName ?? null,
+      outcomes: rows.length,
+      successes,
+      failures: rows.length - successes,
+      successRate: rows.length ? successes / rows.length : 0,
+      averageDurationMs: average(durations),
+      medianDurationMs: durations.length
+        ? durations.length % 2
+          ? durations[Math.floor(durations.length / 2)]!
+          : (durations[durations.length / 2 - 1]! + durations[durations.length / 2]!) / 2
+        : 0,
+      averageToolCalls: average(
+        rows.map((r) => Math.max(0, (r.end_tool_calls ?? r.start_tool_calls) - r.start_tool_calls)),
+      ),
+      averageHandoffs: average(rows.map((r) => r.handoffs)),
+      outcomesLast7d: rows.filter((r) => r.completed_at >= Date.now() - 7 * 86_400_000).length,
+    };
+  }
+  getProductivityLeaderboard(limit = 20): ProductivitySummary[] {
+    const names = this.db
+      .query(
+        "SELECT DISTINCT entity_name FROM productivity_sessions WHERE completed_at IS NOT NULL",
+      )
+      .all() as { entity_name: string }[];
+    return names
+      .map((row) => this.getProductivitySummary(row.entity_name))
+      .sort((a, b) => b.successes - a.successes || a.averageDurationMs - b.averageDurationMs)
+      .slice(0, limit);
+  }
+  getProductivityTrend(entityName?: string, days = 14): ProductivityTrendPoint[] {
+    const since = Date.now() - Math.max(1, days) * 86_400_000;
+    const rows = (
+      entityName
+        ? this.db
+            .query(
+              "SELECT * FROM productivity_sessions WHERE completed_at>=? AND entity_name=? ORDER BY completed_at",
+            )
+            .all(since, entityName)
+        : this.db
+            .query(
+              "SELECT * FROM productivity_sessions WHERE completed_at>=? ORDER BY completed_at",
+            )
+            .all(since)
+    ) as Array<{
+      outcome: string;
+      started_at: number;
+      completed_at: number;
+      start_tool_calls: number;
+      end_tool_calls: number | null;
+      handoffs: number;
+    }>;
+    const groups = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const date = new Date(row.completed_at).toISOString().slice(0, 10);
+      groups.set(date, [...(groups.get(date) ?? []), row]);
+    }
+    const average = (values: number[]) =>
+      values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+    return [...groups.entries()].map(([date, entries]) => ({
+      date,
+      outcomes: entries.length,
+      successes: entries.filter((row) => row.outcome === "approved").length,
+      averageDurationMs: average(entries.map((row) => row.completed_at - row.started_at)),
+      averageToolCalls: average(
+        entries.map((row) =>
+          Math.max(0, (row.end_tool_calls ?? row.start_tool_calls) - row.start_tool_calls),
+        ),
+      ),
+      averageHandoffs: average(entries.map((row) => row.handoffs)),
+    }));
   }
 
   touchNote(id: number): void {
@@ -4646,6 +4885,12 @@ export class MarinaDB {
   }
   recordAttentionFeedback(name: string, feedback: "useful" | "noise"): AgentConfigRow | undefined {
     return agentsDb.recordAttentionFeedback(this.db, name, feedback);
+  }
+  recordAutomaticAttentionOutcome(
+    name: string,
+    outcome: "success" | "failure",
+  ): AgentConfigRow | undefined {
+    return agentsDb.recordAutomaticAttentionOutcome(this.db, name, outcome);
   }
 
   // ─── Settings (delegated to db-agents.ts) ──────────────────────────────
