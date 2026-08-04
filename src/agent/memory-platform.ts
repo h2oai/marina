@@ -94,16 +94,20 @@ export class PlatformMemoryBackend {
 
   async search(
     query: string,
-    opts?: { noteType?: string; mode?: "recent" | "important" },
+    opts?: { noteType?: string; mode?: "recent" | "important"; trusted?: boolean },
   ): Promise<PlatformMemoryResult> {
     let cmd = `recall ${query}`;
     if (opts?.noteType) cmd += ` type ${opts.noteType}`;
     if (opts?.mode === "recent") cmd += " recent";
     if (opts?.mode === "important") cmd += " important";
+    if (opts?.trusted) cmd += " trusted";
 
     const perceptions = await this.client.command(cmd);
     const text = extractText(perceptions);
     const results = this.parseRecallResults(text);
+    if (opts?.trusted && results.length === 0) {
+      return this.search(query, { noteType: opts.noteType, mode: opts.mode });
+    }
     return { success: true, text, results };
   }
 
@@ -222,6 +226,12 @@ export class PlatformMemoryBackend {
 
   async orient(): Promise<PlatformMemoryResult> {
     const perceptions = await this.client.command("orient");
+    const text = extractText(perceptions);
+    return { success: true, text };
+  }
+
+  async workInbox(): Promise<PlatformMemoryResult> {
+    const perceptions = await this.client.command("work");
     const text = extractText(perceptions);
     return { success: true, text };
   }

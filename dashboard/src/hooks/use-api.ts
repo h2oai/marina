@@ -342,6 +342,29 @@ export interface NoteDetail {
   roomId: string | null;
   poolId: string | null;
   supersedesId: number | null;
+  confidence: number;
+  verificationStatus: "unverified" | "verified" | "disputed" | "superseded";
+  claimKey: string | null;
+  sources: Array<{
+    id: number;
+    url: string;
+    source_type: string;
+    source_note_id: number | null;
+    source_entity: string | null;
+    captured_by: string | null;
+    excerpt: string | null;
+    credibility: number;
+    observed_at: number | null;
+    retrieved_at: number;
+  }>;
+  verifications: Array<{
+    id: number;
+    verifier: string;
+    status: string;
+    confidence: number;
+    rationale: string | null;
+    created_at: number;
+  }>;
   links: NoteDetailLink[];
 }
 

@@ -106,6 +106,7 @@ const VALID_RELATIONSHIPS = new Set([
   "related_to",
   "part_of",
   "supersedes",
+  "derived_from",
 ]);
 
 function parseNoteText(input: string): {
@@ -209,6 +210,7 @@ export function noteCommand(deps: {
             const observedAt = modifiers.observed ? Date.parse(modifiers.observed) : undefined;
             db.addNoteSource(id, {
               url: modifiers.source,
+              capturedBy: entity.name,
               observedAt:
                 observedAt !== undefined && Number.isFinite(observedAt) ? observedAt : undefined,
             });
@@ -222,20 +224,82 @@ export function noteCommand(deps: {
 
         case "source": {
           const id = Number.parseInt(tokens[1] ?? "", 10);
-          const url = tokens[2];
+          const reference = tokens[2];
           const note = db.getNote(id);
-          if (!note || note.entity_name !== entity.name || !url) {
-            ctx.send(input.entity, "Usage: note source <your-note-id> <url> [observed YYYY-MM-DD]");
+          if (!note || note.entity_name !== entity.name || !reference) {
+            ctx.send(
+              input.entity,
+              "Usage: note source <your-note-id> <url|note:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]",
+            );
             return;
           }
-          const observedIndex = tokens.indexOf("observed");
-          const observedAt =
-            observedIndex >= 0 ? Date.parse(tokens[observedIndex + 1] ?? "") : undefined;
+          const { modifiers } = extractModifiers(tokens.slice(3).join(" "), [
+            "type",
+            "credibility",
+            "observed",
+          ]);
+          const sourceNoteId = reference.startsWith("note:")
+            ? Number(reference.slice(5))
+            : undefined;
+          if (
+            sourceNoteId !== undefined &&
+            (!Number.isInteger(sourceNoteId) || !db.getNote(sourceNoteId))
+          ) {
+            ctx.send(input.entity, `Source note ${reference} was not found.`);
+            return;
+          }
+          const credibility =
+            modifiers.credibility === undefined ? 0.5 : Number(modifiers.credibility);
+          if (!Number.isFinite(credibility) || credibility < 0 || credibility > 1) {
+            ctx.send(input.entity, "Credibility must be between 0 and 1.");
+            return;
+          }
+          const observedAt = modifiers.observed ? Date.parse(modifiers.observed) : undefined;
           db.addNoteSource(id, {
-            url,
+            url: reference,
+            sourceType:
+              sourceNoteId !== undefined
+                ? "note"
+                : (modifiers.type as
+                    | "url"
+                    | "message"
+                    | "observation"
+                    | "artifact"
+                    | "dataset"
+                    | undefined),
+            sourceNoteId,
+            sourceEntity:
+              sourceNoteId !== undefined ? db.getNote(sourceNoteId)?.entity_name : undefined,
+            capturedBy: entity.name,
+            credibility,
             observedAt: Number.isFinite(observedAt) ? observedAt : undefined,
           });
           ctx.send(input.entity, `Source attached to note #${id}.`);
+          return;
+        }
+
+        case "derive": {
+          const id = Number(tokens[1]);
+          const sourceId = Number(tokens[2]);
+          const note = db.getNote(id);
+          const source = db.getNote(sourceId);
+          if (!note || note.entity_name !== entity.name || !source) {
+            ctx.send(input.entity, "Usage: note derive <your-note-id> <source-note-id>");
+            return;
+          }
+          db.addNoteSource(id, {
+            url: `note:${sourceId}`,
+            sourceType: "note",
+            sourceNoteId: sourceId,
+            sourceEntity: source.entity_name,
+            capturedBy: entity.name,
+            excerpt: source.content.slice(0, 240),
+            credibility: source.confidence ?? 0.5,
+          });
+          try {
+            db.createNoteLink(id, sourceId, "derived_from");
+          } catch {}
+          ctx.send(input.entity, `Note #${id} now records derivation from #${sourceId}.`);
           return;
         }
 
@@ -257,7 +321,14 @@ export function noteCommand(deps: {
             );
             return;
           }
-          db.updateNoteQuality(id, entity.name, confidence, verification);
+          const rationale = tokens.slice(4).join(" ") || undefined;
+          db.recordNoteVerification(
+            id,
+            entity.name,
+            verification as "unverified" | "verified" | "disputed",
+            confidence,
+            rationale,
+          );
           ctx.send(
             input.entity,
             `Note #${id} marked ${verification} (confidence=${Math.max(0, Math.min(1, confidence)).toFixed(2)}).`,
@@ -274,6 +345,7 @@ export function noteCommand(deps: {
           }
           const sources = db.getNoteSources(id);
           const links = db.getNoteLinks(id);
+          const verifications = db.getNoteVerifications(id);
           const lines = [
             header(`Memory #${id}`),
             separator(),
@@ -283,7 +355,11 @@ export function noteCommand(deps: {
           ];
           for (const source of sources)
             lines.push(
-              `  source ${source.url}${source.observed_at ? ` (observed ${new Date(source.observed_at).toISOString().slice(0, 10)})` : ""}`,
+              `  source [${source.source_type}] ${source.url} · credibility ${source.credibility.toFixed(2)}${source.source_entity ? ` · via ${source.source_entity}` : ""}${source.observed_at ? ` · observed ${new Date(source.observed_at).toISOString().slice(0, 10)}` : ""}`,
+            );
+          for (const verification of verifications)
+            lines.push(
+              `  verification ${verification.status} c${verification.confidence.toFixed(2)} by ${verification.verifier}${verification.rationale ? ` — ${verification.rationale}` : ""}`,
             );
           for (const link of links)
             lines.push(

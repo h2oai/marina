@@ -85,4 +85,31 @@ describe("evidence-aware memory", () => {
     expect(db.setOperationalAlertStatus(alert.id, "resolved")).toBe(true);
     expect(db.listOperationalAlerts("resolved")).toHaveLength(1);
   });
+
+  test("preserves typed derivation provenance and verification rationale", () => {
+    const source = db.createNote("Ada", "Primary observation", undefined, { confidence: 0.8 });
+    const claim = db.createNote("Ada", "Derived conclusion", undefined, { confidence: 0.6 });
+    db.addNoteSource(claim, {
+      url: `note:${source}`,
+      sourceType: "note",
+      sourceNoteId: source,
+      sourceEntity: "Ada",
+      capturedBy: "Ada",
+      excerpt: "Primary observation",
+      credibility: 0.8,
+    });
+    db.recordNoteVerification(
+      claim,
+      "Reviewer",
+      "verified",
+      0.9,
+      "Confirmed against the observation",
+    );
+    const provenance = db.getNoteSources(claim)[0];
+    expect(provenance?.source_note_id).toBe(source);
+    expect(provenance?.source_type).toBe("note");
+    expect(provenance?.credibility).toBe(0.8);
+    expect(db.getNoteVerifications(claim)[0]?.rationale).toBe("Confirmed against the observation");
+    expect(db.getNote(claim)?.verification_status).toBe("verified");
+  });
 });

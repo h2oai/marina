@@ -257,6 +257,13 @@ export interface NoteSourceInput {
   publisher?: string;
   observedAt?: number;
   contentHash?: string;
+  sourceType?: "url" | "note" | "message" | "observation" | "artifact" | "dataset";
+  sourceNoteId?: number;
+  sourceEntity?: string;
+  capturedBy?: string;
+  excerpt?: string;
+  credibility?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface NoteSourceRow {
@@ -268,14 +275,25 @@ export interface NoteSourceRow {
   observed_at: number | null;
   retrieved_at: number;
   content_hash: string | null;
+  source_type: string;
+  source_note_id: number | null;
+  source_entity: string | null;
+  captured_by: string | null;
+  excerpt: string | null;
+  credibility: number;
+  metadata: string | null;
 }
 
 export function addNoteSource(db: Database, noteId: number, source: NoteSourceInput): number {
   const result = db.run(
-    `INSERT INTO note_sources (note_id, url, title, publisher, observed_at, retrieved_at, content_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO note_sources (note_id, url, title, publisher, observed_at, retrieved_at, content_hash,
+       source_type, source_note_id, source_entity, captured_by, excerpt, credibility, metadata)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(note_id, url) DO UPDATE SET title=excluded.title, publisher=excluded.publisher,
-       observed_at=excluded.observed_at, retrieved_at=excluded.retrieved_at, content_hash=excluded.content_hash`,
+       observed_at=excluded.observed_at, retrieved_at=excluded.retrieved_at, content_hash=excluded.content_hash,
+       source_type=excluded.source_type, source_note_id=excluded.source_note_id,
+       source_entity=excluded.source_entity, captured_by=excluded.captured_by, excerpt=excluded.excerpt,
+       credibility=excluded.credibility, metadata=excluded.metadata`,
     [
       noteId,
       source.url,
@@ -284,9 +302,56 @@ export function addNoteSource(db: Database, noteId: number, source: NoteSourceIn
       source.observedAt ?? null,
       Date.now(),
       source.contentHash ?? null,
+      source.sourceType ?? "url",
+      source.sourceNoteId ?? null,
+      source.sourceEntity ?? null,
+      source.capturedBy ?? null,
+      source.excerpt ?? null,
+      Math.max(0, Math.min(1, source.credibility ?? 0.5)),
+      source.metadata ? JSON.stringify(source.metadata) : null,
     ],
   );
   return Number(result.lastInsertRowid);
+}
+
+export interface NoteVerificationRow {
+  id: number;
+  note_id: number;
+  verifier: string;
+  status: "unverified" | "verified" | "disputed";
+  confidence: number;
+  rationale: string | null;
+  evidence_source_id: number | null;
+  created_at: number;
+}
+
+export function recordNoteVerification(
+  db: Database,
+  noteId: number,
+  verifier: string,
+  status: "unverified" | "verified" | "disputed",
+  confidence: number,
+  rationale?: string,
+  evidenceSourceId?: number,
+): number {
+  const bounded = Math.max(0, Math.min(1, confidence));
+  const result = db.run(
+    `INSERT INTO note_verifications (note_id,verifier,status,confidence,rationale,evidence_source_id,created_at)
+     VALUES (?,?,?,?,?,?,?)`,
+    [noteId, verifier, status, bounded, rationale ?? null, evidenceSourceId ?? null, Date.now()],
+  );
+  db.run("UPDATE notes SET confidence=?,verification_status=? WHERE id=?", [
+    bounded,
+    status,
+    noteId,
+  ]);
+  return Number(result.lastInsertRowid);
+}
+
+export function getNoteVerifications(db: Database, noteId: number): NoteVerificationRow[] {
+  return db
+    .query("SELECT * FROM note_verifications WHERE note_id=? ORDER BY created_at DESC,id DESC")
+    .all(noteId) as NoteVerificationRow[];
 }
 
 export function getNoteSources(db: Database, noteId: number): NoteSourceRow[] {
@@ -417,7 +482,8 @@ export function recallNotes(
         (? * (-fts.rank)) + (0.10 * n.confidence) +
         CASE n.verification_status WHEN 'verified' THEN 0.10 WHEN 'disputed' THEN -0.10 ELSE 0 END +
         COALESCE((SELECT 0.05 / (1.0 + (? - COALESCE(MAX(ns.observed_at), MAX(ns.retrieved_at))) / 2592000000.0)
-          FROM note_sources ns WHERE ns.note_id=n.id), 0)
+          FROM note_sources ns WHERE ns.note_id=n.id), 0) +
+        COALESCE((SELECT 0.05 * AVG(ns.credibility) FROM note_sources ns WHERE ns.note_id=n.id),0)
         AS score
       FROM notes n
       JOIN notes_fts fts ON n.id = fts.rowid
@@ -453,7 +519,8 @@ export function recallNotesWithType(
         (? * (-fts.rank)) + (0.10 * n.confidence) +
         CASE n.verification_status WHEN 'verified' THEN 0.10 WHEN 'disputed' THEN -0.10 ELSE 0 END +
         COALESCE((SELECT 0.05 / (1.0 + (? - COALESCE(MAX(ns.observed_at), MAX(ns.retrieved_at))) / 2592000000.0)
-          FROM note_sources ns WHERE ns.note_id=n.id), 0)
+          FROM note_sources ns WHERE ns.note_id=n.id), 0) +
+        COALESCE((SELECT 0.05 * AVG(ns.credibility) FROM note_sources ns WHERE ns.note_id=n.id),0)
         AS score
       FROM notes n
       JOIN notes_fts fts ON n.id = fts.rowid
@@ -840,7 +907,8 @@ export function recallPoolNotes(
         (? * (-fts.rank)) + (0.10 * n.confidence) +
         CASE n.verification_status WHEN 'verified' THEN 0.10 WHEN 'disputed' THEN -0.10 ELSE 0 END +
         COALESCE((SELECT 0.05 / (1.0 + (? - COALESCE(MAX(ns.observed_at), MAX(ns.retrieved_at))) / 2592000000.0)
-          FROM note_sources ns WHERE ns.note_id=n.id), 0)
+          FROM note_sources ns WHERE ns.note_id=n.id), 0) +
+        COALESCE((SELECT 0.05 * AVG(ns.credibility) FROM note_sources ns WHERE ns.note_id=n.id),0)
         AS score
       FROM notes n
       JOIN notes_fts fts ON n.id = fts.rowid

@@ -91,6 +91,8 @@ Publish at most one channel update per run. Use \`marina_tell\` for targeted han
 - **marina_feed** — Recent world activity
 - **marina_novelty** — Self-diagnostic: command entropy, exploration gaps
 
+For consequential claims, preserve lineage with \`note claim\`, \`note source\`, \`note derive\`, and \`note verify\`. Prefer trusted memory search before acting; cite note, task, pool, or artifact IDs in handoffs so peers can continue without repeating discovery.
+
 ## Coordination
 - **marina_task** — \`task goal "..."\`, \`task claim <id>\`, \`task progress <id> +N\`
 - **marina_project** — \`project list\`, \`project research join\`

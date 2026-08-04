@@ -1560,6 +1560,12 @@ const memorySchema = Type.Object({
   ),
   content: Type.Optional(Type.String({ description: "Content (for write/reflect)" })),
   query: Type.Optional(Type.String({ description: "Search query (for search/skill_search)" })),
+  trusted: Type.Optional(
+    Type.Boolean({
+      description:
+        "Prefer verified/high-confidence memories; falls back when none exist (for search)",
+    }),
+  ),
   category: Type.Optional(
     Type.Union(
       [
@@ -1596,7 +1602,7 @@ export function createMemoryTool(
       "Platform memory — all data persists on the server across sessions.\n" +
       "Actions: write (save note), search (recall), reflect (synthesize), orient (health), " +
       "skill_store (save skill), skill_search (find skills).\n" +
-      "For other ops use marina_command: note link, note evolve, pool add, pool recall.",
+      "Use trusted=true for decisions. For provenance use marina_command: note claim/source/derive/verify/explain.",
     parameters: memorySchema,
     execute: async (_id, params: Static<typeof memorySchema>) => {
       try {
@@ -1634,7 +1640,7 @@ export function createMemoryTool(
                 details: { success: false },
               };
             }
-            const r = await platformMemory.search(params.query);
+            const r = await platformMemory.search(params.query, { trusted: params.trusted });
             if (!r.results || r.results.length === 0) {
               return {
                 content: [{ type: "text", text: `No notes found for "${params.query}"` }],

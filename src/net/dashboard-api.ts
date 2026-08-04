@@ -677,6 +677,7 @@ export async function handleDashboardApi(
       verificationStatus: note.verification_status ?? "unverified",
       claimKey: note.claim_key ?? null,
       sources: db.getNoteSources(id),
+      verifications: db.getNoteVerifications(id),
       links: hydratedLinks,
     });
   }
