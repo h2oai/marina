@@ -51,7 +51,7 @@ export function recallCommand(deps: {
   return {
     name: "recall",
     aliases: [],
-    help: "Scored note retrieval. Usage: recall <query> [recent | important] [type <type>]",
+    help: "Scored, provenance-aware retrieval. Usage: recall <query> [recent|important|trusted|explain] [type <type>]",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -76,7 +76,12 @@ export function recallCommand(deps: {
       const noteType = modifiers.type;
 
       // Extract weight flags: trailing "recent"/"important" or "--recent"/"--important"
-      const { text: query, flags } = extractFlags(afterType, ["recent", "important"]);
+      const { text: query, flags } = extractFlags(afterType, [
+        "recent",
+        "important",
+        "trusted",
+        "explain",
+      ]);
 
       if (flags.has("recent")) {
         weightImportance = 0.2;
@@ -105,6 +110,15 @@ export function recallCommand(deps: {
       let results = noteType
         ? db.recallNotesWithType(entity.name, query, noteType, weights)
         : db.recallNotes(entity.name, query, weights);
+      if (flags.has("trusted")) {
+        results = results.filter((note) => {
+          const sources = db.getNoteSources(note.id);
+          return (
+            note.verification_status === "verified" ||
+            ((note.confidence ?? 0.5) >= 0.7 && sources.some((source) => source.credibility >= 0.6))
+          );
+        });
+      }
 
       // Graph-enhanced recall: spread activation from top results to linked notes
       if (results.length > 0 && results.length < 20) {
@@ -204,10 +218,22 @@ export function recallCommand(deps: {
       const lines = [
         header(`Recall: "${query}"${typeLabel}`),
         separator(),
-        ...results.map((n) => {
+        ...results.flatMap((n) => {
           const age = Math.floor((now - n.created_at) / DAY_MS);
           const ageStr = age === 0 ? "today" : `${age}d ago`;
-          return `  ${id(n.id)} ${fmtScore(n.score)} ${importance(n.importance)} ${dim(ageStr)} ${n.content.slice(0, 60)}`;
+          const base = `  ${id(n.id)} ${fmtScore(n.score)} ${importance(n.importance)} ${dim(ageStr)} ${n.content.slice(0, 60)}`;
+          if (!flags.has("explain")) return [base];
+          const sources = db.getNoteSources(n.id);
+          const credibility =
+            sources.length > 0
+              ? sources.reduce((sum, source) => sum + source.credibility, 0) / sources.length
+              : 0;
+          return [
+            base,
+            dim(
+              `      provenance: ${n.verification_status ?? "unverified"} · confidence ${(n.confidence ?? 0.5).toFixed(2)} · ${sources.length} source(s) · credibility ${credibility.toFixed(2)}`,
+            ),
+          ];
         }),
       ];
 

@@ -36,7 +36,16 @@ export function nextCommand(deps: NextDeps): CommandDef {
         peers: ctx.entities,
       });
       const detail = item.detail ? `: ${truncate(item.detail, 100)}` : "";
-      ctx.send(input.entity, `${bold(item.title)}${detail}\n${arrow} ${bold(item.action)}`);
+      const memory = db
+        ?.recallNotes(entity.name, item.title)
+        .find((note) => note.verification_status === "verified" || (note.confidence ?? 0.5) >= 0.7);
+      const context = memory
+        ? `\n${dim(`Context #${memory.id} · c${(memory.confidence ?? 0.5).toFixed(2)}:`)} ${truncate(memory.content, 120)}`
+        : "";
+      ctx.send(
+        input.entity,
+        `${bold(item.title)}${detail}${context}\n${arrow} ${bold(item.action)}`,
+      );
     },
   };
 }

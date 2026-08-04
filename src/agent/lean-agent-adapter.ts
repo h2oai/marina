@@ -504,6 +504,7 @@ export class LeanAgentAdapter implements AgentHandle {
     reflection_due: 150, // cadence 75
     current_focus: 30, // every cycle, but content stable
     stuck_detection: 15, // every cycle, must surface promptly
+    priority_work: 20,
   };
   private static readonly SECTION_TTL_DEFAULT = 30;
 
@@ -1604,6 +1605,27 @@ export class LeanAgentAdapter implements AgentHandle {
       }
     }
 
+    // Idle agents get a compact view of the world's highest-value work. This
+    // replaces repeated exploratory turns with an actionable command while
+    // leaving focused agents and event-driven crew responders undisturbed.
+    if (cycle % 10 === 2 && !this.focus && !this.config.crewResponder) {
+      try {
+        const work = await this.platformMemory.workInbox();
+        const content = clampText(work.text, 700);
+        if (
+          content &&
+          !/no active work surfaced/i.test(content) &&
+          this.shouldIncludeSection("priority_work", content)
+        ) {
+          parts.push(
+            `[Priority Work]\n${content}\nChoose one concrete action; avoid claiming work you cannot advance.`,
+          );
+        }
+      } catch {
+        // best-effort; autonomy continues without a work pulse
+      }
+    }
+
     // ── 3. Novelty suggestions (every 5th cycle) ──
     if (cycle % 5 === 0) {
       try {
@@ -1636,7 +1658,7 @@ export class LeanAgentAdapter implements AgentHandle {
         this.notesCacheAge++;
         if (focusDesc !== this.lastNotesQuery || this.notesCacheAge > 60) {
           const [recallResult, skillResult] = await Promise.all([
-            this.platformMemory.search(focusDesc),
+            this.platformMemory.search(focusDesc, { trusted: true }),
             this.platformMemory.searchSkills(focusDesc).catch(() => ({ results: [] })),
           ]);
           const blocks: string[] = [];

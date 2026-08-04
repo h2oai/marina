@@ -39,6 +39,7 @@ export const EXPORT_TABLES = [
   "room_templates",
   "notes",
   "note_sources",
+  "note_verifications",
   "operational_alerts",
   "note_links",
   "core_memory",

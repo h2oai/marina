@@ -1635,6 +1635,10 @@ const NoteContext = memo(function NoteContext({
         </div>
         <PropRow label="Created" value={fmtAge(Date.now() - data.createdAt)} />
         <PropRow label="Last recalled" value={fmtAge(Date.now() - accessed)} />
+        <PropRow
+          label="Verification"
+          value={`${data.verificationStatus} · confidence ${data.confidence.toFixed(2)}`}
+        />
         {data.roomId && <PropRow label="Room" value={data.roomId} />}
         {data.poolId && <PropRow label="Pool" value={data.poolId} />}
         {data.supersedesId !== null && (
@@ -1663,6 +1667,72 @@ const NoteContext = memo(function NoteContext({
             </span>
           </div>
         )}
+      </CascadeSection>
+
+      <CascadeSection
+        title={`Provenance (${data.sources.length})`}
+        defaultOpen={data.sources.length > 0}
+      >
+        {data.sources.length === 0 ? (
+          <div style={{ padding: "6px 12px", color: "#666", fontSize: 12 }}>
+            No explicit evidence attached.
+          </div>
+        ) : (
+          data.sources.map((source) => (
+            <div
+              key={source.id}
+              style={{ padding: "6px 12px", borderBottom: "1px solid #1a1a22", fontSize: 11 }}
+            >
+              <div>
+                <span style={{ color: "#14b8a6" }}>[{source.source_type}]</span>{" "}
+                {source.source_note_id && onNoteClick ? (
+                  <button
+                    type="button"
+                    onClick={() => onNoteClick(source.source_note_id!)}
+                    style={{ background: "none", border: 0, color: "#FFDD00", cursor: "pointer" }}
+                  >
+                    #{source.source_note_id}
+                  </button>
+                ) : (
+                  <span style={{ color: "#bbb", wordBreak: "break-all" }}>{source.url}</span>
+                )}
+              </div>
+              <div style={{ color: "#777" }}>
+                credibility {source.credibility.toFixed(2)}
+                {source.source_entity ? ` · via ${source.source_entity}` : ""}
+              </div>
+              {source.excerpt && (
+                <div style={{ color: "#999", marginTop: 2 }}>{source.excerpt}</div>
+              )}
+            </div>
+          ))
+        )}
+      </CascadeSection>
+
+      <CascadeSection
+        title={`Verification history (${data.verifications.length})`}
+        defaultOpen={data.verifications.length > 0}
+      >
+        {data.verifications.map((entry) => (
+          <div
+            key={entry.id}
+            style={{ padding: "6px 12px", borderBottom: "1px solid #1a1a22", fontSize: 11 }}
+          >
+            <div
+              style={{
+                color:
+                  entry.status === "verified"
+                    ? "#22c55e"
+                    : entry.status === "disputed"
+                      ? "#ef4444"
+                      : "#999",
+              }}
+            >
+              {entry.status} · {entry.confidence.toFixed(2)} · {entry.verifier}
+            </div>
+            {entry.rationale && <div style={{ color: "#888" }}>{entry.rationale}</div>}
+          </div>
+        ))}
       </CascadeSection>
 
       <CascadeSection title={`Links (${data.links.length})`} defaultOpen={data.links.length > 0}>

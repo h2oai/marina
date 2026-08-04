@@ -66,13 +66,21 @@ Evidence-aware memory extends the existing `note <text>` workflow:
 ```text
 note claim The launch window is Tuesday confidence 0.8 source https://example.com/schedule observed 2026-08-04
 note explain 42
-note verify 42 verified 0.9
+note source 42 note:17 credibility 0.8
+note derive 42 17
+note verify 42 verified 0.9 Confirmed against the primary observation
 note contradictions
 note consolidate 42 38 39
 ```
 
 Consolidation retains older records as traceable, superseded memories while excluding them from
 normal recall.
+
+Sources are typed (`url`, `note`, `message`, `observation`, `artifact`, or `dataset`) and retain
+their origin entity, capturing agent, excerpt, observation time, and credibility. Verification is an
+append-only history: later decisions update the current status without erasing earlier judgments.
+Use `recall <topic> trusted` to require verified or strongly supported memories and `explain` to show
+why each result ranked.
 
 Recall combines lexical relevance with importance, recency, confidence, verification, and source
 freshness. Hourly hygiene calibrates confidence from corroborating evidence and publishes unresolved

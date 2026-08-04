@@ -111,6 +111,11 @@ Alerts persist across restarts and include readiness, agent health, attention ba
 budget, memory contradiction, and stale-source signals. Use `ops ack <id>`, `ops resolve <id>`, and
 `ops history`. The dashboard Admin → Ops tab exposes the same inbox and controls.
 
+The dashboard memory inspector shows typed sources, internal-note derivations, credibility, and the
+complete verification history. Idle autonomous agents also receive a deduplicated priority-work
+pulse, while focused agents prefer trusted memories and fall back to legacy recall when no trusted
+context exists.
+
 `readiness` (in-world, rank 0; aliases `doctor`/`health`) returns a per-capability
 report — `ok` / `degraded` / `off` with a remediation hint. Example:
 

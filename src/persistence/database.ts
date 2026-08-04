@@ -1493,6 +1493,31 @@ CREATE TABLE operational_alerts (
 CREATE INDEX idx_operational_alerts_status ON operational_alerts(status, severity, last_seen_at DESC);
 `,
   },
+  // Migration 56: typed evidence lineage and append-only verification history.
+  {
+    version: 56,
+    sql: `
+ALTER TABLE note_sources ADD COLUMN source_type TEXT NOT NULL DEFAULT 'url';
+ALTER TABLE note_sources ADD COLUMN source_note_id INTEGER REFERENCES notes(id) ON DELETE SET NULL;
+ALTER TABLE note_sources ADD COLUMN source_entity TEXT;
+ALTER TABLE note_sources ADD COLUMN captured_by TEXT;
+ALTER TABLE note_sources ADD COLUMN excerpt TEXT;
+ALTER TABLE note_sources ADD COLUMN credibility REAL NOT NULL DEFAULT 0.5;
+ALTER TABLE note_sources ADD COLUMN metadata TEXT;
+CREATE INDEX idx_note_sources_source_note ON note_sources(source_note_id);
+CREATE TABLE note_verifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  verifier TEXT NOT NULL,
+  status TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  rationale TEXT,
+  evidence_source_id INTEGER REFERENCES note_sources(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_note_verifications_note ON note_verifications(note_id, created_at DESC);
+`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -2493,6 +2518,27 @@ export class MarinaDB {
   }
   getNoteSources(noteId: number): notesDb.NoteSourceRow[] {
     return notesDb.getNoteSources(this.db, noteId);
+  }
+  recordNoteVerification(
+    noteId: number,
+    verifier: string,
+    status: "unverified" | "verified" | "disputed",
+    confidence: number,
+    rationale?: string,
+    evidenceSourceId?: number,
+  ): number {
+    return notesDb.recordNoteVerification(
+      this.db,
+      noteId,
+      verifier,
+      status,
+      confidence,
+      rationale,
+      evidenceSourceId,
+    );
+  }
+  getNoteVerifications(noteId: number): notesDb.NoteVerificationRow[] {
+    return notesDb.getNoteVerifications(this.db, noteId);
   }
   updateNoteQuality(
     id: number,
