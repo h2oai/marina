@@ -5,7 +5,7 @@ a Marina's abilities actually work?"
 
 Run **`readiness`** in-world (aliases `doctor`, `health`) at any time to see the
 live answer. This doc explains the model behind it. (A matching dashboard
-`GET /api/readiness` endpoint is planned.)
+`GET /api/readiness` endpoint exposes the same checks plus a measured demo score.)
 
 ## The three tiers
 
@@ -20,9 +20,11 @@ Marina's abilities fall into three tiers. **Only the third needs operator action
 
 2. **Seeded but passive** — a world's `seed(db)` registers **definitions**
    (roles/traits) and persistent **agent configs**. A definition/config is *not* a
-   running agent. The default world seeds: the `chronicler`, `watcher`,
+   running agent. The showcase world seeds: the `chronicler`, `watcher`,
    `market-oracle` roles + traits, a persistent **Chronicler** agent config, and the
-   TabH2O connector (`worlds/default.ts → seed()`, `worlds/seed.ts`).
+   TabH2O connector (`worlds/showcase.ts → seed()`, `worlds/seed.ts`). The default
+   Workbench seeds a deliberately small Host/Builder/Critic/Chronicler population and
+   a Demo Pulse project; they remain passive configs until auto-respawn or manual spawn.
 
 3. **Agent-driven** — the actual synthesis/automation. Needs **(a)** an upstream LLM
    **provider key** and **(b)** the agent **spawned and running**:

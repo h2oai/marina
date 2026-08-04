@@ -27,6 +27,11 @@ const KIND_COLORS: Record<string, string> = {
   canvas_intent: "#ec4899",
   note_created: "#60a5fa",
   note_link_created: "#818cf8",
+  model_request_received: "#94a3b8",
+  model_request_routed: "#f59e0b",
+  model_request_fast_path: "#22d3ee",
+  model_request_completed: "#22c55e",
+  model_request_failed: "#ef4444",
 };
 
 const WINDOW_MINUTES = 30;
@@ -118,6 +123,16 @@ export const TimelineStrip = memo(function TimelineStrip({
         zIndex: 50,
         pointerEvents: "auto",
       };
+
+  // Events sharing request:<id> form one causal arc. The line makes receipt →
+  // routing → completion legible at a glance instead of presenting unrelated dots.
+  const requestArcs = new Map<string, FeedEvent[]>();
+  for (const event of visible) {
+    if (!event.ref?.startsWith("request:")) continue;
+    const group = requestArcs.get(event.ref) ?? [];
+    group.push(event);
+    requestArcs.set(event.ref, group);
+  }
 
   return (
     <div style={containerStyle}>
@@ -222,6 +237,26 @@ export const TimelineStrip = memo(function TimelineStrip({
         >
           NOW
         </text>
+        {/* Causal request arcs */}
+        {[...requestArcs.entries()].map(([ref, grouped]) => {
+          if (grouped.length < 2) return null;
+          const xs = grouped.map((event) => {
+            const pct = 1 - (now - event.timestamp) / (WINDOW_MINUTES * 60_000);
+            return Math.max(2, Math.min(998, pct * 1000));
+          });
+          return (
+            <line
+              key={ref}
+              x1={Math.min(...xs)}
+              x2={Math.max(...xs)}
+              y1={20}
+              y2={20}
+              stroke="#22c55e"
+              strokeWidth={2}
+              opacity={0.45}
+            />
+          );
+        })}
         {/* Event dots */}
         {visible.map((e) => {
           const age = now - e.timestamp;

@@ -24,6 +24,6 @@ const room: RoomModule = {
 export default room;
 ```
 
-See `worlds/default.ts` for richer patterns: `onEnter` handlers, `onTick`, room-scoped storage via `ctx.store`, agent spawning via `ctx.spawnRoomAgent()`, intent system integration.
+See `worlds/showcase.ts` and `worlds/default/` for richer patterns: `onEnter` handlers, `onTick`, room-scoped storage via `ctx.store`, agent spawning via `ctx.spawnRoomAgent()`, intent system integration.
 
 Files in this directory load on top of whatever world `MARINA_WORLD` selected, so a custom room can extend a built-in world without modifying it.

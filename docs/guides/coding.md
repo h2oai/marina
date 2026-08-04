@@ -48,6 +48,12 @@ task and it works autonomously — explores the repo, edits via reviewable patch
 runs the test/lint chain, and iterates — streaming its progress back. Type again to
 steer it; `code status` to watch. This is the **single-agent driver** (the default).
 
+The default coding agent follows an observable operating contract: **received → inspect → plan →
+patch → apply → verify → complete**. Each transition is persisted on the coding session and pushed
+to WebChat immediately, where a causal progress rail stays synchronized with the durable artifact
+view. Completion requires a summary that cites changed paths and successful checks; the agent is
+instructed not to expand scope, install dependencies, or launch applications without a decision.
+
 Want a team instead of one agent? `code driver crew` (or `code crew <goal>`) fans the
 work out to an implementer / reviewer / tester. The driver is a seam — single today,
 multi-agent / multi-backend as it grows.

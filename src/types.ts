@@ -687,6 +687,18 @@ export type EngineEvent =
       delta: string;
       timestamp: number;
     }
+  // Request-level lifecycle for causal demo timelines. These deliberately sit
+  // above token/turn events: one request may span several agents and turns.
+  | {
+      type: "model_request_lifecycle";
+      phase: "received" | "routed" | "fast_path" | "completed" | "failed";
+      requestId: string;
+      model: string;
+      target?: string;
+      durationMs?: number;
+      detail?: string;
+      timestamp: number;
+    }
   | {
       type: "key_change";
       provider: string;

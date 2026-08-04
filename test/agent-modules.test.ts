@@ -512,6 +512,24 @@ describe("social", () => {
     expect(social.scorePerception(plainChatter, "Answerer")).toBeLessThan(80);
   });
 
+  it("normalizes production channel metadata for model-request priority", () => {
+    const social = new SocialAwareness();
+    const [event] = social.handlePerception({
+      kind: "message",
+      timestamp: Date.now(),
+      tag: "model-answerer",
+      data: {
+        text: '[model-answerer] model-api: {"type":"model_request","id":"req-1"}',
+        channel: "model-answerer",
+        senderName: "model-api",
+        content: '{"type":"model_request","id":"req-1"}',
+      },
+    });
+    expect(event?.speaker).toBe("model-api");
+    expect(event?.message).toContain('"type":"model_request"');
+    expect(social.scorePerception(event!, "Answerer")).toBe(95);
+  });
+
   it("getSocialContext output format includes entities and events", () => {
     const social = new SocialAwareness();
     social.updateEntitiesInRoom([{ name: "Alice" }, { name: "Bob" }]);
@@ -899,10 +917,9 @@ describe("roles", () => {
     ).toBe(true);
   });
 
-  it("inferCrewResponder is true for specialist roles, false for coordinators", () => {
-    // Specialists answer-and-shutup; coordinators drive dispatch and need
-    // their full cognitive cycle. The set is the single source of truth
-    // for which roles get the lean autonomous loop. See
+  it("inferCrewResponder is true for request-driven service roles", () => {
+    // Specialists and endpoint coordinators answer on demand. The set is the
+    // single source of truth for which roles get the lean event-driven loop. See
     // src/agent/agent-runtime.ts CREW_RESPONDER_ROLES.
     expect(inferCrewResponder("mathematician")).toBe(true);
     expect(inferCrewResponder("scholar")).toBe(true);
@@ -912,11 +929,10 @@ describe("roles", () => {
     expect(inferCrewResponder("skeptic")).toBe(true);
     expect(inferCrewResponder("historian")).toBe(true);
 
-    // Coordinators stay on the full cognitive cycle.
-    expect(inferCrewResponder("answerer")).toBe(false);
-    expect(inferCrewResponder("councilor")).toBe(false);
-    expect(inferCrewResponder("debater")).toBe(false);
-    expect(inferCrewResponder("decomposer")).toBe(false);
+    expect(inferCrewResponder("answerer")).toBe(true);
+    expect(inferCrewResponder("councilor")).toBe(true);
+    expect(inferCrewResponder("debater")).toBe(true);
+    expect(inferCrewResponder("decomposer")).toBe(true);
 
     // Unknown / freeform roles default to coordinator semantics — preserves
     // backward-compat for user-spawned agents.

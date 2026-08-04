@@ -1,4 +1,5 @@
 import {
+  Activity,
   Check,
   CheckCircle2,
   Code2,
@@ -288,6 +289,7 @@ interface CodeMessageData {
   exitCode?: number;
   modelTarget?: string;
   parentSessionId?: string;
+  phase?: string;
   paths?: string[];
   query?: string;
   rows?: {
@@ -321,6 +323,7 @@ interface CodeMessageData {
     | "file"
     | "history"
     | "list"
+    | "lifecycle"
     | "model"
     | "note"
     | "patch"
@@ -794,6 +797,14 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
     activeCodingSessionId,
     viewMode === "rich" && overlay?.type === "coding-artifacts",
   );
+  const refetchCodingDetail = codingDetailQuery.refetch;
+
+  useEffect(() => {
+    if (overlay?.type !== "coding-artifacts") return;
+    const latest = messages.at(-1);
+    const code = latest?.perception?.data?.code as CodeMessageData | undefined;
+    if (code?.sessionId === activeCodingSessionId) void refetchCodingDetail();
+  }, [activeCodingSessionId, messages, overlay, refetchCodingDetail]);
 
   useEffect(() => {
     if (overlay?.type === "media") {
@@ -1388,6 +1399,50 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
     );
   };
 
+  const renderLifecycle = (phase?: string) => {
+    const phases = [
+      "received",
+      "inspecting",
+      "planning",
+      "patching",
+      "applying",
+      "verifying",
+      "completed",
+    ];
+    const current = phase ?? "received";
+    const currentIndex = phases.indexOf(current);
+    return (
+      <div className="mt-2 flex min-w-0 items-center gap-1 overflow-x-auto pb-1">
+        {phases.map((item, index) => {
+          const reached = current === "failed" ? false : currentIndex >= index;
+          const active = item === current;
+          return (
+            <div key={item} className="flex shrink-0 items-center gap-1">
+              {index > 0 && (
+                <span className={`h-px w-3 ${reached ? "bg-primary/70" : "bg-border"}`} />
+              )}
+              <span
+                className={`h-2 w-2 rounded-full border ${
+                  active
+                    ? "border-primary bg-primary shadow-[0_0_8px_rgba(56,189,248,0.65)]"
+                    : reached
+                      ? "border-primary/70 bg-primary/40"
+                      : "border-border bg-bg"
+                }`}
+              />
+              <span className={active ? "text-[9px] text-primary" : "text-[9px] text-text-dim"}>
+                {item}
+              </span>
+            </div>
+          );
+        })}
+        {current === "failed" && (
+          <span className="ml-2 text-[9px] font-semibold text-red-300">failed</span>
+        )}
+      </div>
+    );
+  };
+
   // ── Phase 3/4 cards ──────────────────────────────────────────────
   // Interactive approve/deny card. Used for `approval` + `spawn_request`
   // artifacts in both the transcript and the artifacts overlay. Decision
@@ -1558,27 +1613,29 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
       code.event?.includes("failed") ||
       (typeof code.exitCode === "number" && code.exitCode !== 0);
     const Icon =
-      type === "command"
-        ? Terminal
-        : type === "verification"
-          ? failed
-            ? XCircle
-            : CheckCircle2
-          : type === "readiness"
-            ? CheckCircle2
-            : type === "patch"
-              ? GitPullRequest
-              : type === "tree"
-                ? GitBranch
-                : type === "session"
-                  ? Code2
-                  : type === "model"
-                    ? Network
-                    : type === "skill"
-                      ? Sparkles
-                      : type === "profile"
-                        ? List
-                        : FileText;
+      type === "lifecycle"
+        ? Activity
+        : type === "command"
+          ? Terminal
+          : type === "verification"
+            ? failed
+              ? XCircle
+              : CheckCircle2
+            : type === "readiness"
+              ? CheckCircle2
+              : type === "patch"
+                ? GitPullRequest
+                : type === "tree"
+                  ? GitBranch
+                  : type === "session"
+                    ? Code2
+                    : type === "model"
+                      ? Network
+                      : type === "skill"
+                        ? Sparkles
+                        : type === "profile"
+                          ? List
+                          : FileText;
     const title =
       type === "command"
         ? `$ ${(code.command ?? []).join(" ")}`
@@ -1688,6 +1745,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
           renderSessionTaskChip(cardMeta, code.title)
         ) : (
           <>
+            {type === "lifecycle" ? renderLifecycle(code.phase) : null}
             {type === "tree" ? renderCodeTree(code.tree) : null}
             {renderCodeChecks(code.checks)}
             {renderCodeRows(code.rows)}

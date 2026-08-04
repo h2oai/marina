@@ -13,6 +13,8 @@ import { MarinaAgent } from "../client";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
 const AGENT_NAME = process.env.AGENT_NAME ?? "Greeter";
+// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI strip
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 async function main() {
   const agent = new MarinaAgent(WS_URL, { autoReconnect: true });
@@ -23,8 +25,14 @@ async function main() {
 
   // Watch for arrivals and greet them
   agent.onPerception((p) => {
-    if (p.kind === "movement" && p.data?.direction === "arrive") {
-      const name = p.data.entityName as string;
+    const movementArrival =
+      p.kind === "movement" && (p.data?.direction === "arrive" || p.data?.type === "arrive");
+    const connectArrival = p.kind === "message" && p.tag === "connect";
+    if (movementArrival || connectArrival) {
+      const cleanText = String(p.data?.text ?? "").replace(ANSI_RE, "");
+      const name =
+        (p.data?.entityName as string | undefined) ??
+        (connectArrival ? cleanText.match(/^([A-Za-z0-9_]+) connects\.$/)?.[1] : undefined);
       if (name && name !== session.name) {
         console.log(`Greeting ${name}`);
         agent.say(`Welcome, ${name}! How can I help you today?`).catch(() => {});

@@ -38,7 +38,8 @@ const DEFAULT_PREFERENCES: Preferences = {
   mcpPort: 3301,
   tickMs: 1000,
   world: "default",
-  startRoom: "hub/crossroads",
+  // Empty means use the selected world's own startRoom.
+  startRoom: "",
   windowBounds: null,
   recentDatabases: [],
   recentServers: [],

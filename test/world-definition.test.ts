@@ -7,38 +7,33 @@ import { loadRooms } from "../src/world/room-loader";
 import { seedGuidePool } from "../src/world/seed-guide";
 import defaultWorld from "../worlds/default";
 import emptyWorld from "../worlds/empty";
+import showcaseWorld from "../worlds/showcase";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 
 describe("WorldDefinition: default world", () => {
-  it("should have no inline rooms, roomsDir and gridPositions set", () => {
-    expect(Object.keys(defaultWorld.rooms).length).toBe(0); // all rooms from files, none inline
-    expect(defaultWorld.roomsDir).toBeDefined();
+  it("should be a compact inline workbench", () => {
+    expect(defaultWorld.name).toBe("Workbench");
+    expect(Object.keys(defaultWorld.rooms).length).toBe(4);
+    expect(defaultWorld.roomsDir).toBeUndefined();
     expect(defaultWorld.gridPositions).toBeDefined();
-    expect(Object.keys(defaultWorld.gridPositions!).length).toBe(25);
+    expect(Object.keys(defaultWorld.gridPositions!).length).toBe(4);
   });
 
-  it("should load 25 rooms total (all from grid files)", async () => {
+  it("should register its four focused rooms", () => {
     const engine = new Engine({
-      startRoom: roomId("hub/crossroads"),
+      startRoom: defaultWorld.startRoom,
       tickInterval: 60_000,
       world: defaultWorld,
     });
     engine.registerWorldRooms(defaultWorld);
-    await loadRooms(engine, resolve(defaultWorld.roomsDir!));
-    expect(engine.rooms.size).toBe(25);
+    expect(engine.rooms.size).toBe(4);
+    expect(engine.rooms.has(roomId("workbench/start"))).toBe(true);
   });
 
-  it("should have hub/crossroads with multiple exits after loading", async () => {
-    const engine = new Engine({
-      startRoom: roomId("hub/crossroads"),
-      tickInterval: 60_000,
-      world: defaultWorld,
-    });
-    await loadRooms(engine, resolve(defaultWorld.roomsDir!));
-    const center = engine.rooms.get(roomId("hub/crossroads"));
-    expect(center).toBeDefined();
-    expect(center!.module.exits).toBeDefined();
-    expect(Object.keys(center!.module.exits!).length).toBeGreaterThanOrEqual(4);
+  it("starts with an outcome contract and a runtime population hook", () => {
+    expect(defaultWorld.startRoom).toBe(roomId("workbench/start"));
+    expect(defaultWorld.guideNotes[0]?.content).toContain("memory set outcome");
+    expect(defaultWorld.afterAgentsReady).toBeDefined();
   });
 
   it("ships with no ceremony quests — the guide pool is the inheritance surface", () => {
@@ -47,12 +42,52 @@ describe("WorldDefinition: default world", () => {
   });
 
   it("should have guide notes", () => {
-    expect(defaultWorld.guideNotes.length).toBe(45); // 35 original + 5 mode + 3 decomposition + 1 csv-intent + 1 crew
+    expect(defaultWorld.guideNotes.length).toBe(10);
   });
 
   it("should have canvas config", () => {
     expect(defaultWorld.canvas).toBeDefined();
-    expect(defaultWorld.canvas!.name).toBe("global");
+    expect(defaultWorld.canvas!.name).toBe("workbench");
+  });
+
+  it("seeds a compact demo population and visible shared work", () => {
+    const path = "test_workbench_seed.db";
+    const db = new MarinaDB(path);
+    try {
+      defaultWorld.seed?.(db);
+      expect(["Host", "Builder", "Critic", "Chronicler"].every((n) => db.getAgentConfig(n))).toBe(
+        true,
+      );
+      expect(db.getProjectByName("Demo Pulse")).toBeDefined();
+      expect(db.getBoardByName("demo-scenarios")).toBeDefined();
+    } finally {
+      db.close();
+      cleanupDb(path);
+    }
+  });
+});
+
+describe("WorldDefinition: showcase world", () => {
+  it("preserves the full 25-room grid", async () => {
+    expect(Object.keys(showcaseWorld.rooms).length).toBe(0);
+    expect(showcaseWorld.roomsDir).toBeDefined();
+    expect(Object.keys(showcaseWorld.gridPositions!).length).toBe(25);
+
+    const engine = new Engine({
+      startRoom: showcaseWorld.startRoom,
+      tickInterval: 60_000,
+      world: showcaseWorld,
+    });
+    engine.registerWorldRooms(showcaseWorld);
+    await loadRooms(engine, resolve(showcaseWorld.roomsDir!));
+    expect(engine.rooms.size).toBe(25);
+  });
+
+  it("preserves the full guide and runtime crew registration", () => {
+    expect(showcaseWorld.name).toBe("Showcase");
+    expect(showcaseWorld.guideNotes.length).toBe(45);
+    expect(showcaseWorld.canvas?.name).toBe("global");
+    expect(showcaseWorld.afterAgentsReady).toBeDefined();
   });
 });
 
@@ -86,14 +121,14 @@ describe("WorldDefinition: registerWorldRooms", () => {
     expect(engine.rooms.has(roomId("void/center"))).toBe(true);
   });
 
-  it("should register all 25 rooms from default world (all files)", async () => {
+  it("should register all 25 rooms from showcase world (all files)", async () => {
     const engine = new Engine({
       startRoom: roomId("hub/crossroads"),
       tickInterval: 60_000,
-      world: defaultWorld,
+      world: showcaseWorld,
     });
-    engine.registerWorldRooms(defaultWorld);
-    await loadRooms(engine, resolve(defaultWorld.roomsDir!));
+    engine.registerWorldRooms(showcaseWorld);
+    await loadRooms(engine, resolve(showcaseWorld.roomsDir!));
     expect(engine.rooms.size).toBe(25);
   });
 });
@@ -154,7 +189,7 @@ describe("WorldDefinition: onComplete callback", () => {
       startRoom: roomId("hub/crossroads"),
       tickInterval: 60_000,
       db,
-      world: defaultWorld,
+      world: showcaseWorld,
     });
     engine.registerRoom(
       roomId("hub/crossroads"),

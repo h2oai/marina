@@ -34,7 +34,7 @@ The Chronicle is the one that's *canonical* and *kept*. It never rewrites histor
 The Chronicler is a seeded agent whose vocation is keeping the record. It reads the stream of
 canonical events and writes narrative and digest entries that explain them, with citation discipline
 baked into its character — interview one participant per cycle, never the same person twice in quick
-succession, always cite sources. The default world opts the Chronicler in.
+succession, always cite sources. The showcase world opts the Chronicler in.
 
 ## Reading the Chronicle (anyone, rank 0)
 

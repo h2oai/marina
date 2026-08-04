@@ -375,15 +375,24 @@ export class LeanAgentAdapter implements AgentHandle {
   private loopIterationCount = 0;
   private stuckCycles = 0;
   private silentTurns = 0;
+  /** True while the current prompt contains a direct/model request. Silent
+   * recovery is valuable for a missed request, but wasteful for quiet turns. */
+  private currentPromptActionable = false;
   /** In-run followUp-based silent recoveries. Resets on agent_start. */
   private inRunRecoveries = 0;
+  private currentRunToolCalls = 0;
+  /** Allow one public update per model run; targeted tells remain unrestricted. */
+  private currentRunChannelSends = 0;
   private static readonly MAX_IN_RUN_RECOVERIES = 1;
   /** Consecutive silent turns past which the loop stops re-prompting at full
    *  cadence and backs off (circuit-breaker). A persistently-silent model
    *  (often a reasoning model exhausting its output budget before a tool call)
    *  would otherwise burn tokens forever with no recovery and no surfaced cause. */
-  private static readonly SILENT_TURN_BACKOFF_THRESHOLD = 6;
+  private static readonly SILENT_TURN_BACKOFF_THRESHOLD = 3;
   private recentCommands: string[] = [];
+  /** Prevent named channel mentions from creating agent↔agent ping-pong. This
+   * is a per-agent channel cadence; direct tells and endpoint requests are never throttled. */
+  private lastChannelResponseAt = 0;
 
   private metrics = {
     toolCalls: 0,
@@ -672,10 +681,20 @@ export class LeanAgentAdapter implements AgentHandle {
           : () => apiKey
         : undefined,
       beforeToolCall: async (context) => {
-        this.hookRegistry.runBeforeToolCall(
-          context.toolCall.name,
-          (context.args ?? {}) as Record<string, unknown>,
-        );
+        const args = (context.args ?? {}) as Record<string, unknown>;
+        const command = typeof args.command === "string" ? args.command.trim().toLowerCase() : "";
+        const isChannelSend =
+          (context.toolCall.name === "marina_channel" && args.action === "send") ||
+          (context.toolCall.name === "marina_command" && /^channel\s+send\b/.test(command));
+        if (isChannelSend && this.currentRunChannelSends >= 1) {
+          return {
+            block: true,
+            reason:
+              "One public channel update is allowed per run. Continue working, use marina_tell for a targeted handoff, or wait for the next perception.",
+          };
+        }
+        if (isChannelSend) this.currentRunChannelSends++;
+        this.hookRegistry.runBeforeToolCall(context.toolCall.name, args);
         return undefined;
       },
       afterToolCall: async (context) => {
@@ -719,13 +738,22 @@ export class LeanAgentAdapter implements AgentHandle {
             }
 
             const lastEvent = events[events.length - 1];
-            const priority = lastEvent
+            let priority = lastEvent
               ? this.socialAwareness.scorePerception(lastEvent, this.name)
               : 15;
-            const respond =
-              priority < 80 && lastEvent
-                ? this.socialAwareness.shouldRespond(lastEvent, this.name)
-                : false;
+            let respond =
+              priority >= 80 ||
+              (this.config.role === "guide" && lastEvent?.type === "player_entered_room") ||
+              (lastEvent ? this.socialAwareness.shouldRespond(lastEvent, this.name) : false);
+            if (lastEvent?.type === "channel_message" && lastEvent.speaker && priority < 90) {
+              const cooldownMs = Number(process.env.AGENT_CHANNEL_REPLY_COOLDOWN_MS) || 30_000;
+              if (Date.now() - this.lastChannelResponseAt < cooldownMs) {
+                priority = Math.min(priority, 40);
+                respond = false;
+              } else if (respond) {
+                this.lastChannelResponseAt = Date.now();
+              }
+            }
 
             // Priority-aware buffer trim. When buffer exceeds cap*5, keep
             // (a) all high-priority events (>=80) regardless of age, plus
@@ -767,7 +795,10 @@ export class LeanAgentAdapter implements AgentHandle {
             // benefit most: their loop only fires when perceptions arrive,
             // so wake-on-perception eliminates wall-clock dead time
             // between coordinator dispatch and specialist response.
-            this.cycleWaiter.wake();
+            // Ambient connects, movement, and channel chatter remain available
+            // to the next reflective cycle but do not each purchase an LLM
+            // turn. Addressed messages and endpoint requests still wake now.
+            if (respond || priority >= 80) this.cycleWaiter.wake();
 
             // High-priority perceptions interrupt immediately
             if (priority >= 80) {
@@ -984,8 +1015,16 @@ export class LeanAgentAdapter implements AgentHandle {
         // continuation entirely — no LLM call, no token cost, no autonomous
         // drift between coordinator messages. They re-enter the loop the
         // moment a perception arrives. See docs/crew-fast-dispatch-design.md.
-        if (this.config.crewResponder && this.pendingPerceptions.length === 0) {
-          continue;
+        if (this.config.crewResponder) {
+          const actionable = this.pendingPerceptions.some(
+            (perception) => perception.shouldRespond || perception.priority >= 80,
+          );
+          if (!actionable) {
+            // Service agents perceive ambient activity without waking the LLM.
+            // Direct tells and model requests remain edge-triggered below.
+            this.pendingPerceptions = [];
+            continue;
+          }
         }
 
         const continuationPrompt = await this.buildContinuationPrompt();
@@ -1176,14 +1215,22 @@ export class LeanAgentAdapter implements AgentHandle {
     // `<think>` AND emit a tool call — the prior 4096 ceiling truncated them
     // mid-reasoning, so the agent connected but never acted. The compactor
     // already reserves at most half the window for output, so half is the
-    // natural split. Cloud models keep the provider's own default (undefined →
-    // not sent).
+    // natural split. Request-driven cloud agents use a deliberately compact
+    // ceiling: endpoint answers and specialist handoffs should not spend tens
+    // of thousands of tokens before acting. Autonomous cloud agents keep the
+    // provider default unless explicitly configured.
+    const crewCloudMaxTokens = Number(process.env.AGENT_CREW_MAX_TOKENS) || 2048;
+    const compactCloudMaxTokens = Number(process.env.AGENT_COMPACT_MAX_TOKENS) || 4096;
     this.outputMaxTokens =
       this.config.maxTokens && this.config.maxTokens > 0
         ? this.config.maxTokens
         : isLocal
           ? localOutputBudget(this.model.contextWindow)
-          : undefined;
+          : this.config.crewResponder
+            ? crewCloudMaxTokens
+            : this.config.toolProfile === "crew"
+              ? compactCloudMaxTokens
+              : undefined;
     if (this.outputMaxTokens) {
       this.model = { ...this.model, maxTokens: this.outputMaxTokens } as Model<Api>;
     }
@@ -1269,10 +1316,12 @@ export class LeanAgentAdapter implements AgentHandle {
       return Math.min(120_000, 15_000 * over);
     }
 
-    const hasPerceptions = this.pendingPerceptions.length > 0;
+    const hasActionablePerceptions = this.pendingPerceptions.some(
+      (perception) => perception.shouldRespond || perception.priority >= 80,
+    );
 
     // Events incoming — fast tick
-    if (hasPerceptions) return rate.min;
+    if (hasActionablePerceptions) return rate.min;
 
     // Actively working on a focus with recent actions
     const recentToolCalls = this.actionHistory
@@ -1294,10 +1343,17 @@ export class LeanAgentAdapter implements AgentHandle {
 
     // Default rates derived from the configured loopCycleDelay
     const base = this.loopCycleDelay;
+    const active =
+      Number(process.env.AGENT_ACTIVE_TICK_MS) > 0
+        ? Number(process.env.AGENT_ACTIVE_TICK_MS)
+        : Math.max(15_000, base);
     this.cachedTickRate = {
       min: Math.max(1000, Math.round(base * 0.5)),
-      normal: base,
-      idle: Math.min(15_000, base * 5),
+      normal: active,
+      idle:
+        Number(process.env.AGENT_IDLE_TICK_MS) > 0
+          ? Number(process.env.AGENT_IDLE_TICK_MS)
+          : Math.max(60_000, base * 5),
     };
     return this.cachedTickRate;
   }
@@ -1338,6 +1394,7 @@ export class LeanAgentAdapter implements AgentHandle {
   private async buildContinuationPrompt(): Promise<string> {
     this.loopIterationCount++;
     this.sectionHashCycle++;
+    this.currentPromptActionable = false;
     const cycle = this.loopIterationCount;
     const parts: string[] = [];
 
@@ -1379,8 +1436,16 @@ export class LeanAgentAdapter implements AgentHandle {
       const batch = this.pendingPerceptions.splice(0);
       batch.sort((a, b) => b.priority - a.priority);
       const topEvents = batch.slice(0, this.perceptionBufferCap);
+      this.currentPromptActionable = topEvents.some(
+        (perception) => perception.shouldRespond || perception.priority >= 80,
+      );
       const lines = topEvents.map((p) => (p.shouldRespond ? `[!] ${p.text}` : p.text));
       parts.push(`[World Events]\n${lines.join("\n")}`);
+      if (topEvents.some((p) => p.text.includes('"type":"model_request"'))) {
+        parts.push(
+          "[ENDPOINT REQUEST — RESPONSE REQUIRED]\nAnswer the model_request now. Your prose is not delivered to the caller. Use `marina_channel` to send a JSON `model_response` on the same model channel with the exact request `id`, or delegate with `marina_tell` and then send that response. Emit the tool call in this turn.",
+        );
+      }
       if (topEvents.some((p) => p.shouldRespond)) {
         parts.push("Events marked [!] await your response.");
       }
@@ -1683,11 +1748,11 @@ The goal is a smaller, sharper memory — not more notes.`;
 
     // ── 11. Forced action escalation (silent turns) ──
     // After one silent turn, nudge. After 3+, require a tool call.
-    if (this.silentTurns >= 3) {
+    if (this.currentPromptActionable && this.silentTurns >= 2) {
       parts.push(
         `[FORCED ACTION REQUIRED]\nYou have returned ${this.silentTurns} consecutive turns with zero tool calls. Text-only responses are not acceptable. You MUST emit at least one tool call this turn. If nothing else, use the \`think\` tool with your current thought, or marina_command with "look". Pure prose responses cannot participate in the world.`,
       );
-    } else if (this.silentTurns > 0) {
+    } else if (this.currentPromptActionable && this.silentTurns > 0) {
       parts.push(
         "[You returned no tool calls last turn — was that intentional? If you want to act, remember: you only participate in the world through tool calls.]",
       );
@@ -1768,6 +1833,8 @@ The goal is a smaller, sharper memory — not more notes.`;
       // can attempt followUp-based recovery fresh every cycle.
       if (event.type === "agent_start") {
         this.inRunRecoveries = 0;
+        this.currentRunToolCalls = 0;
+        this.currentRunChannelSends = 0;
       }
 
       // Turn boundaries — relay to our observers so dashboards and other
@@ -1840,7 +1907,10 @@ The goal is a smaller, sharper memory — not more notes.`;
           // run end and the next cycle's prompt carries the forced-action
           // section. Instant self-correction when the model just needed
           // a nudge; graceful fallback when it didn't.
-          if (this.inRunRecoveries < LeanAgentAdapter.MAX_IN_RUN_RECOVERIES) {
+          if (
+            this.currentPromptActionable &&
+            this.inRunRecoveries < LeanAgentAdapter.MAX_IN_RUN_RECOVERIES
+          ) {
             this.inRunRecoveries++;
             this.agent.followUp({
               role: "user",
@@ -1857,6 +1927,7 @@ The goal is a smaller, sharper memory — not more notes.`;
         } else {
           this.silentTurns = 0;
           this.metrics.silentTurns = 0;
+          this.currentPromptActionable = false;
         }
       }
 
@@ -1864,6 +1935,7 @@ The goal is a smaller, sharper memory — not more notes.`;
         // beforeToolCall hook runs via the framework (AgentOptions.beforeToolCall),
         // so we don't fire hookRegistry here — would double-fire.
         this.metrics.toolCalls++;
+        this.currentRunToolCalls++;
         this.metrics.lastActivity = Date.now();
         this.actionHistory.addAction({
           timestamp: Date.now(),
@@ -1889,6 +1961,20 @@ The goal is a smaller, sharper memory — not more notes.`;
         // afterToolCall hook runs via the framework (AgentOptions.afterToolCall),
         // so we don't fire hookRegistry here — would double-fire.
         if (event.isError) this.metrics.errors++;
+
+        const configuredRunCap = Number(process.env.AGENT_MAX_TOOL_CALLS_PER_RUN);
+        const runCap =
+          configuredRunCap > 0
+            ? configuredRunCap
+            : this.config.crewResponder || this.config.toolProfile === "crew"
+              ? 8
+              : 16;
+        if (this.currentRunToolCalls >= runCap) {
+          console.warn(
+            `[lean-agent] "${this.name}" reached the ${runCap}-tool per-run safety budget; yielding until the next perception/cycle`,
+          );
+          this.agent.abort();
+        }
 
         this.actionHistory.addAction({
           timestamp: Date.now(),

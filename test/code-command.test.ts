@@ -1525,6 +1525,7 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
       },
     };
     const notified: string[] = [];
+    const notifications: Record<string, unknown>[] = [];
     const command = codeCommand({
       db,
       getEntity: (id) =>
@@ -1537,7 +1538,10 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
       },
       listAgents: () => [{ name: "Coder" }],
       findAgentByName: (n: string) => (n === "Coder" ? coderEntity : undefined),
-      notify: (id: string, message: string) => notified.push(`${id}:${stripAnsi(message)}`),
+      notify: (id: string, message: string, metadata?: Record<string, unknown>) => {
+        notified.push(`${id}:${stripAnsi(message)}`);
+        if (metadata) notifications.push(metadata);
+      },
     });
     const ctx = testRoomContext([]);
     await command.handler(ctx, inputFor(alice, "code do explore the repo"));
@@ -1551,11 +1555,33 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
     });
     sub.fn?.({ type: "text_delta", delta: "Found the issue." });
     sub.fn?.({ type: "turn_end", hadToolCalls: true, toolCount: 1 });
+    sub.fn?.({
+      type: "tool_call",
+      toolName: "marina_code",
+      args: { action: "verify" },
+    });
+    sub.fn?.({
+      type: "tool_call",
+      toolName: "marina_code",
+      args: { action: "summary", text: "Verified the fix" },
+    });
 
     const joined = notified.join("\n");
     expect(joined).toContain("u_alice:");
     expect(joined).toContain("code read src/x.ts");
     expect(joined).toContain("Coder: Found the issue.");
+    expect(notifications.map((item) => (item.code as { phase?: string })?.phase)).toEqual([
+      "inspecting",
+      "verifying",
+      "completed",
+    ]);
+    const sessionId = alice.properties.coding_session_id as string;
+    const lifecycle = db
+      .listCodingEvents(sessionId, 50)
+      .filter((event) => event.kind === "code_lifecycle");
+    expect(new Set(lifecycle.map((event) => JSON.parse(event.payload_json).phase))).toEqual(
+      new Set(["received", "inspecting", "verifying", "completed"]),
+    );
   });
 
   it("`code driver crew` switches the session's dispatch strategy", async () => {

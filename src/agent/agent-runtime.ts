@@ -88,8 +88,20 @@ const MAX_AGENT_UPTIME_MS = Number(process.env.MAX_AGENT_UPTIME_MS) || 24 * 60 *
  * profiles stay in the codebase for deliberate experiments; flip via
  * `AgentConfig.toolProfile`.
  */
-function inferToolProfile(_role: string | null | undefined): "full" | "crew" | "minimal" {
-  return "full";
+const COMPACT_TOOL_ROLES = new Set([
+  "general",
+  "guide",
+  "architect",
+  "scholar",
+  "chronicler",
+  "coding-agent",
+]);
+
+function inferToolProfile(role: string | null | undefined): "full" | "crew" | "minimal" {
+  const normalized = role?.trim().toLowerCase();
+  return inferCrewResponder(normalized) || (normalized ? COMPACT_TOOL_ROLES.has(normalized) : false)
+    ? "crew"
+    : "full";
 }
 
 /**
@@ -99,9 +111,9 @@ function inferToolProfile(_role: string | null | undefined): "full" | "crew" | "
  * consolidation are all suppressed when crewResponder=true). See
  * `AgentConfig.crewResponder` and docs/crew-fast-dispatch-design.md.
  *
- * Coordinator roles (answerer, councilor, debater, decomposer) are
- * deliberately NOT in this set — they need the full cognitive cycle to
- * drive dispatch decisions between specialist replies.
+ * Endpoint coordinators are event-driven too: they retain full autonomy over
+ * routing and synthesis after a request arrives, but do not wander into
+ * unrelated bounties while callers wait or burn tokens between requests.
  *
  * Adding a role here is the single touchpoint for marking a new
  * specialist as a crew responder; no DB migration needed because the
@@ -113,8 +125,13 @@ const CREW_RESPONDER_ROLES = new Set<string>([
   "format-verifier",
   "historian",
   "scholar",
+  "chronicler",
   "crew-reflector",
   "translator",
+  "answerer",
+  "councilor",
+  "debater",
+  "decomposer",
 ]);
 
 export function inferCrewResponder(role: string | null | undefined): boolean {

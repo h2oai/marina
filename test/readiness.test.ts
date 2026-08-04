@@ -63,6 +63,7 @@ describe("computeReadiness", () => {
     expect(find("model-api").status).toBe("off");
     // Room agents enabled-by-default but no key → degraded, not off.
     expect(find("room-agents").status).toBe("degraded");
+    expect(computeReadiness(engine).demo.status).toBe("degraded");
   });
 
   it("flips llm-key and room-agents to ok when a provider key is present", () => {

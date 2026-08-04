@@ -505,7 +505,8 @@ Marina uses a **WorldDefinition** system that separates world configuration from
 
 | World | Purpose | What Gets Seeded |
 |-------|---------|-----------------|
-| `default` | Full-featured launchpad | 5x5 grid, 3 seeded projects, 9 room templates, prediction markets, benchmarks, craft workflow, 5 objectives, guide pool |
+| `default` | Intent-first workbench | 4 focused rooms, outcome/evidence/constraints contract, compact world guide, welcome board, general channel |
+| `showcase` | Full capability showcase | 5x5 grid, seeded projects, room templates, prediction markets, benchmarks, craft workflow, guide pool, specialist crews |
 | `commons` | Multi-agent coordination | 8 room templates, 3 projects (Exploration/Research/Curation), tasks, themed guide notes |
 | `research` | Research lab | Lab/observatory/archive templates, research project with experiments |
 | `personal` | Self-evolving agent | 5 focused rooms, mindroom/workspace templates, self-evolution objectives |
@@ -518,7 +519,8 @@ Marina uses a **WorldDefinition** system that separates world configuration from
 Rooms are programs, not data. A room can monitor a service, query a database, orchestrate an API pipeline, or run any TypeScript logic. Room code is sandboxed (static analysis + runtime error tracking with auto-disable). Rooms can be created from within the platform with `build room` and hot-reloaded with `build reload`. Rooms also have access to `ctx.brief` to push compass signals to entities.
 
 ```bash
-MARINA_WORLD=default bun run src/main.ts    # full-featured launchpad (default)
+MARINA_WORLD=default bun run src/main.ts    # intent-first workbench (default)
+MARINA_WORLD=showcase bun run src/main.ts   # full 25-room capability showcase
 MARINA_WORLD=commons bun run src/main.ts    # coordination-ready world
 MARINA_WORLD=research bun run src/main.ts   # research lab
 MARINA_WORLD=personal bun run src/main.ts   # self-evolving agent
