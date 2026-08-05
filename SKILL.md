@@ -560,7 +560,10 @@ Approved, rejected, and expired task claims automatically calibrate attention wi
 operator feedback. Success raises the filtering threshold slightly; failure lowers it more strongly
 to admit broader context. Thresholds remain bounded, replayed terminal events do not train twice,
 and manual `attention-feedback` remains an override. Inspect measured outcomes with `productivity`,
-`productivity agent <name>`, `productivity leaderboard`, or `productivity trend`.
+`productivity agent <name>`, `productivity leaderboard`, or `productivity trend`. Use `productivity
+primitives [name]` to verify meaningful world actions, communication, primitive diversity, and
+model-tool provenance. Tool calls alone never count as meaningful activity, and arguments or tool
+payloads are not retained.
 
 ### Roles
 

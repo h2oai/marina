@@ -22,6 +22,7 @@ import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import type { MarinaDB } from "../persistence/database";
 import { writeSample } from "../resolvers/sample-writer";
 import type { StorageProvider } from "../storage/provider";
+import { classifyPrimitive, isMarinaTool } from "../telemetry/primitive-usage";
 import type {
   CommandContext,
   Connection,
@@ -715,6 +716,7 @@ export class Engine {
 
   /** Process a single command immediately */
   async processCommand(entityId: EntityId, raw: string): Promise<void> {
+    const commandStartedAt = Date.now();
     const entity = this.entities.get(entityId);
     if (!entity) return;
 
@@ -722,6 +724,24 @@ export class Engine {
     const input = this.commands.parse(routedRaw, entityId, entity.room);
 
     if (!input.verb) return;
+    const def = this.commands.getDef(input.verb);
+
+    const recordUsage = (success: boolean) => {
+      if (!this.db) return;
+      const classification = classifyPrimitive(routedRaw, def?.name);
+      tryLog(this.logger, "telemetry", "Primitive usage recording failed", () => {
+        this.db!.recordPrimitiveUsage({
+          actorId: String(entityId),
+          actorName: entity.name,
+          actorKind: entity.kind,
+          source: "command",
+          ...classification,
+          success,
+          latencyMs: Date.now() - commandStartedAt,
+          createdAt: commandStartedAt,
+        });
+      });
+    };
 
     const room = this.rooms.get(entity.room);
     const handler = this.commands.resolve(input.verb, room?.module.commands);
@@ -744,11 +764,11 @@ export class Engine {
         }
       }
       this.sendToEntity(entityId, `Unknown command: ${input.verb}. Type "help" for commands.`);
+      recordUsage(false);
       return;
     }
 
     // Enforce minRank on built-in commands
-    const def = this.commands.getDef(input.verb);
     if (def?.minRank && def.minRank > 0) {
       const rank = getRank(entity);
       if (rank < def.minRank) {
@@ -756,6 +776,7 @@ export class Engine {
           entityId,
           `You must be at least ${rankName(def.minRank)} (rank ${def.minRank}) to use "${def.name}".`,
         );
+        recordUsage(false);
         return;
       }
     }
@@ -769,6 +790,7 @@ export class Engine {
       const result = checkGate(this.db, entityId, def.gate);
       if (!result.ok) {
         this.sendToEntity(entityId, result.reason ?? `Gate "${def.gate}" denied.`);
+        recordUsage(false);
         return;
       }
       if (result.supervisedOnly) pendingDemo = { gate: def.gate };
@@ -806,6 +828,7 @@ export class Engine {
           });
         }
       }
+      recordUsage(false);
       return;
     }
 
@@ -831,6 +854,8 @@ export class Engine {
         recordDemonstration(this.db!, entityId, pendingDemo!.gate);
       });
     }
+
+    recordUsage(!handlerThrew);
 
     this.logEvent({ type: "command", entity: entityId, input: routedRaw, timestamp: Date.now() });
   }
@@ -1700,6 +1725,25 @@ export class Engine {
         // event log. Cache invalidation happens on the next read regardless.
       }
       try {
+        if (event.type === "agent_tool_call") {
+          const entity = this.entities.findAgentByName(event.name);
+          db.recordPrimitiveUsage({
+            actorId: entity ? String(entity.id) : undefined,
+            actorName: event.name,
+            actorKind: "agent",
+            source: "agent_tool",
+            primitive: isMarinaTool(event.toolName) ? "marina" : "reasoning",
+            action: event.toolName,
+            safeLabel: event.toolName,
+            toolName: event.toolName,
+            meaningful: false,
+            worldAction: false,
+            communication: false,
+            createdAt: event.timestamp,
+          });
+        } else if (event.type === "agent_tool_result") {
+          db.finishAgentToolUsage(event.name, event.toolName, !event.isError, event.timestamp);
+        }
         if (event.type === "task_claimed") {
           const entity = this.entities.get(event.entity);
           if (entity) {

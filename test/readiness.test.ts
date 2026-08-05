@@ -100,4 +100,31 @@ describe("computeReadiness", () => {
     process.env.MARINA_ROOM_AGENTS = "false";
     expect(find("room-agents").status).toBe("off");
   });
+
+  it("requires recent meaningful communication from multiple agents as participation proof", () => {
+    const record = (actorName: string, communication = false) =>
+      db.recordPrimitiveUsage({
+        actorName,
+        actorKind: "agent",
+        source: "command",
+        primitive: communication ? "communication" : "memory",
+        action: communication ? "tell" : "note",
+        safeLabel: communication ? "tell" : "note",
+        success: true,
+        meaningful: true,
+        worldAction: true,
+        communication,
+      });
+    record("Ada");
+    record("Ada", true);
+    record("Grace");
+
+    const report = computeReadiness(engine);
+    expect(report.checks.find((check) => check.id === "primitive-evidence")?.status).toBe("ok");
+    expect(report.demo).toMatchObject({
+      recentPrimitiveActions: 3,
+      activeAgents: 2,
+      recentCommunications: 1,
+    });
+  });
 });

@@ -1562,6 +1562,32 @@ CREATE INDEX idx_productivity_entity ON productivity_sessions(entity_name, compl
 CREATE INDEX idx_productivity_outcome ON productivity_sessions(outcome, completed_at DESC);
 `,
   },
+  // Migration 58: durable, human-agent-symmetric primitive telemetry.
+  {
+    version: 58,
+    sql: `
+CREATE TABLE primitive_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  actor_id TEXT,
+  actor_name TEXT NOT NULL,
+  actor_kind TEXT NOT NULL,
+  source TEXT NOT NULL,
+  primitive TEXT NOT NULL,
+  action TEXT NOT NULL,
+  safe_label TEXT NOT NULL,
+  tool_name TEXT,
+  success INTEGER,
+  meaningful INTEGER NOT NULL DEFAULT 0,
+  world_action INTEGER NOT NULL DEFAULT 0,
+  communication INTEGER NOT NULL DEFAULT 0,
+  latency_ms INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_primitive_usage_actor ON primitive_usage(actor_name, created_at DESC);
+CREATE INDEX idx_primitive_usage_source ON primitive_usage(source, created_at DESC);
+CREATE INDEX idx_primitive_usage_meaningful ON primitive_usage(meaningful, created_at DESC);
+`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -1599,6 +1625,26 @@ export interface ProductivityTrendPoint {
   averageDurationMs: number;
   averageToolCalls: number;
   averageHandoffs: number;
+}
+
+export interface PrimitiveUsageSummary {
+  entityName: string | null;
+  commands: number;
+  meaningfulActions: number;
+  meaningfulRate: number;
+  worldActions: number;
+  communications: number;
+  primitiveDiversity: number;
+  activeParticipants: number;
+  activeAgents: number;
+  toolCalls: number;
+  marinaToolCalls: number;
+  reasoningOnlyCalls: number;
+  lastActionAt: number | null;
+  outcomeSessions: number;
+  approvedMeaningfulAverage: number;
+  failedMeaningfulAverage: number;
+  topPrimitives: Array<{ primitive: string; count: number }>;
 }
 
 export interface DirectMessageRow {
@@ -2912,6 +2958,168 @@ export class MarinaDB {
       ),
       averageHandoffs: average(entries.map((row) => row.handoffs)),
     }));
+  }
+
+  recordPrimitiveUsage(input: {
+    actorId?: string;
+    actorName: string;
+    actorKind: string;
+    source: "command" | "agent_tool";
+    primitive: string;
+    action: string;
+    safeLabel: string;
+    toolName?: string;
+    success?: boolean;
+    meaningful?: boolean;
+    worldAction?: boolean;
+    communication?: boolean;
+    latencyMs?: number;
+    createdAt?: number;
+  }): number {
+    const result = this.db.run(
+      `INSERT INTO primitive_usage
+       (actor_id,actor_name,actor_kind,source,primitive,action,safe_label,tool_name,success,
+        meaningful,world_action,communication,latency_ms,created_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        input.actorId ?? null,
+        input.actorName,
+        input.actorKind,
+        input.source,
+        input.primitive,
+        input.action,
+        input.safeLabel,
+        input.toolName ?? null,
+        input.success === undefined ? null : input.success ? 1 : 0,
+        input.meaningful ? 1 : 0,
+        input.worldAction ? 1 : 0,
+        input.communication ? 1 : 0,
+        input.latencyMs ?? null,
+        input.createdAt ?? Date.now(),
+      ],
+    );
+    return Number(result.lastInsertRowid);
+  }
+
+  finishAgentToolUsage(
+    actorName: string,
+    toolName: string,
+    success: boolean,
+    at = Date.now(),
+  ): void {
+    const row = this.db
+      .query(
+        `SELECT id,created_at FROM primitive_usage
+         WHERE actor_name=? AND source='agent_tool' AND tool_name=? AND success IS NULL
+         ORDER BY id DESC LIMIT 1`,
+      )
+      .get(actorName, toolName) as { id: number; created_at: number } | null;
+    if (!row) return;
+    this.db.run("UPDATE primitive_usage SET success=?,latency_ms=? WHERE id=?", [
+      success ? 1 : 0,
+      Math.max(0, at - row.created_at),
+      row.id,
+    ]);
+  }
+
+  getPrimitiveUsageSummary(entityName?: string, days = 7): PrimitiveUsageSummary {
+    const since = Date.now() - Math.max(1 / 1440, days) * 86_400_000;
+    const where = entityName ? "AND actor_name=?" : "";
+    const args = entityName ? [since, entityName] : [since];
+    const row = this.db
+      .query(
+        `SELECT
+          SUM(CASE WHEN source='command' THEN 1 ELSE 0 END) commands,
+          SUM(CASE WHEN source='command' AND meaningful=1 THEN 1 ELSE 0 END) meaningful_actions,
+          SUM(CASE WHEN source='command' AND world_action=1 THEN 1 ELSE 0 END) world_actions,
+          SUM(CASE WHEN source='command' AND communication=1 THEN 1 ELSE 0 END) communications,
+          COUNT(DISTINCT CASE WHEN source='command' AND meaningful=1 THEN primitive END) diversity,
+          COUNT(DISTINCT CASE WHEN source='command' AND meaningful=1 THEN actor_name END) participants,
+          COUNT(DISTINCT CASE WHEN source='command' AND meaningful=1 AND actor_kind='agent' THEN actor_name END) agents,
+          SUM(CASE WHEN source='agent_tool' THEN 1 ELSE 0 END) tool_calls,
+          SUM(CASE WHEN source='agent_tool' AND tool_name LIKE 'marina_%' THEN 1 ELSE 0 END) marina_tools,
+          SUM(CASE WHEN source='agent_tool' AND tool_name='think' THEN 1 ELSE 0 END) reasoning_only,
+          MAX(CASE WHEN source='command' AND meaningful=1 THEN created_at END) last_action
+         FROM primitive_usage WHERE created_at>=? ${where}`,
+      )
+      .get(...args) as {
+      commands: number | null;
+      meaningful_actions: number | null;
+      world_actions: number | null;
+      communications: number | null;
+      diversity: number | null;
+      participants: number | null;
+      agents: number | null;
+      tool_calls: number | null;
+      marina_tools: number | null;
+      reasoning_only: number | null;
+      last_action: number | null;
+    };
+    const commands = row.commands ?? 0;
+    const meaningfulActions = row.meaningful_actions ?? 0;
+    const topPrimitives = this.db
+      .query(
+        `SELECT primitive,COUNT(*) count FROM primitive_usage
+         WHERE created_at>=? AND source='command' AND meaningful=1 ${where}
+         GROUP BY primitive ORDER BY count DESC,primitive LIMIT 8`,
+      )
+      .all(...args) as Array<{ primitive: string; count: number }>;
+    const sessions = this.db
+      .query(
+        `SELECT ps.outcome,COUNT(pu.id) meaningful
+         FROM productivity_sessions ps LEFT JOIN primitive_usage pu
+           ON pu.actor_name=ps.entity_name AND pu.source='command' AND pu.meaningful=1
+           AND pu.created_at BETWEEN ps.started_at AND ps.completed_at
+         WHERE ps.completed_at IS NOT NULL AND ps.completed_at>=? ${
+           entityName ? "AND ps.entity_name=?" : ""
+}
+         GROUP BY ps.id`,
+      )
+      .all(...args) as Array<{ outcome: string; meaningful: number }>;
+    const average = (values: number[]) =>
+      values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+    return {
+      entityName: entityName ?? null,
+      commands,
+      meaningfulActions,
+      meaningfulRate: commands ? meaningfulActions / commands : 0,
+      worldActions: row.world_actions ?? 0,
+      communications: row.communications ?? 0,
+      primitiveDiversity: row.diversity ?? 0,
+      activeParticipants: row.participants ?? 0,
+      activeAgents: row.agents ?? 0,
+      toolCalls: row.tool_calls ?? 0,
+      marinaToolCalls: row.marina_tools ?? 0,
+      reasoningOnlyCalls: row.reasoning_only ?? 0,
+      lastActionAt: row.last_action,
+      outcomeSessions: sessions.length,
+      approvedMeaningfulAverage: average(
+        sessions
+          .filter((session) => session.outcome === "approved")
+          .map((session) => session.meaningful),
+      ),
+      failedMeaningfulAverage: average(
+        sessions
+          .filter((session) => session.outcome !== "approved")
+          .map((session) => session.meaningful),
+      ),
+      topPrimitives,
+    };
+  }
+
+  getPrimitiveUsageLeaderboard(limit = 20): PrimitiveUsageSummary[] {
+    const names = this.db
+      .query("SELECT DISTINCT actor_name FROM primitive_usage WHERE actor_kind='agent'")
+      .all() as Array<{ actor_name: string }>;
+    return names
+      .map((row) => this.getPrimitiveUsageSummary(row.actor_name))
+      .sort(
+        (a, b) =>
+          b.meaningfulActions - a.meaningfulActions ||
+          b.primitiveDiversity - a.primitiveDiversity ||
+          b.meaningfulRate - a.meaningfulRate,
+      )
+      .slice(0, limit);
   }
 
   touchNote(id: number): void {

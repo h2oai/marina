@@ -40,6 +40,10 @@ export interface ReadinessReport {
     warmAgents: number;
     expectedAgents: number;
     recentMeaningfulEvents: number;
+    recentPrimitiveActions: number;
+    activeParticipants: number;
+    activeAgents: number;
+    recentCommunications: number;
     medianResponseMs?: number;
   };
 }
@@ -276,6 +280,10 @@ export function computeReadiness(engine: Engine): ReadinessReport {
     );
   }).length;
   let recentMeaningfulEvents = 0;
+  let recentPrimitiveActions = 0;
+  let activeParticipants = 0;
+  let activeAgents = 0;
+  let recentCommunications = 0;
   const responseDurations: number[] = [];
   try {
     const recent = engine.db?.queryFeedEvents({ since: Date.now() - 5 * 60_000, limit: 200 }) ?? [];
@@ -299,6 +307,15 @@ export function computeReadiness(engine: Engine): ReadinessReport {
     }
   } catch {
     // A closed/new database should degrade the score, never readiness itself.
+  }
+  try {
+    const usage = engine.db?.getPrimitiveUsageSummary(undefined, 5 / 1440);
+    recentPrimitiveActions = usage?.meaningfulActions ?? 0;
+    activeParticipants = usage?.activeParticipants ?? 0;
+    activeAgents = usage?.activeAgents ?? 0;
+    recentCommunications = usage?.communications ?? 0;
+  } catch {
+    // Primitive evidence is additive and must never break readiness.
   }
   responseDurations.sort((a, b) => a - b);
   const medianResponseMs =
@@ -326,6 +343,10 @@ export function computeReadiness(engine: Engine): ReadinessReport {
     warmAgents,
     expectedAgents: expectedNames.length,
     recentMeaningfulEvents,
+    recentPrimitiveActions,
+    activeParticipants,
+    activeAgents,
+    recentCommunications,
     ...(medianResponseMs !== undefined ? { medianResponseMs } : {}),
   };
   checks.push({
@@ -338,6 +359,20 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       : {
           remediation:
             "Enable AGENT_AUTORESPAWN, wait for seeded agents to warm, then run one demo scenario or model probe.",
+        }),
+  });
+  const participationReady =
+    recentPrimitiveActions >= 3 && activeAgents >= 2 && recentCommunications >= 1;
+  checks.push({
+    id: "primitive-evidence",
+    label: "Primitive participation",
+    status: participationReady ? "ok" : "degraded",
+    detail: `${recentPrimitiveActions} meaningful actions · ${activeAgents} active agents (${activeParticipants} total participants) · ${recentCommunications} communications in 5m`,
+    ...(participationReady
+      ? {}
+      : {
+          remediation:
+            "Run a multi-agent task that uses shared memory and a targeted handoff; verify with `productivity primitives`.",
         }),
   });
 

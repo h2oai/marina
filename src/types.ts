@@ -685,6 +685,19 @@ export type EngineEvent =
       timestamp: number;
     }
   | {
+      type: "agent_tool_call";
+      name: string;
+      toolName: string;
+      timestamp: number;
+    }
+  | {
+      type: "agent_tool_result";
+      name: string;
+      toolName: string;
+      isError: boolean;
+      timestamp: number;
+    }
+  | {
       type: "agent_text_delta";
       name: string;
       delta: string;

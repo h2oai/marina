@@ -347,6 +347,10 @@ export interface ReadinessReport {
     warmAgents: number;
     expectedAgents: number;
     recentMeaningfulEvents: number;
+    recentPrimitiveActions: number;
+    activeParticipants: number;
+    activeAgents: number;
+    recentCommunications: number;
     medianResponseMs?: number;
   };
 }
@@ -373,10 +377,32 @@ export interface ProductivityTrendPoint {
   averageHandoffs: number;
 }
 
+export interface PrimitiveUsageSummary {
+  entityName: string | null;
+  commands: number;
+  meaningfulActions: number;
+  meaningfulRate: number;
+  worldActions: number;
+  communications: number;
+  primitiveDiversity: number;
+  activeParticipants: number;
+  activeAgents: number;
+  toolCalls: number;
+  marinaToolCalls: number;
+  reasoningOnlyCalls: number;
+  lastActionAt: number | null;
+  outcomeSessions: number;
+  approvedMeaningfulAverage: number;
+  failedMeaningfulAverage: number;
+  topPrimitives: Array<{ primitive: string; count: number }>;
+}
+
 export interface ProductivityResponse {
   summary: ProductivitySummary;
   leaderboard: ProductivitySummary[];
   trend: ProductivityTrendPoint[];
+  primitiveUsage: PrimitiveUsageSummary;
+  primitiveLeaderboard: PrimitiveUsageSummary[];
 }
 
 export interface MemoryQualitySummary {

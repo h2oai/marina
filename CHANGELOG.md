@@ -21,13 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A persistent dashboard alert indicator, graphical readiness and productivity views, filtered alert
   history, in-place contradiction resolution, selectable map layers, event heatmap access, and
   spatial warning/critical markers.
+- Privacy-safe primitive-use evidence for humans and agents, including canonical command success and
+  latency, agent tool provenance, outcome correlation, readiness checks, and dashboard leaderboards.
 
 ### Changed
 
 - Memory quality alerts now use durable shared contradiction cases at world scope and retain richer
   typed provenance and verification rationale.
-- The persistence schema is now version 57; exports include contradiction cases and productivity
-  sessions.
+- The persistence schema is now version 58; exports include contradiction cases, productivity
+  sessions, and primitive-use evidence. Evidence never retains command arguments or tool payloads.
 
 ## [0.5.0] — 2026-06-05
 

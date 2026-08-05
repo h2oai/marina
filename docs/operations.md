@@ -127,6 +127,12 @@ Use `productivity` for the world summary, `productivity agent <name>` for one co
 authenticated dashboard API exposes the same data at `GET /api/productivity`, optionally filtered
 with `?entity=<name>`.
 
+Use `productivity primitives [name]` to verify real participation: meaningful canonical actions,
+world changes, communication, primitive diversity, and separate agent-tool provenance. Readiness
+requires recent meaningful actions from at least two agents plus communication for its **Primitive
+participation** check. Only command-family labels are stored—not arguments, messages, prompts,
+memory content, or tool payloads.
+
 Cross-agent and shared-pool disagreements are scanned hourly and exposed immediately on read through
 `note conflicts` or `GET /api/memory/contradictions`. Resolve them with
 `note resolve <id> left|right|both|neither <rationale>` or

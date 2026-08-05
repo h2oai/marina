@@ -279,7 +279,10 @@ Task outcomes also close Marina's autonomous learning loop. Approved work slight
 agent's attention filter; rejected or expired work broadens it. The adjustment is durable,
 bounded, and idempotent, while `agent attention-feedback` remains available as an explicit operator
 override. Outcome sessions measure success, completion latency, tool calls, direct-message handoffs,
-seven-day throughput, daily trends, and per-agent leaderboards with `productivity`.
+seven-day throughput, daily trends, and per-agent leaderboards with `productivity`. Durable,
+privacy-safe primitive evidence (`productivity primitives`) verifies that agents actually use shared
+memory, coordination, communication, research, and world primitives; tool calls remain provenance
+and cannot inflate meaningful activity.
 
 ### Human-AI Equivalence
 

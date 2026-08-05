@@ -406,6 +406,23 @@ export class AgentRuntime {
                 timestamp: now,
               });
               break;
+            case "tool_call":
+              onEvent({
+                type: "agent_tool_call",
+                name: config.name,
+                toolName: event.toolName,
+                timestamp: now,
+              });
+              break;
+            case "tool_result":
+              onEvent({
+                type: "agent_tool_result",
+                name: config.name,
+                toolName: event.toolName,
+                isError: event.isError,
+                timestamp: now,
+              });
+              break;
             case "turn_start":
               onEvent({ type: "agent_turn_start", name: config.name, timestamp: now });
               break;

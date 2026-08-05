@@ -42,6 +42,7 @@ export const EXPORT_TABLES = [
   "note_verifications",
   "contradiction_cases",
   "productivity_sessions",
+  "primitive_usage",
   "operational_alerts",
   "note_links",
   "core_memory",
