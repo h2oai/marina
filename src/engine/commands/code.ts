@@ -7,6 +7,8 @@ import {
   type CodingAgentRuntime,
 } from "../../coding/code-session-driver";
 import type { WorkspaceRunResult, WorkspaceRuntime } from "../../coding/local-workspace";
+import { CodingProjectManager } from "../../coding/project-manager";
+import { CodingServiceManager } from "../../coding/service-manager";
 import { summarizeFlywheelEvents, WorkspaceGateway } from "../../coding/workspace-gateway";
 import { WorkspaceRegistry } from "../../coding/workspace-registry";
 import type { ChannelManager } from "../../coordination/channel-manager";
@@ -702,6 +704,15 @@ Usage:
   code sandbox use|local      Select Flywheel or local execution for this session
   code sandbox hibernate|resume Preserve or resume its writable guest disk
   code sandbox stop confirm   Destructively remove its guest workspace
+  code project init <name>    Bootstrap a durable guest Git project
+  code project clone <url> [name] Clone a public HTTPS Git repository
+  code project status|list|diff Inspect durable project state and tracked changes
+  code project switch <id|name> Change the active guest project safely
+  code project export [archive] Store a patch or complete bounded archive artifact
+  code project import <artifact> <name> Materialize a project archive atomically
+  code service start <name> [--port N] -- <command> Start a managed VM service
+  code service list|status|logs|probe|screenshot|stop|restart Manage and observe services
+  code service publish|revoke <name> Expose or revoke a declared service port
   code doctor                 Inspect Code Mode workspace readiness
   code onboard                Show workspace/session readiness guidance
   code ask <request>          Ask the default Marina code model for this session
@@ -778,6 +789,7 @@ const CODE_EXEC_SUBCOMMANDS = new Set<string>([
   "recipe",
   "apply",
   "revert",
+  "service",
 ]);
 
 export interface CodeDeps {
@@ -850,7 +862,11 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         // run` path to host code execution.
         const mutatesSandbox =
           canonicalSub === "sandbox" && (args[0]?.toLowerCase() ?? "status") !== "status";
-        if (CODE_EXEC_SUBCOMMANDS.has(canonicalSub) || mutatesSandbox) {
+        if (
+          CODE_EXEC_SUBCOMMANDS.has(canonicalSub) ||
+          mutatesSandbox ||
+          canonicalSub === "project"
+        ) {
           const gate = checkGate(depsWithDb.db, input.entity, "code.exec");
           if (!gate.ok) {
             ctx.send(
@@ -874,6 +890,12 @@ export function codeCommand(deps: CodeDeps): CommandDef {
             return;
           case "sandbox":
             await sandboxLifecycle(ctx, input.entity, entity, depsWithDb, args);
+            return;
+          case "project":
+            await projectLifecycle(ctx, input.entity, entity, depsWithDb, args);
+            return;
+          case "service":
+            await serviceLifecycle(ctx, input.entity, entity, depsWithDb, args);
             return;
           case "onboard":
           case "setup":
@@ -3315,6 +3337,10 @@ async function sandboxLifecycle(
 
   if (action === "status") {
     const workspace = flywheel.status(eid);
+    const binding = deps.db.listFlywheelBindings().find((row) => row.entity_id === eid);
+    const activeProject = binding?.active_project_id
+      ? deps.db.getCodingProject(binding.active_project_id)
+      : null;
     const activeSessionId = getActiveSessionId(entity);
     const activeSession = activeSessionId ? deps.db.getCodingSession(activeSessionId) : null;
     sendCode(
@@ -3328,6 +3354,10 @@ async function sandboxLifecycle(
             `Persistence: ${workspace.keepAlive ? "durable guest disk" : "ephemeral"}`,
             `Session: ${workspace.sessionId}`,
             `Sandbox: ${workspace.sandboxId}`,
+            activeProject
+              ? `Project: ${activeProject.name} (${activeProject.id})`
+              : "Project: none",
+            binding?.guest_cwd ? `Guest cwd: ${binding.guest_cwd}` : "",
             workspace.publishedUrl ? `Published: ${workspace.publishedUrl}` : "",
             workspace.lastError ? `Last error: ${workspace.lastError}` : "",
             `Session target: ${activeSession?.execution_target ?? "local (no active session)"}`,
@@ -3402,7 +3432,19 @@ async function sandboxLifecycle(
     return;
   }
   if (action === "hibernate") {
+    const sandboxId = flywheel.status(eid)?.sandboxId;
+    for (const service of deps.db.listCodingServices(eid)) {
+      if (!service.published_subdomain) continue;
+      if (!flywheel.unpublish) {
+        throw new Error("Revoke published services before hibernating this sandbox.");
+      }
+      await flywheel.unpublish(eid, service.published_subdomain);
+      deps.db.updateCodingService(service.id, { publishedSubdomain: null, publishedUrl: null });
+    }
     await flywheel.hibernate(eid);
+    if (sandboxId) {
+      deps.db.stopCodingServicesForSandbox(eid, sandboxId, "Sandbox hibernated; restart required.");
+    }
     sendCode(ctx, eid, success("Flywheel sandbox hibernated; writable disk preserved."), {
       event: "sandbox_hibernated",
       status: "hibernated",
@@ -3422,14 +3464,36 @@ async function sandboxLifecycle(
     return;
   }
   if (action === "stop") {
-    if (args[1]?.toLowerCase() !== "confirm") {
+    const discardConfirmed =
+      args[1]?.toLowerCase() === "discard" && args[2]?.toLowerCase() === "confirm";
+    const activeProject = new CodingProjectManager(deps.db, deps.workspace, flywheel).active(eid);
+    if (activeProject && !discardConfirmed) {
+      await new CodingProjectManager(deps.db, deps.workspace, flywheel).status(eid, activeProject);
+    }
+    const hasUnexportedProjects = deps.db
+      .listCodingProjects(eid)
+      .some((project) => project.has_unexported_changes === 1);
+    const confirmed = args[1]?.toLowerCase() === "confirm";
+    if (hasUnexportedProjects && !discardConfirmed) {
+      ctx.send(
+        eid,
+        "Stopping would destroy unexported project work. Export it first, or use `code sandbox stop discard confirm` to acknowledge data loss.",
+      );
+      return;
+    }
+    if (!hasUnexportedProjects && !confirmed && !discardConfirmed) {
       ctx.send(
         eid,
         "Stopping destroys the guest workspace. Use `code sandbox stop confirm` to continue.",
       );
       return;
     }
+    const sandboxId = flywheel.status(eid)?.sandboxId;
     await flywheel.stop(eid);
+    if (sandboxId) {
+      deps.db.stopCodingServicesForSandbox(eid, sandboxId, "Sandbox destroyed.");
+      deps.db.deleteCodingProjectsForSandbox(eid, sandboxId);
+    }
     sendCode(ctx, eid, success("Flywheel sandbox stopped and durable binding removed."), {
       event: "sandbox_stopped",
       status: "absent",
@@ -3439,7 +3503,617 @@ async function sandboxLifecycle(
     return;
   }
 
-  ctx.send(eid, "Usage: code sandbox status|start [image]|use|local|hibernate|resume|stop confirm");
+  ctx.send(
+    eid,
+    "Usage: code sandbox status|start [image]|use|local|hibernate|resume|stop [discard] confirm",
+  );
+}
+
+async function projectLifecycle(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  args: string[],
+): Promise<void> {
+  if (!deps.flywheel) {
+    ctx.send(eid, "Flywheel is not configured; sandbox projects are unavailable.");
+    return;
+  }
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const manager = new CodingProjectManager(
+    deps.db,
+    workspaceForSession(deps, session),
+    deps.flywheel,
+  );
+  const action = args[0]?.toLowerCase() ?? "status";
+
+  if (action === "list") {
+    const active = manager.active(eid);
+    const projects = deps.db.listCodingProjects(eid);
+    sendCode(
+      ctx,
+      eid,
+      projects.length
+        ? projects
+            .map(
+              (project) =>
+                `${project.id === active?.id ? "*" : " "} ${project.name}  ${project.source_type}  ${project.guest_path}`,
+            )
+            .join("\n")
+        : "No sandbox projects.",
+      {
+        event: "projects_listed",
+        rows: projects.map((project) => ({
+          id: project.id,
+          kind: project.source_type,
+          path: project.guest_path,
+          status: project.id === active?.id ? "active" : undefined,
+          title: project.name,
+          type: "project",
+        })),
+        sessionId: session.id,
+        title: "Sandbox Projects",
+        type: "list",
+      },
+    );
+    return;
+  }
+
+  if (action === "init") {
+    if (!args[1]) throw new Error("Usage: code project init <name>");
+    const project = await manager.init(eid, args[1]);
+    recordProjectEvent(deps.db, session, entity, "project_initialized", project);
+    sendCode(ctx, eid, success(`Project ${project.name} initialized at ${project.guest_path}`), {
+      event: "project_initialized",
+      sessionId: session.id,
+      status: "active",
+      title: project.name,
+      type: "lifecycle",
+      workspace: project.guest_path,
+    });
+    return;
+  }
+
+  if (action === "clone") {
+    if (!args[1]) throw new Error("Usage: code project clone <public-https-url> [name]");
+    const project = await manager.clone(eid, args[1], args[2]);
+    recordProjectEvent(deps.db, session, entity, "project_cloned", project);
+    sendCode(ctx, eid, success(`Project ${project.name} cloned at ${project.guest_path}`), {
+      event: "project_cloned",
+      metadata: { source: project.source_locator },
+      sessionId: session.id,
+      status: "active",
+      title: project.name,
+      type: "lifecycle",
+      workspace: project.guest_path,
+    });
+    return;
+  }
+
+  if (action === "switch") {
+    if (!args[1]) throw new Error("Usage: code project switch <id|name>");
+    const project = await manager.switch(eid, args[1]);
+    recordProjectEvent(deps.db, session, entity, "project_switched", project);
+    sendCode(ctx, eid, success(`Active project: ${project.name}`), {
+      event: "project_switched",
+      sessionId: session.id,
+      status: "active",
+      title: project.name,
+      type: "lifecycle",
+      workspace: project.guest_path,
+    });
+    return;
+  }
+
+  if (action === "export") {
+    if (args[1]?.toLowerCase() === "archive") {
+      const exported = await manager.exportArchive(eid);
+      const artifact = deps.db.createCodingArtifact({
+        sessionId: session.id,
+        kind: "project_archive",
+        title: `Archive: ${exported.project.name}`,
+        status: "complete",
+        contentText: Buffer.from(exported.data).toString("base64"),
+        metadata: {
+          branch: exported.status.branch,
+          byteLength: exported.data.length,
+          encoding: "base64",
+          guestPath: exported.project.guest_path,
+          mediaType: "application/gzip",
+          projectId: exported.project.id,
+          revision: exported.status.revision,
+        },
+        createdBy: entity.name,
+      });
+      recordProjectEvent(deps.db, session, entity, "project_archive_exported", exported.project, {
+        artifactId: artifact.id,
+        byteLength: exported.data.length,
+      });
+      sendCode(ctx, eid, success(`Complete project archive stored as ${artifact.id}`), {
+        artifactId: artifact.id,
+        artifactKind: artifact.kind,
+        event: "project_archive_exported",
+        sessionId: session.id,
+        status: "complete",
+        title: artifact.title,
+        type: "artifact",
+        workspace: exported.project.guest_path,
+      });
+      return;
+    }
+    const exported = await manager.exportPatch(eid);
+    const artifact = deps.db.createCodingArtifact({
+      sessionId: session.id,
+      kind: "project_export",
+      title: `Export: ${exported.project.name}`,
+      status: "complete",
+      contentText: exported.content,
+      metadata: {
+        branch: exported.status.branch,
+        guestPath: exported.project.guest_path,
+        projectId: exported.project.id,
+        revision: exported.status.revision,
+        sourceLocator: exported.project.source_locator,
+        sourceType: exported.project.source_type,
+      },
+      createdBy: entity.name,
+    });
+    recordProjectEvent(deps.db, session, entity, "project_exported", exported.project, {
+      artifactId: artifact.id,
+    });
+    sendCode(ctx, eid, success(`Project export stored as ${artifact.id}`), {
+      artifactId: artifact.id,
+      artifactKind: artifact.kind,
+      event: "project_exported",
+      sessionId: session.id,
+      status: "complete",
+      title: artifact.title,
+      type: "artifact",
+      workspace: exported.project.guest_path,
+    });
+    return;
+  }
+
+  if (action === "import") {
+    if (!args[1] || !args[2]) {
+      throw new Error("Usage: code project import <project_archive_artifact> <name>");
+    }
+    const artifact = deps.db.getCodingArtifact(args[1]);
+    if (!artifact || artifact.session_id !== session.id || artifact.kind !== "project_archive") {
+      throw new Error("Project import requires a project_archive artifact from this session.");
+    }
+    const metadata = JSON.parse(artifact.metadata_json) as { encoding?: unknown };
+    if (metadata.encoding !== "base64") throw new Error("Project archive encoding is invalid.");
+    const project = await manager.importArchive(
+      eid,
+      args[2],
+      Uint8Array.from(Buffer.from(artifact.content_text, "base64")),
+    );
+    recordProjectEvent(deps.db, session, entity, "project_archive_imported", project, {
+      artifactId: artifact.id,
+    });
+    sendCode(ctx, eid, success(`Project ${project.name} imported at ${project.guest_path}`), {
+      artifactId: artifact.id,
+      event: "project_archive_imported",
+      sessionId: session.id,
+      status: "active",
+      title: project.name,
+      type: "lifecycle",
+      workspace: project.guest_path,
+    });
+    return;
+  }
+
+  if (action === "diff") {
+    const inspected = await manager.diff(eid);
+    const warning = inspected.diff.untrackedPaths.length
+      ? `\n\nUntracked files (not represented above):\n${inspected.diff.untrackedPaths.join("\n")}`
+      : "";
+    const content = `${inspected.diff.content || "No tracked changes."}${warning}`;
+    const artifact = deps.db.createCodingArtifact({
+      sessionId: session.id,
+      kind: "project_diff",
+      title: `Diff: ${inspected.project.name}`,
+      status: "complete",
+      contentText: content,
+      metadata: {
+        branch: inspected.diff.status.branch,
+        dirty: inspected.diff.status.dirty,
+        guestPath: inspected.project.guest_path,
+        projectId: inspected.project.id,
+        revision: inspected.diff.status.revision,
+        untrackedPaths: inspected.diff.untrackedPaths,
+      },
+      createdBy: entity.name,
+    });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "project_diff_inspected",
+      payload: { artifactId: artifact.id, projectId: inspected.project.id },
+    });
+    sendCode(ctx, eid, content, {
+      artifactId: artifact.id,
+      artifactKind: artifact.kind,
+      event: "project_diff_inspected",
+      sessionId: session.id,
+      status: inspected.diff.status.dirty ? "dirty" : "clean",
+      title: artifact.title,
+      type: "diff",
+      workspace: inspected.project.guest_path,
+    });
+    return;
+  }
+
+  if (action === "status") {
+    const project = manager.active(eid);
+    if (!project) throw new Error("No active project. Use `code project init|clone` first.");
+    const status = await manager.status(eid, project);
+    const refreshed = deps.db.getCodingProject(project.id) ?? project;
+    sendCode(
+      ctx,
+      eid,
+      [
+        header(project.name),
+        `ID: ${project.id}`,
+        `Source: ${project.source_type}${project.source_locator ? ` (${project.source_locator})` : ""}`,
+        `Guest path: ${project.guest_path}`,
+        `Branch: ${status.branch ?? "unborn"}`,
+        `Revision: ${status.revision ?? "no commits"}`,
+        `Working tree: ${status.dirty ? "dirty" : "clean"}`,
+        `Export state: ${refreshed.has_unexported_changes ? "unexported changes" : "safe"}`,
+        status.output,
+      ].join("\n"),
+      {
+        event: "project_status",
+        metadata: { dirty: status.dirty, projectId: project.id, revision: status.revision },
+        sessionId: session.id,
+        status: status.dirty ? "dirty" : "clean",
+        title: project.name,
+        type: "readiness",
+        workspace: project.guest_path,
+      },
+    );
+    return;
+  }
+
+  ctx.send(eid, "Usage: code project init|clone|import|status|list|diff|switch|export [archive]");
+}
+
+function recordProjectEvent(
+  db: MarinaDB,
+  session: CodingSessionRow,
+  entity: Entity,
+  kind: string,
+  project: { id: string; guest_path: string; name: string; source_type: string },
+  extra: Record<string, unknown> = {},
+): void {
+  db.createCodingEvent({
+    sessionId: session.id,
+    actor: entity.name,
+    kind,
+    payload: {
+      ...extra,
+      guestPath: project.guest_path,
+      projectId: project.id,
+      projectName: project.name,
+      sourceType: project.source_type,
+    },
+  });
+}
+
+async function serviceLifecycle(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  args: string[],
+): Promise<void> {
+  if (!deps.flywheel) {
+    ctx.send(eid, "Flywheel is not configured; managed VM services are unavailable.");
+    return;
+  }
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  const manager = new CodingServiceManager(deps.db, deps.flywheel);
+  const action = args[0]?.toLowerCase() ?? "list";
+
+  if (action === "list") {
+    const services = await Promise.all(
+      deps.db
+        .listCodingServices(eid)
+        .map((service) => (service.status === "running" ? manager.refresh(eid, service) : service)),
+    );
+    sendCode(
+      ctx,
+      eid,
+      services.length
+        ? services
+            .map(
+              (service) =>
+                `${service.name}  ${service.status}  pid=${service.pid ?? "-"}${service.port ? `  port=${service.port}` : ""}`,
+            )
+            .join("\n")
+        : "No managed services.",
+      {
+        event: "services_listed",
+        rows: services.map((service) => ({
+          id: service.id,
+          path: service.log_path,
+          status: service.status,
+          title: service.name,
+          type: "service",
+        })),
+        sessionId: session.id,
+        title: "Managed VM Services",
+        type: "list",
+      },
+    );
+    return;
+  }
+
+  if (action === "start") {
+    const name = args[1];
+    const separatorIndex = args.indexOf("--");
+    if (!name || separatorIndex < 0 || separatorIndex === args.length - 1) {
+      throw new Error("Usage: code service start <name> [--port N] -- <command> [args...]");
+    }
+    const portIndex = args.indexOf("--port", 2);
+    const port = portIndex >= 0 ? Number(args[portIndex + 1]) : undefined;
+    const service = await manager.start({
+      entityId: eid,
+      sessionId: session.id,
+      name,
+      command: args.slice(separatorIndex + 1),
+      port,
+    });
+    recordServiceEvent(deps.db, session, entity, "service_started", service);
+    sendCode(ctx, eid, success(`Service ${service.name} started (pid ${service.pid}).`), {
+      event: "service_started",
+      metadata: { port: service.port, serviceId: service.id },
+      sessionId: session.id,
+      status: service.status,
+      title: service.name,
+      type: "lifecycle",
+      workspace: service.guest_cwd,
+    });
+    return;
+  }
+
+  const selector = args[1];
+  if (!selector) throw new Error(`Usage: code service ${action} <id|name>`);
+  let service = deps.db.getCodingServiceForEntity(eid, selector);
+  if (!service) throw new Error(`Unknown service: ${selector}`);
+
+  if (action === "status") {
+    service = await manager.refresh(eid, service);
+    sendCode(
+      ctx,
+      eid,
+      [
+        header(service.name),
+        `ID: ${service.id}`,
+        `Status: ${service.status}`,
+        `PID: ${service.pid ?? "none"}`,
+        `Port: ${service.port ?? "none"}`,
+        `Command: ${JSON.parse(service.command_json).join(" ")}`,
+        `Guest cwd: ${service.guest_cwd}`,
+        `Restart: ${service.restart_policy}`,
+        service.published_url ? `Published: ${service.published_url}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      {
+        event: "service_status",
+        sessionId: session.id,
+        status: service.status,
+        title: service.name,
+        type: "readiness",
+        workspace: service.guest_cwd,
+      },
+    );
+    return;
+  }
+
+  if (action === "logs") {
+    const lines = args[2] ? Number(args[2]) : 100;
+    const output = await manager.logs(eid, service, lines);
+    const artifact = deps.db.createCodingArtifact({
+      sessionId: session.id,
+      kind: "service_log",
+      title: `Logs: ${service.name}`,
+      status: "complete",
+      contentText: output,
+      metadata: { lines: Math.max(1, Math.min(500, Math.trunc(lines))), serviceId: service.id },
+      createdBy: entity.name,
+    });
+    sendCode(ctx, eid, output || "No service logs yet.", {
+      artifactId: artifact.id,
+      artifactKind: artifact.kind,
+      content: output,
+      event: "service_logs_read",
+      sessionId: session.id,
+      status: "complete",
+      title: artifact.title,
+      type: "artifact",
+    });
+    return;
+  }
+
+  if (action === "probe") {
+    service = await manager.refresh(eid, service);
+    if (service.status !== "running") throw new Error("Start the service before probing it.");
+    const result = await manager.probe(eid, service, args[2] ?? "/");
+    const successful = result.httpStatus >= 200 && result.httpStatus < 400;
+    const artifact = deps.db.createCodingArtifact({
+      sessionId: session.id,
+      kind: "service_probe",
+      title: `Probe: ${service.name} ${args[2] ?? "/"}`,
+      status: successful ? "complete" : "failed",
+      contentText: result.body,
+      metadata: {
+        durationMs: result.durationMs,
+        httpStatus: result.httpStatus,
+        path: args[2] ?? "/",
+        port: service.port,
+        serviceId: service.id,
+        truncated: result.truncated,
+      },
+      createdBy: entity.name,
+    });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "service_probed",
+      payload: {
+        artifactId: artifact.id,
+        durationMs: result.durationMs,
+        httpStatus: result.httpStatus,
+        serviceId: service.id,
+      },
+    });
+    sendCode(
+      ctx,
+      eid,
+      [
+        `HTTP ${result.httpStatus} in ${result.durationMs}ms`,
+        result.body || dim("Empty response body."),
+      ].join("\n"),
+      {
+        artifactId: artifact.id,
+        artifactKind: artifact.kind,
+        content: result.body,
+        durationMs: result.durationMs,
+        event: "service_probed",
+        sessionId: session.id,
+        status: artifact.status,
+        title: artifact.title,
+        truncated: result.truncated,
+        type: "verification",
+      },
+    );
+    return;
+  }
+
+  if (action === "capture" || action === "screenshot") {
+    service = await manager.refresh(eid, service);
+    if (service.status !== "running") throw new Error("Start the service before capturing it.");
+    const path = args[2] ?? "/";
+    const result = await manager.screenshot(eid, service, path);
+    const artifact = deps.db.createCodingArtifact({
+      sessionId: session.id,
+      kind: "service_screenshot",
+      title: `Screenshot: ${service.name} ${path}`,
+      status: "complete",
+      contentText: Buffer.from(result.data).toString("base64"),
+      metadata: {
+        byteLength: result.data.length,
+        durationMs: result.durationMs,
+        encoding: "base64",
+        mediaType: "image/png",
+        path,
+        port: service.port,
+        serviceId: service.id,
+      },
+      createdBy: entity.name,
+    });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "service_screenshot_captured",
+      payload: {
+        artifactId: artifact.id,
+        byteLength: result.data.length,
+        durationMs: result.durationMs,
+        serviceId: service.id,
+      },
+    });
+    sendCode(ctx, eid, success(`PNG screenshot stored as ${artifact.id}`), {
+      artifactId: artifact.id,
+      artifactKind: artifact.kind,
+      durationMs: result.durationMs,
+      event: "service_screenshot_captured",
+      sessionId: session.id,
+      status: "complete",
+      title: artifact.title,
+      type: "artifact",
+    });
+    return;
+  }
+
+  if (action === "stop") {
+    if (service.published_subdomain && deps.flywheel.unpublish) {
+      await deps.flywheel.unpublish(eid, service.published_subdomain);
+      deps.db.updateCodingService(service.id, { publishedSubdomain: null, publishedUrl: null });
+    }
+    service = await manager.stop(eid, service);
+    recordServiceEvent(deps.db, session, entity, "service_stopped", service);
+    ctx.send(eid, success(`Service ${service.name} stopped.`));
+    return;
+  }
+
+  if (action === "restart") {
+    service = await manager.restart(eid, service);
+    recordServiceEvent(deps.db, session, entity, "service_restarted", service);
+    ctx.send(eid, success(`Service ${service.name} restarted (pid ${service.pid}).`));
+    return;
+  }
+
+  if (action === "publish") {
+    service = await manager.refresh(eid, service);
+    if (service.status !== "running") throw new Error("Start the service before publishing it.");
+    if (!service.port) throw new Error("Service has no declared port; restart it with --port N.");
+    if (!deps.flywheel.publishDetailed) {
+      throw new Error("Configured Flywheel does not support detailed publish metadata.");
+    }
+    const published = await deps.flywheel.publishDetailed(eid, service.port);
+    deps.db.updateCodingService(service.id, {
+      publishedSubdomain: published.subdomain,
+      publishedUrl: published.url,
+    });
+    recordServiceEvent(deps.db, session, entity, "service_published", service, published);
+    ctx.send(eid, success(`Published ${service.name}: ${published.url}`));
+    return;
+  }
+
+  if (action === "revoke") {
+    if (!service.published_subdomain) throw new Error("Service is not published.");
+    if (!deps.flywheel.unpublish) throw new Error("Configured Flywheel does not support revoke.");
+    await deps.flywheel.unpublish(eid, service.published_subdomain);
+    deps.db.updateCodingService(service.id, { publishedSubdomain: null, publishedUrl: null });
+    recordServiceEvent(deps.db, session, entity, "service_unpublished", service);
+    ctx.send(eid, success(`Publication revoked for ${service.name}.`));
+    return;
+  }
+
+  ctx.send(
+    eid,
+    "Usage: code service start|list|status|logs|probe|screenshot|stop|restart|publish|revoke",
+  );
+}
+
+function recordServiceEvent(
+  db: MarinaDB,
+  session: CodingSessionRow,
+  entity: Entity,
+  kind: string,
+  service: { id: string; name: string; port: number | null; guest_cwd: string },
+  extra: Record<string, unknown> = {},
+): void {
+  db.createCodingEvent({
+    sessionId: session.id,
+    actor: entity.name,
+    kind,
+    payload: {
+      ...extra,
+      guestCwd: service.guest_cwd,
+      port: service.port,
+      serviceId: service.id,
+      serviceName: service.name,
+    },
+  });
 }
 
 function files(
@@ -3745,13 +4419,16 @@ async function runApp(
   requestedScript?: string,
 ): Promise<void> {
   const script = requestedScript?.trim();
+  const sandboxTarget = session.execution_target === "flywheel";
   const message = [
-    fmtError("code run app is disabled in host local mode."),
+    sandboxTarget
+      ? "Use the managed service lifecycle for long-running sandbox applications."
+      : fmtError("code run app is disabled in host local mode."),
     script ? `Requested script: ${script}` : "",
-    "App launch will be enabled through the container/userland runner so package scripts do not execute directly on the Marina host.",
-    dim(
-      "For now: use code verify for checks, and code observe <note> for manual app observations.",
-    ),
+    sandboxTarget
+      ? `Start: code service start <name> --port <port> -- bun run ${script || "dev"}`
+      : "Package scripts do not execute directly on the Marina host; use the managed container/userland runner.",
+    dim("Use code verify for finite checks and code service for VM-resident processes."),
   ]
     .filter(Boolean)
     .join("\n");
@@ -3762,9 +4439,9 @@ async function runApp(
     status: "denied",
     contentText: message,
     metadata: {
-      containerRequired: true,
+      containerRequired: !sandboxTarget,
       profile: getCodeProfile(entity).name,
-      reason: "host-local-mode",
+      reason: sandboxTarget ? "managed-service-required" : "host-local-mode",
       requestedScript: script || undefined,
     },
     createdBy: entity.name,
@@ -3775,7 +4452,7 @@ async function runApp(
     kind: "app_run_denied",
     payload: {
       id: artifact.id,
-      reason: "host-local-mode",
+      reason: sandboxTarget ? "managed-service-required" : "host-local-mode",
       requestedScript: script || null,
     },
   });
@@ -4031,6 +4708,11 @@ async function executeWorkspaceCommand(
     entity.id,
     session.execution_target,
     command,
+    120_000,
+    session.execution_target === "flywheel"
+      ? (deps.db.listFlywheelBindings().find((row) => row.entity_id === entity.id)?.guest_cwd ??
+          undefined)
+      : undefined,
   );
   const { result } = execution;
   const commandText = result.command.join(" ");
@@ -4051,6 +4733,10 @@ async function executeWorkspaceCommand(
       durationMs: result.durationMs,
       executionTarget: execution.target,
       flywheelEventKinds,
+      cwd:
+        session.execution_target === "flywheel"
+          ? deps.db.listFlywheelBindings().find((row) => row.entity_id === entity.id)?.guest_cwd
+          : undefined,
     },
     createdBy: entity.name,
   });

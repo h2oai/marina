@@ -3,6 +3,7 @@ import {
   FlywheelExecutionTimeoutError,
   type FlywheelToolBackend,
 } from "../integrations/flywheel-manager";
+import { assertCredentialFreeCommand, redactSensitiveText } from "../security/secret-redaction";
 import type { EntityId } from "../types";
 import type { WorkspaceRunResult, WorkspaceRuntime } from "./local-workspace";
 
@@ -24,7 +25,7 @@ export interface WorkspaceExecutionEvidence {
  */
 export class WorkspaceGateway {
   constructor(
-    private readonly local: WorkspaceRuntime,
+    private readonly local: WorkspaceRuntime | undefined,
     private readonly flywheel?: FlywheelToolBackend,
   ) {}
 
@@ -33,8 +34,10 @@ export class WorkspaceGateway {
     target: WorkspaceExecutionTarget,
     command: string[],
     timeoutMs = 120_000,
+    cwd?: string,
   ): Promise<WorkspaceExecutionEvidence> {
     if (target === "local") {
+      if (!this.local) throw new Error("Local workspace execution is unavailable.");
       return { result: await this.local.run(command, timeoutMs), target };
     }
     if (!this.flywheel?.execDetailed) {
@@ -52,6 +55,7 @@ export class WorkspaceGateway {
       throw new Error(`Flywheel sandbox is ${workspace.state}; the command was not run locally.`);
     }
     if (command.length === 0) throw new Error("Cannot execute an empty command.");
+    assertCredentialFreeCommand(command);
 
     const startedAt = performance.now();
     let executed: FlywheelExecutionResult;
@@ -60,7 +64,7 @@ export class WorkspaceGateway {
         entityId,
         "/bin/sh",
         ["-c", EXIT_WRAPPER, "marina-code", ...command],
-        undefined,
+        cwd,
         { timeoutMs },
       );
     } catch (error) {
@@ -80,7 +84,7 @@ export class WorkspaceGateway {
       throw error;
     }
     const parsed = parseExitSentinel(executed.output);
-    const bounded = boundOutput(parsed.output, MAX_FLYWHEEL_OUTPUT_BYTES);
+    const bounded = boundOutput(redactSensitiveText(parsed.output), MAX_FLYWHEEL_OUTPUT_BYTES);
     return {
       target,
       flywheelEvents: executed.events,

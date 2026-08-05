@@ -1711,6 +1711,66 @@ CREATE INDEX idx_flywheel_bindings_state ON flywheel_bindings(state);
     version: 65,
     sql: `ALTER TABLE coding_sessions ADD COLUMN execution_target TEXT NOT NULL DEFAULT 'local';`,
   },
+  // Migration 66: durable sandbox project materialization metadata. Project
+  // content remains authoritative in Flywheel; Marina stores only sanitized
+  // provenance, lifecycle, and export safety state.
+  {
+    version: 66,
+    sql: `
+CREATE TABLE coding_projects (
+  id TEXT PRIMARY KEY,
+  entity_id TEXT NOT NULL,
+  sandbox_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_locator TEXT,
+  guest_path TEXT NOT NULL,
+  active_branch TEXT,
+  base_revision TEXT,
+  dirty INTEGER NOT NULL DEFAULT 0,
+  has_unexported_changes INTEGER NOT NULL DEFAULT 0,
+  exported_fingerprint TEXT,
+  last_status_at INTEGER,
+  last_exported_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(entity_id, name),
+  UNIQUE(entity_id, guest_path)
+);
+CREATE INDEX idx_coding_projects_entity ON coding_projects(entity_id, updated_at DESC);
+`,
+  },
+  // Migration 67: durable Marina ownership and restart recipes for services
+  // running inside an entity's Flywheel VM. Logs remain in the guest.
+  {
+    version: 67,
+    sql: `
+CREATE TABLE coding_services (
+  id TEXT PRIMARY KEY,
+  entity_id TEXT NOT NULL,
+  sandbox_id TEXT NOT NULL,
+  project_id TEXT,
+  session_id TEXT NOT NULL REFERENCES coding_sessions(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  command_json TEXT NOT NULL,
+  guest_cwd TEXT NOT NULL,
+  log_path TEXT NOT NULL,
+  pid INTEGER,
+  port INTEGER,
+  status TEXT NOT NULL,
+  restart_policy TEXT NOT NULL DEFAULT 'manual',
+  published_url TEXT,
+  published_subdomain TEXT,
+  last_error TEXT,
+  started_at INTEGER,
+  stopped_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(entity_id, name)
+);
+CREATE INDEX idx_coding_services_entity ON coding_services(entity_id, status, updated_at DESC);
+`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -4033,6 +4093,8 @@ export class MarinaDB {
       publishedUrl?: string | null;
       lastError?: string | null;
       reconciledAt?: number | null;
+      activeProjectId?: string | null;
+      guestCwd?: string | null;
     },
   ): void {
     const assignments = ["updated_at = ?"];
@@ -4053,6 +4115,14 @@ export class MarinaDB {
       assignments.push("reconciled_at = ?");
       values.push(fields.reconciledAt);
     }
+    if (fields.activeProjectId !== undefined) {
+      assignments.push("active_project_id = ?");
+      values.push(fields.activeProjectId);
+    }
+    if (fields.guestCwd !== undefined) {
+      assignments.push("guest_cwd = ?");
+      values.push(fields.guestCwd);
+    }
     values.push(entityId);
     this.db.run(
       `UPDATE flywheel_bindings SET ${assignments.join(", ")} WHERE entity_id = ?`,
@@ -4062,6 +4132,198 @@ export class MarinaDB {
 
   deleteFlywheelBinding(entityId: EntityId): void {
     this.db.run("DELETE FROM flywheel_bindings WHERE entity_id = ?", [entityId]);
+  }
+
+  createCodingProject(project: {
+    id: string;
+    entityId: EntityId;
+    sandboxId: string;
+    name: string;
+    sourceType: "empty" | "git" | "archive";
+    sourceLocator?: string;
+    guestPath: string;
+    activeBranch?: string;
+    baseRevision?: string;
+  }): CodingProjectRow {
+    const now = Date.now();
+    this.db.run(
+      `INSERT INTO coding_projects
+        (id, entity_id, sandbox_id, name, source_type, source_locator, guest_path,
+         active_branch, base_revision, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        project.id,
+        project.entityId,
+        project.sandboxId,
+        project.name,
+        project.sourceType,
+        project.sourceLocator ?? null,
+        project.guestPath,
+        project.activeBranch ?? null,
+        project.baseRevision ?? null,
+        now,
+        now,
+      ],
+    );
+    return this.getCodingProject(project.id) as CodingProjectRow;
+  }
+
+  getCodingProject(id: string): CodingProjectRow | null {
+    return this.reader
+      .query("SELECT * FROM coding_projects WHERE id = ?")
+      .get(id) as CodingProjectRow | null;
+  }
+
+  getCodingProjectForEntity(entityId: EntityId, selector: string): CodingProjectRow | null {
+    return this.reader
+      .query("SELECT * FROM coding_projects WHERE entity_id = ? AND (id = ? OR name = ?)")
+      .get(entityId, selector, selector) as CodingProjectRow | null;
+  }
+
+  listCodingProjects(entityId: EntityId): CodingProjectRow[] {
+    return this.reader
+      .query("SELECT * FROM coding_projects WHERE entity_id = ? ORDER BY updated_at DESC")
+      .all(entityId) as CodingProjectRow[];
+  }
+
+  deleteCodingProjectsForSandbox(entityId: EntityId, sandboxId: string): void {
+    this.db.run("DELETE FROM coding_projects WHERE entity_id = ? AND sandbox_id = ?", [
+      entityId,
+      sandboxId,
+    ]);
+  }
+
+  updateCodingProject(
+    id: string,
+    fields: Partial<{
+      activeBranch: string | null;
+      baseRevision: string | null;
+      dirty: boolean;
+      hasUnexportedChanges: boolean;
+      exportedFingerprint: string | null;
+      lastStatusAt: number | null;
+      lastExportedAt: number | null;
+    }>,
+  ): void {
+    const assignments = ["updated_at = ?"];
+    const values: Array<string | number | null> = [Date.now()];
+    const mapping: Array<
+      [keyof typeof fields, string, (value: unknown) => string | number | null]
+    > = [
+      ["activeBranch", "active_branch", (value) => value as string | null],
+      ["baseRevision", "base_revision", (value) => value as string | null],
+      ["dirty", "dirty", (value) => (value ? 1 : 0)],
+      ["hasUnexportedChanges", "has_unexported_changes", (value) => (value ? 1 : 0)],
+      ["exportedFingerprint", "exported_fingerprint", (value) => value as string | null],
+      ["lastStatusAt", "last_status_at", (value) => value as number | null],
+      ["lastExportedAt", "last_exported_at", (value) => value as number | null],
+    ];
+    for (const [key, column, normalize] of mapping) {
+      if (fields[key] === undefined) continue;
+      assignments.push(`${column} = ?`);
+      values.push(normalize(fields[key]));
+    }
+    values.push(id);
+    this.db.run(`UPDATE coding_projects SET ${assignments.join(", ")} WHERE id = ?`, values);
+  }
+
+  createCodingService(service: {
+    id: string;
+    entityId: EntityId;
+    sandboxId: string;
+    projectId?: string;
+    sessionId: string;
+    name: string;
+    command: string[];
+    guestCwd: string;
+    logPath: string;
+    pid: number;
+    port?: number;
+  }): CodingServiceRow {
+    const now = Date.now();
+    this.db.run(
+      `INSERT INTO coding_services
+        (id, entity_id, sandbox_id, project_id, session_id, name, command_json,
+         guest_cwd, log_path, pid, port, status, started_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
+      [
+        service.id,
+        service.entityId,
+        service.sandboxId,
+        service.projectId ?? null,
+        service.sessionId,
+        service.name,
+        JSON.stringify(service.command),
+        service.guestCwd,
+        service.logPath,
+        service.pid,
+        service.port ?? null,
+        now,
+        now,
+        now,
+      ],
+    );
+    return this.getCodingService(service.id) as CodingServiceRow;
+  }
+
+  getCodingService(id: string): CodingServiceRow | null {
+    return this.reader
+      .query("SELECT * FROM coding_services WHERE id = ?")
+      .get(id) as CodingServiceRow | null;
+  }
+
+  getCodingServiceForEntity(entityId: EntityId, selector: string): CodingServiceRow | null {
+    return this.reader
+      .query("SELECT * FROM coding_services WHERE entity_id = ? AND (id = ? OR name = ?)")
+      .get(entityId, selector, selector) as CodingServiceRow | null;
+  }
+
+  listCodingServices(entityId: EntityId): CodingServiceRow[] {
+    return this.reader
+      .query("SELECT * FROM coding_services WHERE entity_id = ? ORDER BY updated_at DESC")
+      .all(entityId) as CodingServiceRow[];
+  }
+
+  updateCodingService(
+    id: string,
+    fields: Partial<{
+      pid: number | null;
+      status: string;
+      publishedUrl: string | null;
+      publishedSubdomain: string | null;
+      lastError: string | null;
+      startedAt: number | null;
+      stoppedAt: number | null;
+    }>,
+  ): void {
+    const assignments = ["updated_at = ?"];
+    const values: Array<string | number | null> = [Date.now()];
+    const mapping: Array<[keyof typeof fields, string]> = [
+      ["pid", "pid"],
+      ["status", "status"],
+      ["publishedUrl", "published_url"],
+      ["publishedSubdomain", "published_subdomain"],
+      ["lastError", "last_error"],
+      ["startedAt", "started_at"],
+      ["stoppedAt", "stopped_at"],
+    ];
+    for (const [key, column] of mapping) {
+      if (fields[key] === undefined) continue;
+      assignments.push(`${column} = ?`);
+      values.push(fields[key] as string | number | null);
+    }
+    values.push(id);
+    this.db.run(`UPDATE coding_services SET ${assignments.join(", ")} WHERE id = ?`, values);
+  }
+
+  stopCodingServicesForSandbox(entityId: EntityId, sandboxId: string, reason: string): void {
+    const now = Date.now();
+    this.db.run(
+      `UPDATE coding_services
+       SET status = 'stopped', pid = NULL, last_error = ?, stopped_at = ?, updated_at = ?
+       WHERE entity_id = ? AND sandbox_id = ? AND status = 'running'`,
+      [reason, now, now, entityId, sandboxId],
+    );
   }
 
   // ─── Experiment Persistence ────────────────────────────────────────────
@@ -6328,6 +6590,48 @@ export interface CodingSessionRow {
   driver: string | null;
   /** Explicit execution provider. Existing sessions default to trusted local mode. */
   execution_target: "local" | "flywheel";
+}
+
+export interface CodingProjectRow {
+  id: string;
+  entity_id: string;
+  sandbox_id: string;
+  name: string;
+  source_type: "empty" | "git";
+  source_locator: string | null;
+  guest_path: string;
+  active_branch: string | null;
+  base_revision: string | null;
+  dirty: number;
+  has_unexported_changes: number;
+  exported_fingerprint: string | null;
+  last_status_at: number | null;
+  last_exported_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface CodingServiceRow {
+  id: string;
+  entity_id: string;
+  sandbox_id: string;
+  project_id: string | null;
+  session_id: string;
+  name: string;
+  command_json: string;
+  guest_cwd: string;
+  log_path: string;
+  pid: number | null;
+  port: number | null;
+  status: string;
+  restart_policy: string;
+  published_url: string | null;
+  published_subdomain: string | null;
+  last_error: string | null;
+  started_at: number | null;
+  stopped_at: number | null;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface CodingEventRow {

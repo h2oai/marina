@@ -95,4 +95,17 @@ describe("WorkspaceGateway", () => {
     expect(evidence.result.output).toContain("remote cancellation was requested");
     expect(localRuns).toBe(0);
   });
+
+  test("redacts remote secret output and refuses credential command arguments", async () => {
+    const local = {} as WorkspaceRuntime;
+    const gateway = new WorkspaceGateway(
+      local,
+      backend("OPENAI_API_KEY=sk-secret\n__MARINA_EXIT_7f31c9__=0\n"),
+    );
+    const evidence = await gateway.run(entityId("alice"), "flywheel", ["printenv"]);
+    expect(evidence.result.output).toBe("OPENAI_API_KEY=[redacted]");
+    await expect(
+      gateway.run(entityId("alice"), "flywheel", ["env", "OPENAI_API_KEY=sk-secret"]),
+    ).rejects.toThrow("credential profile");
+  });
 });

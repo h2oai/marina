@@ -240,6 +240,201 @@ describe("code command", () => {
     });
   });
 
+  it("materializes a sandbox project and routes session commands through its durable cwd", async () => {
+    const entity = engine.entities.get(conn.entity!)!;
+    const executions: Array<{ args: string[]; cwd?: string }> = [];
+    const flywheel: FlywheelToolBackend = {
+      async create() {
+        throw new Error("not used");
+      },
+      async exec() {
+        throw new Error("use detailed execution");
+      },
+      async execDetailed(_entityId, _command, args = [], cwd) {
+        executions.push({ args, cwd });
+        const actual = args.slice(3);
+        let output = "";
+        if (actual[0] === "git" && actual[1] === "status") output = "## main\n";
+        if (actual[0] === "git" && actual[1] === "rev-parse") output = "abc123\n";
+        if (actual[0] === "pwd") output = `${cwd}\n`;
+        return { output: `${output}__MARINA_EXIT_7f31c9__=0\n`, events: [] };
+      },
+      async publish() {
+        return "";
+      },
+      async hibernate() {},
+      async resume() {},
+      async stop() {},
+      status() {
+        return {
+          sessionId: "session-project",
+          sandboxId: "sandbox-project",
+          image: "code:latest",
+          keepAlive: true,
+          state: "running",
+        };
+      },
+    };
+    db.saveFlywheelBinding({
+      entityId: entity.id,
+      sessionId: "session-project",
+      sandboxId: "sandbox-project",
+      image: "code:latest",
+      keepAlive: true,
+      state: "running",
+    });
+    const sent: string[] = [];
+    const command = codeCommand({
+      db,
+      flywheel,
+      getEntity: () => entity,
+      workspace: new LocalWorkspace(),
+    });
+    const ctx = testRoomContext(sent);
+
+    await command.handler(ctx, inputFor(entity, "code start Project Run"));
+    await command.handler(ctx, inputFor(entity, "code project init demo"));
+    await command.handler(ctx, inputFor(entity, "code sandbox use"));
+    await command.handler(ctx, inputFor(entity, "code run pwd"));
+
+    expect(db.listCodingProjects(entity.id)[0]).toMatchObject({
+      name: "demo",
+      guest_path: "/workspace/projects/demo",
+    });
+    expect(executions.at(-1)?.cwd).toBe("/workspace/projects/demo");
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain("/workspace/projects/demo");
+  });
+
+  it("refreshes project dirtiness before destructive sandbox stop", async () => {
+    const entity = engine.entities.get(conn.entity!)!;
+    let stopped = false;
+    const flywheel: FlywheelToolBackend = {
+      async create() {
+        throw new Error("not used");
+      },
+      async exec() {
+        throw new Error("use detailed execution");
+      },
+      async execDetailed(_entityId, _command, args = []) {
+        const actual = args.slice(3);
+        const output = actual[1] === "status" ? "## main\n M app.ts\n" : "abc123\n";
+        return { output: `${output}__MARINA_EXIT_7f31c9__=0\n`, events: [] };
+      },
+      async publish() {
+        return "";
+      },
+      async hibernate() {},
+      async resume() {},
+      async stop() {
+        stopped = true;
+      },
+      status() {
+        return stopped
+          ? undefined
+          : {
+              sessionId: "session-stop",
+              sandboxId: "sandbox-stop",
+              image: "code:latest",
+              keepAlive: true,
+              state: "running",
+            };
+      },
+    };
+    db.saveFlywheelBinding({
+      entityId: entity.id,
+      sessionId: "session-stop",
+      sandboxId: "sandbox-stop",
+      image: "code:latest",
+      keepAlive: true,
+      state: "running",
+    });
+    const project = db.createCodingProject({
+      id: "project-stop",
+      entityId: entity.id,
+      sandboxId: "sandbox-stop",
+      name: "demo",
+      sourceType: "git",
+      guestPath: "/workspace/projects/demo",
+    });
+    db.updateFlywheelBinding(entity.id, {
+      activeProjectId: project.id,
+      guestCwd: project.guest_path,
+    });
+    const sent: string[] = [];
+    const command = codeCommand({ db, flywheel, getEntity: () => entity });
+    const ctx = testRoomContext(sent);
+
+    await command.handler(ctx, inputFor(entity, "code sandbox stop confirm"));
+    expect(stopped).toBe(false);
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain("unexported project work");
+    await command.handler(ctx, inputFor(entity, "code sandbox stop discard confirm"));
+    expect(stopped).toBe(true);
+    expect(db.listCodingProjects(entity.id)).toHaveLength(0);
+  });
+
+  it("starts and probes a managed Flywheel service with durable evidence", async () => {
+    const entity = engine.entities.get(conn.entity!)!;
+    const flywheel: FlywheelToolBackend = {
+      async create() {
+        throw new Error("not used");
+      },
+      async exec() {
+        throw new Error("use detailed execution");
+      },
+      async execDetailed(_entityId, _command, args = []) {
+        const actual = args.slice(3);
+        let output = "";
+        if (actual.includes("/workspace/.marina/services")) output = "5150\n";
+        else if (actual[0] === "curl") {
+          output = '{"status":"ready"}\n__MARINA_HTTP_STATUS__=200\n';
+        }
+        return { output: `${output}__MARINA_EXIT_7f31c9__=0\n`, events: [] };
+      },
+      async publish() {
+        return "";
+      },
+      async hibernate() {},
+      async resume() {},
+      async stop() {},
+      status() {
+        return {
+          sessionId: "session-service",
+          sandboxId: "sandbox-service",
+          image: "code:latest",
+          keepAlive: true,
+          state: "running",
+        };
+      },
+    };
+    db.saveFlywheelBinding({
+      entityId: entity.id,
+      sessionId: "session-service",
+      sandboxId: "sandbox-service",
+      image: "code:latest",
+      keepAlive: true,
+      state: "running",
+    });
+    db.updateFlywheelBinding(entity.id, { guestCwd: "/workspace/projects/demo" });
+    const sent: string[] = [];
+    const command = codeCommand({ db, flywheel, getEntity: () => entity });
+    const ctx = testRoomContext(sent);
+
+    await command.handler(ctx, inputFor(entity, "code start Service Probe"));
+    await command.handler(
+      ctx,
+      inputFor(entity, "code service start web --port 3000 -- bun run dev"),
+    );
+    await command.handler(ctx, inputFor(entity, "code service probe web /health"));
+
+    const service = db.listCodingServices(entity.id)[0];
+    expect(service).toMatchObject({ name: "web", pid: 5150, port: 3000, status: "running" });
+    const artifact = db
+      .listCodingArtifacts(entity.properties.coding_session_id as string, 5)
+      .find((candidate) => candidate.kind === "service_probe");
+    expect(artifact).toMatchObject({ status: "complete", content_text: '{"status":"ready"}' });
+    expect(JSON.parse(artifact!.metadata_json)).toMatchObject({ httpStatus: 200, port: 3000 });
+  });
+
   it("starts and lists a local coding session", async () => {
     await engine.processCommand(conn.entity!, "code start Test Session");
 
