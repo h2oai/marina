@@ -57,6 +57,7 @@ export const EXPORT_TABLES = [
   "coding_sessions",
   "coding_projects",
   "coding_services",
+  "coding_service_probes",
   "coding_events",
   "coding_artifacts",
   "dynamic_commands",
@@ -95,6 +96,7 @@ export const EXPORT_TABLES = [
   "app_settings",
   "media_jobs",
   "flywheel_bindings",
+  "flywheel_credential_bindings",
   // Secret-bearing tables — only emitted when ExportOptions.includeSecrets is set
   // (see SECRET_TABLES). api_keys is encrypted at rest; the rest may carry creds.
   "api_keys",

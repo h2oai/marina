@@ -1152,6 +1152,13 @@ export class Engine {
       const cm = this.channelManager;
       tryLog(this.logger, "tick", "Channel prune failed", () => cm.pruneExpiredMessages());
     }
+    if (this.tickCount % CHANNEL_PRUNE_INTERVAL === 0) {
+      this.flywheel?.maintenance?.().catch((error) => {
+        this.logger.warn("flywheel", "Workspace maintenance failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
     // Every tick: crew idle GC + dissolved cleanup. Cheap (in-memory map walk).
     if (this.crewManager) {
       const crews = this.crewManager;

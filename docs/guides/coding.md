@@ -258,10 +258,15 @@ code project diff      # inspect tracked changes without marking them exported
 code project export    # bounded Git patch artifact for tracked work
 code project export archive # complete bounded archive, including binary/untracked files
 # code project import <project_archive_artifact> restored
+code project delete restored confirm # refuses unexported work without `discard confirm`
+code project reconcile # remove metadata belonging to a replaced sandbox
 code service start web --port 3000 -- bun run dev
 code service logs web
 code service probe web /health
+code service probes web # durable health history
 code service screenshot web / # PNG evidence when Chromium is present in the image
+code approval request network publish:<service-id>
+# approve the returned artifact before publishing
 code service publish web
 code service revoke web
 code service stop web
@@ -274,14 +279,18 @@ never changes the target, and a Flywheel error never retries on the host. Use `c
 selects among durable guest projects and refuses to leave unexported dirty work. Public clone URLs
 must be credential-free HTTPS. Patch export remains the compact tracked-work path; bounded archive
 export/import preserves complete project content through Flywheel's typed byte stream, stages and
-validates imports, then atomically promotes them. Current archive protection is intentionally
-size/path bounded but remains under M5 hardening for expanded-size, member-count, special-file, and
-link policy. Private Git remains a broker extension. Local and guest
+validates imports with digest, byte, expansion, member, path, and file-type limits, then atomically
+promotes them. Private Git remains a broker extension. Local and guest
 files are distinct and must not be treated as synchronized. Managed services run only in Flywheel,
 keep durable restart recipes and bounded guest logs, and stop across hibernation until explicitly
-restarted. Localhost HTTP probes store response status, latency, and a bounded redacted body as
-verification evidence. Credential-like command arguments are refused; use the broker contract
-rather than raw tokens once credential profiles are available. Screenshot capture runs a guest-local
+restarted. PID plus process birth identity prevents a reused guest PID from being signaled as the
+original service. Localhost HTTP probes store response status, latency, and a bounded redacted body as
+verification evidence, with history available through `code service probes`. Publishing requires a
+matching one-use network approval and is automatically leased (one hour by default); stop,
+hibernate, explicit revoke, or lease expiry removes exposure. `code sandbox network status` reports
+whether policy is provider-owned or verified. Credential-like command arguments are refused;
+`code sandbox credentials` exposes only logical, secret-free binding state, and binding fails closed
+until Flywheel exposes its direct-sandbox broker contract. Screenshot capture runs a guest-local
 Chromium browser, transfers a size-bounded PNG, verifies its signature, and removes the guest temporary
 file. It fails closed when the sandbox image has no supported Chromium binary.
 

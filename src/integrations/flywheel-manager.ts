@@ -29,6 +29,13 @@ export interface FlywheelExecutionResult {
 export interface FlywheelBinaryResult {
   data: Uint8Array;
   events: FlywheelEvent[];
+  byteLength: number;
+  sha256: string;
+}
+
+export interface FlywheelWriteResult {
+  byteLength: number;
+  sha256: string;
 }
 
 export class FlywheelExecutionTimeoutError extends Error {
@@ -58,7 +65,7 @@ export interface FlywheelToolBackend {
     guestPath: string,
     data: Uint8Array,
     options?: { maxBytes?: number; timeoutMs?: number },
-  ): Promise<void>;
+  ): Promise<FlywheelWriteResult>;
   publish(entityId: EntityId, port: number): Promise<string>;
   publishDetailed?(entityId: EntityId, port: number): Promise<{ url: string; subdomain: string }>;
   unpublish?(entityId: EntityId, subdomain: string): Promise<void>;
@@ -67,6 +74,7 @@ export interface FlywheelToolBackend {
   stop(entityId: EntityId): Promise<void>;
   status(entityId: EntityId): FlywheelWorkspace | undefined;
   reconcile?(): Promise<void>;
+  maintenance?(): Promise<void>;
 }
 
 interface EntityWorkspace extends FlywheelWorkspace {
@@ -78,6 +86,7 @@ export class FlywheelManager implements FlywheelToolBackend {
   private readonly operator: FlywheelClient;
   private readonly workspaces = new Map<EntityId, EntityWorkspace>();
   private readonly creating = new Set<EntityId>();
+  private maintenanceRunning = false;
 
   constructor(
     private readonly baseUrl: string,
@@ -215,6 +224,7 @@ export class FlywheelManager implements FlywheelToolBackend {
     const chunks: Uint8Array[] = [];
     const events: FlywheelEvent[] = [];
     let total = 0;
+    let successfulTerminal = false;
     try {
       for await (const event of client.exec(
         {
@@ -227,7 +237,12 @@ export class FlywheelManager implements FlywheelToolBackend {
         { signal: controller.signal },
       )) {
         events.push(event);
-        const chunk = processBytes(event);
+        const process = processEvent(event);
+        if (process && isSuccessfulTerminal(process)) successfulTerminal = true;
+        if (process && isFailedTerminal(process)) {
+          throw new Error(process.error || "Flywheel guest file read failed.");
+        }
+        const chunk = process?.kind.endsWith("STDOUT") ? process.data : new Uint8Array();
         if (!chunk.length) continue;
         total += chunk.length;
         if (total > maxBytes) {
@@ -242,7 +257,11 @@ export class FlywheelManager implements FlywheelToolBackend {
     } finally {
       clearTimeout(timer);
     }
-    return { data: concatBytes(chunks, total), events };
+    if (!successfulTerminal) {
+      throw new Error("Flywheel guest file read ended without authoritative successful status.");
+    }
+    const data = concatBytes(chunks, total);
+    return { data, events, byteLength: data.length, sha256: sha256(data) };
   }
 
   async writeFile(
@@ -250,7 +269,7 @@ export class FlywheelManager implements FlywheelToolBackend {
     guestPath: string,
     data: Uint8Array,
     options?: { maxBytes?: number; timeoutMs?: number },
-  ): Promise<void> {
+  ): Promise<FlywheelWriteResult> {
     if (!guestPath.startsWith("/") || guestPath.includes("\0")) {
       throw new Error("Guest transfer paths must be absolute and contain no NUL bytes.");
     }
@@ -285,7 +304,29 @@ export class FlywheelManager implements FlywheelToolBackend {
           timeoutMs,
         );
       }
+      const verified = await this.execChecked(
+        entityId,
+        "/bin/sh",
+        [
+          "-c",
+          'set -- $(wc -c <"$1") $(sha256sum "$1"); printf \'%s %s\\n\' "$1" "$2"',
+          "marina-transfer-verify",
+          temporaryPath,
+        ],
+        "/",
+        timeoutMs,
+      );
+      const match = verified.output.trim().match(/^(\d+)\s+([a-f0-9]{64})$/i);
+      if (!match?.[1] || !match[2]) {
+        throw new Error("Flywheel upload returned invalid byte-count/digest evidence.");
+      }
+      const evidence = { byteLength: Number(match[1]), sha256: match[2].toLowerCase() };
+      const expected = { byteLength: data.length, sha256: sha256(data) };
+      if (evidence.byteLength !== expected.byteLength || evidence.sha256 !== expected.sha256) {
+        throw new Error("Flywheel upload byte-count/digest verification failed.");
+      }
       await this.execChecked(entityId, "mv", ["--", temporaryPath, guestPath], "/", timeoutMs);
+      return evidence;
     } catch (error) {
       await this.execDetailed(entityId, "rm", ["-f", "--", temporaryPath], "/", {
         timeoutMs,
@@ -300,18 +341,16 @@ export class FlywheelManager implements FlywheelToolBackend {
     args: string[],
     cwd: string,
     timeoutMs: number,
-  ): Promise<void> {
+  ): Promise<FlywheelExecutionResult> {
     const result = await this.execDetailed(entityId, command, args, cwd, { timeoutMs });
-    const failed = result.events.some((event) => {
-      const body = event.body as { case?: unknown; value?: unknown } | undefined;
-      const process =
-        (event.process as { kind?: unknown; error?: unknown } | undefined) ??
-        (body?.case === "process"
-          ? (body.value as { kind?: unknown; error?: unknown } | undefined)
-          : undefined);
-      return process?.kind === "PROCESS_EVENT_KIND_ERROR" || Boolean(process?.error);
-    });
-    if (failed) throw new Error(`Flywheel transfer command failed: ${command}`);
+    const processes = result.events.map(processEvent).filter((event) => event !== undefined);
+    if (processes.some(isFailedTerminal)) {
+      throw new Error(`Flywheel transfer command failed: ${command}`);
+    }
+    if (!processes.some(isSuccessfulTerminal)) {
+      throw new Error(`Flywheel transfer command lacked successful terminal evidence: ${command}`);
+    }
+    return result;
   }
 
   async publish(entityId: EntityId, port: number) {
@@ -401,6 +440,13 @@ export class FlywheelManager implements FlywheelToolBackend {
             lastError: workspace.lastError ?? null,
             reconciledAt,
           });
+          if (workspace.state === "running") {
+            this.db?.markCodingServicesUnknownForSandbox(
+              entityId,
+              workspace.sandboxId,
+              "Marina restarted; process identity must be reverified.",
+            );
+          }
         } catch (error) {
           workspace.state = "unavailable";
           workspace.lastError = sanitizedError(error);
@@ -412,6 +458,33 @@ export class FlywheelManager implements FlywheelToolBackend {
         }
       }),
     );
+  }
+
+  async maintenance(): Promise<void> {
+    if (!this.db || this.maintenanceRunning) return;
+    this.maintenanceRunning = true;
+    try {
+      for (const service of this.db.listExpiredCodingServicePublications()) {
+        try {
+          await this.unpublish(
+            service.entity_id as EntityId,
+            service.published_subdomain as string,
+          );
+          this.db.updateCodingService(service.id, {
+            publishedSubdomain: null,
+            publishedUrl: null,
+            publicationExpiresAt: null,
+            lastError: null,
+          });
+        } catch (error) {
+          this.db.updateCodingService(service.id, {
+            lastError: `Publication lease expired; revoke retry pending: ${sanitizedError(error)}`,
+          });
+        }
+      }
+    } finally {
+      this.maintenanceRunning = false;
+    }
   }
 
   private require(entityId: EntityId): EntityWorkspace {
@@ -499,6 +572,39 @@ function processData(event: FlywheelEvent): string {
   return new TextDecoder().decode(processBytes(event));
 }
 
+interface NormalizedProcessEvent {
+  data: Uint8Array;
+  error: string;
+  kind: string;
+  running?: boolean;
+}
+
+function processEvent(event: FlywheelEvent): NormalizedProcessEvent | undefined {
+  const body = event.body as { case?: unknown; value?: unknown } | undefined;
+  const value =
+    (event.process as Record<string, unknown> | undefined) ??
+    (body?.case === "process" ? (body.value as Record<string, unknown> | undefined) : undefined);
+  if (!value) return undefined;
+  const encoded = value.data;
+  return {
+    data:
+      typeof encoded === "string" && encoded.length
+        ? Uint8Array.from(Buffer.from(encoded, "base64"))
+        : new Uint8Array(),
+    error: typeof value.error === "string" ? value.error : "",
+    kind: String(value.kind ?? "").toUpperCase(),
+    running: typeof value.running === "boolean" ? value.running : undefined,
+  };
+}
+
+function isSuccessfulTerminal(event: NormalizedProcessEvent): boolean {
+  return event.kind.endsWith("STOP") && !event.error && event.running !== true;
+}
+
+function isFailedTerminal(event: NormalizedProcessEvent): boolean {
+  return event.kind.endsWith("ERROR") || (event.kind.endsWith("STOP") && Boolean(event.error));
+}
+
 function processBytes(event: FlywheelEvent): Uint8Array {
   const body = event.body as { case?: unknown; value?: unknown } | undefined;
   const processEvent =
@@ -521,4 +627,8 @@ function concatBytes(chunks: Uint8Array[], total: number): Uint8Array {
     offset += chunk.length;
   }
   return joined;
+}
+
+function sha256(data: Uint8Array): string {
+  return new Bun.CryptoHasher("sha256").update(data).digest("hex");
 }

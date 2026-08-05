@@ -135,6 +135,10 @@ describe("code command", () => {
       async publish() {
         return "";
       },
+      async publishDetailed() {
+        return { url: "https://web.example", subdomain: "web" };
+      },
+      async unpublish() {},
       async hibernate() {
         calls.push("hibernate");
         state = "hibernated";
@@ -198,6 +202,10 @@ describe("code command", () => {
       async publish() {
         return "";
       },
+      async publishDetailed() {
+        return { url: "https://web.example", subdomain: "web" };
+      },
+      async unpublish() {},
       async hibernate() {},
       async resume() {},
       async stop() {},
@@ -384,7 +392,7 @@ describe("code command", () => {
       async execDetailed(_entityId, _command, args = []) {
         const actual = args.slice(3);
         let output = "";
-        if (actual.includes("/workspace/.marina/services")) output = "5150\n";
+        if (actual.includes("/workspace/.marina/services")) output = "5150 7001\n";
         else if (actual[0] === "curl") {
           output = '{"status":"ready"}\n__MARINA_HTTP_STATUS__=200\n';
         }
@@ -393,6 +401,10 @@ describe("code command", () => {
       async publish() {
         return "";
       },
+      async publishDetailed() {
+        return { url: "https://web.example", subdomain: "web" };
+      },
+      async unpublish() {},
       async hibernate() {},
       async resume() {},
       async stop() {},
@@ -427,12 +439,33 @@ describe("code command", () => {
     await command.handler(ctx, inputFor(entity, "code service probe web /health"));
 
     const service = db.listCodingServices(entity.id)[0];
+    expect(service).toBeDefined();
     expect(service).toMatchObject({ name: "web", pid: 5150, port: 3000, status: "running" });
     const artifact = db
       .listCodingArtifacts(entity.properties.coding_session_id as string, 5)
       .find((candidate) => candidate.kind === "service_probe");
     expect(artifact).toMatchObject({ status: "complete", content_text: '{"status":"ready"}' });
     expect(JSON.parse(artifact!.metadata_json)).toMatchObject({ httpStatus: 200, port: 3000 });
+    expect(db.listCodingServiceProbes(service!.id)).toEqual([
+      expect.objectContaining({ http_status: 200, path: "/health", success: 1 }),
+    ]);
+    await command.handler(ctx, inputFor(entity, "code service probes web"));
+    expect(sent.at(-1)).toContain("/health");
+    await command.handler(ctx, inputFor(entity, "code service publish web"));
+    expect(sent.at(-1)).toContain("requires explicit network approval");
+    await command.handler(
+      ctx,
+      inputFor(entity, `code approval request network publish:${service!.id}`),
+    );
+    const approval = db
+      .listCodingArtifacts(entity.properties.coding_session_id as string, 10)
+      .find((candidate) => candidate.kind === "approval");
+    expect(approval).toBeDefined();
+    await command.handler(ctx, inputFor(entity, `code approve ${approval!.id}`));
+    await command.handler(ctx, inputFor(entity, "code service publish web"));
+    expect(sent.at(-1)).toContain("lease expires");
+    expect(db.getCodingArtifact(approval!.id)?.status).toBe("applied");
+    expect(db.getCodingService(service!.id)?.publication_expires_at).toBeGreaterThan(Date.now());
   });
 
   it("starts and lists a local coding session", async () => {

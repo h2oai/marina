@@ -5,9 +5,11 @@ import { WorkspaceGateway } from "./workspace-gateway";
 
 const SERVICE_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const SERVICE_STATE_ROOT = "/workspace/.marina/services";
-const START_SCRIPT = `state_dir="$1"; log_file="$2"; shift 2; mkdir -p "$state_dir"; nohup "$@" >"$log_file" 2>&1 </dev/null & service_pid=$!; printf '%s\n' "$service_pid"`;
-const STATUS_SCRIPT = `kill -0 "$1" 2>/dev/null`;
-const STOP_SCRIPT = `if kill -0 "$1" 2>/dev/null; then kill "$1"; i=0; while kill -0 "$1" 2>/dev/null && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i+1)); done; kill -0 "$1" 2>/dev/null && kill -9 "$1"; fi; exit 0`;
+const SERVICE_LOG_MAX_BYTES = 2 * 1024 * 1024;
+const PROCESS_IDENTITY_FUNCTION = `process_identity() { sed 's/^[^)]*) //' "/proc/$1/stat" 2>/dev/null | awk '{print $20}'; };`;
+const START_SCRIPT = `${PROCESS_IDENTITY_FUNCTION} state_dir="$1"; log_file="$2"; log_max="$3"; shift 3; mkdir -p "$state_dir"; : >"$log_file"; nohup "$@" >>"$log_file" 2>&1 </dev/null & service_pid=$!; service_identity=$(process_identity "$service_pid"); [ -n "$service_identity" ] || { kill "$service_pid" 2>/dev/null; exit 1; }; (while kill -0 "$service_pid" 2>/dev/null; do log_size=$(wc -c <"$log_file" 2>/dev/null || printf 0); if [ "$log_size" -gt "$log_max" ]; then tail -c "$log_max" "$log_file" >"$log_file.trim" && cat "$log_file.trim" >"$log_file"; rm -f "$log_file.trim"; fi; sleep 5; done) >/dev/null 2>&1 & printf '%s %s\n' "$service_pid" "$service_identity"`;
+const STATUS_SCRIPT = `${PROCESS_IDENTITY_FUNCTION} kill -0 "$1" 2>/dev/null || exit 1; observed=$(process_identity "$1"); [ -n "$observed" ] && [ "$observed" = "$2" ] || exit 42`;
+const STOP_SCRIPT = `${PROCESS_IDENTITY_FUNCTION} if kill -0 "$1" 2>/dev/null; then observed=$(process_identity "$1"); [ -n "$observed" ] && [ "$observed" = "$2" ] || { printf '%s\n' 'Process identity mismatch; refusing to signal reused PID.' >&2; exit 42; }; kill "$1"; i=0; while kill -0 "$1" 2>/dev/null && [ "$i" -lt 20 ]; do sleep 0.1; i=$((i+1)); done; kill -0 "$1" 2>/dev/null && kill -9 "$1"; fi; exit 0`;
 const PROBE_STATUS_SENTINEL = "__MARINA_HTTP_STATUS__=";
 const SCREENSHOT_SCRIPT = `browser=""; for candidate in chromium chromium-browser google-chrome google-chrome-stable; do if command -v "$candidate" >/dev/null 2>&1; then browser="$candidate"; break; fi; done; [ -n "$browser" ] || { printf '%s\n' 'No supported Chromium browser is installed in this sandbox image.' >&2; exit 127; }; "$browser" --headless --disable-gpu --no-sandbox --hide-scrollbars --window-size=1440,900 --screenshot="$1" "$2" >/dev/null 2>&1`;
 
@@ -52,13 +54,15 @@ export class CodingServiceManager {
         "marina-service",
         SERVICE_STATE_ROOT,
         logPath,
+        String(SERVICE_LOG_MAX_BYTES),
         ...input.command,
       ],
       30_000,
       binding.guest_cwd ?? undefined,
     );
     if (execution.result.exitCode !== 0) throw new Error(execution.result.output);
-    const pid = Number.parseInt(execution.result.output.trim(), 10);
+    const launched = parseLaunchIdentity(execution.result.output);
+    const pid = launched.pid;
     if (!Number.isSafeInteger(pid) || pid < 1)
       throw new Error("Service launch returned no valid PID.");
     const projectId = binding.active_project_id ?? undefined;
@@ -73,26 +77,48 @@ export class CodingServiceManager {
       guestCwd: binding.guest_cwd ?? "/workspace",
       logPath,
       pid,
+      processIdentity: launched.identity,
       port: input.port,
     });
   }
 
   async refresh(entityId: EntityId, service: CodingServiceRow): Promise<CodingServiceRow> {
     this.requireOwnedSandbox(entityId, service);
-    if (!service.pid || service.status !== "running") return service;
+    if (
+      !service.pid ||
+      !service.process_identity ||
+      !["running", "unknown"].includes(service.status)
+    ) {
+      return service;
+    }
     const result = await this.gateway.run(
       entityId,
       "flywheel",
-      ["/bin/sh", "-c", STATUS_SCRIPT, "marina-service-status", String(service.pid)],
+      [
+        "/bin/sh",
+        "-c",
+        STATUS_SCRIPT,
+        "marina-service-status",
+        String(service.pid),
+        service.process_identity,
+      ],
       10_000,
       service.guest_cwd,
     );
-    if (result.result.exitCode !== 0) {
+    if (result.result.exitCode === 42) {
+      this.db.updateCodingService(service.id, {
+        status: "unknown",
+        lastError: "Stored PID now belongs to a different process; no signal was sent.",
+      });
+    } else if (result.result.exitCode !== 0) {
       this.db.updateCodingService(service.id, {
         pid: null,
+        processIdentity: null,
         status: "stopped",
         stoppedAt: Date.now(),
       });
+    } else if (service.status === "unknown") {
+      this.db.updateCodingService(service.id, { status: "running", lastError: null });
     }
     return this.db.getCodingService(service.id) ?? service;
   }
@@ -125,35 +151,59 @@ export class CodingServiceManager {
       );
     }
     const url = `http://127.0.0.1:${service.port}${path}`;
-    const execution = await this.gateway.run(
-      entityId,
-      "flywheel",
-      [
-        "curl",
-        "--silent",
-        "--show-error",
-        "--max-time",
-        "10",
-        "--output",
-        "-",
-        "--write-out",
-        `\n${PROBE_STATUS_SENTINEL}%{http_code}\n`,
-        "--",
-        url,
-      ],
-      15_000,
-      service.guest_cwd,
-    );
-    if (execution.result.exitCode !== 0) throw new Error(execution.result.output);
-    const pattern = new RegExp(`(?:^|\\n)${PROBE_STATUS_SENTINEL}(\\d{3})$`);
-    const match = execution.result.output.match(pattern);
-    if (!match?.[1]) throw new Error("Service probe returned no HTTP status.");
-    return {
-      body: execution.result.output.replace(pattern, "").trimEnd(),
-      durationMs: execution.result.durationMs,
-      httpStatus: Number(match[1]),
-      truncated: execution.result.truncated,
-    };
+    const startedAt = performance.now();
+    try {
+      const execution = await this.gateway.run(
+        entityId,
+        "flywheel",
+        [
+          "curl",
+          "--silent",
+          "--show-error",
+          "--max-time",
+          "10",
+          "--output",
+          "-",
+          "--write-out",
+          `\n${PROBE_STATUS_SENTINEL}%{http_code}\n`,
+          "--",
+          url,
+        ],
+        15_000,
+        service.guest_cwd,
+      );
+      if (execution.result.exitCode !== 0) throw new Error(execution.result.output);
+      const pattern = new RegExp(`(?:^|\\n)${PROBE_STATUS_SENTINEL}(\\d{3})$`);
+      const match = execution.result.output.match(pattern);
+      if (!match?.[1]) throw new Error("Service probe returned no HTTP status.");
+      const result = {
+        body: execution.result.output.replace(pattern, "").trimEnd(),
+        durationMs: execution.result.durationMs,
+        httpStatus: Number(match[1]),
+        truncated: execution.result.truncated,
+      };
+      this.db.createCodingServiceProbe({
+        serviceId: service.id,
+        entityId,
+        sandboxId: service.sandbox_id,
+        path,
+        httpStatus: result.httpStatus,
+        durationMs: result.durationMs,
+        success: result.httpStatus >= 200 && result.httpStatus < 400,
+      });
+      return result;
+    } catch (error) {
+      this.db.createCodingServiceProbe({
+        serviceId: service.id,
+        entityId,
+        sandboxId: service.sandbox_id,
+        path,
+        durationMs: Math.round(performance.now() - startedAt),
+        success: false,
+        error: error instanceof Error ? error.message.slice(0, 500) : "Probe failed.",
+      });
+      throw error;
+    }
   }
 
   async screenshot(
@@ -193,6 +243,13 @@ export class CodingServiceManager {
         maxBytes: 4 * 1024 * 1024,
         timeoutMs: 30_000,
       });
+      const observedDigest = new Bun.CryptoHasher("sha256").update(transferred.data).digest("hex");
+      if (
+        transferred.byteLength !== transferred.data.length ||
+        transferred.sha256 !== observedDigest
+      ) {
+        throw new Error("Screenshot transfer integrity evidence did not match received bytes.");
+      }
       if (
         transferred.data.length < 8 ||
         ![137, 80, 78, 71, 13, 10, 26, 10].every(
@@ -218,17 +275,37 @@ export class CodingServiceManager {
 
   async stop(entityId: EntityId, service: CodingServiceRow): Promise<CodingServiceRow> {
     this.requireOwnedSandbox(entityId, service);
-    if (service.pid && service.status === "running") {
-      await this.gateway.run(
+    if (
+      service.pid &&
+      service.process_identity &&
+      ["running", "unknown"].includes(service.status)
+    ) {
+      const stopped = await this.gateway.run(
         entityId,
         "flywheel",
-        ["/bin/sh", "-c", STOP_SCRIPT, "marina-service-stop", String(service.pid)],
+        [
+          "/bin/sh",
+          "-c",
+          STOP_SCRIPT,
+          "marina-service-stop",
+          String(service.pid),
+          service.process_identity,
+        ],
         15_000,
         service.guest_cwd,
       );
+      if (stopped.result.exitCode === 42) {
+        this.db.updateCodingService(service.id, {
+          status: "unknown",
+          lastError: "Stored PID was reused; Marina refused to signal the unrelated process.",
+        });
+        throw new Error("Service process identity changed; no process was signaled.");
+      }
+      if (stopped.result.exitCode !== 0) throw new Error(stopped.result.output);
     }
     this.db.updateCodingService(service.id, {
       pid: null,
+      processIdentity: null,
       status: "stopped",
       stoppedAt: Date.now(),
     });
@@ -250,17 +327,20 @@ export class CodingServiceManager {
         "marina-service",
         SERVICE_STATE_ROOT,
         service.log_path,
+        String(SERVICE_LOG_MAX_BYTES),
         ...command,
       ],
       30_000,
       binding.guest_cwd ?? service.guest_cwd,
     );
     if (execution.result.exitCode !== 0) throw new Error(execution.result.output);
-    const pid = Number.parseInt(execution.result.output.trim(), 10);
+    const launched = parseLaunchIdentity(execution.result.output);
+    const pid = launched.pid;
     if (!Number.isSafeInteger(pid) || pid < 1)
       throw new Error("Service restart returned no valid PID.");
     this.db.updateCodingService(service.id, {
       pid,
+      processIdentity: launched.identity,
       status: "running",
       lastError: null,
       startedAt: Date.now(),
@@ -304,4 +384,13 @@ function parseCommand(json: string): string[] {
     throw new Error("Stored service restart recipe is invalid.");
   }
   return parsed as string[];
+}
+
+function parseLaunchIdentity(output: string): { identity: string; pid: number } {
+  const match = output.trim().match(/^(\d+)\s+(\d+)$/);
+  const pid = Number(match?.[1]);
+  if (!Number.isSafeInteger(pid) || pid < 1 || !match?.[2]) {
+    throw new Error("Service launch returned no valid PID and process birth identity.");
+  }
+  return { identity: match[2], pid };
 }

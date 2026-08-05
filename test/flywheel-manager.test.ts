@@ -8,6 +8,57 @@ import { entityId } from "../src/types";
 import { cleanupDb } from "./helpers";
 
 describe("FlywheelManager", () => {
+  test("requires authoritative terminal evidence and records digest/byte count for binary reads", async () => {
+    const payload = Uint8Array.from([0, 1, 2, 255]);
+    let includeTerminal = true;
+    const fetch = async (input: string | URL | Request): Promise<Response> => {
+      const method = String(input).split("/").at(-1);
+      if (method === "CreateSession") return Response.json({ sessionId: "session-transfer" });
+      if (method === "MintCapability") {
+        return Response.json({
+          token: "capability",
+          expiresAt: new Date(Date.now() + 600_000).toISOString(),
+        });
+      }
+      if (method === "CreateSandbox") {
+        return Response.json({ sandboxId: "sandbox-transfer", keepAlive: true });
+      }
+      if (method === "Exec") {
+        const frames = [
+          connectFrame(0, {
+            process: {
+              data: Buffer.from(payload).toString("base64"),
+              kind: "PROCESS_EVENT_KIND_STDOUT",
+              running: true,
+            },
+          }),
+          ...(includeTerminal
+            ? [
+                connectFrame(0, {
+                  process: { kind: "PROCESS_EVENT_KIND_STOP", running: false },
+                }),
+              ]
+            : []),
+          connectFrame(2, {}),
+        ];
+        return new Response(joinBytes(frames) as unknown as BodyInit, { status: 200 });
+      }
+      return Response.json({});
+    };
+    const manager = new FlywheelManager("http://flywheel/rpc", "operator", "code:latest", fetch);
+    const alice = entityId("transfer-owner");
+    await manager.create(alice);
+    await expect(manager.readFile(alice, "/workspace/file.bin")).resolves.toMatchObject({
+      byteLength: payload.length,
+      data: payload,
+      sha256: new Bun.CryptoHasher("sha256").update(payload).digest("hex"),
+    });
+    includeTerminal = false;
+    await expect(manager.readFile(alice, "/workspace/file.bin")).rejects.toThrow(
+      "without authoritative successful status",
+    );
+  });
+
   test("binds an attenuated sandbox lifecycle to one Marina identity", async () => {
     const calls: Array<{ method: string; authorization: string; body: Record<string, unknown> }> =
       [];
@@ -212,3 +263,22 @@ describe("FlywheelManager", () => {
     expect(aborted).toBe(true);
   });
 });
+
+function connectFrame(flags: number, value: unknown): Uint8Array {
+  const payload = new TextEncoder().encode(JSON.stringify(value));
+  const result = new Uint8Array(payload.length + 5);
+  result[0] = flags;
+  new DataView(result.buffer).setUint32(1, payload.length);
+  result.set(payload, 5);
+  return result;
+}
+
+function joinBytes(parts: Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    result.set(part, offset);
+    offset += part.length;
+  }
+  return result;
+}

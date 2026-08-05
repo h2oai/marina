@@ -7,6 +7,11 @@ import { WorkspaceGateway } from "./workspace-gateway";
 const PROJECT_ROOT = "/workspace/projects";
 const PROJECT_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const MAX_PROJECT_ARCHIVE_BYTES = 8 * 1024 * 1024;
+const MAX_PROJECT_EXPANDED_BYTES = 64 * 1024 * 1024;
+const MAX_PROJECT_ARCHIVE_MEMBERS = 2_000;
+const MAX_PROJECT_MEMBER_BYTES = 32 * 1024 * 1024;
+const MAX_PROJECT_COMPRESSION_RATIO = 100;
+export const PROJECT_ARCHIVE_FORMAT = "marina-project-tar-gzip-v1";
 
 export interface ProjectStatus {
   branch: string | null;
@@ -20,6 +25,11 @@ export interface ProjectDiff {
   content: string;
   status: ProjectStatus;
   untrackedPaths: string[];
+}
+
+export interface ProjectArchiveManifest {
+  expandedBytes: number;
+  memberCount: number;
 }
 
 export class CodingProjectManager {
@@ -153,7 +163,13 @@ export class CodingProjectManager {
   async exportArchive(
     entityId: EntityId,
     project = this.active(entityId),
-  ): Promise<{ data: Uint8Array; project: CodingProjectRow; status: ProjectStatus }> {
+  ): Promise<{
+    data: Uint8Array;
+    manifest: ProjectArchiveManifest;
+    project: CodingProjectRow;
+    sha256: string;
+    status: ProjectStatus;
+  }> {
     if (!project) throw new Error("No active project. Use `code project init|clone` first.");
     this.requireOwnedCurrentSandbox(entityId, project);
     if (!this.flywheel.readFile) throw new Error("Flywheel bounded binary reads are unavailable.");
@@ -169,6 +185,9 @@ export class CodingProjectManager {
         maxBytes: MAX_PROJECT_ARCHIVE_BYTES,
         timeoutMs: 60_000,
       });
+      assertTransferEvidence(transferred);
+      const listed = await this.run(entityId, ["tar", "-tvzf", archivePath], "/");
+      const manifest = validateProjectArchiveManifest(listed.output, transferred.byteLength);
       const status = await this.inspectPath(entityId, project.guest_path);
       this.db.updateCodingProject(project.id, {
         activeBranch: status.branch,
@@ -178,7 +197,7 @@ export class CodingProjectManager {
         lastExportedAt: Date.now(),
         lastStatusAt: Date.now(),
       });
-      return { data: transferred.data, project, status };
+      return { data: transferred.data, manifest, project, sha256: transferred.sha256, status };
     } finally {
       await this.run(entityId, ["rm", "-f", "--", archivePath], "/", true);
     }
@@ -204,17 +223,16 @@ export class CodingProjectManager {
     const archivePath = `/workspace/.marina/import-${nonce}.tar.gz`;
     const stagingPath = `${PROJECT_ROOT}/.import-${nonce}`;
     await this.run(entityId, ["mkdir", "-p", "/workspace/.marina", PROJECT_ROOT]);
-    await this.flywheel.writeFile(entityId, archivePath, data, {
+    const uploaded = await this.flywheel.writeFile(entityId, archivePath, data, {
       maxBytes: MAX_PROJECT_ARCHIVE_BYTES,
       timeoutMs: 60_000,
     });
+    if (uploaded.byteLength !== data.length || uploaded.sha256 !== sha256(data)) {
+      throw new Error("Project archive upload integrity evidence did not match its source bytes.");
+    }
     try {
-      const listed = await this.run(entityId, ["tar", "-tzf", archivePath], "/");
-      const unsafe = listed.output
-        .split("\n")
-        .filter(Boolean)
-        .some((entry) => entry.startsWith("/") || entry.split("/").includes(".."));
-      if (unsafe) throw new Error("Project archive contains an unsafe path.");
+      const listed = await this.run(entityId, ["tar", "-tvzf", archivePath], "/");
+      validateProjectArchiveManifest(listed.output, data.length);
       await this.run(entityId, ["mkdir", stagingPath]);
       await this.run(
         entityId,
@@ -238,6 +256,44 @@ export class CodingProjectManager {
       await this.run(entityId, ["rm", "-f", "--", archivePath], "/", true);
       await this.run(entityId, ["rm", "-rf", "--", stagingPath], "/", true);
     }
+  }
+
+  async delete(
+    entityId: EntityId,
+    selector: string,
+    options?: { discard?: boolean },
+  ): Promise<CodingProjectRow> {
+    const project = this.db.getCodingProjectForEntity(entityId, selector);
+    if (!project) throw new Error(`Unknown project: ${selector}`);
+    this.requireOwnedCurrentSandbox(entityId, project);
+    const status = await this.status(entityId, project);
+    const refreshed = this.db.getCodingProject(project.id) ?? project;
+    if (status.dirty && refreshed.has_unexported_changes && !options?.discard) {
+      throw new Error(
+        `Project ${project.name} has unexported changes. Export it first or explicitly confirm discard.`,
+      );
+    }
+    await this.run(entityId, ["rm", "-rf", "--", project.guest_path], "/");
+    this.db.deleteCodingProject(entityId, project.id, project.sandbox_id);
+    const binding = this.requireWorkspace(entityId);
+    if (binding.active_project_id === project.id) {
+      this.db.updateFlywheelBinding(entityId, { activeProjectId: null, guestCwd: null });
+    }
+    return project;
+  }
+
+  reconcile(entityId: EntityId): { removed: string[] } {
+    const workspace = this.requireWorkspace(entityId);
+    const removed: string[] = [];
+    for (const project of this.db.listCodingProjects(entityId)) {
+      if (project.sandbox_id === workspace.sandbox_id) continue;
+      this.db.deleteCodingProject(entityId, project.id, project.sandbox_id);
+      removed.push(project.id);
+    }
+    if (workspace.active_project_id && removed.includes(workspace.active_project_id)) {
+      this.db.updateFlywheelBinding(entityId, { activeProjectId: null, guestCwd: null });
+    }
+    return { removed };
   }
 
   async diff(
@@ -377,4 +433,67 @@ function sanitizePublicGitUrl(locator: string): string {
 
 function statusFingerprint(status: ProjectStatus): string {
   return `${status.revision ?? "unborn"}\n${status.output}`;
+}
+
+export function validateProjectArchiveManifest(
+  verboseListing: string,
+  compressedBytes: number,
+): ProjectArchiveManifest {
+  if (!Number.isSafeInteger(compressedBytes) || compressedBytes < 1) {
+    throw new Error("Project archive compressed byte count is invalid.");
+  }
+  const lines = verboseListing.split("\n").filter(Boolean);
+  if (lines.length === 0) throw new Error("Project archive is empty.");
+  if (lines.length > MAX_PROJECT_ARCHIVE_MEMBERS) {
+    throw new Error(`Project archive exceeds ${MAX_PROJECT_ARCHIVE_MEMBERS} members.`);
+  }
+  let expandedBytes = 0;
+  for (const line of lines) {
+    const match = line.match(/^(.)(\S*)\s+\S+\s+(\d+)\s+\S+\s+\S+\s+(.+)$/);
+    if (!match?.[1] || !match[3] || !match[4]) {
+      throw new Error("Project archive manifest contains an unrecognized member record.");
+    }
+    const type = match[1];
+    if (type !== "-" && type !== "d") {
+      throw new Error("Project archive contains a link, device, FIFO, socket, or special file.");
+    }
+    const size = Number(match[3]);
+    if (!Number.isSafeInteger(size) || size < 0 || size > MAX_PROJECT_MEMBER_BYTES) {
+      throw new Error(`Project archive member exceeds ${MAX_PROJECT_MEMBER_BYTES} bytes.`);
+    }
+    const rawPath = match[4];
+    const path = rawPath.startsWith("./") ? rawPath.slice(2) : rawPath;
+    if (
+      rawPath.startsWith("/") ||
+      path.split("/").includes("..") ||
+      path.includes("\0") ||
+      (path === "" && type !== "d")
+    ) {
+      throw new Error("Project archive contains an unsafe path.");
+    }
+    expandedBytes += size;
+    if (expandedBytes > MAX_PROJECT_EXPANDED_BYTES) {
+      throw new Error(`Project archive expands beyond ${MAX_PROJECT_EXPANDED_BYTES} bytes.`);
+    }
+  }
+  if (expandedBytes / compressedBytes > MAX_PROJECT_COMPRESSION_RATIO) {
+    throw new Error(
+      `Project archive exceeds the ${MAX_PROJECT_COMPRESSION_RATIO}:1 compression-ratio limit.`,
+    );
+  }
+  return { expandedBytes, memberCount: lines.length };
+}
+
+function assertTransferEvidence(result: {
+  byteLength: number;
+  data: Uint8Array;
+  sha256: string;
+}): void {
+  if (result.byteLength !== result.data.length || result.sha256 !== sha256(result.data)) {
+    throw new Error("Flywheel download byte-count/digest evidence did not match received bytes.");
+  }
+}
+
+function sha256(data: Uint8Array): string {
+  return new Bun.CryptoHasher("sha256").update(data).digest("hex");
 }

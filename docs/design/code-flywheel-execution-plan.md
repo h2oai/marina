@@ -45,7 +45,7 @@ sandboxes for mutually untrusted projects or high-concurrency crews without chan
 ## 2026-08-05 implementation review
 
 Commits `5c85aef` and `76dcded` moved the integration from control-plane scaffolding to a usable
-credential-free coding workflow. Review validation: 2,267 Marina tests pass across 143 files, the
+credential-free coding workflow. Review validation: 2,271 Marina tests pass across 143 files, the
 focused Flywheel/project/service suites pass, and TypeScript and Biome checks are clean.
 
 The shipped slices are strong enough for controlled use, but “M1–M4 complete” means **functional
@@ -296,6 +296,13 @@ M5 is now the active milestone and is divided into independently testable gates.
 
 #### M5a — transfer integrity and project durability
 
+Status: **implementation in progress** — bounded reads now require an authoritative successful
+Flywheel process terminal event and carry observed SHA-256/byte-count evidence. Uploads are staged,
+atomically renamed, and independently verified in the guest. Archive v1 enforces compressed,
+expanded, member-count, per-member, compression-ratio, path, and regular-file/directory-only policy
+before extraction. Project deletion and replacement-sandbox metadata reconciliation are scoped by
+entity plus sandbox identity. Disk-full/live interruption evidence remains part of M5e.
+
 - Add expanded-byte and member-count budgets before extraction; reject devices, FIFOs, sockets,
   absolute paths, traversal, and unsafe symlink/hardlink targets.
 - Add SHA-256 plus declared/observed byte counts to every upload/download and require an authoritative
@@ -311,6 +318,13 @@ truncate, or mark incomplete work exported.
 
 #### M5b — network and credential boundary
 
+Status: **policy-visible, fail-closed foundation shipped** — Marina persists and reports the
+provider-owned network profile and logical credential-binding schema without storing secret
+material. Because Flywheel's public direct-sandbox API does not yet expose network-profile or
+credential-broker binding, Marina refuses those mutations rather than claiming enforcement.
+Service publication, the network expansion Marina can currently control, requires a matching
+one-use approval and receives a finite lease.
+
 - Implement the versioned broker in `sandbox-credential-broker.md` for private Git first, then
   package registries and model/cloud APIs. Persist only logical binding metadata.
 - Enforce DNS/IP/redirect-aware egress at Flywheel's network boundary, including IPv4/IPv6 private,
@@ -324,6 +338,13 @@ Exit: private Git works without guest-visible upstream credentials, and network 
 enforced below untrusted guest code rather than inferred from Marina-side validation.
 
 #### M5c — managed-process correctness
+
+Status: **functional lifecycle slice complete** — managed services persist Linux process birth
+identity alongside PID. Status and stop re-read `/proc/<pid>/stat`; identity mismatch becomes
+`unknown` and Marina refuses to signal the reused PID. Startup reconciliation marks previously
+running services unknown until checked, logs remain bounded, probe history is durable, and published
+services have automatically revoked leases. A future first-class Flywheel process handle can replace
+this adapter without changing the Marina service model.
 
 - Replace PID-only ownership with a Flywheel process handle or `(pid, start identity)` verified by a
   supervisor. Stop/restart must never signal an unrelated reused PID.
