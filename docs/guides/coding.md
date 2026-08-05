@@ -247,15 +247,38 @@ When the Marina server has `FLYWHEEL_TOKEN`, each entity can create one durable 
 ```text
 code sandbox start
 code sandbox use       # active session now runs finite commands in Flywheel
+code project init demo # /workspace/projects/demo becomes the durable guest cwd
+# or: code project clone https://github.com/example/project.git
 code run bun test
+code project status
+code project diff      # inspect tracked changes without marking them exported
+code project export    # bounded Git patch artifact for tracked work
+code project export archive # complete bounded archive, including binary/untracked files
+# code project import <project_archive_artifact> restored
+code service start web --port 3000 -- bun run dev
+code service logs web
+code service probe web /health
+code service screenshot web / # PNG evidence when Chromium is present in the image
+code service publish web
+code service revoke web
+code service stop web
 code sandbox local     # explicitly return this session to host-safe local mode
 ```
 
 Selection is stored per coding session. Existing sessions default to local, configuration alone
 never changes the target, and a Flywheel error never retries on the host. Use `code sandbox status`,
-`hibernate`, `resume`, and `stop confirm` for lifecycle management. Filesystem materialization and
-managed background processes are later milestones; until then, local and guest files must not be
-treated as synchronized.
+`hibernate`, `resume`, and `stop confirm` for lifecycle management. `code project list|diff|switch`
+selects among durable guest projects and refuses to leave unexported dirty work. Public clone URLs
+must be credential-free HTTPS. Patch export remains the compact tracked-work path; bounded archive
+export/import preserves complete project content through Flywheel's typed byte stream, stages and
+validates imports, then atomically promotes them. Private Git remains a broker extension. Local and guest
+files are distinct and must not be treated as synchronized. Managed services run only in Flywheel,
+keep durable restart recipes and bounded guest logs, and stop across hibernation until explicitly
+restarted. Localhost HTTP probes store response status, latency, and a bounded redacted body as
+verification evidence. Credential-like command arguments are refused; use the broker contract
+rather than raw tokens once credential profiles are available. Screenshot capture runs a guest-local
+Chromium browser, transfers a size-bounded PNG, verifies its signature, and removes the guest temporary
+file. It fails closed when the sandbox image has no supported Chromium binary.
 
 ## Try it now
 

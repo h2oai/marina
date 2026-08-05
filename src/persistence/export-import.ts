@@ -55,6 +55,8 @@ export const EXPORT_TABLES = [
   "evolution_runs",
   "projects",
   "coding_sessions",
+  "coding_projects",
+  "coding_services",
   "coding_events",
   "coding_artifacts",
   "dynamic_commands",

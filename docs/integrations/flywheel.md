@@ -79,6 +79,14 @@ The same manager is available through Code Mode:
 - `code sandbox use` — explicitly select Flywheel for the active coding session
 - `code sandbox local` — explicitly return that session to host-safe local execution
 - `code sandbox stop confirm`
+- `code project init <name>` — bootstrap a Git project under `/workspace/projects/<name>`
+- `code project clone <public-https-url> [name]` — materialize a public repository
+- `code project status|list|diff|switch|export [archive]` — inspect, select, and preserve work
+- `code project import <artifact> <name>` — stage, validate, and atomically restore an archive
+- `code service start|list|status|logs|stop|restart` — manage guest-native services
+- `code service probe <name> [path]` — store bounded localhost HTTP verification evidence
+- `code service screenshot <name> [path]` — store bounded PNG browser evidence
+- `code service publish|revoke` — expose or remove a service with a declared port
 
 Mutating actions require the existing `code.exec` competence gate. Stop is
 destructive and requires the literal confirmation. Execution changes only when
@@ -89,3 +97,25 @@ command output plus typed Flywheel event-kind evidence. Deadlines abort the
 `Exec` stream; Flywheel binds that cancellation to the exact sandbox process,
 so timed-out work is stopped remotely rather than detached. Unknown terminal
 outcomes still fail closed.
+
+Project metadata is credential-free and durable in Marina; content remains authoritative on the
+Flywheel writable disk. The active guest path becomes the cwd for sandbox-backed Code Mode runs.
+Switching refreshes Git status and blocks on unexported changes. Patch export stores a bounded binary
+Git patch and refuses untracked files. Archive export carries complete project content over Flywheel's
+typed protobuf byte stream; import checks its gzip type and member paths, extracts into a temporary
+guest directory, and atomically renames it. Transfers are explicitly size-bounded and never touch the
+Marina host workspace. Private repositories await the credential broker.
+The broader Git, registry, model, cloud, storage, signing, and runtime-secret boundary is specified
+in the [sandbox credential broker contract](../design/sandbox-credential-broker.md). Flywheel's
+current generalized proxy has the right server-side injection model, but its authentication path is
+not yet a public binding surface for persistent direct-`Exec` sandboxes; Marina does not route raw
+secrets around that gap.
+
+Managed services store only command arrays, ownership, PID/status evidence, declared ports, guest log
+paths, and restart recipes in Marina. Output is bounded and defensively secret-redacted. Commands
+with credential-like arguments or credential-bearing URLs are refused rather than persisted. Guest
+processes do not survive hibernation; Marina marks them stopped and retains an explicit restart
+recipe. Publishing and revocation use Flywheel's versioned public API.
+HTTP probes target only the service's declared loopback port inside its owning sandbox. Screenshot
+capture uses a browser installed in that sandbox, validates the bounded transferred PNG, and fails
+closed without Chromium or binary-read support.

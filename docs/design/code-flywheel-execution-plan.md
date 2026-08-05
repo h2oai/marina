@@ -30,7 +30,8 @@ sandboxes for mutually untrusted projects or high-concurrency crews without chan
   them before expiry, and never returns credentials to an entity.
 - Entity bindings are durable in Marina, contain no credentials, and reconcile against Flywheel's
   registry when the optional integration starts. Unreachable or missing sandboxes become explicitly
-  unavailable and never fall back to host execution. Code Mode does not route through them yet.
+  unavailable and never fall back to host execution. Code Mode routes finite commands through an
+  explicitly selected sandbox target and uses the active durable project as its guest cwd.
 - Flywheel supports arbitrary streamed exec, keep-alive sandboxes, persistent VM writable disks,
   cold-boot hibernate/resume, publishing, registry persistence, and restart recovery.
 - Flywheel does **not** currently expose a general Marina-facing project import/export, file API, or
@@ -52,7 +53,9 @@ sandboxes for mutually untrusted projects or high-concurrency crews without chan
    approval flows; new gates are added only when existing semantics are genuinely insufficient.
 6. **No raw secrets in the guest by default.** Git/provider credentials are short-lived and
    purpose-bound through a broker/proxy. They are never embedded in command arguments, artifacts,
-   logs, or persisted capability records.
+   logs, or persisted capability records. The complete cross-product contract covers Git, package
+   registries, model/cloud APIs, storage, signing, and app runtime access in
+   [sandbox-credential-broker.md](./sandbox-credential-broker.md).
 7. **No fake workspace coherence.** Host files and sandbox files are distinct until a versioned
    materialization/synchronization contract exists. The UI always names the authoritative copy.
 8. **Hibernate is normal idle lifecycle.** It preserves the writable disk but not processes. Resume
@@ -232,13 +235,27 @@ host mode remains unchanged and the full existing suite stays green.
 
 ### M3 — project materialization
 
+Status: **complete for the credential-free public contract** — durable metadata, deterministic
+guest paths, empty Git bootstrap, public
+credential-free HTTPS clone, active-project cwd routing, restart recovery, live dirty-switch
+protection, bounded diff inspection, bounded tracked-work patch export, and complete bounded archive
+export/import with staged atomic promotion are implemented. Private Git remains a credential-broker
+extension rather than an unsafe M3 fallback.
+
 - Ship empty/bootstrap and public Git workflows, then private Git via credential broker.
 - Add project metadata, deterministic guest paths, status/diff/export, and dirty-switch protection.
-- Add archive import/export only after the bounded transfer API exists in Flywheel.
+- Carry archive bytes over Flywheel's typed `Exec` byte stream with strict Marina-side bounds.
 
 Exit: an entity can resume a real project across Marina/Flywheel restarts and safely export work.
 
 ### M4 — services and observation
+
+Status: **complete** — entity-owned services have durable IDs and restart recipes, execute in the
+active guest project, retain bounded guest logs, support live status/stop/restart, declare ports, and
+can publish/revoke through Flywheel. Hibernate records them stopped because process state does not
+survive cold boot. Localhost HTTP probes now create bounded, redacted verification artifacts.
+Guest-local Chromium screenshots are transferred as bounded typed bytes, PNG-validated, persisted as
+artifacts, and cleaned from the guest. Images without Chromium fail closed with explicit remediation.
 
 - Add managed background processes, restart recipes, bounded logs, publish/revoke, API probes, and
   browser/screenshot artifacts where appropriate.

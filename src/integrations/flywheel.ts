@@ -71,8 +71,16 @@ export class FlywheelClient {
     return this.unary("ListSandboxes", { sessionId, limit: 100, offset: 0 });
   }
 
-  publish(input: { sessionId: string; sandboxId: string; port: number }): Promise<{ url: string }> {
+  publish(input: {
+    sessionId: string;
+    sandboxId: string;
+    port: number;
+  }): Promise<{ url: string; subdomain: string }> {
     return this.unary("Publish", input);
+  }
+
+  unpublish(input: { sessionId: string; subdomain: string }): Promise<Record<string, never>> {
+    return this.unary("Unpublish", input);
   }
 
   hibernate(input: { sessionId: string; sandboxId: string }): Promise<Record<string, never>> {

@@ -31,7 +31,7 @@ describe("FlywheelManager", () => {
         case "CreateSandbox":
           return Response.json({ sandboxId: "sandbox-1", keepAlive: true });
         case "Publish":
-          return Response.json({ url: "https://app.example" });
+          return Response.json({ url: "https://app.example", subdomain: "app" });
         default:
           return Response.json({});
       }
@@ -54,9 +54,18 @@ describe("FlywheelManager", () => {
     expect(calls[2]?.authorization).toBe("Bearer agent-cap-1");
 
     expect(await manager.publish(alice, 8080)).toBe("https://app.example");
-    expect(calls.filter((call) => call.method === "MintCapability")).toHaveLength(2);
+    expect(await manager.publishDetailed(alice, 8081)).toEqual({
+      url: "https://app.example",
+      subdomain: "app",
+    });
+    await manager.unpublish(alice, "app");
+    expect(calls.findLast((call) => call.method === "Unpublish")?.body).toEqual({
+      sessionId: "session-1",
+      subdomain: "app",
+    });
+    expect(calls.filter((call) => call.method === "MintCapability")).toHaveLength(4);
     expect(calls.findLast((call) => call.method === "Publish")?.authorization).toBe(
-      "Bearer agent-cap-2",
+      "Bearer agent-cap-3",
     );
     await manager.hibernate(alice);
     expect(manager.status(alice)?.state).toBe("hibernated");

@@ -26,6 +26,11 @@ export interface FlywheelExecutionResult {
   events: FlywheelEvent[];
 }
 
+export interface FlywheelBinaryResult {
+  data: Uint8Array;
+  events: FlywheelEvent[];
+}
+
 export class FlywheelExecutionTimeoutError extends Error {
   constructor(readonly timeoutMs: number) {
     super(`Flywheel command exceeded ${timeoutMs}ms; remote cancellation was requested.`);
@@ -43,7 +48,20 @@ export interface FlywheelToolBackend {
     cwd?: string,
     options?: { timeoutMs?: number },
   ): Promise<FlywheelExecutionResult>;
+  readFile?(
+    entityId: EntityId,
+    guestPath: string,
+    options?: { maxBytes?: number; timeoutMs?: number },
+  ): Promise<FlywheelBinaryResult>;
+  writeFile?(
+    entityId: EntityId,
+    guestPath: string,
+    data: Uint8Array,
+    options?: { maxBytes?: number; timeoutMs?: number },
+  ): Promise<void>;
   publish(entityId: EntityId, port: number): Promise<string>;
+  publishDetailed?(entityId: EntityId, port: number): Promise<{ url: string; subdomain: string }>;
+  unpublish?(entityId: EntityId, subdomain: string): Promise<void>;
   hibernate(entityId: EntityId): Promise<void>;
   resume(entityId: EntityId): Promise<void>;
   stop(entityId: EntityId): Promise<void>;
@@ -173,7 +191,134 @@ export class FlywheelManager implements FlywheelToolBackend {
     };
   }
 
+  async readFile(
+    entityId: EntityId,
+    guestPath: string,
+    options?: { maxBytes?: number; timeoutMs?: number },
+  ): Promise<FlywheelBinaryResult> {
+    if (!guestPath.startsWith("/") || guestPath.includes("\0")) {
+      throw new Error("Guest transfer paths must be absolute and contain no NUL bytes.");
+    }
+    const maxBytes = options?.maxBytes ?? 4 * 1024 * 1024;
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 16 * 1024 * 1024) {
+      throw new Error("Flywheel file reads must be bounded between 1 byte and 16 MiB.");
+    }
+    const workspace = this.requireRunning(entityId);
+    const client = await this.clientFor(workspace);
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeoutMs = options?.timeoutMs ?? 30_000;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+    const chunks: Uint8Array[] = [];
+    const events: FlywheelEvent[] = [];
+    let total = 0;
+    try {
+      for await (const event of client.exec(
+        {
+          sessionId: workspace.sessionId,
+          sandboxId: workspace.sandboxId,
+          command: "cat",
+          args: ["--", guestPath],
+          cwd: "/",
+        },
+        { signal: controller.signal },
+      )) {
+        events.push(event);
+        const chunk = processBytes(event);
+        if (!chunk.length) continue;
+        total += chunk.length;
+        if (total > maxBytes) {
+          controller.abort();
+          throw new Error(`Guest file exceeds the ${maxBytes}-byte transfer limit.`);
+        }
+        chunks.push(chunk);
+      }
+    } catch (error) {
+      if (timedOut) throw new FlywheelExecutionTimeoutError(timeoutMs);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+    return { data: concatBytes(chunks, total), events };
+  }
+
+  async writeFile(
+    entityId: EntityId,
+    guestPath: string,
+    data: Uint8Array,
+    options?: { maxBytes?: number; timeoutMs?: number },
+  ): Promise<void> {
+    if (!guestPath.startsWith("/") || guestPath.includes("\0")) {
+      throw new Error("Guest transfer paths must be absolute and contain no NUL bytes.");
+    }
+    const maxBytes = options?.maxBytes ?? 4 * 1024 * 1024;
+    if (data.length > maxBytes || maxBytes > 16 * 1024 * 1024) {
+      throw new Error(`Guest file exceeds the ${maxBytes}-byte transfer limit.`);
+    }
+    const timeoutMs = options?.timeoutMs ?? 30_000;
+    const temporaryPath = `${guestPath}.marina-${crypto.randomUUID()}.partial`;
+    try {
+      await this.execChecked(
+        entityId,
+        "/bin/sh",
+        ["-c", ': >"$1"', "marina-transfer", temporaryPath],
+        "/",
+        timeoutMs,
+      );
+      const chunkSize = 96 * 1024;
+      for (let offset = 0; offset < data.length; offset += chunkSize) {
+        const encoded = Buffer.from(data.slice(offset, offset + chunkSize)).toString("base64");
+        await this.execChecked(
+          entityId,
+          "/bin/sh",
+          [
+            "-c",
+            'printf \'%s\' "$2" | base64 -d >>"$1"',
+            "marina-transfer",
+            temporaryPath,
+            encoded,
+          ],
+          "/",
+          timeoutMs,
+        );
+      }
+      await this.execChecked(entityId, "mv", ["--", temporaryPath, guestPath], "/", timeoutMs);
+    } catch (error) {
+      await this.execDetailed(entityId, "rm", ["-f", "--", temporaryPath], "/", {
+        timeoutMs,
+      }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async execChecked(
+    entityId: EntityId,
+    command: string,
+    args: string[],
+    cwd: string,
+    timeoutMs: number,
+  ): Promise<void> {
+    const result = await this.execDetailed(entityId, command, args, cwd, { timeoutMs });
+    const failed = result.events.some((event) => {
+      const body = event.body as { case?: unknown; value?: unknown } | undefined;
+      const process =
+        (event.process as { kind?: unknown; error?: unknown } | undefined) ??
+        (body?.case === "process"
+          ? (body.value as { kind?: unknown; error?: unknown } | undefined)
+          : undefined);
+      return process?.kind === "PROCESS_EVENT_KIND_ERROR" || Boolean(process?.error);
+    });
+    if (failed) throw new Error(`Flywheel transfer command failed: ${command}`);
+  }
+
   async publish(entityId: EntityId, port: number) {
+    return (await this.publishDetailed(entityId, port)).url;
+  }
+
+  async publishDetailed(entityId: EntityId, port: number) {
     const workspace = this.requireRunning(entityId);
     const client = await this.clientFor(workspace);
     const result = await client.publish({
@@ -183,7 +328,15 @@ export class FlywheelManager implements FlywheelToolBackend {
     });
     workspace.publishedUrl = result.url;
     this.db?.updateFlywheelBinding(entityId, { publishedUrl: result.url, lastError: null });
-    return result.url;
+    return result;
+  }
+
+  async unpublish(entityId: EntityId, subdomain: string) {
+    const workspace = this.requireRunning(entityId);
+    const client = await this.clientFor(workspace);
+    await client.unpublish({ sessionId: workspace.sessionId, subdomain });
+    if (workspace.publishedUrl) workspace.publishedUrl = undefined;
+    this.db?.updateFlywheelBinding(entityId, { publishedUrl: null, lastError: null });
   }
 
   async hibernate(entityId: EntityId) {
@@ -343,15 +496,29 @@ function sanitizedError(error: unknown): string {
 }
 
 function processData(event: FlywheelEvent): string {
+  return new TextDecoder().decode(processBytes(event));
+}
+
+function processBytes(event: FlywheelEvent): Uint8Array {
   const body = event.body as { case?: unknown; value?: unknown } | undefined;
   const processEvent =
     (event.process as { data?: unknown } | undefined) ??
     (body?.case === "process" ? (body.value as { data?: unknown } | undefined) : undefined);
   const data = processEvent?.data;
-  if (typeof data !== "string" || data.length === 0) return "";
+  if (typeof data !== "string" || data.length === 0) return new Uint8Array();
   try {
-    return Buffer.from(data, "base64").toString("utf8");
+    return Uint8Array.from(Buffer.from(data, "base64"));
   } catch {
-    return data;
+    return new TextEncoder().encode(data);
   }
+}
+
+function concatBytes(chunks: Uint8Array[], total: number): Uint8Array {
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return joined;
 }
