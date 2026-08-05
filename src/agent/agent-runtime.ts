@@ -158,6 +158,17 @@ export class AgentRuntime {
     this.onEvent = opts.onEvent;
   }
 
+  /** Configure the in-process WebSocket endpoint without replacing this runtime instance. */
+  setWsPort(port: number): void {
+    if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+      throw new Error(`Invalid agent WebSocket port: ${port}`);
+    }
+    if (this.agents.size > 0 || this.spawnsInFlight.size > 0) {
+      throw new Error("Cannot change the agent WebSocket port while agents are running");
+    }
+    this.wsPort = port;
+  }
+
   /**
    * Initialize: auto-respawn agents from saved configs.
    * Call after WebSocket server is ready.

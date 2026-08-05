@@ -941,6 +941,11 @@ export async function handleDashboardApi(
           experiment_name: experiment?.name ?? null,
           protocol: parseEvolutionProtocol(session.protocol),
           budget: evolutionBudgetState(session, runs.length),
+          activity: db.getEvolutionActivity(
+            session.experiment_id,
+            session.started_at ?? session.created_at,
+            session.completed_at ?? Date.now(),
+          ),
           runs,
         };
       }),

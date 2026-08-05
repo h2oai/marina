@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Read-only native-evolution qualification, a dedicated MCP evolution tool, and a bounded soak gate
+  with machine-readable connection, error, throughput, and p95 latency evidence.
+- Expandable evolution lineage/evidence telemetry, self-contained three-role live trials, and
+  reconnect/session-token churn qualification.
 - Durable provenance-aware contradiction cases spanning agents and shared memory pools, with
   `left`, `right`, `both`, and `neither` resolution modes, reviewer rationale, verification history,
   terminal commands, and dashboard APIs.
@@ -26,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Agent runtime port configuration now preserves the runtime referenced by command handlers, and
+  spawn rejects names that world login would otherwise truncate into a different identity.
 - Reworked the model-agnostic pi-agent system contract around outcome framing, selective retrieval,
   deliberate tool use, result verification, durable provenance, explicit stopping/replanning, and
   equal treatment of humans and opportunistic agents. Dynamic world, memory, transcript, and tool

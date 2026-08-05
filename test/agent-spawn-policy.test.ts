@@ -129,4 +129,12 @@ describe("agent spawn command — permission layer (integration)", () => {
     await engine.processCommand(alice.entity!, "agent spawn helper");
     expect(output()).toContain("depth limit");
   });
+
+  it("rejects names that would be silently truncated at world login", async () => {
+    grant(db, alice.entity!, "agent.spawn");
+    alice.clear();
+    await engine.processCommand(alice.entity!, "agent spawn this_name_is_over_twenty_chars");
+    expect(output()).toContain("1-20 characters");
+    expect(db.getAgentConfig("this_name_is_over_twenty_chars")).toBeUndefined();
+  });
 });

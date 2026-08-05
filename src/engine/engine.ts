@@ -2122,11 +2122,9 @@ export class Engine {
   /** Initialize the agent runtime. Auto-respawns saved agents only if AGENT_AUTORESPAWN=true. */
   async initAgents(wsPort?: number): Promise<void> {
     if (wsPort) {
-      (this as { agentRuntime: AgentRuntime }).agentRuntime = new AgentRuntime({
-        db: this.db,
-        wsPort,
-        onEvent: (event) => this.logEvent(event),
-      });
+      // Keep the original runtime object: command handlers, media resolution,
+      // and other engine services already hold references to it.
+      this.agentRuntime.setWsPort(wsPort);
     }
     const autoRespawn = process.env.AGENT_AUTORESPAWN === "true";
     if (!autoRespawn) {

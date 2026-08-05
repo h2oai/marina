@@ -777,6 +777,19 @@ export interface EvolutionSessionEntry {
     runsRemaining?: number;
     secondsRemaining?: number;
   };
+  activity: {
+    participants: string[];
+    activeParticipants: number;
+    meaningfulActions: number;
+    communications: number;
+    toolCalls: number;
+    marinaToolCalls: number;
+    averageToolLatencyMs: number | null;
+    maximumToolLatencyMs: number | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    costUsd: number | null;
+  };
   runs: EvolutionRunEntry[];
 }
 

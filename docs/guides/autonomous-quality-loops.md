@@ -121,6 +121,8 @@ bun run qualify:autonomy http://marina.example:3300
 ```
 
 The probe polls for up to two minutes by default and exits non-zero with the missing evidence.
+Native evolution has a separate read-only evidence gate; run `bun run qualify:evolution` after a
+controlled protocol trial. See `docs/guides/native-evolution.md` for its exact checks and soak mode.
 
 ## Opportunistic Agent Negotiation
 

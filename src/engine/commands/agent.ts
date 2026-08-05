@@ -429,6 +429,13 @@ async function handleSpawn(
     );
     return;
   }
+  if (!/^[A-Za-z0-9_]{1,20}$/.test(name)) {
+    ctx.send(
+      eid,
+      "Agent names must be 1-20 characters using only letters, numbers, and underscores.",
+    );
+    return;
+  }
 
   // Parse optional keyword arguments
   const opts: Record<string, string> = {};
