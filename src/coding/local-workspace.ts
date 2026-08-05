@@ -78,6 +78,21 @@ export interface CodeRunPolicy {
   timeoutMs: number;
 }
 
+export type WorkspaceCapability =
+  | "files"
+  | "patches"
+  | "finite-exec"
+  | "processes"
+  | "publish"
+  | "hibernate"
+  | "capture";
+
+export interface WorkspaceDescriptor {
+  target: "local" | "flywheel";
+  persistence: "host" | "durable-sandbox";
+  capabilities: WorkspaceCapability[];
+}
+
 /**
  * Host-side filesystem surface of a workspace. These operations read/mutate the
  * workspace tree directly; for a sandboxed runtime they stay host-side over the
@@ -108,6 +123,7 @@ export interface WorkspaceFiles {
 export interface WorkspaceExec {
   run(command: string[], timeoutMs?: number, maxBytes?: number): Promise<WorkspaceRunResult>;
   runPolicy(): CodeRunPolicy;
+  describe(): WorkspaceDescriptor;
 }
 
 /**
@@ -146,6 +162,14 @@ export class LocalWorkspace implements WorkspaceRuntime {
 
   displayRoot(): string {
     return this.root;
+  }
+
+  describe(): WorkspaceDescriptor {
+    return {
+      target: "local",
+      persistence: "host",
+      capabilities: ["files", "patches", "finite-exec"],
+    };
   }
 
   resolvePath(input = "."): string {

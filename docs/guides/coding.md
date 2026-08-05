@@ -240,6 +240,23 @@ Then `code workspace list`, `code workspace discover` (find likely projects), an
 `code workspace use <path>` choose where new sessions open. `code doctor` confirms git + ripgrep
 are present (they power `diff`/`checkpoint`/`revert` and fast `search`).
 
+### Optional isolated execution with Flywheel
+
+When the Marina server has `FLYWHEEL_TOKEN`, each entity can create one durable isolated workspace:
+
+```text
+code sandbox start
+code sandbox use       # active session now runs finite commands in Flywheel
+code run bun test
+code sandbox local     # explicitly return this session to host-safe local mode
+```
+
+Selection is stored per coding session. Existing sessions default to local, configuration alone
+never changes the target, and a Flywheel error never retries on the host. Use `code sandbox status`,
+`hibernate`, `resume`, and `stop confirm` for lifecycle management. Filesystem materialization and
+managed background processes are later milestones; until then, local and guest files must not be
+treated as synchronized.
+
 ## Try it now
 
 A runnable, narrated session lives in [`examples/coding-quickstart/`](../../examples/coding-quickstart/) —

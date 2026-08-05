@@ -1,3 +1,4 @@
+import type { FlywheelBindingRow, FlywheelBindingState, MarinaDB } from "../persistence/database";
 import type { EntityId } from "../types";
 import { FlywheelClient, type FlywheelEvent, type FlywheelFetch } from "./flywheel";
 
@@ -15,18 +16,39 @@ export interface FlywheelWorkspace {
   sandboxId: string;
   image: string;
   keepAlive: boolean;
-  state: "running" | "hibernated";
+  state: FlywheelBindingState;
   publishedUrl?: string;
+  lastError?: string;
+}
+
+export interface FlywheelExecutionResult {
+  output: string;
+  events: FlywheelEvent[];
+}
+
+export class FlywheelExecutionTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`Flywheel command exceeded ${timeoutMs}ms; remote cancellation was requested.`);
+    this.name = "FlywheelExecutionTimeoutError";
+  }
 }
 
 export interface FlywheelToolBackend {
   create(entityId: EntityId, image?: string, keepAlive?: boolean): Promise<FlywheelWorkspace>;
   exec(entityId: EntityId, command: string, args?: string[], cwd?: string): Promise<string>;
+  execDetailed?(
+    entityId: EntityId,
+    command: string,
+    args?: string[],
+    cwd?: string,
+    options?: { timeoutMs?: number },
+  ): Promise<FlywheelExecutionResult>;
   publish(entityId: EntityId, port: number): Promise<string>;
   hibernate(entityId: EntityId): Promise<void>;
   resume(entityId: EntityId): Promise<void>;
   stop(entityId: EntityId): Promise<void>;
   status(entityId: EntityId): FlywheelWorkspace | undefined;
+  reconcile?(): Promise<void>;
 }
 
 interface EntityWorkspace extends FlywheelWorkspace {
@@ -44,17 +66,26 @@ export class FlywheelManager implements FlywheelToolBackend {
     operatorToken: string,
     private readonly defaultImage: string,
     private readonly fetch?: FlywheelFetch,
+    private readonly db?: MarinaDB,
   ) {
     this.operator = new FlywheelClient({ baseUrl, token: operatorToken, fetch });
+    for (const binding of db?.listFlywheelBindings() ?? []) {
+      this.workspaces.set(
+        binding.entity_id as EntityId,
+        workspaceFromBinding(binding, this.operator),
+      );
+    }
   }
 
-  static fromEnv(): FlywheelManager | undefined {
+  static fromEnv(db?: MarinaDB): FlywheelManager | undefined {
     const token = process.env.FLYWHEEL_TOKEN;
     if (!token) return undefined;
     return new FlywheelManager(
       process.env.FLYWHEEL_RPC_URL ?? "http://localhost:8088/rpc",
       token,
       process.env.FLYWHEEL_IMAGE ?? "localhost/h2oai/flywheel-agentd:latest",
+      undefined,
+      db,
     );
   }
 
@@ -79,6 +110,14 @@ export class FlywheelManager implements FlywheelToolBackend {
         state: "running",
       };
       this.workspaces.set(entityId, workspace);
+      this.db?.saveFlywheelBinding({
+        entityId,
+        sessionId,
+        sandboxId: sandbox.sandboxId,
+        image,
+        keepAlive: sandbox.keepAlive,
+        state: "running",
+      });
       return publicWorkspace(workspace);
     } finally {
       this.creating.delete(entityId);
@@ -86,20 +125,52 @@ export class FlywheelManager implements FlywheelToolBackend {
   }
 
   async exec(entityId: EntityId, command: string, args: string[] = [], cwd?: string) {
+    return (await this.execDetailed(entityId, command, args, cwd)).output;
+  }
+
+  async execDetailed(
+    entityId: EntityId,
+    command: string,
+    args: string[] = [],
+    cwd?: string,
+    options?: { timeoutMs?: number },
+  ) {
     const workspace = this.requireRunning(entityId);
     const output: string[] = [];
+    const events: FlywheelEvent[] = [];
     const client = await this.clientFor(workspace);
-    for await (const event of client.exec({
-      sessionId: workspace.sessionId,
-      sandboxId: workspace.sandboxId,
-      command,
-      args,
-      cwd,
-    })) {
-      const data = processData(event);
-      if (data) output.push(data);
+    const timeoutMs = options?.timeoutMs ?? 120_000;
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+    try {
+      for await (const event of client.exec(
+        {
+          sessionId: workspace.sessionId,
+          sandboxId: workspace.sandboxId,
+          command,
+          args,
+          cwd,
+        },
+        { signal: controller.signal },
+      )) {
+        events.push(event);
+        const data = processData(event);
+        if (data) output.push(data);
+      }
+    } catch (error) {
+      if (timedOut) throw new FlywheelExecutionTimeoutError(timeoutMs);
+      throw error;
+    } finally {
+      clearTimeout(timer);
     }
-    return output.join("") || "Command completed without output.";
+    return {
+      output: output.join("") || "Command completed without output.",
+      events,
+    };
   }
 
   async publish(entityId: EntityId, port: number) {
@@ -111,6 +182,7 @@ export class FlywheelManager implements FlywheelToolBackend {
       port,
     });
     workspace.publishedUrl = result.url;
+    this.db?.updateFlywheelBinding(entityId, { publishedUrl: result.url, lastError: null });
     return result.url;
   }
 
@@ -119,6 +191,7 @@ export class FlywheelManager implements FlywheelToolBackend {
     const client = await this.clientFor(workspace);
     await client.hibernate(workspace);
     workspace.state = "hibernated";
+    this.db?.updateFlywheelBinding(entityId, { state: "hibernated", lastError: null });
   }
 
   async resume(entityId: EntityId) {
@@ -127,18 +200,65 @@ export class FlywheelManager implements FlywheelToolBackend {
     const client = await this.clientFor(workspace);
     await client.resume(workspace);
     workspace.state = "running";
+    workspace.lastError = undefined;
+    this.db?.updateFlywheelBinding(entityId, { state: "running", lastError: null });
   }
 
   async stop(entityId: EntityId) {
     const workspace = this.require(entityId);
+    workspace.state = "stopping";
+    this.db?.updateFlywheelBinding(entityId, { state: "stopping" });
     const client = await this.clientFor(workspace);
-    await client.stopSandbox(workspace);
-    this.workspaces.delete(entityId);
+    try {
+      await client.stopSandbox(workspace);
+      this.workspaces.delete(entityId);
+      this.db?.deleteFlywheelBinding(entityId);
+    } catch (error) {
+      workspace.state = "unavailable";
+      workspace.lastError = sanitizedError(error);
+      this.db?.updateFlywheelBinding(entityId, {
+        state: "unavailable",
+        lastError: workspace.lastError,
+      });
+      throw error;
+    }
   }
 
   status(entityId: EntityId): FlywheelWorkspace | undefined {
     const workspace = this.workspaces.get(entityId);
     return workspace ? publicWorkspace(workspace) : undefined;
+  }
+
+  async reconcile(): Promise<void> {
+    const reconciledAt = Date.now();
+    await Promise.all(
+      [...this.workspaces.entries()].map(async ([entityId, workspace]) => {
+        try {
+          const result = await this.operator.listSandboxes(workspace.sessionId);
+          const remote = result.sandboxes.find((sandbox) => sandbox.id === workspace.sandboxId);
+          if (!remote || remote.status === "stopped") {
+            workspace.state = "unavailable";
+            workspace.lastError = "Flywheel sandbox is missing or stopped.";
+          } else {
+            workspace.state = remote.status === "hibernated" ? "hibernated" : "running";
+            workspace.lastError = undefined;
+          }
+          this.db?.updateFlywheelBinding(entityId, {
+            state: workspace.state,
+            lastError: workspace.lastError ?? null,
+            reconciledAt,
+          });
+        } catch (error) {
+          workspace.state = "unavailable";
+          workspace.lastError = sanitizedError(error);
+          this.db?.updateFlywheelBinding(entityId, {
+            state: "unavailable",
+            lastError: workspace.lastError,
+            reconciledAt,
+          });
+        }
+      }),
+    );
   }
 
   private require(entityId: EntityId): EntityWorkspace {
@@ -150,8 +270,13 @@ export class FlywheelManager implements FlywheelToolBackend {
 
   private requireRunning(entityId: EntityId): EntityWorkspace {
     const workspace = this.require(entityId);
-    if (workspace.state !== "running")
-      throw new Error("Flywheel sandbox is hibernated; resume it first.");
+    if (workspace.state !== "running") {
+      throw new Error(
+        workspace.state === "hibernated"
+          ? "Flywheel sandbox is hibernated; resume it first."
+          : `Flywheel sandbox is ${workspace.state}; host execution was not attempted.`,
+      );
+    }
     return workspace;
   }
 
@@ -191,11 +316,38 @@ function publicWorkspace(workspace: EntityWorkspace): FlywheelWorkspace {
     keepAlive: workspace.keepAlive,
     state: workspace.state,
     publishedUrl: workspace.publishedUrl,
+    lastError: workspace.lastError,
   };
 }
 
+function workspaceFromBinding(
+  binding: FlywheelBindingRow,
+  operator: FlywheelClient,
+): EntityWorkspace {
+  return {
+    client: operator,
+    capabilityExpiresAt: 0,
+    sessionId: binding.session_id,
+    sandboxId: binding.sandbox_id,
+    image: binding.image,
+    keepAlive: binding.keep_alive === 1,
+    state: binding.state,
+    publishedUrl: binding.published_url ?? undefined,
+    lastError: binding.last_error ?? undefined,
+  };
+}
+
+function sanitizedError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/Bearer\s+\S+/gi, "Bearer [redacted]").slice(0, 500);
+}
+
 function processData(event: FlywheelEvent): string {
-  const data = (event.process as { data?: unknown } | undefined)?.data;
+  const body = event.body as { case?: unknown; value?: unknown } | undefined;
+  const processEvent =
+    (event.process as { data?: unknown } | undefined) ??
+    (body?.case === "process" ? (body.value as { data?: unknown } | undefined) : undefined);
+  const data = processEvent?.data;
   if (typeof data !== "string" || data.length === 0) return "";
   try {
     return Buffer.from(data, "base64").toString("utf8");

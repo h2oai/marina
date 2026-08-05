@@ -13,6 +13,17 @@ export interface FlywheelEvent {
   [key: string]: unknown;
 }
 
+export interface FlywheelSandbox {
+  id: string;
+  sessionId: string;
+  image: string;
+  type: string;
+  status: string;
+  createdAt?: string;
+  updatedAt?: string;
+  expiresAt?: string;
+}
+
 export class FlywheelError extends Error {
   constructor(
     message: string,
@@ -56,6 +67,10 @@ export class FlywheelClient {
     return this.unary("CreateSandbox", input);
   }
 
+  listSandboxes(sessionId: string): Promise<{ sandboxes: FlywheelSandbox[] }> {
+    return this.unary("ListSandboxes", { sessionId, limit: 100, offset: 0 });
+  }
+
   publish(input: { sessionId: string; sandboxId: string; port: number }): Promise<{ url: string }> {
     return this.unary("Publish", input);
   }
@@ -72,17 +87,21 @@ export class FlywheelClient {
     return this.unary("StopSandbox", input);
   }
 
-  async *exec(input: {
-    sessionId: string;
-    sandboxId: string;
-    command: string;
-    args?: string[];
-    cwd?: string;
-  }): AsyncGenerator<FlywheelEvent> {
+  async *exec(
+    input: {
+      sessionId: string;
+      sandboxId: string;
+      command: string;
+      args?: string[];
+      cwd?: string;
+    },
+    options?: { signal?: AbortSignal },
+  ): AsyncGenerator<FlywheelEvent> {
     const response = await this.fetchImpl(this.url("Exec"), {
       method: "POST",
       headers: this.headers("application/connect+json"),
       body: envelope(input),
+      signal: options?.signal,
     });
     if (!response.ok) await this.throwResponse(response);
     if (!response.body) throw new FlywheelError("Flywheel returned an empty stream", 502);

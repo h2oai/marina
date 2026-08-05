@@ -28,7 +28,9 @@ sandboxes for mutually untrusted projects or high-concurrency crews without chan
   With `FLYWHEEL_TOKEN`, its MCP tool can create, exec, publish, inspect, hibernate, resume, and stop.
 - The manager retains the operator token, mints session-bound ten-minute capabilities, refreshes
   them before expiry, and never returns credentials to an entity.
-- The binding is currently in memory and only reachable through MCP. Code Mode does not use it.
+- Entity bindings are durable in Marina, contain no credentials, and reconcile against Flywheel's
+  registry when the optional integration starts. Unreachable or missing sandboxes become explicitly
+  unavailable and never fall back to host execution. Code Mode does not route through them yet.
 - Flywheel supports arbitrary streamed exec, keep-alive sandboxes, persistent VM writable disks,
   cold-boot hibernate/resume, publishing, registry persistence, and restart recovery.
 - Flywheel does **not** currently expose a general Marina-facing project import/export, file API, or
@@ -200,6 +202,10 @@ Exit: roadmap and integration docs point to one decision set.
 
 ### M1 — durable entity lifecycle in Marina
 
+Status: **complete** — durable credential-free bindings, startup reconciliation, explicit
+unavailable state, single-flight creation, no-host-fallback coverage, one manager shared by MCP and
+Code Mode, readiness reporting, and lifecycle commands have landed. Execution routing remains M2.
+
 - Persist entity bindings; share one manager between MCP and Code Mode.
 - Add reconciliation/adoption, lifecycle state machine, single-flight creation, and sanitized events.
 - Add `code sandbox start|status|hibernate|resume|stop` and `code doctor` readiness.
@@ -209,6 +215,12 @@ Exit: roadmap and integration docs point to one decision set.
 Exit: restart-safe one-entity/one-sandbox lifecycle with no Code Mode execution routing yet.
 
 ### M2 — sandbox-native Code Mode execution
+
+Status: **complete** — sessions persist an explicit local or Flywheel target, `WorkspaceGateway`
+routes finite commands without fallback, exit status is recovered through an argument-safe audited
+wrapper, typed event kinds are stored with command evidence, and deadlines abort the stream. Flywheel
+binds stream cancellation to the exact remote process and waits for its backend stop attempt, so a
+Marina timeout is cancellation rather than detach. Local mode is unchanged.
 
 - Add `WorkspaceGateway` and `FlywheelWorkspaceRuntime.run()`.
 - Add explicit local/sandbox target selection and sandbox-open command policy.
