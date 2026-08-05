@@ -73,7 +73,11 @@ The `canvas` tool manages shared visual surfaces for rich media and interactive 
 
 When Marina is configured with `FLYWHEEL_TOKEN`, the `flywheel` tool binds one
 Flywheel sandbox to the logged-in Marina entity. Marina retains the operator
-credential and delegates only a short-lived, session-scoped capability.
+credential and delegates only a short-lived, session-scoped capability. This is
+the low-level lifecycle surface; Code Mode's durable project and managed-service
+workflow is reached through the `command` tool (`code sandbox`, `code project`,
+and `code service`). Prefer Code Mode teardown for projects because raw
+`flywheel stop` does not check for unexported guest work.
 
 | Tool | Actions | Parameters |
 |------|---------|------------|

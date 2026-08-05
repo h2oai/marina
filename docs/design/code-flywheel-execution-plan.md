@@ -1,8 +1,8 @@
 # Code Mode × Flywheel execution plan
 
-Status: **canonical plan / approved direction** · Updated 2026-08-05 · Supersedes the execution
-direction in the earlier sandbox PoC/scoping documents. Those documents remain useful technical
-research, but this file owns sequencing and product decisions.
+Status: **canonical plan / M1–M4 functional slices shipped / production hardening active** · Updated
+2026-08-05 · Supersedes the execution direction in the earlier sandbox PoC/scoping documents. Those
+documents remain useful technical research, but this file owns sequencing and product decisions.
 
 ## Outcome
 
@@ -34,8 +34,36 @@ sandboxes for mutually untrusted projects or high-concurrency crews without chan
   explicitly selected sandbox target and uses the active durable project as its guest cwd.
 - Flywheel supports arbitrary streamed exec, keep-alive sandboxes, persistent VM writable disks,
   cold-boot hibernate/resume, publishing, registry persistence, and restart recovery.
-- Flywheel does **not** currently expose a general Marina-facing project import/export, file API, or
-  host-directory mount contract. Image recipe files are image-build inputs, not workspace sync.
+- Marina now implements bounded guest binary read/write over Flywheel's typed `Exec` byte stream and
+  uses it for complete project archives and browser evidence. Flywheel still has no first-class
+  workspace/file-transfer or host-directory mount RPC; the Exec adapter is an intentionally bounded
+  bridge, not a claim of live workspace synchronization.
+- Durable project metadata, empty/public-Git materialization, safe switching, patch/archive
+  import/export, managed services, publish/revoke, probes, and browser screenshots have landed.
+  Private Git and other credentialed resources remain closed pending the broker contract.
+
+## 2026-08-05 implementation review
+
+Commits `5c85aef` and `76dcded` moved the integration from control-plane scaffolding to a usable
+credential-free coding workflow. Review validation: 2,267 Marina tests pass across 143 files, the
+focused Flywheel/project/service suites pass, and TypeScript and Biome checks are clean.
+
+The shipped slices are strong enough for controlled use, but “M1–M4 complete” means **functional
+scope complete**, not production hardening complete. The review found these explicit residual risks:
+
+- Archive transfer is compressed-byte and path-list bounded, but does not yet enforce an independent
+  expanded-byte budget, member-count budget, file-type policy, or explicit symlink/hardlink policy.
+- Public Git URL validation rejects obvious credential and private-address forms, but application
+  parsing is not a network boundary: DNS resolution/rebinding, IPv6/private ranges, redirects, and
+  egress destinations must be enforced by Flywheel's network layer.
+- Managed services persist guest PIDs and restart recipes. PID-only liveness/control can mistake PID
+  reuse for the original process; production control needs a Flywheel process handle or verified
+  process birth identity/supervisor record.
+- Binary read/write uses ordinary Exec processes. It needs authoritative terminal-status, digest,
+  byte-count, cancellation, and partial-cleanup evidence before larger or security-sensitive use.
+- Unit and mocked integration coverage is comprehensive, but the release gate still needs a repeatable
+  live Marina↔Flywheel matrix across supported backends, restart, hibernate, timeout, and failure modes.
+- Quotas, idle policy, operator inventory/reclamation, metrics, and alerts are not yet productionized.
 
 ## Locked decisions
 
@@ -133,10 +161,10 @@ This is the critical dependency for real project work. Support these sources in 
 1. **Empty/bootstrap workspace** — create files and programs entirely in the sandbox. This unlocks
    safe arbitrary code and agentic jobs without synchronization.
 2. **Public Git clone** — clone a URL into a deterministic project directory in the sandbox.
-3. **Private Git clone** — same flow through a short-lived brokered credential; never persist it in
-   `.git/config` or command output.
-4. **Archive import/export** — a bounded, checksummed tar stream with path traversal, symlink,
-   decompression-ratio, file-count, and byte limits. This supports uploads and non-Git projects.
+3. **Archive import/export** — shipped as a bounded Exec-stream bridge with staged promotion. Expanded
+   size, member-count, special-file, symlink/hardlink, and digest enforcement are M5 release gates.
+4. **Private Git clone** — same flow through a short-lived brokered credential; never persist it in
+   `.git/config` or command output. This remains blocked on the cross-product broker contract.
 5. **Optional host share/mount** — only after Flywheel exposes a backend-neutral mount contract and
    its threat model is complete. It is not required for the first useful release.
 
@@ -203,7 +231,7 @@ plus an in-process single-flight guard.
 
 Exit: roadmap and integration docs point to one decision set.
 
-### M1 — durable entity lifecycle in Marina
+### M1 — durable entity lifecycle in Marina — functional slice complete
 
 Status: **complete** — durable credential-free bindings, startup reconciliation, explicit
 unavailable state, single-flight creation, no-host-fallback coverage, one manager shared by MCP and
@@ -217,7 +245,7 @@ Code Mode, readiness reporting, and lifecycle commands have landed. Execution ro
 
 Exit: restart-safe one-entity/one-sandbox lifecycle with no Code Mode execution routing yet.
 
-### M2 — sandbox-native Code Mode execution
+### M2 — sandbox-native Code Mode execution — functional slice complete
 
 Status: **complete** — sessions persist an explicit local or Flywheel target, `WorkspaceGateway`
 routes finite commands without fallback, exit status is recovered through an argument-safe audited
@@ -233,9 +261,9 @@ Marina timeout is cancellation rather than detach. Local mode is unchanged.
 Exit: an entity can create a program, install dependencies, and run/verify it entirely in Flywheel;
 host mode remains unchanged and the full existing suite stays green.
 
-### M3 — project materialization
+### M3 — project materialization — credential-free functional slice complete
 
-Status: **complete for the credential-free public contract** — durable metadata, deterministic
+Status: **functional slice complete for the credential-free public contract** — durable metadata, deterministic
 guest paths, empty Git bootstrap, public
 credential-free HTTPS clone, active-project cwd routing, restart recovery, live dirty-switch
 protection, bounded diff inspection, bounded tracked-work patch export, and complete bounded archive
@@ -248,9 +276,9 @@ extension rather than an unsafe M3 fallback.
 
 Exit: an entity can resume a real project across Marina/Flywheel restarts and safely export work.
 
-### M4 — services and observation
+### M4 — services and observation — functional slice complete
 
-Status: **complete** — entity-owned services have durable IDs and restart recipes, execute in the
+Status: **functional slice complete** — entity-owned services have durable IDs and restart recipes, execute in the
 active guest project, retain bounded guest logs, support live status/stop/restart, declare ports, and
 can publish/revoke through Flywheel. Hibernate records them stopped because process state does not
 survive cold boot. Localhost HTTP probes now create bounded, redacted verification artifacts.
@@ -262,13 +290,79 @@ artifacts, and cleaned from the guest. Images without Chromium fail closed with 
 
 Exit: `code run app` and `code verify` can launch and observe an application without host execution.
 
-### M5 — policy hardening and scale
+### M5 — production hardening and release evidence
 
-- Enforce egress profiles, brokered secrets, quotas, idle hibernation, admission control, metrics,
-  and operator cleanup tooling.
-- Revisit extra sandboxes per entity and per-actor crew views using measured contention/security data.
+M5 is now the active milestone and is divided into independently testable gates.
 
-Exit: production operations have bounded resources, explicit recovery, and tested tenant isolation.
+#### M5a — transfer integrity and project durability
+
+- Add expanded-byte and member-count budgets before extraction; reject devices, FIFOs, sockets,
+  absolute paths, traversal, and unsafe symlink/hardlink targets.
+- Add SHA-256 plus declared/observed byte counts to every upload/download and require an authoritative
+  successful process terminal event. Fail closed on missing/contradictory evidence.
+- Make archive format/version explicit and test interruption, disk-full, cancellation, cleanup, and
+  atomic promotion. Add a first-class Flywheel transfer RPC only if it materially improves this
+  contract; keep Marina's product model provider-neutral.
+- Add project delete/archive and stale-metadata reconciliation without risking another entity or a
+  replacement sandbox.
+
+Exit: malicious or interrupted transfers cannot escape, exhaust unbounded guest storage, silently
+truncate, or mark incomplete work exported.
+
+#### M5b — network and credential boundary
+
+- Implement the versioned broker in `sandbox-credential-broker.md` for private Git first, then
+  package registries and model/cloud APIs. Persist only logical binding metadata.
+- Enforce DNS/IP/redirect-aware egress at Flywheel's network boundary, including IPv4/IPv6 private,
+  link-local, metadata, loopback, and rebinding cases. Marina URL parsing remains defense in depth.
+- Make no-network/restricted/general profiles visible in `code sandbox status`; require explicit
+  approval for profile expansion, credential binding, and publish.
+- Add output/header/URL redaction fixtures and prove credentials never enter command arguments,
+  process listings, Git config, logs, artifacts, DB exports, or model context.
+
+Exit: private Git works without guest-visible upstream credentials, and network authority is
+enforced below untrusted guest code rather than inferred from Marina-side validation.
+
+#### M5c — managed-process correctness
+
+- Replace PID-only ownership with a Flywheel process handle or `(pid, start identity)` verified by a
+  supervisor. Stop/restart must never signal an unrelated reused PID.
+- Reconcile services after Marina restart and sandbox resume; report `unknown` until identity is
+  proven. Preserve explicit restart recipes but never auto-restart without policy.
+- Add command-level cancellation/status for finite executions, bounded log rotation, publication
+  expiry, automatic revoke on stop/hibernate, and health-probe history.
+
+Exit: process lifecycle remains correct across PID reuse, process exit, Marina restart, Flywheel
+restart, hibernation, and publication teardown.
+
+#### M5d — resource operations and civic policy
+
+- Add per-entity CPU/memory/disk/process/time quotas, admission control, idle hibernation, absolute
+  TTLs, and standing-neutral v1 defaults. Measure before introducing standing-weighted capacity.
+- Add operator inventory, force-reconcile, hibernate, revoke, export-before-delete guidance, and
+  orphan/stale-resource reclamation with dry-run support.
+- Emit metrics and alerts for creation latency/failure, active/hibernated count, execution duration,
+  timeout/cancellation, transfer bytes/failures, disk pressure, publish exposure, and reconciliation.
+- Define activity versus Chronicle events and retention; raw stdout remains out of Chronicle.
+
+Exit: operators can bound, observe, reconcile, and safely reclaim every sandbox resource.
+
+#### M5e — live compatibility and release gate
+
+- Build a repeatable live suite against a separately started Flywheel: create → project bootstrap and
+  clone → install → finite run → service/probe/screenshot/publish/revoke → archive round trip →
+  hibernate/resume → stop.
+- Exercise supported Flywheel backends and explicitly record unsupported capability degradation.
+- Test Marina absent, Flywheel absent, unreachable service, token expiry, stream disconnect, timeout,
+  restart ordering, stale registry rows, disk full, and partial transfer.
+- Verify composed and separate deployments behave identically over the public API. Keep both products'
+  standalone suites mandatory and independent.
+- Add operator/user quickstarts and `code doctor` remediation for every failed prerequisite.
+
+Exit: the full matrix is repeatable in CI or a documented release environment with retained evidence;
+no known failure mode silently falls back, loses unexported work, leaks authority, or leaves exposure.
+
+Only after M5 evidence should we revisit extra sandboxes per entity or per-actor crew views.
 
 ## Independence acceptance tests
 

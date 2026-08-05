@@ -1,6 +1,6 @@
 # Pervasive Marina — a substrate you use as little or as much as you want
 
-Status: **north star.** Not a single feature — the direction the seams are already
+Status: **north star, reconciled with the shipped Flywheel path.** Not a single feature — the direction the seams are already
 bending toward. This doc names the end state, shows what already exists, and
 sequences the gaps so each step is shippable on its own.
 
@@ -27,10 +27,11 @@ The vision is reachable because the hard abstractions already exist:
 1. **`WorkspaceRuntime`** (`src/coding/local-workspace.ts`) — the filesystem +
    exec surface a coding session works against, behind an interface
    (`WorkspaceFiles` + `WorkspaceExec`). `LocalWorkspace` is the host impl.
-   **This is the "arbitrary filesystems / sandboxes" seam.** A `SandboxWorkspace`
-   (vfkit/crosvm) or `RemoteWorkspace` (over the gateway / SSH / FUSE) implements
-   the same contract — code mode doesn't change. The 6 `web-coding-sandbox-*`
-   design docs are the plan for the sandboxed impl.
+   **This is the "arbitrary filesystems / sandboxes" seam.** The shipped
+   `WorkspaceGateway` routes an explicitly selected session to the entity's Flywheel sandbox while
+   preserving `LocalWorkspace` for host-safe execution. Marina does not drive vfkit/crosvm itself;
+   Flywheel owns sandbox backends. The canonical plan is
+   [code-flywheel-execution-plan.md](./code-flywheel-execution-plan.md).
 2. **The code-mode driver** (`coding_sessions.driver`, `doCode`) — single agent →
    crew → multi-agent/multi-backend, swappable per session. **This is the "as
    little or as much" seam for *compute*** (one model vs many, one host vs many).
@@ -48,11 +49,11 @@ persistence/memory/standing.
    `MARINA_ADMINS`) and drops straight into agentic Code Mode for that directory.
    Next: bind it to the `marina` bin as `marina code <dir>`, and an option to
    persist/resume per-folder sessions instead of ephemeral.
-2. **`SandboxWorkspace` (the FS/exec isolation impl).** Implement the
-   `WorkspaceRuntime` contract over a microVM (vfkit on macOS, crosvm on
-   Linux/WSL2) with a virtio-fs/FUSE share. Then `code workspace use sandbox:<id>`
-   moves a live session into isolation with no other code change. (Design: the 6
-   `docs/design/web-coding-*` docs.)
+2. ✅ **Flywheel sandbox execution — credential-free functional slice shipped.** One durable
+   sandbox per entity, explicit per-session routing, durable guest projects, public Git clone,
+   bounded patch/archive transfer, managed services, probes, screenshots, and publish/revoke are
+   available through `code sandbox`, `code project`, and `code service`. M5 now hardens transfers,
+   credentials/egress, process identity, quotas/operations, and the live backend matrix.
 3. **`RemoteWorkspace` (move to arbitrary filesystems from within a session).** The
    same contract proxied to another host — over the gateway to a peer Marina, or
    SSH/agent. This is where "move between marinas from a session" + "arbitrary
@@ -75,5 +76,5 @@ Every recent change is a step along this line, not a detour:
   prerequisite for moving/federating them).
 
 So the work isn't "build pervasiveness" — it's keep widening these seams until the
-spectrum is continuous. Start at gap #1 (the front door) or #3 (the seam that most
-directly delivers "move to arbitrary filesystems from within a session").
+spectrum is continuous. The active substrate work is Flywheel M5 hardening; the next unbuilt
+pervasiveness seam is #3, moving to arbitrary remote filesystems from within a session.

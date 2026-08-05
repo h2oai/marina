@@ -1,7 +1,8 @@
 # Web Coding — Phase 4 completion: autonomous crew + write-safety
 
-Status: **in progress** · Branch: `feat/coding-phase3-4` (extends PR #49) · Parent:
-[web-coding-phase3-4.md](./web-coding-phase3-4.md)
+Status: **historical implementation record** · The branch/PR references below are archival; the
+single-agent/crew drivers and write-safety described here are shipped. Parent:
+[web-coding-phase3-4.md](./web-coding-phase3-4.md).
 
 This closes the two gaps that made Phase 4 feel incomplete. They are coupled: making
 `code crew <goal>` form a team **automatically** immediately creates the parallel-edit

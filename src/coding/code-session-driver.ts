@@ -151,6 +151,7 @@ export class CodeSessionDriver {
       `You have been assigned to Marina coding session ${opts.session.id}.`,
       `Requester: ${opts.actor}`,
       `Profile: ${opts.profile}`,
+      `Execution target: ${opts.session.execution_target}`,
       opts.modelTarget ? `Model target: ${opts.modelTarget}` : undefined,
       `Workspace: ${opts.session.workspace_root}`,
       boundEntity
@@ -159,10 +160,14 @@ export class CodeSessionDriver {
       "",
       "Use the marina_code tool when it is available. Use marina_command only as a fallback.",
       boundEntity
-        ? "Start with marina_code status, then inspect with files/read/search/diff. Use verify for the local check chain and run only allowlisted checks."
+        ? opts.session.execution_target === "flywheel"
+          ? "Start with marina_code status, then inspect with files/read/search/diff. Finite commands run in the active Flywheel project with no host fallback; use code service for long-running apps."
+          : "Start with marina_code status, then inspect with files/read/search/diff. Use verify for the local check chain and run only host-allowlisted checks."
         : `First run: code resume ${opts.session.id}. Then use marina_code status/files/read/search/diff/verify when available.`,
       "Use patch to propose a unified diff, apply/reject for patch decisions, show/artifacts/patches/history for durable context.",
-      "Use observe to record app or manual behavior notes. Host app launch is disabled until the container/userland runner exists.",
+      opts.session.execution_target === "flywheel"
+        ? "Use code service start/probe/screenshot for managed app evidence; use observe for additional behavior notes."
+        : "Use observe to record app or manual behavior notes. Long-running app launch is disabled on the Marina host; configure Flywheel and use code service.",
       "Record durable progress with code plan, code summary, code handoff, and code decision.",
       "",
       `Request: ${prompt}`,

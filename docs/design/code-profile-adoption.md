@@ -49,8 +49,8 @@ LLMs and coding styles without locking the civilization layer to one provider's 
 | Read file | `read` or `cat` | `open` | `open` | `view` or `open` | Path-confined workspace read | `adapter` | Implemented |
 | Search | `search` | `grep` | `grep` | `rg` or `grep` | Workspace text search | `adapter` | Implemented |
 | Review changes | `diff` | `changes` | `review` | `changes` | Git diff artifact/display | `narrow` | Implemented |
-| Run a command | `run` | `exec` | `bash` or `shell` | `exec` or `shell` | Allowlisted workspace command output artifact | `narrow` | Implemented |
-| Run app smoke | `run app` | `exec app` | `bash dev` | `run app` | Container/userland-gated app-run artifact | `planned` | Disabled in host mode |
+| Run a command | `run` | `exec` | `bash` or `shell` | `exec` or `shell` | Host-allowlisted or explicitly selected Flywheel command artifact | `narrow` | Implemented |
+| Run app smoke | `run app` | `exec app` | `bash dev` | `run app` | Flywheel managed service + probe/screenshot evidence | `adapter` | Use `code service`; host mode remains disabled |
 | Observe behavior | `observe` | `note` | `/verify` observation step | browser/test note | Observation artifact | `narrow` | Implemented |
 | Run tests | `test` or `run test` | `exec test` | `bash test` | `test`, `verify`, or `check` | `bun run test` through allowlist | `narrow` | Implemented |
 | Typecheck | `typecheck` or `run typecheck` | `exec typecheck` | `bash typecheck` | `typecheck` | `bun run typecheck` through allowlist | `narrow` | Implemented |
@@ -97,8 +97,9 @@ Gaps:
 
 - Claude-style `plan`, `think`, and `compact` are currently steering events. They should become
   first-class plan/summary artifacts when the session transcript model lands.
-- Codex-style `verify` currently maps to tests. It should eventually inspect project metadata and
-  choose test, typecheck, lint, or build based on the workspace.
+- Codex-style `verify` detects project scripts and runs the available typecheck/lint/test/build
+  chain. Richer app verification composes managed service probes and screenshots but is not yet one
+  automatic end-to-end verb.
 - Pi-style `tree` currently maps to event history. It should eventually show a session artifact tree
   with branches, checkpoints, and outputs.
 - Spawn and crew strategies should reuse existing Marina safety gates and conductor Scores rather

@@ -8,12 +8,13 @@ becomes shared memory the next session can build on.
 This guide gets you from zero to a working coding session in about five minutes, then shows the
 parts that make it more than a CLI.
 
-> **Where it runs today:** coding commands execute against a real workspace on the host, behind a
-> safe allowlist (`bun` scripts like `test`/`lint`/`typecheck`/`build`, plus a read-only `git`
-> subset). It's built for trusted-repo work. Flywheel-backed isolation is now the accepted next
-> execution phase, beginning with one durable sandbox per entity; see the
-> [canonical execution plan](../design/code-flywheel-execution-plan.md). Nothing in this guide
-> currently assumes that sandbox path is active.
+> **Where it runs today:** every coding session has an explicit execution target. The default is a
+> real host workspace behind a safe allowlist (`bun` scripts such as
+> `test`/`lint`/`typecheck`/`build`, plus a constrained `git` subset). When the operator configures
+> Flywheel, an entity can create one durable isolated sandbox, materialize guest projects, run open
+> finite commands there, and manage guest services. Selection is per session and never falls back
+> silently to the host. See [Optional isolated execution with Flywheel](#optional-isolated-execution-with-flywheel)
+> and the [canonical execution plan](../design/code-flywheel-execution-plan.md).
 >
 > **Running or applying code is an earned capability.** Reading, searching, diffing, and *proposing*
 > patches are open to everyone, but `code run`/`verify`/`test` and `code apply`/`revert` require the
@@ -118,8 +119,9 @@ Ready.
 > code diff
 ```
 
-**5. Run a check.** Allowlisted commands run in the workspace and the output is stored on the
-session:
+**5. Run a check.** In the default local target, allowlisted commands run in the host workspace. In
+an explicitly selected Flywheel target, finite guest commands run in the active sandbox project.
+Either way, normalized output and execution evidence are stored on the session:
 
 ```
 > code run test
@@ -242,7 +244,8 @@ are present (they power `diff`/`checkpoint`/`revert` and fast `search`).
 
 ### Optional isolated execution with Flywheel
 
-When the Marina server has `FLYWHEEL_TOKEN`, each entity can create one durable isolated workspace:
+When the Marina server has `FLYWHEEL_TOKEN`, each entity can create one durable isolated workspace.
+This is shipped functionality; “optional” means Marina and local Code Mode do not require Flywheel:
 
 ```text
 code sandbox start
@@ -265,13 +268,15 @@ code service stop web
 code sandbox local     # explicitly return this session to host-safe local mode
 ```
 
-Selection is stored per coding session. Existing sessions default to local, configuration alone
+Selection is stored per coding session. Sessions default to local, configuration alone
 never changes the target, and a Flywheel error never retries on the host. Use `code sandbox status`,
 `hibernate`, `resume`, and `stop confirm` for lifecycle management. `code project list|diff|switch`
 selects among durable guest projects and refuses to leave unexported dirty work. Public clone URLs
 must be credential-free HTTPS. Patch export remains the compact tracked-work path; bounded archive
 export/import preserves complete project content through Flywheel's typed byte stream, stages and
-validates imports, then atomically promotes them. Private Git remains a broker extension. Local and guest
+validates imports, then atomically promotes them. Current archive protection is intentionally
+size/path bounded but remains under M5 hardening for expanded-size, member-count, special-file, and
+link policy. Private Git remains a broker extension. Local and guest
 files are distinct and must not be treated as synchronized. Managed services run only in Flywheel,
 keep durable restart recipes and bounded guest logs, and stop across hibernation until explicitly
 restarted. Localhost HTTP probes store response status, latency, and a bounded redacted body as

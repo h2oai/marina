@@ -438,14 +438,16 @@ const PROFILE_COMPARISON_ROWS: ProfileComparisonRow[] = [
   },
   {
     action: "Verify app behavior",
-    marina: "observe; run app planned",
+    marina: "service start/probe/screenshot; observe",
     pi: "extension/skill",
     claude: "/verify",
     codex: "browser/test workflow",
-    canonical: "observation artifact",
-    grade: "planned",
-    portability: "container-gated app launch",
-    status: "planned",
+    canonical: "service_probe/service_screenshot + observation artifacts",
+    grade: "narrow",
+    portability: "Flywheel managed-service evidence",
+    behavior:
+      "Managed guest services support HTTP probes and PNG evidence; one automatic full-app verify verb is not claimed.",
+    status: "implemented",
   },
   {
     action: "Project run recipes",
@@ -686,7 +688,7 @@ const PROFILE_COMPARISON_ROWS: ProfileComparisonRow[] = [
   },
 ];
 
-const BASE_HELP = `Local coding sessions.
+const BASE_HELP = `Coding sessions with explicit local or optional Flywheel execution.
 Usage:
   code                        Enter Code Mode
   code profile                Show active code profile
@@ -751,7 +753,7 @@ Usage:
   code diff [path]            Show git diff
   code run <check|cmd...>     Run an allowed workspace command and store output
   code run allowlist          Show host-local allowed commands
-  code run app [script]       Planned: container-gated app run/observation
+  code run app [script]       Show managed Flywheel service guidance (host mode is disabled)
   code observe <note>         Store an app/workspace observation
   code verify                 Run detected typecheck/lint/test/build chain
   code test|lint|typecheck    Run a common verification command
@@ -4352,7 +4354,7 @@ async function showRunAllowlist(
         "Execution target: Flywheel sandbox",
         "Policy: guest-open finite commands under code.exec governance",
         dim("Commands are passed as argument arrays through a fixed audited wrapper."),
-        dim("There is no host fallback. Managed background processes arrive in M4."),
+        dim("There is no host fallback. Use code service start for managed background processes."),
       ].join("\n"),
       {
         commands: ["code run <command>", "code verify", "code sandbox local"],
@@ -4427,7 +4429,7 @@ async function runApp(
     script ? `Requested script: ${script}` : "",
     sandboxTarget
       ? `Start: code service start <name> --port <port> -- bun run ${script || "dev"}`
-      : "Package scripts do not execute directly on the Marina host; use the managed container/userland runner.",
+      : "Long-running package scripts do not execute on the Marina host; configure Flywheel and use code service start.",
     dim("Use code verify for finite checks and code service for VM-resident processes."),
   ]
     .filter(Boolean)

@@ -137,6 +137,12 @@ identity-scoped sandbox and stream a command's output:
 ← Flywheel sandbox stopped and entity binding removed.
 ```
 
+That is the low-level lifecycle. For a coding workspace, use the generic
+`command` tool with `code sandbox`, `code project`, and `code service`; those
+commands add durable project metadata, export checks, explicit per-session
+routing, and managed process evidence. Raw `flywheel stop` does not check for
+unexported project work.
+
 ### Coordinate with others
 
 ```

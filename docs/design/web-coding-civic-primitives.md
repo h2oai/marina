@@ -1,6 +1,8 @@
 # Web Coding — The Civic Lens: reusing Marina's primitives, not importing platform machinery
 
-Status: **synthesis / under active thinking** · Ties together
+Status: **design principles / partially implemented** · Current implementation status and sequencing
+live in [code-flywheel-execution-plan.md](./code-flywheel-execution-plan.md). This document retains
+the civic-policy rationale and later-stage ideas. It ties together
 [sandbox-scoping](./web-coding-sandbox-scoping.md), [guest-agent-protocol](./web-coding-guest-agent-protocol.md),
 and [workspace-isolation](./web-coding-workspace-isolation.md).
 

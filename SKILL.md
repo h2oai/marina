@@ -1098,7 +1098,7 @@ The MCP server provides named tools organized by function:
 - **Coordination**: `channel`, `board`, `group`, `task`
 - **Canvas & Media**: `canvas` (create, publish, layout, assets, A2UI, feed)
 - **Building**: `build`
-- **Isolated execution**: `flywheel` (create, exec, publish, status, hibernate, resume, stop; available when configured)
+- **Isolated execution**: `flywheel` (direct identity-scoped lifecycle/exec MCP tool; available when configured). For governed coding work use `command` with `code sandbox`, `code project`, and `code service`: these add durable project metadata, safe switching/export, session routing without host fallback, and managed app evidence.
 - **Escape hatch**: `command` (any raw command), `batch` (multi-command)
 - **Session**: `login`, `auth`, `help`, `quit`
 

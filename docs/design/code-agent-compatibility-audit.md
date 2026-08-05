@@ -52,7 +52,7 @@ take the best patterns from coding tools and expose them through durable Marina 
 | Subagents/parallel work | possible via Marina agents/crews | Planned | `code spawn`, `code crew`, result summaries |
 | Session branch/tree | not modeled | Planned | parent artifact/session IDs |
 | Permissions | host-safe command allowlist | Narrow | per-user/profile workspace and command policy |
-| Sandbox/container | identity-scoped Flywheel control plane via MCP | Narrow | durable Code Mode runtime and project materialization per the canonical Flywheel plan |
+| Sandbox/container | identity-scoped Flywheel Code Mode runtime, durable projects, services, and observation | Native (credential-free slice) | M5 hardening and brokered private resources per the canonical Flywheel plan |
 | Skills | global Marina skills exist | Adapter | code-modal skill registry and invocation |
 | Model/provider switching | Marina model surface exists | Adapter | per-session code model/profile settings |
 | Background tasks | Marina agents can keep working | Adapter | explicit code task status and notifications |
@@ -78,11 +78,11 @@ The best target is a shared coding civilization:
 Execution sequencing is owned by
 [Code Mode × Flywheel execution plan](./code-flywheel-execution-plan.md). Within that sequence:
 
-1. Make the existing entity-scoped Flywheel lifecycle durable and expose it in Code Mode.
-2. Route sandbox-selected finite execution through `WorkspaceGateway` without changing host mode.
-3. Add project run recipes: detected scripts first, then stored recipe artifacts, then eventually
+1. Complete M5 transfer, network/credential, managed-process, resource-operations, and live-release
+   gates in the canonical Flywheel plan.
+2. Add project run recipes: detected scripts first, then stored recipe artifacts, then eventually
    generated skills.
-4. Implement `code run app` through Flywheel with persistent supervised app runs.
-5. Add code-modal skills with progressive disclosure and per-workspace discovery.
-6. Add session branching/tree metadata before building Pi-style tree navigation.
-7. Add browser/TUI/API observation artifacts before claiming full Claude-style verify behavior.
+3. Add code-modal skills with progressive disclosure and per-workspace discovery.
+4. Add session branching/tree metadata before building Pi-style tree navigation.
+5. Extend shipped HTTP/browser evidence with richer API/TUI observation before claiming complete
+   Claude-style verify parity.

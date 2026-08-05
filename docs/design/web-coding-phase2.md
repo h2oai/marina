@@ -1,6 +1,8 @@
 # Web Coding — Phase 2 (WebChat Coding MVP)
 
-Status: **draft / in progress** · Parent design: [web-coding-cli.md](./web-coding-cli.md) §"Phase 2: WebChat Coding MVP"
+Status: **historical implementation record** · Do not use this document for current status or
+sequencing. See [web-coding-cli.md](./web-coding-cli.md) and the canonical
+[Flywheel execution plan](./code-flywheel-execution-plan.md).
 
 Phase 2's goal (verbatim from the parent doc): *"usable Claude/Codex-style coding chat
 inside the dashboard, backed by Marina state."* This document records what Phase 2

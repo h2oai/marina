@@ -1,6 +1,8 @@
 # Web Coding — Phase 3 completion + Phase 4 (scoped)
 
-Status: **in progress** · Parent: [web-coding-cli.md](./web-coding-cli.md), [web-coding-phase2.md](./web-coding-phase2.md)
+Status: **historical implementation record** · Branch/track references below describe the work at
+the time and are not current status. See [web-coding-cli.md](./web-coding-cli.md) for the current
+phase map.
 
 This is the build contract for two parallel tracks. The **backend track** owns
 `src/engine/commands/code.ts`, `src/engine/command-registry.ts`, and backend tests. The

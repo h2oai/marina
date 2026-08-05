@@ -883,15 +883,17 @@ invariants, project materialization, failure recovery, and exit criteria are mai
 [Code Mode × Flywheel execution plan](./code-flywheel-execution-plan.md).
 
 Do not implement the older Marina-direct vfkit/crosvm path or imply live coherence between host and
-sandbox files. The next milestone is durable entity lifecycle and Code Mode visibility, followed by
-sandbox-native execution and an explicit project materialization contract.
+sandbox files. Durable entity lifecycle, explicit Code Mode routing, credential-free project
+materialization, archive transfer, and managed service observation have shipped. The active milestone
+is M5 production hardening in the canonical plan.
 
 ## Initial Scope Recommendation
 
-The local CWD coding loop is established. Preserve it while Phase 6 adds Flywheel as an explicit,
-identity-scoped sandbox target.
+The local CWD coding loop and explicit Flywheel target are established. Preserve both independent
+paths while Phase 6 hardens the cross-product boundary.
 
 Do not start with a Monaco editor, complete file tree, PR automation, or browser automation. The
 first version should feel like a serious coding CLI: prompt, stream, read files, search, propose
 diffs, request approvals, run tests, summarize, and hand off. That loop now exists. Richer editor
-features and remote execution remain incremental; Flywheel integration follows the Phase 6 plan.
+features and arbitrary remote filesystems remain incremental; Flywheel production readiness follows
+the Phase 6 M5 gates.
