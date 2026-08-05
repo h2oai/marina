@@ -623,7 +623,7 @@ describe("code command", () => {
       "Record plan | plan | plan | plan | plan | plan artifact | native | typed artifact",
     );
     expect(comparison).toContain("Verify checks | verify; test/lint/typecheck run one command");
-    expect(comparison).toContain("Verify app behavior | observe; run app planned");
+    expect(comparison).toContain("Verify app behavior | service start/probe/screenshot; observe");
     expect(comparison).toContain("Prompt context | code> context strip");
     expect(comparison).toContain("Inspect run policy | run allowlist");
     expect(comparison).toContain("Pin artifact | pin");
@@ -648,7 +648,7 @@ describe("code command", () => {
       "Verify checks: check -> verify; run test for one command -> verify -> verification; run -> command_output; grade=native",
     );
     expect(help).toContain(
-      "Verify app behavior: browser/test workflow -> observation artifact; grade=planned",
+      "Verify app behavior: browser/test workflow -> service_probe/service_screenshot + observation artifacts; grade=narrow",
     );
     expect(help).toContain("List failures: show last failed -> artifact status/exit metadata");
     expect(help).toContain("Approval semantics: approval policy -> artifact + host policy");
@@ -1055,7 +1055,7 @@ describe("code command", () => {
     expect(attention[0]).toContain("Use the marina_code tool when it is available.");
     expect(attention[0]).toContain("files/read/search/diff");
     expect(attention[0]).toContain("Use verify for the local check chain");
-    expect(attention[0]).toContain("Host app launch is disabled");
+    expect(attention[0]).toContain("Long-running app launch is disabled on the Marina host");
     expect(helperEntity.properties.active_modal).toBe("code");
     expect(helperEntity.properties.coding_session_id).toBe(sessionId);
     expect(helperEntity.properties.code_profile).toBe("marina");
@@ -1389,7 +1389,7 @@ diff --git a/../outside.txt b/../outside.txt
 
       const runOutput = stripAnsi(sent.at(-1) ?? "");
       expect(runOutput).toContain("code run app is disabled in host local mode.");
-      expect(runOutput).toContain("container/userland runner");
+      expect(runOutput).toContain("configure Flywheel and use code service start");
       expect(existsSync(join(root, "should-not-exist.txt"))).toBe(false);
       const denialId = runOutput.match(/app_run_denial_[a-f0-9-]+/)?.[0];
       expect(denialId).toBeTruthy();

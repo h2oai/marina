@@ -129,6 +129,23 @@ Room agents (guide, oracle, proctor, etc.) spawned by the world authenticate aut
 | `DISCORD_TOKEN` | *(off)* | Discord bot token |
 | `DISCORD_CHANNEL_IDS` | *(all)* | Restrict Discord bot to these channel IDs |
 
+### Flywheel isolated execution (optional)
+
+Flywheel is additive: Marina and local Code Mode work normally when these variables are absent. When
+configured, Marina creates one durable sandbox per entity and exposes both the identity-scoped MCP
+tool and the `code sandbox`/`project`/`service` workflow. Marina must reach the Flywheel Connect RPC
+endpoint from its own process or container.
+
+| Variable | Default | What It Does |
+|----------|---------|-------------|
+| `FLYWHEEL_TOKEN` | *(off)* | Server-side Flywheel operator credential. Enables the integration; never returned to entities or persisted in Marina. |
+| `FLYWHEEL_RPC_URL` | `http://localhost:8088/rpc` | Flywheel Connect RPC base URL as seen by Marina. In Docker, `localhost` means the Marina container, so use a reachable service or host address. |
+| `FLYWHEEL_IMAGE` | `localhost/h2oai/flywheel-agentd:latest` | Default image for `code sandbox start` and MCP `flywheel create`. The image must be resolvable by the configured Flywheel backend. |
+
+Start with `code doctor`, then `code sandbox status`. Configuration alone never changes a coding
+session from local to Flywheel, and a Flywheel failure never retries a sandbox command on the host.
+See [Coding](coding.md) and [Flywheel integration](../integrations/flywheel.md).
+
 ### Drop-in Compatibility (Passthru)
 
 Marina plays three roles with respect to agents — **participant** (agents inside worlds), **consumer** (Marina calling out to upstream LLMs), and **passthru** (external clients calling in). This section is about passthru.

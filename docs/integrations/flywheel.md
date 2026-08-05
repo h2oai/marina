@@ -1,4 +1,4 @@
-# Flywheel control-plane integration
+# Flywheel isolated execution integration
 
 Marina can drive a separately deployed Flywheel through the dependency-free
 Connect/JSON client in `src/integrations/flywheel.ts`. This is an additive
@@ -47,7 +47,9 @@ RAM or processes, and requires a `keepAlive` sandbox.
 
 - Never expose the operator token to an agent or browser.
 - Bind capabilities to one Flywheel session and use the shortest practical TTL.
-- Always stop the sandbox in cleanup, including after failed execution.
+- Prefer hibernation for an idle durable entity sandbox: it preserves the writable disk but ends
+  processes. Stop only for explicit teardown after work is exported or deliberate data loss is
+  confirmed.
 - Treat publish URLs as externally reachable and unpublish/stop them promptly.
 - The MCP adapter maps stable world identity to durable Marina bindings and
   reconciles them against Flywheel's registry at startup. Bindings contain IDs,
@@ -66,6 +68,10 @@ Call `flywheel` after `login` with one of these actions:
 - `status` — reports the current entity binding without contacting Flywheel
 - `hibernate` / `resume` — VM backends only
 - `stop` — tears down the sandbox and removes the entity binding
+
+The MCP tool is the low-level control-plane surface. Its `stop` action does not run Code Mode's
+dirty-project/export check; use `code sandbox stop confirm` (or `discard confirm`) for coding
+workspaces unless destructive teardown is intentionally being handled by the caller.
 
 The MCP lifecycle plus durable reconciliation is the shipped control-plane
 baseline. Code Mode routing and project materialization are specified by the canonical
