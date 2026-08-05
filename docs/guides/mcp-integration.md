@@ -121,6 +121,22 @@ Claude uses the `login` tool:
   Type quest status to check your progress.
 ```
 
+### Run isolated code with Flywheel
+
+If the Marina operator configured Flywheel, Claude can create an
+identity-scoped sandbox and stream a command's output:
+
+```
+→ flywheel(action: "create")
+← {"sessionId":"...","sandboxId":"...","state":"running"}
+
+→ flywheel(action: "exec", command: "echo", args: ["hello"])
+← hello
+
+→ flywheel(action: "stop")
+← Flywheel sandbox stopped and entity binding removed.
+```
+
 ### Coordinate with others
 
 ```

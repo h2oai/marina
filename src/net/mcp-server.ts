@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { WS_IDLE_TIMEOUT_SECONDS } from "../engine/constants";
 import type { Engine } from "../engine/engine";
+import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywheel-manager";
 import type { Connection, EntityId, Perception } from "../types";
 import {
   buildConnectManifest,
@@ -84,6 +85,7 @@ export class McpServerAdapter {
     private engine: Engine,
     private port: number,
     private rateLimiter?: RateLimiter,
+    private flywheel: FlywheelToolBackend | undefined = FlywheelManager.fromEnv(),
   ) {}
 
   start(): void {
@@ -247,6 +249,7 @@ export class McpServerAdapter {
     const engine = this.engine;
     const sessions = this.sessions;
     const rateLimiter = this.rateLimiter;
+    const flywheel = this.flywheel;
 
     const mcp = new McpServer(
       { name: "marina", version: "0.1.0" },
@@ -631,6 +634,62 @@ export class McpServerAdapter {
       },
       { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
       async ({ input }, extra) => runCmd(extra, `build ${input}`),
+    );
+
+    // ── Isolated execution ────────────────────────────────────────────────
+
+    mcp.tool(
+      "flywheel",
+      "Run and host work in an identity-scoped Flywheel sandbox. Marina keeps the operator " +
+        "credential private and delegates a short-lived, session-bound capability. Actions: " +
+        "create, exec, publish, status, hibernate, resume, stop.",
+      {
+        action: z.enum(["create", "exec", "publish", "status", "hibernate", "resume", "stop"]),
+        image: z.string().optional().describe("Sandbox image override for create"),
+        keep_alive: z.boolean().optional().describe("Persistent sandbox; defaults true"),
+        command: z.string().optional().describe("Command for exec"),
+        args: z.array(z.string()).optional().describe("Arguments for exec"),
+        cwd: z.string().optional().describe("Working directory for exec"),
+        port: z.number().int().min(1).max(65535).optional().describe("Sandbox port for publish"),
+      },
+      { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      async ({ action, image, keep_alive, command, args, cwd, port }, extra) => {
+        const resolved = withSession(sessions, extra);
+        if ("error" in resolved) return resolved.error;
+        if (!flywheel) return text("Flywheel is not configured. Set FLYWHEEL_TOKEN on Marina.");
+        if (rateLimiter && !rateLimiter.consume(`mcp:${resolved.entityId}`)) {
+          return text("Rate limited. Please slow down.");
+        }
+        try {
+          switch (action) {
+            case "create":
+              return text(
+                JSON.stringify(await flywheel.create(resolved.entityId, image, keep_alive)),
+              );
+            case "exec":
+              if (!command) return text("command is required for action=exec.");
+              return text(await flywheel.exec(resolved.entityId, command, args, cwd));
+            case "publish":
+              if (!port) return text("port is required for action=publish.");
+              return text(await flywheel.publish(resolved.entityId, port));
+            case "status":
+              return text(
+                JSON.stringify(flywheel.status(resolved.entityId) ?? { state: "absent" }),
+              );
+            case "hibernate":
+              await flywheel.hibernate(resolved.entityId);
+              return text("Flywheel sandbox hibernated; writable disk preserved.");
+            case "resume":
+              await flywheel.resume(resolved.entityId);
+              return text("Flywheel sandbox resumed by cold boot.");
+            case "stop":
+              await flywheel.stop(resolved.entityId);
+              return text("Flywheel sandbox stopped and entity binding removed.");
+          }
+        } catch (error) {
+          return text(`Flywheel error: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      },
     );
 
     // ── Escape hatch ──────────────────────────────────────────────────────

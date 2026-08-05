@@ -82,7 +82,7 @@ export class FlywheelClient {
     const response = await this.fetchImpl(this.url("Exec"), {
       method: "POST",
       headers: this.headers("application/connect+json"),
-      body: JSON.stringify(input),
+      body: envelope(input),
     });
     if (!response.ok) await this.throwResponse(response);
     if (!response.body) throw new FlywheelError("Flywheel returned an empty stream", 502);
@@ -154,5 +154,13 @@ function concat(left: Uint8Array, right: Uint8Array): Uint8Array {
   const result = new Uint8Array(left.length + right.length);
   result.set(left);
   result.set(right, left.length);
+  return result;
+}
+
+function envelope(value: unknown): Uint8Array<ArrayBuffer> {
+  const payload = new TextEncoder().encode(JSON.stringify(value));
+  const result = new Uint8Array(payload.length + 5);
+  new DataView(result.buffer).setUint32(1, payload.length);
+  result.set(payload, 5);
   return result;
 }

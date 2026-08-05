@@ -49,10 +49,14 @@ describe("FlywheelClient", () => {
         controller.close();
       },
     });
+    let request: RequestInit | undefined;
     const client = new FlywheelClient({
       baseUrl: "http://flywheel/rpc",
       token: "cap",
-      fetch: async () => new Response(stream, { status: 200 }),
+      fetch: async (_input, init) => {
+        request = init;
+        return new Response(stream, { status: 200 });
+      },
     });
 
     const events = [];
@@ -60,6 +64,14 @@ describe("FlywheelClient", () => {
       events.push(event);
     }
     expect(events).toEqual([{ process: { data: "hello" } }, { process: { data: " world" } }]);
+    const requestBody = new Uint8Array(await new Response(request?.body).arrayBuffer());
+    expect(requestBody[0]).toBe(0);
+    expect(new DataView(requestBody.buffer).getUint32(1)).toBe(requestBody.length - 5);
+    expect(JSON.parse(new TextDecoder().decode(requestBody.slice(5)))).toMatchObject({
+      sessionId: "s",
+      sandboxId: "sb",
+      command: "echo",
+    });
   });
 
   test("surfaces Connect errors", async () => {

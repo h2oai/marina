@@ -3,7 +3,8 @@
 Marina can drive a separately deployed Flywheel through the dependency-free
 Connect/JSON client in `src/integrations/flywheel.ts`. This is an additive
 fleet/execution integration; it does not change Marina's default local coding
-runtime and is not yet registered as an MCP tool.
+runtime. When `FLYWHEEL_TOKEN` is set, Marina registers the identity-scoped
+`flywheel` MCP tool.
 
 Keep the operator token in Marina. Create one Flywheel session per Marina task
 or workspace, then mint a short-lived capability for the agent that owns it:
@@ -46,5 +47,17 @@ RAM or processes, and requires a `keepAlive` sandbox.
 - Bind capabilities to one Flywheel session and use the shortest practical TTL.
 - Always stop the sandbox in cleanup, including after failed execution.
 - Treat publish URLs as externally reachable and unpublish/stop them promptly.
-- A future Marina command/MCP adapter should translate stable world identity to
-  session ownership and persist only Flywheel IDs, not bearer tokens.
+- The MCP adapter maps stable world identity to in-memory session ownership.
+  Neither the operator token nor attenuated capability tokens are returned to
+  clients or persisted.
+
+## MCP lifecycle
+
+Call `flywheel` after `login` with one of these actions:
+
+- `create` — optional `image` and `keep_alive` (defaults true)
+- `exec` — `command`, optional `args` and `cwd`; returns streamed process output
+- `publish` — `port`; returns the public URL
+- `status` — reports the current entity binding without contacting Flywheel
+- `hibernate` / `resume` — VM backends only
+- `stop` — tears down the sandbox and removes the entity binding
