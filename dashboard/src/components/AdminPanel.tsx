@@ -201,6 +201,25 @@ function OperationsTab() {
             />
             <Metric label="Handoffs" value={productivity.summary.averageHandoffs.toFixed(1)} />
           </div>
+          <div className="grid grid-cols-4 gap-1">
+            <Metric
+              label="Meaningful"
+              value={`${Math.round(productivity.primitiveUsage.meaningfulRate * 100)}%`}
+              tone={productivity.primitiveUsage.meaningfulActions ? "success" : "warning"}
+            />
+            <Metric
+              label="World actions"
+              value={String(productivity.primitiveUsage.worldActions)}
+            />
+            <Metric
+              label="Communications"
+              value={String(productivity.primitiveUsage.communications)}
+            />
+            <Metric
+              label="Primitive range"
+              value={String(productivity.primitiveUsage.primitiveDiversity)}
+            />
+          </div>
         </div>
       )}
       {readiness && (
@@ -233,6 +252,11 @@ function OperationsTab() {
               </div>
             ))}
           </div>
+          <div className="mt-1 text-text-dim">
+            Live proof: {readiness.demo.activeAgents} agents ·{" "}
+            {readiness.demo.recentPrimitiveActions} meaningful actions ·{" "}
+            {readiness.demo.recentCommunications} communications / 5m
+          </div>
         </div>
       )}
       {productivity && productivity.trend.length > 0 && (
@@ -251,6 +275,28 @@ function OperationsTab() {
                 </span>
                 <span className="w-8 text-right text-text-dim">
                   {Math.round(row.successRate * 100)}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {productivity && productivity.primitiveLeaderboard.length > 0 && (
+        <div className="rounded border border-border bg-bg-surface/50 p-2">
+          <div className="mb-1 flex items-center gap-1 uppercase tracking-wider text-text-dim">
+            <Activity size={10} /> Agent primitive use
+          </div>
+          <div className="space-y-1">
+            {productivity.primitiveLeaderboard.slice(0, 5).map((row, index) => (
+              <div key={row.entityName ?? index} className="flex items-center gap-2">
+                <span className="w-3 text-text-dim">{index + 1}</span>
+                <span className="min-w-0 flex-1 truncate">{row.entityName}</span>
+                <span className="text-success">{row.meaningfulActions} actions</span>
+                <span
+                  className="w-20 text-right text-text-dim"
+                  title={`${row.marinaToolCalls}/${row.toolCalls} Marina tool calls; reasoning-only calls do not count as actions`}
+                >
+                  {row.primitiveDiversity} primitives
                 </span>
               </div>
             ))}

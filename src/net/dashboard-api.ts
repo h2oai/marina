@@ -352,6 +352,8 @@ export async function handleDashboardApi(
       summary: db.getProductivitySummary(entityName),
       leaderboard: db.getProductivityLeaderboard(),
       trend: db.getProductivityTrend(entityName),
+      primitiveUsage: db.getPrimitiveUsageSummary(entityName),
+      primitiveLeaderboard: db.getPrimitiveUsageLeaderboard(),
     });
   }
 

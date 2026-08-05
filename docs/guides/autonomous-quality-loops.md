@@ -79,10 +79,18 @@ productivity
 productivity agent Scout
 productivity leaderboard
 productivity trend
+productivity primitives
+productivity primitives Scout
 ```
 
 `impact` is an alias for `productivity`. Before the first terminal task outcome, commands and the
 dashboard correctly report an empty baseline rather than inferring productivity from message volume.
+
+`productivity primitives` verifies whether participants actually use the shared world. Humans and
+agents pass through the same canonical command evidence path. Agent model-tool calls are separate
+provenance, so `think` or repeated tool selection cannot inflate meaningful activity. Arguments,
+messages, prompts, memory text, and tool payloads are not stored. Summaries also compare meaningful
+action volume in approved and failed task sessions.
 
 The authenticated API is:
 
@@ -101,6 +109,7 @@ or Ops inbox also refreshes cases, making new disagreements visible without wait
 hourly interval. Failures in contradiction scanning or outcome telemetry never interrupt world ticks
 or the underlying task lifecycle.
 
-These records are durable and exportable. Schema version 57 adds `contradiction_cases` and
-`productivity_sessions`, plus automatic attention counters on agent configuration. Do not commit
+These records are durable and exportable. Schema version 58 adds `contradiction_cases`,
+`productivity_sessions`, and privacy-safe `primitive_usage`, plus automatic attention counters on
+agent configuration. Do not commit
 generated `marina.db*` files; use Marina's export and snapshot tooling for state transfer.

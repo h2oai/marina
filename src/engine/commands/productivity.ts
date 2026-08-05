@@ -1,5 +1,9 @@
 import { bold, dim, header, separator } from "../../net/ansi";
-import type { MarinaDB, ProductivitySummary } from "../../persistence/database";
+import type {
+  MarinaDB,
+  PrimitiveUsageSummary,
+  ProductivitySummary,
+} from "../../persistence/database";
 import type { CommandDef } from "../../types";
 
 function duration(ms: number): string {
@@ -16,12 +20,21 @@ function render(summary: ProductivitySummary): string {
   ].join("\n");
 }
 
+function renderParticipation(summary: PrimitiveUsageSummary): string {
+  const top = summary.topPrimitives.map((row) => `${row.primitive}:${row.count}`).join(" · ");
+  return [
+    `${bold(summary.entityName ?? "World")} · ${summary.meaningfulActions}/${summary.commands} meaningful (${Math.round(summary.meaningfulRate * 100)}%) · ${summary.primitiveDiversity} primitive families`,
+    `  ${summary.worldActions} world actions · ${summary.communications} communications · ${summary.marinaToolCalls}/${summary.toolCalls} Marina tool calls · ${summary.reasoningOnlyCalls} think-only`,
+    top ? `  ${dim(`top: ${top}`)}` : `  ${dim("No meaningful primitive use recorded yet.")}`,
+  ].join("\n");
+}
+
 export function productivityCommand(db: MarinaDB): CommandDef {
   return {
     name: "productivity",
     aliases: ["impact"],
     category: "Coordination",
-    help: "Outcome-level productivity. Usage: productivity [agent <name>|leaderboard|trend]",
+    help: "Outcome and primitive evidence. Usage: productivity [agent <name>|leaderboard|trend|primitives [name]]",
     handler: (ctx, input) => {
       const action = input.tokens[0]?.toLowerCase();
       const lines = [header("Productivity Outcomes"), separator()];
@@ -37,6 +50,14 @@ export function productivityCommand(db: MarinaDB): CommandDef {
             lines.push(
               `${point.date} · ${point.successes}/${point.outcomes} successful · avg ${duration(point.averageDurationMs)} · ${point.averageToolCalls.toFixed(1)} tools · ${point.averageHandoffs.toFixed(1)} handoffs`,
             );
+      } else if (action === "primitives" || action === "participation") {
+        const name = input.tokens.slice(1).join(" ") || undefined;
+        lines.push(renderParticipation(db.getPrimitiveUsageSummary(name)));
+        if (!name) {
+          const leaders = db.getPrimitiveUsageLeaderboard(10);
+          for (const [index, row] of leaders.entries())
+            lines.push(`${index + 1}. ${renderParticipation(row)}`);
+        }
       } else {
         const name = action === "agent" ? input.tokens.slice(1).join(" ") : undefined;
         lines.push(render(db.getProductivitySummary(name || undefined)));

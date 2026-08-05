@@ -121,7 +121,11 @@ The Admin panel has eight tabs:
 - **Roles** — browse defined roles and their traits
 - **MCP** — inspect MCP connectivity and configuration.
 - **Config** — inspect and edit supported runtime environment settings.
-- **Ops** — inspect graphical readiness, outcome trends and leaderboard, latency and effort metrics, memory health, alert history and filters, and open contradictions. Alerts can be acknowledged or resolved; contradictions can be adjudicated with rationale in place.
+- **Ops** — inspect graphical readiness, outcome trends and leaderboard, latency and effort metrics,
+  live multi-agent primitive evidence, communication, world actions, primitive diversity, memory
+  health, alert history and filters, and open contradictions. Tool calls are provenance and never
+  count as meaningful actions by themselves. Alerts can be acknowledged or resolved; contradictions
+  can be adjudicated with rationale in place.
 - **Security** — live posture overview: dashboard auth (`MARINA_AUTH`), API-key encryption at rest, the `MARINA_OPEN_API` dev flag, and key/agent counts. It reads the real server state — if auth is off it points you to [authentication.md](../authentication.md).
 
 The header alert indicator remains visible from every dashboard layout. Its severity color and pulse

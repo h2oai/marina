@@ -266,7 +266,7 @@ function handleStatus(
   ctx: RoomContext,
   eid: EntityId,
   name: string | undefined,
-  deps: { agentRuntime: AgentRuntime },
+  deps: { agentRuntime: AgentRuntime; db?: MarinaDB },
 ): void {
   if (!name) {
     ctx.send(eid, "Usage: agent status <name>");
@@ -280,6 +280,7 @@ function handleStatus(
 
   const s = agent.getStatus();
   const upMin = Math.round(s.uptime / 60000);
+  const usage = deps.db?.getPrimitiveUsageSummary(s.name);
   const lines = [
     header(`Agent: ${s.name}`),
     separator(),
@@ -291,6 +292,12 @@ function handleStatus(
     `${bold("Goal:")} ${s.goal || dim("none")}`,
     `${bold("Uptime:")} ${upMin}m`,
     `${bold("Tool calls:")} ${s.toolCalls}`,
+    ...(usage
+      ? [
+          `${bold("Primitive evidence (7d):")} ${usage.meaningfulActions}/${usage.commands} meaningful · ${usage.primitiveDiversity} families · ${usage.communications} communications`,
+          `${bold("Tool provenance (7d):")} ${usage.marinaToolCalls}/${usage.toolCalls} Marina tools · ${usage.reasoningOnlyCalls} think-only`,
+        ]
+      : []),
     `${bold("Errors:")} ${s.errors}`,
     `${bold("Attention:")} ${s.attentionMode ?? "balanced"} · threshold ${s.attentionThreshold ?? 50} · ${s.queuedPerceptions ?? 0} queued · ${s.droppedPerceptions ?? 0} dropped`,
     `${bold("Entity ID:")} ${s.entityId || dim("not connected")}`,
