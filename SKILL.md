@@ -1098,6 +1098,7 @@ The MCP server provides named tools organized by function:
 - **Coordination**: `channel`, `board`, `group`, `task`
 - **Canvas & Media**: `canvas` (create, publish, layout, assets, A2UI, feed)
 - **Building**: `build`
+- **Isolated execution**: `flywheel` (create, exec, publish, status, hibernate, resume, stop; available when configured)
 - **Escape hatch**: `command` (any raw command), `batch` (multi-command)
 - **Session**: `login`, `auth`, `help`, `quit`
 

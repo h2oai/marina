@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { Engine } from "../src/engine/engine";
+import type { FlywheelToolBackend } from "../src/integrations/flywheel-manager";
 import { McpServerAdapter } from "../src/net/mcp-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
@@ -131,6 +132,7 @@ describe("MCP Server", () => {
   let dbPath: string;
   let port: number;
   let url: string;
+  let flywheelCalls: string[];
 
   beforeEach(() => {
     dbPath = nextDbPath();
@@ -158,7 +160,33 @@ describe("MCP Server", () => {
       }),
     );
 
-    adapter = new McpServerAdapter(engine, 0);
+    flywheelCalls = [];
+    const flywheel: FlywheelToolBackend = {
+      async create(entity) {
+        flywheelCalls.push(`create:${entity}`);
+        return {
+          sessionId: "session-1",
+          sandboxId: "sandbox-1",
+          image: "test:latest",
+          keepAlive: true,
+          state: "running",
+        };
+      },
+      async exec(entity, command) {
+        flywheelCalls.push(`exec:${entity}:${command}`);
+        return "sandbox output";
+      },
+      async publish() {
+        return "https://app.example";
+      },
+      async hibernate() {},
+      async resume() {},
+      async stop() {},
+      status() {
+        return undefined;
+      },
+    };
+    adapter = new McpServerAdapter(engine, 0, undefined, flywheel);
     adapter.start();
     port = adapter.getPort();
     url = `http://localhost:${port}`;
@@ -230,10 +258,10 @@ describe("MCP Server", () => {
   // ── Tool Registration ───────────────────────────────────────────────────
 
   describe("tool registration", () => {
-    it("should register all 31 tools", async () => {
+    it("should register all 32 tools", async () => {
       const sid = await initSession(url);
       const tools = await toolList(url, sid);
-      expect(tools.length).toBe(31);
+      expect(tools.length).toBe(32);
     });
 
     it("should include all expected tool names", async () => {
@@ -253,6 +281,7 @@ describe("MCP Server", () => {
         "crew",
         "evolve",
         "examine",
+        "flywheel",
         "group",
         "help",
         "login",
@@ -340,7 +369,7 @@ describe("MCP Server", () => {
       }
     });
 
-    it("should cover all 8 tool categories", async () => {
+    it("should cover all tool categories", async () => {
       const sid = await initSession(url);
       const tools = await toolList(url, sid);
       const names = new Set(tools.map((t) => t.name));
@@ -364,6 +393,8 @@ describe("MCP Server", () => {
       expect(names.has("canvas")).toBe(true);
       // Building
       expect(names.has("build")).toBe(true);
+      // Isolated execution
+      expect(names.has("flywheel")).toBe(true);
       // Escape hatch
       expect(names.has("command")).toBe(true);
       expect(names.has("batch")).toBe(true);
@@ -627,6 +658,28 @@ describe("MCP Server", () => {
   });
 
   // ── Escape Hatch Tools ──────────────────────────────────────────────────
+
+  describe("Flywheel tool", () => {
+    it("requires login and binds calls to the logged-in entity", async () => {
+      const sid = await initSession(url);
+      expect(await toolCall(url, sid, "flywheel", { action: "create" })).toContain("Not logged in");
+
+      await toolCall(url, sid, "login", { name: "FlyBot" });
+      const created = await toolCall(url, sid, "flywheel", { action: "create" });
+      expect(created).toContain('"sandboxId":"sandbox-1"');
+      expect(flywheelCalls).toHaveLength(1);
+      expect(flywheelCalls[0]).toStartWith("create:");
+
+      const output = await toolCall(url, sid, "flywheel", {
+        action: "exec",
+        command: "echo",
+        args: ["hello"],
+      });
+      expect(output).toBe("sandbox output");
+      expect(flywheelCalls[1]).toStartWith("exec:");
+      expect(flywheelCalls[1]).toEndWith(":echo");
+    });
+  });
 
   describe("escape hatch tools", () => {
     it("should execute raw command via command tool", async () => {

@@ -69,6 +69,16 @@ The `canvas` tool manages shared visual surfaces for rich media and interactive 
 |---------|-------------|-----------------|
 | `build` | room, modify, link, unlink, code, validate, reload, diff, audit, revert, destroy, template, command | `"room my/garden A Custom Room"` |
 
+### Isolated Execution
+
+When Marina is configured with `FLYWHEEL_TOKEN`, the `flywheel` tool binds one
+Flywheel sandbox to the logged-in Marina entity. Marina retains the operator
+credential and delegates only a short-lived, session-scoped capability.
+
+| Tool | Actions | Parameters |
+|------|---------|------------|
+| `flywheel` | create, exec, publish, status, hibernate, resume, stop | `image`, `keep_alive`, `command`, `args`, `cwd`, and `port` as required by the action |
+
 ### Escape Hatch
 
 | Tool      | Parameters | Description |
