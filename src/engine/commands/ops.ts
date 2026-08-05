@@ -89,7 +89,57 @@ export function syncOperationalAlerts(deps: OpsDependencies): void {
         remedy: `project status ${project.name}`,
       });
   }
-  for (const category of ["readiness", "agent", "memory", "project"])
+  for (const binding of deps.db.listFlywheelBindings()) {
+    if (binding.state === "unavailable" || binding.last_error) {
+      add("flywheel", {
+        key: `flywheel:${binding.entity_id}:state`,
+        severity: binding.state === "unavailable" ? "critical" : "warning",
+        category: "flywheel",
+        title: `Sandbox ${binding.sandbox_id} needs attention`,
+        detail: binding.last_error ?? `state=${binding.state}`,
+        remedy: "code sandbox ops reconcile",
+      });
+    }
+    if (binding.published_url) {
+      add("flywheel", {
+        key: `flywheel:${binding.entity_id}:published`,
+        severity: "info",
+        category: "flywheel",
+        title: `Sandbox ${binding.sandbox_id} has public exposure`,
+        detail: binding.published_url,
+        remedy: "code service revoke <service>",
+      });
+    }
+    if (
+      binding.state === "running" &&
+      binding.lifecycle_expires_at !== null &&
+      binding.lifecycle_expires_at <= Date.now()
+    ) {
+      add("flywheel", {
+        key: `flywheel:${binding.entity_id}:lifecycle`,
+        severity: "warning",
+        category: "flywheel",
+        title: `Sandbox ${binding.sandbox_id} exceeded its lifecycle deadline`,
+        detail: "Active services or publication may be preventing recoverable hibernation.",
+        remedy: "code sandbox ops inventory",
+      });
+    }
+  }
+  const recentFailures = deps.db
+    .getFlywheelOperationSummary()
+    .filter((row) => row.outcome === "failure" || row.outcome === "blocked")
+    .reduce((sum, row) => sum + row.count, 0);
+  if (recentFailures > 0) {
+    add("flywheel", {
+      key: "flywheel:operations:failures",
+      severity: "warning",
+      category: "flywheel",
+      title: "Flywheel operations require review",
+      detail: `${recentFailures} failed or policy-blocked operation(s) in the last 24 hours`,
+      remedy: "code sandbox ops metrics",
+    });
+  }
+  for (const category of ["readiness", "agent", "memory", "project", "flywheel"])
     deps.db.resolveOperationalAlertsExcept(category, active.get(category) ?? []);
 }
 

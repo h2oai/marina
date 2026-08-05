@@ -45,22 +45,23 @@ sandboxes for mutually untrusted projects or high-concurrency crews without chan
 ## 2026-08-05 implementation review
 
 Commits `5c85aef` and `76dcded` moved the integration from control-plane scaffolding to a usable
-credential-free coding workflow. Review validation: 2,271 Marina tests pass across 143 files, the
+credential-free coding workflow. Review validation: 2,273 Marina tests pass across 143 files, the
 focused Flywheel/project/service suites pass, and TypeScript and Biome checks are clean.
 
-The shipped slices are strong enough for controlled use, but “M1–M4 complete” means **functional
-scope complete**, not production hardening complete. The review found these explicit residual risks:
+The shipped slices are strong enough for controlled use, but functional completion is not the same
+as live release qualification. M5a–M5c now enforce expanded-byte/member/file/type archive limits,
+authoritative transfer evidence, process birth identity, bounded logs, durable probes, and leased
+publication. The remaining risks are narrower and explicit:
 
-- Archive transfer is compressed-byte and path-list bounded, but does not yet enforce an independent
-  expanded-byte budget, member-count budget, file-type policy, or explicit symlink/hardlink policy.
+- Archive and transfer policy is implemented and mock-tested; disk-full, interruption, and partial
+  cleanup still need retained evidence in the live M5e matrix.
 - Public Git URL validation rejects obvious credential and private-address forms, but application
   parsing is not a network boundary: DNS resolution/rebinding, IPv6/private ranges, redirects, and
   egress destinations must be enforced by Flywheel's network layer.
-- Managed services persist guest PIDs and restart recipes. PID-only liveness/control can mistake PID
-  reuse for the original process; production control needs a Flywheel process handle or verified
-  process birth identity/supervisor record.
-- Binary read/write uses ordinary Exec processes. It needs authoritative terminal-status, digest,
-  byte-count, cancellation, and partial-cleanup evidence before larger or security-sensitive use.
+- Managed services use PID plus Linux process birth identity and refuse mismatched control. A future
+  Flywheel process handle would simplify this adapter but is no longer required for PID-reuse safety.
+- Binary read/write requires terminal success, digest and byte-count agreement, bounded size, staged
+  promotion, and cleanup. Live disconnect/disk-pressure evidence remains part of M5e.
 - Unit and mocked integration coverage is comprehensive, but the release gate still needs a repeatable
   live Marina↔Flywheel matrix across supported backends, restart, hibernate, timeout, and failure modes.
 - Quotas, idle policy, operator inventory/reclamation, metrics, and alerts are not yet productionized.
@@ -358,6 +359,12 @@ restart, hibernation, and publication teardown.
 
 #### M5d — resource operations and civic policy
 
+Status: **functional operations slice complete** — standing-neutral global admission limits, idle
+and absolute lifecycle deadlines, recoverable automatic hibernation, steward inventory/reconcile/
+reclaim/revoke/hibernate/teardown controls, retained operation telemetry, and durable Flywheel alerts
+are implemented. Marina does not choose CPU/RAM/disk shapes; those remain Flywheel policy. The live
+M5e matrix must still tune defaults and validate reclamation under real backend failure.
+
 - Add per-entity CPU/memory/disk/process/time quotas, admission control, idle hibernation, absolute
   TTLs, and standing-neutral v1 defaults. Measure before introducing standing-weighted capacity.
 - Add operator inventory, force-reconcile, hibernate, revoke, export-before-delete guidance, and
@@ -366,9 +373,21 @@ restart, hibernation, and publication teardown.
   timeout/cancellation, transfer bytes/failures, disk pressure, publish exposure, and reconciliation.
 - Define activity versus Chronicle events and retention; raw stdout remains out of Chronicle.
 
+Implementation policy: successful sandbox execution, transfer, publication, creation, and resume
+refresh operational activity. Automatic reclamation skips active services and public exposure,
+hibernates writable disks, and never deletes them. Destructive operator teardown remains explicit,
+checks export state, and requires literal confirmation. Operation telemetry is bounded and contains
+only operation class, outcome, duration, byte count, and sanitized detail—not stdout or credentials.
+
 Exit: operators can bound, observe, reconcile, and safely reclaim every sandbox resource.
 
 #### M5e — live compatibility and release gate
+
+Status: **repeatable harness implemented; live backend evidence pending** —
+`bun run qualify:flywheel` now exercises the public Marina→Flywheel boundary with retained,
+redacted JSON evidence and guaranteed teardown. Baseline and full capability modes are distinct;
+absence skips cleanly unless the release gate is explicitly required. Completion still requires
+retained separate/composed and backend/fault-matrix runs in a Flywheel-enabled environment.
 
 - Build a repeatable live suite against a separately started Flywheel: create → project bootstrap and
   clone → install → finite run → service/probe/screenshot/publish/revoke → archive round trip →

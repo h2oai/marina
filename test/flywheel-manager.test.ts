@@ -227,6 +227,70 @@ describe("FlywheelManager", () => {
     }
   });
 
+  test("enforces standing-neutral admission and hibernates idle allocations recoverably", async () => {
+    const dbPath = `/tmp/marina-flywheel-${crypto.randomUUID()}.db`;
+    const db = new MarinaDB(dbPath);
+    const alice = entityId("alice");
+    try {
+      db.saveFlywheelBinding({
+        entityId: alice,
+        sessionId: "session-idle",
+        sandboxId: "sandbox-idle",
+        image: "code:latest",
+        keepAlive: true,
+        state: "running",
+        lifecycleExpiresAt: Date.now() + 60_000,
+      });
+      db.updateFlywheelBinding(alice, { lastActivityAt: Date.now() - 10_000 });
+      const fetch = async (input: string | URL | Request) => {
+        const method = String(input).split("/").at(-1);
+        if (method === "MintCapability") {
+          return Response.json({
+            token: "agent-capability",
+            expiresAt: new Date(Date.now() + 600_000).toISOString(),
+          });
+        }
+        return Response.json({});
+      };
+      const manager = new FlywheelManager(
+        "http://flywheel/rpc",
+        "operator",
+        "default:latest",
+        fetch,
+        db,
+        {
+          maxSandboxes: 1,
+          maxRunningSandboxes: 1,
+          idleHibernateMs: 1_000,
+          absoluteLifetimeMs: 60_000,
+          telemetryRetentionMs: 60_000,
+        },
+      );
+
+      await expect(manager.create(entityId("bob"))).rejects.toThrow("admission limit");
+      expect(manager.inventory()).toEqual([
+        expect.objectContaining({ entityId: alice, state: "running", activeServices: false }),
+      ]);
+      expect(await manager.reclaim(false)).toEqual([
+        expect.objectContaining({ entityId: alice, action: "hibernate" }),
+      ]);
+      await manager.reclaim(true);
+      expect(manager.status(alice)).toMatchObject({
+        state: "hibernated",
+        hibernatedReason: "idle lifecycle reached",
+      });
+      expect(manager.operationSummary()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ operation: "create", outcome: "blocked", count: 1 }),
+          expect.objectContaining({ operation: "hibernate", outcome: "success", count: 1 }),
+        ]),
+      );
+    } finally {
+      db.close();
+      cleanupDb(dbPath);
+    }
+  });
+
   test("aborts a timed-out Exec stream so Flywheel can stop the remote process", async () => {
     let aborted = false;
     const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {

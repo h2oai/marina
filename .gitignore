@@ -22,3 +22,4 @@ benchmarks/datasets/
 benchmarks/results/
 benchmarks/.tmp-humaneval/
 marina-export-*.json
+artifacts/flywheel/

@@ -182,6 +182,64 @@ describe("code command", () => {
     expect(calls).toEqual(["create", "hibernate", "resume", "stop"]);
   });
 
+  it("keeps fleet operations steward-gated and reclamation dry-run by default", async () => {
+    const entity = engine.entities.get(conn.entity!)!;
+    let applied = false;
+    const flywheel: FlywheelToolBackend = {
+      async create() {
+        throw new Error("not used");
+      },
+      async exec() {
+        return "";
+      },
+      async publish() {
+        return "";
+      },
+      async hibernate() {},
+      async resume() {},
+      async stop() {},
+      status() {
+        return undefined;
+      },
+      inventory() {
+        return [
+          {
+            entityId: entity.id,
+            sessionId: "session-ops",
+            sandboxId: "sandbox-ops",
+            image: "code:latest",
+            keepAlive: true,
+            state: "running",
+            activeServices: false,
+          },
+        ];
+      },
+      async reclaim(apply = false) {
+        applied = apply;
+        return [
+          {
+            entityId: entity.id,
+            sandboxId: "sandbox-ops",
+            reason: "idle lifecycle reached",
+            action: "hibernate",
+          },
+        ];
+      },
+    };
+    const sent: string[] = [];
+    const command = codeCommand({ db, flywheel, getEntity: () => entity });
+    const ctx = testRoomContext(sent);
+
+    await command.handler(ctx, inputFor(entity, "code sandbox ops inventory"));
+    expect(sent.at(-1)).toContain("require steward rank");
+    entity.properties.rank = 5;
+    await command.handler(ctx, inputFor(entity, "code sandbox ops reclaim"));
+    expect(applied).toBe(false);
+    expect(sent.at(-1)).toContain("Dry run only");
+    await command.handler(ctx, inputFor(entity, "code sandbox ops reclaim confirm"));
+    expect(applied).toBe(true);
+  });
+
   it("routes a session explicitly through Flywheel and stores provider evidence", async () => {
     const entity = engine.entities.get(conn.entity!)!;
     const executions: Array<{ command: string; args?: string[] }> = [];

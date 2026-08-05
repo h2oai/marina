@@ -1818,6 +1818,31 @@ CREATE INDEX idx_flywheel_credential_bindings_entity
   ON flywheel_credential_bindings(entity_id, state, updated_at DESC);
 `,
   },
+  // Migration 70: M5d standing-neutral lifecycle policy and bounded operational
+  // telemetry. Flywheel continues to own backend resource sizing.
+  {
+    version: 70,
+    sql: `
+ALTER TABLE flywheel_bindings ADD COLUMN last_activity_at INTEGER;
+ALTER TABLE flywheel_bindings ADD COLUMN lifecycle_expires_at INTEGER;
+ALTER TABLE flywheel_bindings ADD COLUMN hibernated_reason TEXT;
+
+CREATE TABLE flywheel_operations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_id TEXT,
+  operation TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  duration_ms INTEGER NOT NULL,
+  byte_count INTEGER,
+  detail TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_flywheel_operations_created
+  ON flywheel_operations(created_at DESC);
+CREATE INDEX idx_flywheel_operations_kind
+  ON flywheel_operations(operation, outcome, created_at DESC);
+`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -4100,18 +4125,22 @@ export class MarinaDB {
     image: string;
     keepAlive: boolean;
     state: FlywheelBindingState;
+    lifecycleExpiresAt?: number;
   }): void {
     const now = Date.now();
     this.db.run(
       `INSERT INTO flywheel_bindings
-        (entity_id, session_id, sandbox_id, image, keep_alive, state, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (entity_id, session_id, sandbox_id, image, keep_alive, state, created_at, updated_at,
+         last_activity_at, lifecycle_expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(entity_id) DO UPDATE SET
          session_id = excluded.session_id,
          sandbox_id = excluded.sandbox_id,
          image = excluded.image,
          keep_alive = excluded.keep_alive,
          state = excluded.state,
+         last_activity_at = excluded.last_activity_at,
+         lifecycle_expires_at = excluded.lifecycle_expires_at,
          last_error = NULL,
          updated_at = excluded.updated_at`,
       [
@@ -4123,6 +4152,8 @@ export class MarinaDB {
         opts.state,
         now,
         now,
+        now,
+        opts.lifecycleExpiresAt ?? null,
       ],
     );
   }
@@ -4144,6 +4175,9 @@ export class MarinaDB {
       guestCwd?: string | null;
       networkProfile?: string;
       networkProfileEnforced?: boolean;
+      lastActivityAt?: number;
+      lifecycleExpiresAt?: number | null;
+      hibernatedReason?: string | null;
     },
   ): void {
     const assignments = ["updated_at = ?"];
@@ -4179,6 +4213,18 @@ export class MarinaDB {
     if (fields.networkProfileEnforced !== undefined) {
       assignments.push("network_profile_enforced = ?");
       values.push(fields.networkProfileEnforced ? 1 : 0);
+    }
+    if (fields.lastActivityAt !== undefined) {
+      assignments.push("last_activity_at = ?");
+      values.push(fields.lastActivityAt);
+    }
+    if (fields.lifecycleExpiresAt !== undefined) {
+      assignments.push("lifecycle_expires_at = ?");
+      values.push(fields.lifecycleExpiresAt);
+    }
+    if (fields.hibernatedReason !== undefined) {
+      assignments.push("hibernated_reason = ?");
+      values.push(fields.hibernatedReason);
     }
     values.push(entityId);
     this.db.run(
@@ -4361,6 +4407,58 @@ export class MarinaDB {
          ORDER BY publication_expires_at`,
       )
       .all(now) as CodingServiceRow[];
+  }
+
+  hasRunningCodingServices(entityId: EntityId, sandboxId: string): boolean {
+    return (
+      this.reader
+        .query(
+          "SELECT 1 present FROM coding_services WHERE entity_id = ? AND sandbox_id = ? AND status IN ('running', 'unknown') LIMIT 1",
+        )
+        .get(entityId, sandboxId) !== null
+    );
+  }
+
+  recordFlywheelOperation(operation: {
+    entityId?: EntityId;
+    operation: string;
+    outcome: "success" | "failure" | "blocked";
+    durationMs: number;
+    byteCount?: number;
+    detail?: string;
+  }): void {
+    this.db.run(
+      `INSERT INTO flywheel_operations
+       (entity_id, operation, outcome, duration_ms, byte_count, detail, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        operation.entityId ?? null,
+        operation.operation,
+        operation.outcome,
+        Math.max(0, Math.trunc(operation.durationMs)),
+        operation.byteCount ?? null,
+        operation.detail?.slice(0, 500) ?? null,
+        Date.now(),
+      ],
+    );
+  }
+
+  pruneFlywheelOperations(before: number): number {
+    return this.db.run("DELETE FROM flywheel_operations WHERE created_at < ?", [before]).changes;
+  }
+
+  getFlywheelOperationSummary(
+    since = Date.now() - 24 * 60 * 60 * 1000,
+  ): FlywheelOperationSummary[] {
+    return this.reader
+      .query(
+        `SELECT operation, outcome, COUNT(*) count,
+                CAST(AVG(duration_ms) AS INTEGER) avg_duration_ms,
+                COALESCE(SUM(byte_count), 0) byte_count
+         FROM flywheel_operations WHERE created_at >= ?
+         GROUP BY operation, outcome ORDER BY operation, outcome`,
+      )
+      .all(since) as FlywheelOperationSummary[];
   }
 
   updateCodingService(
@@ -6482,6 +6580,17 @@ export interface FlywheelBindingRow {
   reconciled_at: number | null;
   network_profile: string;
   network_profile_enforced: number;
+  last_activity_at: number | null;
+  lifecycle_expires_at: number | null;
+  hibernated_reason: string | null;
+}
+
+export interface FlywheelOperationSummary {
+  operation: string;
+  outcome: string;
+  count: number;
+  avg_duration_ms: number;
+  byte_count: number;
 }
 
 export interface FlywheelCredentialBindingRow {
