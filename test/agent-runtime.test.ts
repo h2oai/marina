@@ -104,6 +104,11 @@ describe("AgentRuntime", () => {
     it("get() returns undefined for unknown agents", () => {
       expect(runtime.get("nonexistent")).toBeUndefined();
     });
+
+    it("validates runtime WebSocket port reconfiguration", () => {
+      expect(() => runtime.setWsPort(41010)).not.toThrow();
+      expect(() => runtime.setWsPort(0)).toThrow("Invalid agent WebSocket port");
+    });
   });
 
   // ─── isAvailable() ────────────────────────────────────────────────────

@@ -554,6 +554,23 @@ export class McpServerAdapter {
     );
 
     mcp.tool(
+      "evolve",
+      "Opt-in native evolution protocols: sessions, create, start, status, analyze, propose, " +
+        "evaluate, decide, pause, resume, complete. Uses the same participant permissions and " +
+        "world-command path as humans, in-system Pi agents, and SDK clients. Acceptance records " +
+        "a decision but never activates or promotes a candidate.",
+      {
+        input: z
+          .string()
+          .describe(
+            "Evolution subcommand and arguments, e.g. 'propose PromptTrial | hypothesis | note:7'",
+          ),
+      },
+      { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      async ({ input }, extra) => runCmd(extra, `evolve ${input}`),
+    );
+
+    mcp.tool(
       "market",
       "Prediction markets: discovery, leaderboards, and forecasts. " +
         "Subcommands: list [open|resolved] | search <query> | view <id> | leaderboard | " +

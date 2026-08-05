@@ -55,6 +55,19 @@ describe("native evolution read API", () => {
       protocol: createEvolutionProtocol({ options: ["max-runs=2"] }),
     });
     db.updateEvolutionSessionStatus(sessionId, "active");
+    db.addParticipant(experimentId, "Alice");
+    db.recordPrimitiveUsage({
+      actorName: "Alice",
+      actorKind: "agent",
+      source: "agent_tool",
+      primitive: "marina_evolve",
+      action: "propose",
+      safeLabel: "marina_evolve",
+      toolName: "marina_evolve",
+      success: true,
+      meaningful: true,
+      latencyMs: 42,
+    });
     db.createEvolutionRun({
       sessionId,
       hypothesis: "one",
@@ -73,5 +86,14 @@ describe("native evolution read API", () => {
       automaticPromotion: false,
     });
     expect(body[0]?.runs).toBeArrayOfSize(1);
+    expect(body[0]?.activity).toMatchObject({
+      participants: ["Alice"],
+      activeParticipants: 1,
+      toolCalls: 1,
+      marinaToolCalls: 1,
+      averageToolLatencyMs: 42,
+      inputTokens: null,
+      costUsd: null,
+    });
   });
 });

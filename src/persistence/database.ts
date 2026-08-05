@@ -4123,6 +4123,51 @@ export class MarinaDB {
       .all(entityName) as EvolutionSessionRow[];
   }
 
+  getEvolutionActivity(
+    experimentId: number,
+    startedAt: number,
+    endedAt = Date.now(),
+  ): EvolutionActivitySummary {
+    const participants = this.getParticipants(experimentId).map((row) => row.entity_name);
+    if (participants.length === 0) return emptyEvolutionActivity();
+    const placeholders = participants.map(() => "?").join(",");
+    const row = this.db
+      .query(
+        `SELECT
+           SUM(CASE WHEN source='command' AND meaningful=1 THEN 1 ELSE 0 END) meaningful_actions,
+           SUM(CASE WHEN source='command' AND communication=1 THEN 1 ELSE 0 END) communications,
+           SUM(CASE WHEN source='agent_tool' THEN 1 ELSE 0 END) tool_calls,
+           SUM(CASE WHEN source='agent_tool' AND tool_name LIKE 'marina_%' THEN 1 ELSE 0 END) marina_tool_calls,
+           AVG(CASE WHEN source='agent_tool' AND latency_ms IS NOT NULL THEN latency_ms END) average_tool_latency_ms,
+           MAX(CASE WHEN source='agent_tool' THEN latency_ms END) maximum_tool_latency_ms,
+           COUNT(DISTINCT CASE WHEN meaningful=1 THEN actor_name END) active_participants
+         FROM primitive_usage
+         WHERE created_at BETWEEN ? AND ? AND actor_name IN (${placeholders})`,
+      )
+      .get(startedAt, endedAt, ...participants) as {
+      meaningful_actions: number | null;
+      communications: number | null;
+      tool_calls: number | null;
+      marina_tool_calls: number | null;
+      average_tool_latency_ms: number | null;
+      maximum_tool_latency_ms: number | null;
+      active_participants: number | null;
+    };
+    return {
+      participants,
+      activeParticipants: row.active_participants ?? 0,
+      meaningfulActions: row.meaningful_actions ?? 0,
+      communications: row.communications ?? 0,
+      toolCalls: row.tool_calls ?? 0,
+      marinaToolCalls: row.marina_tool_calls ?? 0,
+      averageToolLatencyMs: row.average_tool_latency_ms,
+      maximumToolLatencyMs: row.maximum_tool_latency_ms,
+      inputTokens: null,
+      outputTokens: null,
+      costUsd: null,
+    };
+  }
+
   updateEvolutionSessionStatus(id: number, status: EvolutionSessionStatus): void {
     const timestampColumn =
       status === "active"
@@ -5898,6 +5943,37 @@ export interface EvolutionRunRow {
   created_at: number;
   evaluated_at: number | null;
   decided_at: number | null;
+}
+
+export interface EvolutionActivitySummary {
+  participants: string[];
+  activeParticipants: number;
+  meaningfulActions: number;
+  communications: number;
+  toolCalls: number;
+  marinaToolCalls: number;
+  averageToolLatencyMs: number | null;
+  maximumToolLatencyMs: number | null;
+  /** Reserved until provider-neutral per-session token attribution is durable. */
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+}
+
+function emptyEvolutionActivity(): EvolutionActivitySummary {
+  return {
+    participants: [],
+    activeParticipants: 0,
+    meaningfulActions: 0,
+    communications: 0,
+    toolCalls: 0,
+    marinaToolCalls: 0,
+    averageToolLatencyMs: null,
+    maximumToolLatencyMs: null,
+    inputTokens: null,
+    outputTokens: null,
+    costUsd: null,
+  };
 }
 
 interface ExperimentParticipantRow {

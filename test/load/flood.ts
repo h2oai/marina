@@ -9,6 +9,8 @@
  *   --duration     Test duration in seconds (default: 30)
  *   --rate         Commands per second per connection (default: 2)
  *   --url          WebSocket server URL (default: ws://localhost:3300)
+ *   --max-errors   Maximum client error count before failure (default: 0)
+ *   --max-p95      Maximum round-trip p95 in milliseconds (default: 2000)
  */
 
 const args = new Map<string, string>();
@@ -21,6 +23,25 @@ const CONNECTIONS = Number(args.get("connections") ?? 50);
 const DURATION_S = Number(args.get("duration") ?? 30);
 const RATE = Number(args.get("rate") ?? 2);
 const WS_URL = args.get("url") ?? "ws://localhost:3300";
+const MAX_ERRORS = Number(args.get("max-errors") ?? 0);
+const MAX_P95_MS = Number(args.get("max-p95") ?? 2000);
+
+if (
+  !Number.isInteger(CONNECTIONS) ||
+  CONNECTIONS < 1 ||
+  !Number.isFinite(DURATION_S) ||
+  DURATION_S <= 0 ||
+  !Number.isFinite(RATE) ||
+  RATE <= 0 ||
+  !Number.isFinite(MAX_ERRORS) ||
+  MAX_ERRORS < 0 ||
+  !Number.isFinite(MAX_P95_MS) ||
+  MAX_P95_MS <= 0
+) {
+  throw new Error(
+    "Invalid soak parameters; counts, duration, rate, and thresholds must be positive",
+  );
+}
 
 const COMMANDS = ["look", "who", "help", "inventory", "north", "south", "east", "west"];
 
@@ -156,6 +177,35 @@ async function main() {
   console.log("");
   console.log(`Client memory:     ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1)}MB`);
   if (serverMemory) console.log(serverMemory);
+
+  const p95 = percentile(stats.roundTripTimes, 95);
+  const failures: string[] = [];
+  if (stats.connected !== CONNECTIONS) {
+    failures.push(`connected ${stats.connected}/${CONNECTIONS}`);
+  }
+  if (stats.errors > MAX_ERRORS) failures.push(`errors ${stats.errors} > ${MAX_ERRORS}`);
+  if (stats.roundTripTimes.length === 0) failures.push("no command responses observed");
+  if (p95 > MAX_P95_MS) failures.push(`round-trip p95 ${p95.toFixed(1)}ms > ${MAX_P95_MS}ms`);
+  console.log("");
+  console.log(
+    JSON.stringify({
+      qualified: failures.length === 0,
+      target: WS_URL,
+      thresholds: { maxErrors: MAX_ERRORS, maxP95Ms: MAX_P95_MS },
+      observed: {
+        connections: stats.connected,
+        commands: stats.commands,
+        responses: stats.responses,
+        errors: stats.errors,
+        roundTripP95Ms: Number(p95.toFixed(1)),
+      },
+      failures,
+    }),
+  );
+  if (failures.length > 0) process.exitCode = 1;
 }
 
-main().catch(console.error);
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

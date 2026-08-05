@@ -230,10 +230,10 @@ describe("MCP Server", () => {
   // ── Tool Registration ───────────────────────────────────────────────────
 
   describe("tool registration", () => {
-    it("should register all 30 tools", async () => {
+    it("should register all 31 tools", async () => {
       const sid = await initSession(url);
       const tools = await toolList(url, sid);
-      expect(tools.length).toBe(30);
+      expect(tools.length).toBe(31);
     });
 
     it("should include all expected tool names", async () => {
@@ -251,6 +251,7 @@ describe("MCP Server", () => {
         "channel",
         "command",
         "crew",
+        "evolve",
         "examine",
         "group",
         "help",
@@ -356,7 +357,7 @@ describe("MCP Server", () => {
         expect(names.has(t)).toBe(true);
       }
       // Coordination
-      for (const t of ["channel", "board", "group", "task"]) {
+      for (const t of ["channel", "board", "group", "task", "evolve"]) {
         expect(names.has(t)).toBe(true);
       }
       // Canvas
@@ -429,6 +430,15 @@ describe("MCP Server", () => {
       expect(text).toContain("next");
       expect(text).toContain("brief");
       expect(text).toContain("canvas");
+    });
+  });
+
+  describe("evolution transport conformance", () => {
+    it("routes the dedicated MCP tool through the canonical world command", async () => {
+      const sid = await initSession(url);
+      await toolCall(url, sid, "login", { name: "EvolutionMcpBot" });
+      const text = await toolCall(url, sid, "evolve", { input: "sessions" });
+      expect(text).toContain("Native evolution protocols are disabled");
     });
   });
 

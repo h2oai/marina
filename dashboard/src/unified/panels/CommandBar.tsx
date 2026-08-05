@@ -664,6 +664,7 @@ const MarketsTab = memo(function MarketsTab() {
 const ExperimentsTab = memo(function ExperimentsTab() {
   const { data, isLoading } = useExperiments();
   const { data: evolutionSessions } = useEvolutionSessions();
+  const [expandedSession, setExpandedSession] = useState<number | null>(null);
   if (isLoading) return <CoordLoading />;
   if (!data?.length) return <CoordEmpty label="experiments" />;
   return (
@@ -672,10 +673,23 @@ const ExperimentsTab = memo(function ExperimentsTab() {
         const accepted = session.runs.filter((run) => run.status === "accepted").length;
         const lastRun = session.runs.at(-1);
         return (
-          <div
+          <button
+            type="button"
             key={`evolution-${session.id}`}
             className="uc-coord-item"
-            style={{ cursor: "default" }}
+            style={{
+              cursor: "pointer",
+              alignItems: "flex-start",
+              width: "100%",
+              border: 0,
+              background: "transparent",
+              color: "inherit",
+              font: "inherit",
+              textAlign: "left",
+            }}
+            onClick={() =>
+              setExpandedSession((current) => (current === session.id ? null : session.id))
+            }
           >
             <div
               className={`uc-coord-dot ${session.status === "active" ? "active" : session.status === "completed" ? "done" : "pending"}`}
@@ -704,8 +718,67 @@ const ExperimentsTab = memo(function ExperimentsTab() {
                 auto-continue off · auto-promote off
                 {session.protocol.independentReview ? " · independent review" : ""}
               </div>
+              <div className="uc-coord-meta" style={{ color: "#777" }}>
+                {session.activity.activeParticipants}/{session.activity.participants.length} active
+                · {session.activity.meaningfulActions} actions · {session.activity.communications}{" "}
+                comms · {session.activity.marinaToolCalls}/{session.activity.toolCalls} Marina tools
+                {session.activity.averageToolLatencyMs !== null
+                  ? ` · ${Math.round(session.activity.averageToolLatencyMs)}ms avg tool latency`
+                  : ""}
+              </div>
+              {session.protocol.guardrails.length > 0 && (
+                <div className="uc-coord-meta" style={{ color: "#c99a45" }}>
+                  Guardrails:{" "}
+                  {session.protocol.guardrails
+                    .map((guardrail) => `${guardrail.metric} ${guardrail.direction}`)
+                    .join(" · ")}
+                </div>
+              )}
+              {expandedSession === session.id && (
+                <div
+                  style={{
+                    marginTop: 6,
+                    paddingLeft: 8,
+                    borderLeft: "1px solid rgba(201,154,69,.45)",
+                    display: "grid",
+                    gap: 6,
+                  }}
+                >
+                  {session.runs.length === 0 && (
+                    <div className="uc-coord-meta">No proposals recorded.</div>
+                  )}
+                  {session.runs.map((run) => (
+                    <div key={run.id} style={{ position: "relative" }}>
+                      <div className="uc-coord-title" style={{ fontSize: 10 }}>
+                        #{run.id} · run {run.sequence} · {run.status}
+                        {run.parent_run_id ? ` ← #${run.parent_run_id}` : " · root"}
+                      </div>
+                      <div className="uc-coord-meta">{run.hypothesis}</div>
+                      <div className="uc-coord-meta" style={{ color: "#777" }}>
+                        candidate {run.candidate_ref} · proposed by {run.proposed_by}
+                      </div>
+                      {run.evidence && (
+                        <div className="uc-coord-meta" style={{ color: "#8fb6a0" }}>
+                          Evidence: {run.evidence}
+                        </div>
+                      )}
+                      {(run.evaluator_name || run.reviewer_name) && (
+                        <div className="uc-coord-meta" style={{ color: "#777" }}>
+                          evaluator {run.evaluator_name ?? "pending"} · reviewer{" "}
+                          {run.reviewer_name ?? "pending"}
+                          {run.decision ? ` · ${run.decision}` : ""}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  <div className="uc-coord-meta" style={{ color: "#555" }}>
+                    Token and cost totals remain unavailable until provider-neutral per-session
+                    attribution is durable; they are never inferred from activity.
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
+          </button>
         );
       })}
       {data.map((e: ExperimentEntry) => (

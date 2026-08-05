@@ -283,8 +283,13 @@ export class MarinaClient {
     return new Promise((resolve, reject) => {
       const wsUrl = `${this.url}/ws`;
       this.ws = new WebSocket(wsUrl);
+      const connectTimer = setTimeout(() => {
+        this.ws?.close();
+        reject(new Error(`WebSocket connection timed out after ${this.options.connectTimeout}ms`));
+      }, this.options.connectTimeout);
 
       this.ws.onopen = () => {
+        clearTimeout(connectTimer);
         this.connected = true;
         this.reconnectAttempts = 0;
         if (this.options.onOpen) {
@@ -317,6 +322,7 @@ export class MarinaClient {
       };
 
       this.ws.onerror = () => {
+        clearTimeout(connectTimer);
         this.emit("error", new Error("WebSocket connection failed"));
         reject(new Error("WebSocket connection failed"));
       };
