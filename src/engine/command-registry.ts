@@ -1,4 +1,9 @@
 import { getInternalModelToken } from "../agent/agent-runtime";
+import {
+  ASK_SYSTEM_PROMPT,
+  CODE_MODE_SYSTEM_PROMPT,
+  formatUntrustedContext,
+} from "../agent/prompts/support-prompts";
 import { registerBuiltinResolvers } from "../resolvers";
 import type { EntityId, RoomId } from "../types";
 import { adapterCommand } from "./commands/adapter";
@@ -911,16 +916,13 @@ async function answerViaLocalModel(query: string, context: string): Promise<stri
     const messages = [
       {
         role: "system",
-        content:
-          "You are Marina's simple ask surface. Answer the user's question directly and concisely. " +
-          "If provided, use Marina world context first. If the answer is general knowledge, answer from your model knowledge. " +
-          "Do not mention internal commands unless the user asks about Marina.",
+        content: ASK_SYSTEM_PROMPT,
       },
       ...(context.trim()
         ? [
             {
-              role: "system",
-              content: `Marina world context:\n${context}`,
+              role: "user",
+              content: formatUntrustedContext("Marina world context", context),
             },
           ]
         : []),
@@ -968,20 +970,16 @@ async function answerCodeViaLocalModel(request: {
     const messages = [
       {
         role: "system",
-        content:
-          "You are Marina Code Mode running through Marina's vendor-neutral model surface. " +
-          "Help with software work inside a persistent coding session. Be concrete and concise. " +
-          "You do not have direct workspace tools in this direct path; ask the user to use code read/search/diff/run/patch when needed, " +
-          "or suggest assigning the session to a live Marina agent for tool-using work.",
+        content: CODE_MODE_SYSTEM_PROMPT,
       },
       {
-        role: "system",
-        content: [
-          `Coding session: ${request.sessionId}`,
-          `Requester: ${request.actor}`,
-          `Profile: ${request.profile}`,
-          `Workspace: ${request.workspaceRoot}`,
-        ].join("\n"),
+        role: "user",
+        content: formatUntrustedContext("Coding session metadata", {
+          sessionId: request.sessionId,
+          requester: request.actor,
+          profile: request.profile,
+          workspace: request.workspaceRoot,
+        }),
       },
       { role: "user", content: request.prompt },
     ];

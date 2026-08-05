@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reworked the model-agnostic pi-agent system contract around outcome framing, selective retrieval,
+  deliberate tool use, result verification, durable provenance, explicit stopping/replanning, and
+  equal treatment of humans and opportunistic agents. Dynamic world, memory, transcript, and tool
+  content is now explicitly kept below governing instructions.
+- Compaction now preserves objective, success criteria, evidence, decisions, commitments, plan state,
+  failures, contradictions, and next action. Silent-turn and stuck recovery no longer manufacture
+  `think`, observation, movement, or notes merely to produce activity.
 - Memory quality alerts now use durable shared contradiction cases at world scope and retain richer
   typed provenance and verification rationale.
 - The persistence schema is now version 58; exports include contradiction cases, productivity
