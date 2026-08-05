@@ -16,6 +16,7 @@ import { WorkspaceRegistry } from "../src/coding/workspace-registry";
 import { codeCommand } from "../src/engine/commands/code";
 import { Engine } from "../src/engine/engine";
 import { grant } from "../src/engine/safety-gates";
+import type { FlywheelToolBackend } from "../src/integrations/flywheel-manager";
 import { MarinaDB } from "../src/persistence/database";
 import {
   type CommandInput,
@@ -98,6 +99,145 @@ describe("code command", () => {
     sent.length = 0;
     await command.handler(ctx, inputFor(ungated, "code apply last patch"));
     expect(stripAnsi(sent.join("\n")).toLowerCase()).toContain("run or apply code");
+  });
+
+  it("keeps local Code Mode available when Flywheel is unconfigured", async () => {
+    const entity = engine.entities.get(conn.entity!)!;
+    const sent: string[] = [];
+    const command = codeCommand({ db, getEntity: () => entity, workspace: new LocalWorkspace() });
+
+    await command.handler(testRoomContext(sent), inputFor(entity, "code sandbox status"));
+
+    const output = stripAnsi(sent.join("\n"));
+    expect(output).toContain("Flywheel is not configured");
+    expect(output).toContain("Local Code Mode remains available and unchanged");
+  });
+
+  it("uses the shared Flywheel lifecycle explicitly and confirms destructive stop", async () => {
+    const entity = engine.entities.get(conn.entity!)!;
+    const calls: string[] = [];
+    let state: "running" | "hibernated" | undefined;
+    const flywheel: FlywheelToolBackend = {
+      async create() {
+        calls.push("create");
+        state = "running";
+        return {
+          sessionId: "session-1",
+          sandboxId: "sandbox-1",
+          image: "code:latest",
+          keepAlive: true,
+          state,
+        };
+      },
+      async exec() {
+        return "";
+      },
+      async publish() {
+        return "";
+      },
+      async hibernate() {
+        calls.push("hibernate");
+        state = "hibernated";
+      },
+      async resume() {
+        calls.push("resume");
+        state = "running";
+      },
+      async stop() {
+        calls.push("stop");
+        state = undefined;
+      },
+      status() {
+        return state
+          ? {
+              sessionId: "session-1",
+              sandboxId: "sandbox-1",
+              image: "code:latest",
+              keepAlive: true,
+              state,
+            }
+          : undefined;
+      },
+    };
+    const sent: string[] = [];
+    const command = codeCommand({
+      db,
+      flywheel,
+      getEntity: () => entity,
+      workspace: new LocalWorkspace(),
+    });
+    const ctx = testRoomContext(sent);
+
+    await command.handler(ctx, inputFor(entity, "code sandbox start code:latest"));
+    await command.handler(ctx, inputFor(entity, "code sandbox hibernate"));
+    await command.handler(ctx, inputFor(entity, "code sandbox resume"));
+    await command.handler(ctx, inputFor(entity, "code sandbox stop"));
+    expect(calls).toEqual(["create", "hibernate", "resume"]);
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain("stop confirm");
+    await command.handler(ctx, inputFor(entity, "code sandbox stop confirm"));
+    expect(calls).toEqual(["create", "hibernate", "resume", "stop"]);
+  });
+
+  it("routes a session explicitly through Flywheel and stores provider evidence", async () => {
+    const entity = engine.entities.get(conn.entity!)!;
+    const executions: Array<{ command: string; args?: string[] }> = [];
+    const flywheel: FlywheelToolBackend = {
+      async create() {
+        throw new Error("already created");
+      },
+      async exec() {
+        throw new Error("use detailed execution");
+      },
+      async execDetailed(_entityId, command, args) {
+        executions.push({ command, args });
+        return {
+          output: "sandbox output\n__MARINA_EXIT_7f31c9__=0\n",
+          events: [{ process: { kind: "PROCESS_EVENT_KIND_STDOUT" } }],
+        };
+      },
+      async publish() {
+        return "";
+      },
+      async hibernate() {},
+      async resume() {},
+      async stop() {},
+      status() {
+        return {
+          sessionId: "session-1",
+          sandboxId: "sandbox-1",
+          image: "code:latest",
+          keepAlive: true,
+          state: "running",
+        };
+      },
+    };
+    const sent: string[] = [];
+    const command = codeCommand({
+      db,
+      flywheel,
+      getEntity: () => entity,
+      workspace: new LocalWorkspace(),
+    });
+    const ctx = testRoomContext(sent);
+
+    await command.handler(ctx, inputFor(entity, "code start Flywheel Run"));
+    await command.handler(ctx, inputFor(entity, "code sandbox use"));
+    await command.handler(ctx, inputFor(entity, "code run echo hello"));
+
+    const session = db.getCodingSession(entity.properties.coding_session_id as string)!;
+    expect(session.execution_target).toBe("flywheel");
+    expect(executions).toHaveLength(1);
+    expect(executions[0]).toMatchObject({ command: "/bin/sh" });
+    expect(executions[0]?.args).toContain("echo");
+    expect(stripAnsi(sent.at(-1) ?? "")).toContain("sandbox output");
+    const artifact = db
+      .listCodingArtifacts(session.id, 5)
+      .find((candidate) => candidate.kind === "command_output")!;
+    expect(JSON.parse(artifact.metadata_json)).toMatchObject({
+      executionTarget: "flywheel",
+      exitCode: 0,
+      flywheelEventKinds: ["process"],
+    });
   });
 
   it("starts and lists a local coding session", async () => {

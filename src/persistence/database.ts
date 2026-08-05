@@ -1681,6 +1681,36 @@ CREATE INDEX idx_evolution_sessions_status ON evolution_sessions(status);
 CREATE INDEX idx_evolution_runs_session ON evolution_runs(session_id, sequence);
 `,
   },
+  // Migration 64: durable, optional Flywheel workspace bindings. Marina owns
+  // the entity/project policy while Flywheel remains an independently deployed
+  // execution provider. No credentials are stored here.
+  {
+    version: 64,
+    sql: `
+CREATE TABLE flywheel_bindings (
+  entity_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL UNIQUE,
+  sandbox_id TEXT NOT NULL UNIQUE,
+  image TEXT NOT NULL,
+  keep_alive INTEGER NOT NULL DEFAULT 1,
+  state TEXT NOT NULL,
+  published_url TEXT,
+  active_project_id TEXT,
+  guest_cwd TEXT,
+  last_error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  reconciled_at INTEGER
+);
+CREATE INDEX idx_flywheel_bindings_state ON flywheel_bindings(state);
+`,
+  },
+  // Migration 65: explicit per-session execution target. Existing and new
+  // sessions remain local unless their owner deliberately selects Flywheel.
+  {
+    version: 65,
+    sql: `ALTER TABLE coding_sessions ADD COLUMN execution_target TEXT NOT NULL DEFAULT 'local';`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -3954,6 +3984,86 @@ export class MarinaDB {
     ).map((r) => r.channel);
   }
 
+  // ─── Optional Flywheel Workspace Bindings ──────────────────────────────
+
+  saveFlywheelBinding(opts: {
+    entityId: EntityId;
+    sessionId: string;
+    sandboxId: string;
+    image: string;
+    keepAlive: boolean;
+    state: FlywheelBindingState;
+  }): void {
+    const now = Date.now();
+    this.db.run(
+      `INSERT INTO flywheel_bindings
+        (entity_id, session_id, sandbox_id, image, keep_alive, state, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(entity_id) DO UPDATE SET
+         session_id = excluded.session_id,
+         sandbox_id = excluded.sandbox_id,
+         image = excluded.image,
+         keep_alive = excluded.keep_alive,
+         state = excluded.state,
+         last_error = NULL,
+         updated_at = excluded.updated_at`,
+      [
+        opts.entityId,
+        opts.sessionId,
+        opts.sandboxId,
+        opts.image,
+        opts.keepAlive ? 1 : 0,
+        opts.state,
+        now,
+        now,
+      ],
+    );
+  }
+
+  listFlywheelBindings(): FlywheelBindingRow[] {
+    return this.reader
+      .query("SELECT * FROM flywheel_bindings ORDER BY created_at")
+      .all() as FlywheelBindingRow[];
+  }
+
+  updateFlywheelBinding(
+    entityId: EntityId,
+    fields: {
+      state?: FlywheelBindingState;
+      publishedUrl?: string | null;
+      lastError?: string | null;
+      reconciledAt?: number | null;
+    },
+  ): void {
+    const assignments = ["updated_at = ?"];
+    const values: Array<string | number | null> = [Date.now()];
+    if (fields.state !== undefined) {
+      assignments.push("state = ?");
+      values.push(fields.state);
+    }
+    if (fields.publishedUrl !== undefined) {
+      assignments.push("published_url = ?");
+      values.push(fields.publishedUrl);
+    }
+    if (fields.lastError !== undefined) {
+      assignments.push("last_error = ?");
+      values.push(fields.lastError);
+    }
+    if (fields.reconciledAt !== undefined) {
+      assignments.push("reconciled_at = ?");
+      values.push(fields.reconciledAt);
+    }
+    values.push(entityId);
+    this.db.run(
+      `UPDATE flywheel_bindings SET ${assignments.join(", ")} WHERE entity_id = ?`,
+      values,
+    );
+  }
+
+  deleteFlywheelBinding(entityId: EntityId): void {
+    this.db.run("DELETE FROM flywheel_bindings WHERE entity_id = ?", [entityId]);
+  }
+
   // ─── Experiment Persistence ────────────────────────────────────────────
 
   createExperiment(opts: {
@@ -5040,6 +5150,7 @@ export class MarinaDB {
       writer: null,
       agent: null,
       driver: null,
+      execution_target: "local",
     };
     this.db.run(
       `INSERT INTO coding_sessions
@@ -5087,6 +5198,7 @@ export class MarinaDB {
       writer: string | null;
       agent: string | null;
       driver: string | null;
+      executionTarget: "local" | "flywheel";
     }>,
   ): void {
     const sets: string[] = [];
@@ -5102,6 +5214,10 @@ export class MarinaDB {
     if (patch.driver !== undefined) {
       sets.push("driver = ?");
       values.push(patch.driver);
+    }
+    if (patch.executionTarget !== undefined) {
+      sets.push("execution_target = ?");
+      values.push(patch.executionTarget);
     }
     if (patch.mode !== undefined) {
       sets.push("mode = ?");
@@ -5898,6 +6014,29 @@ export interface AdapterUserMappingRow {
   created_at: number;
 }
 
+export type FlywheelBindingState =
+  | "creating"
+  | "running"
+  | "hibernated"
+  | "unavailable"
+  | "stopping";
+
+export interface FlywheelBindingRow {
+  entity_id: string;
+  session_id: string;
+  sandbox_id: string;
+  image: string;
+  keep_alive: number;
+  state: FlywheelBindingState;
+  published_url: string | null;
+  active_project_id: string | null;
+  guest_cwd: string | null;
+  last_error: string | null;
+  created_at: number;
+  updated_at: number;
+  reconciled_at: number | null;
+}
+
 export interface ExperimentRow {
   id: number;
   name: string;
@@ -6187,6 +6326,8 @@ export interface CodingSessionRow {
   agent: string | null;
   /** Dispatch strategy: "single" (default) | "crew" | future multi-agent. */
   driver: string | null;
+  /** Explicit execution provider. Existing sessions default to trusted local mode. */
+  execution_target: "local" | "flywheel";
 }
 
 export interface CodingEventRow {

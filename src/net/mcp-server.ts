@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { WS_IDLE_TIMEOUT_SECONDS } from "../engine/constants";
 import type { Engine } from "../engine/engine";
-import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywheel-manager";
+import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
 import type { Connection, EntityId, Perception } from "../types";
 import {
   buildConnectManifest,
@@ -85,7 +85,7 @@ export class McpServerAdapter {
     private engine: Engine,
     private port: number,
     private rateLimiter?: RateLimiter,
-    private flywheel: FlywheelToolBackend | undefined = FlywheelManager.fromEnv(),
+    private flywheel: FlywheelToolBackend | undefined = engine.flywheel,
   ) {}
 
   start(): void {

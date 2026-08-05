@@ -15,6 +15,7 @@ import { CrewManager } from "../coordination/crew-manager";
 import { GroupManager } from "../coordination/group-manager";
 import { MacroManager } from "../coordination/macro-manager";
 import { TaskManager } from "../coordination/task-manager";
+import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywheel-manager";
 import type { AdapterManager } from "../net/adapter-manager";
 import { connects, disconnects } from "../net/ansi";
 import { cleanupStaleConversationChannels } from "../net/model-api";
@@ -94,6 +95,7 @@ export interface EngineConfig {
   storage?: StorageProvider; // optional asset storage
   world?: WorldDefinition; // optional world definition
   logger?: Logger; // optional structured logger
+  flywheel?: FlywheelToolBackend; // optional isolated execution provider
 }
 
 const DEFAULT_TICK_INTERVAL = 1000;
@@ -125,6 +127,7 @@ export class Engine {
   adapterManager?: AdapterManager;
   readonly shellRuntime: ShellRuntime;
   readonly storage?: StorageProvider;
+  readonly flywheel?: FlywheelToolBackend;
   readonly benchmarkRunner?: BenchmarkRunner;
   readonly mediaManager?: MediaManager;
   /** @internal */ db?: MarinaDB;
@@ -172,6 +175,7 @@ export class Engine {
     this.rateLimiter = this.config.rateLimiter;
     this.loginRateLimiter = this.config.loginRateLimiter;
     this.storage = this.config.storage;
+    this.flywheel = this.config.flywheel ?? FlywheelManager.fromEnv(this.db);
 
     // Wire DB into EntityManager for write-through persistence
     if (this.db) {
@@ -979,6 +983,11 @@ export class Engine {
   start(): void {
     if (this.running) return;
     this.running = true;
+    this.flywheel?.reconcile?.().catch((error) => {
+      this.logger.warn("flywheel", "Workspace reconciliation failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
     this.logger.info(
       "engine",
       `Marina engine started (tick: ${this.config.tickInterval}ms, rooms: ${this.rooms.size})`,

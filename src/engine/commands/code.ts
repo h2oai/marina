@@ -7,9 +7,11 @@ import {
   type CodingAgentRuntime,
 } from "../../coding/code-session-driver";
 import type { WorkspaceRunResult, WorkspaceRuntime } from "../../coding/local-workspace";
+import { summarizeFlywheelEvents, WorkspaceGateway } from "../../coding/workspace-gateway";
 import { WorkspaceRegistry } from "../../coding/workspace-registry";
 import type { ChannelManager } from "../../coordination/channel-manager";
 import { CrewError, type CrewManager } from "../../coordination/crew-manager";
+import type { FlywheelToolBackend } from "../../integrations/flywheel-manager";
 import { bold, dim, error as fmtError, header, separator, success } from "../../net/ansi";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, CrewFormation, Entity, EntityId, RoomContext } from "../../types";
@@ -695,6 +697,11 @@ Usage:
   code workspace list         List configured code workspace roots
   code workspace discover     Find likely projects under configured roots
   code workspace use <path>   Select a workspace root for new sessions
+  code sandbox status         Show optional Flywheel workspace readiness
+  code sandbox start [image]  Create this entity's durable Flywheel workspace
+  code sandbox use|local      Select Flywheel or local execution for this session
+  code sandbox hibernate|resume Preserve or resume its writable guest disk
+  code sandbox stop confirm   Destructively remove its guest workspace
   code doctor                 Inspect Code Mode workspace readiness
   code onboard                Show workspace/session readiness guidance
   code ask <request>          Ask the default Marina code model for this session
@@ -778,6 +785,7 @@ export interface CodeDeps {
   answerPrompt?: CodePromptAnswerer;
   channelManager?: ChannelManager;
   crewManager?: CrewManager;
+  flywheel?: FlywheelToolBackend;
   db?: MarinaDB;
   findAgentByName?: (name: string) => Entity | undefined;
   listAgents?: () => { name: string }[];
@@ -840,7 +848,9 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         // running or applying code can execute arbitrary host processes, so it
         // requires earned competence — closing the ungated `code apply` + `code
         // run` path to host code execution.
-        if (CODE_EXEC_SUBCOMMANDS.has(canonicalSub)) {
+        const mutatesSandbox =
+          canonicalSub === "sandbox" && (args[0]?.toLowerCase() ?? "status") !== "status";
+        if (CODE_EXEC_SUBCOMMANDS.has(canonicalSub) || mutatesSandbox) {
           const gate = checkGate(depsWithDb.db, input.entity, "code.exec");
           if (!gate.ok) {
             ctx.send(
@@ -861,6 +871,9 @@ export function codeCommand(deps: CodeDeps): CommandDef {
             return;
           case "doctor":
             await doctor(ctx, input.entity, entity, depsWithDb);
+            return;
+          case "sandbox":
+            await sandboxLifecycle(ctx, input.entity, entity, depsWithDb, args);
             return;
           case "onboard":
           case "setup":
@@ -1459,6 +1472,10 @@ function branchSession(
     workspaceRoot: parent.workspace_root,
     createdBy: entity.name,
   });
+  if (parent.execution_target !== "local") {
+    deps.db.updateCodingSession(session.id, { executionTarget: parent.execution_target });
+    session.execution_target = parent.execution_target;
+  }
   entity.properties[ACTIVE_SESSION_KEY] = session.id;
   updateCodeContext(entity, deps.db, session);
   deps.db.createCodingEvent({
@@ -3092,6 +3109,7 @@ function status(
     `Title: ${session.title}`,
     `Status: ${session.status}`,
     `Mode: ${session.mode}`,
+    `Execution target: ${session.execution_target}`,
     `Model target: ${modelTarget}`,
     `Workspace: ${session.workspace_root}`,
     `Latest artifact: ${latestArtifact ? `${latestArtifact.id} (${latestArtifact.kind}, ${latestArtifact.status})` : dim("none")}`,
@@ -3170,6 +3188,7 @@ async function doctor(
   const gitState = formatGitState(git.exitCode, git.output);
   const verify = recommendedVerify(scripts);
   const roots = registry.listChoices();
+  const flywheel = deps.flywheel?.status(eid);
   const nextSteps = [
     session ? "code status" : "code start <title>",
     verify.length > 0 ? "code verify" : "code run git diff --check",
@@ -3193,6 +3212,7 @@ async function doctor(
     `Search: ${binaries.find((item) => item.binary === "rg")?.available ? "rg" : "built-in fallback"}`,
     `Recommended verify: ${verify.length > 0 ? verify.map((cmd) => `code run ${cmd}`).join(" -> ") : "code run git diff --check"}`,
     `Local policy: host-safe allowlist`,
+    `Flywheel: ${deps.flywheel ? (flywheel ? `${flywheel.state} (${flywheel.image})` : "configured; no workspace") : "not configured; local Code Mode available"}`,
     `Next: ${nextSteps.join(" | ")}`,
     dim("Configure roots with MARINA_CODE_ROOTS and MARINA_CODE_DEFAULT_ROOT."),
     dim("Use: code workspace discover | code workspace use <path> | code start <title>"),
@@ -3239,6 +3259,15 @@ async function doctor(
         status: "info",
         detail: "host-safe allowlist",
       },
+      {
+        label: "Flywheel",
+        status: !deps.flywheel ? "info" : flywheel?.state === "running" ? "ok" : "warn",
+        detail: !deps.flywheel
+          ? "not configured; local Code Mode available"
+          : flywheel
+            ? `${flywheel.state} (${flywheel.image})`
+            : "configured; no workspace",
+      },
     ],
     commands: nextSteps.length > 0 ? nextSteps : ["code start <title>"],
     event: "doctor_ran",
@@ -3254,6 +3283,163 @@ async function doctor(
     type: "readiness",
     workspace: workspace.displayRoot(),
   });
+}
+
+async function sandboxLifecycle(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  args: string[],
+): Promise<void> {
+  const action = args[0]?.toLowerCase() ?? "status";
+  const flywheel = deps.flywheel;
+  if (!flywheel) {
+    sendCode(
+      ctx,
+      eid,
+      [
+        "Flywheel is not configured.",
+        "Local Code Mode remains available and unchanged.",
+        dim("Set FLYWHEEL_TOKEN on the Marina server to enable isolated workspaces."),
+      ].join("\n"),
+      {
+        event: "sandbox_unconfigured",
+        status: "unconfigured",
+        title: "Flywheel Sandbox",
+        type: "readiness",
+      },
+    );
+    return;
+  }
+
+  if (action === "status") {
+    const workspace = flywheel.status(eid);
+    const activeSessionId = getActiveSessionId(entity);
+    const activeSession = activeSessionId ? deps.db.getCodingSession(activeSessionId) : null;
+    sendCode(
+      ctx,
+      eid,
+      workspace
+        ? [
+            header("Flywheel Sandbox"),
+            `State: ${workspace.state}`,
+            `Image: ${workspace.image}`,
+            `Persistence: ${workspace.keepAlive ? "durable guest disk" : "ephemeral"}`,
+            `Session: ${workspace.sessionId}`,
+            `Sandbox: ${workspace.sandboxId}`,
+            workspace.publishedUrl ? `Published: ${workspace.publishedUrl}` : "",
+            workspace.lastError ? `Last error: ${workspace.lastError}` : "",
+            `Session target: ${activeSession?.execution_target ?? "local (no active session)"}`,
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : [
+            "Flywheel is configured; this entity has no sandbox.",
+            "Use: code sandbox start [image]",
+            dim("Local Code Mode remains the active execution target."),
+          ].join("\n"),
+      {
+        event: "sandbox_status",
+        status: workspace?.state ?? "absent",
+        title: "Flywheel Sandbox",
+        type: "readiness",
+      },
+    );
+    return;
+  }
+
+  if (action === "use" || action === "local") {
+    const session = resolveSession(ctx, eid, entity, deps.db);
+    if (!session) return;
+    const target = action === "use" ? "flywheel" : "local";
+    if (target === "flywheel") {
+      const workspace = flywheel.status(eid);
+      if (!workspace) {
+        ctx.send(eid, "Use `code sandbox start` before selecting Flywheel execution.");
+        return;
+      }
+      if (workspace.state !== "running") {
+        ctx.send(eid, `Flywheel sandbox is ${workspace.state}; resume it before selection.`);
+        return;
+      }
+    }
+    deps.db.updateCodingSession(session.id, { executionTarget: target });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "execution_target_changed",
+      payload: { previous: session.execution_target, target },
+    });
+    updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+    sendCode(
+      ctx,
+      eid,
+      success(
+        target === "flywheel"
+          ? "Execution target set to Flywheel for this coding session."
+          : "Execution target set to local host-safe mode for this coding session.",
+      ),
+      {
+        event: "execution_target_changed",
+        sessionId: session.id,
+        status: target,
+        title: "Execution Target",
+        type: "lifecycle",
+      },
+    );
+    return;
+  }
+
+  if (action === "start") {
+    const workspace = await flywheel.create(eid, args[1], true);
+    sendCode(ctx, eid, success(`Flywheel sandbox ready: ${workspace.sandboxId}`), {
+      event: "sandbox_started",
+      status: workspace.state,
+      title: "Flywheel Sandbox",
+      type: "lifecycle",
+    });
+    return;
+  }
+  if (action === "hibernate") {
+    await flywheel.hibernate(eid);
+    sendCode(ctx, eid, success("Flywheel sandbox hibernated; writable disk preserved."), {
+      event: "sandbox_hibernated",
+      status: "hibernated",
+      title: "Flywheel Sandbox",
+      type: "lifecycle",
+    });
+    return;
+  }
+  if (action === "resume") {
+    await flywheel.resume(eid);
+    sendCode(ctx, eid, success("Flywheel sandbox resumed by cold boot."), {
+      event: "sandbox_resumed",
+      status: "running",
+      title: "Flywheel Sandbox",
+      type: "lifecycle",
+    });
+    return;
+  }
+  if (action === "stop") {
+    if (args[1]?.toLowerCase() !== "confirm") {
+      ctx.send(
+        eid,
+        "Stopping destroys the guest workspace. Use `code sandbox stop confirm` to continue.",
+      );
+      return;
+    }
+    await flywheel.stop(eid);
+    sendCode(ctx, eid, success("Flywheel sandbox stopped and durable binding removed."), {
+      event: "sandbox_stopped",
+      status: "absent",
+      title: "Flywheel Sandbox",
+      type: "lifecycle",
+    });
+    return;
+  }
+
+  ctx.send(eid, "Usage: code sandbox status|start [image]|use|local|hibernate|resume|stop confirm");
 }
 
 function files(
@@ -3482,6 +3668,29 @@ async function showRunAllowlist(
   session: CodingSessionRow,
   workspace: WorkspaceRuntime,
 ): Promise<void> {
+  if (session.execution_target === "flywheel") {
+    sendCode(
+      ctx,
+      eid,
+      [
+        header("Code Run Policy"),
+        separator(),
+        "Execution target: Flywheel sandbox",
+        "Policy: guest-open finite commands under code.exec governance",
+        dim("Commands are passed as argument arrays through a fixed audited wrapper."),
+        dim("There is no host fallback. Managed background processes arrive in M4."),
+      ].join("\n"),
+      {
+        commands: ["code run <command>", "code verify", "code sandbox local"],
+        event: "run_allowlist_shown",
+        sessionId: session.id,
+        title: "Flywheel Run Policy",
+        type: "list",
+        workspace: session.workspace_root,
+      },
+    );
+    return;
+  }
   const policy = workspace.runPolicy();
   const packageJson = await workspace.read("package.json").catch(() => null);
   const scripts = packageJson ? detectPackageScripts(packageJson.content) : [];
@@ -3739,7 +3948,9 @@ async function verifyWorkspace(
 
   const workspace = workspaceForSession(deps, session);
   const commands = (await resolveRecipeCommands(deps.db, session, workspace, "default")) ??
-    (await resolveRecipeCommands(deps.db, session, workspace, "detected")) ?? ["git diff --check"];
+    (session.execution_target === "local"
+      ? await resolveRecipeCommands(deps.db, session, workspace, "detected")
+      : null) ?? ["git diff --check"];
 
   await runVerificationCommands(ctx, eid, entity, deps, session, commands, "Verification");
 }
@@ -3816,8 +4027,16 @@ async function executeWorkspaceCommand(
   command: string[],
 ): Promise<StoredCommandResult> {
   const workspace = workspaceForSession(deps, session);
-  const result = await workspace.run(command);
+  const execution = await new WorkspaceGateway(workspace, deps.flywheel).run(
+    entity.id,
+    session.execution_target,
+    command,
+  );
+  const { result } = execution;
   const commandText = result.command.join(" ");
+  const flywheelEventKinds = execution.flywheelEvents
+    ? summarizeFlywheelEvents(execution.flywheelEvents)
+    : undefined;
   const artifact = deps.db.createCodingArtifact({
     sessionId: session.id,
     kind: "command_output",
@@ -3830,6 +4049,8 @@ async function executeWorkspaceCommand(
       truncated: result.truncated,
       timedOut: result.timedOut,
       durationMs: result.durationMs,
+      executionTarget: execution.target,
+      flywheelEventKinds,
     },
     createdBy: entity.name,
   });
@@ -3844,6 +4065,8 @@ async function executeWorkspaceCommand(
       truncated: result.truncated,
       timedOut: result.timedOut,
       durationMs: result.durationMs,
+      executionTarget: execution.target,
+      flywheelEventKinds,
     },
   });
   return { artifact, result };
