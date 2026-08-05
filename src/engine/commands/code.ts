@@ -7,7 +7,7 @@ import {
   type CodingAgentRuntime,
 } from "../../coding/code-session-driver";
 import type { WorkspaceRunResult, WorkspaceRuntime } from "../../coding/local-workspace";
-import { CodingProjectManager } from "../../coding/project-manager";
+import { CodingProjectManager, PROJECT_ARCHIVE_FORMAT } from "../../coding/project-manager";
 import { CodingServiceManager } from "../../coding/service-manager";
 import { summarizeFlywheelEvents, WorkspaceGateway } from "../../coding/workspace-gateway";
 import { WorkspaceRegistry } from "../../coding/workspace-registry";
@@ -25,6 +25,7 @@ const CODE_CONTEXT_KEY = "code_context";
 const CODE_PROFILE_KEY = "code_profile";
 const CODE_PROFILE_ALIASES_KEY = "code_profile_aliases";
 const CODE_WORKSPACE_KEY = "code_workspace_root";
+const DEFAULT_PUBLICATION_TTL_MS = 60 * 60 * 1000;
 
 type CodeProfileName = "marina" | "pi" | "claude" | "codex";
 type CodingNoteKind = "decision" | "handoff" | "observation" | "plan" | "summary";
@@ -702,6 +703,8 @@ Usage:
   code workspace discover     Find likely projects under configured roots
   code workspace use <path>   Select a workspace root for new sessions
   code sandbox status         Show optional Flywheel workspace readiness
+  code sandbox network status Show network profile and verified-enforcement state
+  code sandbox credentials    List logical credential bindings (never secret material)
   code sandbox start [image]  Create this entity's durable Flywheel workspace
   code sandbox use|local      Select Flywheel or local execution for this session
   code sandbox hibernate|resume Preserve or resume its writable guest disk
@@ -712,6 +715,8 @@ Usage:
   code project switch <id|name> Change the active guest project safely
   code project export [archive] Store a patch or complete bounded archive artifact
   code project import <artifact> <name> Materialize a project archive atomically
+  code project delete <id|name> confirm Remove safely exported guest project content
+  code project reconcile       Remove stale metadata from replacement sandboxes
   code service start <name> [--port N] -- <command> Start a managed VM service
   code service list|status|logs|probe|screenshot|stop|restart Manage and observe services
   code service publish|revoke <name> Expose or revoke a declared service port
@@ -3354,6 +3359,7 @@ async function sandboxLifecycle(
             `State: ${workspace.state}`,
             `Image: ${workspace.image}`,
             `Persistence: ${workspace.keepAlive ? "durable guest disk" : "ephemeral"}`,
+            `Network profile: ${binding?.network_profile ?? "provider-default"} (${binding?.network_profile_enforced ? "enforced" : "provider-owned; not Marina-enforced"})`,
             `Session: ${workspace.sessionId}`,
             `Sandbox: ${workspace.sandboxId}`,
             activeProject
@@ -3379,6 +3385,53 @@ async function sandboxLifecycle(
       },
     );
     return;
+  }
+
+  if (action === "network") {
+    const binding = deps.db.listFlywheelBindings().find((row) => row.entity_id === eid);
+    if (!binding) throw new Error("Start a Flywheel sandbox before inspecting its network policy.");
+    if (!args[1] || args[1].toLowerCase() === "status") {
+      ctx.send(
+        eid,
+        [
+          header("Sandbox Network Policy"),
+          `Profile: ${binding.network_profile}`,
+          `Enforcement: ${binding.network_profile_enforced ? "verified" : "provider-owned; not Marina-enforced"}`,
+          dim(
+            "Marina will not claim a restrictive profile until Flywheel exposes direct-sandbox enforcement.",
+          ),
+        ].join("\n"),
+      );
+      return;
+    }
+    throw new Error(
+      "Network profile changes are unavailable: Flywheel's public direct-sandbox policy API is not exposed. No policy was changed.",
+    );
+  }
+
+  if (action === "credentials" || action === "credential") {
+    const workspace = flywheel.status(eid);
+    if (!workspace) throw new Error("Start a Flywheel sandbox before managing credentials.");
+    const bindings = deps.db
+      .listFlywheelCredentialBindings(eid)
+      .filter((binding) => binding.sandbox_id === workspace.sandboxId);
+    if (action === "credentials" || !args[1] || args[1].toLowerCase() === "list") {
+      ctx.send(
+        eid,
+        bindings.length
+          ? bindings
+              .map(
+                (binding) =>
+                  `${binding.profile_name}  ${binding.purpose}  ${binding.state}${binding.expires_at ? `  expires=${new Date(binding.expires_at).toISOString()}` : ""}`,
+              )
+              .join("\n")
+          : "No credential bindings. Marina stores no credential material in sandbox metadata.",
+      );
+      return;
+    }
+    throw new Error(
+      "Credential binding is unavailable: Flywheel's public direct-sandbox credential broker is not exposed. No secret was stored or injected.",
+    );
   }
 
   if (action === "use" || action === "local") {
@@ -3441,7 +3494,11 @@ async function sandboxLifecycle(
         throw new Error("Revoke published services before hibernating this sandbox.");
       }
       await flywheel.unpublish(eid, service.published_subdomain);
-      deps.db.updateCodingService(service.id, { publishedSubdomain: null, publishedUrl: null });
+      deps.db.updateCodingService(service.id, {
+        publishedSubdomain: null,
+        publishedUrl: null,
+        publicationExpiresAt: null,
+      });
     }
     await flywheel.hibernate(eid);
     if (sandboxId) {
@@ -3622,10 +3679,14 @@ async function projectLifecycle(
           branch: exported.status.branch,
           byteLength: exported.data.length,
           encoding: "base64",
+          expandedBytes: exported.manifest.expandedBytes,
+          format: PROJECT_ARCHIVE_FORMAT,
           guestPath: exported.project.guest_path,
           mediaType: "application/gzip",
+          memberCount: exported.manifest.memberCount,
           projectId: exported.project.id,
           revision: exported.status.revision,
+          sha256: exported.sha256,
         },
         createdBy: entity.name,
       });
@@ -3686,13 +3747,21 @@ async function projectLifecycle(
     if (!artifact || artifact.session_id !== session.id || artifact.kind !== "project_archive") {
       throw new Error("Project import requires a project_archive artifact from this session.");
     }
-    const metadata = JSON.parse(artifact.metadata_json) as { encoding?: unknown };
-    if (metadata.encoding !== "base64") throw new Error("Project archive encoding is invalid.");
-    const project = await manager.importArchive(
-      eid,
-      args[2],
-      Uint8Array.from(Buffer.from(artifact.content_text, "base64")),
-    );
+    const metadata = JSON.parse(artifact.metadata_json) as {
+      byteLength?: unknown;
+      encoding?: unknown;
+      format?: unknown;
+      sha256?: unknown;
+    };
+    if (metadata.encoding !== "base64" || metadata.format !== PROJECT_ARCHIVE_FORMAT) {
+      throw new Error("Project archive format or encoding is invalid.");
+    }
+    const archiveData = Uint8Array.from(Buffer.from(artifact.content_text, "base64"));
+    const archiveDigest = new Bun.CryptoHasher("sha256").update(archiveData).digest("hex");
+    if (metadata.byteLength !== archiveData.length || metadata.sha256 !== archiveDigest) {
+      throw new Error("Project archive artifact failed byte-count/digest verification.");
+    }
+    const project = await manager.importArchive(eid, args[2], archiveData);
     recordProjectEvent(deps.db, session, entity, "project_archive_imported", project, {
       artifactId: artifact.id,
     });
@@ -3705,6 +3774,52 @@ async function projectLifecycle(
       type: "lifecycle",
       workspace: project.guest_path,
     });
+    return;
+  }
+
+  if (action === "delete") {
+    if (!args[1]) throw new Error("Usage: code project delete <id|name> [discard] confirm");
+    const discard = args[2]?.toLowerCase() === "discard";
+    const confirmed = discard
+      ? args[3]?.toLowerCase() === "confirm"
+      : args[2]?.toLowerCase() === "confirm";
+    if (!confirmed) {
+      throw new Error("Project deletion requires literal confirmation: [discard] confirm");
+    }
+    const project = await manager.delete(eid, args[1], { discard });
+    recordProjectEvent(deps.db, session, entity, "project_deleted", project, { discard });
+    sendCode(ctx, eid, success(`Project ${project.name} deleted from its guest sandbox.`), {
+      event: "project_deleted",
+      sessionId: session.id,
+      status: "deleted",
+      title: project.name,
+      type: "lifecycle",
+    });
+    return;
+  }
+
+  if (action === "reconcile") {
+    const result = manager.reconcile(eid);
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "project_metadata_reconciled",
+      payload: { removedProjectIds: result.removed },
+    });
+    sendCode(
+      ctx,
+      eid,
+      result.removed.length
+        ? success(`Removed ${result.removed.length} stale project record(s).`)
+        : "Project metadata already matches the active sandbox.",
+      {
+        event: "project_metadata_reconciled",
+        sessionId: session.id,
+        status: result.removed.length ? "changed" : "clean",
+        title: "Project Reconciliation",
+        type: "lifecycle",
+      },
+    );
     return;
   }
 
@@ -3781,7 +3896,10 @@ async function projectLifecycle(
     return;
   }
 
-  ctx.send(eid, "Usage: code project init|clone|import|status|list|diff|switch|export [archive]");
+  ctx.send(
+    eid,
+    "Usage: code project init|clone|import|status|list|diff|switch|export [archive]|delete|reconcile",
+  );
 }
 
 function recordProjectEvent(
@@ -3826,7 +3944,9 @@ async function serviceLifecycle(
     const services = await Promise.all(
       deps.db
         .listCodingServices(eid)
-        .map((service) => (service.status === "running" ? manager.refresh(eid, service) : service)),
+        .map((service) =>
+          ["running", "unknown"].includes(service.status) ? manager.refresh(eid, service) : service,
+        ),
     );
     sendCode(
       ctx,
@@ -3884,6 +4004,26 @@ async function serviceLifecycle(
     return;
   }
 
+  if (action === "probes") {
+    const selector = args[1];
+    if (!selector) throw new Error("Usage: code service probes <id|name> [limit]");
+    const service = deps.db.getCodingServiceForEntity(eid, selector);
+    if (!service) throw new Error(`Unknown service: ${selector}`);
+    const probes = deps.db.listCodingServiceProbes(service.id, Number(args[2] ?? 20));
+    ctx.send(
+      eid,
+      probes.length
+        ? probes
+            .map(
+              (probe) =>
+                `${new Date(probe.created_at).toISOString()}  ${probe.success ? "ok" : "fail"}  ${probe.http_status ?? "error"}  ${probe.duration_ms}ms  ${probe.path}${probe.error ? `  ${probe.error}` : ""}`,
+            )
+            .join("\n")
+        : `No durable probe history for ${service.name}.`,
+    );
+    return;
+  }
+
   const selector = args[1];
   if (!selector) throw new Error(`Usage: code service ${action} <id|name>`);
   let service = deps.db.getCodingServiceForEntity(eid, selector);
@@ -3899,11 +4039,15 @@ async function serviceLifecycle(
         `ID: ${service.id}`,
         `Status: ${service.status}`,
         `PID: ${service.pid ?? "none"}`,
+        `Process identity: ${service.process_identity ?? "none"}`,
         `Port: ${service.port ?? "none"}`,
         `Command: ${JSON.parse(service.command_json).join(" ")}`,
         `Guest cwd: ${service.guest_cwd}`,
         `Restart: ${service.restart_policy}`,
         service.published_url ? `Published: ${service.published_url}` : "",
+        service.publication_expires_at
+          ? `Publication expires: ${new Date(service.publication_expires_at).toISOString()}`
+          : "",
       ]
         .filter(Boolean)
         .join("\n"),
@@ -4048,7 +4192,11 @@ async function serviceLifecycle(
   if (action === "stop") {
     if (service.published_subdomain && deps.flywheel.unpublish) {
       await deps.flywheel.unpublish(eid, service.published_subdomain);
-      deps.db.updateCodingService(service.id, { publishedSubdomain: null, publishedUrl: null });
+      deps.db.updateCodingService(service.id, {
+        publishedSubdomain: null,
+        publishedUrl: null,
+        publicationExpiresAt: null,
+      });
     }
     service = await manager.stop(eid, service);
     recordServiceEvent(deps.db, session, entity, "service_stopped", service);
@@ -4070,13 +4218,40 @@ async function serviceLifecycle(
     if (!deps.flywheel.publishDetailed) {
       throw new Error("Configured Flywheel does not support detailed publish metadata.");
     }
+    const approval = consumeNetworkApproval(
+      deps.db,
+      session.id,
+      `publish:${service.id}`,
+      entity.name,
+    );
+    if (!approval) {
+      throw new Error(
+        `Publishing requires explicit network approval. Request and approve: code approval request network publish:${service.id}`,
+      );
+    }
     const published = await deps.flywheel.publishDetailed(eid, service.port);
+    const configuredTtl = Number(process.env.MARINA_FLYWHEEL_PUBLICATION_TTL_MS);
+    const ttlMs =
+      Number.isSafeInteger(configuredTtl) && configuredTtl >= 60_000
+        ? configuredTtl
+        : DEFAULT_PUBLICATION_TTL_MS;
+    const publicationExpiresAt = Date.now() + ttlMs;
     deps.db.updateCodingService(service.id, {
       publishedSubdomain: published.subdomain,
       publishedUrl: published.url,
+      publicationExpiresAt,
     });
-    recordServiceEvent(deps.db, session, entity, "service_published", service, published);
-    ctx.send(eid, success(`Published ${service.name}: ${published.url}`));
+    recordServiceEvent(deps.db, session, entity, "service_published", service, {
+      ...published,
+      approvalId: approval.id,
+      publicationExpiresAt,
+    });
+    ctx.send(
+      eid,
+      success(
+        `Published ${service.name}: ${published.url} (lease expires ${new Date(publicationExpiresAt).toISOString()})`,
+      ),
+    );
     return;
   }
 
@@ -4084,7 +4259,11 @@ async function serviceLifecycle(
     if (!service.published_subdomain) throw new Error("Service is not published.");
     if (!deps.flywheel.unpublish) throw new Error("Configured Flywheel does not support revoke.");
     await deps.flywheel.unpublish(eid, service.published_subdomain);
-    deps.db.updateCodingService(service.id, { publishedSubdomain: null, publishedUrl: null });
+    deps.db.updateCodingService(service.id, {
+      publishedSubdomain: null,
+      publishedUrl: null,
+      publicationExpiresAt: null,
+    });
     recordServiceEvent(deps.db, session, entity, "service_unpublished", service);
     ctx.send(eid, success(`Publication revoked for ${service.name}.`));
     return;
@@ -4092,8 +4271,35 @@ async function serviceLifecycle(
 
   ctx.send(
     eid,
-    "Usage: code service start|list|status|logs|probe|screenshot|stop|restart|publish|revoke",
+    "Usage: code service start|list|status|logs|probe|probes|screenshot|stop|restart|publish|revoke",
   );
+}
+
+function consumeNetworkApproval(
+  db: MarinaDB,
+  sessionId: string,
+  description: string,
+  actor: string,
+): CodingArtifactRow | null {
+  const approval = db
+    .listCodingArtifacts(sessionId, 100)
+    .find(
+      (artifact) =>
+        artifact.kind === "approval" &&
+        artifact.status === "approved" &&
+        artifact.content_text.trim() === description &&
+        parseJsonObject(artifact.metadata_json).kind === "network",
+    );
+  if (!approval) return null;
+  db.updateCodingArtifact(approval.id, {
+    status: "applied",
+    metadata: {
+      ...parseJsonObject(approval.metadata_json),
+      appliedAt: Date.now(),
+      appliedBy: actor,
+    },
+  });
+  return approval;
 }
 
 function recordServiceEvent(

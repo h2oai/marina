@@ -29,6 +29,7 @@ describe("CodingServiceManager", () => {
       name: "web",
       pid: 4242,
       port: 3000,
+      process_identity: "9001",
       status: "running",
     });
     expect(JSON.parse(service.command_json)).toEqual(["bun", "run", "dev"]);
@@ -99,6 +100,28 @@ describe("CodingServiceManager", () => {
     await expect(manager.logs(OWNER, service)).rejects.toThrow("current Flywheel sandbox");
     db.close();
   });
+
+  test("never signals a reused PID whose process birth identity changed", async () => {
+    const db = databaseWithSessionAndBinding();
+    const state = { alive: true, starts: 0, identityMatches: true };
+    const manager = new CodingServiceManager(db, backend(state));
+    const service = await manager.start({
+      entityId: OWNER,
+      sessionId: "coding-session",
+      name: "worker",
+      command: ["sleep", "100"],
+    });
+    state.identityMatches = false;
+    expect(await manager.refresh(OWNER, service)).toMatchObject({
+      status: "unknown",
+      last_error: expect.stringContaining("different process"),
+    });
+    await expect(manager.stop(OWNER, db.getCodingService(service.id)!)).rejects.toThrow(
+      "no process was signaled",
+    );
+    expect(state.alive).toBe(true);
+    db.close();
+  });
 });
 
 function databaseWithSessionAndBinding(): MarinaDB {
@@ -124,7 +147,11 @@ function databaseWithSessionAndBinding(): MarinaDB {
   return db;
 }
 
-function backend(state: { alive: boolean; starts: number }): FlywheelToolBackend {
+function backend(state: {
+  alive: boolean;
+  starts: number;
+  identityMatches?: boolean;
+}): FlywheelToolBackend {
   return {
     async create() {
       throw new Error("not used");
@@ -139,12 +166,12 @@ function backend(state: { alive: boolean; starts: number }): FlywheelToolBackend
       if (command[0] === "/bin/sh" && command[2]?.includes("nohup")) {
         state.starts++;
         state.alive = true;
-        output = "4242\n";
+        output = "4242 9001\n";
       } else if (command[0] === "/bin/sh" && command[2]?.includes("--screenshot")) {
         output = "";
-      } else if (command[0] === "/bin/sh" && command.at(-1) === "4242") {
-        exitCode = state.alive ? 0 : 1;
-        if (command[2]?.includes("kill -9")) state.alive = false;
+      } else if (command[0] === "/bin/sh" && command.includes("4242") && command.includes("9001")) {
+        exitCode = !state.alive ? 1 : state.identityMatches === false ? 42 : 0;
+        if (command[2]?.includes("kill -9") && exitCode === 0) state.alive = false;
       } else if (command[0] === "tail") {
         output = "ready on 3000\n";
       } else if (command[0] === "curl") {
@@ -153,9 +180,12 @@ function backend(state: { alive: boolean; starts: number }): FlywheelToolBackend
       return { output: `${output}__MARINA_EXIT_7f31c9__=${exitCode}\n`, events: [] };
     },
     async readFile() {
+      const data = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 1]);
       return {
-        data: Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 1]),
+        data,
         events: [],
+        byteLength: data.length,
+        sha256: new Bun.CryptoHasher("sha256").update(data).digest("hex"),
       };
     },
     async publish() {

@@ -80,6 +80,8 @@ baseline. Code Mode routing and project materialization are specified by the can
 The same manager is available through Code Mode:
 
 - `code sandbox status`
+- `code sandbox network [status]` — report the profile and whether enforcement is verified
+- `code sandbox credentials` — list secret-free logical bindings
 - `code sandbox start [image]`
 - `code sandbox hibernate|resume`
 - `code sandbox use` — explicitly select Flywheel for the active coding session
@@ -89,8 +91,11 @@ The same manager is available through Code Mode:
 - `code project clone <public-https-url> [name]` — materialize a public repository
 - `code project status|list|diff|switch|export [archive]` — inspect, select, and preserve work
 - `code project import <artifact> <name>` — stage, validate, and atomically restore an archive
+- `code project delete <id|name> [discard] confirm` — remove with data-loss checks
+- `code project reconcile` — remove stale metadata from replacement sandboxes
 - `code service start|list|status|logs|stop|restart` — manage guest-native services
 - `code service probe <name> [path]` — store bounded localhost HTTP verification evidence
+- `code service probes <name> [limit]` — inspect durable health history
 - `code service screenshot <name> [path]` — store bounded PNG browser evidence
 - `code service publish|revoke` — expose or remove a service with a declared port
 
@@ -109,7 +114,9 @@ Flywheel writable disk. The active guest path becomes the cwd for sandbox-backed
 Switching refreshes Git status and blocks on unexported changes. Patch export stores a bounded binary
 Git patch and refuses untracked files. Archive export carries complete project content over Flywheel's
 typed protobuf byte stream; import checks its gzip type and member paths, extracts into a temporary
-guest directory, and atomically renames it. Transfers are explicitly size-bounded and never touch the
+guest directory, and atomically renames it. Transfer success requires terminal process evidence,
+SHA-256, and byte-count agreement. Archive v1 rejects excessive expansion/member counts, links,
+devices, FIFOs, sockets, traversal, and unsafe member sizes. Transfers never touch the
 Marina host workspace. Private repositories await the credential broker.
 The broader Git, registry, model, cloud, storage, signing, and runtime-secret boundary is specified
 in the [sandbox credential broker contract](../design/sandbox-credential-broker.md). Flywheel's
@@ -118,10 +125,14 @@ not yet a public binding surface for persistent direct-`Exec` sandboxes; Marina 
 secrets around that gap.
 
 Managed services store only command arrays, ownership, PID/status evidence, declared ports, guest log
-paths, and restart recipes in Marina. Output is bounded and defensively secret-redacted. Commands
+paths, process birth identity, and restart recipes in Marina. Status and stop verify PID plus birth
+identity and refuse to signal a reused PID. Output is bounded and defensively secret-redacted. Commands
 with credential-like arguments or credential-bearing URLs are refused rather than persisted. Guest
 processes do not survive hibernation; Marina marks them stopped and retains an explicit restart
-recipe. Publishing and revocation use Flywheel's versioned public API.
+recipe. Startup reconciliation treats formerly running processes as unknown until reverified.
+Publishing and revocation use Flywheel's versioned public API; publication requires a matching,
+one-use network approval and gets a finite automatically revoked lease. The default one-hour lease
+can be changed with `MARINA_FLYWHEEL_PUBLICATION_TTL_MS` (minimum one minute).
 HTTP probes target only the service's declared loopback port inside its owning sandbox. Screenshot
 capture uses a browser installed in that sandbox, validates the bounded transferred PNG, and fails
 closed without Chromium or binary-read support.

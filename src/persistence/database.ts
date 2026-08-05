@@ -1771,6 +1771,53 @@ CREATE TABLE coding_services (
 CREATE INDEX idx_coding_services_entity ON coding_services(entity_id, status, updated_at DESC);
 `,
   },
+  // Migration 68: bind managed-service lifecycle to Linux process birth
+  // identity, preventing a reused PID from being treated as Marina's process.
+  {
+    version: 68,
+    sql: `ALTER TABLE coding_services ADD COLUMN process_identity TEXT;`,
+  },
+  // Migration 69: M5b/M5c policy visibility, publication leases, and durable
+  // health evidence. Network enforcement stays Flywheel-owned.
+  {
+    version: 69,
+    sql: `
+ALTER TABLE flywheel_bindings ADD COLUMN network_profile TEXT NOT NULL DEFAULT 'provider-default';
+ALTER TABLE flywheel_bindings ADD COLUMN network_profile_enforced INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE coding_services ADD COLUMN publication_expires_at INTEGER;
+
+CREATE TABLE coding_service_probes (
+  id TEXT PRIMARY KEY,
+  service_id TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  sandbox_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  http_status INTEGER,
+  duration_ms INTEGER NOT NULL,
+  success INTEGER NOT NULL,
+  error TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_coding_service_probes_service
+  ON coding_service_probes(service_id, created_at DESC);
+
+CREATE TABLE flywheel_credential_bindings (
+  id TEXT PRIMARY KEY,
+  entity_id TEXT NOT NULL,
+  sandbox_id TEXT NOT NULL,
+  profile_name TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  state TEXT NOT NULL,
+  expires_at INTEGER,
+  last_error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(entity_id, sandbox_id, profile_name, purpose)
+);
+CREATE INDEX idx_flywheel_credential_bindings_entity
+  ON flywheel_credential_bindings(entity_id, state, updated_at DESC);
+`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -4095,6 +4142,8 @@ export class MarinaDB {
       reconciledAt?: number | null;
       activeProjectId?: string | null;
       guestCwd?: string | null;
+      networkProfile?: string;
+      networkProfileEnforced?: boolean;
     },
   ): void {
     const assignments = ["updated_at = ?"];
@@ -4122,6 +4171,14 @@ export class MarinaDB {
     if (fields.guestCwd !== undefined) {
       assignments.push("guest_cwd = ?");
       values.push(fields.guestCwd);
+    }
+    if (fields.networkProfile !== undefined) {
+      assignments.push("network_profile = ?");
+      values.push(fields.networkProfile);
+    }
+    if (fields.networkProfileEnforced !== undefined) {
+      assignments.push("network_profile_enforced = ?");
+      values.push(fields.networkProfileEnforced ? 1 : 0);
     }
     values.push(entityId);
     this.db.run(
@@ -4193,6 +4250,14 @@ export class MarinaDB {
     ]);
   }
 
+  deleteCodingProject(entityId: EntityId, projectId: string, sandboxId: string): void {
+    this.db.run("DELETE FROM coding_projects WHERE entity_id = ? AND id = ? AND sandbox_id = ?", [
+      entityId,
+      projectId,
+      sandboxId,
+    ]);
+  }
+
   updateCodingProject(
     id: string,
     fields: Partial<{
@@ -4238,14 +4303,15 @@ export class MarinaDB {
     guestCwd: string;
     logPath: string;
     pid: number;
+    processIdentity: string;
     port?: number;
   }): CodingServiceRow {
     const now = Date.now();
     this.db.run(
       `INSERT INTO coding_services
         (id, entity_id, sandbox_id, project_id, session_id, name, command_json,
-         guest_cwd, log_path, pid, port, status, started_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
+         guest_cwd, log_path, pid, process_identity, port, status, started_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
       [
         service.id,
         service.entityId,
@@ -4257,6 +4323,7 @@ export class MarinaDB {
         service.guestCwd,
         service.logPath,
         service.pid,
+        service.processIdentity,
         service.port ?? null,
         now,
         now,
@@ -4284,13 +4351,27 @@ export class MarinaDB {
       .all(entityId) as CodingServiceRow[];
   }
 
+  listExpiredCodingServicePublications(now = Date.now()): CodingServiceRow[] {
+    return this.reader
+      .query(
+        `SELECT * FROM coding_services
+         WHERE published_subdomain IS NOT NULL
+           AND publication_expires_at IS NOT NULL
+           AND publication_expires_at <= ?
+         ORDER BY publication_expires_at`,
+      )
+      .all(now) as CodingServiceRow[];
+  }
+
   updateCodingService(
     id: string,
     fields: Partial<{
       pid: number | null;
+      processIdentity: string | null;
       status: string;
       publishedUrl: string | null;
       publishedSubdomain: string | null;
+      publicationExpiresAt: number | null;
       lastError: string | null;
       startedAt: number | null;
       stoppedAt: number | null;
@@ -4300,9 +4381,11 @@ export class MarinaDB {
     const values: Array<string | number | null> = [Date.now()];
     const mapping: Array<[keyof typeof fields, string]> = [
       ["pid", "pid"],
+      ["processIdentity", "process_identity"],
       ["status", "status"],
       ["publishedUrl", "published_url"],
       ["publishedSubdomain", "published_subdomain"],
+      ["publicationExpiresAt", "publication_expires_at"],
       ["lastError", "last_error"],
       ["startedAt", "started_at"],
       ["stoppedAt", "stopped_at"],
@@ -4320,10 +4403,110 @@ export class MarinaDB {
     const now = Date.now();
     this.db.run(
       `UPDATE coding_services
-       SET status = 'stopped', pid = NULL, last_error = ?, stopped_at = ?, updated_at = ?
+       SET status = 'stopped', pid = NULL, process_identity = NULL, last_error = ?, stopped_at = ?, updated_at = ?
        WHERE entity_id = ? AND sandbox_id = ? AND status = 'running'`,
       [reason, now, now, entityId, sandboxId],
     );
+  }
+
+  markCodingServicesUnknownForSandbox(entityId: EntityId, sandboxId: string, reason: string): void {
+    this.db.run(
+      `UPDATE coding_services
+       SET status = 'unknown', last_error = ?, updated_at = ?
+       WHERE entity_id = ? AND sandbox_id = ? AND status = 'running'`,
+      [reason, Date.now(), entityId, sandboxId],
+    );
+  }
+
+  createCodingServiceProbe(probe: {
+    serviceId: string;
+    entityId: EntityId;
+    sandboxId: string;
+    path: string;
+    httpStatus?: number;
+    durationMs: number;
+    success: boolean;
+    error?: string;
+  }): CodingServiceProbeRow {
+    const row: CodingServiceProbeRow = {
+      id: `probe_${crypto.randomUUID().slice(0, 12)}`,
+      service_id: probe.serviceId,
+      entity_id: probe.entityId,
+      sandbox_id: probe.sandboxId,
+      path: probe.path,
+      http_status: probe.httpStatus ?? null,
+      duration_ms: probe.durationMs,
+      success: probe.success ? 1 : 0,
+      error: probe.error ?? null,
+      created_at: Date.now(),
+    };
+    this.db.run(
+      `INSERT INTO coding_service_probes
+       (id, service_id, entity_id, sandbox_id, path, http_status, duration_ms, success, error, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id,
+        row.service_id,
+        row.entity_id,
+        row.sandbox_id,
+        row.path,
+        row.http_status,
+        row.duration_ms,
+        row.success,
+        row.error,
+        row.created_at,
+      ],
+    );
+    return row;
+  }
+
+  listCodingServiceProbes(serviceId: string, limit = 20): CodingServiceProbeRow[] {
+    return this.reader
+      .query(
+        "SELECT * FROM coding_service_probes WHERE service_id = ? ORDER BY created_at DESC LIMIT ?",
+      )
+      .all(serviceId, Math.max(1, Math.min(100, limit))) as CodingServiceProbeRow[];
+  }
+
+  saveFlywheelCredentialBinding(binding: {
+    id: string;
+    entityId: EntityId;
+    sandboxId: string;
+    profileName: string;
+    purpose: string;
+    state: string;
+    expiresAt?: number;
+    lastError?: string;
+  }): void {
+    const now = Date.now();
+    this.db.run(
+      `INSERT INTO flywheel_credential_bindings
+       (id, entity_id, sandbox_id, profile_name, purpose, state, expires_at, last_error, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(entity_id, sandbox_id, profile_name, purpose) DO UPDATE SET
+         state = excluded.state, expires_at = excluded.expires_at,
+         last_error = excluded.last_error, updated_at = excluded.updated_at`,
+      [
+        binding.id,
+        binding.entityId,
+        binding.sandboxId,
+        binding.profileName,
+        binding.purpose,
+        binding.state,
+        binding.expiresAt ?? null,
+        binding.lastError ?? null,
+        now,
+        now,
+      ],
+    );
+  }
+
+  listFlywheelCredentialBindings(entityId: EntityId): FlywheelCredentialBindingRow[] {
+    return this.reader
+      .query(
+        "SELECT * FROM flywheel_credential_bindings WHERE entity_id = ? ORDER BY updated_at DESC",
+      )
+      .all(entityId) as FlywheelCredentialBindingRow[];
   }
 
   // ─── Experiment Persistence ────────────────────────────────────────────
@@ -6297,6 +6480,21 @@ export interface FlywheelBindingRow {
   created_at: number;
   updated_at: number;
   reconciled_at: number | null;
+  network_profile: string;
+  network_profile_enforced: number;
+}
+
+export interface FlywheelCredentialBindingRow {
+  id: string;
+  entity_id: string;
+  sandbox_id: string;
+  profile_name: string;
+  purpose: string;
+  state: string;
+  expires_at: number | null;
+  last_error: string | null;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface ExperimentRow {
@@ -6597,7 +6795,7 @@ export interface CodingProjectRow {
   entity_id: string;
   sandbox_id: string;
   name: string;
-  source_type: "empty" | "git";
+  source_type: "empty" | "git" | "archive";
   source_locator: string | null;
   guest_path: string;
   active_branch: string | null;
@@ -6622,16 +6820,31 @@ export interface CodingServiceRow {
   guest_cwd: string;
   log_path: string;
   pid: number | null;
+  process_identity: string | null;
   port: number | null;
   status: string;
   restart_policy: string;
   published_url: string | null;
   published_subdomain: string | null;
+  publication_expires_at: number | null;
   last_error: string | null;
   started_at: number | null;
   stopped_at: number | null;
   created_at: number;
   updated_at: number;
+}
+
+export interface CodingServiceProbeRow {
+  id: string;
+  service_id: string;
+  entity_id: string;
+  sandbox_id: string;
+  path: string;
+  http_status: number | null;
+  duration_ms: number;
+  success: number;
+  error: string | null;
+  created_at: number;
 }
 
 export interface CodingEventRow {

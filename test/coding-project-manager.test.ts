@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { WorkspaceRuntime } from "../src/coding/local-workspace";
-import { CodingProjectManager } from "../src/coding/project-manager";
+import {
+  CodingProjectManager,
+  validateProjectArchiveManifest,
+} from "../src/coding/project-manager";
 import type { FlywheelToolBackend } from "../src/integrations/flywheel-manager";
 import { MarinaDB } from "../src/persistence/database";
 import { entityId } from "../src/types";
@@ -12,6 +15,29 @@ const OWNER = entityId("entity-1");
 afterEach(() => cleanupDb(DB_PATH));
 
 describe("CodingProjectManager", () => {
+  test("rejects unsafe, special, oversized, and suspicious archive manifests", () => {
+    const regular = "-rw-r--r-- 0/0 12 2026-08-05 00:00 ./src/app.ts";
+    expect(validateProjectArchiveManifest(regular, 12)).toEqual({
+      expandedBytes: 12,
+      memberCount: 1,
+    });
+    expect(() =>
+      validateProjectArchiveManifest(
+        "lrwxrwxrwx 0/0 0 2026-08-05 00:00 ./escape -> ../../outside",
+        10,
+      ),
+    ).toThrow("special file");
+    expect(() =>
+      validateProjectArchiveManifest("-rw-r--r-- 0/0 1 2026-08-05 00:00 ../../outside", 10),
+    ).toThrow("unsafe path");
+    expect(() =>
+      validateProjectArchiveManifest("-rw-r--r-- 0/0 33554433 2026-08-05 00:00 ./large.bin", 1024),
+    ).toThrow("member exceeds");
+    expect(() =>
+      validateProjectArchiveManifest("-rw-r--r-- 0/0 10001 2026-08-05 00:00 ./bomb.txt", 100),
+    ).toThrow("compression-ratio");
+  });
+
   test("materializes an empty project and restores its active metadata after restart", async () => {
     const db = databaseWithBinding();
     const calls: Array<{ command: string[]; cwd?: string }> = [];
@@ -123,6 +149,28 @@ describe("CodingProjectManager", () => {
     );
     db.close();
   });
+
+  test("deletes only owned current-sandbox projects and reconciles stale metadata", async () => {
+    const db = databaseWithBinding();
+    const calls: Array<{ command: string[]; cwd?: string }> = [];
+    const manager = new CodingProjectManager(db, unusedLocal(), backend(calls));
+    const project = await manager.init(OWNER, "disposable");
+    await expect(manager.delete(OWNER, project.id)).resolves.toMatchObject({ id: project.id });
+    expect(db.getCodingProject(project.id)).toBeNull();
+    expect(calls.some((call) => call.command.join(" ").includes("rm -rf --"))).toBe(true);
+
+    const stale = db.createCodingProject({
+      id: "project-stale",
+      entityId: OWNER,
+      sandboxId: "sandbox-replaced",
+      name: "stale",
+      sourceType: "empty",
+      guestPath: "/workspace/projects/stale",
+    });
+    expect(manager.reconcile(OWNER)).toEqual({ removed: [stale.id] });
+    expect(db.getCodingProject(stale.id)).toBeNull();
+    db.close();
+  });
 });
 
 function databaseWithBinding(): MarinaDB {
@@ -174,13 +222,26 @@ function backend(
         output = "0123456789abcdef\n";
       }
       if (command[0] === "git" && command[1] === "diff") output = getDiff();
+      if (command[0] === "tar" && command[1] === "-tvzf") {
+        output =
+          "drwxr-xr-x 0/0 0 2026-08-05 00:00 ./\n-rw-r--r-- 0/0 7 2026-08-05 00:00 ./README.md\n";
+      }
       return { output: `${output}__MARINA_EXIT_7f31c9__=${exitCode}\n`, events: [] };
     },
     async readFile() {
-      return { data: archive, events: [] };
+      return {
+        data: archive,
+        events: [],
+        byteLength: archive.length,
+        sha256: new Bun.CryptoHasher("sha256").update(archive).digest("hex"),
+      };
     },
     async writeFile(_entityId, _guestPath, data) {
       expect(data).toEqual(archive);
+      return {
+        byteLength: data.length,
+        sha256: new Bun.CryptoHasher("sha256").update(data).digest("hex"),
+      };
     },
     async publish() {
       throw new Error("not used");
