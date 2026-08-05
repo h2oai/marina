@@ -141,6 +141,11 @@ endpoint from its own process or container.
 | `FLYWHEEL_TOKEN` | *(off)* | Server-side Flywheel operator credential. Enables the integration; never returned to entities or persisted in Marina. |
 | `FLYWHEEL_RPC_URL` | `http://localhost:8088/rpc` | Flywheel Connect RPC base URL as seen by Marina. In Docker, `localhost` means the Marina container, so use a reachable service or host address. |
 | `FLYWHEEL_IMAGE` | `localhost/h2oai/flywheel-agentd:latest` | Default image for `code sandbox start` and MCP `flywheel create`. The image must be resolvable by the configured Flywheel backend. |
+| `MARINA_FLYWHEEL_LIVE_REQUIRED` | `false` | Make `bun run qualify:flywheel` fail when live configuration or required checks are unavailable. |
+| `MARINA_FLYWHEEL_LIVE_FULL` | `false` | Require clone, service/probe, screenshot, publish/revoke, and hibernate/resume in live qualification. |
+| `MARINA_FLYWHEEL_LIVE_CLONE_URL` | *(off)* | Credential-free public fixture cloned only by the full live qualification. |
+| `MARINA_FLYWHEEL_LIVE_ALLOW_PUBLISH` | `false` | Explicitly permit temporary public exposure during live qualification. |
+| `MARINA_FLYWHEEL_EVIDENCE_DIR` | `artifacts/flywheel` | Destination for redacted M5e qualification evidence. |
 
 Start with `code doctor`, then `code sandbox status`. Configuration alone never changes a coding
 session from local to Flywheel, and a Flywheel failure never retries a sandbox command on the host.

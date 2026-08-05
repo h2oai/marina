@@ -19,6 +19,29 @@ export interface FlywheelWorkspace {
   state: FlywheelBindingState;
   publishedUrl?: string;
   lastError?: string;
+  lastActivityAt?: number;
+  lifecycleExpiresAt?: number;
+  hibernatedReason?: string;
+}
+
+export interface FlywheelResourcePolicy {
+  maxSandboxes: number;
+  maxRunningSandboxes: number;
+  idleHibernateMs: number;
+  absoluteLifetimeMs: number;
+  telemetryRetentionMs: number;
+}
+
+export interface FlywheelInventoryItem extends FlywheelWorkspace {
+  entityId: EntityId;
+  activeServices: boolean;
+}
+
+export interface FlywheelReclaimCandidate {
+  entityId: EntityId;
+  sandboxId: string;
+  reason: string;
+  action: "hibernate" | "review";
 }
 
 export interface FlywheelExecutionResult {
@@ -75,6 +98,9 @@ export interface FlywheelToolBackend {
   status(entityId: EntityId): FlywheelWorkspace | undefined;
   reconcile?(): Promise<void>;
   maintenance?(): Promise<void>;
+  inventory?(): FlywheelInventoryItem[];
+  reclaim?(apply?: boolean): Promise<FlywheelReclaimCandidate[]>;
+  operationSummary?(): ReturnType<MarinaDB["getFlywheelOperationSummary"]>;
 }
 
 interface EntityWorkspace extends FlywheelWorkspace {
@@ -94,6 +120,7 @@ export class FlywheelManager implements FlywheelToolBackend {
     private readonly defaultImage: string,
     private readonly fetch?: FlywheelFetch,
     private readonly db?: MarinaDB,
+    private readonly policy: FlywheelResourcePolicy = resourcePolicyFromEnv(),
   ) {
     this.operator = new FlywheelClient({ baseUrl, token: operatorToken, fetch });
     for (const binding of db?.listFlywheelBindings() ?? []) {
@@ -122,7 +149,22 @@ export class FlywheelManager implements FlywheelToolBackend {
         "This entity already has a Flywheel sandbox; stop it before creating another.",
       );
     }
+    const bindings = this.db?.listFlywheelBindings() ?? [];
+    if (bindings.length >= this.policy.maxSandboxes) {
+      this.recordOperation(entityId, "create", "blocked", 0, undefined, "allocation limit");
+      throw new Error(`Flywheel sandbox admission limit reached (${this.policy.maxSandboxes}).`);
+    }
+    if (
+      bindings.filter((binding) => binding.state === "running").length >=
+      this.policy.maxRunningSandboxes
+    ) {
+      this.recordOperation(entityId, "create", "blocked", 0, undefined, "running limit");
+      throw new Error(
+        `Flywheel running-sandbox limit reached (${this.policy.maxRunningSandboxes}); hibernate an idle sandbox first.`,
+      );
+    }
     this.creating.add(entityId);
+    const startedAt = Date.now();
     try {
       const { sessionId } = await this.operator.createSession();
       const { client, expiresAt } = await this.mintAgentClient(sessionId);
@@ -135,6 +177,8 @@ export class FlywheelManager implements FlywheelToolBackend {
         image,
         keepAlive: sandbox.keepAlive,
         state: "running",
+        lastActivityAt: Date.now(),
+        lifecycleExpiresAt: Date.now() + this.policy.absoluteLifetimeMs,
       };
       this.workspaces.set(entityId, workspace);
       this.db?.saveFlywheelBinding({
@@ -144,8 +188,20 @@ export class FlywheelManager implements FlywheelToolBackend {
         image,
         keepAlive: sandbox.keepAlive,
         state: "running",
+        lifecycleExpiresAt: workspace.lifecycleExpiresAt,
       });
+      this.recordOperation(entityId, "create", "success", Date.now() - startedAt);
       return publicWorkspace(workspace);
+    } catch (error) {
+      this.recordOperation(
+        entityId,
+        "create",
+        "failure",
+        Date.now() - startedAt,
+        undefined,
+        sanitizedError(error),
+      );
+      throw error;
     } finally {
       this.creating.delete(entityId);
     }
@@ -163,6 +219,7 @@ export class FlywheelManager implements FlywheelToolBackend {
     options?: { timeoutMs?: number },
   ) {
     const workspace = this.requireRunning(entityId);
+    const startedAt = Date.now();
     const output: string[] = [];
     const events: FlywheelEvent[] = [];
     const client = await this.clientFor(workspace);
@@ -189,11 +246,21 @@ export class FlywheelManager implements FlywheelToolBackend {
         if (data) output.push(data);
       }
     } catch (error) {
+      this.recordOperation(
+        entityId,
+        "exec",
+        "failure",
+        Date.now() - startedAt,
+        undefined,
+        timedOut ? "timeout" : sanitizedError(error),
+      );
       if (timedOut) throw new FlywheelExecutionTimeoutError(timeoutMs);
       throw error;
     } finally {
       clearTimeout(timer);
     }
+    this.touch(entityId, workspace);
+    this.recordOperation(entityId, "exec", "success", Date.now() - startedAt);
     return {
       output: output.join("") || "Command completed without output.",
       events,
@@ -205,6 +272,7 @@ export class FlywheelManager implements FlywheelToolBackend {
     guestPath: string,
     options?: { maxBytes?: number; timeoutMs?: number },
   ): Promise<FlywheelBinaryResult> {
+    const startedAt = Date.now();
     if (!guestPath.startsWith("/") || guestPath.includes("\0")) {
       throw new Error("Guest transfer paths must be absolute and contain no NUL bytes.");
     }
@@ -252,6 +320,14 @@ export class FlywheelManager implements FlywheelToolBackend {
         chunks.push(chunk);
       }
     } catch (error) {
+      this.recordOperation(
+        entityId,
+        "read",
+        "failure",
+        Date.now() - startedAt,
+        total,
+        timedOut ? "timeout" : sanitizedError(error),
+      );
       if (timedOut) throw new FlywheelExecutionTimeoutError(timeoutMs);
       throw error;
     } finally {
@@ -261,6 +337,8 @@ export class FlywheelManager implements FlywheelToolBackend {
       throw new Error("Flywheel guest file read ended without authoritative successful status.");
     }
     const data = concatBytes(chunks, total);
+    this.touch(entityId, workspace);
+    this.recordOperation(entityId, "read", "success", Date.now() - startedAt, data.length);
     return { data, events, byteLength: data.length, sha256: sha256(data) };
   }
 
@@ -270,6 +348,7 @@ export class FlywheelManager implements FlywheelToolBackend {
     data: Uint8Array,
     options?: { maxBytes?: number; timeoutMs?: number },
   ): Promise<FlywheelWriteResult> {
+    const startedAt = Date.now();
     if (!guestPath.startsWith("/") || guestPath.includes("\0")) {
       throw new Error("Guest transfer paths must be absolute and contain no NUL bytes.");
     }
@@ -326,11 +405,21 @@ export class FlywheelManager implements FlywheelToolBackend {
         throw new Error("Flywheel upload byte-count/digest verification failed.");
       }
       await this.execChecked(entityId, "mv", ["--", temporaryPath, guestPath], "/", timeoutMs);
+      this.touch(entityId, this.requireRunning(entityId));
+      this.recordOperation(entityId, "write", "success", Date.now() - startedAt, data.length);
       return evidence;
     } catch (error) {
       await this.execDetailed(entityId, "rm", ["-f", "--", temporaryPath], "/", {
         timeoutMs,
       }).catch(() => undefined);
+      this.recordOperation(
+        entityId,
+        "write",
+        "failure",
+        Date.now() - startedAt,
+        data.length,
+        sanitizedError(error),
+      );
       throw error;
     }
   }
@@ -360,12 +449,28 @@ export class FlywheelManager implements FlywheelToolBackend {
   async publishDetailed(entityId: EntityId, port: number) {
     const workspace = this.requireRunning(entityId);
     const client = await this.clientFor(workspace);
-    const result = await client.publish({
-      sessionId: workspace.sessionId,
-      sandboxId: workspace.sandboxId,
-      port,
-    });
+    const startedAt = Date.now();
+    let result: { url: string; subdomain: string };
+    try {
+      result = await client.publish({
+        sessionId: workspace.sessionId,
+        sandboxId: workspace.sandboxId,
+        port,
+      });
+    } catch (error) {
+      this.recordOperation(
+        entityId,
+        "publish",
+        "failure",
+        Date.now() - startedAt,
+        undefined,
+        sanitizedError(error),
+      );
+      throw error;
+    }
     workspace.publishedUrl = result.url;
+    this.touch(entityId, workspace);
+    this.recordOperation(entityId, "publish", "success", Date.now() - startedAt);
     this.db?.updateFlywheelBinding(entityId, { publishedUrl: result.url, lastError: null });
     return result;
   }
@@ -383,7 +488,12 @@ export class FlywheelManager implements FlywheelToolBackend {
     const client = await this.clientFor(workspace);
     await client.hibernate(workspace);
     workspace.state = "hibernated";
-    this.db?.updateFlywheelBinding(entityId, { state: "hibernated", lastError: null });
+    this.db?.updateFlywheelBinding(entityId, {
+      state: "hibernated",
+      lastError: null,
+      hibernatedReason: workspace.hibernatedReason ?? null,
+    });
+    this.recordOperation(entityId, "hibernate", "success", 0);
   }
 
   async resume(entityId: EntityId) {
@@ -393,7 +503,13 @@ export class FlywheelManager implements FlywheelToolBackend {
     await client.resume(workspace);
     workspace.state = "running";
     workspace.lastError = undefined;
-    this.db?.updateFlywheelBinding(entityId, { state: "running", lastError: null });
+    workspace.hibernatedReason = undefined;
+    this.touch(entityId, workspace);
+    this.db?.updateFlywheelBinding(entityId, {
+      state: "running",
+      lastError: null,
+      hibernatedReason: null,
+    });
   }
 
   async stop(entityId: EntityId) {
@@ -447,6 +563,7 @@ export class FlywheelManager implements FlywheelToolBackend {
               "Marina restarted; process identity must be reverified.",
             );
           }
+          this.recordOperation(entityId, "reconcile", "success", 0);
         } catch (error) {
           workspace.state = "unavailable";
           workspace.lastError = sanitizedError(error);
@@ -455,6 +572,7 @@ export class FlywheelManager implements FlywheelToolBackend {
             lastError: workspace.lastError,
             reconciledAt,
           });
+          this.recordOperation(entityId, "reconcile", "failure", 0, undefined, workspace.lastError);
         }
       }),
     );
@@ -482,9 +600,119 @@ export class FlywheelManager implements FlywheelToolBackend {
           });
         }
       }
+      await this.reclaim(true);
+      this.db.pruneFlywheelOperations(Date.now() - this.policy.telemetryRetentionMs);
     } finally {
       this.maintenanceRunning = false;
     }
+  }
+
+  inventory(): FlywheelInventoryItem[] {
+    if (!this.db) return [];
+    return this.db.listFlywheelBindings().map((binding) => {
+      const workspace = this.workspaces.get(binding.entity_id as EntityId);
+      return {
+        ...(workspace
+          ? publicWorkspace(workspace)
+          : publicWorkspace(workspaceFromBinding(binding, this.operator))),
+        entityId: binding.entity_id as EntityId,
+        activeServices:
+          this.db?.hasRunningCodingServices(binding.entity_id as EntityId, binding.sandbox_id) ??
+          false,
+      };
+    });
+  }
+
+  async reclaim(apply = false): Promise<FlywheelReclaimCandidate[]> {
+    const now = Date.now();
+    const candidates = this.inventory().flatMap((item): FlywheelReclaimCandidate[] => {
+      if (item.state === "unavailable") {
+        return [
+          {
+            entityId: item.entityId,
+            sandboxId: item.sandboxId,
+            reason: item.lastError ?? "remote sandbox is unavailable",
+            action: "review",
+          },
+        ];
+      }
+      if (
+        item.state !== "running" ||
+        item.activeServices ||
+        item.publishedUrl ||
+        !(
+          (item.lifecycleExpiresAt !== undefined && item.lifecycleExpiresAt <= now) ||
+          (item.lastActivityAt !== undefined &&
+            item.lastActivityAt + this.policy.idleHibernateMs <= now)
+        )
+      ) {
+        return [];
+      }
+      return [
+        {
+          entityId: item.entityId,
+          sandboxId: item.sandboxId,
+          reason:
+            item.lifecycleExpiresAt !== undefined && item.lifecycleExpiresAt <= now
+              ? "absolute lifecycle reached"
+              : "idle lifecycle reached",
+          action: "hibernate" as const,
+        },
+      ];
+    });
+    if (apply) {
+      for (const candidate of candidates) {
+        if (candidate.action !== "hibernate") continue;
+        const workspace = this.workspaces.get(candidate.entityId);
+        if (workspace?.state !== "running") continue;
+        workspace.hibernatedReason = candidate.reason;
+        try {
+          await this.hibernate(candidate.entityId);
+        } catch (error) {
+          workspace.hibernatedReason = undefined;
+          workspace.lastError = `Automatic hibernation failed: ${sanitizedError(error)}`;
+          this.db?.updateFlywheelBinding(candidate.entityId, {
+            lastError: workspace.lastError,
+          });
+          this.recordOperation(
+            candidate.entityId,
+            "hibernate",
+            "failure",
+            0,
+            undefined,
+            workspace.lastError,
+          );
+        }
+      }
+    }
+    return candidates;
+  }
+
+  operationSummary() {
+    return this.db?.getFlywheelOperationSummary() ?? [];
+  }
+
+  private touch(entityId: EntityId, workspace: EntityWorkspace): void {
+    workspace.lastActivityAt = Date.now();
+    this.db?.updateFlywheelBinding(entityId, { lastActivityAt: workspace.lastActivityAt });
+  }
+
+  private recordOperation(
+    entityId: EntityId,
+    operation: string,
+    outcome: "success" | "failure" | "blocked",
+    durationMs: number,
+    byteCount?: number,
+    detail?: string,
+  ): void {
+    this.db?.recordFlywheelOperation({
+      entityId,
+      operation,
+      outcome,
+      durationMs,
+      byteCount,
+      detail,
+    });
   }
 
   private require(entityId: EntityId): EntityWorkspace {
@@ -543,6 +771,9 @@ function publicWorkspace(workspace: EntityWorkspace): FlywheelWorkspace {
     state: workspace.state,
     publishedUrl: workspace.publishedUrl,
     lastError: workspace.lastError,
+    lastActivityAt: workspace.lastActivityAt,
+    lifecycleExpiresAt: workspace.lifecycleExpiresAt,
+    hibernatedReason: workspace.hibernatedReason,
   };
 }
 
@@ -560,7 +791,45 @@ function workspaceFromBinding(
     state: binding.state,
     publishedUrl: binding.published_url ?? undefined,
     lastError: binding.last_error ?? undefined,
+    lastActivityAt: binding.last_activity_at ?? binding.updated_at,
+    lifecycleExpiresAt: binding.lifecycle_expires_at ?? undefined,
+    hibernatedReason: binding.hibernated_reason ?? undefined,
   };
+}
+
+function resourcePolicyFromEnv(): FlywheelResourcePolicy {
+  return {
+    maxSandboxes: boundedEnvInteger("MARINA_FLYWHEEL_MAX_SANDBOXES", 100, 1, 10_000),
+    maxRunningSandboxes: boundedEnvInteger("MARINA_FLYWHEEL_MAX_RUNNING_SANDBOXES", 50, 1, 10_000),
+    idleHibernateMs: boundedEnvInteger(
+      "MARINA_FLYWHEEL_IDLE_HIBERNATE_MS",
+      60 * 60 * 1000,
+      60_000,
+      30 * 24 * 60 * 60 * 1000,
+    ),
+    absoluteLifetimeMs: boundedEnvInteger(
+      "MARINA_FLYWHEEL_ABSOLUTE_LIFETIME_MS",
+      24 * 60 * 60 * 1000,
+      60_000,
+      365 * 24 * 60 * 60 * 1000,
+    ),
+    telemetryRetentionMs: boundedEnvInteger(
+      "MARINA_FLYWHEEL_TELEMETRY_RETENTION_MS",
+      7 * 24 * 60 * 60 * 1000,
+      60_000,
+      365 * 24 * 60 * 60 * 1000,
+    ),
+  };
+}
+
+function boundedEnvInteger(
+  name: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const parsed = Number(process.env[name]);
+  return Number.isSafeInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
 }
 
 function sanitizedError(error: unknown): string {

@@ -705,6 +705,7 @@ Usage:
   code sandbox status         Show optional Flywheel workspace readiness
   code sandbox network status Show network profile and verified-enforcement state
   code sandbox credentials    List logical credential bindings (never secret material)
+  code sandbox ops inventory  Steward fleet inventory and recoverable reclamation
   code sandbox start [image]  Create this entity's durable Flywheel workspace
   code sandbox use|local      Select Flywheel or local execution for this session
   code sandbox hibernate|resume Preserve or resume its writable guest disk
@@ -3342,6 +3343,128 @@ async function sandboxLifecycle(
     return;
   }
 
+  if (action === "ops") {
+    if ((entity.properties.rank ?? 0) < 5) {
+      throw new Error("Sandbox fleet operations require steward rank or higher.");
+    }
+    const operation = args[1]?.toLowerCase() ?? "inventory";
+    if (operation === "inventory") {
+      const inventory = flywheel.inventory?.() ?? [];
+      ctx.send(
+        eid,
+        inventory.length
+          ? inventory
+              .map(
+                (item) =>
+                  `${item.entityId}  ${item.state}  ${item.sandboxId}  services=${item.activeServices ? "active" : "none"}  published=${item.publishedUrl ? "yes" : "no"}  last=${item.lastActivityAt ? new Date(item.lastActivityAt).toISOString() : "unknown"}`,
+              )
+              .join("\n")
+          : "No Flywheel sandbox allocations.",
+      );
+      return;
+    }
+    if (operation === "metrics") {
+      const summary = flywheel.operationSummary?.() ?? [];
+      ctx.send(
+        eid,
+        summary.length
+          ? summary
+              .map(
+                (row) =>
+                  `${row.operation}  ${row.outcome}  count=${row.count}  avg=${row.avg_duration_ms}ms  bytes=${row.byte_count}`,
+              )
+              .join("\n")
+          : "No Flywheel operation telemetry in the current window.",
+      );
+      return;
+    }
+    if (operation === "reconcile") {
+      if (!flywheel.reconcile) throw new Error("Flywheel reconciliation is unavailable.");
+      await flywheel.reconcile();
+      ctx.send(eid, success("Flywheel fleet reconciliation completed."));
+      return;
+    }
+    if (operation === "reclaim") {
+      if (!flywheel.reclaim) throw new Error("Flywheel reclamation is unavailable.");
+      const apply = args[2]?.toLowerCase() === "confirm";
+      const candidates = await flywheel.reclaim(apply);
+      const detail = candidates.length
+        ? candidates
+            .map(
+              (candidate) =>
+                `${candidate.entityId}  ${candidate.sandboxId}  ${candidate.action}  ${candidate.reason}`,
+            )
+            .join("\n")
+        : "No reclaimable sandboxes.";
+      ctx.send(
+        eid,
+        apply
+          ? `${success(`Applied ${candidates.length} recoverable reclamation action(s).`)}\n${detail}`
+          : `${detail}\n${dim("Dry run only. Use: code sandbox ops reclaim confirm")}`,
+      );
+      return;
+    }
+    if (operation === "hibernate") {
+      const target = args[2] as EntityId | undefined;
+      if (!target) throw new Error("Usage: code sandbox ops hibernate <entity-id> confirm");
+      if (args[3]?.toLowerCase() !== "confirm") {
+        throw new Error("Operator hibernation requires literal confirm.");
+      }
+      await flywheel.hibernate(target);
+      ctx.send(eid, success(`Hibernated sandbox for ${target}; guest disk is preserved.`));
+      return;
+    }
+    if (operation === "revoke") {
+      const target = args[2] as EntityId | undefined;
+      if (!target) throw new Error("Usage: code sandbox ops revoke <entity-id> confirm");
+      if (args[3]?.toLowerCase() !== "confirm") {
+        throw new Error("Operator publication revocation requires literal confirm.");
+      }
+      if (!flywheel.unpublish) throw new Error("Flywheel publication revocation is unavailable.");
+      let revoked = 0;
+      for (const service of deps.db.listCodingServices(target)) {
+        if (!service.published_subdomain) continue;
+        await flywheel.unpublish(target, service.published_subdomain);
+        deps.db.updateCodingService(service.id, {
+          publishedSubdomain: null,
+          publishedUrl: null,
+          publicationExpiresAt: null,
+        });
+        revoked++;
+      }
+      ctx.send(eid, success(`Revoked ${revoked} publication(s) for ${target}.`));
+      return;
+    }
+    if (operation === "stop") {
+      const target = args[2] as EntityId | undefined;
+      if (!target) {
+        throw new Error("Usage: code sandbox ops stop <entity-id> [discard] confirm");
+      }
+      const discard = args[3]?.toLowerCase() === "discard";
+      const confirmed = (discard ? args[4] : args[3])?.toLowerCase() === "confirm";
+      if (!confirmed) throw new Error("Operator teardown requires literal [discard] confirm.");
+      const unexported = deps.db
+        .listCodingProjects(target)
+        .filter((project) => project.has_unexported_changes === 1);
+      if (unexported.length > 0 && !discard) {
+        throw new Error(
+          `${unexported.length} project(s) have unexported work; export first or use discard confirm.`,
+        );
+      }
+      const sandboxId = flywheel.status(target)?.sandboxId;
+      await flywheel.stop(target);
+      if (sandboxId) {
+        deps.db.stopCodingServicesForSandbox(target, sandboxId, "Sandbox destroyed by operator.");
+        deps.db.deleteCodingProjectsForSandbox(target, sandboxId);
+      }
+      ctx.send(eid, success(`Stopped sandbox for ${target}; its Flywheel allocation was removed.`));
+      return;
+    }
+    throw new Error(
+      "Usage: code sandbox ops inventory|metrics|reconcile|reclaim [confirm]|hibernate|revoke|stop <entity-id> ... confirm",
+    );
+  }
+
   if (action === "status") {
     const workspace = flywheel.status(eid);
     const binding = deps.db.listFlywheelBindings().find((row) => row.entity_id === eid);
@@ -3362,6 +3485,13 @@ async function sandboxLifecycle(
             `Network profile: ${binding?.network_profile ?? "provider-default"} (${binding?.network_profile_enforced ? "enforced" : "provider-owned; not Marina-enforced"})`,
             `Session: ${workspace.sessionId}`,
             `Sandbox: ${workspace.sandboxId}`,
+            workspace.lastActivityAt
+              ? `Last activity: ${new Date(workspace.lastActivityAt).toISOString()}`
+              : "",
+            workspace.lifecycleExpiresAt
+              ? `Lifecycle deadline: ${new Date(workspace.lifecycleExpiresAt).toISOString()}`
+              : "",
+            workspace.hibernatedReason ? `Hibernated reason: ${workspace.hibernatedReason}` : "",
             activeProject
               ? `Project: ${activeProject.name} (${activeProject.id})`
               : "Project: none",
@@ -3564,7 +3694,7 @@ async function sandboxLifecycle(
 
   ctx.send(
     eid,
-    "Usage: code sandbox status|start [image]|use|local|hibernate|resume|stop [discard] confirm",
+    "Usage: code sandbox status|start [image]|use|local|network|credentials|ops|hibernate|resume|stop [discard] confirm",
   );
 }
 

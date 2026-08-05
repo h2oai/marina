@@ -97,6 +97,7 @@ export const EXPORT_TABLES = [
   "media_jobs",
   "flywheel_bindings",
   "flywheel_credential_bindings",
+  "flywheel_operations",
   // Secret-bearing tables — only emitted when ExportOptions.includeSecrets is set
   // (see SECRET_TABLES). api_keys is encrypted at rest; the rest may carry creds.
   "api_keys",

@@ -45,6 +45,7 @@
     "eval-prompt": "bun run scripts/eval-prompt.ts",
     "qualify:autonomy": "bun run scripts/qualify-autonomy.ts",
     "qualify:evolution": "bun run scripts/qualify-evolution.ts",
+    "qualify:flywheel": "bun run scripts/qualify-flywheel-live.ts",
     "trial:evolution": "bun run scripts/run-evolution-trial.ts",
     "trial:evolution:local": "bun run scripts/run-evolution-trial-local.ts",
     "soak": "bun run test/load/flood.ts",

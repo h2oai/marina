@@ -271,6 +271,10 @@ code service publish web
 code service revoke web
 code service stop web
 code sandbox local     # explicitly return this session to host-safe local mode
+# steward operations:
+code sandbox ops inventory
+code sandbox ops reclaim          # dry run
+code sandbox ops reclaim confirm  # recoverable idle hibernation
 ```
 
 Selection is stored per coding session. Sessions default to local, configuration alone
