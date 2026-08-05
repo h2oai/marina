@@ -1,4 +1,8 @@
 import { getInternalModelToken } from "../agent/agent-runtime";
+import {
+  formatUntrustedContext,
+  PANEL_SYNTHESIS_SYSTEM_PROMPT,
+} from "../agent/prompts/support-prompts";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { secretsEqual } from "../auth/secret-compare";
 import type { ChannelManager } from "../coordination/channel-manager";
@@ -722,15 +726,17 @@ async function routePanel(
     return { content: merged, conversationId };
   }
   // synthesize: ask the configured upstream model to merge the panel's answers.
-  const mergePrompt =
-    `You are merging ${responses.length} independent expert answers into one best response.\n\n` +
-    `Question:\n${userContent}\n\n` +
-    `${responses.map((r, i) => `Answer ${i + 1}:\n${r}`).join("\n\n")}\n\n` +
-    `Write a single, coherent answer that reconciles and improves on them.`;
+  const mergePrompt = formatUntrustedContext("Panel synthesis inputs", {
+    question: userContent,
+    candidates: responses,
+  });
   try {
     const resp = await proxyToUpstream(engine, {
       model: "marina/default",
-      messages: [{ role: "user", content: mergePrompt }],
+      messages: [
+        { role: "system", content: PANEL_SYNTHESIS_SYSTEM_PROMPT },
+        { role: "user", content: mergePrompt },
+      ],
     });
     const data = (await resp.json()) as {
       choices?: { message?: { content?: string } }[];

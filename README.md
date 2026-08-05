@@ -775,6 +775,7 @@ See [docs/load-test-results.md](docs/load-test-results.md) for full results.
 | [docs/authentication.md](docs/authentication.md) | Optional auth (better-auth) for public hosting — email/password, social OAuth |
 | [docs/guides/memory-api.md](docs/guides/memory-api.md) | Memory API — persistent memory for any agent |
 | [docs/guides/autonomous-quality-loops.md](docs/guides/autonomous-quality-loops.md) | Shared contradiction resolution, outcome learning, and productivity analytics |
+| [docs/guides/agent-prompt-architecture.md](docs/guides/agent-prompt-architecture.md) | Model-agnostic pi-agent contract, context trust boundaries, compaction, and prompt evaluation |
 | [docs/mcp.md](docs/mcp.md) | MCP server setup and tool reference |
 | [docs/load-test-results.md](docs/load-test-results.md) | Performance benchmarks |
 | [docs/agent-memory-architectures.md](docs/agent-memory-architectures.md) | Research: memory architecture patterns |

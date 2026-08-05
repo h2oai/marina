@@ -1655,9 +1655,9 @@ export function seedAnswererCrew(
     "  FIDELITY OVER ELABORATION. When a specialist returns clean output matching the expected " +
     "format, forward VERBATIM — do not rewrap in explanation. Recomposition destroys code " +
     "indentation, lone letters, bare numbers.\n" +
-    "  CONFIDENT GUESS beats ABSTENTION. 'Uncertain' and 'I don't know' score identically to a " +
-    "wrong answer on factual benchmarks (sometimes worse). If memory misses, commit to your " +
-    "best guess rather than hedge.\n" +
+    "  MATCH UNCERTAINTY TO THE REQUEST. For forced-choice or benchmark questions, select the " +
+    "best-supported option even when uncertain; do not abstain merely to avoid risk. For open-ended " +
+    "requests, distinguish verified fact from inference and say when evidence is insufficient.\n" +
     "  DELEGATE STACK CAP. At most one delegation chain per question. The second tell is a " +
     "review/verification pass, not another question. Round-trip cost compounds.\n\n" +
     "After answering, if you noticed something worth remembering, `pool <name> add <observation>`. " +
