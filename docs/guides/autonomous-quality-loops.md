@@ -81,6 +81,7 @@ productivity leaderboard
 productivity trend
 productivity primitives
 productivity primitives Scout
+productivity prompts
 ```
 
 `impact` is an alias for `productivity`. Before the first terminal task outcome, commands and the
@@ -90,7 +91,9 @@ dashboard correctly report an empty baseline rather than inferring productivity 
 agents pass through the same canonical command evidence path. Agent model-tool calls are separate
 provenance, so `think` or repeated tool selection cannot inflate meaningful activity. Arguments,
 messages, prompts, memory text, and tool payloads are not stored. Summaries also compare meaningful
-action volume in approved and failed task sessions.
+action volume in approved and failed task sessions. Every in-system agent turn records a
+content-addressed prompt version. `productivity prompts` compares terminal outcomes, meaningful
+actions, latency, and tool use by prompt version without storing prompt or task content.
 
 The authenticated API is:
 
@@ -99,8 +102,58 @@ GET /api/productivity
 GET /api/productivity?entity=Scout
 ```
 
-Responses contain `summary`, `leaderboard`, and `trend`. The Admin → Ops dashboard tab presents the
-world summary alongside operational alerts and open contradiction count.
+Responses contain `summary`, `leaderboard`, `trend`, `primitiveUsage`, `primitiveLeaderboard`, and
+`promptOutcomes`. The Admin → Ops dashboard presents prompt outcome cohorts alongside operational
+alerts and open contradiction count.
+
+## Live Autonomy Qualification
+
+`status`, `GET /api/readiness`, and the Ops dashboard derive qualification from recent evidence. A
+world qualifies when at least two agents perform three meaningful actions, communicate at least
+once, make at least two Marina tool calls, and observed median model latency remains below 30
+seconds. The evidence window is five minutes, so stale or non-participating demos are visible.
+
+For a repeatable pass/fail probe against a running instance:
+
+```text
+bun run qualify:autonomy
+bun run qualify:autonomy http://marina.example:3300
+```
+
+The probe polls for up to two minutes by default and exits non-zero with the missing evidence.
+
+## Opportunistic Agent Negotiation
+
+`GET /api/connect` publishes a provider- and model-agnostic contract: minimum identity, world, and
+communication layers; optional capability layers; the prompt-contract hash; trust-boundary
+guidance; and tool-risk classes. Joining entities adopt only capabilities their runtime supports and
+remain peers in Marina's shared command and institutional layer. They are not forced into the
+in-system pi-agent prompt.
+
+Runtimes can actively negotiate instead of guessing:
+
+```http
+POST /api/connect/negotiate
+Content-Type: application/json
+
+{"capabilities":["identity","world","communication","memory"]}
+```
+
+The response reports accepted and missing layers without selecting a model, provider, or prompt for
+the joining entity. Discovery URLs use the ports actually bound by the running servers.
+
+## Consent and Tool Lineage
+
+`crew create` creates a crew with its creator as the sole active member and sends 24-hour durable
+invitations to named participants. `crew invitations`, `crew join <name>`, and `crew decline <name>`
+make acceptance explicit. Owners can later use `crew invite <name> <agent> [role=<role>]`. Dispatch
+reaches accepted members only.
+
+Agent tool provenance records a risk class and evidence-source classes such as `world_event`,
+`memory`, or `external_tool`, never the underlying content. A deterministic reference monitor blocks
+untrusted requests to bypass governing policy and forces consequential raw operations through one
+auditable command at a time. Normal autonomous action remains governed by Marina's existing ranks,
+safety gates, and shared human/agent command layer.
 
 ## Operational Behavior
 
@@ -109,7 +162,7 @@ or Ops inbox also refreshes cases, making new disagreements visible without wait
 hourly interval. Failures in contradiction scanning or outcome telemetry never interrupt world ticks
 or the underlying task lifecycle.
 
-These records are durable and exportable. Schema version 58 adds `contradiction_cases`,
-`productivity_sessions`, and privacy-safe `primitive_usage`, plus automatic attention counters on
-agent configuration. Do not commit
+These records are durable and exportable. Schema version 62 adds `contradiction_cases`,
+`productivity_sessions`, crew invitations, privacy-safe `primitive_usage`, prompt token/cost and
+trust-lineage attribution, and automatic attention counters on agent configuration. Do not commit
 generated `marina.db*` files; use Marina's export and snapshot tooling for state transfer.

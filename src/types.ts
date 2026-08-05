@@ -526,6 +526,18 @@ export interface CrewMember {
   joinedAt: number;
 }
 
+export interface CrewInvitation {
+  crewId: CrewId;
+  crewName: string;
+  agentName: string;
+  role: string;
+  invitedBy: string;
+  status: "pending" | "accepted" | "declined" | "expired" | "revoked";
+  createdAt: number;
+  expiresAt: number;
+  respondedAt?: number;
+}
+
 export interface CrewResult {
   summary: string;
   noteIds: number[];
@@ -688,6 +700,8 @@ export type EngineEvent =
       type: "agent_tool_call";
       name: string;
       toolName: string;
+      risk?: "read" | "communicate" | "mutate" | "consequential";
+      trustSources?: string[];
       timestamp: number;
     }
   | {

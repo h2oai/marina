@@ -59,7 +59,9 @@ Pulling existing idle agents into an effort is cheaper and more civilization-lik
 - **Recruit** — `recruit <a,b,c> into <crew> [role=<r>]` adds idle agents to a crew the caller owns (or rank 4+), auto-joining the crew channel via the existing dispatch path. **Idleness stands in for consent**: an agent already in a live crew is skipped (`busy with crew "X"`), never pulled off its work — this is the autonomy guard. Offline/unknown and non-running names are skipped with reasons.
 - **Earned, lightly** — gated on rank 2 / `RECRUIT_MIN_STANDING` (15), deliberately *below* the `agent.spawn` gate (40): recruiting a free-to-leave existing agent is more reversible than spawning a new mind, so the bar is lower. Operators pass on rank alone.
 - **Reward at completion, not recruitment** — no standing credit for the act of recruiting (avoids gaming). The existing `crew_complete_lead = +10` rewards leading the assembled crew to a result.
-- **Known seam**: `crew create` remains rank-0 and can still conscript any online agent; `recruit` is the recommended autonomy-respecting path, not yet an airtight replacement. Tightening `crew create` is deferred.
+- **Consent boundary**: `crew create` proposes membership through durable, expiring invitations.
+  Named participants become active only through their own `crew join`; they can inspect or decline
+  invitations. `recruit` remains the richer earned workflow for capability-aware staffing.
 
 ## Phase 4 — The Score grammar (composed mode) — foundation landed
 

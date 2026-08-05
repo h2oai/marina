@@ -16,7 +16,12 @@ import { handleAssetApi, handleAssetServing } from "./asset-api";
 import { handleAuthApi } from "./auth-api";
 import { type CanvasNodeCreatedEvent, handleCanvasApi } from "./canvas-api";
 import { CanvasBroadcaster } from "./canvas-ws";
-import { buildConnectManifest, handleSkillRequest } from "./connect-api";
+import {
+  buildConnectManifest,
+  handleSkillRequest,
+  negotiateConnectCapabilities,
+  registerConnectEndpoint,
+} from "./connect-api";
 import { corsHeaders } from "./cors";
 import { handleDashboardApi } from "./dashboard-api";
 import type { DashboardBroadcaster, DashboardWSData } from "./dashboard-ws";
@@ -205,6 +210,9 @@ export class WebSocketServer {
         // Connect manifest
         if (url.pathname === "/api/connect") {
           return buildConnectManifest(req, engine);
+        }
+        if (url.pathname === "/api/connect/negotiate") {
+          return negotiateConnectCapabilities(req);
         }
 
         // Skill document
@@ -505,6 +513,7 @@ export class WebSocketServer {
                   entityId: result.entityId,
                   name: result.name,
                   token: result.token,
+                  activeEvolutionSessions: engine.getActiveEvolutionSessions(result.name),
                 },
               }),
             );
@@ -534,6 +543,7 @@ export class WebSocketServer {
                   entityId: result.entityId,
                   name: result.name,
                   token: result.token,
+                  activeEvolutionSessions: engine.getActiveEvolutionSessions(result.name),
                 },
               }),
             );
@@ -605,9 +615,15 @@ export class WebSocketServer {
       },
     });
 
+    this.port = this.server.port ?? this.port;
+    registerConnectEndpoint(this.engine, "websocket", this.port);
     console.log(`WebSocket server listening on ws://localhost:${this.port}/ws`);
     console.log(`Dashboard available at http://localhost:${this.port}/dashboard`);
     console.log(`Canvas available at http://localhost:${this.port}/canvas`);
+  }
+
+  getPort(): number {
+    return this.port;
   }
 
   stop(): void {

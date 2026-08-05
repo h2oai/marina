@@ -11,6 +11,7 @@ export interface SessionInfo {
   entityId: EntityId;
   token: string;
   name: string;
+  activeEvolutionSessions?: Array<{ id: number; experimentId: number }>;
 }
 
 export interface RoomView {
@@ -147,6 +148,9 @@ export class MarinaClient {
             entityId: p.data.entityId as EntityId,
             token: (p.data.token as string) ?? "",
             name,
+            activeEvolutionSessions: Array.isArray(p.data.activeEvolutionSessions)
+              ? (p.data.activeEvolutionSessions as Array<{ id: number; experimentId: number }>)
+              : [],
           };
           this.startPing();
           this.emit("connect", this.session);
@@ -185,6 +189,9 @@ export class MarinaClient {
             // present a revoked token and fail permanently.
             token: (p.data.token as string) ?? token,
             name: (p.data?.text as string)?.match(/as (\w+)/)?.[1] ?? "",
+            activeEvolutionSessions: Array.isArray(p.data.activeEvolutionSessions)
+              ? (p.data.activeEvolutionSessions as Array<{ id: number; experimentId: number }>)
+              : [],
           };
           this.startPing();
           this.emit("connect", this.session);

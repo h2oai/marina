@@ -27,6 +27,18 @@ export interface CrewMemberRow {
   joined_at: number;
 }
 
+export interface CrewInvitationRow {
+  crew_id: string;
+  crew_name: string;
+  agent_name: string;
+  role: string;
+  invited_by: string;
+  status: "pending" | "accepted" | "declined" | "expired" | "revoked";
+  created_at: number;
+  expires_at: number;
+  responded_at: number | null;
+}
+
 export function saveCrew(
   db: Database,
   crew: {
@@ -115,4 +127,51 @@ export function getCrewMembers(db: Database, crewId: string): CrewMemberRow[] {
   return db
     .query("SELECT * FROM crew_members WHERE crew_id = ? ORDER BY joined_at ASC")
     .all(crewId) as CrewMemberRow[];
+}
+
+export function saveCrewInvitation(db: Database, row: CrewInvitationRow): void {
+  db.run(
+    `INSERT INTO crew_invitations
+       (crew_id,crew_name,agent_name,role,invited_by,status,created_at,expires_at,responded_at)
+     VALUES (?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(crew_id,agent_name) DO UPDATE SET
+       role=excluded.role,invited_by=excluded.invited_by,status=excluded.status,
+       created_at=excluded.created_at,expires_at=excluded.expires_at,responded_at=excluded.responded_at`,
+    [
+      row.crew_id,
+      row.crew_name,
+      row.agent_name,
+      row.role,
+      row.invited_by,
+      row.status,
+      row.created_at,
+      row.expires_at,
+      row.responded_at,
+    ],
+  );
+}
+
+export function setCrewInvitationStatus(
+  db: Database,
+  crewId: string,
+  agentName: string,
+  status: CrewInvitationRow["status"],
+  respondedAt: number,
+): void {
+  db.run("UPDATE crew_invitations SET status=?,responded_at=? WHERE crew_id=? AND agent_name=?", [
+    status,
+    respondedAt,
+    crewId,
+    agentName,
+  ]);
+}
+
+export function deleteCrewInvitations(db: Database, crewId: string): void {
+  db.run("DELETE FROM crew_invitations WHERE crew_id=?", [crewId]);
+}
+
+export function getOpenCrewInvitations(db: Database): CrewInvitationRow[] {
+  return db
+    .query("SELECT * FROM crew_invitations WHERE status='pending' ORDER BY created_at")
+    .all() as CrewInvitationRow[];
 }

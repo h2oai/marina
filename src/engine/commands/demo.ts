@@ -19,12 +19,12 @@ export function demoCommand(deps: {
     name: "demo",
     aliases: [],
     minRank: 0,
-    help: "Operate the default demo safely. Usage: demo preflight|warm|recover|reset|status",
+    help: "Operate the default demo safely. Usage: demo preflight|qualify|warm|recover|reset|status",
     handler: async (ctx, input) => {
       const action = input.tokens[0]?.toLowerCase() ?? "status";
       const report = deps.readiness();
 
-      if (action === "status" || action === "preflight") {
+      if (action === "status" || action === "preflight" || action === "qualify") {
         const blockers = report.checks.filter((check) => check.status === "off");
         const lines = [
           header("Demo Preflight"),
@@ -33,6 +33,8 @@ export function demoCommand(deps: {
           `  Agents: ${report.demo.warmAgents}/${report.demo.expectedAgents} warm`,
           `  Activity: ${report.demo.recentMeaningfulEvents} meaningful events in 5m`,
           `  Response: ${report.demo.medianResponseMs === undefined ? "not measured" : `${report.demo.medianResponseMs}ms median`}`,
+          `  Autonomy: ${report.demo.autonomyQualified ? "QUALIFIED" : "not yet qualified"}`,
+          `  Evidence: ${report.demo.activeAgents}/2 agents · ${report.demo.recentPrimitiveActions}/3 actions · ${report.demo.recentCommunications}/1 communications · ${report.demo.marinaToolCalls}/2 Marina tools`,
         ];
         if (blockers.length > 0) {
           lines.push("", `  Blockers (${blockers.length}):`);
@@ -40,7 +42,10 @@ export function demoCommand(deps: {
         } else {
           lines.push("", "  No hard capability blockers detected.");
         }
-        lines.push("", dim("Controls: demo warm · demo recover · demo reset"));
+        lines.push(
+          "",
+          dim("Controls: demo warm · demo recover · demo reset · bun run qualify:autonomy [url]"),
+        );
         ctx.send(input.entity, lines.join("\n"));
         return;
       }
@@ -124,7 +129,7 @@ export function demoCommand(deps: {
         return;
       }
 
-      ctx.send(input.entity, "Usage: demo preflight|warm|recover|reset|status");
+      ctx.send(input.entity, "Usage: demo preflight|qualify|warm|recover|reset|status");
     },
   };
 }

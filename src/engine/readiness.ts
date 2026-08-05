@@ -44,6 +44,8 @@ export interface ReadinessReport {
     activeParticipants: number;
     activeAgents: number;
     recentCommunications: number;
+    marinaToolCalls: number;
+    autonomyQualified: boolean;
     medianResponseMs?: number;
   };
 }
@@ -284,6 +286,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
   let activeParticipants = 0;
   let activeAgents = 0;
   let recentCommunications = 0;
+  let marinaToolCalls = 0;
   const responseDurations: number[] = [];
   try {
     const recent = engine.db?.queryFeedEvents({ since: Date.now() - 5 * 60_000, limit: 200 }) ?? [];
@@ -314,6 +317,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
     activeParticipants = usage?.activeParticipants ?? 0;
     activeAgents = usage?.activeAgents ?? 0;
     recentCommunications = usage?.communications ?? 0;
+    marinaToolCalls = usage?.marinaToolCalls ?? 0;
   } catch {
     // Primitive evidence is additive and must never break readiness.
   }
@@ -323,6 +327,12 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       ? responseDurations[Math.floor(responseDurations.length / 2)]
       : undefined;
   const warmRatio = expectedNames.length > 0 ? warmAgents / expectedNames.length : 0;
+  const autonomyQualified =
+    recentPrimitiveActions >= 3 &&
+    activeAgents >= 2 &&
+    recentCommunications >= 1 &&
+    marinaToolCalls >= 2 &&
+    (medianResponseMs === undefined || medianResponseMs < 30_000);
   const score = Math.round(
     (hasKey ? 20 : 0) +
       (env.AGENT_AUTORESPAWN === "true" ? 10 : 0) +
@@ -347,6 +357,8 @@ export function computeReadiness(engine: Engine): ReadinessReport {
     activeParticipants,
     activeAgents,
     recentCommunications,
+    marinaToolCalls,
+    autonomyQualified,
     ...(medianResponseMs !== undefined ? { medianResponseMs } : {}),
   };
   checks.push({
@@ -361,18 +373,17 @@ export function computeReadiness(engine: Engine): ReadinessReport {
             "Enable AGENT_AUTORESPAWN, wait for seeded agents to warm, then run one demo scenario or model probe.",
         }),
   });
-  const participationReady =
-    recentPrimitiveActions >= 3 && activeAgents >= 2 && recentCommunications >= 1;
+  const participationReady = autonomyQualified;
   checks.push({
     id: "primitive-evidence",
     label: "Primitive participation",
     status: participationReady ? "ok" : "degraded",
-    detail: `${recentPrimitiveActions} meaningful actions · ${activeAgents} active agents (${activeParticipants} total participants) · ${recentCommunications} communications in 5m`,
+    detail: `${recentPrimitiveActions} meaningful actions · ${activeAgents} active agents (${activeParticipants} total participants) · ${recentCommunications} communications · ${marinaToolCalls} Marina tool calls in 5m`,
     ...(participationReady
       ? {}
       : {
           remediation:
-            "Run a multi-agent task that uses shared memory and a targeted handoff; verify with `productivity primitives`.",
+            "Run a multi-agent task with at least two agents, shared primitives, a targeted handoff, and two Marina tool calls; verify with `productivity primitives`.",
         }),
   });
 

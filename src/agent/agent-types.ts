@@ -126,6 +126,8 @@ export interface AgentStatus {
   entityId: EntityId | null;
   state: "starting" | "connected" | "autonomous" | "idle" | "stopping" | "stopped" | "error";
   model: string;
+  /** Stable hash of the exact assembled system prompt currently in force. */
+  promptVersion?: string;
   role: string;
   focus: string | null;
   goal: string | null;
@@ -147,6 +149,9 @@ export interface AgentStatus {
   maxOutputTokens: number;
   /** Highest real prompt-token count the server has accepted (0 until first reply). */
   peakInputTokens: number;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  totalCostUsd?: number;
   /** Wall-clock of the most recent completed LLM turn (ms); 0 until the first turn. */
   lastTurnMs: number;
   /** Exponential moving average of turn latency (ms) — the "is the model slow?" signal. */
@@ -190,7 +195,13 @@ export interface AgentHandle {
 
 export type AgentEvent =
   | { type: "status_change"; status: AgentStatus }
-  | { type: "tool_call"; toolName: string; args: Record<string, unknown> }
+  | {
+      type: "tool_call";
+      toolName: string;
+      args: Record<string, unknown>;
+      risk?: "read" | "communicate" | "mutate" | "consequential";
+      trustSources?: string[];
+    }
   | { type: "tool_result"; toolName: string; result: unknown; isError: boolean }
   | { type: "perception"; kind: string; text: string }
   | { type: "error"; error: string; context: string }

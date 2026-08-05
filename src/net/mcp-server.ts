@@ -5,7 +5,12 @@ import type { RateLimiter } from "../auth/rate-limiter";
 import { WS_IDLE_TIMEOUT_SECONDS } from "../engine/constants";
 import type { Engine } from "../engine/engine";
 import type { Connection, EntityId, Perception } from "../types";
-import { buildConnectManifest, handleSkillRequest } from "./connect-api";
+import {
+  buildConnectManifest,
+  handleSkillRequest,
+  negotiateConnectCapabilities,
+  registerConnectEndpoint,
+} from "./connect-api";
 
 // ─── Session State ────────────────────────────────────────────────────────────
 
@@ -86,7 +91,7 @@ export class McpServerAdapter {
     const sessions = this.sessions;
     const self = this;
 
-    this.server = Bun.serve({
+    const serverOptions = {
       port: this.port,
       idleTimeout: WS_IDLE_TIMEOUT_SECONDS,
 
@@ -106,6 +111,9 @@ export class McpServerAdapter {
         // Connect manifest
         if (url.pathname === "/api/connect") {
           return buildConnectManifest(req, engine);
+        }
+        if (url.pathname === "/api/connect/negotiate") {
+          return negotiateConnectCapabilities(req);
         }
 
         // Skill document
@@ -170,12 +178,32 @@ export class McpServerAdapter {
           status: 200,
         });
       },
-    });
+    } satisfies Parameters<typeof Bun.serve>[0];
+
+    try {
+      this.server = Bun.serve(serverOptions);
+    } catch (error) {
+      // Some Bun builds intermittently fail to bind port 0 during rapid test and
+      // restart cycles. Preserve explicit-port failures, but make ephemeral-port
+      // startup resilient by retrying a bounded set of high local ports.
+      if (this.port !== 0) throw error;
+      let lastError = error;
+      for (let attempt = 0; attempt < 8 && !this.server; attempt++) {
+        const fallbackPort = 40_000 + Math.floor(Math.random() * 20_000);
+        try {
+          this.server = Bun.serve({ ...serverOptions, port: fallbackPort });
+        } catch (candidateError) {
+          lastError = candidateError;
+        }
+      }
+      if (!this.server) throw lastError;
+    }
 
     // Periodic cleanup of stale MCP sessions (every 5 minutes)
     this.cleanupTimer = setInterval(() => this.cleanupStaleSessions(), 300_000);
 
-    this.port = this.server.port;
+    this.port = this.server.port ?? this.port;
+    registerConnectEndpoint(this.engine, "mcp", this.port);
     console.log(`MCP server listening on http://localhost:${this.port}/mcp`);
   }
 
@@ -415,6 +443,7 @@ export class McpServerAdapter {
       "look",
       "Look at the current room or examine a specific target.",
       { target: z.string().optional().describe("Optional target to look at") },
+      { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       async ({ target }, extra) => {
         const cmd = target ? `look ${target}` : "look";
         return runCmd(extra, cmd);
@@ -432,6 +461,7 @@ export class McpServerAdapter {
       "say",
       "Say something to everyone in the current room.",
       { message: z.string().describe("Message to say") },
+      { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       async ({ message }, extra) => runCmd(extra, `say ${message}`),
     );
 
@@ -503,6 +533,7 @@ export class McpServerAdapter {
             "Task subcommand and arguments, e.g. 'create Fix the bug | Detailed description'",
           ),
       },
+      { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       async ({ input }, extra) => runCmd(extra, `task ${input}`),
     );
 
@@ -510,7 +541,7 @@ export class McpServerAdapter {
       "crew",
       "Multi-agent crews: runtime containers with formations (nsed, chorus, foundry, swarm, " +
         "pipeline, debate, mapreduce, blackboard, symbiosis, research, freeform). Subcommands: " +
-        "create, dispatch, info, join, leave, formation, persist, complete, dissolve. " +
+        "create, invite, invitations, join, decline, dispatch, info, leave, formation, persist, complete, dissolve. " +
         "Usage: crew <subcommand> [args]",
       {
         input: z
@@ -566,6 +597,7 @@ export class McpServerAdapter {
               "or 'asset upload https://example.com/image.png' or 'layout feed feed'",
           ),
       },
+      { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       async ({ input }, extra) => runCmd(extra, `canvas ${input}`),
     );
 
@@ -580,6 +612,7 @@ export class McpServerAdapter {
           .string()
           .describe("Build subcommand and arguments, e.g. 'space my/room A Custom Room'"),
       },
+      { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
       async ({ input }, extra) => runCmd(extra, `build ${input}`),
     );
 
@@ -591,6 +624,7 @@ export class McpServerAdapter {
         "(e.g. pool, project, orient, score, map, inventory, macro, connect, experiment). " +
         "Type 'help' to see all available commands.",
       { input: z.string().describe("Raw command string to send") },
+      { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       async ({ input }, extra) => runCmd(extra, input),
     );
 
@@ -601,6 +635,7 @@ export class McpServerAdapter {
       {
         input: z.string().describe("Commands separated by semicolons, e.g. 'look ; north ; look'"),
       },
+      { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       async ({ input }, extra) => runCmd(extra, `batch ${input}`),
     );
 

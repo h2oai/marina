@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { getLeanSystemPrompt } from "../src/agent/prompts/lean-system";
+import { getLeanSystemPrompt, getPromptVersion } from "../src/agent/prompts/lean-system";
 import {
   ASK_SYSTEM_PROMPT,
   CODE_MODE_SYSTEM_PROMPT,
@@ -19,6 +19,12 @@ function duplicateHeadings(text: string): string[] {
 }
 
 describe("getLeanSystemPrompt", () => {
+  it("produces a stable, content-addressed prompt version", () => {
+    const prompt = getLeanSystemPrompt("ROLE_MARKER");
+    expect(getPromptVersion(prompt)).toMatch(/^[a-f0-9]{12}$/);
+    expect(getPromptVersion(prompt)).toBe(getPromptVersion(prompt));
+    expect(getPromptVersion(`${prompt}\nchanged`)).not.toBe(getPromptVersion(prompt));
+  });
   let prev: string | undefined;
   beforeEach(() => {
     prev = process.env.MARINA_SYSTEM_TOOLS_PROSE;

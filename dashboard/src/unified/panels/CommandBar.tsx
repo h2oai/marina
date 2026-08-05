@@ -31,6 +31,7 @@ import {
   useConnectors,
   useDynamicCommands,
   useEnvConfig,
+  useEvolutionSessions,
   useExperiments,
   useGroupDetail,
   useGroups,
@@ -56,6 +57,7 @@ import type {
   DashboardEvent,
   DynamicCommandEntry,
   EnvVar,
+  EvolutionSessionEntry,
   ExperimentEntry,
   GroupEntry,
   KeyStatus,
@@ -661,10 +663,51 @@ const MarketsTab = memo(function MarketsTab() {
 
 const ExperimentsTab = memo(function ExperimentsTab() {
   const { data, isLoading } = useExperiments();
+  const { data: evolutionSessions } = useEvolutionSessions();
   if (isLoading) return <CoordLoading />;
   if (!data?.length) return <CoordEmpty label="experiments" />;
   return (
     <div className="uc-cmd-msgs">
+      {evolutionSessions?.map((session: EvolutionSessionEntry) => {
+        const accepted = session.runs.filter((run) => run.status === "accepted").length;
+        const lastRun = session.runs.at(-1);
+        return (
+          <div
+            key={`evolution-${session.id}`}
+            className="uc-coord-item"
+            style={{ cursor: "default" }}
+          >
+            <div
+              className={`uc-coord-dot ${session.status === "active" ? "active" : session.status === "completed" ? "done" : "pending"}`}
+            />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="uc-coord-title">
+                {session.experiment_name ?? `Experiment ${session.experiment_id}`} · evolution
+              </div>
+              <div className="uc-coord-meta">
+                {session.status} &middot; {session.runs.length} runs &middot; {accepted} accepted
+                {session.budget.runsRemaining !== undefined
+                  ? ` · ${session.budget.runsRemaining} remaining`
+                  : ""}
+                {session.budget.exhausted ? " · budget exhausted" : ""}
+              </div>
+              <div className="uc-coord-meta" style={{ color: "#777" }}>
+                {session.objective}
+              </div>
+              {lastRun && (
+                <div className="uc-coord-meta" style={{ color: "#555" }}>
+                  Latest: {lastRun.status} · {lastRun.hypothesis}
+                  {lastRun.parent_run_id ? ` · parent #${lastRun.parent_run_id}` : ""}
+                </div>
+              )}
+              <div className="uc-coord-meta" style={{ color: "#555" }}>
+                auto-continue off · auto-promote off
+                {session.protocol.independentReview ? " · independent review" : ""}
+              </div>
+            </div>
+          </div>
+        );
+      })}
       {data.map((e: ExperimentEntry) => (
         <div key={e.id} className="uc-coord-item" style={{ cursor: "default" }}>
           <div

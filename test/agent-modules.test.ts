@@ -23,6 +23,7 @@ import { HookRegistry } from "../src/agent/hook-registry";
 import { InterruptibleWaiter } from "../src/agent/interruptible-waiter";
 import {
   classifyModelResolution,
+  evolutionControlState,
   neutralizeUnusedReasoning,
   normalizeMarinaBaseUrl,
   resolveModel,
@@ -40,6 +41,7 @@ import { SocialAwareness } from "../src/agent/social";
 import {
   COMMAND_ROSTER,
   createCommandTool,
+  createEvolutionTool,
   createScopedTools,
   TOOL_PROFILE_NAMES,
 } from "../src/agent/tools";
@@ -1354,6 +1356,67 @@ describe("context-manager", () => {
 // ── Tool profiles — Haiku-sized agent tool surface ──────────────────────────
 
 describe("tool profiles", () => {
+  it("accepts only reserved system perceptions as evolution capability controls", () => {
+    const control = {
+      kind: "system" as const,
+      tag: "marina-control",
+      timestamp: 1,
+      data: { controlType: "evolution_session_state", sessionId: 7, active: true },
+    };
+    expect(evolutionControlState(control)).toEqual({ sessionId: 7, active: true });
+    expect(evolutionControlState({ ...control, kind: "message" })).toBeUndefined();
+    expect(evolutionControlState({ ...control, tag: "evolution" })).toBeUndefined();
+    expect(
+      evolutionControlState({ ...control, data: { ...control.data, active: "true" } }),
+    ).toBeUndefined();
+  });
+
+  it("maps the scoped evolution tool exclusively onto ordinary world commands", async () => {
+    const commands: string[] = [];
+    const tool = createEvolutionTool({
+      client: {
+        isConnected: () => true,
+        command: async (command: string) => {
+          commands.push(command);
+          return [];
+        },
+      },
+      gameState: { handlePerception: () => {} },
+    } as never);
+    await tool.execute("1", {
+      action: "propose",
+      experiment: "Trial",
+      hypothesis: "shorter prompt",
+      candidateRef: "prompt:2",
+      parentRunId: 1,
+    });
+    await tool.execute("2", {
+      action: "evaluate",
+      experiment: "Trial",
+      runId: 2,
+      evidence: "benchmark:9",
+    });
+    await tool.execute("3", {
+      action: "decide",
+      experiment: "Trial",
+      runId: 2,
+      decision: "accept",
+    });
+    expect(commands).toEqual([
+      "evolve propose Trial | shorter prompt | prompt:2 | parent=1",
+      "evolve evaluate Trial 2 | benchmark:9",
+      "evolve decide Trial 2 accept",
+    ]);
+    await expect(
+      tool.execute("4", {
+        action: "propose",
+        experiment: "Trial",
+        hypothesis: "bad | injection",
+        candidateRef: "prompt:3",
+      }),
+    ).rejects.toThrow();
+  });
+
   it("minimal profile has exactly the 3 essential tools", () => {
     // The rationale of "minimal": marina_command is a universal escape
     // hatch that runs ANY world command, so command + think + memory is

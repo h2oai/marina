@@ -220,6 +220,36 @@ function OperationsTab() {
               value={String(productivity.primitiveUsage.primitiveDiversity)}
             />
           </div>
+          <div className="grid grid-cols-2 gap-1">
+            <Metric
+              label="Trust-attributed tools"
+              value={String(productivity.primitiveUsage.untrustedToolCalls)}
+            />
+            <Metric
+              label="Consequential tools"
+              value={String(productivity.primitiveUsage.consequentialToolCalls)}
+              tone={productivity.primitiveUsage.consequentialToolCalls ? "warning" : undefined}
+            />
+          </div>
+          {productivity.promptOutcomes.length > 0 && (
+            <div className="rounded border border-border/70 bg-bg/40 p-1.5 text-[10px]">
+              <div className="mb-1 uppercase tracking-wider text-text-dim">Prompt outcomes</div>
+              {productivity.promptOutcomes.slice(0, 3).map((row) => (
+                <div
+                  key={row.promptVersion}
+                  className="flex justify-between gap-2"
+                  title={`${row.agents} agents · ${row.successes} successes · ${row.failures} failures · ${formatDuration(row.averageDurationMs)} average latency · ${Math.round(row.averageInputTokens + row.averageOutputTokens)} tokens/outcome · $${row.averageCostUsd.toFixed(4)}/outcome`}
+                >
+                  <span className="font-mono text-text-muted">{row.promptVersion}</span>
+                  <span>
+                    {Math.round(row.successRate * 100)}% · {row.meaningfulActions} actions ·{" "}
+                    {row.averageToolCalls.toFixed(1)} tools ·{" "}
+                    {Math.round(row.averageInputTokens + row.averageOutputTokens)} tok
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
       {readiness && (
@@ -241,6 +271,18 @@ function OperationsTab() {
             </strong>
           </div>
           <div className="grid grid-cols-2 gap-1">
+            <div
+              className={`col-span-2 flex items-center justify-center gap-1 rounded px-1.5 py-1 font-semibold ${readiness.demo.autonomyQualified ? "bg-success/15 text-success" : "bg-warning/15 text-warning"}`}
+            >
+              {readiness.demo.autonomyQualified ? (
+                <CheckCircle2 size={10} />
+              ) : (
+                <Activity size={10} />
+              )}
+              {readiness.demo.autonomyQualified
+                ? "Live autonomy qualified"
+                : "Awaiting live autonomy evidence"}
+            </div>
             {readiness.checks.map((check) => (
               <div
                 key={check.id}
@@ -255,7 +297,8 @@ function OperationsTab() {
           <div className="mt-1 text-text-dim">
             Live proof: {readiness.demo.activeAgents} agents ·{" "}
             {readiness.demo.recentPrimitiveActions} meaningful actions ·{" "}
-            {readiness.demo.recentCommunications} communications / 5m
+            {readiness.demo.recentCommunications} communications · {readiness.demo.marinaToolCalls}{" "}
+            Marina tools / 5m
           </div>
         </div>
       )}

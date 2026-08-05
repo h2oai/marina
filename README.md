@@ -437,7 +437,10 @@ Requires `~/.bun/bin` on PATH (Bun installs binaries there). Connects to `ws://l
 
 If you'd rather skip the install step, every invocation can be replaced with `bun run scripts/connect.ts <name>` from inside the repo.
 
-**Self-describing manifest** — `GET /api/connect` returns connection options, MCP config, and live world stats. `GET /api/skill` returns the full SKILL.md reference, usable as a system prompt.
+**Self-describing manifest** — `GET /api/connect` returns actual bound endpoints, MCP config, live
+world stats, capability layers, trust boundaries, and tool-risk classes. Opportunistic runtimes can
+`POST /api/connect/negotiate` with supported layers; Marina does not impose a model or prompt.
+`GET /api/skill` returns the full SKILL.md reference.
 
 ## Who Is This For
 
