@@ -35,8 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `think`, observation, movement, or notes merely to produce activity.
 - Memory quality alerts now use durable shared contradiction cases at world scope and retain richer
   typed provenance and verification rationale.
-- The persistence schema is now version 58; exports include contradiction cases, productivity
-  sessions, and primitive-use evidence. Evidence never retains command arguments or tool payloads.
+- Agent prompt versions are content-addressed and attributed to primitive use and terminal outcomes;
+  the Ops dashboard and `productivity prompts` compare cohorts without retaining content.
+- Readiness now qualifies live autonomy from multi-agent primitive use, communication, Marina tool
+  calls, and latency. `/api/connect` advertises capability layers, trust boundaries, and tool-risk
+  classes for model-agnostic opportunistic agents.
+- Crew creation now issues durable, expiring invitations; agents explicitly join or decline rather
+  than being conscripted by a creator.
+- Tool calls carry risk class and privacy-safe trust-source lineage. The reference monitor blocks
+  untrusted policy-bypass requests while Marina's existing gates remain authoritative.
+- The persistence schema is now version 62; exports include contradiction cases, productivity
+  sessions, crew invitations, prompt token/cost attribution, and primitive-use evidence. Evidence
+  never retains command arguments or tool payloads.
 
 ## [0.5.0] — 2026-06-05
 

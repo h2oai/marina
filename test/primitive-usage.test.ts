@@ -72,6 +72,7 @@ describe("primitive usage evidence", () => {
         source: "command",
         ...classified,
         success: true,
+        promptVersion: "prompt-a",
         createdAt: at,
       });
     }
@@ -93,6 +94,8 @@ describe("primitive usage evidence", () => {
       action: "marina_memory",
       safeLabel: "marina_memory",
       toolName: "marina_memory",
+      riskClass: "consequential",
+      trustSources: ["memory", "world_event"],
       createdAt: at,
     });
     db.finishAgentToolUsage("Ada", "marina_memory", true, at + 25);
@@ -101,18 +104,21 @@ describe("primitive usage evidence", () => {
     expect(world.meaningfulActions).toBe(2);
     expect(world.activeParticipants).toBe(2);
     expect(world.activeAgents).toBe(1);
+    expect(world.promptVersions).toEqual(["prompt-a"]);
     expect(db.getPrimitiveUsageSummary("Ada").meaningfulActions).toBe(1);
     expect(db.getPrimitiveUsageSummary("Lin").meaningfulActions).toBe(1);
     expect(db.getPrimitiveUsageSummary("Ada")).toMatchObject({
       toolCalls: 2,
       marinaToolCalls: 1,
       reasoningOnlyCalls: 1,
+      consequentialToolCalls: 1,
+      untrustedToolCalls: 1,
     });
   });
 
   test("correlates meaningful action volume with terminal outcomes", () => {
     const startedAt = Date.now() - 5_000;
-    db.startProductivitySession("agent-ada", "Ada", 42, startedAt, 0);
+    db.startProductivitySession("agent-ada", "Ada", 42, startedAt, 0, "prompt-a", 100, 20, 0.01);
     for (const offset of [1_000, 2_000]) {
       db.recordPrimitiveUsage({
         actorName: "Ada",
@@ -120,17 +126,38 @@ describe("primitive usage evidence", () => {
         source: "command",
         ...classifyPrimitive("task submit 42"),
         success: true,
+        promptVersion: "prompt-a",
         createdAt: startedAt + offset,
       });
     }
     expect(
-      db.finishProductivitySession("agent-ada", "Ada", 42, "approved", startedAt + 3_000),
+      db.finishProductivitySession(
+        "agent-ada",
+        "Ada",
+        42,
+        "approved",
+        startedAt + 3_000,
+        0,
+        150,
+        35,
+        0.025,
+      ),
     ).toBe(true);
     expect(db.getPrimitiveUsageSummary("Ada")).toMatchObject({
       outcomeSessions: 1,
       approvedMeaningfulAverage: 2,
       failedMeaningfulAverage: 0,
     });
+    const [promptOutcome] = db.getPromptOutcomeSummaries();
+    expect(promptOutcome).toMatchObject({
+      promptVersion: "prompt-a",
+      outcomes: 1,
+      successes: 1,
+      meaningfulActions: 2,
+      averageInputTokens: 50,
+      averageOutputTokens: 15,
+    });
+    expect(promptOutcome?.averageCostUsd).toBeCloseTo(0.015);
   });
 
   test("records agent commands on the canonical engine path and tools only as provenance", async () => {

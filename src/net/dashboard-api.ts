@@ -5,6 +5,7 @@ import { testKeyConnectivity } from "../engine/commands/key";
 import { syncOperationalAlerts } from "../engine/commands/ops";
 import { allRecipeNames, getRecipe } from "../engine/commands/usecase";
 import type { Engine } from "../engine/engine";
+import { evolutionBudgetState, parseEvolutionProtocol } from "../engine/evolution-protocol";
 import { getRank } from "../engine/permissions";
 import { computeReadiness } from "../engine/readiness";
 import { checkGate } from "../engine/safety-gates";
@@ -354,6 +355,7 @@ export async function handleDashboardApi(
       trend: db.getProductivityTrend(entityName),
       primitiveUsage: db.getPrimitiveUsageSummary(entityName),
       primitiveLeaderboard: db.getPrimitiveUsageLeaderboard(),
+      promptOutcomes: db.getPromptOutcomeSummaries(),
     });
   }
 
@@ -925,6 +927,24 @@ export async function handleDashboardApi(
   }
   if (url.pathname === "/api/experiments" && method === "GET" && db) {
     return json(db.listExperiments());
+  }
+  if (url.pathname === "/api/evolution-sessions" && method === "GET" && db) {
+    if (!/^(1|true|on)$/i.test(process.env.MARINA_EVOLUTION_PROTOCOLS ?? "")) {
+      return json([]);
+    }
+    return json(
+      db.listEvolutionSessions().map((session) => {
+        const experiment = db.getExperiment(session.experiment_id);
+        const runs = db.listEvolutionRuns(session.id);
+        return {
+          ...session,
+          experiment_name: experiment?.name ?? null,
+          protocol: parseEvolutionProtocol(session.protocol),
+          budget: evolutionBudgetState(session, runs.length),
+          runs,
+        };
+      }),
+    );
   }
   if (url.pathname === "/api/markets" && method === "GET" && db) {
     return json(db.listMarkets());

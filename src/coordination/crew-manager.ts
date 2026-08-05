@@ -14,6 +14,7 @@ import type {
   Crew,
   CrewFormation,
   CrewId,
+  CrewInvitation,
   CrewLifetime,
   CrewMember,
   CrewState,
@@ -70,7 +71,10 @@ export class CrewError extends Error {
       | "already_member"
       | "dissolved"
       | "not_persisted"
-      | "already_persisted",
+      | "already_persisted"
+      | "invitation_required"
+      | "invitation_expired"
+      | "invitation_not_found",
   ) {
     super(message);
   }
@@ -87,6 +91,7 @@ export class CrewManager {
   private readonly byName = new Map<string, CrewId>();
   private readonly byMember = new Map<string /* agentName */, Set<CrewId>>();
   private readonly byOwner = new Map<EntityId, Set<CrewId>>();
+  private readonly invitations = new Map<string, CrewInvitation>();
   /** Per-(crew,member) stall offense counter. Standing only debits at >= 3. */
   private readonly memberOffenses = new Map<string, number>();
 
@@ -112,6 +117,20 @@ export class CrewManager {
       this.indexCrew(crew);
       loaded++;
     }
+    for (const row of this.db.getOpenCrewInvitations()) {
+      if (!this.crews.has(toCrewId(row.crew_id))) continue;
+      this.invitations.set(`${row.crew_id}:${row.agent_name.toLowerCase()}`, {
+        crewId: toCrewId(row.crew_id),
+        crewName: row.crew_name,
+        agentName: row.agent_name,
+        role: row.role,
+        invitedBy: row.invited_by,
+        status: row.status,
+        createdAt: row.created_at,
+        expiresAt: row.expires_at,
+        ...(row.responded_at === null ? {} : { respondedAt: row.responded_at }),
+      });
+    }
     return loaded;
   }
 
@@ -128,6 +147,71 @@ export class CrewManager {
 
   list(): Crew[] {
     return [...this.crews.values()];
+  }
+
+  invite(
+    crewId: CrewId,
+    agentName: string,
+    invitedBy: string,
+    role = "specialist",
+    ttlMs = 24 * 60 * 60 * 1000,
+  ): CrewInvitation {
+    const crew = this.requireCrew(crewId);
+    if (crew.members.some((member) => member.agentName === agentName)) {
+      throw new CrewError(`${agentName} is already a member of ${crew.name}`, "already_member");
+    }
+    const now = this.now();
+    const invitation: CrewInvitation = {
+      crewId,
+      crewName: crew.name,
+      agentName,
+      role,
+      invitedBy,
+      status: "pending",
+      createdAt: now,
+      expiresAt: now + ttlMs,
+    };
+    this.invitations.set(`${crewId}:${agentName.toLowerCase()}`, invitation);
+    this.persistInvitation(invitation);
+    return invitation;
+  }
+
+  invitationsFor(agentName: string): CrewInvitation[] {
+    const now = this.now();
+    const rows: CrewInvitation[] = [];
+    for (const invitation of this.invitations.values()) {
+      if (invitation.status === "pending" && invitation.expiresAt <= now) {
+        invitation.status = "expired";
+        invitation.respondedAt = now;
+        this.persistInvitation(invitation);
+      }
+      if (invitation.agentName.toLowerCase() === agentName.toLowerCase()) rows.push(invitation);
+    }
+    return rows.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  respondToInvitation(
+    crewId: CrewId,
+    agentName: string,
+    response: "accepted" | "declined",
+  ): CrewInvitation {
+    const key = `${crewId}:${agentName.toLowerCase()}`;
+    const invitation = this.invitations.get(key);
+    if (invitation?.status !== "pending") {
+      throw new CrewError("No pending invitation found", "invitation_not_found");
+    }
+    const now = this.now();
+    if (invitation.expiresAt <= now) {
+      invitation.status = "expired";
+      invitation.respondedAt = now;
+      this.persistInvitation(invitation);
+      throw new CrewError("Crew invitation has expired", "invitation_expired");
+    }
+    invitation.status = response;
+    invitation.respondedAt = now;
+    this.persistInvitation(invitation);
+    if (response === "accepted") this.addMember(crewId, agentName, invitation.role);
+    return invitation;
   }
 
   /** Active crews this agent is a member of. Used by brief integration. */
@@ -366,6 +450,10 @@ export class CrewManager {
     }
     if (crew.lifetime === "persisted" && this.db) {
       this.db.deleteCrew(crew.id);
+    }
+    if (this.db) this.db.deleteCrewInvitations(crew.id);
+    for (const key of this.invitations.keys()) {
+      if (key.startsWith(`${crew.id}:`)) this.invitations.delete(key);
     }
     this.emit({
       type: "crew_dissolved",
@@ -808,5 +896,20 @@ export class CrewManager {
         ? { summary: row.result_summary, noteIds: [], at: row.last_activity_at }
         : undefined,
     };
+  }
+
+  private persistInvitation(invitation: CrewInvitation): void {
+    if (!this.db) return;
+    this.db.saveCrewInvitation({
+      crew_id: invitation.crewId,
+      crew_name: invitation.crewName,
+      agent_name: invitation.agentName,
+      role: invitation.role,
+      invited_by: invitation.invitedBy,
+      status: invitation.status,
+      created_at: invitation.createdAt,
+      expires_at: invitation.expiresAt,
+      responded_at: invitation.respondedAt ?? null,
+    });
   }
 }

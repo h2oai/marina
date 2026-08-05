@@ -512,6 +512,13 @@ export function registerBuiltinCommands(engine: Engine): void {
     evolveCommand({
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
+      notifyEvolutionState: (entityNames, state) => {
+        for (const name of entityNames) {
+          const target = engine.findEntityGlobal(name);
+          if (!target) continue;
+          engine.sendSystemControl(target.id, "evolution_session_state", state);
+        }
+      },
     }),
   );
   engine.commands.registerBuiltin(

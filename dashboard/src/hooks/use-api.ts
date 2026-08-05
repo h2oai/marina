@@ -17,6 +17,7 @@ import type {
   EntityDetail,
   EntityWorkResponse,
   EnvVar,
+  EvolutionSessionEntry,
   ExperimentEntry,
   GroupDetail,
   GroupEntry,
@@ -457,6 +458,14 @@ export function useExperiments() {
     queryKey: ["experiments"],
     queryFn: () => fetchApi<ExperimentEntry[]>("/api/experiments"),
     staleTime: 30_000,
+  });
+}
+
+export function useEvolutionSessions() {
+  return useQuery({
+    queryKey: ["evolutionSessions"],
+    queryFn: () => fetchApi<EvolutionSessionEntry[]>("/api/evolution-sessions"),
+    refetchInterval: 10_000,
   });
 }
 

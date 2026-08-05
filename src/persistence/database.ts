@@ -1588,6 +1588,99 @@ CREATE INDEX idx_primitive_usage_source ON primitive_usage(source, created_at DE
 CREATE INDEX idx_primitive_usage_meaningful ON primitive_usage(meaningful, created_at DESC);
 `,
   },
+  // Migration 59: attribute agent behavior and outcomes to prompt versions.
+  {
+    version: 59,
+    sql: `
+ALTER TABLE primitive_usage ADD COLUMN prompt_version TEXT;
+ALTER TABLE productivity_sessions ADD COLUMN prompt_version TEXT;
+CREATE INDEX idx_primitive_usage_prompt ON primitive_usage(prompt_version, created_at DESC);
+CREATE INDEX idx_productivity_prompt ON productivity_sessions(prompt_version, completed_at DESC);
+`,
+  },
+  // Migration 60: explicit, durable consent for crew membership.
+  {
+    version: 60,
+    sql: `
+CREATE TABLE crew_invitations (
+  crew_id TEXT NOT NULL,
+  crew_name TEXT NOT NULL,
+  agent_name TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'specialist',
+  invited_by TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  responded_at INTEGER,
+  PRIMARY KEY (crew_id, agent_name)
+);
+CREATE INDEX idx_crew_invitations_agent ON crew_invitations(agent_name, status, expires_at);
+CREATE INDEX idx_crew_invitations_crew ON crew_invitations(crew_id, status);
+`,
+  },
+  // Migration 61: privacy-safe tool risk and trust-lineage attribution.
+  {
+    version: 61,
+    sql: `
+ALTER TABLE primitive_usage ADD COLUMN risk_class TEXT;
+ALTER TABLE primitive_usage ADD COLUMN trust_sources TEXT;
+CREATE INDEX idx_primitive_usage_risk ON primitive_usage(risk_class, created_at DESC);
+`,
+  },
+  // Migration 62: token and cost deltas for outcome-level prompt evaluation.
+  {
+    version: 62,
+    sql: `
+ALTER TABLE productivity_sessions ADD COLUMN start_input_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE productivity_sessions ADD COLUMN end_input_tokens INTEGER;
+ALTER TABLE productivity_sessions ADD COLUMN start_output_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE productivity_sessions ADD COLUMN end_output_tokens INTEGER;
+ALTER TABLE productivity_sessions ADD COLUMN start_cost_usd REAL NOT NULL DEFAULT 0;
+ALTER TABLE productivity_sessions ADD COLUMN end_cost_usd REAL;
+`,
+  },
+  // Migration 63: optional native evolution protocols. These records extend
+  // experiments with durable hypotheses and attributed decisions; they do not
+  // execute work, alter standing, promote candidates, or write beliefs.
+  {
+    version: 63,
+    sql: `
+CREATE TABLE evolution_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  experiment_id INTEGER NOT NULL UNIQUE REFERENCES experiments(id),
+  objective TEXT NOT NULL,
+  protocol TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'draft',
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  started_at INTEGER,
+  paused_at INTEGER,
+  completed_at INTEGER
+);
+
+CREATE TABLE evolution_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL REFERENCES evolution_sessions(id),
+  sequence INTEGER NOT NULL,
+  parent_run_id INTEGER REFERENCES evolution_runs(id),
+  hypothesis TEXT NOT NULL,
+  candidate_ref TEXT NOT NULL,
+  proposed_by TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'proposed',
+  evaluator_name TEXT,
+  reviewer_name TEXT,
+  evidence TEXT NOT NULL DEFAULT '',
+  decision TEXT,
+  created_at INTEGER NOT NULL,
+  evaluated_at INTEGER,
+  decided_at INTEGER,
+  UNIQUE(session_id, sequence)
+);
+
+CREATE INDEX idx_evolution_sessions_status ON evolution_sessions(status);
+CREATE INDEX idx_evolution_runs_session ON evolution_runs(session_id, sequence);
+`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -1640,11 +1733,29 @@ export interface PrimitiveUsageSummary {
   toolCalls: number;
   marinaToolCalls: number;
   reasoningOnlyCalls: number;
+  consequentialToolCalls: number;
+  untrustedToolCalls: number;
   lastActionAt: number | null;
   outcomeSessions: number;
   approvedMeaningfulAverage: number;
   failedMeaningfulAverage: number;
   topPrimitives: Array<{ primitive: string; count: number }>;
+  promptVersions: string[];
+}
+
+export interface PromptOutcomeSummary {
+  promptVersion: string;
+  agents: number;
+  outcomes: number;
+  successes: number;
+  failures: number;
+  successRate: number;
+  averageDurationMs: number;
+  averageToolCalls: number;
+  averageInputTokens: number;
+  averageOutputTokens: number;
+  averageCostUsd: number;
+  meaningfulActions: number;
 }
 
 export interface DirectMessageRow {
@@ -2029,6 +2140,23 @@ export class MarinaDB {
   }
   getCrewMembers(crewId: string): import("./db-crews").CrewMemberRow[] {
     return crewsDb.getCrewMembers(this.db, crewId);
+  }
+  saveCrewInvitation(row: import("./db-crews").CrewInvitationRow): void {
+    crewsDb.saveCrewInvitation(this.db, row);
+  }
+  setCrewInvitationStatus(
+    crewId: string,
+    agentName: string,
+    status: import("./db-crews").CrewInvitationRow["status"],
+    respondedAt: number,
+  ): void {
+    crewsDb.setCrewInvitationStatus(this.db, crewId, agentName, status, respondedAt);
+  }
+  deleteCrewInvitations(crewId: string): void {
+    crewsDb.deleteCrewInvitations(this.db, crewId);
+  }
+  getOpenCrewInvitations(): import("./db-crews").CrewInvitationRow[] {
+    return crewsDb.getOpenCrewInvitations(this.db);
   }
 
   // ─── Competence Persistence (delegated to db-competence.ts) ─────────────
@@ -2808,11 +2936,26 @@ export class MarinaDB {
     taskId: number,
     startedAt: number,
     toolCalls = 0,
+    promptVersion?: string,
+    inputTokens = 0,
+    outputTokens = 0,
+    costUsd = 0,
   ): void {
     this.db.run(
       `INSERT OR IGNORE INTO productivity_sessions
-       (entity_id,entity_name,task_id,started_at,start_tool_calls) VALUES (?,?,?,?,?)`,
-      [entityId, entityName, taskId, startedAt, toolCalls],
+       (entity_id,entity_name,task_id,started_at,start_tool_calls,prompt_version,
+        start_input_tokens,start_output_tokens,start_cost_usd) VALUES (?,?,?,?,?,?,?,?,?)`,
+      [
+        entityId,
+        entityName,
+        taskId,
+        startedAt,
+        toolCalls,
+        promptVersion ?? null,
+        inputTokens,
+        outputTokens,
+        costUsd,
+      ],
     );
   }
   finishProductivitySession(
@@ -2822,6 +2965,9 @@ export class MarinaDB {
     outcome: "approved" | "rejected" | "expired",
     completedAt: number,
     endToolCalls = 0,
+    endInputTokens = 0,
+    endOutputTokens = 0,
+    endCostUsd = 0,
   ): boolean {
     let session = this.db
       .query(
@@ -2854,8 +3000,19 @@ export class MarinaDB {
     ).c;
     return (
       this.db.run(
-        `UPDATE productivity_sessions SET completed_at=?,outcome=?,quality=?,end_tool_calls=?,handoffs=? WHERE id=?`,
-        [completedAt, outcome, outcome === "approved" ? 1 : 0, endToolCalls, handoffs, session.id],
+        `UPDATE productivity_sessions SET completed_at=?,outcome=?,quality=?,end_tool_calls=?,handoffs=?,
+         end_input_tokens=?,end_output_tokens=?,end_cost_usd=? WHERE id=?`,
+        [
+          completedAt,
+          outcome,
+          outcome === "approved" ? 1 : 0,
+          endToolCalls,
+          handoffs,
+          endInputTokens,
+          endOutputTokens,
+          endCostUsd,
+          session.id,
+        ],
       ).changes > 0
     );
   }
@@ -2974,13 +3131,16 @@ export class MarinaDB {
     worldAction?: boolean;
     communication?: boolean;
     latencyMs?: number;
+    promptVersion?: string;
+    riskClass?: "read" | "communicate" | "mutate" | "consequential";
+    trustSources?: string[];
     createdAt?: number;
   }): number {
     const result = this.db.run(
       `INSERT INTO primitive_usage
        (actor_id,actor_name,actor_kind,source,primitive,action,safe_label,tool_name,success,
-        meaningful,world_action,communication,latency_ms,created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        meaningful,world_action,communication,latency_ms,created_at,prompt_version,risk_class,trust_sources)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         input.actorId ?? null,
         input.actorName,
@@ -2996,6 +3156,9 @@ export class MarinaDB {
         input.communication ? 1 : 0,
         input.latencyMs ?? null,
         input.createdAt ?? Date.now(),
+        input.promptVersion ?? null,
+        input.riskClass ?? null,
+        input.trustSources?.length ? JSON.stringify([...new Set(input.trustSources)].sort()) : null,
       ],
     );
     return Number(result.lastInsertRowid);
@@ -3039,6 +3202,8 @@ export class MarinaDB {
           SUM(CASE WHEN source='agent_tool' THEN 1 ELSE 0 END) tool_calls,
           SUM(CASE WHEN source='agent_tool' AND tool_name LIKE 'marina_%' THEN 1 ELSE 0 END) marina_tools,
           SUM(CASE WHEN source='agent_tool' AND tool_name='think' THEN 1 ELSE 0 END) reasoning_only,
+          SUM(CASE WHEN source='agent_tool' AND risk_class='consequential' THEN 1 ELSE 0 END) consequential_tools,
+          SUM(CASE WHEN source='agent_tool' AND trust_sources IS NOT NULL THEN 1 ELSE 0 END) untrusted_tools,
           MAX(CASE WHEN source='command' AND meaningful=1 THEN created_at END) last_action
          FROM primitive_usage WHERE created_at>=? ${where}`,
       )
@@ -3053,6 +3218,8 @@ export class MarinaDB {
       tool_calls: number | null;
       marina_tools: number | null;
       reasoning_only: number | null;
+      consequential_tools: number | null;
+      untrusted_tools: number | null;
       last_action: number | null;
     };
     const commands = row.commands ?? 0;
@@ -3064,6 +3231,12 @@ export class MarinaDB {
          GROUP BY primitive ORDER BY count DESC,primitive LIMIT 8`,
       )
       .all(...args) as Array<{ primitive: string; count: number }>;
+    const promptVersions = this.db
+      .query(
+        `SELECT DISTINCT prompt_version FROM primitive_usage
+         WHERE created_at>=? AND prompt_version IS NOT NULL ${where} ORDER BY prompt_version`,
+      )
+      .all(...args) as Array<{ prompt_version: string }>;
     const sessions = this.db
       .query(
         `SELECT ps.outcome,COUNT(pu.id) meaningful
@@ -3091,6 +3264,8 @@ export class MarinaDB {
       toolCalls: row.tool_calls ?? 0,
       marinaToolCalls: row.marina_tools ?? 0,
       reasoningOnlyCalls: row.reasoning_only ?? 0,
+      consequentialToolCalls: row.consequential_tools ?? 0,
+      untrustedToolCalls: row.untrusted_tools ?? 0,
       lastActionAt: row.last_action,
       outcomeSessions: sessions.length,
       approvedMeaningfulAverage: average(
@@ -3104,7 +3279,58 @@ export class MarinaDB {
           .map((session) => session.meaningful),
       ),
       topPrimitives,
+      promptVersions: promptVersions.map((entry) => entry.prompt_version),
     };
+  }
+
+  getPromptOutcomeSummaries(days = 30): PromptOutcomeSummary[] {
+    const since = Date.now() - Math.max(1, days) * 86_400_000;
+    const outcomes = this.db
+      .query(
+        `SELECT prompt_version,COUNT(DISTINCT entity_name) agents,COUNT(*) outcomes,
+          SUM(CASE WHEN outcome='approved' THEN 1 ELSE 0 END) successes,
+          AVG(completed_at-started_at) average_duration,
+          AVG(MAX(0,COALESCE(end_tool_calls,start_tool_calls)-start_tool_calls)) average_tools,
+          AVG(MAX(0,COALESCE(end_input_tokens,start_input_tokens)-start_input_tokens)) average_input,
+          AVG(MAX(0,COALESCE(end_output_tokens,start_output_tokens)-start_output_tokens)) average_output,
+          AVG(MAX(0,COALESCE(end_cost_usd,start_cost_usd)-start_cost_usd)) average_cost
+         FROM productivity_sessions
+         WHERE completed_at>=? AND prompt_version IS NOT NULL
+         GROUP BY prompt_version ORDER BY outcomes DESC`,
+      )
+      .all(since) as Array<{
+      prompt_version: string;
+      agents: number;
+      outcomes: number;
+      successes: number;
+      average_duration: number;
+      average_tools: number;
+      average_input: number;
+      average_output: number;
+      average_cost: number;
+    }>;
+    const actions = this.db
+      .query(
+        `SELECT prompt_version,COUNT(*) meaningful FROM primitive_usage
+         WHERE created_at>=? AND source='command' AND meaningful=1 AND prompt_version IS NOT NULL
+         GROUP BY prompt_version`,
+      )
+      .all(since) as Array<{ prompt_version: string; meaningful: number }>;
+    const actionMap = new Map(actions.map((row) => [row.prompt_version, row.meaningful]));
+    return outcomes.map((row) => ({
+      promptVersion: row.prompt_version,
+      agents: row.agents,
+      outcomes: row.outcomes,
+      successes: row.successes,
+      failures: row.outcomes - row.successes,
+      successRate: row.outcomes ? row.successes / row.outcomes : 0,
+      averageDurationMs: row.average_duration ?? 0,
+      averageToolCalls: row.average_tools ?? 0,
+      averageInputTokens: row.average_input ?? 0,
+      averageOutputTokens: row.average_output ?? 0,
+      averageCostUsd: row.average_cost ?? 0,
+      meaningfulActions: actionMap.get(row.prompt_version) ?? 0,
+    }));
   }
 
   getPrimitiveUsageLeaderboard(limit = 20): PrimitiveUsageSummary[] {
@@ -3834,6 +4060,161 @@ export class MarinaDB {
     return this.db
       .query("SELECT * FROM experiment_results WHERE experiment_id = ? ORDER BY id")
       .all(experimentId) as ExperimentResultRow[];
+  }
+
+  // ─── Native Evolution Protocols ───────────────────────────────────────
+
+  createEvolutionSession(opts: {
+    experimentId: number;
+    objective: string;
+    protocol?: object;
+    createdBy: string;
+  }): number {
+    const result = this.db.run(
+      `INSERT INTO evolution_sessions
+       (experiment_id, objective, protocol, status, created_by, created_at)
+       VALUES (?, ?, ?, 'draft', ?, ?)`,
+      [
+        opts.experimentId,
+        opts.objective,
+        JSON.stringify(opts.protocol ?? {}),
+        opts.createdBy,
+        Date.now(),
+      ],
+    );
+    return Number(result.lastInsertRowid);
+  }
+
+  getEvolutionSession(id: number): EvolutionSessionRow | undefined {
+    return (
+      (this.db
+        .query("SELECT * FROM evolution_sessions WHERE id = ?")
+        .get(id) as EvolutionSessionRow | null) ?? undefined
+    );
+  }
+
+  getEvolutionSessionByExperiment(experimentId: number): EvolutionSessionRow | undefined {
+    return (
+      (this.db
+        .query("SELECT * FROM evolution_sessions WHERE experiment_id = ?")
+        .get(experimentId) as EvolutionSessionRow | null) ?? undefined
+    );
+  }
+
+  listEvolutionSessions(status?: EvolutionSessionStatus): EvolutionSessionRow[] {
+    if (status) {
+      return this.db
+        .query("SELECT * FROM evolution_sessions WHERE status = ? ORDER BY id DESC")
+        .all(status) as EvolutionSessionRow[];
+    }
+    return this.db
+      .query("SELECT * FROM evolution_sessions ORDER BY id DESC")
+      .all() as EvolutionSessionRow[];
+  }
+
+  listActiveEvolutionSessionsForParticipant(entityName: string): EvolutionSessionRow[] {
+    return this.db
+      .query(
+        `SELECT es.* FROM evolution_sessions es
+         JOIN experiment_participants ep ON ep.experiment_id = es.experiment_id
+         WHERE es.status = 'active' AND lower(ep.entity_name) = lower(?)
+         ORDER BY es.id`,
+      )
+      .all(entityName) as EvolutionSessionRow[];
+  }
+
+  updateEvolutionSessionStatus(id: number, status: EvolutionSessionStatus): void {
+    const timestampColumn =
+      status === "active"
+        ? "started_at"
+        : status === "paused"
+          ? "paused_at"
+          : status === "completed"
+            ? "completed_at"
+            : undefined;
+    if (timestampColumn) {
+      if (status === "active") {
+        this.db.run(
+          "UPDATE evolution_sessions SET status = ?, started_at = COALESCE(started_at, ?) WHERE id = ?",
+          [status, Date.now(), id],
+        );
+        return;
+      }
+      this.db.run(`UPDATE evolution_sessions SET status = ?, ${timestampColumn} = ? WHERE id = ?`, [
+        status,
+        Date.now(),
+        id,
+      ]);
+      return;
+    }
+    this.db.run("UPDATE evolution_sessions SET status = ? WHERE id = ?", [status, id]);
+  }
+
+  createEvolutionRun(opts: {
+    sessionId: number;
+    hypothesis: string;
+    candidateRef: string;
+    proposedBy: string;
+    parentRunId?: number;
+  }): number {
+    const next = this.db
+      .query(
+        "SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM evolution_runs WHERE session_id = ?",
+      )
+      .get(opts.sessionId) as { sequence: number };
+    const result = this.db.run(
+      `INSERT INTO evolution_runs
+       (session_id, sequence, parent_run_id, hypothesis, candidate_ref, proposed_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        opts.sessionId,
+        next.sequence,
+        opts.parentRunId ?? null,
+        opts.hypothesis,
+        opts.candidateRef,
+        opts.proposedBy,
+        Date.now(),
+      ],
+    );
+    return Number(result.lastInsertRowid);
+  }
+
+  getEvolutionRun(id: number): EvolutionRunRow | undefined {
+    return (
+      (this.db
+        .query("SELECT * FROM evolution_runs WHERE id = ?")
+        .get(id) as EvolutionRunRow | null) ?? undefined
+    );
+  }
+
+  listEvolutionRuns(sessionId: number): EvolutionRunRow[] {
+    return this.db
+      .query("SELECT * FROM evolution_runs WHERE session_id = ? ORDER BY sequence")
+      .all(sessionId) as EvolutionRunRow[];
+  }
+
+  evaluateEvolutionRun(id: number, evaluatorName: string, evidence: string): void {
+    this.db.run(
+      `UPDATE evolution_runs
+       SET status = 'evaluated', evaluator_name = ?, evidence = ?, evaluated_at = ?
+       WHERE id = ?`,
+      [evaluatorName, evidence, Date.now(), id],
+    );
+  }
+
+  decideEvolutionRun(
+    id: number,
+    reviewerName: string,
+    decision: "accept" | "reject" | "inconclusive",
+  ): void {
+    const status =
+      decision === "accept" ? "accepted" : decision === "reject" ? "rejected" : "evaluated";
+    this.db.run(
+      `UPDATE evolution_runs
+       SET status = ?, reviewer_name = ?, decision = ?, decided_at = ?
+       WHERE id = ?`,
+      [status, reviewerName, decision, Date.now(), id],
+    );
   }
 
   // ─── Event Queries (delegated to db-entities.ts) ────────────────────────
@@ -5472,7 +5853,7 @@ export interface AdapterUserMappingRow {
   created_at: number;
 }
 
-interface ExperimentRow {
+export interface ExperimentRow {
   id: number;
   name: string;
   description: string;
@@ -5484,6 +5865,39 @@ interface ExperimentRow {
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
+}
+
+export type EvolutionSessionStatus = "draft" | "active" | "paused" | "completed";
+
+export interface EvolutionSessionRow {
+  id: number;
+  experiment_id: number;
+  objective: string;
+  protocol: string;
+  status: EvolutionSessionStatus;
+  created_by: string;
+  created_at: number;
+  started_at: number | null;
+  paused_at: number | null;
+  completed_at: number | null;
+}
+
+export interface EvolutionRunRow {
+  id: number;
+  session_id: number;
+  sequence: number;
+  parent_run_id: number | null;
+  hypothesis: string;
+  candidate_ref: string;
+  proposed_by: string;
+  status: "proposed" | "evaluated" | "accepted" | "rejected";
+  evaluator_name: string | null;
+  reviewer_name: string | null;
+  evidence: string;
+  decision: "accept" | "reject" | "inconclusive" | null;
+  created_at: number;
+  evaluated_at: number | null;
+  decided_at: number | null;
 }
 
 interface ExperimentParticipantRow {

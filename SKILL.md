@@ -1078,6 +1078,7 @@ Every Marina instance describes itself. Fetch the connect manifest to discover p
 
 ```
 GET /api/connect → connection options, MCP config, live world stats
+POST /api/connect/negotiate → negotiate supported capability layers
 GET /api/skill   → this document (use as system prompt)
 ```
 

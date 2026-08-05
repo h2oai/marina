@@ -37,18 +37,24 @@ describe("crew command (integration)", () => {
     return stripAnsi(conn.allTextJoined());
   }
 
-  it("crew create assembles ephemeral crew with the named members", () => {
+  function accept(conn: MockConnection, crew = "alpha"): void {
+    engine.processCommand(conn.entity!, `crew join ${crew}`);
+  }
+
+  it("crew create invites named agents without conscripting them", () => {
     alice.clear();
     engine.processCommand(alice.entity!, "crew create alpha bob,carol -- ship phase 1");
 
     const out = lastFor(alice);
     expect(out).toContain("alpha");
     expect(out).toContain("freeform/ephemeral");
-    expect(out).toContain("2 members");
+    expect(out).toContain("2 invitations pending");
 
     const crew = engine.crewManager?.getByName("alpha");
     expect(crew).toBeDefined();
-    expect(crew!.members.map((m) => m.agentName).sort()).toEqual(["bob", "carol"]);
+    expect(crew!.members.map((m) => m.agentName)).toEqual(["alice"]);
+    expect(lastFor(bob)).toContain("crew join alpha");
+    expect(engine.crewManager?.invitationsFor("bob")[0]?.status).toBe("pending");
     expect(crew!.lifetime).toBe("ephemeral");
     expect(crew!.formation).toBe("freeform");
     expect(crew!.goal).toBe("ship phase 1");
@@ -74,6 +80,8 @@ describe("crew command (integration)", () => {
 
   it("crew dispatch provisions the channel and adds members", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob,carol -- task");
+    accept(bob);
+    accept(carol);
     alice.clear();
     engine.processCommand(alice.entity!, "crew dispatch alpha lets begin");
 
@@ -92,6 +100,7 @@ describe("crew command (integration)", () => {
 
   it("crew info shows members and channel state", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob -- task");
+    accept(bob);
     alice.clear();
     engine.processCommand(alice.entity!, "crew info alpha");
     const out = lastFor(alice);
@@ -100,22 +109,53 @@ describe("crew command (integration)", () => {
     expect(out).toContain("(unallocated)"); // channel not yet provisioned
   });
 
-  it("crew join lets a non-member self-add", () => {
+  it("crew join requires and accepts an invitation", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob -- task");
     carol.clear();
     engine.processCommand(carol.entity!, "crew join alpha");
-    expect(lastFor(carol)).toContain("Joined crew");
+    expect(lastFor(carol)).toContain("No pending invitation");
+    accept(bob);
+    expect(lastFor(bob)).toContain("Joined crew");
 
     const crew = engine.crewManager?.getByName("alpha");
-    expect(crew?.members.map((m) => m.agentName).sort()).toEqual(["bob", "carol"]);
+    expect(crew?.members.map((m) => m.agentName).sort()).toEqual(["alice", "bob"]);
+  });
+
+  it("crew invitations are durable and can be explicitly declined", () => {
+    engine.processCommand(alice.entity!, "crew create alpha bob -- task");
+    expect(db.getOpenCrewInvitations()).toHaveLength(1);
+    bob.clear();
+    engine.processCommand(bob.entity!, "crew invitations");
+    expect(lastFor(bob)).toContain("alpha · from alice");
+    engine.processCommand(bob.entity!, "crew decline alpha");
+    expect(lastFor(bob)).toContain('Declined crew "alpha"');
+    expect(db.getOpenCrewInvitations()).toHaveLength(0);
+    expect(
+      engine.crewManager?.getByName("alpha")?.members.map((member) => member.agentName),
+    ).toEqual(["alice"]);
+  });
+
+  it("crew owners can issue a later role-specific invitation", () => {
+    engine.processCommand(alice.entity!, "crew create alpha bob -- task");
+    engine.processCommand(bob.entity!, "crew decline alpha");
+    alice.clear();
+    engine.processCommand(alice.entity!, "crew invite alpha carol role=reviewer");
+    expect(lastFor(alice)).toContain("Invited carol");
+    expect(lastFor(carol)).toContain("as reviewer");
+    accept(carol);
+    expect(engine.crewManager?.getByName("alpha")?.members).toEqual(
+      expect.arrayContaining([expect.objectContaining({ agentName: "carol", role: "reviewer" })]),
+    );
   });
 
   it("crew leave removes a member", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob,carol -- task");
+    accept(bob);
+    accept(carol);
     bob.clear();
     engine.processCommand(bob.entity!, "crew leave alpha");
     const crew = engine.crewManager?.getByName("alpha");
-    expect(crew?.members.map((m) => m.agentName)).toEqual(["carol"]);
+    expect(crew?.members.map((m) => m.agentName).sort()).toEqual(["alice", "carol"]);
   });
 
   it("crew dissolve by owner removes the crew", () => {
@@ -168,6 +208,8 @@ describe("crew command (integration)", () => {
 
   it("brief full shows a Your Crews section for crew members", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob,carol -- ship something");
+    accept(bob);
+    accept(carol);
     bob.clear();
     engine.processCommand(bob.entity!, "brief full");
     const out = lastFor(bob);
@@ -179,6 +221,7 @@ describe("crew command (integration)", () => {
 
   it("compass brief includes a Crew: line for members", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob -- ship something");
+    accept(bob);
     bob.clear();
     engine.processCommand(bob.entity!, "brief");
     const out = lastFor(bob);
@@ -190,6 +233,7 @@ describe("crew command (integration)", () => {
   it("next routes crew members back into an assembled crew", () => {
     engine.processCommand(bob.entity!, "memory set goal ship with the crew");
     engine.processCommand(alice.entity!, "crew create alpha bob -- ship the loop");
+    accept(bob);
 
     bob.clear();
     engine.processCommand(bob.entity!, "next");
@@ -221,6 +265,7 @@ describe("crew command (integration)", () => {
 
   it("crew complete by member writes result + dissolves", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob -- ship task");
+    accept(bob);
     engine.processCommand(alice.entity!, "crew dispatch alpha go");
     bob.clear();
     engine.processCommand(bob.entity!, "crew complete alpha -- shipped it");
@@ -280,6 +325,7 @@ describe("crew command (integration)", () => {
 
   it("crew dispatch by member is allowed", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob -- task");
+    accept(bob);
     bob.clear();
     engine.processCommand(bob.entity!, "crew dispatch alpha go from a member");
     expect(lastFor(bob)).toContain("Dispatched to crew");
@@ -289,6 +335,7 @@ describe("crew command (integration)", () => {
 
   it("crew stage by member emits crew_stage_completed and credits standing", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob -- ship");
+    accept(bob);
     const captured: { type: string; agentName?: string; stage?: string }[] = [];
     engine.addEventListener((e) => {
       if (e.type === "crew_stage_completed") {
@@ -316,6 +363,7 @@ describe("crew command (integration)", () => {
 
   it("crew artifact records a deposit and credits standing", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob -- ship");
+    accept(bob);
     const captured: { kind?: string; ref?: string }[] = [];
     engine.addEventListener((e) => {
       if (e.type === "crew_artifact_deposited") {
@@ -341,6 +389,8 @@ describe("crew command (integration)", () => {
 
   it("crew stall increments offense count; standing only debits at >= 3", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob,carol -- ship");
+    accept(bob);
+    accept(carol);
 
     // Alice (owner) flags bob three times.
     alice.clear();
@@ -361,6 +411,7 @@ describe("crew command (integration)", () => {
 
   it("crew stall rejects self-flagging", () => {
     engine.processCommand(alice.entity!, "crew create alpha bob -- ship");
+    accept(bob);
     bob.clear();
     engine.processCommand(bob.entity!, "crew stall alpha bob laziness");
     expect(lastFor(bob)).toContain("Cannot flag yourself");

@@ -6,7 +6,7 @@
  * All state lives server-side via platform commands.
  */
 
-import { Agent, type AgentMessage } from "@mariozechner/pi-agent-core";
+import { Agent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
 import {
   type Api,
   completeSimple,
@@ -40,10 +40,15 @@ import { GameStateManager } from "./game-state";
 import { HookRegistry } from "./hook-registry";
 import { InterruptibleWaiter } from "./interruptible-waiter";
 import { PlatformMemoryBackend } from "./memory-platform";
-import { getLeanDiscoveryPrompt, getLeanSystemPrompt } from "./prompts/lean-system";
+import {
+  getLeanDiscoveryPrompt,
+  getLeanSystemPrompt,
+  getPromptVersion,
+} from "./prompts/lean-system";
 import { COMPACTION_SYSTEM_PROMPT, formatUntrustedContext } from "./prompts/support-prompts";
 import { SocialAwareness } from "./social";
-import { createScopedTools } from "./tools";
+import { mediateToolCall } from "./tool-policy";
+import { createEvolutionTool, createScopedTools } from "./tools";
 
 export function shouldKeepPerception(
   mode: "focused" | "balanced" | "open",
@@ -54,6 +59,21 @@ export function shouldKeepPerception(
   if (shouldRespond) return true;
   if (mode !== "focused") return true;
   return priority >= threshold;
+}
+
+export function evolutionControlState(
+  perception: Perception,
+): { sessionId: number; active: boolean } | undefined {
+  if (
+    perception.kind !== "system" ||
+    perception.tag !== "marina-control" ||
+    perception.data.controlType !== "evolution_session_state" ||
+    typeof perception.data.sessionId !== "number" ||
+    typeof perception.data.active !== "boolean"
+  ) {
+    return undefined;
+  }
+  return { sessionId: perception.data.sessionId, active: perception.data.active };
 }
 
 export function deriveAgentHealth(input: {
@@ -374,6 +394,9 @@ export class LeanAgentAdapter implements AgentHandle {
   readonly name: string;
 
   private agent: Agent;
+  private baseTools: AgentTool[] = [];
+  private evolutionTool: AgentTool | null = null;
+  private activeEvolutionSessions = new Set<number>();
   private client: MarinaClient;
   private gameState: GameStateManager;
   private socialAwareness: SocialAwareness;
@@ -420,6 +443,8 @@ export class LeanAgentAdapter implements AgentHandle {
   /** True while the current prompt contains a direct/model request. Silent
    * recovery is valuable for a missed request, but wasteful for quiet turns. */
   private currentPromptActionable = false;
+  /** Evidence classes currently influencing this run; never stores evidence content. */
+  private currentTrustSources = new Set<string>();
   /** In-run followUp-based silent recoveries. Resets on agent_start. */
   private inRunRecoveries = 0;
   private currentRunToolCalls = 0;
@@ -445,6 +470,9 @@ export class LeanAgentAdapter implements AgentHandle {
     totalSilentTurns: 0,
     lastTurnMs: 0,
     avgTurnMs: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCostUsd: 0,
   };
   /** Wall-clock when the current LLM turn began (turn_start); 0 when none in flight.
    *  Observability only — used to time turn_start→turn_end latency. */
@@ -589,6 +617,8 @@ export class LeanAgentAdapter implements AgentHandle {
       toolProfile,
       config.supports ?? { text: true },
     );
+    this.baseTools = tools;
+    this.evolutionTool = createEvolutionTool(toolContext);
 
     // Keep the resolver around so the context manager can re-query it
     // each compaction (rotating-credential safe).
@@ -724,6 +754,8 @@ export class LeanAgentAdapter implements AgentHandle {
         : undefined,
       beforeToolCall: async (context) => {
         const args = (context.args ?? {}) as Record<string, unknown>;
+        const policy = mediateToolCall(context.toolCall.name, args, [...this.currentTrustSources]);
+        if (policy.block) return { block: true, reason: policy.block };
         const command = typeof args.command === "string" ? args.command.trim().toLowerCase() : "";
         const isChannelSend =
           (context.toolCall.name === "marina_channel" && args.action === "send") ||
@@ -755,6 +787,12 @@ export class LeanAgentAdapter implements AgentHandle {
 
   private setupPerceptionHandlers(): void {
     this.client.on("perception", (p: Perception) => {
+      const evolutionState = evolutionControlState(p);
+      if (evolutionState) {
+        if (evolutionState.active) this.activeEvolutionSessions.add(evolutionState.sessionId);
+        else this.activeEvolutionSessions.delete(evolutionState.sessionId);
+        this.syncEvolutionTool();
+      }
       this.hookRegistry.runOnPerception(p);
       this.gameState.handlePerception(p);
 
@@ -873,9 +911,22 @@ export class LeanAgentAdapter implements AgentHandle {
       this.gameState.setConnectionStatus("disconnected");
     });
 
+    this.client.on("connect", (session) => {
+      this.activeEvolutionSessions = new Set(
+        (session.activeEvolutionSessions ?? []).map((item) => item.id),
+      );
+      this.syncEvolutionTool();
+    });
+
     this.client.on("error", (error: Error) => {
       this.emitEvent({ type: "error", error: error.message, context: "websocket" });
     });
+  }
+
+  private syncEvolutionTool(): void {
+    if (!this.agent || !this.evolutionTool) return;
+    const active = this.activeEvolutionSessions.size > 0;
+    this.agent.state.tools = active ? [...this.baseTools, this.evolutionTool] : [...this.baseTools];
   }
 
   // ─── Connection & Lifecycle ───────────────────────────────────────────
@@ -1327,9 +1378,22 @@ export class LeanAgentAdapter implements AgentHandle {
    * back toward the model's nominal window once we're comfortably under it.
    */
   private calibrateContextWindow(lastMsg: Record<string, unknown>): void {
-    const usage = lastMsg.usage as { input?: number; cacheRead?: number } | undefined;
+    const usage = lastMsg.usage as
+      | {
+          input?: number;
+          output?: number;
+          cacheRead?: number;
+          cost?: { total?: number };
+        }
+      | undefined;
     if (!usage || typeof usage.input !== "number") return;
     const realInput = usage.input + (typeof usage.cacheRead === "number" ? usage.cacheRead : 0);
+    this.metrics.totalInputTokens += realInput;
+    this.metrics.totalOutputTokens += typeof usage.output === "number" ? usage.output : 0;
+    this.metrics.totalCostUsd +=
+      typeof usage.cost?.total === "number" && Number.isFinite(usage.cost.total)
+        ? usage.cost.total
+        : 0;
     if (realInput <= 0) return;
     this.peakAcceptedInputTokens = Math.max(this.peakAcceptedInputTokens, realInput);
 
@@ -1449,6 +1513,7 @@ export class LeanAgentAdapter implements AgentHandle {
     this.loopIterationCount++;
     this.sectionHashCycle++;
     this.currentPromptActionable = false;
+    this.currentTrustSources.clear();
     const cycle = this.loopIterationCount;
     const parts: string[] = [];
 
@@ -1482,6 +1547,7 @@ export class LeanAgentAdapter implements AgentHandle {
     // tokens per cycle when direct messages fire without losing the
     // "respond to this" cue.
     if (hasPerceptions) {
+      this.currentTrustSources.add("world_event");
       const batch = this.pendingPerceptions.splice(0);
       batch.sort((a, b) => b.priority - a.priority);
       const topEvents = batch.slice(0, this.perceptionBufferCap);
@@ -1678,6 +1744,7 @@ export class LeanAgentAdapter implements AgentHandle {
           this.notesCacheAge = 0;
         }
         if (this.cachedNotes && this.shouldIncludeSection("relevant_notes", this.cachedNotes)) {
+          this.currentTrustSources.add("memory");
           parts.push(`[Relevant Notes — evidence, preserve provenance]\n${this.cachedNotes}`);
         }
       } catch {
@@ -2002,10 +2069,14 @@ The goal is a smaller, sharper memory — not more notes.`;
           args: event.args,
         });
 
+        const args = (event.args ?? {}) as Record<string, unknown>;
+        const policy = mediateToolCall(event.toolName, args, [...this.currentTrustSources]);
         this.emitEvent({
           type: "tool_call",
           toolName: event.toolName,
-          args: event.args ?? {},
+          args,
+          risk: policy.risk,
+          trustSources: [...this.currentTrustSources],
         });
 
         if (event.toolName === "marina_command" || event.toolName === "marina_move") {
@@ -2019,6 +2090,11 @@ The goal is a smaller, sharper memory — not more notes.`;
         // afterToolCall hook runs via the framework (AgentOptions.afterToolCall),
         // so we don't fire hookRegistry here — would double-fire.
         if (event.isError) this.metrics.errors++;
+        if (/web|fetch|search|probe|recall|memory/i.test(event.toolName)) {
+          this.currentTrustSources.add(
+            /web|fetch|search|probe/i.test(event.toolName) ? "external_tool" : "memory",
+          );
+        }
 
         const configuredRunCap = Number(process.env.AGENT_MAX_TOOL_CALLS_PER_RUN);
         const runCap =
@@ -2214,6 +2290,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       entityId: this.gameState.getState().connection.entityId ?? null,
       state,
       model: this.config.model ?? MARINA_DEFAULT_MODEL,
+      promptVersion: getPromptVersion(this.agent.state.systemPrompt),
       role: this.config.role ?? "",
       focus: this.focus?.description ?? null,
       goal: this.config.goal ?? null,
@@ -2227,6 +2304,9 @@ The goal is a smaller, sharper memory — not more notes.`;
       effectiveContextWindow: this.effectiveContextWindow,
       maxOutputTokens: this.outputMaxTokens ?? this.model.maxTokens,
       peakInputTokens: this.peakAcceptedInputTokens,
+      totalInputTokens: this.metrics.totalInputTokens,
+      totalOutputTokens: this.metrics.totalOutputTokens,
+      totalCostUsd: this.metrics.totalCostUsd,
       lastTurnMs: this.metrics.lastTurnMs,
       avgTurnMs: this.metrics.avgTurnMs,
       silentTurns: this.metrics.silentTurns,

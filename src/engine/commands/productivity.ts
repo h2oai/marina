@@ -24,9 +24,14 @@ function renderParticipation(summary: PrimitiveUsageSummary): string {
   const top = summary.topPrimitives.map((row) => `${row.primitive}:${row.count}`).join(" · ");
   return [
     `${bold(summary.entityName ?? "World")} · ${summary.meaningfulActions}/${summary.commands} meaningful (${Math.round(summary.meaningfulRate * 100)}%) · ${summary.primitiveDiversity} primitive families`,
-    `  ${summary.worldActions} world actions · ${summary.communications} communications · ${summary.marinaToolCalls}/${summary.toolCalls} Marina tool calls · ${summary.reasoningOnlyCalls} think-only`,
+    `  ${summary.worldActions} world actions · ${summary.communications} communications · ${summary.marinaToolCalls}/${summary.toolCalls} Marina tool calls · ${summary.reasoningOnlyCalls} think-only · ${summary.consequentialToolCalls} consequential · ${summary.untrustedToolCalls} trust-attributed`,
     top ? `  ${dim(`top: ${top}`)}` : `  ${dim("No meaningful primitive use recorded yet.")}`,
-  ].join("\n");
+    summary.promptVersions.length
+      ? `  ${dim(`prompt: ${summary.promptVersions.join(", ")}`)}`
+      : null,
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
 }
 
 export function productivityCommand(db: MarinaDB): CommandDef {
@@ -34,7 +39,7 @@ export function productivityCommand(db: MarinaDB): CommandDef {
     name: "productivity",
     aliases: ["impact"],
     category: "Coordination",
-    help: "Outcome and primitive evidence. Usage: productivity [agent <name>|leaderboard|trend|primitives [name]]",
+    help: "Outcome and primitive evidence. Usage: productivity [agent <name>|leaderboard|trend|primitives [name]|prompts]",
     handler: (ctx, input) => {
       const action = input.tokens[0]?.toLowerCase();
       const lines = [header("Productivity Outcomes"), separator()];
@@ -49,6 +54,14 @@ export function productivityCommand(db: MarinaDB): CommandDef {
           for (const point of points)
             lines.push(
               `${point.date} · ${point.successes}/${point.outcomes} successful · avg ${duration(point.averageDurationMs)} · ${point.averageToolCalls.toFixed(1)} tools · ${point.averageHandoffs.toFixed(1)} handoffs`,
+            );
+      } else if (action === "prompts") {
+        const rows = db.getPromptOutcomeSummaries();
+        if (!rows.length) lines.push(dim("No versioned prompt outcomes yet."));
+        else
+          for (const row of rows)
+            lines.push(
+              `${row.promptVersion} · ${row.successes}/${row.outcomes} successful (${Math.round(row.successRate * 100)}%) · ${row.agents} agents · ${row.meaningfulActions} meaningful actions · ${row.averageToolCalls.toFixed(1)} tools · ${Math.round(row.averageInputTokens + row.averageOutputTokens)} tokens · $${row.averageCostUsd.toFixed(4)}/outcome`,
             );
       } else if (action === "primitives" || action === "participation") {
         const name = input.tokens.slice(1).join(" ") || undefined;

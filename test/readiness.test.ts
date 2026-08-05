@@ -118,6 +118,18 @@ describe("computeReadiness", () => {
     record("Ada");
     record("Ada", true);
     record("Grace");
+    for (const actorName of ["Ada", "Grace"]) {
+      db.recordPrimitiveUsage({
+        actorName,
+        actorKind: "agent",
+        source: "agent_tool",
+        primitive: "marina",
+        action: "marina_command",
+        safeLabel: "marina_command",
+        toolName: "marina_command",
+        success: true,
+      });
+    }
 
     const report = computeReadiness(engine);
     expect(report.checks.find((check) => check.id === "primitive-evidence")?.status).toBe("ok");
@@ -125,6 +137,8 @@ describe("computeReadiness", () => {
       recentPrimitiveActions: 3,
       activeAgents: 2,
       recentCommunications: 1,
+      marinaToolCalls: 2,
+      autonomyQualified: true,
     });
   });
 });

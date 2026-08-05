@@ -115,6 +115,17 @@ describe("Export/Import", () => {
     });
     srcDb.addParticipant(1, "Alice");
     srcDb.recordResult(1, "Alice", "accuracy", 0.95);
+    const evolutionId = srcDb.createEvolutionSession({
+      experimentId: 1,
+      objective: "Improve accuracy without automatic activation",
+      createdBy: "Alice",
+    });
+    srcDb.createEvolutionRun({
+      sessionId: evolutionId,
+      hypothesis: "A smaller prompt improves accuracy",
+      candidateRef: "prompt:candidate-1",
+      proposedBy: "Alice",
+    });
 
     // Ban
     srcDb.addBan("badguy", "Alice", "spamming");
@@ -165,7 +176,7 @@ describe("Export/Import", () => {
 
       expect(snapshot.format).toBe("marina-snapshot");
       expect(snapshot.version).toBe(1);
-      expect(snapshot.schema_version).toBe(58);
+      expect(snapshot.schema_version).toBe(63);
       expect(snapshot.exported_at).toBeTruthy();
 
       // Verify key tables are present
@@ -189,6 +200,8 @@ describe("Export/Import", () => {
       expect(snapshot.tables.experiments).toHaveLength(1);
       expect(snapshot.tables.experiment_participants).toHaveLength(1);
       expect(snapshot.tables.experiment_results).toHaveLength(1);
+      expect(snapshot.tables.evolution_sessions).toHaveLength(1);
+      expect(snapshot.tables.evolution_runs).toHaveLength(1);
       expect(snapshot.tables.bans).toHaveLength(1);
       expect(snapshot.tables.room_sources).toHaveLength(1);
       expect(snapshot.tables.projects).toHaveLength(1);

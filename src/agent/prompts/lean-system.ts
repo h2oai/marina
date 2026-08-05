@@ -1,4 +1,8 @@
 /** Stable identity and operating contract for Marina's autonomous agents. */
+export function getPromptVersion(prompt: string): string {
+  return new Bun.CryptoHasher("sha256").update(prompt).digest("hex").slice(0, 12);
+}
+
 export function getLeanSystemPrompt(rolePrompt: string | null): string {
   const roleSection = rolePrompt ?? "You are a versatile, general-purpose agent.";
   const toolsSection = process.env.MARINA_SYSTEM_TOOLS_PROSE === "off" ? "" : `\n${TOOLS_PROSE}\n`;

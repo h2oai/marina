@@ -305,7 +305,7 @@ describe("Trait/role edit history (audit trail)", () => {
       cmd.handler(ctx, inp([]));
       const out = stripAnsi(get());
       expect(out).toContain("System Prompt");
-      expect(out).toContain("autonomous agent");
+      expect(out).toContain("autonomous participant");
       expect(out).toContain("base general-purpose prompt");
     });
 

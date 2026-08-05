@@ -287,6 +287,7 @@ function handleStatus(
     `${bold("State:")} ${s.state}`,
     `${bold("Health:")} ${s.healthState ?? s.state}${s.diagnosis ? ` — ${s.diagnosis}` : ""}`,
     `${bold("Model:")} ${s.model}`,
+    ...(s.promptVersion ? [`${bold("Prompt:")} ${s.promptVersion}`] : []),
     `${bold("Role:")} ${s.role || dim("none")}`,
     `${bold("Focus:")} ${s.focus || dim("none")}`,
     `${bold("Goal:")} ${s.goal || dim("none")}`,

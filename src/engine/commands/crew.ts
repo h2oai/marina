@@ -110,7 +110,10 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       "  crew create <name> <a,b,c> [formation=<f>] [persist] -- <goal>\n" +
       "  crew dispatch <name> <message>\n" +
       "  crew info <name>\n" +
-      "  crew join <name> [role=<r>]\n" +
+      "  crew invite <name> <agent> [role=<r>]\n" +
+      "  crew invitations\n" +
+      "  crew join <name>\n" +
+      "  crew decline <name>\n" +
       "  crew leave <name>\n" +
       "  crew formation <name> <formation>\n" +
       "  crew persist <name>\n" +
@@ -206,7 +209,8 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           return;
         }
 
-        // Validate every member resolves to an online agent.
+        // Validate every invitee resolves to an online agent. Naming someone
+        // proposes membership; only their own `crew join` activates it.
         const missing: string[] = [];
         for (const name of parsed.members) {
           if (!deps.findAgentByName(name)) missing.push(name);
@@ -223,12 +227,85 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
             formation: parsed.formation,
             lifetime: parsed.lifetime,
             owner: input.entity,
-            members: parsed.members.map((agentName) => ({ agentName })),
+            members: [{ agentName: caller.name, role: "owner" }],
           });
+          const invitees = parsed.members.filter(
+            (agentName) => agentName.toLowerCase() !== caller.name.toLowerCase(),
+          );
+          for (const agentName of invitees) {
+            deps.crews.invite(crew.id, agentName, caller.name);
+            const invitee = deps.findAgentByName(agentName);
+            if (invitee) {
+              ctx.send(
+                invitee.id,
+                `${caller.name} invited you to crew "${crew.name}" (${crew.formation}) for: ${crew.goal || "unspecified goal"}. Use 'crew join ${crew.name}' to accept or 'crew decline ${crew.name}' to decline. Invitation expires in 24h.`,
+              );
+            }
+          }
           ctx.send(
             input.entity,
-            `Crew "${crew.name}" created (${crew.formation}/${crew.lifetime}, ${crew.members.length} members). Use 'crew dispatch ${crew.name} <message>' to activate.`,
+            `Crew "${crew.name}" created (${crew.formation}/${crew.lifetime}, ${crew.members.length} active member). ${invitees.length} invitation${invitees.length === 1 ? "" : "s"} pending; dispatch activates only accepted members.`,
           );
+        } catch (e) {
+          if (e instanceof CrewError) ctx.send(input.entity, e.message);
+          else throw e;
+        }
+        return;
+      }
+
+      if (sub === "invitations") {
+        const invitations = deps.crews.invitationsFor(caller.name);
+        const pending = invitations.filter((invitation) => invitation.status === "pending");
+        if (!pending.length) {
+          ctx.send(input.entity, "No pending crew invitations.");
+          return;
+        }
+        ctx.send(
+          input.entity,
+          pending
+            .map(
+              (invitation) =>
+                `${invitation.crewName} · from ${invitation.invitedBy} · role ${invitation.role} · expires ${new Date(invitation.expiresAt).toISOString()}`,
+            )
+            .join("\n"),
+        );
+        return;
+      }
+
+      if (sub === "invite") {
+        const crewName = tokens[1];
+        const agentName = tokens[2];
+        if (!crewName || !agentName) {
+          ctx.send(input.entity, "Usage: crew invite <name> <agent> [role=<r>]");
+          return;
+        }
+        const crew = deps.crews.getByName(crewName);
+        if (!crew) {
+          ctx.send(input.entity, `Crew "${crewName}" not found.`);
+          return;
+        }
+        const callerRank = (caller.properties.rank as number | undefined) ?? 0;
+        if (crew.ownerId !== input.entity && callerRank < 4) {
+          ctx.send(input.entity, `Only the owner or rank 4+ can invite to crew "${crew.name}".`);
+          return;
+        }
+        const invitee = deps.findAgentByName(agentName);
+        if (!invitee) {
+          ctx.send(input.entity, `Unknown agent: ${agentName}`);
+          return;
+        }
+        const role =
+          tokens
+            .slice(3)
+            .find((token) => token.startsWith("role="))
+            ?.slice(5) || "specialist";
+        try {
+          deps.crews.invite(crew.id, agentName, caller.name, role);
+          ctx.send(
+            invitee.id,
+            `${caller.name} invited you to crew "${crew.name}" as ${role}. Use 'crew join ${crew.name}' to accept or 'crew decline ${crew.name}' to decline. Invitation expires in 24h.`,
+          );
+          ctx.send(input.entity, `Invited ${agentName} to crew "${crew.name}" as ${role}.`);
         } catch (e) {
           if (e instanceof CrewError) ctx.send(input.entity, e.message);
           else throw e;
@@ -297,11 +374,11 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         return;
       }
 
-      // crew join <name> [role=<r>] — self-add
+      // crew join <name> — accept a pending invitation
       if (sub === "join") {
         const name = tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: crew join <name> [role=<r>]");
+          ctx.send(input.entity, "Usage: crew join <name>");
           return;
         }
         const crew = deps.crews.getByName(name);
@@ -309,16 +386,33 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           ctx.send(input.entity, `Crew "${name}" not found.`);
           return;
         }
-        let role = "specialist";
-        for (const tok of tokens.slice(2)) {
-          if (tok.startsWith("role=")) role = tok.slice(5);
-        }
         try {
-          deps.crews.addMember(crew.id, caller.name, role);
+          const invitation = deps.crews.respondToInvitation(crew.id, caller.name, "accepted");
           if (crew.channelId && !deps.channels.isMember(crew.channelId, input.entity)) {
             deps.channels.addMember(crew.channelId, input.entity);
           }
-          ctx.send(input.entity, `Joined crew "${crew.name}" as ${role}.`);
+          ctx.send(input.entity, `Joined crew "${crew.name}" as ${invitation.role}.`);
+        } catch (e) {
+          if (e instanceof CrewError) ctx.send(input.entity, e.message);
+          else throw e;
+        }
+        return;
+      }
+
+      if (sub === "decline") {
+        const name = tokens[1];
+        if (!name) {
+          ctx.send(input.entity, "Usage: crew decline <name>");
+          return;
+        }
+        const crew = deps.crews.getByName(name);
+        if (!crew) {
+          ctx.send(input.entity, `Crew "${name}" not found.`);
+          return;
+        }
+        try {
+          deps.crews.respondToInvitation(crew.id, caller.name, "declined");
+          ctx.send(input.entity, `Declined crew "${crew.name}".`);
         } catch (e) {
           if (e instanceof CrewError) ctx.send(input.entity, e.message);
           else throw e;
@@ -599,7 +693,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
 
       ctx.send(
         input.entity,
-        `Unknown crew subcommand "${sub}". Try: create, dispatch, info, join, leave, formation, persist, stage, artifact, stall, complete, dissolve.`,
+        `Unknown crew subcommand "${sub}". Try: create, dispatch, info, invite, invitations, join, decline, leave, formation, persist, stage, artifact, stall, complete, dissolve.`,
       );
     },
   };

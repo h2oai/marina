@@ -411,6 +411,8 @@ export class AgentRuntime {
                 type: "agent_tool_call",
                 name: config.name,
                 toolName: event.toolName,
+                risk: event.risk,
+                trustSources: event.trustSources,
                 timestamp: now,
               });
               break;

@@ -351,6 +351,8 @@ export interface ReadinessReport {
     activeParticipants: number;
     activeAgents: number;
     recentCommunications: number;
+    marinaToolCalls: number;
+    autonomyQualified: boolean;
     medianResponseMs?: number;
   };
 }
@@ -390,11 +392,29 @@ export interface PrimitiveUsageSummary {
   toolCalls: number;
   marinaToolCalls: number;
   reasoningOnlyCalls: number;
+  consequentialToolCalls: number;
+  untrustedToolCalls: number;
   lastActionAt: number | null;
   outcomeSessions: number;
   approvedMeaningfulAverage: number;
   failedMeaningfulAverage: number;
   topPrimitives: Array<{ primitive: string; count: number }>;
+  promptVersions: string[];
+}
+
+export interface PromptOutcomeSummary {
+  promptVersion: string;
+  agents: number;
+  outcomes: number;
+  successes: number;
+  failures: number;
+  successRate: number;
+  averageDurationMs: number;
+  averageToolCalls: number;
+  averageInputTokens: number;
+  averageOutputTokens: number;
+  averageCostUsd: number;
+  meaningfulActions: number;
 }
 
 export interface ProductivityResponse {
@@ -403,6 +423,7 @@ export interface ProductivityResponse {
   trend: ProductivityTrendPoint[];
   primitiveUsage: PrimitiveUsageSummary;
   primitiveLeaderboard: PrimitiveUsageSummary[];
+  promptOutcomes: PromptOutcomeSummary[];
 }
 
 export interface MemoryQualitySummary {
@@ -478,6 +499,7 @@ export interface AgentSupports {
 export interface AgentStatusInfo {
   state: string;
   model: string;
+  promptVersion?: string;
   role: string;
   focus: string | null;
   uptime: number;
@@ -498,6 +520,7 @@ export interface AgentStatusFull {
   entityId: string | null;
   state: string;
   model: string;
+  promptVersion?: string;
   role: string;
   focus: string | null;
   goal: string | null;
@@ -515,6 +538,9 @@ export interface AgentStatusFull {
   maxOutputTokens?: number;
   /** Highest real prompt-token count the server has accepted. */
   peakInputTokens?: number;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  totalCostUsd?: number;
 }
 
 export interface MediaJob {
@@ -711,6 +737,47 @@ export interface ExperimentEntry {
   created_at: number;
   started_at: number | null;
   completed_at: number | null;
+}
+
+export interface EvolutionRunEntry {
+  id: number;
+  sequence: number;
+  parent_run_id: number | null;
+  hypothesis: string;
+  candidate_ref: string;
+  proposed_by: string;
+  evaluator_name: string | null;
+  reviewer_name: string | null;
+  evidence: string;
+  decision: "accept" | "reject" | "inconclusive" | null;
+  status: "proposed" | "evaluated" | "accepted" | "rejected";
+}
+
+export interface EvolutionSessionEntry {
+  id: number;
+  experiment_id: number;
+  experiment_name: string | null;
+  objective: string;
+  status: "draft" | "active" | "paused" | "completed";
+  created_by: string;
+  created_at: number;
+  protocol: {
+    automaticContinuation: false;
+    automaticPromotion: false;
+    independentReview: boolean;
+    minTrials: number;
+    minEffect?: number;
+    maxRuns?: number;
+    maxDurationSeconds?: number;
+    guardrails: Array<{ metric: string; direction: "higher" | "lower" }>;
+  };
+  budget: {
+    exhausted: boolean;
+    reasons: string[];
+    runsRemaining?: number;
+    secondsRemaining?: number;
+  };
+  runs: EvolutionRunEntry[];
 }
 
 export interface MarketEntry {

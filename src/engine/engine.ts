@@ -729,6 +729,10 @@ export class Engine {
     const recordUsage = (success: boolean) => {
       if (!this.db) return;
       const classification = classifyPrimitive(routedRaw, def?.name);
+      const promptVersion =
+        entity.kind === "agent"
+          ? this.agentRuntime.get(entity.name)?.getStatus().promptVersion
+          : undefined;
       tryLog(this.logger, "telemetry", "Primitive usage recording failed", () => {
         this.db!.recordPrimitiveUsage({
           actorId: String(entityId),
@@ -739,6 +743,7 @@ export class Engine {
           success,
           latencyMs: Date.now() - commandStartedAt,
           createdAt: commandStartedAt,
+          promptVersion,
         });
       });
     };
@@ -1256,6 +1261,32 @@ export class Engine {
     this._connections.sendToEntity(target, perception);
   }
 
+  /** Reserved engine-authored control perception. Room code only receives the
+   * ordinary RoomContext message API and cannot emit this system-kind channel. */
+  sendSystemControl(
+    target: EntityId,
+    controlType: string,
+    metadata: Record<string, unknown>,
+  ): void {
+    this._connections.sendToEntity(target, {
+      kind: "system",
+      timestamp: Date.now(),
+      tag: "marina-control",
+      data: { controlType, ...metadata },
+    });
+  }
+
+  getActiveEvolutionSessions(entityName: string): Array<{
+    id: number;
+    experimentId: number;
+  }> {
+    if (!/^(1|true|on)$/i.test(process.env.MARINA_EVOLUTION_PROTOCOLS ?? "") || !this.db) return [];
+    return this.db.listActiveEvolutionSessionsForParticipant(entityName).map((session) => ({
+      id: session.id,
+      experimentId: session.experiment_id,
+    }));
+  }
+
   broadcastToRoom(room: RoomId, message: string, tag?: string): void {
     const entities = this.entities.inRoom(room);
     for (const entity of entities) {
@@ -1727,6 +1758,7 @@ export class Engine {
       try {
         if (event.type === "agent_tool_call") {
           const entity = this.entities.findAgentByName(event.name);
+          const promptVersion = this.agentRuntime.get(event.name)?.getStatus().promptVersion;
           db.recordPrimitiveUsage({
             actorId: entity ? String(entity.id) : undefined,
             actorName: event.name,
@@ -1740,6 +1772,9 @@ export class Engine {
             worldAction: false,
             communication: false,
             createdAt: event.timestamp,
+            promptVersion,
+            riskClass: event.risk,
+            trustSources: event.trustSources,
           });
         } else if (event.type === "agent_tool_result") {
           db.finishAgentToolUsage(event.name, event.toolName, !event.isError, event.timestamp);
@@ -1747,13 +1782,17 @@ export class Engine {
         if (event.type === "task_claimed") {
           const entity = this.entities.get(event.entity);
           if (entity) {
-            const toolCalls = this.agentRuntime.get(entity.name)?.getStatus().toolCalls ?? 0;
+            const status = this.agentRuntime.get(entity.name)?.getStatus();
             db.startProductivitySession(
               String(event.entity),
               entity.name,
               event.taskId,
               event.timestamp,
-              toolCalls,
+              status?.toolCalls ?? 0,
+              status?.promptVersion,
+              status?.totalInputTokens ?? 0,
+              status?.totalOutputTokens ?? 0,
+              status?.totalCostUsd ?? 0,
             );
           }
         } else if (
@@ -1775,14 +1814,17 @@ export class Engine {
               : ([...claims].reverse().find((row) => row.status === desired) ??
                 claims.find((row) => row.entity_id === String(event.entity)));
           if (claim) {
-            const toolCalls = this.agentRuntime.get(claim.entity_name)?.getStatus().toolCalls ?? 0;
+            const status = this.agentRuntime.get(claim.entity_name)?.getStatus();
             const recorded = db.finishProductivitySession(
               claim.entity_id,
               claim.entity_name,
               event.taskId,
               desired,
               event.timestamp,
-              toolCalls,
+              status?.toolCalls ?? 0,
+              status?.totalInputTokens ?? 0,
+              status?.totalOutputTokens ?? 0,
+              status?.totalCostUsd ?? 0,
             );
             if (recorded) {
               this.agentRuntime.recordAttentionOutcome(

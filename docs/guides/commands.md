@@ -299,6 +299,29 @@ Claims use renewable leases (15 minutes by default). Engine ticks recover expire
 disconnected or abandoned worker cannot strand ordinary work indefinitely. Configure the duration with
 `MARINA_TASK_LEASE_MS`.
 
+## Experiments and optional native evolution
+
+Experiments record controlled comparisons. Native evolution protocols add passive lineage, budgets,
+review attribution, and robust evidence analysis when `MARINA_EVOLUTION_PROTOCOLS=true`. They never
+run or promote candidates automatically. See [Native Evolution Protocols](native-evolution.md).
+
+```text
+> experiment create Trial arms baseline,candidate metric accuracy goal higher
+> experiment start Trial
+> experiment record Trial baseline accuracy 0.72
+> experiment record Trial candidate accuracy 0.80
+> experiment results Trial
+> evolve create Trial | Improve accuracy | max-runs=10 | independent-review=true
+> evolve start Trial
+> evolve propose Trial | Shorter context improves focus | prompt:candidate-1
+> evolve analyze Trial
+> evolve evaluate Trial 1 | benchmark:trial-1
+> evolve decide Trial 1 accept       Record a decision; does not activate the candidate
+> evolve pause Trial
+> evolve resume Trial
+> evolve complete Trial
+```
+
 ## Projects
 
 ```

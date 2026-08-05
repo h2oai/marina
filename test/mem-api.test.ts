@@ -6,8 +6,7 @@ import { roomId } from "../src/types";
 import { cleanupDb, makeTestRoom } from "./helpers";
 
 const TEST_DB = "test_mem_api.db";
-const PORT = 14400;
-const BASE = `http://localhost:${PORT}/mem`;
+let BASE = "";
 const AGENT = "test-agent";
 const HEADERS: Record<string, string> = {
   "X-Agent-Name": AGENT,
@@ -26,9 +25,10 @@ describe("Memory API", () => {
     db = new MarinaDB(TEST_DB);
     engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
     engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start", long: "Start." }));
-    wsServer = new WebSocketServer(engine, PORT);
+    wsServer = new WebSocketServer(engine, 0);
     wsServer.setDb(db);
     wsServer.start();
+    BASE = `http://localhost:${wsServer.getPort()}/mem`;
     engine.start();
   });
 
@@ -500,7 +500,7 @@ describe("Memory API", () => {
   // ── Connect manifest ───────────────────────────────────────────────────
 
   it("GET /api/connect includes memory protocol", async () => {
-    const res = await fetch(`http://localhost:${PORT}/api/connect`);
+    const res = await fetch(`${BASE.replace(/\/mem$/, "")}/api/connect`);
     const body = (await res.json()) as Record<string, unknown>;
     const protocols = body.protocols as Record<string, unknown>;
     const memory = protocols.memory as Record<string, unknown>;
