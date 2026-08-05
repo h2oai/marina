@@ -1,7 +1,8 @@
 # Web Coding — Sandbox Deployment & Installation Challenges
 
-Status: **analysis / under active thinking** · Companion to
-[sandbox-scoping](./web-coding-sandbox-scoping.md) and [sandbox-poc](./web-coding-sandbox-poc.md).
+Status: **deployment research / partially superseded** · Flywheel, not Marina, now owns VMM and
+guest-image packaging. Marina deployment and graceful-degradation requirements still apply. See
+[code-flywheel-execution-plan.md](./code-flywheel-execution-plan.md) for canonical sequencing.
 
 The code seam (Step 1, `WorkspaceRuntime`) had **zero** deployment impact — it's type-only. But the
 *sandbox direction* changes Marina from "a Bun process you can run anywhere" into something that, in

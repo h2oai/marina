@@ -1,6 +1,9 @@
 # Web Coding — Workspace Isolation Model (G3) — proposal, no code
 
-Status: **proposal / under active thinking** · Resolves gap **G3** from
+Status: **deferred design input** · The v1 decision is one sandbox per entity with Marina's existing
+single-writer policy. Per-actor views are deferred to M5 of the canonical
+[Code Mode × Flywheel plan](./code-flywheel-execution-plan.md). This document resolves the later
+crew-isolation gap **G3** from
 [web-coding-guest-agent-protocol.md](./web-coding-guest-agent-protocol.md) §6.6 · Reconciles the
 Phase-4 write-lock ([web-coding-phase4-autonomy.md](./web-coding-phase4-autonomy.md)) and the
 long-deferred "worktree policy" with sandboxing (Decisions #5–#7 in

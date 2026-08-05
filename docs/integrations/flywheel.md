@@ -6,8 +6,10 @@ fleet/execution integration; it does not change Marina's default local coding
 runtime. When `FLYWHEEL_TOKEN` is set, Marina registers the identity-scoped
 `flywheel` MCP tool.
 
-Keep the operator token in Marina. Create one Flywheel session per Marina task
-or workspace, then mint a short-lived capability for the agent that owns it:
+Keep the operator token in Marina. The current first-pass product boundary is one
+durable Flywheel session/sandbox per Marina entity; coding sessions and projects
+are contexts within that entity workspace. Mint a short-lived capability bound
+to the Flywheel session for the entity that owns it:
 
 ```ts
 import { FlywheelClient } from "../../src/integrations/flywheel";
@@ -61,3 +63,7 @@ Call `flywheel` after `login` with one of these actions:
 - `status` — reports the current entity binding without contacting Flywheel
 - `hibernate` / `resume` — VM backends only
 - `stop` — tears down the sandbox and removes the entity binding
+
+The MCP lifecycle is the shipped control-plane baseline. Durable binding,
+Code Mode routing, and project materialization follow the canonical
+[Code Mode × Flywheel execution plan](../design/code-flywheel-execution-plan.md).

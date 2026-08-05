@@ -10,8 +10,10 @@ parts that make it more than a CLI.
 
 > **Where it runs today:** coding commands execute against a real workspace on the host, behind a
 > safe allowlist (`bun` scripts like `test`/`lint`/`typecheck`/`build`, plus a read-only `git`
-> subset). It's built for trusted-repo work. Stronger isolation (sandboxed workspaces) is on the
-> roadmap; nothing in this guide depends on it.
+> subset). It's built for trusted-repo work. Flywheel-backed isolation is now the accepted next
+> execution phase, beginning with one durable sandbox per entity; see the
+> [canonical execution plan](../design/code-flywheel-execution-plan.md). Nothing in this guide
+> currently assumes that sandbox path is active.
 >
 > **Running or applying code is an earned capability.** Reading, searching, diffing, and *proposing*
 > patches are open to everyone, but `code run`/`verify`/`test` and `code apply`/`revert` require the

@@ -1,8 +1,9 @@
 # Web Coding — Simplest Sandbox PoC
 
-Status: **PoC plan (no code yet)** · Scopes the smallest slice of
-[sandbox-scoping](./web-coding-sandbox-scoping.md) /
-[guest-agent-protocol](./web-coding-guest-agent-protocol.md) that exercises the real techniques.
+Status: **historical PoC / superseded** · The direct-vfkit PoC is no longer the implementation
+path. Flywheel now owns sandbox backends and Marina already ships its control-plane client. See the
+canonical [Code Mode × Flywheel execution plan](./code-flywheel-execution-plan.md). This document is
+retained for its useful success criteria and host/guest separation research.
 
 ## Framing (what this is really for)
 The primary consumer is a **coding agent inside Marina** (the `code` command / coding tools), not an

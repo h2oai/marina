@@ -1,7 +1,10 @@
 # Web Coding — Sandbox Scoping: vfkit + crosvm microVMs via Flywheel
 
-Status: **scoping / investigation** (no code) · Relates to: [web-coding-cli.md](./web-coding-cli.md)
-Phase 5 "sandbox/container backend" and the deferred Flywheel evaluation.
+Status: **historical investigation / superseded execution direction** · Relates to:
+[web-coding-cli.md](./web-coding-cli.md). The canonical implementation sequence and locked product
+decisions now live in [code-flywheel-execution-plan.md](./code-flywheel-execution-plan.md). Retain
+this document as VMM, deployment, and topology research; do not use its contradictory Decisions
+#4/#7 or Marina-direct VMM path as current roadmap authority.
 
 ## Goal & constraints
 Run coding workspaces inside a real isolation boundary (boot a Linux guest, mount the
@@ -64,6 +67,9 @@ backend is the natural fourth family. Marina talks to Flywheel over ConnectRPC; 
 > need Flywheel?"** immediately below.
 
 ## Reconsideration: do we even need Flywheel? (near-term: probably not)
+
+> **Superseded:** this reconsideration predates the shipped Flywheel integration and the accepted
+> Phase-6 plan. Its cost analysis is retained for history; its conclusion is not current direction.
 Raised in review: if vfkit/crosvm give a **complete VM sandbox**, what does Flywheel add?
 Re-examined against the locked decisions, most of Flywheel's value is **redundant for the
 near-term Topology A**:
@@ -218,6 +224,10 @@ The rosy "just add a backend" view understates these:
   default** — only the escape hatch if crosvm/WHPX proves fragile on a given machine.
 
 ## Decisions (locked 2026-06-20)
+
+> **Historical decision record:** Decisions #4 and #7 conflict because this document captured an
+> active debate. The 2026-08-05 canonical plan resolves it in favor of Flywheel and supersedes this
+> entire decision list for implementation sequencing.
 1. **Linux is first-class**, alongside macOS and Windows. → crosvm/KVM is a *primary* target,
    not incidental; three first-class hosts: macOS (vfkit), Linux (crosvm/KVM), Windows
    (crosvm/WHPX).

@@ -870,17 +870,28 @@ specialization, and shared memory.
 - Add MCP tools for coding sessions.
 - Add optional OpenAI-compatible endpoint behavior that targets coding sessions.
 - Add import/export for session transcripts and artifacts.
-- Evaluate Flywheel as the executor backend after the local CWD loop is stable.
+- Flywheel executor evaluation is complete; Phase 6 owns the accepted integration path.
 
 Exit criteria: editor clients and external agents can participate in the same coding sessions as the
 WebChat terminal.
 
+### Phase 6: Flywheel Sandboxed Execution
+
+The earlier evaluation is complete: Flywheel is the canonical sandbox substrate, and the first
+allocation boundary is one durable sandbox per Marina entity. Implementation sequence, security
+invariants, project materialization, failure recovery, and exit criteria are maintained in
+[Code Mode × Flywheel execution plan](./code-flywheel-execution-plan.md).
+
+Do not implement the older Marina-direct vfkit/crosvm path or imply live coherence between host and
+sandbox files. The next milestone is durable entity lifecycle and Code Mode visibility, followed by
+sandbox-native execution and an explicit project materialization contract.
+
 ## Initial Scope Recommendation
 
-Build the local CWD coding loop before chasing full IDE behavior or sandbox backends.
+The local CWD coding loop is established. Preserve it while Phase 6 adds Flywheel as an explicit,
+identity-scoped sandbox target.
 
 Do not start with a Monaco editor, complete file tree, PR automation, or browser automation. The
 first version should feel like a serious coding CLI: prompt, stream, read files, search, propose
-diffs, request approvals, run tests, summarize, and hand off. Once that loop is solid, richer editor
-features, durable userland filesystems, containers, Flywheel integration, and remote execution become
-incremental instead of architectural.
+diffs, request approvals, run tests, summarize, and hand off. That loop now exists. Richer editor
+features and remote execution remain incremental; Flywheel integration follows the Phase 6 plan.

@@ -1,7 +1,9 @@
 # Web Coding — Guest-Agent ↔ Host Protocol (proposal, no code)
 
-Status: **proposal / under active thinking** · Depends on:
-[web-coding-sandbox-scoping.md](./web-coding-sandbox-scoping.md) (Decisions #1–#7).
+Status: **historical protocol research / Flywheel-owned layer** · The canonical Marina plan is
+[code-flywheel-execution-plan.md](./code-flywheel-execution-plan.md). Marina no longer owns a
+parallel guest-agent protocol; applicable transport requirements belong in Flywheel. This document
+remains a threat-model and use-case input.
 This is the **versioned compatibility contract** between the bundled golden guest image (which
 contains the *guest agent*) and the host (`SandboxWorkspaceRuntime` inside Marina). Because the
 image and host ship together per Marina release, this protocol is the single thing that must be
