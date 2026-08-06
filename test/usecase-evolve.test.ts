@@ -87,7 +87,11 @@ describe("usecase evolve recipe", () => {
 
     const text = stripAnsi(conn.allTextJoined());
     expect(text).toContain("Use case launched: evolve");
-    expect(text).toContain("none (spawn unavailable; project open for existing agents)");
+    // This test deliberately runs with no provider configured, so the recipe
+    // takes the "agent runtime unavailable" path and reports that reason. The
+    // "spawn unavailable" wording belongs to a different branch — runtime
+    // available but the agent.spawn gate closed — which this case never enters.
+    expect(text).toContain("none (no model provider configured)");
 
     const project = db.getProjectByName("evolve: improve autonomous research synthesis");
     expect(project).toBeDefined();

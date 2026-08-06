@@ -413,14 +413,12 @@ async function handleSpawn(
     return;
   }
 
-  if (!deps.agentRuntime.isAvailable()) {
-    ctx.send(
-      eid,
-      "No LLM API keys configured. Set ANTHROPIC_API_KEY, GEMINI_API_KEY, or another provider key.",
-    );
-    return;
-  }
-
+  // Validate the input before checking the environment. A malformed name is
+  // wrong no matter how the instance is configured, so saying "no LLM API keys"
+  // to someone who typed a 25-character name sends them to fix the wrong thing —
+  // and on an instance without keys they could never discover the real problem.
+  // These checks are pure and cheap; the provider check below is about whether
+  // we can act on a request we have already accepted as well-formed.
   const name = tokens[0];
   if (!name) {
     ctx.send(
@@ -433,6 +431,14 @@ async function handleSpawn(
     ctx.send(
       eid,
       "Agent names must be 1-20 characters using only letters, numbers, and underscores.",
+    );
+    return;
+  }
+
+  if (!deps.agentRuntime.isAvailable()) {
+    ctx.send(
+      eid,
+      "No LLM API keys configured. Set ANTHROPIC_API_KEY, GEMINI_API_KEY, or another provider key.",
     );
     return;
   }
