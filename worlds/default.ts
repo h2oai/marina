@@ -1,5 +1,5 @@
-import type { MarinaDB } from "../src/persistence/database";
 import type { Engine } from "../src/engine/engine";
+import type { MarinaDB } from "../src/persistence/database";
 import type { RoomId } from "../src/types";
 import type { WorldDefinition } from "../src/world/world-definition";
 import {
@@ -24,7 +24,9 @@ function workbenchModel(): string {
 const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
   {
     content:
-      "Welcome to the Workbench. Start with an outcome, not a workflow. Record three things: " +
+      "Welcome to the Workbench. For a 90-second first success, run `board read demo-scenarios` " +
+      "and send its Launch Brief prompt to Host. For your own work, start with an outcome, not a workflow. " +
+      "Record three things: " +
       "`memory set outcome <what should be true when the work is done>`, " +
       "`memory set evidence <how completion will be verified>`, and " +
       "`memory set constraints <permissions, budget, deadline, or boundaries>`. " +
@@ -44,8 +46,8 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
     content:
       "Outcome shortcuts: `research <question>`, `debate <question>`, `solve <problem>`, " +
       "`explore <domain>`, `plan <goal>`, and `monitor <target>` create an inspectable project with a " +
-      "fitting collaboration pattern. Report verified results with " +
-      "Run `project <name> verify` to inspect completion evidence and independent review, then record " +
+      "fitting collaboration pattern. Run `project <name> verify` to inspect completion evidence and " +
+      "independent review, then record " +
       "confirmed results with `project <name> outcome <0..1> | <evidence and lessons>` so future work can learn from them.",
     importance: 9,
     type: "skill",
@@ -125,7 +127,9 @@ function seed(db: MarinaDB): void {
   seedBoard(db, "welcome", {
     title: "The Workbench",
     body:
-      "Begin by recording an outcome, its evidence, and its constraints. The default world stays small " +
+      "**Fastest demo:** run `board read demo-scenarios`, copy the Launch Brief prompt, and watch " +
+      "Host → Builder → Critic turn a request into a reviewed artifact.\n\n" +
+      "For your own work, begin by recording an outcome, its evidence, and its constraints. The default world stays small " +
       "until the work justifies additional tasks, projects, crews, tools, or shared memory.\n\n" +
       "- `memory set outcome ...`\n" +
       "- `memory set evidence ...`\n" +
@@ -134,14 +138,16 @@ function seed(db: MarinaDB): void {
   });
 
   seedBoard(db, "demo-scenarios", {
-    title: "Try a live collaboration",
+    title: "Your first 90 seconds",
     body:
-      "Ask the Workbench crew to run one of these observable scenarios:\n\n" +
-      "1. **Investigate:** `tell Host investigate a disputed claim and publish cited findings`\n" +
-      "2. **Build + critique:** `tell Builder propose a small improvement and ask Critic to review it`\n" +
-      "3. **Collaborate:** `channel send general Host, coordinate the next Demo Pulse task`\n" +
-      "4. **Emergence:** `channel send general Host, ask the crew to choose its most valuable next project`\n\n" +
-      "Watch the timeline for receipt, delegation, artifacts, review, and completion.",
+      "**Launch Brief (recommended):**\n" +
+      "`tell Host Turn this brief into a three-point launch plan: make Marina's value obvious to a " +
+      "first-time visitor. Ask Builder to draft it, Critic to verify every point, and publish the " +
+      "reviewed result as a note or canvas artifact.`\n\n" +
+      "Then watch the timeline for receipt, delegation, an inspectable artifact, independent review, " +
+      "and completion. No external services are required beyond the configured model.\n\n" +
+      "**Other paths:** `research <question>` for cited research, `plan <goal>` for a structured project, " +
+      "or `channel send general Host, coordinate the next Demo Pulse task` for an open-ended handoff.",
   });
 
   seedProject(db, {
@@ -151,15 +157,15 @@ function seed(db: MarinaDB): void {
     orchestration: "review-loop",
     tasks: [
       {
-        title: "Publish a two-source finding",
+        title: "Turn a launch brief into a reviewed artifact",
         description:
-          "Choose a contemporary disputed claim, record two source URLs in a durable note, and ask Critic to check whether the conclusion follows from the evidence.",
+          "Turn a bounded user brief into a three-point plan, publish it as a durable note or canvas artifact, and ask Critic to verify that every point follows from the brief.",
         validationMode: "single",
       },
       {
-        title: "Improve the Workbench",
+        title: "Explain Marina with evidence",
         description:
-          "Identify one bounded usability improvement, produce an inspectable artifact or proposal, and obtain independent review before submitting it.",
+          "Use the welcome board and observable world state to explain Marina's value in one paragraph. Cite the commands, artifact, or world evidence behind each concrete claim.",
         validationMode: "single",
       },
       {
@@ -183,29 +189,25 @@ function seed(db: MarinaDB): void {
     name: "Host",
     model,
     role: "guide",
-    goal:
-      "You host the Workbench. Join #general. React quickly to arrivals, direct tells, and questions. Start Demo Pulse work with `task list`, then route one concrete open task to Builder or Critic with `tell`. Keep the user informed with one concise public update per run; do not narrate discovery, waiting, or invented activity.",
+    goal: "You host the Workbench. Join #general. React quickly to arrivals, direct tells, and questions. Start Demo Pulse work with `task list`, then route one concrete open task to Builder or Critic with `tell`. Keep the user informed with one concise public update per run; do not narrate discovery, waiting, or invented activity.",
   });
   seedSystemAgent(db, {
     name: "Builder",
     model,
     role: "architect",
-    goal:
-      "You turn bounded requests and Demo Pulse tasks into inspectable artifacts. Join #general. Begin with `task list`; claim one open task with `task claim <id>`, execute it, then ask Critic privately for independent review. Publish at most one concise update per run. Do not alter world structure unless explicitly required. Submit only with note, canvas, command, URL, or artifact evidence.",
+    goal: "You turn bounded requests and Demo Pulse tasks into inspectable artifacts. Join #general. Begin with `task list`; claim one open task with `task claim <id>`, execute it, then ask Critic privately for independent review. Publish at most one concise update per run. Do not alter world structure unless explicitly required. Submit only with note, canvas, command, URL, or artifact evidence.",
   });
   seedSystemAgent(db, {
     name: "Critic",
     model,
     role: "scholar",
-    goal:
-      "You are the Workbench's independent reviewer. Join #general. Never claim Demo Pulse tasks. Respond promptly when Host or Builder asks for review. Compare claims with stated evidence and acceptance criteria; publish a concise pass, revision request, or contradiction with exact evidence references. You may investigate, but do not take over authorship merely to make a review pass.",
+    goal: "You are the Workbench's independent reviewer. Join #general. Never claim Demo Pulse tasks. Respond promptly when Host or Builder asks for review. Compare claims with stated evidence and acceptance criteria; publish a concise pass, revision request, or contradiction with exact evidence references. You may investigate, but do not take over authorship merely to make a review pass.",
   });
   seedSystemAgent(db, {
     name: "Chronicler",
     model,
     role: "chronicler",
-    goal:
-      "You narrate only meaningful Workbench outcomes. Join #general. Never claim or author Demo Pulse tasks. Use `chronicle pending`; record completed collaborations, reviewed artifacts, corrections, and surprising discoveries with durable refs. Ignore routine movement, warm-up, and chatter. When quiet, stay silent rather than manufacturing a story.",
+    goal: "You narrate only meaningful Workbench outcomes. Join #general. Never claim or author Demo Pulse tasks. Use `chronicle pending`; record completed collaborations, reviewed artifacts, corrections, and surprising discoveries with durable refs. Ignore routine movement, warm-up, and chatter. When quiet, stay silent rather than manufacturing a story.",
   });
 }
 
@@ -217,7 +219,11 @@ function afterAgentsReady(engine: Engine): void {
     if (entity?.kind === "agent") engine.channelManager.addMember(channel.id, entity.id);
   }
   const marker = "[demo-pulse]";
-  if (!engine.channelManager.getHistory(channel.id, 50).some((message) => message.content.startsWith(marker))) {
+  if (
+    !engine.channelManager
+      .getHistory(channel.id, 50)
+      .some((message) => message.content.startsWith(marker))
+  ) {
     const content =
       `${marker} Host and Builder: run \`task list\`, then claim one open Demo Pulse task and produce evidence. ` +
       "Critic: review the evidence independently. Chronicler: record only the verified outcome.";

@@ -8,6 +8,10 @@ This guide walks you through your first 10 minutes in Marina. Its extended tour 
 and its `constraints`, then collaborate with its lightweight Host/Builder/Critic/Chronicler crew.
 Set `AGENT_AUTORESPAWN=true` to bring that seeded population online at boot.
 
+For the fastest Workbench demo, run `board read demo-scenarios` and send the recommended Launch
+Brief to Host. For the extended showcase, join the curated first-success path with
+`project Debut Tour join`, then run `project Debut Tour status`.
+
 ## What You Are Entering
 
 Most AI tools are temporary conversations. Marina keeps running. Notes, tasks, projects, shared pools, rooms, agents, and decisions survive across sessions, so work can compound instead of restarting from zero.
@@ -24,6 +28,10 @@ cd Marina
 bun install
 MARINA_WORLD=showcase bun run start
 ```
+
+The showcase deliberately contains the broad capability landscape. Complete one Debut Tour task
+before exploring it: the tour demonstrates durable memory, a reviewed agent handoff, or a visible
+canvas artifact without requiring you to learn the whole command surface first.
 
 You should see:
 

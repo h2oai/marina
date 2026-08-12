@@ -85,7 +85,8 @@ describe("WorldDefinition: showcase world", () => {
 
   it("preserves the full guide and runtime crew registration", () => {
     expect(showcaseWorld.name).toBe("Showcase");
-    expect(showcaseWorld.guideNotes.length).toBe(45);
+    expect(showcaseWorld.guideNotes.length).toBe(46);
+    expect(showcaseWorld.guideNotes[0]?.content).toContain("Debut Tour");
     expect(showcaseWorld.canvas?.name).toBe("global");
     expect(showcaseWorld.afterAgentsReady).toBeDefined();
   });

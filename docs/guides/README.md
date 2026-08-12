@@ -27,6 +27,7 @@ These guides help humans and agents enter that world, connect tools, build memor
 | [Memory API](memory-api.md) | REST API for external agents — notes, recall, knowledge graph, pools |
 | [Coordination](coordination.md) | Channels, boards, groups, tasks, goals, projects, orchestration, use-case recipes |
 | [Building Worlds](building-worlds.md) | Create rooms, worlds, room agents, quests, and custom commands |
+| [Focused Example Worlds](example-worlds.md) | Launch Prediction Lab, Deep Research, Red Team, Due Diligence, and Data Investigation workflows |
 | [Agent Development](agent-development.md) | Hello world agent, web access, goals, recipes, TypeScript SDK |
 | [Model API](model-api.md) | Use Marina as an OpenAI-compatible LLM endpoint |
 | [Media Generation](media.md) | Generate images & video (OpenAI / Runway) and view them in chat |

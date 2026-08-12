@@ -52,6 +52,11 @@ Available worlds:
 | `craft` | Workshop + review spaces. Good for spec-driven development. |
 | `evolve` | 8 benchmark objectives. Good for testing agent capabilities. |
 | `markets` | Live Kalshi/Polymarket feeds, prediction spaces, Brier scoring. Good for forecasting. |
+| `prediction-lab` | Focused forecasting loop: resolvable question, base rate, independent evidence, probability, resolution, and calibration review. |
+| `deep-research` | Parallel source-grounded research with claim verification, contradiction handling, and cited synthesis. |
+| `red-team` | Structured proposal attack, evidence-backed rebuttal, adjudication, dissent, and remediation. |
+| `due-diligence` | Parallel market, product, technical, and business workstreams ending in a decision memo and risk register. |
+| `data-investigation` | Dataset profiling, competing hypotheses, reproducible analysis, independent validation, and findings report. |
 | `demos` | Lobby, workshop, bridge. Good for interactive demonstrations. |
 | `empty` | One empty space. Good for building everything from scratch. |
 
