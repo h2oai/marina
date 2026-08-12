@@ -109,6 +109,12 @@ if (!token) {
   const gateway = new WorkspaceGateway(undefined, manager);
   const projects = new CodingProjectManager(db, undefined, manager);
   const services = new CodingServiceManager(db, manager);
+  db.createCodingSession({
+    id: "live-qualification",
+    title: "Flywheel live qualification",
+    workspaceRoot: "/workspace",
+    createdBy: String(owner),
+  });
 
   await step("create", true, async () => {
     const workspace = await manager!.create(owner, image, true);
@@ -255,7 +261,14 @@ if (!token) {
 
   await step("hibernate-resume", fullRequired, async () => {
     requirePassed("project-archive-roundtrip");
-    await manager!.hibernate(owner);
+    try {
+      await manager!.hibernate(owner);
+    } catch (error) {
+      if (/does not support hibernation/i.test(safeDetail(error))) {
+        throw new SkipStep("Configured Flywheel backend does not support hibernation.");
+      }
+      throw error;
+    }
     await manager!.resume(owner);
     const active = projects.active(owner);
     if (!active) throw new Error("Active project metadata was lost across resume.");

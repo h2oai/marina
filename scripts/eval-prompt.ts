@@ -10,16 +10,17 @@
  *
  * Targets a model id served by /v1/chat/completions:
  *   - marina:answerer  → agent-served (exercises the Answerer crew + its prompts) [default]
- *   - marina:default   → raw upstream passthrough (the bare model, no agent prompts)
+ *   - marina           → raw upstream passthrough (the bare model, no agent prompts)
  *   - any other served model id
  *
  * Usage (or via the `bun run eval-prompt` alias):
  *   bun run eval-prompt                                  # marina:answerer @ localhost
- *   bun run eval-prompt marina:default                   # the raw model
+ *   bun run eval-prompt marina                           # the raw model
  *   bun run eval-prompt marina:answerer --url http://host:3300 --key sk-...
  *   bun run eval-prompt --limit 5 --json                 # first 5, machine-readable
+ *   bun run eval-prompt --min-score 15                   # fail below a release threshold
  *
- * Exit code is 0 (it's a report). Compare two runs by eye or by --json diff.
+ * Exit code is 0 unless --min-score is set and missed.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -72,6 +73,7 @@ if (import.meta.main) {
   const limit = flags.get("limit") ? Number(flags.get("limit")) : Number.POSITIVE_INFINITY;
   const asJson = flags.get("json") === true;
   const timeoutMs = Number(process.env.EVAL_TIMEOUT_MS) || 120_000;
+  const minScore = flags.get("min-score") ? Number(flags.get("min-score")) : 0;
 
   const fixture = JSON.parse(
     readFileSync(join(import.meta.dir, "..", "benchmarks", "smoke-eval.json"), "utf8"),
@@ -133,6 +135,8 @@ if (import.meta.main) {
           url,
           score: passed,
           total: results.length,
+          minScore,
+          qualified: passed >= minScore,
           byCategory: Object.fromEntries([...byCat].map(([k, v]) => [k, `${v.p}/${v.n}`])),
           results: results.map(({ output, ...r }) => ({ ...r, output: output.slice(0, 200) })),
         },
@@ -145,4 +149,6 @@ if (import.meta.main) {
     console.log(`Model: ${model}   Score: ${passed}/${results.length}`);
     console.log(`By category: ${[...byCat].map(([k, v]) => `${k} ${v.p}/${v.n}`).join("  ")}`);
   }
+
+  if (passed < minScore) process.exit(1);
 }

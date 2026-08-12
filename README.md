@@ -734,7 +734,16 @@ docker compose logs -f     # View logs
 docker compose down        # Stop (add -v to wipe the world)
 ```
 
-Then open `http://localhost:3300`. State (the SQLite database + uploaded assets) is persisted in the `marina-data` Docker volume, mounted at `/app/data`.
+Then open `http://localhost:3300`. State (the SQLite database, uploaded assets, and coding
+workspace) is persisted in the Docker-managed `marina-data` volume, mounted at `/app/data`.
+`docker compose down` preserves it; `docker compose down -v` deliberately deletes the local world.
+For a host-visible bind mount, set `MARINA_DATA_VOLUME=/absolute/writable/path` in `.env`; that
+directory must be writable by container UID 1000.
+
+The default Compose path starts Marina only and needs no GPU. To use the optional local llama.cpp
+service, first set `LLAMA_MODEL`, `LLAMA_API_KEY`, `LLAMA_MODELS_DIR`, and
+`LLAMA_BASE_URL=http://llama:8080/v1` in `.env`, install the NVIDIA Container Toolkit, then run
+`docker compose --profile llama up -d --build`.
 
 For shipping to AWS or any other cloud — TLS, persistence, the security checklist, and worked ECS / Fargate / Fly / single-VM setups — see the **[Deployment guide](docs/guides/deployment.md)**.
 

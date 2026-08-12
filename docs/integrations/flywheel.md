@@ -6,6 +6,45 @@ fleet/execution integration; it does not change Marina's default local coding
 runtime. When `FLYWHEEL_TOKEN` is set, Marina registers the identity-scoped
 `flywheel` MCP tool.
 
+## Preview setup from a clean machine
+
+Flywheel's current preview-supported target is Linux x86_64 with Docker. Start its independently
+deployed stack using Flywheel's launcher (rather than copying its Compose settings into Marina):
+
+```bash
+git clone https://github.com/h2oai/flywheel.git
+cd flywheel
+./scripts/preview-up.sh marina
+```
+
+Save the generated one-time password, then exchange it for the operator token that Marina keeps
+server-side:
+
+```bash
+read -rsp 'Flywheel password: ' FLYWHEEL_PASSWORD; echo
+FLYWHEEL_TOKEN="$(curl --fail --silent --show-error \
+  -X POST http://localhost:8088/api/auth \
+  -H 'content-type: application/json' \
+  --data "$(jq -n --arg login marina --arg password "$FLYWHEEL_PASSWORD" \
+    '{login: $login, password: $password}')" | jq -er .token)"
+unset FLYWHEEL_PASSWORD
+
+cd ../Marina
+FLYWHEEL_TOKEN="$FLYWHEEL_TOKEN" \
+FLYWHEEL_RPC_URL=http://localhost:8088/rpc \
+bun run start
+```
+
+Flywheel's preview launcher currently builds local images, so Marina's existing default
+`localhost/h2oai/flywheel-agentd:latest` applies to that path. Set `FLYWHEEL_IMAGE` explicitly for
+a remote registry or a separately versioned deployment. Docker is the baseline backend and does
+not support hibernation; crosvm and vfkit remain experimental. Publication is also experimental in
+the current Flywheel preview, so do not make it a baseline Marina readiness claim.
+
+Before enabling the integration for users, run the baseline live qualification described below.
+It proves the actual configured endpoint, token, image, cancellation behavior, archive transfer,
+and teardown rather than assuming protocol compatibility from unit tests.
+
 Keep the operator token in Marina. The current first-pass product boundary is one
 durable Flywheel session/sandbox per Marina entity; coding sessions and projects
 are contexts within that entity workspace. Mint a short-lived capability bound

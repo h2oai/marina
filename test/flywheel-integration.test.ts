@@ -85,4 +85,31 @@ describe("FlywheelClient", () => {
       new FlywheelError("denied", 403, "permission_denied"),
     );
   });
+
+  test("cancels an open response body when execution is aborted", async () => {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(frame(0, { process: { data: "started" } }));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const client = new FlywheelClient({
+      baseUrl: "http://flywheel/rpc",
+      token: "cap",
+      fetch: async () => new Response(stream, { status: 200 }),
+    });
+    const controller = new AbortController();
+    const events = client.exec(
+      { sessionId: "s", sandboxId: "sb", command: "sleep" },
+      { signal: controller.signal },
+    );
+
+    expect((await events.next()).value).toEqual({ process: { data: "started" } });
+    controller.abort(new Error("deadline"));
+    await expect(events.next()).rejects.toThrow("deadline");
+    expect(cancelled).toBe(true);
+  });
 });

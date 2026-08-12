@@ -7,6 +7,24 @@ import type { EntityId, RoomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
 
 const TEST_DB = "test_usecase_evolve.db";
+const PROVIDER_VARS = [
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "GROQ_API_KEY",
+  "OPENROUTER_API_KEY",
+  "CEREBRAS_API_KEY",
+  "XAI_API_KEY",
+  "MISTRAL_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "LLAMA_API_KEY",
+  "LLAMA_BASE_URL",
+  "OLLAMA_API_KEY",
+  "OLLAMA_BASE_URL",
+  "VIBETHINKER_API_KEY",
+  "VIBETHINKER_BASE_URL",
+];
 
 function makeRequest(path: string, body: unknown): [URL, string, Request] {
   const url = new URL(`http://localhost:3300${path}`);
@@ -23,8 +41,11 @@ describe("usecase evolve recipe", () => {
   let engine: Engine;
   let conn: MockConnection;
   let entityId: EntityId;
+  let savedProviders: Record<string, string | undefined>;
 
   beforeEach(() => {
+    savedProviders = Object.fromEntries(PROVIDER_VARS.map((name) => [name, process.env[name]]));
+    for (const name of PROVIDER_VARS) delete process.env[name];
     cleanupDb(TEST_DB);
     db = new MarinaDB(TEST_DB);
     engine = new Engine({ db, startRoom: "test/start" as RoomId });
@@ -46,6 +67,10 @@ describe("usecase evolve recipe", () => {
       db.close();
     } catch {}
     cleanupDb(TEST_DB);
+    for (const [name, value] of Object.entries(savedProviders)) {
+      if (value !== undefined) process.env[name] = value;
+      else delete process.env[name];
+    }
   });
 
   it("is registered as a built-in recipe with an evolver/advisor team", () => {

@@ -162,6 +162,48 @@ describe("AgentRuntime", () => {
       }
     });
 
+    it("does not mistake inbound API auth settings for a model provider", () => {
+      const savedOpen = process.env.MARINA_OPEN_API;
+      const savedModelKeys = process.env.MODEL_API_KEYS;
+      const providerVars = [
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "GROQ_API_KEY",
+        "OPENROUTER_API_KEY",
+        "CEREBRAS_API_KEY",
+        "XAI_API_KEY",
+        "MISTRAL_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "LLAMA_API_KEY",
+        "LLAMA_BASE_URL",
+        "OLLAMA_API_KEY",
+        "OLLAMA_BASE_URL",
+        "VIBETHINKER_API_KEY",
+        "VIBETHINKER_BASE_URL",
+      ];
+      const savedProviders = Object.fromEntries(
+        providerVars.map((name) => [name, process.env[name]]),
+      );
+      for (const name of providerVars) delete process.env[name];
+      process.env.MARINA_OPEN_API = "true";
+      process.env.MODEL_API_KEYS = "sk-marina-caller-token";
+
+      try {
+        expect(runtime.isAvailable()).toBe(false);
+      } finally {
+        if (savedOpen !== undefined) process.env.MARINA_OPEN_API = savedOpen;
+        else delete process.env.MARINA_OPEN_API;
+        if (savedModelKeys !== undefined) process.env.MODEL_API_KEYS = savedModelKeys;
+        else delete process.env.MODEL_API_KEYS;
+        for (const [name, value] of Object.entries(savedProviders)) {
+          if (value !== undefined) process.env[name] = value;
+          else delete process.env[name];
+        }
+      }
+    });
+
     it("returns true when a DB API key exists", () => {
       // Clear env keys
       const keyVars = [

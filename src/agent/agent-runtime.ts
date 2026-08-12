@@ -857,10 +857,6 @@ export class AgentRuntime {
   }
 
   private hasAnyApiKey(): boolean {
-    // Marina open API mode enables room agents without external keys
-    if (process.env.MARINA_OPEN_API === "true") return true;
-    if (process.env.MODEL_API_KEYS) return true;
-
     const keyVars = [
       "ANTHROPIC_API_KEY",
       "OPENAI_API_KEY",

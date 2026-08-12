@@ -12,13 +12,10 @@ services:
       - "4000:4000" # Telnet (optional — drop this line to keep it internal)
       - "3301:3301" # MCP    (optional — drop this line to keep it internal)
     volumes:
-      # Bind mount: persistent state (SQLite DB + assets) lives in ./marina-data
-      # on the host, so you can browse/back it up directly. The container runs as
-      # the unprivileged `bun` user (UID 1000) — if it can't write this folder
-      # you'll get SQLITE_CANTOPEN. Before first run:
-      #   mkdir -p ./marina-data && sudo chown -R 1000:1000 ./marina-data
-      # (or set `user: "<your-uid>:<your-gid>"` on this service to match the host).
-      - ./marina-data:/app/data
+      # Docker-managed storage works on first run without host UID/GID repair.
+      # Operators who need host-visible files can set MARINA_DATA_VOLUME to an
+      # absolute/bind path after making it writable by container UID 1000.
+      - ${MARINA_DATA_VOLUME:-marina-data}:/app/data
     environment:
       # Persistence — keep DB + assets on the mounted volume (set in the image too)
       - DB_PATH=/app/data/marina.db
@@ -80,16 +77,14 @@ services:
       # ── Local LLM (the in-cluster `llama` service defined below) ──
       # The code defaults base URLs to localhost (native installs); in compose,
       # marina reaches the llama.cpp container by service name, so pin it here.
-      # LLAMA_API_KEY/LLAMA_MODEL come from .env (required by the llama service).
+      # LLAMA_BASE_URL/LLAMA_API_KEY/LLAMA_MODEL come from .env when the profile
+      # is enabled. Do not inject a base URL unconditionally: that would make
+      # Marina report a provider even while the profiled service is absent.
       # Address models as `llama/<model>`, or leave agents on `marina/default`.
-      - LLAMA_BASE_URL=http://llama:8080/v1
-      - LLAMA_API_KEY=${LLAMA_API_KEY}
       # Running Ollama on the host instead of the llama service? Point at it
       # (Docker Desktop): - OLLAMA_BASE_URL=http://host.docker.internal:11434/v1
       # VibeThinker (optional, `--profile vibethinker`). Reaches the vLLM service
       # by name; address models as `vibethinker/<model>`. Key comes from .env.
-      - VIBETHINKER_BASE_URL=http://vibethinker:8000/v1
-      - VIBETHINKER_API_KEY=${VIBETHINKER_API_KEY:-}
 
       # ── Optional chat adapters ──
       # - TELEGRAM_TOKEN=your_token
@@ -105,10 +100,18 @@ services:
   # model mount, GPU-pinned, api-key required). Requires the NVIDIA Container
   # Toolkit on the host. Tunables live in .env (host-local), not hardcoded here.
   llama:
+    # Optional local-model stack. Keeping this behind a profile is essential:
+    # the normal `docker compose up` path must not require NVIDIA hardware, a
+    # model file, or LLAMA_API_KEY when the operator uses a cloud provider (or
+    # wants to explore Marina without live agents).
+    profiles: ["llama"]
     image: ghcr.io/ggml-org/llama.cpp@sha256:e502860c8aa147e74e7cf42568fa2a8407c578dd291c1b231f698a55dd83fef6
     command:
       - "-m"
-      - "/models/${LLAMA_MODEL:?set LLAMA_MODEL in .env}"
+      # Use `:-` rather than `:?`: Compose interpolates profiled-out services
+      # too, so parse-time required variables would break the Marina-only path.
+      # llama.cpp reports the missing model/key when this profile is selected.
+      - "/models/${LLAMA_MODEL:-}"
       - "--host"
       - "0.0.0.0"
       - "--port"
@@ -121,7 +124,7 @@ services:
       - "--flash-attn"                        # flash attention — explicit on; this build requires a value, bare -fa is rejected
       - "on"                                  #   (A10G / Ampere SM 8.6 supported; already auto-enabled, making it explicit)
       - "--api-key"
-      - "${LLAMA_API_KEY:?set LLAMA_API_KEY in .env}"   # required even internally
+      - "${LLAMA_API_KEY:-}"   # required even internally when this profile runs
     expose:
       - "8080"                                # network-internal only (NOT published)
     volumes:
@@ -204,3 +207,6 @@ services:
     security_opt:
       - "no-new-privileges:true"
     restart: unless-stopped
+
+volumes:
+  marina-data:

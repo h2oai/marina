@@ -114,28 +114,44 @@ export class FlywheelClient {
     if (!response.ok) await this.throwResponse(response);
     if (!response.body) throw new FlywheelError("Flywheel returned an empty stream", 502);
 
+    const reader = response.body.getReader();
+    const abortStream = () => {
+      // Aborting fetch after headers have arrived is not sufficient in every
+      // runtime (notably Bun): explicitly cancel the response reader so the
+      // HTTP/Connect stream closes and Flywheel can kill the exact process.
+      void reader.cancel(options?.signal?.reason).catch(() => {});
+    };
+    options?.signal?.addEventListener("abort", abortStream, { once: true });
     let pending: Uint8Array<ArrayBufferLike> = new Uint8Array();
-    for await (const chunk of response.body) {
-      pending = concat(pending, chunk);
-      while (pending.length >= 5) {
-        const length = new DataView(pending.buffer, pending.byteOffset + 1, 4).getUint32(0);
-        if (pending.length < length + 5) break;
-        const flags = pending[0]!;
-        const payload = pending.slice(5, length + 5);
-        pending = pending.slice(length + 5);
-        const message = JSON.parse(new TextDecoder().decode(payload));
-        if ((flags & 0x02) !== 0) {
-          if (message.error) {
-            throw new FlywheelError(
-              message.error.message ?? "Flywheel stream failed",
-              502,
-              message.error.code,
-            );
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (options?.signal?.aborted) throw options.signal.reason;
+        if (done) break;
+        pending = concat(pending, value);
+        while (pending.length >= 5) {
+          const length = new DataView(pending.buffer, pending.byteOffset + 1, 4).getUint32(0);
+          if (pending.length < length + 5) break;
+          const flags = pending[0]!;
+          const payload = pending.slice(5, length + 5);
+          pending = pending.slice(length + 5);
+          const message = JSON.parse(new TextDecoder().decode(payload));
+          if ((flags & 0x02) !== 0) {
+            if (message.error) {
+              throw new FlywheelError(
+                message.error.message ?? "Flywheel stream failed",
+                502,
+                message.error.code,
+              );
+            }
+            return;
           }
-          return;
+          yield message as FlywheelEvent;
         }
-        yield message as FlywheelEvent;
       }
+    } finally {
+      options?.signal?.removeEventListener("abort", abortStream);
+      reader.releaseLock();
     }
     if (pending.length !== 0) throw new FlywheelError("Flywheel returned a truncated stream", 502);
   }

@@ -1431,7 +1431,8 @@ export function seedAnswererCrew(
         "exact result. mathjs supports fractions, symbolic solve, simplify, derivative, " +
         "integrate, matrices, statistics. NEVER do multi-step arithmetic in your head — " +
         "always route it through `calc`. Before committing to an answer on a numeric " +
-        "benchmark, verify the computation with at least one independent `calc` invocation.",
+        "benchmark, verify the final computation with `calc`; one correct invocation is enough " +
+        "for straightforward arithmetic.",
       capabilities: {
         strengths: ["exact-arithmetic", "symbolic-math", "numerical-verification"],
         preferences: ["use-the-tool", "double-check", "cite-the-calculation"],
@@ -1460,11 +1461,10 @@ export function seedAnswererCrew(
         "`{type:'model_request', id:'req-XXX', content:'<question>', target:'<your-entity-id>'}`. " +
         "When `target` matches your entity ID, you MUST answer. Your response goes back on " +
         "the same channel as `{type:'model_response', id:'<requestId>', content:'<answer>'}`. " +
-        "Use every Marina primitive before answering: `recall <keywords>`, `pool benchmark:<name> recall <topic>`, " +
-        "`pool seed:<domain> recall <topic>`, `web search <query>`, `calc <expression>`, " +
-        "`tell <specialist> <question>`. ALWAYS recall relevant pools before thinking — " +
-        "accumulated wisdom from prior runs lives there. After answering, deposit what you learned: " +
-        "`note <summary>` or `pool benchmark:<name> add <lesson>`.",
+        "Use the minimum sufficient Marina primitives. Answer obvious factual and reasoning " +
+        "questions directly; use `calc` for arithmetic; recall pools or search the web only when " +
+        "the answer needs evidence; delegate only through an awaited tell. Send the model_response " +
+        "before optional learning notes so maintenance work cannot delay the caller.",
       capabilities: {
         strengths: ["channel-protocol", "tool-orchestration", "pool-recall-first"],
         preferences: ["delegate-to-specialists", "verify-before-commit", "reflect-after"],
@@ -1535,15 +1535,15 @@ export function seedAnswererCrew(
       name: "answerer",
       description:
         "Endpoint orchestrator for marina:answerer — coordinates tool use, pool recall, and specialist delegation to serve external model requests.",
-      traits: ["endpoint-answerer", "exact-calculator", "web-research", "methodical-observation"],
+      traits: ["endpoint-answerer", "web-research", "methodical-observation"],
       guidelines: [
-        "On first spawn: `channel join model-answerer` AND `channel join crew-bench`",
+        "Channel membership is seeded automatically; never spend a request turn joining channels",
         "Every model_request perception is a REQUEST you must answer — do not ignore",
         "Classify the question: math / factual / reasoning / multi-step",
-        "For math: `calc <expression>` exhaustively. Verify twice before committing a number.",
+        "For arithmetic and numeric word problems: never delegate; answer directly with at most one `calc`.",
         "For factual: `web search <keywords>` + `pool benchmark:<name> recall <topic>`",
-        "For multi-step or complex math: `tell Mathematician <question>` and wait for their reply",
-        "After answering, write a short `note` summarizing what tool pattern worked",
+        "For advanced math only: call `marina_tell` with `awaitReply:true` and `timeoutMs:30000`",
+        "After answering, write a note only when the result teaches a reusable pattern",
         "Never answer a math question without at least one `calc` invocation",
       ],
       focus: [
@@ -1634,22 +1634,27 @@ export function seedAnswererCrew(
   const answererGoal =
     "You answer incoming model_request messages on model-answerer. You are a strong reasoner " +
     "backed by a specialist crew — use them as capability extenders, not as replacement thinkers.\n\n" +
-    "First spawn: `channel join model-answerer` AND `channel join crew-bench`. " +
+    "Channel membership is automatic; do not issue channel-join calls. " +
     "When a model_request arrives with target matching your entity ID:\n\n" +
     "DEFAULT PATH — answer directly. Most questions (broad MC, factual lookup with an obvious " +
     "answer, straightforward reasoning) are fastest and most accurate when you answer yourself. " +
     "Direct answer = post `{type:model_response,id,content}` on model-answerer, done. No round-" +
     "trips, no recomposition overhead.\n\n" +
     "DELEGATE ONLY WHEN a specific signal warrants it:\n" +
-    "  - Arithmetic you could get wrong → `tell Mathematician` (they use `calc` for exact results)\n" +
-    "  - Multi-step problem where the steps aren't obvious → `tell Decomposer`\n" +
+    "  - Arithmetic or numeric word problems → NEVER delegate; solve directly with at most one " +
+    "`calc`, then answer\n" +
+    "  - Advanced math needing a specialist → `marina_tell` Mathematician with " +
+    "`awaitReply:true, timeoutMs:30000`; if it times out, solve directly\n" +
+    "  - Multi-step problem where the steps aren't obvious → use an awaited `marina_tell` to " +
+    "Decomposer with `timeoutMs:30000`; on timeout, solve directly\n" +
     "  - Factual question where memory might already have the answer → `pool facts:<domain> " +
     "recall` yourself; only `tell Historian` if you truly don't know and a web lookup would help\n" +
     "  - Adversarial-misconception pattern (TruthfulQA-style traps, 'common knowledge' that's " +
-    "actually wrong) → answer, then `tell Skeptic` for a single sanity check\n" +
-    "  - Genuine ambiguity between two plausible answers → `tell Debater` or `tell Councilor`\n" +
+    "actually wrong) → use one awaited `marina_tell` to Skeptic, then answer\n" +
+    "  - Genuine ambiguity between two plausible answers → one awaited `marina_tell` to Debater " +
+    "or Councilor\n" +
     "  - Output format is strict (Python function, single letter, bare number) and your natural " +
-    "reply wraps in prose → `tell Translator <your_answer> target_spec:<spec>` (useful specs: " +
+    "reply wraps in prose → use an awaited `marina_tell` to Translator (useful specs: " +
     "python_function_verbatim, single_letter, short_factual, numeric_only, preserve_verbatim)\n\n" +
     "Note the invariants:\n" +
     "  FIDELITY OVER ELABORATION. When a specialist returns clean output matching the expected " +

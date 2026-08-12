@@ -43,6 +43,7 @@
     "init": "bun run scripts/init.ts",
     "prune-agent-users": "bun run scripts/prune-agent-users.ts",
     "eval-prompt": "bun run scripts/eval-prompt.ts",
+    "qualify:prompt": "bun run scripts/eval-prompt.ts marina:answerer --min-score 13",
     "qualify:autonomy": "bun run scripts/qualify-autonomy.ts",
     "qualify:evolution": "bun run scripts/qualify-evolution.ts",
     "qualify:flywheel": "bun run scripts/qualify-flywheel-live.ts",
