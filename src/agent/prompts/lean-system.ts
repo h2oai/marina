@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /** Stable identity and operating contract for Marina's autonomous agents. */
 export function getPromptVersion(prompt: string): string {
   return new Bun.CryptoHasher("sha256").update(prompt).digest("hex").slice(0, 12);

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * CommandBar -- Persistent command terminal at the bottom of the viewport.
  *

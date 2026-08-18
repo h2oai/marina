@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2025-2026 Marina Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 # Launch the synthesis-provider with explicit env. Separate script so the
 # main Bash tool can invoke it cleanly and setsid/nohup keep the process
 # alive after the invoking shell exits.

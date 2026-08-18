@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { getLeanSystemPrompt } from "../../agent/prompts/lean-system";
 import { composeRolePrompt, inferTaskCategory, resolveRole } from "../../agent/roles";
 import { dim, header, separator } from "../../net/ansi";

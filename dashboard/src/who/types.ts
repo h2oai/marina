@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // Mirror of src/net/entity-api.ts EntityProfile shape. Kept in sync manually
 // (no codegen yet) — backend changes that touch the response shape should
 // update this file too. Treated as the contract surface for the /who pages.

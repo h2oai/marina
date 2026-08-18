@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Optional sign-in gate. When the server reports auth is required
  * (GET /api/auth-status) and the user isn't logged in, this overlays a sign-in

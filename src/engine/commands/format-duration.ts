@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /** Format milliseconds as short human-readable duration (e.g. "3h 12m"). */
 export function formatDuration(ms: number): string {
   const s = Math.floor(ms / 1000);

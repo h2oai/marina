@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // Run A: hit Anthropic directly with the SAME 50 MMLU-Pro items as the
 // harness with --seed 42 --limit 50. Uses identical prompt, model, temp.
 // Output goes to benchmarks/results/mmlu-pro-direct-<ts>.json so we can

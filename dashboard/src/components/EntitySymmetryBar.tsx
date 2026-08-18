@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { Compass, MapPin, MessageCircle, Sparkles, User } from "lucide-react";
 import { useMemo } from "react";
 import { useEntityDetail } from "../hooks/use-api";

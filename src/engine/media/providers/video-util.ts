@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Shared contract for video-generation providers. Video is asynchronous: the
  * manager calls `start()`, then polls `poll(providerJobId)` until the asset is

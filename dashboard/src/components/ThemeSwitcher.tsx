@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { Palette } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "../hooks/use-theme";

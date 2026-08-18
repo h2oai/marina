@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { memo, useCallback, useState } from "react";
 import type { A2UIAction, A2UIComponent } from "./types";
 

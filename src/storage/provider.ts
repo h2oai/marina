@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /** Pluggable storage backend for binary assets (images, video, audio, PDF, etc.). */
 export interface StorageProvider {
   /** One-time setup (create directories, verify credentials, etc.). */

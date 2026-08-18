@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Configurable image endpoints — lets operators use *any* image model, hosted or
  * local, without a code change. Two shapes:

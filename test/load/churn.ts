@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /** Bounded reconnect soak with rotating session-token verification. */
 const args = new Map<string, string>();
 for (const arg of process.argv.slice(2)) {

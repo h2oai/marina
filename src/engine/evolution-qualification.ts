@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 export interface EvolutionQualificationRun {
   status: string;
   proposed_by?: string;

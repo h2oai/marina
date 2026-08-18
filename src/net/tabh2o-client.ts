@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // ─── TabH2O Tabular Foundation Model Client ─────────────────────────────────
 //
 // Minimal HTTP wrapper around H2O's hosted TabH2O endpoint. Used by the market

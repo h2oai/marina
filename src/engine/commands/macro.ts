@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { MacroManager } from "../../coordination/macro-manager";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, RoomContext } from "../../types";

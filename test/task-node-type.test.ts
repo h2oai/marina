@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { describe, expect, it } from "bun:test";
 import { parseTaskNodeType, TASK_NODE_TYPE_MEANING } from "../src/coordination/task-node-type";
 

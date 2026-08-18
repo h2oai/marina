@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { beforeEach, describe, expect, it } from "vitest";
 import { useEntityActivity } from "../hooks/use-entity-activity";
 import type { DashboardEvent } from "../lib/types";

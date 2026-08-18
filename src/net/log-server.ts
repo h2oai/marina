@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { resolve } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
 import type { EngineEvent, EntityId } from "../types";

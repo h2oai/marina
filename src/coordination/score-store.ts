@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Persistence for Score artifacts — a thin layer over the `scores` memory pool.
  *

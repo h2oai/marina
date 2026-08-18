@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 const HIDDEN_KEYS = new Set([
   "url",
   "content",

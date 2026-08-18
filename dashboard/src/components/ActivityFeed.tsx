@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { ScrollText } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { parseMessage } from "../hooks/use-entity-activity";

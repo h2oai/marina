@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { motion } from "motion/react";
 import { useWorldState } from "../../hooks/use-world-state";
 import type { WorldData } from "../../lib/types";

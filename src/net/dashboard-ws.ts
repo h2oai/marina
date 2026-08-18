@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { ServerWebSocket } from "bun";
 import type { AgentSupports } from "../agent/agent-types";
 import type { Engine } from "../engine/engine";

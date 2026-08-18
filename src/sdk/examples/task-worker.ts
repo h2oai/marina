@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Task Worker — lightweight in-world agent that claims + solves benchmark
  * tasks. Polls for unclaimed bounty tasks in its project, claims one, does

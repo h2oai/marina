@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // ─── SSRF Protection ─────────────────────────────────────────────────────────
 //
 // Blocks fetch() requests to private/internal networks and cloud metadata endpoints.

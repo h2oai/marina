@@ -1,4 +1,7 @@
 #!/usr/bin/env bun
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Marina ACP — stdio JSON-RPC bridge for editor clients (Zed, JetBrains,
  * VS Code, Neovim). Speaks Agent Client Protocol 1, proxies each prompt

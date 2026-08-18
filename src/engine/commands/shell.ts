@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { dim, error as fmtError, header, separator, success } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { StorageProvider } from "../../storage/provider";

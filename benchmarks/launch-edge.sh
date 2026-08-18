@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2025-2026 Marina Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 # Launch the "Marina Edge" synthesis-provider — maximum-fidelity config
 # aimed at benchmarks where an orchestrated system can beat a bare LLM:
 #   - Frontier council: sonnet + gemini + gpt + grok + minimax

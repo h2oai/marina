@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Foundry Provider — worker answers, Gate reviewer approves or rejects. Retry-on-reject.
  *

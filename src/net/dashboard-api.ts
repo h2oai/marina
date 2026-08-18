@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { join, resolve } from "node:path";
 import { getStanding } from "../agent/standing";
 import { listWorkItems } from "../coordination/work-loop";

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { memo } from "react";
 import type { DashboardEvent } from "../lib/types";
 import { cn, formatTime } from "../lib/utils";

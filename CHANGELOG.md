@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Relicensed from MIT to Apache License 2.0.** The `LICENSE` file now contains the canonical
+  Apache-2.0 text, a `NOTICE` file has been added, and all license references (package manifests,
+  README, CONTRIBUTING, site, docs) point to Apache-2.0. The Apache license adds an express patent
+  grant and requires modified files to carry change notices. All source files now carry an
+  SPDX-License-Identifier header, and the SDK package ships its own LICENSE/NOTICE copies.
 - Agent runtime port configuration now preserves the runtime referenced by command handlers, and
   spawn rejects names that world login would otherwise truncate into a different identity.
 - Reworked the model-agnostic pi-agent system contract around outcome framing, selective retrieval,

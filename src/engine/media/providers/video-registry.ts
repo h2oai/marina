@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Video-provider registry — provider id → { start, poll }. Add a provider in one
  * line. (Note: `google` resolves to Veo here and to Imagen in the image

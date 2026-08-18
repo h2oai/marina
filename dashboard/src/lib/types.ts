@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // API response types
 
 /** A page of `items` out of `total` rows — backs the "load more" lists. */

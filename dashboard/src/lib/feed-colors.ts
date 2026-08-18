@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Single source of truth for feed-event colorization. Used by the
  * per-type canvas renderers (TextNode border accent) and the timeline

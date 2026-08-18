@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { A, bold, dim, entity, header, rank, separator, table } from "../../net/ansi";
 import type { CommandDef, Crew, Entity, RoomContext } from "../../types";
 import { formatDuration } from "./format-duration";

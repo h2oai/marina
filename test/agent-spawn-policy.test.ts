@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { MAX_AGENTS } from "../src/agent/agent-runtime";
 import { lineageDepth, spawnBudget } from "../src/engine/commands/agent";

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { AgentStatus } from "../../agent/agent-types";
 import { getStanding } from "../../agent/standing";
 import type { ChannelManager } from "../../coordination/channel-manager";

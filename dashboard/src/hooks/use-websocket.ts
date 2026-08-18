@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { useEffect, useRef, useState } from "react";
 import type { DashboardEvent, WorldSnapshot, WSMessage } from "../lib/types";
 import { ACTIVITY_EVENT_TYPES, useEntityActivity } from "./use-entity-activity";

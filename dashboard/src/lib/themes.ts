@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // Theme definitions for the Marina dashboard.
 // Each theme provides CSS custom property overrides applied via data-theme attribute.
 

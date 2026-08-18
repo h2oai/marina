@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { lazy, type ReactNode, StrictMode, Suspense, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";

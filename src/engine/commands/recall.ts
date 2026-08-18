@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { record as recordStanding } from "../../agent/standing";
 import type { TaskManager } from "../../coordination/task-manager";
 import {

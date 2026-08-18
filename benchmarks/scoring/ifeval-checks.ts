@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * IFEval instruction verifiers.
  * Each function checks if a response satisfies a specific constraint type.

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { AgentRuntime } from "../../agent/agent-runtime";
 import { MAX_AGENTS } from "../../agent/agent-runtime";
 import { isSeedDisabled, listDisabledSeedAgents, setSeedDisabled } from "../../agent/seed-registry";

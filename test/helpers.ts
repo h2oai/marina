@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { unlinkSync } from "node:fs";
 import { grant, listGates } from "../src/engine/safety-gates";
 import type { MarinaDB } from "../src/persistence/database";

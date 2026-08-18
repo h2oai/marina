@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { useMemo } from "react";
 import { useModels } from "../hooks/use-api";
 import { mergeGroups, providerLabel, totalModelCount } from "../lib/model-catalog";

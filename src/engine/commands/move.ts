@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { arrival, departure } from "../../net/ansi";
 import type { CommandDef, Entity, EntityId, RoomContext, RoomId } from "../../types";
 import type { LoadedRoom } from "../../world/room-manager";

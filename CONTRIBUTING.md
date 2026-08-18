@@ -75,4 +75,4 @@ For anything that looks like a vulnerability — **do not open a public issue**.
 
 ## License
 
-By contributing, you agree your contribution is licensed under the project's [MIT License](LICENSE).
+By contributing, you agree your contribution is licensed under the project's [Apache License 2.0](LICENSE), per Section 5 of that license.

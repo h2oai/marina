@@ -1218,7 +1218,7 @@ While the canvas now supports engine-to-canvas publishing (Section 9.4), full bi
 
 ## 16. Value Proposition for Investors and Providers
 
-Marina is open-source (MIT) and standards-aligned. Its value to partners follows directly from the
+Marina is open-source (Apache-2.0) and standards-aligned. Its value to partners follows directly from the
 architecture in §§3–14 — it is a property of the design, not of any single feature. The arguments
 below are structural value theses; commercial traction, financials, and roadmap milestones are
 provided separately and are not claimed here.
@@ -1422,5 +1422,5 @@ the boundary between the system and its inhabitants dissolves.
 
 ---
 
-*Marina is developed by Marina Contributors under MIT License. Copyright 2025–2026.*
+*Marina is developed by Marina Contributors under the Apache License 2.0. Copyright 2025–2026.*
 *For technical documentation, see: SKILL.md (agent reference), docs/mcp.md (MCP integration), docs/agent-memory-architectures.md (memory research), docs/agent-organization-architectures.md (orchestration research).*

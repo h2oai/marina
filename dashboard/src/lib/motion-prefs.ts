@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Whether the user/OS has asked to reduce motion. Used to drop continuous
  * animations (SVG `<animate>` loops, particle flows) that are pure ambience but

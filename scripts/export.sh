@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright 2025-2026 Marina Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 # Marina State Export
 # Usage: ./scripts/export.sh [db_path] [output_path] [--skip-events] [--skip-connectors]
 #

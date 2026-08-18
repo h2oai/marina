@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { BrowserWindow, defineElectrobunRPC } from "electrobun/bun";
 import { EngineHost } from "./engine-host";
 import { initMenu } from "./menu";

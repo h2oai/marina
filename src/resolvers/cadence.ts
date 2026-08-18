@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // Cadence parser — voice-friendly duration syntax for watch specs.
 //
 // Accepts: "1h", "30s", "5m", "7d", "1w", "once" (case-insensitive).

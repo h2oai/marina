@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2025-2026 Marina Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 # Bare-Gemini baseline on the 5 Marina Edge benchmarks.
 # No orchestration, no council, no calculator — just one frontier model
 # answering directly. This is the number we need to beat.

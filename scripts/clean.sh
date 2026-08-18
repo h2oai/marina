@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright 2025-2026 Marina Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 # Marina Clean Script
 # Removes database and other persistent data for a fresh start.
 # Usage: ./scripts/clean.sh [--yes]

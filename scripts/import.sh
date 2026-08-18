@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright 2025-2026 Marina Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 # Marina State Import
 # Usage: ./scripts/import.sh <snapshot.json> [db_path] [--merge] [--skip-events]
 #

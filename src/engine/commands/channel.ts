@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { ChannelManager } from "../../coordination/channel-manager";
 import { channelSelf, header, separator } from "../../net/ansi";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";

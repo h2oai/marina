@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // Structural sharing for the 2-second world snapshot.
 //
 // The server resends the FULL world every snapshot, so a naive

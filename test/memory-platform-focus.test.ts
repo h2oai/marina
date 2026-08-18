@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { describe, expect, it } from "bun:test";
 import { PlatformMemoryBackend } from "../src/agent/memory-platform";
 import type { MarinaClient } from "../src/sdk/client";

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * NSED + Memory Provider — full-stack answerer:
  *   translator → recall → ensemble(N) → vote → reflect.

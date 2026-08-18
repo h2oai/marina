@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Compat profiles — passthru-layer model-id aliases for OpenAI-compatible clients.
  *

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * NSED Ensemble Provider — answers the Marina LLM endpoint by calling N
  * substrates in parallel (Negotiate), majority-voting on the extracted

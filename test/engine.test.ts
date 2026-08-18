@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { roomId } from "../src/types";

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Automatic1111 / SD.Next local Stable Diffusion (`/sdapi/v1/txt2img`).
  * Provider `automatic1111` (aliases a1111/sd/sdnext). Keyless by default; base

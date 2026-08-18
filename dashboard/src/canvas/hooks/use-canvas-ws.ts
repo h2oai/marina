@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { Node } from "@xyflow/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { defaultSize, nextTilePosition } from "../lib/layout";

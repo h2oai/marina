@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2025-2026 Marina Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 # benchmarks/sweep.sh — systematic orchestrator × benchmark sweep.
 #
 # Reads a config file of lines like:

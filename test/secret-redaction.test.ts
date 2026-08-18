@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { describe, expect, test } from "bun:test";
 import { assertCredentialFreeCommand, redactSensitiveText } from "../src/security/secret-redaction";
 

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Model limit probing — autodetect a local model's real context window when an
  * agent is launched, so the compactor budgets against the truth instead of a

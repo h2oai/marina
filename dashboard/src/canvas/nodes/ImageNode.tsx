@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { Handle, type NodeProps, NodeResizer, Position } from "@xyflow/react";
 import { useState } from "react";
 import { emptyAssetLabel } from "../lib/node-fields";

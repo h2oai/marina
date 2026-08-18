@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * ACP (Agent Client Protocol) server — stdio ndjson JSON-RPC 2.0.
  *

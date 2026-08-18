@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 export type TaskNodeType = "bundle" | "action" | "decide" | "gate" | "agent" | "leaf";
 
 const MARKER_RE = /^\s*\[(bundle|action|decide|gate|agent)\]\s*/i;

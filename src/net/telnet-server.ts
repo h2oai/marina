@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { Socket } from "bun";
 import type { RateLimiter } from "../auth/rate-limiter";
 import type { Engine } from "../engine/engine";

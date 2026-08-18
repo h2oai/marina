@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { FlywheelBindingRow, FlywheelBindingState, MarinaDB } from "../persistence/database";
 import type { EntityId } from "../types";
 import { FlywheelClient, type FlywheelEvent, type FlywheelFetch } from "./flywheel";

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * World Coordinator Provider — every benchmark question becomes a real
  * Marina task in a real project. Worker agents in the world claim and

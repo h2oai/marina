@@ -2,6 +2,7 @@
   "name": "marina-usecase-ui",
   "private": true,
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "bunx vite --host 127.0.0.1",

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { describe, expect, it } from "bun:test";
 import type { Score } from "../src/coordination/score";
 import { characterizeScore, shapeSummary } from "../src/coordination/score-shape";

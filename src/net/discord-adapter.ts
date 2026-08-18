@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { Client, Events, GatewayIntentBits, type Message } from "discord.js";
 import type { Connection, Perception } from "../types";
 import type { Adapter, AdapterContext } from "./adapter";

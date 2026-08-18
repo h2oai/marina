@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { describe, expect, it } from "vitest";
 import { mergeGroups } from "../lib/model-catalog";
 import type { ProviderGroup } from "../lib/types";

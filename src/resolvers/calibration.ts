@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // Calibration loop — pairs resolved Samples with whatever forecast / position
 // notes referenced the same (kind, id), and writes outcome notes that close
 // the generational learning loop. Successor agents `recall` the chain and

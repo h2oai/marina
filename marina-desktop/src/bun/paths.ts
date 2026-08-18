@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";

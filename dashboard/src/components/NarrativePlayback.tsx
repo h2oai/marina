@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { Pause, Play, SkipBack, SkipForward, Timeline } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFeedState } from "../hooks/use-feed-state";

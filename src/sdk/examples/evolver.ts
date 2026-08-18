@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Evolver Agent — a self-evolving agent that builds its own mind-room,
  * runs benchmarks, talks to other agents for advice, and rewrites its

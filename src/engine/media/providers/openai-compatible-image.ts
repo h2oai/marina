@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Generic OpenAI-compatible image generation (`/v1/images/generations`) against
  * an operator-configured endpoint — covers hosted providers (Together,

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { MarinaDB, MediaJobRow, MediaJobType } from "../../persistence/database";
 import type { StorageProvider } from "../../storage/provider";
 import type { EngineEvent, EntityId } from "../../types";

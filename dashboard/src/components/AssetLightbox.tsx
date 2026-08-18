@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Asset lightbox — an in-app popout viewer for generated/uploaded media and
  * docs. Provided once (AssetViewerProvider) and triggered from anywhere via

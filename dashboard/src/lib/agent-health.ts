@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Liveness classification for an agent, so the roster can show alive-but-idle
  * vs stuck vs dead at a glance. PURE OBSERVABILITY — derived from status the

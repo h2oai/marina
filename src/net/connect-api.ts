@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { join } from "node:path";
 import { getLeanSystemPrompt, getPromptVersion } from "../agent/prompts/lean-system";
 import type { Engine } from "../engine/engine";

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // Static fallback catalog. Only used when /api/models returns empty or fails —
 // live discovery is the primary source. Kept intentionally small: enough to
 // launch an agent without network access, not a reference list of "good" models.

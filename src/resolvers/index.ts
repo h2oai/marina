@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // Resolver registration entrypoint. Called once per engine boot to register
 // the built-in resolvers. Worlds and tests can register additional kinds via
 // registerResolver() directly.

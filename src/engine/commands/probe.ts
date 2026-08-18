@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // In-world `probe` command — invoke a registered resolver and persist the
 // result as a Sample note. This is the primary surface for the resolver
 // primitive: any agent (rank 0+) can call it, the watcher uses it on its

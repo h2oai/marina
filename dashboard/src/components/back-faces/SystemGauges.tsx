@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { animate, motion, useMotionValue } from "motion/react";
 import { useEffect, useMemo } from "react";
 import { useWorld } from "../../hooks/use-api";

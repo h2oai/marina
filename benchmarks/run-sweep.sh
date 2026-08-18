@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2025-2026 Marina Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 # Multi-substrate / multi-benchmark sweep.
 #
 # Assumes launch-stack.sh has set up Marina + ThinProviders + Translator.

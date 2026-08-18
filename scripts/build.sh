@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright 2025-2026 Marina Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 # Marina Full Build Script
 # Builds all parts of the Marina platform: server + dashboard
 # Usage: ./scripts/build.sh [--skip-tests] [--skip-dashboard]

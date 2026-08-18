@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /** Prompts shared by non-autonomous model surfaces and context compaction. */
 
 export const ASK_SYSTEM_PROMPT =

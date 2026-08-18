@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { Bot, Play, Send, Square } from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";

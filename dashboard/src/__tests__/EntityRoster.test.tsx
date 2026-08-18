@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { EntityRoster } from "../components/EntityRoster";

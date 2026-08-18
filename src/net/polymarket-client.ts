@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // ─── Polymarket Trading API Client ──────────────────────────────────────────
 //
 // Typed wrapper around Polymarket's gamma (read) + CLOB (write) APIs. Mirrors

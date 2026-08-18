@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { ChannelManager } from "../../coordination/channel-manager";
 import { CrewError, type CrewManager } from "../../coordination/crew-manager";
 import { bold, dim, header, separator } from "../../net/ansi";

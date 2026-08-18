@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { join } from "node:path";
 import { record as recordStanding } from "../../agent/standing";
 import { header, separator } from "../../net/ansi";

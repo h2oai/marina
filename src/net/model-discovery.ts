@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // ─── Provider Model Discovery ───────────────────────────────────────────────
 //
 // Fetches live model catalogs from each registered provider's `/v1/models`

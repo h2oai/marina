@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { existsSync, mkdirSync, realpathSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { LocalWorkspace, type WorkspaceRuntime } from "./local-workspace";

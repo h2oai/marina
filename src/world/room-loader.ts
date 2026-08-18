@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import { Glob } from "bun";

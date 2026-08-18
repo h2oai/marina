@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // ─── Engine Constants ─────────────────────────────────────────────────────────
 //
 // Named constants replacing magic numbers scattered across the codebase.

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // Persists a Sample as a note and emits a feed event for closure-relevant
 // statuses. Filter-at-source: no-change and error samples never reach the
 // feed — they would drown out signal. They still write notes (process tier,

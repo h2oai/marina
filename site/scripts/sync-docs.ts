@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Sync the repo's user guides into Starlight's content collection at build
  * time. Keeps docs/guides/ as the single source of truth — the generated

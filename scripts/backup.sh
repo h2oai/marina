@@ -1,4 +1,7 @@
 #!/bin/bash
+# Copyright 2025-2026 Marina Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 # Marina Database Backup Script
 # Usage: ./scripts/backup.sh [db_path] [backup_dir]
 

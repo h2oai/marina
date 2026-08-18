@@ -1,4 +1,7 @@
 #!/usr/bin/env bun
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * One-time generator: creates 24 non-center grid room files under worlds/default/world/.
  * The center room (2-2) is hand-written separately with Guide NPC logic.

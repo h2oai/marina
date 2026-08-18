@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // In-world `watch` command — declarative point-in-time observation requests.
 //
 // `watch create resolving venue:kalshi ticker:KXFED-26MAR cadence:1h notify:bettor`

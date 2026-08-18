@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { assessEvolutionQualification } from "../src/engine/evolution-qualification";
 import { MarinaClient, type Perception } from "../src/sdk/client";
 

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { resolve } from "node:path";
 import { getInternalModelToken } from "./agent/agent-runtime";
 import { RateLimiter } from "./auth/rate-limiter";

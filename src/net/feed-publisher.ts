@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { recordChronicleCitation } from "../agent/standing";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId } from "../types";

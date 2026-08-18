@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { Engine } from "../src/engine/engine";
 import type { MarinaDB } from "../src/persistence/database";
 import type { RoomId } from "../src/types";

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { GroupManager } from "../../coordination/group-manager";
 import { bold, dim, entity as fmtEntity, header, rank, separator } from "../../net/ansi";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";

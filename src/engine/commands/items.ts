@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { entity as fmtEntity } from "../../net/ansi";
 import type { CommandDef, Entity, EntityId, RoomContext, RoomId } from "../../types";
 import { splitOn } from "../parse-input";

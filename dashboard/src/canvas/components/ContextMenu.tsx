@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { Trash2, Wand2 } from "lucide-react";
 import { motion } from "motion/react";
 

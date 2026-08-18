@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 const SECRET_TERM = /(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|authorization)/i;
 const SECRET_FIELD = `[a-z0-9_-]*(?:${SECRET_TERM.source})[a-z0-9_-]*`;
 const SECRET_ASSIGNMENT = new RegExp(`\\b(${SECRET_FIELD})\\s*[:=]\\s*([^\\s,;]+)`, "gi");

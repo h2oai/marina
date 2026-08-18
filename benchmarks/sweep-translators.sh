@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2025-2026 Marina Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 # Full translator ablation sweep.
 # 15 translators (14 + none) x 8 benchmarks x N=50, seed=42.
 # Fixed: orchestrator=synthesis, council=haiku+qwen+kimi+gemma, escalator=gemini.

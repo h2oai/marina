@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { accessSync, constants as fsConstants, readdirSync, statSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import type { AgentEvent, AgentHandle } from "../../agent/agent-types";

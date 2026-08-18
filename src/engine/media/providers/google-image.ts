@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Google Imagen image generation (Gemini API `:predict`).
  * Models: `google/imagen-3.0-generate-002`, etc. Key: GEMINI_API_KEY (reuses the

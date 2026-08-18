@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { ServerWebSocket } from "bun";
 
 /** Any WebSocket that has at least a canvasId field. */

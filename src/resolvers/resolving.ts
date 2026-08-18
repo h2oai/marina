@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // `resolving` resolver — did a binary prediction-market event settle?
 //
 // Polls Kalshi and Polymarket for a specific market's resolution. Returns

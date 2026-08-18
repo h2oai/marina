@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Stability AI image generation (Stable Image v2beta).
  * Models: `stability/ultra`, `stability/core`, `stability/sd3` (sdxl /

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { bold, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import * as kalshi from "../../net/kalshi-client";
 import * as polymarket from "../../net/polymarket-client";

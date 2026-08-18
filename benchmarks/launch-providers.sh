@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2025-2026 Marina Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 # Launch all 14 ThinProviders with correct upstream API wiring.
 #
 # Anthropic substrates (sonnet/haiku): PROVIDER_URL=api.anthropic.com

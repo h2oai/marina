@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Provider Agent — an agent that joins a model channel and forwards
  * requests to an external OpenAI-compatible LLM provider.

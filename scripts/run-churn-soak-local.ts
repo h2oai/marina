@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 const basePort = 46_000 + Math.floor(Math.random() * 500) * 4;
 const stamp = `${process.pid}-${Date.now().toString(36)}`;
 const baseUrl = `http://localhost:${basePort}`;

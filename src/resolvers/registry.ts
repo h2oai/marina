@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // Module-level resolver registry. Mirrors the command registry pattern.
 // Resolvers register at engine boot via registerBuiltinResolvers(); tests can
 // clearResolvers() between cases.

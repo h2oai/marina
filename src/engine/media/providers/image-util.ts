@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Shared contract + helpers for image-generation providers. Kept dependency-free
  * so providers and the registry can import it without a cycle.

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * LegendContent -- Color-key reference for the unified canvas. Three tabs:
  * note types, relationship edges, feed event kinds. Rendered inside the

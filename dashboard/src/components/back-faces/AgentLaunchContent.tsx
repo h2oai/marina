@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { Bot, Play, Send, Square } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useAgents, useKeys, useModels, useRoles } from "../../hooks/use-api";

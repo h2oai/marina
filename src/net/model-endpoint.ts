@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Model-endpoint configuration — how Marina behaves when consumed as an LLM at
  * `/v1/chat/completions` (and the Ollama / Responses surfaces). Operator-tunable

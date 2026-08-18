@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { extname } from "node:path";
 import type { EntityId } from "../../types";
 import type { Engine } from "../engine";

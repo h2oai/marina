@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { Node } from "@xyflow/react";
 
 /** Default tile dimensions per node type */

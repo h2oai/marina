@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { join } from "node:path";
 import { AgentRuntime } from "../agent/agent-runtime";
 import { applyRankProgression } from "../agent/rank-progression";

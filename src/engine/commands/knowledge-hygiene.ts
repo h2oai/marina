@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { NoteRow } from "../../persistence/database";
 
 const DEFAULT_MAX_NOTE_LENGTH = 700;

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Custom ReactFlow edge for `recall_trace` events — draws the agent's
  * *reasoning* as a path from its current room to each activated note.

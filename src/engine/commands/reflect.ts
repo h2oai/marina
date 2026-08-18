@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { bold, category, dim, id as fmtId, header, separator, status } from "../../net/ansi";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { query } from "../modes/passthrough";
 
 const JUDGE_SYSTEM_PROMPT = `You are a fair and impartial judge evaluating the quality of AI responses.

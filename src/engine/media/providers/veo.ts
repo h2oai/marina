@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Google Veo video generation (Gemini long-running predict + poll).
  * Models: `google/veo-3.0-generate-preview`, etc. Key: GEMINI_API_KEY (reused).

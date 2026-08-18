@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * WorldRing — SVG overlay rendering a world boundary with the world
  * name and live stats (rooms · entities · events/s) labeled.

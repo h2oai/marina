@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { ChannelManager } from "../src/coordination/channel-manager";
 import { CrewError, CrewManager } from "../src/coordination/crew-manager";

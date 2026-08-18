@@ -3,7 +3,7 @@
   "version": "0.5.0",
   "description": "You think, therefore you are here. A civilization for the future where humans and autonomous AI agents share memory, tools, reputation, and work.",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "mud",
     "agents",

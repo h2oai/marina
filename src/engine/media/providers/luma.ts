@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Luma Dream Machine video generation. Models: `luma/ray-2`, `luma/ray-1-6`, …
  * Key: LUMA_API_KEY (Bearer). Async: create a generation, poll until `completed`.

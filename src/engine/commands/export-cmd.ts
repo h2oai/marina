@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { BoardManager } from "../../coordination/board-manager";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // Dynamic room layout engine for the world map SVG.
 // Computes positions from live room data — no hardcoded grid.
 // Coordinates target a virtual 1000×750 space.

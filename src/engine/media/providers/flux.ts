@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Flux image generation (Black Forest Labs native API). Models:
  * `flux/flux-pro-1.1`, `flux/flux-dev`, `flux/flux-pro-1.1-ultra`, … Key:

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Role/Trait Resolution — reads composable roles from the platform DB
  * and produces effective prompts for agent system prompt injection.

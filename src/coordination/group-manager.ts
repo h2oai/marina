@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { GroupRow, MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId } from "../types";
 import type { BoardManager } from "./board-manager";

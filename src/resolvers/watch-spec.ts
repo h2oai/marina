@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // Watch specs — declarative descriptions of "what to observe and how often",
 // stored as notes by convention in the shared `watches` pool. The watcher
 // agent recalls these on its tick, runs `probe` for ones that are due, and

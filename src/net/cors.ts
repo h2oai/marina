@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // ─── Shared CORS utility ─────────────────────────────────────────────────────
 //
 // When ALLOWED_ORIGINS is set (comma-separated), only those origins get an

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Skill import — parse markdown-with-frontmatter skill files into the
  * shape Marina's `skill` command expects.

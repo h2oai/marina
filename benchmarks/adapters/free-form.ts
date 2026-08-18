@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { chunkText, queryWithMemory } from "../modes/memory";
 import { query, queryMultiTurn } from "../modes/passthrough";
 import { judgeResponse } from "../scoring/judge";

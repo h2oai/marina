@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Classifies an entity by how it came to exist in the world, so the roster can
  * colorize/group "things I launched" vs "the default system" vs "whoever

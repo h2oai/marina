@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { afterEach, describe, expect, test } from "bun:test";
 import type { WorkspaceRuntime } from "../src/coding/local-workspace";
 import {

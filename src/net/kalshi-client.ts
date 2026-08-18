@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 // ─── Kalshi Trading API Client ──────────────────────────────────────────────
 //
 // Typed REST wrapper around Kalshi's CFTC-regulated US prediction market API.

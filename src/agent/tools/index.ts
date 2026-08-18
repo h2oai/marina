@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * LLM-callable tool definitions for the lean agent.
  * All tools conform to pi-agent-core's AgentTool interface.

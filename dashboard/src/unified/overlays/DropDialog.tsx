@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * DropDialog -- Modal that opens after a drag-and-drop file upload, prompting
  * the user for an intent (what should an agent do with this?) and an

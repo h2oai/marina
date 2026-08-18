@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import type { NodeProps, NodeTypes } from "@xyflow/react";
 import { createElement, lazy, Suspense } from "react";
 import { AudioNode } from "./AudioNode";

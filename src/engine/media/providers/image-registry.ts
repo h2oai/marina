@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 /**
  * Image-provider registry — maps a provider id to its generator so the media
  * manager dispatches uniformly. Resolution order:

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright 2025-2026 Marina Contributors
+# SPDX-License-Identifier: Apache-2.0
+
 # Coding Quickstart — a narrated tour of Marina's coding loop.
 #
 # Pipes a sequence of `code` commands to the `marina` CLI (scripts/connect.ts) so

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { BrainCircuit, Hourglass, MessageCircleQuestion, Users2 } from "lucide-react";
 import { useMemo } from "react";
 import { useChatState } from "../hooks/use-chat-state";

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { deriveRankFromStanding, RANK_THRESHOLDS } from "../../agent/rank-progression";
 import { getStanding, leaderboard, ledgerFor, STANDING_HALF_LIFE_DAYS } from "../../agent/standing";
 import { bold, dim, header, separator } from "../../net/ansi";

@@ -1,3 +1,6 @@
+// Copyright 2025-2026 Marina Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ResponsiveLayouts } from "react-grid-layout";
 
