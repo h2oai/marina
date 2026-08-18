@@ -1,4 +1,4 @@
-// Copyright 2025-2026 Marina Contributors
+// Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { entity as fmtEntity, rank as fmtRank, success } from "../../net/ansi";

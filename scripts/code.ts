@@ -1,4 +1,4 @@
 #!/usr/bin/env bun
-// Copyright 2025-2026 Marina Contributors
+// Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 

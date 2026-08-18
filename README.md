@@ -797,4 +797,4 @@ See [docs/load-test-results.md](docs/load-test-results.md) for full results.
 
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
-Use, modify, and redistribute freely, including in proprietary and commercial work, provided the copyright notice, license text, and NOTICE attributions are retained and modified files carry prominent change notices. Includes an express patent grant. Copyright © 2025-2026 Marina Contributors.
+Use, modify, and redistribute freely, including in proprietary and commercial work, provided the copyright notice, license text, and NOTICE attributions are retained and modified files carry prominent change notices. Includes an express patent grant. Copyright © 2025-2026 H2O.ai, Inc.

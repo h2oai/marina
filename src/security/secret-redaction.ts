@@ -1,4 +1,4 @@
-// Copyright 2025-2026 Marina Contributors
+// Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 const SECRET_TERM = /(?:api[_-]?key|access[_-]?key|token|secret|password|passwd|authorization)/i;
