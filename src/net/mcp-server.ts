@@ -4,6 +4,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
+import { version as MARINA_VERSION } from "../../package.json";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { WS_IDLE_TIMEOUT_SECONDS } from "../engine/constants";
 import type { Engine } from "../engine/engine";
@@ -255,7 +256,7 @@ export class McpServerAdapter {
     const flywheel = this.flywheel;
 
     const mcp = new McpServer(
-      { name: "marina", version: "0.1.0" },
+      { name: "marina", version: MARINA_VERSION },
       { capabilities: { tools: {} } },
     );
 

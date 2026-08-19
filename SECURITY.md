@@ -10,10 +10,7 @@ Only the current `main` branch and the latest tagged release receive security fi
 
 **Do not open a public issue for a suspected vulnerability.** Public issues are indexed by search engines and watched by bots; an unfixed CVE in plain view puts every running instance at risk before a patch can ship.
 
-Use one of:
-
-1. **GitHub private security advisories** (preferred). On this repository, go to **Security → Advisories → Report a vulnerability**. This creates a private channel between you and the maintainers. GitHub handles CVE assignment if needed.
-2. **Email** — send to the project maintainer listed in `package.json` or in the repository's GitHub profile. PGP welcome but not required.
+Report via **GitHub private security advisories**: on this repository, go to **Security → Advisories → Report a vulnerability**. This creates a private channel between you and the maintainers. GitHub handles CVE assignment if needed.
 
 Please include:
 

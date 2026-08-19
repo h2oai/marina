@@ -1,0 +1,42 @@
+name: Bug report
+description: Something broke or behaved unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **If this looks like a security vulnerability, do not file it here** — see [SECURITY.md](../blob/main/SECURITY.md) for private disclosure.
+  - type: textarea
+    id: what-ran
+    attributes:
+      label: What you ran
+      description: The exact command(s) or steps.
+      placeholder: bun run start, then `spawn coder ...` in the connected client
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Full output, ideally with `LOG_LEVEL=debug`.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Bun version, OS, world, upstream model provider if any.
+      placeholder: |
+        Bun: 1.2.x
+        OS: Ubuntu 24.04
+        MARINA_WORLD: default
+        Provider: anthropic
+    validations:
+      required: true

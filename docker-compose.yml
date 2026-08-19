@@ -1,6 +1,8 @@
 services:
   marina:
-    image: ${MARINA_IMAGE:-<aws-account-id>.dkr.ecr.us-east-1.amazonaws.com/h2oai-marina:latest}
+    # Builds from this repo by default. Set MARINA_IMAGE to run a prebuilt
+    # image instead (e.g. your registry's tag) — deploy pipelines do this.
+    image: ${MARINA_IMAGE:-marina:local}
     build: .
     # Pull provider keys / secrets from a local .env file if present.
     # Copy .env.example → .env and fill in what you need.

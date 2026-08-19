@@ -404,10 +404,10 @@ Don't remember recipe names? Just type naturally:
 
 ```
 > usecase what are the odds of rain tomorrow
-Detected recipe: predict
+Detected intent: predict
 
 > usecase find everything we know about caching
-Detected recipe: search
+Detected intent: search
 ```
 
 ### List and inspect

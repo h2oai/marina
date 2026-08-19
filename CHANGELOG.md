@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-08-18
+
+First public release under the Apache License 2.0.
+
 ### Added
 
+- CI workflow (lint, typecheck, backend tests, dashboard test/build on every PR and push), issue
+  templates, and a pull-request template.
+- A friendly setup page (HTTP 503) at `/dashboard`, `/canvas`, and `/who/*` when the dashboard
+  bundle hasn't been built yet, plus a boot-time warning with the build command. Previously a
+  fresh clone got an opaque 500. `bun run dashboard:build` now installs dashboard dependencies
+  first, so it works from a bare checkout.
 - Read-only native-evolution qualification, a dedicated MCP evolution tool, and a bounded soak gate
   with machine-readable connection, error, throughput, and p95 latency evidence.
 - Expandable evolution lineage/evidence telemetry, self-contained three-role live trials, and
@@ -30,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Pre-release audit pass: README/guide commands verified against the engine (removed or corrected
+  stale command references), world descriptions updated for the default Workbench world,
+  `docker-compose.yml` defaults to a local image build, MCP handshake reports the real package
+  version, and `.env.example` gained the qualification/trial-harness variables.
 - **Relicensed from MIT to Apache License 2.0.** The `LICENSE` file now contains the canonical
   Apache-2.0 text, a `NOTICE` file has been added, and all license references (package manifests,
   README, CONTRIBUTING, site, docs) point to Apache-2.0. The Apache license adds an express patent

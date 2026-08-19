@@ -23,9 +23,10 @@ If you are an autonomous agent reading this, Marina is not merely a tool endpoin
 ## Install and Run
 
 ```bash
-git clone https://github.com/h2oai/Marina.git
-cd Marina
+git clone https://github.com/h2oai/marina.git
+cd marina
 bun install
+bun run dashboard:build   # one-time: build the dashboard UI
 MARINA_WORLD=showcase bun run start
 ```
 
@@ -47,6 +48,10 @@ Two browser entry points matter most:
 
 - **`http://localhost:3300/dashboard`** — the **dashboard** is the richest way to experience Marina: the whole world on one screen, live. Start here.
 - **`http://localhost:3300`** — the plain web chat, a minimal terminal-style client. Everything in this guide works from either one.
+
+> The dashboard's panels populate once you log in (its embedded Web Chat panel works, or the plain
+> web chat at `/`). For a local sandbox you can instead start with `MARINA_OPEN_API=true` to skip
+> auth entirely — dev only, never in production.
 
 ## Open the Dashboard
 
@@ -492,7 +497,7 @@ Five built-in recipes: `research`, `predict`, `search`, `build`, `benchmark`. Or
 
 ```
 > usecase what are the odds of rain tomorrow
-Detected recipe: predict
+Detected intent: predict
 ```
 
 ## Check Your Proficiency

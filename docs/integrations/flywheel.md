@@ -8,11 +8,16 @@ runtime. When `FLYWHEEL_TOKEN` is set, Marina registers the identity-scoped
 
 ## Preview setup from a clean machine
 
+> **Availability**: Flywheel is currently in private preview — the repository below requires
+> access granted by H2O.ai. Without it, skip this integration entirely; Marina runs fully without
+> Flywheel (Code Mode simply reports sandbox execution as unavailable rather than falling back to
+> host execution).
+
 Flywheel's current preview-supported target is Linux x86_64 with Docker. Start its independently
 deployed stack using Flywheel's launcher (rather than copying its Compose settings into Marina):
 
 ```bash
-git clone https://github.com/h2oai/flywheel.git
+git clone https://github.com/h2oai/flywheel.git   # private preview — requires access
 cd flywheel
 ./scripts/preview-up.sh marina
 ```

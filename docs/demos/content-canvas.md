@@ -10,7 +10,7 @@ Publish a background asset to the `studio` canvas:
 
 ```text
 > canvas asset upload https://example.com/report.pdf
-> canvas publish document <asset_id> studio title:"Marine Heatwave Report"
+> canvas publish document <asset_id> studio
 ```
 
 Switch the web chat to **Rich view** so room updates, agent tells, and canvas
@@ -18,12 +18,13 @@ events render as readable timeline cards.
 
 ## 2. Create an Intent
 
-```text
-> canvas intent create studio summarize-report owner:self notes:"Draft a 5-bullet executive summary."
-> canvas intent list
-```
+Intents are set from the dashboard: open the **studio** canvas, **double-click the published
+document node**, and enter the work request (e.g. "Draft a 5-bullet executive summary."). Then
+verify it's visible in-world:
 
-Flip the canvas card on the dashboard to confirm the new intent tile.
+```text
+> canvas intent list studio
+```
 
 ## 3. Assign an Agent
 

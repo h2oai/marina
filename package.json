@@ -1,6 +1,6 @@
 {
   "name": "marina",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "You think, therefore you are here. A civilization for the future where humans and autonomous AI agents share memory, tools, reputation, and work.",
   "type": "module",
   "license": "Apache-2.0",
@@ -34,7 +34,7 @@
     "lint": "biome check src/ test/ dashboard/src/",
     "format": "biome format --write src/ test/ dashboard/src/",
     "dashboard:dev": "cd dashboard && bunx vite",
-    "dashboard:build": "cd dashboard && bunx vite build",
+    "dashboard:build": "cd dashboard && bun install && bunx vite build",
     "usecase-ui:dev": "cd examples/usecase-ui && bun run dev",
     "usecase-ui:build": "cd examples/usecase-ui && bun run build",
     "clean": "rm -f marina.db marina.db-shm marina.db-wal data/marina.db && rm -rf data/scratch/*",

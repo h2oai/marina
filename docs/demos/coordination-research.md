@@ -29,7 +29,7 @@ What happens:
 Verify progress:
 
 ```text
-> crew list
+> crew info <crew-name>
 > task list
 > agent list
 ```
@@ -42,7 +42,7 @@ the dashboard **Coordination** card to view the auto-created channel and board.
 Once the crew completes, capture the deliverables:
 
 ```text
-> board show research-report
+> board read research-report
 > chronicle about Researcher
 > canvas intent list
 ```

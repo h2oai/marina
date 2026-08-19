@@ -72,7 +72,7 @@ Provider keys can also be added at runtime (admin) via `key add` / Admin → Key
 | Watch / probe commands | (nothing) | No | `watch due`, `probe` |
 | Watcher **loop** (auto-probe on cadence) | provider key + watcher agent | **Yes** | `agent list` → role `watcher` |
 | Room agents | provider key + `MARINA_ROOM_AGENTS≠false` | Yes (lazy, on entry) | enter a room; `agent list` |
-| Crews / orchestration | provider key + spawned specialists | Yes | `crew list`; `agent list` |
+| Crews / orchestration | provider key + spawned specialists | Yes | `crew info <name>`; `agent list` |
 | Canvas / feed / standing | (nothing) | No | `canvas list`, `feed`, `standing` |
 | `market forecast` (tabular) | `TABH2O_API_KEY` | No (HTTP call) | `market forecast <id>` |
 | Marina-as-LLM (`/v1`) | `MODEL_API_KEYS` (or `MARINA_OPEN_API`) + provider key | No | startup `model-api` log; `curl /v1/health` |

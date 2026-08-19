@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
 import type { MarinaAuthProvider } from "../auth/better-auth-provider";
@@ -36,6 +37,28 @@ import { handleProbeApi } from "./probe-api";
 const WEBCHAT_PATH = join(import.meta.dir, "webchat.html");
 const ASK_PATH = join(import.meta.dir, "ask.html");
 const DASHBOARD_DIST = join(import.meta.dir, "../../dist/dashboard");
+const DASHBOARD_INDEX = join(DASHBOARD_DIST, "index.html");
+
+const DASHBOARD_NOT_BUILT_HTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Marina — dashboard not built</title>
+<style>body{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#0b1220;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}main{max-width:44rem;padding:2rem}h1{font-size:1.1rem;color:#7dd3fc}code{background:#1e293b;padding:.15rem .4rem;border-radius:.25rem;color:#a5f3fc}pre{background:#1e293b;padding:1rem;border-radius:.5rem;overflow-x:auto}a{color:#7dd3fc}</style>
+</head><body><main>
+<h1>Dashboard not built yet</h1>
+<p>The Marina server is running, but the dashboard bundle (<code>dist/dashboard/</code>) hasn't been built. Build it once, then reload — no server restart needed:</p>
+<pre>bun run dashboard:build</pre>
+<p>Meanwhile, the <a href="/">web chat</a> works right away.</p>
+</main></body></html>`;
+
+async function serveDashboardIndex(): Promise<Response> {
+  const index = Bun.file(DASHBOARD_INDEX);
+  if (await index.exists()) {
+    return new Response(index, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+  }
+  return new Response(DASHBOARD_NOT_BUILT_HTML, {
+    status: 503,
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
 
 interface WSData {
   connId: string;
@@ -327,25 +350,21 @@ export class WebSocketServer {
                 return new Response(file);
               }
               // SPA fallback
-              return new Response(Bun.file(join(DASHBOARD_DIST, "index.html")));
+              return serveDashboardIndex();
             })
-            .catch(() => new Response(Bun.file(join(DASHBOARD_DIST, "index.html"))));
+            .catch(() => serveDashboardIndex());
         }
 
         // Canvas SPA — serve from same dist/dashboard/ (same SPA, path-based routing)
         if (url.pathname === "/canvas" || url.pathname.startsWith("/canvas/")) {
-          return new Response(Bun.file(join(DASHBOARD_DIST, "index.html")), {
-            headers: { "Content-Type": "text/html; charset=utf-8" },
-          });
+          return serveDashboardIndex();
         }
 
         // /who/<name> — public per-entity profile pages. Served from the same
         // SPA bundle; main.tsx routes to the WhoPage component based on the
         // pathname. No auth required (this is the chronicle's public face).
         if (url.pathname === "/who" || url.pathname.startsWith("/who/")) {
-          return new Response(Bun.file(join(DASHBOARD_DIST, "index.html")), {
-            headers: { "Content-Type": "text/html; charset=utf-8" },
-          });
+          return serveDashboardIndex();
         }
 
         // Serve web chat widget
@@ -621,7 +640,13 @@ export class WebSocketServer {
     this.port = this.server.port ?? this.port;
     registerConnectEndpoint(this.engine, "websocket", this.port);
     console.log(`WebSocket server listening on ws://localhost:${this.port}/ws`);
-    console.log(`Dashboard available at http://localhost:${this.port}/dashboard`);
+    if (existsSync(DASHBOARD_INDEX)) {
+      console.log(`Dashboard available at http://localhost:${this.port}/dashboard`);
+    } else {
+      console.warn(
+        `Dashboard not built yet — run \`bun run dashboard:build\` (installs + builds dashboard/), then reload http://localhost:${this.port}/dashboard. No server restart needed.`,
+      );
+    }
     console.log(`Canvas available at http://localhost:${this.port}/canvas`);
   }
 

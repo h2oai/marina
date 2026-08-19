@@ -3,7 +3,7 @@
 ## Build & Test
 ```bash
 bun run start          # Start server
-bun run test           # Run all backend tests (~81 files, ~2200 tests)
+bun run test           # Run all backend tests (~144 files, ~2300 tests)
 bun run typecheck      # TypeScript strict check
 bun run lint           # Biome lint
 bun run format         # Biome auto-format (run before committing)
@@ -103,7 +103,7 @@ cd dashboard && bun run test  # Frontend smoke tests (vitest, ~24 tests)
 ## World Templates
 - World definitions live in `worlds/` — each is a TypeScript file exporting a `WorldDefinition`
 - `MARINA_WORLD` env var selects which world to load (default: `default`)
-- Available worlds: `default` (intent-first Workbench), `showcase` (full 25-room launchpad — projects, templates, markets, benchmarks, craft, specialist crews), `commons` (coordination-ready), `research` (research lab), `personal` (self-evolving agent), `evolve` (8 capability benchmarks), `craft` (spec-driven dev — interview/spec/verify/ship), `markets` (prediction markets — confidence forecasting, Brier scoring, research-driven positions), `demos` (interactive demonstrations — lobby, workshop, bridge), `empty` (minimal)
+- Available worlds: `default` (intent-first Workbench), `showcase` (full 25-room launchpad — projects, templates, markets, benchmarks, craft, specialist crews), `commons` (coordination-ready), `research` (research lab), `personal` (self-evolving agent), `evolve` (8 capability benchmarks), `craft` (spec-driven dev — interview/spec/verify/ship), `markets` (prediction markets — confidence forecasting, Brier scoring, research-driven positions), `demos` (interactive demonstrations — lobby, workshop, bridge), five focused single-outcome worlds built on `worlds/focused-example.ts` (`prediction-lab`, `deep-research`, `red-team`, `due-diligence`, `data-investigation`), `empty` (minimal)
 - `WorldDefinition.seed?(db)` runs once on first boot, seeds DB with templates/projects/tasks (must be idempotent)
 - `RoomContext.brief?(entityId)` lets rooms push compass signals to entities
 - `brief watch [N]` / `brief unwatch` — periodic compass subscription (30-600 ticks)

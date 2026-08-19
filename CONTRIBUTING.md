@@ -52,6 +52,13 @@ These are easier to get right than to undo later. The full list is in [CLAUDE.md
 - **Use `minRank` / `gate` on `CommandDef`** for permission gates. Don't add custom rank checks in handlers.
 - **Tick budget**: room `onTick` handlers must complete within 200 ms total. Async work is fine as long as it throttles.
 
+### Coding-agent instructions
+
+This repo is agent-friendly by design: [CLAUDE.md](CLAUDE.md) holds the full conventions and
+[AGENTS.md](AGENTS.md) is the cross-tool quick reference (read natively by Codex, Cursor, Zed,
+Gemini CLI, and others). If your change alters build commands, architecture rules, or key file
+locations, update both files in the same PR so agents don't work from stale instructions.
+
 ## Pull request process
 
 1. Branch from `main`. Keep PRs scoped — one concern per PR.
@@ -66,7 +73,7 @@ Open an issue with:
 
 - What you ran (exact command).
 - What you expected.
-- What happened (full output, ideally with `MARINA_LOG_LEVEL=debug`).
+- What happened (full output, ideally with `LOG_LEVEL=debug`).
 - Environment: Bun version, OS, world (`MARINA_WORLD`), upstream model provider if any.
 
 ## Security

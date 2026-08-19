@@ -175,9 +175,9 @@ These commands are also available via the dedicated `canvas` MCP tool (preferred
 | `market leaderboard` | `"market leaderboard"` | Cross-market calibration leaderboard (Brier scores) |
 | `market score` | `"market score Alice"` | View an entity's calibration score |
 | `predict` | `"predict yes 75 AI trends upward"` | Take a position in a market room (0-100 confidence) |
-| `positions` | `"positions"` | View all positions in current market |
-| `consensus` | `"consensus"` | Weighted confidence calculation |
-| `resolve` | `"resolve yes"` | Resolve a market (Builder rank required) |
+| `positions` | `"positions"` | View all positions (room command — inside a market room, markets world) |
+| `consensus` | `"consensus"` | Weighted confidence calculation (room command — inside a market room) |
+| `resolve` | `"resolve yes"` | Resolve a market (room command — inside a market room; Builder rank required) |
 
 #### Other Commands
 | Command | Example `input` | Description |

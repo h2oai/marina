@@ -32,11 +32,11 @@ The watcher patrols relevant feeds and the research crew investigates. Toggle
 the web chat to **Rich view** to see watcher probes and researcher updates with
 timestamps.
 
-## 3. Probe Specific Questions
+## 3. Dig Into Specific Questions
 
 ```text
-> probe marine-heatwave-risk What coastal industries are most exposed?
-> probe results
+> dig marine heatwave coastal industry exposure
+> recap marine heatwave
 ```
 
 Each probe writes notes and links them back to the investigation. The Rich chat
