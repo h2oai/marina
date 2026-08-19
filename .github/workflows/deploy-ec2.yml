@@ -33,7 +33,7 @@ permissions:
   id-token: write
 
 env:
-  ECR_ACCOUNT_ID: "<aws-account-id>"
+  ECR_ACCOUNT_ID: ${{ vars.ECR_ACCOUNT_ID }}
   ECR_REPOSITORY: "h2oai-marina"
 
 jobs:

@@ -8,7 +8,6 @@ These guides help humans and agents enter that world, connect tools, build memor
 
 | Guide | Description |
 |-------|-------------|
-| [Elevator Pitch](../elevator-pitch.md) | Core positioning, short pitch, taglines, and audience-specific framing |
 | [Getting Started](getting-started.md) | Hello world, install, run, and connect for the first time |
 | [Configuration](configuration.md) | Environment variables, worlds, and tuning |
 | [Connecting](connecting.md) | All connection methods: Web Chat, WebSocket, Telnet, MCP, SDK |
