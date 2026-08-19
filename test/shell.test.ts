@@ -139,7 +139,9 @@ describe("Shell", () => {
     it("should handle command timeout", async () => {
       const result = await runtime.execRaw("entity_9", "sleep 10", 500);
       expect(result.timedOut).toBe(true);
-    });
+      // The 500ms exec timeout plus the process-kill path can exceed bun's
+      // default 5s per-test limit on loaded CI runners.
+    }, 15000);
 
     it("should confine scratch file reads", async () => {
       const content = await runtime.readScratchFile("entity_10", "../etc/passwd");
