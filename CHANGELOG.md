@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Updated vulnerable transitive HTTP, URL parsing, IP address, WebSocket, and protobuf
+  dependencies. Upgraded optional better-auth support to the patched 1.7 line and added an
+  automatic, backward-compatible issuer migration for auth databases created by Marina 0.6.0.
+
 ## [0.6.0] — 2026-08-18
 
 First public release under the Apache License 2.0.

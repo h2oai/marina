@@ -42,7 +42,7 @@ export interface MarinaAuthProvider {
 
 /**
  * Canonical better-auth schema (email/password + social — social uses the
- * `account` table which is already present). Captured from better-auth 1.6.x
+ * `account` table which is already present). Captured from better-auth 1.7.x
  * `compileMigrations()` and made idempotent with IF NOT EXISTS so we apply it
  * at startup without the (Bun-flaky) migrate CLI. Regenerate if a future phase
  * adds plugins with new tables (e.g. SSO).
@@ -50,12 +50,33 @@ export interface MarinaAuthProvider {
 const SCHEMA_SQL = `
 create table if not exists "user" ("id" text not null primary key, "name" text not null, "email" text not null unique, "emailVerified" integer not null, "image" text, "createdAt" date not null, "updatedAt" date not null);
 create table if not exists "session" ("id" text not null primary key, "expiresAt" date not null, "token" text not null unique, "createdAt" date not null, "updatedAt" date not null, "ipAddress" text, "userAgent" text, "userId" text not null references "user" ("id") on delete cascade);
-create table if not exists "account" ("id" text not null primary key, "accountId" text not null, "providerId" text not null, "userId" text not null references "user" ("id") on delete cascade, "accessToken" text, "refreshToken" text, "idToken" text, "accessTokenExpiresAt" date, "refreshTokenExpiresAt" date, "scope" text, "password" text, "createdAt" date not null, "updatedAt" date not null);
+create table if not exists "account" ("id" text not null primary key, "issuer" text not null, "accountId" text not null, "providerId" text not null, "userId" text not null references "user" ("id") on delete cascade, "accessToken" text, "refreshToken" text, "idToken" text, "accessTokenExpiresAt" date, "refreshTokenExpiresAt" date, "scope" text, "password" text, "createdAt" date not null, "updatedAt" date not null);
 create table if not exists "verification" ("id" text not null primary key, "identifier" text not null, "value" text not null, "expiresAt" date not null, "createdAt" date not null, "updatedAt" date not null);
 create index if not exists "session_userId_idx" on "session" ("userId");
 create index if not exists "account_userId_idx" on "account" ("userId");
 create index if not exists "verification_identifier_idx" on "verification" ("identifier");
 `;
+
+/** Upgrade auth databases created by Marina's better-auth 1.6 integration. */
+function upgradeAuthSchema(db: Database): void {
+  const accountColumns = db.query(`PRAGMA table_info("account")`).all() as { name: string }[];
+  if (!accountColumns.some((column) => column.name === "issuer")) {
+    db.exec(`ALTER TABLE "account" ADD COLUMN "issuer" text`);
+
+    const accounts = db
+      .query(`SELECT "id", "providerId" FROM "account" WHERE "issuer" IS NULL`)
+      .all() as { id: string; providerId: string }[];
+    const setIssuer = db.query(`UPDATE "account" SET "issuer" = ? WHERE "id" = ?`);
+    for (const account of accounts) {
+      const namespace = account.providerId === "credential" ? "local:" : "local:oauth:";
+      setIssuer.run(`${namespace}${encodeURIComponent(account.providerId)}`, account.id);
+    }
+  }
+
+  db.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS "account_issuer_accountId_idx" ON "account" ("issuer", "accountId")`,
+  );
+}
 
 interface ProviderConfig {
   secret: string;
@@ -100,6 +121,7 @@ export function createBetterAuthProvider(): MarinaAuthProvider {
   const db = new Database(cfg.dbPath);
   // Idempotent schema bootstrap (no CLI).
   db.exec(SCHEMA_SQL);
+  upgradeAuthSchema(db);
 
   const socialProviders = cfg.social;
   const auth = betterAuth({

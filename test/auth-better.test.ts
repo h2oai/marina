@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import {
   createBetterAuthProvider,
@@ -160,5 +161,51 @@ describe("better-auth social providers", () => {
     expect(body.url).toContain("accounts.google.com");
     // The OAuth callback target is on our origin, as registered with the provider.
     expect(decodeURIComponent(body.url ?? "")).toContain("/api/auth/callback/google");
+  });
+});
+
+describe("better-auth schema upgrades", () => {
+  const dbPath = `/tmp/marina-ba-upgrade-${Date.now()}.db`;
+  const previousSecret = process.env.BETTER_AUTH_SECRET;
+  const previousDbPath = process.env.BETTER_AUTH_DB_PATH;
+
+  afterAll(() => {
+    cleanupDb(dbPath);
+    process.env.BETTER_AUTH_SECRET = previousSecret;
+    process.env.BETTER_AUTH_DB_PATH = previousDbPath;
+  });
+
+  it("backfills issuers when opening an auth database created by better-auth 1.6", () => {
+    const legacy = new Database(dbPath);
+    legacy.exec(`
+      create table "account" (
+        "id" text not null primary key,
+        "accountId" text not null,
+        "providerId" text not null,
+        "userId" text not null,
+        "createdAt" date not null,
+        "updatedAt" date not null
+      );
+      insert into "account" values
+        ('credential-row', 'user-1', 'credential', 'user-1', 0, 0),
+        ('oauth-row', 'oauth-1', 'github', 'user-1', 0, 0);
+    `);
+    legacy.close();
+
+    process.env.BETTER_AUTH_SECRET = "x".repeat(40);
+    process.env.BETTER_AUTH_DB_PATH = dbPath;
+    createBetterAuthProvider();
+
+    const upgraded = new Database(dbPath, { readonly: true });
+    const rows = upgraded.query(`SELECT "id", "issuer" FROM "account" ORDER BY "id"`).all() as {
+      id: string;
+      issuer: string;
+    }[];
+    upgraded.close();
+
+    expect(rows).toEqual([
+      { id: "credential-row", issuer: "local:credential" },
+      { id: "oauth-row", issuer: "local:oauth:github" },
+    ]);
   });
 });

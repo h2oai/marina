@@ -73,25 +73,26 @@
     "zod": "4.3.6"
   },
   "overrides": {
-    "@hono/node-server": "^1.19.13",
+    "@hono/node-server": "^1.19.15",
     "@protobufjs/utf8": "^1.1.1",
     "basic-ftp": "^5.3.1",
+    "body-parser": "^2.3.0",
     "express-rate-limit": "^8.2.2",
-    "fast-uri": "^3.1.2",
+    "fast-uri": "^3.1.5",
     "fast-xml-builder": "^1.1.7",
     "fast-xml-parser": "^5.7.0",
-    "hono": "^4.12.18",
-    "ip-address": "^10.1.1",
+    "hono": "^4.12.34",
+    "ip-address": "^10.3.1",
     "lodash": "^4.18.0",
     "path-to-regexp": "^8.4.0",
-    "protobufjs": "^7.5.8",
+    "protobufjs": "^7.6.3",
     "qs": "^6.15.2",
-    "undici": "^6.24.0",
+    "undici": "^6.28.0",
     "ws": "^8.20.1",
     "zod": "4.3.6"
   },
   "optionalDependencies": {
-    "better-auth": "^1.6.15",
+    "better-auth": "^1.6.22",
     "jose": "^6.2.3"
   }
 }
