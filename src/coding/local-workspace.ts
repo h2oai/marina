@@ -100,7 +100,7 @@ export interface WorkspaceDescriptor {
  * Host-side filesystem surface of a workspace. These operations read/mutate the
  * workspace tree directly; for a sandboxed runtime they stay host-side over the
  * shared mount (virtio-fs) rather than crossing into the guest — see
- * docs/design/web-coding-guest-agent-protocol.md (host/guest split).
+ * the host/guest split protocol.
  */
 export interface WorkspaceFiles {
   displayRoot(): string;

@@ -40,7 +40,7 @@ export const ORCHESTRATION_HELP = ORCHESTRATION_PATTERNS.join("|");
 // machine-readable counterpart: which coordination *shapes* a goal can take,
 // and which patterns fit each. It powers `suggestPatterns()` — the bridge that
 // lets an agent recognize "this goal looks like a debate" instead of waiting
-// for an operator to seed a pattern. See docs/design/emergent-orchestration.md.
+// for an operator to seed a pattern.
 
 /** Coordination shapes a goal can take. */
 export type TaskShape =

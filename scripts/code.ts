@@ -9,7 +9,7 @@
  * throwaway DB) and drops you straight into agentic Code Mode for that
  * directory: type a task in plain English and a bound coding agent explores,
  * edits, and runs checks — streaming its work back. The minimum end of the
- * pervasive-Marina spectrum (docs/design/pervasive-marina.md): an agent in a
+ * pervasive-Marina spectrum: an agent in a
  * folder, no world/ports/civics ceremony.
  *
  * Usage:

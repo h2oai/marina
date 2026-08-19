@@ -118,8 +118,8 @@ dirty-project/export check; use `code sandbox stop confirm` (or `discard confirm
 workspaces unless destructive teardown is intentionally being handled by the caller.
 
 The MCP lifecycle plus durable reconciliation is the shipped control-plane
-baseline. Code Mode routing and project materialization are specified by the canonical
-[Code Mode × Flywheel execution plan](../design/code-flywheel-execution-plan.md).
+baseline. Code Mode routing and project materialization follow the canonical
+Code Mode × Flywheel execution plan.
 
 The same manager is available through Code Mode:
 
@@ -166,7 +166,7 @@ SHA-256, and byte-count agreement. Archive v1 rejects excessive expansion/member
 devices, FIFOs, sockets, traversal, and unsafe member sizes. Transfers never touch the
 Marina host workspace. Private repositories await the credential broker.
 The broader Git, registry, model, cloud, storage, signing, and runtime-secret boundary is specified
-in the [sandbox credential broker contract](../design/sandbox-credential-broker.md). Flywheel's
+in the sandbox credential broker contract. Flywheel's
 current generalized proxy has the right server-side injection model, but its authentication path is
 not yet a public binding surface for persistent direct-`Exec` sandboxes; Marina does not route raw
 secrets around that gap.

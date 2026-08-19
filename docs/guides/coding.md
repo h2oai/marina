@@ -13,8 +13,7 @@ parts that make it more than a CLI.
 > `test`/`lint`/`typecheck`/`build`, plus a constrained `git` subset). When the operator configures
 > Flywheel, an entity can create one durable isolated sandbox, materialize guest projects, run open
 > finite commands there, and manage guest services. Selection is per session and never falls back
-> silently to the host. See [Optional isolated execution with Flywheel](#optional-isolated-execution-with-flywheel)
-> and the [canonical execution plan](../design/code-flywheel-execution-plan.md).
+> silently to the host. See [Optional isolated execution with Flywheel](#optional-isolated-execution-with-flywheel).
 >
 > **Running or applying code is an earned capability.** Reading, searching, diffing, and *proposing*
 > patches are open to everyone, but `code run`/`verify`/`test` and `code apply`/`revert` require the
