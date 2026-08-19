@@ -73,7 +73,7 @@ describe("better-auth bridge", () => {
   });
 
   it("exchanges a signed-in identity for a Marina token bound to a named entity", async () => {
-    const cookie = await signUp("creator@h2o.ai", "supersecret123", "Creator");
+    const cookie = await signUp("creator@example.com", "supersecret123", "Creator");
     const req = new Request(url("/api/auth-session"), {
       method: "POST",
       headers: { "Content-Type": "application/json", cookie },
@@ -90,7 +90,7 @@ describe("better-auth bridge", () => {
     expect(engine.entities.get(entityId!)?.name).toBe("creator");
     // The handle is bound to the verified subject + email for stable future logins.
     const user = db.getUserByName("creator");
-    expect(user?.auth_email).toBe("creator@h2o.ai");
+    expect(user?.auth_email).toBe("creator@example.com");
     expect(user?.auth_subject).toBeTruthy();
     expect(db.getUserByAuthSubject(user!.auth_subject!)?.name).toBe("creator");
   });
@@ -106,7 +106,7 @@ describe("better-auth bridge", () => {
   });
 
   it("refuses a handle already claimed by another identity", async () => {
-    const cookie = await signUp("intruder@h2o.ai", "supersecret123", "Intruder");
+    const cookie = await signUp("intruder@example.com", "supersecret123", "Intruder");
     const req = new Request(url("/api/auth-session"), {
       method: "POST",
       headers: { "Content-Type": "application/json", cookie },

@@ -333,6 +333,11 @@ cp "$FONT_CACHE/orbitron.woff2" "$FONTS_DIR/orbitron.woff2" 2>/dev/null
 cp "$FONT_CACHE/share-tech-mono.woff2" "$FONTS_DIR/share-tech-mono.woff2" 2>/dev/null
 ok "Offline fonts copied to build output"
 
+# The distributed app must carry the project license and the NOTICE file
+# (which includes the OFL attribution for the bundled fonts).
+cp "$REPO_ROOT/LICENSE" "$REPO_ROOT/NOTICE" "$DIST_DIR/" 2>/dev/null
+ok "LICENSE and NOTICE copied to build output"
+
 # ─── Step 7: Build Electrobun App ────────────────────────────────────────────
 
 step "Step 7/8: Building Electrobun app (env=$ENV)"

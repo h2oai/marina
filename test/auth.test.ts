@@ -235,7 +235,7 @@ describe("Auth-required mode (authRequired guard)", () => {
     addConn("c1");
     const result = engine.login("c1", "creator", undefined, {
       subject: "auth_sub_1",
-      email: "creator@h2o.ai",
+      email: "creator@example.com",
       emailVerified: false,
     });
     expect("entityId" in result).toBe(true);
@@ -248,12 +248,12 @@ describe("Auth-required mode (authRequired guard)", () => {
   });
 
   it("grants admin only to a VERIFIED admin-list email", () => {
-    process.env.MARINA_AUTH_ADMIN_EMAILS = "boss@h2o.ai";
+    process.env.MARINA_AUTH_ADMIN_EMAILS = "boss@example.com";
     try {
       addConn("c1");
       const result = engine.login("c1", "boss", undefined, {
         subject: "auth_sub_boss",
-        email: "boss@h2o.ai",
+        email: "boss@example.com",
         emailVerified: true,
       });
       expect("entityId" in result).toBe(true);
@@ -271,7 +271,7 @@ describe("Auth-required mode (authRequired guard)", () => {
       // Identity login as 'creator' with a non-admin email → no rank from name.
       const result = engine.login("c1", "creator", undefined, {
         subject: "auth_sub_2",
-        email: "creator@h2o.ai",
+        email: "creator@example.com",
         emailVerified: true,
       });
       expect("entityId" in result).toBe(true);
@@ -287,7 +287,7 @@ describe("Auth-required mode (authRequired guard)", () => {
     addConn("c1");
     const login = engine.login("c1", "creator", undefined, {
       subject: "auth_sub_3",
-      email: "creator@h2o.ai",
+      email: "creator@example.com",
       emailVerified: false,
     });
     if (!("token" in login) || "error" in login) throw new Error("login failed");

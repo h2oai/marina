@@ -23,3 +23,8 @@ benchmarks/results/
 benchmarks/.tmp-humaneval/
 marina-export-*.json
 artifacts/flywheel/
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
