@@ -1,0 +1,11 @@
+# Verified false positives (test fixtures, documentation placeholders, identifiers)
+fe683112527dc3cddae8c7f43ed3408c10b7e2db:test/key-crypto.test.ts:generic-api-key:11
+1c42510bc76de69c6aaa3cb451319daeb7a4c8dc:docs/marina-as-llm.md:generic-api-key:59
+8c1aab94c727a319e9b0c26ea32734037a4d0356:docs/guides/connecting.md:generic-api-key:50
+8c1aab94c727a319e9b0c26ea32734037a4d0356:docs/guides/connecting.md:generic-api-key:83
+8c1aab94c727a319e9b0c26ea32734037a4d0356:docs/guides/troubleshooting.md:curl-auth-header:160
+8c1aab94c727a319e9b0c26ea32734037a4d0356:docs/guides/memory-api.md:curl-auth-header:67
+8c1aab94c727a319e9b0c26ea32734037a4d0356:src/net/model-api.ts:generic-api-key:1091
+8c1aab94c727a319e9b0c26ea32734037a4d0356:test/canvas.test.ts:generic-api-key:186
+8c1aab94c727a319e9b0c26ea32734037a4d0356:test/canvas.test.ts:generic-api-key:217
+8c1aab94c727a319e9b0c26ea32734037a4d0356:worlds/seed.ts:generic-api-key:916
