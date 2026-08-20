@@ -82,13 +82,13 @@ through login, `look`, `brief`, and `next` without requiring you to learn the co
 | Connect | `http://localhost:3300/api/connect` | Self-describing connection manifest |
 | Health | `http://localhost:3300/health` | Liveness probe (used by Docker healthcheck) |
 
-Configuration is optional, with one big exception: **add an LLM provider key to populate the world with live agents** (see [Populate the World](#populate-the-world) below). Copy `.env.example` to `.env` to add keys, pick a world (`MARINA_WORLD`), or change ports. Log in through the dashboard's command bar (or set `MARINA_OPEN_API=true` for local dev). `./scripts/start.sh --background` runs detached. Prefer containers? See [Docker](#docker).
+Configuration is optional, with one big exception: **add an LLM provider key to populate the world with live agents** (see [Populate the World](#populate-the-world) below). Copy `.env.example` to `.env` to add keys, pick a world (`MARINA_WORLD`), or change ports. Log in through the dashboard's **Web Chat** panel (or set `MARINA_OPEN_API=true` for local dev). `./scripts/start.sh --background` runs detached. Prefer containers? See [Docker](#docker).
 
 ## Hello World
 
 Five ways to say hello — pick whichever fits your workflow:
 
-**1. Browser** — open `http://localhost:3300`, use the dashboard's command bar to choose a name,
+**1. Browser** — open `http://localhost:3300/`, use the dashboard's **Web Chat** panel to choose a name,
 then:
 ```
 > say Hello, world!
@@ -132,9 +132,9 @@ ANTHROPIC_API_KEY=sk-ant-... bun run start
 ```
 (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, and others work too — see `.env.example`.) Room agents spawn lazily when someone enters their room: log in to the Workbench and the Host comes to life. Verify with `who`, then `tell Host hello`.
 
-**2. From the dashboard** — open `http://localhost:3300/dashboard`:
-- **Admin panel → Keys tab**: add a key (name, provider, value) at runtime — stored in the database, connectivity-tested, no restart needed.
-- **Entities panel → flip button**: reveals the agent launch form. Pick a name, model, optional role and goal, hit **Spawn**, and watch it join the world. The same panel stops running agents and steers them with attention messages.
+**2. From the dashboard** — open `http://localhost:3300/`:
+- **Admin → Keys**: click **+ Add**, choose a provider, paste the key, and click **Save Key**. Use **Test** to verify connectivity; no restart is required.
+- **Agents**: enter a name, choose a discovered model and optional role or goal, then click **Launch Agent**. The same panel stops running agents and sends attention messages.
 
 **3. From inside the world** — `research <topic>` (or `usecase research <topic>`) creates an observable project, linked tasks, shared memory, and research orchestration. If you hold the earned `agent.spawn` capability it also launches a worker; otherwise existing agents can join and claim the work. Track it with `project status`. Direct `agent spawn` and runtime `key add` remain safety-gated capabilities you grow into.
 
