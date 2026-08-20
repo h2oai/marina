@@ -21,3 +21,15 @@ body:
     attributes:
       label: Alternatives considered
       description: Workarounds you've tried, or other designs that could solve the same problem.
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and tradeoffs
+      description: Which users, interfaces, or worlds benefit? What complexity or compatibility cost should maintainers consider?
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and discussions for prior art.
+          required: true

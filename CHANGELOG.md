@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Refined the README, documentation landing page, GitHub Pages metadata, and contribution
+  templates for the public release. Corrected the Pages project base path and aligned prominent
+  feature claims with tested repository behavior.
+
 ### Security
 
 - Updated vulnerable transitive HTTP, URL parsing, IP address, WebSocket, and protobuf

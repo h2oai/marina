@@ -29,14 +29,29 @@ body:
     validations:
       required: true
   - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Link a small repository, world definition, or self-contained sequence when possible. Remove credentials and private data.
+  - type: textarea
     id: environment
     attributes:
       label: Environment
       description: Bun version, OS, world, upstream model provider if any.
       placeholder: |
         Bun: 1.2.x
+        Marina: release tag or git SHA
         OS: Ubuntu 24.04
         MARINA_WORLD: default
         Provider: anthropic
     validations:
       required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I removed API keys, session tokens, personal data, and other secrets from this report.
+          required: true

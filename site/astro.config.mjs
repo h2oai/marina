@@ -5,8 +5,8 @@
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 
-// GitHub Pages base path. For a project page (h2oai.github.io/Marina) set
-// SITE_BASE=/Marina; for a custom domain / Cloudflare Pages leave it "/".
+// GitHub Pages base path. The public project site uses /marina; custom-domain
+// deployments can override this with SITE_BASE=/.
 const base = process.env.SITE_BASE ?? "/";
 const site = process.env.SITE_URL ?? "https://h2oai.github.io";
 
@@ -27,7 +27,7 @@ export default defineConfig({
       },
       customCss: ["./src/styles/marina.css"],
       social: [
-        { icon: "github", label: "GitHub", href: "https://github.com/h2oai/Marina" },
+        { icon: "github", label: "GitHub", href: "https://github.com/h2oai/marina" },
       ],
       // The bespoke marketing landing lives at src/pages/index.astro; Starlight
       // owns everything under /docs.
