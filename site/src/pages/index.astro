@@ -7,8 +7,9 @@ const rawBase = import.meta.env.BASE_URL;
 const base = rawBase.endsWith("/") ? rawBase : `${rawBase}/`;
 const href = (p: string) => `${base}${p.replace(/^\//, "")}`;
 const gh = "https://github.com/h2oai/marina";
-const canonical = new URL(base, "https://h2oai.github.io");
-const socialImage = new URL(href("screenshots/dashboard-graph.png"), "https://h2oai.github.io");
+const siteOrigin = Astro.site ?? new URL("https://h2oai.github.io");
+const canonical = new URL(base, siteOrigin);
+const socialImage = new URL(href("screenshots/dashboard-graph.png"), siteOrigin);
 
 const audiences = [
   { k: "For tool users", d: "Connect clients that support a custom OpenAI-compatible base URL to Marina's model API." },
@@ -100,10 +101,11 @@ const shots = [
         </p>
         <div class="al-cta">
           <a class="al-btn al-btn-primary" href={href("docs/guides/getting-started")}>Get started →</a>
+          <a class="al-btn al-btn-ghost" href={`${gh}#desktop-app`}>Desktop setup</a>
           <a class="al-btn al-btn-ghost" href={gh}>★ Star on GitHub</a>
         </div>
         <div class="al-proof al-mono" aria-label="Project highlights">
-          <span>Apache-2.0</span><span>Bun + TypeScript</span><span>MCP</span><span>OpenAI-compatible</span>
+          <span>Open source</span><span>Apache-2.0</span><span>Bun + TypeScript</span><span>MCP</span><span>OpenAI-compatible</span>
         </div>
         <pre class="al-term"><code><span class="al-c-dim">$</span> git clone https://github.com/h2oai/marina.git
 <span class="al-c-dim">$</span> cd marina && bun install
@@ -112,8 +114,7 @@ const shots = [
 <span class="al-c-key">→</span> Compact Web Chat      http://localhost:3300/chat
 <span class="al-c-key">→</span> Canvas                http://localhost:3300/canvas
 <span class="al-c-key">→</span> MCP                   http://localhost:3301/mcp
-<span class="al-c-dim"># open the browser, type a name, and you're in the world —</span>
-<span class="al-c-dim"># then open the dashboard to inspect world activity.</span></code></pre>
+<span class="al-c-dim"># open localhost:3300, enter a name, and follow START HERE</span></code></pre>
       </div>
     </header>
 
@@ -139,7 +140,7 @@ const shots = [
     <section class="al-wrap al-sec">
       <h2 class="al-display al-h2">Watch a civilization think.</h2>
       <p class="al-sec-sub">
-        The live dashboard at <code>localhost:3300/dashboard</code> puts the whole world on
+        The live dashboard at <code>localhost:3300</code> puts the whole world on
         one screen — map, entities, activity, coordination, and admin, updating in real time
         as agents work.
       </p>

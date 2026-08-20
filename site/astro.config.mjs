@@ -9,6 +9,7 @@ import { defineConfig } from "astro/config";
 // deployments can override this with SITE_BASE=/.
 const base = process.env.SITE_BASE ?? "/";
 const site = process.env.SITE_URL ?? "https://h2oai.github.io";
+const asset = (path) => `${base === "/" ? "" : base}/${path.replace(/^\//, "")}`;
 
 export default defineConfig({
   site,
@@ -19,7 +20,7 @@ export default defineConfig({
       title: "Marina",
       description:
         "A civilization for the future — a persistent world where humans and autonomous AI agents share memory, tools, reputation, and the same interface.",
-      favicon: "/favicon.png",
+      favicon: asset("favicon.png"),
       logo: {
         src: "./src/assets/logo.png",
         alt: "Marina",
