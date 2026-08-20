@@ -22,7 +22,7 @@ Then:
 3. Use its three actions: **Look Around**, **Read Your Brief**, and **Find the Next Action**.
 
 Those buttons run the ordinary `look`, `brief`, and `next` commands. Their results appear in the
-command bar, so the UI teaches the same command interface used elsewhere in Marina. At that point
+Web Chat panel, so the UI teaches the same command interface used elsewhere in Marina. At that point
 you have entered the world, inspected your surroundings, and received a concrete next step.
 
 The default world is the compact Workbench. It is designed around an outcome, evidence, and
@@ -68,7 +68,7 @@ MCP server listening on http://localhost:3301/mcp
 
 Two browser entry points matter most:
 
-- **`http://localhost:3300`** — opens the **dashboard**, the primary way to experience Marina.
+- **`http://localhost:3300/`** — opens the **dashboard**, the primary way to experience Marina.
 - **`http://localhost:3300/chat`** — the compact terminal-style web client. Everything in this guide works from either one.
 
 > The dashboard's panels populate once you log in (its embedded Web Chat panel works, or the plain
@@ -104,7 +104,7 @@ ANTHROPIC_API_KEY=sk-ant-... bun run start
 
 Any one of these works: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `XAI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`.
 
-**Option B — from the dashboard.** Open `http://localhost:3300/dashboard`, find the **Admin** panel, and use the **Keys** tab to add a key (name, provider, value). Keys added here are stored in the database, tested for connectivity, and take effect without a restart.
+**Option B — from the dashboard.** Open `http://localhost:3300/`, find **Admin → Keys**, click **+ Add**, choose a provider, paste the key, and click **Save Key**. Use **Test** to verify connectivity. Keys take effect without a restart.
 
 **Option C — from inside the world** (operators). The `key` command manages the same database-backed keys: `key add <name> <provider> <value>`, `key test <name>`, `key list`. It is safety-gated (`key.manage`), so it's an operator tool rather than a first-session command — use Option A or B to bootstrap.
 
@@ -127,7 +127,7 @@ If you prefer a quiet world, `MARINA_ROOM_AGENTS=false` suppresses all room-agen
 
 ### Spawn an agent from the dashboard
 
-Open `http://localhost:3300/dashboard`. In the **Entities** panel, click the flip button (the rotating arrow in the panel header) to reveal the **agent launch form**: pick a name, model, optional role and goal, then **Spawn**. The agent connects, appears in the world, and starts its autonomous loop. The same panel shows running agents with stop and attention controls.
+Open `http://localhost:3300/`. In **Agents**, enter a name, choose a discovered model and optional role or goal, then click **Launch Agent**. The agent connects, appears in the world, and starts its autonomous loop. The same panel shows running agents with stop and attention controls.
 
 ### Spawn an agent from inside the world
 
@@ -154,7 +154,7 @@ Direct spawning — `agent spawn <name> model <m> role <r> goal <g>` — is prot
 
 The fastest way to verify everything works — log in and say hello:
 
-**Browser**: Open `http://localhost:3300`, choose a name (e.g. `Kira`) in the dashboard's command bar, then:
+**Browser**: Open `http://localhost:3300/`, choose a name (e.g. `Kira`) in the dashboard's **Web Chat** panel, then:
 ```
 > say Hello, world!
 You say: Hello, world!
@@ -187,7 +187,7 @@ If any of these work, you're good to go. The rest of this guide walks through th
 
 ## Log In
 
-Open **http://localhost:3300** and use the dashboard's command bar — or the compact client at **http://localhost:3300/chat** if you prefer a bare terminal. Either way: type a name (2-20 characters, letters and numbers only) and press Enter.
+Open **http://localhost:3300/** and use the dashboard's **Web Chat** panel — or the compact client at **http://localhost:3300/chat** if you prefer a bare terminal. Either way: type a name (2-20 characters, letters and numbers only) and press Enter.
 
 ```
 > Kira

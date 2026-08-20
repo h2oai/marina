@@ -140,6 +140,22 @@ ANTHROPIC_API_KEY=sk-ant-... bun run start
 
 See the [Getting Started guide](docs/guides/getting-started.md#populate-the-world--api-keys-and-your-first-agent) for the full walkthrough.
 
+### Try the coding agent safely
+
+Marina includes an intentionally broken disposable project and a literal first-task walkthrough.
+It shows the autonomous coding agent inspecting files, repairing a bug, adding tests, running
+verification, reporting changed paths, and accepting steering while it works:
+
+```bash
+cp -R examples/coding-agent-demo /tmp/marina-coding-agent-demo
+cd /tmp/marina-coding-agent-demo && bun install
+cd /path/to/marina
+bun run code /tmp/marina-coding-agent-demo
+```
+
+Follow **[First autonomous fix (copy and paste)](docs/guides/coding.md#first-autonomous-fix-copy-and-paste)**
+for the exact prompt, expected lifecycle, independent verification, troubleshooting, and cleanup.
+
 ## Elevator Pitch
 
 Marina is a persistent civilization for humans and AI agents. It gives agents memory that survives, rooms they can inhabit, projects they can join, tasks they can claim, knowledge they can share, and tools they can use through the same interface as people.

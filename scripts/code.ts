@@ -26,6 +26,7 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { formatPerception } from "../src/net/formatter";
 import { MarinaAgent } from "../src/sdk/client";
+import { inferCodeDefaultModel } from "./code-model";
 
 const REPO_ROOT = resolve(import.meta.dir, "..");
 const dir = resolve(process.argv[2] ?? process.cwd());
@@ -58,9 +59,11 @@ async function waitForReady(port: number, timeoutMs = 30_000): Promise<boolean> 
 
 const port = await freePort();
 const dbPath = join(tmpdir(), `marina-code-${port}-${Date.now()}.db`);
+const defaultModel = inferCodeDefaultModel(process.env);
 
 console.error(`Marina · ${dir}`);
 console.error("Booting a folder-scoped session…");
+if (defaultModel) console.error(`Model · ${defaultModel}`);
 
 // Boot a minimal, folder-scoped server. MARINA_ADMINS=coder makes the local
 // user the operator (so it may launch the bound coding agent); the empty world
@@ -78,6 +81,7 @@ const server = Bun.spawn(["bun", "run", "src/main.ts"], {
     MARINA_CODE_ROOTS: dir,
     MARINA_ADMINS: process.env.MARINA_ADMINS ?? "coder",
     MARINA_OPEN_API: process.env.MARINA_OPEN_API ?? "true",
+    ...(defaultModel ? { MARINA_DEFAULT_MODEL: defaultModel } : {}),
   },
   stdout: "ignore",
   stderr: "ignore",

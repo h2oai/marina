@@ -8,6 +8,113 @@ becomes shared memory the next session can build on.
 This guide gets you from zero to a working coding session in about five minutes, then shows the
 parts that make it more than a CLI.
 
+## First autonomous fix (copy and paste)
+
+This path uses a disposable, intentionally broken TypeScript project included with Marina. It is
+the shortest way to see the coding agent inspect code, change it, run checks, and report evidence
+without risking one of your repositories.
+
+### 1. Prepare the demo
+
+From the Marina repository root:
+
+```bash
+rm -rf /tmp/marina-coding-agent-demo
+cp -R examples/coding-agent-demo /tmp/marina-coding-agent-demo
+cd /tmp/marina-coding-agent-demo
+bun install
+git init
+git add .
+git -c user.name="Marina Demo" -c user.email="demo@localhost" commit -m "demo baseline"
+bun test
+```
+
+The last command should fail. That failure is the agent's starting point.
+
+### 2. Provide one model key
+
+The folder-scoped launcher uses provider keys from the shell that starts it. Choose one provider;
+do not paste a real key into a command you intend to save or share:
+
+```bash
+export ANTHROPIC_API_KEY="your-key-here"
+# Automatic model selection also supports OPENAI_API_KEY, GEMINI_API_KEY,
+# GROQ_API_KEY, and OPENROUTER_API_KEY.
+```
+
+For another provider or a local model, also export an explicit routable model such as
+`MARINA_DEFAULT_MODEL=provider/model-id`; see [Configuration](configuration.md). A key previously
+saved in a different Marina database is not copied into this disposable folder-scoped session.
+
+### 3. Launch Marina against only that folder
+
+Return to the Marina repository and pass the demo path explicitly:
+
+```bash
+cd /path/to/marina
+bun run code /tmp/marina-coding-agent-demo
+```
+
+Wait for the `»` prompt, then paste this task exactly:
+
+```text
+Fix the percentage-discount bug. Treat percent as a value from 0 through 100, reject invalid cents or percent inputs, add regression tests for boundaries and invalid inputs, then run the test and typecheck scripts. Do not change dependencies.
+```
+
+Marina creates a temporary local world, binds one coding agent to the demo directory, and streams
+its progress. The expected lifecycle is `received → inspect → plan → patch → apply → verify →
+complete`. The agent may phrase its messages differently, but a completion must identify changed
+paths and successful checks. It must not claim success from a proposed patch alone.
+
+### 4. Inspect or steer while it works
+
+At the same `»` prompt, these are safe to paste:
+
+```text
+status
+diff
+show last patch
+focus on input validation before changing anything else
+```
+
+Because this launcher is already in Code Mode, omit the `code` prefix. A plain sentence is steering
+or a new task; `status`, `diff`, and `show` are commands. Use `Ctrl-C` to stop the launcher. Its
+temporary Marina database is removed, while edits in the demo folder remain available to inspect.
+
+### 5. Verify independently
+
+Do not rely only on the agent's summary:
+
+```bash
+cd /tmp/marina-coding-agent-demo
+bun test
+bun run typecheck
+git diff --no-index \
+  /path/to/marina/examples/coding-agent-demo \
+  /tmp/marina-coding-agent-demo || true
+```
+
+Both checks should pass. The diff should show changes limited to the copied demo. Delete the copy
+when finished:
+
+```bash
+rm -rf /tmp/marina-coding-agent-demo
+```
+
+### If it does not start
+
+- **“No provider key” or model error:** export a supported provider key in the same shell, then
+  relaunch `bun run code …`.
+- **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.1, and
+  retry.
+- **Agent cannot run checks:** use the folder-scoped launcher above; it boots `coder` as the local
+  operator. In a shared Marina, `code.exec` remains safety-gated.
+- **Wrong files appear:** exit immediately and relaunch with the explicit absolute demo path. The
+  startup banner prints the directory Marina is confined to; verify it before sending the task.
+
+Once this works, replace the demo path with a clean branch or disposable worktree of your own
+project. Keep the task bounded and name the checks that define completion.
+
 > **Where it runs today:** every coding session has an explicit execution target. The default is a
 > real host workspace behind a safe allowlist (`bun` scripts such as
 > `test`/`lint`/`typecheck`/`build`, plus a constrained `git` subset). When the operator configures
