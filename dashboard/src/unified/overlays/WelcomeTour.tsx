@@ -15,6 +15,7 @@
 
 import { AnimatePresence, motion } from "motion/react";
 import { memo, useState } from "react";
+import { useChatState } from "../../hooks/use-chat-state";
 
 const STORAGE_PREFIX = "uc:tour-seen:";
 
@@ -55,13 +56,19 @@ export interface WelcomeTourProps {
   force?: boolean;
   /** Suppress entirely (e.g., clearView mode). */
   hidden?: boolean;
+  /** Expand and focus the command bar. */
+  onOpenTerminal?: () => void;
 }
 
 export const WelcomeTour = memo(function WelcomeTour({
   instanceName,
   force,
   hidden,
+  onOpenTerminal,
 }: WelcomeTourProps) {
+  const loggedIn = useChatState((state) => state.loggedIn);
+  const entityName = useChatState((state) => state.entityName);
+  const sendCommand = useChatState((state) => state.sendCommand);
   const [dismissed, setDismissed] = useState<boolean>(() =>
     force ? false : hasSeenTour(instanceName),
   );
@@ -72,6 +79,11 @@ export const WelcomeTour = memo(function WelcomeTour({
   };
 
   const visible = !hidden && !dismissed;
+
+  const run = (command: string) => {
+    onOpenTerminal?.();
+    sendCommand(command);
+  };
 
   return (
     <AnimatePresence>
@@ -85,7 +97,7 @@ export const WelcomeTour = memo(function WelcomeTour({
             position: "absolute",
             top: 82,
             left: 12,
-            width: "min(340px, 26vw)",
+            width: "min(390px, calc(100vw - 24px))",
             background: "rgba(10, 10, 16, 0.94)",
             border: "1px solid rgba(255,221,0,0.4)",
             borderRadius: 4,
@@ -109,7 +121,7 @@ export const WelcomeTour = memo(function WelcomeTour({
                 flex: 1,
               }}
             >
-              {instanceName ? instanceName.toUpperCase() : "MARINA"}
+              START HERE · {instanceName ? instanceName.toUpperCase() : "MARINA"}
             </span>
             <button
               type="button"
@@ -130,53 +142,60 @@ export const WelcomeTour = memo(function WelcomeTour({
             </button>
           </div>
 
-          <p style={{ margin: "0 0 6px 0", color: "#ccc" }}>
-            You're seeing four live layers at once:
-          </p>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 8 }}>
-            <Row color="#FFDD00" label="WORLD" desc="rooms + who's in them" />
-            <Row color="#06b6d4" label="CANVAS" desc="docs, intents, drop-ins" />
-            <Row color="#a855f7" label="GRAPH" desc="agents' knowledge" />
-            <Row color="#22c55e" label="FEED" desc="live activity timeline" />
-          </div>
-
-          <p style={{ margin: "0 0 6px 0", color: "#aaa", fontSize: 12 }}>
-            Chips top-left toggle layers. <b style={{ color: "#FFDD00" }}>1–4</b> from anywhere.{" "}
-            <b style={{ color: "#FFDD00" }}>LEGEND</b> top-right for colors.
-          </p>
-
-          <p style={{ margin: "0", color: "#777", fontSize: 11, lineHeight: 1.3 }}>
-            Same data, same commands are available from the terminal.
-          </p>
+          {!loggedIn ? (
+            <>
+              <p style={{ margin: "0 0 8px", color: "#ccc" }}>
+                Join the world first. Choose a name in the command bar; no account is required on
+                the default local setup.
+              </p>
+              <TourButton label="1 · CHOOSE A NAME" onClick={onOpenTerminal} />
+              <p style={{ margin: "8px 0 0", color: "#777", fontSize: 11 }}>
+                If login is disabled, ask the instance operator which authentication method to use.
+              </p>
+            </>
+          ) : (
+            <>
+              <p style={{ margin: "0 0 8px", color: "#ccc" }}>
+                You're in{entityName ? ` as ${entityName}` : ""}. These safe commands provide a
+                complete first orientation; their results appear in the command bar.
+              </p>
+              <div style={{ display: "grid", gap: 5 }}>
+                <TourButton label="1 · LOOK AROUND" onClick={() => run("look")} />
+                <TourButton label="2 · READ YOUR BRIEF" onClick={() => run("brief")} />
+                <TourButton label="3 · FIND THE NEXT ACTION" onClick={() => run("next")} />
+              </div>
+              <p style={{ margin: "8px 0 0", color: "#888", fontSize: 11, lineHeight: 1.35 }}>
+                WORLD, CANVAS, GRAPH, and FEED chips toggle the live layers. Replay this guide from
+                LEGEND.
+              </p>
+            </>
+          )}
         </motion.div>
       )}
     </AnimatePresence>
   );
 });
 
-function Row({ color, label, desc }: { color: string; label: string; desc: string }) {
+function TourButton({ label, onClick }: { label: string; onClick?: () => void }) {
   return (
-    <div style={{ display: "flex", alignItems: "baseline", gap: 6, fontSize: 12 }}>
-      <span
-        style={{
-          display: "inline-block",
-          minWidth: 56,
-          padding: "1px 4px",
-          background: `${color}22`,
-          border: `1px solid ${color}`,
-          color,
-          fontFamily: "'Press Start 2P', monospace",
-          fontSize: 8,
-          letterSpacing: 0.8,
-          textAlign: "center",
-          borderRadius: 2,
-          flexShrink: 0,
-        }}
-      >
-        {label}
-      </span>
-      <span style={{ color: "#aaa" }}>{desc}</span>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        width: "100%",
+        padding: "6px 8px",
+        background: "rgba(255,221,0,0.08)",
+        border: "1px solid rgba(255,221,0,0.45)",
+        color: "#FFDD00",
+        cursor: "pointer",
+        fontFamily: "'Press Start 2P', monospace",
+        fontSize: 8,
+        letterSpacing: 0.6,
+        textAlign: "left",
+        borderRadius: 2,
+      }}
+    >
+      {label} →
+    </button>
   );
 }

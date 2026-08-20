@@ -367,8 +367,13 @@ export class WebSocketServer {
           return serveDashboardIndex();
         }
 
-        // Serve web chat widget
-        if (url.pathname === "/" || url.pathname === "/chat") {
+        // The dashboard is the primary human entry point. Keep the compact
+        // web chat available at an explicit route for low-bandwidth use.
+        if (url.pathname === "/") {
+          return new Response(null, { status: 302, headers: { Location: "/dashboard" } });
+        }
+
+        if (url.pathname === "/chat") {
           const file = Bun.file(WEBCHAT_PATH);
           return new Response(file, {
             headers: { "Content-Type": "text/html; charset=utf-8" },

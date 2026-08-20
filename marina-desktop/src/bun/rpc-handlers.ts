@@ -1,9 +1,14 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Connection, Perception } from "../../../src/types";
+import { testKeyConnectivity } from "../../../src/engine/commands/key";
+import { discoverModels } from "../../../src/net/model-discovery";
+import type { Connection, EntityId, Perception } from "../../../src/types";
 import type { EngineHost } from "./engine-host";
 import type {
+  AgentSpawnParams,
+  ApiProxyParams,
+  ApiKeyParams,
   CreateCanvasParams,
   CreateNodeParams,
   DeleteNodeParams,
@@ -47,6 +52,11 @@ export function createRpcHandlers(
   // ── Virtual game connection for the desktop web chat ──
   let desktopGameConn: Connection | null = null;
   let gameConnCounter = 0;
+
+  function maskKey(value: string): string {
+    if (value.length <= 8) return "****";
+    return `${value.slice(0, 4)}...${value.slice(-4)}`;
+  }
 
   return {
     getWorld(): WorldData {
@@ -202,11 +212,11 @@ export function createRpcHandlers(
       return result;
     },
 
-    deleteEntity(name: string): unknown {
+    async deleteEntity(name: string): Promise<unknown> {
       const { engine } = requireEngine();
       const entity = engine.findEntityGlobal(name);
       if (!entity) return { error: "Entity not found" };
-      const result = engine.removeEntity(entity.id);
+      const result = await engine.removeEntity(entity.id);
       if ("error" in result) return { error: result.error };
       return { ok: true, name: result.name };
     },
@@ -587,6 +597,159 @@ export function createRpcHandlers(
         }
         desktopGameConn = null;
       }
+    },
+
+    // These handlers are available only to the bundled local webview. Remote
+    // mode loads the server dashboard, where normal HTTP authorization applies.
+    getKeys(): unknown[] {
+      const { db } = requireEngine();
+      return db.getAllApiKeys().map((key) => ({
+        name: key.name,
+        provider: key.provider,
+        masked: maskKey(key.encrypted_value),
+        setBy: key.set_by,
+        updatedAt: key.updated_at,
+      }));
+    },
+
+    addKey(params: ApiKeyParams): unknown {
+      if (!params.name?.trim() || !params.provider?.trim() || !params.value?.trim()) {
+        return { error: "name, provider, and value are required" };
+      }
+      const { db } = requireEngine();
+      db.saveApiKey({
+        name: params.name.trim(),
+        provider: params.provider.trim(),
+        encryptedValue: params.value.trim(),
+        isEncrypted: false,
+        setBy: "desktop",
+      });
+      return { ok: true, name: params.name.trim(), provider: params.provider.trim() };
+    },
+
+    deleteKey(name: string): unknown {
+      const { db } = requireEngine();
+      if (!db.getApiKey(name)) return { error: "Key not found" };
+      db.deleteApiKey(name);
+      return { ok: true };
+    },
+
+    async testKey(name: string): Promise<unknown> {
+      const { db } = requireEngine();
+      const key = db.getApiKey(name);
+      if (!key) return { error: "Key not found" };
+      const result = await testKeyConnectivity(key.provider, key.encrypted_value);
+      return { name, provider: key.provider, ...result };
+    },
+
+    getModels(): Promise<unknown> {
+      const { db } = requireEngine();
+      return discoverModels(db);
+    },
+
+    getDefaultModel(): unknown {
+      const { db } = requireEngine();
+      return { model: db.getDefaultModel(), configured: db.getSetting("default_model") ?? null };
+    },
+
+    setDefaultModel(model: string): unknown {
+      const value = model.trim();
+      if (!/^[\w.-]+\/[\w./:-]+$/.test(value)) {
+        return { error: 'model must be "provider/model-id"' };
+      }
+      const { db } = requireEngine();
+      db.setSetting("default_model", value);
+      return { ok: true, model: db.getDefaultModel(), configured: value };
+    },
+
+    clearDefaultModel(): unknown {
+      const { db } = requireEngine();
+      db.deleteSetting("default_model");
+      return { ok: true, model: db.getDefaultModel(), configured: null };
+    },
+
+    getRoles(): unknown[] {
+      return requireEngine().db.getAllRoles();
+    },
+
+    getAgents(): unknown[] {
+      return requireEngine().engine.agentRuntime.list();
+    },
+
+    async spawnAgent(params: AgentSpawnParams): Promise<unknown> {
+      if (!params.name?.trim()) return { error: "name is required" };
+      try {
+        const { engine } = requireEngine();
+        const handle = await engine.agentRuntime.spawn({
+          ...params,
+          name: params.name.trim(),
+          spawnedBy: "operator",
+        });
+        const status = handle.getStatus();
+        engine.logEvent({
+          type: "agent_spawn",
+          entity: (status.entityId ?? "") as EntityId,
+          name: params.name.trim(),
+          model: status.model,
+          role: status.role ?? "",
+          timestamp: Date.now(),
+        });
+        return status;
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : String(error) };
+      }
+    },
+
+    async stopAgent(name: string): Promise<unknown> {
+      try {
+        const { engine } = requireEngine();
+        const status = engine.agentRuntime.get(name)?.getStatus();
+        await engine.agentRuntime.stop(name);
+        engine.logEvent({
+          type: "agent_stop",
+          entity: (status?.entityId ?? "") as EntityId,
+          name,
+          reason: "manual",
+          timestamp: Date.now(),
+        });
+        return { ok: true };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : String(error) };
+      }
+    },
+
+    async sendAgentAttention(params: { name: string; message: string }): Promise<unknown> {
+      const agent = requireEngine().engine.agentRuntime.get(params.name);
+      if (!agent) return { error: "Agent not found" };
+      if (!params.message.trim()) return { error: "message is required" };
+      await agent.sendAttention(params.message.trim());
+      return { ok: true };
+    },
+
+    async proxyApi(
+      params: ApiProxyParams,
+    ): Promise<{ status: number; contentType: string; body: string }> {
+      if (!params.path.startsWith("/api/") || params.path.includes("://")) {
+        return {
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "Invalid local API path" }),
+        };
+      }
+      const prefs = appActions.getPreferences();
+      const headers = { ...params.headers };
+      delete headers["x-marina-desktop-token"];
+      headers["x-marina-desktop-token"] = process.env.MARINA_DESKTOP_API_TOKEN ?? "";
+      const response = await fetch(`http://127.0.0.1:${prefs.wsPort}${params.path}`, {
+        method: params.method,
+        headers,
+        body: params.body,
+      });
+      return {
+        status: response.status,
+        contentType: response.headers.get("content-type") ?? "application/json",
+        body: await response.text(),
+      };
     },
 
     // ── Canvas handlers ──

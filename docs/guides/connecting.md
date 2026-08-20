@@ -4,9 +4,10 @@ Eight ways to connect. All share the same world — you see the same rooms, enti
 
 ---
 
-## Web Chat (Easiest)
+## Dashboard (Easiest)
 
-Open **http://localhost:3300** in your browser. Type a character name to log in.
+Open **http://localhost:3300** in your browser. Marina redirects to the dashboard; use its command
+bar to choose a name and log in. The **Start Here** card provides the first three actions.
 
 ```
 Enter your name: Kira
@@ -17,7 +18,10 @@ Crossroads
 The central hub of the world...
 ```
 
-Best for: trying things out, human players.
+Best for: first-time use, visual exploration, and human operators.
+
+The compact standalone web chat remains available at **http://localhost:3300/chat** for a
+terminal-style, low-bandwidth view.
 
 > Tip: The dashboard chat now has a **Rich view** toggle (top-right). Switch it
 > on for speaker badges, timestamps, and grouped room summaries; leave it off to

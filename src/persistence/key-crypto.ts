@@ -20,14 +20,21 @@
  * "" — treated as a missing key) and must be re-entered.
  */
 
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createSecretKey,
+  type KeyObject,
+  randomBytes,
+  scryptSync,
+} from "node:crypto";
 
 const ENV_SECRET = "MARINA_KEY_SECRET";
 const MIN_SECRET_LEN = 16;
 const PREFIX = "mk1:";
 const SCRYPT_SALT = "marina-key-encryption-v1";
 
-let cachedKey: { secret: string; key: Buffer } | null = null;
+let cachedKey: { secret: string; key: KeyObject } | null = null;
 
 /** True when key-at-rest encryption is configured and active. */
 export function isKeyEncryptionEnabled(): boolean {
@@ -35,9 +42,9 @@ export function isKeyEncryptionEnabled(): boolean {
   return !!s && s.length >= MIN_SECRET_LEN;
 }
 
-function deriveKey(secret: string): Buffer {
+function deriveKey(secret: string): KeyObject {
   if (cachedKey && cachedKey.secret === secret) return cachedKey.key;
-  const key = scryptSync(secret, SCRYPT_SALT, 32);
+  const key = createSecretKey(Uint8Array.from(scryptSync(secret, SCRYPT_SALT, 32)));
   cachedKey = { secret, key };
   return key;
 }
@@ -56,11 +63,11 @@ export function encryptSecret(plaintext: string): string {
     );
   }
   const key = deriveKey(secret);
-  const iv = randomBytes(12);
+  const iv = Uint8Array.from(randomBytes(12));
   const cipher = createCipheriv("aes-256-gcm", key, iv);
-  const ct = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return `${PREFIX}${iv.toString("base64")}:${tag.toString("base64")}:${ct.toString("base64")}`;
+  const ct = Uint8Array.from([...cipher.update(plaintext, "utf8"), ...cipher.final()]);
+  const tag = Uint8Array.from(cipher.getAuthTag());
+  return `${PREFIX}${Buffer.from(iv).toString("base64")}:${Buffer.from(tag).toString("base64")}:${Buffer.from(ct).toString("base64")}`;
 }
 
 /**
@@ -80,13 +87,14 @@ export function decryptSecret(stored: string): string {
     const decipher = createDecipheriv(
       "aes-256-gcm",
       deriveKey(secret),
-      Buffer.from(ivB64!, "base64"),
+      Uint8Array.from(Buffer.from(ivB64!, "base64")),
     );
-    decipher.setAuthTag(Buffer.from(tagB64!, "base64"));
-    return Buffer.concat([
-      decipher.update(Buffer.from(ctB64!, "base64")),
-      decipher.final(),
-    ]).toString("utf8");
+    decipher.setAuthTag(Uint8Array.from(Buffer.from(tagB64!, "base64")));
+    const plaintext = Uint8Array.from([
+      ...decipher.update(Uint8Array.from(Buffer.from(ctB64!, "base64"))),
+      ...decipher.final(),
+    ]);
+    return Buffer.from(plaintext).toString("utf8");
   } catch {
     return "";
   }

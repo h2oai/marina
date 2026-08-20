@@ -59,9 +59,14 @@ export function AdminPanel({
   const [tab, setTab] = useState<Tab>("keys");
 
   useEffect(() => {
-    const open = () => setTab("ops");
-    window.addEventListener("marina:open-operations", open);
-    return () => window.removeEventListener("marina:open-operations", open);
+    const openOperations = () => setTab("ops");
+    const openKeys = () => setTab("keys");
+    window.addEventListener("marina:open-operations", openOperations);
+    window.addEventListener("marina:open-keys", openKeys);
+    return () => {
+      window.removeEventListener("marina:open-operations", openOperations);
+      window.removeEventListener("marina:open-keys", openKeys);
+    };
   }, []);
 
   return (
@@ -849,6 +854,8 @@ function KeysTab() {
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [keyAction, setKeyAction] = useState<string | null>(null);
+  const [keyResult, setKeyResult] = useState<string | null>(null);
 
   const handleAdd = async () => {
     // Be explicit about why a save won't proceed — the old silent return on a
@@ -871,6 +878,36 @@ function KeysTab() {
       setFormError(describeApiError(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTest = async (keyName: string) => {
+    setKeyAction(keyName);
+    setKeyResult(null);
+    try {
+      const result = await postApi<{ ok?: boolean; error?: string }>(
+        `/api/keys/${encodeURIComponent(keyName)}/test`,
+      );
+      setKeyResult(result.ok ? `${keyName}: connection succeeded` : `${keyName}: test failed`);
+    } catch (e) {
+      setKeyResult(`${keyName}: ${describeApiError(e)}`);
+    } finally {
+      setKeyAction(null);
+    }
+  };
+
+  const handleRemove = async (keyName: string) => {
+    if (!window.confirm(`Remove API key "${keyName}"?`)) return;
+    setKeyAction(keyName);
+    setKeyResult(null);
+    try {
+      await deleteApi(`/api/keys/${encodeURIComponent(keyName)}`);
+      setKeyResult(`${keyName}: removed`);
+      await refetch();
+    } catch (e) {
+      setKeyResult(`${keyName}: ${describeApiError(e)}`);
+    } finally {
+      setKeyAction(null);
     }
   };
 
@@ -932,13 +969,13 @@ function KeysTab() {
 
       {!adding && formError && <div className="text-danger text-[10px]">{formError}</div>}
       {savedFlash && <div className="text-success text-[10px]">✓ Key saved</div>}
+      {keyResult && <div className="text-text-dim text-[10px]">{keyResult}</div>}
 
       {isError ? (
         <div className="text-danger text-[10px]">{describeApiError(error)}</div>
       ) : !keys || keys.length === 0 ? (
         <div className="text-text-dim text-[10px]">
-          No database keys. Set env vars (ANTHROPIC_API_KEY, GEMINI_API_KEY, etc.) or add keys
-          above.
+          No saved keys. Click + Add, choose your provider, paste its API key, then click Save Key.
         </div>
       ) : (
         keys.map((k) => (
@@ -946,6 +983,23 @@ function KeysTab() {
             <span className="text-text-bright">{k.name}</span>
             <span className="text-text-dim">{k.provider}</span>
             <span className="text-text-dim font-mono text-[9px]">{k.masked}</span>
+            <span className="flex-1" />
+            <button
+              type="button"
+              onClick={() => handleTest(k.name)}
+              disabled={keyAction === k.name}
+              className="text-[9px] text-text-dim hover:text-primary disabled:opacity-50"
+            >
+              Test
+            </button>
+            <button
+              type="button"
+              onClick={() => handleRemove(k.name)}
+              disabled={keyAction === k.name}
+              className="text-[9px] text-text-dim hover:text-danger disabled:opacity-50"
+            >
+              Remove
+            </button>
           </div>
         ))
       )}

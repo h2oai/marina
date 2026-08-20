@@ -22,12 +22,14 @@ import { WorldMapHeatmap } from "./components/back-faces/WorldMapHeatmap";
 import { ConversationInsights } from "./components/ConversationInsights";
 import { CoordinationCard } from "./components/CoordinationCard";
 import { EntityRoster } from "./components/EntityRoster";
+import { FirstRunGuide } from "./components/FirstRunGuide";
 import { Header } from "./components/Header";
 import { NarrativePlayback } from "./components/NarrativePlayback";
 import { RoomDetail } from "./components/RoomDetail";
 import { WebChat } from "./components/WebChat";
 import { WorldMap } from "./components/WorldMap";
 import { useSystem, useWorld } from "./hooks/use-api";
+import { useChatState } from "./hooks/use-chat-state";
 import { useLayoutPresets } from "./hooks/use-layout-presets";
 import { useGlobalRealtimeInvalidations } from "./hooks/use-realtime-invalidations";
 import { useDashboardWebSocket } from "./hooks/use-websocket";
@@ -404,6 +406,22 @@ export default function App() {
         onOpenOperations={() => {
           if (focusedPanelRef.current !== "admin") handlePanelFocus("admin");
           window.dispatchEvent(new CustomEvent("marina:open-operations"));
+        }}
+      />
+
+      <FirstRunGuide
+        onFocusChat={() => {
+          if (focusedPanelRef.current !== "webchat") handlePanelFocus("webchat");
+          setTimeout(() => {
+            const selector = useChatState.getState().loggedIn
+              ? "#marina-command-input"
+              : "#marina-name-input";
+            document.querySelector<HTMLInputElement>(selector)?.focus();
+          }, 50);
+        }}
+        onOpenKeys={() => {
+          if (focusedPanelRef.current !== "admin") handlePanelFocus("admin");
+          window.dispatchEvent(new CustomEvent("marina:open-keys"));
         }}
       />
 

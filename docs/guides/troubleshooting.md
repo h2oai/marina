@@ -45,7 +45,7 @@ MARINA_WORLD=commons bun run start
 
 ## I Can't Connect
 
-### Web Chat shows blank page
+### Dashboard shows a setup or blank page
 
 The dashboard needs to be built:
 

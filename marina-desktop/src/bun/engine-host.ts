@@ -64,6 +64,10 @@ export class EngineHost {
 
     // Database
     this.db = new MarinaDB(this.config.dbPath);
+    const migratedKeys = this.db.migrateApiKeysToEncrypted();
+    if (migratedKeys > 0) {
+      this.logger.info("security", `Encrypted ${migratedKeys} existing API key(s) at rest`);
+    }
     this.rateLimiter = new RateLimiter();
 
     // Asset storage — next to the database file

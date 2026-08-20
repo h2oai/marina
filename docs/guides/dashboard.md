@@ -148,7 +148,7 @@ Each dashboard card can be flipped to show an alternate visualization:
 
 ## Web Chat
 
-The dashboard includes an embedded chat widget. You can log in and play directly from the dashboard — type commands just like the standalone web chat at `http://localhost:3300`.
+The dashboard includes an embedded chat widget. You can log in and play directly from the dashboard — type commands just like the compact web client at `http://localhost:3300/chat`.
 
 - **Rich** (bubble timeline with speaker badges) is the default — it makes
   long-form conversations and room updates easier to scan. Use the top-right

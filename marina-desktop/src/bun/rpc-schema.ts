@@ -132,6 +132,27 @@ export interface UploadAssetParams {
   entity?: string;
 }
 
+export interface ApiKeyParams {
+  name: string;
+  provider: string;
+  value: string;
+}
+
+export interface AgentSpawnParams {
+  name: string;
+  model?: string;
+  role?: string;
+  goal?: string;
+  keyName?: string;
+}
+
+export interface ApiProxyParams {
+  path: string;
+  method: string;
+  headers?: Record<string, string>;
+  body?: string;
+}
+
 // ─── Electrobun RPC Schema ──────────────────────────────────────────────────
 
 export interface DashboardRPCSchema extends ElectrobunRPCSchema {
@@ -176,6 +197,28 @@ export interface DashboardRPCSchema extends ElectrobunRPCSchema {
       gameSend: { params: string; response: void };
       /** Disconnect the game connection */
       gameDisconnect: { params: undefined; response: void };
+
+      // ── Clickable desktop setup and agent lifecycle ──
+      getKeys: { params: undefined; response: unknown[] };
+      addKey: { params: ApiKeyParams; response: unknown };
+      deleteKey: { params: string; response: unknown };
+      testKey: { params: string; response: unknown };
+      getModels: { params: undefined; response: unknown };
+      getDefaultModel: { params: undefined; response: unknown };
+      setDefaultModel: { params: string; response: unknown };
+      clearDefaultModel: { params: undefined; response: unknown };
+      getRoles: { params: undefined; response: unknown[] };
+      getAgents: { params: undefined; response: unknown[] };
+      spawnAgent: { params: AgentSpawnParams; response: unknown };
+      stopAgent: { params: string; response: unknown };
+      sendAgentAttention: {
+        params: { name: string; message: string };
+        response: unknown;
+      };
+      proxyApi: {
+        params: ApiProxyParams;
+        response: { status: number; contentType: string; body: string };
+      };
 
       // ── Canvas ──
       getCanvases: { params: undefined; response: unknown[] };

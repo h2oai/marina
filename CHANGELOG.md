@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refined the README, documentation landing page, GitHub Pages metadata, and contribution
   templates for the public release. Corrected the Pages project base path and aligned prominent
   feature claims with tested repository behavior.
+- Made the dashboard the default browser entry point, moved the compact web client to `/chat`, and
+  added a first-run Start Here card with direct login, orientation, and next-action guidance.
+- Completed the local Electrobun dashboard bridge for clickable API-key management, live model and
+  role discovery, default-model selection, and agent launch, attention, and stop actions.
 
 ### Security
 

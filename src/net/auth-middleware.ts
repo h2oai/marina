@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { secretsEqual } from "../auth/secret-compare";
 import type { Engine } from "../engine/engine";
 import type { EntityId } from "../types";
 import { corsHeaders } from "./cors";
@@ -33,6 +34,17 @@ export function authenticateRequest(
   engine: Engine,
 ): { entityId: EntityId } | { error: Response } {
   const auth = req.headers.get("Authorization");
+  const desktopToken = req.headers.get("X-Marina-Desktop-Token");
+  const expectedDesktopToken = process.env.MARINA_DESKTOP_API_TOKEN;
+
+  if (
+    desktopToken &&
+    expectedDesktopToken &&
+    expectedDesktopToken.length >= 32 &&
+    secretsEqual(desktopToken, expectedDesktopToken)
+  ) {
+    return { entityId: OPEN_API_ENTITY_ID };
+  }
 
   if (auth?.startsWith("Bearer ")) {
     const entityId = engine.authenticate(auth.slice(7));

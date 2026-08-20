@@ -79,7 +79,8 @@ That's the whole loop. Everything below is detail and the good parts.
 
 ## Your first session (5-minute walkthrough)
 
-**1. Connect.** Any surface works — the dashboard, the plain web chat at `http://localhost:3300`,
+**1. Connect.** Any surface works — the dashboard at `http://localhost:3300`, the compact web chat
+at `http://localhost:3300/chat`,
 telnet, the SDK, or the `marina` CLI:
 
 ```bash

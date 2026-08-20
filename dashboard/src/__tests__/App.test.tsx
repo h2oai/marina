@@ -61,6 +61,12 @@ describe("App", () => {
     expect(screen.getByTestId("grid-layout")).toBeInTheDocument();
   });
 
+  it("shows actionable first-run guidance on the standard dashboard", () => {
+    renderWithProviders(<App />);
+    expect(screen.getByRole("complementary", { name: /getting started/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /choose a name/i })).toBeInTheDocument();
+  });
+
   it("opens the operations command center from the header alert indicator", () => {
     renderWithProviders(<App />);
     fireEvent.click(screen.getByTitle("Operations clear"));

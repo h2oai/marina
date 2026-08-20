@@ -384,8 +384,14 @@ describe("WebSocket Server", () => {
 
   // ─── Non-WS Routes ────────────────────────────────────────────────────
 
-  it("should serve webchat on root path", async () => {
-    const resp = await fetch(`http://localhost:${WS_PORT}/`);
+  it("should direct the root path to the dashboard", async () => {
+    const resp = await fetch(`http://localhost:${WS_PORT}/`, { redirect: "manual" });
+    expect(resp.status).toBe(302);
+    expect(resp.headers.get("Location")).toBe("/dashboard");
+  });
+
+  it("should serve the compact webchat on /chat", async () => {
+    const resp = await fetch(`http://localhost:${WS_PORT}/chat`);
     expect(resp.status).toBe(200);
     expect(resp.headers.get("Content-Type")).toContain("text/html");
   });

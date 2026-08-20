@@ -66,10 +66,13 @@ bun run dashboard:build   # one-time: build the dashboard UI (installs dashboard
 ./scripts/start.sh        # or: bun run start
 ```
 
+Open **http://localhost:3300**. It redirects to the dashboard, where the **Start Here** card walks
+through login, `look`, `brief`, and `next` without requiring you to learn the command surface first.
+
 | Interface | URL | Description |
 |-----------|-----|-------------|
-| Web Chat | `http://localhost:3300/` | Browser-based chat UI |
-| Dashboard | `http://localhost:3300/dashboard` | Live server monitoring |
+| Dashboard | `http://localhost:3300/` | Primary browser experience and guided onboarding |
+| Web Chat | `http://localhost:3300/chat` | Compact terminal-style client |
 | Canvas | `http://localhost:3300/canvas` | Infinite canvas for rich media |
 | WebSocket | `ws://localhost:3300/ws` | Primary client protocol (JSON) |
 | Telnet | `localhost:4000` | Classic terminal access |
@@ -79,13 +82,14 @@ bun run dashboard:build   # one-time: build the dashboard UI (installs dashboard
 | Connect | `http://localhost:3300/api/connect` | Self-describing connection manifest |
 | Health | `http://localhost:3300/health` | Liveness probe (used by Docker healthcheck) |
 
-Configuration is optional, with one big exception: **add an LLM provider key to populate the world with live agents** (see [Populate the World](#populate-the-world) below). Copy `.env.example` to `.env` to add keys, pick a world (`MARINA_WORLD`), or change ports. The dashboard shows content once you log in via the web chat at `/` (or set `MARINA_OPEN_API=true` for local dev). `./scripts/start.sh --background` runs detached. Prefer containers? See [Docker](#docker).
+Configuration is optional, with one big exception: **add an LLM provider key to populate the world with live agents** (see [Populate the World](#populate-the-world) below). Copy `.env.example` to `.env` to add keys, pick a world (`MARINA_WORLD`), or change ports. Log in through the dashboard's command bar (or set `MARINA_OPEN_API=true` for local dev). `./scripts/start.sh --background` runs detached. Prefer containers? See [Docker](#docker).
 
 ## Hello World
 
 Five ways to say hello — pick whichever fits your workflow:
 
-**1. Browser** — open `http://localhost:3300`, type a name, then:
+**1. Browser** — open `http://localhost:3300`, use the dashboard's command bar to choose a name,
+then:
 ```
 > say Hello, world!
 ```
@@ -408,7 +412,7 @@ Marina is both an **MCP server** (Claude Desktop, Claude Code, and other LLM cli
 
 ## Connect
 
-**Web browser** — open `http://localhost:3300/` for the built-in chat UI.
+**Web browser** — open `http://localhost:3300/` for the dashboard, or `/chat` for the compact web client.
 
 **Telnet** — `telnet localhost 4000`, then type a name to log in.
 
@@ -789,6 +793,20 @@ For shipping to AWS or any other cloud — TLS, persistence, the security checkl
 ## Desktop App
 
 Marina ships as a native desktop application via Electrobun (macOS, Windows, Linux). The desktop app bundles the engine, dashboard, and all network servers into a single executable.
+
+The packaged app's local mode is designed for point-and-click setup:
+
+1. Open Marina. The dashboard is the home screen; no terminal or config file is required.
+2. In **Web Chat**, enter a name and click **Connect**.
+3. Click **START HERE**, then **Connect an AI provider**.
+4. In **Admin → Keys**, click **+ Add**, choose a provider, paste its API key, and click **Save Key**.
+5. In **Agents**, enter a name, choose a discovered model and optional role, then click **Launch**.
+
+The desktop app automatically creates an owner-readable local encryption secret and uses it to
+encrypt provider keys in Marina's database; saved values are shown only in masked form in the UI.
+This protects a copied database, but is not an OS-keychain claim. A provider account and API key are
+still required for cloud-backed agents; exploration commands such as `look`, `brief`, and `next`
+work without one.
 
 ```bash
 cd marina-desktop && bun install && ./scripts/build.sh

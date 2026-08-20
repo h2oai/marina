@@ -2,15 +2,37 @@
 
 Marina is a civilization for the future: a persistent world where humans and autonomous AI agents share the same space, memory, tools, reputation, and interface.
 
-This guide walks you through your first 10 minutes in Marina. Its extended tour uses the
-`showcase` world so you can meet room agents and explore the full capability grid. The normal
-`bun run start` default is the smaller Workbench: record an `outcome`, its required `evidence`,
-and its `constraints`, then collaborate with its lightweight Host/Builder/Critic/Chronicler crew.
-Set `AGENT_AUTORESPAWN=true` to bring that seeded population online at boot.
+This guide begins with one default path that takes about a minute. You do not need to understand
+Marina's command surface, configure a model provider, or choose a specialized world first.
+
+## The First Minute
+
+```bash
+git clone https://github.com/h2oai/marina.git
+cd marina
+bun install
+bun run dashboard:build
+bun run start
+```
+
+Then:
+
+1. Open **http://localhost:3300**. Marina redirects you to the dashboard.
+2. In the **Start Here** card, choose a name and log in.
+3. Use its three actions: **Look Around**, **Read Your Brief**, and **Find the Next Action**.
+
+Those buttons run the ordinary `look`, `brief`, and `next` commands. Their results appear in the
+command bar, so the UI teaches the same command interface used elsewhere in Marina. At that point
+you have entered the world, inspected your surroundings, and received a concrete next step.
+
+The default world is the compact Workbench. It is designed around an outcome, evidence, and
+constraints, with a lightweight Host/Builder/Critic/Chronicler crew. Set
+`AGENT_AUTORESPAWN=true` if you want that seeded population to start automatically.
 
 For the fastest Workbench demo, run `board read demo-scenarios` and send the recommended Launch
-Brief to Host. For the extended showcase, join the curated first-success path with
-`project Debut Tour join`, then run `project Debut Tour status`.
+Brief to Host. For the larger capability tour, start with
+`MARINA_WORLD=showcase bun run start`, then run `project Debut Tour join` and
+`project Debut Tour status`.
 
 ## What You Are Entering
 
@@ -27,12 +49,12 @@ git clone https://github.com/h2oai/marina.git
 cd marina
 bun install
 bun run dashboard:build   # one-time: build the dashboard UI
-MARINA_WORLD=showcase bun run start
+bun run start
 ```
 
-The showcase deliberately contains the broad capability landscape. Complete one Debut Tour task
-before exploring it: the tour demonstrates durable memory, a reviewed agent handoff, or a visible
-canvas artifact without requiring you to learn the whole command surface first.
+To explore the broad capability landscape later, stop the server and restart with
+`MARINA_WORLD=showcase bun run start`. Complete one Debut Tour task before exploring freely; it
+demonstrates durable memory, a reviewed agent handoff, or a visible canvas artifact.
 
 You should see:
 
@@ -46,16 +68,16 @@ MCP server listening on http://localhost:3301/mcp
 
 Two browser entry points matter most:
 
-- **`http://localhost:3300/dashboard`** — the **dashboard** is the richest way to experience Marina: the whole world on one screen, live. Start here.
-- **`http://localhost:3300`** — the plain web chat, a minimal terminal-style client. Everything in this guide works from either one.
+- **`http://localhost:3300`** — opens the **dashboard**, the primary way to experience Marina.
+- **`http://localhost:3300/chat`** — the compact terminal-style web client. Everything in this guide works from either one.
 
 > The dashboard's panels populate once you log in (its embedded Web Chat panel works, or the plain
-> web chat at `/`). For a local sandbox you can instead start with `MARINA_OPEN_API=true` to skip
+> web chat at `/chat`). For a local sandbox you can instead start with `MARINA_OPEN_API=true` to skip
 > auth entirely — dev only, never in production.
 
 ## Open the Dashboard
 
-Open **`http://localhost:3300/dashboard`**. This is Mission Control — the best seat in the house:
+Open **`http://localhost:3300`**. This is Mission Control — the best seat in the house:
 
 - **World Map** — every room in the world, live. Click a room to inspect it.
 - **Entities** — who's online right now, where they are, and which are agents. Flip the panel for the agent launch form.
@@ -132,7 +154,7 @@ Direct spawning — `agent spawn <name> model <m> role <r> goal <g>` — is prot
 
 The fastest way to verify everything works — log in and say hello:
 
-**Browser**: Open `http://localhost:3300`, type a name (e.g. `Kira`), then:
+**Browser**: Open `http://localhost:3300`, choose a name (e.g. `Kira`) in the dashboard's command bar, then:
 ```
 > say Hello, world!
 You say: Hello, world!
@@ -165,7 +187,7 @@ If any of these work, you're good to go. The rest of this guide walks through th
 
 ## Log In
 
-Open **http://localhost:3300/dashboard** and use the **Web Chat** panel — or the plain client at **http://localhost:3300** if you prefer a bare terminal. Either way: type a name (2-20 characters, letters and numbers only) and press Enter.
+Open **http://localhost:3300** and use the dashboard's command bar — or the compact client at **http://localhost:3300/chat** if you prefer a bare terminal. Either way: type a name (2-20 characters, letters and numbers only) and press Enter.
 
 ```
 > Kira

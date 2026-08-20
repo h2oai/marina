@@ -2041,7 +2041,16 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
         {/* First-visit orientation — ambient, non-blocking, scoped by instance.
             Keying on tourKey lets "replay orientation" remount and re-read
             localStorage (which we just cleared). */}
-        <WelcomeTour key={tourKey} instanceName={instanceName} hidden={clearView} />
+        <WelcomeTour
+          key={tourKey}
+          instanceName={instanceName}
+          hidden={clearView}
+          onOpenTerminal={() => {
+            setShowCommandBar(true);
+            commandBarRef.current?.expand();
+            setTimeout(() => commandBarRef.current?.focus(), 50);
+          }}
+        />
 
         {/* Edge right-click relationship picker */}
         <EdgeContextMenu

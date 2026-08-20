@@ -3,6 +3,7 @@
 
 import { BrowserWindow, defineElectrobunRPC } from "electrobun/bun";
 import { EngineHost } from "./engine-host";
+import { ensureDesktopKeySecret } from "./key-secret";
 import { initMenu } from "./menu";
 import { getAppPaths } from "./paths";
 import { loadPreferences, savePreferences } from "./preferences";
@@ -16,6 +17,11 @@ import type { EngineEvent, Perception } from "../../../src/types";
 
 const paths = getAppPaths();
 const prefs = loadPreferences(paths.prefsFile);
+
+ensureDesktopKeySecret(paths.keySecretFile);
+// Capability shared only by the native main process and its embedded server.
+// The webview never receives it; generic RPC proxy requests overwrite auth.
+process.env.MARINA_DESKTOP_API_TOKEN = crypto.randomUUID() + crypto.randomUUID();
 
 // ─── Engine ─────────────────────────────────────────────────────────────────
 

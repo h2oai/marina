@@ -12,6 +12,8 @@ export interface AppPaths {
   defaultDb: string;
   /** Preferences JSON file */
   prefsFile: string;
+  /** App-generated secret used to encrypt provider keys in the local database. */
+  keySecretFile: string;
   /** Room definitions directory */
   roomsDir: string;
   /** Log directory */
@@ -83,6 +85,7 @@ export function getAppPaths(): AppPaths {
     dataDir,
     defaultDb: join(dataDir, "marina.db"),
     prefsFile: join(dataDir, "preferences.json"),
+    keySecretFile: join(dataDir, ".key-secret"),
     roomsDir,
     logDir,
   };

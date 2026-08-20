@@ -2441,6 +2441,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
             {!loggedIn ? (
               <div className="flex items-center gap-2">
                 <input
+                  id="marina-name-input"
                   ref={nameRef}
                   type="text"
                   onKeyDown={(e) => e.key === "Enter" && doLogin()}
@@ -2469,6 +2470,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
                     </span>
                   )}
                   <input
+                    id="marina-command-input"
                     ref={inputRef}
                     type="text"
                     onChange={(e) => {

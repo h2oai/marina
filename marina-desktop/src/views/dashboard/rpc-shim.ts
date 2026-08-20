@@ -129,11 +129,14 @@ const originalFetch = window.fetch.bind(window);
 
   // Extract pathname — handle both relative (/api/...) and absolute URLs
   let pathname: string;
+  let apiPath: string;
   try {
     const parsed = new URL(url, window.location.origin);
     pathname = parsed.pathname;
+    apiPath = `${parsed.pathname}${parsed.search}`;
   } catch {
     pathname = url;
+    apiPath = url;
   }
 
   // Only intercept /api/* paths when RPC is connected
@@ -155,7 +158,7 @@ const originalFetch = window.fetch.bind(window);
 
     // Parse JSON body for POST/PATCH requests
     let body: unknown;
-    if ((method === "POST" || method === "PATCH") && init?.body) {
+    if ((method === "POST" || method === "PATCH" || method === "PUT") && init?.body) {
       try {
         body = JSON.parse(init.body as string);
       } catch {
@@ -163,9 +166,12 @@ const originalFetch = window.fetch.bind(window);
       }
     }
 
-    const data = await routeApiRequest(pathname, method, body);
+    const data = await routeApiRequest(pathname, method, body, init, apiPath);
+    if (data instanceof Response) return data;
+    const failed =
+      !!data && typeof data === "object" && "error" in data && typeof data.error === "string";
     return new Response(JSON.stringify(data), {
-      status: 200,
+      status: failed ? 400 : 200,
       headers: { "Content-Type": "application/json" },
     });
   } catch (err) {
@@ -227,9 +233,14 @@ async function routeApiRequest(
   pathname: string,
   method: string,
   body?: unknown,
-): Promise<unknown> {
+  init?: RequestInit,
+  apiPath = pathname,
+): Promise<unknown | Response> {
   // ── DELETE routes ──
   if (method === "DELETE") {
+    if (pathname === "/api/default-model") return rpc.request.clearDefaultModel();
+    const keyDeleteMatch = pathname.match(/^\/api\/keys\/(.+)$/);
+    if (keyDeleteMatch) return rpc.request.deleteKey(decodeURIComponent(keyDeleteMatch[1]!));
     const entityDeleteMatch = pathname.match(/^\/api\/entities\/(.+)$/);
     if (entityDeleteMatch) {
       return rpc.request.deleteEntity(
@@ -254,7 +265,15 @@ async function routeApiRequest(
     if (assetDeleteMatch) {
       return rpc.request.deleteAsset(decodeURIComponent(assetDeleteMatch[1]!));
     }
-    throw new Error(`Unknown DELETE route: ${pathname}`);
+    return proxyApiRequest(apiPath, method, body, init);
+  }
+
+  // ── PUT routes ──
+  if (method === "PUT") {
+    if (pathname === "/api/default-model") {
+      return rpc.request.setDefaultModel((body as { model?: string } | undefined)?.model ?? "");
+    }
+    return proxyApiRequest(apiPath, method, body, init);
   }
 
   // ── PATCH routes ──
@@ -272,11 +291,24 @@ async function routeApiRequest(
         data: b?.data as Record<string, unknown> | undefined,
       });
     }
-    throw new Error(`Unknown PATCH route: ${pathname}`);
+    return proxyApiRequest(apiPath, method, body, init);
   }
 
   // ── POST routes ──
   if (method === "POST") {
+    if (pathname === "/api/keys") return rpc.request.addKey(body as any);
+    const keyTestMatch = pathname.match(/^\/api\/keys\/(.+)\/test$/);
+    if (keyTestMatch) return rpc.request.testKey(decodeURIComponent(keyTestMatch[1]!));
+    if (pathname === "/api/agents/spawn") return rpc.request.spawnAgent(body as any);
+    const agentStopMatch = pathname.match(/^\/api\/agents\/(.+)\/stop$/);
+    if (agentStopMatch) return rpc.request.stopAgent(decodeURIComponent(agentStopMatch[1]!));
+    const attentionMatch = pathname.match(/^\/api\/agents\/(.+)\/attention$/);
+    if (attentionMatch) {
+      return rpc.request.sendAgentAttention({
+        name: decodeURIComponent(attentionMatch[1]!),
+        message: (body as { message?: string } | undefined)?.message ?? "",
+      });
+    }
     // POST /api/canvases/:id/nodes — create node
     const nodeCreateMatch = pathname.match(/^\/api\/canvases\/([^/]+)\/nodes$/);
     if (nodeCreateMatch) {
@@ -298,7 +330,7 @@ async function routeApiRequest(
       return rpc.request.createCanvas(body as any);
     }
     // POST /api/assets — upload asset (handled separately in fetch interceptor)
-    throw new Error(`Unknown POST route: ${pathname}`);
+    return proxyApiRequest(apiPath, method, body, init);
   }
 
   // ── GET: Exact matches ──
@@ -318,6 +350,11 @@ async function routeApiRequest(
   if (pathname === "/api/memory/pools") return rpc.request.getMemoryPools();
   if (pathname === "/api/canvases") return rpc.request.getCanvases();
   if (pathname === "/api/assets") return rpc.request.getAssets();
+  if (pathname === "/api/keys") return rpc.request.getKeys();
+  if (pathname === "/api/models") return rpc.request.getModels();
+  if (pathname === "/api/default-model") return rpc.request.getDefaultModel();
+  if (pathname === "/api/roles") return rpc.request.getRoles();
+  if (pathname === "/api/agents") return rpc.request.getAgents();
 
   // ── GET: Parameterized detail routes ──
   const taskDetailMatch = pathname.match(
@@ -395,7 +432,31 @@ async function routeApiRequest(
     return rpc.request.getAssetDetail(decodeURIComponent(assetDetailMatch[1]!));
   }
 
-  throw new Error(`Unknown API route: ${pathname}`);
+  return proxyApiRequest(apiPath, method, body, init);
+}
+
+/** Forward APIs that need no native adaptation to the embedded HTTP server. */
+async function proxyApiRequest(
+  path: string,
+  method: string,
+  body: unknown,
+  init?: RequestInit,
+): Promise<Response> {
+  const headers: Record<string, string> = {};
+  new Headers(init?.headers).forEach((value, key) => {
+    headers[key] = value;
+  });
+  if (body !== undefined && !headers["content-type"]) headers["content-type"] = "application/json";
+  const result = await rpc.request.proxyApi({
+    path,
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  return new Response(result.body, {
+    status: result.status,
+    headers: { "Content-Type": result.contentType },
+  });
 }
 
 // ─── Game WebSocket Message Relay ──────────────────────────────────────────

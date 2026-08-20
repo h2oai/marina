@@ -15,11 +15,11 @@ import { defineConfig } from "vite";
  * - No dev server proxy needed (RPC shim handles API routing)
  */
 export default defineConfig({
-  root: resolve(__dirname, "../dashboard"),
+  root: resolve(import.meta.dirname, "../dashboard"),
   plugins: [react(), tailwindcss()],
   base: "./",
   build: {
-    outDir: resolve(__dirname, "dist/dashboard"),
+    outDir: resolve(import.meta.dirname, "dist/dashboard"),
     emptyOutDir: true,
     rollupOptions: {
       output: {
@@ -32,7 +32,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": resolve(__dirname, "../dashboard/src"),
+      "@": resolve(import.meta.dirname, "../dashboard/src"),
     },
   },
 });
