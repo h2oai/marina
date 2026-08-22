@@ -11,36 +11,38 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@tanstack/react-query": "^5.101.0",
-    "@tiptap/pm": "^3.24.0",
-    "@tiptap/react": "^3.24.0",
-    "@tiptap/starter-kit": "^3.24.0",
-    "@xyflow/react": "^12.11.0",
+    "@tanstack/react-query": "^5.101.4",
+    "@tiptap/pm": "^3.30.2",
+    "@tiptap/react": "^3.30.2",
+    "@tiptap/starter-kit": "^3.30.2",
+    "@xyflow/react": "^12.11.3",
     "clsx": "^2.1.1",
-    "dompurify": "^3.4.7",
-    "lucide-react": "^1.17.0",
-    "motion": "^12.40.0",
-    "pdfjs-dist": "^6.0.227",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "react-grid-layout": "^2.2.3",
+    "dompurify": "^3.4.14",
+    "lucide-react": "^1.33.0",
+    "motion": "^12.43.0",
+    "pdfjs-dist": "^6.2.108",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-grid-layout": "^2.2.4",
     "tailwind-merge": "^3.6.0",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.0",
+    "@tailwindcss/vite": "^4.3.3",
     "@testing-library/dom": "^10.4.1",
-    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/jest-dom": "^6.10.0",
     "@testing-library/react": "^16.3.2",
-    "@types/dompurify": "^3.2.0",
-    "@types/react": "^19.2.16",
-    "@types/react-dom": "^19.2.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "@types/react-grid-layout": "^2.1.0",
-    "@vitejs/plugin-react": "^6.0.2",
+    "@vitejs/plugin-react": "^6.1.0",
     "jsdom": "^29.1.1",
-    "tailwindcss": "^4.3.0",
+    "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
-    "vite": "^8.0.16",
-    "vitest": "^4.1.8"
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
+  },
+  "overrides": {
+    "undici": "^7.29.0"
   }
 }

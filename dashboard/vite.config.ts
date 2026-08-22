@@ -16,7 +16,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: "/dashboard/",
   build: {
-    outDir: resolve(__dirname, "../dist/dashboard"),
+    outDir: resolve(import.meta.dirname, "../dist/dashboard"),
     emptyOutDir: true,
     rollupOptions: {
       output: {
@@ -34,7 +34,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": resolve(__dirname, "src"),
+      "@": resolve(import.meta.dirname, "src"),
     },
   },
   server: {
