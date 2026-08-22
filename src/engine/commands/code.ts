@@ -54,6 +54,7 @@ interface CodeMessageMetadata {
   paths?: string[];
   query?: string;
   rows?: CodeDataRow[];
+  sessionCreatedAt?: number;
   sessionId?: string;
   status?: string;
   timedOut?: boolean;
@@ -68,6 +69,7 @@ interface CodeMessageMetadata {
     | "history"
     | "list"
     | "lifecycle"
+    | "modal"
     | "model"
     | "note"
     | "patch"
@@ -1120,7 +1122,16 @@ function enterCodeMode(
 ): void {
   entity.properties[ACTIVE_MODAL_KEY] = "code";
   const sessionId = getActiveSessionId(entity);
-  const session = sessionId ? deps.db.getCodingSession(sessionId) : null;
+  let session = sessionId ? deps.db.getCodingSession(sessionId) : null;
+  if (!session) {
+    // Resume across restarts: quit/eviction deletes the entity row (and with it
+    // the coding_session_id pointer), but sessions persist keyed by creator
+    // name — re-adopt the most recent still-active one so entering `code`
+    // resumes prior work instead of starting from scratch.
+    session =
+      deps.db.listCodingSessions(entity.name, 12).find((row) => row.status === "active") ?? null;
+    if (session) entity.properties[ACTIVE_SESSION_KEY] = session.id;
+  }
   updateCodeContext(entity, deps.db, session ?? undefined);
   const profile = getCodeProfile(entity);
   const registry = getWorkspaceRegistry(deps);
@@ -1139,7 +1150,8 @@ function enterCodeMode(
     // Unlistable root (permissions / missing) — skip the overview, not fatal.
   }
 
-  ctx.send(
+  sendCode(
+    ctx,
     eid,
     [
       success("Code Mode active."),
@@ -1156,6 +1168,19 @@ function enterCodeMode(
     ]
       .filter(Boolean)
       .join("\n"),
+    {
+      event: "code_mode_entered",
+      ...(session
+        ? {
+            sessionCreatedAt: session.created_at,
+            sessionId: session.id,
+            status: session.status,
+            title: session.title,
+          }
+        : {}),
+      type: "modal",
+      workspace: selectedRoot,
+    },
   );
 }
 
@@ -2148,6 +2173,19 @@ function streamSessionAgent(
   if (codeStreams.has(key)) return; // already streaming this session to this watcher
   let buffer = "";
   let currentPhase = "received";
+  let closed = false;
+  // Tear down this stream (dead handle / dispatcher exit) so a later re-bind of
+  // the same session to a fresh agent isn't blocked by a stale key entry.
+  const closeStream = () => {
+    if (closed) return;
+    closed = true;
+    try {
+      unsub();
+    } catch {
+      /* best-effort */
+    }
+    codeStreams.delete(key);
+  };
   const emitLifecycle = (phase: string, detail: string, extra: Record<string, unknown> = {}) => {
     if (phase === currentPhase && phase !== "failed") return;
     const previous = currentPhase;
@@ -2156,7 +2194,17 @@ function streamSessionAgent(
     // summary, so its assigned task is done — drop task mode so the normal
     // cognitive loop resumes until the next `code do`.
     if (phase === "completed") clearCodingTask(deps, handle.name);
-    const payload = { agent: handle.name, detail, phase, previous, ...extra };
+    // `terminal: true` marks end-of-task lifecycle events (completed, agent
+    // death, stop-interrupt) so machine consumers (one-shot `marina -p`) can
+    // distinguish them from recoverable mid-run "failed" tool errors.
+    const payload = {
+      agent: handle.name,
+      detail,
+      phase,
+      previous,
+      ...(phase === "completed" ? { terminal: true } : {}),
+      ...extra,
+    };
     deps.db?.createCodingEvent({
       sessionId,
       actor: handle.name,
@@ -2185,7 +2233,18 @@ function streamSessionAgent(
       case "tool_call":
         {
           const lifecycle = lifecycleForToolCall(ev.toolName, ev.args);
-          if (lifecycle) emitLifecycle(lifecycle.phase, lifecycle.detail, { tool: ev.toolName });
+          if (lifecycle) {
+            const extra: Record<string, unknown> = { tool: ev.toolName };
+            if (lifecycle.phase === "completed") {
+              // Carry the durable summary text so one-shot callers can print
+              // it without a second artifact query.
+              const summary = ev.args.text ?? ev.args.notes ?? ev.args.summary;
+              if (typeof summary === "string" && summary.trim()) {
+                extra.summary = summary.slice(0, 4000);
+              }
+            }
+            emitLifecycle(lifecycle.phase, lifecycle.detail, extra);
+          }
         }
         notify(dispatcherId, dim(`  ▸ ${formatAgentToolCall(ev.toolName, ev.args)}`));
         break;
@@ -2203,6 +2262,22 @@ function streamSessionAgent(
         break;
       case "error":
         notify(dispatcherId, `  ⚠ ${clipLine(ev.error)}`);
+        break;
+      case "status_change":
+        // The bound agent's handle died (stopped or errored out). If it was
+        // still mid-task, surface a *terminal* failure so machine consumers
+        // don't wait forever, then stop forwarding the dead handle.
+        if (ev.status.state === "stopped" || ev.status.state === "error") {
+          flush();
+          if (currentPhase !== "completed" && agentHasActiveCodingTask(deps, handle.name)) {
+            emitLifecycle("failed", `${handle.name} stopped before completing the task`, {
+              reason: "agent_died",
+              terminal: true,
+            });
+            clearCodingTask(deps, handle.name);
+          }
+          closeStream();
+        }
         break;
     }
   });
@@ -2249,15 +2324,29 @@ function lifecycleForToolCall(
 function clearCodingTask(deps: CodeDeps, agentName: string): void {
   const handle = getAgentHandle(deps, agentName);
   handle?.setActiveCodingTask?.(null);
-  const entityId = handle?.getStatus().entityId;
-  const entity =
-    (entityId ? deps.getEntity(entityId) : undefined) ??
-    deps.findAgentByName?.(agentName) ??
-    deps.findAgentByName?.(sanitizeEntityName(agentName));
+  const entity = findCodingAgentEntity(deps, agentName);
   if (entity && entity.properties[ACTIVE_TASK_KEY] !== undefined) {
     delete entity.properties[ACTIVE_TASK_KEY];
     deps.db?.saveEntity(entity);
   }
+}
+
+/** Resolve the bound coder's entity (handle-status id first, then name lookup
+ *  tolerant of config-name vs sanitized-entity-name drift). */
+function findCodingAgentEntity(deps: CodeDeps, agentName: string): Entity | undefined {
+  const handle = getAgentHandle(deps, agentName);
+  const entityId = handle?.getStatus().entityId;
+  return (
+    (entityId ? deps.getEntity(entityId) : undefined) ??
+    deps.findAgentByName?.(agentName) ??
+    deps.findAgentByName?.(sanitizeEntityName(agentName))
+  );
+}
+
+/** True while the bound coder still carries a persisted `coding_task` — i.e.
+ *  an assigned run is in flight (set on assign, cleared on stop/completion). */
+function agentHasActiveCodingTask(deps: CodeDeps, agentName: string): boolean {
+  return findCodingAgentEntity(deps, agentName)?.properties[ACTIVE_TASK_KEY] !== undefined;
 }
 
 /** Tear down all live streams a dispatcher is watching (on exit / disconnect). */
@@ -2530,6 +2619,9 @@ async function stopSessionAgent(
     ctx.send(eid, "No coding agent is bound to this session — nothing to stop.");
     return;
   }
+  // An interrupt of an in-flight task is a *terminal failure* for machine
+  // consumers (one-shot `marina -p`); a stop with nothing assigned is benign.
+  const interruptedTask = agentHasActiveCodingTask(deps, agentName);
   clearCodingTask(deps, agentName); // task mode ends with the run
   const handle = getAgentHandle(deps, agentName);
   let aborted = false;
@@ -2552,8 +2644,19 @@ async function stopSessionAgent(
     sessionId: session.id,
     actor: entity.name,
     kind: "code_agent_stopped",
-    payload: { agent: agentName, aborted },
+    payload: { agent: agentName, aborted, interruptedTask },
   });
+  const phase = interruptedTask ? "failed" : "stopped";
+  if (interruptedTask) {
+    // Mirror the streamed lifecycle records so the durable event log also
+    // carries the terminal failure.
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "code_lifecycle",
+      payload: { agent: agentName, phase, reason: "stopped", terminal: true },
+    });
+  }
   const detail = !handle
     ? `${agentName} is not running — streaming stopped.`
     : aborted
@@ -2569,10 +2672,15 @@ async function stopSessionAgent(
     ].join("\n"),
     {
       event: "code_lifecycle",
-      metadata: { agent: agentName, aborted, phase: "stopped" },
-      phase: "stopped",
+      metadata: {
+        agent: agentName,
+        aborted,
+        phase,
+        ...(interruptedTask ? { reason: "stopped", terminal: true } : {}),
+      },
+      phase,
       sessionId: session.id,
-      status: "active",
+      status: interruptedTask ? "failed" : "active",
       title: `Stopped ${agentName}`,
       type: "lifecycle",
     },

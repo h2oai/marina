@@ -5,32 +5,93 @@
 /**
  * marina code — "Claude/Codex in any folder".
  *
- * Boots an ephemeral, folder-scoped Marina (empty world, no room agents, a
- * throwaway DB) and drops you straight into agentic Code Mode for that
- * directory: type a task in plain English and a bound coding agent explores,
- * edits, and runs checks — streaming its work back. The minimum end of the
- * pervasive-Marina spectrum: an agent in a
- * folder, no world/ports/civics ceremony.
+ * Boots a folder-scoped Marina (empty world, no room agents) and drops you
+ * straight into agentic Code Mode for that directory: type a task in plain
+ * English and a bound coding agent explores, edits, and runs checks —
+ * streaming its work back. The minimum end of the pervasive-Marina spectrum:
+ * an agent in a folder, no world/ports/civics ceremony.
+ *
+ * The database persists per folder (~/.marina/projects/<slug>/marina.db) so
+ * sessions, artifacts, and memory accrete across launches; `--fresh` (or
+ * MARINA_CODE_FRESH=1) restores the old throwaway-DB behavior.
  *
  * Usage:
  *   bun run code [dir]        # dir defaults to the current directory
  *   marina [dir]              # same flow via the dispatcher bin
+ *   marina -p "<task>" [dir]  # one-shot: dispatch, stream, exit 0/1/2
  *
  * Needs an LLM provider key in the environment (ANTHROPIC_API_KEY, etc.) or a
  * local llama server — same as any coding agent. Exit with Ctrl-D / Ctrl-C.
  */
 
-import { rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
-import { hostname, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { homedir, hostname, tmpdir } from "node:os";
+import { basename, join, resolve } from "node:path";
 import { createInterface, type Interface } from "node:readline";
+import { formatAge } from "../src/engine/commands/format-duration";
 import { formatPerception } from "../src/net/formatter";
-import { MarinaAgent } from "../src/sdk/client";
+import { MarinaAgent, type Perception } from "../src/sdk/client";
 import { inferCodeDefaultModel, PROVIDER_KEY_ENV_VARS } from "./code-model";
 
 const REPO_ROOT = resolve(import.meta.dir, "..");
 const STDERR_TAIL_LINES = 40;
+const DEFAULT_TASK_TIMEOUT_MS = 600_000;
+
+export interface CodeSessionOptions {
+  /** Ephemeral tmp DB, deleted on exit (the pre-persistence behavior). */
+  fresh?: boolean;
+  /** One-shot task: dispatch it, stream output, await completion, exit 0/1/2. */
+  print?: string;
+}
+
+/**
+ * Stable, filesystem-safe per-folder identity: `<basename>-<8-hex-hash>` of
+ * the absolute path. The hash disambiguates same-named folders; the basename
+ * keeps ~/.marina/projects human-navigable.
+ */
+export function projectSlug(absPath: string): string {
+  const base =
+    basename(absPath)
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^[-.]+|[-.]+$/g, "")
+      .slice(0, 40) || "project";
+  const hash = createHash("sha256").update(absPath).digest("hex").slice(0, 8);
+  return `${base}-${hash}`;
+}
+
+/**
+ * Extract the machine-readable end-of-task signal from a perception, if it is
+ * one. Emitted by the engine's Code Mode lifecycle stream (`sendCode`/`notify`
+ * with `code.event === "code_lifecycle"`): `completed` is always terminal;
+ * `failed` is terminal only when flagged (agent death, stop-interrupt) —
+ * recoverable mid-run tool errors also stream as `failed` but never carry
+ * `terminal: true`.
+ */
+export function terminalCodeLifecycle(
+  p: Perception,
+): { phase: "completed" | "failed"; sessionId?: string; summary?: string } | undefined {
+  if (p.kind !== "message") return undefined;
+  const code = (p.data as Record<string, unknown> | undefined)?.code as
+    | Record<string, unknown>
+    | undefined;
+  if (code?.event !== "code_lifecycle") return undefined;
+  const metadata = (code.metadata ?? {}) as Record<string, unknown>;
+  const sessionId = typeof code.sessionId === "string" ? code.sessionId : undefined;
+  if (code.phase === "completed") {
+    return {
+      phase: "completed",
+      sessionId,
+      summary: typeof metadata.summary === "string" ? metadata.summary : undefined,
+    };
+  }
+  if (code.phase === "failed" && metadata.terminal === true) {
+    return { phase: "failed", sessionId };
+  }
+  return undefined;
+}
 
 function freePort(): Promise<number> {
   return new Promise((res, rej) => {
@@ -67,15 +128,30 @@ export function pushTailLines(tail: string[], lines: string[], max = STDERR_TAIL
   }
 }
 
-/** Boot a folder-scoped Marina and run the Code Mode REPL. Never returns. */
-export async function runCodeSession(targetDir: string): Promise<void> {
+/** Boot a folder-scoped Marina and run the Code Mode REPL (or a one-shot
+ *  `print` task). Never returns. */
+export async function runCodeSession(
+  targetDir: string,
+  opts: CodeSessionOptions = {},
+): Promise<void> {
   const dir = resolve(targetDir);
+  const fresh = opts.fresh ?? /^(1|true|on)$/i.test(process.env.MARINA_CODE_FRESH ?? "");
   const port = await freePort();
-  const dbPath = join(tmpdir(), `marina-code-${port}-${Date.now()}.db`);
+  let dbPath: string;
+  if (fresh) {
+    dbPath = join(tmpdir(), `marina-code-${port}-${Date.now()}.db`);
+  } else {
+    // Persistent per-folder home: sessions, artifacts, and memory survive
+    // restarts, so re-entering `code` resumes where the last launch left off.
+    const dbDir = join(homedir(), ".marina", "projects", projectSlug(dir));
+    mkdirSync(dbDir, { recursive: true });
+    dbPath = join(dbDir, "marina.db");
+  }
   const defaultModel = inferCodeDefaultModel(process.env);
 
   console.error(`Marina · ${dir}`);
   console.error("Booting a folder-scoped session…");
+  console.error(fresh ? "DB · ephemeral (deleted on exit)" : `DB · ${dbPath}`);
   if (defaultModel) {
     console.error(`Model · ${defaultModel}`);
   } else {
@@ -87,7 +163,9 @@ export async function runCodeSession(targetDir: string): Promise<void> {
 
   // Boot a minimal, folder-scoped server. MARINA_ADMINS=coder makes the local
   // user the operator (so it may launch the bound coding agent); the empty world
-  // + no room agents keep it light; the DB is a throwaway.
+  // + no room agents keep it light; the DB is per-folder (or a throwaway with
+  // --fresh). MARINA_NAME is pinned to the folder basename so instance-scoped
+  // flags (tour dismissal, seen markers) stay stable across launches.
   const server = Bun.spawn(["bun", "run", "src/main.ts"], {
     cwd: REPO_ROOT,
     env: {
@@ -99,6 +177,7 @@ export async function runCodeSession(targetDir: string): Promise<void> {
       MCP_PORT: "0",
       LOG_PORT: "0",
       DB_PATH: dbPath,
+      MARINA_NAME: process.env.MARINA_NAME ?? (basename(dir) || "marina"),
       MARINA_WORLD: process.env.MARINA_WORLD ?? "empty",
       MARINA_ROOM_AGENTS: process.env.MARINA_ROOM_AGENTS ?? "false",
       AGENT_AUTORESPAWN: process.env.AGENT_AUTORESPAWN ?? "false",
@@ -137,12 +216,16 @@ export async function runCodeSession(targetDir: string): Promise<void> {
       } catch {
         /* already gone */
       }
-      try {
-        rmSync(dbPath, { force: true });
-        rmSync(`${dbPath}-wal`, { force: true });
-        rmSync(`${dbPath}-shm`, { force: true });
-      } catch {
-        /* best-effort */
+      // Only ephemeral (--fresh) DBs are deleted — the per-folder persistent
+      // DB is the whole point of resume.
+      if (fresh) {
+        try {
+          rmSync(dbPath, { force: true });
+          rmSync(`${dbPath}-wal`, { force: true });
+          rmSync(`${dbPath}-shm`, { force: true });
+        } catch {
+          /* best-effort */
+        }
       }
     }
     process.exit(code);
@@ -192,6 +275,10 @@ export async function runCodeSession(targetDir: string): Promise<void> {
       console.error("Last server output:");
       for (const line of stderrTail) console.error(`  ${line}`);
     }
+    if (!fresh) {
+      console.error(`Hint: a stale project database from an older Marina version can block boot —`);
+      console.error(`  remove ${dbPath} (and its -wal/-shm siblings), or relaunch with --fresh.`);
+    }
     cleanup(1);
   }
 
@@ -213,7 +300,64 @@ export async function runCodeSession(targetDir: string): Promise<void> {
   // Mode — its banner and everything after arrive via the onPerception stream.
   await new Promise((r) => setTimeout(r, 400));
   echoPerceptions = true;
-  await agent.command("code");
+  const entered = await agent.command("code");
+
+  // Resume status: the code_mode_entered metadata says whether a prior session
+  // (persistent DB) was picked back up. Ephemeral runs always start clean.
+  for (const p of entered) {
+    const code = (p.data as Record<string, unknown> | undefined)?.code as
+      | Record<string, unknown>
+      | undefined;
+    if (code?.event !== "code_mode_entered") continue;
+    if (typeof code.sessionId === "string") {
+      const createdAt = typeof code.sessionCreatedAt === "number" ? code.sessionCreatedAt : 0;
+      const age = createdAt > 0 ? `${formatAge(Date.now() - createdAt)} ago` : "earlier";
+      const workspace = typeof code.workspace === "string" ? code.workspace : dir;
+      console.error(`Resuming session ${code.sessionId} — started ${age}, workspace ${workspace}`);
+    } else {
+      console.error("No active session yet.");
+    }
+    break;
+  }
+
+  // One-shot mode (`marina -p "<task>"`): dispatch, stream, await the terminal
+  // lifecycle signal, then exit — 0 completed, 1 failed, 2 timeout.
+  if (opts.print !== undefined) {
+    const task = opts.print.trim();
+    if (!task) {
+      console.error("Empty task — nothing to do.");
+      cleanup(1);
+    }
+    const timeoutMs =
+      Number.parseInt(process.env.MARINA_CODE_TASK_TIMEOUT_MS ?? "", 10) || DEFAULT_TASK_TIMEOUT_MS;
+    // Arm the waiter BEFORE dispatching so a fast completion can't slip past.
+    const outcome = agent.waitForMessage((p) => terminalCodeLifecycle(p) !== undefined, timeoutMs);
+    outcome.catch(() => {
+      /* handled below — avoid unhandled-rejection noise */
+    });
+    taskInFlight = true;
+    await agent.command(`code do ${task}`);
+    let terminal: ReturnType<typeof terminalCodeLifecycle>;
+    try {
+      terminal = terminalCodeLifecycle(await outcome);
+    } catch {
+      // Timeout: interrupt the run so the agent doesn't keep working unattended.
+      console.error(`Task timed out after ${timeoutMs}ms — sending code stop.`);
+      await agent.command("code stop").catch(() => {
+        /* best-effort */
+      });
+      cleanup(2);
+    }
+    taskInFlight = false;
+    if (!terminal || terminal.phase === "failed") {
+      console.error("Task failed.");
+      cleanup(1);
+    }
+    // Completed: show the session diff, then the durable summary text.
+    await agent.command("code diff"); // output streams through the perception echo
+    if (terminal.summary) process.stdout.write(`\n${terminal.summary}\n`);
+    cleanup(0);
+  }
 
   rl = createInterface({ input: process.stdin, output: process.stderr, prompt: "» " });
   rl.on("SIGINT", handleSigint);

@@ -598,6 +598,285 @@ describe("coding task mode (set on assign, cleared on stop/completion)", () => {
   });
 });
 
+describe("structured completion signal (machine-readable lifecycle metadata)", () => {
+  let db: MarinaDB;
+
+  beforeEach(() => {
+    db = new MarinaDB(TEST_DB);
+  });
+  afterEach(() => {
+    db.close();
+    cleanupDb(TEST_DB);
+  });
+
+  interface Notification {
+    entityId: string;
+    message: string;
+    metadata?: Record<string, unknown>;
+  }
+  interface SentWithMeta {
+    message: string;
+    metadata?: Record<string, unknown>;
+  }
+
+  /** Extract the `code` lifecycle payload from a notify/send metadata bag. */
+  function codeMeta(metadata?: Record<string, unknown>): Record<string, unknown> | undefined {
+    return metadata?.code as Record<string, unknown> | undefined;
+  }
+
+  /** Bound setup whose notify AND ctx.send capture full metadata. */
+  function makeStructuredSetup() {
+    const alice = makeAgentEntity("u_alice", "Alice");
+    db.saveEntity(alice);
+    const coder = makeAgentEntity("agent_coder", "Coder");
+    db.saveEntity(coder);
+    const fake = fakeHandle("Coder", "agent_coder");
+    const notifications: Notification[] = [];
+    const sent: SentWithMeta[] = [];
+    const command = codeCommand({
+      db,
+      getEntity: (id) => (id === "u_alice" ? alice : id === "agent_coder" ? coder : undefined),
+      workspace: new LocalWorkspace(),
+      agentRuntime: {
+        get: (n: string) => (n === "Coder" ? fake.handle : undefined),
+        isAvailable: () => true,
+        list: () => [{ name: "Coder" }],
+      },
+      listAgents: () => [{ name: "Coder" }],
+      findAgentByName: (n: string) => (n === "Coder" ? coder : undefined),
+      notify: (entityId: string, message: string, metadata?: Record<string, unknown>) => {
+        notifications.push({ entityId, message: stripAnsi(message), metadata });
+      },
+    });
+    const ctx = {
+      send: (
+        _target: EntityId,
+        message: string,
+        _tag?: string,
+        metadata?: Record<string, unknown>,
+      ) => {
+        sent.push({ message: stripAnsi(message), metadata });
+      },
+    } as unknown as RoomContext;
+    return { alice, coder, fake, notifications, sent, command, ctx };
+  }
+
+  it("the summary completion notification carries terminal machine-readable metadata", async () => {
+    const { alice, fake, notifications, command, ctx } = makeStructuredSetup();
+
+    await command.handler(ctx, inputFor(alice, "code do add a health endpoint"));
+    const sid = alice.properties.coding_session_id as string;
+
+    fake.emit({
+      type: "tool_call",
+      toolName: "marina_code",
+      args: { action: "summary", text: "Added /health in server.ts; bun test passes." },
+    });
+
+    const completed = notifications
+      .map((n) => codeMeta(n.metadata))
+      .find((code) => code?.phase === "completed");
+    expect(completed).toBeDefined();
+    expect(completed!.event).toBe("code_lifecycle");
+    expect(completed!.sessionId).toBe(sid);
+    expect(completed!.status).toBe("complete");
+    const payload = completed!.metadata as Record<string, unknown>;
+    expect(payload.terminal).toBe(true);
+    expect(payload.summary).toBe("Added /health in server.ts; bun test passes.");
+    expect(payload.agent).toBe("Coder");
+  });
+
+  it("agent death mid-task emits a terminal failed notification and clears the task", async () => {
+    const { alice, coder, fake, notifications, command, ctx } = makeStructuredSetup();
+
+    await command.handler(ctx, inputFor(alice, "code do refactor the parser"));
+    const sid = alice.properties.coding_session_id as string;
+    expect(coder.properties.coding_task).toBe("refactor the parser");
+
+    fake.emit({
+      type: "status_change",
+      status: { state: "stopped" } as never,
+    });
+
+    const failed = notifications
+      .map((n) => codeMeta(n.metadata))
+      .find((code) => code?.phase === "failed");
+    expect(failed).toBeDefined();
+    expect(failed!.event).toBe("code_lifecycle");
+    expect(failed!.sessionId).toBe(sid);
+    expect(failed!.status).toBe("failed");
+    const payload = failed!.metadata as Record<string, unknown>;
+    expect(payload.terminal).toBe(true);
+    expect(payload.reason).toBe("agent_died");
+    // Task mode ends with the death — no orphaned assignment.
+    expect(coder.properties.coding_task).toBeUndefined();
+    expect(fake.codingTasks.at(-1)).toBeNull();
+    // The failure is durable in the session event log too.
+    const dbFailed = db
+      .listCodingEvents(sid, 100)
+      .filter((event) => event.kind === "code_lifecycle")
+      .map((event) => JSON.parse(event.payload_json))
+      .find((payloadJson) => payloadJson.phase === "failed");
+    expect(dbFailed).toMatchObject({ reason: "agent_died", terminal: true });
+  });
+
+  it("agent death after completion emits no spurious failure", async () => {
+    const { alice, fake, notifications, command, ctx } = makeStructuredSetup();
+
+    await command.handler(ctx, inputFor(alice, "code do add a health endpoint"));
+    fake.emit({
+      type: "tool_call",
+      toolName: "marina_code",
+      args: { action: "summary", text: "done" },
+    });
+    fake.emit({ type: "status_change", status: { state: "stopped" } as never });
+
+    const failed = notifications
+      .map((n) => codeMeta(n.metadata))
+      .find((code) => code?.phase === "failed");
+    expect(failed).toBeUndefined();
+  });
+
+  it("a recoverable tool error streams failed WITHOUT the terminal flag", async () => {
+    const { alice, fake, notifications, command, ctx } = makeStructuredSetup();
+
+    await command.handler(ctx, inputFor(alice, "code do fix the tokenizer"));
+    fake.emit({ type: "tool_result", toolName: "marina_code", result: "boom", isError: true });
+
+    const failed = notifications
+      .map((n) => codeMeta(n.metadata))
+      .find((code) => code?.phase === "failed");
+    expect(failed).toBeDefined();
+    const payload = failed!.metadata as Record<string, unknown>;
+    expect(payload.terminal).toBeUndefined();
+  });
+
+  it("code stop mid-task sends a terminal failed lifecycle; an idle stop stays 'stopped'", async () => {
+    const { alice, sent, command, ctx } = makeStructuredSetup();
+
+    await command.handler(ctx, inputFor(alice, "code do refactor the parser"));
+    const sid = alice.properties.coding_session_id as string;
+
+    sent.length = 0;
+    await command.handler(ctx, inputFor(alice, "code stop"));
+
+    const stopMeta = sent
+      .map((entry) => codeMeta(entry.metadata))
+      .find((code) => code?.event === "code_lifecycle");
+    expect(stopMeta).toBeDefined();
+    expect(stopMeta!.phase).toBe("failed");
+    expect(stopMeta!.sessionId).toBe(sid);
+    const payload = stopMeta!.metadata as Record<string, unknown>;
+    expect(payload.terminal).toBe(true);
+    expect(payload.reason).toBe("stopped");
+
+    // Second stop: nothing in flight anymore — benign "stopped", not a failure.
+    sent.length = 0;
+    await command.handler(ctx, inputFor(alice, "code stop"));
+    const idleMeta = sent
+      .map((entry) => codeMeta(entry.metadata))
+      .find((code) => code?.event === "code_lifecycle");
+    expect(idleMeta!.phase).toBe("stopped");
+    expect((idleMeta!.metadata as Record<string, unknown>).terminal).toBeUndefined();
+  });
+});
+
+describe("resume: entering code re-adopts the creator's latest active session", () => {
+  let db: MarinaDB;
+
+  beforeEach(() => {
+    db = new MarinaDB(TEST_DB);
+  });
+  afterEach(() => {
+    db.close();
+    cleanupDb(TEST_DB);
+  });
+
+  function makeCommandFor(entity: Entity) {
+    const sent: SentEntry[] = [];
+    const command = codeCommand({
+      db,
+      getEntity: (id) => (id === entity.id ? entity : undefined),
+      workspace: new LocalWorkspace(),
+    });
+    const ctx = {
+      send: (
+        _target: EntityId,
+        message: string,
+        _tag?: string,
+        metadata?: Record<string, unknown>,
+      ) => {
+        sent.push({ message: stripAnsi(message), metadata });
+      },
+    } as unknown as RoomContext;
+    return { command, ctx, sent };
+  }
+  interface SentEntry {
+    message: string;
+    metadata?: Record<string, unknown>;
+  }
+
+  it("a rebuilt entity (quit deletes the row) resumes its prior active session", async () => {
+    const alice = makeAgentEntity("u_alice", "Alice");
+    db.saveEntity(alice);
+    const first = makeCommandFor(alice);
+    await first.command.handler(first.ctx, inputFor(alice, "code start Persistent work"));
+    const sid = alice.properties.coding_session_id as string;
+
+    // Simulate quit + relaunch: a brand-new entity with the same name and no
+    // session pointer (engine `quit` deletes the entity row entirely).
+    const reborn = makeAgentEntity("u_alice2", "Alice");
+    db.saveEntity(reborn);
+    const second = makeCommandFor(reborn);
+    await second.command.handler(second.ctx, inputFor(reborn, "code"));
+
+    expect(reborn.properties.coding_session_id).toBe(sid);
+    const banner = second.sent.map((entry) => entry.message).join("\n");
+    expect(banner).toContain(`Session: ${sid}`);
+    // The entry metadata is machine-readable for launchers.
+    const meta = second.sent
+      .map((entry) => entry.metadata?.code as Record<string, unknown> | undefined)
+      .find((code) => code?.event === "code_mode_entered");
+    expect(meta).toBeDefined();
+    expect(meta!.sessionId).toBe(sid);
+    expect(typeof meta!.sessionCreatedAt).toBe("number");
+  });
+
+  it("completed sessions are not re-adopted", async () => {
+    const alice = makeAgentEntity("u_alice", "Alice");
+    db.saveEntity(alice);
+    const first = makeCommandFor(alice);
+    await first.command.handler(first.ctx, inputFor(alice, "code start Old work"));
+    const sid = alice.properties.coding_session_id as string;
+    db.updateCodingSession(sid, { status: "complete" });
+
+    const reborn = makeAgentEntity("u_alice2", "Alice");
+    db.saveEntity(reborn);
+    const second = makeCommandFor(reborn);
+    await second.command.handler(second.ctx, inputFor(reborn, "code"));
+
+    expect(reborn.properties.coding_session_id).toBeUndefined();
+    expect(second.sent.map((entry) => entry.message).join("\n")).toContain("No active session yet");
+  });
+
+  it("an existing valid pointer wins over re-adoption", async () => {
+    const alice = makeAgentEntity("u_alice", "Alice");
+    db.saveEntity(alice);
+    const { command, ctx } = makeCommandFor(alice);
+    await command.handler(ctx, inputFor(alice, "code start First"));
+    const firstSid = alice.properties.coding_session_id as string;
+    await command.handler(ctx, inputFor(alice, "code start Second"));
+    const secondSid = alice.properties.coding_session_id as string;
+    expect(secondSid).not.toBe(firstSid);
+
+    // Explicitly resume the FIRST session, then re-enter the modal: the
+    // pointer must be respected, not overwritten by "most recent".
+    await command.handler(ctx, inputFor(alice, `code resume ${firstSid}`));
+    await command.handler(ctx, inputFor(alice, "code"));
+    expect(alice.properties.coding_session_id).toBe(firstSid);
+  });
+});
+
 describe("self-dispatch guard (bound coder cannot queue tasks to itself)", () => {
   let db: MarinaDB;
 

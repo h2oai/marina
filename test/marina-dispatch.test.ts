@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import { pushTailLines } from "../scripts/code";
+import { projectSlug, pushTailLines, terminalCodeLifecycle } from "../scripts/code";
 import { parseDispatch, USAGE } from "../scripts/marina";
+import type { Perception } from "../src/sdk/client";
 
 describe("marina dispatcher routing", () => {
   it("routes bare invocation to the coding flow with no dir", () => {
@@ -34,12 +35,135 @@ describe("marina dispatcher routing", () => {
 
   it("flags unknown options instead of treating them as directories", () => {
     expect(parseDispatch(["--bogus"])).toEqual({ kind: "usage-error", arg: "--bogus" });
+    expect(parseDispatch(["/dir", "--bogus"])).toEqual({ kind: "usage-error", arg: "--bogus" });
   });
 
-  it("usage covers every flow", () => {
-    for (const word of ["connect", "start", "--help", "[dir]"]) {
+  it("parses --fresh with and without a dir", () => {
+    expect(parseDispatch(["--fresh"])).toEqual({ kind: "code", dir: undefined, fresh: true });
+    expect(parseDispatch(["/dir", "--fresh"])).toEqual({ kind: "code", dir: "/dir", fresh: true });
+    expect(parseDispatch(["--fresh", "/dir"])).toEqual({ kind: "code", dir: "/dir", fresh: true });
+  });
+
+  it("parses -p/--print one-shot tasks in any position", () => {
+    expect(parseDispatch(["-p", "fix the bug"])).toEqual({
+      kind: "code",
+      dir: undefined,
+      print: "fix the bug",
+    });
+    expect(parseDispatch(["--print", "fix the bug", "/dir"])).toEqual({
+      kind: "code",
+      dir: "/dir",
+      print: "fix the bug",
+    });
+    expect(parseDispatch(["/dir", "-p", "fix the bug"])).toEqual({
+      kind: "code",
+      dir: "/dir",
+      print: "fix the bug",
+    });
+  });
+
+  it("combines -p with --fresh", () => {
+    expect(parseDispatch(["--fresh", "-p", "fix it", "/dir"])).toEqual({
+      kind: "code",
+      dir: "/dir",
+      fresh: true,
+      print: "fix it",
+    });
+  });
+
+  it("rejects -p without a task (or with a flag-shaped follow-up)", () => {
+    expect(parseDispatch(["-p"])).toEqual({ kind: "usage-error", arg: "-p" });
+    expect(parseDispatch(["-p", "--fresh"])).toEqual({ kind: "usage-error", arg: "-p" });
+    expect(parseDispatch(["--print"])).toEqual({ kind: "usage-error", arg: "--print" });
+  });
+
+  it("rejects a second positional directory", () => {
+    expect(parseDispatch(["/a", "/b"])).toEqual({ kind: "usage-error", arg: "/b" });
+  });
+
+  it("usage covers every flow, the new flags, and the exit codes", () => {
+    for (const word of ["connect", "start", "--help", "[dir]", "-p", "--fresh"]) {
       expect(USAGE).toContain(word);
     }
+    expect(USAGE).toContain("Exit codes");
+    expect(USAGE).toContain("MARINA_CODE_TASK_TIMEOUT_MS");
+    expect(USAGE).toContain("~/.marina/projects/<slug>/marina.db");
+  });
+});
+
+describe("projectSlug (per-folder DB identity)", () => {
+  it("is stable for the same absolute path", () => {
+    expect(projectSlug("/home/me/projects/acme")).toBe(projectSlug("/home/me/projects/acme"));
+  });
+
+  it("distinguishes same-named folders at different paths", () => {
+    const a = projectSlug("/home/me/projects/acme");
+    const b = projectSlug("/tmp/checkouts/acme");
+    expect(a).not.toBe(b);
+    // Both keep the human-readable basename prefix.
+    expect(a.startsWith("acme-")).toBe(true);
+    expect(b.startsWith("acme-")).toBe(true);
+  });
+
+  it("is filesystem-safe: <sanitized-basename>-<8 hex>", () => {
+    expect(projectSlug("/home/me/projects/acme")).toMatch(/^[a-z0-9._-]+-[0-9a-f]{8}$/);
+    expect(projectSlug("/x/My Wild Folder!! (v2)")).toMatch(/^[a-z0-9._-]+-[0-9a-f]{8}$/);
+    expect(projectSlug("/x/My Wild Folder!! (v2)")).not.toContain(" ");
+    expect(projectSlug("/x/My Wild Folder!! (v2)")).not.toContain("/");
+  });
+
+  it("falls back to a usable name for degenerate basenames", () => {
+    expect(projectSlug("/")).toMatch(/^project-[0-9a-f]{8}$/);
+  });
+});
+
+describe("terminalCodeLifecycle (one-shot completion predicate)", () => {
+  const lifecycle = (
+    phase: string,
+    metadata: Record<string, unknown> = {},
+    extra: Record<string, unknown> = {},
+  ): Perception =>
+    ({
+      kind: "message",
+      timestamp: 0,
+      tag: "code",
+      data: {
+        text: "detail",
+        code: { event: "code_lifecycle", phase, sessionId: "code_abc", metadata, ...extra },
+      },
+    }) as unknown as Perception;
+
+  it("matches completed and extracts the summary", () => {
+    const result = terminalCodeLifecycle(
+      lifecycle("completed", { terminal: true, summary: "changed a.ts; tests pass" }),
+    );
+    expect(result).toEqual({
+      phase: "completed",
+      sessionId: "code_abc",
+      summary: "changed a.ts; tests pass",
+    });
+  });
+
+  it("matches failed only when flagged terminal (agent death / stop-interrupt)", () => {
+    expect(
+      terminalCodeLifecycle(lifecycle("failed", { reason: "agent_died", terminal: true })),
+    ).toEqual({ phase: "failed", sessionId: "code_abc", summary: undefined });
+    // A recoverable mid-run tool error also streams as "failed" — never terminal.
+    expect(terminalCodeLifecycle(lifecycle("failed", { tool: "marina_code" }))).toBeUndefined();
+  });
+
+  it("ignores non-terminal phases and non-lifecycle perceptions", () => {
+    expect(terminalCodeLifecycle(lifecycle("inspecting"))).toBeUndefined();
+    expect(
+      terminalCodeLifecycle({
+        kind: "message",
+        timestamp: 0,
+        data: { text: "plain chatter" },
+      } as unknown as Perception),
+    ).toBeUndefined();
+    expect(
+      terminalCodeLifecycle({ kind: "system", timestamp: 0, data: {} } as unknown as Perception),
+    ).toBeUndefined();
   });
 });
 

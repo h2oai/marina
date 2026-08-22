@@ -78,8 +78,10 @@ focus on input validation before changing anything else
 ```
 
 Because this launcher is already in Code Mode, omit the `code` prefix. A plain sentence is steering
-or a new task; `status`, `diff`, and `show` are commands. Use `Ctrl-C` to stop the launcher. Its
-temporary Marina database is removed, while edits in the demo folder remain available to inspect.
+or a new task; `status`, `diff`, and `show` are commands. Use `Ctrl-C` to stop the launcher. The
+session's database persists per folder (see below), so relaunching resumes where you left off;
+edits in the demo folder remain available to inspect. Pass `--fresh` for the old throwaway
+behavior.
 
 ### 5. Verify independently
 
@@ -107,6 +109,9 @@ rm -rf /tmp/marina-coding-agent-demo
   relaunch `bun run code …`.
 - **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.1, and
   retry.
+- **Stale project database:** a per-folder DB written by an older Marina version can block boot.
+  The failure hint prints the exact path (`~/.marina/projects/<slug>/marina.db`) — remove it, or
+  relaunch with `--fresh` to use a throwaway DB.
 - **Agent cannot run checks:** use the folder-scoped launcher above; it boots `coder` as the local
   operator. In a shared Marina, `code.exec` remains safety-gated.
 - **Wrong files appear:** exit immediately and relaunch with the explicit absolute demo path. The
@@ -130,7 +135,7 @@ project. Keep the task bounded and name the checks that define completion.
 
 ## TL;DR — just talk to it (like Codex / Claude Code / Cursor)
 
-**Zero-config, in any folder** — boots an ephemeral folder-scoped Marina and drops
+**Zero-config, in any folder** — boots a folder-scoped Marina and drops
 you straight into agentic Code Mode (needs an LLM provider key in your env):
 
 ```bash
@@ -138,6 +143,26 @@ bun run code            # the current directory
 bun run code ~/projects/acme   # …or any directory
 # It evaluates the directory, then you say what you want, in plain English:
 » fix the off-by-one in the tokenizer and add a regression test
+```
+
+**Sessions persist per folder.** Each directory gets its own Marina database at
+`~/.marina/projects/<slug>/marina.db` (slug = folder basename + a short hash of the absolute
+path), so sessions, artifacts, and agent memory accrete across launches — relaunching in the same
+folder prints `Resuming session <id> — started <age>, workspace <path>` and picks up where the
+last run left off. Pass `--fresh` (or set `MARINA_CODE_FRESH=1`) for the old behavior: a
+throwaway database, deleted on exit. Only the ephemeral DB is ever deleted; the per-folder one is
+yours to keep or remove.
+
+**One-shot mode** (`marina -p "<task>" [dir]`, alias `--print`) dispatches a single task
+non-interactively: it boots (persistent DB by default, so `-p` runs accrete history), streams the
+agent's work as usual, then waits for the structured completion signal. On completion it prints
+the session diff and the agent's summary and exits `0`; if the run fails (the agent dies mid-task
+or is stopped) it exits `1`; if nothing terminal arrives within `MARINA_CODE_TASK_TIMEOUT_MS`
+(default 600000 ms) it sends `code stop` and exits `2` — script-friendly for CI and cron.
+
+```bash
+marina -p "fix the off-by-one in the tokenizer and add a regression test" ~/projects/acme
+echo $?   # 0 completed · 1 failed · 2 timed out
 ```
 
 Or inside an already-running Marina:
