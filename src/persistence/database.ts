@@ -1846,6 +1846,27 @@ CREATE INDEX idx_flywheel_operations_kind
   ON flywheel_operations(operation, outcome, created_at DESC);
 `,
   },
+  // Migration 71: append-only, attributed judgments over retained execution
+  // traces. These are participant assertions, never execution gates.
+  {
+    version: 71,
+    sql: `
+CREATE TABLE trace_judgments (
+  id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  evaluator_entity TEXT NOT NULL,
+  verdict TEXT NOT NULL CHECK(verdict IN ('passed', 'failed', 'inconclusive')),
+  criterion TEXT NOT NULL,
+  rationale TEXT NOT NULL,
+  evidence_span_ids TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_trace_judgments_trace
+  ON trace_judgments(trace_id, created_at DESC);
+CREATE INDEX idx_trace_judgments_evaluator
+  ON trace_judgments(evaluator_entity, created_at DESC);
+`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -2053,6 +2074,21 @@ export class MarinaDB {
 
   getRecentEvents(limit = 100): EngineEvent[] {
     return entitiesDb.getRecentEvents(this.db, limit);
+  }
+
+  getRecentTraceEvents(
+    limit = 5000,
+    traceId?: string,
+  ): { events: EngineEvent[]; truncated: boolean } {
+    return entitiesDb.getRecentTraceEvents(this.reader, limit, traceId);
+  }
+
+  addTraceJudgment(input: entitiesDb.TraceJudgmentInput): entitiesDb.TraceJudgmentRow {
+    return entitiesDb.addTraceJudgment(this.db, input);
+  }
+
+  getTraceJudgments(traceId: string, limit = 100): entitiesDb.TraceJudgmentRow[] {
+    return entitiesDb.getTraceJudgments(this.reader, traceId, limit);
   }
 
   getEventCount(): number {
@@ -5228,6 +5264,21 @@ export class MarinaDB {
       [canvasId, canvasId, max],
     );
     return result.changes ?? 0;
+  }
+
+  /** Trim old canvas nodes and return their ids so live clients can converge. */
+  trimCanvasNodesWithIds(canvasId: string, max: number): string[] {
+    const rows = this.db
+      .query(
+        `SELECT id FROM canvas_nodes
+         WHERE canvas_id = ?
+         ORDER BY created_at DESC
+         LIMIT -1 OFFSET ?`,
+      )
+      .all(canvasId, max) as Array<{ id: string }>;
+    if (rows.length === 0) return [];
+    this.trimCanvasNodes(canvasId, max);
+    return rows.map((row) => row.id);
   }
 
   updateNode(

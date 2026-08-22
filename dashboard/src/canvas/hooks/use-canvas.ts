@@ -6,12 +6,13 @@ import { applyNodeChanges } from "@xyflow/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "../../lib/api";
 import { defaultSize, tilePosition } from "../lib/layout";
-import type { CanvasData, CanvasNodeData } from "../lib/types";
+import { type CanvasData, type CanvasNodeData, normalizeNodeType } from "../lib/types";
 
 const API_BASE = window.location.origin;
 
 function toFlowNode(n: CanvasNodeData, index: number): Node {
-  const ds = defaultSize(n.type);
+  const type = normalizeNodeType(n.type);
+  const ds = defaultSize(type);
 
   // Use stored dimensions if they differ from the old 300×200 default,
   // otherwise use the type-specific default
@@ -25,7 +26,7 @@ function toFlowNode(n: CanvasNodeData, index: number): Node {
 
   return {
     id: n.id,
-    type: n.type,
+    type,
     position: pos,
     data: {
       ...n.data,
@@ -51,6 +52,8 @@ function toFlowNode(n: CanvasNodeData, index: number): Node {
 interface UseCanvasOptions {
   onBeforeFetch?: () => void;
   onSnapshotReady?: () => void;
+  /** Change to request a fresh snapshot without changing canvases. */
+  refreshKey?: number;
 }
 
 export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {}) {
@@ -60,6 +63,8 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
   const [error, setError] = useState<string | null>(null);
   const onBeforeFetchRef = useRef(options.onBeforeFetch);
   const onSnapshotReadyRef = useRef(options.onSnapshotReady);
+  const previousCanvasIdRef = useRef<string | null>(null);
+  const refreshKey = options.refreshKey;
 
   useEffect(() => {
     onBeforeFetchRef.current = options.onBeforeFetch;
@@ -68,9 +73,21 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
 
   // Fetch canvas data
   useEffect(() => {
+    // Reading the key makes the recovery refresh an explicit effect input.
+    void refreshKey;
     if (!canvasId) {
+      setCanvas(null);
+      setNodes([]);
+      setError(null);
       setLoading(false);
+      previousCanvasIdRef.current = null;
       return;
+    }
+    if (previousCanvasIdRef.current !== canvasId) {
+      setCanvas(null);
+      setNodes([]);
+      setError(null);
+      previousCanvasIdRef.current = canvasId;
     }
     setLoading(true);
     onBeforeFetchRef.current?.();
@@ -83,11 +100,15 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
         setCanvas(data);
         setNodes(data.nodes.map((n, i) => toFlowNode(n, i)));
         setError(null);
-        onSnapshotReadyRef.current?.();
       })
       .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [canvasId]);
+      .finally(() => {
+        // A failed snapshot is still a completed snapshot attempt. Release the
+        // live-event buffer so recovery events do not remain queued forever.
+        onSnapshotReadyRef.current?.();
+        setLoading(false);
+      });
+  }, [canvasId, refreshKey]);
 
   // Handle node position/size changes (from drag or resize)
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -208,6 +229,6 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
 /** Fetch list of all canvases */
 export async function fetchCanvases(): Promise<CanvasData[]> {
   const r = await authFetch(`${API_BASE}/api/canvases`);
-  if (!r.ok) return [];
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }

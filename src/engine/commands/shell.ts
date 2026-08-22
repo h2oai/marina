@@ -410,6 +410,13 @@ async function handleSave(
           },
           creatorName: entity.name,
         });
+        deps.logEvent?.({
+          type: "canvas_publish",
+          entity: eid,
+          canvasId: canvas.id,
+          nodeId,
+          timestamp: Date.now(),
+        });
         published++;
       }
 

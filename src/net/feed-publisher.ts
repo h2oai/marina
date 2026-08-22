@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { recordChronicleCitation } from "../agent/standing";
-import type { MarinaDB } from "../persistence/database";
+import { getErrorMessage } from "../engine/errors";
+import type { CanvasNodeRow, MarinaDB } from "../persistence/database";
+import type { StorageProvider } from "../storage/provider";
 import type { EngineEvent, EntityId } from "../types";
+import { enrichNodeData } from "./canvas-api";
 import type { CanvasBroadcaster } from "./canvas-ws";
 
 const FEED_CANVAS_NAME = "feed";
@@ -25,6 +28,12 @@ interface FeedPublisherDeps {
   resolveEntityIdByName?: (name: string) => string | undefined;
   broadcaster?: CanvasBroadcaster;
   /**
+   * Asset storage used to enrich broadcast node snapshots with resolvable
+   * urls (same enrichment the HTTP canvas API applies). Without it,
+   * asset-backed nodes still broadcast — just with `url: undefined`.
+   */
+  storage?: StorageProvider;
+  /**
    * Re-broadcast an engine event through the dashboard WS. Used both for
    * `feed_event` publication and for calibration follow-ups (note_created /
    * note_link_created) that close the forecast→outcome loop.
@@ -44,6 +53,7 @@ export class FeedPublisher {
   private resolveEntity: (id: EntityId) => string | undefined;
   private resolveEntityIdByName?: (name: string) => string | undefined;
   private broadcaster?: CanvasBroadcaster;
+  private storage?: StorageProvider;
   private emitEvent?: (event: EngineEvent) => void;
   private insertsSinceTrim = 0;
 
@@ -52,6 +62,7 @@ export class FeedPublisher {
     this.resolveEntity = deps.resolveEntity;
     this.resolveEntityIdByName = deps.resolveEntityIdByName;
     this.broadcaster = deps.broadcaster;
+    this.storage = deps.storage;
     this.emitEvent = deps.emitEvent;
 
     // Clean up any bloat carried over from before the cap existed.
@@ -81,7 +92,13 @@ export class FeedPublisher {
     });
     if (++this.insertsSinceTrim >= FEED_TRIM_INTERVAL) {
       this.insertsSinceTrim = 0;
-      this.db.trimCanvasNodes(params.canvasId, FEED_CANVAS_MAX_NODES);
+      for (const id of this.db.trimCanvasNodesWithIds(params.canvasId, FEED_CANVAS_MAX_NODES)) {
+        this.broadcaster?.broadcast({
+          type: "node_deleted",
+          canvasId: params.canvasId,
+          nodeId: id,
+        });
+      }
     }
     return nodeId;
   }
@@ -176,6 +193,33 @@ export class FeedPublisher {
       case "canvas_intent":
         this.publishCanvasIntent(event);
         break;
+      case "canvas_publish":
+        this.broadcastNodeAdded(event.canvasId, event.nodeId);
+        break;
+      case "canvas_node_updated":
+        this.broadcastNodeUpdated(event.canvasId, event.nodeId);
+        break;
+      case "canvas_edge_created":
+        this.broadcaster?.broadcast({
+          type: "edge_added",
+          canvasId: event.canvasId,
+          edge: {
+            id: event.edgeId,
+            sourceId: event.sourceId,
+            targetId: event.targetId,
+            relationship: event.relationship,
+            creatorName: this.resolveEntity(event.entity) ?? event.entity,
+            createdAt: event.timestamp,
+          },
+        });
+        break;
+      case "canvas_edge_deleted":
+        this.broadcaster?.broadcast({
+          type: "edge_deleted",
+          canvasId: event.canvasId,
+          edgeId: event.edgeId,
+        });
+        break;
       case "note_created":
         this.publishNoteCreated(event);
         break;
@@ -221,6 +265,9 @@ export class FeedPublisher {
       summary: summaries[event.phase],
       payload: {
         requestId: event.requestId,
+        runId: event.runId,
+        traceId: event.traceId,
+        spanId: event.spanId,
         model: event.model,
         phase: event.phase,
         target: event.target,
@@ -282,7 +329,7 @@ export class FeedPublisher {
       creatorName: ownerName,
     });
 
-    this.broadcast({ type: "node_added", canvasId: canvas.id, node: { id: nodeId } });
+    this.broadcastNodeAdded(canvas.id, nodeId);
     const feedId = this.recordFeedEvent({
       kind: "crew_created",
       entity: ownerName,
@@ -320,7 +367,7 @@ export class FeedPublisher {
       creatorName: "system",
     });
 
-    this.broadcast({ type: "node_added", canvasId: canvas.id, node: { id: nodeId } });
+    this.broadcastNodeAdded(canvas.id, nodeId);
     const feedId = this.recordFeedEvent({
       kind: "crew_completed",
       ref: `crew:${event.crew}`,
@@ -355,7 +402,7 @@ export class FeedPublisher {
       creatorName: "system",
     });
 
-    this.broadcast({ type: "node_added", canvasId: canvas.id, node: { id: nodeId } });
+    this.broadcastNodeAdded(canvas.id, nodeId);
     const feedId = this.recordFeedEvent({
       kind: "crew_dissolved",
       ref: `crew:${event.crew}`,
@@ -389,7 +436,7 @@ export class FeedPublisher {
       creatorName: entityName,
     });
 
-    this.broadcast({ type: "node_added", canvasId: canvas.id, node: { id: nodeId } });
+    this.broadcastNodeAdded(canvas.id, nodeId);
     this.recordFeedEvent({
       kind: "board_post",
       entity: entityName,
@@ -418,7 +465,7 @@ export class FeedPublisher {
       creatorName: entityName,
     });
 
-    this.broadcast({ type: "node_added", canvasId: canvas.id, node: { id: nodeId } });
+    this.broadcastNodeAdded(canvas.id, nodeId);
     this.recordFeedEvent({
       kind: "pool_note",
       entity: entityName,
@@ -450,7 +497,7 @@ export class FeedPublisher {
       creatorName: entityName,
     });
 
-    this.broadcast({ type: "node_added", canvasId: canvas.id, node: { id: nodeId } });
+    this.broadcastNodeAdded(canvas.id, nodeId);
     this.recordFeedEvent({
       kind: "channel_message",
       entity: entityName,
@@ -486,7 +533,7 @@ export class FeedPublisher {
       creatorName: entityName,
     });
 
-    this.broadcast({ type: "node_added", canvasId: canvas.id, node: { id: nodeId } });
+    this.broadcastNodeAdded(canvas.id, nodeId);
     const feedId = this.recordFeedEvent({
       kind: event.type,
       entity: entityName,
@@ -547,7 +594,7 @@ export class FeedPublisher {
       creatorName: entityName,
     });
 
-    this.broadcast({ type: "node_added", canvasId: canvas.id, node: { id: nodeId } });
+    this.broadcastNodeAdded(canvas.id, nodeId);
     this.recordFeedEvent({
       kind: "market_position",
       entity: entityName,
@@ -584,7 +631,7 @@ export class FeedPublisher {
       creatorName: entityName,
     });
 
-    this.broadcast({ type: "node_added", canvasId: canvas.id, node: { id: nodeId } });
+    this.broadcastNodeAdded(canvas.id, nodeId);
     const feedId = this.recordFeedEvent({
       kind: "market_consensus",
       entity: entityName,
@@ -606,6 +653,20 @@ export class FeedPublisher {
   }
 
   private publishCanvasIntent(event: EngineEvent & { type: "canvas_intent" }): void {
+    this.broadcastNodeUpdated(event.canvasId, event.nodeId);
+    const intentNode = this.db.getNode(event.nodeId);
+    if (event.status === "done" && intentNode) {
+      // A corrupt data row only costs the result-node broadcast — the feed
+      // canvas node and feed_event below must still be recorded.
+      try {
+        const intent = JSON.parse(intentNode.data).intent as { resultNodeId?: string } | undefined;
+        if (intent?.resultNodeId) this.broadcastNodeAdded(event.canvasId, intent.resultNodeId);
+      } catch (err) {
+        console.warn(
+          `[feed] intent node ${event.nodeId} has corrupt data, skipping result broadcast: ${getErrorMessage(err)}`,
+        );
+      }
+    }
     const canvas = this.ensureFeedCanvas();
     if (!canvas) return;
 
@@ -633,7 +694,7 @@ export class FeedPublisher {
       creatorName: entityName,
     });
 
-    this.broadcast({ type: "node_added", canvasId: canvas.id, node: { id: nodeId } });
+    this.broadcastNodeAdded(canvas.id, nodeId);
     this.recordFeedEvent({
       kind: "canvas_intent",
       entity: entityName,
@@ -669,7 +730,7 @@ export class FeedPublisher {
       creatorName: entityName,
     });
 
-    this.broadcast({ type: "node_added", canvasId: canvas.id, node: { id: nodeId } });
+    this.broadcastNodeAdded(canvas.id, nodeId);
     this.recordFeedEvent({
       kind: "note_created",
       entity: entityName,
@@ -705,7 +766,7 @@ export class FeedPublisher {
       creatorName: entityName,
     });
 
-    this.broadcast({ type: "node_added", canvasId: canvas.id, node: { id: nodeId } });
+    this.broadcastNodeAdded(canvas.id, nodeId);
     this.recordFeedEvent({
       kind: "note_link_created",
       entity: entityName,
@@ -734,7 +795,43 @@ export class FeedPublisher {
     return this.db.getCanvas(id);
   }
 
-  private broadcast(event: { type: string; canvasId: string; [k: string]: unknown }): void {
-    this.broadcaster?.broadcast(event as import("./canvas-ws").CanvasEvent);
+  /**
+   * Full node snapshot for WS broadcasts, enriched exactly like the HTTP
+   * canvas API (asset url/filename/mime via enrichNodeData) so live viewers
+   * see media-backed nodes render immediately. Returns undefined when the
+   * data row is corrupt JSON — callers skip the broadcast (feed_event
+   * recording is unaffected).
+   */
+  private nodeSnapshot(node: CanvasNodeRow): Record<string, unknown> | undefined {
+    try {
+      const parsed = JSON.parse(node.data) as Record<string, unknown>;
+      return { ...node, data: enrichNodeData(node, parsed, this.db, this.storage) };
+    } catch (err) {
+      console.warn(
+        `[feed] node ${node.id} has corrupt data, skipping broadcast: ${getErrorMessage(err)}`,
+      );
+      return undefined;
+    }
+  }
+
+  private broadcastNodeAdded(canvasId: string, nodeId: string): void {
+    const node = this.db.getNode(nodeId);
+    if (!node || node.canvas_id !== canvasId) return;
+    const snapshot = this.nodeSnapshot(node);
+    if (!snapshot) return;
+    this.broadcaster?.broadcast({ type: "node_added", canvasId, node: snapshot });
+  }
+
+  private broadcastNodeUpdated(canvasId: string, nodeId: string): void {
+    const node = this.db.getNode(nodeId);
+    if (!node || node.canvas_id !== canvasId) return;
+    const snapshot = this.nodeSnapshot(node);
+    if (!snapshot) return;
+    this.broadcaster?.broadcast({
+      type: "node_updated",
+      canvasId,
+      nodeId,
+      changes: snapshot,
+    });
   }
 }

@@ -11,6 +11,9 @@ import { secretsEqual } from "../auth/secret-compare";
 import type { ChannelManager } from "../coordination/channel-manager";
 import { localOutputBudget } from "../engine/constants";
 import type { Engine } from "../engine/engine";
+import { compareTraceCohorts } from "../engine/trace-dataset";
+import { projectTraces } from "../engine/trace-projection";
+import { adviseTraceRouting, selectAdaptiveCandidate } from "../engine/trace-routing-advice";
 import { buildAliasMap } from "./compat-profiles";
 import { corsHeaders } from "./cors";
 import { handleMediaApi } from "./media-api";
@@ -413,12 +416,50 @@ function buildHistory(cm: ChannelManager, channelId: string): HistoryEntry[] {
 interface RouteResult {
   content: string;
   conversationId?: string;
+  /** Traced request identity (equals the runId/traceId recorded in the event
+   *  log). Returned as `x-request-id` so a caller can jump straight to
+   *  `trace show <id>` / Admin → Traces for this exact request. */
+  requestId: string;
 }
 
 interface RouteOptions {
   context?: string;
   conversationId?: string;
-  strategy?: "round-robin" | "least-busy";
+  strategy?: "round-robin" | "least-busy" | "adaptive";
+}
+
+const ADAPTIVE_HISTORY_EVENT_LIMIT = 2_000;
+
+function selectRouteTarget(
+  engine: Engine,
+  members: string[],
+  channelId: string,
+  strategy: NonNullable<RouteOptions["strategy"]>,
+): { target: string; adviceMode?: "pareto" | "explore" | "insufficient"; reason?: string } {
+  if (strategy !== "adaptive") return { target: selectAgent(members, channelId, strategy) };
+  const history = engine.db?.getRecentTraceEvents(ADAPTIVE_HISTORY_EVENT_LIMIT);
+  // Routing advice is decided purely from observed mechanics (adviseTraceRouting
+  // never reads judgments), so skip the per-trace judgment fetch here — it would
+  // cost up to one query per projected trace on the request hot path. Judgments
+  // remain on the /api/traces display path (dashboard-api.ts).
+  const evidence = history ? projectTraces(history.events) : [];
+  const advice = adviseTraceRouting(compareTraceCohorts(evidence, "route"), "route");
+  const selected = selectAdaptiveCandidate(members, advice, () =>
+    selectAgent(members, channelId, "least-busy"),
+  );
+  return { target: selected.target, adviceMode: advice.mode, reason: selected.reason };
+}
+
+function requestTrace(requestId: string): {
+  runId: string;
+  traceId: string;
+  spanId: string;
+} {
+  return {
+    runId: requestId,
+    traceId: requestId,
+    spanId: `span-${requestId}`,
+  };
 }
 
 async function routeToChannel(
@@ -444,7 +485,8 @@ async function routeToChannel(
 
   // Load balancing
   const strategy = opts?.strategy ?? "round-robin";
-  const target = selectAgent(onlineMembers, channel.id, strategy);
+  const route = selectRouteTarget(engine, onlineMembers, channel.id, strategy);
+  const target = route.target;
 
   // Multi-turn conversation
   const convId = opts?.conversationId ?? undefined;
@@ -461,6 +503,7 @@ async function routeToChannel(
     type: "model_request_lifecycle",
     phase: "received",
     requestId,
+    ...requestTrace(requestId),
     model,
     timestamp: startedAt,
   });
@@ -468,8 +511,13 @@ async function routeToChannel(
     type: "model_request_lifecycle",
     phase: "routed",
     requestId,
+    ...requestTrace(requestId),
     model,
     target,
+    routeStrategy: strategy,
+    candidateCount: onlineMembers.length,
+    routeAdviceMode: route.adviceMode,
+    routeReason: route.reason,
     timestamp: Date.now(),
   });
 
@@ -477,6 +525,7 @@ async function routeToChannel(
   const payload = JSON.stringify({
     type: "model_request",
     id: requestId,
+    trace: requestTrace(requestId),
     content: userContent,
     target,
     ...(opts?.context ? { context: opts.context } : {}),
@@ -511,7 +560,7 @@ async function routeToChannel(
         if (parsed?.type === "model_response" && parsed.id === requestId) {
           clearTimeout(timer);
           unsub();
-          resolve({ content: parsed.content ?? "", conversationId: convId });
+          resolve({ content: parsed.content ?? "", conversationId: convId, requestId });
           return;
         }
 
@@ -523,6 +572,7 @@ async function routeToChannel(
           resolve({
             content: content.slice(prefix.length),
             conversationId: convId,
+            requestId,
           });
         }
       });
@@ -541,8 +591,13 @@ async function routeToChannel(
       type: "model_request_lifecycle",
       phase: "completed",
       requestId,
+      ...requestTrace(requestId),
       model,
       target,
+      routeStrategy: strategy,
+      candidateCount: onlineMembers.length,
+      routeAdviceMode: route.adviceMode,
+      routeReason: route.reason,
       durationMs: Date.now() - startedAt,
       timestamp: Date.now(),
     });
@@ -552,8 +607,13 @@ async function routeToChannel(
       type: "model_request_lifecycle",
       phase: "failed",
       requestId,
+      ...requestTrace(requestId),
       model,
       target,
+      routeStrategy: strategy,
+      candidateCount: onlineMembers.length,
+      routeAdviceMode: route.adviceMode,
+      routeReason: route.reason,
       durationMs: Date.now() - startedAt,
       detail: error instanceof Error ? error.message : "unknown error",
       timestamp: Date.now(),
@@ -618,72 +678,133 @@ async function collectResponses(
   opts: RouteOptions | undefined,
   resolveMode: "first" | "all",
   maxTargets: number,
-): Promise<{ responses: string[]; conversationId?: string }> {
+): Promise<{ responses: string[]; conversationId?: string; requestId: string }> {
   const { cm, channel, onlineMembers } = getModelChannelMembers(engine, model);
   const targets = onlineMembers.slice(0, Math.min(maxTargets, onlineMembers.length, FANOUT_CAP));
   const convId = opts?.conversationId ?? undefined;
   const pending = new Set<string>();
   const collected: string[] = [];
 
-  return new Promise<{ responses: string[]; conversationId?: string }>((resolve, reject) => {
-    let graceTimer: ReturnType<typeof setTimeout> | undefined;
-    const overall = setTimeout(() => {
-      cleanup();
-      if (collected.length > 0) resolve({ responses: collected, conversationId: convId });
-      else reject(new HttpError(504, "Response timeout"));
-    }, REQUEST_TIMEOUT_MS);
-
-    function cleanup() {
-      clearTimeout(overall);
-      if (graceTimer) clearTimeout(graceTimer);
-      unsub();
-      for (const t of targets) decrementPending(t);
-    }
-
-    const unsub = cm.onMessage((channelId, senderId, _name, content) => {
-      if (channelId !== channel.id || senderId === "__model_api__") return;
-      const match = matchFanoutReply(content, pending);
-      if (!match) return;
-      pending.delete(match.id);
-      collected.push(match.text);
-      if (resolveMode === "first") {
-        cleanup();
-        resolve({ responses: collected, conversationId: convId });
-        return;
-      }
-      // "all": resolve when every target has replied, or a grace window after the
-      // first reply elapses (so one slow/dead agent can't stall the panel).
-      if (collected.length === 1) {
-        graceTimer = setTimeout(() => {
-          cleanup();
-          resolve({ responses: collected, conversationId: convId });
-        }, PANEL_GRACE_MS);
-      }
-      if (pending.size === 0) {
-        cleanup();
-        resolve({ responses: collected, conversationId: convId });
-      }
-    });
-
-    for (const target of targets) {
-      const requestId = `req-${crypto.randomUUID().slice(0, 8)}`;
-      pending.add(requestId);
-      incrementPending(target);
-      cm.send(
-        channel.id,
-        "__model_api__",
-        "model-api",
-        JSON.stringify({
-          type: "model_request",
-          id: requestId,
-          content: userContent,
-          target,
-          ...(opts?.context ? { context: opts.context } : {}),
-          ...(convId ? { conversation_id: convId } : {}),
-        }),
-      );
-    }
+  // One run/trace identity for the whole fan-out; each target gets its own
+  // request span (same traceId, distinct spanId) so a responding agent's turn
+  // parents under the span embedded in its own model_request payload.
+  const runId = `req-${crypto.randomUUID().slice(0, 8)}`;
+  const startedAt = Date.now();
+  const targetByRequest = new Map<string, string>();
+  const fanoutTrace = (requestId: string) => ({
+    runId,
+    traceId: runId,
+    spanId: `span-${requestId}`,
   });
+  const finishTarget = (requestId: string, phase: "completed" | "failed", detail?: string) => {
+    const target = targetByRequest.get(requestId);
+    if (!target) return;
+    targetByRequest.delete(requestId);
+    engine.logEvent({
+      type: "model_request_lifecycle",
+      phase,
+      requestId,
+      ...fanoutTrace(requestId),
+      model,
+      target,
+      candidateCount: onlineMembers.length,
+      durationMs: Date.now() - startedAt,
+      ...(detail ? { detail } : {}),
+      timestamp: Date.now(),
+    });
+  };
+
+  return new Promise<{ responses: string[]; conversationId?: string; requestId: string }>(
+    (resolve, reject) => {
+      let graceTimer: ReturnType<typeof setTimeout> | undefined;
+      let settled = false;
+      const done = () => ({ responses: collected, conversationId: convId, requestId: runId });
+      const overall = setTimeout(() => {
+        cleanup("Response timeout");
+        if (collected.length > 0) resolve(done());
+        else reject(new HttpError(504, "Response timeout"));
+      }, REQUEST_TIMEOUT_MS);
+
+      // `unresolvedDetail` explains, on the trace, why a target's span failed
+      // without a reply (timeout, open-mode close, panel grace window).
+      function cleanup(unresolvedDetail: string) {
+        settled = true;
+        clearTimeout(overall);
+        if (graceTimer) clearTimeout(graceTimer);
+        unsub();
+        for (const id of pending) finishTarget(id, "failed", unresolvedDetail);
+        for (const t of targets) decrementPending(t);
+      }
+
+      const unsub = cm.onMessage((channelId, senderId, _name, content) => {
+        if (channelId !== channel.id || senderId === "__model_api__") return;
+        const match = matchFanoutReply(content, pending);
+        if (!match) return;
+        pending.delete(match.id);
+        finishTarget(match.id, "completed");
+        collected.push(match.text);
+        if (resolveMode === "first") {
+          cleanup("fan-out closed after first response (open mode)");
+          resolve(done());
+          return;
+        }
+        // "all": resolve when every target has replied, or a grace window after the
+        // first reply elapses (so one slow/dead agent can't stall the panel).
+        if (collected.length === 1) {
+          graceTimer = setTimeout(() => {
+            cleanup("fan-out grace window elapsed before a response (panel mode)");
+            resolve(done());
+          }, PANEL_GRACE_MS);
+        }
+        if (pending.size === 0) {
+          cleanup("fan-out complete");
+          resolve(done());
+        }
+      });
+
+      for (const target of targets) {
+        // A synchronous responder can settle the fan-out mid-loop (open mode:
+        // first answer wins); don't dispatch — or trace — dead requests.
+        if (settled) break;
+        const requestId = `req-${crypto.randomUUID().slice(0, 8)}`;
+        pending.add(requestId);
+        targetByRequest.set(requestId, target);
+        incrementPending(target);
+        engine.logEvent({
+          type: "model_request_lifecycle",
+          phase: "received",
+          requestId,
+          ...fanoutTrace(requestId),
+          model,
+          timestamp: Date.now(),
+        });
+        engine.logEvent({
+          type: "model_request_lifecycle",
+          phase: "routed",
+          requestId,
+          ...fanoutTrace(requestId),
+          model,
+          target,
+          candidateCount: onlineMembers.length,
+          timestamp: Date.now(),
+        });
+        cm.send(
+          channel.id,
+          "__model_api__",
+          "model-api",
+          JSON.stringify({
+            type: "model_request",
+            id: requestId,
+            trace: fanoutTrace(requestId),
+            content: userContent,
+            target,
+            ...(opts?.context ? { context: opts.context } : {}),
+            ...(convId ? { conversation_id: convId } : {}),
+          }),
+        );
+      }
+    },
+  );
 }
 
 /** Open mode: first online member to answer wins. */
@@ -693,7 +814,7 @@ async function routeOpen(
   userContent: string,
   opts?: RouteOptions,
 ): Promise<RouteResult> {
-  const { responses, conversationId } = await collectResponses(
+  const { responses, conversationId, requestId } = await collectResponses(
     engine,
     model,
     userContent,
@@ -701,7 +822,7 @@ async function routeOpen(
     "first",
     FANOUT_CAP,
   );
-  return { content: responses[0] ?? "", conversationId };
+  return { content: responses[0] ?? "", conversationId, requestId };
 }
 
 /** Panel mode: collect up to N answers, then concat or synthesize. */
@@ -713,7 +834,7 @@ async function routePanel(
   panelSize: number,
   synthesis: "concat" | "synthesize",
 ): Promise<RouteResult> {
-  const { responses, conversationId } = await collectResponses(
+  const { responses, conversationId, requestId } = await collectResponses(
     engine,
     model,
     userContent,
@@ -722,11 +843,11 @@ async function routePanel(
     panelSize,
   );
   if (responses.length <= 1) {
-    return { content: responses[0] ?? "", conversationId };
+    return { content: responses[0] ?? "", conversationId, requestId };
   }
   if (synthesis === "concat") {
     const merged = responses.map((r, i) => `### Answer ${i + 1}\n\n${r}`).join("\n\n");
-    return { content: merged, conversationId };
+    return { content: merged, conversationId, requestId };
   }
   // synthesize: ask the configured upstream model to merge the panel's answers.
   const mergePrompt = formatUntrustedContext("Panel synthesis inputs", {
@@ -745,17 +866,22 @@ async function routePanel(
       choices?: { message?: { content?: string } }[];
     };
     const text = data.choices?.[0]?.message?.content;
-    if (text) return { content: text, conversationId };
+    if (text) return { content: text, conversationId, requestId };
   } catch {
     // synthesis upstream unavailable — fall back to concat below
   }
   const merged = responses.map((r, i) => `### Answer ${i + 1}\n\n${r}`).join("\n\n");
-  return { content: merged, conversationId };
+  return { content: merged, conversationId, requestId };
 }
 
 /** Emit a buffered string as an OpenAI-format SSE stream (used when a stream is
  *  requested in a mode that can't stream incrementally — open / panel). */
-function bufferedOpenaiStream(model: string, content: string, convId?: string): Response {
+function bufferedOpenaiStream(
+  model: string,
+  content: string,
+  convId?: string,
+  requestId?: string,
+): Response {
   const id = `chatcmpl-${crypto.randomUUID().slice(0, 8)}`;
   const enc = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
@@ -771,7 +897,8 @@ function bufferedOpenaiStream(model: string, content: string, convId?: string): 
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
-    "x-request-id": generateRequestId(),
+    // Prefer the traced request identity so the header matches `trace show <id>`.
+    "x-request-id": requestId ?? generateRequestId(),
   };
   if (convId) headers["X-Conversation-Id"] = convId;
   return new Response(stream, { headers });
@@ -787,7 +914,7 @@ function routeToChannelStreaming(
   userContent: string,
   format: StreamFormat,
   opts?: RouteOptions,
-): { stream: ReadableStream<Uint8Array>; conversationId?: string } {
+): { stream: ReadableStream<Uint8Array>; conversationId?: string; requestId: string } {
   const cm = engine.channelManager;
   if (!cm) throw new HttpError(503, "Channel system unavailable");
 
@@ -803,7 +930,8 @@ function routeToChannelStreaming(
   }
 
   const strategy = opts?.strategy ?? "round-robin";
-  const target = selectAgent(onlineMembers, channel.id, strategy);
+  const route = selectRouteTarget(engine, onlineMembers, channel.id, strategy);
+  const target = route.target;
 
   const convId = opts?.conversationId ?? undefined;
   let convChannel: { id: string; name: string } | undefined;
@@ -814,6 +942,7 @@ function routeToChannelStreaming(
   }
 
   const reqId = `req-${crypto.randomUUID().slice(0, 8)}`;
+  const startedAt = Date.now();
   const streamId = `chatcmpl-${reqId.slice(4)}`;
   const encoder = new TextEncoder();
   const collectedContent: string[] = [];
@@ -821,6 +950,7 @@ function routeToChannelStreaming(
   const payload = JSON.stringify({
     type: "model_request",
     id: reqId,
+    trace: requestTrace(reqId),
     content: userContent,
     target,
     stream: true,
@@ -831,18 +961,60 @@ function routeToChannelStreaming(
 
   incrementPending(target);
 
+  engine.logEvent({
+    type: "model_request_lifecycle",
+    phase: "received",
+    requestId: reqId,
+    ...requestTrace(reqId),
+    model,
+    timestamp: startedAt,
+  });
+  engine.logEvent({
+    type: "model_request_lifecycle",
+    phase: "routed",
+    requestId: reqId,
+    ...requestTrace(reqId),
+    model,
+    target,
+    routeStrategy: strategy,
+    candidateCount: onlineMembers.length,
+    routeAdviceMode: route.adviceMode,
+    routeReason: route.reason,
+    timestamp: Date.now(),
+  });
+
   // Hoisted so cancel() (client disconnect) runs the same cleanup as the
   // success/timeout paths. `settled` guards decrementPending against running
   // more than once across {end, single-response, timeout, cancel}.
   let timer: ReturnType<typeof setTimeout> | undefined;
   let unsub: (() => void) | undefined;
   let settled = false;
+  let traceFinished = false;
   const cleanup = () => {
     if (settled) return;
     settled = true;
     if (timer) clearTimeout(timer);
     unsub?.();
     decrementPending(target);
+  };
+  const finishTrace = (phase: "completed" | "failed", detail?: string) => {
+    if (traceFinished) return;
+    traceFinished = true;
+    engine.logEvent({
+      type: "model_request_lifecycle",
+      phase,
+      requestId: reqId,
+      ...requestTrace(reqId),
+      model,
+      target,
+      routeStrategy: strategy,
+      candidateCount: onlineMembers.length,
+      routeAdviceMode: route.adviceMode,
+      routeReason: route.reason,
+      durationMs: Date.now() - startedAt,
+      ...(detail ? { detail } : {}),
+      timestamp: Date.now(),
+    });
   };
 
   const stream = new ReadableStream<Uint8Array>({
@@ -854,6 +1026,7 @@ function routeToChannelStreaming(
 
       timer = setTimeout(() => {
         cleanup();
+        finishTrace("failed", "Response timeout");
         safeClose(controller);
       }, REQUEST_TIMEOUT_MS);
 
@@ -889,6 +1062,7 @@ function routeToChannelStreaming(
         // Streaming end
         if (parsed.type === "model_response_end" && parsed.id === reqId) {
           cleanup();
+          finishTrace("completed");
           let endChunk: string;
           if (format === "openai") {
             endChunk = openaiStreamEnd(streamId, model);
@@ -908,6 +1082,7 @@ function routeToChannelStreaming(
         // Phase 1 compat: single model_response → wrap as one chunk + end
         if (parsed.type === "model_response" && parsed.id === reqId) {
           cleanup();
+          finishTrace("completed");
           collectedContent.push(text);
           if (format === "openai") {
             controller.enqueue(encoder.encode(openaiStreamChunk(streamId, model, text)));
@@ -933,10 +1108,11 @@ function routeToChannelStreaming(
       // pending-request slot now instead of leaking them until the timeout
       // (which otherwise skews least-busy load-balancing for up to REQUEST_TIMEOUT_MS).
       cleanup();
+      finishTrace("failed", "Client disconnected");
     },
   });
 
-  return { stream, conversationId: convId };
+  return { stream, conversationId: convId, requestId: reqId };
 }
 
 class HttpError extends Error {
@@ -1073,6 +1249,10 @@ async function handleResponsesCreate(req: Request, engine: Engine): Promise<Resp
     const opts: RouteOptions = {
       context: body.instructions ? `system: ${body.instructions}` : undefined,
       conversationId,
+      // Explicit X-Load-Balance wins; otherwise the operator-configured strategy.
+      strategy: req.headers.has("X-Load-Balance")
+        ? extractStrategy(req)
+        : getEndpointConfig(engine.db).strategy,
     };
 
     try {
@@ -1090,7 +1270,10 @@ async function handleResponsesCreate(req: Request, engine: Engine): Promise<Resp
       if (body.store !== false) {
         responseIndex.set(id, rec);
       }
-      return json(formatResponseRecord(rec), 200, { "X-Conversation-Id": conversationId });
+      return json(formatResponseRecord(rec), 200, {
+        "X-Conversation-Id": conversationId,
+        "x-request-id": result.requestId,
+      });
     } catch (routeError) {
       if (routeError instanceof HttpError && routeError.status === 503) {
         // No agents online — do NOT fall back silently for Responses API;
@@ -1160,9 +1343,10 @@ function extractConversationId(
   return body?.conversation_id ?? req.headers.get("X-Conversation-Id") ?? undefined;
 }
 
-function extractStrategy(req: Request): "round-robin" | "least-busy" {
+export function extractStrategy(req: Request): "round-robin" | "least-busy" | "adaptive" {
   const header = req.headers.get("X-Load-Balance");
   if (header === "least-busy") return "least-busy";
+  if (header === "adaptive") return "adaptive";
   return "round-robin";
 }
 
@@ -1304,7 +1488,11 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
       return await proxyToUpstream(engine, body, ec.passthruModel || undefined);
     }
 
-    const opts: RouteOptions = { context, conversationId, strategy: ec.strategy };
+    const opts: RouteOptions = {
+      context,
+      conversationId,
+      strategy: req.headers.has("X-Load-Balance") ? extractStrategy(req) : ec.strategy,
+    };
     const wantStream = body.stream === true;
 
     // A deliberately tiny verified fast path keeps the demo reactive without
@@ -1324,6 +1512,7 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
         type: "model_request_lifecycle",
         phase: "received",
         requestId,
+        ...requestTrace(requestId),
         model,
         timestamp: startedAt,
       });
@@ -1331,6 +1520,7 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
         type: "model_request_lifecycle",
         phase: "fast_path",
         requestId,
+        ...requestTrace(requestId),
         model,
         target: "verified-arithmetic",
         timestamp: Date.now(),
@@ -1339,31 +1529,30 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
         type: "model_request_lifecycle",
         phase: "completed",
         requestId,
+        ...requestTrace(requestId),
         model,
         target: "verified-arithmetic",
         durationMs: Date.now() - startedAt,
         timestamp: Date.now(),
       });
-      if (wantStream) return bufferedOpenaiStream(model, fastAnswer, conversationId);
-      return json(openaiCompletion(model, fastAnswer));
+      if (wantStream) return bufferedOpenaiStream(model, fastAnswer, conversationId, requestId);
+      return json(openaiCompletion(model, fastAnswer), 200, { "x-request-id": requestId });
     }
 
     try {
       // Agents mode streams natively (one coordinator, incremental deltas).
       if (wantStream && ec.mode === "agents") {
-        const { stream, conversationId: convId } = routeToChannelStreaming(
-          engine,
-          model,
-          userMsg.content,
-          "openai",
-          opts,
-        );
+        const {
+          stream,
+          conversationId: convId,
+          requestId,
+        } = routeToChannelStreaming(engine, model, userMsg.content, "openai", opts);
         const headers: Record<string, string> = {
           ...MODEL_CORS,
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
-          "x-request-id": generateRequestId(),
+          "x-request-id": requestId,
         };
         if (convId) headers["X-Conversation-Id"] = convId;
         return new Response(stream, { headers });
@@ -1386,9 +1575,11 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
       }
 
       // open/panel can't stream incrementally — emit the buffered result as SSE.
-      if (wantStream) return bufferedOpenaiStream(model, result.content, result.conversationId);
+      if (wantStream) {
+        return bufferedOpenaiStream(model, result.content, result.conversationId, result.requestId);
+      }
 
-      const extra: Record<string, string> = {};
+      const extra: Record<string, string> = { "x-request-id": result.requestId };
       if (result.conversationId) extra["X-Conversation-Id"] = result.conversationId;
       return json(openaiCompletion(model, result.content), 200, extra);
     } catch (routeError) {
@@ -1422,29 +1613,31 @@ async function handleOllamaChat(req: Request, engine: Engine): Promise<Response>
     const context = contextParts.length > 0 ? contextParts.join("\n") : undefined;
 
     const conversationId = extractConversationId(req, body);
-    const strategy = extractStrategy(req);
+    // Explicit X-Load-Balance wins; otherwise the operator-configured strategy.
+    const strategy = req.headers.has("X-Load-Balance")
+      ? extractStrategy(req)
+      : getEndpointConfig(engine.db).strategy;
     const opts: RouteOptions = { context, conversationId, strategy };
 
     // Ollama defaults to streaming (stream !== false)
     if (body.stream !== false) {
-      const { stream, conversationId: convId } = routeToChannelStreaming(
-        engine,
-        model,
-        userMsg.content,
-        "ollama-chat",
-        opts,
-      );
+      const {
+        stream,
+        conversationId: convId,
+        requestId,
+      } = routeToChannelStreaming(engine, model, userMsg.content, "ollama-chat", opts);
       const headers: Record<string, string> = {
         ...MODEL_CORS,
         "Content-Type": "application/x-ndjson",
         "Transfer-Encoding": "chunked",
+        "x-request-id": requestId,
       };
       if (convId) headers["X-Conversation-Id"] = convId;
       return new Response(stream, { headers });
     }
 
     const result = await routeToChannel(engine, model, userMsg.content, opts);
-    const extra: Record<string, string> = {};
+    const extra: Record<string, string> = { "x-request-id": result.requestId };
     if (result.conversationId) extra["X-Conversation-Id"] = result.conversationId;
     return json(ollamaChatResponse(model, result.content), 200, extra);
   } catch (e) {
@@ -1462,29 +1655,31 @@ async function handleOllamaGenerate(req: Request, engine: Engine): Promise<Respo
 
     const context = body.system ? `system: ${body.system}` : undefined;
     const conversationId = extractConversationId(req, body);
-    const strategy = extractStrategy(req);
+    // Explicit X-Load-Balance wins; otherwise the operator-configured strategy.
+    const strategy = req.headers.has("X-Load-Balance")
+      ? extractStrategy(req)
+      : getEndpointConfig(engine.db).strategy;
     const opts: RouteOptions = { context, conversationId, strategy };
 
     // Ollama defaults to streaming (stream !== false)
     if (body.stream !== false) {
-      const { stream, conversationId: convId } = routeToChannelStreaming(
-        engine,
-        model,
-        prompt,
-        "ollama-generate",
-        opts,
-      );
+      const {
+        stream,
+        conversationId: convId,
+        requestId,
+      } = routeToChannelStreaming(engine, model, prompt, "ollama-generate", opts);
       const headers: Record<string, string> = {
         ...MODEL_CORS,
         "Content-Type": "application/x-ndjson",
         "Transfer-Encoding": "chunked",
+        "x-request-id": requestId,
       };
       if (convId) headers["X-Conversation-Id"] = convId;
       return new Response(stream, { headers });
     }
 
     const result = await routeToChannel(engine, model, prompt, opts);
-    const extra: Record<string, string> = {};
+    const extra: Record<string, string> = { "x-request-id": result.requestId };
     if (result.conversationId) extra["X-Conversation-Id"] = result.conversationId;
     return json(ollamaGenerateResponse(model, result.content), 200, extra);
   } catch (e) {

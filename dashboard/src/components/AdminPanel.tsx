@@ -34,6 +34,7 @@ import {
 import { deleteApi, describeApiError, fetchApi, patchApi, postApi, putApi } from "../lib/api";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { ModelSelect } from "./ModelSelect";
+import { TraceExplorer } from "./TraceExplorer";
 
 const SUPPORTED_PROVIDERS = [
   "anthropic",
@@ -49,7 +50,16 @@ const SUPPORTED_PROVIDERS = [
 
 const SUPPORTED_ADAPTERS = ["telegram", "discord"];
 
-type Tab = "keys" | "endpoint" | "adapters" | "roles" | "mcp" | "config" | "security" | "ops";
+type Tab =
+  | "keys"
+  | "endpoint"
+  | "adapters"
+  | "roles"
+  | "mcp"
+  | "config"
+  | "security"
+  | "ops"
+  | "traces";
 
 export function AdminPanel({
   backContent,
@@ -79,7 +89,17 @@ export function AdminPanel({
     >
       <div className="flex border-b border-border text-[10px]">
         {(
-          ["keys", "endpoint", "adapters", "roles", "mcp", "config", "security", "ops"] as Tab[]
+          [
+            "keys",
+            "endpoint",
+            "adapters",
+            "roles",
+            "mcp",
+            "config",
+            "security",
+            "ops",
+            "traces",
+          ] as Tab[]
         ).map((t) => (
           <button
             key={t}
@@ -102,6 +122,7 @@ export function AdminPanel({
         {tab === "config" && <ConfigTab />}
         {tab === "security" && <SecurityTab />}
         {tab === "ops" && <OperationsTab />}
+        {tab === "traces" && <TraceExplorer />}
       </div>
     </GlassPanel>
   );
@@ -650,7 +671,7 @@ function DefaultModelSelector() {
 interface EndpointCfg {
   mode: "passthru" | "agents" | "open" | "panel";
   fallback: boolean;
-  strategy: "round-robin" | "least-busy";
+  strategy: "round-robin" | "least-busy" | "adaptive";
   passthruModel: string;
   panelSize: number;
   panelSynthesis: "concat" | "synthesize";
@@ -752,6 +773,7 @@ function EndpointTab() {
           >
             <option value="round-robin">round-robin</option>
             <option value="least-busy">least-busy</option>
+            <option value="adaptive">adaptive (evidence-aware)</option>
           </select>
         </label>
       )}

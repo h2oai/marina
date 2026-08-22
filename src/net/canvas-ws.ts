@@ -9,7 +9,20 @@ type CanvasCompatibleWS = ServerWebSocket<{ canvasId?: string; [key: string]: un
 export type CanvasEvent =
   | { type: "node_added"; canvasId: string; node: Record<string, unknown> }
   | { type: "node_updated"; canvasId: string; nodeId: string; changes: Record<string, unknown> }
-  | { type: "node_deleted"; canvasId: string; nodeId: string };
+  | { type: "node_deleted"; canvasId: string; nodeId: string }
+  | {
+      type: "edge_added";
+      canvasId: string;
+      edge: {
+        id: string;
+        sourceId: string;
+        targetId: string;
+        relationship: string;
+        creatorName: string;
+        createdAt: number;
+      };
+    }
+  | { type: "edge_deleted"; canvasId: string; edgeId: string };
 
 /**
  * Maintains WebSocket clients per canvas and broadcasts real-time events

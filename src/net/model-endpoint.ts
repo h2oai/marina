@@ -21,7 +21,7 @@
 import type { MarinaDB } from "../persistence/database";
 
 export type EndpointMode = "passthru" | "agents" | "open" | "panel";
-export type LoadStrategy = "round-robin" | "least-busy";
+export type LoadStrategy = "round-robin" | "least-busy" | "adaptive";
 export type PanelSynthesis = "concat" | "synthesize";
 
 export interface EndpointConfig {
@@ -39,7 +39,7 @@ export interface EndpointConfig {
 }
 
 const MODES: ReadonlySet<string> = new Set(["passthru", "agents", "open", "panel"]);
-const STRATEGIES: ReadonlySet<string> = new Set(["round-robin", "least-busy"]);
+const STRATEGIES: ReadonlySet<string> = new Set(["round-robin", "least-busy", "adaptive"]);
 const SYNTH: ReadonlySet<string> = new Set(["concat", "synthesize"]);
 
 export const DEFAULT_ENDPOINT_CONFIG: EndpointConfig = {

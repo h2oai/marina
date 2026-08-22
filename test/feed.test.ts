@@ -3,8 +3,10 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
+import { CanvasBroadcaster } from "../src/net/canvas-ws";
 import { FeedPublisher } from "../src/net/feed-publisher";
 import { MarinaDB } from "../src/persistence/database";
+import type { StorageProvider } from "../src/storage/provider";
 import type { EngineEvent, EntityId, RoomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
 
@@ -257,6 +259,212 @@ describe("Feed Canvas System", () => {
       expect(data.action).toBe("claimed");
     });
 
+    it("broadcasts complete live node snapshots for automated feed events", () => {
+      db.createCanvas({ id: "feed-live", name: "feed", creatorName: "system" });
+      const broadcaster = new CanvasBroadcaster();
+      const sent: string[] = [];
+      broadcaster.addClient(
+        { readyState: 1, send: (payload: string) => sent.push(payload) } as never,
+        "feed-live",
+      );
+      const livePublisher = new FeedPublisher({
+        db,
+        resolveEntity: (id) => engine.entities.get(id)?.name,
+        broadcaster,
+      });
+
+      livePublisher.handleEvent({
+        type: "board_post",
+        entity: entityId,
+        postId: 42,
+        boardId: "board:welcome",
+        boardName: "welcome",
+        title: "Visible now",
+        body: "A complete live node",
+        timestamp: Date.now(),
+      });
+
+      const event = JSON.parse(sent[0]!) as { node: Record<string, unknown> };
+      expect(event.node.canvas_id).toBe("feed-live");
+      expect(event.node.type).toBe("text");
+      expect(event.node.x).toBe(0);
+      expect(event.node.width).toBe(300);
+      expect(event.node.data).toMatchObject({ feedType: "board_post", title: "Visible now" });
+    });
+
+    it("broadcasts agent-published nodes onto their target canvas", () => {
+      db.createCanvas({ id: "work-live", name: "work-live", creatorName: "Tester" });
+      db.createNode({
+        id: "agent-node",
+        canvasId: "work-live",
+        type: "text",
+        data: { content: "Agent result" },
+        creatorName: "Tester",
+      });
+      const broadcaster = new CanvasBroadcaster();
+      const sent: string[] = [];
+      broadcaster.addClient(
+        { readyState: 1, send: (payload: string) => sent.push(payload) } as never,
+        "work-live",
+      );
+      const livePublisher = new FeedPublisher({
+        db,
+        resolveEntity: (id) => engine.entities.get(id)?.name,
+        broadcaster,
+      });
+
+      livePublisher.handleEvent({
+        type: "canvas_publish",
+        entity: entityId,
+        canvasId: "work-live",
+        nodeId: "agent-node",
+        timestamp: Date.now(),
+      });
+
+      const event = JSON.parse(sent[0]!) as { type: string; node: { data: unknown } };
+      expect(event.type).toBe("node_added");
+      expect(event.node.data).toEqual({ content: "Agent result" });
+    });
+
+    it("enriches broadcast snapshots of asset-backed nodes with a resolvable url", () => {
+      db.createAsset({
+        id: "asset-1",
+        entityName: "Tester",
+        filename: "photo.jpg",
+        mimeType: "image/jpeg",
+        size: 1024,
+        storageKey: "asset-1.jpg",
+      });
+      db.createCanvas({ id: "media-live", name: "media-live", creatorName: "Tester" });
+      db.createNode({
+        id: "media-node",
+        canvasId: "media-live",
+        type: "image",
+        assetId: "asset-1",
+        data: { caption: "A photo" },
+        creatorName: "Tester",
+      });
+      const broadcaster = new CanvasBroadcaster();
+      const sent: string[] = [];
+      broadcaster.addClient(
+        { readyState: 1, send: (payload: string) => sent.push(payload) } as never,
+        "media-live",
+      );
+      const storage: StorageProvider = {
+        init: async () => {},
+        put: async (key) => key,
+        get: async () => null,
+        delete: async () => true,
+        resolve: (key) => `/assets/${key}`,
+      };
+      const livePublisher = new FeedPublisher({
+        db,
+        resolveEntity: (id) => engine.entities.get(id)?.name,
+        broadcaster,
+        storage,
+      });
+
+      livePublisher.handleEvent({
+        type: "canvas_publish",
+        entity: entityId,
+        canvasId: "media-live",
+        nodeId: "media-node",
+        timestamp: Date.now(),
+      });
+
+      const event = JSON.parse(sent[0]!) as {
+        type: string;
+        node: { data: Record<string, unknown> };
+      };
+      expect(event.type).toBe("node_added");
+      expect(event.node.data.url).toBe("/assets/asset-1.jpg");
+      expect(event.node.data.filename).toBe("photo.jpg");
+      expect(event.node.data.mime).toBe("image/jpeg");
+      expect(event.node.data.caption).toBe("A photo");
+    });
+
+    it("records the feed_event even when the intent node data row is corrupt", () => {
+      db.createCanvas({ id: "intent-live", name: "intent-live", creatorName: "Tester" });
+      db.createNode({
+        id: "intent-node",
+        canvasId: "intent-live",
+        type: "text",
+        data: { intent: { prompt: "do the thing", status: "done" } },
+        creatorName: "Tester",
+      });
+      db.updateNode("intent-node", { data: "{not json" });
+      const broadcaster = new CanvasBroadcaster();
+      const sent: string[] = [];
+      broadcaster.addClient(
+        { readyState: 1, send: (payload: string) => sent.push(payload) } as never,
+        "intent-live",
+      );
+      const livePublisher = new FeedPublisher({
+        db,
+        resolveEntity: (id) => engine.entities.get(id)?.name,
+        broadcaster,
+      });
+
+      livePublisher.handleEvent({
+        type: "canvas_intent",
+        entity: entityId,
+        canvasId: "intent-live",
+        nodeId: "intent-node",
+        prompt: "do the thing",
+        status: "done",
+        timestamp: Date.now(),
+      } as EngineEvent);
+
+      // The corrupt row skips only the broadcast enrichment…
+      const updates = sent.map((s) => JSON.parse(s)).filter((e) => e.type === "node_updated");
+      expect(updates).toHaveLength(0);
+      // …while the structured feed_event is still recorded.
+      const [event] = db.queryFeedEvents({ limit: 1 });
+      expect(event?.kind).toBe("canvas_intent");
+      expect(event?.ref).toBe("canvas_intent:intent-node");
+    });
+
+    it("broadcasts typed edge creation and deletion on the canvas socket", () => {
+      const broadcaster = new CanvasBroadcaster();
+      const sent: string[] = [];
+      broadcaster.addClient(
+        { readyState: 1, send: (payload: string) => sent.push(payload) } as never,
+        "work-live",
+      );
+      const livePublisher = new FeedPublisher({
+        db,
+        resolveEntity: (id) => engine.entities.get(id)?.name,
+        broadcaster,
+      });
+      livePublisher.handleEvent({
+        type: "canvas_edge_created",
+        entity: entityId,
+        canvasId: "work-live",
+        edgeId: "edge-1",
+        sourceId: "node-a",
+        targetId: "node-b",
+        relationship: "supports",
+        timestamp: 123,
+      });
+      livePublisher.handleEvent({
+        type: "canvas_edge_deleted",
+        entity: entityId,
+        canvasId: "work-live",
+        edgeId: "edge-1",
+        timestamp: 124,
+      });
+
+      expect(JSON.parse(sent[0]!)).toMatchObject({
+        type: "edge_added",
+        edge: { id: "edge-1", relationship: "supports", creatorName: "Tester" },
+      });
+      expect(JSON.parse(sent[1]!)).toEqual({
+        type: "edge_deleted",
+        canvasId: "work-live",
+        edgeId: "edge-1",
+      });
+    });
+
     it("publishes board_post events as feed nodes", () => {
       publisher.handleEvent({
         type: "board_post",
@@ -333,6 +541,9 @@ describe("Feed Canvas System", () => {
         type: "model_request_lifecycle",
         phase: "completed",
         requestId: "req-demo",
+        runId: "req-demo",
+        traceId: "req-demo",
+        spanId: "span-req-demo",
         model: "marina:answerer",
         target: "Answerer",
         durationMs: 1234,
@@ -342,6 +553,12 @@ describe("Feed Canvas System", () => {
       expect(event?.kind).toBe("model_request_completed");
       expect(event?.ref).toBe("request:req-demo");
       expect(event?.summary).toContain("1234ms");
+      expect(JSON.parse(event?.payload ?? "{}")).toMatchObject({
+        requestId: "req-demo",
+        runId: "req-demo",
+        traceId: "req-demo",
+        spanId: "span-req-demo",
+      });
       expect(db.getCanvasByName("feed")).toBeUndefined();
     });
 

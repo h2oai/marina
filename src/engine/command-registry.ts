@@ -88,6 +88,7 @@ import { standingCommand } from "./commands/standing";
 import { systemPromptCommand } from "./commands/system-prompt";
 import { taskCommand } from "./commands/task";
 import { replyCommand, tellCommand } from "./commands/tell";
+import { traceCommand } from "./commands/trace";
 import { traitCommand } from "./commands/trait";
 import { universalIntentCommands, usecaseCommand } from "./commands/usecase";
 import { timeCommand, uptimeCommand } from "./commands/utility";
@@ -600,6 +601,13 @@ export function registerBuiltinCommands(engine: Engine): void {
           input: "input" in e ? e.input : undefined,
           timestamp: e.timestamp,
         })),
+    }),
+  );
+  engine.commands.registerBuiltin(
+    traceCommand({
+      db: engine.db,
+      getEventLog: () => engine.getEventLog(),
+      getEntityName: (id) => engine.entities.get(id)?.name,
     }),
   );
 

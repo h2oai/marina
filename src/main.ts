@@ -294,6 +294,9 @@ const feedPublisher = new FeedPublisher({
     engine.entities.findAgentByName(name)?.id ??
     engine.entities.all().find((e) => e.name === name)?.id,
   broadcaster: wsServer.canvasBroadcaster,
+  // Same storage the canvas HTTP API uses, so live broadcast snapshots resolve
+  // asset urls identically to REST responses.
+  storage,
   emitEvent: (event) => engine.logEvent(event),
 });
 engine.addEventListener((event) => feedPublisher.handleEvent(event));

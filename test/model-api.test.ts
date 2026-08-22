@@ -6,6 +6,7 @@ import type { ChannelManager } from "../src/coordination/channel-manager";
 import { Engine } from "../src/engine/engine";
 import { getActiveAliases } from "../src/net/compat-profiles";
 import {
+  extractStrategy,
   handleModelApi,
   pendingRequests,
   prepareLlamaBody,
@@ -14,8 +15,9 @@ import {
   selectAgent,
   tryVerifiedArithmetic,
 } from "../src/net/model-api";
+import { setEndpointConfig } from "../src/net/model-endpoint";
 import { MarinaDB } from "../src/persistence/database";
-import { roomId } from "../src/types";
+import { type EngineEvent, roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 
 const TEST_DB = "test_model_api.db";
@@ -172,6 +174,9 @@ describe("Model API", () => {
       .getEventLog()
       .filter((event) => event.type === "model_request_lifecycle");
     expect(lifecycle.map((event) => event.phase)).toEqual(["received", "fast_path", "completed"]);
+    expect(new Set(lifecycle.map((event) => event.runId)).size).toBe(1);
+    expect(new Set(lifecycle.map((event) => event.traceId)).size).toBe(1);
+    expect(new Set(lifecycle.map((event) => event.spanId)).size).toBe(1);
   });
 
   it("GET /v1/models lists channels matching model* pattern", async () => {
@@ -393,6 +398,8 @@ describe("Model API", () => {
     });
     const resp = await handleModelApi(url, method, req, engine);
     expect(resp!.headers.get("Content-Type")).toBe("text/event-stream");
+    const requestId = resp!.headers.get("x-request-id") ?? undefined;
+    expect(requestId).toStartWith("req-");
 
     const text = await collectStream(resp!);
     const dataLines = text.split("\n").filter((l) => l.startsWith("data: "));
@@ -421,6 +428,18 @@ describe("Model API", () => {
 
     // [DONE]
     expect(dataLines[5]).toBe("data: [DONE]");
+
+    const lifecycle = engine
+      .getEventLog()
+      .filter((event) => event.type === "model_request_lifecycle");
+    expect(lifecycle.map((event) => event.phase)).toEqual(["received", "routed", "completed"]);
+    expect(new Set(lifecycle.map((event) => event.traceId)).size).toBe(1);
+    expect(lifecycle[0]?.traceId).toBe(lifecycle[0]?.requestId);
+    expect(lifecycle[0]?.requestId).toBe(requestId);
+    expect(lifecycle.find((event) => event.phase === "routed")).toMatchObject({
+      routeStrategy: "round-robin",
+      candidateCount: 1,
+    });
   });
 
   it("streaming: Ollama chunked JSON lines format", async () => {
@@ -479,6 +498,27 @@ describe("Model API", () => {
     expect(stop.choices[0].finish_reason).toBe("stop");
 
     expect(dataLines[3]).toBe("data: [DONE]");
+  });
+
+  it("streaming: cancellation closes the trace exactly once", async () => {
+    engine.processCommand(conn1.entity!, "channel join model");
+
+    const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+      model: "marina",
+      messages: [{ role: "user", content: "wait for cancellation" }],
+      stream: true,
+    });
+    const resp = await handleModelApi(url, method, req, engine);
+    const requestId = resp!.headers.get("x-request-id") ?? undefined;
+    await resp!.body!.cancel();
+
+    const lifecycle = engine
+      .getEventLog()
+      .filter((event) => event.type === "model_request_lifecycle")
+      .filter((event) => event.requestId === requestId);
+    expect(lifecycle.map((event) => event.phase)).toEqual(["received", "routed", "failed"]);
+    expect(lifecycle.filter((event) => event.phase === "failed")).toHaveLength(1);
+    expect(lifecycle.at(-1)?.detail).toBe("Client disconnected");
   });
 
   // --- Multi-turn conversation tests ---
@@ -663,6 +703,40 @@ describe("Model API", () => {
     expect(result2).toBe("agent-only");
   });
 
+  it("load balancing: adaptive is explicit and records its transparent fallback", async () => {
+    engine.processCommand(conn1.entity!, "channel join model");
+    cm.onMessage((channelId, senderId, _senderName, content) => {
+      if (senderId !== "__model_api__") return;
+      const parsed = JSON.parse(content);
+      cm.send(
+        channelId,
+        parsed.target,
+        "Agent1",
+        JSON.stringify({ type: "model_response", id: parsed.id, content: "ok" }),
+      );
+    });
+    const [url, method, req] = makeRequest(
+      "/v1/chat/completions",
+      "POST",
+      { model: "marina", messages: [{ role: "user", content: "adaptive request" }] },
+      { "X-Load-Balance": "adaptive" },
+    );
+    expect(extractStrategy(req)).toBe("adaptive");
+    const response = await handleModelApi(url, method, req, engine);
+    expect(response?.status).toBe(200);
+    const routed = engine
+      .getEventLog()
+      .filter((event) => event.type === "model_request_lifecycle" && event.phase === "routed")
+      .at(-1);
+    expect(routed).toMatchObject({
+      routeStrategy: "adaptive",
+      routeAdviceMode: "insufficient",
+    });
+    expect(routed && "routeReason" in routed ? routed.routeReason : "").toContain(
+      "fell back to least-busy",
+    );
+  });
+
   it("model-conv channels excluded from model listing", async () => {
     engine.processCommand(conn1.entity!, "channel join model");
     // Create a conversation channel manually
@@ -678,16 +752,20 @@ describe("Model API", () => {
     expect(ids.some((id: string) => id.startsWith("marina:model-conv"))).toBe(false);
   });
 
-  it("request payload includes target field for load balancing", async () => {
+  it("request payload includes target and explicit trace context", async () => {
     engine.processCommand(conn1.entity!, "channel join model");
 
     let capturedTarget: string | undefined;
+    let capturedTrace:
+      | { runId?: string; traceId?: string; spanId?: string; requestId?: string }
+      | undefined;
     cm.onMessage((channelId, senderId, _senderName, content) => {
       if (senderId === "__model_api__") {
         try {
           const parsed = JSON.parse(content);
           if (parsed.type === "model_request") {
             capturedTarget = parsed.target;
+            capturedTrace = { ...parsed.trace, requestId: parsed.id };
             cm.send(
               channelId,
               conn1.entity!,
@@ -710,6 +788,14 @@ describe("Model API", () => {
     await handleModelApi(url, method, req, engine);
 
     expect(capturedTarget).toBe(conn1.entity!);
+    const capturedRequestId = capturedTrace?.requestId;
+    expect(capturedRequestId).toStartWith("req-");
+    expect(capturedTrace).toEqual({
+      requestId: capturedRequestId,
+      runId: capturedRequestId,
+      traceId: capturedRequestId,
+      spanId: `span-${capturedRequestId}`,
+    });
   });
 
   it("orchestration boundary: non-target sender responses are ignored", async () => {
@@ -765,6 +851,173 @@ describe("Model API", () => {
     const data = await resp!.json();
     expect(nonTargetResponded).toBe(true);
     expect(data.choices[0].message.content).toBe("target-answer");
+  });
+
+  describe("execution tracing", () => {
+    type LifecycleEvent = Extract<EngineEvent, { type: "model_request_lifecycle" }>;
+    const lifecycleEvents = (): LifecycleEvent[] =>
+      engine.getEventLog().filter((e): e is LifecycleEvent => e.type === "model_request_lifecycle");
+
+    it("non-streaming chat completion x-request-id equals the traced traceId", async () => {
+      engine.processCommand(conn1.entity!, "channel join model");
+      setupPhase1Agent(cm, conn1.entity!, "Agent1", "traced answer");
+
+      const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+        model: "marina",
+        messages: [{ role: "user", content: "hello" }],
+      });
+      const resp = await handleModelApi(url, method, req, engine);
+      expect(resp!.status).toBe(200);
+
+      const headerId = resp!.headers.get("x-request-id");
+      const completed = lifecycleEvents().find((e) => e.phase === "completed");
+      expect(completed).toBeDefined();
+      expect(headerId).toBe(completed!.traceId!);
+      expect(headerId).toBe(completed!.requestId);
+    });
+
+    it("Ollama non-streaming x-request-id equals the traced traceId", async () => {
+      engine.processCommand(conn1.entity!, "channel join model");
+      setupPhase1Agent(cm, conn1.entity!, "Agent1", "generated");
+
+      const [url, method, req] = makeRequest("/api/generate", "POST", {
+        model: "marina",
+        prompt: "story",
+        stream: false,
+      });
+      const resp = await handleModelApi(url, method, req, engine);
+      expect(resp!.status).toBe(200);
+
+      const headerId = resp!.headers.get("x-request-id");
+      const completed = lifecycleEvents().find((e) => e.phase === "completed");
+      expect(headerId).toBe(completed!.traceId!);
+    });
+
+    it("/v1/responses x-request-id equals the traced traceId and honors X-Load-Balance", async () => {
+      engine.processCommand(conn1.entity!, "channel join model");
+      setupPhase1Agent(cm, conn1.entity!, "Agent1", "responses api answer");
+
+      const [url, method, req] = makeRequest(
+        "/v1/responses",
+        "POST",
+        { model: "marina", input: "hello" },
+        { "X-Load-Balance": "least-busy" },
+      );
+      const resp = await handleModelApi(url, method, req, engine);
+      expect(resp!.status).toBe(200);
+
+      const headerId = resp!.headers.get("x-request-id");
+      const completed = lifecycleEvents().find((e) => e.phase === "completed");
+      expect(headerId).toBe(completed!.traceId!);
+      const routed = lifecycleEvents().find((e) => e.phase === "routed");
+      expect(routed!.routeStrategy).toBe("least-busy");
+    });
+
+    it("Ollama routes use the operator-configured strategy when no header is sent", async () => {
+      setEndpointConfig(db, { strategy: "least-busy" });
+      engine.processCommand(conn1.entity!, "channel join model");
+      setupPhase1Agent(cm, conn1.entity!, "Agent1", "ok");
+
+      const [url, method, req] = makeRequest("/api/chat", "POST", {
+        model: "marina",
+        messages: [{ role: "user", content: "hello" }],
+        stream: false,
+      });
+      const resp = await handleModelApi(url, method, req, engine);
+      expect(resp!.status).toBe(200);
+
+      const routed = lifecycleEvents().find((e) => e.phase === "routed");
+      expect(routed!.routeStrategy).toBe("least-busy");
+    });
+
+    it("panel fan-out emits per-target lifecycle spans under one shared trace", async () => {
+      setEndpointConfig(db, { mode: "panel", panelSize: 2 });
+      engine.processCommand(conn1.entity!, "channel join model");
+      const conn2 = new MockConnection("c2");
+      engine.addConnection(conn2);
+      engine.spawnEntity("c2", "Agent2");
+      engine.processCommand(conn2.entity!, "channel join model");
+
+      const captured: {
+        id: string;
+        target: string;
+        trace: { runId: string; traceId: string; spanId: string };
+      }[] = [];
+      cm.onMessage((channelId, senderId, _name, content) => {
+        if (senderId !== "__model_api__") return;
+        try {
+          const parsed = JSON.parse(content);
+          if (parsed.type !== "model_request") return;
+          captured.push({ id: parsed.id, target: parsed.target, trace: parsed.trace });
+          // Reply asynchronously so both fan-out requests dispatch before any
+          // response settles the collection.
+          setTimeout(() => {
+            cm.send(
+              channelId,
+              parsed.target,
+              "Agent",
+              JSON.stringify({
+                type: "model_response",
+                id: parsed.id,
+                content: `answer from ${parsed.target}`,
+              }),
+            );
+          }, 0);
+        } catch {}
+      });
+
+      const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+        model: "marina",
+        messages: [{ role: "user", content: "panel question" }],
+      });
+      const resp = await handleModelApi(url, method, req, engine);
+      expect(resp!.status).toBe(200);
+      const data = await resp!.json();
+      expect(data.choices[0].message.content).toContain("### Answer 1");
+      expect(data.choices[0].message.content).toContain("### Answer 2");
+
+      // Every target got its own model_request span in the same trace.
+      expect(captured.length).toBe(2);
+      const traceIds = new Set(captured.map((c) => c.trace.traceId));
+      expect(traceIds.size).toBe(1);
+      const spanIds = new Set(captured.map((c) => c.trace.spanId));
+      expect(spanIds.size).toBe(2);
+
+      // The response header carries the shared fan-out trace identity.
+      const sharedTraceId = captured[0]!.trace.traceId;
+      expect(resp!.headers.get("x-request-id")).toBe(sharedTraceId);
+
+      // Each per-target request completed its received → routed → completed chain.
+      const traced = lifecycleEvents().filter((e) => e.traceId === sharedTraceId);
+      for (const c of captured) {
+        const phases = traced.filter((e) => e.requestId === c.id).map((e) => e.phase);
+        expect(phases).toEqual(["received", "routed", "completed"]);
+        const routedEvent = traced.find((e) => e.requestId === c.id && e.phase === "routed");
+        expect(routedEvent!.target).toBe(c.target);
+        expect(routedEvent!.spanId).toBe(c.trace.spanId);
+      }
+    });
+
+    it("open fan-out records the winning target and header equals the shared trace id", async () => {
+      setEndpointConfig(db, { mode: "open" });
+      engine.processCommand(conn1.entity!, "channel join model");
+      setupPhase1Agent(cm, conn1.entity!, "Agent1", "first answer wins");
+
+      const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+        model: "marina",
+        messages: [{ role: "user", content: "open question" }],
+      });
+      const resp = await handleModelApi(url, method, req, engine);
+      expect(resp!.status).toBe(200);
+      const data = await resp!.json();
+      expect(data.choices[0].message.content).toBe("first answer wins");
+
+      const headerId = resp!.headers.get("x-request-id");
+      const completed = lifecycleEvents().find((e) => e.phase === "completed");
+      expect(completed).toBeDefined();
+      expect(completed!.traceId).toBe(headerId!);
+      expect(completed!.target).toBe(conn1.entity!);
+    });
   });
 
   describe("authentication", () => {

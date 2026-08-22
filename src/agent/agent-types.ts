@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { EntityId } from "../types";
+import type { TraceParent } from "./execution-trace";
 
 export interface AgentSupports {
   text: boolean;
@@ -218,7 +219,7 @@ export type AgentEvent =
   | { type: "error"; error: string; context: string }
   // Turn boundaries — fire once per LLM turn. Observers use these to
   // know when an agent is mid-thought vs. idle.
-  | { type: "turn_start" }
+  | { type: "turn_start"; traceParent?: TraceParent }
   | { type: "turn_end"; hadToolCalls: boolean; toolCount: number }
   // Fine-grained streaming. Consumers that don't want per-token events
   // should filter. Pro-presence: observers see the agent thinking in

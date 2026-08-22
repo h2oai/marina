@@ -6,7 +6,7 @@ import { Engine } from "../src/engine/engine";
 import { handleCanvasApi } from "../src/net/canvas-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 
 const TEST_DB = "test_canvas_api_auth.db";
 
@@ -33,6 +33,7 @@ describe("canvas API auth contract", () => {
     process.env.MARINA_OPEN_API = undefined;
     db = new MarinaDB(TEST_DB);
     engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom());
   });
 
   afterEach(() => {
@@ -52,6 +53,58 @@ describe("canvas API auth contract", () => {
     const [url, method, r] = req("/api/canvases", "POST");
     const resp = await handleCanvasApi(url, method, r, db, undefined, undefined, engine);
     expect(resp.status).toBe(401);
+  });
+
+  it("attributes authenticated writes to the session identity, not spoofed names", async () => {
+    const connection = new MockConnection("canvas-writer");
+    engine.addConnection(connection);
+    const login = engine.login(connection.id, "Alice");
+    if (!("token" in login)) throw new Error("login failed");
+    db.createCanvas({ id: "canvas-auth", name: "auth", creatorName: "system" });
+
+    const [nodeUrl, nodeMethod, nodeReq] = req(
+      "/api/canvases/canvas-auth/nodes",
+      "POST",
+      login.token,
+      { type: "text", creator_name: "Mallory", data: { content: "owned" } },
+    );
+    const nodeResp = await handleCanvasApi(
+      nodeUrl,
+      nodeMethod,
+      nodeReq,
+      db,
+      undefined,
+      undefined,
+      engine,
+    );
+    expect(nodeResp.status).toBe(201);
+    const created = (await nodeResp.json()) as { id: string; creator_name: string };
+    expect(created.creator_name).toBe("Alice");
+
+    db.createNode({
+      id: "intent-auth",
+      canvasId: "canvas-auth",
+      type: "text",
+      creatorName: "Requester",
+      data: { intent: { status: "pending", prompt: "Do it" } },
+    });
+    const [claimUrl, claimMethod, claimReq] = req(
+      "/api/canvases/canvas-auth/nodes/intent-auth/intent/claim",
+      "POST",
+      login.token,
+      { actorName: "Mallory" },
+    );
+    const claimResp = await handleCanvasApi(
+      claimUrl,
+      claimMethod,
+      claimReq,
+      db,
+      undefined,
+      undefined,
+      engine,
+    );
+    expect(claimResp.status).toBe(200);
+    expect(JSON.parse(db.getNode("intent-auth")!.data).intent.claimedBy).toBe("Alice");
   });
 
   it("accepts pre-stringified node data on PATCH without double encoding", async () => {
@@ -77,6 +130,64 @@ describe("canvas API auth contract", () => {
     const stored = JSON.parse(db.getNode("node-1")!.data);
     expect(stored.content).toBe("new");
     expect(stored.intent.prompt).toBe("Handle this.");
+  });
+
+  it("refuses cross-canvas node mutation and deletion", async () => {
+    db.createCanvas({ id: "canvas-a", name: "a", creatorName: "Tester" });
+    db.createCanvas({ id: "canvas-b", name: "b", creatorName: "Tester" });
+    db.createNode({
+      id: "node-b",
+      canvasId: "canvas-b",
+      type: "text",
+      creatorName: "Tester",
+      data: { content: "protected" },
+    });
+
+    const [patchUrl, patchMethod, patchReq] = req(
+      "/api/canvases/canvas-a/nodes/node-b",
+      "PATCH",
+      undefined,
+      { data: { content: "wrong canvas" } },
+    );
+    const patchResp = await handleCanvasApi(patchUrl, patchMethod, patchReq, db);
+    expect(patchResp.status).toBe(404);
+    expect(JSON.parse(db.getNode("node-b")!.data).content).toBe("protected");
+
+    const [deleteUrl, deleteMethod, deleteReq] = req(
+      "/api/canvases/canvas-a/nodes/node-b",
+      "DELETE",
+    );
+    const deleteResp = await handleCanvasApi(deleteUrl, deleteMethod, deleteReq, db);
+    expect(deleteResp.status).toBe(404);
+    expect(db.getNode("node-b")).toBeDefined();
+  });
+
+  it("rejects unsupported render types and cross-canvas reply parents", async () => {
+    db.createCanvas({ id: "canvas-a", name: "a", creatorName: "Tester" });
+    db.createCanvas({ id: "canvas-b", name: "b", creatorName: "Tester" });
+    db.createNode({
+      id: "parent-b",
+      canvasId: "canvas-b",
+      type: "text",
+      creatorName: "Tester",
+    });
+
+    const [typeUrl, typeMethod, typeReq] = req("/api/canvases/canvas-a/nodes", "POST", undefined, {
+      type: "nonexistent-widget",
+      data: { content: "invisible" },
+    });
+    const typeResp = await handleCanvasApi(typeUrl, typeMethod, typeReq, db);
+    expect(typeResp.status).toBe(400);
+
+    const [parentUrl, parentMethod, parentReq] = req(
+      "/api/canvases/canvas-a/nodes",
+      "POST",
+      undefined,
+      { type: "text", parent_node_id: "parent-b", data: { content: "orphan" } },
+    );
+    const parentResp = await handleCanvasApi(parentUrl, parentMethod, parentReq, db);
+    expect(parentResp.status).toBe(400);
+    expect(db.getNodesByCanvas("canvas-a")).toHaveLength(0);
   });
 
   it("claims and completes intents through first-class action endpoints", async () => {

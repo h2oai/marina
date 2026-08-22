@@ -39,6 +39,7 @@ describe("model-endpoint config", () => {
       panelSize: 4,
       panelSynthesis: "synthesize",
       fallback: false,
+      strategy: "adaptive",
     });
     expect("config" in r).toBe(true);
     const c = getEndpointConfig(db);
@@ -46,6 +47,7 @@ describe("model-endpoint config", () => {
     expect(c.panelSize).toBe(4);
     expect(c.panelSynthesis).toBe("synthesize");
     expect(c.fallback).toBe(false);
+    expect(c.strategy).toBe("adaptive");
   });
 
   it("validates mode / strategy / synthesis", () => {

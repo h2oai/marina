@@ -13,6 +13,7 @@ import {
   type OnSelectionChangeParams,
   ReactFlow,
   ReactFlowProvider,
+  useNodesInitialized,
   useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -24,10 +25,12 @@ import { ContextMenu } from "./components/ContextMenu";
 import { NodeDetailPanel } from "./components/NodeDetailPanel";
 import { SearchBar } from "./components/SearchBar";
 import { fetchCanvases, useCanvas } from "./hooks/use-canvas";
+import type { CanvasEvent } from "./hooks/use-canvas-ws";
 import { useCanvasWs } from "./hooks/use-canvas-ws";
 import { animateLayout as animateLayoutUtil, springEntrance } from "./lib/animations";
 import { defaultSize } from "./lib/layout";
-import type { CanvasData } from "./lib/types";
+import { selectInitialCanvas } from "./lib/select-canvas";
+import type { CanvasData, CanvasEdgeData } from "./lib/types";
 import { nodeTypes } from "./nodes";
 
 const API_BASE = window.location.origin;
@@ -65,24 +68,52 @@ function guessNodeType(mime: string): string {
 
 function CanvasInner() {
   const [canvasList, setCanvasList] = useState<CanvasData[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const requestedCanvasIdRef = useRef(new URLSearchParams(window.location.search).get("canvas"));
   const [filteredIds, setFilteredIds] = useState<Set<string> | null>(null);
   const [dropping, setDropping] = useState(false);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
-  const { screenToFlowPosition } = useReactFlow();
+  const { fitView, screenToFlowPosition } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
   const prevNodeIdsRef = useRef<Set<string>>(new Set());
+  const [snapshotRefreshKey, setSnapshotRefreshKey] = useState(0);
+  const [liveEdges, setLiveEdges] = useState<CanvasEdgeData[]>([]);
+  const handledGenerationRef = useRef(0);
+  const skipNextConnectionRecoveryRef = useRef(true);
+  const fittedSnapshotRef = useRef<string>();
 
-  // Load canvas list on mount — default to "global" canvas
-  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only; selectedId guard prevents the initial choice from clobbering later selections
-  useEffect(() => {
-    fetchCanvases().then((list) => {
-      setCanvasList(list);
-      if (list.length > 0 && !selectedId) {
-        const global = list.find((c) => c.name === "global");
-        setSelectedId(global?.id ?? list[0]!.id);
-      }
-    });
+  // Load canvas list on mount. Prefer the auto-populated activity feed so a
+  // running Marina opens on visible work rather than an empty workspace.
+  const loadCanvasList = useCallback(() => {
+    setListError(null);
+    fetchCanvases()
+      .then((list) => {
+        setCanvasList(list);
+        setSelectedId((current) => {
+          if (current && list.some((canvas) => canvas.id === current)) return current;
+          return selectInitialCanvas(list, requestedCanvasIdRef.current)?.id ?? null;
+        });
+      })
+      .catch((cause) => {
+        setListError(cause instanceof Error ? cause.message : "Request failed");
+      });
   }, []);
+  useEffect(loadCanvasList, [loadCanvasList]);
+  useEffect(() => {
+    const refreshOnFocus = () => loadCanvasList();
+    window.addEventListener("focus", refreshOnFocus);
+    return () => window.removeEventListener("focus", refreshOnFocus);
+  }, [loadCanvasList]);
+
+  // Keep deep links truthful even when an invalid/deleted requested canvas
+  // falls back to a valid guide/feed workspace.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (selectedId) url.searchParams.set("canvas", selectedId);
+    else url.searchParams.delete("canvas");
+    window.history.replaceState(null, "", url);
+  }, [selectedId]);
 
   // Real-time updates via WebSocket. The hook subscribes first and buffers
   // every event; we flip its `markReady` once the snapshot has been applied,
@@ -108,11 +139,66 @@ function CanvasInner() {
   } = useCanvas(selectedId, {
     onBeforeFetch: () => wsHandleRef.current?.resetForFetch(),
     onSnapshotReady: () => wsHandleRef.current?.markReady(),
+    refreshKey: snapshotRefreshKey,
   });
 
-  const wsHandle = useCanvasWs(selectedId, setNodes);
+  useEffect(() => setLiveEdges(canvas?.edges ?? []), [canvas?.edges]);
+  const handleCanvasEvent = useCallback((event: CanvasEvent) => {
+    if (event.type === "edge_added" && event.edge) {
+      setLiveEdges((current) =>
+        current.some((edge) => edge.id === event.edge!.id) ? current : [...current, event.edge!],
+      );
+    } else if (event.type === "edge_deleted" && event.edgeId) {
+      setLiveEdges((current) => current.filter((edge) => edge.id !== event.edgeId));
+    } else if (event.type === "node_deleted" && event.nodeId) {
+      setLiveEdges((current) =>
+        current.filter((edge) => edge.sourceId !== event.nodeId && edge.targetId !== event.nodeId),
+      );
+    }
+  }, []);
+  const wsHandle = useCanvasWs(selectedId, setNodes, handleCanvasEvent);
   const wsStatus = wsHandle.status;
   wsHandleRef.current = wsHandle;
+
+  // React Flow's declarative fitView runs before asynchronously fetched nodes
+  // are measured. Fit once after each canvas snapshot becomes renderable so
+  // valid nodes cannot remain off-screen or visibility:hidden until interaction.
+  useEffect(() => {
+    if (!selectedId || loading || nodes.length === 0 || !nodesInitialized) return;
+    const snapshotKey = `${selectedId}:${snapshotRefreshKey}`;
+    if (fittedSnapshotRef.current === snapshotKey) return;
+    fittedSnapshotRef.current = snapshotKey;
+    requestAnimationFrame(() => {
+      if (window.innerWidth < 640 && nodes[0]) {
+        // Fitting a desktop-wide board onto a phone makes every card illegible.
+        // Start on the first card at a readable scale; the minimap and pan
+        // controls retain access to the rest of the infinite canvas.
+        void fitView({ nodes: [nodes[0]], padding: 0.12, maxZoom: 0.9, duration: 250 });
+      } else {
+        void fitView({ padding: 0.18, duration: 250 });
+      }
+    });
+  }, [fitView, loading, nodes, nodesInitialized, selectedId, snapshotRefreshKey]);
+
+  // Selecting a different canvas already starts its own snapshot fetch; its
+  // first connection must not schedule a duplicate recovery fetch.
+  useEffect(() => {
+    void selectedId;
+    skipNextConnectionRecoveryRef.current = true;
+  }, [selectedId]);
+
+  // Apart from a canvas's first connection, every generation follows a
+  // disconnect and needs a recovery snapshot to reconcile offline mutations.
+  useEffect(() => {
+    const generation = wsHandle.connectionGeneration;
+    if (generation === 0 || generation <= handledGenerationRef.current) return;
+    handledGenerationRef.current = generation;
+    if (skipNextConnectionRecoveryRef.current) {
+      skipNextConnectionRecoveryRef.current = false;
+      return;
+    }
+    setSnapshotRefreshKey((key) => key + 1);
+  }, [wsHandle.connectionGeneration]);
 
   // ── Node entrance animation ─────────────────────────────────────────
   useEffect(() => {
@@ -262,10 +348,11 @@ function CanvasInner() {
     }));
   }, [nodes, filteredIds]);
 
-  // Derive edges from parent_node_id relationships, styled by type
+  // Render both conversational parent links and first-class typed Canvas
+  // relationships returned by the snapshot API.
   const edges = useMemo<Edge[]>(() => {
     const nodeIds = new Set(nodes.map((n) => n.id));
-    return nodes
+    const parentEdges = nodes
       .filter((n) => {
         const pid = n.data.parent_node_id as string | null;
         return pid && nodeIds.has(pid);
@@ -289,7 +376,20 @@ function CanvasInner() {
           markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
         };
       });
-  }, [nodes]);
+    const typedEdges = liveEdges
+      .filter((edge) => nodeIds.has(edge.sourceId) && nodeIds.has(edge.targetId))
+      .map((edge) => ({
+        id: edge.id,
+        source: edge.sourceId,
+        target: edge.targetId,
+        type: "smoothstep",
+        label: edge.relationship,
+        style: { stroke: "#22d3ee", strokeWidth: 1.5, opacity: 0.7 },
+        labelStyle: { fill: "var(--color-text-dim)", fontSize: 10 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: "#22d3ee" },
+      }));
+    return [...parentEdges, ...typedEdges];
+  }, [liveEdges, nodes]);
 
   const onFilterChange = useCallback((filtered: Node[] | null) => {
     if (!filtered) {
@@ -408,12 +508,15 @@ function CanvasInner() {
   return (
     <div className="w-screen h-screen bg-bg flex flex-col">
       {/* Top bar */}
-      <div className="flex items-center gap-3 px-4 py-2 bg-bg-card border-b border-border">
-        <h1 className="text-primary font-bold text-sm tracking-wider">MARINA CANVAS</h1>
+      <div className="flex items-center gap-3 overflow-x-auto px-3 md:px-4 py-2 bg-bg-card border-b border-border shrink-0">
+        <h1 className="text-primary font-bold text-sm tracking-wider whitespace-nowrap shrink-0">
+          MARINA CANVAS
+        </h1>
         <div className="w-px h-5 bg-bg-hover" />
         <select
-          className="bg-bg-hover text-text text-sm rounded px-2 py-1 border border-border focus:outline-none focus:border-primary"
+          className="bg-bg-hover text-text text-sm rounded px-2 py-1 border border-border focus:outline-none focus:border-primary shrink-0"
           value={selectedId ?? ""}
+          onFocus={loadCanvasList}
           onChange={(e) => setSelectedId(e.target.value || null)}
         >
           {canvasList.length === 0 && <option value="">No canvases</option>}
@@ -424,7 +527,7 @@ function CanvasInner() {
           ))}
         </select>
         {canvas && (
-          <span className="text-xs text-text-dim">
+          <span className="hidden lg:inline text-xs text-text-dim whitespace-nowrap">
             {canvas.description} &middot; {nodes.length} nodes &middot; by {canvas.creator_name}
           </span>
         )}
@@ -437,8 +540,10 @@ function CanvasInner() {
             Reconnecting…
           </span>
         )}
-        <div className="flex-1" />
-        <SearchBar nodes={nodes} onFilterChange={onFilterChange} />
+        <div className="flex-1 min-w-2" />
+        <div className="hidden md:block">
+          <SearchBar nodes={nodes} onFilterChange={onFilterChange} />
+        </div>
         <div className="w-px h-5 bg-bg-hover" />
         <CanvasToolbar
           canvasId={selectedId}
@@ -476,12 +581,35 @@ function CanvasInner() {
             <div className="text-primary text-sm animate-pulse">Loading canvas...</div>
           </div>
         )}
-        {error && (
+        {listError && !selectedId && (
           <div className="absolute inset-0 flex items-center justify-center z-10">
-            <div className="text-red-400 text-sm">Error: {error}</div>
+            <div className="rounded border border-red-800/60 bg-bg-card p-4 text-center shadow-xl">
+              <div className="text-red-400 text-sm">Could not load canvases: {listError}</div>
+              <button
+                type="button"
+                className="mt-3 rounded border border-primary/50 px-3 py-1 text-xs text-primary hover:bg-primary/10"
+                onClick={loadCanvasList}
+              >
+                Retry
+              </button>
+            </div>
           </div>
         )}
-        {!loading && !selectedId && (
+        {error && (
+          <div className="absolute inset-0 flex items-center justify-center z-10">
+            <div className="rounded border border-red-800/60 bg-bg-card p-4 text-center shadow-xl">
+              <div className="text-red-400 text-sm">Canvas unavailable: {error}</div>
+              <button
+                type="button"
+                className="mt-3 rounded border border-primary/50 px-3 py-1 text-xs text-primary hover:bg-primary/10"
+                onClick={() => setSnapshotRefreshKey((key) => key + 1)}
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        )}
+        {!loading && !listError && !selectedId && (
           <div className="absolute inset-0 flex items-center justify-center z-10">
             <div className="text-center text-text-dim max-w-md">
               <div className="text-lg mb-2">No Canvas Selected</div>
@@ -495,7 +623,7 @@ function CanvasInner() {
             </div>
           </div>
         )}
-        {!loading && selectedId && nodes.length === 0 && (
+        {!loading && !error && selectedId && nodes.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
             <div className="text-center text-text-dim max-w-sm">
               <div className="text-sm mb-2">This canvas is empty</div>
@@ -524,7 +652,6 @@ function CanvasInner() {
           onNodeDoubleClick={onNodeDoubleClick}
           onNodeContextMenu={onNodeContextMenu}
           onPaneClick={() => setContextMenu(null)}
-          fitView
           minZoom={0.1}
           maxZoom={4}
           proOptions={{ hideAttribution: true }}

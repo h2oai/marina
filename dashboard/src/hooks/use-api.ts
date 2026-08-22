@@ -46,6 +46,7 @@ import type {
   SystemData,
   TaskDetail,
   TaskEntry,
+  TracesResponse,
   TraitEntry,
   WorldData,
 } from "../lib/types";
@@ -75,6 +76,14 @@ export function useSystem() {
     queryKey: ["system"],
     queryFn: () => fetchApi<SystemData>("/api/system"),
     refetchInterval: 30_000,
+  });
+}
+
+export function useTraces(limit = 25) {
+  return useQuery({
+    queryKey: ["traces", limit],
+    queryFn: () => fetchApi<TracesResponse>(`/api/traces?limit=${limit}`),
+    refetchInterval: 5_000,
   });
 }
 

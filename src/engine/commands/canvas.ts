@@ -70,7 +70,7 @@ export function canvasCommand(deps: {
           handleNodes(ctx, eid, db, tokens.slice(1));
           return;
         case "layout":
-          handleLayout(ctx, eid, db, tokens.slice(1));
+          handleLayout(ctx, eid, db, tokens.slice(1), deps.logEvent);
           return;
         case "delete": {
           // Deleting a whole canvas (and its nodes) is destructive and shared —
@@ -453,6 +453,13 @@ function handlePublish(
         if (!node) return;
         const merged = { ...JSON.parse(node.data), preview };
         db.updateNode(nodeId, { data: JSON.stringify(merged) });
+        logEvent?.({
+          type: "canvas_node_updated",
+          entity: eid,
+          canvasId: canvas.id,
+          nodeId,
+          timestamp: Date.now(),
+        });
       })
       .catch((err) => {
         console.warn("[canvas] preview build failed:", (err as Error).message);
@@ -834,6 +841,13 @@ async function handleIntent(
         resultType = resultTokens[typeIdx + 1]!;
         resultTokens = [...resultTokens.slice(0, typeIdx), ...resultTokens.slice(typeIdx + 2)];
       }
+      if (!Object.hasOwn(TYPE_MIME_RULES, resultType)) {
+        ctx.send(
+          eid,
+          `Invalid result node type. Valid: ${Object.keys(TYPE_MIME_RULES).join(", ")}`,
+        );
+        return;
+      }
       const result = resultTokens.join(" ");
       if (!nodeId || !result) {
         ctx.send(eid, "Usage: canvas intent complete <node_id> [--type <type>] <result text>");
@@ -1112,7 +1126,13 @@ async function previewNodeAsset(
 
 // ─── Layout ─────────────────────────────────────────────────────────────
 
-function handleLayout(ctx: RoomContext, eid: EntityId, db: MarinaDB, tokens: string[]): void {
+function handleLayout(
+  ctx: RoomContext,
+  eid: EntityId,
+  db: MarinaDB,
+  tokens: string[],
+  logEvent?: (event: { type: string; entity: EntityId; [key: string]: unknown }) => void,
+): void {
   const algo = tokens[0]?.toLowerCase();
   const name = tokens[1];
   if (!algo || !name) {
@@ -1143,6 +1163,13 @@ function handleLayout(ctx: RoomContext, eid: EntityId, db: MarinaDB, tokens: str
         x: col * (nodeW + padX),
         y: row * (nodeH + padY),
       });
+      logEvent?.({
+        type: "canvas_node_updated",
+        entity: eid,
+        canvasId: canvas.id,
+        nodeId: nodes[i]!.id,
+        timestamp: Date.now(),
+      });
     }
     ctx.send(eid, `Arranged ${nodes.length} nodes in a ${cols}-column grid.`);
     return;
@@ -1156,6 +1183,13 @@ function handleLayout(ctx: RoomContext, eid: EntityId, db: MarinaDB, tokens: str
       db.updateNode(sorted[i]!.id, {
         x: i * (nodeW + padX),
         y: 0,
+      });
+      logEvent?.({
+        type: "canvas_node_updated",
+        entity: eid,
+        canvasId: canvas.id,
+        nodeId: sorted[i]!.id,
+        timestamp: Date.now(),
       });
     }
     ctx.send(eid, `Arranged ${sorted.length} nodes in chronological timeline.`);
@@ -1191,6 +1225,13 @@ function handleLayout(ctx: RoomContext, eid: EntityId, db: MarinaDB, tokens: str
         y: cursorY,
         width: feedW - depth * indentX,
         height: h,
+      });
+      logEvent?.({
+        type: "canvas_node_updated",
+        entity: eid,
+        canvasId: canvas.id,
+        nodeId: node.id,
+        timestamp: Date.now(),
       });
       cursorY += h + padY;
       const children = childMap.get(node.id)?.sort((a, b) => a.created_at - b.created_at) ?? [];

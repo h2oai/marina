@@ -9,9 +9,15 @@ import { syncOperationalAlerts } from "../engine/commands/ops";
 import { allRecipeNames, getRecipe } from "../engine/commands/usecase";
 import type { Engine } from "../engine/engine";
 import { evolutionBudgetState, parseEvolutionProtocol } from "../engine/evolution-protocol";
+import { tracesToOtlpJson } from "../engine/otlp-trace-export";
 import { getRank } from "../engine/permissions";
 import { computeReadiness } from "../engine/readiness";
 import { checkGate } from "../engine/safety-gates";
+import { analyzeTraces } from "../engine/trace-analytics";
+import { buildTraceDataset, compareTraceCohorts } from "../engine/trace-dataset";
+import { evaluateTrace } from "../engine/trace-evaluation";
+import { projectTraces } from "../engine/trace-projection";
+import { adviseTraceRouting } from "../engine/trace-routing-advice";
 import type { MarinaDB, MediaJobRow } from "../persistence/database";
 import { isKeyEncryptionEnabled } from "../persistence/key-crypto";
 import type { Connection, EntityId, Perception, RoomId } from "../types";
@@ -268,6 +274,9 @@ export async function handleDashboardApi(
   }
   if (url.pathname === "/api/events") {
     return getEvents(engine, url);
+  }
+  if (url.pathname === "/api/traces" && method === "GET") {
+    return getTraces(engine, url, db);
   }
   if (url.pathname === "/api/system") {
     return getSystem(engine, db);
@@ -1223,6 +1232,55 @@ function getEvents(engine: Engine, url: URL): Response {
     .filter((e) => e.type !== "tick")
     .slice(-limit);
   return json(events);
+}
+
+function getTraces(engine: Engine, url: URL, db?: MarinaDB): Response {
+  const format = url.searchParams.get("format");
+  if (format && format !== "otlp-json" && format !== "eval-json") {
+    return json({ error: "Unsupported trace format. Use 'otlp-json' or 'eval-json'." }, 400);
+  }
+  const rawLimit = url.searchParams.get("limit");
+  const requestedLimit = rawLimit === null ? Number.NaN : Number(rawLimit);
+  const limit =
+    Number.isFinite(requestedLimit) && requestedLimit > 0
+      ? Math.max(1, Math.min(Math.trunc(requestedLimit), 100))
+      : 25;
+  const traceId = url.searchParams.get("traceId")?.trim();
+  const history = db
+    ? db.getRecentTraceEvents(Math.min(limit * 200, 5000), traceId)
+    : { events: engine.getEventLog(), truncated: false };
+  const projected = projectTraces(history.events);
+  const evidence = (traceId ? projected.filter((trace) => trace.traceId === traceId) : projected)
+    .slice(0, limit)
+    .map((trace) => ({
+      ...trace,
+      judgments: db ? db.getTraceJudgments(trace.traceId) : [],
+    }));
+  const traces = evidence.map((trace) => ({ ...trace, evaluation: evaluateTrace(trace) }));
+  if (format === "otlp-json") {
+    return json(tracesToOtlpJson(traces, { truncated: history.truncated }));
+  }
+  if (format === "eval-json") {
+    return json(buildTraceDataset(evidence));
+  }
+  const modelComparisons = compareTraceCohorts(evidence, "model");
+  const routeComparisons = compareTraceCohorts(evidence, "route");
+  return json({
+    traces,
+    analytics: analyzeTraces(traces),
+    comparisons: {
+      models: modelComparisons,
+      routes: routeComparisons,
+    },
+    shadowAdvice: {
+      models: adviseTraceRouting(modelComparisons, "model"),
+      routes: adviseTraceRouting(routeComparisons, "route"),
+    },
+    partial: history.truncated || traces.some((trace) => trace.partial),
+    truncated: history.truncated,
+    source: db ? "event-log" : "memory",
+    retention: db ? "operator-managed" : "bounded-memory",
+  });
 }
 
 function getMemoryNotes(db: MarinaDB, entityName: string): Response {

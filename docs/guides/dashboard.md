@@ -113,7 +113,7 @@ raw logs.
 
 ### Admin Panel
 
-The Admin panel has eight tabs:
+The Admin panel has nine tabs:
 
 - **Keys** — manage LLM API keys. Click "+ Add" to store a key by selecting a provider from the dropdown and pasting the key value. Keys are shown masked. **Note: DB-stored keys are kept in plaintext** unless key encryption is enabled (Admin → Security shows the state). For sensitive deployments, prefer the environment-variable fallback (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `XAI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`, `LLAMA_API_KEY`) — env keys are read live and never written to the database.
 - **Endpoint** — configure the runtime default model and model endpoint.
@@ -121,6 +121,9 @@ The Admin panel has eight tabs:
 - **Roles** — browse defined roles and their traits
 - **MCP** — inspect MCP connectivity and configuration.
 - **Config** — inspect and edit supported runtime environment settings.
+- **Traces** — inspect recent model-request, agent-turn, and tool-call spans with factual execution
+  checks and evidence IDs. See [Execution Traces and Evaluations](observability.md) for retention,
+  privacy, API, and interpretation boundaries.
 - **Ops** — inspect graphical readiness, outcome trends and leaderboard, latency and effort metrics,
   live multi-agent primitive evidence, communication, world actions, primitive diversity, memory
   health, alert history and filters, and open contradictions. Tool calls are provenance and never
@@ -185,7 +188,12 @@ The canvas view is at:
 http://localhost:3300/canvas
 ```
 
-A shared visual surface where entities publish rich media, interactive UIs, and build threaded discussions. Select a canvas from the dropdown to view it.
+A shared visual surface where entities publish rich media, interactive UIs, and build threaded
+discussions. On first open Marina prefers the auto-populated `feed` canvas, then the seeded `guide`,
+then the shared `global` workspace. An explicit canvas link or dropdown selection still takes
+precedence.
+
+Share or bookmark a specific workspace with `/canvas?canvas=<canvas-id>`.
 
 ### What You'll See
 
@@ -193,6 +201,7 @@ A shared visual surface where entities publish rich media, interactive UIs, and 
 - **Text nodes** — plain text or markdown content
 - **A2UI nodes** — interactive widgets (buttons, forms, data tables, timelines) that respond to user interaction
 - **Threaded replies** — nodes linked to parent nodes, forming visual conversation trees
+- **Typed relationships** — labeled edges such as `supports`, `extends`, and `contradicts`
 
 ### The Feed Canvas
 
@@ -206,7 +215,10 @@ Select the `feed` canvas for a live activity stream. Board posts, channel messag
 - **Export** canvas data as JSON
 - **Layout** buttons apply grid, timeline, or feed arrangements
 
-All changes broadcast in real-time via WebSocket — multiple viewers see updates instantly.
+Node, intent, layout, retention, and typed-edge changes broadcast in real time via WebSocket.
+After a disconnect, the Canvas refetches its snapshot before applying buffered replacement-socket
+events so mutations made while offline are recovered. A failed load is shown as an error with a
+retry action rather than being presented as an empty canvas.
 
 ---
 

@@ -132,6 +132,32 @@ AGENT_NAME=Scholar MODEL_CHANNEL=model-scholar bun run src/sdk/examples/provider
 
 Multiple agents in the same channel means requests are load-balanced across them.
 
+Choose the within-channel strategy with `X-Load-Balance`. The header is honored on the routes that
+select a single agent: `POST /v1/chat/completions` (in the default `agents` endpoint mode),
+`POST /v1/responses`, `POST /api/chat`, and `POST /api/generate`. When the header is absent, these
+routes use the operator-configured strategy from **Admin → Model Endpoint** (default
+`round-robin`). The `open` and `panel` endpoint modes fan out to all channel members by design —
+no within-channel selection happens, so the header has no effect there.
+
+- `round-robin` (default) rotates across eligible online agents.
+- `least-busy` selects the eligible agent with the fewest in-flight requests.
+- `adaptive` explicitly opts into Marina's observable evidence policy. It can select only among the
+  online agents already eligible for the requested `model`; it never changes the requested model.
+  A unique Pareto candidate or least-observed exploration candidate may be applied. If no advised
+  candidate is eligible, Marina falls back to `least-busy` and records the reason in the trace.
+
+```bash
+curl http://localhost:3300/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "X-Load-Balance: adaptive" \
+  -d '{"model":"marina","messages":[{"role":"user","content":"hello"}]}'
+```
+
+Adaptive routing is never enabled implicitly. Inspect its recorded strategy, evidence mode, and
+fallback reason in **Admin → Traces** or with `trace show <id>`. Every agent-routed response —
+streaming or not — returns the traced request identity in its `x-request-id` header; that value is
+the trace id to pass to `trace show`.
+
 ---
 
 ## Authentication

@@ -17,8 +17,13 @@ import type { Edge, Node } from "@xyflow/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type CanvasWsStatus, useCanvasEventSocket } from "../../canvas/hooks/use-canvas-ws";
 import { defaultSize } from "../../canvas/lib/layout";
-import type { CanvasData, CanvasEdgeData, CanvasNodeData } from "../../canvas/lib/types";
-import { useWorldState } from "../../hooks/use-world-state";
+import { selectInitialCanvas } from "../../canvas/lib/select-canvas";
+import {
+  type CanvasData,
+  type CanvasEdgeData,
+  type CanvasNodeData,
+  normalizeNodeType,
+} from "../../canvas/lib/types";
 import { authFetch } from "../../lib/api";
 import { collisionRepulse, ringPosition } from "../lib/layout-utils";
 
@@ -121,6 +126,10 @@ interface UseCanvasIntegrationResult {
   canvasEdges: Edge[];
   /** Loading state. */
   loading: boolean;
+  /** Snapshot/list failure, distinct from a genuinely empty canvas. */
+  error: string | null;
+  /** Retry the active canvas snapshot after a failure. */
+  retry: () => void;
   /** List of all available canvases for the selector. */
   canvasList: CanvasListEntry[];
   /** Currently active canvas ID. */
@@ -170,8 +179,11 @@ export function useCanvasIntegration(
   const [rawNodes, setRawNodes] = useState<CanvasNodeData[]>([]);
   const [rawEdges, setRawEdges] = useState<CanvasEdgeData[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const fetchedRef = useRef(false);
   const initialCanvasIdRef = useRef(selectedCanvasId);
+  const handledGenerationRef = useRef(0);
+  const skipNextConnectionRecoveryRef = useRef(true);
 
   // Live canvas-node updates: merge node_added / node_updated / node_deleted
   // events from /canvas-ws into rawNodes so the unified surface reflects
@@ -183,6 +195,7 @@ export function useCanvasIntegration(
   // Declared before the fetch effects so they can reference these handles.
   const {
     status: wsStatus,
+    connectionGeneration,
     markReady: markWsReady,
     resetForFetch: resetWsBuffer,
   } = useCanvasEventSocket(canvasId, (event) => {
@@ -199,136 +212,86 @@ export function useCanvasIntegration(
     } else if (event.type === "node_deleted" && event.nodeId) {
       const id = event.nodeId;
       setRawNodes((prev) => prev.filter((n) => n.id !== id));
+      setRawEdges((prev) => prev.filter((e) => e.sourceId !== id && e.targetId !== id));
+    } else if (event.type === "edge_added" && event.edge) {
+      const edge = event.edge;
+      setRawEdges((prev) => (prev.some((e) => e.id === edge.id) ? prev : [...prev, edge]));
+    } else if (event.type === "edge_deleted" && event.edgeId) {
+      const edgeId = event.edgeId;
+      setRawEdges((prev) => prev.filter((e) => e.id !== edgeId));
     }
   });
+
+  const loadSnapshot = useCallback(
+    async (targetId: string) => {
+      setLoading(true);
+      setError(null);
+      resetWsBuffer();
+      try {
+        const response = await authFetch(`${API_BASE}/api/canvases/${targetId}`);
+        if (!response.ok) throw new Error(`Request failed (${response.status})`);
+        const data = (await response.json()) as CanvasData;
+        setRawNodes(data.nodes ?? []);
+        setRawEdges(data.edges ?? []);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Request failed");
+      } finally {
+        setLoading(false);
+        markWsReady();
+      }
+    },
+    [markWsReady, resetWsBuffer],
+  );
 
   // Fetch canvas list on mount
   useEffect(() => {
     if (fetchedRef.current) return;
     fetchedRef.current = true;
     const initialId = initialCanvasIdRef.current;
-    resetWsBuffer();
-
     authFetch(`${API_BASE}/api/canvases`)
       .then((r) => {
-        if (!r.ok) return [];
+        if (!r.ok) throw new Error(`Request failed (${r.status})`);
         return r.json() as Promise<CanvasData[]>;
       })
       .then((list) => {
         setCanvasList(list.map((c: CanvasData) => ({ id: c.id, name: c.name })));
-        const target = initialId
-          ? list.find((c: CanvasData) => c.id === initialId)
-          : (list.find((c: CanvasData) => c.name === "global") ?? list[0]);
+        const target = selectInitialCanvas(list, initialId);
         if (!target) {
           setLoading(false);
           return;
         }
         setCanvasId(target.id);
-        return authFetch(`${API_BASE}/api/canvases/${target.id}`);
+        return loadSnapshot(target.id);
       })
-      .then((r) => {
-        if (!r?.ok) {
-          setLoading(false);
-          return;
-        }
-        return r.json() as Promise<CanvasData>;
-      })
-      .then((data) => {
-        if (data) {
-          setRawNodes(data.nodes);
-          setRawEdges(data.edges ?? []);
-        }
-        setLoading(false);
-        markWsReady();
-      })
-      .catch(() => {
+      .catch((cause) => {
+        setError(cause instanceof Error ? cause.message : "Request failed");
         setLoading(false);
         markWsReady();
       });
-  }, [markWsReady, resetWsBuffer]);
-
-  // Live canvas-edge updates: react to canvas_edge_created/deleted events
-  // from the dashboard WS stream so edges appear without a page refresh.
-  const eventFeed = useWorldState((s) => s.eventFeed);
-  const lastSeenEdgeEventRef = useRef<number>(0);
-  useEffect(() => {
-    if (!canvasId) return;
-    for (const event of eventFeed) {
-      if (event.timestamp <= lastSeenEdgeEventRef.current) break;
-      if (
-        (event.type === "canvas_edge_created" || event.type === "canvas_edge_deleted") &&
-        (event as unknown as { canvasId?: string }).canvasId === canvasId
-      ) {
-        if (event.type === "canvas_edge_created") {
-          const e = event as unknown as {
-            edgeId?: string;
-            sourceId?: string;
-            targetId?: string;
-            relationship?: string;
-            entity?: string;
-            timestamp: number;
-          };
-          if (e.edgeId && e.sourceId && e.targetId && e.relationship) {
-            setRawEdges((prev) => {
-              if (prev.some((x) => x.id === e.edgeId)) return prev;
-              return [
-                ...prev,
-                {
-                  id: e.edgeId!,
-                  sourceId: e.sourceId!,
-                  targetId: e.targetId!,
-                  relationship: e.relationship!,
-                  data: null,
-                  creatorName: e.entity ?? "unknown",
-                  createdAt: e.timestamp,
-                },
-              ];
-            });
-          }
-        } else {
-          const e = event as unknown as { edgeId?: string };
-          if (e.edgeId) {
-            setRawEdges((prev) => prev.filter((x) => x.id !== e.edgeId));
-          }
-        }
-      }
-    }
-    lastSeenEdgeEventRef.current = eventFeed[0]?.timestamp ?? lastSeenEdgeEventRef.current;
-  }, [eventFeed, canvasId]);
+  }, [loadSnapshot, markWsReady]);
 
   // Switch canvas when selectedCanvasId changes
   useEffect(() => {
     if (selectedCanvasId && selectedCanvasId !== canvasId) {
       setLoading(true);
       setCanvasId(selectedCanvasId);
-      resetWsBuffer();
-      authFetch(`${API_BASE}/api/canvases/${selectedCanvasId}`)
-        .then((r) => {
-          if (!r.ok) {
-            setRawNodes([]);
-            setRawEdges([]);
-            setLoading(false);
-            markWsReady();
-            return;
-          }
-          return r.json() as Promise<CanvasData>;
-        })
-        .then((data) => {
-          if (data) {
-            setRawNodes(data.nodes);
-            setRawEdges(data.edges ?? []);
-          }
-          setLoading(false);
-          markWsReady();
-        })
-        .catch(() => {
-          setRawNodes([]);
-          setRawEdges([]);
-          setLoading(false);
-          markWsReady();
-        });
+      skipNextConnectionRecoveryRef.current = true;
+      void loadSnapshot(selectedCanvasId);
     }
-  }, [selectedCanvasId, canvasId, markWsReady, resetWsBuffer]);
+  }, [selectedCanvasId, canvasId, loadSnapshot]);
+
+  // A replacement socket cannot replay mutations that happened while it was
+  // offline. Reconcile from a fresh snapshot after every connection except
+  // the first connection for a newly selected canvas.
+  useEffect(() => {
+    if (connectionGeneration === 0 || connectionGeneration <= handledGenerationRef.current) return;
+    handledGenerationRef.current = connectionGeneration;
+    if (skipNextConnectionRecoveryRef.current) {
+      skipNextConnectionRecoveryRef.current = false;
+      return;
+    }
+    if (canvasId) void loadSnapshot(canvasId);
+  }, [canvasId, connectionGeneration, loadSnapshot]);
 
   // Tick while any canvas edge is inside the flash window, so the
   // `activated: true` flag naturally expires without a page refresh.
@@ -375,6 +338,7 @@ export function useCanvasIntegration(
 
     for (const assigned of assignedNodes) {
       const { canvasNode: cn, roomId, ringIndex } = assigned;
+      const nodeType = normalizeNodeType(cn.type);
       const group = groups[roomId]!;
       const total = group.nodes.length;
       const roomPos = roomPositions[roomId];
@@ -398,7 +362,7 @@ export function useCanvasIntegration(
 
       const intentData = getIntentData(cn);
       const origin = (cn.data as Record<string, unknown>).origin as string | undefined;
-      const color = nodeColor(cn.type, origin);
+      const color = nodeColor(nodeType, origin);
       const rawData = cn.data as Record<string, unknown>;
 
       // Emit per-type ReactFlow nodes so the unified surface uses the same
@@ -417,18 +381,18 @@ export function useCanvasIntegration(
         origin,
         color,
         intent: intentData,
-        title: (rawData.title as string) ?? (rawData.filename as string) ?? cn.type,
+        title: (rawData.title as string) ?? (rawData.filename as string) ?? nodeType,
         author: (rawData.author as string | undefined) ?? cn.creator_name,
       };
 
-      const ds = defaultSize(cn.type);
+      const ds = defaultSize(nodeType);
       const isGenericDefault = cn.width === 300 && cn.height === 200;
       const w = isGenericDefault ? ds.w : cn.width;
       const h = isGenericDefault ? ds.h : cn.height;
 
       nodes.push({
         id: `canvas-${cn.id}`,
-        type: cn.type,
+        type: nodeType,
         position: { x: absX, y: absY },
         data: nodeData,
         draggable: true,
@@ -606,7 +570,9 @@ export function useCanvasIntegration(
           if (!res.ok) continue;
 
           const newNode = (await res.json()) as CanvasNodeData;
-          setRawNodes((prev) => [...prev, newNode]);
+          setRawNodes((prev) =>
+            prev.some((node) => node.id === newNode.id) ? prev : [...prev, newNode],
+          );
           results.push({
             filename: file.name,
             mime: file.type || "application/octet-stream",
@@ -625,12 +591,19 @@ export function useCanvasIntegration(
 
   const removeNode = useCallback((nodeId: string) => {
     setRawNodes((prev) => prev.filter((n) => n.id !== nodeId));
+    setRawEdges((prev) => prev.filter((e) => e.sourceId !== nodeId && e.targetId !== nodeId));
   }, []);
+
+  const retry = useCallback(() => {
+    if (canvasId) void loadSnapshot(canvasId);
+  }, [canvasId, loadSnapshot]);
 
   return {
     canvasNodes,
     canvasEdges,
     loading,
+    error,
+    retry,
     canvasList,
     activeCanvasId: canvasId,
     wsStatus,

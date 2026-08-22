@@ -18,6 +18,7 @@ import {
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
 import type { AgentConfig, AgentHandle, AgentStatus, AgentSupports } from "./agent-types";
+import { AgentExecutionTracer } from "./execution-trace";
 import { classifyModelResolution, LeanAgentAdapter } from "./lean-agent-adapter";
 import { detectModelLimits } from "./model-probe";
 import { getRolePrompt, inferTaskCategory } from "./roles";
@@ -401,6 +402,7 @@ export class AgentRuntime {
       // background discovery turn) are observed rather than fired into the void.
       if (this.onEvent) {
         const onEvent = this.onEvent;
+        const executionTrace = new AgentExecutionTracer();
         const unsub = adapter.subscribe((event) => {
           const now = Date.now();
           switch (event.type) {
@@ -425,6 +427,7 @@ export class AgentRuntime {
                 type: "agent_tool_call",
                 name: config.name,
                 toolName: event.toolName,
+                ...executionTrace.trace("tool_call", event.toolName),
                 risk: event.risk,
                 trustSources: event.trustSources,
                 timestamp: now,
@@ -435,17 +438,24 @@ export class AgentRuntime {
                 type: "agent_tool_result",
                 name: config.name,
                 toolName: event.toolName,
+                ...executionTrace.trace("tool_result", event.toolName),
                 isError: event.isError,
                 timestamp: now,
               });
               break;
             case "turn_start":
-              onEvent({ type: "agent_turn_start", name: config.name, timestamp: now });
+              onEvent({
+                type: "agent_turn_start",
+                name: config.name,
+                ...executionTrace.trace("turn_start", undefined, event.traceParent),
+                timestamp: now,
+              });
               break;
             case "turn_end":
               onEvent({
                 type: "agent_turn_end",
                 name: config.name,
+                ...executionTrace.trace("turn_end"),
                 hadToolCalls: event.hadToolCalls,
                 toolCount: event.toolCount,
                 timestamp: now,
@@ -456,6 +466,7 @@ export class AgentRuntime {
                 type: "agent_text_delta",
                 name: config.name,
                 delta: event.delta,
+                ...executionTrace.trace("text_delta"),
                 timestamp: now,
               });
               break;
@@ -464,6 +475,7 @@ export class AgentRuntime {
                 type: "agent_thinking_delta",
                 name: config.name,
                 delta: event.delta,
+                ...executionTrace.trace("thinking_delta"),
                 timestamp: now,
               });
               break;

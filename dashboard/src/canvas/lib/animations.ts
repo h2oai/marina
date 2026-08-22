@@ -94,7 +94,11 @@ export function animateLayout(
 }
 
 /**
- * Animate a spring entrance for DOM elements (scale 0 -> 1) with stagger.
+ * Animate a visible-safe spring entrance with stagger.
+ *
+ * The first keyframe deliberately remains fully visible. Browser throttling,
+ * reduced animation clocks, or an interrupted Motion animation must never
+ * strand Canvas content at scale 0 or opacity 0.
  */
 export function springEntrance(elements: Element | Element[] | NodeListOf<Element>) {
   if (prefersReducedMotion()) return;
@@ -107,7 +111,7 @@ export function springEntrance(elements: Element | Element[] | NodeListOf<Elemen
   els.forEach((el, i) => {
     animate(
       el,
-      { scale: [0, 1], opacity: [0, 1] },
+      { scale: [1, 1.025, 1], opacity: [1, 0.92, 1] },
       {
         duration: 0.5,
         delay: i * 0.05,

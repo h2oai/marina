@@ -50,3 +50,20 @@ export type NodeType =
   | "embed"
   | "frame"
   | "a2ui";
+
+const NODE_TYPES = new Set<NodeType>([
+  "image",
+  "video",
+  "pdf",
+  "audio",
+  "document",
+  "text",
+  "embed",
+  "frame",
+  "a2ui",
+]);
+
+/** Unknown producer values must remain visible instead of breaking React Flow rendering. */
+export function normalizeNodeType(type: string): NodeType {
+  return NODE_TYPES.has(type as NodeType) ? (type as NodeType) : "text";
+}

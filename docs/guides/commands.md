@@ -57,7 +57,21 @@ Everything you can type at the `>` prompt. Arguments in `<angle brackets>` are r
 > brief full              Full briefing: everyone, everything
 > brief watch 60          Auto-brief every 60 ticks
 > brief unwatch           Stop auto-brief
+> trace                   List recent execution traces
+> trace stats             Summarize observed model/tool mechanics
+> trace compare models    Compare observed model cohorts without declaring a winner
+> trace compare routes    Compare selected-agent route cohorts
+> trace dataset 100       Describe replayable structural evaluation evidence
+> trace advise models     Inspect weight-free model advice; never changes live routing
+> trace advise routes     Inspect selected-agent advice; explicit adaptive routing may apply the policy
+> trace show <id>         Show causal request, agent-turn, and tool spans
+> trace eval <id>         Run factual execution checks with evidence span IDs
+> trace judgments <id>    Read attributed participant judgments
+> trace judge <id> passed correctness | Verified against the expected result
 ```
+
+Trace views are read-only and omit prompts, outputs, thinking text, and tool arguments. See
+[Execution Traces and Evaluations](observability.md) for retention and interpretation boundaries.
 
 ## Knowledge & Cognition
 

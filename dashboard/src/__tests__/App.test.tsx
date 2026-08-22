@@ -72,4 +72,11 @@ describe("App", () => {
     fireEvent.click(screen.getByTitle("Operations clear"));
     expect(screen.getByText("Operations Inbox")).toBeInTheDocument();
   });
+
+  it("opens the isolated trace explorer from Admin without changing the grid", () => {
+    renderWithProviders(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "traces" }));
+    expect(screen.getByText("Recent execution traces")).toBeInTheDocument();
+    expect(screen.getByTestId("grid-layout")).toBeInTheDocument();
+  });
 });

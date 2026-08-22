@@ -91,6 +91,133 @@ export function getRecentEvents(db: Database, limit = 100): EngineEvent[] {
   return rows.map((r) => JSON.parse(r.data) as EngineEvent).reverse();
 }
 
+export function getRecentTraceEvents(
+  db: Database,
+  limit = 5000,
+  traceId?: string,
+): { events: EngineEvent[]; truncated: boolean } {
+  const boundedLimit = Math.max(1, Math.min(Math.trunc(limit), 5000));
+  const params: Array<string | number> = [
+    "model_request_lifecycle",
+    "agent_turn_start",
+    "agent_turn_end",
+    "agent_tool_call",
+    "agent_tool_result",
+  ];
+  const traceFilter = traceId ? " AND json_extract(data, '$.traceId') = ?" : "";
+  if (traceId) params.push(traceId);
+  params.push(boundedLimit + 1);
+  const rows = db
+    .query(
+      `SELECT data FROM event_log
+       WHERE type IN (?, ?, ?, ?, ?)
+         AND json_extract(data, '$.traceId') IS NOT NULL${traceFilter}
+       ORDER BY id DESC LIMIT ?`,
+    )
+    .all(...params) as { data: string }[];
+  const truncated = rows.length > boundedLimit;
+  return {
+    events: rows
+      .slice(0, boundedLimit)
+      .map((row) => JSON.parse(row.data) as EngineEvent)
+      .reverse(),
+    truncated,
+  };
+}
+
+export interface TraceJudgmentInput {
+  traceId: string;
+  evaluatorEntity: string;
+  verdict: "passed" | "failed" | "inconclusive";
+  criterion: string;
+  rationale: string;
+  evidenceSpanIds: string[];
+}
+
+export interface TraceJudgmentRow {
+  id: string;
+  traceId: string;
+  evaluatorEntity: string;
+  verdict: TraceJudgmentInput["verdict"];
+  criterion: string;
+  rationale: string;
+  evidenceSpanIds: string[];
+  createdAt: number;
+}
+
+export function addTraceJudgment(db: Database, input: TraceJudgmentInput): TraceJudgmentRow {
+  const row: TraceJudgmentRow = {
+    id: `tj-${crypto.randomUUID()}`,
+    traceId: cleanJudgmentText(input.traceId),
+    evaluatorEntity: cleanJudgmentText(input.evaluatorEntity),
+    verdict: input.verdict,
+    criterion: cleanJudgmentText(input.criterion),
+    rationale: cleanJudgmentText(input.rationale),
+    evidenceSpanIds: [...new Set(input.evidenceSpanIds.map(cleanJudgmentText))],
+    createdAt: Date.now(),
+  };
+  if (!row.traceId || !row.evaluatorEntity || !row.criterion || !row.rationale) {
+    throw new Error(
+      "Trace judgment attribution, criterion, and rationale must contain visible text",
+    );
+  }
+  db.query(
+    `INSERT INTO trace_judgments
+      (id, trace_id, evaluator_entity, verdict, criterion, rationale, evidence_span_ids, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    row.id,
+    row.traceId,
+    row.evaluatorEntity,
+    row.verdict,
+    row.criterion,
+    row.rationale,
+    JSON.stringify(row.evidenceSpanIds),
+    row.createdAt,
+  );
+  return row;
+}
+
+function cleanJudgmentText(value: string): string {
+  return [...value]
+    .map((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 || code === 127 ? " " : character;
+    })
+    .join("")
+    .trim();
+}
+
+export function getTraceJudgments(db: Database, traceId: string, limit = 100): TraceJudgmentRow[] {
+  const rows = db
+    .query(
+      `SELECT id, trace_id, evaluator_entity, verdict, criterion, rationale,
+              evidence_span_ids, created_at
+       FROM trace_judgments WHERE trace_id = ?
+       ORDER BY created_at DESC, id DESC LIMIT ?`,
+    )
+    .all(traceId, Math.max(1, Math.min(Math.trunc(limit), 500))) as Array<{
+    id: string;
+    trace_id: string;
+    evaluator_entity: string;
+    verdict: TraceJudgmentRow["verdict"];
+    criterion: string;
+    rationale: string;
+    evidence_span_ids: string;
+    created_at: number;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    traceId: row.trace_id,
+    evaluatorEntity: row.evaluator_entity,
+    verdict: row.verdict,
+    criterion: row.criterion,
+    rationale: row.rationale,
+    evidenceSpanIds: JSON.parse(row.evidence_span_ids) as string[],
+    createdAt: row.created_at,
+  }));
+}
+
 export function getEventCount(db: Database): number {
   const row = db.query("SELECT COUNT(*) as count FROM event_log").get() as {
     count: number;

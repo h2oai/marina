@@ -9,12 +9,24 @@ import { authenticateRequest } from "./auth-middleware";
 import type { CanvasBroadcaster } from "./canvas-ws";
 import { corsHeaders } from "./cors";
 
+const CANVAS_NODE_TYPES = new Set([
+  "image",
+  "video",
+  "pdf",
+  "audio",
+  "document",
+  "text",
+  "embed",
+  "frame",
+  "a2ui",
+]);
+
 function jsonWithOrigin(origin: string | null) {
   return (data: unknown, status = 200): Response =>
     Response.json(data, { status, headers: corsHeaders(origin) });
 }
 
-function resolveNodeUrl(
+export function resolveNodeUrl(
   node: { asset_id: string | null; data: string },
   db: MarinaDB,
   storage?: StorageProvider,
@@ -22,6 +34,27 @@ function resolveNodeUrl(
   if (!node.asset_id || !storage) return undefined;
   const asset = db.getAsset(node.asset_id);
   return asset ? storage.resolve(asset.storage_key) : undefined;
+}
+
+/**
+ * Canonical node-data enrichment for every node leaving the server: asset-backed
+ * nodes get a resolvable `url` plus filename/mime fallbacks from the asset row.
+ * Shared by the HTTP responses here and FeedPublisher's live WS broadcasts, so a
+ * broadcast snapshot matches what a REST fetch of the same node would return.
+ */
+export function enrichNodeData(
+  node: { asset_id: string | null; data: string },
+  parsed: Record<string, unknown>,
+  db: MarinaDB,
+  storage?: StorageProvider,
+): Record<string, unknown> {
+  const asset = node.asset_id ? db.getAsset(node.asset_id) : undefined;
+  return {
+    ...parsed,
+    url: resolveNodeUrl(node, db, storage),
+    filename: asset?.filename ?? parsed.filename,
+    mime: asset?.mime_type ?? parsed.mime,
+  };
 }
 
 function encodeNodeDataForUpdate(data: unknown): string | undefined {
@@ -40,12 +73,12 @@ function actorNameForRequest(
   engine: Engine | undefined,
   entityId: EntityId | undefined,
 ): string {
-  const explicit = body.actorName ?? body.claimantName ?? body.completerName;
-  if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
   if (engine && entityId) {
     const entity = engine.entities.get(entityId);
     if (entity) return entity.name;
   }
+  const explicit = body.actorName ?? body.claimantName ?? body.completerName;
+  if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
   return "api";
 }
 
@@ -111,7 +144,10 @@ export async function handleCanvasApi(
       if (!result.ok) return intentErrorResponse(json, result);
       const parsed = JSON.parse(result.node.data);
       const responseNode = { ...result.node, data: parsed };
-      broadcaster?.broadcast({ type: "node_updated", canvasId, nodeId, changes: responseNode });
+      // No direct broadcast here: the canvas_intent engine event below reaches
+      // FeedPublisher synchronously, which broadcasts an asset-enriched
+      // node_updated snapshot. Broadcasting the unenriched node too would just
+      // duplicate it.
       engine?.logEvent({
         type: "canvas_intent",
         entity: (authenticatedEntityId ?? result.node.creator_name) as EntityId,
@@ -140,12 +176,9 @@ export async function handleCanvasApi(
       if (!result.ok) return intentErrorResponse(json, result);
       const responseNode = { ...result.node, data: JSON.parse(result.node.data) };
       const responseResultNode = { ...result.resultNode, data: JSON.parse(result.resultNode.data) };
-      broadcaster?.broadcast({ type: "node_updated", canvasId, nodeId, changes: responseNode });
-      broadcaster?.broadcast({
-        type: "node_added",
-        canvasId,
-        node: responseResultNode,
-      });
+      // No direct broadcasts: FeedPublisher handles the canvas_intent event
+      // below and broadcasts both the enriched node_updated and the result
+      // node_added (it reads resultNodeId from the intent data).
       engine?.logEvent({
         type: "canvas_intent",
         entity: (authenticatedEntityId ?? result.node.creator_name) as EntityId,
@@ -170,7 +203,7 @@ export async function handleCanvasApi(
     const result = db.failCanvasIntent(node.id, reason);
     if (!result.ok) return intentErrorResponse(json, result);
     const responseNode = { ...result.node, data: JSON.parse(result.node.data) };
-    broadcaster?.broadcast({ type: "node_updated", canvasId, nodeId, changes: responseNode });
+    // No direct broadcast — see the claim handler above.
     engine?.logEvent({
       type: "canvas_intent",
       entity: (authenticatedEntityId ?? result.node.creator_name) as EntityId,
@@ -191,7 +224,7 @@ export async function handleCanvasApi(
     if (method === "DELETE") {
       // Fetch the node first so we can clean up its asset
       const node = db.getNode(nodeId);
-      if (!node) return json({ error: "Node not found" }, 404);
+      if (!node || node.canvas_id !== canvasId) return json({ error: "Node not found" }, 404);
       const deleted = db.deleteNode(nodeId);
       if (!deleted) return json({ error: "Node not found" }, 404);
       // Clean up associated asset file and DB row
@@ -207,6 +240,10 @@ export async function handleCanvasApi(
     }
 
     if (method === "PATCH") {
+      const existingNode = db.getNode(nodeId);
+      if (!existingNode || existingNode.canvas_id !== canvasId) {
+        return json({ error: "Node not found" }, 404);
+      }
       const body = (await req.json()) as Record<string, unknown>;
       const updated = db.updateNode(nodeId, {
         x: body.x as number | undefined,
@@ -218,17 +255,7 @@ export async function handleCanvasApi(
       if (!updated) return json({ error: "Node not found" }, 404);
       const node = db.getNode(nodeId)!;
       const parsed = JSON.parse(node.data);
-      const nodeUrl = resolveNodeUrl(node, db, storage);
-      const asset = node.asset_id ? db.getAsset(node.asset_id) : undefined;
-      const enriched = {
-        ...node,
-        data: {
-          ...parsed,
-          url: nodeUrl,
-          filename: asset?.filename ?? parsed.filename,
-          mime: asset?.mime_type ?? parsed.mime,
-        },
-      };
+      const enriched = { ...node, data: enrichNodeData(node, parsed, db, storage) };
       broadcaster?.broadcast({
         type: "node_updated",
         canvasId,
@@ -260,17 +287,7 @@ export async function handleCanvasApi(
       const node = db.getNode(nodeId);
       if (!node || node.canvas_id !== canvasId) return json({ error: "Node not found" }, 404);
       const parsed = JSON.parse(node.data);
-      const nodeUrl = resolveNodeUrl(node, db, storage);
-      const asset = node.asset_id ? db.getAsset(node.asset_id) : undefined;
-      return json({
-        ...node,
-        data: {
-          ...parsed,
-          url: nodeUrl,
-          filename: asset?.filename ?? parsed.filename,
-          mime: asset?.mime_type ?? parsed.mime,
-        },
-      });
+      return json({ ...node, data: enrichNodeData(node, parsed, db, storage) });
     }
   }
 
@@ -282,41 +299,42 @@ export async function handleCanvasApi(
     if (!canvas) return json({ error: "Canvas not found" }, 404);
 
     const body = (await req.json()) as Record<string, unknown>;
+    const requestedType = typeof body.type === "string" ? body.type : "text";
+    if (!CANVAS_NODE_TYPES.has(requestedType)) {
+      return json({ error: `Unsupported canvas node type: ${requestedType}` }, 400);
+    }
+    const parentNodeId = typeof body.parent_node_id === "string" ? body.parent_node_id : undefined;
+    if (parentNodeId) {
+      const parent = db.getNode(parentNodeId);
+      if (!parent || parent.canvas_id !== canvasId) {
+        return json({ error: "Parent node not found on this canvas" }, 400);
+      }
+    }
     const id = crypto.randomUUID();
     db.createNode({
       id,
       canvasId,
-      type: (body.type as string) ?? "text",
+      type: requestedType,
       x: body.x as number | undefined,
       y: body.y as number | undefined,
       width: body.width as number | undefined,
       height: body.height as number | undefined,
       assetId: body.asset_id as string | undefined,
       data: body.data as Record<string, unknown> | undefined,
-      creatorName: (body.creator_name as string) ?? "api",
-      parentNodeId: body.parent_node_id as string | undefined,
+      creatorName: actorNameForRequest(body, engine, authenticatedEntityId),
+      parentNodeId,
     });
 
     const node = db.getNode(id)!;
     const parsed = JSON.parse(node.data);
-    const url = resolveNodeUrl(node, db, storage);
-    const asset = node.asset_id ? db.getAsset(node.asset_id) : undefined;
-    const enriched = {
-      ...node,
-      data: {
-        ...parsed,
-        url,
-        filename: asset?.filename ?? parsed.filename,
-        mime: asset?.mime_type ?? parsed.mime,
-      },
-    };
+    const enriched = { ...node, data: enrichNodeData(node, parsed, db, storage) };
     broadcaster?.broadcast({ type: "node_added", canvasId, node: enriched });
     onNodeCreated?.({
       nodeId: id,
       canvasId,
-      type: (body.type as string) ?? "text",
-      creatorName: (body.creator_name as string) ?? "api",
-      parentNodeId: (body.parent_node_id as string) ?? null,
+      type: requestedType,
+      creatorName: actorNameForRequest(body, engine, authenticatedEntityId),
+      parentNodeId: parentNodeId ?? null,
       data: parsed,
     });
     if (
@@ -354,20 +372,10 @@ export async function handleCanvasApi(
     if (method === "GET") {
       const canvas = db.getCanvas(id);
       if (!canvas) return json({ error: "Canvas not found" }, 404);
-      const nodes = db.getNodesByCanvas(id).map((n) => {
-        const parsed = JSON.parse(n.data);
-        const url = resolveNodeUrl(n, db, storage);
-        const asset = n.asset_id ? db.getAsset(n.asset_id) : undefined;
-        return {
-          ...n,
-          data: {
-            ...parsed,
-            url,
-            filename: asset?.filename ?? parsed.filename,
-            mime: asset?.mime_type ?? parsed.mime,
-          },
-        };
-      });
+      const nodes = db.getNodesByCanvas(id).map((n) => ({
+        ...n,
+        data: enrichNodeData(n, JSON.parse(n.data), db, storage),
+      }));
       const edges = db.getCanvasEdges(id).map((e) => ({
         id: e.id,
         sourceId: e.source_id,
@@ -397,7 +405,7 @@ export async function handleCanvasApi(
       description: (body.description as string) ?? "",
       scope: (body.scope as string) ?? "global",
       scopeId: body.scope_id as string | undefined,
-      creatorName: (body.creator_name as string) ?? "api",
+      creatorName: actorNameForRequest(body, engine, authenticatedEntityId),
     });
 
     return json(db.getCanvas(id), 201);

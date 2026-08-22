@@ -4,7 +4,7 @@
 import type { Node } from "@xyflow/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { defaultSize, nextTilePosition } from "../lib/layout";
-import type { CanvasNodeData } from "../lib/types";
+import { type CanvasEdgeData, type CanvasNodeData, normalizeNodeType } from "../lib/types";
 
 /**
  * Connection state of the canvas WebSocket. `live` means the socket is open;
@@ -17,11 +17,62 @@ const RECONNECT_DELAY_MS = 1500;
 const RECONNECT_MAX_DELAY_MS = 15000;
 
 export interface CanvasEvent {
-  type: "node_added" | "node_updated" | "node_deleted";
+  type: "node_added" | "node_updated" | "node_deleted" | "edge_added" | "edge_deleted";
   canvasId: string;
   node?: CanvasNodeData;
   nodeId?: string;
   changes?: CanvasNodeData;
+  edge?: CanvasEdgeData;
+  edgeId?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCompleteNode(value: unknown): value is CanvasNodeData {
+  if (!isRecord(value) || !isRecord(value.data)) return false;
+  return (
+    typeof value.id === "string" &&
+    typeof value.canvas_id === "string" &&
+    typeof value.type === "string" &&
+    typeof value.x === "number" &&
+    typeof value.y === "number" &&
+    typeof value.width === "number" &&
+    typeof value.height === "number" &&
+    typeof value.creator_name === "string" &&
+    typeof value.created_at === "number" &&
+    typeof value.updated_at === "number"
+  );
+}
+
+/** Reject malformed or cross-subscription events before they can corrupt rendered state. */
+export function parseCanvasEvent(payload: unknown, canvasId: string): CanvasEvent | null {
+  if (!isRecord(payload) || payload.canvasId !== canvasId || typeof payload.type !== "string") {
+    return null;
+  }
+  switch (payload.type) {
+    case "node_added":
+      return isCompleteNode(payload.node) ? (payload as unknown as CanvasEvent) : null;
+    case "node_updated":
+      return typeof payload.nodeId === "string" && isCompleteNode(payload.changes)
+        ? (payload as unknown as CanvasEvent)
+        : null;
+    case "node_deleted":
+      return typeof payload.nodeId === "string" ? (payload as unknown as CanvasEvent) : null;
+    case "edge_added":
+      return isRecord(payload.edge) &&
+        typeof payload.edge.id === "string" &&
+        typeof payload.edge.sourceId === "string" &&
+        typeof payload.edge.targetId === "string" &&
+        typeof payload.edge.relationship === "string"
+        ? (payload as unknown as CanvasEvent)
+        : null;
+    case "edge_deleted":
+      return typeof payload.edgeId === "string" ? (payload as unknown as CanvasEvent) : null;
+    default:
+      return null;
+  }
 }
 
 /**
@@ -51,6 +102,8 @@ export interface CanvasEvent {
 interface CanvasEventSocketHandle {
   /** Live connection status; drives the "Reconnecting…" badge in the UI. */
   status: CanvasWsStatus;
+  /** Increments on every successful connection, including reconnects. */
+  connectionGeneration: number;
   /**
    * Signal that the snapshot has been applied to state. Drains any buffered
    * events synchronously, then enters live mode. Idempotent.
@@ -74,6 +127,7 @@ export function useCanvasEventSocket(
   const bufferRef = useRef<CanvasEvent[]>([]);
   const readyRef = useRef(false);
   const [status, setStatus] = useState<CanvasWsStatus>("idle");
+  const [connectionGeneration, setConnectionGeneration] = useState(0);
 
   // Keep the latest handler without re-subscribing the socket on every render.
   useEffect(() => {
@@ -89,6 +143,9 @@ export function useCanvasEventSocket(
   }, []);
 
   const resetForFetch = useCallback(() => {
+    // When a disconnect already put the socket into buffered mode, preserve
+    // events received by the new subscription before the recovery fetch began.
+    if (!readyRef.current) return;
     readyRef.current = false;
     bufferRef.current = [];
   }, []);
@@ -112,15 +169,18 @@ export function useCanvasEventSocket(
       ws.onopen = () => {
         reconnectAttemptRef.current = 0;
         setStatus("live");
+        setConnectionGeneration((generation) => generation + 1);
       };
 
       ws.onmessage = (msg) => {
-        let event: CanvasEvent;
+        let payload: unknown;
         try {
-          event = JSON.parse(msg.data);
+          payload = JSON.parse(msg.data);
         } catch {
           return;
         }
+        const event = parseCanvasEvent(payload, canvasId);
+        if (!event) return;
         if (!readyRef.current) {
           bufferRef.current.push(event);
           return;
@@ -135,6 +195,10 @@ export function useCanvasEventSocket(
       ws.onclose = () => {
         wsRef.current = null;
         if (teardown) return;
+        // A reconnect must converge through a fresh snapshot. Buffer anything
+        // delivered by the replacement socket until that snapshot completes.
+        readyRef.current = false;
+        bufferRef.current = [];
         setStatus("reconnecting");
         const attempt = reconnectAttemptRef.current++;
         const delay = Math.min(RECONNECT_DELAY_MS * 2 ** attempt, RECONNECT_MAX_DELAY_MS);
@@ -164,13 +228,14 @@ export function useCanvasEventSocket(
     };
   }, [canvasId]);
 
-  return { status, markReady, resetForFetch };
+  return { status, connectionGeneration, markReady, resetForFetch };
 }
 
 type SetNodes = React.Dispatch<React.SetStateAction<Node[]>>;
 
 function toFlowNode(n: CanvasNodeData, existing: Node[]): Node {
-  const ds = defaultSize(n.type);
+  const type = normalizeNodeType(n.type);
+  const ds = defaultSize(type);
   const isGenericDefault = n.width === 300 && n.height === 200;
   const w = isGenericDefault ? ds.w : n.width;
   const h = isGenericDefault ? ds.h : n.height;
@@ -181,7 +246,7 @@ function toFlowNode(n: CanvasNodeData, existing: Node[]): Node {
 
   return {
     id: n.id,
-    type: n.type,
+    type,
     position: pos,
     data: {
       ...n.data,
@@ -204,11 +269,16 @@ function toFlowNode(n: CanvasNodeData, existing: Node[]): Node {
  */
 export interface UseCanvasWsHandle {
   status: CanvasWsStatus;
+  connectionGeneration: number;
   markReady: () => void;
   resetForFetch: () => void;
 }
 
-export function useCanvasWs(canvasId: string | null, setNodes: SetNodes): UseCanvasWsHandle {
+export function useCanvasWs(
+  canvasId: string | null,
+  setNodes: SetNodes,
+  onCanvasEvent?: (event: CanvasEvent) => void,
+): UseCanvasWsHandle {
   const pendingRef = useRef<CanvasEvent[]>([]);
   const rafRef = useRef<number>(0);
 
@@ -228,6 +298,8 @@ export function useCanvasWs(canvasId: string | null, setNodes: SetNodes): UseCan
       if (events.length === 0) return;
       pendingRef.current = [];
 
+      for (const event of events) onCanvasEvent?.(event);
+
       setNodes((prev) => {
         let nodes = prev;
         for (const ev of events) {
@@ -239,7 +311,8 @@ export function useCanvasWs(canvasId: string | null, setNodes: SetNodes): UseCan
 
           if (ev.type === "node_updated" && ev.nodeId && ev.changes) {
             const c = ev.changes;
-            const ds = defaultSize(c.type);
+            const type = normalizeNodeType(c.type);
+            const ds = defaultSize(type);
             const isGenericDefault = c.width === 300 && c.height === 200;
             const w = isGenericDefault ? ds.w : c.width;
             const h = isGenericDefault ? ds.h : c.height;
@@ -249,6 +322,7 @@ export function useCanvasWs(canvasId: string | null, setNodes: SetNodes): UseCan
               if (n.id !== eid) return n;
               return {
                 ...n,
+                type,
                 position: { x: c.x, y: c.y },
                 data: {
                   ...c.data,

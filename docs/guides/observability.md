@@ -1,0 +1,168 @@
+# Execution Traces and Evaluations
+
+Marina exposes a read-only execution view for recent model requests, agent turns, and tool calls.
+Humans can inspect it in the dashboard; humans and agents can inspect the same evidence with the
+`trace` command; authenticated software can read it through HTTP.
+
+This surface is for understanding observed execution. It does not score intelligence, autonomy,
+or answer quality, and it never blocks an agent from acting. Its routing advice remains read-only
+unless an operator or caller explicitly selects Marina's `adaptive` within-channel strategy.
+
+## Use the dashboard
+
+1. Open `http://localhost:3300/dashboard`.
+2. Open **Admin**.
+3. Select **Traces**.
+4. Select a trace to expand its request, turn, and tool hierarchy.
+
+The view refreshes every five seconds while the Traces tab is mounted. Status and duration come
+from recorded lifecycle events. A `running` span has no recorded terminal event yet. A `partial`
+span is missing its recorded start, usually because the retained event window begins mid-run.
+
+## Use the command surface
+
+The command is read-only and available to every Marina participant:
+
+```text
+trace                 List the 10 most recent traces
+trace list 20         List up to 20 recent traces
+trace stats 100       Summarize observed model/tool mechanics
+trace compare models  Compare observed model cohorts without selecting a winner
+trace compare routes  Compare selected-agent route cohorts
+trace dataset 100     Summarize the replayable structural evaluation dataset
+trace advise models   Inspect read-only, weight-free model shadow advice
+trace advise routes   Inspect read-only selected-agent shadow advice
+trace show <id>       Show the causal request/turn/tool hierarchy
+trace eval <id>       Show objective checks and their evidence span IDs
+trace judgments <id>  Read attributed participant judgments
+trace judge <id> <passed|failed|inconclusive> <criterion> | <rationale>
+```
+
+This is also the simplest way for an autonomous agent to examine its execution environment without
+leaving Marina.
+
+`trace judge` appends an immutable, identity-attributed assertion to durable storage. Marina records
+the criterion, verdict, rationale, evaluator identity, timestamp, and root evidence span. These
+judgments are advisory: the author may be mistaken, conflicting judgments may coexist, and neither
+the runtime nor router treats one as a verified fact or execution gate.
+
+## Use the HTTP API
+
+The dashboard API requires the same authentication as other protected dashboard endpoints. Supply
+a valid dashboard session or bearer token for your deployment.
+
+```bash
+curl -H "Authorization: Bearer $MARINA_TOKEN" \
+  "http://localhost:3300/api/traces?limit=25"
+
+curl -H "Authorization: Bearer $MARINA_TOKEN" \
+  "http://localhost:3300/api/traces?traceId=<trace-id>"
+
+curl -H "Authorization: Bearer $MARINA_TOKEN" \
+  "http://localhost:3300/api/traces?limit=100&format=eval-json"
+```
+
+The native response includes the projected traces and a `marina.execution.v1` evaluation for each
+trace. It also includes `marina.trace.analytics.v1` aggregates and reports the data source,
+retention description, and whether the bounded read was truncated.
+
+Analytics group model-request, selected-agent route, and tool spans by name. Routed lifecycle spans
+also retain the selection strategy and number of eligible agent candidates. Aggregates report
+observed and eligible sample counts, terminal and successful terminal rates, and nearest-rank
+p50/p95 terminal latency. Partial spans are counted as observed but excluded from rates and latency.
+These descriptive measurements are not quality rankings: traffic mix, task difficulty, selection
+effects, and small samples can all change them. The default router does not use them. The explicit
+`adaptive` strategy may use only the route-cohort mechanics described below and records that policy
+decision on the request trace.
+
+### Native evaluation dataset
+
+`format=eval-json` returns `marina.trace.dataset.v1`. Each case contains structural spans, the
+objective `marina.execution.v1` result, and any identity-attributed participant judgments. Cases are
+sorted by trace ID and can replay the objective evaluator deterministically.
+
+This is an evaluation-evidence dataset, not a prompt-replay corpus. Because Marina deliberately
+omits prompts, outputs, thinking text, and tool arguments, the export cannot rerun the original model
+request. Cohort comparisons group the same retained evidence by model or selected route and expose
+sample sizes; they do not infer statistical significance, declare a winner, or change routing.
+
+### Shadow routing advice
+
+`marina.routing.shadow.v1` is the versioned advice document returned by the trace read surfaces. If
+one cohort is uniquely Pareto-nondominated on observed terminal success and p50 terminal latency,
+Marina names that mechanical candidate without combining the measures into a score. Otherwise it
+suggests exploring the least-observed cohort to counter popularity feedback. With fewer than two
+cohorts it reports insufficient evidence. Participant judgments remain visible but are never
+collapsed across different criteria into this mechanical relation.
+
+Advice alone cannot alter a request. The default remains round-robin. When a caller sends
+`X-Load-Balance: adaptive`, or an operator selects **adaptive (evidence-aware)** in the Model Endpoint
+dashboard, the selector may apply that same policy only among the online agents already eligible for
+the requested model. It never substitutes another model. If the advised name is not eligible, it
+uses least-busy and records the strategy, advice mode, and fallback reason in the trace.
+
+### Use trace evidence in an evolution protocol
+
+Trace evaluation and native evolution share evidence by reference; Marina does not run a second
+optimizer or silently promote a routing choice. A participant can inspect a trace, record an
+attributed judgment, and cite the durable identifiers in the existing protocol:
+
+```text
+trace eval <trace-id>
+trace judge <trace-id> passed correctness | Matched the independently checked result
+evolve evaluate RouteTrial <run-id> | trace:<trace-id>; evaluator:marina.execution.v1; judgment:<judgment-id>
+```
+
+The `evolve` controller records that citation as advisory evidence under its existing attribution,
+review, budget, and activation boundaries. It does not reinterpret the trace, choose the next run,
+or activate an accepted candidate. Keep the cited trace and judgment IDs in exported evidence when
+retention policy might otherwise remove the underlying event history.
+
+### OTLP JSON
+
+Request an OpenTelemetry-compatible JSON trace document with:
+
+```bash
+curl -H "Authorization: Bearer $MARINA_TOKEN" \
+  "http://localhost:3300/api/traces?limit=25&format=otlp-json"
+```
+
+This is a pull endpoint that returns an OTLP-shaped JSON document; Marina does not push spans to a
+collector in this release. Only completed spans are exported. Marina derives protocol-valid trace
+and span IDs deterministically and retains the original IDs as attributes.
+
+## What the evaluations mean
+
+`marina.execution.v1` makes four factual checks:
+
+- `terminal_outcome` — whether the root request completed, failed, or remains open.
+- `history_integrity` — whether observed spans have starts and valid parent links.
+- `agent_turns` — whether observed agent turns reached terminal events.
+- `tool_results` — whether observed tool calls reached successful or failed results.
+
+Each check is `passed`, `failed`, `inconclusive`, or `not_applicable` and cites the exact span IDs it
+used. There is deliberately no aggregate quality score. A completed execution is not proof that its
+answer was correct or that its goal was achieved.
+
+## Retention and privacy boundaries
+
+Trace reads use Marina's existing SQLite event log when it is available. Retention is
+operator-managed. A single read is bounded to at most 5,000 retained trace events; if the boundary
+is reached, the response says it was truncated. In-memory events are used when durable history is
+not available, and that window ends when the process restarts.
+
+The trace projection does not include prompts, model output, agent thinking text, or tool arguments.
+It does include operational metadata such as model, agent, and tool names, IDs, timestamps, status,
+duration, and safe lifecycle attributes. Treat those names and timing records as deployment data
+when setting access policy.
+
+Participant judgments are a separate authored layer and include the evaluator's identity, criterion,
+and rationale verbatim. Do not put secrets, private prompts, or sensitive output in a rationale.
+
+The current causal chain covers agent-routed requests handled by Marina's model API — single-agent
+(`agents`) routing, the verified fast path, and the `open`/`panel` fan-out modes, where each fan-out
+target gets its own request span under one shared trace — plus the agent turns and tool calls
+parented to those requests. Passthru-mode requests and passthru fallbacks proxy directly to the
+upstream provider and are not traced. When a perception batch contains multiple distinct request
+traces, Marina leaves the turn unparented instead of claiming an ambiguous causal relationship.
+Other world events and external provider internals are not represented as spans.

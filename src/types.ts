@@ -598,6 +598,13 @@ export type EngineEvent =
       timestamp: number;
     }
   | {
+      type: "canvas_node_updated";
+      entity: EntityId;
+      canvasId: string;
+      nodeId: string;
+      timestamp: number;
+    }
+  | {
       type: "canvas_intent";
       entity: EntityId;
       canvasId: string;
@@ -692,11 +699,19 @@ export type EngineEvent =
   | {
       type: "agent_turn_start";
       name: string;
+      runId?: string;
+      traceId?: string;
+      spanId?: string;
+      parentSpanId?: string;
       timestamp: number;
     }
   | {
       type: "agent_turn_end";
       name: string;
+      runId?: string;
+      traceId?: string;
+      spanId?: string;
+      parentSpanId?: string;
       hadToolCalls: boolean;
       toolCount: number;
       timestamp: number;
@@ -705,6 +720,10 @@ export type EngineEvent =
       type: "agent_tool_call";
       name: string;
       toolName: string;
+      runId?: string;
+      traceId?: string;
+      spanId?: string;
+      parentSpanId?: string;
       risk?: "read" | "communicate" | "mutate" | "consequential";
       trustSources?: string[];
       timestamp: number;
@@ -713,6 +732,10 @@ export type EngineEvent =
       type: "agent_tool_result";
       name: string;
       toolName: string;
+      runId?: string;
+      traceId?: string;
+      spanId?: string;
+      parentSpanId?: string;
       isError: boolean;
       timestamp: number;
     }
@@ -720,12 +743,20 @@ export type EngineEvent =
       type: "agent_text_delta";
       name: string;
       delta: string;
+      runId?: string;
+      traceId?: string;
+      spanId?: string;
+      parentSpanId?: string;
       timestamp: number;
     }
   | {
       type: "agent_thinking_delta";
       name: string;
       delta: string;
+      runId?: string;
+      traceId?: string;
+      spanId?: string;
+      parentSpanId?: string;
       timestamp: number;
     }
   // Request-level lifecycle for causal demo timelines. These deliberately sit
@@ -734,8 +765,20 @@ export type EngineEvent =
       type: "model_request_lifecycle";
       phase: "received" | "routed" | "fast_path" | "completed" | "failed";
       requestId: string;
+      /** User-visible execution identity. Equal to requestId for the first
+       * traced model-request path; kept explicit so later multi-request runs
+       * can retain one stable run identity. */
+      runId?: string;
+      /** Causal trace identity propagated to child agent/tool spans. */
+      traceId?: string;
+      /** Root request span. Lifecycle events for one request share this id. */
+      spanId?: string;
       model: string;
       target?: string;
+      routeStrategy?: "round-robin" | "least-busy" | "adaptive";
+      candidateCount?: number;
+      routeAdviceMode?: "pareto" | "explore" | "insufficient";
+      routeReason?: string;
       durationMs?: number;
       detail?: string;
       timestamp: number;

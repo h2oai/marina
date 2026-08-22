@@ -39,6 +39,11 @@ import type {
 } from "./agent-types";
 
 import { createContextManager, hardTrimMessages } from "./context-manager";
+import {
+  type TraceParent,
+  traceParentFromPerception,
+  unambiguousTraceParent,
+} from "./execution-trace";
 import { GameStateManager } from "./game-state";
 import { HookRegistry } from "./hook-registry";
 import { InterruptibleWaiter } from "./interruptible-waiter";
@@ -439,6 +444,7 @@ export class LeanAgentAdapter implements AgentHandle {
     text: string;
     priority: number;
     shouldRespond?: boolean;
+    traceParent?: TraceParent;
   }> = [];
   private loopIterationCount = 0;
   private stuckCycles = 0;
@@ -446,6 +452,8 @@ export class LeanAgentAdapter implements AgentHandle {
   /** True while the current prompt contains a direct/model request. Silent
    * recovery is valuable for a missed request, but wasteful for quiet turns. */
   private currentPromptActionable = false;
+  /** Explicit parent carried by one unambiguous endpoint request in this prompt. */
+  private currentPromptTraceParent?: TraceParent;
   /** Evidence classes currently influencing this run; never stores evidence content. */
   private currentTrustSources = new Set<string>();
   /** In-run followUp-based silent recoveries. Resets on agent_start. */
@@ -885,6 +893,7 @@ export class LeanAgentAdapter implements AgentHandle {
               text: `[${p.kind}] ${text}`,
               priority,
               shouldRespond: respond,
+              traceParent: traceParentFromPerception(text),
             });
 
             // Edge-trigger the autonomous loop: if the loop is currently
@@ -1525,6 +1534,7 @@ export class LeanAgentAdapter implements AgentHandle {
     this.loopIterationCount++;
     this.sectionHashCycle++;
     this.currentPromptActionable = false;
+    this.currentPromptTraceParent = undefined;
     this.currentTrustSources.clear();
     const cycle = this.loopIterationCount;
     const parts: string[] = [];
@@ -1565,6 +1575,9 @@ export class LeanAgentAdapter implements AgentHandle {
       const batch = this.pendingPerceptions.splice(0);
       batch.sort((a, b) => b.priority - a.priority);
       const topEvents = batch.slice(0, this.perceptionBufferCap);
+      this.currentPromptTraceParent = unambiguousTraceParent(
+        topEvents.map((perception) => perception.traceParent),
+      );
       this.currentPromptActionable = topEvents.some(
         (perception) => perception.shouldRespond || perception.priority >= 80,
       );
@@ -2005,7 +2018,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       // subscribers can show "agent is mid-thought" vs idle state.
       if (event.type === "turn_start") {
         this.turnStartedAt = Date.now();
-        this.emitEvent({ type: "turn_start" });
+        this.emitEvent({ type: "turn_start", traceParent: this.currentPromptTraceParent });
       }
 
       // Streaming text/thinking deltas — high frequency, pro-presence.

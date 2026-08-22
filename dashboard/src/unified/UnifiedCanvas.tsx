@@ -872,6 +872,9 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
     canvasEdges,
     canvasList,
     activeCanvasId,
+    loading: canvasLoading,
+    error: canvasError,
+    retry: retryCanvas,
     wsStatus: canvasWsStatus,
     onDrop: canvasDrop,
     removeNode: removeCanvasNode,
@@ -1701,6 +1704,33 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
             />
             RECONNECTING
           </span>
+        )}
+        {canvasLoading && (
+          <span
+            title="Loading the selected canvas snapshot"
+            style={{ color: "#8b5cf6", fontSize: 10, marginRight: 12 }}
+          >
+            CANVAS LOADING…
+          </span>
+        )}
+        {canvasError && (
+          <button
+            type="button"
+            onClick={retryCanvas}
+            title={`${canvasError}. Click to retry.`}
+            style={{
+              color: "#f87171",
+              border: "1px solid rgba(248,113,113,0.5)",
+              background: "rgba(248,113,113,0.08)",
+              fontFamily: "'Press Start 2P', monospace",
+              fontSize: "clamp(6px, 0.52vw, 8px)",
+              padding: "4px 8px",
+              marginRight: 12,
+              cursor: "pointer",
+            }}
+          >
+            CANVAS UNAVAILABLE · RETRY
+          </button>
         )}
 
         {/* Panel toggle buttons */}

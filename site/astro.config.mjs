@@ -27,9 +27,7 @@ export default defineConfig({
         replacesTitle: false,
       },
       customCss: ["./src/styles/marina.css"],
-      social: [
-        { icon: "github", label: "GitHub", href: "https://github.com/h2oai/marina" },
-      ],
+      social: [{ icon: "github", label: "GitHub", href: "https://github.com/h2oai/marina" }],
       // The bespoke marketing landing lives at src/pages/index.astro; Starlight
       // owns everything under /docs.
       disable404Route: false,
@@ -77,6 +75,7 @@ export default defineConfig({
             { label: "Model API (OpenAI-compatible)", slug: "docs/guides/model-api" },
             { label: "MCP Integration", slug: "docs/guides/mcp-integration" },
             { label: "Dashboard", slug: "docs/guides/dashboard" },
+            { label: "Execution Traces", slug: "docs/guides/observability" },
             { label: "Discord & Telegram", slug: "docs/guides/chat-adapters" },
           ],
         },

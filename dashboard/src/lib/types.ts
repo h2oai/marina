@@ -203,6 +203,13 @@ export interface SystemData {
 
 export interface DashboardEvent {
   type: string;
+  /** Causal execution identifiers. Present on traced lifecycle events and
+   * optional elsewhere so older event producers remain compatible. */
+  runId?: string;
+  traceId?: string;
+  spanId?: string;
+  parentSpanId?: string;
+  requestId?: string;
   entity?: string;
   input?: string;
   connectionId?: string;
@@ -262,6 +269,130 @@ export interface DashboardEvent {
   resource?: "project" | "group" | "channel" | "pool" | "board" | "connector" | "command";
   action?: "create" | "update" | "delete";
   timestamp: number;
+}
+
+export type TraceStatus = "running" | "completed" | "failed";
+
+export interface TraceSpanView {
+  spanId: string;
+  parentSpanId?: string;
+  kind: "model_request" | "agent_turn" | "tool";
+  name: string;
+  status: TraceStatus;
+  startedAt: number;
+  endedAt?: number;
+  durationMs?: number;
+  partial: boolean;
+  attributes: Record<string, string | number | boolean>;
+}
+
+export interface TraceView {
+  traceId: string;
+  runId: string;
+  status: TraceStatus;
+  startedAt: number;
+  endedAt?: number;
+  durationMs?: number;
+  partial: boolean;
+  spans: TraceSpanView[];
+  evaluation: TraceEvaluation;
+  judgments?: TraceJudgment[];
+}
+
+export interface TraceJudgment {
+  id: string;
+  traceId: string;
+  evaluatorEntity: string;
+  verdict: "passed" | "failed" | "inconclusive";
+  criterion: string;
+  rationale: string;
+  evidenceSpanIds: string[];
+  createdAt: number;
+}
+
+export type TraceCheckResult = "passed" | "failed" | "inconclusive" | "not_applicable";
+
+export interface TraceEvaluationCheck {
+  id: "terminal_outcome" | "history_integrity" | "agent_turns" | "tool_results";
+  result: TraceCheckResult;
+  summary: string;
+  evidenceSpanIds: string[];
+}
+
+export interface TraceEvaluation {
+  evaluator: "marina.execution.v1";
+  checks: TraceEvaluationCheck[];
+}
+
+export interface TracesResponse {
+  traces: TraceView[];
+  /** Optional during rolling upgrades from servers that predate trace analytics. */
+  analytics?: TraceAnalytics;
+  comparisons?: {
+    models: TraceCohortComparison[];
+    routes: TraceCohortComparison[];
+  };
+  shadowAdvice?: {
+    models: TraceRoutingAdvice;
+    routes: TraceRoutingAdvice;
+  };
+  partial: boolean;
+  truncated: boolean;
+  source: "event-log" | "memory";
+  retention: "operator-managed" | "bounded-memory";
+}
+
+export interface TraceRoutingAdvice {
+  schema: "marina.routing.shadow.v1";
+  dimension: "model" | "route";
+  mode: "pareto" | "explore" | "insufficient";
+  candidates: string[];
+  reasons: string[];
+  advisoryOnly: true;
+}
+
+export interface JudgmentSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  inconclusive: number;
+  evaluators: number;
+  criteria: Record<string, number>;
+}
+
+export interface TraceCohortComparison {
+  dimension: "model" | "route";
+  name: string;
+  mechanics: TraceAggregate;
+  judgments: JudgmentSummary;
+}
+
+export interface TraceLatencySummary {
+  samples: number;
+  p50Ms?: number;
+  p95Ms?: number;
+}
+
+export interface TraceAggregate {
+  name: string;
+  observed: number;
+  eligible: number;
+  excludedPartial: number;
+  completed: number;
+  failed: number;
+  running: number;
+  terminalRate?: number;
+  successRate?: number;
+  latency: TraceLatencySummary;
+}
+
+export interface TraceAnalytics {
+  schema: "marina.trace.analytics.v1";
+  tracesObserved: number;
+  partialTraces: number;
+  models: TraceAggregate[];
+  routes: TraceAggregate[];
+  tools: TraceAggregate[];
 }
 
 // ─── Knowledge Graph (live from WS + /api/graph snapshot) ───────────────────

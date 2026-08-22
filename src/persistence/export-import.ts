@@ -22,6 +22,7 @@ export const EXPORT_TABLES = [
   "entities",
   "room_store",
   "event_log",
+  "trace_judgments",
   "users",
   "bans",
   "adapter_links",

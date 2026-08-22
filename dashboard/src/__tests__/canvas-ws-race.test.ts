@@ -2,8 +2,31 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { act, renderHook } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type CanvasEvent, useCanvasEventSocket } from "../canvas/hooks/use-canvas-ws";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  type CanvasEvent,
+  parseCanvasEvent,
+  useCanvasEventSocket,
+} from "../canvas/hooks/use-canvas-ws";
+import type { CanvasNodeData } from "../canvas/lib/types";
+
+function node(id: string): CanvasNodeData {
+  return {
+    id,
+    canvas_id: "canvas-1",
+    type: "text",
+    x: 0,
+    y: 0,
+    width: 300,
+    height: 200,
+    asset_id: null,
+    data: { content: id },
+    creator_name: "test",
+    parent_node_id: null,
+    created_at: 1,
+    updated_at: 1,
+  };
+}
 
 /**
  * Race-condition fix: WebSocket events that arrive during the snapshot fetch
@@ -70,8 +93,8 @@ describe("useCanvasEventSocket — race-free fetch + stream", () => {
 
     // Fire three events while the fake "fetch" is still in flight.
     act(() => {
-      ws.emit({ type: "node_added", canvasId: "canvas-1", node: { id: "n1" } as never });
-      ws.emit({ type: "node_added", canvasId: "canvas-1", node: { id: "n2" } as never });
+      ws.emit({ type: "node_added", canvasId: "canvas-1", node: node("n1") });
+      ws.emit({ type: "node_added", canvasId: "canvas-1", node: node("n2") });
       ws.emit({ type: "node_deleted", canvasId: "canvas-1", nodeId: "n1" });
     });
 
@@ -101,7 +124,7 @@ describe("useCanvasEventSocket — race-free fetch + stream", () => {
     act(() => result.current.markReady());
 
     act(() => {
-      ws.emit({ type: "node_added", canvasId: "canvas-1", node: { id: "n1" } as never });
+      ws.emit({ type: "node_added", canvasId: "canvas-1", node: node("n1") });
     });
 
     expect(events).toHaveLength(1);
@@ -122,14 +145,14 @@ describe("useCanvasEventSocket — race-free fetch + stream", () => {
 
     // First batch — live.
     act(() => {
-      ws.emit({ type: "node_added", canvasId: "canvas-1", node: { id: "n1" } as never });
+      ws.emit({ type: "node_added", canvasId: "canvas-1", node: node("n1") });
     });
     expect(events).toHaveLength(1);
 
     // Refetch starts — events should buffer again.
     act(() => result.current.resetForFetch());
     act(() => {
-      ws.emit({ type: "node_added", canvasId: "canvas-1", node: { id: "n2" } as never });
+      ws.emit({ type: "node_added", canvasId: "canvas-1", node: node("n2") });
     });
     expect(events).toHaveLength(1);
 
@@ -152,5 +175,81 @@ describe("useCanvasEventSocket — race-free fetch + stream", () => {
 
     act(() => ws.close());
     expect(result.current.status).toBe("reconnecting");
+  });
+
+  it("increments the connection generation and buffers recovery events", () => {
+    vi.useFakeTimers();
+    const events: CanvasEvent[] = [];
+    const { result } = renderHook(() =>
+      useCanvasEventSocket("canvas-1", (event) => events.push(event)),
+    );
+
+    const first = FakeWebSocket.instances[0]!;
+    act(() => first.open());
+    act(() => result.current.markReady());
+    expect(result.current.connectionGeneration).toBe(1);
+
+    act(() => first.close());
+    act(() => vi.advanceTimersByTime(1500));
+    const replacement = FakeWebSocket.instances[1]!;
+    act(() => replacement.open());
+    expect(result.current.connectionGeneration).toBe(2);
+
+    // The replacement subscription is live, but recovery has not applied its
+    // snapshot yet, so this event must remain buffered.
+    act(() => {
+      replacement.emit({ type: "node_deleted", canvasId: "canvas-1", nodeId: "offline-node" });
+    });
+    expect(events).toHaveLength(0);
+
+    // Starting the recovery fetch must not erase an event that won the race.
+    act(() => result.current.resetForFetch());
+    act(() => result.current.markReady());
+    expect(events).toEqual([
+      { type: "node_deleted", canvasId: "canvas-1", nodeId: "offline-node" },
+    ]);
+    vi.useRealTimers();
+  });
+});
+
+describe("parseCanvasEvent", () => {
+  it("rejects incomplete nodes and events for another canvas", () => {
+    expect(
+      parseCanvasEvent(
+        { type: "node_added", canvasId: "canvas-1", node: { id: "blank" } },
+        "canvas-1",
+      ),
+    ).toBeNull();
+    expect(
+      parseCanvasEvent(
+        { type: "node_added", canvasId: "canvas-2", node: node("cross-canvas") },
+        "canvas-1",
+      ),
+    ).toBeNull();
+  });
+
+  it("accepts complete node and typed edge events", () => {
+    expect(
+      parseCanvasEvent({ type: "node_added", canvasId: "canvas-1", node: node("full") }, "canvas-1")
+        ?.type,
+    ).toBe("node_added");
+    expect(
+      parseCanvasEvent(
+        {
+          type: "edge_added",
+          canvasId: "canvas-1",
+          edge: {
+            id: "edge-1",
+            sourceId: "a",
+            targetId: "b",
+            relationship: "references",
+            data: null,
+            creatorName: "test",
+            createdAt: 1,
+          },
+        },
+        "canvas-1",
+      )?.type,
+    ).toBe("edge_added");
   });
 });
