@@ -62,7 +62,6 @@ You should see:
 WebSocket server listening on ws://localhost:3300/ws
 Dashboard available at http://localhost:3300/dashboard
 Canvas available at http://localhost:3300/canvas
-Telnet server listening on port 4000
 MCP server listening on http://localhost:3301/mcp
 ```
 

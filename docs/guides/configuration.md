@@ -16,7 +16,9 @@ No configuration needed for local development. Just run:
 bun run start
 ```
 
-This starts with all defaults: web chat on 3300, telnet on 4000, default world, open API.
+This starts with all defaults: web chat on 3300, default world, open API. Telnet is
+off by default (plaintext, unauthenticated); enable it with `TELNET_PORT=4000` on a
+trusted network.
 
 ---
 
@@ -92,7 +94,7 @@ See [Discord & Telegram](chat-adapters.md) for bot setup.
 | Variable | Default | What It Does |
 |----------|---------|-------------|
 | `WS_PORT` | `3300` | WebSocket, web chat, dashboard, and model API |
-| `TELNET_PORT` | `4000` | Telnet server |
+| `TELNET_PORT` | `0` (off) | Telnet server — plaintext/unauthenticated; set a port to enable |
 | `MCP_PORT` | `3301` | MCP server (for Claude Desktop etc.) |
 | `LOG_PORT` | `3302` | Real-time event viewer |
 
@@ -198,7 +200,7 @@ A `tabh2o` connector row is seeded on every world boot so `connect list` always 
 ```bash
 # .env
 WS_PORT=8080
-TELNET_PORT=4000
+TELNET_PORT=0          # telnet off (plaintext/unauthenticated) — recommended in production
 MCP_PORT=8081
 LOG_PORT=8082
 DB_PATH=/data/marina.db

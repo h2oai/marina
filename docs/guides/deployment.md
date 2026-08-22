@@ -28,7 +28,7 @@ Three more ports run alongside it:
 | Port | Env var | Purpose | Expose publicly? |
 |------|---------|---------|------------------|
 | `3300` | `WS_PORT` | HTTP + WebSocket + API (above) | **Yes** (behind TLS) |
-| `4000` | `TELNET_PORT` | Plain-text telnet client | No — internal/admin only |
+| `4000` | `TELNET_PORT` | Plain-text telnet client (off by default; set to enable) | No — internal/admin only |
 | `3301` | `MCP_PORT` | MCP server for tool clients | Only if you use MCP remotely |
 | `3302` | `LOG_PORT` | Real-time event log viewer | No — internal only |
 
@@ -93,7 +93,7 @@ Marina's HTTP API requires authentication **by default** — but it's easy to we
 - [ ] **Enable dashboard sign-in** with `MARINA_AUTH=better-auth` (+ `BETTER_AUTH_SECRET`) for any human-facing public host — see [authentication.md](../authentication.md). Without it the dashboard is open to anyone who can reach it.
 - [ ] **Encrypt API keys at rest** with `MARINA_KEY_SECRET` (≥ 16 chars; `openssl rand -base64 32`) if you store provider keys in the Admin → Keys panel — values are then AES-256-GCM encrypted in the DB. Without it they're plaintext; either set the secret, or prefer the provider **env vars** (`ANTHROPIC_API_KEY`, …, `LLAMA_API_KEY`), which are read live and never persisted. Admin → Security shows the live state. (Back up the secret — losing it orphans stored keys.)
 - [ ] **Set `ALLOWED_ORIGINS`** to your real dashboard origin(s) if clients run cross-origin. Unset = same-origin only (no CORS header), which is the safe default.
-- [ ] **Don't publish ports 4000 (telnet) and 3302 (log viewer)** — neither is authenticated. Keep them off your public load balancer / security group. The shipped Compose maps `4000` for local convenience; drop that line for a public host.
+- [ ] **Don't publish ports 4000 (telnet) and 3302 (log viewer)** — neither is authenticated. Telnet is off by default now (`TELNET_PORT=0`); if you enable it, keep it (and the log viewer) off your public load balancer / security group.
 - [ ] **Set `GATEWAY_SECRET`** if (and only if) you use [federation](federation.md). Otherwise leave it unset.
 - [ ] **Terminate TLS at a reverse proxy** (next section). Marina speaks plain HTTP/WS; never expose `3300` directly to the internet.
 - [ ] Rate limits are built in (WS 5/s, MCP 5/s, Model API 2/s per IP, Memory API 10/s per agent) but a proxy-level limit is still wise.

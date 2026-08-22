@@ -42,7 +42,9 @@ function parsePort(name: string, fallback: number): number {
 }
 
 const WS_PORT = Math.max(0, parsePort("WS_PORT", 3300));
-const TELNET_PORT = parsePort("TELNET_PORT", 4000);
+// Telnet is plaintext and unauthenticated — off by default. Set TELNET_PORT
+// explicitly (e.g. 4000) to enable it, and only on a trusted network.
+const TELNET_PORT = parsePort("TELNET_PORT", 0);
 const MCP_PORT = parsePort("MCP_PORT", 3301);
 const LOG_PORT = parsePort("LOG_PORT", 3302);
 const TICK_MS = Number(process.env.TICK_MS) || 1000;

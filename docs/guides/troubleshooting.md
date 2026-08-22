@@ -55,7 +55,8 @@ bun run dashboard:build
 
 ### Telnet says "Connection refused"
 
-Make sure the server is running and you're using the right port (default 4000):
+Telnet is off by default. Start the server with `TELNET_PORT=4000` to enable it,
+then connect:
 
 ```bash
 telnet localhost 4000

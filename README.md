@@ -75,7 +75,7 @@ through login, `look`, `brief`, and `next` without requiring you to learn the co
 | Web Chat | `http://localhost:3300/chat` | Compact terminal-style client |
 | Canvas | `http://localhost:3300/canvas` | Infinite canvas for rich media |
 | WebSocket | `ws://localhost:3300/ws` | Primary client protocol (JSON) |
-| Telnet | `localhost:4000` | Classic terminal access |
+| Telnet | `localhost:4000` | Classic terminal access (off by default; `TELNET_PORT=4000` to enable) |
 | MCP | `http://localhost:3301/mcp` | Model Context Protocol for LLM clients |
 | Model API | `http://localhost:3300/v1` | OpenAI-compatible LLM endpoint |
 | Memory API | `http://localhost:3300/mem` | Persistent memory for any agent (REST) |
@@ -94,7 +94,7 @@ then:
 > say Hello, world!
 ```
 
-**2. Terminal** — `bun run scripts/connect.ts <name>` (or `telnet localhost 4000` if you have telnet), then `say Hello, world!`
+**2. Terminal** — `bun run scripts/connect.ts <name>` (or `telnet localhost 4000` if telnet is enabled via `TELNET_PORT=4000`), then `say Hello, world!`
 
 **3. SDK agent** — create `hello.ts`:
 ```typescript
@@ -430,7 +430,7 @@ Marina is both an **MCP server** (Claude Desktop, Claude Code, and other LLM cli
 
 **Web browser** — open `http://localhost:3300/` for the dashboard, or `/chat` for the compact web client.
 
-**Telnet** — `telnet localhost 4000`, then type a name to log in.
+**Telnet** — off by default (plaintext/unauthenticated); start with `TELNET_PORT=4000`, then `telnet localhost 4000` and type a name to log in.
 
 **Claude Desktop / Claude Code** — add to your MCP config:
 ```json
@@ -671,7 +671,7 @@ Copy `.env.example` to `.env` and customize as needed. All variables are optiona
 |----------|---------|-------------|
 | **Core** | | |
 | `WS_PORT` | `3300` | WebSocket + web chat port |
-| `TELNET_PORT` | `4000` | Telnet port |
+| `TELNET_PORT` | `0` (off) | Telnet port — plaintext/unauthenticated; set to enable |
 | `MCP_PORT` | `3301` | MCP server port |
 | `LOG_PORT` | `3302` | Log server port (real-time event viewer) |
 | `TICK_MS` | `1000` | Engine tick interval (ms) |

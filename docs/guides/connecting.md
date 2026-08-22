@@ -31,6 +31,9 @@ terminal-style, low-bandwidth view.
 
 ## Telnet
 
+Telnet is **off by default** (plaintext, unauthenticated). Enable it on a trusted
+network by starting the server with `TELNET_PORT=4000`, then:
+
 ```bash
 telnet localhost 4000
 ```
