@@ -268,6 +268,36 @@ describe("Engine", () => {
     });
   });
 
+  describe("modal routing bypass", () => {
+    it("routes commands through the active modal by default", async () => {
+      const entity = engine.spawnEntity("c1", "TestAgent")!;
+      entity.properties.active_modal = "code";
+      conn.clear();
+      // Without the bypass, "look" is rewritten to "code look" — so the room
+      // description must NOT appear.
+      await engine.processCommand(entity.id, "look");
+      expect(stripAnsi(conn.lastText())).not.toContain("Starting Room");
+    });
+
+    it("bypassModal executes engine-initiated commands untouched inside a modal", async () => {
+      const entity = engine.spawnEntity("c1", "TestAgent")!;
+      entity.properties.active_modal = "code";
+      conn.clear();
+      // "look" is registered; without the bypass it would become "code look".
+      await engine.processCommand(entity.id, "look", { bypassModal: true });
+      expect(stripAnsi(conn.lastText())).toContain("Starting Room");
+    });
+
+    it("sendLook and sendBrief are not captured by the code modal", async () => {
+      const entity = engine.spawnEntity("c1", "TestAgent")!;
+      entity.properties.active_modal = "code";
+      conn.clear();
+      engine.sendLook(entity.id);
+      await Bun.sleep(10);
+      expect(stripAnsi(conn.lastText())).toContain("Starting Room");
+    });
+  });
+
   describe("disconnect", () => {
     it("unbinds connection immediately and defers entity removal for reconnect grace", () => {
       const entity = engine.spawnEntity("c1", "TestAgent")!;

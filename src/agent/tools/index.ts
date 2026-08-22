@@ -279,6 +279,20 @@ const codePatchSchema = Type.Object({
   diff: Type.String({ description: "Unified diff to propose" }),
 });
 
+const codeEditSchema = Type.Object({
+  path: Type.String({ description: "Relative workspace file path" }),
+  oldText: Type.String({ description: "Exact existing text to replace (may span lines)" }),
+  newText: Type.String({ description: "Replacement text (empty string deletes oldText)" }),
+  replaceAll: Type.Optional(
+    Type.Boolean({ description: "Replace every occurrence instead of requiring a unique match" }),
+  ),
+});
+
+const codeWriteSchema = Type.Object({
+  path: Type.String({ description: "Relative workspace file path" }),
+  content: Type.String({ description: "Full file content to write" }),
+});
+
 const codeArtifactsSchema = Type.Object({
   kind: Type.Optional(Type.String({ description: "Artifact kind filter" })),
 });
@@ -1051,6 +1065,42 @@ function createTypedCodeTools(ctx: ToolContext): AgentTool[] {
       codePatchSchema,
       (p) =>
         `code patch ${singleLineCodeParam((p.title as string | undefined) ?? "Proposed change", "title")}\n${requiredCodeDiff(p.diff as string | undefined)}`,
+      ctx,
+    ),
+    wrap(
+      "marina_code_edit",
+      "Code Edit",
+      "Surgically replace exact text in one workspace file. Prefer this over patches for small targeted changes; if a patch fails to apply, fall back to this instead of retrying the same diff. oldText must match the file byte-for-byte (copy it from marina_code_read_file, including whitespace); set replaceAll only when every occurrence should change.",
+      codeEditSchema,
+      (p) => {
+        const path = requiredSingleLineCodeParam(
+          p.path as string | undefined,
+          "path",
+          "path is required",
+        );
+        const oldText = p.oldText as string | undefined;
+        if (!oldText) throw new Error("oldText is required");
+        const newText = (p.newText as string | undefined) ?? "";
+        const all = p.replaceAll === true ? " all" : "";
+        return `code edit ${path}${all}\n<<<<<<< OLD\n${oldText}\n=======\n${newText}\n>>>>>>> NEW`;
+      },
+      ctx,
+    ),
+    wrap(
+      "marina_code_write",
+      "Code Write",
+      "Create or fully overwrite one workspace file with the given content (parent directories are created). Use for new files or full rewrites; prefer marina_code_edit for surgical changes to existing files.",
+      codeWriteSchema,
+      (p) => {
+        const path = requiredSingleLineCodeParam(
+          p.path as string | undefined,
+          "path",
+          "path is required",
+        );
+        const content = p.content as string | undefined;
+        if (content == null) throw new Error("content is required");
+        return `code write ${path}\n${content}`;
+      },
       ctx,
     ),
     wrap(

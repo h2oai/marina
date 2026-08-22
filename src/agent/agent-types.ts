@@ -180,6 +180,14 @@ export interface AgentHandle {
   setSystemPrompt(prompt: string | undefined): void;
   setAttentionMode?(mode: "focused" | "balanced" | "open"): void;
   setAttentionThreshold?(threshold: number): void;
+  /**
+   * Task mode for a session-bound coder: while a task is set, the autonomous
+   * loop suppresses low-value cognitive sections (novelty, memory health,
+   * learning signal, reflection, idle consolidation) and restates the task
+   * every cycle. Pass null to clear (on `code stop` or task completion).
+   * Unlike crewResponder, the loop keeps cycling without fresh perceptions.
+   */
+  setActiveCodingTask?(task: string | null): void;
   stop(): Promise<void>;
   subscribe(handler: (event: AgentEvent) => void): () => void;
   /** Reconfigure the agent (restarts LLM loop, preserves entity state). */

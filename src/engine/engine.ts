@@ -65,6 +65,7 @@ import {
   ROOM_FETCH_RATE_MS,
   ROOM_FETCH_TIMEOUT_MS,
 } from "./constants";
+import { sanitizeEntityName } from "./entity-name";
 import { getErrorMessage, tryLog, tryLogAsync } from "./errors";
 import { EventLog } from "./event-log";
 import { GatewayRuntime } from "./gateway-runtime";
@@ -246,7 +247,10 @@ export class Engine {
             this.sendToEntity(e.id, formatted, "gateway");
           }
         },
-        localWorldName: this.world?.name ?? "Marina",
+        // Present as the per-instance name (MARINA_NAME), not the world
+        // template name — many instances of the same world must federate
+        // as distinct Gateway_<name> identities.
+        localWorldName: this.instanceName,
       });
     }
 
@@ -384,7 +388,7 @@ export class Engine {
     if (!conn) return undefined;
 
     // Sanitize name: alphanumeric + underscores only, 2-20 chars
-    const cleanName = name.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 20);
+    const cleanName = sanitizeEntityName(name);
     if (cleanName.length < 2) return undefined;
 
     const entity = this.entities.create({
@@ -494,7 +498,7 @@ export class Engine {
     }
 
     // Sanitize name once, then pass through to spawnEntity
-    const cleanName = name.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 20);
+    const cleanName = sanitizeEntityName(name);
     // If an entity with this name exists but has no live connection, the login is a
     // re-attach (typical at server restart — `restoreEntities` reinstated the row but
     // no WebSocket is bound to it yet). Bind the new connection to the existing entity
@@ -722,12 +726,19 @@ export class Engine {
   }
 
   /** Process a single command immediately */
-  async processCommand(entityId: EntityId, raw: string): Promise<void> {
+  async processCommand(
+    entityId: EntityId,
+    raw: string,
+    opts?: { bypassModal?: boolean },
+  ): Promise<void> {
     const commandStartedAt = Date.now();
     const entity = this.entities.get(entityId);
     if (!entity) return;
 
-    const routedRaw = this.routeModalCommand(entity, raw);
+    // Engine-initiated housekeeping (brief heartbeat, login look) must not be
+    // captured by an entity's active modal — inside Code Mode the rewrite
+    // would turn "brief" into the coding task `code brief`.
+    const routedRaw = opts?.bypassModal ? raw : this.routeModalCommand(entity, raw);
     const input = this.commands.parse(routedRaw, entityId, entity.room);
 
     if (!input.verb) return;
@@ -1404,14 +1415,14 @@ export class Engine {
   sendLook(entityId: EntityId): void {
     const entity = this.entities.get(entityId);
     if (!entity) return;
-    this.processCommand(entityId, "look");
+    this.processCommand(entityId, "look", { bypassModal: true });
   }
 
   /** Send a brief orientation to an entity (used on first login) */
   sendBrief(entityId: EntityId): void {
     const entity = this.entities.get(entityId);
     if (!entity) return;
-    this.processCommand(entityId, "brief");
+    this.processCommand(entityId, "brief", { bypassModal: true });
   }
 
   /** Subscribe an entity to periodic brief pulses */

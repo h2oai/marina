@@ -369,6 +369,8 @@ describe("code autonomous crew assembly (Phase 4 B1)", () => {
     const entity = engine.entities.get(conn.entity!)!;
     grant(db, entity.id, "agent.spawn");
     const idle = makeAgentEntity("agent_idle", "idle");
+    // Recruitment is role-aware: only coding-appropriate roles are drafted.
+    idle.properties.role = "coding-agent";
     const crewStub = makeCrewManagerStub();
     const baseGet = (id: string) => (id === entity.id ? entity : id === idle.id ? idle : undefined);
     const rt = makeAgentRuntimeStub(baseGet);

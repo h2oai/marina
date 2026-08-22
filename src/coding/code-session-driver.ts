@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { closeSync, openSync, readSync } from "node:fs";
+import { join } from "node:path";
 import type { AgentHandle } from "../agent/agent-types";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../persistence/database";
 import type { Entity } from "../types";
@@ -8,6 +10,13 @@ import type { Entity } from "../types";
 const ACTIVE_SESSION_KEY = "coding_session_id";
 const ACTIVE_MODAL_KEY = "active_modal";
 const CODE_PROFILE_KEY = "code_profile";
+const ACTIVE_TASK_KEY = "coding_task";
+
+// Convention files read from the workspace root and handed to the assigned
+// coder so it starts warm (Claude Code reads CLAUDE.md the same way). Bounded
+// per file so a sprawling doc can't crowd the attention prompt.
+const CONVENTION_FILES = ["CLAUDE.md", "AGENTS.md", ".marina.md"] as const;
+const CONVENTION_MAX_BYTES = 4096;
 
 export interface CodePromptRequest {
   actor: string;
@@ -148,7 +157,10 @@ export class CodeSessionDriver {
 
     const agent = this.deps.agentRuntime.get(opts.agentName);
     if (!agent) throw new Error(`Agent "${opts.agentName}" is not running.`);
-    const boundEntity = this.bindAgentEntity(agent, opts.session, opts.profile);
+    const boundEntity = this.bindAgentEntity(agent, opts.session, opts.profile, prompt);
+    // Task mode: the adapter suppresses its low-value cognitive sections and
+    // restates this task every cycle until code.ts clears it (stop/summary).
+    agent.setActiveCodingTask?.(prompt);
 
     const attention = [
       `You have been assigned to Marina coding session ${opts.session.id}.`,
@@ -172,6 +184,7 @@ export class CodeSessionDriver {
         ? "Use code service start/probe/screenshot for managed app evidence; use observe for additional behavior notes."
         : "Use observe to record app or manual behavior notes. Long-running app launch is disabled on the Marina host; configure Flywheel and use code service.",
       "Record durable progress with code plan, code summary, code handoff, and code decision.",
+      ...formatProjectConventions(opts.session.workspace_root),
       "",
       `Request: ${prompt}`,
     ]
@@ -215,6 +228,7 @@ export class CodeSessionDriver {
     agent: AgentHandle,
     session: CodingSessionRow,
     profile: string,
+    task?: string,
   ): Entity | undefined {
     const entityId = agent.getStatus().entityId;
     if (!entityId || !this.deps.getEntity) return undefined;
@@ -223,6 +237,10 @@ export class CodeSessionDriver {
     entity.properties[ACTIVE_MODAL_KEY] = "code";
     entity.properties[ACTIVE_SESSION_KEY] = session.id;
     entity.properties[CODE_PROFILE_KEY] = profile;
+    // Persist the active task so the assignment survives inspection/restart
+    // and the engine can see the agent is mid-task. Cleared by code.ts on
+    // `code stop` and on the summary-artifact completion heuristic.
+    if (task) entity.properties[ACTIVE_TASK_KEY] = task;
     this.deps.db.saveEntity(entity);
     this.deps.db.createCodingEvent({
       sessionId: session.id,
@@ -231,6 +249,36 @@ export class CodeSessionDriver {
       payload: { agent: agent.name, entityId: entity.id, profile },
     });
     return entity;
+  }
+}
+
+/**
+ * Read the workspace's convention docs (CLAUDE.md / AGENTS.md / .marina.md,
+ * first ~4KB each, missing files skipped) as attention-prompt lines under a
+ * "Project conventions" heading. Empty when none exist.
+ */
+function formatProjectConventions(workspaceRoot: string): string[] {
+  const sections: string[] = [];
+  for (const file of CONVENTION_FILES) {
+    const text = readFileHead(join(workspaceRoot, file), CONVENTION_MAX_BYTES);
+    if (text) sections.push(`--- ${file} ---\n${text}`);
+  }
+  if (sections.length === 0) return [];
+  return ["", "Project conventions:", ...sections];
+}
+
+function readFileHead(path: string, maxBytes: number): string | undefined {
+  try {
+    const fd = openSync(path, "r");
+    try {
+      const buffer = Buffer.alloc(maxBytes);
+      const bytesRead = readSync(fd, buffer, 0, maxBytes, 0);
+      return buffer.subarray(0, bytesRead).toString("utf8").trim() || undefined;
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return undefined; // missing or unreadable — skip silently
   }
 }
 

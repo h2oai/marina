@@ -29,10 +29,22 @@ import { loadRooms } from "./world/room-loader";
 import { seedGuidePool } from "./world/seed-guide";
 import type { WorldDefinition } from "./world/world-definition";
 
-const WS_PORT = Number(process.env.WS_PORT) || 3300;
-const TELNET_PORT = Number(process.env.TELNET_PORT) || 4000;
-const MCP_PORT = Number(process.env.MCP_PORT) || 3301;
-const LOG_PORT = Number(process.env.LOG_PORT) || 3302;
+// Port semantics: unset/empty/non-numeric env keeps the default; an explicit 0
+// (or negative) DISABLES that listener so multiple instances can share a host.
+// Exception: the WS/HTTP server is the primary surface and can't be disabled —
+// WS_PORT=0 (or negative) asks Bun for a free ephemeral port instead, and the
+// real bound port is read back after start via wsServer.getPort().
+function parsePort(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}
+
+const WS_PORT = Math.max(0, parsePort("WS_PORT", 3300));
+const TELNET_PORT = parsePort("TELNET_PORT", 4000);
+const MCP_PORT = parsePort("MCP_PORT", 3301);
+const LOG_PORT = parsePort("LOG_PORT", 3302);
 const TICK_MS = Number(process.env.TICK_MS) || 1000;
 const DB_PATH = process.env.DB_PATH || "marina.db";
 
@@ -207,12 +219,19 @@ const sessionCleanupInterval = setInterval(() => {
 
 // ─── Live Log Server ────────────────────────────────────────────────────────
 
-const logServer = new LogServer({
-  port: LOG_PORT,
-  resolveEntity: (id) => engine.entities.get(id)?.name,
-});
-engine.addEventListener((event) => logServer.handleEvent(event));
-logServer.start();
+const logServer =
+  LOG_PORT > 0
+    ? new LogServer({
+        port: LOG_PORT,
+        resolveEntity: (id) => engine.entities.get(id)?.name,
+      })
+    : undefined;
+if (logServer) {
+  engine.addEventListener((event) => logServer.handleEvent(event));
+  logServer.start();
+} else {
+  logger.info("engine", "Log server disabled (LOG_PORT <= 0)");
+}
 
 // ─── Network Layer ────────────────────────────────────────────────────────────
 
@@ -293,8 +312,11 @@ wsServer.setOnNodeCreated((event) => {
   });
 });
 
-const telnetServer = new TelnetServer(engine, TELNET_PORT, rateLimiter);
-const mcpServer = new McpServerAdapter(engine, MCP_PORT, rateLimiter);
+const telnetServer =
+  TELNET_PORT > 0 ? new TelnetServer(engine, TELNET_PORT, rateLimiter) : undefined;
+const mcpServer = MCP_PORT > 0 ? new McpServerAdapter(engine, MCP_PORT, rateLimiter) : undefined;
+if (!telnetServer) logger.info("engine", "Telnet server disabled (TELNET_PORT <= 0)");
+if (!mcpServer) logger.info("engine", "MCP server disabled (MCP_PORT <= 0)");
 
 // Adapter manager (hot-reloadable external platform adapters)
 const adapterCtx = { engine, rateLimiter, db, formatPerception };
@@ -302,8 +324,10 @@ const adapterManager = new AdapterManager(adapterCtx, db);
 engine.adapterManager = adapterManager;
 
 wsServer.start();
-telnetServer.start();
-mcpServer.start();
+telnetServer?.start();
+mcpServer?.start();
+// Real bound port — differs from WS_PORT when WS_PORT=0 (ephemeral).
+const boundWsPort = wsServer.getPort();
 
 // Auto-start adapters from env vars
 for (const platform of ["telegram", "discord"] as const) {
@@ -326,7 +350,7 @@ await Promise.all(
 );
 
 // Initialize agent runtime (auto-respawns saved configs, requires WS server ready)
-await engine.initAgents(WS_PORT);
+await engine.initAgents(boundWsPort);
 
 engine.start();
 
@@ -374,6 +398,26 @@ if (
   );
 }
 
+// ─── Boot banner: this instance's coordinates ────────────────────────────────
+// One compact stdout announcement of every live surface. Marina instances are
+// peers — the Federate line is this instance's invitation to bridge in.
+{
+  const surfaces = [
+    `WebSocket ws://localhost:${boundWsPort}/ws`,
+    `Dashboard http://localhost:${boundWsPort}/dashboard`,
+  ];
+  if (mcpServer) surfaces.push(`MCP http://localhost:${mcpServer.getPort()}/mcp`);
+  if (telnetServer) surfaces.push(`Telnet localhost:${TELNET_PORT}`);
+  if (logServer) surfaces.push(`Logs http://localhost:${LOG_PORT}`);
+  console.log(
+    [
+      `Marina "${INSTANCE_NAME}" is up · world: ${world.name}`,
+      `  ${surfaces.join(" · ")}`,
+      `  Federate: gateway add <name> ws://<host>:${boundWsPort}/ws`,
+    ].join("\n"),
+  );
+}
+
 // ─── Marina-as-an-LLM: copy-paste wiring summary ───────────────────────────────
 // Print the exact baseURL / model / auth so the OpenAI-compatible endpoint can be
 // wired into any client (or another Marina instance) without reading the source.
@@ -387,13 +431,13 @@ if (
       : "NOT CONFIGURED — set MODEL_API_KEYS or MARINA_OPEN_API=true";
   logger.info(
     "model-api",
-    `OpenAI-compatible LLM endpoint: baseURL http://localhost:${WS_PORT}/v1 · model "marina" → ${defaultModel}` +
+    `OpenAI-compatible LLM endpoint: baseURL http://localhost:${boundWsPort}/v1 · model "marina" → ${defaultModel}` +
       `${hasUpstream ? "" : " · NO upstream key yet (returns 503 until a provider key is set)"} · auth: ${authMode}`,
   );
   logger.info(
     "model-api",
     `Wire an agent to this instance: \`agent spawn <name> model marina\`. ` +
-      `From another Marina: \`agent spawn <name> model marina@http://<this-host>:${WS_PORT}/v1 key <name>\`.`,
+      `From another Marina: \`agent spawn <name> model marina@http://<this-host>:${boundWsPort}/v1 key <name>\`.`,
   );
 }
 
@@ -421,10 +465,10 @@ async function shutdown(code = 0) {
   await engine.agentRuntime.stopAll().catch(() => {});
 
   engine.shutdown(); // saves state + stops tick loop
-  logServer.stop();
+  logServer?.stop();
   wsServer.stop();
-  telnetServer.stop();
-  mcpServer.stop();
+  telnetServer?.stop();
+  mcpServer?.stop();
   db.close();
   process.exit(code);
 }

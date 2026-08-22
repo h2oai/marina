@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 const DEFAULT_MAX_READ_BYTES = 64 * 1024;
 const DEFAULT_MAX_LIST_ENTRIES = 200;
@@ -116,6 +116,16 @@ export interface WorkspaceFiles {
   ): Promise<{ content: string; truncated: boolean; exitCode: number }>;
   checkPatch(patch: string): Promise<PatchCheck>;
   applyPatch(patch: string): Promise<PatchCheck>;
+  editFile(
+    path: string,
+    oldText: string,
+    newText: string,
+    opts?: { replaceAll?: boolean },
+  ): Promise<{ ok: boolean; output: string; occurrences: number }>;
+  writeFile(
+    path: string,
+    content: string,
+  ): Promise<{ ok: boolean; output: string; created: boolean }>;
   reversePatch(patch: string, checkOnly?: boolean): Promise<PatchCheck>;
 }
 
@@ -272,7 +282,7 @@ export class LocalWorkspace implements WorkspaceRuntime {
 
   async checkPatch(patch: string): Promise<PatchCheck> {
     const paths = validatePatchPaths(this.root, patch);
-    const result = await runGitApply(this.root, patch, true);
+    const result = await runGitApplyResilient(this.root, patch, true);
     return {
       ok: result.exitCode === 0,
       paths,
@@ -283,11 +293,96 @@ export class LocalWorkspace implements WorkspaceRuntime {
   async applyPatch(patch: string): Promise<PatchCheck> {
     const paths = validatePatchPaths(this.root, patch);
     return withRootLock(this.root, async () => {
-      const result = await runGitApply(this.root, patch, false);
+      const result = await runGitApplyResilient(this.root, patch, false);
       return {
         ok: result.exitCode === 0,
         paths,
         output: result.content.trim(),
+      };
+    });
+  }
+
+  async editFile(
+    path: string,
+    oldText: string,
+    newText: string,
+    opts?: { replaceAll?: boolean },
+  ): Promise<{ ok: boolean; output: string; occurrences: number }> {
+    const target = this.resolvePath(path);
+    assertNotGitMetadata(this.root, target);
+    const rel = this.relativePath(target);
+    if (!oldText) {
+      return { ok: false, output: "oldText must be non-empty.", occurrences: 0 };
+    }
+    return withRootLock(this.root, async () => {
+      const stat = statSync(target, { throwIfNoEntry: false });
+      if (!stat?.isFile()) {
+        return { ok: false, output: `File not found: ${rel}`, occurrences: 0 };
+      }
+      const bytes = new Uint8Array(await Bun.file(target).arrayBuffer());
+      if (bytes.includes(0)) {
+        return { ok: false, output: `Not a text file: ${rel}`, occurrences: 0 };
+      }
+      const content = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+      const occurrences = countOccurrences(content, oldText);
+      if (occurrences === 0) {
+        return {
+          ok: false,
+          output: `oldText not found in ${rel}. Read the file and copy the exact text, including whitespace and indentation.`,
+          occurrences: 0,
+        };
+      }
+      if (occurrences > 1 && !opts?.replaceAll) {
+        return {
+          ok: false,
+          output: `oldText matches ${occurrences} locations in ${rel}. Include more surrounding context to make it unique, or set replaceAll.`,
+          occurrences,
+        };
+      }
+      // Splice by index — String.replace would interpret $-patterns in newText.
+      const updated = opts?.replaceAll
+        ? content.split(oldText).join(newText)
+        : spliceFirst(content, oldText, newText);
+      writeFileSync(target, updated);
+      const n = opts?.replaceAll ? occurrences : 1;
+      return {
+        ok: true,
+        output: `Replaced ${n} occurrence${n === 1 ? "" : "s"} in ${rel}.`,
+        occurrences: n,
+      };
+    });
+  }
+
+  async writeFile(
+    path: string,
+    content: string,
+  ): Promise<{ ok: boolean; output: string; created: boolean }> {
+    const target = this.resolvePath(path);
+    assertNotGitMetadata(this.root, target);
+    const rel = this.relativePath(target);
+    return withRootLock(this.root, async () => {
+      const stat = statSync(target, { throwIfNoEntry: false });
+      if (stat?.isDirectory()) {
+        return { ok: false, output: `Path is a directory: ${rel}`, created: false };
+      }
+      if (stat?.isFile()) {
+        const bytes = new Uint8Array(await Bun.file(target).arrayBuffer());
+        if (bytes.includes(0)) {
+          return {
+            ok: false,
+            output: `Refusing to overwrite a binary file: ${rel}`,
+            created: false,
+          };
+        }
+      }
+      const created = !stat;
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, content);
+      const bytes = Buffer.byteLength(content, "utf-8");
+      return {
+        ok: true,
+        output: `${created ? "Created" : "Overwrote"} ${rel} (${bytes} bytes).`,
+        created,
       };
     });
   }
@@ -396,6 +491,28 @@ function looksTextual(name: string): boolean {
   return /\.(astro|css|csv|go|html|json|js|jsx|md|mjs|py|rs|sql|toml|ts|tsx|txt|yaml|yml)$/i.test(
     name,
   );
+}
+
+function assertNotGitMetadata(root: string, target: string): void {
+  const rel = relative(root, target).split(sep).join("/");
+  if (rel === ".git" || rel.startsWith(".git/")) {
+    throw new Error("Refusing to modify .git metadata.");
+  }
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  let count = 0;
+  let idx = haystack.indexOf(needle);
+  while (idx !== -1) {
+    count++;
+    idx = haystack.indexOf(needle, idx + needle.length);
+  }
+  return count;
+}
+
+function spliceFirst(content: string, oldText: string, newText: string): string {
+  const idx = content.indexOf(oldText);
+  return content.slice(0, idx) + newText + content.slice(idx + oldText.length);
 }
 
 function validatePatchPaths(root: string, patch: string): string[] {
@@ -527,12 +644,13 @@ async function runGitApply(
   patch: string,
   checkOnly: boolean,
   reverse = false,
+  extraArgs: string[] = [],
 ): Promise<{ content: string; truncated: boolean; exitCode: number }> {
   const dir = mkdtempSync(join(tmpdir(), "marina-code-patch-"));
   const patchPath = join(dir, "change.patch");
   try {
     writeFileSync(patchPath, patch);
-    const args = ["git", "apply", "--whitespace=nowarn"];
+    const args = ["git", "apply", "--whitespace=nowarn", ...extraArgs];
     if (checkOnly) args.push("--check");
     if (reverse) args.push("--reverse");
     args.push(patchPath);
@@ -540,6 +658,43 @@ async function runGitApply(
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+// LLM-generated diffs often carry slightly-wrong hunk line counts, which plain
+// `git apply` rejects as "corrupt patch". Retry with --recount -C1 (recompute
+// counts, relaxed context), then — for real applies inside a git repo — a final
+// --3way merge. The winning mode is appended to output so the trail stays honest.
+async function runGitApplyResilient(
+  cwd: string,
+  patch: string,
+  checkOnly: boolean,
+): Promise<{ content: string; truncated: boolean; exitCode: number }> {
+  const plain = await runGitApply(cwd, patch, checkOnly);
+  if (plain.exitCode === 0) return plain;
+
+  const recount = await runGitApply(cwd, patch, checkOnly, false, ["--recount", "-C1"]);
+  if (recount.exitCode === 0) {
+    return { ...recount, content: withApplyModeNote(recount.content, "--recount -C1") };
+  }
+
+  let triedThreeWay = false;
+  if (!checkOnly && existsSync(join(cwd, ".git"))) {
+    triedThreeWay = true;
+    const threeWay = await runGitApply(cwd, patch, false, false, ["--3way"]);
+    if (threeWay.exitCode === 0) {
+      return { ...threeWay, content: withApplyModeNote(threeWay.content, "--3way") };
+    }
+  }
+
+  const retries = triedThreeWay ? "--recount -C1 and --3way retries" : "--recount -C1 retry";
+  return { ...plain, content: withApplyModeNote(plain.content, undefined, retries) };
+}
+
+function withApplyModeNote(content: string, mode?: string, failedRetries?: string): string {
+  const note = mode
+    ? `(succeeded with git apply ${mode})`
+    : `(${failedRetries ?? "retries"} also failed)`;
+  return content.trim() ? `${content.trimEnd()}\n${note}` : note;
 }
 
 async function runWorkspaceCommand(

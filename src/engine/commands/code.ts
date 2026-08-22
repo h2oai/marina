@@ -20,10 +20,12 @@ import type { FlywheelToolBackend } from "../../integrations/flywheel-manager";
 import { bold, dim, error as fmtError, header, separator, success } from "../../net/ansi";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, CrewFormation, Entity, EntityId, RoomContext } from "../../types";
+import { sanitizeEntityName } from "../entity-name";
 import { checkGate, grant, recordDemonstration } from "../safety-gates";
 
 const ACTIVE_SESSION_KEY = "coding_session_id";
 const ACTIVE_MODAL_KEY = "active_modal";
+const ACTIVE_TASK_KEY = "coding_task";
 const CODE_CONTEXT_KEY = "code_context";
 const CODE_PROFILE_KEY = "code_profile";
 const CODE_PROFILE_ALIASES_KEY = "code_profile_aliases";
@@ -753,6 +755,7 @@ Usage:
   code branch [title]         Branch the active coding session
   code tree                   Show session branch lineage
   code done [summary]         Complete the active coding session
+  code stop                   Stop the bound coding agent's current run (alias: cancel)
   code list                   List your coding sessions
   code resume <session_id>    Make a session active
   code status [session_id]    Show session status
@@ -767,6 +770,8 @@ Usage:
   code verify                 Run detected typecheck/lint/test/build chain
   code test|lint|typecheck    Run a common verification command
   code patch [title]\\n<diff>  Propose a unified-diff patch
+  code edit <path> [all]\\n<<<<<<< OLD\\n{old}\\n=======\\n{new}\\n>>>>>>> NEW  Replace exact text in a file
+  code write <path>\\n<content> Create or overwrite a workspace file
   code artifacts [recent|failed|status <s>|kind <k>] List coding artifacts
   code patches [status]       List proposed patches
   code show <artifact_id|last|last patch|last failed> Show a coding artifact
@@ -801,6 +806,8 @@ const CODE_EXEC_SUBCOMMANDS = new Set<string>([
   "apply",
   "revert",
   "service",
+  "edit",
+  "write",
 ]);
 
 export interface CodeDeps {
@@ -1075,6 +1082,16 @@ export function codeCommand(deps: CodeDeps): CommandDef {
             return;
           case "driver":
             driverCommand(ctx, input.entity, entity, depsWithDb, args);
+            return;
+          case "stop":
+          case "cancel":
+            await stopSessionAgent(ctx, input.entity, entity, depsWithDb);
+            return;
+          case "edit":
+            await editWorkspaceFile(ctx, input.entity, entity, depsWithDb, rawAfterSub);
+            return;
+          case "write":
+            await writeWorkspaceFile(ctx, input.entity, entity, depsWithDb, rawAfterSub);
             return;
           default: {
             // In Code Mode, anything that isn't a known subcommand is a
@@ -1955,7 +1972,7 @@ function resolveNamedMembers(
   const resolved: AssembledMember[] = [];
   const missing: string[] = [];
   for (const name of members) {
-    const agent = deps.findAgentByName?.(name);
+    const agent = deps.findAgentByName?.(name) ?? deps.findAgentByName?.(sanitizeEntityName(name));
     if (agent) resolved.push({ agentName: agent.name, id: agent.id, source: "recruited" });
     else missing.push(name);
   }
@@ -2135,6 +2152,10 @@ function streamSessionAgent(
     if (phase === currentPhase && phase !== "failed") return;
     const previous = currentPhase;
     currentPhase = phase;
+    // Summary-artifact completion heuristic: the agent recorded a durable
+    // summary, so its assigned task is done — drop task mode so the normal
+    // cognitive loop resumes until the next `code do`.
+    if (phase === "completed") clearCodingTask(deps, handle.name);
     const payload = { agent: handle.name, detail, phase, previous, ...extra };
     deps.db?.createCodingEvent({
       sessionId,
@@ -2219,6 +2240,26 @@ function lifecycleForToolCall(
   return undefined;
 }
 
+/**
+ * End the bound coder's task mode: clear the persisted `coding_task` entity
+ * property and the adapter's in-memory task (which un-suppresses the normal
+ * cognitive sections). Called on `code stop` and when the summary-artifact
+ * completion heuristic fires. Best-effort — a missing handle/entity is fine.
+ */
+function clearCodingTask(deps: CodeDeps, agentName: string): void {
+  const handle = getAgentHandle(deps, agentName);
+  handle?.setActiveCodingTask?.(null);
+  const entityId = handle?.getStatus().entityId;
+  const entity =
+    (entityId ? deps.getEntity(entityId) : undefined) ??
+    deps.findAgentByName?.(agentName) ??
+    deps.findAgentByName?.(sanitizeEntityName(agentName));
+  if (entity && entity.properties[ACTIVE_TASK_KEY] !== undefined) {
+    delete entity.properties[ACTIVE_TASK_KEY];
+    deps.db?.saveEntity(entity);
+  }
+}
+
 /** Tear down all live streams a dispatcher is watching (on exit / disconnect). */
 function stopCodeStreamsFor(entityId: EntityId): void {
   const suffix = `:${entityId}`;
@@ -2284,6 +2325,20 @@ async function doCode(
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
 
+  // Self-dispatch guard: the bound coder is itself in the code modal, so any
+  // stray line from its own loop (e.g. `brief` rewritten to `code brief` by
+  // the engine's modal routing) lands here. Queuing that as a NEW task to
+  // itself creates a dispatch loop and echoes noise to the human — refuse.
+  // Normalized comparison: session.agent may hold a config name ("code-coder-
+  // code_5") while the agent's entity logged in sanitized ("codecodercode_5").
+  if (session.agent && sameEntityName(session.agent, entity.name)) {
+    ctx.send(
+      eid,
+      "You are this session's coding agent — act with marina_code actions; the task is already assigned.",
+    );
+    return;
+  }
+
   const strategy = (session.driver ?? "single").toLowerCase();
   if (strategy === "crew") {
     await crewPlan(ctx, eid, entity, deps, task);
@@ -2320,7 +2375,7 @@ async function doCode(
     });
     // Stream the bound agent's live work back to this human so Code Mode shows
     // it working (reads, edits, test runs, prose) rather than going quiet.
-    const handle = deps.agentRuntime?.get?.(agentName);
+    const handle = getAgentHandle(deps, agentName);
     if (handle) streamSessionAgent(deps, eid, handle, session.id);
     ctx.send(
       eid,
@@ -2351,13 +2406,18 @@ async function ensureSessionAgent(
   session: CodingSessionRow,
 ): Promise<string | null> {
   // 1) Reuse the already-bound agent if it's still running.
-  if (session.agent && deps.agentRuntime?.get?.(session.agent)) return session.agent;
+  const boundHandle = session.agent ? getAgentHandle(deps, session.agent) : undefined;
+  if (session.agent && boundHandle) {
+    bindSessionWriter(deps, session, entity.name, boundHandle.name ?? session.agent);
+    return boundHandle.name ?? session.agent;
+  }
 
   // 2) Recruit an idle coding agent already in the world.
   const recruited = recruitCodingAgent(deps, new Set());
   if (recruited) {
     grant(deps.db, recruited.id, "code.exec");
     deps.db.updateCodingSession(session.id, { agent: recruited.name, driver: "single" });
+    bindSessionWriter(deps, session, entity.name, recruited.name);
     return recruited.name;
   }
 
@@ -2395,6 +2455,7 @@ async function ensureSessionAgent(
     if (spawnedId) grant(deps.db, spawnedId as EntityId, "code.exec");
     if (gate.supervisedOnly) recordDemonstration(deps.db, eid, "agent.spawn");
     deps.db.updateCodingSession(session.id, { agent: handle.name, driver: "single" });
+    bindSessionWriter(deps, session, entity.name, handle.name);
     deps.db.createCodingEvent({
       sessionId: session.id,
       actor: entity.name,
@@ -2448,6 +2509,105 @@ function driverCommand(
   ctx.send(eid, success(`Driver set to ${want}. ${dim(CODE_DRIVERS[want] ?? "")}`));
 }
 
+/**
+ * `code stop` (alias `cancel`) — abort the bound agent's current run and stop
+ * streaming its activity. The session, its artifacts, and the agent binding all
+ * stay intact; the next `code do` reuses the same agent. The abort seam is
+ * AgentHandle.reconfigure({}) — the runtime's exposed "abort in-flight prompt,
+ * wait for idle, restart the loop with unchanged config" path.
+ */
+async function stopSessionAgent(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+): Promise<void> {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  stopCodeStreamsFor(eid); // stop forwarding the bound agent's activity first
+  const agentName = session.agent;
+  if (!agentName) {
+    ctx.send(eid, "No coding agent is bound to this session — nothing to stop.");
+    return;
+  }
+  clearCodingTask(deps, agentName); // task mode ends with the run
+  const handle = getAgentHandle(deps, agentName);
+  let aborted = false;
+  if (handle && typeof handle.reconfigure === "function") {
+    try {
+      await handle.reconfigure({});
+      aborted = true;
+    } catch {
+      // Best-effort — the agent may already be stopping; streaming is off regardless.
+    }
+    try {
+      await handle.sendAttention(
+        `${entity.name} stopped your current run on coding session ${session.id}. Stand by for a new task; do not resume the interrupted one unless re-asked.`,
+      );
+    } catch {
+      // Non-fatal — the abort already landed (or the agent is gone).
+    }
+  }
+  deps.db.createCodingEvent({
+    sessionId: session.id,
+    actor: entity.name,
+    kind: "code_agent_stopped",
+    payload: { agent: agentName, aborted },
+  });
+  const detail = !handle
+    ? `${agentName} is not running — streaming stopped.`
+    : aborted
+      ? `${agentName}'s current run was aborted; the agent stays bound and idle.`
+      : `${agentName} could not be interrupted cleanly; streaming stopped.`;
+  sendCode(
+    ctx,
+    eid,
+    [
+      success(`Stopped ${agentName} on session ${session.id}.`),
+      detail,
+      dim("Session and artifacts are intact. Type a new task or `code done` to close out."),
+    ].join("\n"),
+    {
+      event: "code_lifecycle",
+      metadata: { agent: agentName, aborted, phase: "stopped" },
+      phase: "stopped",
+      sessionId: session.id,
+      status: "active",
+      title: `Stopped ${agentName}`,
+      type: "lifecycle",
+    },
+  );
+}
+
+/**
+ * Hold the session write lock for the bound single-driver agent — mirrors the
+ * crew-dispatch writer assignment so applyPatch's write-lock/creator guard
+ * admits the agent that was just handed the task. No-op when already held.
+ */
+function bindSessionWriter(
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+  actor: string,
+  writer: string,
+): void {
+  // Store the entity-name form the write-lock guards will actually see at
+  // apply time — a config name with dashes sanitizes at login.
+  const writerName = entityNameForm(writer);
+  if (session.writer === writerName) return;
+  deps.db.updateCodingSession(session.id, { writer: writerName });
+  deps.db.createCodingEvent({
+    sessionId: session.id,
+    actor,
+    kind: "writer_changed",
+    payload: { writer: writerName, previousWriter: session.writer ?? null, reason: "agent_bind" },
+  });
+}
+
+// Roles a recruit may hold to be drafted as a session coder. Anything else
+// (market-oracle, chronicler, ...) is skipped so binding never hands code.exec
+// to an agent whose role has nothing to do with writing code.
+const CODING_ROLE_PATTERN = /cod|implement|engineer/i;
+
 function recruitCodingAgent(
   deps: CodeDeps & { db: MarinaDB },
   taken: Set<string>,
@@ -2456,9 +2616,18 @@ function recruitCodingAgent(
   for (const candidate of candidates) {
     const name = candidate.name;
     if (!name || taken.has(name.toLowerCase())) continue;
-    const agent = deps.findAgentByName?.(name);
+    // Config names may differ from the login-sanitized entity name — retry.
+    const agent = deps.findAgentByName?.(name) ?? deps.findAgentByName?.(sanitizeEntityName(name));
     if (!agent) continue;
-    return { name: agent.name, id: agent.id };
+    const role =
+      getAgentHandle(deps, name)?.getStatus().role ??
+      (candidate as { role?: string }).role ??
+      agent.properties.role;
+    if (typeof role !== "string" || !CODING_ROLE_PATTERN.test(role)) continue;
+    // Return the runtime-facing candidate name (not agent.name): downstream
+    // dispatch resolves the handle by this name; the writer lock stores the
+    // sanitized entity form separately.
+    return { name, id: agent.id };
   }
   return undefined;
 }
@@ -2491,8 +2660,11 @@ async function dispatchCodingCrew(
   // with how each one joined (recruited vs spawned).
   const sourceByName = new Map(resolved.map((m) => [m.agentName, m.source] as const));
   // The implementer holds the write lock; fall back to the first member.
-  const writer =
+  // Stored in entity-name form (login-sanitized) so the guards match the
+  // member's actual entity at apply time.
+  const writerSource =
     resolved.find((m) => m.role === "implementer")?.agentName ?? resolved[0]?.agentName;
+  const writer = writerSource ? entityNameForm(writerSource) : writerSource;
 
   const formation: CrewFormation = "swarm";
   const crewName = `code-${session.id}-${crypto.randomUUID().slice(0, 6)}`;
@@ -2657,8 +2829,10 @@ function writerCommand(
     return;
   }
   // Only the current holder or the session creator may reassign.
-  const isOwner = session.created_by === entity.name;
-  const isHolder = session.writer === entity.name;
+  // Normalized: stored names may be config-name forms that differ from the
+  // login-sanitized entity name.
+  const isOwner = sameEntityName(session.created_by, entity.name);
+  const isHolder = sameEntityName(session.writer, entity.name);
   if (session.writer && !isHolder && !isOwner) {
     ctx.send(
       eid,
@@ -2684,6 +2858,8 @@ function reassignWriter(
   reason: string,
 ): void {
   const previousWriter = session.writer ?? null;
+  // Store the entity-name form so the write-lock guards match at apply time.
+  newWriter = entityNameForm(newWriter);
   deps.db.updateCodingSession(session.id, { writer: newWriter });
   const artifact = deps.db.createCodingArtifact({
     sessionId: session.id,
@@ -5426,7 +5602,7 @@ async function applyPatch(
   if (!enforceWriteLock(ctx, eid, entity, session)) return;
   // Solo-workspace guard (only enforced when there is no crew writer): the
   // session creator owns local writes. A set writer supersedes this.
-  if (!session.writer && session.created_by !== entity.name) {
+  if (!session.writer && !sameEntityName(session.created_by, entity.name)) {
     ctx.send(eid, "Only the session creator can apply patches in this local workspace mode.");
     return;
   }
@@ -5482,6 +5658,241 @@ async function applyPatch(
       status: "applied",
       title: artifact.title,
       type: "patch",
+    },
+  );
+}
+
+/**
+ * File-mutation surface implemented by LocalWorkspace.editFile/writeFile.
+ * Typed locally (and probed at runtime) so `code edit`/`code write` degrade
+ * with a clear message on a workspace runtime that predates the methods.
+ */
+interface WorkspaceFileEdits {
+  editFile(
+    path: string,
+    oldText: string,
+    newText: string,
+    opts?: { replaceAll?: boolean },
+  ): Promise<{ ok: boolean; output: string; occurrences: number }>;
+  writeFile(
+    path: string,
+    content: string,
+  ): Promise<{ ok: boolean; output: string; created: boolean }>;
+}
+
+const EDIT_USAGE =
+  "Usage: code edit <path>[ all]\\n<<<<<<< OLD\\n{old text}\\n=======\\n{new text}\\n>>>>>>> NEW";
+const WRITE_USAGE = "Usage: code write <path>\\n{content}";
+
+function parseEditRequest(
+  raw: string,
+):
+  | { ok: true; path: string; oldText: string; newText: string; replaceAll: boolean }
+  | { ok: false; error: string } {
+  const newlineIdx = raw.indexOf("\n");
+  if (newlineIdx === -1) return { ok: false, error: EDIT_USAGE };
+  const header = raw.slice(0, newlineIdx).trim();
+  const replaceAll = /\s+all$/i.test(header);
+  const path = replaceAll ? header.replace(/\s+all$/i, "").trim() : header;
+  if (!path) return { ok: false, error: EDIT_USAGE };
+  const body = raw.slice(newlineIdx + 1);
+  const match = body.match(/^<{7} OLD\r?\n([\s\S]*?)\r?\n={7}\r?\n([\s\S]*?)\r?\n>{7} NEW\s*$/);
+  if (!match) return { ok: false, error: EDIT_USAGE };
+  return { ok: true, path, oldText: match[1] ?? "", newText: match[2] ?? "", replaceAll };
+}
+
+/**
+ * Shared writer gate for direct file mutations — identical to applyPatch's:
+ * a set crew writer must be the actor; with no writer, only the session
+ * creator may write in this local workspace mode.
+ */
+function enforceFileWriteGuard(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  session: CodingSessionRow,
+  verb: string,
+): boolean {
+  if (!enforceWriteLock(ctx, eid, entity, session)) return false;
+  if (!session.writer && !sameEntityName(session.created_by, entity.name)) {
+    ctx.send(eid, `Only the session creator can ${verb} files in this local workspace mode.`);
+    return false;
+  }
+  return true;
+}
+
+async function editWorkspaceFile(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  raw: string,
+): Promise<void> {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  if (!enforceFileWriteGuard(ctx, eid, entity, session, "edit")) return;
+  const parsed = parseEditRequest(raw);
+  if (!parsed.ok) {
+    ctx.send(eid, parsed.error);
+    return;
+  }
+  const workspace = workspaceForSession(deps, session) as WorkspaceRuntime &
+    Partial<WorkspaceFileEdits>;
+  if (typeof workspace.editFile !== "function") {
+    ctx.send(eid, "This workspace runtime does not support code edit.");
+    return;
+  }
+  const result = await workspace.editFile(parsed.path, parsed.oldText, parsed.newText, {
+    replaceAll: parsed.replaceAll,
+  });
+  if (!result.ok) {
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "file_edit_failed",
+      payload: { path: parsed.path, output: result.output, occurrences: result.occurrences },
+    });
+    ctx.send(
+      eid,
+      [fmtError(`Edit did not apply to ${parsed.path}.`), result.output].filter(Boolean).join("\n"),
+    );
+    return;
+  }
+  // Audit trail: durable artifact + session event, same as an applied patch.
+  const artifact = deps.db.createCodingArtifact({
+    sessionId: session.id,
+    kind: "file_edit",
+    title: `Edit ${parsed.path}`,
+    status: "applied",
+    contentText: [
+      `--- ${parsed.path} (old)`,
+      parsed.oldText,
+      `+++ ${parsed.path} (new)`,
+      parsed.newText,
+    ].join("\n"),
+    metadata: {
+      occurrences: result.occurrences,
+      output: result.output,
+      path: parsed.path,
+      replaceAll: parsed.replaceAll,
+    },
+    createdBy: entity.name,
+  });
+  deps.db.createCodingEvent({
+    sessionId: session.id,
+    actor: entity.name,
+    kind: "file_edited",
+    payload: {
+      id: artifact.id,
+      occurrences: result.occurrences,
+      path: parsed.path,
+      replaceAll: parsed.replaceAll,
+    },
+  });
+  updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+  sendCode(
+    ctx,
+    eid,
+    [
+      success(
+        `Edited ${parsed.path} (${result.occurrences} occurrence${result.occurrences === 1 ? "" : "s"}).`,
+      ),
+      result.output,
+      dim(`Review: code diff ${parsed.path}`),
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    {
+      artifactId: artifact.id,
+      artifactKind: artifact.kind,
+      commands: [`code diff ${parsed.path}`, `code show ${artifact.id}`],
+      content: artifact.content_text,
+      event: "file_edited",
+      paths: [parsed.path],
+      sessionId: session.id,
+      status: artifact.status,
+      title: artifact.title,
+      type: "file",
+      workspace: session.workspace_root,
+    },
+  );
+}
+
+async function writeWorkspaceFile(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  raw: string,
+): Promise<void> {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  if (!enforceFileWriteGuard(ctx, eid, entity, session, "write")) return;
+  const newlineIdx = raw.indexOf("\n");
+  const path = (newlineIdx === -1 ? raw : raw.slice(0, newlineIdx)).trim();
+  if (newlineIdx === -1 || !path) {
+    ctx.send(eid, WRITE_USAGE);
+    return;
+  }
+  const content = raw.slice(newlineIdx + 1);
+  const workspace = workspaceForSession(deps, session) as WorkspaceRuntime &
+    Partial<WorkspaceFileEdits>;
+  if (typeof workspace.writeFile !== "function") {
+    ctx.send(eid, "This workspace runtime does not support code write.");
+    return;
+  }
+  const result = await workspace.writeFile(path, content);
+  if (!result.ok) {
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "file_write_failed",
+      payload: { path, output: result.output },
+    });
+    ctx.send(
+      eid,
+      [fmtError(`Write failed for ${path}.`), result.output].filter(Boolean).join("\n"),
+    );
+    return;
+  }
+  const artifact = deps.db.createCodingArtifact({
+    sessionId: session.id,
+    kind: "file_write",
+    title: `${result.created ? "Create" : "Overwrite"} ${path}`,
+    status: "applied",
+    contentText: content,
+    metadata: { created: result.created, output: result.output, path },
+    createdBy: entity.name,
+  });
+  deps.db.createCodingEvent({
+    sessionId: session.id,
+    actor: entity.name,
+    kind: "file_written",
+    payload: { id: artifact.id, created: result.created, path },
+  });
+  updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+  sendCode(
+    ctx,
+    eid,
+    [
+      success(`${result.created ? "Created" : "Overwrote"} ${path}.`),
+      result.output,
+      dim(`Review: code read ${path}`),
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    {
+      artifactId: artifact.id,
+      artifactKind: artifact.kind,
+      commands: [`code read ${path}`, `code show ${artifact.id}`],
+      content: artifact.content_text,
+      event: "file_written",
+      paths: [path],
+      sessionId: session.id,
+      status: artifact.status,
+      title: artifact.title,
+      type: "file",
+      workspace: session.workspace_root,
     },
   );
 }
@@ -5577,7 +5988,7 @@ async function revertCheckpoint(
   if (!session) return;
   // Reverting a checkpoint writes the workspace — same single-writer gate.
   if (!enforceWriteLock(ctx, eid, entity, session)) return;
-  if (!session.writer && session.created_by !== entity.name) {
+  if (!session.writer && !sameEntityName(session.created_by, entity.name)) {
     ctx.send(eid, "Only the session creator can revert checkpoints in this local workspace mode.");
     return;
   }
@@ -6386,7 +6797,7 @@ function enforceWriteLock(
   entity: Entity,
   session: CodingSessionRow,
 ): boolean {
-  if (!session.writer || session.writer === entity.name) return true;
+  if (!session.writer || sameEntityName(session.writer, entity.name)) return true;
   ctx.send(
     eid,
     `${session.writer} holds the write lock for this session — request a handoff (code handoff <notes> to ${entity.name}) or have the owner reassign (code writer ${entity.name}).`,
@@ -6550,21 +6961,57 @@ function sanitizeAgentName(value: string): string {
     .slice(0, 40);
 }
 
+/**
+ * Identity comparison between a stored name (agent config name, session
+ * writer/creator) and a live entity's name. Config names may contain dashes
+ * ("code-coder-code_5") while login sanitizes the entity name to
+ * "codecodercode_5" — normalize BOTH sides through the login sanitizer and
+ * compare case-insensitively (entity names are unique case-insensitively).
+ */
+function sameEntityName(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  return sanitizeEntityName(a).toLowerCase() === sanitizeEntityName(b).toLowerCase();
+}
+
+/**
+ * Normalize a name to the form the login path will actually give its entity,
+ * for storing in identity fields (session.writer). Falls back to the input
+ * when sanitization would empty it — better a comparable-but-odd name than "".
+ */
+function entityNameForm(name: string): string {
+  return sanitizeEntityName(name) || name;
+}
+
+/**
+ * Runtime handle lookup tolerant of config-name vs sanitized-entity-name drift
+ * for recruited/legacy agents (spawned agents now use sanitizer-fixed-point
+ * names, so the raw lookup hits first).
+ */
+function getAgentHandle(deps: CodeDeps, name: string): AgentHandle | undefined {
+  return deps.agentRuntime?.get?.(name) ?? deps.agentRuntime?.get?.(sanitizeEntityName(name));
+}
+
 function uniqueSpawnAgentName(
   liveAgents: { name: string }[],
   role: string,
   sessionId: string,
 ): string {
   const live = new Set(liveAgents.map((agent) => agent.name.toLowerCase()));
-  const base =
-    sanitizeAgentName(`code-${role}-${sessionId.replace(/^code_session_?/, "").slice(0, 6)}`) ||
-    "code-agent";
+  // Spawned names must be FIXED POINTS of the login sanitizer (alphanumeric +
+  // underscore, ≤20 chars) so config name === entity name — otherwise every
+  // identity comparison (writer lock, self-dispatch guard) silently misses.
+  const session = sessionId.replace(/^code_session_?/, "").slice(0, 6);
+  const raw =
+    `code_${role}_${session}`.replace(/[^a-zA-Z0-9_]+/g, "_").replace(/^_+|_+$/g, "") ||
+    "code_agent";
+  const fit = (suffix: string) => sanitizeEntityName(raw.slice(0, 20 - suffix.length) + suffix);
+  const base = sanitizeEntityName(raw);
   if (!live.has(base.toLowerCase())) return base;
   for (let i = 2; i < 50; i++) {
-    const candidate = `${base}-${i}`;
+    const candidate = fit(`_${i}`);
     if (!live.has(candidate.toLowerCase())) return candidate;
   }
-  return `${base}-${Date.now().toString(36).slice(-4)}`;
+  return fit(`_${Date.now().toString(36).slice(-4)}`);
 }
 
 function bindSpawnedAgentEntity(

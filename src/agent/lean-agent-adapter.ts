@@ -545,6 +545,15 @@ export class LeanAgentAdapter implements AgentHandle {
   private cachedNotes = "";
   private notesCacheAge = 0;
 
+  // ─── Coding Task Mode ──────────────────────────────────────────────
+  // Set via AgentHandle.setActiveCodingTask when the code-session driver
+  // assigns a task to this (session-bound) agent; cleared on `code stop`
+  // or when the summary-artifact completion heuristic fires. While set,
+  // buildContinuationPrompt suppresses the low-value cognitive sections
+  // and restates the task every cycle. NOT crewResponder: the loop must
+  // keep cycling without fresh perceptions so mid-task work continues.
+  private activeCodingTask: string | null = null;
+
   // ─── Perception Dedup ──────────────────────────────────────────────
   private recentPerceptionHashes = new Set<string>();
 
@@ -1535,8 +1544,10 @@ export class LeanAgentAdapter implements AgentHandle {
     // ── Idle consolidation: replace normal prompt with memory work ──
     // Skipped for crew-responder specialists — they have no autonomous
     // cognitive life between messages, so consolidation just burns tokens
-    // on memory work the coordinator never asked for.
-    if (this.idleCycles >= 3 && !this.config.crewResponder) {
+    // on memory work the coordinator never asked for. Also skipped while a
+    // coding task is active — a bound coder that goes quiet needs the task
+    // restated, not a detour into memory housekeeping.
+    if (this.idleCycles >= 3 && !this.config.crewResponder && !this.activeCodingTask) {
       parts.push(
         "[Quiet — nothing needs your attention]\n\n" +
           "Take at most one consolidation action, and only if it improves future decisions: resolve a known contradiction, link evidence, evolve a stale belief, or store a genuinely reusable procedure. Do not create a note merely to record quiet, repeat orientation calls, or broadcast status. If memory is already sharp, run one `brief` for new work and end the turn.",
@@ -1569,6 +1580,20 @@ export class LeanAgentAdapter implements AgentHandle {
       if (topEvents.some((p) => p.shouldRespond)) {
         parts.push("Events marked [!] await your response.");
       }
+    }
+
+    // ── 1b. Active coding task (EVERY cycle while assigned — no dedup) ──
+    // A session-bound coder is in task mode: the cognitive-loop sections
+    // (novelty, memory health, learning signal, reflection, idle
+    // consolidation) are suppressed below so they can't drown the task,
+    // and the task itself is restated each cycle as the mandate.
+    if (this.activeCodingTask) {
+      parts.push(
+        `[Active Coding Task]\n${this.activeCodingTask}\n` +
+          "Work ONLY through marina_code actions (read/search/edit/write/patch/verify). " +
+          "Finish with a marina_code summary citing changed paths and passing checks. " +
+          "Do not use memory/pool/focus tools until this task is done.",
+      );
     }
 
     // ── 2. Social context (every 5th cycle, deduped on content) ──
@@ -1692,7 +1717,9 @@ export class LeanAgentAdapter implements AgentHandle {
     }
 
     // ── 3. Novelty suggestions (every 5th cycle) ──
-    if (cycle % 5 === 0) {
+    // Coding-task mode: suppressed — exploration prompts pull a bound coder
+    // off the assigned work.
+    if (cycle % 5 === 0 && !this.activeCodingTask) {
       try {
         const suggestions = await this.platformMemory.getNoveltySuggestions();
         if (suggestions.length > 0) {
@@ -1761,8 +1788,9 @@ export class LeanAgentAdapter implements AgentHandle {
     // orient text back at it wastes ~100-150 tokens. Also skips the DB
     // round-trip, not just the output.
     // Crew-responder mode: suppressed — specialists don't need cognitive-state
-    // awareness, they need to answer the coordinator and shut up.
-    if (cycle % 20 === 0 && !this.config.crewResponder) {
+    // awareness, they need to answer the coordinator and shut up. Same for a
+    // bound coder mid-task.
+    if (cycle % 20 === 0 && !this.config.crewResponder && !this.activeCodingTask) {
       const recentSelfOrient = this.actionHistory
         .getActions(Date.now() - 5 * 60 * 1000)
         .some(
@@ -1790,8 +1818,9 @@ export class LeanAgentAdapter implements AgentHandle {
     // ── 6. Learning signal (every 15th cycle) ──
     // Crew-responder mode: suppressed — the learning signal exists for
     // self-driven agents calibrating their own action policy. A thin
-    // specialist's actions are dictated by the coordinator's request.
-    if (cycle % 15 === 0 && !this.config.crewResponder) {
+    // specialist's actions are dictated by the coordinator's request — and a
+    // bound coder's by the assigned task.
+    if (cycle % 15 === 0 && !this.config.crewResponder && !this.activeCodingTask) {
       try {
         const summary = this.actionHistory.createSummary();
         if (summary && summary.totalActions > 0) {
@@ -1825,10 +1854,12 @@ export class LeanAgentAdapter implements AgentHandle {
     // Crew-responder mode: suppressed — reflection is for accumulating
     // generational memory across long-running sessions; thin specialists
     // don't accumulate, they respond. The coordinator owns reflection.
+    // Coding-task mode: suppressed — reflection waits until the task is done.
     if (
       cycle - this.lastReflectionCycle >= 75 &&
       this.notesSinceReflection >= 3 &&
-      !this.config.crewResponder
+      !this.config.crewResponder &&
+      !this.activeCodingTask
     ) {
       const reflectionContent = `${this.notesSinceReflection} new notes since your last reflection. Run the three-phase consolidation:
 1. **Generate.** What's your working hypothesis for the current focus? State it in one sentence — what do you expect to happen / be true / work?
@@ -2343,10 +2374,22 @@ The goal is a smaller, sharper memory — not more notes.`;
       content: `ATTENTION:\n\n${message}\n\nIntegrate this into your current plan.`,
       timestamp: Date.now(),
     });
+    // Instant pickup: steer() only queues — an idle loop would otherwise
+    // sleep out its full cycle delay (up to ~15s) before noticing an
+    // assigned task. Wake the cycle-delay sleep so the steered message is
+    // handled now. Scope: only attention/assign delivery wakes; rate-limit
+    // backoffs (LLM-error, loop-exception, streaming guard) intentionally
+    // stay on the non-wakeable sleep().
+    this.cycleWaiter.wake();
   }
 
   setFocus(description: string): void {
     this.updateFocus({ description, startedAt: Date.now() });
+  }
+
+  /** See AgentHandle.setActiveCodingTask — task-mode toggle for a bound coder. */
+  setActiveCodingTask(task: string | null): void {
+    this.activeCodingTask = task?.trim() ? task.trim() : null;
   }
 
   /**

@@ -6,6 +6,7 @@
  * Marina Connect — single-command agent bridge
  *
  * Usage:
+ *   marina connect <name> [...]                                  # via the dispatcher bin
  *   bun run scripts/connect.ts <name>                            # interactive REPL
  *   bun run scripts/connect.ts <name> -c "look"                  # one-shot
  *   echo "look\nsay hello" | bun run scripts/connect.ts <name>   # pipe mode
@@ -18,8 +19,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { MarinaAgent } from "../src/sdk/client";
 import { formatPerception } from "../src/net/formatter";
+import { MarinaAgent } from "../src/sdk/client";
 
 const URL = process.env.MARINA_URL ?? "ws://localhost:3300";
 
@@ -37,7 +38,7 @@ if (dashC !== -1) {
 }
 
 if (!name) {
-  console.error("Usage: bun run scripts/connect.ts <name> [-c \"command\"]");
+  console.error('Usage: marina connect <name> [-c "command"]');
   process.exit(1);
 }
 
@@ -89,7 +90,7 @@ agent.onPerception((p) => {
 const cachedToken = loadCachedToken(name);
 
 try {
-  let session;
+  let session: Awaited<ReturnType<typeof agent.connect>>;
   if (cachedToken) {
     try {
       session = await agent.reconnect(cachedToken);

@@ -43,6 +43,8 @@ export interface KnownProperties extends Record<string, unknown> {
   active_modal?: string;
   code_profile?: string;
   coding_session_id?: string;
+  /** Active task text for a session-bound coding agent — set on assign, cleared on stop/completion. */
+  coding_task?: string;
   fragment?: string;
 
   // ─── Social ─────────────────────────────────────────────────────────────────

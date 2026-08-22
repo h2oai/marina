@@ -27,6 +27,7 @@ import { InterruptibleWaiter } from "../src/agent/interruptible-waiter";
 import {
   classifyModelResolution,
   evolutionControlState,
+  LeanAgentAdapter,
   neutralizeUnusedReasoning,
   normalizeMarinaBaseUrl,
   resolveModel,
@@ -1742,6 +1743,32 @@ describe("InterruptibleWaiter", () => {
     await w.sleep(40);
     const elapsed = performance.now() - start;
     expect(elapsed).toBeGreaterThanOrEqual(35);
+  });
+});
+
+// ─── sendAttention instant pickup ────────────────────────────────────────────
+
+describe("sendAttention instant pickup", () => {
+  it("attention delivery wakes a parked cycle-delay sleep instead of waiting it out", async () => {
+    // The autonomous loop parks in cycleWaiter.sleep(computeDynamicDelay())
+    // between cycles — up to ~15s when idle. steer() only queues, so before
+    // the fix an assigned coding task sat unnoticed until the sleep expired.
+    // Constructor is I/O-free (MarinaClient connects only in start()), so we
+    // can arm the loop's real waiter and prove sendAttention cuts it short.
+    const adapter = new LeanAgentAdapter(
+      { name: "attention-wake-test" },
+      "ws://127.0.0.1:3300",
+      null,
+    );
+    const waiter = (adapter as unknown as { cycleWaiter: InterruptibleWaiter }).cycleWaiter;
+    const start = performance.now();
+    const parked = waiter.sleep(5000);
+    expect(waiter.isArmed()).toBe(true);
+    await adapter.sendAttention("New coding task assigned: fix the failing test in session s1");
+    await parked;
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(500);
+    expect(waiter.isArmed()).toBe(false);
   });
 });
 

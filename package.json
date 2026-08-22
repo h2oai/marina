@@ -27,8 +27,19 @@
     "model-api"
   ],
   "bin": {
-    "marina": "scripts/connect.ts"
+    "marina": "scripts/marina.ts"
   },
+  "files": [
+    "src",
+    "worlds",
+    "rooms",
+    "scripts",
+    "benchmarks/reference-scores.ts",
+    "dist/dashboard",
+    ".env.example",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "bun": ">=1.1.0"
   },
@@ -37,12 +48,13 @@
     "code": "bun run scripts/code.ts",
     "dev": "bun run src/main.ts",
     "build": "bun build src/main.ts --outdir dist --target bun",
-    "test": "bun test --path-ignore-patterns '**/dashboard/**'",
+    "test": "bun test --path-ignore-patterns '**/dashboard/**' --path-ignore-patterns '**/examples/coding-agent-demo/**'",
     "typecheck": "tsc --noEmit",
     "lint": "biome check src/ test/ dashboard/src/",
     "format": "biome format --write src/ test/ dashboard/src/",
     "dashboard:dev": "cd dashboard && bunx vite",
     "dashboard:build": "cd dashboard && bun install && bunx vite build",
+    "prepack": "bun run dashboard:build",
     "usecase-ui:dev": "cd examples/usecase-ui && bun run dev",
     "usecase-ui:build": "cd examples/usecase-ui && bun run build",
     "clean": "rm -f marina.db marina.db-shm marina.db-wal data/marina.db && rm -rf data/scratch/*",

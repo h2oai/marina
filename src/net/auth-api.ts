@@ -16,6 +16,7 @@
 
 import type { MarinaAuthProvider } from "../auth/better-auth-provider";
 import type { Engine } from "../engine/engine";
+import { sanitizeEntityName } from "../engine/entity-name";
 import type { MarinaDB } from "../persistence/database";
 import type { Connection, EntityId, Perception } from "../types";
 import { corsHeaders } from "./cors";
@@ -26,7 +27,8 @@ function json(body: unknown, status: number, origin: string | null): Response {
   return Response.json(body, { status, headers: corsHeaders(origin) });
 }
 
-const sanitizeHandle = (s: string): string => s.replace(/[^a-zA-Z0-9_]/g, "").slice(0, 20);
+// Handles become entity names — share the login path's canonical sanitizer.
+const sanitizeHandle = sanitizeEntityName;
 
 /**
  * Route an /api/auth* request. Returns a Response, or undefined to let the
