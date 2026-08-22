@@ -28,3 +28,4 @@ artifacts/flywheel/
 *.pem
 *.key
 *.p12
+marina-desktop/artifacts/
