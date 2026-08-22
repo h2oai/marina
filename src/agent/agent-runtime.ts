@@ -17,7 +17,13 @@ import {
 } from "../net/model-discovery";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
-import type { AgentConfig, AgentHandle, AgentStatus, AgentSupports } from "./agent-types";
+import type {
+  AgentConfig,
+  AgentEvent,
+  AgentHandle,
+  AgentStatus,
+  AgentSupports,
+} from "./agent-types";
 import { AgentExecutionTracer } from "./execution-trace";
 import { classifyModelResolution, LeanAgentAdapter } from "./lean-agent-adapter";
 import { detectModelLimits } from "./model-probe";
@@ -141,6 +147,100 @@ const CREW_RESPONDER_ROLES = new Set<string>([
 export function inferCrewResponder(role: string | null | undefined): boolean {
   if (!role) return false;
   return CREW_RESPONDER_ROLES.has(role);
+}
+
+/**
+ * Relay one agent's adapter events as engine events so dashboard / MCP /
+ * gateway peers can observe agent cognitive lifecycle: errors, turn
+ * boundaries, streaming thought, and state transitions. The tracer stamps
+ * causal identity (runId/traceId/spanId/parentSpanId) onto turn and tool
+ * events; a propagated model-request trace parents the turn under the
+ * originating request span. Exported so the perception → turn trace chain is
+ * testable without spawning a live runtime.
+ */
+export function createAgentEventRelay(
+  name: string,
+  onEvent: (event: EngineEvent) => void,
+  executionTrace = new AgentExecutionTracer(),
+): (event: AgentEvent) => void {
+  return (event) => {
+    const now = Date.now();
+    switch (event.type) {
+      case "status_change":
+        onEvent({
+          type: "agent_state_change",
+          name,
+          state: event.status.state,
+          timestamp: now,
+        });
+        break;
+      case "error":
+        onEvent({
+          type: "agent_error",
+          name,
+          error: event.error,
+          timestamp: now,
+        });
+        break;
+      case "tool_call":
+        onEvent({
+          type: "agent_tool_call",
+          name,
+          toolName: event.toolName,
+          ...executionTrace.trace("tool_call", event.toolName),
+          risk: event.risk,
+          trustSources: event.trustSources,
+          timestamp: now,
+        });
+        break;
+      case "tool_result":
+        onEvent({
+          type: "agent_tool_result",
+          name,
+          toolName: event.toolName,
+          ...executionTrace.trace("tool_result", event.toolName),
+          isError: event.isError,
+          timestamp: now,
+        });
+        break;
+      case "turn_start":
+        onEvent({
+          type: "agent_turn_start",
+          name,
+          ...executionTrace.trace("turn_start", undefined, event.traceParent),
+          timestamp: now,
+        });
+        break;
+      case "turn_end":
+        onEvent({
+          type: "agent_turn_end",
+          name,
+          ...executionTrace.trace("turn_end"),
+          hadToolCalls: event.hadToolCalls,
+          toolCount: event.toolCount,
+          timestamp: now,
+        });
+        break;
+      case "text_delta":
+        onEvent({
+          type: "agent_text_delta",
+          name,
+          delta: event.delta,
+          ...executionTrace.trace("text_delta"),
+          timestamp: now,
+        });
+        break;
+      case "thinking_delta":
+        onEvent({
+          type: "agent_thinking_delta",
+          name,
+          delta: event.delta,
+          ...executionTrace.trace("thinking_delta"),
+          timestamp: now,
+        });
+        break;
+    }
+  };
 }
 
 export class AgentRuntime {
@@ -394,93 +494,13 @@ export class AgentRuntime {
         INTERNAL_MODEL_TOKEN,
       );
 
-      // Relay per-agent adapter events as engine events so dashboard / MCP /
-      // gateway peers can observe agent cognitive lifecycle: errors, turn
-      // boundaries, streaming thought, and state transitions. Registered
-      // BEFORE start() so the initial connected/autonomous status changes
-      // (start() emits "connected" synchronously and "autonomous" from the
-      // background discovery turn) are observed rather than fired into the void.
+      // Relay per-agent adapter events as engine events (see
+      // createAgentEventRelay). Registered BEFORE start() so the initial
+      // connected/autonomous status changes (start() emits "connected"
+      // synchronously and "autonomous" from the background discovery turn)
+      // are observed rather than fired into the void.
       if (this.onEvent) {
-        const onEvent = this.onEvent;
-        const executionTrace = new AgentExecutionTracer();
-        const unsub = adapter.subscribe((event) => {
-          const now = Date.now();
-          switch (event.type) {
-            case "status_change":
-              onEvent({
-                type: "agent_state_change",
-                name: config.name,
-                state: event.status.state,
-                timestamp: now,
-              });
-              break;
-            case "error":
-              onEvent({
-                type: "agent_error",
-                name: config.name,
-                error: event.error,
-                timestamp: now,
-              });
-              break;
-            case "tool_call":
-              onEvent({
-                type: "agent_tool_call",
-                name: config.name,
-                toolName: event.toolName,
-                ...executionTrace.trace("tool_call", event.toolName),
-                risk: event.risk,
-                trustSources: event.trustSources,
-                timestamp: now,
-              });
-              break;
-            case "tool_result":
-              onEvent({
-                type: "agent_tool_result",
-                name: config.name,
-                toolName: event.toolName,
-                ...executionTrace.trace("tool_result", event.toolName),
-                isError: event.isError,
-                timestamp: now,
-              });
-              break;
-            case "turn_start":
-              onEvent({
-                type: "agent_turn_start",
-                name: config.name,
-                ...executionTrace.trace("turn_start", undefined, event.traceParent),
-                timestamp: now,
-              });
-              break;
-            case "turn_end":
-              onEvent({
-                type: "agent_turn_end",
-                name: config.name,
-                ...executionTrace.trace("turn_end"),
-                hadToolCalls: event.hadToolCalls,
-                toolCount: event.toolCount,
-                timestamp: now,
-              });
-              break;
-            case "text_delta":
-              onEvent({
-                type: "agent_text_delta",
-                name: config.name,
-                delta: event.delta,
-                ...executionTrace.trace("text_delta"),
-                timestamp: now,
-              });
-              break;
-            case "thinking_delta":
-              onEvent({
-                type: "agent_thinking_delta",
-                name: config.name,
-                delta: event.delta,
-                ...executionTrace.trace("thinking_delta"),
-                timestamp: now,
-              });
-              break;
-          }
-        });
+        const unsub = adapter.subscribe(createAgentEventRelay(config.name, this.onEvent));
         this.agentUnsubscribers.set(config.name, unsub);
       }
 

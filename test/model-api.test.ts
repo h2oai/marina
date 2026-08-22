@@ -452,6 +452,8 @@ describe("Model API", () => {
     });
     const resp = await handleModelApi(url, method, req, engine);
     expect(resp!.headers.get("Content-Type")).toBe("application/x-ndjson");
+    const requestId = resp!.headers.get("x-request-id");
+    expect(requestId).toStartWith("req-");
 
     const text = await collectStream(resp!);
     const lines = text.split("\n").filter((l) => l.length > 0);
@@ -467,6 +469,15 @@ describe("Model API", () => {
 
     const end = JSON.parse(lines[2]!);
     expect(end.done).toBe(true);
+
+    // The streaming Ollama path returns the traced request identity, same as
+    // the non-streaming routes — the id for `trace show <id>`.
+    const lifecycle = engine
+      .getEventLog()
+      .filter((event) => event.type === "model_request_lifecycle");
+    expect(lifecycle.map((event) => event.phase)).toEqual(["received", "routed", "completed"]);
+    expect(lifecycle[0]?.traceId).toBe(requestId!);
+    expect(lifecycle[0]?.requestId).toBe(requestId!);
   });
 
   it("streaming: fallback when agent sends single model_response (Phase 1 compat)", async () => {
@@ -734,6 +745,83 @@ describe("Model API", () => {
     });
     expect(routed && "routeReason" in routed ? routed.routeReason : "").toContain(
       "fell back to least-busy",
+    );
+  });
+
+  it("load balancing: adaptive applies pareto advice from observed trace cohorts", async () => {
+    engine.processCommand(conn1.entity!, "channel join model");
+    const conn2 = new MockConnection("c2");
+    engine.addConnection(conn2);
+    engine.spawnEntity("c2", "Agent2");
+    engine.processCommand(conn2.entity!, "channel join model");
+
+    // Seed two route cohorts into the durable event log (selectRouteTarget
+    // reads engine.db.getRecentTraceEvents, which engine.logEvent feeds).
+    // Agent2's cohort is nondominated on both terminal success and p50
+    // latency, so shadow advice must be pareto with Agent2 as sole candidate.
+    const seedTrace = (requestId: string, target: string, durationMs: number, failed = false) => {
+      const trace = { runId: requestId, traceId: requestId, spanId: `span-${requestId}` };
+      const startedAt = Date.now() - 60_000;
+      engine.logEvent({
+        type: "model_request_lifecycle",
+        phase: "received",
+        requestId,
+        ...trace,
+        model: "marina",
+        timestamp: startedAt,
+      });
+      engine.logEvent({
+        type: "model_request_lifecycle",
+        phase: failed ? "failed" : "completed",
+        requestId,
+        ...trace,
+        model: "marina",
+        target,
+        durationMs,
+        timestamp: startedAt + durationMs,
+      });
+    };
+    seedTrace("req-slow-01", conn1.entity!, 900);
+    seedTrace("req-slow-02", conn1.entity!, 900, true);
+    seedTrace("req-fast-01", conn2.entity!, 40);
+    seedTrace("req-fast-02", conn2.entity!, 40);
+
+    const targets: string[] = [];
+    cm.onMessage((channelId, senderId, _senderName, content) => {
+      if (senderId !== "__model_api__") return;
+      const parsed = JSON.parse(content);
+      if (parsed.type !== "model_request") return;
+      targets.push(parsed.target);
+      cm.send(
+        channelId,
+        parsed.target,
+        "Agent",
+        JSON.stringify({ type: "model_response", id: parsed.id, content: "ok" }),
+      );
+    });
+
+    const [url, method, req] = makeRequest(
+      "/v1/chat/completions",
+      "POST",
+      { model: "marina", messages: [{ role: "user", content: "route me adaptively" }] },
+      { "X-Load-Balance": "adaptive" },
+    );
+    const resp = await handleModelApi(url, method, req, engine);
+    expect(resp?.status).toBe(200);
+
+    // The dominant cohort's agent got the request, not the round-robin pick.
+    expect(targets).toEqual([conn2.entity!]);
+    const routed = engine
+      .getEventLog()
+      .filter((event) => event.type === "model_request_lifecycle" && event.phase === "routed")
+      .at(-1);
+    expect(routed).toMatchObject({
+      routeStrategy: "adaptive",
+      routeAdviceMode: "pareto",
+      target: conn2.entity!,
+    });
+    expect(routed && "routeReason" in routed ? routed.routeReason : "").toContain(
+      "pareto candidate selected from the already-eligible set",
     );
   });
 

@@ -5,7 +5,13 @@ import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, RoomContext } from "../../types";
 import { analyzeTraces, type TraceAggregate } from "../trace-analytics";
-import { buildTraceDataset, compareTraceCohorts, type TraceWithJudgments } from "../trace-dataset";
+import {
+  buildTraceDataset,
+  compareTraceCohorts,
+  replayTraceDataset,
+  type TraceEvaluationDataset,
+  type TraceWithJudgments,
+} from "../trace-dataset";
 import { evaluateTrace } from "../trace-evaluation";
 import { projectTraces, type TraceSpanView, type TraceView } from "../trace-projection";
 import { adviseTraceRouting } from "../trace-routing-advice";
@@ -15,6 +21,7 @@ const HELP = `Inspect recent execution traces (read-only).
   trace stats [limit]   — observed model/tool mechanics (maximum 100 traces)
   trace compare <models|routes> [limit] — descriptive cohorts, no winner inference
   trace dataset [limit] — replayable structural evaluation cases
+  trace dataset verify [limit] — replay an exported dataset copy, report schema + drift
   trace advise <models|routes> [limit] — read-only shadow routing advice
   trace show <id>       — causal request/turn/tool spans
   trace eval <id>       — objective checks with evidence span IDs
@@ -58,14 +65,17 @@ export function traceCommand(deps: {
       }
 
       if (sub === "compare" || sub === "dataset" || sub === "advise") {
-        const rawLimit = sub === "dataset" ? input.tokens[1] : input.tokens[2];
+        const verify = sub === "dataset" && input.tokens[1]?.toLowerCase() === "verify";
+        const rawLimit =
+          sub === "dataset" ? (verify ? input.tokens[2] : input.tokens[1]) : input.tokens[2];
         const limit = Math.max(1, Math.min(Number(rawLimit) || 100, 100));
         const loaded = load(undefined, Math.min(limit * 200, 5000));
         const evidence: TraceWithJudgments[] = loaded.traces.slice(0, limit).map((trace) => ({
           ...trace,
           judgments: deps.db?.getTraceJudgments(trace.traceId) ?? [],
         }));
-        if (sub === "dataset") sendDataset(ctx, input.entity, evidence, loaded.truncated);
+        if (verify) sendDatasetVerify(ctx, input.entity, evidence, loaded.truncated);
+        else if (sub === "dataset") sendDataset(ctx, input.entity, evidence, loaded.truncated);
         else {
           const dimension = input.tokens[1];
           if (dimension !== "models" && dimension !== "routes") {
@@ -141,6 +151,42 @@ function sendAdvice(
   ctx.send(entityId, lines.join("\n"));
 }
 
+function sendDatasetVerify(
+  ctx: RoomContext,
+  entityId: Parameters<RoomContext["send"]>[0],
+  traces: TraceWithJudgments[],
+  truncated: boolean,
+): void {
+  // Round-trip the export through JSON so the verified object is exactly what
+  // an external consumer of `format=eval-json` holds, then replay the
+  // objective evaluators from the exported spans alone. Zero drift proves the
+  // dataset is self-contained: `marina.execution.v1` recomputes identically
+  // outside the process that produced it.
+  const dataset = JSON.parse(JSON.stringify(buildTraceDataset(traces))) as TraceEvaluationDataset;
+  const schemaOk =
+    dataset.schema === "marina.trace.dataset.v1" &&
+    typeof dataset.generatedAt === "number" &&
+    Array.isArray(dataset.cases);
+  const replayed = schemaOk ? replayTraceDataset(dataset) : [];
+  const drifted = replayed.filter(
+    (item, index) =>
+      JSON.stringify(item.evaluation) !== JSON.stringify(dataset.cases[index]?.evaluation),
+  ).length;
+  const judgments = dataset.cases.reduce((sum, item) => sum + item.judgments.length, 0);
+  const lines = [
+    header("Evaluation Dataset Replay"),
+    separator(),
+    `  schema: ${schemaOk ? "valid marina.trace.dataset.v1" : "INVALID"}`,
+    `  cases: ${dataset.cases.length} · judgments: ${judgments}`,
+    `  replayed evaluations: ${replayed.length} · drift from export: ${drifted}`,
+    drifted === 0 && schemaOk
+      ? "  Objective checks recompute identically from exported spans; the export is replayable."
+      : "  Replay diverged from the export — re-export before citing these evaluations.",
+  ];
+  if (truncated) lines.push("  [retained event window truncated]");
+  ctx.send(entityId, lines.join("\n"));
+}
+
 function sendDataset(
   ctx: RoomContext,
   entityId: Parameters<RoomContext["send"]>[0],
@@ -154,7 +200,7 @@ function sendDataset(
     separator(),
     `  ${dataset.schema} · ${dataset.cases.length} cases · ${judgments} judgments`,
     "  Replays objective evaluators over structural spans; it cannot replay private model inputs.",
-    "  Export: GET /api/traces?limit=100&format=eval-json",
+    "  Export: GET /api/traces?limit=100&format=eval-json · Check replayability: trace dataset verify",
   ];
   if (truncated) lines.push("  [retained event window truncated]");
   ctx.send(entityId, lines.join("\n"));

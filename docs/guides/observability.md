@@ -30,6 +30,7 @@ trace stats 100       Summarize observed model/tool mechanics
 trace compare models  Compare observed model cohorts without selecting a winner
 trace compare routes  Compare selected-agent route cohorts
 trace dataset 100     Summarize the replayable structural evaluation dataset
+trace dataset verify  Replay an exported dataset copy; report schema validity, counts, and drift
 trace advise models   Inspect read-only, weight-free model shadow advice
 trace advise routes   Inspect read-only selected-agent shadow advice
 trace show <id>       Show the causal request/turn/tool hierarchy
@@ -40,6 +41,16 @@ trace judge <id> <passed|failed|inconclusive> <criterion> | <rationale>
 
 This is also the simplest way for an autonomous agent to examine its execution environment without
 leaving Marina.
+
+### Correlate feed events with traces
+
+Model-request lifecycle activity is mirrored to the shared feed as `model_request_received`,
+`model_request_routed`, `model_request_completed`, and `model_request_failed` events whose payloads
+carry the same `requestId`, `runId`, `traceId`, and `spanId` recorded in the event log (the feed
+`ref` is `request:<id>`). Because the request id is the trace id on this path, jumping from the
+feed to the full causal view is a working flow: `feed list --kind model_request_completed --since 1h`
+to find the request, then `trace show <id>` with the id from the event's payload — the same id the
+HTTP caller received in its `x-request-id` header.
 
 `trace judge` appends an immutable, identity-attributed assertion to durable storage. Marina records
 the criterion, verdict, rationale, evaluator identity, timestamp, and root evidence span. These
@@ -85,6 +96,12 @@ This is an evaluation-evidence dataset, not a prompt-replay corpus. Because Mari
 omits prompts, outputs, thinking text, and tool arguments, the export cannot rerun the original model
 request. Cohort comparisons group the same retained evidence by model or selected route and expose
 sample sizes; they do not infer statistical significance, declare a winner, or change routing.
+
+`trace dataset verify` closes the replay loop in-world: it serializes the export, parses it back
+(exactly what an external consumer of `format=eval-json` holds), reruns the objective evaluators
+from the exported spans alone, and reports schema validity, case and judgment counts, and any drift
+between the replayed and exported evaluations. Zero drift confirms the dataset is self-contained
+and deterministic; external tooling can do the same with the `replayTraceDataset` contract.
 
 ### Shadow routing advice
 

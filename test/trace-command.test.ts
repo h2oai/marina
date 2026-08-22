@@ -106,6 +106,16 @@ describe("trace command", () => {
     expect(output).toContain("cannot replay private model inputs");
   });
 
+  it("verifies the exported dataset replays without drift", async () => {
+    await engine.processCommand(entityId, "trace dataset verify");
+    const output = stripAnsi(conn.lastText());
+    expect(output).toContain("Evaluation Dataset Replay");
+    expect(output).toContain("schema: valid marina.trace.dataset.v1");
+    expect(output).toContain("cases: 1 · judgments: 0");
+    expect(output).toContain("replayed evaluations: 1 · drift from export: 0");
+    expect(output).toContain("the export is replayable");
+  });
+
   it("keeps model advice read-only and explicit about insufficient cohorts", async () => {
     await engine.processCommand(entityId, "trace advise models");
     const output = stripAnsi(conn.lastText());
