@@ -112,6 +112,18 @@ export const SAFETY_GATES: Record<string, GateDef> = {
     demoThreshold: 1,
     description: "perform destructive admin operations",
   },
+  "code.exec.unrestricted": {
+    id: "code.exec.unrestricted",
+    // The highest-blast-radius code capability: running ARBITRARY (non-allowlisted)
+    // host commands in a workspace. Deliberately above admin.destructive (250) so
+    // it sorts last on the ladder and is never reachable by accident. This gate is
+    // NEVER added to RANK_GATES — not even a sovereign gets it from rank; it is
+    // earned (standing + demonstrations) or granted explicitly, and every use is
+    // additionally fenced by the exec-approver chain (interactive or headless).
+    minStanding: 251,
+    demoThreshold: 5,
+    description: "run arbitrary (non-allowlisted) host commands in a workspace",
+  },
 };
 
 export interface GateCheckResult {

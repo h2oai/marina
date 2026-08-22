@@ -14,15 +14,16 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent, AgentHandle, AgentStatus } from "../src/agent/agent-types";
-import { LocalWorkspace } from "../src/coding/local-workspace";
+import { HostExecForbiddenError, LocalWorkspace } from "../src/coding/local-workspace";
 import { WorkspaceRegistry } from "../src/coding/workspace-registry";
-import { codeCommand } from "../src/engine/commands/code";
+import { codeCommand, isLoopbackConnection } from "../src/engine/commands/code";
 import { Engine } from "../src/engine/engine";
 import { grant } from "../src/engine/safety-gates";
 import type { FlywheelToolBackend } from "../src/integrations/flywheel-manager";
 import { MarinaDB } from "../src/persistence/database";
 import {
   type CommandInput,
+  type Connection,
   type Entity,
   type EntityId,
   type RoomContext,
@@ -56,6 +57,56 @@ describe("code command startup", () => {
       db.close();
       cleanupDb(dbName);
     }
+  });
+});
+
+describe("isLoopbackConnection (exec trust anchor)", () => {
+  const mk = (over: Partial<Connection>): Connection =>
+    ({
+      id: "c",
+      protocol: "websocket",
+      entity: "e_1" as EntityId,
+      connectedAt: Date.now(),
+      send() {},
+      close() {},
+      ...over,
+    }) as Connection;
+
+  it("SPOOF IS DEAD: a spoofed X-Forwarded-For loopback header (conn.ip) with a REMOTE real peer is NOT trusted", () => {
+    // Attacker hits a 0.0.0.0-bound Marina from a remote host and sends
+    // `X-Forwarded-For: 127.0.0.1`. The header lands in conn.ip; the REAL TCP
+    // peer (server.requestIP) lands in conn.peerIp. Trust must follow peerIp.
+    const spoofed = mk({ ip: "127.0.0.1", peerIp: "203.0.113.7" });
+    expect(isLoopbackConnection(spoofed)).toBe(false);
+  });
+
+  it("trusts a genuine loopback real socket peer (IPv4, IPv4-mapped, IPv6)", () => {
+    expect(isLoopbackConnection(mk({ peerIp: "127.0.0.1" }))).toBe(true);
+    expect(isLoopbackConnection(mk({ peerIp: "127.5.6.7" }))).toBe(true);
+    expect(isLoopbackConnection(mk({ peerIp: "::1" }))).toBe(true);
+    expect(isLoopbackConnection(mk({ peerIp: "::ffff:127.0.0.1" }))).toBe(true);
+  });
+
+  it("does not trust a genuine remote real socket peer even when conn.ip claims loopback", () => {
+    expect(isLoopbackConnection(mk({ ip: "127.0.0.1", peerIp: "10.0.0.5" }))).toBe(false);
+    expect(isLoopbackConnection(mk({ ip: "::1", peerIp: "192.168.1.9" }))).toBe(false);
+  });
+
+  it("fails closed when the real peer is unknown (undefined peerIp), even with a loopback header", () => {
+    expect(isLoopbackConnection(mk({ ip: "127.0.0.1", peerIp: undefined }))).toBe(false);
+  });
+
+  it("trusts genuinely internal / in-process connections regardless of peerIp", () => {
+    expect(isLoopbackConnection(mk({ internal: true, peerIp: undefined }))).toBe(true);
+    expect(isLoopbackConnection(mk({ internal: true, ip: "203.0.113.7" }))).toBe(true);
+  });
+
+  it("never trusts telnet as loopback (even a real loopback socket peer)", () => {
+    expect(isLoopbackConnection(mk({ protocol: "telnet", peerIp: "127.0.0.1" }))).toBe(false);
+  });
+
+  it("fails closed for an undefined connection", () => {
+    expect(isLoopbackConnection(undefined)).toBe(false);
   });
 });
 
@@ -102,6 +153,760 @@ describe("code command", () => {
     sent.length = 0;
     await command.handler(ctx, inputFor(ungated, "code apply last patch"));
     expect(stripAnsi(sent.join("\n")).toLowerCase()).toContain("run or apply code");
+  });
+
+  it("denies host exec over telnet before the gate, even for a sovereign holding code.exec.unrestricted", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { test: "true" } }));
+      const entity = engine.entities.get(conn.entity!)!;
+      // Maximally-privileged: sovereign + both code.exec gates granted.
+      entity.properties.rank = 9;
+      grant(db, entity.id, "code.exec.unrestricted");
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+        getConnectionProtocol: () => "telnet",
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Telnet"));
+
+      // LAYER 0: allowlisted run is refused over telnet, before the gate.
+      sent.length = 0;
+      await command.handler(ctx, inputFor(entity, "code run test"));
+      expect(stripAnsi(sent.join("\n"))).toContain("not available over telnet");
+
+      // ...and so is an arbitrary command.
+      sent.length = 0;
+      await command.handler(ctx, inputFor(entity, "code run pytest"));
+      expect(stripAnsi(sent.join("\n"))).toContain("not available over telnet");
+
+      // No exec ever happened → no command_output / exec_decision artifacts.
+      const session = db.listCodingSessions(entity.name, 1)[0]!;
+      const kinds = db.listCodingArtifacts(session.id).map((a) => a.kind);
+      expect(kinds).not.toContain("command_output");
+      expect(kinds).not.toContain("exec_decision");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("denies read-only host spawners (doctor/onboard/setup) over telnet — no Bun.spawn", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const entity = engine.entities.get(conn.entity!)!;
+      for (const sub of ["doctor", "onboard", "setup"]) {
+        const sent: string[] = [];
+        const command = codeCommand({
+          db,
+          getEntity: () => entity,
+          workspace: new LocalWorkspace(root),
+          getConnectionProtocol: () => "telnet",
+        });
+        const ctx = testRoomContext(sent);
+        await command.handler(ctx, inputFor(entity, "code start T"));
+        sent.length = 0;
+        await command.handler(ctx, inputFor(entity, `code ${sub}`));
+        expect(stripAnsi(sent.join("\n"))).toContain("not available over telnet");
+        // The friendly deny fired; the git-status readiness output never appears.
+        expect(stripAnsi(sent.join("\n"))).not.toContain("git status");
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("allows doctor over websocket (chokepoint does not over-block non-telnet)", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const entity = engine.entities.get(conn.entity!)!;
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+        getConnectionProtocol: () => "websocket",
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start W"));
+      sent.length = 0;
+      await command.handler(ctx, inputFor(entity, "code doctor"));
+      const out = stripAnsi(sent.join("\n"));
+      expect(out).not.toContain("not available over telnet");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("allows an allowlisted run over websocket (telnet deny does not over-block)", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const entity = engine.entities.get(conn.entity!)!;
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+        getConnectionProtocol: () => "websocket",
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Ws"));
+      await command.handler(ctx, inputFor(entity, "code run git status --short"));
+      expect(stripAnsi(sent.at(-1) ?? "")).toContain("$ git status --short");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("runs an approved arbitrary command via the headless approver and writes an exec_decision audit", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const entity = engine.entities.get(conn.entity!)!;
+      grant(db, entity.id, "code.exec.unrestricted"); // unsupervised competence
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+        execUnrestrictedAllow: [entity.id],
+        authRequired: true,
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Unrestricted"));
+      await command.handler(ctx, inputFor(entity, "code run echo marina-approved"));
+      expect(stripAnsi(sent.at(-1) ?? "")).toContain("marina-approved");
+
+      const session = db.listCodingSessions(entity.name, 1)[0]!;
+      const decisions = db
+        .listCodingArtifacts(session.id)
+        .filter((a) => a.kind === "exec_decision");
+      expect(decisions.length).toBe(1);
+      expect(decisions[0]!.status).toBe("complete");
+      expect(JSON.parse(decisions[0]!.metadata_json).approved).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an arbitrary command and audits a denial when the headless approver rejects", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const entity = engine.entities.get(conn.entity!)!;
+      // Env admits the entity but it lacks code.exec.unrestricted competence.
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+        execUnrestrictedAllow: [entity.id],
+        authRequired: true,
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Denied"));
+      await command.handler(ctx, inputFor(entity, "code run curl https://example.com"));
+      expect(stripAnsi(sent.at(-1) ?? "")).toContain("Command is not allowed");
+
+      const session = db.listCodingSessions(entity.name, 1)[0]!;
+      const decisions = db
+        .listCodingArtifacts(session.id)
+        .filter((a) => a.kind === "exec_decision");
+      expect(decisions.length).toBe(1);
+      expect(decisions[0]!.status).toBe("denied");
+      expect(JSON.parse(decisions[0]!.metadata_json).approved).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("exec-mode prompt is refused unless the server verifies a loopback sovereign creator", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const entity = engine.entities.get(conn.entity!)!;
+      const sent: string[] = [];
+      // No getConnection / non-sovereign creator → verification fails.
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+        findEntityByName: () => entity,
+        notify: () => {},
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Modes"));
+      await command.handler(ctx, inputFor(entity, "code exec-mode prompt"));
+      expect(stripAnsi(sent.at(-1) ?? "")).toContain("loopback sovereign session creator");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("interactive prompt: notifies the loopback sovereign creator, runs on exec-approve, and audits", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const entity = engine.entities.get(conn.entity!)!;
+      entity.properties.rank = 9; // sovereign creator
+      const loopbackConn = {
+        id: "c1",
+        protocol: "websocket",
+        entity: entity.id,
+        connectedAt: Date.now(),
+        ip: "127.0.0.1",
+        peerIp: "127.0.0.1", // real socket peer — the exec trust anchor
+        send() {},
+        close() {},
+      } as unknown as Connection;
+      const notes: Array<{ id: string; metadata?: Record<string, unknown> }> = [];
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+        findEntityByName: () => entity,
+        getConnection: () => loopbackConn,
+        notify: (id, _message, metadata) => notes.push({ id, metadata }),
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Interactive"));
+      await command.handler(ctx, inputFor(entity, "code exec-mode prompt"));
+      expect(stripAnsi(sent.at(-1) ?? "")).toContain("exec-mode: prompt");
+
+      // Fire an arbitrary command; it blocks awaiting the creator's approval.
+      const running = command.handler(ctx, inputFor(entity, "code run echo interactive-ok"));
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      const token = (notes.at(-1)?.metadata?.execApproval as { token: string }).token;
+      expect(token).toBeTruthy();
+      await command.handler(ctx, inputFor(entity, `code exec-approve ${token}`));
+      await running;
+      expect(stripAnsi(sent.join("\n"))).toContain("interactive-ok");
+
+      const session = db.listCodingSessions(entity.name, 1)[0]!;
+      const approved = db
+        .listCodingArtifacts(session.id)
+        .filter((a) => a.kind === "exec_decision")
+        .some((a) => JSON.parse(a.metadata_json).approved === true);
+      expect(approved).toBe(true);
+      // The witnessed (human-approved) arbitrary exec counts as one supervised
+      // demonstration toward code.exec.unrestricted.
+      expect(db.getCompetence(entity.id, "code.exec.unrestricted")?.demonstrations).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("gates `code build` and `code dashboard:build` behind code.exec (BYPASS 4)", async () => {
+    // build / dashboard:build spawn host processes (bun run build) and were
+    // previously ungated — a zero-standing agent could reach host exec.
+    const ungated = makeAgentEntity("agent_ungated_build", "UngatedBuild");
+    db.saveEntity(ungated);
+    const sent: string[] = [];
+    const command = codeCommand({
+      db,
+      getEntity: (id) => (id === ungated.id ? ungated : undefined),
+      workspace: new LocalWorkspace(),
+    });
+    const ctx = testRoomContext(sent);
+    await command.handler(ctx, inputFor(ungated, "code start Build"));
+    sent.length = 0;
+    await command.handler(ctx, inputFor(ungated, "code build"));
+    expect(stripAnsi(sent.join("\n")).toLowerCase()).toContain("run or apply code");
+    sent.length = 0;
+    await command.handler(ctx, inputFor(ungated, "code dashboard:build"));
+    expect(stripAnsi(sent.join("\n")).toLowerCase()).toContain("run or apply code");
+  });
+
+  it("denies the agentic `code do` and the build/patch host surface over telnet (BYPASS 2 + 4)", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const entity = engine.entities.get(conn.entity!)!;
+      // Maximally-privileged: telnet must be refused regardless of competence.
+      entity.properties.rank = 9;
+      grant(db, entity.id, "code.exec.unrestricted");
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+        getConnectionProtocol: () => "telnet",
+        // A runtime is present so, absent the deny, `code do` WOULD try to drive.
+        agentRuntime: { get: () => undefined, isAvailable: () => true, list: () => [] },
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Telnet2"));
+
+      // Agentic natural-language dispatch is refused before any spawn.
+      sent.length = 0;
+      await command.handler(ctx, inputFor(entity, "code do add a feature"));
+      expect(stripAnsi(sent.join("\n"))).toContain("not available over telnet");
+
+      // build (now gated) and patch/propose (host subprocess, ungated) are ALL
+      // refused over telnet by the comprehensive host-exec surface.
+      for (const line of ["code build", "code dashboard:build", "code patch foo.txt"]) {
+        sent.length = 0;
+        await command.handler(ctx, inputFor(entity, line));
+        expect(stripAnsi(sent.join("\n"))).toContain("not available over telnet");
+      }
+
+      // Nothing was spawned or mutated to agent mode.
+      const session = db.listCodingSessions(entity.name, 1)[0]!;
+      expect(session.agent).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("exec-mode prompt is refused when the creator's REAL socket is remote despite a spoofed loopback header", async () => {
+    // The creator is a rank-9 sovereign, but reaches a 0.0.0.0-bound Marina from
+    // a remote host and forges `X-Forwarded-For: 127.0.0.1` (→ conn.ip). The real
+    // TCP peer (conn.peerIp) is remote, so verifyInteractiveEligible must refuse.
+    const root = makeTempGitWorkspace();
+    try {
+      const entity = engine.entities.get(conn.entity!)!;
+      entity.properties.rank = 9;
+      const spoofedConn = {
+        id: "c1",
+        protocol: "websocket",
+        entity: entity.id,
+        connectedAt: Date.now(),
+        ip: "127.0.0.1", // SPOOFED header-derived ip
+        peerIp: "203.0.113.7", // real, remote TCP peer
+        send() {},
+        close() {},
+      } as unknown as Connection;
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+        findEntityByName: () => entity,
+        getConnection: () => spoofedConn,
+        notify: () => {},
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Spoof"));
+      await command.handler(ctx, inputFor(entity, "code exec-mode prompt"));
+      expect(stripAnsi(sent.at(-1) ?? "")).toContain("loopback sovereign session creator");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("denies `code spawn` and `code spawn run` over telnet (agentic-spawn surface, defense-in-depth)", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const entity = engine.entities.get(conn.entity!)!;
+      entity.properties.rank = 9; // maximally privileged — telnet refused anyway
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+        getConnectionProtocol: () => "telnet",
+        agentRuntime: {
+          get: () => undefined,
+          isAvailable: () => true,
+          list: () => [],
+          spawn: async () => {
+            throw new Error("spawn must never be reached over telnet");
+          },
+        },
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start TelnetSpawn"));
+      for (const line of ["code spawn implementer build a thing", "code spawn run req_1"]) {
+        sent.length = 0;
+        await command.handler(ctx, inputFor(entity, line));
+        expect(stripAnsi(sent.join("\n"))).toContain("not available over telnet");
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("attaches NO exec approver for a non-creator that adopted the session id (BYPASS 1b)", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const sovereign = engine.entities.get(conn.entity!)!; // Alice, code.exec granted
+      sovereign.properties.rank = 9;
+      const loopbackConn = {
+        id: "c1",
+        protocol: "websocket",
+        entity: sovereign.id,
+        connectedAt: Date.now(),
+        ip: "127.0.0.1",
+        peerIp: "127.0.0.1", // real socket peer — the exec trust anchor
+        send() {},
+        close() {},
+      } as unknown as Connection;
+      const stranger = makeAgentEntity("agent_stranger", "Stranger");
+      db.saveEntity(stranger);
+      // Give the stranger EVERY authorization short of session membership.
+      grant(db, stranger.id, "code.exec");
+      grant(db, stranger.id, "code.exec.unrestricted");
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: (id) =>
+          id === sovereign.id ? sovereign : id === stranger.id ? stranger : undefined,
+        workspace: new LocalWorkspace(root),
+        findEntityByName: (n) =>
+          n.toLowerCase() === sovereign.name.toLowerCase() ? sovereign : undefined,
+        findEntityExact: (n) =>
+          n.toLowerCase() === sovereign.name.toLowerCase() ? sovereign : undefined,
+        getConnection: (id) => (id === sovereign.id ? loopbackConn : undefined),
+        notify: () => {},
+        execUnrestrictedAllow: [stranger.id],
+        authRequired: true,
+      });
+      const ctx = testRoomContext(sent);
+
+      // Sovereign creates a session and turns on auto exec-mode.
+      await command.handler(ctx, inputFor(sovereign, "code start Shared"));
+      const session = db.listCodingSessions(sovereign.name, 1)[0]!;
+      await command.handler(ctx, inputFor(sovereign, "code exec-mode auto"));
+
+      // Stranger adopts the session id directly (the confused-deputy vector) and
+      // tries to ride the sovereign's exec authorization.
+      stranger.properties.coding_session_id = session.id;
+      sent.length = 0;
+      await command.handler(ctx, inputFor(stranger, "code run pytest"));
+
+      // No approver attached → allowlist-only refusal, and NO exec_decision audit
+      // (auto-mode never fired for the stranger).
+      expect(stripAnsi(sent.join("\n"))).toContain("Command is not allowed");
+      const kinds = db.listCodingArtifacts(session.id).map((a) => a.kind);
+      expect(kinds).not.toContain("exec_decision");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves the exec-mode creator by EXACT name, rejecting a prefix spoof (BYPASS 3)", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const sovereign = makeAgentEntity("agent_sovereign", "sovereign");
+      sovereign.properties.rank = 9;
+      db.saveEntity(sovereign);
+      const attacker = makeAgentEntity("agent_sov", "sov"); // "sov" prefixes "sovereign"
+      db.saveEntity(attacker);
+      grant(db, attacker.id, "code.exec");
+      const loopbackConn = {
+        id: "cs",
+        protocol: "websocket",
+        entity: sovereign.id,
+        connectedAt: Date.now(),
+        ip: "127.0.0.1",
+        peerIp: "127.0.0.1", // real socket peer — the exec trust anchor
+        send() {},
+        close() {},
+      } as unknown as Connection;
+      // The vulnerable fuzzy matcher: engine.findEntityGlobal does a SINGLE pass
+      // returning the first entity that is exact-OR-prefix. With the sovereign
+      // iterated first, its prefix match wins the lookup for "sov".
+      const byName = (name: string): Entity | undefined => {
+        const lower = name.toLowerCase();
+        for (const e of [sovereign, attacker]) {
+          if (e.name.toLowerCase() === lower || e.name.toLowerCase().startsWith(lower)) return e;
+        }
+        return undefined;
+      };
+      const byExact = (name: string): Entity | undefined =>
+        [sovereign, attacker].find((e) => e.name.toLowerCase() === name.toLowerCase());
+      // Sanity: the fuzzy matcher WOULD mis-resolve the spoof to the sovereign.
+      expect(byName("sov")?.name).toBe("sovereign");
+      expect(byExact("sov")?.name).toBe("sov");
+
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: (id) =>
+          id === sovereign.id ? sovereign : id === attacker.id ? attacker : undefined,
+        workspace: new LocalWorkspace(root),
+        findEntityByName: byName,
+        findEntityExact: byExact,
+        getConnection: (id) => (id === sovereign.id ? loopbackConn : undefined),
+        notify: () => {},
+      });
+      const ctx = testRoomContext(sent);
+
+      // Attacker creates a session (created_by = "sov") and tries exec-mode.
+      await command.handler(ctx, inputFor(attacker, "code start Spoof"));
+      sent.length = 0;
+      await command.handler(ctx, inputFor(attacker, "code exec-mode auto"));
+      // Exact resolution finds the rank-0 attacker, not the sovereign → refused.
+      expect(stripAnsi(sent.join("\n"))).toContain("loopback sovereign session creator");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("auto-mode and session-allow replays do NOT mint a code.exec.unrestricted demo (BYPASS 5)", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const entity = engine.entities.get(conn.entity!)!;
+      entity.properties.rank = 9;
+      const loopbackConn = {
+        id: "c1",
+        protocol: "websocket",
+        entity: entity.id,
+        connectedAt: Date.now(),
+        ip: "127.0.0.1",
+        peerIp: "127.0.0.1", // real socket peer — the exec trust anchor
+        send() {},
+        close() {},
+      } as unknown as Connection;
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+        findEntityByName: () => entity,
+        findEntityExact: () => entity,
+        getConnection: () => loopbackConn,
+        notify: () => {},
+      });
+      const ctx = testRoomContext([]);
+
+      // Auto mode: approved + audited, but no genuine per-command human decision.
+      await command.handler(ctx, inputFor(entity, "code start Auto"));
+      await command.handler(ctx, inputFor(entity, "code exec-mode auto"));
+      await command.handler(ctx, inputFor(entity, "code run echo hello-auto"));
+      const session = db.listCodingSessions(entity.name, 1)[0]!;
+      const approved = db
+        .listCodingArtifacts(session.id)
+        .filter((a) => a.kind === "exec_decision")
+        .some((a) => JSON.parse(a.metadata_json).approved === true);
+      expect(approved).toBe(true);
+      // No demonstration minted by an auto approval.
+      expect(db.getCompetence(entity.id, "code.exec.unrestricted")?.demonstrations ?? 0).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("a genuine human prompt approval mints exactly one demo; a replay does not (BYPASS 5)", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const entity = engine.entities.get(conn.entity!)!;
+      entity.properties.rank = 9;
+      const loopbackConn = {
+        id: "c1",
+        protocol: "websocket",
+        entity: entity.id,
+        connectedAt: Date.now(),
+        ip: "127.0.0.1",
+        peerIp: "127.0.0.1", // real socket peer — the exec trust anchor
+        send() {},
+        close() {},
+      } as unknown as Connection;
+      const notes: Array<{ metadata?: Record<string, unknown> }> = [];
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+        findEntityByName: () => entity,
+        findEntityExact: () => entity,
+        getConnection: () => loopbackConn,
+        notify: (_id, _message, metadata) => notes.push({ metadata }),
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start PromptDemo"));
+      await command.handler(ctx, inputFor(entity, "code exec-mode prompt"));
+
+      // First arbitrary command → genuine human approve (session scope) → 1 demo.
+      const running = command.handler(ctx, inputFor(entity, "code run echo replay-me"));
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      const token = (notes.at(-1)?.metadata?.execApproval as { token: string }).token;
+      await command.handler(ctx, inputFor(entity, `code exec-approve ${token}`));
+      await running;
+      expect(db.getCompetence(entity.id, "code.exec.unrestricted")?.demonstrations).toBe(1);
+
+      // Same argv again → served from the session allow-set (no prompt) → still 1.
+      const before = notes.length;
+      await command.handler(ctx, inputFor(entity, "code run echo replay-me"));
+      expect(notes.length).toBe(before); // no new prompt
+      expect(db.getCompetence(entity.id, "code.exec.unrestricted")?.demonstrations).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("only the session operator may change exec-mode; the bound agent cannot self-enable (FINDING A)", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const sovereign = engine.entities.get(conn.entity!)!; // Alice, code.exec granted
+      sovereign.properties.rank = 9;
+      const loopbackConn = {
+        id: "c1",
+        protocol: "websocket",
+        entity: sovereign.id,
+        connectedAt: Date.now(),
+        ip: "127.0.0.1",
+        peerIp: "127.0.0.1", // real socket peer — the exec trust anchor
+        send() {},
+        close() {},
+      } as unknown as Connection;
+      // The session's own bound coding agent — fully gated, yet still must NOT be
+      // able to change exec-mode or bootstrap its own arbitrary exec.
+      const boundAgent = makeAgentEntity("agent_bound_a", "BoundCoder");
+      db.saveEntity(boundAgent);
+      grant(db, boundAgent.id, "code.exec");
+      grant(db, boundAgent.id, "code.exec.unrestricted");
+      const stranger = makeAgentEntity("agent_stranger_a", "Stranger");
+      db.saveEntity(stranger);
+
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: (id) =>
+          id === sovereign.id
+            ? sovereign
+            : id === boundAgent.id
+              ? boundAgent
+              : id === stranger.id
+                ? stranger
+                : undefined,
+        workspace: new LocalWorkspace(root),
+        findEntityByName: (n) =>
+          n.toLowerCase() === sovereign.name.toLowerCase() ? sovereign : undefined,
+        findEntityExact: (n) =>
+          n.toLowerCase() === sovereign.name.toLowerCase() ? sovereign : undefined,
+        getConnection: (id) => (id === sovereign.id ? loopbackConn : undefined),
+        notify: () => {},
+      });
+      const ctx = testRoomContext(sent);
+
+      // Sovereign creates the session; bind the coding agent to it.
+      await command.handler(ctx, inputFor(sovereign, "code start Bound"));
+      const session = db.listCodingSessions(sovereign.name, 1)[0]!;
+      db.updateCodingSession(session.id, { agent: boundAgent.name });
+
+      // The bound agent points at the session and tries to self-enable auto.
+      boundAgent.properties.coding_session_id = session.id;
+      sent.length = 0;
+      await command.handler(ctx, inputFor(boundAgent, "code exec-mode auto"));
+      expect(stripAnsi(sent.join("\n"))).toContain("Only the session's operator");
+
+      // With no operator-enabled mode, the bound agent's off-allowlist run gets
+      // NO approver (allowlist-only) — it cannot bootstrap its own exec.
+      sent.length = 0;
+      await command.handler(ctx, inputFor(boundAgent, "code run pytest"));
+      expect(stripAnsi(sent.join("\n"))).toContain("Command is not allowed");
+      expect(db.listCodingArtifacts(session.id).map((a) => a.kind)).not.toContain("exec_decision");
+
+      // A non-participant that merely adopted the session id is also refused.
+      stranger.properties.coding_session_id = session.id;
+      sent.length = 0;
+      await command.handler(ctx, inputFor(stranger, "code exec-mode auto"));
+      expect(stripAnsi(sent.join("\n"))).toContain("Only the session's operator");
+
+      // The creator (operator) CAN set it — the human/launcher path is unaffected.
+      sent.length = 0;
+      await command.handler(ctx, inputFor(sovereign, "code exec-mode auto"));
+      expect(stripAnsi(sent.join("\n"))).toContain("exec-mode: auto");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("interactive flow intact: creator enables prompt, bound agent runs off-allowlist, creator approves (FINDING A regression)", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const sovereign = engine.entities.get(conn.entity!)!;
+      sovereign.properties.rank = 9;
+      const loopbackConn = {
+        id: "c1",
+        protocol: "websocket",
+        entity: sovereign.id,
+        connectedAt: Date.now(),
+        ip: "127.0.0.1",
+        peerIp: "127.0.0.1", // real socket peer — the exec trust anchor
+        send() {},
+        close() {},
+      } as unknown as Connection;
+      const boundAgent = makeAgentEntity("agent_bound_flow", "BoundCoder");
+      db.saveEntity(boundAgent);
+      grant(db, boundAgent.id, "code.exec");
+      const notes: Array<{ metadata?: Record<string, unknown> }> = [];
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: (id) =>
+          id === sovereign.id ? sovereign : id === boundAgent.id ? boundAgent : undefined,
+        workspace: new LocalWorkspace(root),
+        findEntityByName: (n) =>
+          n.toLowerCase() === sovereign.name.toLowerCase() ? sovereign : undefined,
+        findEntityExact: (n) =>
+          n.toLowerCase() === sovereign.name.toLowerCase() ? sovereign : undefined,
+        getConnection: (id) => (id === sovereign.id ? loopbackConn : undefined),
+        notify: (_id, _message, metadata) => notes.push({ metadata }),
+      });
+      const ctx = testRoomContext(sent);
+
+      // Sovereign creates the session, binds the agent, and enables prompt mode.
+      await command.handler(ctx, inputFor(sovereign, "code start BoundFlow"));
+      const session = db.listCodingSessions(sovereign.name, 1)[0]!;
+      db.updateCodingSession(session.id, { agent: boundAgent.name });
+      await command.handler(ctx, inputFor(sovereign, "code exec-mode prompt"));
+      expect(stripAnsi(sent.at(-1) ?? "")).toContain("exec-mode: prompt");
+
+      // The bound agent runs an off-allowlist command; it blocks on approval,
+      // which targets the creator.
+      boundAgent.properties.coding_session_id = session.id;
+      sent.length = 0;
+      const running = command.handler(ctx, inputFor(boundAgent, "code run echo bound-ok"));
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      const token = (notes.at(-1)?.metadata?.execApproval as { token: string }).token;
+      expect(token).toBeTruthy();
+      await command.handler(ctx, inputFor(sovereign, `code exec-approve ${token}`));
+      await running;
+      expect(stripAnsi(sent.join("\n"))).toContain("bound-ok");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("denies read-only host spawners (diff/search/checkpoint) and agentic dispatch (crew/assign) over telnet (FINDING B + C)", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const entity = engine.entities.get(conn.entity!)!;
+      // Maximally-privileged: telnet must be refused regardless of competence.
+      entity.properties.rank = 9;
+      grant(db, entity.id, "code.exec.unrestricted");
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: () => entity,
+        workspace: new LocalWorkspace(root),
+        getConnectionProtocol: () => "telnet",
+        // A runtime is present so, absent the deny, crew/assign WOULD dispatch.
+        agentRuntime: { get: () => undefined, isAvailable: () => true, list: () => [] },
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start TelnetB"));
+      const session = db.listCodingSessions(entity.name, 1)[0]!;
+
+      for (const line of [
+        "code diff",
+        "code search hello",
+        "code checkpoint snap",
+        "code crew build a thing",
+        "code assign Coder do it",
+      ]) {
+        sent.length = 0;
+        await command.handler(ctx, inputFor(entity, line));
+        expect(stripAnsi(sent.join("\n"))).toContain("not available over telnet");
+      }
+
+      // Nothing spawned or dispatched: no checkpoint diff captured, no bound agent.
+      const kinds = db.listCodingArtifacts(session.id).map((a) => a.kind);
+      expect(kinds).not.toContain("checkpoint");
+      expect(kinds).not.toContain("crew_plan");
+      expect(db.getCodingSession(session.id)?.agent ?? null).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("keeps local Code Mode available when Flywheel is unconfigured", async () => {
@@ -1784,6 +2589,44 @@ diff --git a/../outside.txt b/../outside.txt
     await command.handler(ctx, inputFor(entity, `code spawn run ${spawnId}`));
     expect(spawnedConfigs).toHaveLength(0);
     expect(db.getCodingArtifact(spawnId!)?.status).toBe("approved");
+  });
+});
+
+describe("LocalWorkspace host-exec chokepoint", () => {
+  it("refuses every spawn path when host exec is forbidden (run/diff/search/checkPatch)", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const ws = new LocalWorkspace(root);
+      ws.setHostExecForbidden(true);
+      // run() — allowlisted command still refuses (never reaches Bun.spawn).
+      await expect(ws.run(["git", "status", "--short"])).rejects.toBeInstanceOf(
+        HostExecForbiddenError,
+      );
+      // diff() and search() go through runCapture — also refuse.
+      await expect(ws.diff()).rejects.toBeInstanceOf(HostExecForbiddenError);
+      await expect(ws.search("hello")).rejects.toBeInstanceOf(HostExecForbiddenError);
+      // checkPatch() goes through runGitApply → runCapture — also refuses.
+      const patch = "diff --git a/example.txt b/example.txt\n";
+      await expect(ws.checkPatch(patch)).rejects.toBeInstanceOf(HostExecForbiddenError);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("spawns normally when host exec is not forbidden (default)", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      const ws = new LocalWorkspace(root);
+      const result = await ws.run(["git", "status", "--short"]);
+      expect(result.exitCode).toBe(0);
+      // A forbidden flag then set back to false also spawns.
+      ws.setHostExecForbidden(true);
+      ws.setHostExecForbidden(false);
+      const again = await ws.run(["git", "status", "--short"]);
+      expect(again.exitCode).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

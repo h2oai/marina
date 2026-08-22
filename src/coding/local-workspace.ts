@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import type { ExecApprover } from "./exec-approver";
 
 const DEFAULT_MAX_READ_BYTES = 64 * 1024;
 const DEFAULT_MAX_LIST_ENTRIES = 200;
@@ -137,6 +138,37 @@ export interface WorkspaceExec {
   run(command: string[], timeoutMs?: number, maxBytes?: number): Promise<WorkspaceRunResult>;
   runPolicy(): CodeRunPolicy;
   describe(): WorkspaceDescriptor;
+  /**
+   * Attach an optional per-call exec approver consulted only for commands that
+   * fall off the allowlist. Passing `undefined` clears it (allowlist-only,
+   * byte-identical to the default). Not all runtimes support this.
+   */
+  attachExecApprover?(approver: ExecApprover | undefined, entityId: string): void;
+  /**
+   * Forbid ALL host-process spawning for this workspace instance. Set true for a
+   * telnet-origin caller so no code subcommand — enumerated or not — can reach a
+   * subprocess. The guarantee is enforced at the two spawn primitives, so it
+   * covers every path by construction rather than an enumerated subcommand list.
+   */
+  setHostExecForbidden?(forbidden: boolean): void;
+}
+
+/**
+ * Thrown by the spawn chokepoint when a host-exec-forbidden workspace (a
+ * telnet-origin caller) attempts to launch any subprocess. Fail-closed backstop
+ * behind the friendly early subcommand-level deny in the `code` command.
+ */
+export class HostExecForbiddenError extends Error {
+  constructor() {
+    super(
+      "Host execution is not available for this caller (telnet-origin, plaintext/unauthenticated).",
+    );
+    this.name = "HostExecForbiddenError";
+  }
+}
+
+function assertHostExecAllowed(hostExecForbidden: boolean): void {
+  if (hostExecForbidden) throw new HostExecForbiddenError();
 }
 
 /**
@@ -168,9 +200,21 @@ function withRootLock<T>(root: string, fn: () => Promise<T>): Promise<T> {
 
 export class LocalWorkspace implements WorkspaceRuntime {
   readonly root: string;
+  private execApprover?: ExecApprover;
+  private execApproverEntityId?: string;
+  private hostExecForbidden = false;
 
   constructor(root = process.cwd()) {
     this.root = realpathSync(root);
+  }
+
+  attachExecApprover(approver: ExecApprover | undefined, entityId: string): void {
+    this.execApprover = approver;
+    this.execApproverEntityId = entityId;
+  }
+
+  setHostExecForbidden(forbidden: boolean): void {
+    this.hostExecForbidden = forbidden;
   }
 
   displayRoot(): string {
@@ -276,13 +320,13 @@ export class LocalWorkspace implements WorkspaceRuntime {
       const target = this.resolvePath(input);
       args.push(this.relativePath(target));
     }
-    const result = await runCapture(["git", ...args], this.root, maxBytes);
+    const result = await runCapture(["git", ...args], this.root, maxBytes, this.hostExecForbidden);
     return result;
   }
 
   async checkPatch(patch: string): Promise<PatchCheck> {
     const paths = validatePatchPaths(this.root, patch);
-    const result = await runGitApplyResilient(this.root, patch, true);
+    const result = await runGitApplyResilient(this.root, patch, true, this.hostExecForbidden);
     return {
       ok: result.exitCode === 0,
       paths,
@@ -293,7 +337,7 @@ export class LocalWorkspace implements WorkspaceRuntime {
   async applyPatch(patch: string): Promise<PatchCheck> {
     const paths = validatePatchPaths(this.root, patch);
     return withRootLock(this.root, async () => {
-      const result = await runGitApplyResilient(this.root, patch, false);
+      const result = await runGitApplyResilient(this.root, patch, false, this.hostExecForbidden);
       return {
         ok: result.exitCode === 0,
         paths,
@@ -390,7 +434,14 @@ export class LocalWorkspace implements WorkspaceRuntime {
   async reversePatch(patch: string, checkOnly = false): Promise<PatchCheck> {
     const paths = validatePatchPaths(this.root, patch);
     return withRootLock(this.root, async () => {
-      const result = await runGitApply(this.root, patch, checkOnly, true);
+      const result = await runGitApply(
+        this.root,
+        patch,
+        checkOnly,
+        true,
+        [],
+        this.hostExecForbidden,
+      );
       return {
         ok: result.exitCode === 0,
         paths,
@@ -404,7 +455,32 @@ export class LocalWorkspace implements WorkspaceRuntime {
     timeoutMs = DEFAULT_RUN_TIMEOUT_MS,
     maxBytes = DEFAULT_MAX_OUTPUT_BYTES,
   ): Promise<WorkspaceRunResult> {
-    const normalized = normalizeAllowedCodeCommand(this.root, command);
+    // Chokepoint (highest precedence): a host-exec-forbidden (telnet-origin)
+    // workspace never spawns — not even an allowlisted command, and never
+    // reaching the approver prompt. Backstop behind the friendly early deny.
+    assertHostExecAllowed(this.hostExecForbidden);
+    // 1) On the allowlist → run unchanged. 2) Off the allowlist but an approver
+    // is attached AND approves → run the arbitrary argv, still under the same
+    // residual guards (scrubbed env, cwd pinned to root, 300s cap, output cap,
+    // per-root lock). 3) Otherwise → throw the existing allowlist error,
+    // byte-identical to today. With no approver attached, (2) is unreachable.
+    let normalized: string[];
+    try {
+      normalized = normalizeAllowedCodeCommand(this.root, command);
+    } catch (allowlistErr) {
+      const argv = command.map((part) => part.trim()).filter(Boolean);
+      if (this.execApprover && this.execApproverEntityId !== undefined && argv.length > 0) {
+        const decision = await this.execApprover.requestApproval({
+          argv,
+          cwd: this.root,
+          entityId: this.execApproverEntityId,
+        });
+        if (!decision.approved) throw allowlistErr;
+        normalized = argv;
+      } else {
+        throw allowlistErr;
+      }
+    }
     return withRootLock(this.root, async () => {
       const started = Date.now();
       const result = await runWorkspaceCommand(
@@ -412,6 +488,7 @@ export class LocalWorkspace implements WorkspaceRuntime {
         this.root,
         Math.min(timeoutMs, MAX_RUN_TIMEOUT_MS),
         maxBytes,
+        this.hostExecForbidden,
       );
       return { ...result, command: normalized, durationMs: Math.max(0, Date.now() - started) };
     });
@@ -426,6 +503,7 @@ export class LocalWorkspace implements WorkspaceRuntime {
       ["rg", "--line-number", "--no-heading", "--color", "never", "--", query, "."],
       this.root,
       DEFAULT_MAX_OUTPUT_BYTES,
+      this.hostExecForbidden,
     );
     if (result.exitCode > 1) return null;
     const hits: SearchHit[] = [];
@@ -645,7 +723,9 @@ async function runGitApply(
   checkOnly: boolean,
   reverse = false,
   extraArgs: string[] = [],
+  hostExecForbidden = false,
 ): Promise<{ content: string; truncated: boolean; exitCode: number }> {
+  assertHostExecAllowed(hostExecForbidden); // refuse before writing the temp patch file
   const dir = mkdtempSync(join(tmpdir(), "marina-code-patch-"));
   const patchPath = join(dir, "change.patch");
   try {
@@ -654,7 +734,7 @@ async function runGitApply(
     if (checkOnly) args.push("--check");
     if (reverse) args.push("--reverse");
     args.push(patchPath);
-    return await runCapture(args, cwd, DEFAULT_MAX_OUTPUT_BYTES);
+    return await runCapture(args, cwd, DEFAULT_MAX_OUTPUT_BYTES, hostExecForbidden);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -668,11 +748,19 @@ async function runGitApplyResilient(
   cwd: string,
   patch: string,
   checkOnly: boolean,
+  hostExecForbidden = false,
 ): Promise<{ content: string; truncated: boolean; exitCode: number }> {
-  const plain = await runGitApply(cwd, patch, checkOnly);
+  const plain = await runGitApply(cwd, patch, checkOnly, false, [], hostExecForbidden);
   if (plain.exitCode === 0) return plain;
 
-  const recount = await runGitApply(cwd, patch, checkOnly, false, ["--recount", "-C1"]);
+  const recount = await runGitApply(
+    cwd,
+    patch,
+    checkOnly,
+    false,
+    ["--recount", "-C1"],
+    hostExecForbidden,
+  );
   if (recount.exitCode === 0) {
     return { ...recount, content: withApplyModeNote(recount.content, "--recount -C1") };
   }
@@ -680,7 +768,7 @@ async function runGitApplyResilient(
   let triedThreeWay = false;
   if (!checkOnly && existsSync(join(cwd, ".git"))) {
     triedThreeWay = true;
-    const threeWay = await runGitApply(cwd, patch, false, false, ["--3way"]);
+    const threeWay = await runGitApply(cwd, patch, false, false, ["--3way"], hostExecForbidden);
     if (threeWay.exitCode === 0) {
       return { ...threeWay, content: withApplyModeNote(threeWay.content, "--3way") };
     }
@@ -702,7 +790,9 @@ async function runWorkspaceCommand(
   cwd: string,
   timeoutMs: number,
   maxBytes: number,
+  hostExecForbidden = false,
 ): Promise<Omit<WorkspaceRunResult, "command" | "durationMs">> {
+  assertHostExecAllowed(hostExecForbidden); // chokepoint: telnet-origin never spawns
   mkdirSync(CODE_RUN_HOME, { recursive: true });
   const env: Record<string, string> = {
     ...CODE_RUN_ENV,
@@ -766,7 +856,9 @@ async function runCapture(
   cmd: string[],
   cwd: string,
   maxBytes: number,
+  hostExecForbidden = false,
 ): Promise<{ content: string; truncated: boolean; exitCode: number }> {
+  assertHostExecAllowed(hostExecForbidden); // chokepoint: telnet-origin never spawns
   try {
     const proc = Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe" });
     const [exitCode, stdout, stderr] = await Promise.all([

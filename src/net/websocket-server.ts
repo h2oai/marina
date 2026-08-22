@@ -66,10 +66,25 @@ interface WSData {
   isCanvas?: boolean;
   canvasId?: string;
   ip?: string;
+  /** Real, unspoofable TCP peer address from `server.requestIP` — the exec/loopback trust anchor. */
+  peerIp?: string;
   [key: string]: unknown;
 }
 
 let wsIdCounter = 0;
+
+/**
+ * Resolve the explicit bind hostname from the environment, or `undefined` to keep
+ * Bun's default bind (today's behavior — do NOT change the default). When
+ * WS_HOST/MARINA_HOST is set, it is passed to `Bun.serve({ hostname })` so that
+ * WS_HOST=127.0.0.1 genuinely binds loopback-only rather than the port silently
+ * listening on 0.0.0.0. This is the trust anchor behind loopback isolation; the
+ * headless-exec identity decision is now per-connection and does not read it.
+ */
+export function resolveWsBindHostname(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const host = (env.WS_HOST ?? env.MARINA_HOST ?? "").trim();
+  return host || undefined;
+}
 
 export class WebSocketServer {
   private server: Server<WSData> | null = null;
@@ -127,8 +142,13 @@ export class WebSocketServer {
     const rateLimiter = this.rateLimiter;
     const self = this;
 
+    const bindHostname = resolveWsBindHostname();
+
     this.server = Bun.serve<WSData>({
       port: this.port,
+      // Only set hostname when explicitly configured — an unset host keeps Bun's
+      // default bind (unchanged behavior). WS_HOST=127.0.0.1 → loopback-only.
+      ...(bindHostname ? { hostname: bindHostname } : {}),
       idleTimeout: WS_IDLE_TIMEOUT_SECONDS,
 
       async fetch(req, server) {
@@ -151,12 +171,16 @@ export class WebSocketServer {
           url.pathname === "/canvas-ws";
 
         if (isWsUpgrade) {
-          // Extract client IP (once for limit check + pass to WSData)
+          // Real, unspoofable TCP peer address — the ONLY value usable as an exec/loopback
+          // trust anchor. Never mix header values into this.
+          const peerIp = server.requestIP(req)?.address;
+          // Header-derived display/rate-limiting IP — SPOOFABLE (client controls the headers).
+          // Never use this as a trust anchor; see `peerIp` above.
           const fwd = req.headers.get("x-forwarded-for");
           const ip =
             (fwd ? fwd.split(",")[0]!.trim() : null) ??
             req.headers.get("x-real-ip") ??
-            server.requestIP(req)?.address ??
+            peerIp ??
             "unknown";
 
           // Enforce total connection cap (all types: game + dashboard + canvas)
@@ -174,7 +198,7 @@ export class WebSocketServer {
           if (url.pathname === "/dashboard-ws") {
             const connId = `dash_${++wsIdCounter}`;
             const upgraded = server.upgrade(req, {
-              data: { connId, isDashboard: true, ip },
+              data: { connId, isDashboard: true, ip, peerIp },
             });
             if (!upgraded) {
               return new Response("WebSocket upgrade failed", { status: 400 });
@@ -185,7 +209,7 @@ export class WebSocketServer {
           // Game WebSocket upgrade
           if (url.pathname === "/ws") {
             const connId = `ws_${++wsIdCounter}`;
-            const upgraded = server.upgrade(req, { data: { connId, ip } });
+            const upgraded = server.upgrade(req, { data: { connId, ip, peerIp } });
             if (!upgraded) {
               return new Response("WebSocket upgrade failed", { status: 400 });
             }
@@ -200,7 +224,7 @@ export class WebSocketServer {
             }
             const connId = `canvas_${++wsIdCounter}`;
             const upgraded = server.upgrade(req, {
-              data: { connId, isCanvas: true, canvasId, ip },
+              data: { connId, isCanvas: true, canvasId, ip, peerIp },
             });
             if (!upgraded) {
               return new Response("WebSocket upgrade failed", { status: 400 });
@@ -426,6 +450,7 @@ export class WebSocketServer {
             entity: null,
             connectedAt: Date.now(),
             ip: ws.data.ip,
+            peerIp: ws.data.peerIp,
             send(perception: Perception) {
               if (ws.readyState === 1) {
                 ws.send(JSON.stringify(perception));
@@ -657,6 +682,11 @@ export class WebSocketServer {
 
   getPort(): number {
     return this.port;
+  }
+
+  /** The hostname the running server is actually bound to (for diagnostics/tests). */
+  getBoundHostname(): string | undefined {
+    return this.server?.hostname;
   }
 
   stop(): void {

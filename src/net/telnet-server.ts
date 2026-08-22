@@ -46,6 +46,9 @@ export class TelnetServer {
             entity: null,
             connectedAt: Date.now(),
             ip: socket.remoteAddress,
+            // Real TCP peer address from the socket (telnet is never behind a header-proxy here),
+            // carried into the unspoofable exec/loopback trust anchor.
+            peerIp: socket.remoteAddress,
             send(perception: Perception) {
               const text = formatPerception(perception, "ansi");
               if (text) {

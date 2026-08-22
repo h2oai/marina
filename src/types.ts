@@ -401,6 +401,19 @@ export interface Perception {
   data: Record<string, unknown>;
 }
 
+/**
+ * Payload carried on `data.execApproval` of a perception sent to a coding
+ * session's creator when an arbitrary (non-allowlisted) host command needs
+ * interactive approval. The human replies with `code exec-approve <token>` or
+ * `code exec-deny <token> [reason]`. See src/coding/exec-approver.ts.
+ */
+export interface ExecApprovalPrompt {
+  token: string;
+  argv: string[];
+  cwd: string;
+  rendered: string;
+}
+
 export interface RoomPerception extends Perception {
   kind: "room";
   data: {
@@ -462,8 +475,16 @@ export interface Connection {
   protocol: ConnectionProtocol;
   entity: EntityId | null;
   connectedAt: number;
-  /** Client IP when known (WebSocket/telnet); undefined for MCP/in-process. */
+  /** Client IP when known (WebSocket/telnet); undefined for MCP/in-process. Header-derived (X-Forwarded-For / X-Real-IP) for WebSocket — SPOOFABLE. Use ONLY for rate-limiting/display, NEVER as a trust anchor. */
   ip?: string;
+  /**
+   * Real, unspoofable socket peer address (WebSocket `server.requestIP`, telnet `socket.remoteAddress`,
+   * or a loopback sentinel for genuinely in-process/internal transports). Unlike `ip`, this is NEVER
+   * derived from client-controlled headers. This is the ONLY field permitted as an exec/loopback TRUST
+   * anchor (see `isLoopbackConnection`). Undefined when the real peer address could not be determined —
+   * treat undefined as untrusted (fail closed), never as loopback.
+   */
+  peerIp?: string;
   /** True for internal room/crew agent connections (exempt from instance login limits). */
   internal?: boolean;
   send(perception: Perception): void;

@@ -20,7 +20,14 @@ import { join } from "node:path";
 export type Dispatch =
   | { kind: "help" }
   | { kind: "usage-error"; arg: string }
-  | { kind: "code"; dir?: string; fresh?: boolean; print?: string }
+  | {
+      kind: "code";
+      dir?: string;
+      fresh?: boolean;
+      print?: string;
+      allowExec?: boolean;
+      dangerouslyAllowAll?: boolean;
+    }
   | { kind: "connect"; rest: string[] }
   | { kind: "start" };
 
@@ -30,14 +37,25 @@ export function parseDispatch(argv: string[]): Dispatch {
   if (first === "--help" || first === "-h" || first === "help") return { kind: "help" };
   if (first === "connect") return { kind: "connect", rest: argv.slice(1) };
   if (first === "start") return { kind: "start" };
-  // Coding flow: [dir] plus optional --fresh and -p/--print "<task>", any order.
+  // Coding flow: [dir] plus optional --fresh, -p/--print "<task>", and the
+  // exec-approval flags, in any order.
   let dir: string | undefined;
   let fresh: boolean | undefined;
   let print: string | undefined;
+  let allowExec: boolean | undefined;
+  let dangerouslyAllowAll: boolean | undefined;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === "--fresh") {
       fresh = true;
+      continue;
+    }
+    if (arg === "--allow-exec") {
+      allowExec = true;
+      continue;
+    }
+    if (arg === "--dangerously-allow-all") {
+      dangerouslyAllowAll = true;
       continue;
     }
     if (arg === "-p" || arg === "--print") {
@@ -57,6 +75,8 @@ export function parseDispatch(argv: string[]): Dispatch {
     dir,
     ...(fresh !== undefined ? { fresh } : {}),
     ...(print !== undefined ? { print } : {}),
+    ...(allowExec !== undefined ? { allowExec } : {}),
+    ...(dangerouslyAllowAll !== undefined ? { dangerouslyAllowAll } : {}),
   };
 }
 
@@ -73,6 +93,16 @@ Options:
   -p, --print <task>           dispatch one coding task, await completion, then exit
   --fresh                      throwaway database (deleted on exit) instead of the
                                per-folder default at ~/.marina/projects/<slug>/marina.db
+  --allow-exec                 permit non-allowlisted host commands, prompting for
+                               approval (y/N/a) on each one. Interactive local
+                               session only (requires a TTY you own).
+  --dangerously-allow-all      auto-approve every host command with no prompt.
+                               DANGEROUS — an interactive local session only
+                               (requires a TTY you own); prints a loud banner.
+
+Host execution is allowlist-only by default. --allow-exec / --dangerously-allow-all
+loosen that only in an interactive local terminal you own; without a TTY they are
+refused and the session stays allowlist-only.
 
 Exit codes (one-shot -p):
   0  task completed (summary recorded; session diff printed)
@@ -114,6 +144,8 @@ if (import.meta.main) {
       await runCodeSession(dispatch.dir ?? process.cwd(), {
         fresh: dispatch.fresh,
         print: dispatch.print,
+        allowExec: dispatch.allowExec,
+        dangerouslyAllowAll: dispatch.dangerouslyAllowAll,
       });
       break;
     }

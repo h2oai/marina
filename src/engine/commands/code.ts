@@ -9,6 +9,16 @@ import {
   CodeSessionDriver,
   type CodingAgentRuntime,
 } from "../../coding/code-session-driver";
+import {
+  type ExecApprover,
+  type ExecAuditSink,
+  getPendingExecApproval,
+  HeadlessGateApprover,
+  InteractiveApprover,
+  OPERATOR_APPROVED_REASON,
+  renderArgv,
+  settleExecApproval,
+} from "../../coding/exec-approver";
 import type { WorkspaceRunResult, WorkspaceRuntime } from "../../coding/local-workspace";
 import { CodingProjectManager, PROJECT_ARCHIVE_FORMAT } from "../../coding/project-manager";
 import { CodingServiceManager } from "../../coding/service-manager";
@@ -19,8 +29,17 @@ import { CrewError, type CrewManager } from "../../coordination/crew-manager";
 import type { FlywheelToolBackend } from "../../integrations/flywheel-manager";
 import { bold, dim, error as fmtError, header, separator, success } from "../../net/ansi";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../persistence/database";
-import type { CommandDef, CrewFormation, Entity, EntityId, RoomContext } from "../../types";
+import type {
+  CommandDef,
+  Connection,
+  ConnectionProtocol,
+  CrewFormation,
+  Entity,
+  EntityId,
+  RoomContext,
+} from "../../types";
 import { sanitizeEntityName } from "../entity-name";
+import { getRank } from "../permissions";
 import { checkGate, grant, recordDemonstration } from "../safety-gates";
 
 const ACTIVE_SESSION_KEY = "coding_session_id";
@@ -804,6 +823,11 @@ const CODE_EXEC_SUBCOMMANDS = new Set<string>([
   "test",
   "lint",
   "typecheck",
+  // `build` / `dashboard:build` spawn host processes (bun run build), so they
+  // are host-execution and must be earned via the code.exec gate — closing a
+  // pre-existing gap where they ran ungated.
+  "build",
+  "dashboard:build",
   "recipe",
   "apply",
   "revert",
@@ -811,6 +835,49 @@ const CODE_EXEC_SUBCOMMANDS = new Set<string>([
   "edit",
   "write",
 ]);
+
+// The full host-subprocess surface: every subcommand that can spawn a host
+// process or mutate the working tree via a subprocess. Superset of
+// CODE_EXEC_SUBCOMMANDS that also includes read-only host spawners that stay
+// rank 0 (ungated per policy) yet still shell out to a subprocess, so they need
+// the transport (telnet) deny WITHOUT the code.exec gate:
+//   - `patch`/`propose` run `git apply --check`
+//   - `diff`/`checkpoint` run `git diff` (checkpoint captures a diff snapshot)
+//   - `search` runs `rg`
+// Used only for the LAYER-0 telnet host-exec refusal so no telnet-origin caller
+// can reach ANY host subprocess.
+const CODE_HOST_EXEC_SURFACE = new Set<string>([
+  ...CODE_EXEC_SUBCOMMANDS,
+  "patch",
+  "propose",
+  "diff",
+  "search",
+  "checkpoint",
+  // Read-only host spawners that stay rank 0 yet shell out (`git status --short`):
+  "doctor",
+  "onboard",
+  "setup",
+]);
+
+/** Single source of truth for the LAYER-0 telnet host-exec refusal message. */
+const TELNET_HOST_EXEC_DENY =
+  "Host execution is not available over telnet (plaintext, unauthenticated). Use the local marina CLI or an authenticated WebSocket session.";
+
+/**
+ * LAYER-0 telnet-origin refusal for the agentic-dispatch verbs (`code do`,
+ * `code crew`, `code assign`). These recruit/spawn a coding agent, grant it
+ * code.exec, and drive host execution — so a telnet-origin dispatcher must be
+ * refused BEFORE any session auto-start / ensureSessionAgent / crew spawn, just
+ * like the explicit host-exec subcommands. Returns true when refused (caller
+ * must return immediately). Read-only status/list views never call this.
+ */
+function refuseTelnetDispatch(ctx: RoomContext, eid: EntityId, deps: CodeDeps): boolean {
+  if (deps.getConnectionProtocol?.(eid) === "telnet") {
+    ctx.send(eid, TELNET_HOST_EXEC_DENY);
+    return true;
+  }
+  return false;
+}
 
 export interface CodeDeps {
   agentRuntime?: CodingAgentRuntime;
@@ -827,6 +894,35 @@ export interface CodeDeps {
   /** Send a line to a specific entity's connection — used to stream a bound
    *  coding agent's live activity back to the human who dispatched the task. */
   notify?: (entityId: string, message: string, metadata?: Record<string, unknown>) => void;
+  /** Transport of an entity's active connection — LAYER 0 telnet host-exec deny. */
+  getConnectionProtocol?: (entityId: string) => ConnectionProtocol | undefined;
+  /** Full connection for loopback verification of the interactive approver. */
+  getConnection?: (entityId: string) => Connection | undefined;
+  /** Resolve a (possibly human) entity by name — used to check the session creator. */
+  findEntityByName?: (name: string) => Entity | undefined;
+  /**
+   * Resolve an entity by EXACT (case-insensitive) name — NEVER a fuzzy prefix
+   * match. All exec-approval identity resolution (creator verification) uses
+   * this so a low-privilege attacker whose name merely prefixes the sovereign's
+   * cannot be resolved as the creator.
+   */
+  findEntityExact?: (name: string) => Entity | undefined;
+  /** Entity ids/names permitted headless arbitrary exec (MARINA_CODE_EXEC_UNRESTRICTED). */
+  execUnrestrictedAllow?: string[];
+  /**
+   * True when external identity verification is required for every login
+   * (MARINA_AUTH=better-auth). Short-circuits headless identity trust; otherwise
+   * trust is resolved per acting connection (loopback), never from WS_HOST.
+   */
+  authRequired?: boolean;
+  /** Interactive-approval timeout override (MARINA_CODE_EXEC_APPROVAL_TIMEOUT_MS). */
+  execApprovalTimeoutMs?: number;
+  /**
+   * Per-invocation: true when the ACTING caller is telnet-origin, so the resolved
+   * workspace must refuse ALL host-process spawning (chokepoint backstop behind
+   * the enumerated LAYER-0 deny). Computed once per command in `codeCommand`.
+   */
+  hostExecForbidden?: boolean;
 }
 
 export function codeCommand(deps: CodeDeps): CommandDef {
@@ -842,7 +938,14 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         ctx.send(input.entity, "Coding sessions require database support.");
         return;
       }
-      const depsWithDb: CodeDeps & { db: MarinaDB } = { ...deps, db: deps.db };
+      // Resolve the acting caller's transport ONCE. A telnet-origin caller is
+      // host-exec-forbidden: every workspace resolved this invocation refuses to
+      // spawn (the chokepoint guarantee, independent of the enumerated surface).
+      const depsWithDb: CodeDeps & { db: MarinaDB } = {
+        ...deps,
+        db: deps.db,
+        hostExecForbidden: deps.getConnectionProtocol?.(input.entity) === "telnet",
+      };
       const driver = new CodeSessionDriver({
         agentRuntime: deps.agentRuntime,
         answerPrompt: deps.answerPrompt,
@@ -882,11 +985,22 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         // run` path to host code execution.
         const mutatesSandbox =
           canonicalSub === "sandbox" && (args[0]?.toLowerCase() ?? "status") !== "status";
-        if (
-          CODE_EXEC_SUBCOMMANDS.has(canonicalSub) ||
-          mutatesSandbox ||
-          canonicalSub === "project"
-        ) {
+        const isProject = canonicalSub === "project";
+        // LAYER 0 (highest precedence): transport-origin deny across the ENTIRE
+        // host-subprocess surface (superset of the gated set — also covers
+        // patch/propose, which run `git apply --check`). Host execution is never
+        // available over telnet (plaintext, unauthenticated) — even for a
+        // sovereign or a code.exec.unrestricted holder, and even for an
+        // allowlisted run. Refuse before the gate; do not fall through.
+        const isHostExecSurface =
+          CODE_HOST_EXEC_SURFACE.has(canonicalSub) || mutatesSandbox || isProject;
+        if (isHostExecSurface && deps.getConnectionProtocol?.(input.entity) === "telnet") {
+          ctx.send(input.entity, TELNET_HOST_EXEC_DENY);
+          return;
+        }
+        // The narrower gated set (earned competence). patch/propose stay rank 0
+        // (read/propose are open per policy) and so are NOT gated here.
+        if (CODE_EXEC_SUBCOMMANDS.has(canonicalSub) || mutatesSandbox || isProject) {
           const gate = checkGate(depsWithDb.db, input.entity, "code.exec");
           if (!gate.ok) {
             ctx.send(
@@ -925,6 +1039,15 @@ export function codeCommand(deps: CodeDeps): CommandDef {
           case "back":
           case "world":
             exitCodeMode(ctx, input.entity, entity, depsWithDb);
+            return;
+          case "exec-mode":
+            execModeCommand(ctx, input.entity, entity, depsWithDb, args);
+            return;
+          case "exec-approve":
+            execApprove(ctx, input.entity, entity, args);
+            return;
+          case "exec-deny":
+            execDeny(ctx, input.entity, entity, args);
             return;
           case "start":
           case "new":
@@ -1688,6 +1811,21 @@ function resumeSession(
     ctx.send(eid, `Coding session not found: ${id}`);
     return;
   }
+  // Ownership gate: only the session creator or its own bound coding agent may
+  // adopt a session. Without this, any entity could point coding_session_id at a
+  // loopback-sovereign's exec-mode session and ride its exec authorization
+  // (which keys on session.created_by) — a confused-deputy path to arbitrary
+  // host execution. Fail closed.
+  if (
+    !sameEntityName(session.created_by, entity.name) &&
+    !sameEntityName(session.agent, entity.name)
+  ) {
+    ctx.send(
+      eid,
+      "You can only resume a coding session you created or are the bound coding agent for.",
+    );
+    return;
+  }
   entity.properties[ACTIVE_SESSION_KEY] = session.id;
   updateCodeContext(entity, deps.db, session);
   deps.db.createCodingEvent({
@@ -1760,6 +1898,8 @@ async function assignCode(
   driver: CodeSessionDriver,
   args: string[],
 ): Promise<void> {
+  // Agentic dispatch: hands host-affecting work to a coding agent — telnet-denied.
+  if (refuseTelnetDispatch(ctx, eid, deps)) return;
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const agentName = args[0];
@@ -1863,6 +2003,8 @@ async function crewPlan(
   deps: CodeDeps & { db: MarinaDB },
   rawGoal: string,
 ): Promise<void> {
+  // Agentic dispatch: fans out implementer/reviewer/tester coders — telnet-denied.
+  if (refuseTelnetDispatch(ctx, eid, deps)) return;
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const { goal: text, members } = parseCrewArgs(rawGoal);
@@ -2407,6 +2549,13 @@ async function doCode(
     ctx.send(eid, 'Describe what you want done, e.g. "fix the off-by-one in the tokenizer".');
     return;
   }
+
+  // LAYER 0: the agentic dispatch path (`code do <task>` and the natural-language
+  // modal fall-through) spawns/recruits a coder, grants it code.exec, and drives
+  // host execution — so a telnet-origin dispatcher must be refused here, BEFORE
+  // any session auto-start / ensureSessionAgent / crew spawn. Same refusal as
+  // the explicit host-exec subcommands (which never reach doCode).
+  if (refuseTelnetDispatch(ctx, eid, deps)) return;
 
   // Auto-start a session on the first task so entering Code Mode + typing just
   // works — no explicit `code start` required.
@@ -3059,6 +3208,10 @@ async function spawnRequest(
   deps: CodeDeps & { db: MarinaDB },
   args: string[],
 ): Promise<void> {
+  // Agentic-spawn surface is telnet-denied by construction — symmetric with
+  // doCode/crewPlan/assignCode. Defense-in-depth: keeps the spawn dispatch off
+  // the telnet transport even if a future change grants it code.exec.
+  if (refuseTelnetDispatch(ctx, eid, deps)) return;
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const action = args[0]?.toLowerCase();
@@ -3159,6 +3312,9 @@ async function runApprovedSpawnRequest(
   session: CodingSessionRow,
   args: string[],
 ): Promise<void> {
+  // Agentic-spawn surface is telnet-denied by construction — symmetric with
+  // doCode/crewPlan/assignCode. Defense-in-depth on the approved-spawn path.
+  if (refuseTelnetDispatch(ctx, eid, deps)) return;
   if (!deps.agentRuntime?.spawn) {
     ctx.send(eid, "Agent spawning is not available in this Marina process.");
     return;
@@ -5329,6 +5485,12 @@ async function executeWorkspaceCommand(
   command: string[],
 ): Promise<StoredCommandResult> {
   const workspace = workspaceForSession(deps, session);
+  // Arbitrary (non-allowlisted) host exec is fenced by an optional approver,
+  // attached per-call to the local workspace only. Off the allowlist, the
+  // workspace consults it; with none attached, behavior is allowlist-only.
+  if (session.execution_target === "local") {
+    workspace.attachExecApprover?.(selectExecApprover(entity, deps, session), entity.id);
+  }
   const execution = await new WorkspaceGateway(workspace, deps.flywheel).run(
     entity.id,
     session.execution_target,
@@ -6947,8 +7109,24 @@ function getWorkspaceRegistry(deps: CodeDeps): WorkspaceRegistry {
   return deps.workspaceRegistry ?? new WorkspaceRegistry({ defaultRoot: root, roots: [root] });
 }
 
+/**
+ * Stamp the telnet-origin host-exec ban onto a freshly-resolved workspace. The
+ * registry hands back a NEW LocalWorkspace per call, so this is per-invocation
+ * state — no cross-caller stickiness. Every host-spawning workspace flows through
+ * `getSelectedWorkspace` / `workspaceForSession`, so stamping here covers all
+ * subcommands (including read-only host spawners like `code doctor`) by
+ * construction rather than an enumerated list.
+ */
+function stampHostExecPolicy(ws: WorkspaceRuntime, deps: CodeDeps): WorkspaceRuntime {
+  ws.setHostExecForbidden?.(deps.hostExecForbidden === true);
+  return ws;
+}
+
 function getSelectedWorkspace(entity: Entity, deps: CodeDeps): WorkspaceRuntime {
-  return getWorkspaceRegistry(deps).workspaceForRoot(getSelectedWorkspaceRoot(entity, deps));
+  return stampHostExecPolicy(
+    getWorkspaceRegistry(deps).workspaceForRoot(getSelectedWorkspaceRoot(entity, deps)),
+    deps,
+  );
 }
 
 function getSelectedWorkspaceRoot(entity: Entity, deps: CodeDeps): string {
@@ -6961,7 +7139,10 @@ function getSelectedWorkspaceRoot(entity: Entity, deps: CodeDeps): string {
 }
 
 function workspaceForSession(deps: CodeDeps, session: CodingSessionRow): WorkspaceRuntime {
-  return getWorkspaceRegistry(deps).workspaceForRoot(session.workspace_root);
+  return stampHostExecPolicy(
+    getWorkspaceRegistry(deps).workspaceForRoot(session.workspace_root),
+    deps,
+  );
 }
 
 interface DiscoveredWorkspace {
@@ -7067,6 +7248,251 @@ function sanitizeAgentName(value: string): string {
     .replace(/[^a-zA-Z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
+}
+
+// ─── Arbitrary-exec approver wiring ──────────────────────────────────────────
+
+const LOOPBACK_IPS = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost"]);
+
+// Per-session interactive exec mode ("prompt"/"auto"). In-memory only, never
+// persisted — a restart drops it and exec returns to allowlist-only.
+const execModes = new Map<string, "prompt" | "auto">();
+
+/**
+ * Exported for tests: the exec/loopback TRUST anchor. Consults ONLY the real,
+ * unspoofable socket peer (`conn.peerIp`) plus the in-process/internal flag —
+ * never the header-derived `conn.ip`.
+ */
+export function isLoopbackConnection(conn: Connection | undefined): boolean {
+  if (!conn) return false;
+  if (conn.protocol === "telnet") return false; // never trust telnet as loopback
+  if (conn.internal) return true; // in-process trusted connections
+  // TRUST ANCHOR: consult ONLY the real, unspoofable socket peer address (peerIp),
+  // NEVER conn.ip (header-derived X-Forwarded-For / X-Real-IP — client can forge it
+  // to claim 127.0.0.1). A remote WebSocket peer sending `X-Forwarded-For: 127.0.0.1`
+  // sets conn.ip but not conn.peerIp, so this stays false. Undefined peerIp (real
+  // peer unknown) fails closed.
+  const ip = conn.peerIp;
+  if (!ip) return false;
+  return LOOPBACK_IPS.has(ip) || ip.startsWith("127.") || ip.startsWith("::ffff:127.");
+}
+
+/**
+ * Resolve a session's creator by EXACT, sanitize-normalized name equality —
+ * never the fuzzy prefix matcher (`findEntityGlobal`). A resolved entity is
+ * accepted only when its name sanitize-equals `session.created_by`, so an
+ * attacker whose name prefixes the creator's cannot be mistaken for them.
+ * Returns undefined when no exact match exists (fail closed).
+ */
+function resolveCreatorExact(deps: CodeDeps, session: CodingSessionRow): Entity | undefined {
+  const resolver = deps.findEntityExact ?? deps.findEntityByName;
+  const creator = resolver?.(session.created_by) ?? resolver?.(entityNameForm(session.created_by));
+  if (!creator) return undefined;
+  return sameEntityName(creator.name, session.created_by) ? creator : undefined;
+}
+
+/**
+ * Server-side, independent verification (never trust the launcher's word) that
+ * a session's creator is a local sovereign operator on a loopback connection.
+ * Gates whether an `exec-mode` request is honored. Creator resolution is EXACT
+ * (not prefix) so a name-prefix spoof cannot pose as the loopback sovereign.
+ */
+function verifyInteractiveEligible(deps: CodeDeps, session: CodingSessionRow): boolean {
+  const creator = resolveCreatorExact(deps, session);
+  if (!creator || getRank(creator) < 9) return false;
+  return isLoopbackConnection(deps.getConnection?.(creator.id));
+}
+
+/** Audit sink — one durable `exec_decision` artifact + event per attempt. */
+function makeExecAudit(
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+): ExecAuditSink {
+  return (req, decision, meta) => {
+    const rendered = renderArgv(req.argv);
+    const artifact = deps.db.createCodingArtifact({
+      sessionId: session.id,
+      kind: "exec_decision",
+      title: `${decision.approved ? "Approved" : "Denied"} exec: ${rendered}`,
+      status: decision.approved ? "complete" : "denied",
+      contentText: rendered,
+      metadata: {
+        argv: req.argv,
+        cwd: req.cwd,
+        entityId: req.entityId,
+        approved: decision.approved,
+        scope: decision.scope,
+        reason: decision.reason,
+        mode: meta.mode,
+        interactive: meta.interactive,
+        humanApproved: meta.humanApproved,
+      },
+      createdBy: session.created_by,
+    });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: req.entityId,
+      kind: "exec_decision",
+      payload: {
+        id: artifact.id,
+        approved: decision.approved,
+        argv: req.argv,
+        mode: meta.mode,
+        interactive: meta.interactive,
+        reason: decision.reason ?? null,
+      },
+    });
+    // A supervised (human-approved) interactive arbitrary exec is a witnessed
+    // demonstration toward code.exec.unrestricted — this is how an entity earns
+    // the unsupervised competence the headless path later requires. ONLY a
+    // genuine per-command human prompt approval qualifies: auto-mode approvals
+    // and session-allow-set replays set humanApproved=false and never mint
+    // competence toward the highest-blast-radius gate.
+    if (meta.humanApproved) {
+      recordDemonstration(deps.db, req.entityId, "code.exec.unrestricted");
+    }
+  };
+}
+
+/**
+ * Pick the arbitrary-exec approver for this local run, or `undefined` (→
+ * allowlist-only). Interactive wins when the launcher enabled `exec-mode` AND
+ * the server verifies a loopback sovereign creator; otherwise the headless
+ * approver is offered whenever MARINA_CODE_EXEC_UNRESTRICTED lists any entity.
+ */
+function selectExecApprover(
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+): ExecApprover | undefined {
+  // Participant gate: an approver is attached ONLY when the ACTING entity is
+  // legitimately part of this session — the creator, or the session's own bound
+  // coding agent (dispatched by that creator). A stranger who merely pointed
+  // coding_session_id at this session id gets NO approver (→ allowlist-only),
+  // closing the confused-deputy path where a non-creator rides the creator's
+  // exec authorization. The human-approval prompt still targets the creator.
+  const actingIsCreator = sameEntityName(session.created_by, entity.name);
+  const actingIsBoundAgent = !!session.agent && sameEntityName(session.agent, entity.name);
+  if (!actingIsCreator && !actingIsBoundAgent) return undefined;
+
+  const mode = execModes.get(session.id);
+  if (mode && deps.notify && verifyInteractiveEligible(deps, session)) {
+    const creator = resolveCreatorExact(deps, session);
+    return new InteractiveApprover({
+      sessionId: session.id,
+      creatorEntityId: creator?.id ?? session.created_by,
+      creatorName: session.created_by,
+      mode,
+      notify: deps.notify,
+      audit: makeExecAudit(deps, session),
+      timeoutMs: deps.execApprovalTimeoutMs,
+    });
+  }
+  const allow = deps.execUnrestrictedAllow ?? [];
+  if (allow.length > 0) {
+    return new HeadlessGateApprover({
+      db: deps.db,
+      entityName: entity.name,
+      allowList: allow,
+      authRequired: deps.authRequired ?? false,
+      // Per-connection trust: resolve the ACTING entity's own live connection and
+      // require it to be genuinely local (loopback IP / in-process). This does
+      // NOT consult WS_HOST — so an accidentally-0.0.0.0-bound server that a
+      // remote peer reaches never yields headless exec, even if WS_HOST lies.
+      actingConnectionTrusted: (entityId) => isLoopbackConnection(deps.getConnection?.(entityId)),
+      audit: makeExecAudit(deps, session),
+    });
+  }
+  return undefined;
+}
+
+/** `code exec-mode <prompt|auto|off>` — launcher opt-in, server re-verified. */
+function execModeCommand(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  args: string[],
+): void {
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+  // Enabling or changing exec-mode is a creator/operator-only privilege. The
+  // interactive launcher issues `code exec-mode prompt|auto` on the HUMAN
+  // operator's own connection (actor == creator), so the human path is
+  // unaffected. A session's bound coding agent (or any non-creator) is refused
+  // here — otherwise the agent could self-enable auto-approval and ride the
+  // creator's loopback-sovereign standing for unattended arbitrary host exec.
+  if (!sameEntityName(session.created_by, entity.name)) {
+    ctx.send(eid, "Only the session's operator can change exec-mode.");
+    return;
+  }
+  const mode = args[0]?.toLowerCase();
+  if (mode === "off" || mode === "none" || mode === "disable") {
+    execModes.delete(session.id);
+    ctx.send(eid, success("Code exec-mode disabled (allowlist only)."));
+    return;
+  }
+  if (mode !== "prompt" && mode !== "auto") {
+    ctx.send(eid, "Usage: code exec-mode <prompt|auto|off>");
+    return;
+  }
+  // Honor prompt/auto ONLY when the server independently verifies a local
+  // sovereign creator on a loopback connection — never the client's word alone.
+  if (!verifyInteractiveEligible(deps, session)) {
+    ctx.send(
+      eid,
+      "Exec-mode requires a loopback sovereign session creator; request refused. Exec stays allowlist-only.",
+    );
+    return;
+  }
+  execModes.set(session.id, mode);
+  ctx.send(
+    eid,
+    success(
+      `Code exec-mode: ${mode}. Non-allowlisted commands will ${
+        mode === "auto" ? "run (audited, no prompt)" : "prompt the session creator"
+      }.`,
+    ),
+  );
+}
+
+/** `code exec-approve <token> [once]` — session creator only, rank 0. */
+function execApprove(ctx: RoomContext, eid: EntityId, entity: Entity, args: string[]): void {
+  const token = args[0];
+  if (!token) {
+    ctx.send(eid, "Usage: code exec-approve <token> [once]");
+    return;
+  }
+  const pending = getPendingExecApproval(token);
+  if (!pending) {
+    ctx.send(eid, `No pending exec approval: ${token}`);
+    return;
+  }
+  // Identity-checked, not rank-gated: only the session creator may resolve.
+  if (!sameEntityName(pending.creatorName, entity.name)) return;
+  const scope = args[1]?.toLowerCase() === "once" ? "once" : "session";
+  // Stamp the human-decision provenance so the audit sink counts this — and only
+  // this — as a witnessed demonstration toward code.exec.unrestricted.
+  settleExecApproval(token, { approved: true, scope, reason: OPERATOR_APPROVED_REASON });
+  ctx.send(eid, success(`Approved exec ${token} (${scope}).`));
+}
+
+/** `code exec-deny <token> [reason]` — session creator only, rank 0. */
+function execDeny(ctx: RoomContext, eid: EntityId, entity: Entity, args: string[]): void {
+  const token = args[0];
+  if (!token) {
+    ctx.send(eid, "Usage: code exec-deny <token> [reason]");
+    return;
+  }
+  const pending = getPendingExecApproval(token);
+  if (!pending) {
+    ctx.send(eid, `No pending exec approval: ${token}`);
+    return;
+  }
+  if (!sameEntityName(pending.creatorName, entity.name)) return;
+  const reason = args.slice(1).join(" ").trim() || "denied by operator";
+  settleExecApproval(token, { approved: false, reason });
+  ctx.send(eid, success(`Denied exec ${token}.`));
 }
 
 /**

@@ -3,9 +3,10 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { RateLimiter } from "../src/auth/rate-limiter";
+import { isLoopbackConnection } from "../src/engine/commands/code";
 import { WS_MAX_CONNECTIONS_PER_IP, WS_MAX_TOTAL_CONNECTIONS } from "../src/engine/constants";
 import { Engine } from "../src/engine/engine";
-import { WebSocketServer } from "../src/net/websocket-server";
+import { resolveWsBindHostname, WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, makeTestRoom } from "./helpers";
@@ -61,6 +62,44 @@ function parse(msg: string): { kind: string; data: Record<string, unknown> } {
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
+
+describe("WebSocket bind hostname (WS_HOST trust anchor)", () => {
+  it("resolveWsBindHostname returns undefined when unset (keeps Bun default bind)", () => {
+    expect(resolveWsBindHostname({} as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveWsBindHostname({ WS_HOST: "  " } as NodeJS.ProcessEnv)).toBeUndefined();
+  });
+
+  it("resolveWsBindHostname honors WS_HOST / MARINA_HOST when explicitly set", () => {
+    expect(resolveWsBindHostname({ WS_HOST: "127.0.0.1" } as NodeJS.ProcessEnv)).toBe("127.0.0.1");
+    expect(resolveWsBindHostname({ MARINA_HOST: "127.0.0.1" } as NodeJS.ProcessEnv)).toBe(
+      "127.0.0.1",
+    );
+    // WS_HOST wins over MARINA_HOST.
+    expect(
+      resolveWsBindHostname({ WS_HOST: "127.0.0.1", MARINA_HOST: "0.0.0.0" } as NodeJS.ProcessEnv),
+    ).toBe("127.0.0.1");
+  });
+
+  it("WS_HOST=127.0.0.1 causes the running server to bind loopback only", () => {
+    const prev = process.env.WS_HOST;
+    process.env.WS_HOST = "127.0.0.1";
+    const dbPath = tmpDbPath();
+    const db = new MarinaDB(dbPath);
+    const engine = new Engine({ startRoom: roomId("test/lobby"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/lobby"), makeTestRoom({ short: "L", long: "L" }));
+    const server = new WebSocketServer(engine, 15399);
+    try {
+      server.start();
+      expect(server.getBoundHostname()).toBe("127.0.0.1");
+    } finally {
+      server.stop();
+      db.close();
+      cleanupDb(dbPath);
+      if (prev === undefined) delete process.env.WS_HOST;
+      else process.env.WS_HOST = prev;
+    }
+  });
+});
 
 describe("WebSocket Server", () => {
   let engine: Engine;
@@ -168,6 +207,42 @@ describe("WebSocket Server", () => {
     expect(allText).toContain("The Lobby");
 
     await close();
+  });
+
+  // ─── Exec trust anchor: peerIp vs. spoofable conn.ip ──────────────────
+
+  it("a spoofed X-Forwarded-For sets conn.ip (display) but NOT peerIp (real socket, the trust anchor)", async () => {
+    // Bun's WebSocket honors a `headers` option. Forge an X-Forwarded-For that
+    // would previously have poisoned the loopback trust check. conn.ip follows
+    // the header; conn.peerIp follows the real TCP socket (localhost here).
+    const ws = new WebSocket(`ws://localhost:${WS_PORT}/ws`, {
+      headers: { "X-Forwarded-For": "203.0.113.99" },
+    } as unknown as string[]);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ws.onopen = () => resolve();
+        ws.onerror = () => reject(new Error("ws error"));
+      });
+      ws.send(JSON.stringify({ type: "login", name: "SpoofBob" }));
+      await Bun.sleep(150);
+
+      const conn = [...engine.connections.values()]
+        .filter((c) => c.protocol === "websocket" && c.entity)
+        .at(-1)!;
+      expect(conn).toBeDefined();
+      // conn.ip is the SPOOFED, header-derived value — never a trust anchor.
+      expect(conn.ip).toBe("203.0.113.99");
+      // peerIp is the REAL socket peer (loopback in this test), independent of the header.
+      expect(conn.peerIp).toBeDefined();
+      expect(conn.peerIp).not.toBe("203.0.113.99");
+      const peer = conn.peerIp!;
+      expect(peer === "127.0.0.1" || peer === "::1" || peer.startsWith("::ffff:127.")).toBe(true);
+      // Trust follows the real socket peer, not the forged header.
+      expect(isLoopbackConnection(conn)).toBe(true);
+    } finally {
+      ws.close();
+      await Bun.sleep(50);
+    }
   });
 
   // ─── Message Parsing ──────────────────────────────────────────────────

@@ -7,6 +7,7 @@ import {
   CODE_MODE_SYSTEM_PROMPT,
   formatUntrustedContext,
 } from "../agent/prompts/support-prompts";
+import { parseExecUnrestricted } from "../coding/exec-approver";
 import { registerBuiltinResolvers } from "../resolvers";
 import type { EntityId, RoomId } from "../types";
 import { adapterCommand } from "./commands/adapter";
@@ -810,6 +811,24 @@ export function registerBuiltinCommands(engine: Engine): void {
       // Forward a bound coding agent's live activity to the human in Code Mode.
       notify: (id, message, metadata) =>
         engine.sendToEntity(id as EntityId, message, "code", metadata),
+      // LAYER 0 transport deny + interactive-approver loopback verification.
+      getConnectionProtocol: (id) => engine.getConnectionForEntity(id as EntityId)?.protocol,
+      getConnection: (id) => engine.getConnectionForEntity(id as EntityId),
+      findEntityByName: (name) => engine.findEntityGlobal(name),
+      // EXACT (case-insensitive) resolver for exec-approval identity checks —
+      // never the fuzzy prefix matcher, which a name-prefix spoof could ride.
+      findEntityExact: (name) => engine.entities.findAgentByName(name),
+      // Headless arbitrary-exec gating (MARINA_CODE_EXEC_UNRESTRICTED). Env is
+      // available at process start; identity trust folds authRequired with an
+      // optional loopback-only bind.
+      execUnrestrictedAllow: parseExecUnrestricted(process.env.MARINA_CODE_EXEC_UNRESTRICTED),
+      // Headless identity trust is resolved PER acting connection at approval
+      // time (loopback IP / in-process), never from a process-wide WS_HOST env.
+      // authRequired short-circuits to trusted when every login is verified.
+      authRequired: engine.config.authRequired === true,
+      execApprovalTimeoutMs: parseExecApprovalTimeout(
+        process.env.MARINA_CODE_EXEC_APPROVAL_TIMEOUT_MS,
+      ),
       db: engine.db,
     }),
   );
@@ -924,6 +943,11 @@ export function registerBuiltinCommands(engine: Engine): void {
       logEvent: (event) => engine.logEvent(event),
     }),
   );
+}
+
+function parseExecApprovalTimeout(value: string | undefined): number | undefined {
+  const parsed = Number.parseInt((value ?? "").trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 async function answerViaLocalModel(query: string, context: string): Promise<string | undefined> {

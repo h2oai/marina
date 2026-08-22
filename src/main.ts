@@ -4,6 +4,7 @@
 import { resolve } from "node:path";
 import { getInternalModelToken } from "./agent/agent-runtime";
 import { RateLimiter } from "./auth/rate-limiter";
+import { parseExecUnrestricted } from "./coding/exec-approver";
 import { ensureConfiguredRoots } from "./coding/workspace-registry";
 import {
   DASHBOARD_BROADCAST_INTERVAL_MS,
@@ -61,6 +62,14 @@ const INSTANCE_NAME = process.env.MARINA_NAME ?? world.name;
 // and the better-auth dependency are loaded lazily — standalone/local Marina
 // never imports them. Passwordless name-login is then gated (see engine.login).
 const AUTH_ENABLED = process.env.MARINA_AUTH === "better-auth";
+// An explicitly-set WS_HOST/MARINA_HOST is honored by the actual bind (see
+// WebSocketServer.start): WS_HOST=127.0.0.1 genuinely binds loopback-only.
+// Headless-exec identity trust is NO LONGER derived from this env — it is
+// resolved per acting connection (loopback IP / in-process) at approval time,
+// so an accidentally-0.0.0.0-bound port can never be spoofed as trusted.
+const WS_BIND_HOST = (process.env.WS_HOST ?? process.env.MARINA_HOST ?? "").trim().toLowerCase();
+const LOOPBACK_ONLY_BIND =
+  WS_BIND_HOST === "127.0.0.1" || WS_BIND_HOST === "::1" || WS_BIND_HOST === "localhost";
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -377,6 +386,29 @@ if (!process.env.MEM_API_KEYS && process.env.MARINA_OPEN_API !== "true") {
     "security",
     "MEM_API_KEYS is not set — memory API endpoints will reject requests. Set MEM_API_KEYS or MARINA_OPEN_API=true",
   );
+}
+// Arbitrary (non-allowlisted) host code execution in a workspace is off unless
+// explicitly enabled. When MARINA_CODE_EXEC_UNRESTRICTED lists entities, the
+// headless approver still requires code.exec.unrestricted competence AND a
+// trustworthy identity, which is decided PER acting connection at approval time:
+// MARINA_AUTH=better-auth (every login verified), OR the acting entity's own
+// connection is genuinely loopback (127.0.0.0/8, ::1) / in-process. A bare
+// WS_HOST claim no longer confers trust — bind loopback AND accept only local
+// connections, or enable auth. Interactive approval (code exec-mode prompt|auto)
+// is orthogonal and always available to a verified loopback sovereign creator.
+{
+  const execUnrestricted = parseExecUnrestricted(process.env.MARINA_CODE_EXEC_UNRESTRICTED);
+  if (execUnrestricted.length > 0) {
+    const genuineLoopbackBind = LOOPBACK_ONLY_BIND; // bind is now honored (see WebSocketServer)
+    const likelyTrusted = AUTH_ENABLED || genuineLoopbackBind;
+    logger.warn(
+      "security",
+      `MARINA_CODE_EXEC_UNRESTRICTED admits ${execUnrestricted.length} entity(ies) for headless arbitrary code exec` +
+        (likelyTrusted
+          ? " (identity trust is resolved per acting connection: MARINA_AUTH or a genuine loopback connection; competence still required per entity)"
+          : " — headless exec is refused for any non-loopback connection unless MARINA_AUTH=better-auth is set; set WS_HOST=127.0.0.1 to bind loopback-only, or enable auth"),
+    );
+  }
 }
 if (!process.env.ALLOWED_ORIGINS) {
   logger.info(

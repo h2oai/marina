@@ -1122,3 +1122,58 @@ describe("identity mismatch: dashed config names vs login-sanitized entity names
     expect(session.writer).toBe(name);
   });
 });
+
+describe("code resume ownership (BYPASS 1a)", () => {
+  let db: MarinaDB;
+
+  beforeEach(() => {
+    db = new MarinaDB(TEST_DB);
+  });
+  afterEach(() => {
+    db.close();
+    cleanupDb(TEST_DB);
+  });
+
+  it("refuses resume for a non-creator/non-bound entity; allows the creator and bound agent", async () => {
+    const creator = makeAgentEntity("u_creator", "Creator");
+    db.saveEntity(creator);
+    const boundAgent = makeAgentEntity("agent_bound", "BoundCoder");
+    db.saveEntity(boundAgent);
+    const stranger = makeAgentEntity("u_stranger", "Stranger");
+    db.saveEntity(stranger);
+
+    const session = db.createCodingSession({
+      id: "cs_ownership_1",
+      title: "Owned",
+      workspaceRoot: process.cwd(),
+      createdBy: creator.name,
+      mode: "agent",
+    });
+    db.updateCodingSession(session.id, { agent: boundAgent.name });
+
+    const sent: string[] = [];
+    const command = codeCommand({
+      db,
+      getEntity: (id) => [creator, boundAgent, stranger].find((e) => e.id === id),
+      workspace: new LocalWorkspace(),
+    });
+    const ctx = testRoomContext(sent);
+
+    // A stranger who merely knows the id cannot adopt the session (confused
+    // deputy toward the creator's exec authorization).
+    sent.length = 0;
+    await command.handler(ctx, inputFor(stranger, `code resume ${session.id}`));
+    expect(stripAnsi(sent.join("\n"))).toContain("only resume a coding session you created");
+    expect(stranger.properties.coding_session_id).toBeUndefined();
+
+    // The creator may resume.
+    sent.length = 0;
+    await command.handler(ctx, inputFor(creator, `code resume ${session.id}`));
+    expect(creator.properties.coding_session_id).toBe(session.id);
+
+    // The session's own bound coding agent may resume.
+    sent.length = 0;
+    await command.handler(ctx, inputFor(boundAgent, `code resume ${session.id}`));
+    expect(boundAgent.properties.coding_session_id).toBe(session.id);
+  });
+});

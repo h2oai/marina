@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import { projectSlug, pushTailLines, terminalCodeLifecycle } from "../scripts/code";
+import {
+  execApprovalRequest,
+  projectSlug,
+  pushTailLines,
+  resolveExecMode,
+  terminalCodeLifecycle,
+} from "../scripts/code";
 import { parseDispatch, USAGE } from "../scripts/marina";
 import type { Perception } from "../src/sdk/client";
 
@@ -81,13 +87,126 @@ describe("marina dispatcher routing", () => {
     expect(parseDispatch(["/a", "/b"])).toEqual({ kind: "usage-error", arg: "/b" });
   });
 
+  it("parses --allow-exec and --dangerously-allow-all in any position", () => {
+    expect(parseDispatch(["--allow-exec"])).toEqual({
+      kind: "code",
+      dir: undefined,
+      allowExec: true,
+    });
+    expect(parseDispatch(["--dangerously-allow-all"])).toEqual({
+      kind: "code",
+      dir: undefined,
+      dangerouslyAllowAll: true,
+    });
+    expect(parseDispatch(["/dir", "--allow-exec"])).toEqual({
+      kind: "code",
+      dir: "/dir",
+      allowExec: true,
+    });
+    expect(parseDispatch(["--dangerously-allow-all", "/dir"])).toEqual({
+      kind: "code",
+      dir: "/dir",
+      dangerouslyAllowAll: true,
+    });
+  });
+
+  it("combines the exec flags with -p and a dir", () => {
+    expect(parseDispatch(["-p", "fix it", "/dir", "--allow-exec"])).toEqual({
+      kind: "code",
+      dir: "/dir",
+      print: "fix it",
+      allowExec: true,
+    });
+    expect(parseDispatch(["--dangerously-allow-all", "--fresh", "-p", "go", "/dir"])).toEqual({
+      kind: "code",
+      dir: "/dir",
+      fresh: true,
+      print: "go",
+      dangerouslyAllowAll: true,
+    });
+  });
+
   it("usage covers every flow, the new flags, and the exit codes", () => {
-    for (const word of ["connect", "start", "--help", "[dir]", "-p", "--fresh"]) {
+    for (const word of [
+      "connect",
+      "start",
+      "--help",
+      "[dir]",
+      "-p",
+      "--fresh",
+      "--allow-exec",
+      "--dangerously-allow-all",
+    ]) {
       expect(USAGE).toContain(word);
     }
     expect(USAGE).toContain("Exit codes");
     expect(USAGE).toContain("MARINA_CODE_TASK_TIMEOUT_MS");
     expect(USAGE).toContain("~/.marina/projects/<slug>/marina.db");
+    expect(USAGE).toContain("allowlist-only");
+  });
+});
+
+describe("resolveExecMode (host-exec approval posture)", () => {
+  it("is off when neither flag is set, regardless of TTY", () => {
+    expect(resolveExecMode({}, true)).toEqual({ mode: "off" });
+    expect(resolveExecMode({}, false)).toEqual({ mode: "off" });
+  });
+
+  it("maps --allow-exec to prompt and --dangerously-allow-all to auto on a TTY", () => {
+    expect(resolveExecMode({ allowExec: true }, true)).toEqual({ mode: "prompt" });
+    expect(resolveExecMode({ dangerouslyAllowAll: true }, true)).toEqual({ mode: "auto" });
+  });
+
+  it("lets auto (--dangerously-allow-all) win when both flags are set", () => {
+    expect(resolveExecMode({ allowExec: true, dangerouslyAllowAll: true }, true)).toEqual({
+      mode: "auto",
+    });
+  });
+
+  it("refuses either flag without a TTY and stays allowlist-only", () => {
+    const auto = resolveExecMode({ dangerouslyAllowAll: true }, false);
+    expect(auto.mode).toBe("off");
+    expect(auto.refusal).toContain("--dangerously-allow-all");
+    expect(auto.refusal).toContain("TTY");
+
+    const prompt = resolveExecMode({ allowExec: true }, false);
+    expect(prompt.mode).toBe("off");
+    expect(prompt.refusal).toContain("--allow-exec");
+  });
+});
+
+describe("execApprovalRequest (server exec-approval payload)", () => {
+  const perception = (execApproval: unknown): Perception =>
+    ({
+      kind: "message",
+      timestamp: 0,
+      data: { text: "approval please", execApproval },
+    }) as unknown as Perception;
+
+  it("extracts a well-formed request", () => {
+    expect(
+      execApprovalRequest(
+        perception({
+          token: "tok_1",
+          argv: ["ls", "-la"],
+          cwd: "/work",
+          rendered: "ls -la",
+        }),
+      ),
+    ).toEqual({ token: "tok_1", argv: ["ls", "-la"], cwd: "/work", rendered: "ls -la" });
+  });
+
+  it("ignores perceptions without a valid token+rendered payload", () => {
+    expect(execApprovalRequest(perception(undefined))).toBeUndefined();
+    expect(execApprovalRequest(perception({ token: "t" }))).toBeUndefined();
+    expect(execApprovalRequest(perception({ rendered: "ls" }))).toBeUndefined();
+    expect(
+      execApprovalRequest({
+        kind: "message",
+        timestamp: 0,
+        data: { text: "no payload" },
+      } as unknown as Perception),
+    ).toBeUndefined();
   });
 });
 

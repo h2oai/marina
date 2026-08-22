@@ -44,6 +44,73 @@ export interface CodeSessionOptions {
   fresh?: boolean;
   /** One-shot task: dispatch it, stream output, await completion, exit 0/1/2. */
   print?: string;
+  /** Prompt (y/N/a) for each non-allowlisted host command (`--allow-exec`). */
+  allowExec?: boolean;
+  /** Auto-approve every host command with no prompt (`--dangerously-allow-all`). */
+  dangerouslyAllowAll?: boolean;
+}
+
+/** Interactive host-exec approval posture negotiated with the server. */
+export type ExecMode = "off" | "prompt" | "auto";
+
+export interface ExecModeResolution {
+  mode: ExecMode;
+  /**
+   * A human-facing message explaining why exec stayed allowlist-only despite a
+   * flag being set (only present when a requested flag was refused).
+   */
+  refusal?: string;
+}
+
+/**
+ * Pure decision: given the exec flags and whether stdin is an owned TTY, what
+ * exec posture do we ask the server for? Neither flag → "off" (today's
+ * allowlist-only behavior, no exec-mode sent). Either flag without a TTY is
+ * refused — a non-interactive pipe is never treated as operator consent, so we
+ * stay "off" and surface a reason. `--dangerously-allow-all` (auto) wins over
+ * `--allow-exec` (prompt) when both are given.
+ */
+export function resolveExecMode(
+  opts: Pick<CodeSessionOptions, "allowExec" | "dangerouslyAllowAll">,
+  isTTY: boolean,
+): ExecModeResolution {
+  const wantsAuto = opts.dangerouslyAllowAll === true;
+  const wantsPrompt = opts.allowExec === true;
+  if (!wantsAuto && !wantsPrompt) return { mode: "off" };
+  if (!isTTY) {
+    const flag = wantsAuto ? "--dangerously-allow-all" : "--allow-exec";
+    return {
+      mode: "off",
+      refusal:
+        `${flag} requires an interactive local terminal (stdin must be a TTY you own); ` +
+        "staying allowlist-only.",
+    };
+  }
+  return { mode: wantsAuto ? "auto" : "prompt" };
+}
+
+/** Shape of the exec-approval payload the server attaches to a perception. */
+export interface ExecApprovalPayload {
+  token: string;
+  argv: string[];
+  cwd: string;
+  rendered: string;
+}
+
+/** Extract the exec-approval request from a perception, if it is one. */
+export function execApprovalRequest(p: Perception): ExecApprovalPayload | undefined {
+  const payload = (p.data as Record<string, unknown> | undefined)?.execApproval as
+    | Record<string, unknown>
+    | undefined;
+  if (!payload) return undefined;
+  const token = typeof payload.token === "string" ? payload.token : undefined;
+  const rendered = typeof payload.rendered === "string" ? payload.rendered : undefined;
+  if (!token || !rendered) return undefined;
+  const argv = Array.isArray(payload.argv)
+    ? (payload.argv.filter((a) => typeof a === "string") as string[])
+    : [];
+  const cwd = typeof payload.cwd === "string" ? payload.cwd : "";
+  return { token, argv, cwd, rendered };
 }
 
 /**
@@ -136,6 +203,10 @@ export async function runCodeSession(
 ): Promise<void> {
   const dir = resolve(targetDir);
   const fresh = opts.fresh ?? /^(1|true|on)$/i.test(process.env.MARINA_CODE_FRESH ?? "");
+  // Host-exec approval posture. Neither flag → "off" (allowlist-only, no
+  // exec-mode sent). Either flag demands an owned TTY; a pipe is never consent.
+  const execResolution = resolveExecMode(opts, process.stdin.isTTY === true);
+  const execMode = execResolution.mode;
   const port = await freePort();
   let dbPath: string;
   if (fresh) {
@@ -159,6 +230,25 @@ export async function runCodeSession(
     console.error("Warning · no LLM provider key found; the coding agent won't be able to think.");
     console.error(`  Checked: MARINA_DEFAULT_MODEL, ${PROVIDER_KEY_ENV_VARS.join(", ")}`);
     console.error("  Set one (e.g. ANTHROPIC_API_KEY) and restart to enable task execution.");
+  }
+
+  if (execResolution.refusal) {
+    // A flag was set but refused (no owned TTY) — say so and stay allowlist-only.
+    console.error(`Refused · ${execResolution.refusal}`);
+  }
+  if (execMode === "prompt") {
+    console.error(
+      "Exec · non-allowlisted host commands will prompt for approval (y/N/a) before running.",
+    );
+  } else if (execMode === "auto") {
+    // A loud, one-time banner — this session auto-runs arbitrary host commands.
+    console.error("");
+    console.error("  ##############################################################");
+    console.error("  #  DANGER: --dangerously-allow-all is ON                     #");
+    console.error("  #  Every host command this session issues runs AUTOMATICALLY #");
+    console.error("  #  with NO approval prompt. Only use in a folder you trust.   #");
+    console.error("  ##############################################################");
+    console.error("");
   }
 
   // Boot a minimal, folder-scoped server. MARINA_ADMINS=coder makes the local
@@ -249,6 +339,46 @@ export async function runCodeSession(
   let stopRequested = false;
   let lastSigintAt = 0;
 
+  // Interactive host-exec approval. Only wired in "prompt" mode; in "auto" the
+  // server approves without a prompt and we just stream, in "off" no request is
+  // ever sent. The prompt reuses the REPL readline (via a scoped question) so it
+  // never deadlocks the main line loop, and Ctrl-C still interrupts.
+  function promptApproval(rendered: string): Promise<boolean> {
+    return new Promise((resolveAnswer) => {
+      const query = `Run: ${rendered}  [y/N/a] `;
+      const decide = (answer: string): void => {
+        const a = answer.trim().toLowerCase();
+        // 'a' ("allow this argv for the session") is just a yes here — the
+        // server enforces the session-scope allow-set, so the launcher only
+        // needs to relay approve/deny.
+        resolveAnswer(a === "y" || a === "a");
+      };
+      if (rl) {
+        rl.question(query, decide);
+      } else {
+        // No REPL yet (e.g. before the prompt loop is reached) — scoped reader.
+        const tmp = createInterface({ input: process.stdin, output: process.stderr });
+        tmp.question(query, (answer) => {
+          tmp.close();
+          decide(answer);
+        });
+      }
+    });
+  }
+  if (execMode === "prompt") {
+    agent.onPerception((p) => {
+      const req = execApprovalRequest(p);
+      if (!req) return;
+      promptApproval(req.rendered)
+        .then((ok) =>
+          agent.command(ok ? `code exec-approve ${req.token}` : `code exec-deny ${req.token}`),
+        )
+        .catch(() => {
+          /* best-effort — a missed reply times out server-side into a deny */
+        });
+    });
+  }
+
   function handleSigint(): void {
     // One Ctrl-C can arrive via both the process SIGINT signal and readline's
     // "SIGINT" event — debounce so a single keypress counts once.
@@ -318,6 +448,15 @@ export async function runCodeSession(
       console.error("No active session yet.");
     }
     break;
+  }
+
+  // Negotiate the host-exec posture with the server. The server independently
+  // re-verifies the operator is a loopback-local sovereign before honoring this
+  // — the flag alone is not trusted. "off" sends nothing (allowlist-only).
+  if (execMode !== "off") {
+    await agent.command(`code exec-mode ${execMode}`).catch(() => {
+      /* best-effort — if refused server-side, exec simply stays allowlist-only */
+    });
   }
 
   // One-shot mode (`marina -p "<task>"`): dispatch, stream, await the terminal

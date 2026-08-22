@@ -173,11 +173,35 @@ describe("Safety gates", () => {
     expect(db.getCompetence("e_steward", "admin.destructive")).toBeUndefined();
   });
 
-  it("grantGatesForRank(9) grants every gate", () => {
+  it("grantGatesForRank(9) grants every RANK-TIERED gate but not code.exec.unrestricted", () => {
     grantGatesForRank(db, "e_sov", 9);
-    for (const id of listGates()) {
+    // Every rank-tiered gate is granted to a sovereign...
+    for (const id of [
+      "shell.exec",
+      "agent.spawn",
+      "code.exec",
+      "agent.run",
+      "adapter.enable",
+      "connect.manage",
+      "gateway.connect",
+      "key.manage",
+      "admin.destructive",
+    ]) {
       expect(db.getCompetence("e_sov", id)?.supervised_only).toBe(0);
     }
+    // ...but the arbitrary-exec gate is NEVER granted by rank, not even for a
+    // sovereign — it is earned or granted explicitly, and fenced by the approver.
+    expect(db.getCompetence("e_sov", "code.exec.unrestricted")).toBeUndefined();
+  });
+
+  it("registers code.exec.unrestricted but keeps it off the rank ladder", () => {
+    expect(listGates()).toContain("code.exec.unrestricted");
+    const gate = SAFETY_GATES["code.exec.unrestricted"]!;
+    expect(gate.minStanding).toBe(251);
+    expect(gate.demoThreshold).toBe(5);
+    // Highest minStanding → it sorts last on the reachability ladder.
+    const ordered = Object.values(SAFETY_GATES).sort((a, b) => a.minStanding - b.minStanding);
+    expect(ordered.at(-1)!.id).toBe("code.exec.unrestricted");
   });
 
   // ── getGateProgress: the visible "what's next past rank 4" ladder ──
@@ -185,9 +209,10 @@ describe("Safety gates", () => {
     it("locks every gate for a fresh entity and reports the standing gap", () => {
       const progress = getGateProgress(db, "e_fresh");
       expect(progress.every((g) => g.status === "locked")).toBe(true);
-      // Ordered by reachability — code.exec (min 5) first, admin.destructive (250) last.
+      // Ordered by reachability — code.exec (min 5) first, and the arbitrary-exec
+      // gate (min 251) sorts last, after admin.destructive (250).
       expect(progress[0]!.id).toBe("code.exec");
-      expect(progress.at(-1)!.id).toBe("admin.destructive");
+      expect(progress.at(-1)!.id).toBe("code.exec.unrestricted");
       const spawn = progress.find((g) => g.id === "agent.spawn")!;
       expect(spawn.standing).toBe(0);
       expect(spawn.minStanding).toBe(40);
