@@ -167,12 +167,16 @@ export interface DroppedFileResult {
  * @param roomIds - Array of all room IDs in the world.
  * @param entityRooms - Map of entity names to their current room IDs.
  * @param selectedCanvasId - Optional canvas ID override from the selector.
+ * @param onCanvasDeleted - Called when the active canvas is deleted server-side,
+ *   so the owner of `selectedCanvasId` can clear a now-stale selection before
+ *   the hook reselects a surviving canvas.
  */
 export function useCanvasIntegration(
   roomPositions: Record<string, { x: number; y: number }>,
   roomIds: string[],
   entityRooms: Record<string, string>,
   selectedCanvasId?: string | null,
+  onCanvasDeleted?: (canvasId: string) => void,
 ): UseCanvasIntegrationResult {
   const [canvasId, setCanvasId] = useState<string | null>(null);
   const [canvasList, setCanvasList] = useState<CanvasListEntry[]>([]);
@@ -184,6 +188,10 @@ export function useCanvasIntegration(
   const initialCanvasIdRef = useRef(selectedCanvasId);
   const handledGenerationRef = useRef(0);
   const skipNextConnectionRecoveryRef = useRef(true);
+  const onCanvasDeletedRef = useRef(onCanvasDeleted);
+  useEffect(() => {
+    onCanvasDeletedRef.current = onCanvasDeleted;
+  }, [onCanvasDeleted]);
 
   // Live canvas-node updates: merge node_added / node_updated / node_deleted
   // events from /canvas-ws into rawNodes so the unified surface reflects
@@ -219,6 +227,10 @@ export function useCanvasIntegration(
     } else if (event.type === "edge_deleted" && event.edgeId) {
       const edgeId = event.edgeId;
       setRawEdges((prev) => prev.filter((e) => e.id !== edgeId));
+    } else if (event.type === "canvas_deleted") {
+      // Closure evaluated on event delivery, after `handleCanvasDeleted`
+      // (declared below, next to `loadSnapshot`) is initialized.
+      handleCanvasDeleted(event.canvasId);
     }
   });
 
@@ -241,6 +253,42 @@ export function useCanvasIntegration(
       }
     },
     [markWsReady, resetWsBuffer],
+  );
+
+  // The active canvas was deleted server-side. Drop its content immediately,
+  // let the selector owner clear a stale `selectedCanvasId`, then refresh the
+  // list and reselect via the shared selectInitialCanvas fallback order.
+  const handleCanvasDeleted = useCallback(
+    (deletedId: string) => {
+      setRawNodes([]);
+      setRawEdges([]);
+      onCanvasDeletedRef.current?.(deletedId);
+      setLoading(true);
+      authFetch(`${API_BASE}/api/canvases`)
+        .then((r) => {
+          if (!r.ok) throw new Error(`Request failed (${r.status})`);
+          return r.json() as Promise<CanvasData[]>;
+        })
+        .then((list) => {
+          // The list endpoint may still race the delete — filter defensively.
+          const remaining = list.filter((c) => c.id !== deletedId);
+          setCanvasList(remaining.map((c) => ({ id: c.id, name: c.name })));
+          const target = selectInitialCanvas(remaining);
+          if (!target) {
+            setCanvasId(null);
+            setLoading(false);
+            return;
+          }
+          skipNextConnectionRecoveryRef.current = true;
+          setCanvasId(target.id);
+          return loadSnapshot(target.id);
+        })
+        .catch((cause) => {
+          setError(cause instanceof Error ? cause.message : "Request failed");
+          setLoading(false);
+        });
+    },
+    [loadSnapshot],
   );
 
   // Fetch canvas list on mount

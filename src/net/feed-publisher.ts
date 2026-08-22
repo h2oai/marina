@@ -208,6 +208,9 @@ export class FeedPublisher {
             sourceId: event.sourceId,
             targetId: event.targetId,
             relationship: event.relationship,
+            // Match the snapshot API's edge shape (CanvasEdgeData.data is
+            // non-optional) so live consumers and snapshot loads converge.
+            data: this.edgeData(event.edgeId),
             creatorName: this.resolveEntity(event.entity) ?? event.entity,
             createdAt: event.timestamp,
           },
@@ -219,6 +222,9 @@ export class FeedPublisher {
           canvasId: event.canvasId,
           edgeId: event.edgeId,
         });
+        break;
+      case "canvas_deleted":
+        this.publishCanvasDeleted(event);
         break;
       case "note_created":
         this.publishNoteCreated(event);
@@ -244,6 +250,44 @@ export class FeedPublisher {
       default:
         break;
     }
+  }
+
+  /**
+   * Parsed `data` payload of a canvas edge, matching the snapshot API shape
+   * (`data: e.data ? JSON.parse(e.data) : null`). A corrupt or already-gone
+   * row degrades to `null` — the broadcast itself must still go out.
+   */
+  private edgeData(edgeId: string): Record<string, unknown> | null {
+    const row = this.db.getCanvasEdge(edgeId);
+    if (!row?.data) return null;
+    try {
+      return JSON.parse(row.data) as Record<string, unknown>;
+    } catch (err) {
+      console.warn(
+        `[feed] edge ${edgeId} has corrupt data, broadcasting without it: ${getErrorMessage(err)}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * A canvas was deleted. Live viewers of that canvas need the broadcast to
+   * clear their board and reselect (the dashboard fetches the canvas list
+   * once — without this they keep a dead board forever); the structured
+   * feed_event keeps the timeline consistent with other canvas lifecycle
+   * events. No feed-canvas node: the deletion of a board is not itself
+   * browsable content.
+   */
+  private publishCanvasDeleted(event: EngineEvent & { type: "canvas_deleted" }): void {
+    this.broadcaster?.broadcast({ type: "canvas_deleted", canvasId: event.canvasId });
+    const entityName = this.resolveEntity(event.entity) ?? event.entity;
+    this.recordFeedEvent({
+      kind: "canvas_deleted",
+      entity: entityName,
+      ref: `canvas:${event.canvasId}`,
+      summary: `${entityName} deleted canvas "${event.name}"`,
+      payload: { canvasId: event.canvasId, name: event.name },
+    });
   }
 
   private publishModelRequestLifecycle(

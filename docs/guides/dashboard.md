@@ -215,7 +215,9 @@ Select the `feed` canvas for a live activity stream. Board posts, channel messag
 - **Export** canvas data as JSON
 - **Layout** buttons apply grid, timeline, or feed arrangements
 
-Node, intent, layout, retention, and typed-edge changes broadcast in real time via WebSocket.
+Node, intent, layout, retention, typed-edge, and canvas-deletion changes broadcast in real time via
+WebSocket. If the canvas you are viewing is deleted (`canvas delete <name>` in the engine), the view
+clears automatically and switches to the next available workspace (feed → guide → global).
 After a disconnect, the Canvas refetches its snapshot before applying buffered replacement-socket
 events so mutations made while offline are recovered. A failed load is shown as an error with a
 retry action rather than being presented as an empty canvas.

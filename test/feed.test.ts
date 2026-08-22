@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { CanvasBroadcaster } from "../src/net/canvas-ws";
@@ -456,13 +457,155 @@ describe("Feed Canvas System", () => {
 
       expect(JSON.parse(sent[0]!)).toMatchObject({
         type: "edge_added",
-        edge: { id: "edge-1", relationship: "supports", creatorName: "Tester" },
+        // No DB row for this edge — data degrades to null, matching the
+        // snapshot API's non-optional CanvasEdgeData.data contract.
+        edge: { id: "edge-1", relationship: "supports", creatorName: "Tester", data: null },
       });
       expect(JSON.parse(sent[1]!)).toEqual({
         type: "edge_deleted",
         canvasId: "work-live",
         edgeId: "edge-1",
       });
+    });
+
+    it("includes the persisted edge data payload in edge_added broadcasts", () => {
+      db.createCanvas({ id: "edge-data", name: "edge-data", creatorName: "Tester" });
+      db.createNode({ id: "node-a", canvasId: "edge-data", type: "text", creatorName: "Tester" });
+      db.createNode({ id: "node-b", canvasId: "edge-data", type: "text", creatorName: "Tester" });
+      db.createCanvasEdge({
+        id: "edge-2",
+        canvasId: "edge-data",
+        sourceId: "node-a",
+        targetId: "node-b",
+        relationship: "supports",
+        data: { weight: 3, note: "load-bearing" },
+        creatorName: "Tester",
+      });
+      const broadcaster = new CanvasBroadcaster();
+      const sent: string[] = [];
+      broadcaster.addClient(
+        { readyState: 1, send: (payload: string) => sent.push(payload) } as never,
+        "edge-data",
+      );
+      const livePublisher = new FeedPublisher({
+        db,
+        resolveEntity: (id) => engine.entities.get(id)?.name,
+        broadcaster,
+      });
+
+      livePublisher.handleEvent({
+        type: "canvas_edge_created",
+        entity: entityId,
+        canvasId: "edge-data",
+        edgeId: "edge-2",
+        sourceId: "node-a",
+        targetId: "node-b",
+        relationship: "supports",
+        timestamp: 456,
+      });
+
+      expect(JSON.parse(sent[0]!)).toMatchObject({
+        type: "edge_added",
+        canvasId: "edge-data",
+        edge: {
+          id: "edge-2",
+          sourceId: "node-a",
+          targetId: "node-b",
+          relationship: "supports",
+          data: { weight: 3, note: "load-bearing" },
+          creatorName: "Tester",
+          createdAt: 456,
+        },
+      });
+    });
+
+    it("broadcasts canvas_deleted and records a feed_event for canvas deletion", () => {
+      const broadcaster = new CanvasBroadcaster();
+      const sent: string[] = [];
+      broadcaster.addClient(
+        { readyState: 1, send: (payload: string) => sent.push(payload) } as never,
+        "doomed-id",
+      );
+      const livePublisher = new FeedPublisher({
+        db,
+        resolveEntity: (id) => engine.entities.get(id)?.name,
+        broadcaster,
+      });
+
+      livePublisher.handleEvent({
+        type: "canvas_deleted",
+        entity: entityId,
+        canvasId: "doomed-id",
+        name: "doomed",
+        timestamp: Date.now(),
+      });
+
+      expect(JSON.parse(sent[0]!)).toEqual({ type: "canvas_deleted", canvasId: "doomed-id" });
+      const [event] = db.queryFeedEvents({ limit: 1 });
+      expect(event?.kind).toBe("canvas_deleted");
+      expect(event?.ref).toBe("canvas:doomed-id");
+      expect(event?.summary).toContain('deleted canvas "doomed"');
+      expect(JSON.parse(event?.payload ?? "{}")).toEqual({
+        canvasId: "doomed-id",
+        name: "doomed",
+      });
+    });
+
+    it("emits node_deleted for exactly the evicted node ids when retention trims the feed", () => {
+      db.createCanvas({ id: "feed-trim", name: "feed", creatorName: "system" });
+      const broadcaster = new CanvasBroadcaster();
+      const sent: string[] = [];
+      broadcaster.addClient(
+        { readyState: 1, send: (payload: string) => sent.push(payload) } as never,
+        "feed-trim",
+      );
+      const livePublisher = new FeedPublisher({
+        db,
+        resolveEntity: (id) => engine.entities.get(id)?.name,
+        broadcaster,
+      });
+
+      // Fill the feed to exactly FEED_CANVAS_MAX_NODES (500), then spread
+      // created_at so eviction order is deterministic — Date.now() collides at
+      // ms resolution and the trim SQL orders by created_at.
+      const seedIds: string[] = [];
+      for (let i = 0; i < 500; i++) {
+        const id = `seed-${String(i).padStart(4, "0")}`;
+        seedIds.push(id);
+        db.createNode({ id, canvasId: "feed-trim", type: "text", creatorName: "system" });
+      }
+      const raw = new Database(TEST_DB);
+      raw.run(
+        "UPDATE canvas_nodes SET created_at = created_at - 100000 + rowid WHERE canvas_id = 'feed-trim'",
+      );
+      raw.close();
+
+      // FEED_TRIM_INTERVAL inserts trigger one amortized trim: 500 + 20 nodes
+      // trims back to 500, evicting the 20 oldest seeds via the
+      // `LIMIT -1 OFFSET max` idiom in trimCanvasNodesWithIds.
+      for (let i = 0; i < 20; i++) {
+        livePublisher.handleEvent({
+          type: "board_post",
+          entity: entityId,
+          postId: i,
+          boardId: "board:general",
+          boardName: "general",
+          title: `post ${i}`,
+          body: "retention test",
+          timestamp: Date.now(),
+        });
+      }
+
+      const deletions = sent
+        .map((payload) => JSON.parse(payload) as { type: string; canvasId: string; nodeId: string })
+        .filter((event) => event.type === "node_deleted");
+      expect(deletions).toHaveLength(20);
+      expect(deletions.every((event) => event.canvasId === "feed-trim")).toBe(true);
+      expect(deletions.map((event) => event.nodeId).sort()).toEqual(seedIds.slice(0, 20));
+      expect(db.getNodesByCanvas("feed-trim")).toHaveLength(500);
+      // The evicted rows are gone; the newest seed survives.
+      expect(db.getNode("seed-0019")).toBeUndefined();
+      expect(db.getNode("seed-0020")).toBeDefined();
     });
 
     it("publishes board_post events as feed nodes", () => {
@@ -644,6 +787,38 @@ describe("Feed Canvas System", () => {
       } as EngineEvent);
 
       expect(db.getCanvasByName("feed")).toBeUndefined();
+    });
+  });
+
+  // ─── Canvas delete emits canvas_deleted event ────────────────────────
+
+  describe("canvas delete emits events", () => {
+    it("emits canvas_deleted with the canvas id and name", () => {
+      const events: EngineEvent[] = [];
+      engine.addEventListener((e) => events.push(e));
+
+      engine.processCommand(entityId, "canvas create doomed");
+      const canvas = db.getCanvasByName("doomed")!;
+      events.length = 0;
+
+      engine.processCommand(entityId, "canvas delete doomed");
+
+      expect(db.getCanvasByName("doomed")).toBeUndefined();
+      const deleteEvents = events.filter((e) => e.type === "canvas_deleted");
+      expect(deleteEvents).toHaveLength(1);
+      const event = deleteEvents[0] as EngineEvent & { type: "canvas_deleted" };
+      expect(event.canvasId).toBe(canvas.id);
+      expect(event.name).toBe("doomed");
+      expect(event.entity).toBe(entityId);
+    });
+
+    it("does not emit canvas_deleted when the canvas does not exist", () => {
+      const events: EngineEvent[] = [];
+      engine.addEventListener((e) => events.push(e));
+
+      engine.processCommand(entityId, "canvas delete no-such-canvas");
+
+      expect(events.filter((e) => e.type === "canvas_deleted")).toHaveLength(0);
     });
   });
 

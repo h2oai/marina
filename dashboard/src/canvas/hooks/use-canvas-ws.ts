@@ -17,7 +17,13 @@ const RECONNECT_DELAY_MS = 1500;
 const RECONNECT_MAX_DELAY_MS = 15000;
 
 export interface CanvasEvent {
-  type: "node_added" | "node_updated" | "node_deleted" | "edge_added" | "edge_deleted";
+  type:
+    | "node_added"
+    | "node_updated"
+    | "node_deleted"
+    | "edge_added"
+    | "edge_deleted"
+    | "canvas_deleted";
   canvasId: string;
   node?: CanvasNodeData;
   nodeId?: string;
@@ -70,6 +76,10 @@ export function parseCanvasEvent(payload: unknown, canvasId: string): CanvasEven
         : null;
     case "edge_deleted":
       return typeof payload.edgeId === "string" ? (payload as unknown as CanvasEvent) : null;
+    case "canvas_deleted":
+      // The subscribed canvas itself is gone — the canvasId guard above
+      // already ensured this event targets our subscription.
+      return payload as unknown as CanvasEvent;
     default:
       return null;
   }

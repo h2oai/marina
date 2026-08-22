@@ -875,6 +875,13 @@ export type EngineEvent =
       timestamp: number;
     }
   | {
+      type: "canvas_deleted";
+      entity: EntityId;
+      canvasId: string;
+      name: string;
+      timestamp: number;
+    }
+  | {
       type: "crew_created";
       crew: CrewId;
       name: string;

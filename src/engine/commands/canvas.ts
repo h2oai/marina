@@ -83,7 +83,7 @@ export function canvasCommand(deps: {
             );
             return;
           }
-          handleDelete(ctx, eid, db, tokens.slice(1));
+          handleDelete(ctx, eid, db, deps.logEvent, tokens.slice(1));
           return;
         }
         case "intent":
@@ -585,7 +585,13 @@ function handleNodes(ctx: RoomContext, eid: EntityId, db: MarinaDB, tokens: stri
   ctx.send(eid, lines.join("\n"));
 }
 
-function handleDelete(ctx: RoomContext, eid: EntityId, db: MarinaDB, tokens: string[]): void {
+function handleDelete(
+  ctx: RoomContext,
+  eid: EntityId,
+  db: MarinaDB,
+  logEvent: ((event: { type: string; entity: EntityId; [k: string]: unknown }) => void) | undefined,
+  tokens: string[],
+): void {
   const name = tokens[0];
   if (!name) {
     ctx.send(eid, "Usage: canvas delete <name>");
@@ -597,6 +603,16 @@ function handleDelete(ctx: RoomContext, eid: EntityId, db: MarinaDB, tokens: str
     return;
   }
   db.deleteCanvas(canvas.id);
+  // Without this, dashboard viewers keep the deleted board forever — the
+  // canvas list is only fetched on mount/focus. FeedPublisher translates it
+  // into a `canvas_deleted` WS broadcast so live clients clear and reselect.
+  logEvent?.({
+    type: "canvas_deleted",
+    entity: eid,
+    canvasId: canvas.id,
+    name: canvas.name,
+    timestamp: Date.now(),
+  });
   ctx.send(eid, `Canvas "${name}" deleted.`);
 }
 

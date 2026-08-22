@@ -215,6 +215,11 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
 
   // ── Canvas selector state ───────────────────────────────────────────────
   const [selectedCanvasId, setSelectedCanvasId] = useState<string | null>(null);
+  // A deleted canvas must not stay selected — the integration hook reselects
+  // a surviving canvas, and a stale selection here would switch right back.
+  const handleCanvasDeleted = useCallback((deletedId: string) => {
+    setSelectedCanvasId((current) => (current === deletedId ? null : current));
+  }, []);
 
   // ── Panel visibility state ──────────────────────────────────────────────
   const [showEntities, setShowEntities] = useState(true);
@@ -878,7 +883,13 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
     wsStatus: canvasWsStatus,
     onDrop: canvasDrop,
     removeNode: removeCanvasNode,
-  } = useCanvasIntegration(roomPositions, roomIds, entityRooms, selectedCanvasId);
+  } = useCanvasIntegration(
+    roomPositions,
+    roomIds,
+    entityRooms,
+    selectedCanvasId,
+    handleCanvasDeleted,
+  );
 
   // ── Per-room latest in-room message (say / emote) ─────────────────────
   // Content-over-motion on the map: the pedestal gets a small glass pill

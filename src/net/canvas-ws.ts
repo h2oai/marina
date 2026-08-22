@@ -18,11 +18,13 @@ export type CanvasEvent =
         sourceId: string;
         targetId: string;
         relationship: string;
+        data: Record<string, unknown> | null;
         creatorName: string;
         createdAt: number;
       };
     }
-  | { type: "edge_deleted"; canvasId: string; edgeId: string };
+  | { type: "edge_deleted"; canvasId: string; edgeId: string }
+  | { type: "canvas_deleted"; canvasId: string };
 
 /**
  * Maintains WebSocket clients per canvas and broadcasts real-time events

@@ -143,19 +143,33 @@ function CanvasInner() {
   });
 
   useEffect(() => setLiveEdges(canvas?.edges ?? []), [canvas?.edges]);
-  const handleCanvasEvent = useCallback((event: CanvasEvent) => {
-    if (event.type === "edge_added" && event.edge) {
-      setLiveEdges((current) =>
-        current.some((edge) => edge.id === event.edge!.id) ? current : [...current, event.edge!],
-      );
-    } else if (event.type === "edge_deleted" && event.edgeId) {
-      setLiveEdges((current) => current.filter((edge) => edge.id !== event.edgeId));
-    } else if (event.type === "node_deleted" && event.nodeId) {
-      setLiveEdges((current) =>
-        current.filter((edge) => edge.sourceId !== event.nodeId && edge.targetId !== event.nodeId),
-      );
-    }
-  }, []);
+  const handleCanvasEvent = useCallback(
+    (event: CanvasEvent) => {
+      if (event.type === "canvas_deleted") {
+        // The selected canvas was deleted server-side. Clear its content and
+        // refresh the list — the deleted id is absent from the fresh list, so
+        // loadCanvasList's selectInitialCanvas fallback picks the next board.
+        setNodes([]);
+        setLiveEdges([]);
+        loadCanvasList();
+        return;
+      }
+      if (event.type === "edge_added" && event.edge) {
+        setLiveEdges((current) =>
+          current.some((edge) => edge.id === event.edge!.id) ? current : [...current, event.edge!],
+        );
+      } else if (event.type === "edge_deleted" && event.edgeId) {
+        setLiveEdges((current) => current.filter((edge) => edge.id !== event.edgeId));
+      } else if (event.type === "node_deleted" && event.nodeId) {
+        setLiveEdges((current) =>
+          current.filter(
+            (edge) => edge.sourceId !== event.nodeId && edge.targetId !== event.nodeId,
+          ),
+        );
+      }
+    },
+    [loadCanvasList, setNodes],
+  );
   const wsHandle = useCanvasWs(selectedId, setNodes, handleCanvasEvent);
   const wsStatus = wsHandle.status;
   wsHandleRef.current = wsHandle;
