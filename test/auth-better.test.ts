@@ -54,8 +54,8 @@ describe("better-auth bridge", () => {
     db.close();
     cleanupDb(marinaDbPath);
     cleanupDb(authDbPath);
-    process.env.BETTER_AUTH_SECRET = undefined;
-    process.env.BETTER_AUTH_DB_PATH = undefined;
+    delete process.env.BETTER_AUTH_SECRET;
+    delete process.env.BETTER_AUTH_DB_PATH;
   });
 
   it("reports auth required with the email method", async () => {
@@ -171,8 +171,10 @@ describe("better-auth schema upgrades", () => {
 
   afterAll(() => {
     cleanupDb(dbPath);
-    process.env.BETTER_AUTH_SECRET = previousSecret;
-    process.env.BETTER_AUTH_DB_PATH = previousDbPath;
+    if (previousSecret === undefined) delete process.env.BETTER_AUTH_SECRET;
+    else process.env.BETTER_AUTH_SECRET = previousSecret;
+    if (previousDbPath === undefined) delete process.env.BETTER_AUTH_DB_PATH;
+    else process.env.BETTER_AUTH_DB_PATH = previousDbPath;
   });
 
   it("backfills issuers when opening an auth database created by better-auth 1.6", () => {

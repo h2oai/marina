@@ -134,7 +134,7 @@ describe("AgentRuntime", () => {
       const saved: Record<string, string | undefined> = {};
       for (const v of keyVars) {
         saved[v] = process.env[v];
-        process.env[v] = undefined;
+        delete process.env[v];
       }
 
       // Ensure no DB keys either (fresh DB has none)
@@ -148,7 +148,7 @@ describe("AgentRuntime", () => {
         // Restore env
         for (const [k, v] of Object.entries(saved)) {
           if (v !== undefined) process.env[k] = v;
-          else process.env[k] = undefined;
+          else delete process.env[k];
         }
       }
     });
@@ -161,7 +161,7 @@ describe("AgentRuntime", () => {
         expect(runtime.isAvailable()).toBe(true);
       } finally {
         if (saved !== undefined) process.env.OPENAI_API_KEY = saved;
-        else process.env.OPENAI_API_KEY = undefined;
+        else delete process.env.OPENAI_API_KEY;
       }
     });
 
@@ -224,7 +224,7 @@ describe("AgentRuntime", () => {
       const saved: Record<string, string | undefined> = {};
       for (const v of keyVars) {
         saved[v] = process.env[v];
-        process.env[v] = undefined;
+        delete process.env[v];
       }
 
       try {
@@ -238,7 +238,7 @@ describe("AgentRuntime", () => {
       } finally {
         for (const [k, v] of Object.entries(saved)) {
           if (v !== undefined) process.env[k] = v;
-          else process.env[k] = undefined;
+          else delete process.env[k];
         }
       }
     });
@@ -498,20 +498,21 @@ describe("AgentRuntime", () => {
         expect(key).toBe("gsk-test-env-key");
       } finally {
         if (saved !== undefined) process.env.GROQ_API_KEY = saved;
-        else process.env.GROQ_API_KEY = undefined;
+        else delete process.env.GROQ_API_KEY;
       }
     });
 
     it("returns undefined when no keys available", () => {
       // Clear all env keys for the test provider
       const saved = process.env.XAI_API_KEY;
-      process.env.XAI_API_KEY = undefined;
+      delete process.env.XAI_API_KEY;
 
       try {
         const key = resolveApiKey(runtime, "xai/grok-2");
         expect(key).toBeUndefined();
       } finally {
         if (saved !== undefined) process.env.XAI_API_KEY = saved;
+        else delete process.env.XAI_API_KEY;
       }
     });
 
@@ -536,7 +537,7 @@ describe("AgentRuntime", () => {
     it("resolves Google API keys with GEMINI_API_KEY env", () => {
       const savedGemini = process.env.GEMINI_API_KEY;
       const savedGoogle = process.env.GOOGLE_API_KEY;
-      process.env.GOOGLE_API_KEY = undefined;
+      delete process.env.GOOGLE_API_KEY;
       process.env.GEMINI_API_KEY = "gemini-test-key";
 
       try {
@@ -544,9 +545,9 @@ describe("AgentRuntime", () => {
         expect(key).toBe("gemini-test-key");
       } finally {
         if (savedGemini !== undefined) process.env.GEMINI_API_KEY = savedGemini;
-        else process.env.GEMINI_API_KEY = undefined;
+        else delete process.env.GEMINI_API_KEY;
         if (savedGoogle !== undefined) process.env.GOOGLE_API_KEY = savedGoogle;
-        else process.env.GOOGLE_API_KEY = undefined;
+        else delete process.env.GOOGLE_API_KEY;
       }
     });
 
@@ -559,7 +560,7 @@ describe("AgentRuntime", () => {
         expect(key).toBe("gemini-default-test");
       } finally {
         if (savedGemini !== undefined) process.env.GEMINI_API_KEY = savedGemini;
-        else process.env.GEMINI_API_KEY = undefined;
+        else delete process.env.GEMINI_API_KEY;
       }
     });
 

@@ -56,13 +56,13 @@ describe("seedConnector", () => {
       const headers = JSON.parse(row!.auth_data!) as Record<string, string>;
       expect(headers.Authorization).toBe("Bearer secret123");
     } finally {
-      process.env[envVar] = undefined;
+      delete process.env[envVar];
     }
   });
 
   it("leaves auth null when env var is missing — discoverable but inactive", () => {
     const envVar = "P8_MISSING_KEY";
-    process.env[envVar] = undefined;
+    delete process.env[envVar];
     seedConnector(db, {
       name: "test-no-auth",
       url: "https://example.com",
@@ -104,7 +104,7 @@ describe("seedTabH2OConnector", () => {
       const row = db.getConnectorByName("tabh2o");
       expect(row?.url).toBe("https://custom.example.com/predict");
     } finally {
-      process.env.TABH2O_ENDPOINT = undefined;
+      delete process.env.TABH2O_ENDPOINT;
     }
   });
 

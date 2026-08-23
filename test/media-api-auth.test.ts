@@ -37,7 +37,7 @@ describe("media API canvas-write authorization", () => {
 
   beforeEach(() => {
     // No dev bypass — the whole point is enforcing scope on an exposed instance.
-    process.env.MARINA_OPEN_API = undefined;
+    delete process.env.MARINA_OPEN_API;
     db = new MarinaDB(TEST_DB);
     engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
     engine.registerRoom(roomId("test/start"), makeTestRoom());
@@ -199,8 +199,8 @@ describe("media API canvas-write authorization", () => {
 
   it("rejects an unauthenticated model-API caller with 401 before any media handling (fail-closed)", async () => {
     const prevKeys = process.env.MODEL_API_KEYS;
-    process.env.MODEL_API_KEYS = undefined;
-    process.env.MARINA_OPEN_API = undefined;
+    delete process.env.MODEL_API_KEYS;
+    delete process.env.MARINA_OPEN_API;
     try {
       const [url, method, r] = mediaRequest({
         type: "image",
@@ -218,7 +218,8 @@ describe("media API canvas-write authorization", () => {
       expect(resp?.status).toBe(401);
       expect(startJobCalls).toHaveLength(0);
     } finally {
-      process.env.MODEL_API_KEYS = prevKeys;
+      if (prevKeys === undefined) delete process.env.MODEL_API_KEYS;
+      else process.env.MODEL_API_KEYS = prevKeys;
     }
   });
 });

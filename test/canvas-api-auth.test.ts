@@ -30,7 +30,7 @@ describe("canvas API auth contract", () => {
   beforeEach(() => {
     // MARINA_OPEN_API must be off — the whole point is fresh, unauthenticated
     // viewing without the dev bypass.
-    process.env.MARINA_OPEN_API = undefined;
+    delete process.env.MARINA_OPEN_API;
     db = new MarinaDB(TEST_DB);
     engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
     engine.registerRoom(roomId("test/start"), makeTestRoom());
@@ -522,7 +522,8 @@ describe("canvas API auth contract", () => {
         expect(resp.status).toBe(200);
         expect(JSON.parse(db.getNode("priv-node")!.data).content).toBe("desktop-edit");
       } finally {
-        process.env.MARINA_DESKTOP_API_TOKEN = prev;
+        if (prev === undefined) delete process.env.MARINA_DESKTOP_API_TOKEN;
+        else process.env.MARINA_DESKTOP_API_TOKEN = prev;
       }
     });
 

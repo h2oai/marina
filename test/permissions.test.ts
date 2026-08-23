@@ -230,7 +230,7 @@ describe("Command Permissions", () => {
         }
       } finally {
         if (originalEnv === undefined) {
-          process.env.MARINA_ADMINS = undefined;
+          delete process.env.MARINA_ADMINS;
         } else {
           process.env.MARINA_ADMINS = originalEnv;
         }
@@ -253,7 +253,7 @@ describe("Command Permissions", () => {
         }
       } finally {
         if (originalEnv === undefined) {
-          process.env.MARINA_ADMINS = undefined;
+          delete process.env.MARINA_ADMINS;
         } else {
           process.env.MARINA_ADMINS = originalEnv;
         }
@@ -288,7 +288,7 @@ describe("Command Permissions", () => {
         }
       } finally {
         if (originalEnv === undefined) {
-          process.env.MARINA_ADMINS = undefined;
+          delete process.env.MARINA_ADMINS;
         } else {
           process.env.MARINA_ADMINS = originalEnv;
         }

@@ -181,7 +181,8 @@ describe("dig", () => {
   afterEach(() => {
     db.close();
     cleanupDb(TEST_DB);
-    process.env.MARINA_ASK_MODEL = prevAskModel;
+    if (prevAskModel === undefined) delete process.env.MARINA_ASK_MODEL;
+    else process.env.MARINA_ASK_MODEL = prevAskModel;
   });
 
   it("rejects empty topic", () => {

@@ -260,7 +260,7 @@ describe("Auth-required mode (authRequired guard)", () => {
       if (!("entityId" in result)) return;
       expect(engine.entities.get(result.entityId)?.properties.rank).toBe(9);
     } finally {
-      process.env.MARINA_AUTH_ADMIN_EMAILS = undefined;
+      delete process.env.MARINA_AUTH_ADMIN_EMAILS;
     }
   });
 
@@ -278,7 +278,7 @@ describe("Auth-required mode (authRequired guard)", () => {
       if (!("entityId" in result)) return;
       expect((engine.entities.get(result.entityId)?.properties.rank as number) ?? 0).toBe(0);
     } finally {
-      process.env.MARINA_ADMINS = undefined;
+      delete process.env.MARINA_ADMINS;
     }
   });
 

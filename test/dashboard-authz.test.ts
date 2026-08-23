@@ -17,7 +17,7 @@ describe("dashboard privileged-op authorization (spawn)", () => {
   let engine: Engine;
 
   beforeEach(() => {
-    process.env.MARINA_OPEN_API = undefined;
+    delete process.env.MARINA_OPEN_API;
     delete process.env.MARINA_OPEN_API;
     db = new MarinaDB(TEST_DB);
     engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });

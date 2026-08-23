@@ -40,7 +40,7 @@ describe("Memory API", () => {
     wsServer.stop();
     db.close();
     cleanupDb(TEST_DB);
-    process.env.MARINA_OPEN_API = undefined;
+    delete process.env.MARINA_OPEN_API;
   });
 
   // ── Discovery & Health ──────────────────────────────────────────────────
