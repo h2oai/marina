@@ -141,7 +141,7 @@ describe("Model API", () => {
   });
 
   afterEach(() => {
-    process.env.MARINA_OPEN_API = undefined;
+    delete process.env.MARINA_OPEN_API;
     db.close();
     cleanupDb(TEST_DB);
   });
@@ -236,7 +236,7 @@ describe("Model API", () => {
       "ANTHROPIC_API_KEY",
     ]) {
       savedKeys[k] = process.env[k];
-      process.env[k] = undefined;
+      delete process.env[k];
     }
 
     try {
@@ -946,6 +946,48 @@ describe("Model API", () => {
     const lifecycleEvents = (): LifecycleEvent[] =>
       engine.getEventLog().filter((e): e is LifecycleEvent => e.type === "model_request_lifecycle");
 
+    const upstreamCompletion = () =>
+      Response.json({
+        id: "chatcmpl-upstream",
+        object: "chat.completion",
+        model: "gpt-4o",
+        choices: [{ index: 0, message: { role: "assistant", content: "upstream answer" } }],
+      });
+
+    async function withOpenAiUpstream<T>(
+      fetchImpl: (input: string | URL | Request, init?: RequestInit) => Promise<Response>,
+      run: () => Promise<T>,
+    ): Promise<T> {
+      const originalFetch = globalThis.fetch;
+      const providerEnvKeys = [
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "GROQ_API_KEY",
+        "LLAMA_API_KEY",
+        "LLAMA_BASE_URL",
+        "OLLAMA_API_KEY",
+        "OLLAMA_BASE_URL",
+        "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
+      ] as const;
+      const originalValues = new Map(
+        providerEnvKeys.map((key) => [key, process.env[key]] as const),
+      );
+      for (const key of providerEnvKeys) delete process.env[key];
+      process.env.OPENAI_API_KEY = "test-key";
+      globalThis.fetch = fetchImpl as typeof fetch;
+      try {
+        return await run();
+      } finally {
+        globalThis.fetch = originalFetch;
+        for (const [key, value] of originalValues) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
+      }
+    }
+
     it("non-streaming chat completion x-request-id equals the traced traceId", async () => {
       engine.processCommand(conn1.entity!, "channel join model");
       setupPhase1Agent(cm, conn1.entity!, "Agent1", "traced answer");
@@ -962,6 +1004,104 @@ describe("Model API", () => {
       expect(completed).toBeDefined();
       expect(headerId).toBe(completed!.traceId!);
       expect(headerId).toBe(completed!.requestId);
+    });
+
+    it("traces a successful passthru request with its selected upstream target", async () => {
+      setEndpointConfig(db, { mode: "passthru", passthruModel: "openai/gpt-4o" });
+      const resp = await withOpenAiUpstream(
+        async () => upstreamCompletion(),
+        async () => {
+          const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+            model: "marina",
+            messages: [{ role: "user", content: "hello upstream" }],
+          });
+          return (await handleModelApi(url, method, req, engine))!;
+        },
+      );
+
+      expect(resp.status).toBe(200);
+      const requestId = resp.headers.get("x-request-id");
+      const lifecycle = lifecycleEvents();
+      expect(lifecycle.map((event) => event.phase)).toEqual(["received", "routed", "completed"]);
+      expect(new Set(lifecycle.map((event) => event.traceId))).toEqual(new Set([requestId!]));
+      expect(lifecycle[1]).toMatchObject({
+        routeKind: "passthru",
+        target: "openai/gpt-4o",
+      });
+    });
+
+    it("keeps a passthru stream running until the caller consumes the upstream stream", async () => {
+      setEndpointConfig(db, { mode: "passthru", passthruModel: "openai/gpt-4o" });
+      const resp = await withOpenAiUpstream(
+        async () =>
+          new Response(
+            'data: {"id":"chatcmpl-stream","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}\n\ndata: [DONE]\n\n',
+            { headers: { "Content-Type": "text/event-stream" } },
+          ),
+        async () => {
+          const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+            model: "marina",
+            stream: true,
+            messages: [{ role: "user", content: "stream" }],
+          });
+          return (await handleModelApi(url, method, req, engine))!;
+        },
+      );
+
+      expect(lifecycleEvents().map((event) => event.phase)).toEqual(["received", "routed"]);
+      expect(await collectStream(resp)).toContain("hello");
+      expect(lifecycleEvents().map((event) => event.phase)).toEqual([
+        "received",
+        "routed",
+        "completed",
+      ]);
+    });
+
+    it("labels an agent-unavailable upstream recovery as fallback", async () => {
+      setEndpointConfig(db, {
+        mode: "agents",
+        fallback: true,
+        passthruModel: "openai/gpt-4o",
+      });
+      const resp = await withOpenAiUpstream(
+        async () => upstreamCompletion(),
+        async () => {
+          const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+            model: "marina",
+            messages: [{ role: "user", content: "recover" }],
+          });
+          return (await handleModelApi(url, method, req, engine))!;
+        },
+      );
+
+      expect(resp.status).toBe(200);
+      expect(lifecycleEvents().find((event) => event.phase === "routed")).toMatchObject({
+        routeKind: "fallback",
+        target: "openai/gpt-4o",
+      });
+    });
+
+    it("terminates a rejected passthru trace as failed", async () => {
+      setEndpointConfig(db, { mode: "passthru", passthruModel: "openai/gpt-4o" });
+      const resp = await withOpenAiUpstream(
+        async () => new Response("quota", { status: 429 }),
+        async () => {
+          const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+            model: "marina",
+            messages: [{ role: "user", content: "fail visibly" }],
+          });
+          return (await handleModelApi(url, method, req, engine))!;
+        },
+      );
+
+      expect(resp.status).toBe(502);
+      const lifecycle = lifecycleEvents();
+      expect(lifecycle.at(-1)).toMatchObject({
+        phase: "failed",
+        routeKind: "passthru",
+        target: "openai/gpt-4o",
+      });
+      expect(resp.headers.get("x-request-id")).toBe(lifecycle.at(-1)?.traceId ?? null);
     });
 
     it("Ollama non-streaming x-request-id equals the traced traceId", async () => {
@@ -1112,11 +1252,11 @@ describe("Model API", () => {
     const TEST_KEY = "sk-test-key-12345";
 
     afterEach(() => {
-      process.env.MODEL_API_KEYS = undefined;
+      delete process.env.MODEL_API_KEYS;
     });
 
     it("allows requests when MARINA_OPEN_API=true and MODEL_API_KEYS is unset", async () => {
-      process.env.MODEL_API_KEYS = undefined;
+      delete process.env.MODEL_API_KEYS;
       process.env.MARINA_OPEN_API = "true";
       const [url, method, req] = makeRequest("/v1/models", "GET");
       const resp = await handleModelApi(url, method, req, engine);
@@ -1124,8 +1264,8 @@ describe("Model API", () => {
     });
 
     it("rejects requests when neither MODEL_API_KEYS nor MARINA_OPEN_API is set", async () => {
-      process.env.MODEL_API_KEYS = undefined;
-      process.env.MARINA_OPEN_API = undefined;
+      delete process.env.MODEL_API_KEYS;
+      delete process.env.MARINA_OPEN_API;
       const [url, method, req] = makeRequest("/v1/models", "GET");
       const resp = await handleModelApi(url, method, req, engine);
       expect(resp!.status).toBe(401);

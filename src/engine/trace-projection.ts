@@ -83,6 +83,7 @@ export function projectTraces(events: readonly EngineEvent[]): TraceView[] {
           ...(event.candidateCount === undefined ? {} : { candidateCount: event.candidateCount }),
           ...(event.routeAdviceMode ? { routeAdviceMode: event.routeAdviceMode } : {}),
           ...(event.routeReason ? { routeReason: event.routeReason } : {}),
+          ...(event.routeKind ? { routeKind: event.routeKind } : {}),
           ...(event.detail ? { detail: event.detail } : {}),
         },
       });

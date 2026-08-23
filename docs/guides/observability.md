@@ -176,10 +176,12 @@ when setting access policy.
 Participant judgments are a separate authored layer and include the evaluator's identity, criterion,
 and rationale verbatim. Do not put secrets, private prompts, or sensitive output in a rationale.
 
-The current causal chain covers agent-routed requests handled by Marina's model API — single-agent
-(`agents`) routing, the verified fast path, and the `open`/`panel` fan-out modes, where each fan-out
-target gets its own request span under one shared trace — plus the agent turns and tool calls
-parented to those requests. Passthru-mode requests and passthru fallbacks proxy directly to the
-upstream provider and are not traced. When a perception batch contains multiple distinct request
-traces, Marina leaves the turn unparented instead of claiming an ambiguous causal relationship.
-Other world events and external provider internals are not represented as spans.
+The current causal chain covers requests handled by Marina's model API: single-agent (`agents`)
+routing, the verified fast path, and the `open`/`panel` fan-out modes, where each fan-out target gets
+its own request span under one shared trace. Agent turns and tool calls are parented to those
+requests. Direct passthru requests and upstream fallbacks also produce a request span with the
+selected route kind, provider/model target, duration, and terminal status; Marina does not claim
+child spans for work performed inside an external provider. When a perception batch contains
+multiple distinct request traces, Marina leaves the turn unparented instead of claiming an
+ambiguous causal relationship. Other world events and external provider internals are not
+represented as spans.

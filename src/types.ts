@@ -802,6 +802,8 @@ export type EngineEvent =
       candidateCount?: number;
       routeAdviceMode?: "pareto" | "explore" | "insufficient";
       routeReason?: string;
+      /** Execution path selected at the model endpoint boundary. */
+      routeKind?: "agent" | "passthru" | "fallback" | "synthesis";
       durationMs?: number;
       detail?: string;
       timestamp: number;

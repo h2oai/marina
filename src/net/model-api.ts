@@ -1485,7 +1485,9 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
     // Passthru: Marina is a thin gateway — proxy straight to the configured
     // upstream model, no agents involved.
     if (ec.mode === "passthru") {
-      return await proxyToUpstream(engine, body, ec.passthruModel || undefined);
+      return await proxyToUpstream(engine, body, ec.passthruModel || undefined, {
+        routeKind: "passthru",
+      });
     }
 
     const opts: RouteOptions = {
@@ -1586,7 +1588,9 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
       // No agent answered (503): fall back to direct upstream proxy when enabled.
       // 404 (unknown model variant) remains an error — caller asked for a specific model.
       if (routeError instanceof HttpError && routeError.status === 503 && ec.fallback) {
-        return await proxyToUpstream(engine, body, ec.passthruModel || undefined);
+        return await proxyToUpstream(engine, body, ec.passthruModel || undefined, {
+          routeKind: "fallback",
+        });
       }
       throw routeError;
     }
@@ -2049,9 +2053,48 @@ async function proxyToUpstream(
   engine: Engine,
   body: Record<string, unknown>,
   forceModel?: string,
+  traceOptions?: { routeKind: "passthru" | "fallback" | "synthesis" },
 ): Promise<Response> {
   const wantStream = body.stream === true;
   let attemptedUpstream = false;
+  let lastTarget: string | undefined;
+  const requestedModel = typeof body.model === "string" ? body.model : "marina";
+  const startedAt = Date.now();
+  const requestId = traceOptions ? `req-${crypto.randomUUID().slice(0, 8)}` : undefined;
+  if (requestId) {
+    engine.logEvent({
+      type: "model_request_lifecycle",
+      phase: "received",
+      requestId,
+      ...requestTrace(requestId),
+      model: requestedModel,
+      routeKind: traceOptions!.routeKind,
+      timestamp: startedAt,
+    });
+  }
+
+  const finish = (response: Response, target?: string): Response => {
+    if (!requestId) return response;
+    if (target) {
+      engine.logEvent({
+        type: "model_request_lifecycle",
+        phase: "routed",
+        requestId,
+        ...requestTrace(requestId),
+        model: requestedModel,
+        target,
+        routeKind: traceOptions!.routeKind,
+        timestamp: Date.now(),
+      });
+    }
+    return traceProxyResponse(engine, response, {
+      requestId,
+      model: requestedModel,
+      target,
+      routeKind: traceOptions!.routeKind,
+      startedAt,
+    });
+  };
   // `forceModel` (passthru endpoint mode) pins the upstream model regardless of
   // what the caller requested; otherwise only marina/default models resolve to
   // the configured default.
@@ -2073,14 +2116,17 @@ async function proxyToUpstream(
     const localReady = isLocalProvider(provider) && localProviderConfigured(provider);
     if (cfg && (key || localReady) && upstreamModel) {
       attemptedUpstream = true;
-      if (cfg.anthropic) return await proxyToAnthropic(body, key!, upstreamModel, wantStream);
+      lastTarget = `${provider}/${upstreamModel}`;
+      if (cfg.anthropic) {
+        return finish(await proxyToAnthropic(body, key!, upstreamModel, wantStream), lastTarget);
+      }
       const r = await dispatchOpenAICompatible(
         cfg.url,
         key ?? "",
         prepareUpstreamBody({ ...body, model: upstreamModel }, provider),
         wantStream,
       );
-      if (r) return r;
+      if (r) return finish(r, lastTarget);
     }
   }
 
@@ -2094,30 +2140,112 @@ async function proxyToUpstream(
     if (!key && !localReady) continue;
     attemptedUpstream = true;
     const envKey = cfg.envKeys[0]!;
-    if (cfg.anthropic) {
-      return await proxyToAnthropic(body, key!, getDefaultUpstreamModel(envKey), wantStream);
-    }
     const requestModel = isDefault ? getDefaultUpstreamModel(envKey) : (body.model as string);
+    lastTarget = `${provider}/${requestModel}`;
+    if (cfg.anthropic) {
+      return finish(await proxyToAnthropic(body, key!, requestModel, wantStream), lastTarget);
+    }
     const r = await dispatchOpenAICompatible(
       cfg.url,
       key ?? "",
       prepareUpstreamBody({ ...body, model: requestModel }, provider),
       wantStream,
     );
-    if (r) return r;
+    if (r) return finish(r, lastTarget);
   }
 
   if (attemptedUpstream) {
-    return errorJson(
-      502,
-      "Configured upstream LLM providers were reachable by configuration but rejected or could not complete the request. Check provider status, quota, model access, and server logs.",
+    return finish(
+      errorJson(
+        502,
+        "Configured upstream LLM providers were reachable by configuration but rejected or could not complete the request. Check provider status, quota, model access, and server logs.",
+      ),
+      lastTarget,
     );
   }
 
-  return errorJson(
-    503,
-    "No upstream LLM providers configured. Set an API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.) or add one in Admin → Keys.",
+  return finish(
+    errorJson(
+      503,
+      "No upstream LLM providers configured. Set an API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.) or add one in Admin → Keys.",
+    ),
   );
+}
+
+function traceProxyResponse(
+  engine: Engine,
+  response: Response,
+  trace: {
+    requestId: string;
+    model: string;
+    target?: string;
+    routeKind: "passthru" | "fallback" | "synthesis";
+    startedAt: number;
+  },
+): Response {
+  const headers = new Headers(response.headers);
+  headers.set("x-request-id", trace.requestId);
+  let terminal = false;
+  const finish = (phase: "completed" | "failed", detail?: string) => {
+    if (terminal) return;
+    terminal = true;
+    engine.logEvent({
+      type: "model_request_lifecycle",
+      phase,
+      requestId: trace.requestId,
+      ...requestTrace(trace.requestId),
+      model: trace.model,
+      target: trace.target,
+      routeKind: trace.routeKind,
+      durationMs: Date.now() - trace.startedAt,
+      ...(detail ? { detail } : {}),
+      timestamp: Date.now(),
+    });
+  };
+
+  if (!response.ok) {
+    finish("failed", `upstream response HTTP ${response.status}`);
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+  if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
+    finish("completed");
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
+
+  const reader = response.body.getReader();
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          finish("completed");
+          controller.close();
+        } else {
+          controller.enqueue(value);
+        }
+      } catch (cause) {
+        finish("failed", cause instanceof Error ? cause.message : "upstream stream failed");
+        controller.error(cause);
+      }
+    },
+    cancel(reason) {
+      finish("failed", "response stream cancelled before completion");
+      return reader.cancel(reason);
+    },
+  });
+  return new Response(stream, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 async function proxyToAnthropic(

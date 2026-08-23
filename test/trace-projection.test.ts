@@ -16,6 +16,7 @@ describe("projectTraces", () => {
         ...base,
         spanId: "request",
         model: "marina",
+        routeKind: "passthru",
         timestamp: 100,
       },
       {
@@ -82,6 +83,7 @@ describe("projectTraces", () => {
       ["agent_turn", "turn", "request"],
       ["tool", "tool", "turn"],
     ]);
+    expect(trace?.spans[0]?.attributes.routeKind).toBe("passthru");
   });
 
   it("marks an end observed without its retained start as partial", () => {
