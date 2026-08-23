@@ -21,7 +21,7 @@ import { LogServer } from "./net/log-server";
 import { McpServerAdapter } from "./net/mcp-server";
 import { detectLocalContextWindow } from "./net/model-discovery";
 import { TelnetServer } from "./net/telnet-server";
-import { WebSocketServer } from "./net/websocket-server";
+import { isLoopbackHostname, resolveWsBindHostname, WebSocketServer } from "./net/websocket-server";
 import { MarinaDB } from "./persistence/database";
 import { isKeyEncryptionEnabled } from "./persistence/key-crypto";
 import { LocalStorageProvider } from "./storage/local-provider";
@@ -62,18 +62,57 @@ const INSTANCE_NAME = process.env.MARINA_NAME ?? world.name;
 // and the better-auth dependency are loaded lazily — standalone/local Marina
 // never imports them. Passwordless name-login is then gated (see engine.login).
 const AUTH_ENABLED = process.env.MARINA_AUTH === "better-auth";
-// An explicitly-set WS_HOST/MARINA_HOST is honored by the actual bind (see
-// WebSocketServer.start): WS_HOST=127.0.0.1 genuinely binds loopback-only.
-// Headless-exec identity trust is NO LONGER derived from this env — it is
-// resolved per acting connection (loopback IP / in-process) at approval time,
-// so an accidentally-0.0.0.0-bound port can never be spoofed as trusted.
-const WS_BIND_HOST = (process.env.WS_HOST ?? process.env.MARINA_HOST ?? "").trim().toLowerCase();
-const LOOPBACK_ONLY_BIND =
-  WS_BIND_HOST === "127.0.0.1" || WS_BIND_HOST === "::1" || WS_BIND_HOST === "localhost";
+// Secure-by-default bind: an unset WS_HOST/MARINA_HOST binds LOOPBACK-ONLY
+// (127.0.0.1). Public exposure is a deliberate opt-in (WS_HOST=0.0.0.0 or
+// MARINA_PUBLIC=true). The resolved host is honored by the actual bind (see
+// WebSocketServer.start / McpServerAdapter.start). Headless-exec identity trust
+// is NOT derived from this env — it is resolved per acting connection (loopback
+// IP / in-process) at approval time, so even an intentionally-public port can
+// never be spoofed as trusted.
+const RESOLVED_WS_HOST = resolveWsBindHostname();
+const LOOPBACK_ONLY_BIND = isLoopbackHostname(RESOLVED_WS_HOST);
+// Explicit operator acknowledgement that they accept the risk of a public bind
+// combined with passwordless login / open API. Without it, that combination is
+// a FATAL startup error rather than a warning.
+const INSECURE_PUBLIC_ACK = process.env.MARINA_ALLOW_INSECURE_PUBLIC === "true";
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
 const logger = new Logger();
+
+// ─── Ingress posture gate: fail fast on an unsafe public bind ─────────────────
+// A non-loopback bind exposes Marina to the network. Combined with passwordless
+// name-login (no MARINA_AUTH) or the open-API dev bypass, that lets anyone reach
+// the instance as an ordinary entity or an unauthenticated API caller. This is a
+// deliberate, dangerous configuration — refuse to start unless the operator has
+// (a) enabled real auth, or (b) explicitly accepted the risk. A warning is not
+// enough for this one.
+if (!LOOPBACK_ONLY_BIND && !INSECURE_PUBLIC_ACK) {
+  if (!AUTH_ENABLED) {
+    const msg =
+      `FATAL: Marina is configured to bind a NON-LOOPBACK interface ` +
+      `("${RESOLVED_WS_HOST}") while passwordless name-login is in effect ` +
+      `(MARINA_AUTH is not "better-auth"). Anyone who can reach this host could log ` +
+      `in as any entity. Fix ONE of:\n` +
+      `  • keep it local: unset WS_HOST/MARINA_HOST/MARINA_PUBLIC (binds 127.0.0.1), or\n` +
+      `  • require sign-in: set MARINA_AUTH=better-auth (+ MARINA_AUTH_ADMIN_EMAILS), or\n` +
+      `  • accept the risk explicitly: set MARINA_ALLOW_INSECURE_PUBLIC=true.`;
+    logger.error("security", msg);
+    throw new Error(msg);
+  }
+  if (process.env.MARINA_OPEN_API === "true") {
+    const msg =
+      `FATAL: MARINA_OPEN_API=true (unauthenticated API access) combined with a ` +
+      `NON-LOOPBACK bind ("${RESOLVED_WS_HOST}") exposes every API endpoint to the ` +
+      `network with no auth. Fix ONE of:\n` +
+      `  • unset MARINA_OPEN_API and configure MODEL_API_KEYS/MEM_API_KEYS, or\n` +
+      `  • bind loopback-only (unset WS_HOST/MARINA_HOST/MARINA_PUBLIC), or\n` +
+      `  • accept the risk explicitly: set MARINA_ALLOW_INSECURE_PUBLIC=true.`;
+    logger.error("security", msg);
+    throw new Error(msg);
+  }
+}
+
 const db = new MarinaDB(DB_PATH);
 // Encrypt any plaintext API keys at rest once MARINA_KEY_SECRET is configured,
 // then surface the "encrypted but can't decrypt" misconfiguration loudly —
@@ -369,6 +408,20 @@ await engine.initAgents(boundWsPort);
 engine.start();
 
 // Security warnings
+if (!LOOPBACK_ONLY_BIND) {
+  logger.warn(
+    "security",
+    `Bound to a NON-LOOPBACK interface ("${RESOLVED_WS_HOST}") — this instance is reachable ` +
+      `from the network.` +
+      (AUTH_ENABLED
+        ? " Sign-in is required (MARINA_AUTH=better-auth)."
+        : INSECURE_PUBLIC_ACK
+          ? " Passwordless login is EXPOSED and MARINA_ALLOW_INSECURE_PUBLIC=true accepts the risk."
+          : ""),
+  );
+} else {
+  logger.info("security", "Bound loopback-only (127.0.0.1) — local-only, not reachable remotely.");
+}
 if (process.env.MARINA_OPEN_API === "true") {
   logger.warn(
     "security",

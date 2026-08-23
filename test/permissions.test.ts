@@ -379,12 +379,16 @@ describe("Command Permissions", () => {
   // ─── Supervised demonstration recording ──────────────────────────────────
 
   describe("Safety gate demonstration", () => {
-    it("records a demonstration after a successful supervised run", async () => {
+    it("REFUSES a supervised-only gated command and never self-mints a demonstration", async () => {
+      // SECURITY: the declarative gate router uses `checkUnattendedGate`, so a
+      // standing-only holder (no competence row) is refused — it can NOT
+      // self-certify a dangerous gate by running the op unwatched. Competence is
+      // earned only via operator grant / rank promotion / witnessed demonstration.
       const entity = engine.entities.get(conn1.entity!)!;
       setRank(entity, 9 as EntityRank);
-      // Seed enough standing to pass admin.destructive (>= 250). Granting
-      // gates here would skip the supervised path entirely, so we seed
-      // standing only — the gate check returns supervisedOnly: true.
+      // Seed enough standing to pass admin.destructive (>= 250) but NO competence
+      // row — the gate check would return supervisedOnly: true, which the
+      // unattended router downgrades to a denial.
       const taskId = db.createTask({
         title: "seed",
         creatorId: conn1.entity!,
@@ -392,18 +396,25 @@ describe("Command Permissions", () => {
       });
       db.recordStandingEarned(conn1.entity!, "Alice", taskId, 300);
 
-      // No competence row yet — first run is supervised.
+      // No competence row yet — the run must be refused.
       expect(db.getCompetence(conn1.entity!, "admin.destructive")).toBeUndefined();
 
       await engine.processCommand(conn1.entity!, "admin stats");
-      expect(conn1.lastText()).toContain("Server Stats");
+      // Refused — the command did not run…
+      expect(conn1.lastText()).not.toContain("Server Stats");
+      expect(conn1.lastText().toLowerCase()).toContain("supervised-only");
 
-      // admin.destructive.demoThreshold === 1, so a single successful run
-      // both records the demo and flips supervised_only to 0.
-      const comp = db.getCompetence(conn1.entity!, "admin.destructive");
-      expect(comp).toBeDefined();
-      expect(comp?.demonstrations).toBe(1);
-      expect(comp?.supervised_only).toBe(0);
+      // …and no demonstration was self-minted.
+      expect(db.getCompetence(conn1.entity!, "admin.destructive")).toBeUndefined();
+    });
+
+    it("allows a gated command once the gate is granted (unsupervised competence)", async () => {
+      const entity = engine.entities.get(conn1.entity!)!;
+      setRank(entity, 9 as EntityRank);
+      grantAllGates(db, conn1.entity!);
+
+      await engine.processCommand(conn1.entity!, "admin stats");
+      expect(conn1.lastText()).toContain("Server Stats");
     });
 
     it("does not record a demonstration when the entity is already unsupervised", async () => {

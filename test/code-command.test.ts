@@ -155,6 +155,31 @@ describe("code command", () => {
     expect(stripAnsi(sent.join("\n")).toLowerCase()).toContain("run or apply code");
   });
 
+  it("does NOT gate `code crew` dispatch on the dispatcher's own code.exec (crew grants none)", async () => {
+    // The crew path never grants code.exec to its members (only the single-driver
+    // ensureSessionAgent does). Spawning members is gated on agent.spawn, and any
+    // member that later attempts host exec must itself pass the code.exec gate. So
+    // an ungated dispatcher CAN coordinate a crew plan — gating crewPlan on the
+    // dispatcher's code.exec would block legitimate coordination that never
+    // delegates host execution. (Finding 7's dispatcher gate lives on the doCode
+    // single-driver path, where code.exec IS granted.)
+    const ungated = makeAgentEntity("agent_ungated_crew", "UngatedCrew");
+    db.saveEntity(ungated);
+    const sent: string[] = [];
+    const command = codeCommand({
+      db,
+      getEntity: (id) => (id === ungated.id ? ungated : undefined),
+      workspace: new LocalWorkspace(),
+    });
+    const ctx = testRoomContext(sent);
+    await command.handler(ctx, inputFor(ungated, "code crew build a feature"));
+    const out = stripAnsi(sent.join("\n")).toLowerCase();
+    // Not refused by a code.exec gate — the crew plan proceeds.
+    expect(out).not.toContain("run or apply code");
+    // Security property: no code.exec competence was granted to the dispatcher.
+    expect(db.getCompetence(ungated.id, "code.exec")?.supervised_only ?? undefined).not.toBe(0);
+  });
+
   it("denies host exec over telnet before the gate, even for a sovereign holding code.exec.unrestricted", async () => {
     const root = makeTempGitWorkspace();
     try {
@@ -2745,6 +2770,9 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
   it("routes a natural-language task to a bound coding agent and records it on the session", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    // Finding 7: the dispatching entity must itself hold code.exec before it can
+    // drive a recruited/spawned coder to host execution.
+    grant(db, alice.id, "code.exec");
     const coderEntity = makeAgentEntity("agent_coder", "Coder");
     db.saveEntity(coderEntity);
     const attention: string[] = [];
@@ -2782,6 +2810,7 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
   it("streams the bound agent's activity back to the dispatcher", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     const coderEntity = makeAgentEntity("agent_coder", "Coder");
     db.saveEntity(coderEntity);
     // Holder (not a `let`) so the captured handler keeps its function type after
@@ -2872,5 +2901,89 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
     await command.handler(ctx, inputFor(alice, "code driver crew"));
     expect(db.getCodingSession(sid)!.driver).toBe("crew");
     expect(stripAnsi(sent.join("\n")).toLowerCase()).toContain("driver set to crew");
+  });
+});
+
+describe("code host-exec workspace root policy (Finding 2)", () => {
+  const ROOT_DB = "test_code_root_policy.db";
+  let db: MarinaDB;
+  let engine: Engine;
+  let conn: MockConnection;
+  let savedRoots: string | undefined;
+  let savedDefault: string | undefined;
+
+  beforeEach(() => {
+    savedRoots = process.env.MARINA_CODE_ROOTS;
+    savedDefault = process.env.MARINA_CODE_DEFAULT_ROOT;
+    db = new MarinaDB(ROOT_DB);
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+    conn = new MockConnection("c-root");
+    engine.addConnection(conn);
+    engine.spawnEntity("c-root", "Rooter");
+    // Fully earned code.exec — so a refusal is about the missing ROOT, not the gate.
+    grant(db, conn.entity!, "code.exec");
+    conn.clear();
+  });
+
+  afterEach(() => {
+    if (savedRoots === undefined) delete process.env.MARINA_CODE_ROOTS;
+    else process.env.MARINA_CODE_ROOTS = savedRoots;
+    if (savedDefault === undefined) delete process.env.MARINA_CODE_DEFAULT_ROOT;
+    else process.env.MARINA_CODE_DEFAULT_ROOT = savedDefault;
+    db.close();
+    cleanupDb(ROOT_DB);
+  });
+
+  it("refuses host execution when no code root is configured (never falls back to cwd)", async () => {
+    delete process.env.MARINA_CODE_ROOTS;
+    delete process.env.MARINA_CODE_DEFAULT_ROOT;
+    const entity = engine.entities.get(conn.entity!)!;
+    const sent: string[] = [];
+    // No `workspace` / `workspaceRegistry` dep → registry resolves from env,
+    // which now yields a cwd-fallback (host-exec disabled) registry.
+    const command = codeCommand({ db, getEntity: () => entity });
+    const ctx = testRoomContext(sent);
+    await command.handler(ctx, inputFor(entity, "code start NoRoot"));
+    sent.length = 0;
+    await command.handler(ctx, inputFor(entity, "code run git status --short"));
+    expect(stripAnsi(sent.join("\n"))).toContain("no code workspace is configured");
+    // Nothing executed → no command_output artifact was written.
+    const session = db.listCodingSessions(entity.name, 1)[0]!;
+    expect(db.listCodingArtifacts(session.id).map((a) => a.kind)).not.toContain("command_output");
+  });
+
+  it("allows host execution when MARINA_CODE_ROOTS is set (the folder-CLI path)", async () => {
+    const root = makeTempGitWorkspace();
+    try {
+      process.env.MARINA_CODE_ROOTS = root;
+      delete process.env.MARINA_CODE_DEFAULT_ROOT;
+      const entity = engine.entities.get(conn.entity!)!;
+      const sent: string[] = [];
+      const command = codeCommand({ db, getEntity: () => entity });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Configured"));
+      sent.length = 0;
+      await command.handler(ctx, inputFor(entity, "code run git status --short"));
+      const out = stripAnsi(sent.join("\n"));
+      expect(out).not.toContain("no code workspace is configured");
+      expect(out).toContain("$ git status --short");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps read-only inspect verbs open even with no configured root", async () => {
+    delete process.env.MARINA_CODE_ROOTS;
+    delete process.env.MARINA_CODE_DEFAULT_ROOT;
+    const entity = engine.entities.get(conn.entity!)!;
+    const sent: string[] = [];
+    const command = codeCommand({ db, getEntity: () => entity });
+    const ctx = testRoomContext(sent);
+    await command.handler(ctx, inputFor(entity, "code start ReadOnly"));
+    sent.length = 0;
+    // `code files` is read-only and must not be blocked by the root policy.
+    await command.handler(ctx, inputFor(entity, "code files"));
+    expect(stripAnsi(sent.join("\n"))).not.toContain("no code workspace is configured");
   });
 });

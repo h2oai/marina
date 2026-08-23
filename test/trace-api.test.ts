@@ -6,7 +6,7 @@ import { Engine } from "../src/engine/engine";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 
 const TEST_DB = "test_trace_api.db";
 
@@ -19,19 +19,13 @@ describe("Trace API", () => {
     db = new MarinaDB(TEST_DB);
     engine = new Engine({ db, startRoom: roomId("test/start"), tickInterval: 60_000 });
     engine.registerRoom(roomId("test/start"), makeTestRoom());
-    const loginUrl = new URL("http://localhost:3300/api/command");
-    const login = await handleDashboardApi(
-      new Request(loginUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: "TraceReader", command: "look" }),
-      }),
-      loginUrl,
-      "POST",
-      engine,
-      db,
-    );
-    token = ((await login!.json()) as { token: string }).token;
+    // Mint a real session token directly — the /api/command ingress no longer
+    // returns a usable token.
+    const conn = new MockConnection("trace-reader");
+    engine.addConnection(conn);
+    const login = engine.login(conn.id, "TraceReader");
+    if ("error" in login) throw new Error(`login failed: ${login.error}`);
+    token = login.token;
   });
 
   afterEach(() => {

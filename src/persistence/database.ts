@@ -1867,6 +1867,17 @@ CREATE INDEX idx_trace_judgments_evaluator
   ON trace_judgments(evaluator_entity, created_at DESC);
 `,
   },
+  // Migration 72: record the rank actually granted when a session token was
+  // minted. A bare passwordless-name token is NOT proof of identity — a remote
+  // login is capped at rank 0 (see Engine.restorableRank), but it still mints a
+  // valid token. Without remembering the granted rank, reconnect() would restore
+  // the persisted (elevated) rank from that token, defeating the login cap. NULL
+  // for legacy rows is treated as "unknown / not elevation-eligible" (rank 0
+  // ceiling) unless the reconnecting connection is itself loopback/internal.
+  {
+    version: 72,
+    sql: `ALTER TABLE sessions ADD COLUMN granted_rank INTEGER;`,
+  },
 ];
 
 export interface OperationalAlertRow {

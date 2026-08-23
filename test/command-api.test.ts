@@ -6,7 +6,7 @@ import { Engine } from "../src/engine/engine";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 
 const TEST_DB = "test_command_api.db";
 
@@ -44,6 +44,21 @@ describe("Command API", () => {
     cleanupDb(TEST_DB);
   });
 
+  // Mint a real session token the normal way. The pre-auth /api/command ingress
+  // deliberately no longer hands out a usable token (see the ingress tests
+  // below), so authenticated follow-up requests get one via a direct login.
+  let connCounter = 0;
+  function loginToken(name: string): string {
+    const conn = new MockConnection(`cmd-${connCounter++}`);
+    engine.addConnection(conn);
+    const login = engine.login(conn.id, name);
+    if ("error" in login) throw new Error(`login failed: ${login.error}`);
+    // Free the connection so the token can be used to reconnect (the entity
+    // must not read as "already connected").
+    engine.removeConnection(conn.id);
+    return login.token;
+  }
+
   it("executes a command through a name-based short-lived session", async () => {
     const [url, method, req] = makeRequest("/api/command", {
       name: "ApiAlice",
@@ -53,21 +68,17 @@ describe("Command API", () => {
 
     const resp = await handleDashboardApi(req, url, method, engine, db);
     expect(resp?.status).toBe(200);
-    const body = (await resp!.json()) as { token: string; text: string; name: string };
+    const body = (await resp!.json()) as { token?: string; text: string; name: string };
 
     expect(body.name).toBe("ApiAlice");
-    expect(body.token).toBeTruthy();
+    // The unauthenticated ingress must not mint a reusable session token.
+    expect(body.token).toBeUndefined();
     expect(body.text).toContain("Command API Room");
     expect(body.text).toContain("A room for command API tests.");
   });
 
-  it("reconnects with a token and returns the rotated token", async () => {
-    const [loginUrl, loginMethod, loginReq] = makeRequest("/api/command", {
-      name: "ApiBob",
-      command: "look",
-    });
-    const loginResp = await handleDashboardApi(loginReq, loginUrl, loginMethod, engine, db);
-    const loginBody = (await loginResp!.json()) as { token: string };
+  it("reconnects with a token to run a command, still returning no token", async () => {
+    const token = loginToken("ApiBob");
 
     const [url, method, req] = makeRequest(
       "/api/command",
@@ -75,15 +86,15 @@ describe("Command API", () => {
         command: "say hello from http",
         render: "text",
       },
-      loginBody.token,
+      token,
     );
     const resp = await handleDashboardApi(req, url, method, engine, db);
     expect(resp?.status).toBe(200);
-    const body = (await resp!.json()) as { token: string; text: string; name: string };
+    const body = (await resp!.json()) as { token?: string; text: string; name: string };
 
     expect(body.name).toBe("ApiBob");
-    expect(body.token).toBeTruthy();
-    expect(body.token).not.toBe(loginBody.token);
+    // Even the reconnect path never echoes a token back to the caller.
+    expect(body.token).toBeUndefined();
     expect(body.text).toContain("You say");
     expect(body.text).toContain("hello from http");
   });
@@ -112,12 +123,7 @@ describe("Command API", () => {
       setBy: "test",
     });
     // The endpoint is behind the API auth gate — get a session token first.
-    const [lu, lm, lr] = makeRequest("/api/command", { name: "SecAdmin", command: "look" });
-    const token = (
-      (await (await handleDashboardApi(lr, lu, lm, engine, db))!.json()) as {
-        token: string;
-      }
-    ).token;
+    const token = loginToken("SecAdmin");
 
     const url = new URL("http://localhost:3300/api/security-status");
     const req = new Request(url.toString(), {
@@ -157,12 +163,7 @@ describe("Command API", () => {
   });
 
   it("serves the shared work inbox for an authenticated entity", async () => {
-    const [loginUrl, loginMethod, loginReq] = makeRequest("/api/command", {
-      name: "ApiWorker",
-      command: "memory set goal respond to requests",
-    });
-    const loginResp = await handleDashboardApi(loginReq, loginUrl, loginMethod, engine, db);
-    const loginBody = (await loginResp!.json()) as { token: string };
+    const token = loginToken("ApiWorker");
 
     db.createCanvas({ id: "canvas-work-api", name: "requests", creatorName: "Human" });
     db.createNode({
@@ -178,7 +179,7 @@ describe("Command API", () => {
     const url = new URL("http://localhost:3300/api/entities/ApiWorker/work");
     const req = new Request(url.toString(), {
       method: "GET",
-      headers: { Authorization: `Bearer ${loginBody.token}` },
+      headers: { Authorization: `Bearer ${token}` },
     });
     const resp = await handleDashboardApi(req, url, "GET", engine, db);
 

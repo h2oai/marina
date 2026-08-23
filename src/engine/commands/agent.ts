@@ -10,7 +10,7 @@ import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
 import { getRank } from "../permissions";
-import { checkGate, recordDemonstration, SAFETY_GATES } from "../safety-gates";
+import { checkUnattendedGate, SAFETY_GATES } from "../safety-gates";
 
 export function agentCommand(deps: {
   agentRuntime: AgentRuntime;
@@ -364,18 +364,19 @@ async function handleSpawn(
   //
   // This gate is enforced imperatively here rather than via the declarative
   // `CommandDef.gate` field, by design: `spawn` is a subcommand of `agent`
-  // (whose other subcommands — list/stop — must stay rank 0), and the spawn
-  // flow needs the gate *result* (`supervisedOnly`) to drive the
-  // demonstration-recording loop below. The declarative field gates whole
-  // commands and discards that result, so it can't express this.
-  let pendingDemo = false;
+  // (whose other subcommands — list/stop — must stay rank 0).
+  //
+  // FINDING 3: use `checkUnattendedGate`, not `checkGate`. A standing-only
+  // (supervisedOnly) holder is REFUSED — spawning agents cannot be self-
+  // certified by doing it N times unwatched. Unsupervised agent.spawn is earned
+  // only by an operator grant, a rank promotion, or a witnessed demonstration;
+  // no self-reported demonstration is recorded on success.
   if (deps.db) {
-    const gate = checkGate(deps.db, eid, "agent.spawn");
+    const gate = checkUnattendedGate(deps.db, eid, "agent.spawn");
     if (!gate.ok) {
       ctx.send(eid, gate.reason ?? "Not permitted to spawn agents.");
       return;
     }
-    pendingDemo = gate.supervisedOnly === true;
 
     // Lineage depth cap — emergence, not a fork bomb. An agent at or beyond
     // MAX_SPAWN_DEPTH may not spawn further. Operators/humans aren't in the
@@ -485,12 +486,6 @@ async function handleSpawn(
       role: status.role,
       timestamp: Date.now(),
     });
-
-    // Record the supervised demonstration only after a clean spawn — once
-    // demoThreshold accumulates, agent.spawn flips to unsupervised.
-    if (pendingDemo && deps.db) {
-      recordDemonstration(deps.db, eid, "agent.spawn");
-    }
 
     ctx.send(eid, `Agent ${bold(name)} spawned and running.`);
   } catch (error) {

@@ -161,6 +161,7 @@ describe("code single-agent binding (writer lock + role-aware recruit)", () => {
   it("sets session.writer to the recruited bound agent so it can apply", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     const coder = makeAgentEntity("agent_coder", "Coder");
     db.saveEntity(coder);
     const { handle } = fakeHandle("Coder", "agent_coder");
@@ -197,9 +198,53 @@ describe("code single-agent binding (writer lock + role-aware recruit)", () => {
     });
   });
 
+  it("FINDING 7: an ungated dispatcher cannot drive a recruited coder to host exec", async () => {
+    // Dave has NO code.exec — a standing-0 caller must not reach host execution
+    // through a plain Code Mode task by having a coder recruited on his behalf.
+    const dave = makeAgentEntity("u_dave", "Dave");
+    db.saveEntity(dave);
+    const coder = makeAgentEntity("agent_coder", "Coder");
+    db.saveEntity(coder);
+    const { handle } = fakeHandle("Coder", "agent_coder");
+    const spawned: string[] = [];
+    const sent: string[] = [];
+    const command = codeCommand({
+      db,
+      getEntity: (id) => (id === "u_dave" ? dave : id === "agent_coder" ? coder : undefined),
+      workspace: new LocalWorkspace(),
+      agentRuntime: {
+        get: (n: string) => (n === "Coder" ? handle : undefined),
+        isAvailable: () => true,
+        list: () => [{ name: "Coder" }],
+        spawn: async (cfg: { name: string }) => {
+          spawned.push(cfg.name);
+          return handle;
+        },
+      },
+      listAgents: () => [{ name: "Coder" }],
+      findAgentByName: (n: string) => (n === "Coder" ? coder : undefined),
+    });
+    const ctx = testRoomContext(sent);
+
+    await command.handler(ctx, inputFor(dave, "code do fix the tokenizer"));
+
+    // Refused before any recruit/bind/spawn — no coder was recruited or spawned,
+    // and no code.exec was granted on the ungated caller's behalf. Dave has zero
+    // standing so the refusal cites the standing gap on the code.exec capability.
+    expect(stripAnsi(sent.join("\n")).toLowerCase()).toMatch(/standing|code\.exec/);
+    expect(spawned).toHaveLength(0);
+    const sid = dave.properties.coding_session_id as string | undefined;
+    if (sid) {
+      const session = db.getCodingSession(sid);
+      expect(session?.agent ?? null).toBeNull();
+    }
+    expect(db.getCompetence("agent_coder", "code.exec")).toBeUndefined();
+  });
+
   it("skips non-coding roles when recruiting and falls through to spawn", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     grant(db, alice.id, "agent.spawn");
     const oracle = makeAgentEntity("agent_oracle", "Oracle");
     db.saveEntity(oracle);
@@ -245,6 +290,7 @@ describe("code single-agent binding (writer lock + role-aware recruit)", () => {
   it("code stop aborts the bound agent's run and leaves the session intact", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     const coder = makeAgentEntity("agent_coder", "Coder");
     db.saveEntity(coder);
     const { handle, attention, calls } = fakeHandle("Coder", "agent_coder");
@@ -292,6 +338,7 @@ describe("code single-agent binding (writer lock + role-aware recruit)", () => {
   it("code stop without a bound agent explains there is nothing to stop", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     const sent: string[] = [];
     const command = codeCommand({
       db,
@@ -333,6 +380,7 @@ describe("code edit / code write (guarded direct file mutations)", () => {
   it("code edit applies a conflict-marker replacement and records an artifact", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     grant(db, alice.id, "code.exec");
     const { command, ctx, sent, edits } = makeCommand(alice);
 
@@ -358,6 +406,7 @@ describe("code edit / code write (guarded direct file mutations)", () => {
   it("trailing ' all' after the path requests replaceAll", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     grant(db, alice.id, "code.exec");
     const { command, ctx, edits } = makeCommand(alice);
 
@@ -374,6 +423,7 @@ describe("code edit / code write (guarded direct file mutations)", () => {
   it("malformed edit input yields usage and never touches the workspace", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     grant(db, alice.id, "code.exec");
     const { command, ctx, sent, edits } = makeCommand(alice);
 
@@ -386,6 +436,7 @@ describe("code edit / code write (guarded direct file mutations)", () => {
   it("code write creates a file, records file_write, and emits an event", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     grant(db, alice.id, "code.exec");
     const { command, ctx, sent, writes } = makeCommand(alice);
 
@@ -405,6 +456,7 @@ describe("code edit / code write (guarded direct file mutations)", () => {
   it("enforces the same writer/creator guard as apply", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     const bob = makeAgentEntity("agent_bob", "bob");
     db.saveEntity(bob);
     grant(db, alice.id, "code.exec");
@@ -527,6 +579,7 @@ describe("coding task mode (set on assign, cleared on stop/completion)", () => {
   function makeBoundSetup(notifications?: string[]) {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     const coder = makeAgentEntity("agent_coder", "Coder");
     db.saveEntity(coder);
     const fake = fakeHandle("Coder", "agent_coder");
@@ -628,6 +681,7 @@ describe("structured completion signal (machine-readable lifecycle metadata)", (
   function makeStructuredSetup() {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     const coder = makeAgentEntity("agent_coder", "Coder");
     db.saveEntity(coder);
     const fake = fakeHandle("Coder", "agent_coder");
@@ -819,6 +873,7 @@ describe("resume: entering code re-adopts the creator's latest active session", 
   it("a rebuilt entity (quit deletes the row) resumes its prior active session", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     const first = makeCommandFor(alice);
     await first.command.handler(first.ctx, inputFor(alice, "code start Persistent work"));
     const sid = alice.properties.coding_session_id as string;
@@ -845,6 +900,7 @@ describe("resume: entering code re-adopts the creator's latest active session", 
   it("completed sessions are not re-adopted", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     const first = makeCommandFor(alice);
     await first.command.handler(first.ctx, inputFor(alice, "code start Old work"));
     const sid = alice.properties.coding_session_id as string;
@@ -862,6 +918,7 @@ describe("resume: entering code re-adopts the creator's latest active session", 
   it("an existing valid pointer wins over re-adoption", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     const { command, ctx } = makeCommandFor(alice);
     await command.handler(ctx, inputFor(alice, "code start First"));
     const firstSid = alice.properties.coding_session_id as string;
@@ -891,6 +948,7 @@ describe("self-dispatch guard (bound coder cannot queue tasks to itself)", () =>
   function makeBoundSetup() {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     const coder = makeAgentEntity("agent_coder", "Coder");
     db.saveEntity(coder);
     const fake = fakeHandle("Coder", "agent_coder");
@@ -994,6 +1052,7 @@ describe("identity mismatch: dashed config names vs login-sanitized entity names
   function makeMismatchSetup() {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     const coder = makeAgentEntity("agent_coder", ENTITY_NAME);
     db.saveEntity(coder);
     grant(db, alice.id, "code.exec");
@@ -1082,6 +1141,7 @@ describe("identity mismatch: dashed config names vs login-sanitized entity names
   it("spawned coder names are fixed points of the login sanitizer", async () => {
     const alice = makeAgentEntity("u_alice", "Alice");
     db.saveEntity(alice);
+    grant(db, alice.id, "code.exec"); // Finding 7: dispatcher must hold code.exec.
     grant(db, alice.id, "agent.spawn");
     const spawned: { name: string }[] = [];
     const spawnedEntities = new Map<string, Entity>();

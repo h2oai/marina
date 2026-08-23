@@ -16,6 +16,7 @@ import {
   negotiateConnectCapabilities,
   registerConnectEndpoint,
 } from "./connect-api";
+import { resolveWsBindHostname } from "./websocket-server";
 
 // ─── Session State ────────────────────────────────────────────────────────────
 
@@ -99,9 +100,13 @@ export class McpServerAdapter {
 
     const serverOptions = {
       port: this.port,
+      // Secure-by-default: bind loopback-only unless WS_HOST/MARINA_HOST is set
+      // or MARINA_PUBLIC=true. Mirrors the WebSocket server so the MCP surface is
+      // never silently exposed on all interfaces on a fresh desktop node.
+      hostname: resolveWsBindHostname(),
       idleTimeout: WS_IDLE_TIMEOUT_SECONDS,
 
-      async fetch(req) {
+      async fetch(req, server) {
         const url = new URL(req.url);
 
         if (url.pathname === "/health") {
@@ -135,6 +140,13 @@ export class McpServerAdapter {
             return session.transport.handleRequest(req);
           }
 
+          // Real socket peer for this session's client — used to key the
+          // login-attempt throttle. Without it, every MCP session falls back to
+          // its unique connId and each new session gets a fresh throttle bucket,
+          // bypassing checkLoginRate entirely (a flood of new sessions is never
+          // limited). Sharing one bucket per peer IP closes that bypass.
+          const peerIp = server.requestIP(req)?.address ?? undefined;
+
           // New session
           const transport = new WebStandardStreamableHTTPServerTransport({
             sessionIdGenerator: () => crypto.randomUUID(),
@@ -153,6 +165,9 @@ export class McpServerAdapter {
                 protocol: "mcp",
                 entity: null,
                 connectedAt: Date.now(),
+                // Header-derived rate-limit/throttle key ONLY — never a trust
+                // anchor (peerIp/loopback trust is left unset for MCP).
+                ip: peerIp,
                 send(perception: Perception) {
                   newSession.perceptionBuffer.push(perception);
                 },

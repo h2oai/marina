@@ -20,12 +20,14 @@ interface EnvEntry {
 describe("env config editability", () => {
   let db: MarinaDB;
   let engine: Engine;
-  let savedOpenApi: string | undefined;
+  let savedDesktopToken: string | undefined;
+  // GET /api/env now requires an operator capability; the desktop operator
+  // token is the zero-config local-operator credential the panel uses.
+  const DESKTOP_TOKEN = "desktop-capability-token-at-least-32-chars";
 
   beforeEach(() => {
-    savedOpenApi = process.env.MARINA_OPEN_API;
-    // Open API so the /api/env auth gate passes without a session token.
-    process.env.MARINA_OPEN_API = "true";
+    savedDesktopToken = process.env.MARINA_DESKTOP_API_TOKEN;
+    process.env.MARINA_DESKTOP_API_TOKEN = DESKTOP_TOKEN;
     db = new MarinaDB(TEST_DB);
     engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
   });
@@ -33,13 +35,16 @@ describe("env config editability", () => {
   afterEach(() => {
     db.close();
     cleanupDb(TEST_DB);
-    if (savedOpenApi === undefined) delete process.env.MARINA_OPEN_API;
-    else process.env.MARINA_OPEN_API = savedOpenApi;
+    if (savedDesktopToken === undefined) delete process.env.MARINA_DESKTOP_API_TOKEN;
+    else process.env.MARINA_DESKTOP_API_TOKEN = savedDesktopToken;
   });
 
   async function getEnv(): Promise<EnvEntry[]> {
     const url = new URL("http://localhost:3300/api/env");
-    const req = new Request(url.toString(), { method: "GET" });
+    const req = new Request(url.toString(), {
+      method: "GET",
+      headers: { "X-Marina-Desktop-Token": DESKTOP_TOKEN },
+    });
     const resp = await handleDashboardApi(req, url, "GET", engine, db);
     return (await resp!.json()) as EnvEntry[];
   }

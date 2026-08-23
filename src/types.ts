@@ -162,12 +162,14 @@ export interface CommandDef {
    */
   category?: string;
   /**
-   * Safety gate id (see src/engine/safety-gates.ts SAFETY_GATES). When
-   * set, the command-router checks `checkGate(db, entityId, gate)` after
-   * the standard `minRank` check. A failed gate refuses the command with
-   * the gate's reason; a supervised-only result also runs the handler but
-   * expects the handler to record a demonstration via
-   * `recordDemonstration()` on success.
+   * Safety gate id (see src/engine/safety-gates.ts SAFETY_GATES). When set, the
+   * command-router checks `checkUnattendedGate(db, entityId, gate)` after the
+   * standard `minRank` check — every declaratively-gated command is an
+   * unattended dangerous op, so a standing-only (supervisedOnly) holder is
+   * REFUSED. Unsupervised competence is earned only via operator grant, rank
+   * promotion (`grantGatesForRank`), or a witnessed demonstration — never by the
+   * router self-recording a demonstration (that self-certification path is
+   * closed).
    */
   gate?: string;
 }

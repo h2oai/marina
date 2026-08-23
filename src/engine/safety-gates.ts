@@ -64,10 +64,16 @@ export const SAFETY_GATES: Record<string, GateDef> = {
     // Running or applying code in a workspace can execute arbitrary processes
     // on the host (e.g. `code run bun test <file>` runs that file's JS), so it
     // is a host-execution capability and must be earned — never available to a
-    // freshly-spawned, zero-standing (untrusted) agent. Kept low (rank-1) so it
-    // stays usable for established collaborators; supervised-first. Full
-    // containment of executed code is the workspace-sandbox roadmap; this gate
-    // closes the ungated drive-by path in the meantime.
+    // freshly-spawned, zero-standing (untrusted) agent.
+    //
+    // THE BAR (post-hardening): minStanding is only the threshold to *attempt*.
+    // A standing-only holder is `supervisedOnly` and is REFUSED unattended
+    // execution — it can NEVER be self-certified by running the op N times
+    // (see `checkUnattendedGate`). Unsupervised code.exec is earned solely by an
+    // operator grant, a rank promotion (`grantGatesForRank`), or an externally
+    // witnessed demonstration (`recordWitnessedDemonstration`). This mirrors
+    // shell.exec's unfarmable behavior; minStanding stays low so a legitimate
+    // grant path is cheap, but standing alone can no longer buy host execution.
     minStanding: 5,
     demoThreshold: 3,
     description: "run or apply code in a workspace",
@@ -176,6 +182,43 @@ export function checkGate(
 }
 
 /**
+ * Stricter sibling of `checkGate` for UNATTENDED enforcement sites — every
+ * host-execution / agent-spawn call path where no co-present witness or
+ * per-command human approver is in the loop.
+ *
+ * `checkGate` returns `{ ok: true, supervisedOnly: true }` on standing alone.
+ * Historically the call sites treated that as "go ahead, then self-record a
+ * demonstration" — which let an entity auto-unlock a dangerous gate by simply
+ * running the op N times unwatched (self-certification). That is closed here:
+ * a `supervisedOnly` result is downgraded to a refusal. An unattended caller
+ * proceeds ONLY when it already holds unsupervised competence — earned by an
+ * operator grant, a rank promotion (`grantGatesForRank`), or an externally
+ * attested demonstration (`recordWitnessedDemonstration`). Never by self-report.
+ *
+ * Use this (not `checkGate`) at any site that will EXECUTE the dangerous op
+ * without a live witness/approver. `checkGate` remains for read-only progress
+ * views and for sites (e.g. the exec-approver) that mint competence from a
+ * genuine per-command human approval.
+ */
+export function checkUnattendedGate(
+  db: MarinaDB,
+  entityId: string,
+  gateId: string,
+  now = Date.now(),
+): GateCheckResult {
+  const result = checkGate(db, entityId, gateId, now);
+  if (!result.ok) return result;
+  if (result.supervisedOnly) {
+    const gate = SAFETY_GATES[gateId];
+    return {
+      ok: false,
+      reason: `Supervised-only: you have the standing to ${gate?.description ?? "use this capability"}, but an unattended run is not permitted. This capability cannot be self-certified — an operator must grant it (or a qualified witness must attest a supervised demonstration) before you can run it solo.`,
+    };
+  }
+  return { ok: true };
+}
+
+/**
  * Determine whether an entity is qualified to witness a supervised
  * demonstration of a particular gate. They must themselves be unsupervised
  * on the same gate (closing the bootstrapping loop). Sovereigns (rank 9)
@@ -185,6 +228,29 @@ export function checkGate(
 export function canWitness(db: MarinaDB, witnessId: string, gateId: string): boolean {
   const competence = db.getCompetence(witnessId, gateId);
   return Boolean(competence && competence.supervised_only === 0);
+}
+
+/**
+ * Record a demonstration ONLY when a qualified, external witness attests it.
+ * This is the sole path (besides an operator grant / rank promotion) by which a
+ * supervised entity advances toward unsupervised competence — replacing the old
+ * self-reported `recordDemonstration` calls at the enforcement sites. The
+ * witness must be a different entity that is itself unsupervised on the same
+ * gate (`canWitness`); self-witnessing and unqualified witnesses are refused.
+ * Returns true when a demonstration was recorded.
+ */
+export function recordWitnessedDemonstration(
+  db: MarinaDB,
+  entityId: string,
+  gateId: string,
+  witnessId: string,
+  now = Date.now(),
+): boolean {
+  if (!SAFETY_GATES[gateId]) return false;
+  if (!witnessId || witnessId === entityId) return false;
+  if (!canWitness(db, witnessId, gateId)) return false;
+  recordDemonstration(db, entityId, gateId, now);
+  return true;
 }
 
 /**

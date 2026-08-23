@@ -5,11 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   canWitness,
   checkGate,
+  checkUnattendedGate,
   getGateProgress,
   grant,
   grantGatesForRank,
   listGates,
   recordDemonstration,
+  recordWitnessedDemonstration,
   revoke,
   SAFETY_GATES,
 } from "../src/engine/safety-gates";
@@ -89,6 +91,70 @@ describe("Safety gates", () => {
     const final = checkGate(db, "e_alice", "shell.exec");
     expect(final.ok).toBe(true);
     expect(final.supervisedOnly).toBeUndefined();
+  });
+
+  // ── Finding 3: supervised gates cannot be self-certified ──
+  describe("checkUnattendedGate (no self-certification)", () => {
+    it("refuses a standing-only holder — supervisedOnly is downgraded to a denial", () => {
+      seedStanding(db, "e_alice", "Alice", 120);
+      // checkGate would say "ok, but supervised"; the unattended check refuses.
+      expect(checkGate(db, "e_alice", "shell.exec").supervisedOnly).toBe(true);
+      const unattended = checkUnattendedGate(db, "e_alice", "shell.exec");
+      expect(unattended.ok).toBe(false);
+      expect(unattended.reason).toContain("Supervised-only");
+      expect(unattended.reason?.toLowerCase()).toContain("cannot be self-certified");
+    });
+
+    it("passes only when the entity already holds unsupervised competence", () => {
+      grant(db, "e_op", "code.exec");
+      const result = checkUnattendedGate(db, "e_op", "code.exec");
+      expect(result.ok).toBe(true);
+      expect(result.supervisedOnly).toBeUndefined();
+    });
+
+    it("still refuses an entity with no standing (same as checkGate)", () => {
+      const result = checkUnattendedGate(db, "e_nobody", "agent.spawn");
+      expect(result.ok).toBe(false);
+      expect(result.reason).toContain("standing");
+    });
+
+    it("running an op under supervision never auto-unlocks it (no self-report path)", () => {
+      seedStanding(db, "e_alice", "Alice", 120);
+      // Simulate the OLD vulnerability: an entity 'running' code.exec many times.
+      // With no witnessed demonstrations, it stays refused forever.
+      for (let i = 0; i < 10; i++) {
+        expect(checkUnattendedGate(db, "e_alice", "code.exec").ok).toBe(false);
+      }
+      // No demonstrations were minted by the refusals.
+      expect(db.getCompetence("e_alice", "code.exec")?.demonstrations ?? 0).toBe(0);
+    });
+  });
+
+  describe("recordWitnessedDemonstration (external attestation only)", () => {
+    it("refuses self-witnessing", () => {
+      seedStanding(db, "e_alice", "Alice", 120);
+      expect(recordWitnessedDemonstration(db, "e_alice", "shell.exec", "e_alice")).toBe(false);
+      expect(db.getCompetence("e_alice", "shell.exec")?.demonstrations ?? 0).toBe(0);
+    });
+
+    it("refuses an unqualified witness (not unsupervised on the gate)", () => {
+      seedStanding(db, "e_alice", "Alice", 120);
+      seedStanding(db, "e_bob", "Bob", 120); // has standing but no competence row
+      expect(recordWitnessedDemonstration(db, "e_alice", "shell.exec", "e_bob")).toBe(false);
+      expect(db.getCompetence("e_alice", "shell.exec")?.demonstrations ?? 0).toBe(0);
+    });
+
+    it("a qualified witness advances the entity to unsupervised at the threshold", () => {
+      seedStanding(db, "e_alice", "Alice", 120);
+      grant(db, "e_witness", "shell.exec"); // unsupervised → qualified witness
+      // shell.exec.demoThreshold === 3
+      expect(recordWitnessedDemonstration(db, "e_alice", "shell.exec", "e_witness")).toBe(true);
+      expect(recordWitnessedDemonstration(db, "e_alice", "shell.exec", "e_witness")).toBe(true);
+      expect(checkUnattendedGate(db, "e_alice", "shell.exec").ok).toBe(false);
+      expect(recordWitnessedDemonstration(db, "e_alice", "shell.exec", "e_witness")).toBe(true);
+      // Now unsupervised → unattended execution permitted.
+      expect(checkUnattendedGate(db, "e_alice", "shell.exec").ok).toBe(true);
+    });
   });
 
   it("canWitness returns true only for unsupervised entities on the same gate", () => {

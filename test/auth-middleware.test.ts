@@ -3,7 +3,12 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
-import { authenticateRequest, OPEN_API_ENTITY_ID } from "../src/net/auth-middleware";
+import {
+  authenticateRequest,
+  DESKTOP_OPERATOR_ENTITY_ID,
+  isOperatorPrincipal,
+  OPEN_API_ENTITY_ID,
+} from "../src/net/auth-middleware";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
@@ -94,7 +99,15 @@ describe("authenticateRequest — dashboard auth gate", () => {
       engine,
     );
 
-    expect("entityId" in valid && valid.entityId).toBe(OPEN_API_ENTITY_ID);
+    // The desktop capability token resolves to the trusted operator sentinel —
+    // distinct from the dev-open bypass — so it can authorize privileged ops.
+    expect("entityId" in valid && valid.entityId).toBe(DESKTOP_OPERATOR_ENTITY_ID);
+    expect("entityId" in valid && isOperatorPrincipal(valid.entityId)).toBe(true);
     expect("error" in invalid && invalid.error.status).toBe(401);
+  });
+
+  it("classifies the open-API sentinel as non-operator (reads only)", () => {
+    expect(isOperatorPrincipal(OPEN_API_ENTITY_ID)).toBe(false);
+    expect(isOperatorPrincipal(DESKTOP_OPERATOR_ENTITY_ID)).toBe(true);
   });
 });

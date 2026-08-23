@@ -13,6 +13,16 @@ export interface Session {
   createdAt: number;
   lastSeen: number;
   expiresAt: number;
+  /**
+   * The rank actually granted to the login that minted this token. A bare
+   * passwordless-name token is NOT proof of identity: a remote login is capped
+   * at rank 0 even when the persisted user row is elevated. reconnect() must
+   * restore at most this rank (unless the reconnecting connection is itself a
+   * trusted loopback/internal peer) — otherwise the token would launder the
+   * login cap into a full rank restore. Undefined for legacy rows (treated as
+   * rank 0 ceiling).
+   */
+  grantedRank?: number;
 }
 
 export interface SessionManagerOptions {
@@ -40,8 +50,10 @@ export class SessionManager {
     }
   }
 
-  /** Create a new session for the given entity. Revokes any existing session first. */
-  create(entityId: EntityId, name: string): Session {
+  /** Create a new session for the given entity. Revokes any existing session first.
+   *  `grantedRank` records the rank actually granted to the minting login — the
+   *  ceiling reconnect() may restore from this token (see Session.grantedRank). */
+  create(entityId: EntityId, name: string, grantedRank?: number): Session {
     this.revokeByEntity(entityId);
 
     const now = Date.now();
@@ -52,6 +64,7 @@ export class SessionManager {
       createdAt: now,
       lastSeen: now,
       expiresAt: now + this.sessionTtlMs,
+      grantedRank,
     };
 
     this.sessions.set(session.token, session);

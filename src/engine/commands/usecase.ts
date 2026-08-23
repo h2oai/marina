@@ -7,7 +7,7 @@ import type { TaskManager } from "../../coordination/task-manager";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, EntityRank, RoomContext } from "../../types";
-import { checkGate, recordDemonstration } from "../safety-gates";
+import { checkUnattendedGate } from "../safety-gates";
 
 /**
  * Use-case recipes — one-command scaffolding that creates a project,
@@ -1356,7 +1356,11 @@ Examples:
         // 7. Spawn agent(s) — team takes precedence over agentCount/agentRole.
         const agentNames: string[] = [];
         let noAgentReason = "none (no model provider configured)";
-        const spawnGate = checkGate(db, input.entity, "agent.spawn");
+        // Unattended spawn path: use `checkUnattendedGate` (refuses a
+        // standing-only holder). A rank-0 entity that merely farmed standing to
+        // 40 must NOT be able to spawn agents solo via a use-case recipe, and
+        // the supervised path here previously self-minted competence — closed.
+        const spawnGate = checkUnattendedGate(db, input.entity, "agent.spawn");
         if (deps.agentRuntime.isAvailable() && !spawnGate.ok) {
           noAgentReason = "none (spawn unavailable; project open for existing agents)";
           ctx.send(
@@ -1429,9 +1433,6 @@ Examples:
                 );
               }
             }
-          }
-          if (spawnGate.supervisedOnly && agentNames.length > 0) {
-            recordDemonstration(db, input.entity, "agent.spawn");
           }
         }
 

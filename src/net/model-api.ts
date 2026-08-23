@@ -1373,7 +1373,7 @@ export async function handleModelApi(
   }
 
   if (url.pathname.startsWith("/v1/media")) {
-    return await handleMediaApi(url, method, req, engine);
+    return await handleMediaApi(url, method, req, engine, server);
   }
 
   // OpenAI: GET /v1/models

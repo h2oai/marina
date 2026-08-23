@@ -18,8 +18,10 @@ import type { StorageProvider } from "../storage/provider";
 import type { Connection, Perception } from "../types";
 import { handleAssetApi, handleAssetServing } from "./asset-api";
 import { handleAuthApi } from "./auth-api";
+import { DESKTOP_OPERATOR_ENTITY_ID, OPEN_API_ENTITY_ID } from "./auth-middleware";
 import { type CanvasNodeCreatedEvent, handleCanvasApi } from "./canvas-api";
-import { CanvasBroadcaster } from "./canvas-ws";
+import { buildCanvasPrincipal, isLoopbackPeer, LOOPBACK_PRINCIPAL } from "./canvas-principal";
+import { CanvasBroadcaster, type CanvasSubscriptionPrincipal } from "./canvas-ws";
 import {
   buildConnectManifest,
   handleSkillRequest,
@@ -68,22 +70,58 @@ interface WSData {
   ip?: string;
   /** Real, unspoofable TCP peer address from `server.requestIP` — the exec/loopback trust anchor. */
   peerIp?: string;
+  /**
+   * Authenticated principal resolved at UPGRADE time for the dashboard/canvas
+   * live streams. Either a real `EntityId` (valid session token), the
+   * {@link OPEN_API_ENTITY_ID} sentinel (dev bypass / desktop token), or the
+   * {@link LOOPBACK_PRINCIPAL} sentinel (genuine local operator on a loopback
+   * bind, zero-config desktop). Cluster B reads `ws.data.principal` to scope
+   * canvas subscriptions. Never undefined on an upgraded dashboard/canvas socket
+   * (the upgrade is rejected before it can be).
+   */
+  principal?: string;
   [key: string]: unknown;
 }
 
 let wsIdCounter = 0;
 
+/** Loopback host tokens that count as a secure, local-only bind. */
+const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
+
 /**
- * Resolve the explicit bind hostname from the environment, or `undefined` to keep
- * Bun's default bind (today's behavior — do NOT change the default). When
- * WS_HOST/MARINA_HOST is set, it is passed to `Bun.serve({ hostname })` so that
- * WS_HOST=127.0.0.1 genuinely binds loopback-only rather than the port silently
- * listening on 0.0.0.0. This is the trust anchor behind loopback isolation; the
- * headless-exec identity decision is now per-connection and does not read it.
+ * Sentinel principal attached to a dashboard/canvas socket that was admitted
+ * purely because it arrived over a genuine loopback peer with no session token.
+ * This is the zero-config desktop path: a local client keeps working, but the
+ * principal is explicitly "unauthenticated-but-local" rather than a real entity.
  */
-export function resolveWsBindHostname(env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const host = (env.WS_HOST ?? env.MARINA_HOST ?? "").trim();
-  return host || undefined;
+// Re-exported from the shared canvas-principal module (single source of truth
+// for the loopback trust anchor). Kept exported here for backward compatibility
+// with existing importers/tests.
+export { LOOPBACK_PRINCIPAL };
+
+/**
+ * Resolve the bind hostname from the environment. SECURE-BY-DEFAULT: an unset
+ * WS_HOST/MARINA_HOST now binds LOOPBACK-ONLY (127.0.0.1) so a fresh desktop
+ * node is never silently exposed on all interfaces. Public exposure is a
+ * deliberate opt-in:
+ *   - WS_HOST=0.0.0.0 (or any explicit non-loopback host), or
+ *   - MARINA_PUBLIC=true (binds 0.0.0.0 without naming an interface).
+ * An explicit WS_HOST/MARINA_HOST always wins over MARINA_PUBLIC. The value is
+ * threaded into `Bun.serve({ hostname })` so the bind is real, and it is the
+ * trust anchor behind loopback isolation (the headless-exec identity decision
+ * stays per-connection and does not read it).
+ */
+export function resolveWsBindHostname(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = (env.WS_HOST ?? env.MARINA_HOST ?? "").trim();
+  if (explicit) return explicit;
+  if ((env.MARINA_PUBLIC ?? "").trim().toLowerCase() === "true") return "0.0.0.0";
+  return "127.0.0.1";
+}
+
+/** True when a resolved bind hostname is loopback-only (secure local default). */
+export function isLoopbackHostname(host: string): boolean {
+  const h = host.trim().toLowerCase();
+  return LOOPBACK_HOSTNAMES.has(h) || h.startsWith("127.");
 }
 
 export class WebSocketServer {
@@ -136,6 +174,76 @@ export class WebSocketServer {
     this.authProvider = provider;
   }
 
+  /**
+   * Resolve the authenticated principal for a dashboard/canvas WebSocket UPGRADE.
+   * Returns the principal string to attach to the socket, or `null` to REJECT
+   * the upgrade. Accepted, in order of strength:
+   *   1. A valid session token (Authorization: Bearer <t> header, or ?token=<t>
+   *      query param) → the real EntityId.
+   *   2. The desktop API token header (X-Marina-Desktop-Token) → DESKTOP_OPERATOR
+   *      sentinel (a trusted local operator — mirrors authenticateRequest so the
+   *      same token maps to {isOperator:true} on both the HTTP and WS surfaces).
+   *   3. MARINA_OPEN_API=true dev bypass → OPEN_API sentinel.
+   *   4. A genuine loopback peer (zero-config desktop) → LOOPBACK_PRINCIPAL.
+   * Otherwise (a remote client on a public bind with no token) → null (reject).
+   * This is defense-in-depth on the loopback-only default and essential on a
+   * public bind; Cluster B scopes canvas subscriptions off the attached principal.
+   */
+  private resolveUpgradePrincipal(
+    req: Request,
+    url: URL,
+    peerIp: string | undefined,
+  ): string | null {
+    const auth = req.headers.get("Authorization");
+    const headerToken = auth?.startsWith("Bearer ") ? auth.slice(7) : null;
+    const token = headerToken ?? url.searchParams.get("token");
+    if (token) {
+      const entityId = this.engine.authenticate(token);
+      if (entityId) return entityId as string;
+    }
+
+    const desktopToken = req.headers.get("X-Marina-Desktop-Token");
+    const expectedDesktopToken = process.env.MARINA_DESKTOP_API_TOKEN;
+    if (
+      desktopToken &&
+      expectedDesktopToken &&
+      expectedDesktopToken.length >= 32 &&
+      secretsEqual(desktopToken, expectedDesktopToken)
+    ) {
+      return DESKTOP_OPERATOR_ENTITY_ID as string;
+    }
+
+    if (process.env.MARINA_OPEN_API === "true") return OPEN_API_ENTITY_ID as string;
+
+    // Zero-config desktop: a genuine loopback peer (never header-derived) is
+    // admitted as an unauthenticated-but-local principal. A remote peer that
+    // forges X-Forwarded-For does NOT set peerIp, so it stays rejected.
+    if (isLoopbackPeer(peerIp)) return LOOPBACK_PRINCIPAL;
+
+    return null;
+  }
+
+  /**
+   * Translate the string principal attached at UPGRADE time into the structured
+   * {@link CanvasSubscriptionPrincipal} the subscription gate understands.
+   *
+   *   - {@link LOOPBACK_PRINCIPAL}: genuine local desktop owner → operator (zero-
+   *     config desktop keeps seeing its own/local canvases).
+   *   - {@link DESKTOP_OPERATOR_ENTITY_ID}: provisioned desktop capability token → operator.
+   *   - {@link OPEN_API_ENTITY_ID}: dev-open bypass — reads are already wide open,
+   *     so it may observe any canvas (read-scope operator).
+   *   - A real EntityId: owner of its own private canvas; operator only when it is
+   *     a sovereign admin (rank ≥ 9) or holds the operator gate.
+   *   - undefined: fully anonymous — private per-entity canvases stay closed.
+   */
+  private buildCanvasPrincipal(
+    principal: string | undefined,
+    db: MarinaDB | undefined,
+  ): CanvasSubscriptionPrincipal {
+    // Delegate to the shared builder so the WS and HTTP surfaces apply one rule.
+    return buildCanvasPrincipal(principal, this.engine, db);
+  }
+
   start(): void {
     const engine = this.engine;
     const sockets = this.sockets;
@@ -146,9 +254,9 @@ export class WebSocketServer {
 
     this.server = Bun.serve<WSData>({
       port: this.port,
-      // Only set hostname when explicitly configured — an unset host keeps Bun's
-      // default bind (unchanged behavior). WS_HOST=127.0.0.1 → loopback-only.
-      ...(bindHostname ? { hostname: bindHostname } : {}),
+      // Secure-by-default: an unset host binds loopback-only (127.0.0.1). Public
+      // exposure is an explicit opt-in (WS_HOST=0.0.0.0 or MARINA_PUBLIC=true).
+      hostname: bindHostname,
       idleTimeout: WS_IDLE_TIMEOUT_SECONDS,
 
       async fetch(req, server) {
@@ -194,11 +302,15 @@ export class WebSocketServer {
             return new Response("Too many connections from this IP", { status: 429 });
           }
 
-          // Dashboard WebSocket upgrade
+          // Dashboard WebSocket upgrade — require an authenticated principal.
           if (url.pathname === "/dashboard-ws") {
+            const principal = self.resolveUpgradePrincipal(req, url, peerIp);
+            if (principal === null) {
+              return new Response("Unauthorized", { status: 401 });
+            }
             const connId = `dash_${++wsIdCounter}`;
             const upgraded = server.upgrade(req, {
-              data: { connId, isDashboard: true, ip, peerIp },
+              data: { connId, isDashboard: true, ip, peerIp, principal },
             });
             if (!upgraded) {
               return new Response("WebSocket upgrade failed", { status: 400 });
@@ -216,15 +328,19 @@ export class WebSocketServer {
             return undefined;
           }
 
-          // Canvas WebSocket upgrade
+          // Canvas WebSocket upgrade — require an authenticated principal.
           if (url.pathname === "/canvas-ws") {
             const canvasId = url.searchParams.get("canvas");
             if (!canvasId) {
               return new Response("Missing canvas query param", { status: 400 });
             }
+            const principal = self.resolveUpgradePrincipal(req, url, peerIp);
+            if (principal === null) {
+              return new Response("Unauthorized", { status: 401 });
+            }
             const connId = `canvas_${++wsIdCounter}`;
             const upgraded = server.upgrade(req, {
-              data: { connId, isCanvas: true, canvasId, ip, peerIp },
+              data: { connId, isCanvas: true, canvasId, ip, peerIp, principal },
             });
             if (!upgraded) {
               return new Response("WebSocket upgrade failed", { status: 400 });
@@ -245,6 +361,9 @@ export class WebSocketServer {
 
         // Canvas API routes: /api/canvases*
         if (url.pathname.startsWith("/api/canvases") && self.db) {
+          // Real, unspoofable TCP peer address — the loopback trust anchor for
+          // the zero-config desktop reader (never header-derived).
+          const canvasPeerIp = server.requestIP(req)?.address;
           return handleCanvasApi(
             url,
             req.method,
@@ -254,6 +373,7 @@ export class WebSocketServer {
             self.canvasBroadcaster,
             engine,
             self.onNodeCreated,
+            canvasPeerIp,
           );
         }
 
@@ -343,7 +463,11 @@ export class WebSocketServer {
 
         // API routes
         if (url.pathname.startsWith("/api/")) {
-          return handleDashboardApi(req, url, req.method, engine, self.db);
+          // Real, unspoofable TCP peer address — the loopback trust anchor for
+          // the zero-config desktop reader on per-entity canvas routes (never
+          // header-derived). Mirrors the canvas API above.
+          const dashPeerIp = server.requestIP(req)?.address;
+          return handleDashboardApi(req, url, req.method, engine, self.db, dashPeerIp);
         }
 
         // Health check
@@ -435,9 +559,23 @@ export class WebSocketServer {
             return;
           }
 
-          // Canvas WebSocket
+          // Canvas WebSocket — scope the subscription against the principal
+          // resolved at upgrade time. Private per-entity canvases (scope
+          // "entity") are owner/operator-only; a denied subscription closes the
+          // socket. Requires the DB for the canvas-scope lookup; without it we
+          // cannot authorize, so the socket is closed rather than fail open.
           if (ws.data.isCanvas && ws.data.canvasId) {
-            self.canvasBroadcaster.addClient(ws, ws.data.canvasId);
+            const canvasDb = self.db ?? engine.db;
+            if (!canvasDb) {
+              ws.close();
+              return;
+            }
+            const principal = self.buildCanvasPrincipal(ws.data.principal, canvasDb);
+            const admitted = self.canvasBroadcaster.addClient(ws, ws.data.canvasId, {
+              db: canvasDb,
+              principal,
+            });
+            if (!admitted) ws.close();
             return;
           }
 

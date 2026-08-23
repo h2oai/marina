@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import type { AgentRuntime } from "../src/agent/agent-runtime";
 import { MAX_AGENTS } from "../src/agent/agent-runtime";
-import { lineageDepth, spawnBudget } from "../src/engine/commands/agent";
+import { agentCommand, lineageDepth, spawnBudget } from "../src/engine/commands/agent";
 import { Engine } from "../src/engine/engine";
 import { grant } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
+import type { CommandInput, Entity, EntityId, RoomContext } from "../src/types";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
 
@@ -119,6 +121,18 @@ describe("agent spawn command — permission layer (integration)", () => {
     expect(output()).toContain("standing");
   });
 
+  it("FINDING 3: a standing-only (supervised) spawner is refused and never self-certifies", async () => {
+    // Enough standing to ATTEMPT (>= 40) but no unsupervised competence.
+    const taskId = db.createTask({ title: "t", creatorId: alice.entity!, creatorName: "alice" });
+    db.recordStandingEarned(alice.entity!, "alice", taskId, 60);
+    alice.clear();
+    await engine.processCommand(alice.entity!, "agent spawn helper");
+    // Refused as supervised-only — cannot be self-certified by spawning.
+    expect(output()).toContain("Supervised-only");
+    // And crucially: no demonstration was minted from the refused attempt.
+    expect(db.getCompetence(alice.entity!, "agent.spawn")?.demonstrations ?? 0).toBe(0);
+  });
+
   it("refuses spawning past the lineage depth cap", async () => {
     // Grant the gate so the gate check passes; depth is enforced independently.
     grant(db, alice.entity!, "agent.spawn");
@@ -139,5 +153,78 @@ describe("agent spawn command — permission layer (integration)", () => {
     await engine.processCommand(alice.entity!, "agent spawn this_name_is_over_twenty_chars");
     expect(output()).toContain("1-20 characters");
     expect(db.getAgentConfig("this_name_is_over_twenty_chars")).toBeUndefined();
+  });
+});
+
+describe("agent spawn policy — per-entity budget enforcement (cost-DoS cap)", () => {
+  const dbPath = `/tmp/marina-spawn-budget-${Date.now()}.db`;
+  let db: MarinaDB;
+
+  beforeEach(() => {
+    db = new MarinaDB(dbPath);
+  });
+  afterEach(() => {
+    db.close();
+    cleanupDb(dbPath);
+  });
+
+  function entity(id: string, name: string): Entity {
+    return {
+      id: id as EntityId,
+      name,
+      kind: "agent",
+      room: roomId("test/start"),
+      createdAt: Date.now(),
+      short: name,
+      long: "",
+      inventory: [],
+      properties: {},
+    };
+  }
+
+  function inputFor(e: Entity, raw: string): CommandInput {
+    const args = raw.slice(raw.indexOf(" ") + 1);
+    return {
+      raw,
+      verb: "agent",
+      args,
+      tokens: args.split(/\s+/),
+      entity: e.id,
+      room: roomId("test/start"),
+    };
+  }
+
+  it("refuses spawning once live children reach the earned standing budget", async () => {
+    const acting = entity("u_org", "Organizer");
+    db.saveEntity(acting);
+    // Unsupervised agent.spawn (grant) + standing 60 → an EARNED spawner (not a
+    // below-threshold granted operator), so budget = floor(60 / 25) = 2.
+    const taskId = db.createTask({ title: "t", creatorId: acting.id, creatorName: "Organizer" });
+    db.recordStandingEarned(acting.id, "Organizer", taskId, 60);
+    grant(db, acting.id, "agent.spawn");
+
+    // Two live children already spawned by Organizer → at the budget of 2.
+    db.saveAgentConfig({ name: "kid1", model: "x/y", spawnedBy: "Organizer" });
+    db.saveAgentConfig({ name: "kid2", model: "x/y", spawnedBy: "Organizer" });
+
+    const runtime = {
+      list: () => [{ name: "kid1" }, { name: "kid2" }],
+      isAvailable: () => true,
+    } as unknown as AgentRuntime;
+
+    const sent: string[] = [];
+    const ctx = {
+      send: (_t: EntityId, m: string) => sent.push(stripAnsi(m)),
+    } as unknown as RoomContext;
+    const command = agentCommand({
+      agentRuntime: runtime,
+      db,
+      getEntity: (id) => (id === acting.id ? acting : undefined),
+      logEvent: () => {},
+    });
+
+    await command.handler(ctx, inputFor(acting, "agent spawn helper"));
+    expect(sent.join("\n")).toContain("Spawn budget reached");
+    expect(db.getAgentConfig("helper")).toBeUndefined();
   });
 });

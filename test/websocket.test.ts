@@ -6,10 +6,15 @@ import { RateLimiter } from "../src/auth/rate-limiter";
 import { isLoopbackConnection } from "../src/engine/commands/code";
 import { WS_MAX_CONNECTIONS_PER_IP, WS_MAX_TOTAL_CONNECTIONS } from "../src/engine/constants";
 import { Engine } from "../src/engine/engine";
-import { resolveWsBindHostname, WebSocketServer } from "../src/net/websocket-server";
+import { DESKTOP_OPERATOR_ENTITY_ID, OPEN_API_ENTITY_ID } from "../src/net/auth-middleware";
+import {
+  isLoopbackHostname,
+  resolveWsBindHostname,
+  WebSocketServer,
+} from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -63,10 +68,10 @@ function parse(msg: string): { kind: string; data: Record<string, unknown> } {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe("WebSocket bind hostname (WS_HOST trust anchor)", () => {
-  it("resolveWsBindHostname returns undefined when unset (keeps Bun default bind)", () => {
-    expect(resolveWsBindHostname({} as NodeJS.ProcessEnv)).toBeUndefined();
-    expect(resolveWsBindHostname({ WS_HOST: "  " } as NodeJS.ProcessEnv)).toBeUndefined();
+describe("WebSocket bind hostname (secure-by-default loopback)", () => {
+  it("resolveWsBindHostname defaults to loopback (127.0.0.1) when unset", () => {
+    expect(resolveWsBindHostname({} as NodeJS.ProcessEnv)).toBe("127.0.0.1");
+    expect(resolveWsBindHostname({ WS_HOST: "  " } as NodeJS.ProcessEnv)).toBe("127.0.0.1");
   });
 
   it("resolveWsBindHostname honors WS_HOST / MARINA_HOST when explicitly set", () => {
@@ -78,6 +83,51 @@ describe("WebSocket bind hostname (WS_HOST trust anchor)", () => {
     expect(
       resolveWsBindHostname({ WS_HOST: "127.0.0.1", MARINA_HOST: "0.0.0.0" } as NodeJS.ProcessEnv),
     ).toBe("127.0.0.1");
+  });
+
+  it("public exposure is an explicit opt-in (WS_HOST=0.0.0.0 or MARINA_PUBLIC=true)", () => {
+    expect(resolveWsBindHostname({ WS_HOST: "0.0.0.0" } as NodeJS.ProcessEnv)).toBe("0.0.0.0");
+    expect(resolveWsBindHostname({ MARINA_PUBLIC: "true" } as NodeJS.ProcessEnv)).toBe("0.0.0.0");
+    // Explicit host wins over MARINA_PUBLIC.
+    expect(
+      resolveWsBindHostname({ WS_HOST: "127.0.0.1", MARINA_PUBLIC: "true" } as NodeJS.ProcessEnv),
+    ).toBe("127.0.0.1");
+  });
+
+  it("isLoopbackHostname classifies loopback vs public binds", () => {
+    expect(isLoopbackHostname("127.0.0.1")).toBe(true);
+    expect(isLoopbackHostname("localhost")).toBe(true);
+    expect(isLoopbackHostname("::1")).toBe(true);
+    expect(isLoopbackHostname("0.0.0.0")).toBe(false);
+    expect(isLoopbackHostname("192.168.1.5")).toBe(false);
+  });
+
+  it("binds loopback-only by default (no WS_HOST/MARINA_PUBLIC set)", () => {
+    const prevHost = process.env.WS_HOST;
+    const prevMarinaHost = process.env.MARINA_HOST;
+    const prevPublic = process.env.MARINA_PUBLIC;
+    delete process.env.WS_HOST;
+    delete process.env.MARINA_HOST;
+    delete process.env.MARINA_PUBLIC;
+    const dbPath = tmpDbPath();
+    const db = new MarinaDB(dbPath);
+    const engine = new Engine({ startRoom: roomId("test/lobby"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/lobby"), makeTestRoom({ short: "L", long: "L" }));
+    const server = new WebSocketServer(engine, 15398);
+    try {
+      server.start();
+      expect(server.getBoundHostname()).toBe("127.0.0.1");
+    } finally {
+      server.stop();
+      db.close();
+      cleanupDb(dbPath);
+      if (prevHost === undefined) delete process.env.WS_HOST;
+      else process.env.WS_HOST = prevHost;
+      if (prevMarinaHost === undefined) delete process.env.MARINA_HOST;
+      else process.env.MARINA_HOST = prevMarinaHost;
+      if (prevPublic === undefined) delete process.env.MARINA_PUBLIC;
+      else process.env.MARINA_PUBLIC = prevPublic;
+    }
   });
 
   it("WS_HOST=127.0.0.1 causes the running server to bind loopback only", () => {
@@ -172,6 +222,155 @@ describe("WebSocket Server", () => {
     expect(welcome.data.connect).toBe("/api/connect");
 
     await close();
+  });
+
+  // ─── Live-stream upgrade principal gate (Cluster B seam) ───────────────
+
+  it("admits a loopback canvas-ws upgrade with zero config (desktop-first)", async () => {
+    // A local client on loopback must connect to the canvas live stream without
+    // any token — the zero-config desktop path. The upgrade gate resolves a
+    // LOOPBACK_PRINCIPAL rather than rejecting.
+    const ws = new WebSocket(`ws://localhost:${WS_PORT}/canvas-ws?canvas=test`);
+    const opened = await new Promise<boolean>((resolve) => {
+      ws.onopen = () => resolve(true);
+      ws.onerror = () => resolve(false);
+      setTimeout(() => resolve(ws.readyState === WebSocket.OPEN), 1500);
+    });
+    expect(opened).toBe(true);
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it("admits a loopback dashboard-ws upgrade with zero config (desktop-first)", async () => {
+    const ws = new WebSocket(`ws://localhost:${WS_PORT}/dashboard-ws`);
+    const opened = await new Promise<boolean>((resolve) => {
+      ws.onopen = () => resolve(true);
+      ws.onerror = () => resolve(false);
+      setTimeout(() => resolve(ws.readyState === WebSocket.OPEN), 1500);
+    });
+    expect(opened).toBe(true);
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  // ─── Private-canvas subscription authorization (real open() path) ───────
+  // These exercise the wired control end-to-end: the runtime open() handler
+  // builds a principal from ws.data.principal and calls addClient(auth). The
+  // authorizeCanvasSubscription unit lives in canvas-api-auth.test.ts; here we
+  // prove it actually runs and closes the socket on denial.
+
+  it("denies a non-owner authenticated peer a private entity-canvas subscription", async () => {
+    // Bob owns a private (scope: entity) canvas.
+    const bobConn = new MockConnection("bob-conn");
+    engine.addConnection(bobConn);
+    const bob = engine.login(bobConn.id, "Bob");
+    if ("error" in bob) throw new Error("bob login failed");
+    db.createCanvas({
+      id: "bob-private",
+      name: "bob's canvas",
+      scope: "entity",
+      scopeId: bob.entityId,
+      creatorName: "Bob",
+    });
+
+    // Alice authenticates but is not the owner — with a real token, the upgrade
+    // resolves her real entityId (not the loopback operator sentinel).
+    const aliceConn = new MockConnection("alice-conn");
+    engine.addConnection(aliceConn);
+    const alice = engine.login(aliceConn.id, "Alice");
+    if ("error" in alice) throw new Error("alice login failed");
+
+    const ws = new WebSocket(
+      `ws://localhost:${WS_PORT}/canvas-ws?canvas=bob-private&token=${alice.token}`,
+    );
+    const denied = await new Promise<boolean>((resolve) => {
+      ws.onclose = () => resolve(true);
+      ws.onerror = () => resolve(true);
+      setTimeout(
+        () => resolve(ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING),
+        1500,
+      );
+    });
+    expect(denied).toBe(true);
+    expect(ws.readyState).not.toBe(WebSocket.OPEN);
+    // The denied socket was never registered as a subscriber.
+    expect(wsServer.canvasBroadcaster.clientCount("bob-private")).toBe(0);
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it("admits the owner to their own private entity-canvas subscription", async () => {
+    const bobConn = new MockConnection("bob-owner-conn");
+    engine.addConnection(bobConn);
+    const bob = engine.login(bobConn.id, "BobOwner");
+    if ("error" in bob) throw new Error("bob login failed");
+    db.createCanvas({
+      id: "bobowner-private",
+      name: "bobowner's canvas",
+      scope: "entity",
+      scopeId: bob.entityId,
+      creatorName: "BobOwner",
+    });
+
+    const ws = new WebSocket(
+      `ws://localhost:${WS_PORT}/canvas-ws?canvas=bobowner-private&token=${bob.token}`,
+    );
+    const opened = await new Promise<boolean>((resolve) => {
+      ws.onopen = () => resolve(true);
+      ws.onerror = () => resolve(false);
+      setTimeout(() => resolve(ws.readyState === WebSocket.OPEN), 1500);
+    });
+    expect(opened).toBe(true);
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  it("admits a loopback peer to a private entity-canvas (zero-config desktop owner)", async () => {
+    db.createCanvas({
+      id: "someone-private",
+      name: "someone's canvas",
+      scope: "entity",
+      scopeId: "e_other",
+      creatorName: "sys",
+    });
+    // No token: a genuine loopback peer resolves to LOOPBACK_PRINCIPAL, which
+    // buildCanvasPrincipal treats as a local operator — must still see canvases.
+    const ws = new WebSocket(`ws://localhost:${WS_PORT}/canvas-ws?canvas=someone-private`);
+    const opened = await new Promise<boolean>((resolve) => {
+      ws.onopen = () => resolve(true);
+      ws.onerror = () => resolve(false);
+      setTimeout(() => resolve(ws.readyState === WebSocket.OPEN), 1500);
+    });
+    expect(opened).toBe(true);
+    ws.close();
+    await Bun.sleep(50);
+  });
+
+  // ─── Finding 2: desktop token → operator sentinel on the upgrade path ───
+  it("resolves the desktop capability token to the operator sentinel (consistent with authenticateRequest)", () => {
+    const desktopToken = "desktop-capability-token-at-least-32-chars";
+    const prev = process.env.MARINA_DESKTOP_API_TOKEN;
+    process.env.MARINA_DESKTOP_API_TOKEN = desktopToken;
+    try {
+      const req = new Request("http://localhost/canvas-ws?canvas=x", {
+        headers: { "X-Marina-Desktop-Token": desktopToken },
+      });
+      const url = new URL("http://localhost/canvas-ws?canvas=x");
+      const resolveUpgradePrincipal = (
+        wsServer as unknown as {
+          resolveUpgradePrincipal: (r: Request, u: URL, p?: string) => string | null;
+        }
+      ).resolveUpgradePrincipal.bind(wsServer);
+      // A non-loopback peer so the loopback fallback cannot mask the desktop branch.
+      const principal = resolveUpgradePrincipal(req, url, "203.0.113.5");
+      expect(principal).toBe(DESKTOP_OPERATOR_ENTITY_ID);
+      expect(principal).not.toBe(OPEN_API_ENTITY_ID);
+    } finally {
+      if (prev === undefined) delete process.env.MARINA_DESKTOP_API_TOKEN;
+      else process.env.MARINA_DESKTOP_API_TOKEN = prev;
+    }
   });
 
   // ─── Login Flow ───────────────────────────────────────────────────────

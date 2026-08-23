@@ -7,7 +7,7 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId } from "../../types";
 import type { ReadinessReport } from "../readiness";
-import { checkGate, recordDemonstration } from "../safety-gates";
+import { checkUnattendedGate } from "../safety-gates";
 
 const DEMO_AGENTS = ["Host", "Builder", "Critic", "Chronicler"];
 
@@ -87,7 +87,9 @@ export function demoCommand(deps: {
       }
 
       if (action === "warm") {
-        const gate = checkGate(deps.db, input.entity, "agent.spawn");
+        // Unattended spawn path: `checkUnattendedGate` refuses a standing-only
+        // holder so a farmed-standing entity can't warm-spawn agents solo.
+        const gate = checkUnattendedGate(deps.db, input.entity, "agent.spawn");
         if (!gate.ok) {
           ctx.send(input.entity, gate.reason ?? "agent.spawn capability is unavailable.");
           return;
@@ -123,8 +125,6 @@ export function demoCommand(deps: {
             );
           }
         }
-        if (gate.supervisedOnly && started > 0)
-          recordDemonstration(deps.db, input.entity, "agent.spawn");
         ctx.send(
           input.entity,
           `Demo warm complete: ${started} started, ${DEMO_AGENTS.length - configs.length} already running/config-unavailable${failures.length > 0 ? `; ${failures.join("; ")}` : ""}.`,

@@ -12,7 +12,7 @@ import { evolutionBudgetState, parseEvolutionProtocol } from "../engine/evolutio
 import { tracesToOtlpJson } from "../engine/otlp-trace-export";
 import { getRank } from "../engine/permissions";
 import { computeReadiness } from "../engine/readiness";
-import { checkGate } from "../engine/safety-gates";
+import { checkUnattendedGate } from "../engine/safety-gates";
 import { analyzeTraces } from "../engine/trace-analytics";
 import { buildTraceDataset, compareTraceCohorts } from "../engine/trace-dataset";
 import { evaluateTrace } from "../engine/trace-evaluation";
@@ -22,7 +22,9 @@ import type { MarinaDB, MediaJobRow } from "../persistence/database";
 import { isKeyEncryptionEnabled } from "../persistence/key-crypto";
 import type { Connection, EntityId, Perception, RoomId } from "../types";
 import { ORCHESTRATION_PATTERNS } from "../world/templates/orchestration";
-import { authenticateRequest, OPEN_API_ENTITY_ID } from "./auth-middleware";
+import { authenticateRequest, isOperatorPrincipal, isSentinelPrincipal } from "./auth-middleware";
+import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "./canvas-principal";
+import { authorizeCanvasSubscription } from "./canvas-ws";
 import { corsHeaders } from "./cors";
 import { formatPerception } from "./formatter";
 import { discoverModels } from "./model-discovery";
@@ -139,11 +141,18 @@ async function handleCommandIngress(
   };
 
   engine.addConnection(conn);
+  // Track a token freshly minted by an *unauthenticated* login so we can revoke
+  // it below. This ingress path is pre-auth: returning (or leaving live) a
+  // working session token would let an anonymous caller reuse it against
+  // authenticated routes — including cross-entity private-memory reads. A
+  // reconnect (caller already holds a valid token) does not mint anything new.
+  let freshToken: string | undefined;
   try {
     const session = token ? engine.reconnect(connId, token) : engine.login(connId, name);
     if ("error" in session) {
       return json({ error: session.error }, token ? 401 : 400, origin);
     }
+    if (!token) freshToken = session.token;
 
     if (engine.rateLimiter && !engine.rateLimiter.consume(session.entityId)) {
       return json({ error: "Rate limited. Please slow down." }, 429, origin);
@@ -151,11 +160,13 @@ async function handleCommandIngress(
 
     await engine.processCommand(session.entityId, command);
 
+    // Deliberately omit the session token from the response. Named sessions can
+    // still be continued by re-sending `name` (passwordless login re-binds the
+    // same entity); the token is never handed to an unauthenticated caller.
     return json(
       {
         entityId: session.entityId,
         name: session.name,
-        token: session.token,
         command,
         perceptions,
         text: formatCommandText(perceptions, body.render),
@@ -164,6 +175,7 @@ async function handleCommandIngress(
       origin,
     );
   } finally {
+    if (freshToken) engine.sessionManager?.revoke(freshToken);
     engine.removeConnection(connId);
   }
 }
@@ -175,10 +187,16 @@ async function handleCommandIngress(
  * signed-in user — or, under MARINA_OPEN_API, anyone — could spawn agents,
  * bypassing the `agent.spawn` safety gate the in-world command enforces.
  *
- * Returns null when allowed, or a 403 Response when not. Allowed if: the dev
- * open-API bypass is active (operator opted into MARINA_OPEN_API), OR the
- * caller is a sovereign admin (rank 9), OR the caller has earned/been-granted
- * the relevant safety gate. Mirrors "admin, or granted to a user".
+ * Returns null when allowed, or a 403 Response when not. Allowed if: the
+ * caller presents the local desktop operator credential, OR the caller is a
+ * sovereign admin (rank 9), OR the caller has earned/been-granted the relevant
+ * safety gate. Mirrors "admin, or granted to a user".
+ *
+ * The `MARINA_OPEN_API=true` dev bypass deliberately does NOT satisfy this
+ * gate: dev-open may open reads, but destructive/privileged operations
+ * (key/env management, agent spawn, entity deletion) must never be reachable
+ * without a real operator credential — otherwise a dev instance left exposed
+ * would hand out full control to any anonymous caller.
  */
 function authorizePrivileged(
   engine: Engine,
@@ -186,14 +204,47 @@ function authorizePrivileged(
   callerId: EntityId,
   gateId: string,
 ): Response | null {
-  if (callerId === OPEN_API_ENTITY_ID) return null; // dev bypass — operator's choice
+  if (isOperatorPrincipal(callerId)) return null; // desktop operator credential
   const entity = engine.entities.get(callerId);
   if (entity && getRank(entity) >= 9) return null; // sovereign admin
-  if (db && checkGate(db, callerId, gateId).ok) return null; // granted / earned the gate
+  // `checkUnattendedGate`, not `checkGate`: a standing-only (supervisedOnly)
+  // holder must NOT pass a privileged HTTP op — that path has no live witness or
+  // per-command human approver, so a farmed-standing entity would otherwise
+  // self-authorize. Only genuinely unsupervised competence (grant / rank promo /
+  // witnessed demo) qualifies.
+  if (db && checkUnattendedGate(db, callerId, gateId).ok) return null; // granted / earned the gate
   return json(
     { error: `Not authorized: this action requires an admin or the "${gateId}" capability.` },
     403,
   );
+}
+
+/**
+ * Read-authorization for name-scoped memory / entity-detail routes. A caller
+ * may read another entity's private memory (core memory, notes, note graph)
+ * only when it *is* that entity, or holds an operator capability. Without this,
+ * any valid session token — including the ephemeral one minted by the pre-auth
+ * ingress endpoints — could read every entity's private memory.
+ *
+ * The `MARINA_OPEN_API` dev bypass is intentionally allowed here: dev-open is
+ * an explicit single-user local opt-in where reads are already wide open.
+ */
+function authorizeEntityRead(
+  engine: Engine,
+  db: MarinaDB | undefined,
+  callerId: EntityId,
+  requestedName: string,
+): Response | null {
+  // Sentinels: desktop operator (trusted) and the dev-open bypass (reads only)
+  // may both read. A non-operator sentinel never reaches privileged *writes*.
+  if (isSentinelPrincipal(callerId)) return null;
+  const caller = engine.entities.get(callerId);
+  if (caller && getRank(caller) >= 9) return null; // sovereign admin
+  if (caller && caller.name.toLowerCase() === requestedName.toLowerCase()) return null; // own memory
+  // Operator gate — unattended check so a supervised-only holder isn't treated
+  // as an operator for cross-entity private-memory reads.
+  if (db && checkUnattendedGate(db, callerId, "admin.destructive").ok) return null; // operator gate
+  return json({ error: "Not authorized to read another entity's private memory." }, 403);
 }
 
 export async function handleDashboardApi(
@@ -202,6 +253,7 @@ export async function handleDashboardApi(
   method: string,
   engine: Engine,
   db?: MarinaDB,
+  peerIp?: string,
 ): Promise<Response | undefined> {
   // Pre-auth endpoints (no session required — used by dashboard before login)
   if (url.pathname === "/api/setup-status" && method === "GET") {
@@ -456,7 +508,35 @@ export async function handleDashboardApi(
     const entityName = decodeURIComponent(entityCanvasMatch[1]!);
     const entity = engine.findEntityGlobal(entityName);
     if (!entity) return json({ error: "Entity not found" }, 404);
-    const canvas = db.ensureEntityCanvas(entity.id, entity.name, entity.name);
+
+    // A per-entity workspace is a private `scope:"entity"` canvas. This route
+    // must apply the SAME owner/operator predicate the canvas WS + HTTP
+    // surfaces use (`authorizeCanvasSubscription` via `buildCanvasPrincipal`) —
+    // otherwise it both leaks another entity's private canvas metadata and
+    // lazily MATERIALIZES their workspace on a non-owner's behalf. Loopback
+    // desktop reader → operator-equivalent (zero-config preserved).
+    const canvasPrincipal = buildCanvasPrincipal(
+      resolveCanvasHttpPrincipal(req, engine, peerIp),
+      engine,
+      db,
+    );
+    const existing = db.getEntityCanvas(entity.id);
+    if (existing) {
+      // 404 (not 403) so a private canvas id isn't confirmable to a non-owner.
+      if (!authorizeCanvasSubscription(db, existing.id, canvasPrincipal)) {
+        return json({ error: "Entity not found" }, 404);
+      }
+    } else {
+      // Not yet created. Only the owner (caller === this entity) or an operator
+      // may trigger lazy creation; a non-owner read returns 404 WITHOUT
+      // materializing another entity's canvas. Mirrors the owner/operator branch
+      // of `authorizeCanvasSubscription` for scope:"entity" (scope_id = entity.id).
+      const ownerOrOperator =
+        canvasPrincipal.isOperator === true ||
+        (!!canvasPrincipal.entityId && canvasPrincipal.entityId === entity.id);
+      if (!ownerOrOperator) return json({ error: "Entity not found" }, 404);
+    }
+    const canvas = existing ?? db.ensureEntityCanvas(entity.id, entity.name, entity.name);
     return json({
       id: canvas.id,
       name: canvas.name,
@@ -593,6 +673,8 @@ export async function handleDashboardApi(
   const graphMatch = url.pathname.match(/^\/api\/memory\/graph\/([^/]+)$/);
   if (graphMatch && method === "GET" && db) {
     const entityName = decodeURIComponent(graphMatch[1]!);
+    const denied = authorizeEntityRead(engine, db, callerId, entityName);
+    if (denied) return denied;
     const notes = db.getNotesByEntity(entityName, 50);
     const graph: {
       noteId: number;
@@ -633,8 +715,12 @@ export async function handleDashboardApi(
     const myClaims = db.getActiveClaimsByName(entityName);
     const pools = db.listMemoryPools();
     const memoryCount = db.listCoreMemory(entityName).length;
-    const goalEntry = db.getCoreMemory(entityName, "goal");
-    const focusEntry = db.getCoreMemory(entityName, "focus");
+    // goal/focus are private core memory. Expose them only to the entity itself
+    // or an operator; other authenticated callers still get the (non-sensitive)
+    // counts but see goal/focus as null.
+    const canReadPrivate = authorizeEntityRead(engine, db, callerId, entityName) === null;
+    const goalEntry = canReadPrivate ? db.getCoreMemory(entityName, "goal") : undefined;
+    const focusEntry = canReadPrivate ? db.getCoreMemory(entityName, "focus") : undefined;
 
     const pendingIntents = db.listCanvasIntents({
       statuses: ["pending"],
@@ -688,12 +774,19 @@ export async function handleDashboardApi(
         deleteEntity(engine, entityName)
       );
     }
+    // Entity detail bundles the entity's private core memory + notes, so it is
+    // scoped like the dedicated memory routes below.
+    const denied = authorizeEntityRead(engine, db, callerId, entityName);
+    if (denied) return denied;
     return getEntityDetail(engine, db, entityName);
   }
 
   const memNotesMatch = url.pathname.match(/^\/api\/memory\/notes\/(.+)$/);
   if (memNotesMatch && db) {
-    return getMemoryNotes(db, decodeURIComponent(memNotesMatch[1]!));
+    const entityName = decodeURIComponent(memNotesMatch[1]!);
+    const denied = authorizeEntityRead(engine, db, callerId, entityName);
+    if (denied) return denied;
+    return getMemoryNotes(db, entityName);
   }
 
   // Single-note detail: content, author, links, supersession chain
@@ -702,6 +795,13 @@ export async function handleDashboardApi(
     const id = Number(noteDetailMatch[1]);
     const note = db.getNote(id);
     if (!note) return json({ error: "Note not found" }, 404);
+    // A private note is owner/operator-scoped like the /api/memory/* routes.
+    // Notes deposited in a shared pool are intentional coordination artifacts —
+    // readable by anyone — so they are exempt from the owner check.
+    if (!note.pool_id) {
+      const denied = authorizeEntityRead(engine, db, callerId, note.entity_name);
+      if (denied) return denied;
+    }
     const links = db.getNoteLinks(id);
     // Hydrate each link with the other note's brief preview for the UI
     const hydratedLinks = links.map((l) => {
@@ -743,7 +843,10 @@ export async function handleDashboardApi(
 
   const memCoreMatch = url.pathname.match(/^\/api\/memory\/core\/(.+)$/);
   if (memCoreMatch && db) {
-    return getMemoryCore(db, decodeURIComponent(memCoreMatch[1]!));
+    const entityName = decodeURIComponent(memCoreMatch[1]!);
+    const denied = authorizeEntityRead(engine, db, callerId, entityName);
+    if (denied) return denied;
+    return getMemoryCore(db, entityName);
   }
 
   if (url.pathname === "/api/memory/pools" && db) {
@@ -844,7 +947,12 @@ export async function handleDashboardApi(
   }
   const keyTestMatch = url.pathname.match(/^\/api\/keys\/([^/]+)\/test$/);
   if (keyTestMatch && method === "POST" && db) {
-    return handleKeyTest(decodeURIComponent(keyTestMatch[1]!), db);
+    // Testing a stored provider key is privileged: it probes upstream with the
+    // operator's credential (can trigger spend). Gate it like key add/delete.
+    return (
+      authorizePrivileged(engine, db, callerId, "key.manage") ??
+      handleKeyTest(decodeURIComponent(keyTestMatch[1]!), db)
+    );
   }
 
   // ─── Default model API ─────────────────────────────────────────────────
@@ -858,6 +966,8 @@ export async function handleDashboardApi(
     });
   }
   if (url.pathname === "/api/default-model" && method === "PUT" && db) {
+    const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
+    if (denied) return denied;
     const body = (await req.json().catch(() => ({}))) as { model?: string };
     const model = body.model?.trim();
     if (!model) return json({ error: "model is required" }, 400);
@@ -871,6 +981,8 @@ export async function handleDashboardApi(
     return json({ ok: true, model: db.getDefaultModel(), configured: model });
   }
   if (url.pathname === "/api/default-model" && method === "DELETE" && db) {
+    const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
+    if (denied) return denied;
     db.deleteSetting("default_model");
     return json({ ok: true, model: db.getDefaultModel(), configured: null });
   }
@@ -881,6 +993,8 @@ export async function handleDashboardApi(
     return json(getEndpointConfig(db));
   }
   if (url.pathname === "/api/model-endpoint" && method === "PUT" && db) {
+    const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
+    if (denied) return denied;
     const body = (await req.json().catch(() => ({}))) as Partial<EndpointConfig>;
     const result = setEndpointConfig(db, body);
     if ("error" in result) return json({ error: result.error }, 400);
@@ -899,14 +1013,23 @@ export async function handleDashboardApi(
     return getAdaptersWithEnv(db, engine);
   }
   if (url.pathname === "/api/adapters" && method === "POST" && db) {
-    return handleAdapterSave(req, db, engine);
+    return (
+      authorizePrivileged(engine, db, callerId, "adapter.enable") ??
+      handleAdapterSave(req, db, engine)
+    );
   }
   const adapterMatch = url.pathname.match(/^\/api\/adapters\/([^/]+)$/);
   if (adapterMatch && method === "PATCH" && db) {
-    return handleAdapterUpdate(req, decodeURIComponent(adapterMatch[1]!), db, engine);
+    return (
+      authorizePrivileged(engine, db, callerId, "adapter.enable") ??
+      handleAdapterUpdate(req, decodeURIComponent(adapterMatch[1]!), db, engine)
+    );
   }
   if (adapterMatch && method === "DELETE" && db) {
-    return handleAdapterDelete(decodeURIComponent(adapterMatch[1]!), db, engine);
+    return (
+      authorizePrivileged(engine, db, callerId, "adapter.enable") ??
+      handleAdapterDelete(decodeURIComponent(adapterMatch[1]!), db, engine)
+    );
   }
 
   // ─── Roles & Traits API ───────────────────────────────────────────────
@@ -923,11 +1046,15 @@ export async function handleDashboardApi(
   }
 
   // ─── Env Config API ────────────────────────────────────────────────────
+  // The env panel reads/writes .env, which holds credentials and security
+  // knobs. Both verbs require an operator capability; reads never expose secret
+  // plaintext (only isSet + a coarse length bucket), and writes reject
+  // security-relevant keys outright regardless of caller.
   if (url.pathname === "/api/env" && method === "GET") {
-    return handleEnvGet();
+    return authorizePrivileged(engine, db, callerId, "key.manage") ?? handleEnvGet();
   }
   if (url.pathname === "/api/env" && method === "PUT") {
-    return handleEnvPut(req);
+    return authorizePrivileged(engine, db, callerId, "admin.destructive") ?? handleEnvPut(req);
   }
 
   // ─── Room Templates, Macros, Experiments, Markets, Benchmarks ──────────
@@ -1850,15 +1977,61 @@ function isSecretKey(key: string): boolean {
   return SECRET_PATTERNS.some((p) => key.includes(p));
 }
 
-function maskEnvValue(key: string, value: string): string {
-  if (!isSecretKey(key) || !value) return value;
-  if (value.length <= 8) return "****";
-  return `${value.slice(0, 4)}${"*".repeat(4)}${value.slice(-4)}`;
+/**
+ * Security-relevant env keys that must never be edited through this route, even
+ * by an operator: they control who is an admin, the dashboard password, the API
+ * bearer tokens, and the auth mode / dev-open bypass. A misapplied edit here
+ * could silently escalate privilege or open the instance, so changing them is
+ * kept to out-of-band .env / shell provisioning only.
+ */
+const PROTECTED_ENV_KEYS = new Set([
+  "MARINA_ADMINS",
+  "MARINA_AUTH",
+  "MARINA_AUTH_ADMIN_EMAILS",
+  "MARINA_OPEN_API",
+  "DASHBOARD_PASSWORD",
+  "MARINA_DESKTOP_API_TOKEN",
+  "GATEWAY_SECRET",
+]);
+
+/** True for keys whose plaintext must never leave the server (any secret, or a
+ * protected security knob). */
+function isProtectedEnvKey(key: string): boolean {
+  return PROTECTED_ENV_KEYS.has(key) || key.endsWith("_API_KEYS");
+}
+
+/** Coarse length bucket for a secret value — a "how long is it" hint that leaks
+ * no fragment of the plaintext. */
+function envLengthBucket(len: number): "empty" | "short" | "medium" | "long" {
+  if (len <= 0) return "empty";
+  if (len < 16) return "short";
+  if (len < 40) return "medium";
+  return "long";
+}
+
+/**
+ * Project a raw env value into what the GET panel is allowed to see. Secrets
+ * never return any plaintext (not even a first4/last4 fragment) — only a coarse
+ * length bucket. Non-secret operational vars return their real value so the
+ * panel remains a usable editor. Exported for direct testing of the
+ * no-secret-fragment guarantee.
+ */
+export function projectEnvValueForRead(
+  key: string,
+  rawValue: string,
+  isSet: boolean,
+): { value: string; lengthBucket?: "empty" | "short" | "medium" | "long" } {
+  if (isSecretKey(key)) {
+    return { value: "", lengthBucket: envLengthBucket(isSet ? rawValue.length : 0) };
+  }
+  return { value: rawValue };
 }
 
 interface EnvEntry {
   key: string;
   value: string;
+  /** Coarse size hint for secret-classified keys (never a plaintext fragment). */
+  lengthBucket?: "empty" | "short" | "medium" | "long";
   description: string;
   category: string;
   isSecret: boolean;
@@ -1965,14 +2138,15 @@ function handleEnvGet(): Response {
     // pretending it's unset and offering a futile editable field.
     const externallySet = inProc && !inFile;
     const rawValue = inFile ? (fileVars.get(s.key) ?? "") : (procVal ?? "");
+    const isSet = inFile || inProc;
 
     return {
       key: s.key,
-      value: maskEnvValue(s.key, rawValue),
+      ...projectEnvValueForRead(s.key, rawValue, isSet),
       description: s.description,
       category: s.category,
       isSecret: isSecretKey(s.key),
-      isSet: inFile || inProc,
+      isSet,
       editable: !externallySet,
       source: externallySet ? "env" : inFile ? "file" : "unset",
     };
@@ -2015,6 +2189,20 @@ async function handleEnvPut(req: Request): Promise<Response> {
     return json({ error: "vars object is required" }, 400);
   }
 
+  // Reject security-relevant keys outright — even for a privileged caller, and
+  // regardless of whether they appear in the schema. Editing who is an admin /
+  // the auth mode / the API bearer tokens through a dashboard route is a
+  // privilege-escalation footgun; keep them .env-only.
+  const protectedEdits = Object.keys(body.vars).filter((k) => isProtectedEnvKey(k));
+  if (protectedEdits.length > 0) {
+    return json(
+      {
+        error: `These keys can only be changed by editing .env directly: ${protectedEdits.join(", ")}`,
+      },
+      403,
+    );
+  }
+
   // Validate against .env.example schema
   const schema = parseEnvExample();
   const allowedKeys = new Set(schema.map((s) => s.key));
@@ -2044,6 +2232,11 @@ async function handleEnvPut(req: Request): Promise<Response> {
       // Masked value — keep existing
       continue;
     }
+
+    // Secrets are returned to the panel with an empty value (no plaintext
+    // leaves the server), so a blank secret field means "unchanged" — never
+    // interpret it as a request to delete the stored secret.
+    if (isSecretKey(key) && value === "") continue;
 
     const oldValue = currentVars.get(key) ?? "";
     if (value === oldValue) continue; // No change

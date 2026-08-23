@@ -8,7 +8,7 @@ import { grant } from "../src/engine/safety-gates";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 
 const TEST_DB = "test_dashboard_authz.db";
 
@@ -30,16 +30,16 @@ describe("dashboard privileged-op authorization (spawn)", () => {
     cleanupDb(TEST_DB);
   });
 
-  // Name-login via /api/command returns a session token for a fresh rank-0 entity.
-  async function loginToken(name: string): Promise<string> {
-    const url = new URL("http://localhost:3300/api/command");
-    const req = new Request(url.toString(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, command: "look" }),
-    });
-    const resp = await handleDashboardApi(req, url, "POST", engine, db);
-    return ((await resp!.json()) as { token: string }).token;
+  // Mint a real session token for a fresh rank-0 entity via a direct login.
+  // (The pre-auth /api/command ingress deliberately no longer returns a usable
+  // token — see the "ingress" test below — so tests mint one the normal way.)
+  let connCounter = 0;
+  function loginToken(name: string): string {
+    const conn = new MockConnection(`authz-${connCounter++}`);
+    engine.addConnection(conn);
+    const login = engine.login(conn.id, name);
+    if ("error" in login) throw new Error(`login failed: ${login.error}`);
+    return login.token;
   }
 
   function spawnReq(token?: string): [URL, string, Request] {
@@ -95,11 +95,13 @@ describe("dashboard privileged-op authorization (spawn)", () => {
     expect(resp?.status).not.toBe(401);
   });
 
-  it("keeps dev open: MARINA_OPEN_API bypass allows spawn without a token", async () => {
+  it("denies spawn under MARINA_OPEN_API: dev-open must not auto-authorize privileged ops", async () => {
+    // The dev bypass may open reads, but privileged/destructive operations
+    // (agent spawn, key/env management) require a real operator credential —
+    // otherwise an exposed dev instance hands full control to any anonymous caller.
     process.env.MARINA_OPEN_API = "true";
     const [url, method, req] = spawnReq();
     const resp = await handleDashboardApi(req, url, method, engine, db);
-    expect(resp?.status).not.toBe(403);
-    expect(resp?.status).not.toBe(401);
+    expect(resp?.status).toBe(403);
   });
 });

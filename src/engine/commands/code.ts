@@ -40,7 +40,7 @@ import type {
 } from "../../types";
 import { sanitizeEntityName } from "../entity-name";
 import { getRank } from "../permissions";
-import { checkGate, grant, recordDemonstration } from "../safety-gates";
+import { checkUnattendedGate, grant, recordDemonstration } from "../safety-gates";
 
 const ACTIVE_SESSION_KEY = "coding_session_id";
 const ACTIVE_MODAL_KEY = "active_modal";
@@ -836,6 +836,16 @@ const CODE_EXEC_SUBCOMMANDS = new Set<string>([
   "write",
 ]);
 
+// Subcommands that touch the HOST working tree or spawn HOST processes against
+// it — the set refused when no code root is configured (Finding 2), so we never
+// mutate/execute in Marina's own process.cwd(). This is CODE_EXEC_SUBCOMMANDS
+// minus the Flywheel-contained `service` (which routes to a sandbox, not the
+// host root), plus patch/propose (host `git apply --check`). Sandbox/project
+// lifecycle is likewise excluded — it has its own guest isolation.
+const HOST_ROOT_EXEC_SUBCOMMANDS = new Set<string>(
+  [...CODE_EXEC_SUBCOMMANDS].filter((s) => s !== "service").concat(["patch", "propose"]),
+);
+
 // The full host-subprocess surface: every subcommand that can spawn a host
 // process or mutate the working tree via a subprocess. Superset of
 // CODE_EXEC_SUBCOMMANDS that also includes read-only host spawners that stay
@@ -862,6 +872,17 @@ const CODE_HOST_EXEC_SURFACE = new Set<string>([
 /** Single source of truth for the LAYER-0 telnet host-exec refusal message. */
 const TELNET_HOST_EXEC_DENY =
   "Host execution is not available over telnet (plaintext, unauthenticated). Use the local marina CLI or an authenticated WebSocket session.";
+
+/**
+ * Refusal when no code workspace root is configured (Finding 2). Marina must
+ * never default the code root to its own process.cwd(), so host mutation /
+ * execution is disabled until an operator points MARINA_CODE_ROOTS (or
+ * MARINA_CODE_DEFAULT_ROOT) at a directory Marina may modify. Read-only inspect
+ * verbs stay open. The `marina` folder-CLI sets these explicitly, so the local
+ * desktop coding flow is unaffected.
+ */
+const NO_CODE_ROOT_DENY =
+  "Host code execution is disabled: no code workspace is configured. Set MARINA_CODE_ROOTS (or MARINA_CODE_DEFAULT_ROOT) to a directory Marina may modify — never the server's own source tree. Read-only inspect commands remain available.";
 
 /**
  * LAYER-0 telnet-origin refusal for the agentic-dispatch verbs (`code do`,
@@ -998,10 +1019,27 @@ export function codeCommand(deps: CodeDeps): CommandDef {
           ctx.send(input.entity, TELNET_HOST_EXEC_DENY);
           return;
         }
+        // LAYER 0.5: no configured code root → refuse HOST mutation/execution.
+        // Never fall back to the server's own process.cwd() (Finding 2). Scoped
+        // to subcommands that touch the HOST working tree / spawn host processes
+        // (run/verify/test/lint/typecheck/build/recipe/apply/revert/edit/write
+        // plus patch/propose's `git apply --check`). Flywheel-contained surfaces
+        // (sandbox/project/service) have their own isolation and don't use the
+        // host root, so they are NOT refused here. Read-only inspectors stay open.
+        if (
+          HOST_ROOT_EXEC_SUBCOMMANDS.has(canonicalSub) &&
+          getWorkspaceRegistry(depsWithDb).usesCwdFallback
+        ) {
+          ctx.send(input.entity, NO_CODE_ROOT_DENY);
+          return;
+        }
         // The narrower gated set (earned competence). patch/propose stay rank 0
         // (read/propose are open per policy) and so are NOT gated here.
+        // `checkUnattendedGate` refuses a standing-only (supervisedOnly) holder:
+        // code.exec cannot be self-certified by running the op — it must be
+        // granted or witnessed (Finding 3). No self-reported demonstration here.
         if (CODE_EXEC_SUBCOMMANDS.has(canonicalSub) || mutatesSandbox || isProject) {
-          const gate = checkGate(depsWithDb.db, input.entity, "code.exec");
+          const gate = checkUnattendedGate(depsWithDb.db, input.entity, "code.exec");
           if (!gate.ok) {
             ctx.send(
               input.entity,
@@ -1009,9 +1047,6 @@ export function codeCommand(deps: CodeDeps): CommandDef {
                 "Running or applying code requires the code.exec capability, which is earned through contribution.",
             );
             return;
-          }
-          if (gate.supervisedOnly) {
-            recordDemonstration(depsWithDb.db, input.entity, "code.exec");
           }
         }
 
@@ -2005,6 +2040,14 @@ async function crewPlan(
 ): Promise<void> {
   // Agentic dispatch: fans out implementer/reviewer/tester coders — telnet-denied.
   if (refuseTelnetDispatch(ctx, eid, deps)) return;
+  // NOTE: the crew path does NOT grant code.exec to its members (only the
+  // single-driver ensureSessionAgent does, via grant() at the recruit/spawn
+  // sites). Spawning members is gated on agent.spawn in assembleCodingCrew, and
+  // any member that later attempts host execution must itself pass the code.exec
+  // gate (checkUnattendedGate at the run/apply site). So crew dispatch is NOT
+  // gated on the dispatcher's own code.exec — that would block legitimate
+  // coordination that never delegates host execution. (Finding 7's dispatcher
+  // gate lives on the doCode single-driver path, where code.exec IS granted.)
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const { goal: text, members } = parseCrewArgs(rawGoal);
@@ -2183,10 +2226,10 @@ async function assembleCodingCrew(
   const taken = new Set<string>();
   // Roles map by detail for spawned-agent attention.
   const roleDetail = new Map<string, string>(CODING_ROLES.map(([role, detail]) => [role, detail]));
-  // Track whether the gate is supervised so we record a demonstration per spawn.
+  // agent.spawn is checked once via checkUnattendedGate: a supervised-only
+  // holder is refused (Finding 3) — crew assembly cannot self-certify the gate.
   let gateChecked = false;
   let gateOk = false;
-  let gateSupervised = false;
   let gateReason: string | undefined;
 
   for (const role of AUTONOMOUS_CREW_ROLES) {
@@ -2203,10 +2246,9 @@ async function assembleCodingCrew(
     if (!deps.agentRuntime?.spawn) continue;
     if (deps.agentRuntime.isAvailable && !deps.agentRuntime.isAvailable()) continue;
     if (!gateChecked) {
-      const gate = checkGate(deps.db, eid, "agent.spawn");
+      const gate = checkUnattendedGate(deps.db, eid, "agent.spawn");
       gateChecked = true;
       gateOk = gate.ok;
-      gateSupervised = gate.supervisedOnly === true;
       gateReason = gate.reason;
     }
     if (!gateOk) {
@@ -2267,8 +2309,6 @@ async function assembleCodingCrew(
         source: "spawned",
       });
       taken.add(handle.name.toLowerCase());
-      // Supervised-only entities prove competence by completing a real spawn.
-      if (gateSupervised) recordDemonstration(deps.db, eid, "agent.spawn");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       ctx.send(eid, dim(`Skipping ${role}: spawn failed (${message}).`));
@@ -2557,6 +2597,30 @@ async function doCode(
   // the explicit host-exec subcommands (which never reach doCode).
   if (refuseTelnetDispatch(ctx, eid, deps)) return;
 
+  // LAYER 0.5: no configured code root → refuse (Finding 2). The dispatched
+  // coder would otherwise run in Marina's own source tree.
+  if (getWorkspaceRegistry(deps).usesCwdFallback) {
+    ctx.send(eid, NO_CODE_ROOT_DENY);
+    return;
+  }
+
+  // FINDING 7: the DISPATCHING entity must itself hold code.exec (unsupervised)
+  // before we recruit/bind/spawn a coder and grant IT code.exec on the
+  // dispatcher's behalf. Otherwise a standing-0 caller drives arbitrary host
+  // execution through a plain Code Mode task, never touching a gated subcommand.
+  // `checkUnattendedGate` also refuses a supervised-only dispatcher — the drive-
+  // by path cannot be self-certified. Delegation of code.exec to the coder is
+  // only legitimate when the dispatcher already holds it.
+  const dispatcherGate = checkUnattendedGate(deps.db, eid, "code.exec");
+  if (!dispatcherGate.ok) {
+    ctx.send(
+      eid,
+      dispatcherGate.reason ??
+        "Dispatching a coding agent requires the code.exec capability, which is earned through contribution.",
+    );
+    return;
+  }
+
   // Auto-start a session on the first task so entering Code Mode + typing just
   // works — no explicit `code start` required.
   if (!getActiveSessionId(entity)) startSession(ctx, eid, entity, deps, "");
@@ -2668,7 +2732,10 @@ async function ensureSessionAgent(
     ctx.send(eid, "No LLM provider configured — set a provider key, then a coding agent can run.");
     return null;
   }
-  const gate = checkGate(deps.db, eid, "agent.spawn");
+  // agent.spawn via `checkUnattendedGate`: a supervised-only holder cannot
+  // self-certify by spawning coders (Finding 3). No demonstration is recorded
+  // from this self-reported success.
+  const gate = checkUnattendedGate(deps.db, eid, "agent.spawn");
   if (!gate.ok) {
     ctx.send(eid, gate.reason ?? "Not permitted to launch a coding agent (requires agent.spawn).");
     return null;
@@ -2691,7 +2758,6 @@ async function ensureSessionAgent(
     bindSpawnedAgentEntity(handle, session, getCodeProfile(entity).name, deps);
     const spawnedId = handle.getStatus().entityId;
     if (spawnedId) grant(deps.db, spawnedId as EntityId, "code.exec");
-    if (gate.supervisedOnly) recordDemonstration(deps.db, eid, "agent.spawn");
     deps.db.updateCodingSession(session.id, { agent: handle.name, driver: "single" });
     bindSessionWriter(deps, session, entity.name, handle.name);
     deps.db.createCodingEvent({
@@ -3344,12 +3410,14 @@ async function runApprovedSpawnRequest(
   // enforce the agent.spawn safety gate here rather than bypassing it from
   // inside Code Mode. The session-level approval artifact is a human review
   // step; the gate is the civic-substrate competence proof.
-  const gate = checkGate(deps.db, eid, "agent.spawn");
+  // checkUnattendedGate: the session-level approval artifact is a human review
+  // of the *request*, not an attestation of gate competence — a supervised-only
+  // entity is still refused (Finding 3) and no demonstration is self-recorded.
+  const gate = checkUnattendedGate(deps.db, eid, "agent.spawn");
   if (!gate.ok) {
     ctx.send(eid, gate.reason ?? "Not permitted to spawn agents.");
     return;
   }
-  const pendingDemo = gate.supervisedOnly === true;
 
   const meta = parseJsonObject(artifact.metadata_json);
   const role = typeof meta.role === "string" ? meta.role : "implementer";
@@ -3428,6 +3496,8 @@ async function runApprovedSpawnRequest(
       },
     });
     updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+    // NOTE: no self-recorded agent.spawn demonstration here — supervised-only
+    // entities never reach this point (checkUnattendedGate refuses above).
     sendCode(ctx, eid, success(`Coding agent launched: ${handle.name}`), {
       artifactId: assignment.id,
       artifactKind: assignment.kind,
@@ -3442,12 +3512,6 @@ async function runApprovedSpawnRequest(
       type: "artifact",
       workspace: session.workspace_root,
     });
-
-    // Supervised-only entities prove competence by completing a real spawn.
-    // After demoThreshold demonstrations, agent.spawn flips to unsupervised.
-    if (pendingDemo) {
-      recordDemonstration(deps.db, eid, "agent.spawn");
-    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     deps.db.createCodingEvent({

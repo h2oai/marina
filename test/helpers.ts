@@ -53,6 +53,10 @@ export class MockConnection implements Connection {
   entity: EntityId | null = null;
   connectedAt = Date.now();
   ip?: string;
+  /** Real socket peer address. Defaults to loopback so tests behave like the
+   * local desktop operator (the trusted path); set to a public address to
+   * simulate a remote client for ingress/identity tests. */
+  peerIp?: string = "127.0.0.1";
   internal?: boolean;
   messages: Perception[] = [];
 

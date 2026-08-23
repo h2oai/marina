@@ -4,7 +4,12 @@
 import type { Engine } from "../engine/engine";
 import type { MediaJobRow } from "../persistence/database";
 import type { EntityId } from "../types";
+import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "./canvas-principal";
+import { authorizeCanvasSubscription } from "./canvas-ws";
 import { corsHeaders } from "./cors";
+
+/** Minimal socket-peer accessor — the real, unspoofable `server.requestIP`. */
+type PeerAddr = { requestIP?: (req: Request) => { address: string } | null };
 
 const MEDIA_CORS = corsHeaders(null, {
   methods: "GET, POST, OPTIONS",
@@ -34,6 +39,7 @@ export async function handleMediaApi(
   method: string,
   req: Request,
   engine: Engine,
+  server?: PeerAddr,
 ): Promise<Response> {
   if (method === "OPTIONS") {
     return new Response(null, { status: 204, headers: MEDIA_CORS });
@@ -61,6 +67,30 @@ export async function handleMediaApi(
     }
 
     const { entityId, entityName } = resolveEntity(engine, body);
+
+    // Canvas-write authorization. The media pipeline appends an output node to a
+    // caller-supplied `canvasId` — but that append happens ASYNCHRONOUSLY after
+    // this request returns (during provider polling). Enforce the shared canvas
+    // owner/operator predicate SYNCHRONOUSLY here, before the job is enqueued, so
+    // the denial holds regardless of the async pipeline. The body-supplied entity
+    // identity is untrusted (the model API is a shared-key surface), so ownership
+    // is derived from the SAME canvas principal the WS/HTTP canvas gates use
+    // (real socket peer IP + authenticated canvas session/desktop/open-api),
+    // never from `entityId`/`entityName`. Omitted canvasId falls back to the
+    // caller's own entity canvas downstream — existing behavior preserved.
+    if (body.canvasId && engine.db) {
+      const peerIp = server?.requestIP?.(req)?.address ?? undefined;
+      const principal = buildCanvasPrincipal(
+        resolveCanvasHttpPrincipal(req, engine, peerIp),
+        engine,
+        engine.db,
+      );
+      if (!authorizeCanvasSubscription(engine.db, body.canvasId, principal)) {
+        // 404 (not 403) so a private canvas's existence is not disclosed —
+        // matches the canvas HTTP mutation-denial contract.
+        return mediaError(404, "Canvas not found.");
+      }
+    }
 
     try {
       const job =

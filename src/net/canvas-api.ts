@@ -6,7 +6,8 @@ import type { MarinaDB } from "../persistence/database";
 import type { StorageProvider } from "../storage/provider";
 import type { EntityId } from "../types";
 import { authenticateRequest } from "./auth-middleware";
-import type { CanvasBroadcaster } from "./canvas-ws";
+import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "./canvas-principal";
+import { authorizeCanvasSubscription, type CanvasBroadcaster } from "./canvas-ws";
 import { corsHeaders } from "./cors";
 
 const CANVAS_NODE_TYPES = new Set([
@@ -110,21 +111,43 @@ export async function handleCanvasApi(
   broadcaster?: CanvasBroadcaster,
   engine?: Engine,
   onNodeCreated?: (event: CanvasNodeCreatedEvent) => void,
+  peerIp?: string,
 ): Promise<Response> {
   const json = jsonWithOrigin(req.headers.get("Origin"));
   let authenticatedEntityId: EntityId | undefined;
 
-  // Reads are public: the canvas is an observability surface — the same world
-  // content is already streamed to any client over the unauthenticated
-  // /dashboard-ws + canvas WS broadcasts, and /who pages are public. A fresh,
-  // not-yet-logged-in visitor must be able to view the world canvas instead of
-  // getting a 401 (which renders as an empty canvas + raw error). Mutations
-  // (POST/PATCH/DELETE) still require a valid session token.
+  // Reads of PUBLIC/SHARED canvases are open: the canvas is an observability
+  // surface — the same world content is already streamed to any client over the
+  // unauthenticated /dashboard-ws + canvas WS broadcasts, and /who pages are
+  // public. A fresh, not-yet-logged-in visitor must be able to view the world
+  // canvas instead of getting a 401. Mutations (POST/PATCH/DELETE) still require
+  // a valid session token.
+  //
+  // BUT per-entity PRIVATE canvases (`scope === "entity"`) must NOT be readable
+  // OR mutable over unauthenticated / non-owner HTTP — that would enumerate/read
+  // private workspaces and let a non-owner create/update/delete nodes, delete the
+  // canvas, or drive its intent lifecycle, bypassing the WS owner-scoping. We
+  // resolve the caller principal once and apply the SAME rule
+  // (`authorizeCanvasSubscription` via `buildCanvasPrincipal`) that the WS
+  // subscription gate uses to EVERY canvas route — read and mutation alike — so
+  // no path is left open (`canAccessCanvas`).
   if (engine && method !== "GET") {
     const auth = authenticateRequest(req, engine);
     if ("error" in auth) return auth.error;
     authenticatedEntityId = auth.entityId;
   }
+
+  // Single owner/operator predicate for ALL private-canvas access (read AND
+  // mutation). Loopback desktop reader → operator-equivalent (zero-config
+  // preserved). Anonymous / non-owner remote caller → {} (public/shared allowed,
+  // private denied). Public/shared canvases stay open to reads; their write
+  // policy is unchanged — a valid session token is already required above for any
+  // non-GET method, and `authorizeCanvasSubscription` returns true for them.
+  const canvasPrincipal = engine
+    ? buildCanvasPrincipal(resolveCanvasHttpPrincipal(req, engine, peerIp), engine, db)
+    : { isOperator: true };
+  const canAccessCanvas = (canvasId: string): boolean =>
+    authorizeCanvasSubscription(db, canvasId, canvasPrincipal);
 
   const intentActionMatch = url.pathname.match(
     /^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)\/intent\/(claim|complete|fail)$/,
@@ -133,6 +156,10 @@ export async function handleCanvasApi(
     const canvasId = decodeURIComponent(intentActionMatch[1]!);
     const nodeId = decodeURIComponent(intentActionMatch[2]!);
     const action = intentActionMatch[3]!;
+    // Private per-entity canvas: the intent lifecycle both leaks node data and
+    // mutates state, so it is owner/operator-only. 404 (not 403) so a private
+    // node's existence isn't confirmable.
+    if (!canAccessCanvas(canvasId)) return json({ error: "Node not found" }, 404);
     const node = db.getNode(nodeId);
     if (!node || node.canvas_id !== canvasId) return json({ error: "Node not found" }, 404);
 
@@ -220,6 +247,9 @@ export async function handleCanvasApi(
   if (nodeMatch) {
     const canvasId = decodeURIComponent(nodeMatch[1]!);
     const nodeId = decodeURIComponent(nodeMatch[2]!);
+    // Owner/operator gate for EVERY node method (GET read + DELETE/PATCH
+    // mutation) on a private per-entity canvas. 404 so existence isn't leaked.
+    if (!canAccessCanvas(canvasId)) return json({ error: "Node not found" }, 404);
 
     if (method === "DELETE") {
       // Fetch the node first so we can clean up its asset
@@ -282,7 +312,7 @@ export async function handleCanvasApi(
       return json(enriched);
     }
 
-    // GET single node
+    // GET single node (private-canvas access already gated at the top).
     if (method === "GET") {
       const node = db.getNode(nodeId);
       if (!node || node.canvas_id !== canvasId) return json({ error: "Node not found" }, 404);
@@ -297,6 +327,8 @@ export async function handleCanvasApi(
     const canvasId = decodeURIComponent(nodesMatch[1]!);
     const canvas = db.getCanvas(canvasId);
     if (!canvas) return json({ error: "Canvas not found" }, 404);
+    // A non-owner may not create nodes on a private per-entity canvas.
+    if (!canAccessCanvas(canvasId)) return json({ error: "Canvas not found" }, 404);
 
     const body = (await req.json()) as Record<string, unknown>;
     const requestedType = typeof body.type === "string" ? body.type : "text";
@@ -361,6 +393,9 @@ export async function handleCanvasApi(
   const canvasMatch = url.pathname.match(/^\/api\/canvases\/([^/]+)$/);
   if (canvasMatch) {
     const id = decodeURIComponent(canvasMatch[1]!);
+    // Owner/operator gate for canvas detail (GET) and canvas delete (DELETE) on a
+    // private per-entity canvas. 404 so a private canvas id isn't confirmable.
+    if (!canAccessCanvas(id)) return json({ error: "Canvas not found" }, 404);
 
     if (method === "DELETE") {
       const deleted = db.deleteCanvas(id);
@@ -368,7 +403,7 @@ export async function handleCanvasApi(
       return json({ ok: true, id });
     }
 
-    // GET canvas detail with nodes + first-class edges
+    // GET canvas detail with nodes + first-class edges (access gated above).
     if (method === "GET") {
       const canvas = db.getCanvas(id);
       if (!canvas) return json({ error: "Canvas not found" }, 404);
@@ -398,24 +433,49 @@ export async function handleCanvasApi(
     const existing = db.getCanvasByName(name);
     if (existing) return json({ error: "Canvas name already exists" }, 409);
 
+    const requestedScope = (body.scope as string) ?? "global";
+    let scopeId = body.scope_id as string | undefined;
+    // A private per-entity canvas (`scope === "entity"`) is OWNED by its
+    // `scope_id`, and that ownership is what `authorizeCanvasSubscription` reads
+    // to decide who may access it. A caller must therefore only be able to
+    // create one scoped to ITSELF — otherwise it could create
+    // scope:"entity", scope_id:<victim> and own/poison the victim's de-facto
+    // private workspace before the victim ever visits it. Non-operator callers
+    // are forced to their own entity id and a mismatched foreign target is
+    // rejected; a trusted operator (desktop credential / sovereign / operator
+    // gate → `canvasPrincipal.isOperator`) may still create on another entity's
+    // behalf.
+    if (requestedScope === "entity" && !canvasPrincipal.isOperator) {
+      if (!authenticatedEntityId) return json({ error: "Authentication required" }, 401);
+      if (scopeId && scopeId !== authenticatedEntityId) {
+        return json({ error: "Cannot create an entity-scoped canvas for another entity" }, 403);
+      }
+      scopeId = authenticatedEntityId;
+    }
+
     const id = crypto.randomUUID();
     db.createCanvas({
       id,
       name,
       description: (body.description as string) ?? "",
-      scope: (body.scope as string) ?? "global",
-      scopeId: body.scope_id as string | undefined,
+      scope: requestedScope,
+      scopeId,
       creatorName: actorNameForRequest(body, engine, authenticatedEntityId),
     });
 
     return json(db.getCanvas(id), 201);
   }
 
-  // GET /api/canvases — list canvases
+  // GET /api/canvases — list canvases. Private per-entity canvases are filtered
+  // to those the caller may read (own workspace / operator / loopback desktop),
+  // so `?scope=entity` can't enumerate every entity's private workspace. Public
+  // and shared scopes stay listable by anyone.
   if (url.pathname === "/api/canvases" && method === "GET") {
     const scope = url.searchParams.get("scope") ?? undefined;
     const limit = Math.min(Number(url.searchParams.get("limit")) || 50, 200);
-    const canvases = db.listCanvases({ scope, limit });
+    const canvases = db
+      .listCanvases({ scope, limit })
+      .filter((c) => c.scope !== "entity" || canAccessCanvas(c.id));
     return json(canvases);
   }
 

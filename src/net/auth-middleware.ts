@@ -8,11 +8,42 @@ import { corsHeaders } from "./cors";
 
 /**
  * Sentinel identity returned when the dev-mode open-API bypass is active and
- * no valid session token was presented. The dashboard/asset/canvas API gates
- * only use the result as a yes/no gate (they never read `entityId`), so a
- * sentinel is sufficient and avoids inventing a real session.
+ * no valid session token was presented. It authorizes *reads* only: callers
+ * must treat it as an anonymous dev principal, never as an operator (see
+ * {@link isOperatorPrincipal}) and never as a specific in-world entity.
  */
 export const OPEN_API_ENTITY_ID = "open-api" as EntityId;
+
+/**
+ * Sentinel identity returned when a request presents the process-scoped desktop
+ * capability token ({@link https} `MARINA_DESKTOP_API_TOKEN`). Unlike the
+ * open-API bypass, this is a *deliberately-provisioned* local operator secret
+ * (the desktop app mints a random ≥32-char token at boot and only its own
+ * requests carry it), so it is treated as a trusted operator — see
+ * {@link isOperatorPrincipal}. It is still a sentinel (no in-world entity), so
+ * name-scoped reads treat it as "any entity" rather than a specific one.
+ */
+export const DESKTOP_OPERATOR_ENTITY_ID = "desktop-operator" as EntityId;
+
+/**
+ * Whether the principal is a trusted local *operator* credential permitted to
+ * perform privileged / destructive operations (key management, env edits,
+ * agent spawn, entity deletion).
+ *
+ * Only the desktop capability token qualifies. Crucially the
+ * {@link OPEN_API_ENTITY_ID} dev bypass does NOT: `MARINA_OPEN_API=true` opens
+ * *reads* for local development, but must never silently auto-authorize
+ * destructive operations — those require a real operator credential, a
+ * sovereign-admin rank, or an explicitly-granted safety gate.
+ */
+export function isOperatorPrincipal(entityId: EntityId): boolean {
+  return entityId === DESKTOP_OPERATOR_ENTITY_ID;
+}
+
+/** Whether the principal is a sentinel (no backing in-world entity). */
+export function isSentinelPrincipal(entityId: EntityId): boolean {
+  return entityId === OPEN_API_ENTITY_ID || entityId === DESKTOP_OPERATOR_ENTITY_ID;
+}
 
 /** Whether unauthenticated API access is allowed (development mode). */
 function openApiEnabled(): boolean {
@@ -43,7 +74,7 @@ export function authenticateRequest(
     expectedDesktopToken.length >= 32 &&
     secretsEqual(desktopToken, expectedDesktopToken)
   ) {
-    return { entityId: OPEN_API_ENTITY_ID };
+    return { entityId: DESKTOP_OPERATOR_ENTITY_ID };
   }
 
   if (auth?.startsWith("Bearer ")) {

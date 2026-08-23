@@ -48,6 +48,7 @@ import { BenchmarkRunner } from "./benchmark-runner";
 import { BriefManager } from "./brief-manager";
 import { registerBuiltinCommands } from "./command-registry";
 import { CommandRouter } from "./command-router";
+import { isLoopbackConnection } from "./commands/code";
 import { isIgnoring } from "./commands/ignore";
 import { syncOperationalAlerts } from "./commands/ops";
 import { trackQuestProgress } from "./commands/quest";
@@ -74,7 +75,7 @@ import { MediaManager } from "./media/manager";
 import { getRank, rankName, setRank } from "./permissions";
 import { computeReadiness } from "./readiness";
 import { RoomSandbox } from "./room-sandbox";
-import { checkGate, grantGatesForRank, recordDemonstration } from "./safety-gates";
+import { checkUnattendedGate, grantGatesForRank } from "./safety-gates";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
 import { ShellRuntime } from "./shell-runtime";
 
@@ -463,6 +464,31 @@ export class Engine {
     return this._connections.boundExternalCount() >= cap;
   }
 
+  /**
+   * Rank to restore for a passwordless name-login. A bare name is NOT proof of
+   * identity: an untrusted passwordless login must NEVER inherit an elevated rank
+   * from the persisted users row (that would let anyone re-attach to another
+   * user's name and get their rank). Rank is forced to 0 until the login is
+   * genuinely authenticated:
+   *   - `internal` (process-local internal token — room/crew agents),
+   *   - `identity` (better-auth verified subject/email), or
+   *   - a genuine loopback connection (the local desktop operator — the same
+   *     unspoofable trust anchor exec uses).
+   * Token-based `reconnect()` restores rank directly (the token IS the proof), so
+   * the normal desktop CLI/dashboard flow keeps its rank across reconnects. Only
+   * a REMOTE, tokenless name-login is capped at 0.
+   */
+  private restorableRank(
+    storedRank: number,
+    connId: string,
+    internal: boolean,
+    identity?: LoginIdentity,
+  ): EntityRank {
+    if (internal || identity) return storedRank as EntityRank;
+    if (isLoopbackConnection(this._connections.get(connId))) return storedRank as EntityRank;
+    return 0 as EntityRank;
+  }
+
   private static readonly ERR_AUTH_REQUIRED =
     "This instance requires sign-in. Authenticate via the dashboard, or connect with a session token.";
 
@@ -524,12 +550,25 @@ export class Engine {
         const existingUser = this.db.getUserByName(existing.name);
         if (existingUser) {
           this.db.updateUserLastLogin(existingUser.id);
-          existing.properties.rank = existingUser.rank as EntityRank;
+          // SECURITY: a passwordless re-attach must not inherit a stored rank.
+          existing.properties.rank = this.restorableRank(
+            existingUser.rank,
+            connId,
+            internal,
+            identity,
+          );
         }
       }
-      this.applyAdminBootstrap(existing, identity);
+      this.applyAdminBootstrap(existing, connId, identity);
       if (this.sessionManager) {
-        const session = this.sessionManager.create(existing.id, existing.name);
+        // Bind the granted rank to the token: a remote passwordless re-attach was
+        // capped at rank 0 above, so its token must not later restore an elevated
+        // rank via reconnect().
+        const session = this.sessionManager.create(
+          existing.id,
+          existing.name,
+          (existing.properties.rank as number) ?? 0,
+        );
         return { entityId: existing.id, name: existing.name, token: session.token };
       }
       return { entityId: existing.id, name: existing.name, token: "" };
@@ -550,9 +589,9 @@ export class Engine {
       if (existingUser) {
         isNewUser = false;
         this.db.updateUserLastLogin(existingUser.id);
-        // Apply stored rank to entity
-        const rank = existingUser.rank as EntityRank;
-        entity.properties.rank = rank;
+        // Apply stored rank to entity — but SECURITY: a passwordless name-login
+        // never inherits an elevated rank (a name is not proof of identity).
+        entity.properties.rank = this.restorableRank(existingUser.rank, connId, internal, identity);
       } else {
         // Use a stable UUID for user IDs (entity IDs are transient and reset on restart)
         const userId = crypto.randomUUID();
@@ -560,7 +599,7 @@ export class Engine {
       }
     }
 
-    this.applyAdminBootstrap(entity, identity);
+    this.applyAdminBootstrap(entity, connId, identity);
 
     // Auto-start quest for new entities (rank 0)
     const rank = (entity.properties.rank as number) ?? 0;
@@ -583,7 +622,14 @@ export class Engine {
     }
 
     if (this.sessionManager) {
-      const session = this.sessionManager.create(entity.id, entity.name);
+      // Bind the granted rank to the token so a remote passwordless login (capped
+      // at rank 0 above) cannot launder that cap into a full rank restore on
+      // reconnect().
+      const session = this.sessionManager.create(
+        entity.id,
+        entity.name,
+        (entity.properties.rank as number) ?? 0,
+      );
       return { entityId: entity.id, name: entity.name, token: session.token };
     }
 
@@ -665,20 +711,32 @@ export class Engine {
       }
     }
 
-    // Update the session to point to the new entity
-    this.sessionManager.revoke(token);
-    const newSession = this.sessionManager.create(entity.id, entity.name);
-
-    // Apply stored rank
+    // Apply stored rank — but a session token is NOT unconditional proof of
+    // identity. A remote passwordless login is capped at rank 0 at login() yet
+    // still mints a valid token; restoring the persisted (elevated) rank from
+    // that token would launder the login cap into a full rank restore. Restore
+    // at most the rank the minting login was actually granted (session.grantedRank),
+    // UNLESS the reconnecting connection is itself a trusted anchor (loopback
+    // desktop operator or internal room/crew agent) — in which case the current
+    // connection re-establishes identity directly, exactly like login().
+    let restoredRank = 0;
     if (this.db) {
       const user = this.db.getUserByName(entity.name);
       if (user) {
-        entity.properties.rank = user.rank as EntityRank;
+        const trustedNow = internal || isLoopbackConnection(this._connections.get(connId));
+        const ceiling = trustedNow ? user.rank : (session.grantedRank ?? 0);
+        restoredRank = Math.min(user.rank, ceiling);
+        entity.properties.rank = restoredRank as EntityRank;
         this.db.updateUserLastLogin(user.id);
       }
     }
 
-    this.applyAdminBootstrap(entity);
+    // Update the session to point to the new entity, carrying the restored rank
+    // forward as the new token's ceiling so subsequent reconnects stay capped.
+    this.sessionManager.revoke(token);
+    const newSession = this.sessionManager.create(entity.id, entity.name, restoredRank);
+
+    this.applyAdminBootstrap(entity, connId);
 
     return { entityId: entity.id, name: entity.name, token: newSession.token };
   }
@@ -805,18 +863,24 @@ export class Engine {
     }
 
     // Enforce safety gate if declared. A gate is a per-operation competence
-    // proof — see src/engine/safety-gates.ts. Standing must clear the gate's
-    // minimum, and an unsupervised flag must be set (or this is a supervised
-    // attempt — we record the demonstration after the handler succeeds).
-    let pendingDemo: { gate: string } | null = null;
+    // proof — see src/engine/safety-gates.ts. Every command that declares
+    // `def.gate` (shell.exec, agent.run, adapter.enable, connect.manage,
+    // gateway.connect, key.manage, admin.destructive) is an UNATTENDED dangerous
+    // op dispatched through the router with no live witness or per-command human
+    // approver in the loop. So this uses `checkUnattendedGate`, NOT `checkGate`:
+    // a standing-only (supervisedOnly) holder is REFUSED. Otherwise the router
+    // itself would let an entity self-certify a gate by running the op N times
+    // unwatched (the demos recorded here). Unsupervised competence is earned
+    // only by an operator grant, a rank promotion (`grantGatesForRank`), or an
+    // externally-witnessed demonstration (`recordWitnessedDemonstration`) —
+    // never self-report.
     if (def?.gate && this.db) {
-      const result = checkGate(this.db, entityId, def.gate);
+      const result = checkUnattendedGate(this.db, entityId, def.gate);
       if (!result.ok) {
         this.sendToEntity(entityId, result.reason ?? `Gate "${def.gate}" denied.`);
         recordUsage(false);
         return;
       }
-      if (result.supervisedOnly) pendingDemo = { gate: def.gate };
     }
 
     const ctx = this.buildCommandContext(entity.room, entityId) ?? this.buildContext(entity.room);
@@ -869,15 +933,11 @@ export class Engine {
       }
     }
 
-    // Record the supervised demonstration after a clean run. Once enough
-    // demos accumulate, supervised_only flips to 0 and the entity may use
-    // the gate unattended. Async failures don't count.
-    if (pendingDemo && !handlerThrew && this.db) {
-      tryLog(this.logger, "tick", "Demonstration recording failed", () => {
-        recordDemonstration(this.db!, entityId, pendingDemo!.gate);
-      });
-    }
-
+    // NOTE: no self-reported demonstration recording here. Gated commands are
+    // unattended dangerous ops (see the gate check above) — self-recording a
+    // demonstration on a clean run is exactly the self-certification path that
+    // let a standing-only entity auto-unlock a gate. Competence is earned only
+    // via operator grant / rank promotion / witnessed demonstration.
     recordUsage(!handlerThrew);
 
     this.logEvent({ type: "command", entity: entityId, input: routedRaw, timestamp: Date.now() });
@@ -1517,7 +1577,7 @@ export class Engine {
   }
 
   /** Promote entity to sovereign if listed in MARINA_ADMINS env var */
-  private applyAdminBootstrap(entity: Entity, identity?: LoginIdentity): void {
+  private applyAdminBootstrap(entity: Entity, connId: string, identity?: LoginIdentity): void {
     // Auth mode: bind the verified identity to this named entity and grant admin
     // by VERIFIED EMAIL (MARINA_AUTH_ADMIN_EMAILS) — never by name. This closes
     // the name-based admin hole that makes name-login unsafe for public hosting.
@@ -1548,8 +1608,25 @@ export class Engine {
         .map((s) => s.trim())
         .filter(Boolean),
     );
-    if (adminNames.has(entity.name)) {
+    if (!adminNames.has(entity.name)) return;
+
+    // SECURITY: MARINA_ADMINS is name-based, and under passwordless login a name
+    // is not proof of identity. Honor it ONLY for a genuine local operator — a
+    // loopback (or in-process/internal) connection, the same unspoofable trust
+    // anchor exec uses. A REMOTE connection claiming an admin name is refused
+    // with a loud log. This keeps the desktop-first flow (local operator on
+    // loopback becomes sovereign, zero config) while closing the public hole.
+    // For a hard, network-safe admin boundary use MARINA_AUTH=better-auth +
+    // MARINA_AUTH_ADMIN_EMAILS instead.
+    if (isLoopbackConnection(this._connections.get(connId))) {
       this.grantSovereign(entity);
+    } else {
+      this.logger.warn(
+        "security",
+        `Refusing MARINA_ADMINS sovereign promotion for "${entity.name}" — passwordless ` +
+          `name-login from a non-loopback connection is not proof of identity. Enable ` +
+          `MARINA_AUTH=better-auth and use MARINA_AUTH_ADMIN_EMAILS for network admin access.`,
+      );
     }
   }
 

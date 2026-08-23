@@ -236,8 +236,8 @@ export function pruneEvents(db: Database, keepLast: number): void {
 
 export function saveSession(db: Database, session: Session): void {
   db.run(
-    `INSERT OR REPLACE INTO sessions (token, entity_id, name, created_at, last_seen, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO sessions (token, entity_id, name, created_at, last_seen, expires_at, granted_rank)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [
       session.token,
       session.entityId,
@@ -245,6 +245,7 @@ export function saveSession(db: Database, session: Session): void {
       session.createdAt,
       session.lastSeen,
       session.expiresAt,
+      session.grantedRank ?? null,
     ],
   );
 }
@@ -603,6 +604,7 @@ interface SessionRow {
   created_at: number;
   last_seen: number;
   expires_at: number;
+  granted_rank: number | null;
 }
 
 function rowToSession(row: SessionRow): Session {
@@ -613,5 +615,6 @@ function rowToSession(row: SessionRow): Session {
     createdAt: row.created_at,
     lastSeen: row.last_seen,
     expiresAt: row.expires_at,
+    grantedRank: row.granted_rank ?? undefined,
   };
 }

@@ -16,6 +16,13 @@ export class WorkspaceRegistry {
   readonly usesCwdFallback: boolean;
 
   constructor(opts: { defaultRoot?: string; roots?: string[]; usesCwdFallback?: boolean } = {}) {
+    // SECURITY (Finding 2): when no code root is configured, process.cwd() is
+    // Marina's OWN source tree. We keep it here only as a READ-ONLY display /
+    // resolution fallback so `code doctor`, `code status`, and inspect verbs
+    // still work with zero config — but `usesCwdFallback` is latched true and
+    // `hostExecAllowed` returns false, so every host mutation/execution path
+    // (write/edit/apply/run/patch/build/…) is refused upstream. The cwd is
+    // NEVER a writable/executable default; that is the vulnerability this closes.
     const rawRoots = opts.roots && opts.roots.length > 0 ? opts.roots : [process.cwd()];
     this.roots = unique(rawRoots.map((root) => canonicalDirectory(root)));
     this.usesCwdFallback = opts.usesCwdFallback ?? (!opts.roots || opts.roots.length === 0);
@@ -35,6 +42,16 @@ export class WorkspaceRegistry {
       roots: roots.length > 0 ? roots : undefined,
       usesCwdFallback: roots.length === 0 && !env.MARINA_CODE_DEFAULT_ROOT,
     });
+  }
+
+  /**
+   * True only when at least one code root was explicitly configured
+   * (MARINA_CODE_ROOTS / MARINA_CODE_DEFAULT_ROOT). Host mutation/execution
+   * must be refused when this is false — the process.cwd() fallback is a
+   * read-only display root, never a writable/executable one.
+   */
+  get hostExecAllowed(): boolean {
+    return !this.usesCwdFallback;
   }
 
   defaultWorkspace(): WorkspaceRuntime {
