@@ -12,6 +12,7 @@
  */
 
 import { Buffer } from "node:buffer";
+import { guardedFetch } from "../../../net/url-guard";
 import { bareModel, type ImageGenOptions, type ImageGenResult } from "./image-util";
 
 const DEFAULT_BASE = "https://api.bfl.ml";
@@ -73,7 +74,8 @@ export async function generateFluxImage(opts: ImageGenOptions): Promise<ImageGen
       if (json.status === "Ready") {
         const url = json.result?.sample;
         if (!url) return { status: "failed", asset: null, error: "Flux ready without a sample." };
-        const dl = await fetch(url, { signal: opts.signal });
+        // Provider-returned asset URL — route through the SSRF guard, not bare fetch.
+        const dl = await guardedFetch(url, { signal: opts.signal });
         if (!dl.ok) {
           return {
             status: "failed",

@@ -11,6 +11,7 @@
  */
 
 import { Buffer } from "node:buffer";
+import { guardedFetch } from "../../../net/url-guard";
 import { bareModel, type GeneratedAsset } from "./image-util";
 import type { VideoPollOptions, VideoResult, VideoStartOptions } from "./video-util";
 
@@ -107,7 +108,8 @@ async function extractVeoAsset(
     const dlUrl = uri.includes("key=")
       ? uri
       : `${uri}${uri.includes("?") ? "&" : "?"}key=${encodeURIComponent(apiKey)}`;
-    const dl = await fetch(dlUrl, { headers: { "x-goog-api-key": apiKey }, signal });
+    // Provider-returned Files-API URL — route through the SSRF guard, not bare fetch.
+    const dl = await guardedFetch(dlUrl, { headers: { "x-goog-api-key": apiKey }, signal });
     if (!dl.ok) return null;
     const mimeType = dl.headers.get("content-type") ?? "video/mp4";
     return {

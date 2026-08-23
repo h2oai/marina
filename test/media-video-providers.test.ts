@@ -1,16 +1,26 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { pollVeoVideoJob, startVeoVideoJob } from "../src/engine/media/providers/veo";
 import {
   getVideoProvider,
   knownVideoProviders,
 } from "../src/engine/media/providers/video-registry";
+import { __setDnsResolverForTest } from "../src/net/url-guard";
 
 const realFetch = globalThis.fetch;
+// Provider-returned asset URLs now flow through guardedFetch, which resolves
+// DNS. Stub the resolver so unit tests never touch real DNS (throwing makes
+// guardedFetch fail-open to a plain fetch, intercepted by the fetch mock).
+beforeEach(() => {
+  __setDnsResolverForTest(async () => {
+    throw new Error("DNS disabled in unit tests");
+  });
+});
 afterEach(() => {
   globalThis.fetch = realFetch;
+  __setDnsResolverForTest(null);
 });
 
 function mockFetch(handler: (url: string, init?: RequestInit) => Response): {

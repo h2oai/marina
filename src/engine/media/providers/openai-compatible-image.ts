@@ -9,6 +9,7 @@
  */
 
 import { Buffer } from "node:buffer";
+import { guardedFetch } from "../../../net/url-guard";
 import { imageEndpointBaseUrl, imageEndpointKey } from "./image-endpoints";
 import { bareModel, type ImageGenOptions, type ImageGenResult } from "./image-util";
 
@@ -63,8 +64,9 @@ export async function generateOpenAICompatibleImage(
     if (entry?.b64_json) {
       data = new Uint8Array(Buffer.from(entry.b64_json, "base64"));
     } else if (entry?.url) {
-      // Some servers return a URL instead of inline bytes — fetch it.
-      const imgRes = await fetch(entry.url, { signal: opts.signal });
+      // Some servers return a URL instead of inline bytes — fetch it through the
+      // SSRF guard (provider-returned URL, not a fixed endpoint).
+      const imgRes = await guardedFetch(entry.url, { signal: opts.signal });
       if (imgRes.ok) data = new Uint8Array(await imgRes.arrayBuffer());
     }
     if (!data || data.byteLength === 0) {

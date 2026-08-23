@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
+import { guardedFetch } from "../../../net/url-guard";
 
 const RUNWAY_ENDPOINT = "https://api.runwayml.com/v1/generations";
 
@@ -154,7 +155,8 @@ async function fetchRunwayAsset(output?: RunwayOutput): Promise<{
   filename: string;
 } | null> {
   if (!output?.url) return null;
-  const res = await fetch(output.url);
+  // Provider-returned asset URL — route through the SSRF guard, not bare fetch.
+  const res = await guardedFetch(output.url);
   if (!res.ok) return null;
   const buffer = Buffer.from(await res.arrayBuffer());
   const mime = output.mime_type ?? res.headers.get("content-type") ?? "video/mp4";

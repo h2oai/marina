@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { guardedFetch, validateFetchUrl } from "../src/net/url-guard";
+import { __setDnsResolverForTest, guardedFetch, validateFetchUrl } from "../src/net/url-guard";
 
 describe("validateFetchUrl", async () => {
   // 1. Valid public URLs pass
@@ -96,6 +96,50 @@ describe("validateFetchUrl", async () => {
     it("should block metadata.goog", async () => {
       expect(await validateFetchUrl("http://metadata.goog/computeMetadata/v1/")).not.toBeNull();
     });
+
+    it("should block 100.100.100.200 (Alibaba Cloud metadata)", async () => {
+      expect(await validateFetchUrl("http://100.100.100.200/latest/meta-data/")).not.toBeNull();
+    });
+
+    it("should block 192.0.0.192 (Oracle Cloud metadata)", async () => {
+      expect(await validateFetchUrl("http://192.0.0.192/opc/v1/instance/")).not.toBeNull();
+    });
+  });
+
+  // 5b. Extra blocked v4 ranges: CGNAT/shared 100.64.0.0/10 and IANA special
+  //     192.0.0.0/24 — the ranges the Alibaba/Oracle metadata endpoints live in.
+  describe("CGNAT + IANA-special ranges (Alibaba / Oracle metadata neighborhoods)", async () => {
+    it("should block 100.64.0.1 (CGNAT lower bound)", async () => {
+      expect(await validateFetchUrl("http://100.64.0.1")).not.toBeNull();
+    });
+
+    it("should block 100.127.255.255 (CGNAT upper bound)", async () => {
+      expect(await validateFetchUrl("http://100.127.255.255")).not.toBeNull();
+    });
+
+    it("should allow 100.63.255.255 (just below CGNAT)", async () => {
+      expect(await validateFetchUrl("http://100.63.255.255")).toBeNull();
+    });
+
+    it("should allow 100.128.0.1 (just above CGNAT)", async () => {
+      expect(await validateFetchUrl("http://100.128.0.1")).toBeNull();
+    });
+
+    it("should block 192.0.0.1 (192.0.0.0/24 IANA special)", async () => {
+      expect(await validateFetchUrl("http://192.0.0.1")).not.toBeNull();
+    });
+
+    it("should block 192.0.0.255 (192.0.0.0/24 upper)", async () => {
+      expect(await validateFetchUrl("http://192.0.0.255")).not.toBeNull();
+    });
+
+    it("should allow 192.0.1.1 (just outside 192.0.0.0/24)", async () => {
+      expect(await validateFetchUrl("http://192.0.1.1")).toBeNull();
+    });
+
+    it("should allow 192.1.0.1 (unrelated public 192.x)", async () => {
+      expect(await validateFetchUrl("http://192.1.0.1")).toBeNull();
+    });
   });
 
   // 6. IPv4-mapped IPv6 — URL parsers normalise [::ffff:x.x.x.x] to hex form
@@ -123,6 +167,65 @@ describe("validateFetchUrl", async () => {
 
     it("should allow ::ffff:8.8.8.8 (public IP via mapped IPv6)", async () => {
       expect(await validateFetchUrl("http://[::ffff:8.8.8.8]")).toBeNull();
+    });
+
+    it("should block ::ffff:100.100.100.200 (Alibaba metadata via mapped IPv6)", async () => {
+      expect(await validateFetchUrl("http://[::ffff:100.100.100.200]")).not.toBeNull();
+    });
+
+    it("should block ::ffff:192.0.0.192 (Oracle metadata via mapped IPv6)", async () => {
+      expect(await validateFetchUrl("http://[::ffff:192.0.0.192]")).not.toBeNull();
+    });
+  });
+
+  // 6b. IPv6 transition/tunnel wrappers that embed a private/metadata IPv4
+  describe("IPv6 tunnel wrappers (NAT64 / 6to4 / Teredo)", async () => {
+    it("should block NAT64 64:ff9b::/96 wrapping 127.0.0.1", async () => {
+      expect(await validateFetchUrl("http://[64:ff9b::7f00:1]")).not.toBeNull();
+    });
+
+    it("should block NAT64 64:ff9b::/96 wrapping 169.254.169.254 (metadata)", async () => {
+      expect(await validateFetchUrl("http://[64:ff9b::a9fe:a9fe]")).not.toBeNull();
+    });
+
+    it("should block NAT64 64:ff9b::/96 wrapping 10.0.0.1", async () => {
+      expect(await validateFetchUrl("http://[64:ff9b::a00:1]")).not.toBeNull();
+    });
+
+    it("should block NAT64 local prefix 64:ff9b:1::/48 wrapping 127.0.0.1", async () => {
+      expect(await validateFetchUrl("http://[64:ff9b:1::7f00:1]")).not.toBeNull();
+    });
+
+    it("should block 6to4 2002::/16 wrapping 10.0.0.1", async () => {
+      expect(await validateFetchUrl("http://[2002:a00:1::]")).not.toBeNull();
+    });
+
+    it("should block 6to4 2002::/16 wrapping 169.254.169.254 (metadata)", async () => {
+      expect(await validateFetchUrl("http://[2002:a9fe:a9fe::]")).not.toBeNull();
+    });
+
+    it("should block Teredo 2001:0::/32 whose client IPv4 decodes to 127.0.0.1", async () => {
+      // Public Teredo server (8.8.8.8) so the block is attributable to the
+      // obfuscated client field, not the server field.
+      expect(await validateFetchUrl("http://[2001:0:808:808::80ff:fffe]")).not.toBeNull();
+    });
+
+    it("should block NAT64 wrapping 100.100.100.200 (Alibaba metadata)", async () => {
+      // 100.100.100.200 = 0x6464:0x64c8
+      expect(await validateFetchUrl("http://[64:ff9b::6464:64c8]")).not.toBeNull();
+    });
+
+    it("should block NAT64 wrapping 192.0.0.192 (Oracle metadata)", async () => {
+      // 192.0.0.192 = 0xc000:0x00c0
+      expect(await validateFetchUrl("http://[64:ff9b::c000:c0]")).not.toBeNull();
+    });
+
+    it("should allow NAT64 wrapping a public IPv4 (8.8.8.8)", async () => {
+      expect(await validateFetchUrl("http://[64:ff9b::808:808]")).toBeNull();
+    });
+
+    it("should allow 6to4 wrapping a public IPv4 (8.8.8.8)", async () => {
+      expect(await validateFetchUrl("http://[2002:808:808::]")).toBeNull();
     });
   });
 
@@ -198,6 +301,7 @@ describe("guardedFetch (redirect-aware SSRF guard)", () => {
   const realFetch = globalThis.fetch;
   afterEach(() => {
     globalThis.fetch = realFetch;
+    __setDnsResolverForTest(null);
   });
 
   it("throws on a blocked initial URL without ever fetching", async () => {
@@ -230,5 +334,58 @@ describe("guardedFetch (redirect-aware SSRF guard)", () => {
     const resp = await guardedFetch("http://example.com");
     expect(resp.status).toBe(200);
     expect(await resp.text()).toBe("ok");
+  });
+
+  it("pins the connection to the validated IP, neutralizing DNS rebinding", async () => {
+    // The guard resolves once and gets a public IP; a rebinding host would flip
+    // to a private IP on a later resolve. Because the connection targets the
+    // pinned IP literal (not the hostname), fetch() never re-resolves.
+    let resolves = 0;
+    __setDnsResolverForTest(async () => {
+      resolves++;
+      return resolves === 1 ? ["93.184.216.34"] : ["127.0.0.1"];
+    });
+    let connectedTo = "";
+    let hostHeader = "";
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      connectedTo = typeof input === "string" ? input : input.toString();
+      hostHeader = new Headers(init?.headers).get("host") ?? "";
+      return new Response("asset", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const resp = await guardedFetch("http://rebind.example.com/asset.png");
+    expect(resp.status).toBe(200);
+    // Connection went to the pinned public IP, never the hostname — so a rebind
+    // to 127.0.0.1 could not take effect.
+    expect(connectedTo).toContain("93.184.216.34");
+    expect(connectedTo).not.toContain("rebind.example.com");
+    // Routing identity preserved via the Host header.
+    expect(hostHeader).toBe("rebind.example.com");
+  });
+
+  it("carries TLS SNI serverName for https so cert validation matches the host", async () => {
+    __setDnsResolverForTest(async () => ["93.184.216.34"]);
+    let serverName: string | undefined;
+    let connectedTo = "";
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      connectedTo = typeof input === "string" ? input : input.toString();
+      serverName = (init as { tls?: { serverName?: string } })?.tls?.serverName;
+      return new Response("asset", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    await guardedFetch("https://cdn.example.com/asset.png");
+    expect(connectedTo).toContain("93.184.216.34");
+    expect(serverName).toBe("cdn.example.com");
+  });
+
+  it("blocks a host that resolves to a private IP (no connection attempted)", async () => {
+    __setDnsResolverForTest(async () => ["10.0.0.5"]);
+    let called = false;
+    globalThis.fetch = (async () => {
+      called = true;
+      return new Response("");
+    }) as unknown as typeof fetch;
+    await expect(guardedFetch("http://sneaky.example.com/x")).rejects.toThrow(/SSRF blocked/);
+    expect(called).toBe(false);
   });
 });

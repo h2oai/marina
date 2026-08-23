@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { generateAutomatic1111Image } from "../src/engine/media/providers/automatic1111";
 import { generateGoogleImage } from "../src/engine/media/providers/google-image";
 import {
@@ -11,10 +11,22 @@ import {
 import { bareModel, nearestAspectRatio } from "../src/engine/media/providers/image-util";
 import { generateOpenAICompatibleImage } from "../src/engine/media/providers/openai-compatible-image";
 import { generateStabilityImage } from "../src/engine/media/providers/stability";
+import { __setDnsResolverForTest } from "../src/net/url-guard";
 
 const realFetch = globalThis.fetch;
+// Keep unit tests hermetic: provider-returned asset URLs now flow through
+// guardedFetch, which resolves DNS. Stub the resolver so tests never touch real
+// DNS (fake hostnames would hang). Throwing makes guardedFetch fail-open to a
+// plain fetch, which the fetch mock then intercepts. Tests that exercise the
+// SSRF path override this resolver in-body.
+beforeEach(() => {
+  __setDnsResolverForTest(async () => {
+    throw new Error("DNS disabled in unit tests");
+  });
+});
 afterEach(() => {
   globalThis.fetch = realFetch;
+  __setDnsResolverForTest(null);
 });
 
 /** Install a fetch mock; returns a capture of the last call + a call count. */
@@ -303,5 +315,35 @@ describe("generateFluxImage (Black Forest Labs)", () => {
     const moderated = await generateFluxImage({ apiKey: "k", model: "flux/flux-dev", prompt: "p" });
     expect(moderated.status).toBe("failed");
     expect(moderated.error).toContain("Content Moderated");
+  });
+});
+
+describe("media provider SSRF — provider-returned asset URLs go through the guard", () => {
+  afterEach(() => {
+    __setDnsResolverForTest(null);
+  });
+
+  it("blocks a Flux sample URL that resolves to a private/metadata IP", async () => {
+    // The provider response steers the download target; a rebinding/private
+    // resolution must be blocked before any bytes are read.
+    __setDnsResolverForTest(async () => ["169.254.169.254"]);
+    let downloadPayloadServed = false;
+    mockFetch((url) => {
+      if (url.includes("/v1/get_result")) {
+        return Response.json({
+          status: "Ready",
+          result: { sample: "https://attacker-controlled.example.com/x.jpg" },
+        });
+      }
+      if (url.includes("/v1/")) return Response.json({ id: "task-1" });
+      // The download must never reach here — guardedFetch rejects first.
+      downloadPayloadServed = true;
+      return new Response(new Uint8Array([1, 2, 3]), { status: 200 });
+    });
+
+    const res = await generateFluxImage({ apiKey: "k", model: "flux/flux-dev", prompt: "p" });
+    expect(res.status).toBe("failed");
+    expect(res.error).toContain("SSRF blocked");
+    expect(downloadPayloadServed).toBe(false);
   });
 });

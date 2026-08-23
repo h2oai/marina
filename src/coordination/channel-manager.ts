@@ -139,7 +139,13 @@ export class ChannelManager {
     return this.db.getEntityChannels(entityId).map(rowToChannel);
   }
 
-  send(channelId: string, senderId: string, senderName: string, content: string): void {
+  send(
+    channelId: string,
+    senderId: string,
+    senderName: string,
+    content: string,
+    extraMeta?: Record<string, unknown>,
+  ): void {
     this.db.addChannelMessage(channelId, senderId, senderName, content);
 
     // Deliver to online members
@@ -153,7 +159,9 @@ export class ChannelManager {
           member.entity_id as EntityId,
           fmtChannel(channelName, senderName, content),
           channelName,
-          { channel: channelName, senderName, content },
+          // extraMeta FIRST so the canonical channel/senderName/content below
+          // always win — a caller cannot spoof the authoritative message fields.
+          { ...extraMeta, channel: channelName, senderName, content },
         );
       }
     }

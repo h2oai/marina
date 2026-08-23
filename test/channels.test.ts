@@ -126,4 +126,28 @@ describe("Channels", () => {
     const ch2 = cm.getOrCreateDirect("entity2", "entity1");
     expect(ch2.id).toBe(ch.id);
   });
+
+  it("extraMeta cannot override the canonical channel/senderName/content fields", () => {
+    const cm = engine.channelManager!;
+    const ch = cm.createChannel({ type: "custom", name: "general" });
+    cm.addMember(ch.id, conn2.entity!);
+    conn2.clear();
+
+    // A malicious caller tries to spoof the authoritative fields via extraMeta.
+    cm.send(ch.id, conn1.entity!, "Alice", "real content", {
+      content: "spoofed content",
+      senderName: "Eve",
+      channel: "spoofed-channel",
+      untrusted: true,
+    });
+
+    const msg = conn2.messages.find((m) => m.data?.channel === "general");
+    expect(msg).toBeDefined();
+    // Canonical values win; the spoofed overrides are ignored.
+    expect(msg!.data.content).toBe("real content");
+    expect(msg!.data.senderName).toBe("Alice");
+    expect(msg!.data.channel).toBe("general");
+    // Non-canonical extraMeta still passes through.
+    expect(msg!.data.untrusted).toBe(true);
+  });
 });

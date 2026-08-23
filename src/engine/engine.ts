@@ -237,16 +237,49 @@ export class Engine {
       const channelMgr = this.channelManager;
       this.gatewayRuntime = new GatewayRuntime({
         db: this.db,
-        localRelay: (channel, message) => {
+        localRelay: (channel, body, meta) => {
           const ch = channelMgr.getChannelByName(channel);
-          if (ch) channelMgr.send(ch.id, "gateway", "Gateway", message);
-        },
-        localTellRelay: (senderLabel, message, _originEntity) => {
-          // Deliver gateway tells to all online agents as system messages
-          const formatted = `[gateway] ${senderLabel}: ${message}`;
-          for (const e of this.getOnlineAgents()) {
-            this.sendToEntity(e.id, formatted, "gateway");
+          // Tag gateway-relayed channel content as an untrusted, cross-instance
+          // source so downstream logic can keep it out of tool-influencing /
+          // auto-action paths. Provenance is also visible in the `[from …]` trail.
+          //
+          // The message body persisted/delivered locally is the CLEAN inner body
+          // (no `[relay …]` framing). The relay envelope (origin/hops) rides
+          // out-of-band in metadata: it reaches bridged peer gateway clients via
+          // the perception payload — preserving multi-hop loop detection — but
+          // never appears in a local channel message or a user's view.
+          if (ch) {
+            channelMgr.send(ch.id, "gateway", "Gateway", body, {
+              untrusted: true,
+              source: "gateway",
+              relayOrigin: meta.origin,
+              relayHops: meta.hops,
+            });
           }
+        },
+        localTellRelay: (target, senderLabel, message, _originEntity) => {
+          // A gateway-relayed tell is untrusted cross-instance content. Deliver
+          // ONLY to the addressed local recipient — never broadcast to every
+          // agent. When the target is unrecoverable from the relay framing we
+          // drop it rather than fan out (documented in gateway-runtime.ts).
+          const formatted = `[gateway] ${senderLabel}: ${message}`;
+          const meta = { untrusted: true, source: "gateway", gatewaySender: senderLabel };
+          if (!target) {
+            console.warn(
+              `[gateway] dropped relayed tell from ${senderLabel}: no recoverable local target (not broadcasting)`,
+            );
+            return;
+          }
+          const recipient =
+            this.entities.findAgentByName(target) ??
+            this.entities.all().find((e) => e.name.toLowerCase() === target.toLowerCase());
+          if (!recipient) {
+            console.warn(
+              `[gateway] dropped relayed tell from ${senderLabel}: local target "${target}" not found`,
+            );
+            return;
+          }
+          this.sendToEntity(recipient.id, formatted, "gateway", meta);
         },
         // Present as the per-instance name (MARINA_NAME), not the world
         // template name — many instances of the same world must federate

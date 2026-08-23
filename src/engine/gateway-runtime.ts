@@ -53,6 +53,27 @@ function extractChannelPayload(
   return { channel: match[1]!, sender: match[2]!.trim(), content: match[3]!.trim() };
 }
 
+/**
+ * Recover the structured relay envelope carried out-of-band in perception data
+ * (`relayOrigin` / `relayHops` / `relayTarget`). New peers ship origin/hops here
+ * rather than inline in the message body, so the delivered/persisted channel
+ * content stays clean while cross-peer loop detection still has a real,
+ * non-content-derived hop count. Returns `undefined` when no structured relay
+ * fields are present (older peer — fall back to parsing the body envelope).
+ */
+function extractRelayMeta(p: Perception): RelayEnvelope | undefined {
+  const d = p.data;
+  const hasHops = typeof d.relayHops === "number";
+  const hasOrigin = typeof d.relayOrigin === "string";
+  const hasTarget = typeof d.relayTarget === "string";
+  if (!hasHops && !hasOrigin && !hasTarget) return undefined;
+  return {
+    hops: hasHops ? Math.max(0, d.relayHops as number) : 0,
+    origin: hasOrigin ? (d.relayOrigin as string) : undefined,
+    target: hasTarget ? (d.relayTarget as string) : undefined,
+  };
+}
+
 /** Extract tell payload from structured perception data, falling back to regex on text. */
 function extractTellPayload(p: Perception): { sender: string; message: string } | undefined {
   const d = p.data;
@@ -76,19 +97,92 @@ export const GATEWAY_PROTOCOL_VERSION = 1;
 const RELAY_MIN_MS = 1000;
 
 /**
- * Maximum number of relay hops before a message is dropped. The existing
- * self-loop and sender-prefix checks catch immediate cycles; this caps
+ * Maximum number of relay hops before a message is dropped. Caps
  * multi-gateway chains (A → B → C → A) where no individual hop looks
  * like a loop but the net effect is one.
  *
- * The relay format `[from <gw>/<sender>] <content>` accumulates one
- * "[from " per hop, so counting occurrences in the incoming content is
- * a good hop-count proxy without a protocol format change.
+ * The authoritative hop count now lives in a STRUCTURED relay envelope
+ * (`[relay origin=<id> hops=<n>] <body>`) that each relaying instance
+ * rewrites — a real integer that is not derived from user-controlled
+ * content. The legacy `[from ` substring count is retained only as a
+ * fallback for messages from older peers that predate the envelope.
  */
 const MAX_RELAY_HOPS = 3;
 
+/**
+ * Structured relay framing carried across gateway hops.
+ *
+ * `origin` is the instance name (`localWorldName`) of the FIRST instance to
+ * federate a message into the mesh. Loop detection compares it against the
+ * local instance name — if a message we introduced comes back to us, we drop
+ * it. This is spoof-resistant in the sense that injecting "[from " into user
+ * content cannot change `hops` or `origin` (those live in the framing, not the
+ * body); a malicious peer can forge the envelope, but that only lets it drop
+ * its own traffic or target a named origin, not defeat loop detection for
+ * honest peers.
+ *
+ * `hops` is a real integer incremented by each relaying instance.
+ * `target` (tells only) names the intended final local recipient.
+ */
+export interface RelayEnvelope {
+  origin?: string;
+  hops: number;
+  target?: string;
+}
+
+const RELAY_PREFIX_RE = /^\[relay ([^\]]*)\]\s?/;
+
+/** Sanitize a field value so it can't break the space/bracket-delimited framing. */
+function sanitizeField(v: string): string {
+  return v.replace(/[[\]\s]/g, "_");
+}
+
+/**
+ * Parse the structured relay envelope from content. Prefers the structured
+ * `[relay ...]` prefix; falls back to counting the legacy `[from ` trail
+ * (content-derived, spoofable) only when no structured envelope is present.
+ */
+export function parseRelayEnvelope(content: string): { meta: RelayEnvelope; body: string } {
+  const m = content.match(RELAY_PREFIX_RE);
+  if (m) {
+    const meta: RelayEnvelope = { hops: 0 };
+    for (const tok of m[1]!.trim().split(/\s+/)) {
+      const eq = tok.indexOf("=");
+      if (eq < 0) continue;
+      const k = tok.slice(0, eq);
+      const v = tok.slice(eq + 1);
+      if (k === "origin") meta.origin = v;
+      else if (k === "hops") meta.hops = Math.max(0, Number.parseInt(v, 10) || 0);
+      else if (k === "target") meta.target = v;
+    }
+    return { meta, body: content.slice(m[0].length) };
+  }
+  return { meta: { hops: countRelayHops(content) }, body: content };
+}
+
+/** Serialize a relay envelope as a readable, machine-parseable prefix. */
+export function buildRelayEnvelope(meta: RelayEnvelope, body: string): string {
+  const parts: string[] = [];
+  if (meta.origin) parts.push(`origin=${sanitizeField(meta.origin)}`);
+  parts.push(`hops=${meta.hops}`);
+  if (meta.target) parts.push(`target=${sanitizeField(meta.target)}`);
+  return `[relay ${parts.join(" ")}] ${body}`;
+}
+
+/**
+ * Recover an intended local recipient from a relayed tell body via a leading
+ * `@name` or `to:name` routing token. When present, the relay delivers only to
+ * that local entity instead of dropping (see localTellRelay). Returns the
+ * cleaned body with the routing token stripped.
+ */
+export function extractRoutingTarget(message: string): { target?: string; body: string } {
+  const m = message.match(/^\s*(?:@|to:)([A-Za-z0-9_-]{1,40})\s+([\s\S]*)$/);
+  if (m) return { target: m[1], body: m[2]! };
+  return { body: message };
+}
+
+/** Legacy fallback: count "[from " occurrences as a hop-count proxy. */
 function countRelayHops(content: string): number {
-  // Count non-overlapping occurrences of "[from " — one per relay hop.
   let count = 0;
   let idx = 0;
   while ((idx = content.indexOf("[from ", idx)) !== -1) {
@@ -101,14 +195,24 @@ function countRelayHops(content: string): number {
 export class GatewayRuntime {
   private connections = new Map<string, GatewayConnection>();
   private db?: MarinaDB;
-  private localRelay: (channel: string, message: string) => void;
-  private localTellRelay: (senderLabel: string, message: string, originEntity: string) => void;
+  private localRelay: (channel: string, body: string, meta: RelayEnvelope) => void;
+  private localTellRelay: (
+    target: string | undefined,
+    senderLabel: string,
+    message: string,
+    originEntity: string,
+  ) => void;
   private localWorldName: string;
 
   constructor(opts: {
     db?: MarinaDB;
-    localRelay: (channel: string, message: string) => void;
-    localTellRelay: (senderLabel: string, message: string, originEntity: string) => void;
+    localRelay: (channel: string, body: string, meta: RelayEnvelope) => void;
+    localTellRelay: (
+      target: string | undefined,
+      senderLabel: string,
+      message: string,
+      originEntity: string,
+    ) => void;
     localWorldName: string;
   }) {
     this.db = opts.db;
@@ -311,14 +415,31 @@ export class GatewayRuntime {
       if (channelPayload.sender === conn.entityName) return; // self-loop
       if (!conn.bridgedChannels.has(channelPayload.channel)) return; // not bridged
 
-      // Don't relay messages from other gateways (prevent cross-gateway loops)
+      // Secondary heuristic: skip messages authored by a peer gateway's own
+      // client identity. Not authoritative — the structured envelope below is
+      // the real loop guard.
       if (channelPayload.sender.startsWith("Gateway_")) return;
 
-      // Hop-count guard: drop messages that have already been relayed
-      // through MAX_RELAY_HOPS gateways to prevent multi-hop chains.
-      if (countRelayHops(channelPayload.content) >= MAX_RELAY_HOPS) {
+      // Prefer the structured relay meta carried out-of-band in perception data
+      // (new peers); otherwise parse it from the body envelope (older peers).
+      // Either way `body` is the envelope-stripped content, so local delivery
+      // never sees the `[relay …]` framing.
+      const parsed = parseRelayEnvelope(channelPayload.content);
+      const meta = extractRelayMeta(p) ?? parsed.meta;
+      const body = parsed.body;
+
+      // Structured origin loop guard: a message we first federated has come
+      // back around. Cannot be spoofed by "[from " in user content — that only
+      // affects the legacy fallback count, never `origin`/`hops`.
+      if (meta.origin && meta.origin === this.localWorldName) {
         console.warn(
-          `[gateway] "${conn.name}" dropped over-hopped channel relay (>=${MAX_RELAY_HOPS} hops)`,
+          `[gateway] "${conn.name}" dropped channel relay looped back to origin "${this.localWorldName}"`,
+        );
+        return;
+      }
+      if (meta.hops >= MAX_RELAY_HOPS) {
+        console.warn(
+          `[gateway] "${conn.name}" dropped over-hopped channel relay (${meta.hops} >= ${MAX_RELAY_HOPS} hops)`,
         );
         return;
       }
@@ -329,10 +450,15 @@ export class GatewayRuntime {
 
       conn.lastRelayAt.set(channelPayload.channel, now);
       conn.messagesRelayed++;
-      this.localRelay(
-        channelPayload.channel,
-        `[from ${conn.name}/${channelPayload.sender}] ${channelPayload.content}`,
-      );
+      // Deliver the CLEAN readable body to local members; the relay envelope is
+      // handed back as structured meta so the caller can carry it out-of-band to
+      // other peers (preserving multi-hop loop detection) without leaking the
+      // `[relay …]` framing into a local channel message or a user's view.
+      const readable = `[from ${conn.name}/${channelPayload.sender}] ${body}`;
+      this.localRelay(channelPayload.channel, readable, {
+        origin: meta.origin ?? this.localWorldName,
+        hops: meta.hops + 1,
+      });
       return;
     }
 
@@ -342,13 +468,25 @@ export class GatewayRuntime {
       if (!tellPayload) return;
       if (tellPayload.sender.startsWith("Gateway_")) return; // from another gateway
 
-      // Hop-count guard (same rationale as channel relay above).
-      if (countRelayHops(tellPayload.message) >= MAX_RELAY_HOPS) {
+      const { meta, body } = parseRelayEnvelope(tellPayload.message);
+      if (meta.origin && meta.origin === this.localWorldName) {
         console.warn(
-          `[gateway] "${conn.name}" dropped over-hopped tell relay (>=${MAX_RELAY_HOPS} hops)`,
+          `[gateway] "${conn.name}" dropped tell relay looped back to origin "${this.localWorldName}"`,
         );
         return;
       }
+      if (meta.hops >= MAX_RELAY_HOPS) {
+        console.warn(
+          `[gateway] "${conn.name}" dropped over-hopped tell relay (${meta.hops} >= ${MAX_RELAY_HOPS} hops)`,
+        );
+        return;
+      }
+
+      // Recover the intended local recipient. Prefer the structured envelope
+      // target, then a leading `@name`/`to:name` routing token. When neither is
+      // present the target is unrecoverable — localTellRelay must NOT broadcast.
+      const routed = extractRoutingTarget(body);
+      const target = meta.target ?? routed.target;
 
       // Rate limit tells
       const lastTellRelay = conn.lastRelayAt.get("__tell__") ?? 0;
@@ -357,10 +495,37 @@ export class GatewayRuntime {
       conn.lastRelayAt.set("__tell__", now);
       conn.messagesRelayed++;
       this.localTellRelay(
+        target,
         `${conn.name}/${tellPayload.sender}`,
-        tellPayload.message,
+        routed.body,
         conn.entityName,
       );
     }
+  }
+
+  /**
+   * @internal Test hook — feed a perception as if it arrived on a connection
+   * named `connName` (presenting as `entityName`, bridged to `bridged`).
+   * Exercises the real relay decision + local delivery wiring without a live
+   * WebSocket. Not used in production paths.
+   */
+  receivePerceptionForTest(
+    connName: string,
+    entityName: string,
+    bridged: string[],
+    p: Perception,
+  ): void {
+    const conn: GatewayConnection = {
+      name: connName,
+      url: "",
+      client: undefined as unknown as MarinaClient,
+      entityName,
+      bridgedChannels: new Set(bridged),
+      status: "connected",
+      messagesRelayed: 0,
+      connectedAt: 0,
+      lastRelayAt: new Map(),
+    };
+    this.handleRemotePerception(conn, p);
   }
 }

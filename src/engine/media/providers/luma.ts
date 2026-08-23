@@ -7,6 +7,7 @@
  */
 
 import { Buffer } from "node:buffer";
+import { guardedFetch } from "../../../net/url-guard";
 import { bareModel, type GeneratedAsset } from "./image-util";
 import type { VideoPollOptions, VideoResult, VideoStartOptions } from "./video-util";
 
@@ -78,7 +79,8 @@ export async function pollLumaVideoJob(opts: VideoPollOptions): Promise<VideoRes
 }
 
 async function download(url: string, signal?: AbortSignal): Promise<GeneratedAsset | null> {
-  const res = await fetch(url, { signal });
+  // Provider-returned asset URL — route through the SSRF guard, not bare fetch.
+  const res = await guardedFetch(url, { signal });
   if (!res.ok) return null;
   return {
     data: new Uint8Array(Buffer.from(await res.arrayBuffer())),
