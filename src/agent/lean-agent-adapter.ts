@@ -84,6 +84,34 @@ export function evolutionControlState(
   return { sessionId: perception.data.sessionId, active: perception.data.active };
 }
 
+export interface TurnUsageMetrics {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  costUsd?: number;
+}
+
+/** Normalize provider-reported pi-ai usage without estimating missing values. */
+export function extractTurnUsage(message: unknown): TurnUsageMetrics {
+  if (!message || typeof message !== "object") return {};
+  const usage = (message as { usage?: unknown }).usage;
+  if (!usage || typeof usage !== "object") return {};
+  const row = usage as Record<string, unknown>;
+  const finite = (value: unknown): number | undefined =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+  const cost = row.cost;
+  const costUsd =
+    cost && typeof cost === "object" ? finite((cost as Record<string, unknown>).total) : undefined;
+  return {
+    ...(finite(row.input) === undefined ? {} : { inputTokens: finite(row.input) }),
+    ...(finite(row.output) === undefined ? {} : { outputTokens: finite(row.output) }),
+    ...(finite(row.cacheRead) === undefined ? {} : { cacheReadTokens: finite(row.cacheRead) }),
+    ...(finite(row.cacheWrite) === undefined ? {} : { cacheWriteTokens: finite(row.cacheWrite) }),
+    ...(costUsd === undefined ? {} : { costUsd }),
+  };
+}
+
 export function deriveAgentHealth(input: {
   state: "connected" | "autonomous" | "stopped" | "error";
   silentTurns: number;
@@ -488,6 +516,8 @@ export class LeanAgentAdapter implements AgentHandle {
   /** Wall-clock when the current LLM turn began (turn_start); 0 when none in flight.
    *  Observability only — used to time turn_start→turn_end latency. */
   private turnStartedAt = 0;
+  /** First streamed output observed during the active turn; zero until observed. */
+  private firstTurnOutputAt = 0;
   private consecutiveLoopErrors = 0;
   private lastErrorReason: string | null = null;
   private checkpointInterval: ReturnType<typeof setInterval> | null = null;
@@ -2018,7 +2048,12 @@ The goal is a smaller, sharper memory — not more notes.`;
       // subscribers can show "agent is mid-thought" vs idle state.
       if (event.type === "turn_start") {
         this.turnStartedAt = Date.now();
-        this.emitEvent({ type: "turn_start", traceParent: this.currentPromptTraceParent });
+        this.firstTurnOutputAt = 0;
+        this.emitEvent({
+          type: "turn_start",
+          traceParent: this.currentPromptTraceParent,
+          model: this.config.model ?? MARINA_DEFAULT_MODEL,
+        });
       }
 
       // Streaming text/thinking deltas — high frequency, pro-presence.
@@ -2026,8 +2061,10 @@ The goal is a smaller, sharper memory — not more notes.`;
       if (event.type === "message_update") {
         const inner = event.assistantMessageEvent;
         if (inner.type === "text_delta" && inner.delta) {
+          if (this.firstTurnOutputAt === 0) this.firstTurnOutputAt = Date.now();
           this.emitEvent({ type: "text_delta", delta: inner.delta });
         } else if (inner.type === "thinking_delta" && inner.delta) {
+          if (this.firstTurnOutputAt === 0) this.firstTurnOutputAt = Date.now();
           this.emitEvent({ type: "thinking_delta", delta: inner.delta });
         }
       }
@@ -2039,8 +2076,12 @@ The goal is a smaller, sharper memory — not more notes.`;
       if (event.type === "turn_end") {
         // Observability: record turn latency (turn_start→turn_end wall-clock).
         // Pure measurement — does not affect when or how the agent acts.
-        if (this.turnStartedAt > 0) {
-          const dur = Date.now() - this.turnStartedAt;
+        const endedAt = Date.now();
+        const startedAt = this.turnStartedAt;
+        let durationMs: number | undefined;
+        if (startedAt > 0) {
+          const dur = endedAt - startedAt;
+          durationMs = dur;
           this.turnStartedAt = 0;
           this.metrics.lastTurnMs = dur;
           this.metrics.avgTurnMs =
@@ -2050,7 +2091,14 @@ The goal is a smaller, sharper memory — not more notes.`;
           type: "turn_end",
           hadToolCalls: event.toolResults.length > 0,
           toolCount: event.toolResults.length,
+          model: this.config.model ?? MARINA_DEFAULT_MODEL,
+          ...(durationMs === undefined ? {} : { durationMs }),
+          ...(startedAt > 0 && this.firstTurnOutputAt >= startedAt
+            ? { ttftMs: this.firstTurnOutputAt - startedAt }
+            : {}),
+          ...extractTurnUsage(event.message),
         });
+        this.firstTurnOutputAt = 0;
         if (event.toolResults.length === 0) {
           this.silentTurns++;
           this.metrics.silentTurns = this.silentTurns;

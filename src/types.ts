@@ -726,6 +726,8 @@ export type EngineEvent =
       traceId?: string;
       spanId?: string;
       parentSpanId?: string;
+      origin?: "autonomous" | "request";
+      model?: string;
       timestamp: number;
     }
   | {
@@ -735,8 +737,17 @@ export type EngineEvent =
       traceId?: string;
       spanId?: string;
       parentSpanId?: string;
+      origin?: "autonomous" | "request";
+      model?: string;
       hadToolCalls: boolean;
       toolCount: number;
+      durationMs?: number;
+      ttftMs?: number;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      costUsd?: number;
       timestamp: number;
     }
   | {
@@ -805,6 +816,22 @@ export type EngineEvent =
       /** Execution path selected at the model endpoint boundary. */
       routeKind?: "agent" | "passthru" | "fallback" | "synthesis";
       durationMs?: number;
+      ttftMs?: number;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      costUsd?: number;
+      errorKind?:
+        | "auth"
+        | "quota"
+        | "rate_limit"
+        | "timeout"
+        | "network"
+        | "provider"
+        | "cancelled"
+        | "unavailable"
+        | "unknown";
       detail?: string;
       timestamp: number;
     }

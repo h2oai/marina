@@ -14,7 +14,11 @@ import {
 } from "../trace-dataset";
 import { evaluateTrace } from "../trace-evaluation";
 import { projectTraces, type TraceSpanView, type TraceView } from "../trace-projection";
-import { adviseTraceRouting } from "../trace-routing-advice";
+import {
+  adviseTraceAggregates,
+  adviseTraceRouting,
+  selectAdaptiveCandidate,
+} from "../trace-routing-advice";
 
 const HELP = `Inspect recent execution traces (read-only).
   trace [list] [limit]  — recent traces (default 10, maximum 20)
@@ -22,7 +26,8 @@ const HELP = `Inspect recent execution traces (read-only).
   trace compare <models|routes> [limit] — descriptive cohorts, no winner inference
   trace dataset [limit] — replayable structural evaluation cases
   trace dataset verify [limit] — replay an exported dataset copy, report schema + drift
-  trace advise <models|routes> [limit] — read-only shadow routing advice
+  trace advise <models|routes|autonomous|tools> [limit] — read-only shadow selection advice
+  trace choose <models|routes|autonomous|tools> <eligible...> — select only inside an explicit set
   trace show <id>       — causal request/turn/tool spans
   trace eval <id>       — objective checks with evidence span IDs
   trace judgments <id>  — attributed participant judgments
@@ -64,6 +69,50 @@ export function traceCommand(deps: {
         return;
       }
 
+      if (sub === "choose") {
+        const dimension = input.tokens[1];
+        const eligible = [...new Set(input.tokens.slice(2).filter(Boolean))];
+        if (
+          !["models", "routes", "autonomous", "tools"].includes(dimension ?? "") ||
+          eligible.length === 0
+        ) {
+          ctx.send(
+            input.entity,
+            "Usage: trace choose <models|routes|autonomous|tools> <eligible-candidate...>",
+          );
+          return;
+        }
+        const loaded = load(undefined, 5000);
+        const evidence: TraceWithJudgments[] = loaded.traces.slice(0, 100).map((trace) => ({
+          ...trace,
+          judgments: deps.db?.getTraceJudgments(trace.traceId) ?? [],
+        }));
+        const analytics = analyzeTraces(evidence);
+        const advice =
+          dimension === "models" || dimension === "routes"
+            ? adviseTraceRouting(
+                compareTraceCohorts(evidence, dimension === "models" ? "model" : "route"),
+                dimension === "models" ? "model" : "route",
+              )
+            : adviseTraceAggregates(
+                dimension === "autonomous" ? analytics.agentModels : analytics.tools,
+                dimension === "autonomous" ? "autonomous_model" : "tool",
+              );
+        const selection = selectAdaptiveCandidate(eligible, advice, () => eligible[0]!);
+        const lines = [
+          header(`Explicit Trace Selection: ${advice.dimension}`),
+          separator(),
+          `  eligible: ${eligible.join(", ")}`,
+          `  selected: ${selection.target}`,
+          `  advice applied: ${selection.applied ? "yes" : "no"}`,
+          `  reason: ${selection.reason}`,
+          "  No configuration changed. The caller may use this selection for its next action.",
+        ];
+        if (loaded.truncated) lines.push("  [retained event window truncated]");
+        ctx.send(input.entity, lines.join("\n"));
+        return;
+      }
+
       if (sub === "compare" || sub === "dataset" || sub === "advise") {
         const verify = sub === "dataset" && input.tokens[1]?.toLowerCase() === "verify";
         const rawLimit =
@@ -78,8 +127,32 @@ export function traceCommand(deps: {
         else if (sub === "dataset") sendDataset(ctx, input.entity, evidence, loaded.truncated);
         else {
           const dimension = input.tokens[1];
-          if (dimension !== "models" && dimension !== "routes") {
-            ctx.send(input.entity, `Usage: trace ${sub} <models|routes> [limit]`);
+          const observedDimension = dimension === "autonomous" || dimension === "tools";
+          if (dimension !== "models" && dimension !== "routes" && !observedDimension) {
+            ctx.send(
+              input.entity,
+              `Usage: trace ${sub} <models|routes${sub === "advise" ? "|autonomous|tools" : ""}> [limit]`,
+            );
+            return;
+          }
+          if (observedDimension) {
+            if (sub !== "advise") {
+              ctx.send(
+                input.entity,
+                "Autonomous model and tool cohorts are available via trace stats.",
+              );
+              return;
+            }
+            const analytics = analyzeTraces(evidence);
+            sendAdvice(
+              ctx,
+              input.entity,
+              adviseTraceAggregates(
+                dimension === "autonomous" ? analytics.agentModels : analytics.tools,
+                dimension === "autonomous" ? "autonomous_model" : "tool",
+              ),
+              loaded.truncated,
+            );
             return;
           }
           const cohorts = compareTraceCohorts(evidence, dimension === "models" ? "model" : "route");
@@ -145,7 +218,7 @@ function sendAdvice(
     ...advice.reasons.map((reason) => `  ${reason}`),
     advice.dimension === "route"
       ? "  Advisory result: default routing ignores it; explicit adaptive routing may recompute and apply it only within the eligible route set."
-      : "  Advisory result: Marina does not automatically apply model advice.",
+      : `  Advisory result: Marina never applies ${advice.dimension.replace("_", " ")} advice without an explicit eligible set and opt-in policy.`,
   ];
   if (truncated) lines.push("  [retained event window truncated]");
   ctx.send(entityId, lines.join("\n"));
@@ -160,7 +233,7 @@ function sendDatasetVerify(
   // Round-trip the export through JSON so the verified object is exactly what
   // an external consumer of `format=eval-json` holds, then replay the
   // objective evaluators from the exported spans alone. Zero drift proves the
-  // dataset is self-contained: `marina.execution.v1` recomputes identically
+  // dataset is self-contained: `marina.execution.v2` recomputes identically
   // outside the process that produced it.
   const dataset = JSON.parse(JSON.stringify(buildTraceDataset(traces))) as TraceEvaluationDataset;
   const schemaOk =
@@ -318,6 +391,7 @@ function sendStats(
     `  ${analytics.tracesObserved} traces observed · ${analytics.partialTraces} partial`,
   ];
   appendAggregates(lines, "Models", analytics.models);
+  appendAggregates(lines, "Autonomous models", analytics.agentModels);
   appendAggregates(lines, "Routes", analytics.routes);
   appendAggregates(lines, "Tools", analytics.tools);
   if (truncated) lines.push("  [retained event window truncated]");
@@ -336,8 +410,12 @@ function appendAggregates(lines: string[], label: string, rows: TraceAggregate[]
       row.terminalRate === undefined ? "n/a" : `${Math.round(row.terminalRate * 100)}%`;
     const success = row.successRate === undefined ? "n/a" : `${Math.round(row.successRate * 100)}%`;
     const latency = row.latency.p50Ms === undefined ? "n/a" : `${row.latency.p50Ms}ms`;
+    const ttft = row.ttft.p50Ms === undefined ? "n/a" : `${row.ttft.p50Ms}ms`;
+    const tokens =
+      row.tokens.samples === 0 ? "n/a" : `${row.tokens.input}in/${row.tokens.output}out`;
+    const cost = row.cost.samples === 0 ? "n/a" : `$${row.cost.totalUsd.toFixed(4)}`;
     lines.push(
-      `    ${row.name}: n=${row.eligible}/${row.observed} terminal=${terminal} success=${success} p50=${latency}`,
+      `    ${row.name}: n=${row.eligible}/${row.observed} terminal=${terminal} success=${success} p50=${latency} ttft=${ttft} tokens=${tokens} cost=${cost}`,
     );
   }
 }
@@ -394,6 +472,24 @@ function sendTrace(
         .join(" · ");
       lines.push(`  ${"  ".repeat(depth + 1)}${routing}`);
     }
+    const metrics = [
+      typeof span.attributes.model === "string" ? `model=${span.attributes.model}` : undefined,
+      typeof span.attributes.origin === "string" ? `origin=${span.attributes.origin}` : undefined,
+      typeof span.attributes.ttftMs === "number" ? `ttft=${span.attributes.ttftMs}ms` : undefined,
+      typeof span.attributes.inputTokens === "number"
+        ? `input=${span.attributes.inputTokens}`
+        : undefined,
+      typeof span.attributes.outputTokens === "number"
+        ? `output=${span.attributes.outputTokens}`
+        : undefined,
+      typeof span.attributes.costUsd === "number"
+        ? `cost=$${span.attributes.costUsd.toFixed(4)}`
+        : undefined,
+      typeof span.attributes.errorKind === "string"
+        ? `error=${span.attributes.errorKind}`
+        : undefined,
+    ].filter(Boolean);
+    if (metrics.length > 0) lines.push(`  ${"  ".repeat(depth + 1)}${metrics.join(" · ")}`);
   }
   if (trace.spans.length > visible.length)
     lines.push(`  … ${trace.spans.length - visible.length} more spans`);

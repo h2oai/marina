@@ -2855,7 +2855,7 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
       args: { action: "read", path: "src/x.ts" },
     });
     sub.fn?.({ type: "text_delta", delta: "Found the issue." });
-    sub.fn?.({ type: "turn_end", hadToolCalls: true, toolCount: 1 });
+    sub.fn?.({ type: "turn_end", hadToolCalls: true, toolCount: 1, model: "test/model" });
     sub.fn?.({
       type: "tool_call",
       toolName: "marina_code",

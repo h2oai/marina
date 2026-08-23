@@ -84,6 +84,17 @@ export function projectTraces(events: readonly EngineEvent[]): TraceView[] {
           ...(event.routeAdviceMode ? { routeAdviceMode: event.routeAdviceMode } : {}),
           ...(event.routeReason ? { routeReason: event.routeReason } : {}),
           ...(event.routeKind ? { routeKind: event.routeKind } : {}),
+          ...(event.ttftMs === undefined ? {} : { ttftMs: event.ttftMs }),
+          ...(event.inputTokens === undefined ? {} : { inputTokens: event.inputTokens }),
+          ...(event.outputTokens === undefined ? {} : { outputTokens: event.outputTokens }),
+          ...(event.cacheReadTokens === undefined
+            ? {}
+            : { cacheReadTokens: event.cacheReadTokens }),
+          ...(event.cacheWriteTokens === undefined
+            ? {}
+            : { cacheWriteTokens: event.cacheWriteTokens }),
+          ...(event.costUsd === undefined ? {} : { costUsd: event.costUsd }),
+          ...(event.errorKind ? { errorKind: event.errorKind } : {}),
           ...(event.detail ? { detail: event.detail } : {}),
         },
       });
@@ -97,10 +108,29 @@ export function projectTraces(events: readonly EngineEvent[]): TraceView[] {
         isStart: event.type === "agent_turn_start",
         isEnd: event.type === "agent_turn_end",
         failed: false,
+        durationMs: event.type === "agent_turn_end" ? event.durationMs : undefined,
         attributes:
           event.type === "agent_turn_end"
-            ? { hadToolCalls: event.hadToolCalls, toolCount: event.toolCount }
-            : {},
+            ? {
+                hadToolCalls: event.hadToolCalls,
+                toolCount: event.toolCount,
+                ...(event.origin ? { origin: event.origin } : {}),
+                ...(event.model ? { model: event.model } : {}),
+                ...(event.ttftMs === undefined ? {} : { ttftMs: event.ttftMs }),
+                ...(event.inputTokens === undefined ? {} : { inputTokens: event.inputTokens }),
+                ...(event.outputTokens === undefined ? {} : { outputTokens: event.outputTokens }),
+                ...(event.cacheReadTokens === undefined
+                  ? {}
+                  : { cacheReadTokens: event.cacheReadTokens }),
+                ...(event.cacheWriteTokens === undefined
+                  ? {}
+                  : { cacheWriteTokens: event.cacheWriteTokens }),
+                ...(event.costUsd === undefined ? {} : { costUsd: event.costUsd }),
+              }
+            : {
+                ...(event.origin ? { origin: event.origin } : {}),
+                ...(event.model ? { model: event.model } : {}),
+              },
       });
     } else if (event.type === "agent_tool_call" || event.type === "agent_tool_result") {
       upsertSpan(trace, {

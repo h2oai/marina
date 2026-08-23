@@ -1,11 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { TraceAggregate } from "./trace-analytics";
 import type { TraceCohortComparison } from "./trace-dataset";
 
 export interface TraceRoutingAdvice {
   schema: "marina.routing.shadow.v1";
-  dimension: "model" | "route";
+  dimension: "model" | "route" | "autonomous_model" | "tool";
   mode: "pareto" | "explore" | "insufficient";
   candidates: string[];
   reasons: string[];
@@ -48,7 +49,7 @@ export function selectAdaptiveCandidate(
  */
 export function adviseTraceRouting(
   cohorts: readonly TraceCohortComparison[],
-  dimension: "model" | "route",
+  dimension: TraceRoutingAdvice["dimension"],
 ): TraceRoutingAdvice {
   if (cohorts.length < 2) {
     return advice(dimension, "insufficient", [], ["Fewer than two observed cohorts."]);
@@ -87,6 +88,29 @@ export function adviseTraceRouting(
   ]);
 }
 
+/** Produce the same weight-free advice for observed span aggregates. */
+export function adviseTraceAggregates(
+  aggregates: readonly TraceAggregate[],
+  dimension: "autonomous_model" | "tool",
+): TraceRoutingAdvice {
+  return adviseTraceRouting(
+    aggregates.map((mechanics) => ({
+      dimension: "model",
+      name: mechanics.name,
+      mechanics,
+      judgments: {
+        total: 0,
+        passed: 0,
+        failed: 0,
+        inconclusive: 0,
+        evaluators: 0,
+        criteria: {},
+      },
+    })),
+    dimension,
+  );
+}
+
 function dominates(a: TraceCohortComparison, b: TraceCohortComparison): boolean {
   const aSuccess = a.mechanics.successRate!;
   const bSuccess = b.mechanics.successRate!;
@@ -98,7 +122,7 @@ function dominates(a: TraceCohortComparison, b: TraceCohortComparison): boolean 
 }
 
 function advice(
-  dimension: "model" | "route",
+  dimension: TraceRoutingAdvice["dimension"],
   mode: TraceRoutingAdvice["mode"],
   candidates: string[],
   reasons: string[],

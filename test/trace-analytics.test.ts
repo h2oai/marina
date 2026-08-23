@@ -55,6 +55,9 @@ describe("analyzeTraces", () => {
       terminalRate: 0.75,
       successRate: 2 / 3,
       latency: { samples: 3, p50Ms: 20, p95Ms: 40 },
+      ttft: { samples: 0 },
+      tokens: { samples: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: { samples: 0, totalUsd: 0 },
     });
   });
 
@@ -73,6 +76,36 @@ describe("analyzeTraces", () => {
       failed: 0,
       running: 0,
       latency: { samples: 0 },
+      ttft: { samples: 0 },
+      tokens: { samples: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: { samples: 0, totalUsd: 0 },
+    });
+  });
+
+  test("summarizes autonomous model usage without estimating missing values", () => {
+    const analytics = analyzeTraces([
+      trace("agent", [
+        span({
+          kind: "agent_turn",
+          name: "Ada",
+          attributes: {
+            model: "local/qwen",
+            origin: "autonomous",
+            ttftMs: 25,
+            inputTokens: 100,
+            outputTokens: 20,
+            cacheReadTokens: 10,
+            costUsd: 0,
+          },
+        }),
+      ]),
+    ]);
+
+    expect(analytics.agentModels[0]).toMatchObject({
+      name: "local/qwen",
+      ttft: { samples: 1, p50Ms: 25 },
+      tokens: { samples: 1, input: 100, output: 20, cacheRead: 10 },
+      cost: { samples: 1, totalUsd: 0, averageUsd: 0 },
     });
   });
 

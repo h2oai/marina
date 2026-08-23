@@ -6,21 +6,26 @@ import type { TraceSpanView, TraceView } from "./trace-projection";
 export type TraceCheckResult = "passed" | "failed" | "inconclusive" | "not_applicable";
 
 export interface TraceEvaluationCheck {
-  id: "terminal_outcome" | "history_integrity" | "agent_turns" | "tool_results";
+  id:
+    | "terminal_outcome"
+    | "history_integrity"
+    | "agent_turns"
+    | "tool_results"
+    | "metrics_integrity";
   result: TraceCheckResult;
   summary: string;
   evidenceSpanIds: string[];
 }
 
 export interface TraceEvaluation {
-  evaluator: "marina.execution.v1";
+  evaluator: "marina.execution.v2";
   checks: TraceEvaluationCheck[];
 }
 
 /** Objective, threshold-free checks over one observed execution trace. */
 export function evaluateTrace(trace: TraceView): TraceEvaluation {
   return {
-    evaluator: "marina.execution.v1",
+    evaluator: "marina.execution.v2",
     checks: [
       terminalOutcome(trace),
       historyIntegrity(trace),
@@ -34,8 +39,53 @@ export function evaluateTrace(trace: TraceView): TraceEvaluation {
         "tool result",
         trace.spans.filter((s) => s.kind === "tool"),
       ),
+      metricsIntegrity(trace),
     ],
   };
+}
+
+function metricsIntegrity(trace: TraceView): TraceEvaluationCheck {
+  const metricKeys = [
+    "ttftMs",
+    "inputTokens",
+    "outputTokens",
+    "cacheReadTokens",
+    "cacheWriteTokens",
+    "costUsd",
+  ] as const;
+  const measured = trace.spans.filter((span) =>
+    metricKeys.some((key) => span.attributes[key] !== undefined),
+  );
+  if (measured.length === 0) {
+    return check("metrics_integrity", "not_applicable", "No normalized metrics were reported.", []);
+  }
+  const invalid = measured.filter((span) => {
+    for (const key of metricKeys) {
+      const value = span.attributes[key];
+      if (
+        value !== undefined &&
+        (typeof value !== "number" || !Number.isFinite(value) || value < 0)
+      ) {
+        return true;
+      }
+    }
+    const ttft = span.attributes.ttftMs;
+    return typeof ttft === "number" && span.durationMs !== undefined && ttft > span.durationMs;
+  });
+  if (invalid.length > 0) {
+    return check(
+      "metrics_integrity",
+      "failed",
+      "A normalized metric was negative, non-finite, non-numeric, or exceeded its span duration.",
+      ids(invalid),
+    );
+  }
+  return check(
+    "metrics_integrity",
+    "passed",
+    `All ${measured.length} spans with normalized metrics are internally consistent.`,
+    ids(measured),
+  );
 }
 
 function terminalOutcome(trace: TraceView): TraceEvaluationCheck {

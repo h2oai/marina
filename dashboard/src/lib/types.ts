@@ -313,14 +313,19 @@ export interface TraceJudgment {
 export type TraceCheckResult = "passed" | "failed" | "inconclusive" | "not_applicable";
 
 export interface TraceEvaluationCheck {
-  id: "terminal_outcome" | "history_integrity" | "agent_turns" | "tool_results";
+  id:
+    | "terminal_outcome"
+    | "history_integrity"
+    | "agent_turns"
+    | "tool_results"
+    | "metrics_integrity";
   result: TraceCheckResult;
   summary: string;
   evidenceSpanIds: string[];
 }
 
 export interface TraceEvaluation {
-  evaluator: "marina.execution.v1";
+  evaluator: "marina.execution.v1" | "marina.execution.v2";
   checks: TraceEvaluationCheck[];
 }
 
@@ -335,6 +340,8 @@ export interface TracesResponse {
   shadowAdvice?: {
     models: TraceRoutingAdvice;
     routes: TraceRoutingAdvice;
+    autonomousModels?: TraceRoutingAdvice;
+    tools?: TraceRoutingAdvice;
   };
   partial: boolean;
   truncated: boolean;
@@ -344,7 +351,7 @@ export interface TracesResponse {
 
 export interface TraceRoutingAdvice {
   schema: "marina.routing.shadow.v1";
-  dimension: "model" | "route";
+  dimension: "model" | "route" | "autonomous_model" | "tool";
   mode: "pareto" | "explore" | "insufficient";
   candidates: string[];
   reasons: string[];
@@ -384,6 +391,15 @@ export interface TraceAggregate {
   terminalRate?: number;
   successRate?: number;
   latency: TraceLatencySummary;
+  ttft?: TraceLatencySummary;
+  tokens?: {
+    samples: number;
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+  };
+  cost?: { samples: number; totalUsd: number; averageUsd?: number };
 }
 
 export interface TraceAnalytics {
@@ -391,6 +407,7 @@ export interface TraceAnalytics {
   tracesObserved: number;
   partialTraces: number;
   models: TraceAggregate[];
+  agentModels?: TraceAggregate[];
   routes: TraceAggregate[];
   tools: TraceAggregate[];
 }

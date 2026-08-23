@@ -33,6 +33,9 @@ trace dataset 100     Summarize the replayable structural evaluation dataset
 trace dataset verify  Replay an exported dataset copy; report schema validity, counts, and drift
 trace advise models   Inspect read-only, weight-free model shadow advice
 trace advise routes   Inspect read-only selected-agent shadow advice
+trace advise autonomous Inspect autonomous-model shadow advice
+trace advise tools    Inspect tool-mechanics shadow advice
+trace choose tools read search  Select only inside this explicit eligible set; change no config
 trace show <id>       Show the causal request/turn/tool hierarchy
 trace eval <id>       Show objective checks and their evidence span IDs
 trace judgments <id>  Read attributed participant judgments
@@ -73,14 +76,15 @@ curl -H "Authorization: Bearer $MARINA_TOKEN" \
   "http://localhost:3300/api/traces?limit=100&format=eval-json"
 ```
 
-The native response includes the projected traces and a `marina.execution.v1` evaluation for each
+The native response includes the projected traces and a `marina.execution.v2` evaluation for each
 trace. It also includes `marina.trace.analytics.v1` aggregates and reports the data source,
 retention description, and whether the bounded read was truncated.
 
 Analytics group model-request, selected-agent route, and tool spans by name. Routed lifecycle spans
 also retain the selection strategy and number of eligible agent candidates. Aggregates report
-observed and eligible sample counts, terminal and successful terminal rates, and nearest-rank
-p50/p95 terminal latency. Partial spans are counted as observed but excluded from rates and latency.
+observed and eligible sample counts, terminal and successful terminal rates, nearest-rank p50/p95
+terminal latency and time-to-first-output, plus provider-reported token and cost totals when present.
+Partial spans are counted as observed but excluded from rates and latency.
 These descriptive measurements are not quality rankings: traffic mix, task difficulty, selection
 effects, and small samples can all change them. The default router does not use them. The explicit
 `adaptive` strategy may use only the route-cohort mechanics described below and records that policy
@@ -89,7 +93,7 @@ decision on the request trace.
 ### Native evaluation dataset
 
 `format=eval-json` returns `marina.trace.dataset.v1`. Each case contains structural spans, the
-objective `marina.execution.v1` result, and any identity-attributed participant judgments. Cases are
+objective `marina.execution.v2` result, and any identity-attributed participant judgments. Cases are
 sorted by trace ID and can replay the objective evaluator deterministically.
 
 This is an evaluation-evidence dataset, not a prompt-replay corpus. Because Marina deliberately
@@ -127,7 +131,7 @@ attributed judgment, and cite the durable identifiers in the existing protocol:
 ```text
 trace eval <trace-id>
 trace judge <trace-id> passed correctness | Matched the independently checked result
-evolve evaluate RouteTrial <run-id> | trace:<trace-id>; evaluator:marina.execution.v1; judgment:<judgment-id>
+evolve evaluate RouteTrial <run-id> | trace:<trace-id>; evaluator:marina.execution.v2; judgment:<judgment-id>
 ```
 
 The `evolve` controller records that citation as advisory evidence under its existing attribution,
@@ -150,12 +154,14 @@ and span IDs deterministically and retains the original IDs as attributes.
 
 ## What the evaluations mean
 
-`marina.execution.v1` makes four factual checks:
+`marina.execution.v2` makes five factual checks:
 
 - `terminal_outcome` — whether the root request completed, failed, or remains open.
 - `history_integrity` — whether observed spans have starts and valid parent links.
 - `agent_turns` — whether observed agent turns reached terminal events.
 - `tool_results` — whether observed tool calls reached successful or failed results.
+- `metrics_integrity` — whether reported timing, token, and cost metrics are finite, non-negative,
+  and consistent with their span duration.
 
 Each check is `passed`, `failed`, `inconclusive`, or `not_applicable` and cites the exact span IDs it
 used. There is deliberately no aggregate quality score. A completed execution is not proof that its
@@ -179,7 +185,9 @@ and rationale verbatim. Do not put secrets, private prompts, or sensitive output
 The current causal chain covers requests handled by Marina's model API: single-agent (`agents`)
 routing, the verified fast path, and the `open`/`panel` fan-out modes, where each fan-out target gets
 its own request span under one shared trace. Agent turns and tool calls are parented to those
-requests. Direct passthru requests and upstream fallbacks also produce a request span with the
+requests. Autonomous turns without a model-endpoint request receive their own trace with
+`origin=autonomous`; their model, provider-reported usage/cost, latency, and time-to-first-output are
+visible to both `trace` and the dashboard. Direct passthru requests and upstream fallbacks also produce a request span with the
 selected route kind, provider/model target, duration, and terminal status; Marina does not claim
 child spans for work performed inside an external provider. When a perception batch contains
 multiple distinct request traces, Marina leaves the turn unparented instead of claiming an

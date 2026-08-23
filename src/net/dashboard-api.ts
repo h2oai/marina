@@ -17,7 +17,7 @@ import { analyzeTraces } from "../engine/trace-analytics";
 import { buildTraceDataset, compareTraceCohorts } from "../engine/trace-dataset";
 import { evaluateTrace } from "../engine/trace-evaluation";
 import { projectTraces } from "../engine/trace-projection";
-import { adviseTraceRouting } from "../engine/trace-routing-advice";
+import { adviseTraceAggregates, adviseTraceRouting } from "../engine/trace-routing-advice";
 import type { MarinaDB, MediaJobRow } from "../persistence/database";
 import { isKeyEncryptionEnabled } from "../persistence/key-crypto";
 import type { Connection, EntityId, Perception, RoomId } from "../types";
@@ -1392,9 +1392,10 @@ function getTraces(engine: Engine, url: URL, db?: MarinaDB): Response {
   }
   const modelComparisons = compareTraceCohorts(evidence, "model");
   const routeComparisons = compareTraceCohorts(evidence, "route");
+  const analytics = analyzeTraces(traces);
   return json({
     traces,
-    analytics: analyzeTraces(traces),
+    analytics,
     comparisons: {
       models: modelComparisons,
       routes: routeComparisons,
@@ -1402,6 +1403,8 @@ function getTraces(engine: Engine, url: URL, db?: MarinaDB): Response {
     shadowAdvice: {
       models: adviseTraceRouting(modelComparisons, "model"),
       routes: adviseTraceRouting(routeComparisons, "route"),
+      autonomousModels: adviseTraceAggregates(analytics.agentModels, "autonomous_model"),
+      tools: adviseTraceAggregates(analytics.tools, "tool"),
     },
     partial: history.truncated || traces.some((trace) => trace.partial),
     truncated: history.truncated,

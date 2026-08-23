@@ -9,7 +9,7 @@ import {
   traceParentFromPerception,
   unambiguousTraceParent,
 } from "../src/agent/execution-trace";
-import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
+import { extractTurnUsage, LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
 import type { EngineEvent, Perception } from "../src/types";
 
 describe("AgentExecutionTracer", () => {
@@ -25,6 +25,7 @@ describe("AgentExecutionTracer", () => {
       runId: "agent-run-one",
       traceId: "agent-trace-one",
       spanId: "turn-one",
+      origin: "autonomous",
     });
     expect(thinking).toEqual(start);
     expect(text).toEqual(start);
@@ -57,6 +58,59 @@ describe("AgentExecutionTracer", () => {
     expect(tracer.trace("tool_result", "marina_memory")).toBeUndefined();
   });
 
+  it("normalizes only finite provider-reported usage", () => {
+    expect(
+      extractTurnUsage({
+        usage: {
+          input: 120,
+          output: 30,
+          cacheRead: 40,
+          cacheWrite: 5,
+          cost: { total: 0.0042 },
+        },
+      }),
+    ).toEqual({
+      inputTokens: 120,
+      outputTokens: 30,
+      cacheReadTokens: 40,
+      cacheWriteTokens: 5,
+      costUsd: 0.0042,
+    });
+    expect(extractTurnUsage({ usage: { input: -1, output: Number.NaN } })).toEqual({});
+  });
+
+  it("relays autonomous turn metrics on the canonical trace", () => {
+    const events: EngineEvent[] = [];
+    const relay = createAgentEventRelay("Ada", (event) => events.push(event));
+    relay({ type: "turn_start", model: "local/qwen" });
+    relay({
+      type: "turn_end",
+      model: "local/qwen",
+      hadToolCalls: true,
+      toolCount: 2,
+      durationMs: 900,
+      ttftMs: 120,
+      inputTokens: 400,
+      outputTokens: 80,
+      costUsd: 0,
+    });
+
+    expect(events[0]).toMatchObject({
+      type: "agent_turn_start",
+      origin: "autonomous",
+      model: "local/qwen",
+    });
+    expect(events[1]).toMatchObject({
+      type: "agent_turn_end",
+      origin: "autonomous",
+      durationMs: 900,
+      ttftMs: 120,
+      inputTokens: 400,
+      outputTokens: 80,
+      costUsd: 0,
+    });
+  });
+
   it("parents a turn to an explicitly propagated model-request trace", () => {
     const tracer = new AgentExecutionTracer(() => "child");
     const turn = tracer.trace("turn_start", undefined, {
@@ -70,6 +124,7 @@ describe("AgentExecutionTracer", () => {
       traceId: "req-1",
       spanId: "turn-child",
       parentSpanId: "span-req-1",
+      origin: "request",
     });
   });
 

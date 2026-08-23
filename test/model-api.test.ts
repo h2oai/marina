@@ -952,6 +952,7 @@ describe("Model API", () => {
         object: "chat.completion",
         model: "gpt-4o",
         choices: [{ index: 0, message: { role: "assistant", content: "upstream answer" } }],
+        usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
       });
 
     async function withOpenAiUpstream<T>(
@@ -1028,6 +1029,7 @@ describe("Model API", () => {
         routeKind: "passthru",
         target: "openai/gpt-4o",
       });
+      expect(lifecycle[2]).toMatchObject({ inputTokens: 12, outputTokens: 4 });
     });
 
     it("keeps a passthru stream running until the caller consumes the upstream stream", async () => {
@@ -1055,6 +1057,7 @@ describe("Model API", () => {
         "routed",
         "completed",
       ]);
+      expect(lifecycleEvents().at(-1)?.ttftMs).toBeNumber();
     });
 
     it("labels an agent-unavailable upstream recovery as fallback", async () => {
@@ -1100,6 +1103,7 @@ describe("Model API", () => {
         phase: "failed",
         routeKind: "passthru",
         target: "openai/gpt-4o",
+        errorKind: "rate_limit",
       });
       expect(resp.headers.get("x-request-id")).toBe(lifecycle.at(-1)?.traceId ?? null);
     });

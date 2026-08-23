@@ -219,8 +219,20 @@ export type AgentEvent =
   | { type: "error"; error: string; context: string }
   // Turn boundaries — fire once per LLM turn. Observers use these to
   // know when an agent is mid-thought vs. idle.
-  | { type: "turn_start"; traceParent?: TraceParent }
-  | { type: "turn_end"; hadToolCalls: boolean; toolCount: number }
+  | { type: "turn_start"; traceParent?: TraceParent; model: string }
+  | {
+      type: "turn_end";
+      hadToolCalls: boolean;
+      toolCount: number;
+      model: string;
+      durationMs?: number;
+      ttftMs?: number;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      costUsd?: number;
+    }
   // Fine-grained streaming. Consumers that don't want per-token events
   // should filter. Pro-presence: observers see the agent thinking in
   // real time; pro-emergence: a human can engage mid-thought and steer.

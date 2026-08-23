@@ -27,8 +27,12 @@ const data: TracesResponse = {
         terminalRate: 1,
         successRate: 1,
         latency: { samples: 1, p50Ms: 45, p95Ms: 45 },
+        ttft: { samples: 1, p50Ms: 8, p95Ms: 8 },
+        tokens: { samples: 1, input: 20, output: 5, cacheRead: 0, cacheWrite: 0 },
+        cost: { samples: 1, totalUsd: 0.001, averageUsd: 0.001 },
       },
     ],
+    agentModels: [],
     routes: [],
     tools: [],
   },
@@ -89,7 +93,7 @@ const data: TracesResponse = {
       durationMs: 45,
       partial: false,
       evaluation: {
-        evaluator: "marina.execution.v1",
+        evaluator: "marina.execution.v2",
         checks: [
           {
             id: "terminal_outcome",
@@ -114,6 +118,12 @@ const data: TracesResponse = {
             result: "passed",
             summary: "All observed tool results completed.",
             evidenceSpanIds: ["tool"],
+          },
+          {
+            id: "metrics_integrity",
+            result: "passed",
+            summary: "Normalized metrics are internally consistent.",
+            evidenceSpanIds: ["turn"],
           },
         ],
       },
@@ -155,7 +165,14 @@ const data: TracesResponse = {
           endedAt: 140,
           durationMs: 30,
           partial: false,
-          attributes: {},
+          attributes: {
+            model: "openai/gpt-4o",
+            origin: "request",
+            ttftMs: 8,
+            inputTokens: 20,
+            outputTokens: 5,
+            costUsd: 0.001,
+          },
         },
         {
           spanId: "tool",
@@ -188,6 +205,8 @@ describe("TraceExplorerView", () => {
     expect(screen.getByLabelText("Participant judgments")).toBeInTheDocument();
     expect(screen.getByText("Matched the expected result.")).toBeInTheDocument();
     expect(screen.getByLabelText("Shadow routing advice")).toBeInTheDocument();
+    expect(screen.getByText(/model: openai\/gpt-4o/)).toBeInTheDocument();
+    expect(screen.getByText(/ttft: 8ms/)).toBeInTheDocument();
     expect(screen.getByText(/strategy: adaptive/)).toHaveTextContent("advice: insufficient");
     expect(screen.getByText(/strategy: adaptive/)).toHaveTextContent("least-busy fallback");
   });

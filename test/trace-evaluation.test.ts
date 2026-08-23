@@ -35,13 +35,46 @@ describe("evaluateTrace", () => {
   it("passes completed, structurally sound execution without inventing a tool requirement", () => {
     const evaluation = evaluateTrace(trace([span({ spanId: "root", kind: "model_request" })]));
     expect(evaluation).toEqual({
-      evaluator: "marina.execution.v1",
+      evaluator: "marina.execution.v2",
       checks: [
         expect.objectContaining({ id: "terminal_outcome", result: "passed" }),
         expect.objectContaining({ id: "history_integrity", result: "passed" }),
         expect.objectContaining({ id: "agent_turns", result: "not_applicable" }),
         expect.objectContaining({ id: "tool_results", result: "not_applicable" }),
+        expect.objectContaining({ id: "metrics_integrity", result: "not_applicable" }),
       ],
+    });
+  });
+
+  it("validates normalized metrics without treating their absence as failure", () => {
+    const valid = evaluateTrace(
+      trace([
+        span({
+          spanId: "valid",
+          kind: "agent_turn",
+          durationMs: 10,
+          attributes: { ttftMs: 3, inputTokens: 20, outputTokens: 5, costUsd: 0 },
+        }),
+      ]),
+    );
+    expect(valid.checks.find((item) => item.id === "metrics_integrity")).toMatchObject({
+      result: "passed",
+      evidenceSpanIds: ["valid"],
+    });
+
+    const invalid = evaluateTrace(
+      trace([
+        span({
+          spanId: "invalid",
+          kind: "agent_turn",
+          durationMs: 10,
+          attributes: { ttftMs: 11 },
+        }),
+      ]),
+    );
+    expect(invalid.checks.find((item) => item.id === "metrics_integrity")).toMatchObject({
+      result: "failed",
+      evidenceSpanIds: ["invalid"],
     });
   });
 

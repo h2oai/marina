@@ -99,12 +99,86 @@ describe("Trace API", () => {
     });
     expect(body.traces[0]).toMatchObject({ traceId: "req-api", status: "completed" });
     expect(body.traces[0]?.evaluation).toMatchObject({
-      evaluator: "marina.execution.v1",
+      evaluator: "marina.execution.v2",
       checks: expect.arrayContaining([
         expect.objectContaining({ id: "terminal_outcome", result: "passed" }),
       ]),
     });
     expect(JSON.stringify(body)).not.toContain("secret intermediate text");
+  });
+
+  it("makes autonomous model metrics consumable through the authenticated API", async () => {
+    const trace = {
+      runId: "agent-run-1",
+      traceId: "agent-trace-1",
+      spanId: "turn-1",
+      origin: "autonomous" as const,
+    };
+    engine.logEvent({
+      type: "agent_turn_start",
+      name: "Ada",
+      model: "local/qwen",
+      ...trace,
+      timestamp: 100,
+    });
+    engine.logEvent({
+      type: "agent_turn_end",
+      name: "Ada",
+      model: "local/qwen",
+      ...trace,
+      hadToolCalls: false,
+      toolCount: 0,
+      durationMs: 40,
+      ttftMs: 7,
+      inputTokens: 100,
+      outputTokens: 12,
+      costUsd: 0,
+      timestamp: 140,
+    });
+
+    const url = new URL("http://localhost:3300/api/traces?traceId=agent-trace-1");
+    const response = await handleDashboardApi(
+      new Request(url, { headers: { Authorization: `Bearer ${token}` } }),
+      url,
+      "GET",
+      engine,
+      db,
+    );
+    const body = (await response!.json()) as {
+      traces: Array<{ spans: Array<{ attributes: Record<string, unknown> }> }>;
+      analytics: { agentModels: Array<Record<string, unknown>> };
+      shadowAdvice: {
+        autonomousModels: {
+          schema: string;
+          dimension: string;
+          mode: string;
+          candidates: string[];
+          reasons: string[];
+          advisoryOnly: boolean;
+        };
+      };
+    };
+    expect(body.traces[0]?.spans[0]?.attributes).toMatchObject({
+      origin: "autonomous",
+      model: "local/qwen",
+      ttftMs: 7,
+      inputTokens: 100,
+      outputTokens: 12,
+      costUsd: 0,
+    });
+    expect(body.analytics.agentModels[0]).toMatchObject({
+      name: "local/qwen",
+      ttft: { samples: 1, p50Ms: 7 },
+      tokens: { samples: 1, input: 100, output: 12 },
+    });
+    expect(body.shadowAdvice.autonomousModels).toEqual({
+      schema: "marina.routing.shadow.v1",
+      dimension: "autonomous_model",
+      mode: "insufficient",
+      candidates: [],
+      reasons: ["Fewer than two observed cohorts."],
+      advisoryOnly: true,
+    });
   });
 
   it("returns durable participant judgments as attributed assertions", async () => {
@@ -292,7 +366,7 @@ describe("Trace API", () => {
     expect(body).toMatchObject({ schema: "marina.trace.dataset.v1" });
     expect(body.cases[0]).toMatchObject({
       trace: { traceId: "req-dataset" },
-      evaluation: { evaluator: "marina.execution.v1" },
+      evaluation: { evaluator: "marina.execution.v2" },
     });
     expect(JSON.stringify(body)).not.toContain("content");
   });

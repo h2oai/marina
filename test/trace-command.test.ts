@@ -80,7 +80,7 @@ describe("trace command", () => {
   it("shows objective checks and evidence", async () => {
     await engine.processCommand(entityId, "trace eval req-command");
     const output = stripAnsi(conn.lastText());
-    expect(output).toContain("marina.execution.v1");
+    expect(output).toContain("marina.execution.v2");
     expect(output).toContain("terminal_outcome: passed");
     expect(output).toContain("evidence: request");
     expect(output).toContain("tool_results: not_applicable");
@@ -120,7 +120,28 @@ describe("trace command", () => {
     await engine.processCommand(entityId, "trace advise models");
     const output = stripAnsi(conn.lastText());
     expect(output).toContain("mode: insufficient");
-    expect(output).toContain("does not automatically apply model advice");
+    expect(output).toContain("never applies model advice without an explicit eligible set");
+  });
+
+  it("makes autonomous-model and tool shadow advice agent-consumable", async () => {
+    await engine.processCommand(entityId, "trace advise autonomous");
+    expect(stripAnsi(conn.lastText())).toContain("Shadow Routing Advice: autonomous_model");
+    conn.clear();
+
+    await engine.processCommand(entityId, "trace advise tools");
+    const output = stripAnsi(conn.lastText());
+    expect(output).toContain("Shadow Routing Advice: tool");
+    expect(output).toContain("never applies tool advice without an explicit eligible set");
+  });
+
+  it("selects only inside a caller-provided eligible set without mutating configuration", async () => {
+    await engine.processCommand(entityId, "trace choose tools read search");
+    const output = stripAnsi(conn.lastText());
+    expect(output).toContain("Explicit Trace Selection: tool");
+    expect(output).toContain("eligible: read, search");
+    expect(output).toContain("selected: read");
+    expect(output).toContain("advice applied: no");
+    expect(output).toContain("No configuration changed");
   });
 
   it("appends and reads identity-attributed advisory judgments", async () => {

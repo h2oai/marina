@@ -44,6 +44,8 @@ import { guideCommand } from "./commands/guide";
 import { helpCommand } from "./commands/help";
 import { ignoreCommand, isIgnoring } from "./commands/ignore";
 import { imageCommand } from "./commands/image";
+import { inheritCommand } from "./commands/inherit";
+import { inheritanceCommand } from "./commands/inheritance";
 import { inventoryCommand } from "./commands/inventory";
 import { dropCommand, getCommand, giveCommand } from "./commands/items";
 import { keyCommand } from "./commands/key";
@@ -609,6 +611,13 @@ export function registerBuiltinCommands(engine: Engine): void {
       db: engine.db,
       getEventLog: () => engine.getEventLog(),
       getEntityName: (id) => engine.entities.get(id)?.name,
+    }),
+  );
+  engine.commands.registerBuiltin(inheritanceCommand(engine.db));
+  engine.commands.registerBuiltin(
+    inheritCommand({
+      db: engine.db,
+      getEntity: (id) => engine.entities.get(id as EntityId),
     }),
   );
 

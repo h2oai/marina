@@ -3,7 +3,11 @@
 
 import { describe, expect, test } from "bun:test";
 import type { TraceCohortComparison } from "../src/engine/trace-dataset";
-import { adviseTraceRouting, selectAdaptiveCandidate } from "../src/engine/trace-routing-advice";
+import {
+  adviseTraceAggregates,
+  adviseTraceRouting,
+  selectAdaptiveCandidate,
+} from "../src/engine/trace-routing-advice";
 
 function cohort(
   name: string,
@@ -27,6 +31,9 @@ function cohort(
         samples: p50Ms === undefined ? 0 : observed,
         ...(p50Ms === undefined ? {} : { p50Ms, p95Ms: p50Ms }),
       },
+      ttft: { samples: 0 },
+      tokens: { samples: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: { samples: 0, totalUsd: 0 },
     },
     judgments: { total: 0, passed: 0, failed: 0, inconclusive: 0, evaluators: 0, criteria: {} },
   };
@@ -68,6 +75,19 @@ describe("shadow routing advice", () => {
     expect(selectAdaptiveCandidate(["different"], advice, () => "different")).toMatchObject({
       target: "different",
       applied: false,
+    });
+  });
+
+  test("keeps autonomous-model and tool aggregate advice shadow-only", () => {
+    const result = adviseTraceAggregates(
+      [cohort("search", 4, 1, 10).mechanics, cohort("read", 4, 0.5, 20).mechanics],
+      "tool",
+    );
+    expect(result).toMatchObject({
+      dimension: "tool",
+      mode: "pareto",
+      candidates: ["search"],
+      advisoryOnly: true,
     });
   });
 });

@@ -22,6 +22,8 @@ describe("projectTraces", () => {
       {
         type: "agent_turn_start",
         name: "Ada",
+        origin: "request",
+        model: "openai/gpt-4o",
         ...base,
         spanId: "turn",
         parentSpanId: "request",
@@ -51,6 +53,13 @@ describe("projectTraces", () => {
         name: "Ada",
         hadToolCalls: true,
         toolCount: 1,
+        origin: "request",
+        model: "openai/gpt-4o",
+        durationMs: 30,
+        ttftMs: 8,
+        inputTokens: 20,
+        outputTokens: 5,
+        costUsd: 0.001,
         ...base,
         spanId: "turn",
         parentSpanId: "request",
@@ -84,6 +93,17 @@ describe("projectTraces", () => {
       ["tool", "tool", "turn"],
     ]);
     expect(trace?.spans[0]?.attributes.routeKind).toBe("passthru");
+    expect(trace?.spans[1]).toMatchObject({
+      durationMs: 30,
+      attributes: {
+        origin: "request",
+        model: "openai/gpt-4o",
+        ttftMs: 8,
+        inputTokens: 20,
+        outputTokens: 5,
+        costUsd: 0.001,
+      },
+    });
   });
 
   it("marks an end observed without its retained start as partial", () => {

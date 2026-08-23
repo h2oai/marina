@@ -6,6 +6,7 @@ export interface AgentTraceFields {
   traceId: string;
   spanId: string;
   parentSpanId?: string;
+  origin: "autonomous" | "request";
 }
 
 export interface TraceParent {
@@ -27,6 +28,7 @@ interface ActiveTurn {
   traceId: string;
   spanId: string;
   parentSpanId?: string;
+  origin: "autonomous" | "request";
   toolSpans: Map<string, string[]>;
 }
 
@@ -56,6 +58,7 @@ export class AgentExecutionTracer {
       traceId: turn.traceId,
       spanId: turn.spanId,
       ...(turn.parentSpanId ? { parentSpanId: turn.parentSpanId } : {}),
+      origin: turn.origin,
     };
 
     if (type === "tool_call" && toolName) {
@@ -82,6 +85,7 @@ export class AgentExecutionTracer {
       traceId: parent?.traceId ?? `agent-trace-${id}`,
       spanId: `turn-${id}`,
       parentSpanId: parent?.spanId,
+      origin: parent ? "request" : "autonomous",
       toolSpans: new Map(),
     };
   }

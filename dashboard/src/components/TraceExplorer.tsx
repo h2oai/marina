@@ -96,7 +96,8 @@ export function TraceExplorerView({
       {isLoading && traces.length === 0 && <div className="text-text-dim">Loading traces…</div>}
       {!isLoading && !error && traces.length === 0 && (
         <div className="rounded border border-border p-3 text-text-dim">
-          No traced executions yet. Send a request through Marina’s model endpoint to begin.
+          No traced executions yet. Start an agent turn or send a request through Marina’s model
+          endpoint to begin.
         </div>
       )}
       {traces.length > 0 && (
@@ -104,6 +105,7 @@ export function TraceExplorerView({
           {data?.analytics && (
             <AnalyticsSummary
               models={data.analytics.models}
+              agentModels={data.analytics.agentModels ?? []}
               routes={data.analytics.routes}
               tools={data.analytics.tools}
             />
@@ -112,7 +114,14 @@ export function TraceExplorerView({
             <CohortSummary rows={[...data.comparisons.models, ...data.comparisons.routes]} />
           )}
           {data?.shadowAdvice && (
-            <ShadowAdvice rows={[data.shadowAdvice.models, data.shadowAdvice.routes]} />
+            <ShadowAdvice
+              rows={[
+                data.shadowAdvice.models,
+                data.shadowAdvice.routes,
+                data.shadowAdvice.autonomousModels,
+                data.shadowAdvice.tools,
+              ].filter((row): row is TraceRoutingAdvice => row !== undefined)}
+            />
           )}
           <div className="grid min-h-0 flex-1 grid-cols-[minmax(8rem,0.8fr)_minmax(12rem,1.6fr)] gap-2">
             <div className="min-h-0 space-y-1 overflow-auto border-r border-border pr-2">
@@ -176,15 +185,18 @@ function CohortSummary({ rows }: { rows: TraceCohortComparison[] }) {
 
 function AnalyticsSummary({
   models,
+  agentModels,
   routes,
   tools,
 }: {
   models: TraceAggregate[];
+  agentModels: TraceAggregate[];
   routes: TraceAggregate[];
   tools: TraceAggregate[];
 }) {
   const rows = [
     ...models.slice(0, 1).map((row) => ({ kind: "model", row })),
+    ...agentModels.slice(0, 1).map((row) => ({ kind: "autonomous", row })),
     ...routes.slice(0, 1).map((row) => ({ kind: "route", row })),
     ...tools.slice(0, 2).map((row) => ({ kind: "tool", row })),
   ];
@@ -198,7 +210,11 @@ function AnalyticsSummary({
           </div>
           <div className="text-[9px] text-text-dim">
             n={row.eligible}/{row.observed} · success {formatRate(row.successRate)} · p50{" "}
-            {formatDuration(row.latency.p50Ms)}
+            {formatDuration(row.latency.p50Ms)} · ttft {formatDuration(row.ttft?.p50Ms)}
+            {(row.tokens?.samples ?? 0) > 0
+              ? ` · ${row.tokens!.input}in/${row.tokens!.output}out`
+              : ""}
+            {(row.cost?.samples ?? 0) > 0 ? ` · $${row.cost!.totalUsd.toFixed(4)}` : ""}
           </div>
         </div>
       ))}
@@ -222,6 +238,29 @@ function routeDetails(span: TraceSpanView): string | undefined {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+function metricDetails(span: TraceSpanView): string | undefined {
+  const values = [
+    typeof span.attributes.model === "string" ? `model: ${span.attributes.model}` : undefined,
+    typeof span.attributes.origin === "string" ? `origin: ${span.attributes.origin}` : undefined,
+    typeof span.attributes.ttftMs === "number"
+      ? `ttft: ${formatDuration(span.attributes.ttftMs)}`
+      : undefined,
+    typeof span.attributes.inputTokens === "number"
+      ? `input: ${span.attributes.inputTokens}`
+      : undefined,
+    typeof span.attributes.outputTokens === "number"
+      ? `output: ${span.attributes.outputTokens}`
+      : undefined,
+    typeof span.attributes.costUsd === "number"
+      ? `cost: $${span.attributes.costUsd.toFixed(4)}`
+      : undefined,
+    typeof span.attributes.errorKind === "string"
+      ? `error: ${span.attributes.errorKind}`
+      : undefined,
+  ].filter(Boolean);
+  return values.length > 0 ? values.join(" · ") : undefined;
 }
 
 function TraceRow({
@@ -267,6 +306,7 @@ function SpanTree({ trace }: { trace: TraceView }) {
       </div>
       {trace.spans.map((span) => {
         const routing = routeDetails(span);
+        const metrics = metricDetails(span);
         return (
           <div
             key={span.spanId}
@@ -287,6 +327,11 @@ function SpanTree({ trace }: { trace: TraceView }) {
             {routing && (
               <div className="mt-0.5 text-[9px] text-text-dim" title={routing}>
                 {routing}
+              </div>
+            )}
+            {metrics && (
+              <div className="mt-0.5 text-[9px] text-text-dim" title={metrics}>
+                {metrics}
               </div>
             )}
           </div>

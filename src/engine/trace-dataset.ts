@@ -121,5 +121,8 @@ function emptyAggregate(name: string): TraceAggregate {
     failed: 0,
     running: 0,
     latency: { samples: 0 },
+    ttft: { samples: 0 },
+    tokens: { samples: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    cost: { samples: 0, totalUsd: 0 },
   };
 }

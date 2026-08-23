@@ -70,6 +70,17 @@ Everything you can type at the `>` prompt. Arguments in `<angle brackets>` are r
 > trace judge <id> passed correctness | Verified against the expected result
 ```
 
+Shared guide and tradition evidence can move between Marina worlds without carrying private memory:
+
+```text
+> inheritance list
+> inheritance export orchestration:research
+> inherit <bundle-token>
+```
+
+Imports remain quarantined as unverified evidence until a human or agent deliberately reviews and
+curates them. See [Cross-world Inheritance](inheritance.md).
+
 Trace views are read-only and omit prompts, outputs, thinking text, and tool arguments. See
 [Execution Traces and Evaluations](observability.md) for retention and interpretation boundaries.
 

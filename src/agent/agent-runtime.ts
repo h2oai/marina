@@ -208,6 +208,7 @@ export function createAgentEventRelay(
           type: "agent_turn_start",
           name,
           ...executionTrace.trace("turn_start", undefined, event.traceParent),
+          model: event.model,
           timestamp: now,
         });
         break;
@@ -216,8 +217,20 @@ export function createAgentEventRelay(
           type: "agent_turn_end",
           name,
           ...executionTrace.trace("turn_end"),
+          model: event.model,
           hadToolCalls: event.hadToolCalls,
           toolCount: event.toolCount,
+          ...(event.durationMs === undefined ? {} : { durationMs: event.durationMs }),
+          ...(event.ttftMs === undefined ? {} : { ttftMs: event.ttftMs }),
+          ...(event.inputTokens === undefined ? {} : { inputTokens: event.inputTokens }),
+          ...(event.outputTokens === undefined ? {} : { outputTokens: event.outputTokens }),
+          ...(event.cacheReadTokens === undefined
+            ? {}
+            : { cacheReadTokens: event.cacheReadTokens }),
+          ...(event.cacheWriteTokens === undefined
+            ? {}
+            : { cacheWriteTokens: event.cacheWriteTokens }),
+          ...(event.costUsd === undefined ? {} : { costUsd: event.costUsd }),
           timestamp: now,
         });
         break;
