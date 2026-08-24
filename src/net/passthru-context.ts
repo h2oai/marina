@@ -74,14 +74,22 @@ function findOrCreatePassthruEntity(engine: Engine, rawName: string): Entity {
   });
 }
 
-function identityFor(entity: Entity, headers: Headers, shared: boolean): PassthruIdentity {
+function identityFor(
+  entity: Entity,
+  headers: Headers,
+  shared: boolean,
+  headerOptInAllowed: boolean,
+): PassthruIdentity {
   const configured = entity.properties[CONTEXT_OPT_IN_PROP];
-  const contextOptIn =
-    !shared &&
-    (headers.get("X-Marina-Context")?.trim().toLowerCase() === "on" ||
-      configured === true ||
-      configured === "on" ||
-      configured === "true");
+  const storedOptIn = configured === true || configured === "on" || configured === "true";
+  // Header-driven opt-in is honored ONLY for a bound identity (an operator
+  // explicitly declared that binding). For a NAME-MAPPED target the request
+  // header is attacker-controlled and MUST NOT force the target agent into
+  // shared-context participation — the target opts in solely via its own stored
+  // `properties[passthruContext]`. Shared/anonymous never participates at all.
+  const headerOptIn =
+    headerOptInAllowed && headers.get("X-Marina-Context")?.trim().toLowerCase() === "on";
+  const contextOptIn = !shared && (headerOptIn || storedOptIn);
   return { entityId: entity.id, name: entity.name, contextOptIn, shared };
 }
 
@@ -112,7 +120,8 @@ export function resolvePassthruIdentity(
 ): PassthruIdentity {
   const boundName = auth.boundEntityName ? sanitizeEntityName(auth.boundEntityName) : "";
   if (boundName) {
-    return identityFor(findOrCreatePassthruEntity(engine, boundName), headers, false);
+    // Bound identity: operator-declared, so the request MAY opt it into context.
+    return identityFor(findOrCreatePassthruEntity(engine, boundName), headers, false, true);
   }
 
   if (auth.canNameMap === true) {
@@ -121,12 +130,21 @@ export function resolvePassthruIdentity(
     if (sanitized && sanitized !== DEFAULT_PASSTHRU_ENTITY) {
       // Name-map ONLY to a pre-existing entity — never auto-create from a header.
       const target = engine.entities.findAgentByName(sanitized);
-      if (target) return identityFor(target, headers, false);
+      // Name-mapped target: IGNORE the request X-Marina-Context header — the
+      // target participates in shared context only if IT has itself opted in via
+      // stored properties. This blocks an operator key from forcing context
+      // sharing/capture on an agent that never consented.
+      if (target) return identityFor(target, headers, false, false);
       // Unknown target → fall through to the shared anonymous entity (no create).
     }
   }
 
-  return identityFor(findOrCreatePassthruEntity(engine, DEFAULT_PASSTHRU_ENTITY), headers, true);
+  return identityFor(
+    findOrCreatePassthruEntity(engine, DEFAULT_PASSTHRU_ENTITY),
+    headers,
+    true,
+    false,
+  );
 }
 
 function clamp(value: string): string {

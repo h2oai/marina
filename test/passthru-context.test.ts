@@ -141,6 +141,54 @@ describe("passthru-context", () => {
       expect(id.contextOptIn).toBe(false);
     });
 
+    it("IGNORES X-Marina-Context for a NAME-MAPPED target that never opted in (no forced sharing)", () => {
+      // A multi-tenant operator key (canNameMap) must NOT be able to force context
+      // sharing/capture on a name-mapped target agent via the request header.
+      engine.entities.create({
+        kind: "agent",
+        name: "Victim",
+        short: "Victim",
+        long: "never opted in",
+        room: engine.config.startRoom,
+        properties: {},
+      });
+      const mapped = resolvePassthruIdentity(
+        engine,
+        headers({ "X-Marina-Agent": "Victim", "X-Marina-Context": "on" }),
+        { canNameMap: true },
+      );
+      expect(mapped.name).toBe("Victim");
+      expect(mapped.shared).toBe(false);
+      expect(mapped.contextOptIn).toBe(false); // header ignored — target never consented
+    });
+
+    it("opts a NAME-MAPPED target in ONLY via its own stored passthruContext property", () => {
+      const target = engine.entities.create({
+        kind: "agent",
+        name: "Consenting",
+        short: "Consenting",
+        long: "opted in",
+        room: engine.config.startRoom,
+        properties: { passthruContext: true },
+      });
+      // No X-Marina-Context header — opt-in must come from the target's property.
+      const mapped = resolvePassthruIdentity(engine, headers({ "X-Marina-Agent": "Consenting" }), {
+        canNameMap: true,
+      });
+      expect(mapped.entityId).toBe(target.id);
+      expect(mapped.contextOptIn).toBe(true);
+    });
+
+    it("still honors X-Marina-Context for a BOUND secret:entity key (unchanged)", () => {
+      const bound = resolvePassthruIdentity(engine, headers({ "X-Marina-Context": "on" }), {
+        boundEntityName: "BoundOps",
+        canNameMap: false,
+      });
+      expect(bound.name).toBe("BoundOps");
+      expect(bound.shared).toBe(false);
+      expect(bound.contextOptIn).toBe(true); // operator-declared binding → header opt-in allowed
+    });
+
     it("sets contextOptIn from the resolved identity's config property", () => {
       const first = resolvePassthruIdentity(engine, headers({}), { boundEntityName: "Optin" });
       const ent = engine.entities.get(first.entityId)!;
