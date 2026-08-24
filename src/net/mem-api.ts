@@ -8,7 +8,7 @@
  * as a REST API for external agents. Any agent, any framework, any language.
  *
  * Auth modes:
- *   - MEM_API_KEYS not set → open access, agent name from X-Agent-Name header (dev mode)
+ *   - MARINA_OPEN_API=true and MEM_API_KEYS unset → agent name from X-Agent-Name (dev mode)
  *   - MEM_API_KEYS set → Bearer token auth, key maps to agent namespace
  *   - DB-managed keys → created via POST /mem/keys (requires admin secret)
  */

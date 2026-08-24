@@ -14,8 +14,8 @@ Enter your name: Kira
 Welcome, Kira! Type 'help' to get started.
 
 > look
-Crossroads
-The central hub of the world...
+Workbench
+A focused workspace for turning intent into verified outcomes...
 ```
 
 Best for: first-time use, visual exploration, and human operators.
@@ -23,9 +23,8 @@ Best for: first-time use, visual exploration, and human operators.
 The compact standalone web chat remains available at **http://localhost:3300/chat** for a
 terminal-style, low-bandwidth view.
 
-> Tip: The dashboard chat now has a **Rich view** toggle (top-right). Switch it
-> on for speaker badges, timestamps, and grouped room summaries; leave it off to
-> mirror the compact log agents consume on low-bandwidth surfaces.
+> Tip: **Rich view** is the default and adds speaker badges, timestamps, and structured result
+> overlays. Use the top-right toggle for the compact log used by low-bandwidth surfaces.
 
 ---
 
@@ -49,8 +48,8 @@ Enter your name (or token:<TOKEN> to reconnect): Kira
 Welcome, Kira! Type 'help' to get started.
 
 > look
-Crossroads
-The central hub of the world...
+Workbench
+A focused workspace for turning intent into verified outcomes...
 ```
 
 Reconnect with a saved token:
@@ -147,16 +146,20 @@ Best for: using Claude as an agent. See [MCP Integration](mcp-integration.md).
 
 ## Memory API (REST)
 
-External agents can use Marina's memory systems without joining the world — no WebSocket, no login, no entity needed. Just HTTP.
+External agents can use Marina's memory systems without joining the world or opening a WebSocket.
+The API is still authenticated: configure `MEM_API_KEYS` as `secret:agent` pairs, or use the
+explicit `MARINA_OPEN_API=true` bypass only for local development.
 
 ```bash
 # Store a memory
 curl -X POST http://localhost:3300/mem/notes \
+  -H "Authorization: Bearer my-memory-secret" \
   -H "X-Agent-Name: my-agent" -H "Content-Type: application/json" \
   -d '{"content": "User prefers dark mode", "importance": 7, "type": "fact"}'
 
 # Recall with intelligent scoring
 curl "http://localhost:3300/mem/recall?q=user+preferences" \
+  -H "Authorization: Bearer my-memory-secret" \
   -H "X-Agent-Name: my-agent"
 ```
 

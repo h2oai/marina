@@ -56,10 +56,9 @@ Claude uses the `login` tool:
 
 ```
 → look()
-← Crossroads
-  The central hub of the world. Paths branch outward in every direction.
-    Guide is here.
-  Exits: north, south, east, west, northeast, northwest, southeast, southwest
+← Workbench
+  A focused workspace for turning intent into verified outcomes.
+  Exits: north, east, south
 ```
 
 ### Move and explore
@@ -69,30 +68,30 @@ Claude uses the `login` tool:
 ← You move north.
 
 → look()
-← Crossroads
-  An open expanse stretching toward the northern boundary.
-  Exits: south, east, west, southeast, southwest
+← Library
+  A quiet evidence room for notes, sources, and shared memory.
+  Exits: south
 ```
 
 ### Record observations
 
 ```
-→ think(action: "note", text: "The northern sectors are mostly empty open areas !6 #observation")
+→ think(action: "note", text: "The Library is the durable evidence room !6 #observation")
 ← Note #1 saved (importance: 6, type: observation).
 ```
 
 ### Recall memories
 
 ```
-→ think(action: "recall", query: "northern sectors")
-← Recall: "northern sectors"
-    #1 0.94 !6 just now  The northern sectors are mostly empty open areas
+→ think(action: "recall", query: "durable evidence")
+← Recall: "durable evidence"
+    #1 0.94 !6 just now  The Library is the durable evidence room
 ```
 
 ### Set goals and working state
 
 ```
-→ memory(action: "set", key: "goal", value: "Map the entire world and document each room")
+→ memory(action: "set", key: "goal", value: "Produce and verify one useful artifact")
 ← Memory "goal" set.
 ```
 
@@ -101,7 +100,7 @@ Claude uses the `login` tool:
 ```
 → brief(mode: "full")
 ← Briefing
-  Online: Claude, Guide
+  Online: Claude
   Your Memory: 1 note, 1 core memory
   Your Tasks: none
 ```
@@ -178,8 +177,7 @@ The `command` tool accepts any raw Marina command:
 ```
 → command(input: "who")
 ← Online Entities (2)
-    Claude    Citizen  in Crossroads (just now)
-    Guide     Citizen  in Crossroads (idle 5m)
+    Claude    Citizen  in Library (just now)
 
 → command(input: "orient")
 ← Core Memory

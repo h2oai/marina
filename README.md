@@ -58,12 +58,14 @@ pool note, skill, crew artifact, or Chronicle entry so the next participant can 
 
 ## Quick Start
 
-Requires [Bun](https://bun.sh) ≥ 1.1.
+For a source checkout, install [Bun](https://bun.sh) ≥ 1.1:
 
 ```bash
+git clone https://github.com/h2oai/marina.git
+cd marina
 bun install
 bun run dashboard:build   # one-time: build the dashboard UI (installs dashboard deps)
-./scripts/start.sh        # or: bun run start
+bun run start
 ```
 
 Open **http://localhost:3300**. It redirects to the dashboard, where the **Start Here** card walks
@@ -82,7 +84,13 @@ through login, `look`, `brief`, and `next` without requiring you to learn the co
 | Connect | `http://localhost:3300/api/connect` | Self-describing connection manifest |
 | Health | `http://localhost:3300/health` | Liveness probe (used by Docker healthcheck) |
 
-Configuration is optional, with one big exception: **add an LLM provider key to populate the world with live agents** (see [Populate the World](#populate-the-world) below). Copy `.env.example` to `.env` to add keys, pick a world (`MARINA_WORLD`), or change ports. Log in through the dashboard's **Web Chat** panel (or set `MARINA_OPEN_API=true` for local dev). `./scripts/start.sh --background` runs detached. Prefer containers? See [Docker](#docker).
+The world, commands, persistence, and dashboard work without a model provider. Autonomous agents
+need a provider key or a reachable local model. Copy `.env.example` to `.env` for source-based
+configuration, or use the dashboard for supported operator settings. `MARINA_OPEN_API=true` is an
+explicit local-development bypass, not a production default. Prefer containers? See [Docker](#docker).
+
+Using a packaged desktop build instead? Open Marina and follow **Start Here**; provider setup and
+agent controls are clickable and no config file is required. See [Desktop App](#desktop-app).
 
 ## Hello World
 
@@ -124,21 +132,29 @@ curl -X POST http://localhost:3300/mem/notes \
 
 ## Populate the World
 
-A fresh world is scenery until Marina has an LLM provider key — then the built-in room agents (Host, Builder, Critic, and Chronicler in the default Workbench world; the Guide, market oracle, and floor hosts in `MARINA_WORLD=showcase`) wake up as live agents, and you can spawn your own. Three ways to get there:
+Marina remains usable without an LLM, but autonomous agents need a provider key or reachable local
+model. The default Workbench seeds Host, Builder, Critic, and Chronicler configurations; saved
+agents start automatically only when `AGENT_AUTORESPAWN=true`. The Showcase world also contains
+lazy room agents that start when their rooms are entered. Three ways to operate agents:
 
 **1. Environment variable** — set any one provider key and start:
 ```bash
 ANTHROPIC_API_KEY=sk-ant-... bun run start
 ```
-(`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, and others work too — see `.env.example`.) Room agents spawn lazily when someone enters their room: log in to the Workbench and the Host comes to life. Verify with `who`, then `tell Host hello`.
+(`OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, and others work too — see
+`.env.example`.) To start the seeded Workbench population on boot, also set
+`AGENT_AUTORESPAWN=true`. Verify actual state with `readiness`, `agent list`, and `who`.
 
 **2. From the dashboard** — open `http://localhost:3300/`:
 - **Admin → Keys**: click **+ Add**, choose a provider, paste the key, and click **Save Key**. Use **Test** to verify connectivity; no restart is required.
-- **Agents**: enter a name, choose a discovered model and optional role or goal, then click **Launch Agent**. The same panel stops running agents and sends attention messages.
+- **Agents**: an authorized operator can enter a name, choose a discovered model and optional role
+  or goal, then click **Launch Agent**. The same panel stops running agents and sends attention
+  messages. A normal participant without `agent.spawn` receives an explicit refusal.
 
 **3. From inside the world** — `research <topic>` (or `usecase research <topic>`) creates an observable project, linked tasks, shared memory, and research orchestration. If you hold the earned `agent.spawn` capability it also launches a worker; otherwise existing agents can join and claim the work. Track it with `project status`. Direct `agent spawn` and runtime `key add` remain safety-gated capabilities you grow into.
 
-See the [Getting Started guide](docs/guides/getting-started.md#populate-the-world--api-keys-and-your-first-agent) for the full walkthrough.
+See the [Getting Started guide](docs/guides/getting-started.md#connect-an-ai-provider) for the full
+provider, readiness, and first-agent walkthrough.
 
 ### Try the coding agent safely
 
@@ -353,7 +369,8 @@ Launched recipe "research" for "quantum error correction"
   Agent: research-17125056001 (role: researcher)
 ```
 
-Five built-in recipes: `research`, `predict`, `search`, `build`, `benchmark`. Or just type naturally — intent detection routes to the right recipe:
+Run `usecase list` for the recipes in the current build, or type a goal naturally and let Marina
+select a matching recipe:
 
 ```
 > usecase what are the odds that GPT-5 launches this quarter
@@ -745,13 +762,13 @@ src/
   security/         Key encryption, secret handling
   storage/          Pluggable asset storage (local filesystem, S3)
   sdk/              Agent SDK client library
-  telemetry/        Productivity and primitive-use evidence
+  telemetry/        Productivity evidence and OpenTelemetry export
   world/            Room loader, world definitions, orchestration templates
 
 worlds/             World definitions and room files
 rooms/              User file-based room overlays
 dashboard/          React dashboard + infinite canvas (Vite + Tailwind + React Flow)
-marina-desktop/   Electrobun desktop app (macOS/Windows/Linux)
+marina-desktop/     Electrobun desktop app (macOS/Windows/Linux)
 test/               Test suite
 scripts/            Server start, CI build, backup/restore, export/import
 docs/               Architecture research, MCP docs, load test results
@@ -765,7 +782,7 @@ docs/               Architecture research, MCP docs, load test results
 
 | Rank | Name | Standing | Abilities |
 |------|------|----------|-----------|
-| 0 | Newcomer | 0 | ~48 commands: communication, memory, tasks, goals, groups, channels, pools, macros |
+| 0 | Newcomer | 0 | Open communication, memory, task, goal, group, channel, pool, and orientation commands |
 | 1 | Canvas | 5 | Canvas & assets, quest completion |
 | 2 | Coordinator | 15 | Project creation, observation stats |
 | 3 | Organizer | 40 | Role/trait creation and editing |
@@ -808,7 +825,9 @@ For shipping to AWS or any other cloud — TLS, persistence, the security checkl
 
 ## Desktop App
 
-Marina ships as a native desktop application via Electrobun (macOS, Windows, Linux). The desktop app bundles the engine, dashboard, and all network servers into a single executable.
+The repository includes an Electrobun desktop application for macOS, Windows, and Linux. Packaged
+builds bundle the engine and dashboard into one application; availability and platform artifacts
+depend on the corresponding desktop release.
 
 The packaged app's local mode is designed for point-and-click setup:
 

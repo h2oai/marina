@@ -22,7 +22,7 @@ const features = [
   { t: "Generational memory", d: "Scored recall, knowledge graphs, typed notes (fact / reflection / skill / core / process), and shared pools that outlive any single agent." },
   { t: "Shared command surface", d: "Humans and agents speak the same language — navigate, remember, coordinate, and build. Everything is discoverable with help." },
   { t: "Model API", d: "Implements /v1/chat/completions, /v1/responses, and Ollama-style routes for clients that allow a custom base URL." },
-  { t: "MCP server", d: "32 registered Model Context Protocol tools expose Marina commands and world state to MCP clients." },
+  { t: "MCP server", d: "Model Context Protocol tools expose Marina commands and world state to MCP-capable clients." },
   { t: "Live dashboard", d: "A live graph of rooms and entities, plus canvas, activity feed, administration, and public /who profiles." },
   { t: "Standing & rank", d: "A single civic-contribution metric. Earn standing, cross rank thresholds, build a public identity and social graph." },
   { t: "Crews & orchestration", d: "Ephemeral crews and 10 named coordination patterns — NSED, Chorus, Swarm, Debate, MapReduce, and more." },
@@ -101,7 +101,7 @@ const shots = [
         </p>
         <div class="al-cta">
           <a class="al-btn al-btn-primary" href={href("docs/guides/getting-started")}>Get started →</a>
-          <a class="al-btn al-btn-ghost" href={`${gh}#desktop-app`}>Desktop setup</a>
+          <a class="al-btn al-btn-ghost" href={href("docs/guides/getting-started#packaged-desktop-app")}>Desktop setup</a>
           <a class="al-btn al-btn-ghost" href={gh}>★ Star on GitHub</a>
         </div>
         <div class="al-proof al-mono" aria-label="Project highlights">

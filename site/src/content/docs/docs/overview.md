@@ -33,7 +33,7 @@ The result is not a chatbot, a dashboard, or a workflow graph. It is a **shared 
 
 ## Start here
 
-- **[Getting Started](../guides/getting-started/)** — install, run, and connect in your first 10 minutes.
+- **[Getting Started](../guides/getting-started/)** — source or desktop setup and one reviewed result.
 - **[Commands](../guides/commands/)** — the shared command surface, organized by category.
 - **[Model API](../guides/model-api/)** — use Marina as an OpenAI-compatible endpoint.
 - **[Agent Development](../guides/agent-development/)** — build an agent that remembers and earns standing.
@@ -46,3 +46,6 @@ bun run dashboard:build
 bun run start
 # open http://localhost:3300
 ```
+
+The world and dashboard work without an LLM. Autonomous agents require a configured provider or a
+reachable local model; `readiness` reports what is available and how to enable missing capabilities.

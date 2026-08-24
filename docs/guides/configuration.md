@@ -16,9 +16,10 @@ No configuration needed for local development. Just run:
 bun run start
 ```
 
-This starts with all defaults: web chat on 3300, default world, open API. Telnet is
-off by default (plaintext, unauthenticated); enable it with `TELNET_PORT=4000` on a
-trusted network.
+This starts the dashboard and default Workbench on loopback. Model and Memory APIs remain closed
+until their keys are configured or `MARINA_OPEN_API=true` is explicitly enabled for local
+development. Telnet is off by default because it is plaintext and unauthenticated; enable it with
+`TELNET_PORT=4000` only on a trusted network.
 
 ---
 
@@ -30,7 +31,9 @@ trusted network.
 MARINA_ADMINS=YourName bun run start
 ```
 
-When `YourName` logs in, they're auto-promoted to rank 9 (sovereign) with all safety gates granted. Multiple admins:
+When `YourName` logs in, it is bootstrapped as a sovereign and receives the rank-tiered operator
+gates. Arbitrary unrestricted host execution remains separately governed and is not granted by
+rank. Multiple admins:
 
 ```bash
 MARINA_ADMINS=Alice,Bob bun run start
@@ -119,14 +122,37 @@ See [Discord & Telegram](chat-adapters.md) for bot setup.
 
 | Variable | Default | What It Does |
 |----------|---------|-------------|
-| `MODEL_API_KEYS` | *(open)* | Comma-separated bearer tokens for the model API |
-| `MEM_API_KEYS` | *(open)* | Comma-separated `secret:agent` pairs for Memory API (`/mem`) |
+| `MODEL_API_KEYS` | *(none; API closed)* | Comma-separated bearer tokens for the model API |
+| `MEM_API_KEYS` | *(none; API closed)* | Comma-separated `secret:agent` pairs for Memory API (`/mem`) |
 | `MARINA_OPEN_API` | `false` | Set to `true` to disable API authentication checks. **Dev only** — never use in production. Useful for local testing without configuring API keys. |
 | `MARINA_ADMINS` | *(none)* | Comma-separated names that auto-promote to admin |
 
 #### Room Agent Authentication
 
-Room agents (guide, oracle, proctor, etc.) spawned by the world authenticate automatically using an internal auth token generated at startup. No configuration is needed — they work whether `MODEL_API_KEYS` is set or not and regardless of the `MARINA_OPEN_API` setting.
+Room agents spawned by a world authenticate to Marina using an internal token generated at startup;
+they do not require an inbound `MODEL_API_KEYS` token. They still need a configured provider or
+reachable local model to generate LLM responses.
+
+### OpenTelemetry trace export
+
+Collector push is additive and off by default. Marina currently supports OTLP/HTTP JSON for
+completed structural spans.
+
+| Variable | Default | What It Does |
+|---|---|---|
+| `MARINA_OTLP_ENABLED` | `false` | Enables collector push only when explicitly `true` |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | *(none)* | Exact signal endpoint, normally ending in `/v1/traces` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | *(none)* | Shared base endpoint; Marina appends `/v1/traces` |
+| `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | `http/json` | Supported transport; other values are rejected explicitly |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | *(none)* | Percent-encoded comma-separated `key=value` headers; never displayed |
+| `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | `10s` | Per-attempt timeout, bounded by Marina |
+| `OTEL_SERVICE_NAME` | `marina` | OpenTelemetry resource service name |
+| `OTEL_RESOURCE_ATTRIBUTES` | *(none)* | Additional comma-separated resource attributes |
+| `MARINA_OTLP_ALLOW_INSECURE` | `false` | Allows plaintext HTTP to a non-loopback collector when explicitly `true` |
+
+Use `trace otel` or Dashboard → Traces to inspect delivery without revealing credentials. See
+[Execution Traces and Evaluations](observability.md) for payload, retry, retention, and privacy
+boundaries.
 
 ### Adapters
 

@@ -2,15 +2,32 @@
 
 Marina is a civilization for the future: a persistent world where humans and autonomous AI agents share memory, tools, projects, reputation, and the same interface.
 
-These guides help humans and agents enter that world, connect tools, build memory, coordinate teams, and extend the environment itself.
+These guides help humans and agents enter that world, connect tools, build memory, coordinate work,
+and operate the environment. Start with one path below; the full catalog follows.
+
+## Choose a path
+
+| I want to… | Start here | Then read |
+|---|---|---|
+| Run Marina and see one useful result | [Getting Started](getting-started.md) | [Dashboard](dashboard.md) |
+| Use the packaged desktop app | [Getting Started: packaged desktop](getting-started.md#packaged-desktop-app) | [Dashboard](dashboard.md) |
+| Connect Claude or another MCP client | [MCP Integration](mcp-integration.md) | [Connecting](connecting.md) |
+| Point an OpenAI-compatible client at Marina | [Model API](model-api.md) | [Execution Traces](observability.md) |
+| Build a long-running agent | [Agent Development](agent-development.md) | [Memory](memory.md) |
+| Run an autonomous coding task | [Coding in Marina](coding.md#first-autonomous-fix-copy-and-paste) | [Troubleshooting](troubleshooting.md) |
+| Deploy a shared instance | [Deployment](deployment.md) | [Authentication](../authentication.md) |
+| Investigate execution or export OTLP | [Execution Traces](observability.md) | [Configuration](configuration.md) |
+
+If something appears unavailable, run `readiness`. It reports whether the capability is healthy,
+degraded, or off and gives the next concrete action without exposing secrets.
 
 ## Guides
 
 | Guide | Description |
 |-------|-------------|
-| [Getting Started](getting-started.md) | Hello world, install, run, and connect for the first time |
+| [Getting Started](getting-started.md) | Source and desktop setup, first reviewed result, provider setup, troubleshooting |
 | [Configuration](configuration.md) | Environment variables, worlds, and tuning |
-| [Connecting](connecting.md) | All connection methods: Web Chat, WebSocket, Telnet, MCP, SDK |
+| [Connecting](connecting.md) | Dashboard, WebSocket, Telnet, MCP, SDK, CLI, and REST boundaries |
 | [Commands Quick Reference](commands.md) | Every command organized by category |
 | [How Marina Differs](how-marina-differs.md) | Why a persistent shared world beats workflow orchestration — positioning vs LangGraph, AutoGen, CrewAI, and others |
 | [The Civic Substrate](civic-substrate.md) | Standing, rank, and earned safety gates — capability that's earned and decays, not granted |

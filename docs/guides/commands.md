@@ -58,6 +58,7 @@ Everything you can type at the `>` prompt. Arguments in `<angle brackets>` are r
 > brief watch 60          Auto-brief every 60 ticks
 > brief unwatch           Stop auto-brief
 > trace                   List recent execution traces
+> trace find status=failed model=qwen limit=20
 > trace stats             Summarize observed model/tool mechanics
 > trace compare models    Compare observed model cohorts without declaring a winner
 > trace compare routes    Compare selected-agent route cohorts
@@ -68,6 +69,7 @@ Everything you can type at the `>` prompt. Arguments in `<angle brackets>` are r
 > trace eval <id>         Run factual execution checks with evidence span IDs
 > trace judgments <id>    Read attributed participant judgments
 > trace judge <id> passed correctness | Verified against the expected result
+> trace otel              Show collector delivery health without credentials
 ```
 
 Shared guide and tradition evidence can move between Marina worlds without carrying private memory:

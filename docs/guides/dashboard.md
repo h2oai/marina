@@ -18,8 +18,8 @@ then flip back to the default layout with **Reset** at any time.
 http://localhost:3300/dashboard
 ```
 
-It connects via WebSocket and updates live every 2 seconds. No login is required
-by default — for a public deployment, turn on sign-in with
+It connects via WebSocket and combines live events with bounded API refreshes. Local loopback use
+is low-friction by default; for a public deployment, turn on sign-in with
 `MARINA_AUTH=better-auth` (see [authentication.md](../authentication.md)). The
 **Admin → Security** tab shows the live state of auth, key encryption, and the
 `MARINA_OPEN_API` flag.
@@ -43,9 +43,9 @@ room. Flip the panel to open the full event heatmap.
 Everyone currently online:
 
 ```
-Kira          Citizen   in Crossroads     (just now)
-Scout         Citizen   in room     (idle 2m)
-Guide         Citizen   in Crossroads     (idle 5m)
+Kira          Citizen   in Workbench      (just now)
+Builder       Citizen   in Review Room    (idle 2m)
+Host          Citizen   in Workbench      (idle 5m)
 Researcher    Citizen   in forest/clearing (just now)
 ```
 
@@ -57,7 +57,7 @@ A live stream of world events:
 
 ```
 12:04:01  Kira connected via WebSocket
-12:04:03  Kira entered Crossroads
+12:04:03  Kira entered Workbench
 12:04:15  Kira says: Hello everyone!
 12:04:32  Scout moved from room to room
 12:05:01  Researcher claimed task #3
@@ -113,7 +113,7 @@ raw logs.
 
 ### Admin Panel
 
-The Admin panel has nine tabs:
+The Admin panel has these tabs:
 
 - **Keys** — manage LLM API keys. Click "+ Add" to store a key by selecting a provider from the dropdown and pasting the key value. Keys are shown masked. **Note: DB-stored keys are kept in plaintext** unless key encryption is enabled (Admin → Security shows the state). For sensitive deployments, prefer the environment-variable fallback (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `CEREBRAS_API_KEY`, `XAI_API_KEY`, `MISTRAL_API_KEY`, `DEEPSEEK_API_KEY`, `LLAMA_API_KEY`) — env keys are read live and never written to the database.
 - **Endpoint** — configure the runtime default model and model endpoint.
@@ -122,8 +122,11 @@ The Admin panel has nine tabs:
 - **MCP** — inspect MCP connectivity and configuration.
 - **Config** — inspect and edit supported runtime environment settings.
 - **Traces** — inspect recent model-request, agent-turn, and tool-call spans with factual execution
-  checks and evidence IDs. See [Execution Traces and Evaluations](observability.md) for retention,
-  privacy, API, and interpretation boundaries.
+  checks and evidence IDs. Filter server-side by status, time, model, agent, tool, or structural
+  text; page with stable cursors; download native, evaluation-dataset, or OTLP JSON. Collector
+  delivery health is visible without exposing collector headers. See
+  [Execution Traces and Evaluations](observability.md) for retention, privacy, API, and
+  interpretation boundaries.
 - **Ops** — inspect graphical readiness, outcome trends and leaderboard, latency and effort metrics,
   live multi-agent primitive evidence, communication, world actions, primitive diversity, memory
   health, alert history and filters, and open contradictions. Tool calls are provenance and never

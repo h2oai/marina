@@ -256,9 +256,9 @@ routing, the verified fast path, and the `open`/`panel` fan-out modes, where eac
 its own request span under one shared trace. Agent turns and tool calls are parented to those
 requests. Autonomous turns without a model-endpoint request receive their own trace with
 `origin=autonomous`; their model, provider-reported usage/cost, latency, and time-to-first-output are
-visible to both `trace` and the dashboard. Direct passthru requests and upstream fallbacks also produce a request span with the
-selected route kind, provider/model target, duration, and terminal status; Marina does not claim
-child spans for work performed inside an external provider. When a perception batch contains
-multiple distinct request traces, Marina leaves the turn unparented instead of claiming an
-ambiguous causal relationship. Other world events and external provider internals are not
-represented as spans.
+visible to both `trace` and the dashboard. Direct passthru requests and upstream fallbacks also
+produce a request span with the selected route kind, provider/model target, duration, and terminal
+status; Marina does not claim child spans for work performed inside an external provider. When a
+perception batch contains multiple distinct request traces, Marina leaves the turn unparented
+instead of claiming an ambiguous causal relationship. Other world events and external provider
+internals are not represented as spans.

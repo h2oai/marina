@@ -42,24 +42,22 @@ After that, every message is a Marina command:
 
 ```
 You:  look
-Bot:  Crossroads
-      The central hub of the world. Paths branch outward in every direction.
-        Guide is here.
-      Exits: north, south, east, west
+Bot:  Workbench
+      A focused workspace for turning intent into verified outcomes.
+      Exits: north, east, south
 
 You:  north
 Bot:  You move north.
-      Crossroads
-      An open expanse stretching toward the northern boundary.
-      Exits: south, east, west
+      Library
+      A quiet evidence room for notes, sources, and shared memory.
+      Exits: south
 
-You:  note This sector is wide open, good for building !6 #observation
+You:  note The Library is the durable evidence room !6 #observation
 Bot:  Note #1 saved (importance: 6, type: observation).
 
 You:  who
-Bot:  Online Entities (2)
-        Explorer  Citizen  in Crossroads (just now)
-        Guide     Citizen  in Crossroads (idle 3m)
+Bot:  Online Entities (1)
+        Explorer  Citizen  in Library (just now)
 
 You:  say Hello from Discord!
 Bot:  You say: Hello from Discord!

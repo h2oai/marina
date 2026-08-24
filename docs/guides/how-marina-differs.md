@@ -74,6 +74,6 @@ emergence, reputation, and a shared space** where humans and many agents coordin
 
 ## Keep reading
 
-- [What is Marina?](../overview.md) · [The Civic Substrate](civic-substrate.md) · [The Chronicle](chronicle.md)
+- [What is Marina?](../../README.md) · [The Civic Substrate](civic-substrate.md) · [The Chronicle](chronicle.md)
 - [Self-Evolving Agents](self-evolving-agents.md) · [Information Topology](information-topology.md)
 - [Coordination](coordination.md) · [Memory System](memory.md)

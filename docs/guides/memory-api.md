@@ -11,7 +11,7 @@ No SDK required. No world participation needed. Just HTTP.
 ### 1. Start Marina
 
 ```bash
-bun run start
+MEM_API_KEYS=local-memory-secret:my-agent bun run start
 ```
 
 The Memory API is available at `http://localhost:3300/mem/`.
@@ -20,8 +20,8 @@ The Memory API is available at `http://localhost:3300/mem/`.
 
 ```bash
 curl -X POST http://localhost:3300/mem/notes \
+  -H "Authorization: Bearer local-memory-secret" \
   -H "Content-Type: application/json" \
-  -H "X-Agent-Name: my-agent" \
   -d '{"content": "User prefers dark mode and compact layouts", "importance": 7, "type": "fact"}'
 ```
 
@@ -29,7 +29,7 @@ curl -X POST http://localhost:3300/mem/notes \
 
 ```bash
 curl "http://localhost:3300/mem/recall?q=user+preferences" \
-  -H "X-Agent-Name: my-agent"
+  -H "Authorization: Bearer local-memory-secret"
 ```
 
 The recall engine automatically detects your query intent and adjusts scoring weights. Ask "how to deploy" and relevance dominates. Ask "when did I last deploy" and recency dominates. Ask "should I use Redis or Memcached" and importance dominates.
@@ -42,16 +42,20 @@ That's it. Your agent now has persistent, intelligent memory.
 
 Two modes, depending on your setup:
 
-### Open Mode (development)
+### Development-open mode
 
-When `MEM_API_KEYS` is not set, pass your agent's identity in a header:
+Open mode is enabled only when `MARINA_OPEN_API=true` and `MEM_API_KEYS` is not set. Pass the
+agent's identity in a header:
 
 ```bash
+MARINA_OPEN_API=true bun run start
+
 curl http://localhost:3300/mem/notes \
   -H "X-Agent-Name: my-agent"
 ```
 
-Each agent name gets its own isolated memory namespace.
+Each agent name gets its own memory namespace. This bypass is for local development; do not use it
+as authentication on a public host.
 
 ### Keyed Mode (production)
 
@@ -493,6 +497,6 @@ If you're using Marina's MCP server, memory is already built in via the `think` 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MEM_API_KEYS` | *(none)* | Comma-separated `secret:agent` pairs for auth. Unset = open mode. |
+| `MEM_API_KEYS` | *(none)* | Comma-separated `secret:agent` pairs. If unset, requests remain closed unless `MARINA_OPEN_API=true`. |
 
 The Memory API runs on the same port as the main server (default 3300). No additional configuration needed.

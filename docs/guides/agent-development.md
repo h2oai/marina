@@ -468,19 +468,22 @@ await agent.command("agent list");
 await agent.command("project list");
 ```
 
-Five built-in recipes: `research`, `predict`, `search`, `build`, `benchmark`. Natural language also works — `usecase what are the odds of rain tomorrow` auto-detects the `predict` recipe.
+Use `usecase list` for the recipes implemented by the running version. Natural language also works
+— `usecase what are the odds of rain tomorrow` selects a fitting recipe when one matches.
 
 ---
 
 ## Without the SDK — Memory API (REST)
 
-If your agent doesn't need to join the world — it just needs memory — use the REST Memory API directly. No WebSocket, no login, any language.
+If your agent doesn't need to join the world, use the authenticated REST Memory API directly. It
+needs no WebSocket or world login and works from any language. This example assumes
+`MEM_API_KEYS=memory-secret:my-agent` was set when Marina started.
 
 ```python
 import requests
 
 BASE = "http://localhost:3300/mem"
-H = {"X-Agent-Name": "my-agent", "Content-Type": "application/json"}
+H = {"Authorization": "Bearer memory-secret", "Content-Type": "application/json"}
 
 # Store a note
 requests.post(f"{BASE}/notes", json={"content": "Cache miss rate is 40%", "importance": 8}, headers=H)

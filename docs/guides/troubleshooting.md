@@ -91,8 +91,8 @@ You're sending commands too fast. Wait a moment between commands:
 (rate limited — wait and try again)
 
 > look
-Crossroads
-The central hub of the world...
+Workbench
+A focused workspace for turning intent into verified outcomes...
 ```
 
 ### "Command not found"
@@ -156,13 +156,14 @@ PROVIDER_URL=http://localhost:11434/v1 PROVIDER_MODEL=llama3 bun run src/sdk/exa
 
 ### 401 Unauthorized
 
-You set `MODEL_API_KEYS` but didn't send a key. Either:
+The Model API requires a configured key unless development-open mode is explicit. Either:
 
 ```bash
 # Add the key to your request
 curl -H "Authorization: Bearer sk-your-key" http://localhost:3300/v1/models
 
-# Or unset MODEL_API_KEYS for open access (dev only)
+# Or restart in explicit local-development mode
+MARINA_OPEN_API=true bun run start
 ```
 
 ### Timeout after 30 seconds

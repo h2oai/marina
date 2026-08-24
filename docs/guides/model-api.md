@@ -204,7 +204,9 @@ curl http://localhost:3300/v1/chat/completions \
 
 **Timeout after 30 seconds** — The agent is slow to respond. Check that your external LLM provider is reachable.
 
-**401 Unauthorized** — You set `MODEL_API_KEYS` but didn't include a valid key in the `Authorization` header. Either add the key or unset `MODEL_API_KEYS` for open access.
+**401 Unauthorized** — Configure `MODEL_API_KEYS` and send a matching bearer token. For local
+development only, restart with `MARINA_OPEN_API=true`; merely leaving the key list unset does not
+open the API.
 
 ---
 
