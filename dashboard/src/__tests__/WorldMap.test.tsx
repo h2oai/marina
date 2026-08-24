@@ -45,7 +45,7 @@ describe("WorldMap", () => {
 
   it("renders the World Map panel title", () => {
     renderWithProviders(<WorldMap />);
-    expect(screen.getByText("World Map")).toBeInTheDocument();
+    expect(screen.getByText("World topology + 30s activity")).toBeInTheDocument();
   });
 
   it("renders with sample world data", () => {

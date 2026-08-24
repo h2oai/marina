@@ -3,7 +3,7 @@
 
 import { AlertTriangle, CheckCircle2, CircleDot, RefreshCw } from "lucide-react";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
-import { traceQueryString, useTrace, useTraces } from "../hooks/use-api";
+import { traceQueryString, useEvidenceReceipts, useTrace, useTraces } from "../hooks/use-api";
 import { describeApiError, downloadApi } from "../lib/api";
 import { tracePermalink } from "../lib/trace-links";
 import type {
@@ -695,6 +695,7 @@ function TraceWaterfall({
 }
 
 export function TraceExplorer({ requestedTraceId }: { requestedTraceId?: string }) {
+  const evidence = useEvidenceReceipts();
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [status, setStatus] = useState<"all" | TraceStatus>("all");
@@ -725,73 +726,99 @@ export function TraceExplorer({ requestedTraceId }: { requestedTraceId?: string 
     return { ...query.data, traces: [requested, ...query.data.traces] };
   }, [detailQuery.data, query.data]);
   return (
-    <TraceExplorerView
-      data={data}
-      isLoading={query.isLoading || (Boolean(requestedTraceId) && detailQuery.isLoading)}
-      error={
-        query.error
-          ? describeApiError(query.error)
-          : detailQuery.error
-            ? describeApiError(detailQuery.error)
-            : exportError
-      }
-      onRefresh={() =>
-        void Promise.all(
-          requestedTraceId ? [query.refetch(), detailQuery.refetch()] : [query.refetch()],
-        )
-      }
-      requestedTraceId={requestedTraceId}
-      requestedTraceMissing={
-        Boolean(requestedTraceId) && !detailQuery.isLoading && detailQuery.data?.traces.length === 0
-      }
-      onQueryChange={(value) => {
-        setSearch(value);
-        setCursor(undefined);
-        setCursorHistory([]);
-      }}
-      onStatusChange={(value) => {
-        setStatus(value);
-        setCursor(undefined);
-        setCursorHistory([]);
-      }}
-      onDimensionChange={(key, value) => {
-        setDimensions((current) => ({ ...current, [key]: value }));
-        setCursor(undefined);
-        setCursorHistory([]);
-      }}
-      onTimeRangeChange={(milliseconds) => {
-        setSince(milliseconds === undefined ? undefined : Date.now() - milliseconds);
-        setCursor(undefined);
-        setCursorHistory([]);
-      }}
-      canPreviousPage={cursorHistory.length > 0}
-      onPreviousPage={() => {
-        const previous = cursorHistory.at(-1);
-        setCursor(previous);
-        setCursorHistory((history) => history.slice(0, -1));
-      }}
-      onNextPage={() => {
-        if (!query.data?.page?.nextCursor) return;
-        setCursorHistory((history) => [...history, cursor]);
-        setCursor(query.data.page!.nextCursor);
-      }}
-      onExport={(format) => {
-        const exportFilters = {
-          limit: 100,
-          ...(deferredSearch.trim() ? { q: deferredSearch.trim() } : {}),
-          ...(status === "all" ? {} : { status }),
-          ...(since === undefined ? {} : { since }),
-          ...(deferredDimensions.model.trim() ? { model: deferredDimensions.model.trim() } : {}),
-          ...(deferredDimensions.agent.trim() ? { agent: deferredDimensions.agent.trim() } : {}),
-          ...(deferredDimensions.tool.trim() ? { tool: deferredDimensions.tool.trim() } : {}),
-        };
-        const formatQuery = format === "native" ? "" : `&format=${format}`;
-        setExportError(undefined);
-        void downloadApi(
-          `/api/traces?${traceQueryString(exportFilters)}${formatQuery}&download=1`,
-          `marina-traces-${format}.json`,
-        ).catch((cause) => setExportError(describeApiError(cause)));
-      }}
-    />
+    <div className="space-y-2">
+      <section className="rounded border border-border bg-bg/40 px-2 py-1 text-[10px] text-text-dim">
+        {evidence.isLoading ? (
+          "Verifying local evidence receipts…"
+        ) : evidence.isError ? (
+          <span className="text-warning">Evidence receipt status unavailable.</span>
+        ) : (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className={evidence.data?.verification.valid ? "text-success" : "text-danger"}>
+              Local receipt chain {evidence.data?.verification.valid ? "consistent" : "invalid"}
+            </span>
+            <span>{evidence.data?.verification.entries ?? 0} receipts</span>
+            {evidence.data?.verification.headHash && (
+              <code title={evidence.data.verification.headHash}>
+                head {evidence.data.verification.headHash.slice(0, 12)}…
+              </code>
+            )}
+            <span title={evidence.data?.trustBoundary}>
+              local linkage, not external immutability
+            </span>
+          </div>
+        )}
+      </section>
+      <TraceExplorerView
+        data={data}
+        isLoading={query.isLoading || (Boolean(requestedTraceId) && detailQuery.isLoading)}
+        error={
+          query.error
+            ? describeApiError(query.error)
+            : detailQuery.error
+              ? describeApiError(detailQuery.error)
+              : exportError
+        }
+        onRefresh={() =>
+          void Promise.all(
+            requestedTraceId ? [query.refetch(), detailQuery.refetch()] : [query.refetch()],
+          )
+        }
+        requestedTraceId={requestedTraceId}
+        requestedTraceMissing={
+          Boolean(requestedTraceId) &&
+          !detailQuery.isLoading &&
+          detailQuery.data?.traces.length === 0
+        }
+        onQueryChange={(value) => {
+          setSearch(value);
+          setCursor(undefined);
+          setCursorHistory([]);
+        }}
+        onStatusChange={(value) => {
+          setStatus(value);
+          setCursor(undefined);
+          setCursorHistory([]);
+        }}
+        onDimensionChange={(key, value) => {
+          setDimensions((current) => ({ ...current, [key]: value }));
+          setCursor(undefined);
+          setCursorHistory([]);
+        }}
+        onTimeRangeChange={(milliseconds) => {
+          setSince(milliseconds === undefined ? undefined : Date.now() - milliseconds);
+          setCursor(undefined);
+          setCursorHistory([]);
+        }}
+        canPreviousPage={cursorHistory.length > 0}
+        onPreviousPage={() => {
+          const previous = cursorHistory.at(-1);
+          setCursor(previous);
+          setCursorHistory((history) => history.slice(0, -1));
+        }}
+        onNextPage={() => {
+          if (!query.data?.page?.nextCursor) return;
+          setCursorHistory((history) => [...history, cursor]);
+          setCursor(query.data.page!.nextCursor);
+        }}
+        onExport={(format) => {
+          const exportFilters = {
+            limit: 100,
+            ...(deferredSearch.trim() ? { q: deferredSearch.trim() } : {}),
+            ...(status === "all" ? {} : { status }),
+            ...(since === undefined ? {} : { since }),
+            ...(deferredDimensions.model.trim() ? { model: deferredDimensions.model.trim() } : {}),
+            ...(deferredDimensions.agent.trim() ? { agent: deferredDimensions.agent.trim() } : {}),
+            ...(deferredDimensions.tool.trim() ? { tool: deferredDimensions.tool.trim() } : {}),
+          };
+          const formatQuery = format === "native" ? "" : `&format=${format}`;
+          setExportError(undefined);
+          void downloadApi(
+            `/api/traces?${traceQueryString(exportFilters)}${formatQuery}&download=1`,
+            `marina-traces-${format}.json`,
+          ).catch((cause) => setExportError(describeApiError(cause)));
+        }}
+      />
+    </div>
   );
 }

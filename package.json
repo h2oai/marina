@@ -67,6 +67,7 @@
     "qualify:prompt": "bun run scripts/eval-prompt.ts marina:answerer --min-score 13",
     "qualify:autonomy": "bun run scripts/qualify-autonomy.ts",
     "qualify:evolution": "bun run scripts/qualify-evolution.ts",
+    "qualify:release": "bun run typecheck && bun run lint && bun run test && cd dashboard && bun run test && bun run build && bun run test:browser && cd ../site && bun run build && cd .. && bun audit",
     "qualify:flywheel": "bun run scripts/qualify-flywheel-live.ts",
     "trial:evolution": "bun run scripts/run-evolution-trial.ts",
     "trial:evolution:local": "bun run scripts/run-evolution-trial-local.ts",

@@ -76,7 +76,7 @@ feed to the full causal view is a working flow: `feed list --kind model_request_
 to find the request, then `trace show <id>` with the id from the event's payload — the same id the
 HTTP caller received in its `x-request-id` header.
 
-`trace judge` appends an immutable, identity-attributed assertion to durable storage. Marina records
+`trace judge` appends an identity-attributed assertion to a locally append-only durable record. Marina records
 the criterion, verdict, rationale, evaluator identity, timestamp, and root evidence span. These
 judgments are advisory: the author may be mistaken, conflicting judgments may coexist, and neither
 the runtime nor router treats one as a verified fact or execution gate.
@@ -294,6 +294,36 @@ when setting access policy.
 
 Participant judgments are a separate authored layer and include the evaluator's identity, criterion,
 and rationale verbatim. Do not put secrets, private prompts, or sensitive output in a rationale.
+
+## Tamper-evident evidence receipts
+
+Each new trace judgment also appends a receipt to Marina's local SHA-256 hash chain. Authenticated
+clients can inspect both the bounded receipt list and a full-chain verification result:
+
+```bash
+curl -H "Authorization: Bearer $MARINA_TOKEN" \
+  "http://localhost:3300/api/evidence/receipts?limit=100"
+```
+
+The response includes `verification.valid`, the entry count, the current `headHash`, and an explicit
+`trustBoundary`. Payloads are represented by their canonical hash; the receipt does not duplicate a
+judgment's rationale or other potentially sensitive evidence.
+
+Export a small checkpoint for independent storage or timestamping:
+
+```bash
+curl -H "Authorization: Bearer $MARINA_TOKEN" \
+  -OJ "http://localhost:3300/api/evidence/checkpoint?download=1"
+```
+
+The checkpoint names the instance, algorithm, entry count, head hash, generation time, and local
+verification result. It is intentionally unsigned. Keeping it in independently controlled storage
+lets a later verifier detect whether the Marina history has been replaced since that checkpoint.
+
+This proves internal linkage, not independent immutability. An operator who controls the database
+could rebuild the entire chain. Exporting or independently anchoring a head hash is required before
+another party can use it as external tamper evidence. Marina does not call this a signature,
+blockchain, non-repudiation, or consensus mechanism.
 
 The current causal chain covers requests handled by Marina's model API: single-agent (`agents`)
 routing, the verified fast path, and the `open`/`panel` fan-out modes, where each fan-out target gets

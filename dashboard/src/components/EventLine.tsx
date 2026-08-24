@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { memo } from "react";
+import { marinaReferenceHref, primaryReferenceForEvent } from "../lib/marina-reference";
 import type { DashboardEvent } from "../lib/types";
 import { cn, formatTime } from "../lib/utils";
 import { formatEvent } from "./ActivityFeed";
@@ -41,6 +42,7 @@ export const EventLine = memo(function EventLine({
 }: EventLineProps) {
   const { color, prefix, suffix } = formatEvent(event, resolveEntityName);
   const clickableName = prefix || undefined;
+  const primaryReference = primaryReferenceForEvent(event);
   const compact = variant === "compact";
 
   return (
@@ -70,7 +72,17 @@ export const EventLine = memo(function EventLine({
             <WhoLink name={clickableName} className="ml-1" size={9} />
           </>
         )}
-        {suffix}
+        {primaryReference ? (
+          <a
+            href={marinaReferenceHref(primaryReference, window.location.href)}
+            className="hover:underline"
+            title="Open the referenced evidence"
+          >
+            {suffix}
+          </a>
+        ) : (
+          suffix
+        )}
       </span>
     </div>
   );

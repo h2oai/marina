@@ -58,7 +58,9 @@ export function GlassPanel({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      // Visible-safe base state: a stalled animation clock must never erase a
+      // dashboard panel (the same invariant that protects Canvas nodes).
+      initial={{ opacity: 1, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: "easeOut" }}
       className={cn(
@@ -129,13 +131,13 @@ export function GlassPanel({
           parent gives the rotation depth. min-h-0 lets the flex children
           shrink below their content height so the face can scroll. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ perspective: 1200 }}>
-        <AnimatePresence mode="wait" initial={false}>
+        <AnimatePresence mode="sync" initial={false}>
           {isFlipped ? (
             <motion.div
               key="back"
-              initial={{ rotateY: -90, opacity: 0 }}
+              initial={{ rotateY: 0, opacity: 1 }}
               animate={{ rotateY: 0, opacity: 1 }}
-              exit={{ rotateY: 90, opacity: 0 }}
+              exit={{ rotateY: 0, opacity: 1 }}
               transition={FLIP_TRANSITION}
               style={{ backfaceVisibility: "hidden", transformOrigin: "center" }}
               className="flex flex-1 flex-col overflow-hidden overflow-y-auto"
@@ -145,9 +147,9 @@ export function GlassPanel({
           ) : (
             <motion.div
               key="front"
-              initial={{ rotateY: 90, opacity: 0 }}
+              initial={{ rotateY: 0, opacity: 1 }}
               animate={{ rotateY: 0, opacity: 1 }}
-              exit={{ rotateY: -90, opacity: 0 }}
+              exit={{ rotateY: 0, opacity: 1 }}
               transition={FLIP_TRANSITION}
               style={{ backfaceVisibility: "hidden", transformOrigin: "center" }}
               className={cn(

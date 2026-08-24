@@ -3,6 +3,29 @@
 
 import { expect, test } from "@playwright/test";
 
+test("dashboard attention is globally visible and opens without navigating away", async ({
+  page,
+}) => {
+  await page.goto("/dashboard");
+  await page.getByRole("button", { name: /alerts/ }).click();
+  await expect(page.getByRole("complementary", { name: "Attention inbox" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Needs attention" })).toBeVisible();
+  await page.getByRole("button", { name: "Close attention inbox" }).click();
+  await expect(page.getByRole("complementary", { name: "Attention inbox" })).toHaveCount(0);
+});
+
+test("dashboard Work and Pulse are globally reachable and mutually coherent", async ({ page }) => {
+  await page.goto("/dashboard");
+  await page.getByRole("button", { name: "Pulse" }).click();
+  await expect(page.getByRole("complementary", { name: "Live pulse" })).toBeVisible();
+  await expect(page.getByText(/live WebSocket window, not historical totals/i)).toBeVisible();
+
+  await page.getByRole("button", { name: "Work" }).click();
+  await expect(page.getByRole("complementary", { name: "Live pulse" })).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: "Work overview" })).toBeVisible();
+  await expect(page.locator('.glass-panel[style*="opacity: 0"]')).toHaveCount(0);
+});
+
 test("production Canvas opens in a coherent, actionable state", async ({ page }) => {
   await page.goto("/canvas");
   await expect(page.getByRole("heading", { name: "MARINA CANVAS" })).toBeVisible();
@@ -78,4 +101,41 @@ test("a failed relationship mutation is visible and leaves the dialog recoverabl
   await expect(page.getByRole("alert")).toContainText("Temporarily unavailable");
   await expect(page.getByRole("dialog")).toBeVisible();
   await expect(page.getByRole("button", { name: "Create relationship" })).toBeEnabled();
+});
+
+test("an exact Canvas node link restores, focuses, and explains a missing target", async ({
+  page,
+  request,
+}) => {
+  const canvasResponse = await request.post("/api/canvases", {
+    data: { name: "Deep link", scope: "global" },
+  });
+  const canvas = (await canvasResponse.json()) as { id: string };
+  const nodeResponse = await request.post(`/api/canvases/${canvas.id}/nodes`, {
+    data: { type: "text", data: { title: "Exact destination", content: "Referenced content" } },
+  });
+  const node = (await nodeResponse.json()) as { id: string };
+
+  await page.goto(
+    `/canvas?canvas=${encodeURIComponent(canvas.id)}&node=${encodeURIComponent(node.id)}`,
+  );
+  await expect(page.getByText("Exact destination").first()).toBeVisible();
+  await expect(
+    page.getByRole("complementary").getByRole("heading", { name: "Node Detail" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL((url) => {
+    return url.searchParams.get("canvas") === canvas.id && url.searchParams.get("node") === node.id;
+  });
+
+  await page.getByRole("complementary").getByRole("button", { name: "×" }).click();
+  await expect(page).toHaveURL((url) => !url.searchParams.has("node"));
+  await page.goBack();
+  await expect(
+    page.getByRole("complementary").getByRole("heading", { name: "Node Detail" }),
+  ).toBeVisible();
+  await page.goForward();
+  await expect(page.getByRole("complementary")).toHaveCount(0);
+
+  await page.goto(`/canvas?canvas=${encodeURIComponent(canvas.id)}&node=deleted-node`);
+  await expect(page.getByRole("alert")).toContainText("unavailable or was deleted");
 });

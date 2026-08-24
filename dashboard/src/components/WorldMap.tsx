@@ -323,7 +323,6 @@ export function WorldMap({ worldData, backContent, isFocused, onToggleFocus }: W
   const [activityCounts, setActivityCounts] = useState<Map<string, number>>(new Map());
 
   // Animation refs
-  const hasInitializedRef = useRef(false);
   const entityRoomRef = useRef<Map<string, string>>(new Map());
   const activeTrailsRef = useRef(0);
   const breatheTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -432,62 +431,6 @@ export function WorldMap({ worldData, backContent, isFocused, onToggleFocus }: W
     for (const r of rooms) m.set(r.id, r.short);
     return m;
   }, [wsRooms, worldData]);
-
-  // ── 2.1: Map Materialization on First Load ────────────────────────
-  useEffect(() => {
-    if (
-      hasInitializedRef.current ||
-      !svgRef.current ||
-      prefersReducedMotion() ||
-      allPositions.length === 0
-    )
-      return;
-    hasInitializedRef.current = true;
-
-    const svg = svgRef.current;
-    const hubPos = posMap.get(startRoom);
-
-    // Sort rooms by distance from hub
-    const sorted = [...allPositions].sort((a, b) => {
-      if (!hubPos) return 0;
-      const da = Math.sqrt((a.x - hubPos.x) ** 2 + (a.y - hubPos.y) ** 2);
-      const db = Math.sqrt((b.x - hubPos.x) ** 2 + (b.y - hubPos.y) ** 2);
-      return da - db;
-    });
-
-    const roomEls = sorted
-      .map((r) => svg.querySelector(`[data-room-id="${r.id}"]`))
-      .filter((el): el is Element => el != null);
-
-    const edgeEls = svg.querySelectorAll("line");
-
-    // Hub first, then remaining rooms staggered, then edges. Each call is a
-    // separate Motion animation; their durations + delays compose into the
-    // same materialization sequence the old timeline produced.
-    if (roomEls.length > 0) {
-      animate(
-        roomEls[0]!,
-        { scale: [0, 1], opacity: [0, 1] },
-        { duration: 0.6, type: "spring", stiffness: 120, damping: 14 },
-      );
-    }
-    roomEls.slice(1).forEach((el, i) => {
-      animate(
-        el,
-        { scale: [0, 1], opacity: [0, 1] },
-        {
-          duration: 0.4,
-          delay: 0.3 + i * 0.04,
-          type: "spring",
-          stiffness: 120,
-          damping: 14,
-        },
-      );
-    });
-    edgeEls.forEach((el, i) => {
-      animate(el, { opacity: [0, 0.3] }, { duration: 0.3, delay: 0.4 + i * 0.02 });
-    });
-  }, [allPositions, posMap, startRoom]);
 
   // ── 2.2: Entity Movement Trails ───────────────────────────────────
   // Driven by a non-rendering store subscription: the handler fires on event
@@ -854,7 +797,9 @@ export function WorldMap({ worldData, backContent, isFocused, onToggleFocus }: W
 
   return (
     <GlassPanel
-      title={worldName ? `World Map — ${worldName}` : "World Map"}
+      title={
+        worldName ? `World topology + 30s activity — ${worldName}` : "World topology + 30s activity"
+      }
       icon={<MapIcon size={14} />}
       backContent={backContent}
       isFocused={isFocused}

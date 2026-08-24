@@ -226,6 +226,8 @@ export interface DashboardEvent {
   importance?: number;
   noteType?: string;
   roomId?: string;
+  canvasId?: string;
+  nodeId?: string;
   poolId?: string;
   lastAccessed?: number;
   sourceId?: number;
@@ -308,6 +310,74 @@ export interface TraceJudgment {
   rationale: string;
   evidenceSpanIds: string[];
   createdAt: number;
+}
+
+export interface EvidenceReceipt {
+  sequence: number;
+  event_type: string;
+  ref: string;
+  payload_hash: string;
+  previous_hash: string | null;
+  entry_hash: string;
+  created_at: number;
+}
+
+export interface EvidenceReceiptsResponse {
+  receipts: EvidenceReceipt[];
+  verification: {
+    valid: boolean;
+    entries: number;
+    headHash: string | null;
+    firstInvalidSequence: number | null;
+  };
+  trustBoundary: string;
+}
+
+export interface PrincipalEntry {
+  principal_id: string;
+  principal_type: "human" | "agent" | "service" | "system";
+  display_name: string;
+  home_world: string;
+  owner_principal_id: string | null;
+  lineage_parent_id: string | null;
+  status: "active" | "suspended" | "disabled";
+  created_at: number;
+  disabled_at: number | null;
+}
+
+export interface WorldVariantEntry {
+  id: string;
+  name: string;
+  world_template: string;
+  hypothesis: string;
+  status: "draft" | "starting" | "running" | "stopped" | "failed" | "promoted" | "archived";
+  parent_variant_id: string | null;
+  ws_port: number;
+  pid: number | null;
+  created_by: string;
+  created_at: number;
+  updated_at: number;
+  promoted_at: number | null;
+  promotion_rationale: string | null;
+  promotion_evidence: string | null;
+  promoted_by: string | null;
+  last_error: string | null;
+}
+
+export interface WorldVariantsResponse {
+  sourceAvailable: boolean;
+  variants: WorldVariantEntry[];
+}
+
+export interface FederationPeerEntry {
+  world_id: string;
+  name: string;
+  base_url: string;
+  public_key: string | null;
+  trust_status: "unverified" | "trusted" | "blocked";
+  manifest: string;
+  first_seen_at: number;
+  last_seen_at: number;
 }
 
 export type TraceCheckResult = "passed" | "failed" | "inconclusive" | "not_applicable";
@@ -534,6 +604,18 @@ export interface OperationalAlert {
   occurrences: number;
   first_seen_at: number;
   last_seen_at: number;
+  acknowledged_at: number | null;
+  resolved_at: number | null;
+  attention_kind: string;
+  source_entity: string | null;
+  target_entity: string | null;
+  assigned_to: string | null;
+  action_label: string | null;
+  action_ref: string | null;
+  metadata: string | null;
+  seen_at: number | null;
+  snoozed_until: number | null;
+  deadline_at: number | null;
 }
 
 export interface ReadinessCheck {

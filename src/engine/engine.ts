@@ -476,9 +476,14 @@ export class Engine {
    * agents pass the process-local internal token). Internal connections are
    * exempt from the instance login cap and the login rate limit, and don't
    * consume cap slots. */
-  private resolveInternal(connId: string, internalToken?: string): boolean {
+  private resolveInternal(connId: string, internalToken?: string, claimedName?: string): boolean {
     const expected = this.config.internalAuthToken;
-    const isInternal = !!expected && !!internalToken && secretsEqual(internalToken, expected);
+    const legacy = !!expected && !!internalToken && secretsEqual(internalToken, expected);
+    const workload = internalToken ? this.db?.verifyWorkloadCredential(internalToken) : undefined;
+    const workloadMatches =
+      !!workload &&
+      (!claimedName || workload.display_name.toLowerCase() === claimedName.toLowerCase());
+    const isInternal = legacy || workloadMatches;
     if (isInternal) {
       const conn = this._connections.get(connId);
       if (conn) conn.internal = true;
@@ -539,7 +544,16 @@ export class Engine {
     internalToken?: string,
     identity?: LoginIdentity,
   ): { entityId: EntityId; name: string; token: string } | { error: string } {
-    const internal = this.resolveInternal(connId, internalToken);
+    const workloadPrincipal = internalToken
+      ? this.db?.verifyWorkloadCredential(internalToken)
+      : undefined;
+    if (internalToken?.startsWith("marina-agent-") && !workloadPrincipal) {
+      return { error: "Workload credential is expired, revoked, or disabled." };
+    }
+    if (workloadPrincipal && workloadPrincipal.display_name.toLowerCase() !== name.toLowerCase()) {
+      return { error: "Workload credential subject does not match the requested identity." };
+    }
+    const internal = this.resolveInternal(connId, internalToken, name);
 
     // Login attempts are rate-limited before any other work (success or failure
     // both consume a token — attempts are what's limited).
@@ -562,6 +576,10 @@ export class Engine {
 
     // Sanitize name once, then pass through to spawnEntity
     const cleanName = sanitizeEntityName(name);
+    const principal = this.db?.getPrincipal(internal ? "agent" : "human", cleanName);
+    if (principal && principal.status !== "active") {
+      return { error: `This identity is ${principal.status}. Contact the Marina operator.` };
+    }
     // If an entity with this name exists but has no live connection, the login is a
     // re-attach (typical at server restart — `restoreEntities` reinstated the row but
     // no WebSocket is bound to it yet). Bind the new connection to the existing entity
@@ -679,6 +697,12 @@ export class Engine {
     token: string,
     internalToken?: string,
   ): { entityId: EntityId; name: string; token: string } | { error: string } {
+    if (
+      internalToken?.startsWith("marina-agent-") &&
+      !this.db?.verifyWorkloadCredential(internalToken)
+    ) {
+      return { error: "Workload credential is expired, revoked, or disabled." };
+    }
     const internal = this.resolveInternal(connId, internalToken);
 
     if (!this.checkLoginRate(connId, internal)) {

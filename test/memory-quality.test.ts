@@ -89,6 +89,31 @@ describe("evidence-aware memory", () => {
     expect(db.listOperationalAlerts("resolved")).toHaveLength(1);
   });
 
+  test("persists attributed attention metadata and snooze", () => {
+    const alert = db.upsertOperationalAlert({
+      key: "attention:review:42",
+      severity: "warning",
+      category: "review",
+      title: "Candidate ready",
+      detail: "Candidate B passed its deterministic checks.",
+      remedy: "Review the evidence before promotion.",
+      kind: "decision",
+      sourceEntity: "Verifier",
+      targetEntity: "Operator",
+      assignedTo: "Operator",
+      actionLabel: "Open trace",
+      actionRef: "/dashboard?trace=trace-42",
+      metadata: { traceId: "trace-42" },
+      deadlineAt: 2_000_000,
+    });
+    expect(alert.attention_kind).toBe("decision");
+    expect(alert.source_entity).toBe("Verifier");
+    expect(alert.action_ref).toBe("/dashboard?trace=trace-42");
+    expect(JSON.parse(alert.metadata ?? "{}")).toEqual({ traceId: "trace-42" });
+    expect(db.snoozeOperationalAlert(alert.id, 1_500_000)).toBe(true);
+    expect(db.listOperationalAlerts()[0]?.snoozed_until).toBe(1_500_000);
+  });
+
   test("preserves typed derivation provenance and verification rationale", () => {
     const source = db.createNote("Ada", "Primary observation", undefined, { confidence: 0.8 });
     const claim = db.createNote("Ada", "Derived conclusion", undefined, { confidence: 0.6 });

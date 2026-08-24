@@ -589,6 +589,16 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
     ensureChatWs(handlePerception);
   }, []);
 
+  useEffect(() => {
+    const openCoding = (event: Event) => {
+      const sessionId = (event as CustomEvent<{ sessionId?: string }>).detail?.sessionId;
+      if (sessionId) setPersistedSessionId(sessionId);
+      setOverlay({ type: "coding-artifacts", issuedFrom: "Work" });
+    };
+    window.addEventListener("marina:open-coding", openCoding);
+    return () => window.removeEventListener("marina:open-coding", openCoding);
+  }, []);
+
   const doLogin = useCallback(() => {
     const name = nameRef.current?.value.trim();
     if (!name) return;

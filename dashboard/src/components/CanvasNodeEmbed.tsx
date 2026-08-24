@@ -4,6 +4,7 @@
 import { ExternalLink, Loader2, RefreshCcw, TriangleAlert, Video, Volume2 } from "lucide-react";
 import type { ReactElement } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { canvasPermalink } from "../canvas/lib/canvas-links";
 import type { CanvasNodeData } from "../canvas/lib/types";
 import { A2UIRenderer } from "../canvas/nodes/a2ui/A2UIRenderer";
 import type { A2UIAction, A2UINodeData } from "../canvas/nodes/a2ui/types";
@@ -118,7 +119,7 @@ export function CanvasNodeEmbed({
       {body}
       <div className="mt-2 flex items-center gap-2 text-[10px] text-text-dim">
         <a
-          href={`/canvas`}
+          href={canvasPermalink({ canvasId, nodeId }, window.location.href)}
           target="_blank"
           rel="noreferrer"
           className="flex items-center gap-1 text-text-dim hover:text-primary transition-colors"

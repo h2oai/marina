@@ -56,6 +56,10 @@ describe("Entity profile API", () => {
       expect(profile?.identity.kind).toBeDefined();
       expect(profile?.identity.rank).toBe(0);
       expect(profile?.identity.standing).toBe(0);
+      expect(profile?.identity.local_id).toMatch(/^[0-9a-f-]{36}$/);
+      expect(profile?.identity.local_id).not.toBe(_entityId);
+      expect(profile?.identity.id_stability).toBe("durable");
+      expect(profile?.identity.identity_assurance).toBe("session_only");
     });
 
     it("is case-insensitive on name lookup", () => {
@@ -86,6 +90,8 @@ describe("Entity profile API", () => {
       expect(profile?.bio.goal).toContain("Test the world");
       expect(profile?.bio.model).toBe("marina/default");
       expect(profile?.bio.traits).toContain("intellectual-honesty");
+      expect(profile?.identity.spawned_by).toBe("system");
+      expect(profile?.identity.identity_assurance).toBe("internal_agent");
     });
 
     it("narratives include narrative + digest entries, not events", () => {

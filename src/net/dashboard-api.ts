@@ -8,6 +8,7 @@ import { testKeyConnectivity } from "../engine/commands/key";
 import { syncOperationalAlerts } from "../engine/commands/ops";
 import { allRecipeNames, getRecipe } from "../engine/commands/usecase";
 import type { Engine } from "../engine/engine";
+import { getErrorMessage } from "../engine/errors";
 import { evolutionBudgetState, parseEvolutionProtocol } from "../engine/evolution-protocol";
 import { tracesToOtlpJson } from "../engine/otlp-trace-export";
 import { getRank } from "../engine/permissions";
@@ -21,10 +22,12 @@ import { queryTraces, type TracePage, type TraceQuery } from "../engine/trace-qu
 import { adviseTraceAggregates, adviseTraceRouting } from "../engine/trace-routing-advice";
 import type { MarinaDB, MediaJobRow } from "../persistence/database";
 import { decodeLogCursor } from "../persistence/db-logs";
+import type { WorldVariantRow } from "../persistence/db-world-variants";
 import { isKeyEncryptionEnabled } from "../persistence/key-crypto";
 import { logsToOtlpJson } from "../telemetry/otlp-log-exporter";
 import type { Connection, EntityId, Perception, RoomId } from "../types";
 import { ORCHESTRATION_PATTERNS } from "../world/templates/orchestration";
+import { WorldCollectiveManager } from "../world/world-collective-manager";
 import { authenticateRequest, isOperatorPrincipal, isSentinelPrincipal } from "./auth-middleware";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "./canvas-principal";
 import { authorizeCanvasSubscription } from "./canvas-ws";
@@ -35,6 +38,37 @@ import { type EndpointConfig, getEndpointConfig, setEndpointConfig } from "./mod
 
 const ROOMS_DIR = join(import.meta.dir, "../../rooms");
 const PROJECT_ROOT = resolve(import.meta.dir, "../..");
+const collectiveManagers = new WeakMap<MarinaDB, WorldCollectiveManager>();
+
+function collectiveManager(db: MarinaDB): WorldCollectiveManager {
+  let manager = collectiveManagers.get(db);
+  if (!manager) {
+    manager = new WorldCollectiveManager(db, PROJECT_ROOT);
+    collectiveManagers.set(db, manager);
+  }
+  return manager;
+}
+
+function serializeWorldVariant(variant: WorldVariantRow) {
+  return {
+    id: variant.id,
+    name: variant.name,
+    world_template: variant.world_template,
+    hypothesis: variant.hypothesis,
+    status: variant.status,
+    parent_variant_id: variant.parent_variant_id,
+    ws_port: variant.ws_port,
+    pid: variant.pid,
+    created_by: variant.created_by,
+    created_at: variant.created_at,
+    updated_at: variant.updated_at,
+    promoted_at: variant.promoted_at,
+    promotion_rationale: variant.promotion_rationale,
+    promotion_evidence: variant.promotion_evidence,
+    promoted_by: variant.promoted_by,
+    last_error: variant.last_error,
+  };
+}
 
 /**
  * Per-IP rate limit for the pre-auth /api/setup-status endpoint. The
@@ -92,6 +126,18 @@ async function readCommandBody(req: Request): Promise<CommandApiBody | { error: 
     return body;
   } catch {
     return { error: json({ error: "Invalid JSON body" }, 400, origin) };
+  }
+}
+
+async function readJsonBody<T extends object>(req: Request): Promise<T | { error: Response }> {
+  try {
+    const body = (await req.json()) as T;
+    if (!body || typeof body !== "object") {
+      return { error: json({ error: "Expected JSON object body" }, 400) };
+    }
+    return body;
+  } catch {
+    return { error: json({ error: "Invalid JSON body" }, 400) };
   }
 }
 
@@ -304,6 +350,34 @@ export async function handleDashboardApi(
     return handleCommandIngress(req, engine, `ask ${body.query}`, body);
   }
 
+  // Public, non-secret world discovery document. Registration by another
+  // Marina remains unverified until its operator explicitly changes trust.
+  if (url.pathname === "/api/federation/manifest" && method === "GET" && db) {
+    const evidence = db.verifyEvidenceChain();
+    return json({
+      schema: "marina.federation.manifest.v1",
+      worldId: db.getOrCreateWorldId(),
+      name: engine.instanceName,
+      baseUrl: url.origin,
+      publicKey: null,
+      capabilities: [
+        "world-collective.local.v1",
+        "traces.read.v1",
+        "logs.read.v1",
+        "evidence.checkpoint.v1",
+        "inheritance.unverified.v1",
+      ],
+      evidenceCheckpoint: {
+        algorithm: "sha256",
+        entries: evidence.entries,
+        headHash: evidence.headHash,
+        locallyValid: evidence.valid,
+      },
+      trustBoundary:
+        "Unsigned discovery manifest. Registration does not authenticate this world or its claims.",
+    });
+  }
+
   // Authenticate — every dashboard API route from this point on requires a
   // valid session token. The pre-auth surface above (`/api/setup-status`,
   // `/api/command`, `/api/ask`) is intentionally open / self-gated and runs
@@ -333,11 +407,192 @@ export async function handleDashboardApi(
   if (url.pathname === "/api/traces" && method === "GET") {
     return getTraces(engine, url, db);
   }
+  if (url.pathname === "/api/evidence/receipts" && method === "GET" && db) {
+    const requested = Number(url.searchParams.get("limit"));
+    const limit = Number.isFinite(requested) ? requested : 100;
+    return json({
+      receipts: db.listEvidenceReceipts(limit),
+      verification: db.verifyEvidenceChain(),
+      trustBoundary:
+        "Local hash chain; export or independently anchor the head hash for external tamper evidence.",
+    });
+  }
+  if (url.pathname === "/api/evidence/checkpoint" && method === "GET" && db) {
+    const verification = db.verifyEvidenceChain();
+    const checkpoint = {
+      schema: "marina.evidence.checkpoint.v1",
+      instance: engine.instanceName,
+      generatedAt: Date.now(),
+      algorithm: "sha256",
+      entries: verification.entries,
+      headHash: verification.headHash,
+      valid: verification.valid,
+      trustBoundary:
+        "Unsigned local checkpoint; external storage or anchoring supplies the witness.",
+    };
+    return Response.json(checkpoint, {
+      headers:
+        url.searchParams.get("download") === "1"
+          ? { "Content-Disposition": 'attachment; filename="marina-evidence-checkpoint.json"' }
+          : undefined,
+    });
+  }
   if (url.pathname === "/api/logs" && method === "GET") {
     return getLogs(engine, url, db);
   }
   if (url.pathname === "/api/system") {
     return getSystem(engine, db);
+  }
+  if (url.pathname === "/api/principals" && method === "GET" && db) {
+    return json(db.listPrincipals());
+  }
+  const principalStatusMatch = url.pathname.match(/^\/api\/principals\/([^/]+)\/status$/);
+  if (principalStatusMatch && method === "POST" && db) {
+    const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
+    if (denied) return denied;
+    const body = await readJsonBody<{ status?: "active" | "suspended" | "disabled" }>(req);
+    if ("error" in body) return body.error;
+    if (!body.status || !["active", "suspended", "disabled"].includes(body.status)) {
+      return json({ error: "status must be active, suspended, or disabled" }, 400);
+    }
+    const changed = db.setPrincipalStatus(
+      decodeURIComponent(principalStatusMatch[1]!),
+      body.status,
+    );
+    return changed ? json({ ok: true, status: body.status }) : json({ error: "Not found" }, 404);
+  }
+  if (url.pathname === "/api/collective/variants" && method === "GET" && db) {
+    const manager = collectiveManager(db);
+    return json({
+      sourceAvailable: manager.sourceAvailable(),
+      variants: manager.list().map(serializeWorldVariant),
+    });
+  }
+  if (url.pathname === "/api/federation/peers" && method === "GET" && db) {
+    return json(db.listFederationPeers());
+  }
+  if (url.pathname === "/api/federation/peers" && method === "POST" && db) {
+    const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
+    if (denied) return denied;
+    const body = await readJsonBody<{
+      schema?: string;
+      worldId?: string;
+      name?: string;
+      baseUrl?: string;
+      publicKey?: string | null;
+      capabilities?: unknown;
+    }>(req);
+    if ("error" in body) return body.error;
+    if (
+      body.schema !== "marina.federation.manifest.v1" ||
+      !body.worldId ||
+      body.worldId.length > 100 ||
+      !body.name ||
+      body.name.length > 100 ||
+      !body.baseUrl
+    ) {
+      return json({ error: "A valid marina.federation.manifest.v1 document is required" }, 400);
+    }
+    if (
+      JSON.stringify(body).length > 32_768 ||
+      (body.publicKey?.length ?? 0) > 8_192 ||
+      (body.capabilities !== undefined &&
+        (!Array.isArray(body.capabilities) ||
+          body.capabilities.length > 100 ||
+          body.capabilities.some(
+            (capability) => typeof capability !== "string" || capability.length > 200,
+          )))
+    ) {
+      return json({ error: "Federation manifest exceeds the accepted bounds" }, 400);
+    }
+    let baseUrl: URL;
+    try {
+      baseUrl = new URL(body.baseUrl);
+    } catch {
+      return json({ error: "baseUrl must be an absolute HTTP(S) URL" }, 400);
+    }
+    if (!["http:", "https:"].includes(baseUrl.protocol) || baseUrl.username || baseUrl.password) {
+      return json({ error: "baseUrl must be an HTTP(S) URL without embedded credentials" }, 400);
+    }
+    return json(
+      db.upsertFederationPeer({
+        worldId: body.worldId,
+        name: body.name,
+        baseUrl: baseUrl.origin,
+        publicKey: body.publicKey,
+        manifest: body,
+      }),
+      201,
+    );
+  }
+  const federationTrustMatch = url.pathname.match(/^\/api\/federation\/peers\/([^/]+)\/trust$/);
+  if (federationTrustMatch && method === "POST" && db) {
+    const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
+    if (denied) return denied;
+    const body = await readJsonBody<{ trust?: "unverified" | "trusted" | "blocked" }>(req);
+    if ("error" in body) return body.error;
+    if (!body.trust || !["unverified", "trusted", "blocked"].includes(body.trust)) {
+      return json({ error: "trust must be unverified, trusted, or blocked" }, 400);
+    }
+    const peer = db.setFederationTrust(decodeURIComponent(federationTrustMatch[1]!), body.trust);
+    return peer ? json(peer) : json({ error: "Peer not found" }, 404);
+  }
+  if (url.pathname === "/api/collective/variants" && method === "POST" && db) {
+    const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
+    if (denied) return denied;
+    const body = await readJsonBody<{
+      name?: string;
+      worldTemplate?: string;
+      hypothesis?: string;
+      parentVariantId?: string;
+    }>(req);
+    if ("error" in body) return body.error;
+    if (!body.name || !body.worldTemplate) {
+      return json({ error: "name and worldTemplate are required" }, 400);
+    }
+    try {
+      return json(
+        serializeWorldVariant(
+          collectiveManager(db).create({
+            name: body.name,
+            worldTemplate: body.worldTemplate,
+            hypothesis: body.hypothesis,
+            parentVariantId: body.parentVariantId,
+            createdBy: engine.entities.get(callerId)?.name ?? String(callerId),
+          }),
+        ),
+        201,
+      );
+    } catch (cause) {
+      return json({ error: getErrorMessage(cause) }, 400);
+    }
+  }
+  const collectiveActionMatch = url.pathname.match(
+    /^\/api\/collective\/variants\/([^/]+)\/(start|stop|promote)$/,
+  );
+  if (collectiveActionMatch && method === "POST" && db) {
+    const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
+    if (denied) return denied;
+    const id = decodeURIComponent(collectiveActionMatch[1]!);
+    const action = collectiveActionMatch[2]!;
+    try {
+      const manager = collectiveManager(db);
+      let variant: WorldVariantRow;
+      if (action === "start") variant = await manager.start(id);
+      else if (action === "stop") variant = await manager.stop(id);
+      else {
+        const body = await readJsonBody<{ rationale?: string; evidenceRefs?: string[] }>(req);
+        if ("error" in body) return body.error;
+        variant = manager.promote(id, {
+          rationale: body.rationale ?? "",
+          evidenceRefs: Array.isArray(body.evidenceRefs) ? body.evidenceRefs : [],
+          promotedBy: engine.entities.get(callerId)?.name ?? String(callerId),
+        });
+      }
+      return json(serializeWorldVariant(variant));
+    } catch (cause) {
+      return json({ error: getErrorMessage(cause) }, 400);
+    }
   }
   // Security posture for the Admin → Security panel. Reports the real state of
   // the hardening knobs (never secret values) so the panel can stop guessing.
@@ -377,6 +632,18 @@ export async function handleDashboardApi(
       Number(opsAlertMatch[1]),
       opsAlertMatch[2] === "ack" ? "acknowledged" : "resolved",
     );
+    return ok ? json({ ok: true }) : json({ error: "Alert not found" }, 404);
+  }
+  const opsAlertSnoozeMatch = url.pathname.match(/^\/api\/operations\/alerts\/(\d+)\/snooze$/);
+  if (opsAlertSnoozeMatch && method === "POST" && db) {
+    const denied = authorizePrivileged(engine, db, callerId, "admin.destructive");
+    if (denied) return denied;
+    const body = (await req.json().catch(() => ({}))) as { durationMs?: unknown };
+    const durationMs = Number(body.durationMs);
+    if (!Number.isFinite(durationMs) || durationMs < 60_000 || durationMs > 30 * 86_400_000) {
+      return json({ error: "durationMs must be between 1 minute and 30 days" }, 400);
+    }
+    const ok = db.snoozeOperationalAlert(Number(opsAlertSnoozeMatch[1]), Date.now() + durationMs);
     return ok ? json({ ok: true }) : json({ error: "Alert not found" }, 404);
   }
   if (url.pathname === "/api/memory/quality" && method === "GET" && db) {

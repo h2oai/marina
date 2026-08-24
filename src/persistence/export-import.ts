@@ -23,7 +23,11 @@ export const EXPORT_TABLES = [
   "room_store",
   "event_log",
   "trace_judgments",
+  "evidence_receipts",
   "users",
+  "principals",
+  "world_variants",
+  "federation_peers",
   "bans",
   "adapter_links",
   "channels",
@@ -129,14 +133,15 @@ const SECRET_TABLES = new Set<string>([
 
 /**
  * Tables intentionally never exported: migration scratch (`*_new`), FTS5 virtual
- * + shadow tables (anything containing `_fts`), ephemeral sessions, and the
- * schema-version marker, and deployment-local structured logs. The drift test in
+ * + shadow tables (anything containing `_fts`), ephemeral sessions and agent
+ * credentials, the schema-version marker, and deployment-local structured logs. The drift test in
  * test/export-import.test.ts asserts
  * every real table is either in EXPORT_TABLES or matches one of these.
  */
 export function isExcludedFromExport(table: string): boolean {
   return (
     table === "sessions" ||
+    table === "principal_credentials" ||
     table === "structured_logs" ||
     table === "schema_version" ||
     table.endsWith("_new") ||
@@ -150,7 +155,7 @@ export interface ExportOptions {
   /** Skip the event_log table (can be very large). Default: false */
   skipEventLog?: boolean;
   /**
-   * Include secret-bearing tables (SECRET_TABLES: api_keys, mem_api_keys, users,
+   * Include secret-bearing tables (SECRET_TABLES: api_keys, mem_api_keys,
    * connectors, gateways, gateway_bridges). Default: false — snapshots are safe
    * to share by default; pass true only for a full operational backup.
    */

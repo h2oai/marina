@@ -33,6 +33,7 @@ import {
   useTasksPaged,
 } from "../hooks/use-api";
 import { useInvalidateOnEvent } from "../hooks/use-realtime";
+import { dashboardInspectionFromSearch } from "../lib/marina-reference";
 import type { DashboardEvent } from "../lib/types";
 import { cn, formatTime } from "../lib/utils";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
@@ -78,7 +79,9 @@ export function CoordinationCard({
 }: { backContent?: React.ReactNode } & PanelFocusProps) {
   const [expanded, setExpanded] = useState<Section>(null);
   const [highlightedSection, setHighlightedSection] = useState<number | null>(null);
-  const [detail, setDetail] = useState<DetailView>(null);
+  const [detail, setDetail] = useState<DetailView>(
+    () => dashboardInspectionFromSearch(window.location.search) ?? null,
+  );
 
   const toggle = useCallback(
     (section: Section) => setExpanded((prev) => (prev === section ? null : section)),

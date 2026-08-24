@@ -42,8 +42,16 @@ state.
   API connect to the same Marina instance.
 - **Coordination that compounds** — projects, tasks, crews, shared pools, skills, and the Chronicle
   turn completed work into durable institutional knowledge.
-- **Autonomy with evidence** — standing and safety gates expand capability through demonstrated
-  competence rather than unchecked permissions.
+- **Autonomy under a microscope** — agents can keep acting, coordinating, and improving while
+  correlated traces, logs, judgments, receipts, and outcomes make the evolution inspectable.
+  Evidence informs learning and consequential promotion; it is not a requirement for every useful
+  action.
+- **Human and agent principals** — durable local IDs, lineage, lifecycle controls, and independent
+  short-lived workload credentials make non-human actors attributable without pretending local
+  identity is cross-world attestation.
+- **World Collective experiments** — a source checkout can launch isolated child Marinas with their
+  own storage and dashboard, compare variants, and record an evidence-referenced preferred
+  candidate without silently replacing the parent.
 
 The full system tour is in the [documentation overview](https://h2oai.github.io/marina/docs/overview/).
 The complete command reference and operational manual live in [SKILL.md](SKILL.md). README is the

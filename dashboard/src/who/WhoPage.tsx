@@ -16,7 +16,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { fetchApi } from "../lib/api";
 import { Sigil } from "./Sigil";
 import type { Achievement, ChronicleEntry, EntityProfile } from "./types";
@@ -128,9 +128,10 @@ function Nav() {
 
 function Identity({ profile }: { profile: EntityProfile }) {
   const { identity } = profile;
+  const [copied, setCopied] = useState(false);
   return (
     <motion.section
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 1, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4 }}
       className="glass-panel mb-6 flex items-start gap-5 p-5"
@@ -155,6 +156,27 @@ function Identity({ profile }: { profile: EntityProfile }) {
             </>
           )}
         </div>
+        <div className="mt-3 grid gap-1 text-[10px] text-text-dim sm:grid-cols-2">
+          <span title={identity.local_id}>Local ID · {identity.local_id}</span>
+          <span>Stability · {identity.id_stability}</span>
+          <span>Assurance · {identity.identity_assurance.replaceAll("_", " ")}</span>
+          {identity.spawned_by && <span>Spawned by · {identity.spawned_by}</span>}
+        </div>
+        <button
+          type="button"
+          className="mt-3 text-[10px] text-primary hover:underline"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(window.location.href);
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1_500);
+            } catch {
+              setCopied(false);
+            }
+          }}
+        >
+          {copied ? "Canonical link copied" : "Copy canonical profile link"}
+        </button>
       </div>
       <div className="flex shrink-0 flex-col items-end gap-2 text-right">
         <Pill label="rank" value={String(identity.rank)} />
@@ -188,7 +210,7 @@ function Bio({ profile }: { profile: EntityProfile }) {
 
   return (
     <motion.section
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 1, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: 0.05 }}
       className="glass-panel mb-6 p-5"
@@ -211,7 +233,7 @@ function Bio({ profile }: { profile: EntityProfile }) {
 function Narratives({ narratives }: { narratives: ChronicleEntry[] }) {
   return (
     <motion.section
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 1, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: 0.1 }}
       className="mb-6"
@@ -267,7 +289,7 @@ function NarrativeCard({ entry }: { entry: ChronicleEntry }) {
 function StatsAchievementsConnections({ profile }: { profile: EntityProfile }) {
   return (
     <motion.section
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 1, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: 0.15 }}
       className="mb-6 grid gap-4 md:grid-cols-3"

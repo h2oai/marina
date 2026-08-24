@@ -51,7 +51,7 @@ export function FirstRunGuide({ onFocusChat, onOpenKeys }: FirstRunGuideProps) {
         {open && (
           <motion.aside
             aria-label="Getting started"
-            initial={{ opacity: 0, y: -12 }}
+            initial={{ opacity: 1, y: 0 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -12 }}
             className="fixed top-14 left-1/2 z-50 w-[min(420px,calc(100vw-24px))] -translate-x-1/2 rounded border border-primary/50 bg-bg/95 p-3 font-mono text-text shadow-2xl backdrop-blur"

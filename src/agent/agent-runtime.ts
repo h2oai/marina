@@ -259,6 +259,7 @@ export function createAgentEventRelay(
 export class AgentRuntime {
   private agents = new Map<string, AgentHandle>();
   private agentUnsubscribers = new Map<string, () => void>();
+  private workloadCredentials = new Map<string, string>();
   /** Names currently spawning. Used to prevent concurrent spawns of the
    * same name racing past the `agents.has()` check during the await
    * window inside spawn(). */
@@ -358,6 +359,10 @@ export class AgentRuntime {
    * Spawn a new agent. Connects via WebSocket and starts autonomous loop.
    */
   async spawn(config: AgentConfig): Promise<AgentHandle> {
+    const principal = this.db?.getPrincipal("agent", config.name);
+    if (principal && principal.status !== "active") {
+      throw new Error(`Agent identity "${config.name}" is ${principal.status}.`);
+    }
     if (this.agents.has(config.name) || this.spawnsInFlight.has(config.name)) {
       throw new Error(`Agent "${config.name}" is already running.`);
     }
@@ -384,6 +389,7 @@ export class AgentRuntime {
     // failure it's freed for retry.
     this.spawnsInFlight.add(config.name);
     const savedPolicy = this.db?.getAgentConfig(config.name);
+    let issuedCredentialId: string | undefined;
     try {
       // Resolve role prompt from DB. PRISM-style task-conditional
       // gating: infer the agent's primary task category from its goal
@@ -499,12 +505,27 @@ export class AgentRuntime {
       // Create adapter — use effectiveConfig so the inferred crewResponder
       // flag (and any other adapter-level defaults) reach the runtime.
       const wsUrl = `ws://localhost:${this.wsPort}`;
+      let internalCredential = INTERNAL_MODEL_TOKEN;
+      if (this.db) {
+        const spawnedBy = config.spawnedBy ?? "system";
+        const parent =
+          this.db.getPrincipal("agent", spawnedBy) ?? this.db.getPrincipal("human", spawnedBy);
+        const agentPrincipal = this.db.ensurePrincipal({
+          type: "agent",
+          displayName: config.name,
+          ownerPrincipalId: parent?.principal_id,
+          lineageParentId: parent?.principal_type === "agent" ? parent.principal_id : null,
+        });
+        const issued = this.db.issueWorkloadCredential(agentPrincipal.principal_id);
+        internalCredential = issued.token;
+        issuedCredentialId = issued.credentialId;
+      }
       const adapter = new LeanAgentAdapter(
         effectiveConfig,
         wsUrl,
         rolePrompt,
         apiKeyResolver,
-        INTERNAL_MODEL_TOKEN,
+        internalCredential,
       );
 
       // Relay per-agent adapter events as engine events (see
@@ -527,6 +548,7 @@ export class AgentRuntime {
 
       // Track it
       this.agents.set(config.name, adapter);
+      if (issuedCredentialId) this.workloadCredentials.set(config.name, issuedCredentialId);
 
       // Save config for auto-respawn
       if (this.db) {
@@ -546,6 +568,9 @@ export class AgentRuntime {
 
       return adapter;
     } finally {
+      if (issuedCredentialId && !this.agents.has(config.name)) {
+        this.db?.revokeWorkloadCredential(issuedCredentialId);
+      }
       this.spawnsInFlight.delete(config.name);
     }
   }
@@ -569,6 +594,11 @@ export class AgentRuntime {
     if (agent) {
       await agent.stop();
       this.agents.delete(key);
+    }
+    const credentialId = this.workloadCredentials.get(key);
+    if (credentialId) {
+      this.db?.revokeWorkloadCredential(credentialId);
+      this.workloadCredentials.delete(key);
     }
 
     // Free the in-flight slot so a fresh spawn with the same name can

@@ -16,17 +16,23 @@ and operate the environment. Start with one path below; the full catalog follows
 | Build a long-running agent | [Agent Development](agent-development.md) | [Memory](memory.md) |
 | Run an autonomous coding task | [Coding in Marina](coding.md#first-autonomous-fix-copy-and-paste) | [Troubleshooting](troubleshooting.md) |
 | Deploy a shared instance | [Deployment](deployment.md) | [Authentication](../authentication.md) |
+| Review human and agent identity controls | [Identity and workload security](identity.md) | [Authentication](../authentication.md) |
+| Run isolated A/B Marina variants | [World Collective](world-collective.md) | [Execution Traces](observability.md) |
+| Register another Marina without assuming trust | [Federation discovery](federation-discovery.md) | [Inheritance](inheritance.md) |
+| Qualify a public release without skipped claims | [Release qualification](release-qualification.md) | [Troubleshooting](troubleshooting.md) |
 | Investigate execution or export OTLP | [Execution Traces](observability.md) | [Configuration](configuration.md) |
 
 If something appears unavailable, run `readiness`. It reports whether the capability is healthy,
 degraded, or off and gives the next concrete action without exposing secrets.
 
-## Guides
-
 | Guide | Description |
 |-------|-------------|
 | [Getting Started](getting-started.md) | Source and desktop setup, first reviewed result, provider setup, troubleshooting |
 | [Configuration](configuration.md) | Environment variables, worlds, and tuning |
+| [Identity and workload security](identity.md) | Durable principals, agent credentials, lifecycle, and explicit trust boundaries |
+| [World Collective](world-collective.md) | Local child worlds, isolated A/B variants, readiness, and explicit promotion |
+| [Federation discovery](federation-discovery.md) | Passive peer manifests, local trust decisions, and current cryptographic boundaries |
+| [Release qualification](release-qualification.md) | Deterministic local gate plus explicit provider-backed qualification boundaries |
 | [Connecting](connecting.md) | Dashboard, WebSocket, Telnet, MCP, SDK, CLI, and REST boundaries |
 | [Commands Quick Reference](commands.md) | Every command organized by category |
 | [How Marina Differs](how-marina-differs.md) | Why a persistent shared world beats workflow orchestration — positioning vs LangGraph, AutoGen, CrewAI, and others |

@@ -1,134 +1,103 @@
 # Federation Setup Guide
 
-> **Advanced feature.** Gateway federation links multiple Marina instances. Most deployments run a single instance and never need this — skip it unless you specifically intend to bridge separate instances. It requires a shared secret, open WebSocket ports between hosts, and the `gateway.connect` safety gate on each instance.
+> **Advanced feature.** Gateway federation links multiple Marina instances. Most deployments run a
+> single instance and never need this. It requires a shared secret, open WebSocket ports between
+> hosts, and the `gateway.connect` safety gate on each instance.
 
-Connect two or more Marina instances so they can relay channel messages and direct tells across instance boundaries.
+Connect two or more Marina instances so they can relay channel messages and direct tells across
+instance boundaries.
 
 ## Prerequisites
 
 - Two or more Marina instances running (`bun run start` on each)
-- `GATEWAY_SECRET` environment variable set to the **same value** on all instances
+- `GATEWAY_SECRET` set to the same value on all instances
 - Network access between instances (WebSocket port open, default 3300)
-- `gateway.connect` safety gate on both instances to run gateway commands
+- `gateway.connect` safety gate on both instances
 
 ## Setup
 
 ### 1. Set the shared secret
 
-On **every** instance, set the same secret before starting:
+On every instance, set the same strong secret before starting:
 
 ```bash
 export GATEWAY_SECRET="your-strong-secret-here"
 bun run start
 ```
 
-If `GATEWAY_SECRET` is not set, gateway auth messages are silently ignored (backward compatible), but any connection with a `Gateway_` prefix name will be rejected if the receiving instance has a secret set.
+If `GATEWAY_SECRET` is not set, gateway auth messages are silently ignored for backward
+compatibility. If the receiver does have a secret, it rejects connections using a `Gateway_` prefix
+that cannot authenticate.
 
-### 2. Add a gateway
+### 2. Add and verify a gateway
 
-On instance A, connect to instance B:
+On instance A:
 
-```
+```text
 gateway add site-b ws://instance-b-host:3300/ws
-```
-
-The gateway name (`site-b`) is a local label -- alphanumeric, 2-40 characters. The URL must point to the remote instance's WebSocket endpoint (`/ws`).
-
-### 3. Verify the connection
-
-```
 gateway status site-b
 ```
 
-You should see `Status: connected`, the URL, and `Messages relayed: 0`.
+The local label is 2-40 alphanumeric characters. The status should report `connected` before you
+rely on it.
 
-### 4. Bridge a channel
+### 3. Bridge and test a channel
 
-```
+```text
 gateway bridge site-b general
 ```
 
-This joins the `general` channel on the remote instance. Any message sent to `#general` on instance B will now be relayed to `#general` on instance A.
-
-### 5. Test it
-
 On instance B:
 
-```
+```text
 channel send general hello from B
 ```
 
-On instance A, the message appears in `#general` as `[from site-b/SomeUser] hello from B`.
+Instance A receives `[from site-b/SomeUser] hello from B` in `#general`.
 
-### 6. Make it bidirectional
+### 4. Make it bidirectional
 
-Bridging is one-directional. To relay messages both ways, repeat the setup on instance B:
+Bridging is directional. On instance B, add the reverse gateway and bridge:
 
-```
-# On instance B:
+```text
 gateway add site-a ws://instance-a-host:3300/ws
 gateway bridge site-a general
 ```
 
-## Cross-Instance Messaging
+## Cross-instance messaging
 
-### Channel bridging
-
-```
-gateway bridge <name> <channel>       # Start relaying a channel
-gateway unbridge <name> <channel>     # Stop relaying a channel
-```
-
-### Direct tells
-
-Send a message to a specific entity on the remote instance:
-
-```
+```text
+gateway bridge <name> <channel>
+gateway unbridge <name> <channel>
 gateway send <name> <entity> <message>
+gateway list
+gateway status <name>
+gateway remove <name>
 ```
 
-Example:
+The `gw` alias works for all subcommands.
 
-```
-gateway send site-b Alice Hey, check the research channel
-```
+## Persistence and behavior
 
-### Management
+Gateways and bridges persist in the database. On restart, Marina reconnects active gateways and
+re-bridges their channels. The client retries after a temporary disconnect. Initial connections time
+out after 15 seconds.
 
-```
-gateway list                          # Show all gateways and their status
-gateway status <name>                 # Detailed status for one gateway
-gateway remove <name>                 # Disconnect and delete a gateway
-```
-
-The `gw` alias works for all subcommands (e.g., `gw list`, `gw status site-b`).
-
-## Persistence
-
-Gateways and bridges are persisted to the database. On restart, the engine automatically reconnects all active gateways and re-bridges their channels.
+Only channel messages and direct tells cross this boundary. Entities, rooms, memory, tasks, and
+Canvas data remain local. Messages that fail to relay are currently dropped; channel history is the
+available audit record, not a guaranteed delivery queue.
 
 ## Security
 
-- **Always use `wss://` in production.** Terminate TLS with a reverse proxy (nginx, Caddy) in front of each instance.
-- **Set a strong `GATEWAY_SECRET`.** This is a pre-shared key -- all instances in the federation must share it. Without it, anyone who can reach the WebSocket port can impersonate a gateway.
-- **Gateway commands require the `gateway.connect` safety gate.** Only the creator or an operator with the relevant administrative authority can remove a gateway.
-- **Rate limiting.** Channel relay is throttled to 1 message per channel per second. Tell relay has the same 1/sec limit. This prevents message floods across the federation.
-- **Gateway loop prevention.** Messages from other `Gateway_` entities are never relayed, preventing cross-gateway amplification loops.
+- Use `wss://` in production and terminate TLS with a reverse proxy.
+- Use a strong `GATEWAY_SECRET`; anyone who obtains the shared secret can impersonate a gateway.
+- Gateway commands require `gateway.connect`; removal also applies ownership/operator checks.
+- Channel and tell relay is throttled to one message per channel per second.
+- Messages from `Gateway_` entities are not relayed again, preventing amplification loops.
+- Monitor `gateway status` for connection age, relay counts, and stale activity.
+- Gateway configuration is included in database exports. `GATEWAY_SECRET` remains environment-only.
 
-## Production Considerations
-
-- **TLS termination.** Use a reverse proxy to upgrade `ws://` to `wss://`. The gateway URL would then be `wss://instance-b.example.com/ws`.
-- **Monitoring.** `gateway status <name>` shows uptime, relay count, and bridged channels. Use this to verify health.
-- **Auto-reconnect.** The gateway client reconnects automatically (5-second delay) if the remote instance goes down temporarily.
-- **Connection timeout.** Initial connection attempts time out after 15 seconds.
-- **No state sync.** Entities, rooms, memory, tasks, and canvas data are all instance-local. Only channel messages and direct tells cross the federation boundary.
-- **Firewall rules.** Only the WebSocket port (default 3300) needs to be open between instances. No additional ports are required.
-
-## Production Hardening
-
-### TLS
-
-Always use `wss://` in production. Terminate TLS at a reverse proxy (nginx, Caddy):
+Example nginx WebSocket termination:
 
 ```nginx
 server {
@@ -146,28 +115,5 @@ server {
 }
 ```
 
-### Monitoring
-
-- `gateway status <name>` shows message count and connection age
-- Watch for increasing error counts or stale `lastMessageAt` timestamps
-- Set alerts on `gateway list` output for disconnected gateways
-
-### Dead Letters
-
-Messages that fail to relay are currently dropped. For critical channels:
-
-- Bridge both directions (A->B and B->A) for redundancy
-- Use channel message history as audit trail: `channel history <name>`
-- Consider writing a room agent that monitors relay health
-
-### Rate Limiting
-
-- Relay rate: 1 message per channel per second (built-in)
-- No per-gateway bandwidth quotas -- monitor and add GATEWAY_SECRET rotation if abused
-- Gateway loop prevention: messages from `Gateway_*` senders are not re-relayed
-
-### Backup
-
-- Gateway configs persist in the database -- included in `export` snapshots
-- Bridge state auto-restores on restart
-- GATEWAY_SECRET is env-only -- not exported (keep it in `.env`)
+Federation discovery manifests are a separate passive identity/trust registry. They do not replace
+the gateway transport or authenticate it. See [Federation discovery](federation-discovery.md).

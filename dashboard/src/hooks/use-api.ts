@@ -20,8 +20,10 @@ import type {
   EntityDetail,
   EntityWorkResponse,
   EnvVar,
+  EvidenceReceiptsResponse,
   EvolutionSessionEntry,
   ExperimentEntry,
+  FederationPeerEntry,
   GroupDetail,
   GroupEntry,
   KeyStatus,
@@ -36,6 +38,7 @@ import type {
   NoteGraphEntry,
   OperationalAlert,
   Paged,
+  PrincipalEntry,
   ProductivityResponse,
   ProjectEntry,
   ReadinessReport,
@@ -50,6 +53,7 @@ import type {
   TracesResponse,
   TraitEntry,
   WorldData,
+  WorldVariantsResponse,
 } from "../lib/types";
 
 export function useSetupStatus() {
@@ -159,6 +163,38 @@ export function useOperationalAlerts() {
     queryKey: ["operations", "alerts"],
     queryFn: () => fetchApi<OperationalAlert[]>("/api/operations/alerts"),
     refetchInterval: 15_000,
+  });
+}
+
+export function useEvidenceReceipts() {
+  return useQuery({
+    queryKey: ["evidence", "receipts"],
+    queryFn: () => fetchApi<EvidenceReceiptsResponse>("/api/evidence/receipts?limit=25"),
+    refetchInterval: 30_000,
+  });
+}
+
+export function usePrincipals() {
+  return useQuery({
+    queryKey: ["principals"],
+    queryFn: () => fetchApi<PrincipalEntry[]>("/api/principals"),
+    staleTime: 15_000,
+  });
+}
+
+export function useWorldVariants() {
+  return useQuery({
+    queryKey: ["collective", "variants"],
+    queryFn: () => fetchApi<WorldVariantsResponse>("/api/collective/variants"),
+    refetchInterval: 10_000,
+  });
+}
+
+export function useFederationPeers() {
+  return useQuery({
+    queryKey: ["federation", "peers"],
+    queryFn: () => fetchApi<FederationPeerEntry[]>("/api/federation/peers"),
+    staleTime: 15_000,
   });
 }
 

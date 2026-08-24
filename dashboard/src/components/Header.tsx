@@ -4,6 +4,7 @@
 import {
   Activity,
   Bell,
+  BriefcaseBusiness,
   Edit3,
   FolderKanban,
   Frame,
@@ -32,7 +33,9 @@ interface HeaderProps {
   onSaveLayoutPreset?: () => void;
   onRenameLayoutPreset?: (id: string) => void;
   onDeleteLayoutPreset?: (id: string) => void;
-  onOpenOperations?: () => void;
+  onOpenAttention?: () => void;
+  onOpenPulse?: () => void;
+  onOpenWork?: () => void;
   onOpenTraces?: () => void;
 }
 
@@ -51,14 +54,19 @@ export function Header({
   onSaveLayoutPreset,
   onRenameLayoutPreset,
   onDeleteLayoutPreset,
-  onOpenOperations,
+  onOpenAttention,
+  onOpenPulse,
+  onOpenWork,
   onOpenTraces,
 }: HeaderProps) {
   const entities = useWorldState((s) => s.entities);
   const connections = useWorldState((s) => s.connections);
   const { data: systemData } = useSystem();
   const { data: alerts = [] } = useOperationalAlerts();
-  const activeAlerts = alerts.filter((alert) => alert.status !== "resolved");
+  const activeAlerts = alerts.filter(
+    (alert) =>
+      alert.status !== "resolved" && (!alert.snoozed_until || alert.snoozed_until <= Date.now()),
+  );
   const criticalAlerts = activeAlerts.filter((alert) => alert.severity === "critical").length;
   const agents = entities.filter((e) => e.kind === "agent");
   const activePreset = layoutPresets?.find((p) => p.id === activeLayoutId);
@@ -73,7 +81,7 @@ export function Header({
               // biome-ignore lint/suspicious/noArrayIndexKey: TITLE_LETTERS is a static, never-reordered constant
               key={i}
               style={{ display: "inline-block" }}
-              initial={{ opacity: 0, scale: 0.5, filter: "blur(8px)" }}
+              initial={false}
               animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
               transition={{
                 delay: Math.abs(i - center) * 0.05,
@@ -92,6 +100,24 @@ export function Header({
       <div className="flex items-center gap-3 text-[11px]">
         <button
           type="button"
+          onClick={onOpenPulse}
+          className="flex items-center gap-1.5 rounded border border-success/30 bg-success/5 px-2 py-0.5 text-success transition-colors hover:border-success/60 hover:bg-success/10"
+          title="Open the live, evidence-linked event stream"
+        >
+          <Radio size={11} className={connected ? "animate-pulse" : ""} />
+          <span>Pulse</span>
+        </button>
+        <button
+          type="button"
+          onClick={onOpenWork}
+          className="flex items-center gap-1.5 rounded border border-primary/30 bg-primary/5 px-2 py-0.5 text-primary transition-colors hover:border-primary/60 hover:bg-primary/10"
+          title="Open active tasks, projects, and coding sessions"
+        >
+          <BriefcaseBusiness size={11} />
+          <span>Work</span>
+        </button>
+        <button
+          type="button"
           onClick={onOpenTraces}
           className="flex items-center gap-1.5 rounded border border-cyan-400/30 bg-cyan-400/5 px-2 py-0.5 text-cyan-300 transition-colors hover:border-cyan-300/60 hover:bg-cyan-400/10"
           title="Open execution traces and evaluations"
@@ -101,7 +127,7 @@ export function Header({
         </button>
         <button
           type="button"
-          onClick={onOpenOperations}
+          onClick={onOpenAttention}
           className={`relative flex items-center gap-1.5 rounded border px-2 py-0.5 transition-colors ${
             criticalAlerts
               ? "border-danger/50 bg-danger/10 text-danger"
@@ -119,7 +145,12 @@ export function Header({
           <AnimatedNumber value={activeAlerts.length} className="tabular-nums" />
           <span className="hidden xl:inline">alerts</span>
           {criticalAlerts > 0 && (
-            <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-danger shadow-[0_0_8px_var(--color-danger)]" />
+            <>
+              <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-danger shadow-[0_0_8px_var(--color-danger)]" />
+              <span className="sr-only" aria-live="assertive">
+                {criticalAlerts} critical Marina alert{criticalAlerts === 1 ? "" : "s"}
+              </span>
+            </>
           )}
         </button>
 

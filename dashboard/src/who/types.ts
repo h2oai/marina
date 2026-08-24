@@ -30,6 +30,8 @@ export interface Achievement {
 
 export interface EntityProfile {
   identity: {
+    local_id: string;
+    id_stability: "durable" | "runtime" | "name_record";
     name: string;
     kind: string;
     role: string | null;
@@ -38,6 +40,8 @@ export interface EntityProfile {
     first_seen: number | null;
     last_active: number | null;
     online: boolean;
+    spawned_by: string | null;
+    identity_assurance: "verified_human" | "internal_agent" | "session_only" | "record_only";
   };
   bio: {
     goal: string | null;

@@ -14,12 +14,16 @@ import * as chronicleDb from "./db-chronicle";
 import * as competenceDb from "./db-competence";
 import * as crewsDb from "./db-crews";
 import * as entitiesDb from "./db-entities";
+import * as evidenceDb from "./db-evidence";
+import * as federationDb from "./db-federation";
 import * as feedDb from "./db-feed";
 import * as logsDb from "./db-logs";
 import * as mediaDb from "./db-media";
 import * as notesDb from "./db-notes";
+import * as principalsDb from "./db-principals";
 import * as standingDb from "./db-standing";
 import * as tasksDb from "./db-tasks";
+import * as worldVariantsDb from "./db-world-variants";
 
 export type {
   AdapterRow,
@@ -1904,6 +1908,161 @@ CREATE INDEX idx_structured_logs_trace ON structured_logs(trace_id, timestamp DE
 CREATE INDEX idx_structured_logs_request ON structured_logs(request_id, timestamp DESC);
 `,
   },
+  // Migration 74: evolve the operator remediation inbox into the durable
+  // Attention substrate. Existing operational producers remain valid; the
+  // optional fields add attribution, action routing, assignment, deadlines,
+  // and snooze without creating a competing notification table.
+  {
+    version: 74,
+    sql: `
+ALTER TABLE operational_alerts ADD COLUMN attention_kind TEXT NOT NULL DEFAULT 'operational';
+ALTER TABLE operational_alerts ADD COLUMN source_entity TEXT;
+ALTER TABLE operational_alerts ADD COLUMN target_entity TEXT;
+ALTER TABLE operational_alerts ADD COLUMN assigned_to TEXT;
+ALTER TABLE operational_alerts ADD COLUMN action_label TEXT;
+ALTER TABLE operational_alerts ADD COLUMN action_ref TEXT;
+ALTER TABLE operational_alerts ADD COLUMN metadata TEXT;
+ALTER TABLE operational_alerts ADD COLUMN seen_at INTEGER;
+ALTER TABLE operational_alerts ADD COLUMN snoozed_until INTEGER;
+ALTER TABLE operational_alerts ADD COLUMN deadline_at INTEGER;
+CREATE INDEX idx_operational_alerts_attention
+  ON operational_alerts(status, snoozed_until, deadline_at, last_seen_at DESC);
+CREATE INDEX idx_operational_alerts_assigned
+  ON operational_alerts(assigned_to, status, last_seen_at DESC);
+`,
+  },
+  // Migration 75: a local tamper-evident receipt chain for consequential
+  // evidence. This is deliberately not described as a signature or blockchain:
+  // independent trust requires exporting/anchoring the head hash externally.
+  {
+    version: 75,
+    sql: `
+CREATE TABLE evidence_receipts (
+  sequence INTEGER PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  ref TEXT NOT NULL,
+  payload_hash TEXT NOT NULL,
+  previous_hash TEXT,
+  entry_hash TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_evidence_receipts_ref ON evidence_receipts(ref, sequence DESC);
+CREATE INDEX idx_evidence_receipts_type ON evidence_receipts(event_type, sequence DESC);
+`,
+  },
+  // Migration 76: immutable local principal identities shared by human and
+  // non-human actors. Credentials and policy remain separate concerns.
+  {
+    version: 76,
+    sql: `
+CREATE TABLE principals (
+  principal_id TEXT PRIMARY KEY,
+  principal_type TEXT NOT NULL CHECK(principal_type IN ('human','agent','service','system')),
+  display_name TEXT NOT NULL,
+  home_world TEXT NOT NULL DEFAULT 'local',
+  owner_principal_id TEXT REFERENCES principals(principal_id),
+  lineage_parent_id TEXT REFERENCES principals(principal_id),
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','suspended','disabled')),
+  created_at INTEGER NOT NULL,
+  disabled_at INTEGER
+);
+CREATE UNIQUE INDEX idx_principals_identity
+  ON principals(principal_type, display_name COLLATE NOCASE, home_world);
+CREATE INDEX idx_principals_owner ON principals(owner_principal_id, status);
+CREATE INDEX idx_principals_lineage ON principals(lineage_parent_id, status);
+
+INSERT OR IGNORE INTO principals
+  (principal_id,principal_type,display_name,home_world,status,created_at)
+SELECT id,'human',name,'local','active',created_at FROM users;
+
+INSERT OR IGNORE INTO principals
+  (principal_id,principal_type,display_name,home_world,status,created_at)
+SELECT lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' ||
+       substr(lower(hex(randomblob(2))),2) || '-a' || substr(lower(hex(randomblob(2))),2) || '-' ||
+       lower(hex(randomblob(6))),
+       'agent',name,'local','active',created_at
+FROM agent_configs;
+`,
+  },
+  // Migration 77: independently revocable, short-lived workload credentials.
+  // Only token hashes are stored; the process bootstrap secret is retained as
+  // a compatibility/bootstrap path, not used for newly spawned runtime agents.
+  {
+    version: 77,
+    sql: `
+CREATE TABLE principal_credentials (
+  credential_id TEXT PRIMARY KEY,
+  principal_id TEXT NOT NULL REFERENCES principals(principal_id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  audience TEXT NOT NULL,
+  scopes TEXT NOT NULL,
+  issued_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  revoked_at INTEGER
+);
+CREATE INDEX idx_principal_credentials_principal
+  ON principal_credentials(principal_id, revoked_at, expires_at DESC);
+CREATE INDEX idx_principal_credentials_expiry
+  ON principal_credentials(expires_at, revoked_at);
+`,
+  },
+  // Migration 78: local World Collective variants. A variant is an explicit,
+  // isolated child process/database rooted in the same Marina source tree.
+  {
+    version: 78,
+    sql: `
+CREATE TABLE world_variants (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  world_template TEXT NOT NULL,
+  hypothesis TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL CHECK(status IN ('draft','starting','running','stopped','failed','promoted','archived')),
+  parent_variant_id TEXT REFERENCES world_variants(id),
+  source_root TEXT NOT NULL,
+  db_path TEXT NOT NULL,
+  ws_port INTEGER NOT NULL UNIQUE,
+  pid INTEGER,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  promoted_at INTEGER,
+  last_error TEXT
+);
+CREATE INDEX idx_world_variants_status ON world_variants(status, updated_at DESC);
+CREATE INDEX idx_world_variants_parent ON world_variants(parent_variant_id, created_at DESC);
+`,
+  },
+  // Migration 79: explicit federation peer manifests and operator trust state.
+  // Registration never implies trust; public-key verification is reserved for
+  // a future signed-envelope protocol and is not fabricated here.
+  {
+    version: 79,
+    sql: `
+CREATE TABLE federation_peers (
+  world_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  public_key TEXT,
+  trust_status TEXT NOT NULL DEFAULT 'unverified'
+    CHECK(trust_status IN ('unverified','trusted','blocked')),
+  manifest TEXT NOT NULL,
+  first_seen_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL
+);
+CREATE INDEX idx_federation_peers_trust
+  ON federation_peers(trust_status, name COLLATE NOCASE);
+`,
+  },
+  // Migration 80: promotion decisions retain their rationale, exact evidence
+  // references, and actor without making evidence a runtime autonomy gate.
+  {
+    version: 80,
+    sql: `
+ALTER TABLE world_variants ADD COLUMN promotion_rationale TEXT;
+ALTER TABLE world_variants ADD COLUMN promotion_evidence TEXT;
+ALTER TABLE world_variants ADD COLUMN promoted_by TEXT;
+`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -1920,6 +2079,16 @@ export interface OperationalAlertRow {
   last_seen_at: number;
   acknowledged_at: number | null;
   resolved_at: number | null;
+  attention_kind: string;
+  source_entity: string | null;
+  target_entity: string | null;
+  assigned_to: string | null;
+  action_label: string | null;
+  action_ref: string | null;
+  metadata: string | null;
+  seen_at: number | null;
+  snoozed_until: number | null;
+  deadline_at: number | null;
 }
 
 export interface ProductivitySummary {
@@ -2121,11 +2290,34 @@ export class MarinaDB {
   }
 
   addTraceJudgment(input: entitiesDb.TraceJudgmentInput): entitiesDb.TraceJudgmentRow {
-    return entitiesDb.addTraceJudgment(this.db, input);
+    return this.db.transaction(() => {
+      const row = entitiesDb.addTraceJudgment(this.db, input);
+      evidenceDb.appendEvidenceReceipt(this.db, {
+        eventType: "trace_judgment",
+        ref: `trace:${row.traceId}/judgment:${row.id}`,
+        payload: row,
+        createdAt: row.createdAt,
+      });
+      return row;
+    })();
   }
 
   getTraceJudgments(traceId: string, limit = 100): entitiesDb.TraceJudgmentRow[] {
     return entitiesDb.getTraceJudgments(this.reader, traceId, limit);
+  }
+
+  appendEvidenceReceipt(
+    input: Parameters<typeof evidenceDb.appendEvidenceReceipt>[1],
+  ): evidenceDb.EvidenceReceiptRow {
+    return evidenceDb.appendEvidenceReceipt(this.db, input);
+  }
+
+  listEvidenceReceipts(limit = 100): evidenceDb.EvidenceReceiptRow[] {
+    return evidenceDb.listEvidenceReceipts(this.reader, limit);
+  }
+
+  verifyEvidenceChain(): evidenceDb.EvidenceVerification {
+    return evidenceDb.verifyEvidenceChain(this.reader);
   }
 
   getEventCount(): number {
@@ -2813,6 +3005,11 @@ export class MarinaDB {
       "INSERT INTO users (id, name, created_at, last_login, rank) VALUES (?, ?, ?, ?, ?)",
       [user.id, user.name, now, now, user.rank ?? 0],
     );
+    principalsDb.ensurePrincipal(this.db, {
+      type: "human",
+      displayName: user.name,
+      principalId: user.id,
+    });
   }
 
   getUser(id: string): UserRow | undefined {
@@ -3115,17 +3312,30 @@ export class MarinaDB {
     title: string;
     detail: string;
     remedy: string;
+    kind?: string;
+    sourceEntity?: string;
+    targetEntity?: string;
+    assignedTo?: string;
+    actionLabel?: string;
+    actionRef?: string;
+    metadata?: Record<string, unknown>;
+    deadlineAt?: number;
   }): OperationalAlertRow {
     const now = Date.now();
     this.db.run(
       `INSERT INTO operational_alerts
-       (alert_key,severity,category,title,detail,remedy,status,first_seen_at,last_seen_at)
-       VALUES (?,?,?,?,?,?,'open',?,?)
+       (alert_key,severity,category,title,detail,remedy,status,first_seen_at,last_seen_at,
+        attention_kind,source_entity,target_entity,assigned_to,action_label,action_ref,metadata,deadline_at)
+       VALUES (?,?,?,?,?,?,'open',?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(alert_key) DO UPDATE SET severity=excluded.severity, title=excluded.title,
        detail=excluded.detail, remedy=excluded.remedy, last_seen_at=excluded.last_seen_at,
+       attention_kind=excluded.attention_kind, source_entity=excluded.source_entity,
+       target_entity=excluded.target_entity, assigned_to=excluded.assigned_to,
+       action_label=excluded.action_label, action_ref=excluded.action_ref,
+       metadata=excluded.metadata, deadline_at=excluded.deadline_at,
        occurrences=operational_alerts.occurrences+1,
        status=CASE WHEN operational_alerts.status='resolved' THEN 'open' ELSE operational_alerts.status END,
-       resolved_at=NULL`,
+       resolved_at=NULL, snoozed_until=NULL`,
       [
         alert.key,
         alert.severity,
@@ -3135,6 +3345,14 @@ export class MarinaDB {
         alert.remedy,
         now,
         now,
+        alert.kind ?? "operational",
+        alert.sourceEntity ?? null,
+        alert.targetEntity ?? null,
+        alert.assignedTo ?? null,
+        alert.actionLabel ?? null,
+        alert.actionRef ?? null,
+        alert.metadata ? JSON.stringify(alert.metadata) : null,
+        alert.deadlineAt ?? null,
       ],
     );
     return this.db
@@ -3166,6 +3384,14 @@ export class MarinaDB {
         now,
         id,
       ]).changes > 0
+    );
+  }
+  snoozeOperationalAlert(id: number, until: number): boolean {
+    return (
+      this.db.run(
+        "UPDATE operational_alerts SET snoozed_until=?, status='open' WHERE id=? AND status!='resolved'",
+        [until, id],
+      ).changes > 0
     );
   }
   resolveOperationalAlertsExcept(category: string, activeKeys: string[]): number {
@@ -6261,12 +6487,128 @@ export class MarinaDB {
     supports?: AgentSupports;
   }): void {
     agentsDb.saveAgentConfig(this.db, opts);
+    const parent =
+      principalsDb.getPrincipal(this.reader, "agent", opts.spawnedBy) ??
+      principalsDb.getPrincipal(this.reader, "human", opts.spawnedBy);
+    principalsDb.ensurePrincipal(this.db, {
+      type: "agent",
+      displayName: opts.name,
+      ownerPrincipalId: parent?.principal_id,
+      lineageParentId: parent?.principal_type === "agent" ? parent.principal_id : null,
+    });
   }
   getAgentConfig(name: string): AgentConfigRow | undefined {
     return agentsDb.getAgentConfig(this.db, name);
   }
   getAllAgentConfigs(): AgentConfigRow[] {
     return agentsDb.getAllAgentConfigs(this.db);
+  }
+
+  ensurePrincipal(
+    input: Parameters<typeof principalsDb.ensurePrincipal>[1],
+  ): principalsDb.PrincipalRow {
+    return principalsDb.ensurePrincipal(this.db, input);
+  }
+
+  getPrincipal(
+    type: principalsDb.PrincipalType,
+    displayName: string,
+    homeWorld = "local",
+  ): principalsDb.PrincipalRow | undefined {
+    return principalsDb.getPrincipal(this.reader, type, displayName, homeWorld);
+  }
+
+  listPrincipals(): principalsDb.PrincipalRow[] {
+    return principalsDb.listPrincipals(this.reader);
+  }
+
+  setPrincipalStatus(principalId: string, status: principalsDb.PrincipalStatus): boolean {
+    return principalsDb.setPrincipalStatus(this.db, principalId, status);
+  }
+
+  issueWorkloadCredential(
+    principalId: string,
+    ttlMs?: number,
+  ): principalsDb.IssuedWorkloadCredential {
+    return principalsDb.issueWorkloadCredential(this.db, principalId, ttlMs);
+  }
+
+  verifyWorkloadCredential(token: string): principalsDb.PrincipalRow | undefined {
+    return principalsDb.verifyWorkloadCredential(this.reader, token);
+  }
+
+  revokeWorkloadCredential(credentialId: string): boolean {
+    return principalsDb.revokeWorkloadCredential(this.db, credentialId);
+  }
+
+  createWorldVariant(
+    input: Parameters<typeof worldVariantsDb.createWorldVariant>[1],
+  ): worldVariantsDb.WorldVariantRow {
+    return worldVariantsDb.createWorldVariant(this.db, input);
+  }
+
+  getWorldVariant(id: string): worldVariantsDb.WorldVariantRow | undefined {
+    return worldVariantsDb.getWorldVariant(this.reader, id);
+  }
+
+  listWorldVariants(): worldVariantsDb.WorldVariantRow[] {
+    return worldVariantsDb.listWorldVariants(this.reader);
+  }
+
+  updateWorldVariant(
+    id: string,
+    patch: Parameters<typeof worldVariantsDb.updateWorldVariant>[2],
+  ): worldVariantsDb.WorldVariantRow | undefined {
+    return worldVariantsDb.updateWorldVariant(this.db, id, patch);
+  }
+
+  promoteWorldVariant(
+    id: string,
+    input: Parameters<typeof worldVariantsDb.promoteWorldVariant>[2],
+  ): worldVariantsDb.WorldVariantRow | undefined {
+    return this.db.transaction(() => {
+      const promoted = worldVariantsDb.promoteWorldVariant(this.db, id, input);
+      if (promoted?.promoted_at) {
+        evidenceDb.appendEvidenceReceipt(this.db, {
+          eventType: "world_variant_promoted",
+          ref: `world-variant:${id}`,
+          payload: {
+            variantId: id,
+            rationale: input.rationale,
+            evidenceRefs: input.evidenceRefs,
+            promotedBy: input.promotedBy,
+            promotedAt: promoted.promoted_at,
+          },
+          createdAt: promoted.promoted_at,
+        });
+      }
+      return promoted;
+    })();
+  }
+
+  getOrCreateWorldId(): string {
+    const existing = agentsDb.getSetting(this.db, "federation.world_id");
+    if (existing) return existing;
+    const worldId = crypto.randomUUID();
+    agentsDb.setSetting(this.db, "federation.world_id", worldId);
+    return worldId;
+  }
+
+  upsertFederationPeer(
+    input: Parameters<typeof federationDb.upsertFederationPeer>[1],
+  ): federationDb.FederationPeerRow {
+    return federationDb.upsertFederationPeer(this.db, input);
+  }
+
+  listFederationPeers(): federationDb.FederationPeerRow[] {
+    return federationDb.listFederationPeers(this.reader);
+  }
+
+  setFederationTrust(
+    worldId: string,
+    trust: federationDb.FederationTrust,
+  ): federationDb.FederationPeerRow | undefined {
+    return federationDb.setFederationTrust(this.db, worldId, trust);
   }
   getAgentConfigsBySpawnedBy(spawnedBy: string): AgentConfigRow[] {
     return agentsDb.getAgentConfigsBySpawnedBy(this.db, spawnedBy);

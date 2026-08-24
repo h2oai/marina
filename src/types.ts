@@ -815,6 +815,9 @@ export type EngineEvent =
       routeReason?: string;
       /** Execution path selected at the model endpoint boundary. */
       routeKind?: "agent" | "passthru" | "fallback" | "synthesis";
+      /** Resolved passthru identity for per-caller attribution (light
+       * governance). Absent on anonymous/internal-routed requests. */
+      entityId?: string;
       durationMs?: number;
       ttftMs?: number;
       inputTokens?: number;

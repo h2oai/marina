@@ -67,10 +67,10 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: /choose a name/i })).toBeInTheDocument();
   });
 
-  it("opens the operations command center from the header alert indicator", () => {
+  it("opens the global attention inbox from the header alert indicator", () => {
     renderWithProviders(<App />);
     fireEvent.click(screen.getByTitle("Operations clear"));
-    expect(screen.getByText("Operations Inbox")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Attention inbox" })).toBeInTheDocument();
   });
 
   it("opens the isolated trace explorer from Admin without changing the grid", () => {

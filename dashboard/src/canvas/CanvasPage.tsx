@@ -29,6 +29,7 @@ import { fetchCanvases, useCanvas } from "./hooks/use-canvas";
 import type { CanvasEvent } from "./hooks/use-canvas-ws";
 import { useCanvasWs } from "./hooks/use-canvas-ws";
 import { animateLayout as animateLayoutUtil, springEntrance } from "./lib/animations";
+import { canvasPermalink, canvasSelectionFromSearch } from "./lib/canvas-links";
 import { defaultSize } from "./lib/layout";
 import { selectInitialCanvas } from "./lib/select-canvas";
 import type { CanvasData, CanvasEdgeData } from "./lib/types";
@@ -68,10 +69,12 @@ function guessNodeType(mime: string): string {
 }
 
 function CanvasInner() {
+  const initialSelectionRef = useRef(canvasSelectionFromSearch(window.location.search));
   const [canvasList, setCanvasList] = useState<CanvasData[]>([]);
   const [listError, setListError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const requestedCanvasIdRef = useRef(new URLSearchParams(window.location.search).get("canvas"));
+  const requestedCanvasIdRef = useRef(initialSelectionRef.current.canvasId);
+  const requestedNodeIdRef = useRef(initialSelectionRef.current.nodeId);
   const [filteredIds, setFilteredIds] = useState<Set<string> | null>(null);
   const [dropping, setDropping] = useState(false);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
@@ -79,6 +82,7 @@ function CanvasInner() {
   const nodesInitialized = useNodesInitialized();
   const prevNodeIdsRef = useRef<Set<string>>(new Set());
   const [snapshotRefreshKey, setSnapshotRefreshKey] = useState(0);
+  const [navigationRevision, setNavigationRevision] = useState(0);
   const [liveEdges, setLiveEdges] = useState<CanvasEdgeData[]>([]);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"canvas" | "relationship" | null>(null);
@@ -86,6 +90,7 @@ function CanvasInner() {
   const handledGenerationRef = useRef(0);
   const skipNextConnectionRecoveryRef = useRef(true);
   const fittedSnapshotRef = useRef<string>();
+  const resolvedNodeLinkRef = useRef<string>();
 
   // Load canvas list on mount. Prefer the auto-populated activity feed so a
   // running Marina opens on visible work rather than an empty workspace.
@@ -118,6 +123,23 @@ function CanvasInner() {
     else url.searchParams.delete("canvas");
     window.history.replaceState(null, "", url);
   }, [selectedId]);
+
+  // Browser history is semantic navigation: restore the selected canvas and
+  // exact node rather than leaving React state on the page the user left.
+  useEffect(() => {
+    const restoreHistorySelection = () => {
+      const selection = canvasSelectionFromSearch(window.location.search);
+      requestedCanvasIdRef.current = selection.canvasId;
+      requestedNodeIdRef.current = selection.nodeId;
+      resolvedNodeLinkRef.current = undefined;
+      setDetailNode(null);
+      const nextCanvas = selectInitialCanvas(canvasList, selection.canvasId)?.id ?? null;
+      setSelectedId(nextCanvas);
+      setNavigationRevision((revision) => revision + 1);
+    };
+    window.addEventListener("popstate", restoreHistorySelection);
+    return () => window.removeEventListener("popstate", restoreHistorySelection);
+  }, [canvasList]);
 
   // Real-time updates via WebSocket. The hook subscribes first and buffers
   // every event; we flip its `markReady` once the snapshot has been applied,
@@ -260,9 +282,51 @@ function CanvasInner() {
   const [detailNode, setDetailNode] = useState<Node | null>(null);
   const [suggestedPrompt, setSuggestedPrompt] = useState<string | undefined>();
 
-  const onNodeDoubleClick = useCallback((_event: React.MouseEvent, node: Node) => {
-    setDetailNode(node);
-  }, []);
+  const onNodeDoubleClick = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      requestedNodeIdRef.current = node.id;
+      setDetailNode(node);
+      window.history.pushState(
+        null,
+        "",
+        canvasPermalink(
+          { canvasId: selectedId ?? undefined, nodeId: node.id },
+          window.location.href,
+        ),
+      );
+    },
+    [selectedId],
+  );
+
+  // Resolve an exact node deep link only after the selected canvas snapshot is
+  // ready. A link never silently opens a different node or canvas: missing
+  // targets remain visible as an actionable error.
+  useEffect(() => {
+    void navigationRevision;
+    const requestedNodeId = requestedNodeIdRef.current;
+    if (!selectedId || !requestedNodeId || loading || !nodesInitialized) return;
+    const key = `${selectedId}:${requestedNodeId}:${snapshotRefreshKey}`;
+    if (resolvedNodeLinkRef.current === key) return;
+    resolvedNodeLinkRef.current = key;
+    const target = nodes.find((node) => node.id === requestedNodeId);
+    if (!target) {
+      setNotice({
+        tone: "error",
+        message: `Canvas node “${requestedNodeId}” is unavailable or was deleted.`,
+      });
+      return;
+    }
+    setDetailNode(target);
+    void fitView({ nodes: [{ id: target.id }], padding: 0.6, duration: 350, maxZoom: 1.4 });
+  }, [
+    fitView,
+    loading,
+    navigationRevision,
+    nodes,
+    nodesInitialized,
+    selectedId,
+    snapshotRefreshKey,
+  ]);
 
   // Keep detail panel in sync with node updates
   useEffect(() => {
@@ -641,7 +705,18 @@ function CanvasInner() {
           className="bg-bg-hover text-text text-sm rounded px-2 py-1 border border-border focus:outline-none focus:border-primary shrink-0"
           value={selectedId ?? ""}
           onFocus={loadCanvasList}
-          onChange={(e) => setSelectedId(e.target.value || null)}
+          onChange={(e) => {
+            const nextId = e.target.value || null;
+            requestedNodeIdRef.current = undefined;
+            resolvedNodeLinkRef.current = undefined;
+            setDetailNode(null);
+            setSelectedId(nextId);
+            window.history.pushState(
+              null,
+              "",
+              canvasPermalink({ canvasId: nextId ?? undefined }, window.location.href),
+            );
+          }}
         >
           {canvasList.length === 0 && <option value="">No canvases</option>}
           {canvasList.map((c) => (
@@ -884,6 +959,12 @@ function CanvasInner() {
         onClose={() => {
           setDetailNode(null);
           setSuggestedPrompt(undefined);
+          requestedNodeIdRef.current = undefined;
+          window.history.pushState(
+            null,
+            "",
+            canvasPermalink({ canvasId: selectedId ?? undefined }, window.location.href),
+          );
         }}
         canvasId={selectedId}
         onSetIntent={persistNodeData}

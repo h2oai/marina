@@ -36,6 +36,8 @@ const CITATION_MILESTONES = [1, 5, 25, 100];
 
 export interface EntityProfile {
   identity: {
+    local_id: string;
+    id_stability: "durable" | "runtime" | "name_record";
     name: string;
     kind: string;
     role: string | null;
@@ -44,6 +46,8 @@ export interface EntityProfile {
     first_seen: number | null;
     last_active: number | null;
     online: boolean;
+    spawned_by: string | null;
+    identity_assurance: "verified_human" | "internal_agent" | "session_only" | "record_only";
   };
   bio: {
     goal: string | null;
@@ -133,7 +137,7 @@ export function buildEntityProfile(
   // Canonical name = liveEntity.name > userRow.name > agentConfig.name
   const canonicalName = liveEntity?.name ?? userRow?.name ?? agentConfig?.name ?? name;
 
-  const identity = buildIdentity(canonicalName, liveEntity, userRow, db);
+  const identity = buildIdentity(canonicalName, liveEntity, userRow, agentConfig, db);
   const bio = buildBio(canonicalName, liveEntity, agentConfig, db);
   const narratives = buildNarratives(canonicalName, db);
   const stats = buildStats(canonicalName, liveEntity, db);
@@ -146,7 +150,15 @@ export function buildEntityProfile(
 function buildIdentity(
   name: string,
   liveEntity: Entity | undefined,
-  userRow: { rank: number; created_at: number } | undefined,
+  userRow:
+    | {
+        id: string;
+        rank: number;
+        created_at: number;
+        auth_subject?: string | null;
+      }
+    | undefined,
+  agentConfig: { spawned_by: string } | undefined,
   db: MarinaDB,
 ): EntityProfile["identity"] {
   const kind = liveEntity?.kind ?? (db.getAgentConfig(name) ? "agent" : "user");
@@ -155,7 +167,10 @@ function buildIdentity(
   const standing = liveEntity ? readStandingFor(liveEntity.id, db) : 0;
   const first_seen = userRow?.created_at ?? liveEntity?.createdAt ?? null;
   const last_active = db.getLastActivityAt(name);
+  const principal = db.getPrincipal(agentConfig ? "agent" : "human", name);
   return {
+    local_id: principal?.principal_id ?? userRow?.id ?? liveEntity?.id ?? `name:${name}`,
+    id_stability: principal || userRow ? "durable" : liveEntity ? "runtime" : "name_record",
     name,
     kind,
     role,
@@ -164,6 +179,14 @@ function buildIdentity(
     first_seen,
     last_active,
     online: !!liveEntity,
+    spawned_by: agentConfig?.spawned_by ?? null,
+    identity_assurance: userRow?.auth_subject
+      ? "verified_human"
+      : agentConfig
+        ? "internal_agent"
+        : liveEntity
+          ? "session_only"
+          : "record_only",
   };
 }
 

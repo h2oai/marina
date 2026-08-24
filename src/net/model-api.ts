@@ -14,7 +14,8 @@ import type { Engine } from "../engine/engine";
 import { compareTraceCohorts } from "../engine/trace-dataset";
 import { projectTraces } from "../engine/trace-projection";
 import { adviseTraceRouting, selectAdaptiveCandidate } from "../engine/trace-routing-advice";
-import type { EngineEvent } from "../types";
+import type { EngineEvent, EntityId } from "../types";
+import { handleAnthropicMessages } from "./anthropic-inbound";
 import { buildAliasMap } from "./compat-profiles";
 import { corsHeaders } from "./cors";
 import { handleMediaApi } from "./media-api";
@@ -25,6 +26,14 @@ import {
   localProviderContextWindow,
 } from "./model-discovery";
 import { getEndpointConfig } from "./model-endpoint";
+import {
+  applyInjection,
+  buildInjectedContext,
+  capturePassthruTranscript,
+  messageText,
+  type OpenAIMessage,
+  resolvePassthruIdentity,
+} from "./passthru-context";
 import {
   normalizeTextualToolCalls,
   type StreamEvent,
@@ -46,47 +55,111 @@ function isOpenApiMode(): boolean {
   return process.env.MARINA_OPEN_API === "true";
 }
 
-function getApiKeys(): Set<string> | null {
-  const raw = process.env.MODEL_API_KEYS;
-  if (!raw) return null;
-  const keys = raw
-    .split(",")
-    .map((k) => k.trim())
-    .filter(Boolean);
-  return keys.length > 0 ? new Set(keys) : null;
+/**
+ * Result of authenticating a model-API request. The integrator constructs this
+ * and hands it to `resolvePassthruIdentity` (passthru-context.ts), which maps
+ * the authenticated caller to a Marina entity. Owned here because authentication
+ * is the integrator's responsibility; passthru-context imports the type.
+ */
+export interface PassthruAuthResult {
+  /** The MODEL_API_KEYS secret that matched, if any (never the bound name). */
+  matchedKey?: string;
+  /** Entity name bound by a `secret:entity` MODEL_API_KEYS entry, if present. */
+  boundEntityName?: string;
+  /** Internal room-agent token was presented (fully trusted). */
+  internal: boolean;
+  /** MARINA_OPEN_API dev mode allowed the request through. */
+  openMode: boolean;
+  /**
+   * Whether an `X-Marina-Agent` name-map header may be honored for this caller.
+   * True only for trusted callers: internal token, open dev mode, or a key with
+   * an explicit entity binding (an operator key). A plain shared secret cannot
+   * impersonate arbitrary entities.
+   */
+  canNameMap: boolean;
 }
 
-function authenticate(req: Request): Response | null {
+interface KeyEntry {
+  secret: string;
+  entity?: string;
+}
+
+/**
+ * Parse a MODEL_API_KEYS entry. Backward compatible: a plain `secret` maps to
+ * the default passthru entity; `secret:entity` binds the key to a named entity
+ * (mirrors the MEM_API_KEYS `secret:agent` convention). Splits on the FIRST
+ * colon so entity names may not contain one, consistent with MEM_API_KEYS.
+ */
+function parseKeyEntry(entry: string): KeyEntry {
+  const idx = entry.indexOf(":");
+  if (idx < 0) return { secret: entry };
+  const secret = entry.slice(0, idx);
+  const entity = entry.slice(idx + 1).trim();
+  return entity ? { secret, entity } : { secret };
+}
+
+function getApiKeyEntries(): KeyEntry[] | null {
+  const raw = process.env.MODEL_API_KEYS;
+  if (!raw) return null;
+  const entries = raw
+    .split(",")
+    .map((k) => k.trim())
+    .filter(Boolean)
+    .map(parseKeyEntry);
+  return entries.length > 0 ? entries : null;
+}
+
+type AuthOutcome = { error: Response } | { auth: PassthruAuthResult };
+
+function authenticate(req: Request): AuthOutcome {
   // Accept internal token from room agents — always valid, no config needed
   const auth = req.headers.get("Authorization");
-  if (auth?.startsWith("Bearer ")) {
-    const token = auth.slice(7);
+  const token = auth?.startsWith("Bearer ") ? auth.slice(7) : undefined;
+  if (token) {
     const internal = getInternalModelToken();
     // Constant-time compare, consistent with GATEWAY_SECRET / internal-WS-token.
-    if (internal && secretsEqual(token, internal)) return null;
+    if (internal && secretsEqual(token, internal)) {
+      return { auth: { internal: true, openMode: false, canNameMap: true } };
+    }
   }
 
-  const keys = getApiKeys();
-  if (!keys) {
-    // No API keys configured — check for open mode
-    if (isOpenApiMode()) return null;
-    return errorJson(
-      401,
-      "Model API requires authentication. Set MODEL_API_KEYS or MARINA_OPEN_API=true for development.",
-    );
+  const entries = getApiKeyEntries();
+  if (!entries) {
+    // No API keys configured — check for open (dev) mode. Fails closed otherwise.
+    if (isOpenApiMode()) {
+      return { auth: { internal: false, openMode: true, canNameMap: true } };
+    }
+    return {
+      error: errorJson(
+        401,
+        "Model API requires authentication. Set MODEL_API_KEYS or MARINA_OPEN_API=true for development.",
+      ),
+    };
   }
-  if (!auth?.startsWith("Bearer ")) {
-    return errorJson(401, "Missing or invalid Authorization header");
+  if (!token) {
+    return { error: errorJson(401, "Missing or invalid Authorization header") };
   }
-  const token = auth.slice(7);
-  // Non-short-circuiting constant-time membership check (all comparisons run
-  // regardless of an early match) so timing doesn't leak which/whether a key matched.
-  let ok = false;
-  for (const k of keys) ok = secretsEqual(token, k) || ok;
-  if (!ok) {
-    return errorJson(401, "Invalid API key");
+  // Non-short-circuiting constant-time membership check (every comparison runs
+  // regardless of an early match) so timing doesn't leak which/whether a key
+  // matched. secretsEqual is itself constant-time per comparison.
+  let matched: KeyEntry | undefined;
+  for (const e of entries) {
+    if (secretsEqual(token, e.secret)) matched = e;
   }
-  return null;
+  if (!matched) {
+    return { error: errorJson(401, "Invalid API key") };
+  }
+  return {
+    auth: {
+      matchedKey: matched.secret,
+      boundEntityName: matched.entity,
+      internal: false,
+      openMode: false,
+      // A key with an explicit entity binding is an operator key authorized to
+      // name-map; a plain shared secret is not.
+      canNameMap: matched.entity != null,
+    },
+  };
 }
 
 function generateRequestId(): string {
@@ -1359,10 +1432,14 @@ export async function handleModelApi(
   rateLimiter?: RateLimiter,
   server?: PeerAddr,
 ): Promise<Response | undefined> {
-  // Authenticate (skipped for CORS preflight)
+  // Authenticate (skipped for CORS preflight). Fails closed by default — see
+  // `authenticate`. The resolved outcome is threaded to passthru handlers so
+  // they can map the caller to a Marina entity (identity + context injection).
+  let authResult: PassthruAuthResult | undefined;
   if (method !== "OPTIONS") {
-    const authError = authenticate(req);
-    if (authError) return authError;
+    const outcome = authenticate(req);
+    if ("error" in outcome) return outcome.error;
+    authResult = outcome.auth;
   }
 
   // Per-IP rate limiting for mutation endpoints
@@ -1384,7 +1461,18 @@ export async function handleModelApi(
 
   // OpenAI: POST /v1/chat/completions
   if (url.pathname === "/v1/chat/completions" && method === "POST") {
-    return await handleOpenaiChat(req, engine);
+    return await handleOpenaiChat(req, engine, authResult);
+  }
+
+  // Anthropic Messages: POST /v1/messages — inbound Anthropic-format server so
+  // Claude Code / Anthropic SDKs plug in. Auth already enforced above (fails
+  // closed identically to /v1/chat/completions). handleAnthropicMessages
+  // translates Anthropic <-> OpenAI and drives the existing chat/proxy path via
+  // the runInternal callback below.
+  if (url.pathname === "/v1/messages" && method === "POST") {
+    return await handleAnthropicMessages(req, {
+      runInternal: (openaiBody, opts) => runOpenaiChat(engine, req, openaiBody, authResult, opts),
+    });
   }
 
   // OpenAI Responses API: /v1/responses, /v1/responses/:id
@@ -1462,21 +1550,117 @@ export function tryVerifiedArithmetic(input: unknown): string | undefined {
   return `${rendered}. Verified directly: ${left} ${symbol} ${right} = ${rendered}.`;
 }
 
-async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response> {
+/**
+ * Whether the request carries any signal that a specific passthru identity is
+ * intended. Absent all of these, the request is the anonymous default and we
+ * skip identity resolution entirely to stay byte-identical (and write-free).
+ */
+function passthruSignalPresent(req: Request, authResult: PassthruAuthResult): boolean {
+  if (authResult.boundEntityName) return true;
+  if (req.headers.get("X-Marina-Agent")) return true;
+  const ctx = req.headers.get("X-Marina-Context");
+  return ctx != null && ctx.toLowerCase() === "on";
+}
+
+/**
+ * Resolve the passthru caller to a Marina entity, but only when a real identity
+ * signal is present. Returns undefined for the anonymous default so the passthru
+ * path performs no entity resolve-or-create and no memory writes.
+ */
+function maybePassthruIdentity(
+  engine: Engine,
+  req: Request,
+  authResult?: PassthruAuthResult,
+): { entityId: EntityId; name: string; contextOptIn: boolean } | undefined {
+  if (!authResult) return undefined;
+  if (!passthruSignalPresent(req, authResult)) return undefined;
+  return resolvePassthruIdentity(engine, req.headers, authResult);
+}
+
+/** Best-effort text extraction from a completed (non-streaming) proxy response. */
+async function extractResponseText(resp: Response): Promise<string> {
+  const ct = resp.headers.get("content-type") ?? "";
+  // Streaming capture is intentionally skipped in v1 — keep the memory write cheap.
+  if (ct.includes("text/event-stream")) return "";
   try {
-    const body = await req.json();
-    const model = body.model ?? "marina";
-    const messages = body.messages ?? [];
+    const data = (await resp.json()) as {
+      choices?: { message?: { content?: unknown }; text?: unknown }[];
+    };
+    const choice = data?.choices?.[0];
+    const content = choice?.message?.content ?? choice?.text;
+    return typeof content === "string" ? content : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Fire-and-forget capture of a passthru exchange into the caller's OWN memory so
+ * future injections see it. Clones the response synchronously (before the caller
+ * consumes it), then extracts and records off the hot path.
+ */
+async function capturePassthruResponse(
+  engine: Engine,
+  entityId: EntityId,
+  inboundMessages: OpenAIMessage[],
+  resp: Response,
+): Promise<void> {
+  if (!resp.ok) return;
+  const clone = resp.clone();
+  try {
+    const text = await extractResponseText(clone);
+    if (text) capturePassthruTranscript(engine, entityId, inboundMessages, text);
+  } catch {
+    // Best-effort only — capture must never affect the caller's response.
+  }
+}
+
+async function handleOpenaiChat(
+  req: Request,
+  engine: Engine,
+  authResult?: PassthruAuthResult,
+): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return errorJson(400, "Invalid JSON body");
+  }
+  return runOpenaiChat(engine, req, body, authResult);
+}
+
+/**
+ * Core OpenAI chat handling over an already-parsed body. Reached directly by
+ * `handleOpenaiChat` and via the `/v1/messages` runInternal callback (the
+ * Anthropic Messages bridge translates its request into an OpenAI body first).
+ * `req` is still passed for headers (conversation id, load-balance, passthru
+ * identity) and auth context; `runOpts.stream` lets a bridge override the body's
+ * stream flag.
+ */
+async function runOpenaiChat(
+  engine: Engine,
+  req: Request,
+  requestBody: Record<string, unknown>,
+  authResult?: PassthruAuthResult,
+  runOpts?: { stream?: boolean },
+): Promise<Response> {
+  try {
+    const body: Record<string, unknown> =
+      runOpts?.stream !== undefined ? { ...requestBody, stream: runOpts.stream } : requestBody;
+    const model = typeof body.model === "string" ? body.model : "marina";
+    const messages = Array.isArray(body.messages) ? (body.messages as OpenAIMessage[]) : [];
 
     // Extract last user message
-    const userMsg = [...messages].reverse().find((m: { role: string }) => m.role === "user");
+    const userMsg = [...messages].reverse().find((m) => m.role === "user");
     if (!userMsg) return errorJson(400, "No user message found");
+    const userText = messageText(userMsg.content);
+    if (!userText) return errorJson(400, "User message has no textual content");
 
     // Build context from system/prior messages
     const contextParts: string[] = [];
     for (const msg of messages) {
       if (msg === userMsg) break;
-      contextParts.push(`${msg.role}: ${msg.content}`);
+      contextParts.push(`${msg.role}: ${messageText(msg.content)}`);
     }
     const context = contextParts.length > 0 ? contextParts.join("\n") : undefined;
 
@@ -1484,11 +1668,25 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
     const ec = getEndpointConfig(engine.db);
 
     // Passthru: Marina is a thin gateway — proxy straight to the configured
-    // upstream model, no agents involved.
+    // upstream model. When the caller opts into shared-world context (bound key
+    // config or `X-Marina-Context: on`), inject their OWN readable context and
+    // record the exchange. Strict NO-OP otherwise: no identity resolve-or-create,
+    // no injected bytes, no memory writes — byte-identical to the un-instrumented
+    // path (see `maybePassthruIdentity`).
     if (ec.mode === "passthru") {
-      return await proxyToUpstream(engine, body, ec.passthruModel || undefined, {
+      const identity = maybePassthruIdentity(engine, req, authResult);
+      if (identity?.contextOptIn) {
+        const { systemAddendum } = await buildInjectedContext(engine, identity.entityId, messages);
+        if (systemAddendum) applyInjection(body, systemAddendum, "openai");
+      }
+      const resp = await proxyToUpstream(engine, body, ec.passthruModel || undefined, {
         routeKind: "passthru",
+        entityId: identity?.entityId,
       });
+      if (identity?.contextOptIn) {
+        void capturePassthruResponse(engine, identity.entityId, messages, resp);
+      }
+      return resp;
     }
 
     const opts: RouteOptions = {
@@ -1506,7 +1704,7 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
       ec.mode === "agents" &&
       modelToChannelName(model) === "model-answerer" &&
       process.env.MARINA_MODEL_FAST_PATH !== "false"
-        ? tryVerifiedArithmetic(userMsg.content)
+        ? tryVerifiedArithmetic(userText)
         : undefined;
     if (fastAnswer) {
       const requestId = `req-${crypto.randomUUID().slice(0, 8)}`;
@@ -1549,7 +1747,7 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
           stream,
           conversationId: convId,
           requestId,
-        } = routeToChannelStreaming(engine, model, userMsg.content, "openai", opts);
+        } = routeToChannelStreaming(engine, model, userText, "openai", opts);
         const headers: Record<string, string> = {
           ...MODEL_CORS,
           "Content-Type": "text/event-stream",
@@ -1563,18 +1761,11 @@ async function handleOpenaiChat(req: Request, engine: Engine): Promise<Response>
 
       let result: RouteResult;
       if (ec.mode === "open") {
-        result = await routeOpen(engine, model, userMsg.content, opts);
+        result = await routeOpen(engine, model, userText, opts);
       } else if (ec.mode === "panel") {
-        result = await routePanel(
-          engine,
-          model,
-          userMsg.content,
-          opts,
-          ec.panelSize,
-          ec.panelSynthesis,
-        );
+        result = await routePanel(engine, model, userText, opts, ec.panelSize, ec.panelSynthesis);
       } else {
-        result = await routeToChannel(engine, model, userMsg.content, opts);
+        result = await routeToChannel(engine, model, userText, opts);
       }
 
       // open/panel can't stream incrementally — emit the buffered result as SSE.
@@ -2058,13 +2249,18 @@ async function proxyToUpstream(
   engine: Engine,
   body: Record<string, unknown>,
   forceModel?: string,
-  traceOptions?: { routeKind: "passthru" | "fallback" | "synthesis" },
+  traceOptions?: {
+    routeKind: "passthru" | "fallback" | "synthesis";
+    /** Resolved passthru identity, tagged onto every lifecycle span. */
+    entityId?: EntityId;
+  },
 ): Promise<Response> {
   const wantStream = body.stream === true;
   let attemptedUpstream = false;
   let lastTarget: string | undefined;
   let lastErrorKind: ProxyTraceMetrics["errorKind"];
   const requestedModel = typeof body.model === "string" ? body.model : "marina";
+  const entityId = traceOptions?.entityId;
   const startedAt = Date.now();
   const requestId = traceOptions ? `req-${crypto.randomUUID().slice(0, 8)}` : undefined;
   if (requestId) {
@@ -2075,6 +2271,7 @@ async function proxyToUpstream(
       ...requestTrace(requestId),
       model: requestedModel,
       routeKind: traceOptions!.routeKind,
+      ...(entityId ? { entityId } : {}),
       timestamp: startedAt,
     });
   }
@@ -2094,6 +2291,7 @@ async function proxyToUpstream(
         model: requestedModel,
         target,
         routeKind: traceOptions!.routeKind,
+        ...(entityId ? { entityId } : {}),
         timestamp: Date.now(),
       });
     }
@@ -2102,6 +2300,7 @@ async function proxyToUpstream(
       model: requestedModel,
       target,
       routeKind: traceOptions!.routeKind,
+      entityId,
       startedAt,
       errorKind,
     });
@@ -2204,6 +2403,7 @@ async function traceProxyResponse(
     model: string;
     target?: string;
     routeKind: "passthru" | "fallback" | "synthesis";
+    entityId?: EntityId;
     startedAt: number;
     errorKind?: ProxyTraceMetrics["errorKind"];
   },
@@ -2226,6 +2426,7 @@ async function traceProxyResponse(
       model: trace.model,
       target: trace.target,
       routeKind: trace.routeKind,
+      ...(trace.entityId ? { entityId: trace.entityId } : {}),
       durationMs: Date.now() - trace.startedAt,
       ...metrics,
       ...(detail ? { detail } : {}),

@@ -14,6 +14,7 @@ import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 
 import { AdminPanel } from "./components/AdminPanel";
+import { AttentionDrawer } from "./components/AttentionDrawer";
 import { AgentLaunchContent } from "./components/back-faces/AgentLaunchContent";
 import { RoomNeighborhood } from "./components/back-faces/RoomNeighborhood";
 import { SystemMetricsContent } from "./components/back-faces/SystemMetricsContent";
@@ -25,14 +26,17 @@ import { EntityRoster } from "./components/EntityRoster";
 import { FirstRunGuide } from "./components/FirstRunGuide";
 import { Header } from "./components/Header";
 import { NarrativePlayback } from "./components/NarrativePlayback";
+import { PulseDrawer } from "./components/PulseDrawer";
 import { RoomDetail } from "./components/RoomDetail";
 import { WebChat } from "./components/WebChat";
+import { WorkDrawer } from "./components/WorkDrawer";
 import { WorldMap } from "./components/WorldMap";
 import { useSystem, useWorld } from "./hooks/use-api";
 import { useChatState } from "./hooks/use-chat-state";
 import { useLayoutPresets } from "./hooks/use-layout-presets";
 import { useGlobalRealtimeInvalidations } from "./hooks/use-realtime-invalidations";
 import { useDashboardWebSocket } from "./hooks/use-websocket";
+import { dashboardInspectionFromSearch } from "./lib/marina-reference";
 import { traceIdFromSearch } from "./lib/trace-links";
 
 // Bump the version suffix whenever DEFAULT_LAYOUTS changes shape so existing
@@ -166,6 +170,9 @@ function loadLayouts(): ResponsiveLayouts<Bp> | undefined {
 
 export default function App() {
   const { connected } = useDashboardWebSocket();
+  const [attentionOpen, setAttentionOpen] = useState(false);
+  const [pulseOpen, setPulseOpen] = useState(false);
+  const [workOpen, setWorkOpen] = useState(false);
   // Realtime core tenet: bootstrap queries invalidate on matching WS events.
   useGlobalRealtimeInvalidations();
   const { data: worldData } = useWorld();
@@ -237,6 +244,14 @@ export default function App() {
   }, [handlePanelFocus]);
 
   useEffect(() => {
+    const focusCoding = () => {
+      if (focusedPanelRef.current !== "webchat") handlePanelFocus("webchat");
+    };
+    window.addEventListener("marina:open-coding", focusCoding);
+    return () => window.removeEventListener("marina:open-coding", focusCoding);
+  }, [handlePanelFocus]);
+
+  useEffect(() => {
     const traceId = traceIdFromSearch(window.location.search);
     if (!traceId) return;
     const timer = window.setTimeout(() => {
@@ -244,6 +259,11 @@ export default function App() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (!dashboardInspectionFromSearch(window.location.search)) return;
+    if (focusedPanelRef.current !== "coordination") handlePanelFocus("coordination");
+  }, [handlePanelFocus]);
 
   const handleUnfocus = useCallback(() => {
     if (focusedPanelRef.current) {
@@ -421,15 +441,30 @@ export default function App() {
         onSaveLayoutPreset={handleSavePreset}
         onRenameLayoutPreset={handleRenamePreset}
         onDeleteLayoutPreset={handleDeletePreset}
-        onOpenOperations={() => {
-          if (focusedPanelRef.current !== "admin") handlePanelFocus("admin");
-          window.dispatchEvent(new CustomEvent("marina:open-operations"));
+        onOpenAttention={() => {
+          setWorkOpen(false);
+          setPulseOpen(false);
+          setAttentionOpen((open) => !open);
+        }}
+        onOpenPulse={() => {
+          setAttentionOpen(false);
+          setWorkOpen(false);
+          setPulseOpen((open) => !open);
+        }}
+        onOpenWork={() => {
+          setAttentionOpen(false);
+          setPulseOpen(false);
+          setWorkOpen((open) => !open);
         }}
         onOpenTraces={() => {
           if (focusedPanelRef.current !== "admin") handlePanelFocus("admin");
           window.dispatchEvent(new CustomEvent("marina:open-traces"));
         }}
       />
+
+      <AttentionDrawer open={attentionOpen} onClose={() => setAttentionOpen(false)} />
+      <PulseDrawer open={pulseOpen} onClose={() => setPulseOpen(false)} />
+      <WorkDrawer open={workOpen} onClose={() => setWorkOpen(false)} />
 
       <FirstRunGuide
         onFocusChat={() => {

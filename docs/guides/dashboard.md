@@ -28,9 +28,24 @@ is low-friction by default; for a public deployment, turn on sign-in with
 
 ## What You'll See
 
-### World Map
+### World Topology + 30s Activity
 
-A visual graph of all rooms as nodes and exits as edges. Click any room to see its details — description, occupants, exits, and items. Rooms with more activity glow brighter.
+A visual graph of all rooms as nodes and exits as edges. Click any room to see its details — description, occupants, exits, and items. The heat layer counts observed room events in the latest
+30-second live window; it is not a historical communication graph or a claim about hidden provider
+activity.
+
+### Global Work, Attention, and Pulse
+
+Three header controls remain available across layouts:
+
+- **Work** projects active tasks, projects, and coding sessions from their existing canonical
+  stores. Every item opens its real detail surface; the drawer does not create a second work queue.
+- **Attention** shows durable attributed alerts, actions, deadlines, snooze, acknowledgement, and
+  resolution failures. Critical counts use an assertive screen-reader announcement. Desktop
+  notifications are opt-in and requested only after a click.
+- **Pulse** shows the newest live WebSocket events, currently thinking agents, and observed failures.
+  Rows link to exact traces, tasks, Canvas nodes, or entity profiles when those references exist. It
+  labels the window as live rather than implying retained totals.
 
 The map includes independent **Heat**, **Alerts**, and **Presence** layers. Heat shows recent room
 activity, Presence shows entity orbits, and Alerts places warning or critical badges in affected
@@ -127,6 +142,13 @@ The Admin panel has these tabs:
   delivery health is visible without exposing collector headers. See
   [Execution Traces and Evaluations](observability.md) for retention, privacy, API, and
   interpretation boundaries.
+- **Logs** — query bounded structured logs and follow their trace/span correlation into the trace
+  explorer. OTLP log delivery state is visible separately from local persistence.
+- **Identity** — inspect immutable local principal IDs, human/agent type, home world, lineage,
+  lifecycle state, and suspend/disable actions. The panel states the local credential boundary.
+- **Collective** — create and start isolated child Marinas from a source checkout, open each child
+  dashboard, retain A/B hypotheses, and record evidence-backed promotion decisions. The same tab
+  registers federation manifests as unverified before any explicit trust decision.
 - **Ops** — inspect graphical readiness, outcome trends and leaderboard, latency and effort metrics,
   live multi-agent primitive evidence, communication, world actions, primitive diversity, memory
   health, alert history and filters, and open contradictions. Tool calls are provenance and never
@@ -135,7 +157,8 @@ The Admin panel has these tabs:
 - **Security** — live posture overview: dashboard auth (`MARINA_AUTH`), API-key encryption at rest, the `MARINA_OPEN_API` dev flag, and key/agent counts. It reads the real server state — if auth is off it points you to [authentication.md](../authentication.md).
 
 The header alert indicator remains visible from every dashboard layout. Its severity color and pulse
-show whether actionable warnings or critical failures exist; click it to focus Admin → Ops.
+show whether actionable warnings or critical failures exist; click it to open the Attention drawer
+without navigating away.
 
 ---
 
