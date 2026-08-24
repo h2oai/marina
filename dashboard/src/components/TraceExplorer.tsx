@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { AlertTriangle, CheckCircle2, CircleDot, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { useTraces } from "../hooks/use-api";
-import { describeApiError } from "../lib/api";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { traceQueryString, useTrace, useTraces } from "../hooks/use-api";
+import { describeApiError, downloadApi } from "../lib/api";
+import { tracePermalink } from "../lib/trace-links";
 import type {
   TraceAggregate,
   TraceCheckResult,
@@ -45,6 +46,45 @@ export function traceSpanDepth(span: TraceSpanView, spans: readonly TraceSpanVie
   return depth;
 }
 
+export interface TraceWaterfallBar {
+  spanId: string;
+  leftPercent: number;
+  widthPercent: number;
+}
+
+/**
+ * Converts absolute span timestamps into bounded percentages. The calculation
+ * is pure so malformed or partial retained history cannot push bars outside
+ * the visible waterfall.
+ */
+export function traceWaterfallLayout(trace: TraceView, now = Date.now()): TraceWaterfallBar[] {
+  const observedEnd = trace.endedAt
+    ? Math.max(trace.startedAt + 1, trace.endedAt)
+    : Math.max(
+        trace.startedAt + 1,
+        ...trace.spans.map((span) => span.endedAt ?? span.startedAt + (span.durationMs ?? 0)),
+        trace.status === "running" ? now : 0,
+      );
+  const windowMs = Math.max(1, observedEnd - trace.startedAt);
+  return trace.spans.map((span) => {
+    const start = Math.min(observedEnd, Math.max(trace.startedAt, span.startedAt));
+    const end = Math.min(
+      observedEnd,
+      Math.max(
+        start,
+        span.endedAt ?? start + (span.durationMs ?? (span.status === "running" ? now - start : 0)),
+      ),
+    );
+    const leftPercent = ((start - trace.startedAt) / windowMs) * 100;
+    const measuredWidth = ((end - start) / windowMs) * 100;
+    return {
+      spanId: span.spanId,
+      leftPercent,
+      widthPercent: Math.min(100 - leftPercent, Math.max(0.8, measuredWidth)),
+    };
+  });
+}
+
 function formatDuration(durationMs?: number): string {
   if (durationMs === undefined) return "live";
   if (durationMs < 1000) return `${durationMs}ms`;
@@ -62,20 +102,64 @@ export function TraceExplorerView({
   isLoading,
   error,
   onRefresh,
+  requestedTraceId,
+  requestedTraceMissing = false,
+  onQueryChange,
+  onStatusChange,
+  onDimensionChange,
+  onTimeRangeChange,
+  onNextPage,
+  onPreviousPage,
+  canPreviousPage = false,
+  onExport,
 }: {
   data?: TracesResponse;
   isLoading: boolean;
   error?: string;
   onRefresh: () => void;
+  requestedTraceId?: string;
+  requestedTraceMissing?: boolean;
+  onQueryChange?: (query: string) => void;
+  onStatusChange?: (status: "all" | TraceStatus) => void;
+  onDimensionChange?: (key: "model" | "agent" | "tool", value: string) => void;
+  onTimeRangeChange?: (milliseconds?: number) => void;
+  onNextPage?: () => void;
+  onPreviousPage?: () => void;
+  canPreviousPage?: boolean;
+  onExport?: (format: "native" | "eval-json" | "otlp-json") => void;
 }) {
   const traces = data?.traces ?? [];
   const [selectedId, setSelectedId] = useState<string>();
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<"all" | TraceStatus>("all");
+  const visibleTraces = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    return traces.filter((trace) => {
+      if (status !== "all" && trace.status !== status) return false;
+      if (!needle) return true;
+      return (
+        trace.traceId.toLowerCase().includes(needle) ||
+        trace.spans.some(
+          (span) =>
+            span.name.toLowerCase().includes(needle) ||
+            span.kind.toLowerCase().includes(needle) ||
+            Object.values(span.attributes).some((value) =>
+              String(value).toLowerCase().includes(needle),
+            ),
+        )
+      );
+    });
+  }, [query, status, traces]);
   useEffect(() => {
-    if (!selectedId || !traces.some((trace) => trace.traceId === selectedId)) {
-      setSelectedId(traces[0]?.traceId);
+    if (requestedTraceId && traces.some((trace) => trace.traceId === requestedTraceId)) {
+      setSelectedId(requestedTraceId);
+      return;
     }
-  }, [selectedId, traces]);
-  const selected = traces.find((trace) => trace.traceId === selectedId) ?? traces[0];
+    if (!selectedId || !visibleTraces.some((trace) => trace.traceId === selectedId)) {
+      setSelectedId(visibleTraces[0]?.traceId);
+    }
+  }, [requestedTraceId, selectedId, traces, visibleTraces]);
+  const selected = visibleTraces.find((trace) => trace.traceId === selectedId) ?? visibleTraces[0];
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 text-[10px]">
@@ -92,7 +176,14 @@ export function TraceExplorerView({
           <RefreshCw size={10} /> Refresh
         </button>
       </div>
+      {data?.otlp && <OtlpDeliveryStatus status={data.otlp} />}
       {error && <div className="text-red-400">{error}</div>}
+      {requestedTraceMissing && requestedTraceId && (
+        <div className="rounded border border-amber-400/40 bg-amber-400/5 p-2 text-amber-300">
+          Trace “{requestedTraceId}” is not present in retained history. It may have expired or come
+          from a different Marina instance.
+        </div>
+      )}
       {isLoading && traces.length === 0 && <div className="text-text-dim">Loading traces…</div>}
       {!isLoading && !error && traces.length === 0 && (
         <div className="rounded border border-border p-3 text-text-dim">
@@ -123,9 +214,127 @@ export function TraceExplorerView({
               ].filter((row): row is TraceRoutingAdvice => row !== undefined)}
             />
           )}
+          <fieldset className="flex min-w-0 items-center gap-2 border-0 p-0">
+            <legend className="sr-only">Trace filters</legend>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                onQueryChange?.(event.target.value);
+              }}
+              placeholder="Search ID, model, agent, tool, error…"
+              aria-label="Search traces"
+              className="min-w-0 flex-1 rounded border border-border bg-bg px-2 py-1 text-text outline-none focus:border-primary/60"
+            />
+            <select
+              value={status}
+              onChange={(event) => {
+                const value = event.target.value as "all" | TraceStatus;
+                setStatus(value);
+                onStatusChange?.(value);
+              }}
+              aria-label="Filter trace status"
+              className="rounded border border-border bg-bg px-2 py-1 text-text"
+            >
+              <option value="all">all statuses</option>
+              <option value="running">running</option>
+              <option value="completed">completed</option>
+              <option value="failed">failed</option>
+            </select>
+            {onTimeRangeChange && (
+              <select
+                aria-label="Filter trace time range"
+                defaultValue="all"
+                className="rounded border border-border bg-bg px-2 py-1 text-text"
+                onChange={(event) =>
+                  onTimeRangeChange(
+                    event.target.value === "all" ? undefined : Number(event.target.value),
+                  )
+                }
+              >
+                <option value="all">all retained time</option>
+                <option value={15 * 60_000}>last 15 minutes</option>
+                <option value={60 * 60_000}>last hour</option>
+                <option value={24 * 60 * 60_000}>last 24 hours</option>
+              </select>
+            )}
+            <span className="shrink-0 text-text-dim">
+              {visibleTraces.length}/{traces.length}
+            </span>
+          </fieldset>
+          {onDimensionChange && (
+            <fieldset className="grid grid-cols-3 gap-2 border-0 p-0">
+              <legend className="sr-only">Trace dimensions</legend>
+              {(["model", "agent", "tool"] as const).map((key) => (
+                <input
+                  key={key}
+                  type="search"
+                  aria-label={`Filter trace ${key}`}
+                  placeholder={`${key} contains…`}
+                  className="min-w-0 rounded border border-border bg-bg px-2 py-1 text-text outline-none focus:border-primary/60"
+                  onChange={(event) => onDimensionChange(key, event.target.value)}
+                />
+              ))}
+            </fieldset>
+          )}
+          {(onExport || onNextPage || onPreviousPage) && (
+            <div className="flex items-center justify-between gap-2 text-[9px]">
+              <div className="flex gap-2">
+                {onExport && (
+                  <>
+                    <button
+                      type="button"
+                      className="text-primary hover:underline"
+                      onClick={() => onExport("native")}
+                    >
+                      Download JSON
+                    </button>
+                    <button
+                      type="button"
+                      className="text-primary hover:underline"
+                      onClick={() => onExport("eval-json")}
+                    >
+                      Download eval dataset
+                    </button>
+                    <button
+                      type="button"
+                      className="text-primary hover:underline"
+                      onClick={() => onExport("otlp-json")}
+                    >
+                      Download OTLP
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={!canPreviousPage}
+                  className="text-primary enabled:hover:underline disabled:text-text-dim"
+                  onClick={onPreviousPage}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  disabled={!data?.page?.hasMore}
+                  className="text-primary enabled:hover:underline disabled:text-text-dim"
+                  onClick={onNextPage}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+          {visibleTraces.length === 0 && (
+            <div className="rounded border border-border p-2 text-text-dim">
+              No retained traces match these filters.
+            </div>
+          )}
           <div className="grid min-h-0 flex-1 grid-cols-[minmax(8rem,0.8fr)_minmax(12rem,1.6fr)] gap-2">
             <div className="min-h-0 space-y-1 overflow-auto border-r border-border pr-2">
-              {traces.map((trace) => (
+              {visibleTraces.map((trace) => (
                 <TraceRow
                   key={trace.traceId}
                   trace={trace}
@@ -141,6 +350,30 @@ export function TraceExplorerView({
         </>
       )}
     </div>
+  );
+}
+
+function OtlpDeliveryStatus({ status }: { status: NonNullable<TracesResponse["otlp"]> }) {
+  if (!status.enabled) {
+    return (
+      <section className="text-[9px] text-text-dim" aria-label="OpenTelemetry delivery">
+        OpenTelemetry export: off
+      </section>
+    );
+  }
+  const unhealthy = status.consecutiveFailures > 0 || status.droppedTraces > 0;
+  return (
+    <section
+      className={`rounded border px-2 py-1 ${
+        unhealthy ? "border-amber-400/40 text-amber-300" : "border-emerald-400/30 text-emerald-300"
+      }`}
+      aria-label="OpenTelemetry delivery"
+      title={status.lastError}
+    >
+      OTLP {unhealthy ? "degraded" : "healthy"} · {status.exportedSpans} spans exported ·{" "}
+      {status.pendingTraces} traces queued · {status.rejectedSpans} rejected ·{" "}
+      {status.exportFailures} failures
+    </section>
   );
 }
 
@@ -303,7 +536,15 @@ function SpanTree({ trace }: { trace: TraceView }) {
         <span className={STATUS_CLASS[trace.status]}>{trace.status}</span>
         <span>{formatDuration(trace.durationMs)}</span>
         {trace.partial && <span className="text-amber-300">partial history</span>}
+        <a
+          href={tracePermalink(trace.traceId, window.location.href)}
+          className="ml-auto text-primary hover:underline"
+          title="Open or copy a durable link to this retained trace"
+        >
+          permalink
+        </a>
       </div>
+      <TraceWaterfall trace={trace} depths={depths} />
       {trace.spans.map((span) => {
         const routing = routeDetails(span);
         const metrics = metricDetails(span);
@@ -384,14 +625,173 @@ function SpanTree({ trace }: { trace: TraceView }) {
   );
 }
 
-export function TraceExplorer() {
-  const query = useTraces();
+const WATERFALL_KIND_CLASS: Record<TraceSpanView["kind"], string> = {
+  model_request: "bg-cyan-400",
+  agent_turn: "bg-violet-400",
+  tool: "bg-amber-400",
+};
+
+function TraceWaterfall({
+  trace,
+  depths,
+}: {
+  trace: TraceView;
+  depths: ReadonlyMap<string, number>;
+}) {
+  const bars = useMemo(() => traceWaterfallLayout(trace), [trace]);
+  const byId = new Map(bars.map((bar) => [bar.spanId, bar]));
+  return (
+    <section className="mb-2 rounded border border-border p-2" aria-label="Trace waterfall">
+      <div className="mb-1 flex items-center justify-between text-[9px] uppercase tracking-wider text-text-dim">
+        <span>causal waterfall</span>
+        <span>0 → {formatDuration(trace.durationMs)}</span>
+      </div>
+      <div className="space-y-1">
+        {trace.spans.map((span) => {
+          const bar = byId.get(span.spanId);
+          if (!bar) return null;
+          return (
+            <div
+              key={span.spanId}
+              className="grid grid-cols-[minmax(5rem,0.8fr)_1.5fr] items-center gap-2"
+            >
+              <div
+                className="truncate text-[9px] text-text-dim"
+                style={{ paddingLeft: `${(depths.get(span.spanId) ?? 0) * 8}px` }}
+                title={`${span.kind}: ${span.name}`}
+              >
+                {span.name}
+              </div>
+              <div className="relative h-2 overflow-hidden rounded bg-white/5">
+                <div
+                  className={`absolute inset-y-0 rounded ${WATERFALL_KIND_CLASS[span.kind]} ${
+                    span.status === "running" ? "animate-pulse" : ""
+                  } ${span.partial ? "opacity-50" : "opacity-80"}`}
+                  style={{ left: `${bar.leftPercent}%`, width: `${bar.widthPercent}%` }}
+                  title={`${span.name} · ${formatDuration(span.durationMs)} · ${span.status}`}
+                  data-testid={`waterfall-${span.spanId}`}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-1 flex gap-3 text-[8px] text-text-dim">
+        <span>
+          <i className="mr-1 inline-block h-1.5 w-1.5 rounded bg-cyan-400" />
+          request
+        </span>
+        <span>
+          <i className="mr-1 inline-block h-1.5 w-1.5 rounded bg-violet-400" />
+          agent
+        </span>
+        <span>
+          <i className="mr-1 inline-block h-1.5 w-1.5 rounded bg-amber-400" />
+          tool
+        </span>
+      </div>
+    </section>
+  );
+}
+
+export function TraceExplorer({ requestedTraceId }: { requestedTraceId?: string }) {
+  const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
+  const [status, setStatus] = useState<"all" | TraceStatus>("all");
+  const [dimensions, setDimensions] = useState({ model: "", agent: "", tool: "" });
+  const deferredDimensions = useDeferredValue(dimensions);
+  const [since, setSince] = useState<number>();
+  const [cursor, setCursor] = useState<string>();
+  const [cursorHistory, setCursorHistory] = useState<Array<string | undefined>>([]);
+  const [exportError, setExportError] = useState<string>();
+  const filters = {
+    limit: 100,
+    ...(deferredSearch.trim() ? { q: deferredSearch.trim() } : {}),
+    ...(status === "all" ? {} : { status }),
+    ...(deferredDimensions.model.trim() ? { model: deferredDimensions.model.trim() } : {}),
+    ...(deferredDimensions.agent.trim() ? { agent: deferredDimensions.agent.trim() } : {}),
+    ...(deferredDimensions.tool.trim() ? { tool: deferredDimensions.tool.trim() } : {}),
+    ...(cursor ? { cursor } : {}),
+    ...(since === undefined ? {} : { since }),
+  };
+  const query = useTraces(filters);
+  const detailQuery = useTrace(requestedTraceId);
+  const data = useMemo(() => {
+    if (!query.data) return detailQuery.data;
+    const requested = detailQuery.data?.traces[0];
+    if (!requested || query.data.traces.some((trace) => trace.traceId === requested.traceId)) {
+      return query.data;
+    }
+    return { ...query.data, traces: [requested, ...query.data.traces] };
+  }, [detailQuery.data, query.data]);
   return (
     <TraceExplorerView
-      data={query.data}
-      isLoading={query.isLoading}
-      error={query.error ? describeApiError(query.error) : undefined}
-      onRefresh={() => void query.refetch()}
+      data={data}
+      isLoading={query.isLoading || (Boolean(requestedTraceId) && detailQuery.isLoading)}
+      error={
+        query.error
+          ? describeApiError(query.error)
+          : detailQuery.error
+            ? describeApiError(detailQuery.error)
+            : exportError
+      }
+      onRefresh={() =>
+        void Promise.all(
+          requestedTraceId ? [query.refetch(), detailQuery.refetch()] : [query.refetch()],
+        )
+      }
+      requestedTraceId={requestedTraceId}
+      requestedTraceMissing={
+        Boolean(requestedTraceId) && !detailQuery.isLoading && detailQuery.data?.traces.length === 0
+      }
+      onQueryChange={(value) => {
+        setSearch(value);
+        setCursor(undefined);
+        setCursorHistory([]);
+      }}
+      onStatusChange={(value) => {
+        setStatus(value);
+        setCursor(undefined);
+        setCursorHistory([]);
+      }}
+      onDimensionChange={(key, value) => {
+        setDimensions((current) => ({ ...current, [key]: value }));
+        setCursor(undefined);
+        setCursorHistory([]);
+      }}
+      onTimeRangeChange={(milliseconds) => {
+        setSince(milliseconds === undefined ? undefined : Date.now() - milliseconds);
+        setCursor(undefined);
+        setCursorHistory([]);
+      }}
+      canPreviousPage={cursorHistory.length > 0}
+      onPreviousPage={() => {
+        const previous = cursorHistory.at(-1);
+        setCursor(previous);
+        setCursorHistory((history) => history.slice(0, -1));
+      }}
+      onNextPage={() => {
+        if (!query.data?.page?.nextCursor) return;
+        setCursorHistory((history) => [...history, cursor]);
+        setCursor(query.data.page!.nextCursor);
+      }}
+      onExport={(format) => {
+        const exportFilters = {
+          limit: 100,
+          ...(deferredSearch.trim() ? { q: deferredSearch.trim() } : {}),
+          ...(status === "all" ? {} : { status }),
+          ...(since === undefined ? {} : { since }),
+          ...(deferredDimensions.model.trim() ? { model: deferredDimensions.model.trim() } : {}),
+          ...(deferredDimensions.agent.trim() ? { agent: deferredDimensions.agent.trim() } : {}),
+          ...(deferredDimensions.tool.trim() ? { tool: deferredDimensions.tool.trim() } : {}),
+        };
+        const formatQuery = format === "native" ? "" : `&format=${format}`;
+        setExportError(undefined);
+        void downloadApi(
+          `/api/traces?${traceQueryString(exportFilters)}${formatQuery}&download=1`,
+          `marina-traces-${format}.json`,
+        ).catch((cause) => setExportError(describeApiError(cause)));
+      }}
     />
   );
 }

@@ -67,6 +67,30 @@ describe("trace command", () => {
     expect(output).not.toContain("prompts");
   });
 
+  it("lets agents filter and paginate retained traces", async () => {
+    engine.logEvent({
+      type: "model_request_lifecycle",
+      phase: "failed",
+      requestId: "req-qwen",
+      runId: "req-qwen",
+      traceId: "req-qwen",
+      spanId: "request-qwen",
+      model: "qwen-local",
+      durationMs: 10,
+      timestamp: 200,
+    });
+    await engine.processCommand(entityId, "trace find status=failed model=qwen limit=1");
+    const output = stripAnsi(conn.lastText());
+    expect(output).toContain("req-qwen");
+    expect(output).not.toContain("req-command");
+
+    conn.clear();
+    await engine.processCommand(entityId, "trace find status=unknown");
+    expect(stripAnsi(conn.lastText())).toContain(
+      "Trace status must be running, completed, or failed.",
+    );
+  });
+
   it("shows causal spans without event content", async () => {
     await engine.processCommand(entityId, "trace show req-command");
     const output = stripAnsi(conn.lastText());
@@ -142,6 +166,27 @@ describe("trace command", () => {
     expect(output).toContain("selected: read");
     expect(output).toContain("advice applied: no");
     expect(output).toContain("No configuration changed");
+  });
+
+  it("makes credential-free OTLP delivery health agent-consumable", async () => {
+    engine.setOtlpStatusProvider(() => ({
+      enabled: true,
+      endpoint: "https://collector.example/v1/traces",
+      protocol: "http/json",
+      pendingTraces: 2,
+      exportedSpans: 12,
+      rejectedSpans: 1,
+      droppedTraces: 0,
+      exportFailures: 1,
+      consecutiveFailures: 0,
+      lastSuccessAt: 100,
+    }));
+    await engine.processCommand(entityId, "trace otel");
+    const output = stripAnsi(conn.lastText());
+    expect(output).toContain("OpenTelemetry Export");
+    expect(output).toContain("12 exported · 1 rejected");
+    expect(output).toContain("2 traces");
+    expect(output).toContain("credentials are never displayed");
   });
 
   it("appends and reads identity-attributed advisory judgments", async () => {

@@ -32,6 +32,7 @@ import {
   useTraits,
 } from "../hooks/use-api";
 import { deleteApi, describeApiError, fetchApi, patchApi, postApi, putApi } from "../lib/api";
+import { traceIdFromSearch } from "../lib/trace-links";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { ModelSelect } from "./ModelSelect";
 import { TraceExplorer } from "./TraceExplorer";
@@ -66,16 +67,25 @@ export function AdminPanel({
   isFocused,
   onToggleFocus,
 }: { backContent?: React.ReactNode } & PanelFocusProps) {
-  const [tab, setTab] = useState<Tab>("keys");
+  const initialTraceId = traceIdFromSearch(window.location.search);
+  const [tab, setTab] = useState<Tab>(initialTraceId ? "traces" : "keys");
+  const [requestedTraceId, setRequestedTraceId] = useState<string | undefined>(initialTraceId);
 
   useEffect(() => {
     const openOperations = () => setTab("ops");
     const openKeys = () => setTab("keys");
+    const openTraces = (event: Event) => {
+      const detail = (event as CustomEvent<{ traceId?: string }>).detail;
+      setRequestedTraceId(detail?.traceId);
+      setTab("traces");
+    };
     window.addEventListener("marina:open-operations", openOperations);
     window.addEventListener("marina:open-keys", openKeys);
+    window.addEventListener("marina:open-traces", openTraces);
     return () => {
       window.removeEventListener("marina:open-operations", openOperations);
       window.removeEventListener("marina:open-keys", openKeys);
+      window.removeEventListener("marina:open-traces", openTraces);
     };
   }, []);
 
@@ -122,7 +132,7 @@ export function AdminPanel({
         {tab === "config" && <ConfigTab />}
         {tab === "security" && <SecurityTab />}
         {tab === "ops" && <OperationsTab />}
-        {tab === "traces" && <TraceExplorer />}
+        {tab === "traces" && <TraceExplorer requestedTraceId={requestedTraceId} />}
       </div>
     </GlassPanel>
   );

@@ -331,6 +331,11 @@ export interface TraceEvaluation {
 
 export interface TracesResponse {
   traces: TraceView[];
+  page?: {
+    limit: number;
+    hasMore: boolean;
+    nextCursor?: string;
+  };
   /** Optional during rolling upgrades from servers that predate trace analytics. */
   analytics?: TraceAnalytics;
   comparisons?: {
@@ -347,6 +352,22 @@ export interface TracesResponse {
   truncated: boolean;
   source: "event-log" | "memory";
   retention: "operator-managed" | "bounded-memory";
+  otlp?: OtlpExporterStatus;
+}
+
+export interface OtlpExporterStatus {
+  enabled: boolean;
+  endpoint?: string;
+  protocol?: "http/json";
+  pendingTraces: number;
+  exportedSpans: number;
+  rejectedSpans: number;
+  droppedTraces: number;
+  exportFailures: number;
+  consecutiveFailures: number;
+  lastSuccessAt?: number;
+  lastFailureAt?: number;
+  lastError?: string;
 }
 
 export interface TraceRoutingAdvice {

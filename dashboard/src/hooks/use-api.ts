@@ -79,11 +79,46 @@ export function useSystem() {
   });
 }
 
-export function useTraces(limit = 25) {
+export interface TraceFilters {
+  limit?: number;
+  cursor?: string;
+  status?: "running" | "completed" | "failed";
+  q?: string;
+  model?: string;
+  agent?: string;
+  tool?: string;
+  since?: number;
+  until?: number;
+}
+
+export function traceQueryString(filters: TraceFilters): string {
+  const params = new URLSearchParams({ limit: String(filters.limit ?? 25) });
+  for (const key of ["cursor", "status", "q", "model", "agent", "tool"] as const) {
+    const value = filters[key]?.trim();
+    if (value) params.set(key, value);
+  }
+  if (filters.since !== undefined) params.set("since", String(filters.since));
+  if (filters.until !== undefined) params.set("until", String(filters.until));
+  return params.toString();
+}
+
+export function useTraces(filters: TraceFilters | number = {}) {
+  const normalized = typeof filters === "number" ? { limit: filters } : filters;
+  const query = traceQueryString(normalized);
   return useQuery({
-    queryKey: ["traces", limit],
-    queryFn: () => fetchApi<TracesResponse>(`/api/traces?limit=${limit}`),
+    queryKey: ["traces", query],
+    queryFn: () => fetchApi<TracesResponse>(`/api/traces?${query}`),
     refetchInterval: 5_000,
+  });
+}
+
+export function useTrace(traceId?: string) {
+  return useQuery({
+    queryKey: ["traces", "detail", traceId],
+    queryFn: () =>
+      fetchApi<TracesResponse>(`/api/traces?traceId=${encodeURIComponent(traceId!)}&limit=1`),
+    enabled: Boolean(traceId),
+    staleTime: 5_000,
   });
 }
 

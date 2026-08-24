@@ -611,6 +611,7 @@ export function registerBuiltinCommands(engine: Engine): void {
       db: engine.db,
       getEventLog: () => engine.getEventLog(),
       getEntityName: (id) => engine.entities.get(id)?.name,
+      getOtlpStatus: () => engine.getOtlpExporterStatus(),
     }),
   );
   engine.commands.registerBuiltin(inheritanceCommand(engine.db));

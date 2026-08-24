@@ -66,6 +66,24 @@ export async function fetchApi<T>(path: string): Promise<T> {
   return res.json();
 }
 
+/** Download an authenticated API response without placing session tokens in URLs. */
+export async function downloadApi(path: string, fallbackFilename: string): Promise<void> {
+  const res = await fetch(`${BASE}${path}`, { headers: authHeaders() });
+  if (res.status === 401) clearToken();
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  const disposition = res.headers.get("content-disposition");
+  const filename = disposition?.match(/filename="([^"]+)"/)?.[1] ?? fallbackFilename;
+  const url = URL.createObjectURL(await res.blob());
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 /**
  * Turn a thrown API error into a human-readable message. `fetchApi`/`postApi`
  * throw `Error("API error: <status>")`; a 401 means the dashboard has no valid

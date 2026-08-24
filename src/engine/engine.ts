@@ -26,6 +26,7 @@ import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import type { MarinaDB } from "../persistence/database";
 import { writeSample } from "../resolvers/sample-writer";
 import type { StorageProvider } from "../storage/provider";
+import type { OtlpExporterStatus } from "../telemetry/otlp-exporter";
 import { classifyPrimitive, isMarinaTool } from "../telemetry/primitive-usage";
 import type {
   CommandContext,
@@ -159,6 +160,7 @@ export class Engine {
   private ticking = false;
   private tickCount = 0;
   /** @internal */ readonly logger: Logger;
+  private otlpStatusProvider?: () => OtlpExporterStatus;
 
   constructor(config?: Partial<EngineConfig>) {
     // Derive startRoom: explicit config > world definition > generic fallback
@@ -1871,6 +1873,24 @@ export class Engine {
 
   getEventLog(): EngineEvent[] {
     return this._eventLog.getAll();
+  }
+
+  setOtlpStatusProvider(provider: () => OtlpExporterStatus): void {
+    this.otlpStatusProvider = provider;
+  }
+
+  getOtlpExporterStatus(): OtlpExporterStatus {
+    return (
+      this.otlpStatusProvider?.() ?? {
+        enabled: false,
+        pendingTraces: 0,
+        exportedSpans: 0,
+        rejectedSpans: 0,
+        droppedTraces: 0,
+        exportFailures: 0,
+        consecutiveFailures: 0,
+      }
+    );
   }
 
   /** @internal */ logEvent(event: EngineEvent): void {

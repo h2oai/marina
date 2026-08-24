@@ -43,6 +43,12 @@ function kindColor(kind: string): string {
   return KIND_COLORS[kind] ?? "#9ca3af";
 }
 
+export function traceIdFromFeedEvent(event: FeedEvent): string | undefined {
+  if (!event.ref?.startsWith("request:")) return undefined;
+  const traceId = event.ref.slice("request:".length).trim();
+  return traceId || undefined;
+}
+
 export interface TimelineStripProps {
   /** Hide the strip entirely (driven by Feed layer toggle). */
   hidden?: boolean;
@@ -266,7 +272,14 @@ export const TimelineStrip = memo(function TimelineStrip({
           const pct = 1 - age / (WINDOW_MINUTES * 60_000);
           const x = Math.max(2, Math.min(998, pct * 1000));
           const color = kindColor(e.kind);
-          const interactive = Boolean(onEventClick);
+          const traceId = traceIdFromFeedEvent(e);
+          const interactive = Boolean(onEventClick || traceId);
+          const activate = () => {
+            onEventClick?.(e);
+            if (traceId) {
+              window.dispatchEvent(new CustomEvent("marina:open-traces", { detail: { traceId } }));
+            }
+          };
           return (
             // biome-ignore lint/a11y/noStaticElementInteractions: SVG dot; role/tabIndex/keyboard are conditionally wired when interactive
             <g
@@ -275,11 +288,11 @@ export const TimelineStrip = memo(function TimelineStrip({
               tabIndex={interactive ? 0 : undefined}
               aria-label={interactive ? `${e.kind}: ${e.summary}` : undefined}
               style={{ cursor: interactive ? "pointer" : undefined }}
-              onClick={() => onEventClick?.(e)}
+              onClick={activate}
               onKeyDown={(ke) => {
-                if ((ke.key === "Enter" || ke.key === " ") && onEventClick) {
+                if ((ke.key === "Enter" || ke.key === " ") && interactive) {
                   ke.preventDefault();
-                  onEventClick(e);
+                  activate();
                 }
               }}
             >

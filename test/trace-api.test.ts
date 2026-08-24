@@ -90,6 +90,7 @@ describe("Trace API", () => {
       source: "event-log",
       retention: "operator-managed",
       partial: false,
+      otlp: { enabled: false, exportedSpans: 0, pendingTraces: 0 },
     });
     expect(body.traces).toHaveLength(1);
     expect(body.analytics).toMatchObject({
@@ -288,6 +289,124 @@ describe("Trace API", () => {
       const body = (await response!.json()) as { traces: unknown[] };
       expect(body.traces).toHaveLength(2);
     }
+  });
+
+  it("filters traces and paginates with stable opaque cursors", async () => {
+    for (const [index, spec] of [
+      { id: "filter-new", model: "gpt-remote", failed: false },
+      { id: "filter-mid", model: "qwen-local", failed: true },
+      { id: "filter-old", model: "qwen-local", failed: false },
+    ].entries()) {
+      const timestamp = 1_000 - index * 100;
+      engine.logEvent({
+        type: "model_request_lifecycle",
+        phase: "received",
+        requestId: spec.id,
+        runId: spec.id,
+        traceId: spec.id,
+        spanId: `span-${spec.id}`,
+        model: spec.model,
+        timestamp,
+      });
+      engine.logEvent({
+        type: "model_request_lifecycle",
+        phase: spec.failed ? "failed" : "completed",
+        requestId: spec.id,
+        runId: spec.id,
+        traceId: spec.id,
+        spanId: `span-${spec.id}`,
+        model: spec.model,
+        timestamp: timestamp + 10,
+        durationMs: 10,
+      });
+    }
+
+    const firstUrl = new URL("http://localhost:3300/api/traces?model=qwen&limit=1");
+    const firstResponse = await handleDashboardApi(
+      new Request(firstUrl, { headers: { Authorization: `Bearer ${token}` } }),
+      firstUrl,
+      "GET",
+      engine,
+      db,
+    );
+    const first = (await firstResponse!.json()) as {
+      traces: Array<{ traceId: string }>;
+      page: { hasMore: boolean; nextCursor: string };
+    };
+    expect(first.traces.map((trace) => trace.traceId)).toEqual(["filter-mid"]);
+    expect(first.page.hasMore).toBe(true);
+
+    // A newer trace does not shift the next page because the cursor is based
+    // on the last observed timestamp and trace ID, not an array offset.
+    engine.logEvent({
+      type: "agent_turn_start",
+      name: "NewAgent",
+      runId: "new-run",
+      traceId: "new-trace",
+      spanId: "new-span",
+      timestamp: 2_000,
+    });
+    const secondUrl = new URL(
+      `http://localhost:3300/api/traces?model=qwen&limit=1&cursor=${encodeURIComponent(first.page.nextCursor)}`,
+    );
+    const secondResponse = await handleDashboardApi(
+      new Request(secondUrl, { headers: { Authorization: `Bearer ${token}` } }),
+      secondUrl,
+      "GET",
+      engine,
+      db,
+    );
+    const second = (await secondResponse!.json()) as {
+      traces: Array<{ traceId: string }>;
+      page: { hasMore: boolean };
+    };
+    expect(second.traces.map((trace) => trace.traceId)).toEqual(["filter-old"]);
+    expect(second.page.hasMore).toBe(false);
+
+    const failedUrl = new URL("http://localhost:3300/api/traces?status=failed&q=filter-mid");
+    const failedResponse = await handleDashboardApi(
+      new Request(failedUrl, { headers: { Authorization: `Bearer ${token}` } }),
+      failedUrl,
+      "GET",
+      engine,
+      db,
+    );
+    const failed = (await failedResponse!.json()) as { traces: Array<{ traceId: string }> };
+    expect(failed.traces.map((trace) => trace.traceId)).toEqual(["filter-mid"]);
+  });
+
+  it("validates retrieval filters and marks requested exports as downloads", async () => {
+    const invalidUrl = new URL("http://localhost:3300/api/traces?status=unknown");
+    const invalidResponse = await handleDashboardApi(
+      new Request(invalidUrl, { headers: { Authorization: `Bearer ${token}` } }),
+      invalidUrl,
+      "GET",
+      engine,
+      db,
+    );
+    expect(invalidResponse?.status).toBe(400);
+
+    const cursorUrl = new URL("http://localhost:3300/api/traces?cursor=not_valid");
+    const cursorResponse = await handleDashboardApi(
+      new Request(cursorUrl, { headers: { Authorization: `Bearer ${token}` } }),
+      cursorUrl,
+      "GET",
+      engine,
+      db,
+    );
+    expect(cursorResponse?.status).toBe(400);
+
+    const exportUrl = new URL("http://localhost:3300/api/traces?format=eval-json&download=1");
+    const exportResponse = await handleDashboardApi(
+      new Request(exportUrl, { headers: { Authorization: `Bearer ${token}` } }),
+      exportUrl,
+      "GET",
+      engine,
+      db,
+    );
+    expect(exportResponse?.headers.get("content-disposition")).toBe(
+      'attachment; filename="marina-traces-eval.json"',
+    );
   });
 
   it("exports completed spans as an OTLP/JSON request without changing native IDs", async () => {

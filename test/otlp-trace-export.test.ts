@@ -40,7 +40,7 @@ const trace: TraceView = {
       endedAt: 150,
       durationMs: 50,
       partial: false,
-      attributes: { requestId: "req-readable" },
+      attributes: { requestId: "req-readable", detail: "provider secret detail" },
     },
     {
       spanId: "turn-readable",
@@ -83,6 +83,7 @@ describe("tracesToOtlpJson", () => {
       key: "marina.trace_id",
       value: { stringValue: "req-readable" },
     });
+    expect(JSON.stringify(first)).not.toContain("provider secret detail");
   });
 
   it("omits running spans because OTLP export represents completed spans", () => {

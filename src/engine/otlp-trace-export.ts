@@ -15,10 +15,40 @@ interface OtlpAttribute {
   value: OtlpAnyValue;
 }
 
+const OTLP_SAFE_SPAN_ATTRIBUTES = new Set([
+  "agent",
+  "cacheReadTokens",
+  "cacheWriteTokens",
+  "candidateCount",
+  "costUsd",
+  "errorKind",
+  "hadToolCalls",
+  "inputTokens",
+  "isError",
+  "model",
+  "origin",
+  "outputTokens",
+  "phase",
+  "requestId",
+  "risk",
+  "routeAdviceMode",
+  "routeKind",
+  "routeStrategy",
+  "target",
+  "toolCount",
+  "ttftMs",
+]);
+
+interface OtlpResourceOptions {
+  serviceName?: string;
+  serviceInstanceId?: string;
+  attributes?: Record<string, string>;
+}
+
 /** Convert Marina's read model into an OTLP ExportTraceServiceRequest JSON body. */
 export function tracesToOtlpJson(
   traces: readonly TraceView[],
-  options: { truncated?: boolean } = {},
+  options: { truncated?: boolean; resource?: OtlpResourceOptions } = {},
 ): Record<string, unknown> {
   const spans = traces.flatMap((trace) =>
     trace.spans.filter((span) => span.endedAt !== undefined).map((span) => toOtlpSpan(trace, span)),
@@ -30,9 +60,16 @@ export function tracesToOtlpJson(
       {
         resource: {
           attributes: [
-            attribute("service.name", "marina"),
+            attribute("service.name", options.resource?.serviceName ?? "marina"),
+            ...(options.resource?.serviceInstanceId
+              ? [attribute("service.instance.id", options.resource.serviceInstanceId)]
+              : []),
             attribute("telemetry.sdk.name", "marina-native"),
+            attribute("telemetry.sdk.language", "nodejs"),
             attribute("marina.export.truncated", options.truncated ?? false),
+            ...Object.entries(options.resource?.attributes ?? {}).map(([key, value]) =>
+              attribute(key, value),
+            ),
           ],
         },
         scopeSpans: [
@@ -54,7 +91,9 @@ function toOtlpSpan(trace: TraceView, span: TraceSpanView): Record<string, unkno
     attribute("marina.span.kind", span.kind),
     attribute("marina.span.name", span.name),
     attribute("marina.history.partial", span.partial),
-    ...Object.entries(span.attributes).map(([key, value]) => attribute(`marina.${key}`, value)),
+    ...Object.entries(span.attributes)
+      .filter(([key]) => OTLP_SAFE_SPAN_ATTRIBUTES.has(key))
+      .map(([key, value]) => attribute(`marina.${key}`, value)),
   ];
   return {
     traceId: otlpId(`trace:${trace.traceId}`, 32),

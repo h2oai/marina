@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Save,
   Trash2,
+  Workflow,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useOperationalAlerts, useSystem } from "../hooks/use-api";
@@ -32,6 +33,7 @@ interface HeaderProps {
   onRenameLayoutPreset?: (id: string) => void;
   onDeleteLayoutPreset?: (id: string) => void;
   onOpenOperations?: () => void;
+  onOpenTraces?: () => void;
 }
 
 const TITLE_LETTERS = "MARINA".split("");
@@ -50,6 +52,7 @@ export function Header({
   onRenameLayoutPreset,
   onDeleteLayoutPreset,
   onOpenOperations,
+  onOpenTraces,
 }: HeaderProps) {
   const entities = useWorldState((s) => s.entities);
   const connections = useWorldState((s) => s.connections);
@@ -87,6 +90,15 @@ export function Header({
       </div>
 
       <div className="flex items-center gap-3 text-[11px]">
+        <button
+          type="button"
+          onClick={onOpenTraces}
+          className="flex items-center gap-1.5 rounded border border-cyan-400/30 bg-cyan-400/5 px-2 py-0.5 text-cyan-300 transition-colors hover:border-cyan-300/60 hover:bg-cyan-400/10"
+          title="Open execution traces and evaluations"
+        >
+          <Workflow size={11} />
+          <span>Traces</span>
+        </button>
         <button
           type="button"
           onClick={onOpenOperations}

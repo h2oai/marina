@@ -13,6 +13,7 @@ import {
 } from "./engine/constants";
 import { Engine } from "./engine/engine";
 import { Logger } from "./engine/logger";
+import { projectTraces } from "./engine/trace-projection";
 import { AdapterManager } from "./net/adapter-manager";
 import { DashboardBroadcaster } from "./net/dashboard-ws";
 import { FeedPublisher } from "./net/feed-publisher";
@@ -25,6 +26,7 @@ import { isLoopbackHostname, resolveWsBindHostname, WebSocketServer } from "./ne
 import { MarinaDB } from "./persistence/database";
 import { isKeyEncryptionEnabled } from "./persistence/key-crypto";
 import { LocalStorageProvider } from "./storage/local-provider";
+import { loadOtlpExporterConfig, MarinaOtlpExporter } from "./telemetry/otlp-exporter";
 import type { RoomId } from "./types";
 import { loadRooms } from "./world/room-loader";
 import { seedGuidePool } from "./world/seed-guide";
@@ -257,6 +259,25 @@ const stateInterval = setInterval(
   () => dashboardBroadcaster.broadcastState(engine),
   DASHBOARD_BROADCAST_INTERVAL_MS,
 );
+
+const otlpConfig = loadOtlpExporterConfig();
+const otlpExporter = otlpConfig
+  ? new MarinaOtlpExporter(otlpConfig, (traceIds) =>
+      traceIds.flatMap((traceId) =>
+        projectTraces(db.getRecentTraceEvents(5_000, traceId).events).filter(
+          (trace) => trace.traceId === traceId,
+        ),
+      ),
+    )
+  : undefined;
+if (otlpExporter) {
+  engine.setOtlpStatusProvider(() => otlpExporter.getStatus());
+  engine.addEventListener((event) => otlpExporter.handleEvent(event));
+  logger.info(
+    "observability",
+    `OTLP/HTTP JSON trace export enabled → ${otlpExporter.getStatus().endpoint} (credentials redacted)`,
+  );
+}
 
 // Expired-session sweep: reclaim in-memory Map entries + DB rows whose TTL
 // has elapsed. Without this, long-running instances leak expired sessions in
@@ -546,6 +567,7 @@ async function shutdown(code = 0) {
 
   clearInterval(stateInterval);
   clearInterval(sessionCleanupInterval);
+  await otlpExporter?.stop().catch(() => {});
 
   // Stop external adapters first
   await adapterManager.stopAll().catch(() => {});

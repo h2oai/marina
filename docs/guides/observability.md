@@ -15,6 +15,19 @@ unless an operator or caller explicitly selects Marina's `adaptive` within-chann
 3. Select **Traces**.
 4. Select a trace to expand its request, turn, and tool hierarchy.
 
+The dashboard header also has a direct **Traces** button. The detail view includes a causal
+waterfall: cyan request spans, violet autonomous/agent turns, and amber tool calls are positioned
+against the recorded trace clock. The waterfall is derived from the same retained lifecycle events
+as the textual span tree; it does not infer missing timing.
+
+Search accepts trace IDs, models, agent/tool names, span kinds, and recorded error attributes. A
+status selector narrows the retained window to running, completed, or failed traces. Clicking a
+model-request event on the dashboard timeline opens its exact retained trace; if it falls outside
+the normal list window, the dashboard performs a bounded trace-ID lookup instead of guessing.
+Every selected trace also exposes a permalink using `?trace=<trace-id>`. Opening that link focuses
+the trace explorer and performs the same exact lookup. An expired or cross-instance ID is reported
+as absent from retained history rather than silently substituting a different trace.
+
 The view refreshes every five seconds while the Traces tab is mounted. Status and duration come
 from recorded lifecycle events. A `running` span has no recorded terminal event yet. A `partial`
 span is missing its recorded start, usually because the retained event window begins mid-run.
@@ -26,6 +39,8 @@ The command is read-only and available to every Marina participant:
 ```text
 trace                 List the 10 most recent traces
 trace list 20         List up to 20 recent traces
+trace find status=failed model=qwen limit=20
+trace find agent=Ada tool=search q=timeout limit=20
 trace stats 100       Summarize observed model/tool mechanics
 trace compare models  Compare observed model cohorts without selecting a winner
 trace compare routes  Compare selected-agent route cohorts
@@ -74,7 +89,24 @@ curl -H "Authorization: Bearer $MARINA_TOKEN" \
 
 curl -H "Authorization: Bearer $MARINA_TOKEN" \
   "http://localhost:3300/api/traces?limit=100&format=eval-json"
+
+curl -H "Authorization: Bearer $MARINA_TOKEN" \
+  "http://localhost:3300/api/traces?status=failed&model=qwen&limit=25"
 ```
+
+Retrieval filters are `status`, `model`, `agent`, `tool`, `q`, `since`, and `until`. Time bounds
+accept Unix milliseconds or ISO 8601 and apply to trace start time. Responses include
+`page.hasMore` and an opaque `page.nextCursor`; pass that value as `cursor` for the next page.
+Evaluation and OTLP format responses preserve their standard document shapes and expose the next
+cursor, when present, in the `X-Marina-Next-Cursor` response header.
+The cursor records stable trace ordering rather than an array offset, so newly arriving traces do
+not shift an ongoing investigation onto duplicate pages. Do not parse or synthesize cursors.
+
+The dashboard applies search and status filters on the server and exposes Previous/Next controls.
+Its JSON, evaluation-dataset, and OTLP download actions make authenticated requests before creating
+the local file, so bearer credentials are never placed in a download URL. API clients can add
+`download=1` to receive an attachment filename. Every export is limited to the selected page; use
+the response cursor to retrieve additional pages deliberately.
 
 The native response includes the projected traces and a `marina.execution.v2` evaluation for each
 trace. It also includes `marina.trace.analytics.v1` aggregates and reports the data source,
@@ -148,9 +180,42 @@ curl -H "Authorization: Bearer $MARINA_TOKEN" \
   "http://localhost:3300/api/traces?limit=25&format=otlp-json"
 ```
 
-This is a pull endpoint that returns an OTLP-shaped JSON document; Marina does not push spans to a
-collector in this release. Only completed spans are exported. Marina derives protocol-valid trace
-and span IDs deterministically and retains the original IDs as attributes.
+This pull endpoint returns an OTLP-shaped JSON document. Only completed spans are exported. Marina
+derives protocol-valid trace and span IDs deterministically and retains the original IDs as
+attributes.
+
+### Push to an OpenTelemetry collector
+
+Collector push is additive and off by default. This minimal configuration uses the stable
+OTLP/HTTP JSON transport:
+
+```bash
+MARINA_OTLP_ENABLED=true
+OTEL_EXPORTER_OTLP_TRACES_PROTOCOL=http/json
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://collector.example/v1/traces
+OTEL_SERVICE_NAME=marina
+```
+
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is used exactly as supplied. When only
+`OTEL_EXPORTER_OTLP_ENDPOINT` is set, Marina appends `/v1/traces`. Standard
+`OTEL_EXPORTER_OTLP_TRACES_HEADERS`, `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT`, and
+`OTEL_RESOURCE_ATTRIBUTES` are supported. Header values use comma-separated, percent-encoded
+`key=value` syntax.
+
+Marina batches completed spans, bounds its pending queue, retries transient responses with
+exponential backoff and jitter, understands OTLP partial-success rejection counts, and isolates
+collector failures from agent execution. Plaintext HTTP is accepted for loopback collectors only
+unless `MARINA_OTLP_ALLOW_INSECURE=true` explicitly acknowledges non-loopback transport risk.
+
+Governance boundary: exported spans contain structural identifiers, timing, model/route names,
+normalized token/cost/error metrics, agent/tool names, and risk classification. They exclude
+prompts, outputs, thinking text, tool arguments/results, provider error detail, and collector
+credentials. Check delivery without exposing headers using `trace otel` or Dashboard → Traces.
+
+Configuration and retry behavior follow the OpenTelemetry
+[OTLP exporter specification](https://opentelemetry.io/docs/specs/otel/protocol/exporter/) and the
+[OTLP protocol](https://opentelemetry.io/docs/specs/otlp/). Marina currently implements
+`http/json`; gRPC and `http/protobuf` are rejected explicitly rather than mislabeled.
 
 ## What the evaluations mean
 
@@ -173,6 +238,10 @@ Trace reads use Marina's existing SQLite event log when it is available. Retenti
 operator-managed. A single read is bounded to at most 5,000 retained trace events; if the boundary
 is reached, the response says it was truncated. In-memory events are used when durable history is
 not available, and that window ends when the process restarts.
+
+Filters and pagination operate inside that disclosed retained-event window. An empty filtered page
+therefore means “no match in the scanned retained window,” not proof that an older matching trace
+never existed. Exact trace-ID lookup uses the same bounded, durable source.
 
 The trace projection does not include prompts, model output, agent thinking text, or tool arguments.
 It does include operational metadata such as model, agent, and tool names, IDs, timestamps, status,

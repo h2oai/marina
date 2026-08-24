@@ -3,7 +3,11 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { TraceExplorerView, traceSpanDepth } from "../components/TraceExplorer";
+import {
+  TraceExplorerView,
+  traceSpanDepth,
+  traceWaterfallLayout,
+} from "../components/TraceExplorer";
 import type { TraceSpanView, TracesResponse } from "../lib/types";
 
 const data: TracesResponse = {
@@ -11,6 +15,17 @@ const data: TracesResponse = {
   retention: "operator-managed",
   partial: false,
   truncated: false,
+  otlp: {
+    enabled: true,
+    endpoint: "https://collector.example/v1/traces",
+    protocol: "http/json",
+    pendingTraces: 0,
+    exportedSpans: 12,
+    rejectedSpans: 0,
+    droppedTraces: 0,
+    exportFailures: 0,
+    consecutiveFailures: 0,
+  },
   analytics: {
     schema: "marina.trace.analytics.v1",
     tracesObserved: 1,
@@ -196,10 +211,15 @@ describe("TraceExplorerView", () => {
     render(<TraceExplorerView data={data} isLoading={false} onRefresh={() => {}} />);
     expect(screen.getByText("event-log · operator-managed")).toBeInTheDocument();
     expect(screen.getByText("req-visible")).toBeInTheDocument();
-    expect(screen.getByText("marina_memory")).toBeInTheDocument();
+    expect(screen.getAllByText("marina_memory")).toHaveLength(2);
     expect(screen.getByLabelText("Trace spans")).toBeInTheDocument();
+    expect(screen.getByLabelText("Trace waterfall")).toBeInTheDocument();
+    expect(screen.getByTestId("waterfall-tool")).toHaveStyle({ left: "44.44444444444444%" });
     expect(screen.getByLabelText("Execution checks")).toBeInTheDocument();
     expect(screen.getByLabelText("Trace analytics")).toBeInTheDocument();
+    expect(screen.getByLabelText("OpenTelemetry delivery")).toHaveTextContent(
+      "OTLP healthy · 12 spans exported",
+    );
     expect(screen.getByText("terminal outcome")).toBeInTheDocument();
     expect(screen.getByText("evidence: request")).toBeInTheDocument();
     expect(screen.getByLabelText("Participant judgments")).toBeInTheDocument();
@@ -237,6 +257,97 @@ describe("TraceExplorerView", () => {
     );
     expect(screen.getByText("Not authorized")).toBeInTheDocument();
   });
+
+  it("filters by status and any recorded span evidence", () => {
+    const failedTrace = {
+      ...data.traces[0]!,
+      traceId: "req-failed",
+      status: "failed" as const,
+      spans: data.traces[0]!.spans.map((span) =>
+        span.spanId === "turn"
+          ? { ...span, status: "failed" as const, attributes: { errorKind: "rate_limit" } }
+          : span,
+      ),
+    };
+    render(
+      <TraceExplorerView
+        data={{ ...data, traces: [data.traces[0]!, failedTrace] }}
+        isLoading={false}
+        onRefresh={() => {}}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Search traces"), {
+      target: { value: "rate_limit" },
+    });
+    expect(screen.getByText("req-failed")).toBeInTheDocument();
+    expect(screen.queryByText("req-visible")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Filter trace status"), {
+      target: { value: "completed" },
+    });
+    expect(screen.getByText("No retained traces match these filters.")).toBeInTheDocument();
+  });
+
+  it("exposes server filter, paging, and authenticated export actions", () => {
+    const onQueryChange = vi.fn();
+    const onStatusChange = vi.fn();
+    const onDimensionChange = vi.fn();
+    const onTimeRangeChange = vi.fn();
+    const onNextPage = vi.fn();
+    const onPreviousPage = vi.fn();
+    const onExport = vi.fn();
+    render(
+      <TraceExplorerView
+        data={{ ...data, page: { limit: 100, hasMore: true, nextCursor: "opaque" } }}
+        isLoading={false}
+        onRefresh={() => {}}
+        onQueryChange={onQueryChange}
+        onStatusChange={onStatusChange}
+        onDimensionChange={onDimensionChange}
+        onTimeRangeChange={onTimeRangeChange}
+        onNextPage={onNextPage}
+        onPreviousPage={onPreviousPage}
+        canPreviousPage
+        onExport={onExport}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Search traces"), { target: { value: "qwen" } });
+    fireEvent.change(screen.getByLabelText("Filter trace status"), {
+      target: { value: "failed" },
+    });
+    fireEvent.change(screen.getByLabelText("Filter trace model"), {
+      target: { value: "qwen-local" },
+    });
+    fireEvent.change(screen.getByLabelText("Filter trace time range"), {
+      target: { value: String(60 * 60_000) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download eval dataset" }));
+    expect(onQueryChange).toHaveBeenCalledWith("qwen");
+    expect(onStatusChange).toHaveBeenCalledWith("failed");
+    expect(onDimensionChange).toHaveBeenCalledWith("model", "qwen-local");
+    expect(onTimeRangeChange).toHaveBeenCalledWith(60 * 60_000);
+    expect(onNextPage).toHaveBeenCalledOnce();
+    expect(onPreviousPage).toHaveBeenCalledOnce();
+    expect(onExport).toHaveBeenCalledWith("eval-json");
+  });
+
+  it("reports an exact requested trace that is outside retained history", () => {
+    render(
+      <TraceExplorerView
+        data={data}
+        isLoading={false}
+        onRefresh={() => {}}
+        requestedTraceId="expired-trace"
+        requestedTraceMissing
+      />,
+    );
+    expect(screen.getByText(/expired-trace/)).toHaveTextContent("not present in retained history");
+    expect(screen.getByRole("link", { name: "permalink" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("trace=req-visible"),
+    );
+  });
 });
 
 describe("traceSpanDepth", () => {
@@ -246,5 +357,36 @@ describe("traceSpanDepth", () => {
       { ...data.traces[0]!.spans[1]!, spanId: "b", parentSpanId: "a" },
     ];
     expect(traceSpanDepth(spans[0]!, spans)).toBe(1);
+  });
+});
+
+describe("traceWaterfallLayout", () => {
+  it("maps nested timings into the trace window", () => {
+    expect(traceWaterfallLayout(data.traces[0]!, 145)).toEqual([
+      { spanId: "request", leftPercent: 0, widthPercent: 100 },
+      {
+        spanId: "turn",
+        leftPercent: 22.22222222222222,
+        widthPercent: 66.66666666666666,
+      },
+      {
+        spanId: "tool",
+        leftPercent: 44.44444444444444,
+        widthPercent: 22.22222222222222,
+      },
+    ]);
+  });
+
+  it("clamps partial timestamps to a visible bounded bar", () => {
+    const trace = data.traces[0]!;
+    const partial = {
+      ...trace,
+      spans: [{ ...trace.spans[0]!, startedAt: 20, endedAt: 500 }],
+    };
+    expect(traceWaterfallLayout(partial, 145)[0]).toEqual({
+      spanId: "request",
+      leftPercent: 0,
+      widthPercent: 100,
+    });
   });
 });

@@ -33,6 +33,7 @@ import { useChatState } from "./hooks/use-chat-state";
 import { useLayoutPresets } from "./hooks/use-layout-presets";
 import { useGlobalRealtimeInvalidations } from "./hooks/use-realtime-invalidations";
 import { useDashboardWebSocket } from "./hooks/use-websocket";
+import { traceIdFromSearch } from "./lib/trace-links";
 
 // Bump the version suffix whenever DEFAULT_LAYOUTS changes shape so existing
 // users pick up the new default instead of a stale auto-persisted copy of the
@@ -227,6 +228,23 @@ export default function App() {
     [layouts],
   );
 
+  useEffect(() => {
+    const focusTracePanel = () => {
+      if (focusedPanelRef.current !== "admin") handlePanelFocus("admin");
+    };
+    window.addEventListener("marina:open-traces", focusTracePanel);
+    return () => window.removeEventListener("marina:open-traces", focusTracePanel);
+  }, [handlePanelFocus]);
+
+  useEffect(() => {
+    const traceId = traceIdFromSearch(window.location.search);
+    if (!traceId) return;
+    const timer = window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("marina:open-traces", { detail: { traceId } }));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   const handleUnfocus = useCallback(() => {
     if (focusedPanelRef.current) {
       if (savedLayoutsRef.current) {
@@ -406,6 +424,10 @@ export default function App() {
         onOpenOperations={() => {
           if (focusedPanelRef.current !== "admin") handlePanelFocus("admin");
           window.dispatchEvent(new CustomEvent("marina:open-operations"));
+        }}
+        onOpenTraces={() => {
+          if (focusedPanelRef.current !== "admin") handlePanelFocus("admin");
+          window.dispatchEvent(new CustomEvent("marina:open-traces"));
         }}
       />
 

@@ -3,6 +3,7 @@
 
 import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
+import type { OtlpExporterStatus } from "../../telemetry/otlp-exporter";
 import type { CommandDef, EngineEvent, RoomContext } from "../../types";
 import { analyzeTraces, type TraceAggregate } from "../trace-analytics";
 import {
@@ -14,6 +15,7 @@ import {
 } from "../trace-dataset";
 import { evaluateTrace } from "../trace-evaluation";
 import { projectTraces, type TraceSpanView, type TraceView } from "../trace-projection";
+import { queryTraces, type TraceQuery } from "../trace-query";
 import {
   adviseTraceAggregates,
   adviseTraceRouting,
@@ -22,12 +24,14 @@ import {
 
 const HELP = `Inspect recent execution traces (read-only).
   trace [list] [limit]  — recent traces (default 10, maximum 20)
+  trace find [status=...] [model=...] [agent=...] [tool=...] [q=...] [since=...] [until=...] [limit=20] [cursor=...]
   trace stats [limit]   — observed model/tool mechanics (maximum 100 traces)
   trace compare <models|routes> [limit] — descriptive cohorts, no winner inference
   trace dataset [limit] — replayable structural evaluation cases
   trace dataset verify [limit] — replay an exported dataset copy, report schema + drift
   trace advise <models|routes|autonomous|tools> [limit] — read-only shadow selection advice
   trace choose <models|routes|autonomous|tools> <eligible...> — select only inside an explicit set
+  trace otel            — OTLP collector delivery status (no credentials)
   trace show <id>       — causal request/turn/tool spans
   trace eval <id>       — objective checks with evidence span IDs
   trace judgments <id>  — attributed participant judgments
@@ -40,6 +44,7 @@ export function traceCommand(deps: {
   db?: MarinaDB;
   getEventLog: () => EngineEvent[];
   getEntityName: (id: Parameters<RoomContext["send"]>[0]) => string | undefined;
+  getOtlpStatus?: () => OtlpExporterStatus;
 }): CommandDef {
   const load = (traceId?: string, eventLimit = 4000) => {
     const history = deps.db
@@ -55,11 +60,56 @@ export function traceCommand(deps: {
     help: HELP,
     handler: (ctx: RoomContext, input) => {
       const sub = input.tokens[0]?.toLowerCase();
+      if (sub === "otel" || sub === "otlp") {
+        const status = deps.getOtlpStatus?.() ?? {
+          enabled: false,
+          pendingTraces: 0,
+          exportedSpans: 0,
+          rejectedSpans: 0,
+          droppedTraces: 0,
+          exportFailures: 0,
+          consecutiveFailures: 0,
+        };
+        const lines = [header("OpenTelemetry Export"), separator()];
+        if (!status.enabled) {
+          lines.push("  off · set MARINA_OTLP_ENABLED=true and an OTLP endpoint to enable");
+        } else {
+          lines.push(`  endpoint: ${status.endpoint}`);
+          lines.push(`  protocol: ${status.protocol}`);
+          lines.push(
+            `  spans: ${status.exportedSpans} exported · ${status.rejectedSpans} rejected`,
+          );
+          lines.push(`  queue: ${status.pendingTraces} traces · ${status.droppedTraces} dropped`);
+          lines.push(
+            `  delivery: ${status.exportFailures} failures · ${status.consecutiveFailures} consecutive`,
+          );
+          if (status.lastSuccessAt)
+            lines.push(`  last success: ${new Date(status.lastSuccessAt).toISOString()}`);
+          if (status.lastFailureAt)
+            lines.push(`  last failure: ${new Date(status.lastFailureAt).toISOString()}`);
+          if (status.lastError) lines.push(`  last error: ${status.lastError}`);
+        }
+        lines.push("  Collector headers and credentials are never displayed.");
+        ctx.send(input.entity, lines.join("\n"));
+        return;
+      }
       if (!sub || sub === "list" || /^\d+$/.test(sub)) {
         const rawLimit = sub === "list" ? input.tokens[1] : sub;
         const limit = Math.max(1, Math.min(Number(rawLimit) || 10, 20));
         const { traces, truncated } = load(undefined, Math.min(limit * 200, 4000));
         return sendList(ctx, input.entity, traces.slice(0, limit), truncated);
+      }
+
+      if (sub === "find") {
+        try {
+          const query = parseFindQuery(input.tokens.slice(1));
+          const loaded = load(undefined, 5000);
+          const page = queryTraces(loaded.traces, query);
+          return sendList(ctx, input.entity, page.traces, loaded.truncated, page.nextCursor);
+        } catch (cause) {
+          ctx.send(input.entity, cause instanceof Error ? cause.message : "Invalid trace query.");
+          return;
+        }
       }
 
       if (sub === "stats") {
@@ -425,6 +475,7 @@ function sendList(
   entityId: Parameters<RoomContext["send"]>[0],
   traces: TraceView[],
   truncated: boolean,
+  nextCursor?: string,
 ): void {
   if (traces.length === 0) {
     ctx.send(entityId, "No traced executions in retained history.");
@@ -438,8 +489,51 @@ function sendList(
     );
   }
   if (truncated) lines.push("  [retained event window truncated]");
+  if (nextCursor) lines.push(`  next cursor: ${nextCursor}`);
   lines.push("  Use: trace show <id> | trace eval <id>");
   ctx.send(entityId, lines.join("\n"));
+}
+
+function parseFindQuery(tokens: string[]): TraceQuery {
+  const query: TraceQuery = { limit: 20 };
+  for (const token of tokens) {
+    const separator = token.indexOf("=");
+    if (separator < 1) throw new Error(`Invalid trace filter "${token}". Use key=value.`);
+    const key = token.slice(0, separator).toLowerCase();
+    const value = token.slice(separator + 1).trim();
+    if (!value || value.length > 512) throw new Error(`Invalid trace filter "${key}".`);
+    if (key === "limit") {
+      const limit = Number(value);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+        throw new Error("Trace find limit must be an integer from 1 to 100.");
+      }
+      query.limit = limit;
+    } else if (key === "status") {
+      if (value !== "running" && value !== "completed" && value !== "failed") {
+        throw new Error("Trace status must be running, completed, or failed.");
+      }
+      query.status = value;
+    } else if (key === "model" || key === "agent" || key === "tool" || key === "q") {
+      if (value.length > 200)
+        throw new Error(`Trace ${key} filter must be at most 200 characters.`);
+      query[key] = value;
+    } else if (key === "cursor") {
+      query.cursor = value;
+    } else if (key === "since" || key === "until") {
+      const numeric = Number(value);
+      const timestamp = Number.isFinite(numeric) ? numeric : Date.parse(value);
+      if (!Number.isFinite(timestamp) || timestamp < 0) {
+        throw new Error(`Trace ${key} must be Unix milliseconds or ISO 8601.`);
+      }
+      query[key] = Math.trunc(timestamp);
+    } else {
+      throw new Error(`Unknown trace filter "${key}".`);
+    }
+  }
+  if (query.since !== undefined && query.until !== undefined && query.since > query.until) {
+    throw new Error("Trace since must not be later than until.");
+  }
+  return query;
 }
 
 function sendTrace(

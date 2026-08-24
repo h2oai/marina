@@ -17,6 +17,7 @@ import { analyzeTraces } from "../engine/trace-analytics";
 import { buildTraceDataset, compareTraceCohorts } from "../engine/trace-dataset";
 import { evaluateTrace } from "../engine/trace-evaluation";
 import { projectTraces } from "../engine/trace-projection";
+import { queryTraces, type TracePage, type TraceQuery } from "../engine/trace-query";
 import { adviseTraceAggregates, adviseTraceRouting } from "../engine/trace-routing-advice";
 import type { MarinaDB, MediaJobRow } from "../persistence/database";
 import { isKeyEncryptionEnabled } from "../persistence/key-crypto";
@@ -1373,28 +1374,56 @@ function getTraces(engine: Engine, url: URL, db?: MarinaDB): Response {
       ? Math.max(1, Math.min(Math.trunc(requestedLimit), 100))
       : 25;
   const traceId = url.searchParams.get("traceId")?.trim();
+  let query: TraceQuery;
+  try {
+    query = parseTraceQuery(url, limit);
+  } catch (cause) {
+    return json({ error: cause instanceof Error ? cause.message : "Invalid trace query." }, 400);
+  }
   const history = db
-    ? db.getRecentTraceEvents(Math.min(limit * 200, 5000), traceId)
+    ? db.getRecentTraceEvents(5000, traceId)
     : { events: engine.getEventLog(), truncated: false };
   const projected = projectTraces(history.events);
-  const evidence = (traceId ? projected.filter((trace) => trace.traceId === traceId) : projected)
-    .slice(0, limit)
-    .map((trace) => ({
-      ...trace,
-      judgments: db ? db.getTraceJudgments(trace.traceId) : [],
-    }));
+  let page: TracePage;
+  try {
+    page = queryTraces(
+      traceId ? projected.filter((trace) => trace.traceId === traceId) : projected,
+      query,
+    );
+  } catch (cause) {
+    return json({ error: cause instanceof Error ? cause.message : "Invalid trace cursor." }, 400);
+  }
+  const evidence = page.traces.map((trace) => ({
+    ...trace,
+    judgments: db ? db.getTraceJudgments(trace.traceId) : [],
+  }));
   const traces = evidence.map((trace) => ({ ...trace, evaluation: evaluateTrace(trace) }));
   if (format === "otlp-json") {
-    return json(tracesToOtlpJson(traces, { truncated: history.truncated }));
+    return traceExportResponse(
+      tracesToOtlpJson(traces, { truncated: history.truncated }),
+      url,
+      "marina-traces-otlp.json",
+      page.nextCursor,
+    );
   }
   if (format === "eval-json") {
-    return json(buildTraceDataset(evidence));
+    return traceExportResponse(
+      buildTraceDataset(evidence),
+      url,
+      "marina-traces-eval.json",
+      page.nextCursor,
+    );
   }
   const modelComparisons = compareTraceCohorts(evidence, "model");
   const routeComparisons = compareTraceCohorts(evidence, "route");
   const analytics = analyzeTraces(traces);
-  return json({
+  const native = {
     traces,
+    page: {
+      limit,
+      hasMore: page.hasMore,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    },
     analytics,
     comparisons: {
       models: modelComparisons,
@@ -1410,6 +1439,79 @@ function getTraces(engine: Engine, url: URL, db?: MarinaDB): Response {
     truncated: history.truncated,
     source: db ? "event-log" : "memory",
     retention: db ? "operator-managed" : "bounded-memory",
+    otlp: engine.getOtlpExporterStatus(),
+  };
+  return traceExportResponse(native, url, "marina-traces.json", page.nextCursor);
+}
+
+function parseTraceQuery(url: URL, limit: number): TraceQuery {
+  const rawStatus = url.searchParams.get("status")?.trim();
+  if (rawStatus && rawStatus !== "running" && rawStatus !== "completed" && rawStatus !== "failed") {
+    throw new Error("Invalid trace status. Use running, completed, or failed.");
+  }
+  const status = rawStatus as TraceQuery["status"];
+  const since = parseTraceTime(url.searchParams.get("since"), "since");
+  const until = parseTraceTime(url.searchParams.get("until"), "until");
+  if (since !== undefined && until !== undefined && since > until) {
+    throw new Error("Trace 'since' must not be later than 'until'.");
+  }
+  return {
+    limit,
+    ...(url.searchParams.get("cursor")?.trim()
+      ? { cursor: url.searchParams.get("cursor")!.trim() }
+      : {}),
+    ...(status ? { status } : {}),
+    ...boundedTraceFilter(url, "model"),
+    ...boundedTraceFilter(url, "agent"),
+    ...boundedTraceFilter(url, "tool"),
+    ...boundedTraceFilter(url, "q"),
+    ...(since === undefined ? {} : { since }),
+    ...(until === undefined ? {} : { until }),
+  };
+}
+
+function boundedTraceFilter(url: URL, key: "model" | "agent" | "tool" | "q") {
+  const value = url.searchParams.get(key)?.trim();
+  if (!value) return {};
+  if (value.length > 200) throw new Error(`Trace '${key}' filter must be at most 200 characters.`);
+  return { [key]: value };
+}
+
+function parseTraceTime(raw: string | null, name: string): number | undefined {
+  if (!raw?.trim()) return undefined;
+  const numeric = Number(raw);
+  const value = Number.isFinite(numeric) ? numeric : Date.parse(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`Invalid trace '${name}' timestamp. Use Unix milliseconds or ISO 8601.`);
+  }
+  return Math.trunc(value);
+}
+
+function traceExportResponse(
+  data: unknown,
+  url: URL,
+  filename: string,
+  nextCursor?: string,
+): Response {
+  const cursorHeaders: Record<string, string> = nextCursor
+    ? { "x-marina-next-cursor": nextCursor }
+    : {};
+  if (url.searchParams.get("download") !== "1") {
+    return new Response(JSON.stringify(data), {
+      headers: {
+        ...corsHeaders(null),
+        "content-type": "application/json; charset=utf-8",
+        ...cursorHeaders,
+      },
+    });
+  }
+  return new Response(JSON.stringify(data), {
+    headers: {
+      ...corsHeaders(null),
+      "content-disposition": `attachment; filename="${filename}"`,
+      "content-type": "application/json; charset=utf-8",
+      ...cursorHeaders,
+    },
   });
 }
 
