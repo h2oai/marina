@@ -27,6 +27,7 @@ import type { MarinaDB } from "../persistence/database";
 import { writeSample } from "../resolvers/sample-writer";
 import type { StorageProvider } from "../storage/provider";
 import type { OtlpExporterStatus } from "../telemetry/otlp-exporter";
+import type { OtlpLogExporterStatus } from "../telemetry/otlp-log-exporter";
 import { classifyPrimitive, isMarinaTool } from "../telemetry/primitive-usage";
 import type {
   CommandContext,
@@ -161,6 +162,7 @@ export class Engine {
   private tickCount = 0;
   /** @internal */ readonly logger: Logger;
   private otlpStatusProvider?: () => OtlpExporterStatus;
+  private otlpLogStatusProvider?: () => OtlpLogExporterStatus;
 
   constructor(config?: Partial<EngineConfig>) {
     // Derive startRoom: explicit config > world definition > generic fallback
@@ -1887,6 +1889,24 @@ export class Engine {
         exportedSpans: 0,
         rejectedSpans: 0,
         droppedTraces: 0,
+        exportFailures: 0,
+        consecutiveFailures: 0,
+      }
+    );
+  }
+
+  setOtlpLogStatusProvider(provider: () => OtlpLogExporterStatus): void {
+    this.otlpLogStatusProvider = provider;
+  }
+
+  getOtlpLogExporterStatus(): OtlpLogExporterStatus {
+    return (
+      this.otlpLogStatusProvider?.() ?? {
+        enabled: false,
+        pendingLogs: 0,
+        exportedLogs: 0,
+        rejectedLogs: 0,
+        droppedLogs: 0,
         exportFailures: 0,
         consecutiveFailures: 0,
       }

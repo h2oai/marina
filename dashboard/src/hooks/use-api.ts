@@ -25,6 +25,7 @@ import type {
   GroupDetail,
   GroupEntry,
   KeyStatus,
+  LogsResponse,
   MacroEntry,
   MarketEntry,
   McpInfo,
@@ -119,6 +120,37 @@ export function useTrace(traceId?: string) {
       fetchApi<TracesResponse>(`/api/traces?traceId=${encodeURIComponent(traceId!)}&limit=1`),
     enabled: Boolean(traceId),
     staleTime: 5_000,
+  });
+}
+
+export interface LogFilters {
+  limit?: number;
+  cursor?: string;
+  level?: "debug" | "info" | "warn" | "error";
+  category?: string;
+  traceId?: string;
+  q?: string;
+  since?: number;
+  until?: number;
+}
+
+export function logQueryString(filters: LogFilters): string {
+  const params = new URLSearchParams({ limit: String(filters.limit ?? 100) });
+  for (const key of ["cursor", "level", "category", "traceId", "q"] as const) {
+    const value = filters[key]?.trim();
+    if (value) params.set(key, value);
+  }
+  if (filters.since !== undefined) params.set("since", String(filters.since));
+  if (filters.until !== undefined) params.set("until", String(filters.until));
+  return params.toString();
+}
+
+export function useLogs(filters: LogFilters = {}) {
+  const query = logQueryString(filters);
+  return useQuery({
+    queryKey: ["logs", query],
+    queryFn: () => fetchApi<LogsResponse>(`/api/logs?${query}`),
+    refetchInterval: 5_000,
   });
 }
 

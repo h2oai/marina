@@ -34,6 +34,7 @@ import {
 import { deleteApi, describeApiError, fetchApi, patchApi, postApi, putApi } from "../lib/api";
 import { traceIdFromSearch } from "../lib/trace-links";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
+import { LogExplorer } from "./LogExplorer";
 import { ModelSelect } from "./ModelSelect";
 import { TraceExplorer } from "./TraceExplorer";
 
@@ -60,7 +61,8 @@ type Tab =
   | "config"
   | "security"
   | "ops"
-  | "traces";
+  | "traces"
+  | "logs";
 
 export function AdminPanel({
   backContent,
@@ -97,7 +99,7 @@ export function AdminPanel({
       isFocused={isFocused}
       onToggleFocus={onToggleFocus}
     >
-      <div className="flex border-b border-border text-[10px]">
+      <div className="flex overflow-x-auto border-b border-border text-[10px]">
         {(
           [
             "keys",
@@ -109,13 +111,14 @@ export function AdminPanel({
             "security",
             "ops",
             "traces",
+            "logs",
           ] as Tab[]
         ).map((t) => (
           <button
             key={t}
             type="button"
             onClick={() => setTab(t)}
-            className={`flex-1 px-2 py-1 capitalize transition-colors ${
+            className={`flex-none px-2 py-1 capitalize transition-colors ${
               tab === t ? "text-primary border-b border-primary" : "text-text-dim hover:text-text"
             }`}
           >
@@ -133,6 +136,7 @@ export function AdminPanel({
         {tab === "security" && <SecurityTab />}
         {tab === "ops" && <OperationsTab />}
         {tab === "traces" && <TraceExplorer requestedTraceId={requestedTraceId} />}
+        {tab === "logs" && <LogExplorer />}
       </div>
     </GlassPanel>
   );

@@ -20,7 +20,9 @@ import { projectTraces } from "../engine/trace-projection";
 import { queryTraces, type TracePage, type TraceQuery } from "../engine/trace-query";
 import { adviseTraceAggregates, adviseTraceRouting } from "../engine/trace-routing-advice";
 import type { MarinaDB, MediaJobRow } from "../persistence/database";
+import { decodeLogCursor } from "../persistence/db-logs";
 import { isKeyEncryptionEnabled } from "../persistence/key-crypto";
+import { logsToOtlpJson } from "../telemetry/otlp-log-exporter";
 import type { Connection, EntityId, Perception, RoomId } from "../types";
 import { ORCHESTRATION_PATTERNS } from "../world/templates/orchestration";
 import { authenticateRequest, isOperatorPrincipal, isSentinelPrincipal } from "./auth-middleware";
@@ -330,6 +332,9 @@ export async function handleDashboardApi(
   }
   if (url.pathname === "/api/traces" && method === "GET") {
     return getTraces(engine, url, db);
+  }
+  if (url.pathname === "/api/logs" && method === "GET") {
+    return getLogs(engine, url, db);
   }
   if (url.pathname === "/api/system") {
     return getSystem(engine, db);
@@ -1442,6 +1447,87 @@ function getTraces(engine: Engine, url: URL, db?: MarinaDB): Response {
     otlp: engine.getOtlpExporterStatus(),
   };
   return traceExportResponse(native, url, "marina-traces.json", page.nextCursor);
+}
+
+function getLogs(engine: Engine, url: URL, db?: MarinaDB): Response {
+  if (!db) return json({ error: "Durable structured logs are unavailable." }, 503);
+  const format = url.searchParams.get("format");
+  if (format && format !== "otlp-json") {
+    return json({ error: "Unsupported log format. Use 'otlp-json'." }, 400);
+  }
+  const rawLevel = url.searchParams.get("level")?.trim();
+  if (rawLevel && !["debug", "info", "warn", "error"].includes(rawLevel)) {
+    return json({ error: "Invalid log level. Use debug, info, warn, or error." }, 400);
+  }
+  let beforeId: number | undefined;
+  try {
+    const cursor = url.searchParams.get("cursor")?.trim();
+    beforeId = cursor ? decodeLogCursor(cursor) : undefined;
+  } catch (cause) {
+    return json({ error: cause instanceof Error ? cause.message : "Invalid log cursor." }, 400);
+  }
+  const filter = (name: string): string | undefined => {
+    const value = url.searchParams.get(name)?.trim();
+    if (!value) return undefined;
+    if (value.length > 200) throw new Error(`Log '${name}' filter must be at most 200 characters.`);
+    return value;
+  };
+  const parseTime = (name: "since" | "until"): number | undefined => {
+    const raw = url.searchParams.get(name)?.trim();
+    if (!raw) return undefined;
+    const numeric = Number(raw);
+    const value = Number.isFinite(numeric) ? numeric : Date.parse(raw);
+    if (!Number.isFinite(value)) throw new Error(`Invalid log '${name}' time.`);
+    return Math.trunc(value);
+  };
+  let since: number | undefined;
+  let until: number | undefined;
+  try {
+    since = parseTime("since");
+    until = parseTime("until");
+    if (since !== undefined && until !== undefined && since > until) {
+      throw new Error("Log 'since' must not be later than 'until'.");
+    }
+  } catch (cause) {
+    return json({ error: cause instanceof Error ? cause.message : "Invalid log time." }, 400);
+  }
+  let page: ReturnType<MarinaDB["queryStructuredLogs"]>;
+  try {
+    page = db.queryStructuredLogs({
+      limit: Number(url.searchParams.get("limit")) || 100,
+      beforeId,
+      level: rawLevel as "debug" | "info" | "warn" | "error" | undefined,
+      category: filter("category"),
+      traceId: filter("traceId"),
+      spanId: filter("spanId"),
+      requestId: filter("requestId"),
+      entityId: filter("entityId"),
+      q: filter("q"),
+      since,
+      until,
+    });
+  } catch (cause) {
+    return json({ error: cause instanceof Error ? cause.message : "Invalid log query." }, 400);
+  }
+  if (format === "otlp-json") {
+    return traceExportResponse(
+      logsToOtlpJson(page.logs, { serviceName: "marina", resourceAttributes: {} }),
+      url,
+      "marina-logs-otlp.json",
+      page.nextCursor,
+    );
+  }
+  return json({
+    logs: page.logs,
+    page: {
+      limit: Math.max(1, Math.min(Number(url.searchParams.get("limit")) || 100, 500)),
+      hasMore: page.hasMore,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    },
+    source: "structured_logs",
+    retention: Number(process.env.MARINA_LOG_RETENTION) || 10_000,
+    otlp: engine.getOtlpLogExporterStatus(),
+  });
 }
 
 function parseTraceQuery(url: URL, limit: number): TraceQuery {

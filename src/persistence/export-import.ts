@@ -130,12 +130,14 @@ const SECRET_TABLES = new Set<string>([
 /**
  * Tables intentionally never exported: migration scratch (`*_new`), FTS5 virtual
  * + shadow tables (anything containing `_fts`), ephemeral sessions, and the
- * schema-version marker. The drift test in test/export-import.test.ts asserts
+ * schema-version marker, and deployment-local structured logs. The drift test in
+ * test/export-import.test.ts asserts
  * every real table is either in EXPORT_TABLES or matches one of these.
  */
 export function isExcludedFromExport(table: string): boolean {
   return (
     table === "sessions" ||
+    table === "structured_logs" ||
     table === "schema_version" ||
     table.endsWith("_new") ||
     table.includes("_fts")

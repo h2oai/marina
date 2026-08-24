@@ -370,6 +370,42 @@ export interface OtlpExporterStatus {
   lastError?: string;
 }
 
+export interface StructuredLogEntry {
+  id: number;
+  timestamp: number;
+  level: "debug" | "info" | "warn" | "error";
+  category: string;
+  message: string;
+  data?: Record<string, unknown>;
+  traceId?: string;
+  spanId?: string;
+  requestId?: string;
+  entityId?: string;
+}
+
+export interface OtlpLogExporterStatus {
+  enabled: boolean;
+  endpoint?: string;
+  protocol?: "http/json";
+  pendingLogs: number;
+  exportedLogs: number;
+  rejectedLogs: number;
+  droppedLogs: number;
+  exportFailures: number;
+  consecutiveFailures: number;
+  lastSuccessAt?: number;
+  lastFailureAt?: number;
+  lastError?: string;
+}
+
+export interface LogsResponse {
+  logs: StructuredLogEntry[];
+  page: { limit: number; hasMore: boolean; nextCursor?: string };
+  source: "structured_logs";
+  retention: number;
+  otlp: OtlpLogExporterStatus;
+}
+
 export interface TraceRoutingAdvice {
   schema: "marina.routing.shadow.v1";
   dimension: "model" | "route" | "autonomous_model" | "tool";

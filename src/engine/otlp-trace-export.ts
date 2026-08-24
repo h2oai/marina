@@ -96,11 +96,9 @@ function toOtlpSpan(trace: TraceView, span: TraceSpanView): Record<string, unkno
       .map(([key, value]) => attribute(`marina.${key}`, value)),
   ];
   return {
-    traceId: otlpId(`trace:${trace.traceId}`, 32),
-    spanId: otlpId(`span:${trace.traceId}:${span.spanId}`, 16),
-    ...(span.parentSpanId
-      ? { parentSpanId: otlpId(`span:${trace.traceId}:${span.parentSpanId}`, 16) }
-      : {}),
+    traceId: otlpTraceId(trace.traceId),
+    spanId: otlpSpanId(trace.traceId, span.spanId),
+    ...(span.parentSpanId ? { parentSpanId: otlpSpanId(trace.traceId, span.parentSpanId) } : {}),
     name:
       span.kind === "model_request"
         ? "marina.model.request"
@@ -118,6 +116,14 @@ function toOtlpSpan(trace: TraceView, span: TraceSpanView): Record<string, unkno
 function otlpId(value: string, length: 16 | 32): string {
   const id = new Bun.CryptoHasher("sha256").update(value).digest("hex").slice(0, length);
   return /^0+$/.test(id) ? `${"0".repeat(length - 1)}1` : id;
+}
+
+export function otlpTraceId(traceId: string): string {
+  return otlpId(`trace:${traceId}`, 32);
+}
+
+export function otlpSpanId(traceId: string, spanId: string): string {
+  return otlpId(`span:${traceId}:${spanId}`, 16);
 }
 
 function unixNano(timestampMs: number): string {

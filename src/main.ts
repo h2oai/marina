@@ -27,6 +27,7 @@ import { MarinaDB } from "./persistence/database";
 import { isKeyEncryptionEnabled } from "./persistence/key-crypto";
 import { LocalStorageProvider } from "./storage/local-provider";
 import { loadOtlpExporterConfig, MarinaOtlpExporter } from "./telemetry/otlp-exporter";
+import { loadOtlpLogExporterConfig, MarinaOtlpLogExporter } from "./telemetry/otlp-log-exporter";
 import type { RoomId } from "./types";
 import { loadRooms } from "./world/room-loader";
 import { seedGuidePool } from "./world/seed-guide";
@@ -116,6 +117,17 @@ if (!LOOPBACK_ONLY_BIND && !INSECURE_PUBLIC_ACK) {
 }
 
 const db = new MarinaDB(DB_PATH);
+const structuredLogRetention = Math.max(
+  100,
+  Math.min(Number(process.env.MARINA_LOG_RETENTION) || 10_000, 1_000_000),
+);
+db.pruneStructuredLogs(structuredLogRetention);
+let structuredLogWrites = 0;
+logger.addSink((entry) => {
+  db.appendStructuredLog(entry);
+  structuredLogWrites++;
+  if (structuredLogWrites % 250 === 0) db.pruneStructuredLogs(structuredLogRetention);
+});
 // Encrypt any plaintext API keys at rest once MARINA_KEY_SECRET is configured,
 // then surface the "encrypted but can't decrypt" misconfiguration loudly —
 // otherwise those keys silently read as missing.
@@ -276,6 +288,16 @@ if (otlpExporter) {
   logger.info(
     "observability",
     `OTLP/HTTP JSON trace export enabled → ${otlpExporter.getStatus().endpoint} (credentials redacted)`,
+  );
+}
+const otlpLogConfig = loadOtlpLogExporterConfig();
+const otlpLogExporter = otlpLogConfig ? new MarinaOtlpLogExporter(otlpLogConfig) : undefined;
+if (otlpLogExporter) {
+  engine.setOtlpLogStatusProvider(() => otlpLogExporter.getStatus());
+  logger.addSink(otlpLogExporter.handleLog);
+  logger.info(
+    "observability",
+    `OTLP/HTTP JSON log export enabled → ${otlpLogExporter.getStatus().endpoint} (credentials redacted)`,
   );
 }
 
@@ -568,6 +590,7 @@ async function shutdown(code = 0) {
   clearInterval(stateInterval);
   clearInterval(sessionCleanupInterval);
   await otlpExporter?.stop().catch(() => {});
+  await otlpLogExporter?.stop().catch(() => {});
 
   // Stop external adapters first
   await adapterManager.stopAll().catch(() => {});

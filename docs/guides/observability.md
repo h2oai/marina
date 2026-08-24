@@ -4,6 +4,12 @@ Marina exposes a read-only execution view for recent model requests, agent turns
 Humans can inspect it in the dashboard; humans and agents can inspect the same evidence with the
 `trace` command; authenticated software can read it through HTTP.
 
+Marina also persists bounded structured application logs. Open **Admin → Logs** to search by
+message, category, or severity, inspect redacted metadata, follow a correlated trace, paginate
+retained history, and download the selected page as OTLP JSON. This differs from the legacy
+`LOG_PORT` event viewer: that remains a live compatibility surface, while Admin → Logs is the
+durable operational record produced by Marina's central logger.
+
 This surface is for understanding observed execution. It does not score intelligence, autonomy,
 or answer quality, and it never blocks an agent from acting. Its routing advice remains read-only
 unless an operator or caller explicitly selects Marina's `adaptive` within-channel strategy.
@@ -92,6 +98,12 @@ curl -H "Authorization: Bearer $MARINA_TOKEN" \
 
 curl -H "Authorization: Bearer $MARINA_TOKEN" \
   "http://localhost:3300/api/traces?status=failed&model=qwen&limit=25"
+
+curl -H "Authorization: Bearer $MARINA_TOKEN" \
+  "http://localhost:3300/api/logs?level=error&category=model-request&limit=100"
+
+curl -H "Authorization: Bearer $MARINA_TOKEN" \
+  "http://localhost:3300/api/logs?traceId=<trace-id>&format=otlp-json&download=1"
 ```
 
 Retrieval filters are `status`, `model`, `agent`, `tool`, `q`, `since`, and `until`. Time bounds
@@ -216,6 +228,38 @@ Configuration and retry behavior follow the OpenTelemetry
 [OTLP exporter specification](https://opentelemetry.io/docs/specs/otel/protocol/exporter/) and the
 [OTLP protocol](https://opentelemetry.io/docs/specs/otlp/). Marina currently implements
 `http/json`; gRPC and `http/protobuf` are rejected explicitly rather than mislabeled.
+
+### Push structured logs to an OpenTelemetry collector
+
+Log push is independently additive and off by default. It can share the collector base and
+resource attributes with traces, or use the logs-specific standard endpoint:
+
+```bash
+MARINA_OTLP_LOGS_ENABLED=true
+OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/json
+OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=https://collector.example/v1/logs
+OTEL_SERVICE_NAME=marina
+```
+
+`OTEL_EXPORTER_OTLP_LOGS_HEADERS`, `OTEL_EXPORTER_OTLP_LOGS_TIMEOUT`,
+`OTEL_RESOURCE_ATTRIBUTES`, `MARINA_OTLP_LOGS_BATCH_DELAY_MS`, and
+`MARINA_OTLP_LOGS_MAX_QUEUE` are supported. If only `OTEL_EXPORTER_OTLP_ENDPOINT` is supplied,
+Marina appends `/v1/logs`. Export failures never interrupt agent execution: the queue is bounded,
+failed batches remain for a later attempt while capacity exists, and delivery counters appear in
+Admin → Logs and `/api/logs`.
+
+Log records use the same deterministic OTLP trace/span IDs as Marina's trace exporter and retain
+the native Marina IDs as attributes, so collectors can join both signals. Terminal model requests
+and failed agent tool calls are correlated automatically. Other logger calls become correlated
+when their caller supplies trace/span/request context; Marina does not fabricate causality.
+
+Structured metadata is recursively bounded and fields whose names resemble credentials, tokens,
+passwords, cookies, authorization headers, or private keys become `[REDACTED]` before stdout,
+SQLite, or OTLP receives them. Free-form log messages are not rewritten—callers must never put
+secrets in message text. `MARINA_LOG_RETENTION` controls the SQLite retention target (default
+10,000, bounded to one million); periodic pruning keeps the newest records and may temporarily
+exceed the target by at most 249 rows. The configured `LOG_LEVEL` applies before persistence and
+export. Dashboard/API reads require the normal authenticated dashboard principal.
 
 ## What the evaluations mean
 

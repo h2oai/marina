@@ -80,6 +80,7 @@ DB_PATH=/app/data/marina.db   # keep on the durable volume
 ASSETS_DIR=/app/data/assets     # ditto
 MARINA_NAME=my-instance       # shown in the dashboard topbar
 LOG_FORMAT=json                 # structured logs for your aggregator
+MARINA_LOG_RETENTION=10000      # durable structured-log rows retained in SQLite
 ANTHROPIC_API_KEY=sk-ant-...     # (or OPENAI_API_KEY, GEMINI_API_KEY, ...)
 ```
 

@@ -695,6 +695,7 @@ Copy `.env.example` to `.env` and customize as needed. All variables are optiona
 | `DB_PATH` | `marina.db` | SQLite database path |
 | `LOG_FORMAT` | `text` | Log format: `text` or `json` |
 | `LOG_LEVEL` | `info` | Minimum log level (debug, info, warn, error) |
+| `MARINA_LOG_RETENTION` | `10000` | Newest durable structured-log rows retained in SQLite |
 | `MARINA_WORLD` | `default` | World definition to load (see `worlds/`) |
 | `START_ROOM` | *(world default)* | Override spawn room for new entities |
 | `ASSETS_DIR` | `data/assets` | Directory for uploaded asset files |

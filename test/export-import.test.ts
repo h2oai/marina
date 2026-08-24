@@ -179,7 +179,7 @@ describe("Export/Import", () => {
 
       expect(snapshot.format).toBe("marina-snapshot");
       expect(snapshot.version).toBe(1);
-      expect(snapshot.schema_version).toBe(72);
+      expect(snapshot.schema_version).toBe(73);
       expect(snapshot.exported_at).toBeTruthy();
 
       // Verify key tables are present
@@ -624,7 +624,7 @@ describe("Export/Import", () => {
     it("every persistent table is either in EXPORT_TABLES or explicitly excluded", () => {
       // Drift guard: a new migration that adds a table must also add it to
       // EXPORT_TABLES (or it'll be silently dropped on backup/restore) or to
-      // the documented exclusions (sessions / schema_version / *_new / *_fts).
+      // the documented exclusions (sessions / structured_logs / schema_version / *_new / *_fts).
       const raw = new Database(SRC_DB, { readonly: true });
       const names = (
         raw.query("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]

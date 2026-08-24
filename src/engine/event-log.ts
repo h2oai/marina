@@ -33,11 +33,39 @@ export class EventLog {
       const db = this.db;
       tryLog(this.logger, "event", "DB log failed", () => db.logEvent(event));
     }
+    this.logLifecycle(event);
 
     // Notify external listeners (copy to avoid mutation during iteration)
     const snapshot = [...this.listeners];
     for (const listener of snapshot) {
       tryLog(this.logger, "event", "Listener failed", () => listener(event));
+    }
+  }
+
+  private logLifecycle(event: EngineEvent): void {
+    if (event.type === "model_request_lifecycle" && ["completed", "failed"].includes(event.phase)) {
+      const data = {
+        requestId: event.requestId,
+        traceId: event.traceId,
+        spanId: event.spanId,
+        model: event.model,
+        target: event.target,
+        routeKind: event.routeKind,
+        durationMs: event.durationMs,
+        errorKind: event.errorKind,
+      };
+      if (event.phase === "failed")
+        this.logger.error("model-request", "Model request failed", data);
+      else this.logger.info("model-request", "Model request completed", data);
+      return;
+    }
+    if (event.type === "agent_tool_result" && event.isError) {
+      this.logger.warn("agent-tool", `Tool ${event.toolName} failed for ${event.name}`, {
+        traceId: event.traceId,
+        spanId: event.spanId,
+        agentName: event.name,
+        toolName: event.toolName,
+      });
     }
   }
 

@@ -15,6 +15,7 @@ import * as competenceDb from "./db-competence";
 import * as crewsDb from "./db-crews";
 import * as entitiesDb from "./db-entities";
 import * as feedDb from "./db-feed";
+import * as logsDb from "./db-logs";
 import * as mediaDb from "./db-media";
 import * as notesDb from "./db-notes";
 import * as standingDb from "./db-standing";
@@ -1878,6 +1879,31 @@ CREATE INDEX idx_trace_judgments_evaluator
     version: 72,
     sql: `ALTER TABLE sessions ADD COLUMN granted_rank INTEGER;`,
   },
+  // Migration 73: bounded, queryable structured application logs. Payloads
+  // are redacted before insertion by Logger; correlation columns remain
+  // separately indexed so operators need not search opaque JSON.
+  {
+    version: 73,
+    sql: `
+CREATE TABLE structured_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  timestamp INTEGER NOT NULL,
+  level TEXT NOT NULL CHECK(level IN ('debug', 'info', 'warn', 'error')),
+  category TEXT NOT NULL,
+  message TEXT NOT NULL,
+  data TEXT,
+  trace_id TEXT,
+  span_id TEXT,
+  request_id TEXT,
+  entity_id TEXT
+);
+CREATE INDEX idx_structured_logs_time ON structured_logs(timestamp DESC, id DESC);
+CREATE INDEX idx_structured_logs_level ON structured_logs(level, timestamp DESC);
+CREATE INDEX idx_structured_logs_category ON structured_logs(category, timestamp DESC);
+CREATE INDEX idx_structured_logs_trace ON structured_logs(trace_id, timestamp DESC);
+CREATE INDEX idx_structured_logs_request ON structured_logs(request_id, timestamp DESC);
+`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -2104,6 +2130,20 @@ export class MarinaDB {
 
   getEventCount(): number {
     return entitiesDb.getEventCount(this.db);
+  }
+
+  // ─── Structured Logs (delegated to db-logs.ts) ──────────────────────
+
+  appendStructuredLog(entry: logsDb.StoredLogEntry | Omit<logsDb.StoredLogEntry, "id">): number {
+    return logsDb.appendLog(this.db, entry);
+  }
+
+  queryStructuredLogs(query: logsDb.LogQuery = {}): logsDb.LogPage {
+    return logsDb.queryLogs(this.reader, query);
+  }
+
+  pruneStructuredLogs(keepLast: number): number {
+    return logsDb.pruneLogs(this.db, keepLast);
   }
 
   pruneEvents(keepLast: number): void {
