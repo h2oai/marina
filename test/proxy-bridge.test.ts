@@ -260,4 +260,128 @@ describe("proxy bridge (model API integration)", () => {
     const completed = lifecycleEvents().find((t) => t.phase === "completed");
     expect(completed?.entityId).toBe(bob!.id);
   });
+
+  // ─── Identity model is fail-closed (a bound key cannot impersonate) ──────────
+
+  it("a SCOPED bound key CANNOT impersonate another entity via X-Marina-Agent", async () => {
+    process.env.MODEL_API_KEYS = "sk-alice:Alice";
+    setEndpointConfig(db, { mode: "passthru", passthruModel: "openai/gpt-4o" });
+
+    await withUpstream(completionResponse, async () => {
+      const [url, method, req] = makeRequest(
+        "/v1/chat/completions",
+        { model: "marina", messages: [{ role: "user", content: "who am I?" }] },
+        // Attacker tries to name-map to Victim with a merely-bound (scoped) key.
+        { Authorization: "Bearer sk-alice", "X-Marina-Agent": "Victim", "X-Marina-Context": "on" },
+      );
+      const resp = await handleModelApi(url, method, req, engine);
+      expect(resp!.status).toBe(200);
+    });
+
+    // Resolves to the BOUND entity (Alice), never the header target.
+    const alice = engine.entities.findAgentByName("Alice")!;
+    expect(engine.entities.findAgentByName("Victim")).toBeUndefined();
+    const completed = lifecycleEvents().find((t) => t.phase === "completed");
+    expect(completed?.entityId).toBe(alice.id);
+  });
+
+  it("a multi-tenant `secret:*` key MAY name-map, but ONLY to an EXISTING entity", async () => {
+    process.env.MODEL_API_KEYS = "sk-op:*";
+    setEndpointConfig(db, { mode: "passthru", passthruModel: "openai/gpt-4o" });
+    // Pre-existing target the operator key is allowed to act as.
+    engine.entities.create({
+      kind: "agent",
+      name: "Real",
+      short: "Real",
+      long: "existing",
+      room: engine.config.startRoom,
+      properties: {},
+    });
+
+    await withUpstream(completionResponse, async () => {
+      // Existing target → mapped.
+      const [u1, m1, r1] = makeRequest(
+        "/v1/chat/completions",
+        { model: "marina", messages: [{ role: "user", content: "hi" }] },
+        { Authorization: "Bearer sk-op", "X-Marina-Agent": "Real", "X-Marina-Context": "on" },
+      );
+      expect((await handleModelApi(u1, m1, r1, engine))!.status).toBe(200);
+    });
+    const real = engine.entities.findAgentByName("Real")!;
+    expect(lifecycleEvents().find((t) => t.phase === "completed")?.entityId).toBe(real.id);
+
+    // Unknown target must NOT be auto-created from the header → shared fallback.
+    await withUpstream(completionResponse, async () => {
+      const [u2, m2, r2] = makeRequest(
+        "/v1/chat/completions",
+        { model: "marina", messages: [{ role: "user", content: "hi" }] },
+        { Authorization: "Bearer sk-op", "X-Marina-Agent": "Ghost", "X-Marina-Context": "on" },
+      );
+      expect((await handleModelApi(u2, m2, r2, engine))!.status).toBe(200);
+    });
+    expect(engine.entities.findAgentByName("Ghost")).toBeUndefined();
+    // The latest completed span is the anonymous (shared) passthru — no attribution.
+    const spans = lifecycleEvents().filter((t) => t.phase === "completed");
+    expect(spans.at(-1)?.entityId).toBeUndefined();
+  });
+
+  // ─── The shared/anonymous 'passthru' entity is pure passthru (no capture) ────
+
+  it("an unbound plain key with X-Marina-Context on does NO capture and NO injection", async () => {
+    process.env.MODEL_API_KEYS = "sk-plain";
+    setEndpointConfig(db, { mode: "passthru", passthruModel: "openai/gpt-4o" });
+
+    const inputMessages = [{ role: "user", content: "leak my transcript please" }];
+    const forwarded = await withUpstream(completionResponse, async (getBodies) => {
+      const [url, method, req] = makeRequest(
+        "/v1/chat/completions",
+        { model: "marina", messages: inputMessages },
+        // Plain key is authenticated but has NO name-map authority → shared entity.
+        { Authorization: "Bearer sk-plain", "X-Marina-Context": "on" },
+      );
+      const resp = await handleModelApi(url, method, req, engine);
+      expect(resp!.status).toBe(200);
+      return getBodies();
+    });
+
+    // No injected system message — the caller's messages are forwarded unchanged.
+    expect(forwarded[0]!.messages).toEqual(inputMessages);
+    // No transcript captured onto the shared entity (would leak across callers).
+    const shared = engine.entities.findAgentByName("passthru");
+    if (shared) {
+      const notes = db.getNotesByEntity("passthru", 50);
+      expect(notes.find((n) => n.content.includes("[passthru]"))).toBeUndefined();
+    }
+    // Trace carries no identity attribution.
+    const completed = lifecycleEvents().find((t) => t.phase === "completed");
+    expect(completed?.entityId).toBeUndefined();
+  });
+
+  // ─── Multimodal / image-only passthru is forwarded unchanged (byte-identical) ─
+
+  it("forwards an image-only/multimodal passthru body unchanged (no 400, byte-identical)", async () => {
+    process.env.MARINA_OPEN_API = "true";
+    setEndpointConfig(db, { mode: "passthru", passthruModel: "openai/gpt-4o" });
+
+    // A user message with NO textual content — only an image part.
+    const inputMessages = [
+      {
+        role: "user",
+        content: [{ type: "image_url", image_url: { url: "https://example.com/cat.png" } }],
+      },
+    ];
+    const forwarded = await withUpstream(completionResponse, async (getBodies) => {
+      const [url, method, req] = makeRequest("/v1/chat/completions", {
+        model: "marina",
+        messages: inputMessages,
+      });
+      const resp = await handleModelApi(url, method, req, engine);
+      // Must NOT be rejected as "no textual content" — passthru forwards it.
+      expect(resp!.status).toBe(200);
+      return getBodies();
+    });
+
+    expect(forwarded).toHaveLength(1);
+    expect(forwarded[0]!.messages).toEqual(inputMessages);
+  });
 });
