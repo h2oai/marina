@@ -54,6 +54,7 @@ interface UseCanvasOptions {
   onSnapshotReady?: () => void;
   /** Change to request a fresh snapshot without changing canvases. */
   refreshKey?: number;
+  onMutationError?: (message: string) => void;
 }
 
 export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {}) {
@@ -65,11 +66,13 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
   const onSnapshotReadyRef = useRef(options.onSnapshotReady);
   const previousCanvasIdRef = useRef<string | null>(null);
   const refreshKey = options.refreshKey;
+  const onMutationErrorRef = useRef(options.onMutationError);
 
   useEffect(() => {
     onBeforeFetchRef.current = options.onBeforeFetch;
     onSnapshotReadyRef.current = options.onSnapshotReady;
-  }, [options.onBeforeFetch, options.onSnapshotReady]);
+    onMutationErrorRef.current = options.onMutationError;
+  }, [options.onBeforeFetch, options.onSnapshotReady, options.onMutationError]);
 
   // Fetch canvas data
   useEffect(() => {
@@ -120,13 +123,14 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
     async (nodeId: string, x: number, y: number) => {
       if (!canvasId) return;
       try {
-        await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
+        const response = await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ x, y }),
         });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
       } catch {
-        // Silent fail — position will be correct on next reload
+        onMutationErrorRef.current?.("Could not save the node position. The canvas was refreshed.");
       }
     },
     [canvasId],
@@ -137,13 +141,14 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
     async (nodeId: string, width: number, height: number) => {
       if (!canvasId) return;
       try {
-        await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
+        const response = await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ width: Math.round(width), height: Math.round(height) }),
         });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
       } catch {
-        // Silent fail
+        onMutationErrorRef.current?.("Could not save the node size. The canvas was refreshed.");
       }
     },
     [canvasId],
@@ -157,9 +162,14 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
       if (!canvasId) return;
       const { canvas_id, creator_name, created_at, updated_at, asset_id, ...clean } = data;
 
+      let previousData: Record<string, unknown> | undefined;
       // Optimistic local update — badge appears immediately
       setNodes((prev) =>
-        prev.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...clean } } : n)),
+        prev.map((n) => {
+          if (n.id !== nodeId) return n;
+          previousData = n.data;
+          return { ...n, data: { ...n.data, ...clean } };
+        }),
       );
 
       try {
@@ -168,11 +178,16 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ data: clean }),
         });
-        if (!res.ok && import.meta.env.DEV) {
-          console.warn(`[canvas] node-data PATCH failed: ${res.status}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      } catch {
+        if (previousData) {
+          setNodes((prev) =>
+            prev.map((node) => (node.id === nodeId ? { ...node, data: previousData! } : node)),
+          );
         }
-      } catch (err) {
-        if (import.meta.env.DEV) console.warn("[canvas] node-data PATCH error:", err);
+        onMutationErrorRef.current?.(
+          "Could not save the node changes. Your previous content was restored.",
+        );
       }
     },
     [canvasId],
@@ -207,6 +222,9 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
       if (failed.length > 0 && snapshot) {
         const restore = (snapshot as Node[]).filter((n) => failed.includes(n.id));
         setNodes((nds) => [...nds, ...restore]);
+        onMutationErrorRef.current?.(
+          `Could not delete ${failed.length} node${failed.length === 1 ? "" : "s"}. ${failed.length === 1 ? "It was" : "They were"} restored.`,
+        );
       }
     },
     [canvasId],

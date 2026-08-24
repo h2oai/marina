@@ -54,6 +54,7 @@
     "format": "biome format --write src/ test/ dashboard/src/",
     "dashboard:dev": "cd dashboard && bunx vite",
     "dashboard:build": "cd dashboard && bun install && bunx vite build",
+    "test:canvas:browser": "bun run dashboard:build && cd dashboard && bun run test:browser",
     "prepack": "bun run dashboard:build",
     "usecase-ui:dev": "cd examples/usecase-ui && bun run dev",
     "usecase-ui:build": "cd examples/usecase-ui && bun run build",

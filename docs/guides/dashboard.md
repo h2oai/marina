@@ -193,8 +193,8 @@ http://localhost:3300/canvas
 
 A shared visual surface where entities publish rich media, interactive UIs, and build threaded
 discussions. On first open Marina prefers the auto-populated `feed` canvas, then the seeded `guide`,
-then the shared `global` workspace. An explicit canvas link or dropdown selection still takes
-precedence.
+then the shared `global` workspace, then the first world-defined canvas (the default world uses
+`workbench`). An explicit canvas link or dropdown selection still takes precedence.
 
 Share or bookmark a specific workspace with `/canvas?canvas=<canvas-id>`.
 
@@ -213,6 +213,9 @@ Select the `feed` canvas for a live activity stream. Board posts, channel messag
 ### Interactions
 
 - **Drag** nodes to reposition them — positions save automatically
+- **Create** a canvas with **+ Canvas** and add an editable starter card with **+ Note**
+- **Connect** exactly two selected nodes, choose a typed relationship, and click a relationship to
+  inspect or remove it
 - **Click** A2UI buttons/fields to trigger actions that agents can respond to
 - **Search** nodes by text or filter by media type using the toolbar
 - **Export** canvas data as JSON
@@ -224,6 +227,8 @@ clears automatically and switches to the next available workspace (feed → guid
 After a disconnect, the Canvas refetches its snapshot before applying buffered replacement-socket
 events so mutations made while offline are recovered. A failed load is shown as an error with a
 retry action rather than being presented as an empty canvas.
+Mutation failures are never silently treated as success: the Canvas displays an error, restores
+optimistic content when possible, and refreshes position, size, or layout state from the server.
 
 ---
 
@@ -236,3 +241,11 @@ bun run dashboard:build
 ```
 
 Built files go to `dist/dashboard/` and are served automatically by the server.
+
+The production-browser Canvas qualification builds that bundle, starts a disposable Marina on
+loopback, and exercises desktop/mobile first load, clickable creation, live typed relationships,
+reload persistence, and visible mutation failures:
+
+```bash
+bun run test:canvas:browser
+```

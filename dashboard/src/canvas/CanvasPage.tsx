@@ -20,6 +20,7 @@ import "@xyflow/react/dist/style.css";
 import { AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { authFetch } from "../lib/api";
+import { CreateCanvasDialog, CreateRelationshipDialog } from "./components/CanvasDialogs";
 import { CanvasToolbar } from "./components/CanvasToolbar";
 import { ContextMenu } from "./components/ContextMenu";
 import { NodeDetailPanel } from "./components/NodeDetailPanel";
@@ -79,6 +80,9 @@ function CanvasInner() {
   const prevNodeIdsRef = useRef<Set<string>>(new Set());
   const [snapshotRefreshKey, setSnapshotRefreshKey] = useState(0);
   const [liveEdges, setLiveEdges] = useState<CanvasEdgeData[]>([]);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<"canvas" | "relationship" | null>(null);
+  const [notice, setNotice] = useState<{ tone: "success" | "error"; message: string } | null>(null);
   const handledGenerationRef = useRef(0);
   const skipNextConnectionRecoveryRef = useRef(true);
   const fittedSnapshotRef = useRef<string>();
@@ -140,6 +144,10 @@ function CanvasInner() {
     onBeforeFetch: () => wsHandleRef.current?.resetForFetch(),
     onSnapshotReady: () => wsHandleRef.current?.markReady(),
     refreshKey: snapshotRefreshKey,
+    onMutationError: (message) => {
+      setNotice({ tone: "error", message });
+      setSnapshotRefreshKey((key) => key + 1);
+    },
   });
 
   useEffect(() => setLiveEdges(canvas?.edges ?? []), [canvas?.edges]);
@@ -307,6 +315,108 @@ function CanvasInner() {
       setSelectedNodeIds([]);
     }
   }, [selectedNodeIds, deleteNodes]);
+
+  const createCanvas = useCallback(
+    async (name: string, description: string) => {
+      try {
+        const response = await authFetch(`${API_BASE}/api/canvases`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, description, scope: "global" }),
+        });
+        if (!response.ok) {
+          const body = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? `Request failed (${response.status})`);
+        }
+        const created = (await response.json()) as CanvasData;
+        setDialog(null);
+        setNotice({ tone: "success", message: `Created “${created.name}”.` });
+        await Promise.resolve(loadCanvasList());
+        setSelectedId(created.id);
+      } catch (cause) {
+        setNotice({
+          tone: "error",
+          message: cause instanceof Error ? cause.message : "Could not create the canvas.",
+        });
+      }
+    },
+    [loadCanvasList],
+  );
+
+  const createTextNode = useCallback(async () => {
+    if (!selectedId) return;
+    try {
+      const response = await authFetch(`${API_BASE}/api/canvases/${selectedId}/nodes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "text",
+          x: 0,
+          y: 0,
+          data: { title: "New note", content: "Double-click to add an intent or conversation." },
+        }),
+      });
+      if (!response.ok) throw new Error(`Request failed (${response.status})`);
+      setNotice({ tone: "success", message: "Added a note to the canvas." });
+    } catch (cause) {
+      setNotice({
+        tone: "error",
+        message: cause instanceof Error ? cause.message : "Could not add the note.",
+      });
+    }
+  }, [selectedId]);
+
+  const createRelationship = useCallback(
+    async (sourceId: string, targetId: string, relationship: string) => {
+      if (!selectedId) return;
+      try {
+        const response = await authFetch(`${API_BASE}/api/canvases/${selectedId}/edges`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sourceId, targetId, relationship }),
+        });
+        if (!response.ok) {
+          const body = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? `Request failed (${response.status})`);
+        }
+        const edge = (await response.json()) as CanvasEdgeData;
+        setLiveEdges((current) =>
+          current.some((item) => item.id === edge.id) ? current : [...current, edge],
+        );
+        setDialog(null);
+        setSelectedNodeIds([]);
+        setNotice({
+          tone: "success",
+          message: `Created ${relationship.replaceAll("_", " ")} relationship.`,
+        });
+      } catch (cause) {
+        setNotice({
+          tone: "error",
+          message: cause instanceof Error ? cause.message : "Could not create the relationship.",
+        });
+      }
+    },
+    [selectedId],
+  );
+
+  const deleteRelationship = useCallback(async () => {
+    if (!selectedId || !selectedEdgeId) return;
+    try {
+      const response = await authFetch(
+        `${API_BASE}/api/canvases/${selectedId}/edges/${selectedEdgeId}`,
+        { method: "DELETE" },
+      );
+      if (!response.ok) throw new Error(`Request failed (${response.status})`);
+      setLiveEdges((current) => current.filter((item) => item.id !== selectedEdgeId));
+      setSelectedEdgeId(null);
+      setNotice({ tone: "success", message: "Relationship removed." });
+    } catch (cause) {
+      setNotice({
+        tone: "error",
+        message: cause instanceof Error ? cause.message : "Could not remove the relationship.",
+      });
+    }
+  }, [selectedEdgeId, selectedId]);
 
   const onNodeDragStop = useCallback(
     (_event: MouseEvent | TouchEvent, node: Node) => {
@@ -540,6 +650,23 @@ function CanvasInner() {
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          onClick={() => setDialog("canvas")}
+          className="shrink-0 rounded border border-primary/50 bg-primary/10 px-2 py-1 text-xs text-primary hover:bg-primary/20"
+          title="Create a new canvas"
+        >
+          + Canvas
+        </button>
+        <button
+          type="button"
+          onClick={createTextNode}
+          disabled={!selectedId}
+          className="shrink-0 rounded border border-border bg-bg-hover px-2 py-1 text-xs text-text hover:text-text-bright disabled:opacity-30"
+          title="Add a text note"
+        >
+          + Note
+        </button>
         {canvas && (
           <span className="hidden lg:inline text-xs text-text-dim whitespace-nowrap">
             {canvas.description} &middot; {nodes.length} nodes &middot; by {canvas.creator_name}
@@ -564,6 +691,11 @@ function CanvasInner() {
           nodes={nodes}
           selectedCount={selectedNodeIds.length}
           onDelete={handleToolbarDelete}
+          onConnect={() => setDialog("relationship")}
+          onMutationError={(message) => {
+            setNotice({ tone: "error", message });
+            setSnapshotRefreshKey((key) => key + 1);
+          }}
           onAnimateLayout={handleAnimateLayout}
         />
         <div className="w-px h-5 bg-bg-hover" />
@@ -584,6 +716,26 @@ function CanvasInner() {
         onDragLeave={onDragLeave}
         onDrop={onDrop}
       >
+        {notice && (
+          <div
+            role={notice.tone === "error" ? "alert" : "status"}
+            className={`absolute left-1/2 top-3 z-[60] flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-3 rounded border px-3 py-2 text-xs shadow-xl ${
+              notice.tone === "error"
+                ? "border-red-800 bg-red-950/95 text-red-200"
+                : "border-emerald-800 bg-emerald-950/95 text-emerald-200"
+            }`}
+          >
+            <span>{notice.message}</span>
+            <button
+              type="button"
+              onClick={() => setNotice(null)}
+              aria-label="Dismiss notification"
+              className="opacity-70 hover:opacity-100"
+            >
+              ×
+            </button>
+          </div>
+        )}
         {/* Drop overlay */}
         {dropping && (
           <div className="absolute inset-0 z-50 pointer-events-none flex items-center justify-center bg-primary/10 border-2 border-dashed border-primary/50 rounded-lg m-2">
@@ -627,9 +779,13 @@ function CanvasInner() {
           <div className="absolute inset-0 flex items-center justify-center z-10">
             <div className="text-center text-text-dim max-w-md">
               <div className="text-lg mb-2">No Canvas Selected</div>
-              <div className="text-sm mb-3">
-                Create one in-game: <code className="text-primary">canvas create mycanvas</code>
-              </div>
+              <button
+                type="button"
+                onClick={() => setDialog("canvas")}
+                className="mb-3 rounded border border-primary/60 bg-primary/10 px-4 py-2 text-sm text-primary hover:bg-primary/20"
+              >
+                Create your first canvas
+              </button>
               <div className="text-xs text-text-dim">
                 Tip: the <span className="text-primary">guide</span> canvas has an interactive
                 tutorial. Select it from the dropdown above.
@@ -638,7 +794,7 @@ function CanvasInner() {
           </div>
         )}
         {!loading && !error && selectedId && nodes.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+          <div className="absolute inset-0 flex items-center justify-center z-10">
             <div className="text-center text-text-dim max-w-sm">
               <div className="text-sm mb-2">This canvas is empty</div>
               <div className="text-xs space-y-1">
@@ -651,6 +807,13 @@ function CanvasInner() {
                 <div className="mt-2 text-text-dim">
                   Double-click any node to set an intent or start a conversation.
                 </div>
+                <button
+                  type="button"
+                  onClick={createTextNode}
+                  className="mt-3 rounded border border-primary/50 bg-primary/10 px-3 py-2 text-xs text-primary hover:bg-primary/20"
+                >
+                  Add a note
+                </button>
               </div>
             </div>
           </div>
@@ -665,7 +828,11 @@ function CanvasInner() {
           onSelectionChange={onSelectionChange}
           onNodeDoubleClick={onNodeDoubleClick}
           onNodeContextMenu={onNodeContextMenu}
-          onPaneClick={() => setContextMenu(null)}
+          onEdgeClick={(_event, edge) => setSelectedEdgeId(edge.id)}
+          onPaneClick={() => {
+            setContextMenu(null);
+            setSelectedEdgeId(null);
+          }}
           minZoom={0.1}
           maxZoom={4}
           proOptions={{ hideAttribution: true }}
@@ -684,6 +851,31 @@ function CanvasInner() {
             maskColor="rgba(0,0,0,0.7)"
           />
         </ReactFlow>
+        {selectedEdgeId && liveEdges.some((edge) => edge.id === selectedEdgeId) && (
+          <div className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-3 rounded border border-cyan-900/70 bg-bg-card px-3 py-2 text-xs shadow-xl">
+            <span className="text-text-dim">
+              Relationship:{" "}
+              {liveEdges
+                .find((edge) => edge.id === selectedEdgeId)
+                ?.relationship.replaceAll("_", " ")}
+            </span>
+            <button
+              type="button"
+              onClick={deleteRelationship}
+              className="text-red-400 hover:text-red-200"
+            >
+              Remove
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedEdgeId(null)}
+              aria-label="Close relationship inspector"
+              className="text-text-dim hover:text-text"
+            >
+              ×
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Detail panel — double-click a node to inspect */}
@@ -716,6 +908,16 @@ function CanvasInner() {
           />
         )}
       </AnimatePresence>
+      {dialog === "canvas" && (
+        <CreateCanvasDialog onClose={() => setDialog(null)} onCreate={createCanvas} />
+      )}
+      {dialog === "relationship" && (
+        <CreateRelationshipDialog
+          nodes={nodes.filter((node) => selectedNodeIds.includes(node.id))}
+          onClose={() => setDialog(null)}
+          onCreate={createRelationship}
+        />
+      )}
     </div>
   );
 }

@@ -598,4 +598,72 @@ describe("canvas API auth contract", () => {
       expect(created.scope).toBe("global");
     });
   });
+
+  describe("typed relationship mutations", () => {
+    it("creates and deletes same-canvas relationships through the authenticated API", async () => {
+      const connection = new MockConnection("edge-writer");
+      engine.addConnection(connection);
+      const login = engine.login(connection.id, "Alice");
+      if (!("token" in login)) throw new Error("login failed");
+      db.createCanvas({ id: "edge-canvas", name: "edges", creatorName: "system" });
+      for (const id of ["source", "target"]) {
+        db.createNode({ id, canvasId: "edge-canvas", type: "text", creatorName: "system" });
+      }
+
+      const [createUrl, createMethod, createReq] = req(
+        "/api/canvases/edge-canvas/edges",
+        "POST",
+        login.token,
+        { sourceId: "source", targetId: "target", relationship: "supports" },
+      );
+      const createdResponse = await handleCanvasApi(
+        createUrl,
+        createMethod,
+        createReq,
+        db,
+        undefined,
+        undefined,
+        engine,
+      );
+      expect(createdResponse.status).toBe(201);
+      const created = (await createdResponse.json()) as { id: string; creatorName: string };
+      expect(created.creatorName).toBe("Alice");
+      expect(db.getCanvasEdges("edge-canvas")).toHaveLength(1);
+
+      const [deleteUrl, deleteMethod, deleteReq] = req(
+        `/api/canvases/edge-canvas/edges/${created.id}`,
+        "DELETE",
+        login.token,
+      );
+      const deletedResponse = await handleCanvasApi(
+        deleteUrl,
+        deleteMethod,
+        deleteReq,
+        db,
+        undefined,
+        undefined,
+        engine,
+      );
+      expect(deletedResponse.status).toBe(200);
+      expect(db.getCanvasEdges("edge-canvas")).toHaveLength(0);
+    });
+
+    it("rejects self, unsupported, and cross-canvas relationships", async () => {
+      db.createCanvas({ id: "edge-a", name: "edge-a", creatorName: "system" });
+      db.createCanvas({ id: "edge-b", name: "edge-b", creatorName: "system" });
+      db.createNode({ id: "node-a", canvasId: "edge-a", type: "text", creatorName: "system" });
+      db.createNode({ id: "node-b", canvasId: "edge-b", type: "text", creatorName: "system" });
+
+      for (const body of [
+        { sourceId: "node-a", targetId: "node-a", relationship: "supports" },
+        { sourceId: "node-a", targetId: "node-b", relationship: "supports" },
+        { sourceId: "node-a", targetId: "node-b", relationship: "arbitrary" },
+      ]) {
+        const [url, method, request] = req("/api/canvases/edge-a/edges", "POST", undefined, body);
+        const response = await handleCanvasApi(url, method, request, db);
+        expect(response.status).toBe(400);
+      }
+      expect(db.getCanvasEdges("edge-a")).toHaveLength(0);
+    });
+  });
 });

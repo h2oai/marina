@@ -13,6 +13,8 @@ interface CanvasToolbarProps {
   canvasId: string | null;
   nodes: Node[];
   selectedCount?: number;
+  onConnect?: () => void;
+  onMutationError?: (message: string) => void;
   onDelete?: () => void;
   onAnimateLayout?: (
     targetMap: Map<string, { x: number; y: number; w: number; h: number }>,
@@ -26,6 +28,8 @@ export function CanvasToolbar({
   nodes,
   selectedCount = 0,
   onDelete,
+  onConnect,
+  onMutationError,
   onAnimateLayout,
 }: CanvasToolbarProps) {
   const exportCanvas = () => {
@@ -75,9 +79,10 @@ export function CanvasToolbar({
     }
 
     // Persist to backend
+    let failures = 0;
     for (const [nodeId, target] of targetMap) {
       try {
-        await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
+        const response = await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -87,10 +92,15 @@ export function CanvasToolbar({
             height: target.h,
           }),
         });
+        if (!response.ok) failures++;
       } catch {
-        // Continue with remaining nodes
+        failures++;
       }
     }
+    if (failures > 0)
+      onMutationError?.(
+        `Could not save the grid layout for ${failures} node${failures === 1 ? "" : "s"}.`,
+      );
   };
 
   const layoutTimeline = async () => {
@@ -119,9 +129,10 @@ export function CanvasToolbar({
     }
 
     // Persist to backend
+    let failures = 0;
     for (const [nodeId, target] of targetMap) {
       try {
-        await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
+        const response = await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -131,10 +142,15 @@ export function CanvasToolbar({
             height: target.h,
           }),
         });
+        if (!response.ok) failures++;
       } catch {
-        // Continue
+        failures++;
       }
     }
+    if (failures > 0)
+      onMutationError?.(
+        `Could not save the timeline layout for ${failures} node${failures === 1 ? "" : "s"}.`,
+      );
   };
 
   return (
@@ -182,6 +198,18 @@ export function CanvasToolbar({
           title={`Delete ${selectedCount} selected node${selectedCount > 1 ? "s" : ""}`}
         >
           Delete ({selectedCount})
+        </motion.button>
+      )}
+      {selectedCount === 2 && onConnect && (
+        <motion.button
+          type="button"
+          onClick={onConnect}
+          whileHover={HOVER}
+          whileTap={TAP}
+          className="text-xs text-cyan-300 hover:text-cyan-100 bg-bg-hover px-2 py-1 rounded border border-cyan-900/60 hover:border-cyan-700"
+          title="Create a typed relationship between the two selected nodes"
+        >
+          Connect
         </motion.button>
       )}
     </div>

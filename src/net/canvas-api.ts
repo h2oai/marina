@@ -22,6 +22,17 @@ const CANVAS_NODE_TYPES = new Set([
   "a2ui",
 ]);
 
+const CANVAS_EDGE_RELATIONSHIPS = new Set([
+  "supports",
+  "contradicts",
+  "extends",
+  "exemplifies",
+  "relates_to",
+  "supersedes",
+  "derived_from",
+  "part_of",
+]);
+
 function jsonWithOrigin(origin: string | null) {
   return (data: unknown, status = 200): Response =>
     Response.json(data, { status, headers: corsHeaders(origin) });
@@ -152,6 +163,95 @@ export async function handleCanvasApi(
   const intentActionMatch = url.pathname.match(
     /^\/api\/canvases\/([^/]+)\/nodes\/([^/]+)\/intent\/(claim|complete|fail)$/,
   );
+
+  // Typed relationships are first-class Canvas data, not a dashboard-only
+  // overlay. Keep HTTP mutations on the same DB + EngineEvent path used by
+  // `canvas connect` so command, agent, and clickable workflows converge.
+  const edgeMatch = url.pathname.match(/^\/api\/canvases\/([^/]+)\/edges(?:\/([^/]+))?$/);
+  if (edgeMatch) {
+    const canvasId = decodeURIComponent(edgeMatch[1]!);
+    const edgeId = edgeMatch[2] ? decodeURIComponent(edgeMatch[2]) : undefined;
+    if (!canAccessCanvas(canvasId)) return json({ error: "Canvas not found" }, 404);
+    const canvas = db.getCanvas(canvasId);
+    if (!canvas) return json({ error: "Canvas not found" }, 404);
+
+    if (method === "POST" && !edgeId) {
+      const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      const sourceId = typeof body.sourceId === "string" ? body.sourceId : "";
+      const targetId = typeof body.targetId === "string" ? body.targetId : "";
+      const relationship =
+        typeof body.relationship === "string" ? body.relationship.trim().toLowerCase() : "";
+      if (!sourceId || !targetId || !relationship) {
+        return json({ error: "sourceId, targetId, and relationship are required" }, 400);
+      }
+      if (sourceId === targetId) return json({ error: "A node cannot relate to itself" }, 400);
+      if (!CANVAS_EDGE_RELATIONSHIPS.has(relationship)) {
+        return json({ error: "Unsupported relationship" }, 400);
+      }
+      const source = db.getNode(sourceId);
+      const target = db.getNode(targetId);
+      if (!source || !target || source.canvas_id !== canvasId || target.canvas_id !== canvasId) {
+        return json({ error: "Both nodes must belong to this canvas" }, 400);
+      }
+      const id = crypto.randomUUID();
+      const creatorName = actorNameForRequest(body, engine, authenticatedEntityId);
+      const data =
+        body.data && typeof body.data === "object" && !Array.isArray(body.data)
+          ? (body.data as Record<string, unknown>)
+          : undefined;
+      try {
+        db.createCanvasEdge({
+          id,
+          canvasId,
+          sourceId,
+          targetId,
+          relationship,
+          data,
+          creatorName,
+        });
+      } catch {
+        return json({ error: "That relationship already exists" }, 409);
+      }
+      const row = db.getCanvasEdge(id)!;
+      engine?.logEvent({
+        type: "canvas_edge_created",
+        entity: (authenticatedEntityId ?? creatorName) as EntityId,
+        canvasId,
+        edgeId: id,
+        sourceId,
+        targetId,
+        relationship,
+        timestamp: row.created_at,
+      });
+      return json(
+        {
+          id,
+          sourceId,
+          targetId,
+          relationship,
+          data: row.data ? JSON.parse(row.data) : null,
+          creatorName,
+          createdAt: row.created_at,
+        },
+        201,
+      );
+    }
+
+    if (method === "DELETE" && edgeId) {
+      const edge = db.getCanvasEdge(edgeId);
+      if (!edge || edge.canvas_id !== canvasId)
+        return json({ error: "Relationship not found" }, 404);
+      db.deleteCanvasEdge(edgeId);
+      engine?.logEvent({
+        type: "canvas_edge_deleted",
+        entity: (authenticatedEntityId ?? edge.creator_name) as EntityId,
+        canvasId,
+        edgeId,
+        timestamp: Date.now(),
+      });
+      return json({ ok: true, id: edgeId });
+    }
+  }
   if (intentActionMatch && method === "POST") {
     const canvasId = decodeURIComponent(intentActionMatch[1]!);
     const nodeId = decodeURIComponent(intentActionMatch[2]!);

@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
@@ -28,6 +29,7 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.10.0",
