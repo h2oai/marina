@@ -25,6 +25,7 @@ describe("passthru-context", () => {
   let db: MarinaDB;
   let engine: Engine;
   const prevKeys = process.env.MODEL_API_KEYS;
+  const prevSharedPools = process.env.MARINA_PASSTHRU_SHARED_POOLS;
 
   beforeEach(() => {
     cleanupDb(TEST_DB);
@@ -38,71 +39,113 @@ describe("passthru-context", () => {
     cleanupDb(TEST_DB);
     if (prevKeys === undefined) delete process.env.MODEL_API_KEYS;
     else process.env.MODEL_API_KEYS = prevKeys;
+    if (prevSharedPools === undefined) delete process.env.MARINA_PASSTHRU_SHARED_POOLS;
+    else process.env.MARINA_PASSTHRU_SHARED_POOLS = prevSharedPools;
   });
 
   // ─── Identity resolution ───────────────────────────────────────────────────
 
   describe("resolvePassthruIdentity", () => {
-    it("binds a MODEL_API_KEYS 'secret:entity' key to that entity", () => {
-      process.env.MODEL_API_KEYS = "sk-abc:Alice";
-      const id = resolvePassthruIdentity(engine, headers({}), { token: "sk-abc" });
+    it("binds a MODEL_API_KEYS 'secret:entity' key to that entity (distinct, lazily created)", () => {
+      const id = resolvePassthruIdentity(engine, headers({}), { boundEntityName: "Alice" });
       expect(id.name).toBe("Alice");
+      expect(id.shared).toBe(false);
       expect(engine.entities.findAgentByName("Alice")?.id).toBe(id.entityId);
       expect(id.contextOptIn).toBe(false); // default FALSE
     });
 
-    it("honors X-Marina-Agent for a bound (name-map-authorized) key", () => {
-      process.env.MODEL_API_KEYS = "sk-op:Ops";
+    it("a SCOPED bound key CANNOT impersonate another entity via X-Marina-Agent", () => {
+      // Even with the header set, a scoped `secret:entity` key (canNameMap:false)
+      // resolves ONLY to its bound entity — the header is ignored.
       const id = resolvePassthruIdentity(engine, headers({ "X-Marina-Agent": "Carol" }), {
-        token: "sk-op",
+        boundEntityName: "Ops",
+        canNameMap: false,
       });
-      expect(id.name).toBe("Carol");
+      expect(id.name).toBe("Ops");
+      expect(id.shared).toBe(false);
+      expect(engine.entities.findAgentByName("Carol")).toBeUndefined();
     });
 
-    it("honors X-Marina-Agent for an operator credential", () => {
-      const id = resolvePassthruIdentity(engine, headers({ "X-Marina-Agent": "Dave" }), {
-        operator: true,
+    it("honors X-Marina-Agent for a name-map-authorized credential, but ONLY to an EXISTING entity", () => {
+      // Pre-existing target → mapped.
+      engine.entities.create({
+        kind: "agent",
+        name: "Dave",
+        short: "Dave",
+        long: "existing",
+        room: engine.config.startRoom,
+        properties: {},
       });
-      expect(id.name).toBe("Dave");
+      const mapped = resolvePassthruIdentity(engine, headers({ "X-Marina-Agent": "Dave" }), {
+        canNameMap: true,
+      });
+      expect(mapped.name).toBe("Dave");
+      expect(mapped.shared).toBe(false);
+    });
+
+    it("REFUSES to auto-create an arbitrary entity from X-Marina-Agent (name-map to non-existent falls back to shared)", () => {
+      const id = resolvePassthruIdentity(engine, headers({ "X-Marina-Agent": "Ghost" }), {
+        canNameMap: true,
+      });
+      // Unknown target must NOT be conjured from a header → shared passthru fallback.
+      expect(engine.entities.findAgentByName("Ghost")).toBeUndefined();
+      expect(id.name).toBe(DEFAULT_PASSTHRU_ENTITY);
+      expect(id.shared).toBe(true);
     });
 
     it("IGNORES X-Marina-Agent for an unbound plain key (no name-map authority)", () => {
-      process.env.MODEL_API_KEYS = "sk-plain";
+      // Plain key is authenticated but canNameMap:false → shared entity.
       const id = resolvePassthruIdentity(engine, headers({ "X-Marina-Agent": "Mallory" }), {
-        token: "sk-plain",
+        canNameMap: false,
       });
-      // Plain key is authenticated but not authorized to name-map → shared entity.
       expect(id.name).toBe(DEFAULT_PASSTHRU_ENTITY);
+      expect(id.shared).toBe(true);
       expect(engine.entities.findAgentByName("Mallory")).toBeUndefined();
     });
 
-    it("IGNORES X-Marina-Agent for an anonymous open-mode caller", () => {
+    it("IGNORES X-Marina-Agent for an anonymous open-mode caller with no target entity", () => {
       const id = resolvePassthruIdentity(engine, headers({ "X-Marina-Agent": "Eve" }), {
         openMode: true,
+        canNameMap: true,
       });
+      // Eve does not exist → no auto-create → shared.
       expect(id.name).toBe(DEFAULT_PASSTHRU_ENTITY);
+      expect(id.shared).toBe(true);
+      expect(engine.entities.findAgentByName("Eve")).toBeUndefined();
     });
 
     it("defaults to the stable shared passthru entity", () => {
       const a = resolvePassthruIdentity(engine, headers({}), {});
       const b = resolvePassthruIdentity(engine, headers({}), {});
       expect(a.name).toBe(DEFAULT_PASSTHRU_ENTITY);
+      expect(a.shared).toBe(true);
       expect(a.entityId).toBe(b.entityId); // reused, not duplicated
     });
 
-    it("sets contextOptIn from the X-Marina-Context header", () => {
-      const on = resolvePassthruIdentity(engine, headers({ "X-Marina-Context": "on" }), {});
+    it("sets contextOptIn from the X-Marina-Context header for a DISTINCT identity", () => {
+      const on = resolvePassthruIdentity(engine, headers({ "X-Marina-Context": "on" }), {
+        boundEntityName: "Ctx",
+      });
       expect(on.contextOptIn).toBe(true);
-      const off = resolvePassthruIdentity(engine, headers({ "X-Marina-Context": "off" }), {});
+      const off = resolvePassthruIdentity(engine, headers({ "X-Marina-Context": "off" }), {
+        boundEntityName: "Ctx",
+      });
       expect(off.contextOptIn).toBe(false);
     });
 
+    it("NEVER opts the shared/anonymous entity into context (no cross-caller injection)", () => {
+      // Even X-Marina-Context: on cannot make the shared default entity opt in —
+      // it is pure passthru, so it can never capture or receive injected context.
+      const id = resolvePassthruIdentity(engine, headers({ "X-Marina-Context": "on" }), {});
+      expect(id.shared).toBe(true);
+      expect(id.contextOptIn).toBe(false);
+    });
+
     it("sets contextOptIn from the resolved identity's config property", () => {
-      process.env.MODEL_API_KEYS = "sk-x:Optin";
-      const first = resolvePassthruIdentity(engine, headers({}), { token: "sk-x" });
+      const first = resolvePassthruIdentity(engine, headers({}), { boundEntityName: "Optin" });
       const ent = engine.entities.get(first.entityId)!;
       ent.properties.passthruContext = true;
-      const again = resolvePassthruIdentity(engine, headers({}), { token: "sk-x" });
+      const again = resolvePassthruIdentity(engine, headers({}), { boundEntityName: "Optin" });
       expect(again.contextOptIn).toBe(true);
     });
   });
@@ -134,6 +177,7 @@ describe("passthru-context", () => {
 
     it("injects world-shared pool notes but not foreign private notes", async () => {
       const me = resolvePassthruIdentity(engine, headers({}), {});
+      process.env.MARINA_PASSTHRU_SHARED_POOLS = "ideas";
       const poolId = "pool_ideas_1";
       db.createMemoryPool(poolId, "ideas", "Founder");
       db.createNote("Founder", "shared aurora protocol design in the pool", undefined, {
@@ -149,6 +193,36 @@ describe("passthru-context", () => {
 
       expect(systemAddendum).toContain("aurora");
       expect(systemAddendum).not.toContain("TRUDYSECRET");
+    });
+
+    it("injects a MEMBER pool but NEVER a non-member pool (no pool harvesting)", async () => {
+      const me = resolvePassthruIdentity(engine, headers({}), {});
+      // No env allowlist here — eligibility must come purely from membership.
+      delete process.env.MARINA_PASSTHRU_SHARED_POOLS;
+
+      // A pool whose group the entity IS a member of → eligible.
+      db.createGroup({ id: "g_member", name: "member-crew", leaderId: me.entityId });
+      db.addGroupMember("g_member", me.entityId);
+      db.createMemoryPool("pool_member_1", "member-pool", "Founder", "g_member");
+      db.createNote("Founder", "aurora protocol MEMBERVISIBLE design", undefined, {
+        poolId: "pool_member_1",
+        importance: 7,
+      });
+
+      // A pool whose group the entity is NOT a member of → must never leak.
+      db.createGroup({ id: "g_other", name: "other-crew", leaderId: me.entityId });
+      db.createMemoryPool("pool_other_1", "other-pool", "Stranger", "g_other");
+      db.createNote("Stranger", "aurora protocol NONMEMBERSECRET design", undefined, {
+        poolId: "pool_other_1",
+        importance: 9,
+      });
+
+      const { systemAddendum } = await buildInjectedContext(engine, me.entityId, [
+        { role: "user", content: "what about the aurora protocol?" },
+      ]);
+
+      expect(systemAddendum).toContain("MEMBERVISIBLE");
+      expect(systemAddendum).not.toContain("NONMEMBERSECRET");
     });
 
     it("returns null when nothing relevant matches", async () => {

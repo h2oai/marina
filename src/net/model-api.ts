@@ -72,30 +72,39 @@ export interface PassthruAuthResult {
   openMode: boolean;
   /**
    * Whether an `X-Marina-Agent` name-map header may be honored for this caller.
-   * True only for trusted callers: internal token, open dev mode, or a key with
-   * an explicit entity binding (an operator key). A plain shared secret cannot
-   * impersonate arbitrary entities.
+   * NARROW by design — true ONLY for genuinely privileged callers: the internal
+   * room-agent token, open dev mode, or an explicitly-flagged multi-tenant
+   * operator key (`secret:*`). A scoped `secret:entity` key is CONFINED to its
+   * bound entity and CANNOT name-map — merely holding a binding is not authority
+   * to impersonate arbitrary entities.
    */
   canNameMap: boolean;
 }
 
 interface KeyEntry {
   secret: string;
+  /** Scoped binding from `secret:entity` — the key resolves to exactly this entity. */
   entity?: string;
+  /** `secret:*` — an explicitly-flagged multi-tenant operator key that MAY name-map. */
+  multiTenant?: boolean;
 }
 
 /**
  * Parse a MODEL_API_KEYS entry. Backward compatible: a plain `secret` maps to
- * the default passthru entity; `secret:entity` binds the key to a named entity
- * (mirrors the MEM_API_KEYS `secret:agent` convention). Splits on the FIRST
- * colon so entity names may not contain one, consistent with MEM_API_KEYS.
+ * the default passthru entity; `secret:entity` binds (scopes) the key to a named
+ * entity (mirrors the MEM_API_KEYS `secret:agent` convention); the reserved
+ * `secret:*` marks a multi-tenant operator key authorized to name-map via
+ * `X-Marina-Agent`. Splits on the FIRST colon so entity names may not contain
+ * one, consistent with MEM_API_KEYS.
  */
 function parseKeyEntry(entry: string): KeyEntry {
   const idx = entry.indexOf(":");
   if (idx < 0) return { secret: entry };
   const secret = entry.slice(0, idx);
-  const entity = entry.slice(idx + 1).trim();
-  return entity ? { secret, entity } : { secret };
+  const rest = entry.slice(idx + 1).trim();
+  if (!rest) return { secret };
+  if (rest === "*") return { secret, multiTenant: true };
+  return { secret, entity: rest };
 }
 
 function getApiKeyEntries(): KeyEntry[] | null {
@@ -152,12 +161,14 @@ function authenticate(req: Request): AuthOutcome {
   return {
     auth: {
       matchedKey: matched.secret,
+      // A scoped `secret:entity` key carries its bound entity (and is confined to
+      // it). A multi-tenant `secret:*` key carries NO binding — it name-maps.
       boundEntityName: matched.entity,
       internal: false,
       openMode: false,
-      // A key with an explicit entity binding is an operator key authorized to
-      // name-map; a plain shared secret is not.
-      canNameMap: matched.entity != null,
+      // Name-map authority is narrow: ONLY an explicitly-flagged multi-tenant
+      // operator key. A scoped `secret:entity` binding is NOT name-map authority.
+      canNameMap: matched.multiTenant === true,
     },
   };
 }
@@ -1574,7 +1585,14 @@ function maybePassthruIdentity(
 ): { entityId: EntityId; name: string; contextOptIn: boolean } | undefined {
   if (!authResult) return undefined;
   if (!passthruSignalPresent(req, authResult)) return undefined;
-  return resolvePassthruIdentity(engine, req.headers, authResult);
+  const identity = resolvePassthruIdentity(engine, req.headers, authResult);
+  // The shared/anonymous default entity is pure passthru: every non-distinct
+  // caller collapses onto it, so it must NOT capture transcripts or receive
+  // cross-context injection (that would leak caller A's data to caller B). Only a
+  // DISTINCT identity — a scoped bound key or an authorized name-map to an
+  // existing entity — participates in the shared world.
+  if (identity.shared) return undefined;
+  return identity;
 }
 
 /** Best-effort text extraction from a completed (non-streaming) proxy response. */
@@ -1654,7 +1672,10 @@ async function runOpenaiChat(
     const userMsg = [...messages].reverse().find((m) => m.role === "user");
     if (!userMsg) return errorJson(400, "No user message found");
     const userText = messageText(userMsg.content);
-    if (!userText) return errorJson(400, "User message has no textual content");
+    // NOTE: the empty-userText guard lives BELOW the passthru branch — passthru is
+    // a thin gateway that must forward multimodal / image-only bodies (which have
+    // no textual user content) unchanged. Requiring text here would break them and
+    // make injection-OFF passthru non-byte-identical.
 
     // Build context from system/prior messages
     const contextParts: string[] = [];
@@ -1688,6 +1709,10 @@ async function runOpenaiChat(
       }
       return resp;
     }
+
+    // Non-passthru routing modes synthesize an answer from the user's text, so it
+    // must be present. (Passthru already returned above without this requirement.)
+    if (!userText) return errorJson(400, "User message has no textual content");
 
     const opts: RouteOptions = {
       context,

@@ -3,7 +3,7 @@
 
 import type { Engine } from "../engine/engine";
 import { sanitizeEntityName } from "../engine/entity-name";
-import type { EntityId } from "../types";
+import type { Entity, EntityId } from "../types";
 import type { PassthruAuthResult } from "./model-api";
 
 export const DEFAULT_PASSTHRU_ENTITY = "passthru";
@@ -20,6 +20,15 @@ export interface PassthruIdentity {
   entityId: EntityId;
   name: string;
   contextOptIn: boolean;
+  /**
+   * True when resolution fell back to the anonymous, shared default passthru
+   * entity. A shared identity is pure passthru: it MUST NOT participate in
+   * transcript capture or cross-context injection (every non-distinct caller
+   * collapses onto it, so writing/reading its memory would leak caller A's
+   * transcripts to caller B). Only a distinct identity — a scoped bound key or an
+   * authorized name-map to an existing entity — reads/writes the shared world.
+   */
+  shared: boolean;
 }
 
 export function messageText(content: unknown): string {
@@ -50,47 +59,93 @@ function entityName(engine: Engine, entityId: EntityId): string | undefined {
   return engine.entities.get(entityId)?.name;
 }
 
+/** Lazily resolve (or create) a passthru entity by an already-trusted name. */
+function findOrCreatePassthruEntity(engine: Engine, rawName: string): Entity {
+  const name = sanitizeEntityName(rawName) || DEFAULT_PASSTHRU_ENTITY;
+  const existing = engine.entities.findAgentByName(name);
+  if (existing) return existing;
+  return engine.entities.create({
+    kind: "agent",
+    name,
+    short: `${name} (model API)`,
+    long: "A caller represented by Marina's model API.",
+    room: engine.config.startRoom,
+    properties: { passthru: true },
+  });
+}
+
+function identityFor(entity: Entity, headers: Headers, shared: boolean): PassthruIdentity {
+  const configured = entity.properties[CONTEXT_OPT_IN_PROP];
+  const contextOptIn =
+    !shared &&
+    (headers.get("X-Marina-Context")?.trim().toLowerCase() === "on" ||
+      configured === true ||
+      configured === "on" ||
+      configured === "true");
+  return { entityId: entity.id, name: entity.name, contextOptIn, shared };
+}
+
+/**
+ * Map an authenticated model-API caller to a Marina entity. Fail-closed identity
+ * model (mirrors MEM_API_KEYS scoping):
+ *
+ *  - A scoped `secret:entity` MODEL_API_KEYS key (`auth.boundEntityName`) is
+ *    CONFINED to its bound entity. `X-Marina-Agent` is IGNORED for it — a bound
+ *    key can never impersonate another entity. The binding is operator-declared
+ *    config (not attacker input), so the bound entity may be lazily created.
+ *  - `X-Marina-Agent` name-mapping to an arbitrary entity is honored ONLY for a
+ *    genuinely privileged credential (internal token, open dev mode, or an
+ *    explicitly-flagged multi-tenant/operator key) — i.e. `auth.canNameMap`, the
+ *    authoritative flag computed by `authenticate()`. Merely holding a binding
+ *    does NOT grant name-map authority.
+ *  - Even a name-map-authorized caller may only target an ALREADY-EXISTING
+ *    entity: a header can never conjure a new agent. Only the shared default
+ *    passthru entity is auto-created.
+ *  - Everything else collapses onto the anonymous shared default entity, flagged
+ *    `shared: true` so the caller performs pure passthru (no capture, no
+ *    cross-context injection).
+ */
 export function resolvePassthruIdentity(
   engine: Engine,
   headers: Headers,
-  auth: Partial<PassthruAuthResult> & { token?: string; operator?: boolean },
+  auth: Partial<PassthruAuthResult>,
 ): PassthruIdentity {
-  let boundName = auth.boundEntityName;
-  if (!boundName && auth.token) {
-    const entry = (process.env.MODEL_API_KEYS ?? "")
-      .split(",")
-      .map((value) => value.trim())
-      .find((value) => value.split(":", 1)[0] === auth.token);
-    const separator = entry?.indexOf(":") ?? -1;
-    if (entry && separator > 0) boundName = entry.slice(separator + 1).trim() || undefined;
+  const boundName = auth.boundEntityName ? sanitizeEntityName(auth.boundEntityName) : "";
+  if (boundName) {
+    return identityFor(findOrCreatePassthruEntity(engine, boundName), headers, false);
   }
-  const canNameMap = auth.operator === true || auth.internal === true || !!boundName;
-  const requested = canNameMap ? headers.get("X-Marina-Agent") : null;
-  const rawName = requested || boundName || DEFAULT_PASSTHRU_ENTITY;
-  const name = sanitizeEntityName(rawName) || DEFAULT_PASSTHRU_ENTITY;
-  let entity = engine.entities.findAgentByName(name);
-  if (!entity) {
-    entity = engine.entities.create({
-      kind: "agent",
-      name,
-      short: `${name} (model API)`,
-      long: "A caller represented by Marina's model API.",
-      room: engine.config.startRoom,
-      properties: { passthru: true },
-    });
+
+  if (auth.canNameMap === true) {
+    const requested = headers.get("X-Marina-Agent");
+    const sanitized = requested ? sanitizeEntityName(requested) : "";
+    if (sanitized && sanitized !== DEFAULT_PASSTHRU_ENTITY) {
+      // Name-map ONLY to a pre-existing entity — never auto-create from a header.
+      const target = engine.entities.findAgentByName(sanitized);
+      if (target) return identityFor(target, headers, false);
+      // Unknown target → fall through to the shared anonymous entity (no create).
+    }
   }
-  const configured = entity.properties[CONTEXT_OPT_IN_PROP];
-  const contextOptIn =
-    headers.get("X-Marina-Context")?.trim().toLowerCase() === "on" ||
-    configured === true ||
-    configured === "on" ||
-    configured === "true";
-  return { entityId: entity.id, name: entity.name, contextOptIn };
+
+  return identityFor(findOrCreatePassthruEntity(engine, DEFAULT_PASSTHRU_ENTITY), headers, true);
 }
 
 function clamp(value: string): string {
   if (value.length <= MAX_ADDENDUM_CHARS) return value;
   return `${value.slice(0, MAX_ADDENDUM_CHARS - 1).trimEnd()}…`;
+}
+
+/**
+ * World-shared pools an operator has explicitly opted into passthru injection via
+ * `MARINA_PASSTHRU_SHARED_POOLS` (comma-separated pool names). Empty by default —
+ * fail-closed, so no ungrouped pool is exposed to passthru callers unless named.
+ */
+function passthruShareablePoolNames(): Set<string> {
+  return new Set(
+    (process.env.MARINA_PASSTHRU_SHARED_POOLS ?? "")
+      .split(",")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean),
+  );
 }
 
 function matchesQuery(content: string, query: string): boolean {
@@ -109,11 +164,19 @@ export async function buildInjectedContext(
   if (!name || !query || !engine.db) return { systemAddendum: null };
 
   const snippets: string[] = [];
+  // Own notes only: entity_name-scoped, pool-less (recallNotes enforces
+  // `entity_name = ? AND pool_id IS NULL`) so a foreign private note never leaks.
   for (const note of engine.db.recallNotes(name, query).slice(0, 4)) {
     snippets.push(`Own memory: ${note.content}`);
   }
+  // Pools: inject ONLY pools the entity is actually a member of, or pools an
+  // operator has explicitly marked passthru-shareable. Never every pool — an
+  // ungrouped/world pool the caller has no relationship to must not be harvested.
+  const shareablePools = passthruShareablePoolNames();
   for (const pool of engine.db.listMemoryPools()) {
-    if (pool.group_id && !engine.db.getGroupMember(pool.group_id, entityId)) continue;
+    const isMember = pool.group_id ? !!engine.db.getGroupMember(pool.group_id, entityId) : false;
+    const isShareable = shareablePools.has(pool.name.trim().toLowerCase());
+    if (!isMember && !isShareable) continue;
     for (const note of engine.db.recallPoolNotes(pool.id, query).slice(0, 2)) {
       snippets.push(`Shared pool ${pool.name}: ${note.content}`);
     }
