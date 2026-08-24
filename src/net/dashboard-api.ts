@@ -32,6 +32,11 @@ import { authenticateRequest, isOperatorPrincipal, isSentinelPrincipal } from ".
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "./canvas-principal";
 import { authorizeCanvasSubscription } from "./canvas-ws";
 import { corsHeaders } from "./cors";
+import {
+  federationSigningAvailable,
+  signFederationDocument,
+  verifyFederationDocument,
+} from "./federation-crypto";
 import { formatPerception } from "./formatter";
 import { discoverModels } from "./model-discovery";
 import { type EndpointConfig, getEndpointConfig, setEndpointConfig } from "./model-endpoint";
@@ -354,18 +359,19 @@ export async function handleDashboardApi(
   // Marina remains unverified until its operator explicitly changes trust.
   if (url.pathname === "/api/federation/manifest" && method === "GET" && db) {
     const evidence = db.verifyEvidenceChain();
-    return json({
-      schema: "marina.federation.manifest.v1",
+    const signed = federationSigningAvailable();
+    const manifest = {
+      schema: signed ? "marina.federation.manifest.v2" : "marina.federation.manifest.v1",
       worldId: db.getOrCreateWorldId(),
       name: engine.instanceName,
       baseUrl: url.origin,
-      publicKey: null,
       capabilities: [
         "world-collective.local.v1",
         "traces.read.v1",
         "logs.read.v1",
         "evidence.checkpoint.v1",
         "inheritance.unverified.v1",
+        ...(signed ? ["federation.signed-envelope.v1"] : []),
       ],
       evidenceCheckpoint: {
         algorithm: "sha256",
@@ -373,9 +379,11 @@ export async function handleDashboardApi(
         headHash: evidence.headHash,
         locallyValid: evidence.valid,
       },
-      trustBoundary:
-        "Unsigned discovery manifest. Registration does not authenticate this world or its claims.",
-    });
+      trustBoundary: signed
+        ? "Ed25519 signature proves document integrity and key possession, not operator trust or claim truth."
+        : "Unsigned discovery manifest. Registration does not authenticate this world or its claims.",
+    };
+    return json(signed ? signFederationDocument(manifest) : { ...manifest, publicKey: null });
   }
 
   // Authenticate — every dashboard API route from this point on requires a
@@ -420,17 +428,22 @@ export async function handleDashboardApi(
   if (url.pathname === "/api/evidence/checkpoint" && method === "GET" && db) {
     const verification = db.verifyEvidenceChain();
     const checkpoint = {
-      schema: "marina.evidence.checkpoint.v1",
+      schema: federationSigningAvailable()
+        ? "marina.evidence.checkpoint.v2"
+        : "marina.evidence.checkpoint.v1",
+      worldId: db.getOrCreateWorldId(),
       instance: engine.instanceName,
       generatedAt: Date.now(),
       algorithm: "sha256",
       entries: verification.entries,
       headHash: verification.headHash,
       valid: verification.valid,
-      trustBoundary:
-        "Unsigned local checkpoint; external storage or anchoring supplies the witness.",
+      trustBoundary: federationSigningAvailable()
+        ? "Ed25519 signature authenticates this checkpoint to its world key; an independent anchor supplies external time and persistence."
+        : "Unsigned local checkpoint; external storage or anchoring supplies the witness.",
     };
-    return Response.json(checkpoint, {
+    const exported = federationSigningAvailable() ? signFederationDocument(checkpoint) : checkpoint;
+    return Response.json(exported, {
       headers:
         url.searchParams.get("download") === "1"
           ? { "Content-Disposition": 'attachment; filename="marina-evidence-checkpoint.json"' }
@@ -480,18 +493,27 @@ export async function handleDashboardApi(
       name?: string;
       baseUrl?: string;
       publicKey?: string | null;
+      signature?: { algorithm?: string; publicKey?: string; keyId?: string; value?: string };
       capabilities?: unknown;
     }>(req);
     if ("error" in body) return body.error;
     if (
-      body.schema !== "marina.federation.manifest.v1" ||
+      !["marina.federation.manifest.v1", "marina.federation.manifest.v2"].includes(
+        body.schema ?? "",
+      ) ||
       !body.worldId ||
       body.worldId.length > 100 ||
       !body.name ||
       body.name.length > 100 ||
       !body.baseUrl
     ) {
-      return json({ error: "A valid marina.federation.manifest.v1 document is required" }, 400);
+      return json({ error: "A valid Marina federation manifest is required" }, 400);
+    }
+    if (body.schema === "marina.federation.manifest.v2") {
+      const verification = verifyFederationDocument(body as Record<string, unknown>);
+      if (!verification.valid) {
+        return json({ error: verification.error ?? "Manifest signature is invalid" }, 400);
+      }
     }
     if (
       JSON.stringify(body).length > 32_768 ||
@@ -519,7 +541,7 @@ export async function handleDashboardApi(
         worldId: body.worldId,
         name: body.name,
         baseUrl: baseUrl.origin,
-        publicKey: body.publicKey,
+        publicKey: body.publicKey ?? body.signature?.publicKey,
         manifest: body,
       }),
       201,

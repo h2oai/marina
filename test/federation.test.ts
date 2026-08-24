@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
 import { Engine } from "../src/engine/engine";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { MarinaDB } from "../src/persistence/database";
@@ -27,9 +28,25 @@ describe("federation discovery and trust", () => {
   });
 
   afterEach(() => {
+    delete process.env.MARINA_FEDERATION_SIGNING_KEY;
     engine.shutdown();
     db.close();
     cleanupDb(TEST_DB);
+  });
+
+  test("publishes a verifiable signed v2 manifest when explicitly configured", async () => {
+    const { privateKey } = generateKeyPairSync("ed25519");
+    process.env.MARINA_FEDERATION_SIGNING_KEY = privateKey
+      .export({ format: "der", type: "pkcs8" })
+      .toString("base64");
+    const url = new URL("https://marina.example/api/federation/manifest");
+    const response = await handleDashboardApi(new Request(url), url, "GET", engine, db);
+    const manifest = (await response?.json()) as Record<string, unknown>;
+    expect(manifest).toMatchObject({
+      schema: "marina.federation.manifest.v2",
+      signature: { algorithm: "Ed25519" },
+      trustBoundary: expect.stringContaining("not operator trust"),
+    });
   });
 
   test("publishes a stable, explicitly unsigned manifest without authentication", async () => {
