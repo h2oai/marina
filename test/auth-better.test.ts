@@ -2,16 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Database } from "bun:sqlite";
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { record as recordStanding } from "../src/agent/standing";
 import {
   createBetterAuthProvider,
+  type IdentitySession,
   type MarinaAuthProvider,
 } from "../src/auth/better-auth-provider";
 import { Engine } from "../src/engine/engine";
 import { handleAuthApi } from "../src/net/auth-api";
 import { MarinaDB } from "../src/persistence/database";
-import { roomId } from "../src/types";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { type EntityId, roomId } from "../src/types";
+import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 
 // Full bridge loop against the real better-auth provider: sign up → exchange a
 // verified identity for a Marina session token bound to a NAMED entity.
@@ -209,5 +211,114 @@ describe("better-auth schema upgrades", () => {
       { id: "credential-row", issuer: "local:credential" },
       { id: "oauth-row", issuer: "local:oauth:github" },
     ]);
+  });
+});
+
+// FIX 2 — a verified identity must NOT be able to adopt a pre-existing ELEVATED
+// entity (rank > 0 or standing-bearing) by claiming its handle. A stub provider
+// lets us control the identity + emailVerified directly (real email sign-ups are
+// unverified, so we can't mint an operator identity through the live provider).
+describe("handle-claim elevation guard", () => {
+  const dbPath = `/tmp/marina-ba-elevated-${Date.now()}.db`;
+  let db: MarinaDB;
+  let engine: Engine;
+  let identity: IdentitySession;
+  const prevAdmins = process.env.MARINA_AUTH_ADMIN_EMAILS;
+
+  const url = (path: string) => new URL(`http://localhost:3300${path}`);
+
+  // Minimal provider surface: only getIdentity is exercised by the claim path.
+  const stubProvider: MarinaAuthProvider = {
+    methods: ["email"],
+    socialProviders: [],
+    handler: async () => new Response(null, { status: 404 }),
+    getIdentity: async () => identity,
+  };
+
+  async function claim(handle: string): Promise<Response> {
+    const req = new Request(url("/api/auth-session"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ handle }),
+    });
+    const res = await handleAuthApi(
+      req,
+      url("/api/auth-session"),
+      "POST",
+      engine,
+      db,
+      stubProvider,
+    );
+    return res!;
+  }
+
+  beforeEach(() => {
+    db = new MarinaDB(dbPath);
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+    identity = {
+      subject: "new-verified-user",
+      email: "newcomer@example.com",
+      emailVerified: true,
+    };
+    delete process.env.MARINA_AUTH_ADMIN_EMAILS;
+  });
+
+  afterEach(() => {
+    db.close();
+    cleanupDb(dbPath);
+    if (prevAdmins === undefined) delete process.env.MARINA_AUTH_ADMIN_EMAILS;
+    else process.env.MARINA_AUTH_ADMIN_EMAILS = prevAdmins;
+  });
+
+  it("refuses claiming a rank-elevated handle for a non-operator identity", async () => {
+    db.createUser({ id: "u_boss", name: "boss", rank: 3 });
+
+    const res = await claim("boss");
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string; message: string };
+    expect(body.error).toBe("handleElevated");
+    expect(body.message).toContain("operator linking required");
+  });
+
+  it("refuses claiming a standing-bearing (rank-0) handle for a non-operator", async () => {
+    // An online rank-0 entity that has accrued standing is still 'elevated'.
+    const conn = new MockConnection("c_rich");
+    engine.addConnection(conn);
+    const login = engine.login("c_rich", "richie");
+    expect("entityId" in login).toBe(true);
+    const entityId = (login as { entityId: EntityId }).entityId;
+    recordStanding(db, entityId, "richie", "task_complete", "task:1", 25);
+    expect(db.getUserByName("richie")?.rank).toBe(0); // rank stays 0
+
+    const res = await claim("richie");
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe("handleElevated");
+  });
+
+  it("lets an authorized operator email claim an elevated handle", async () => {
+    db.createUser({ id: "u_boss2", name: "chief", rank: 4 });
+    process.env.MARINA_AUTH_ADMIN_EMAILS = "newcomer@example.com";
+
+    const res = await claim("chief");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { name: string; token: string };
+    expect(body.name).toBe("chief");
+    expect(body.token).toBeTruthy();
+  });
+
+  it("lets a fresh rank-0 no-standing handle be claimed normally", async () => {
+    const res = await claim("freshname");
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { name: string }).name).toBe("freshname");
+  });
+
+  it("still rejects a handle bound to a different identity (handleTaken)", async () => {
+    db.createUser({ id: "u_other", name: "owned", rank: 0 });
+    db.bindAuthSubject("u_other", "some-other-subject", "owner@example.com");
+
+    const res = await claim("owned");
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe("handleTaken");
   });
 });

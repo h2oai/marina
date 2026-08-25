@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { TelnetServer } from "../src/net/telnet-server";
@@ -464,21 +465,23 @@ describe("Session Manager", () => {
     const mgr = new SessionManager(db);
     const session = mgr.create("e_1" as EntityId, "TestAgent");
 
-    // Load from DB directly
-    const loaded = db.loadSession(session.token);
+    // Tokens are stored hashed at rest: a raw-token lookup MUST miss (that's the
+    // security property), while a lookup by the SHA-256 hash resolves the record.
+    expect(db.loadSession(session.token)).toBeUndefined();
+    const hash = createHash("sha256").update(session.token).digest("hex");
+    const loaded = db.loadSession(hash);
     expect(loaded).toBeDefined();
     expect(loaded!.entityId).toBe("e_1" as EntityId);
 
     db.close();
   });
 
-  it("should clean up expired sessions", () => {
+  it("should clean up expired sessions", async () => {
+    // create() returns a value copy (it swaps in the raw token), so the returned
+    // object can't be mutated to force expiry. Drive real expiry via a 1ms TTL.
     const mgr = new SessionManager(undefined, { sessionTtlMs: 1 });
-    const session = mgr.create("e_1" as EntityId, "TestAgent");
-
-    // Force the session into the past so cleanup considers it expired.
-    // Use Number.MIN_SAFE_INTEGER to handle broken Date.now() returning INT32_MIN.
-    session.expiresAt = Number.MIN_SAFE_INTEGER;
+    mgr.create("e_1" as EntityId, "TestAgent");
+    await Bun.sleep(10);
 
     const removed = mgr.cleanup();
     expect(removed).toBe(1);

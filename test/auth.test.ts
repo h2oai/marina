@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { SessionManager } from "../src/auth/session-manager";
 import { Engine } from "../src/engine/engine";
@@ -542,8 +543,11 @@ describe("SessionManager", () => {
     const first = mgr.create(entityId, "Alice");
     const second = mgr.create(entityId, "Alice");
     // First was evicted by create()'s revokeByEntity. Reinsert it manually to
-    // reproduce the stale-in-memory-token failure mode.
-    db.saveSession(first);
+    // reproduce the stale-in-memory-token failure mode. create() returns the RAW
+    // token but stores only its hash, so re-save the HASHED record (what validate
+    // looks up) — not the raw-token object.
+    const firstHash = createHash("sha256").update(first.token).digest("hex");
+    db.saveSession({ ...first, token: firstHash });
     expect(mgr.validate(first.token)).toBeDefined();
 
     mgr.revokeByEntity(entityId);
@@ -565,6 +569,91 @@ describe("SessionManager", () => {
 
     const removed = mgr.cleanup();
     expect(removed).toBeGreaterThanOrEqual(2);
+  });
+
+  it("stores only a hash of the token at rest — never the raw token", () => {
+    const mgr = new SessionManager(db);
+    const session = mgr.create("e_hash_1" as EntityId, "Alice");
+
+    // create() hands back the RAW token to the caller once...
+    expect(session.token).toMatch(/^[0-9a-f-]{36}$/); // uuid shape
+    const expectedHash = createHash("sha256").update(session.token).digest("hex");
+
+    // ...but the persisted record keys on the hash, and holds no raw token.
+    const stored = db.loadSession(expectedHash);
+    expect(stored).toBeDefined();
+    expect(stored!.token).toBe(expectedHash);
+    // A DB dump keyed by the raw token yields nothing usable.
+    expect(db.loadSession(session.token)).toBeUndefined();
+  });
+
+  it("validate accepts the raw token and rejects a wrong one (constant-time hash compare)", () => {
+    const mgr = new SessionManager(db);
+    const session = mgr.create("e_hash_2" as EntityId, "Alice");
+
+    expect(mgr.validate(session.token)?.entityId).toBe("e_hash_2" as EntityId);
+    expect(mgr.validate("not-the-token")).toBeUndefined();
+    // Presenting the stored HASH must not authenticate (validate hashes input).
+    const hash = createHash("sha256").update(session.token).digest("hex");
+    expect(mgr.validate(hash)).toBeUndefined();
+  });
+
+  it("rejects a token past its absolute max-age even when recently used", () => {
+    // Sliding TTL long, absolute cap tiny: sliding refresh cannot save it.
+    const mgr = new SessionManager(db, {
+      sessionTtlMs: 60_000,
+      sessionMaxAgeMs: 5,
+    });
+    const session = mgr.create("e_maxage_1" as EntityId, "Alice");
+
+    // Fresh: valid, and refresh (recent activity) still works within the cap.
+    expect(mgr.validate(session.token)).toBeDefined();
+
+    const start = Date.now();
+    while (Date.now() - start < 15) {
+      /* spin past the 5ms absolute cap */
+    }
+
+    // Recent use (refresh) must NOT renew past the absolute cap.
+    expect(mgr.refresh(session.token)).toBe(false);
+    expect(mgr.validate(session.token)).toBeUndefined();
+  });
+
+  it("sliding refresh still extends idle expiry within the absolute cap", () => {
+    const mgr = new SessionManager(db, {
+      sessionTtlMs: 20,
+      sessionMaxAgeMs: 60_000,
+    });
+    const session = mgr.create("e_maxage_2" as EntityId, "Alice");
+
+    // Let the short sliding TTL nearly lapse, then refresh to extend it.
+    const start = Date.now();
+    while (Date.now() - start < 10) {
+      /* spin */
+    }
+    expect(mgr.refresh(session.token)).toBe(true);
+
+    // After refresh the session is live again well within the absolute cap.
+    const validated = mgr.validate(session.token);
+    expect(validated).toBeDefined();
+    expect(validated!.expiresAt).toBeLessThanOrEqual(validated!.createdAt + 60_000);
+  });
+
+  it("MARINA_SESSION_MAX_AGE_MS configures the absolute cap", () => {
+    const prev = process.env.MARINA_SESSION_MAX_AGE_MS;
+    process.env.MARINA_SESSION_MAX_AGE_MS = "5";
+    try {
+      const mgr = new SessionManager(db, { sessionTtlMs: 60_000 });
+      const session = mgr.create("e_maxage_env" as EntityId, "Alice");
+      const start = Date.now();
+      while (Date.now() - start < 15) {
+        /* spin past the env-configured cap */
+      }
+      expect(mgr.validate(session.token)).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.MARINA_SESSION_MAX_AGE_MS;
+      else process.env.MARINA_SESSION_MAX_AGE_MS = prev;
+    }
   });
 });
 

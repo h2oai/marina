@@ -14,6 +14,7 @@
  * claim/resume a handle. Agents never touch this path — they use session tokens.
  */
 
+import { getStanding } from "../agent/standing";
 import type { MarinaAuthProvider } from "../auth/better-auth-provider";
 import type { Engine } from "../engine/engine";
 import { sanitizeEntityName } from "../engine/entity-name";
@@ -22,6 +23,43 @@ import type { Connection, EntityId, Perception } from "../types";
 import { corsHeaders } from "./cors";
 
 let authConnCounter = 0;
+
+/**
+ * Standing above this (in a rank-0 row) counts as "elevated" for the handle-
+ * claim guard — small so any meaningful accrued reputation trips it, while a
+ * fresh entity (standing 0) still claims normally. Rank > 0 is the primary,
+ * restart-durable signal; standing is a secondary check for the online case.
+ */
+const ELEVATED_STANDING_THRESHOLD = 1;
+
+/** True when the verified identity is an explicitly-authorized operator by
+ *  email (MARINA_AUTH_ADMIN_EMAILS) — the only identity allowed to adopt a
+ *  pre-existing elevated handle. Mirrors the engine's admin-by-email gate. */
+function isAuthorizedOperator(identity: { email: string; emailVerified: boolean }): boolean {
+  if (!identity.emailVerified) return false;
+  const adminEmails = new Set(
+    (process.env.MARINA_AUTH_ADMIN_EMAILS ?? "")
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  return adminEmails.has(identity.email.toLowerCase());
+}
+
+/** True when a pre-existing handle's entity carries elevated rank or standing —
+ *  i.e. adopting it would inherit privilege. */
+function isElevatedHandle(
+  engine: Engine,
+  db: MarinaDB,
+  user: { name: string; rank: number },
+): boolean {
+  if (user.rank > 0) return true;
+  // Standing is keyed by the (transient) entity id, so it's only checkable when
+  // the entity is currently resident. rank is the durable primary signal.
+  const entity = engine.entities.findAgentByName(user.name);
+  if (entity && getStanding(db, entity.id) > ELEVATED_STANDING_THRESHOLD) return true;
+  return false;
+}
 
 function json(body: unknown, status: number, origin: string | null): Response {
   return Response.json(body, { status, headers: corsHeaders(origin) });
@@ -115,6 +153,21 @@ async function exchangeForMarinaSession(
       return json(
         { error: "handleTaken", message: "That handle is already claimed." },
         409,
+        origin,
+      );
+    }
+    // Refuse silently adopting a pre-existing ELEVATED entity (rank > 0 or
+    // standing-bearing) via a name claim — a new verified user must not inherit
+    // an existing privileged entity's rank/standing. Only an explicitly
+    // authorized operator (MARINA_AUTH_ADMIN_EMAILS) may link such a handle.
+    // A fresh/unprivileged handle (rank 0, no standing) claims normally.
+    if (taken && db && isElevatedHandle(engine, db, taken) && !isAuthorizedOperator(identity)) {
+      return json(
+        {
+          error: "handleElevated",
+          message: "that handle maps to a privileged entity; operator linking required",
+        },
+        403,
         origin,
       );
     }
