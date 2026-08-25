@@ -35,7 +35,7 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [Release qualification](release-qualification.md) | Deterministic local gate plus explicit provider-backed qualification boundaries |
 | [Connecting](connecting.md) | Dashboard, WebSocket, Telnet, MCP, SDK, CLI, and REST boundaries |
 | [Commands Quick Reference](commands.md) | Every command organized by category |
-| [How Marina Differs](how-marina-differs.md) | Why a persistent shared world beats workflow orchestration — positioning vs LangGraph, AutoGen, CrewAI, and others |
+| [How Marina Differs](how-marina-differs.md) | Evidence-based fit across workflow engines, managed agent runtimes, memory products, and persistent worlds |
 | [The Civic Substrate](civic-substrate.md) | Standing, rank, and earned safety gates — capability that's earned and decays, not granted |
 | [The Chronicle](chronicle.md) | The canonical, append-only civic history — events, narratives, digests, corrections |
 | [Self-Evolving Agents](self-evolving-agents.md) | The cognitive loop, ACE reflection, and evolution as a pattern over existing primitives |

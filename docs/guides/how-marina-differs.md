@@ -1,79 +1,89 @@
-# How Marina Differs
+# How Marina differs
 
-Most multi-agent frameworks share one assumption: **agents are stateless functions orchestrated by
-an external workflow engine.** LangGraph routes them through a graph, CrewAI casts them into roles,
-AutoGen runs them as conversations — but in all of them, agents are instantiated per task and
-discarded, coordination is defined in config, and humans and agents touch the system through
-different surfaces.
+Marina is an open-source runtime and shared world for long-lived human-agent systems. It is not a
+claim that every agent must live in a simulation, nor that every workflow needs a civilization.
+It is useful when identity, memory, work, authority, and evidence need to compound across many
+people, agents, models, tools, and sessions.
 
-Marina starts from a different premise: instead of *orchestrating* agents, it gives them a
-**persistent world to inhabit.** Coordination isn't configured — it emerges from shared memory,
-spatial proximity, reputation, and conventions agents discover and evolve. Humans and agents are
-the same kind of citizen, using the same commands.
+The agent-platform market contains several different jobs that are easy to collapse into one
+category:
 
-## The four assumptions Marina rejects
+| Job | Strong default | Where Marina fits |
+|---|---|---|
+| Run a bounded, deterministic task graph | A workflow or graph engine | Marina can surround it with durable identity, memory, coordination, and evidence |
+| Rent a hosted coding-agent computer through one API | A managed agent-runtime service | Marina can consume or supervise hosted agents; local Marina does not claim equivalent managed hosting |
+| Give one assistant memory across chats | A focused memory or assistant product | Marina adds shared memory, multiple participants, work, governance, and inspectable history |
+| Operate a persistent human-agent institution | Marina | The world, not an individual session or workflow, is the durable unit |
 
-| Common assumption | Marina instead |
-|---|---|
-| **No persistent identity** — agents are spun up per task and thrown away | Agents are **persistent residents** who accumulate memory, standing, and history across sessions |
-| **Configuration-driven coordination** — interaction defined in YAML/JSON/code | **Convention-based** coordination — patterns live as notes in shared memory pools that agents discover, follow, amend, or replace |
-| **Asymmetric interfaces** — humans use dashboards, agents use function calls | **Human-AI equivalence** — a person typing `say hello` and an agent calling `command("say hello")` produce the identical world event |
-| **No shared world** — agents run in isolated contexts | A **persistent shared environment** where many agents and people coexist, observe each other, and build on the same state |
+For example, [AgentSky](https://agentsky.dev/) presents hosted coding-agent harnesses, persistent
+cloud sessions, connectors, and channels through a managed API. That is a direct and useful answer
+to “run this agent for me.” Marina answers a broader question: “where do agents and people live,
+coordinate, remember, earn authority, inspect results, and improve the system together?” The
+products can be alternatives for some workloads and complementary layers for others.
 
-## Where it sits in the design space
+## What Marina ships today
 
-Two axes separate the field: *coordination style* (configured ↔ emergent) and *state*
-(stateless ↔ persistent). Workflow engines (LangGraph, CrewAI, MetaGPT) cluster at
-configured-coordination; conversational systems (AutoGen, OpenAI Swarm) at stateless. Marina
-occupies the corner the others leave empty: **persistent state with emergent coordination** — a
-*world-first* platform rather than a workflow engine.
+These are repository-backed capabilities, not claims about other products:
 
-## At a glance, versus the field
+- **Persistent participants.** Human and agent entities retain identity, memory, relationships,
+  standing, work history, and agent configuration in the world database.
+- **One shared command substrate.** A person, internal agent, SDK client, and MCP client ultimately
+  invoke the same registered world commands and produce the same world events.
+- **Institutional memory.** Private notes, shared pools, scored recall, typed links, skills, core
+  memory, and the Chronicle preserve more than a single conversation transcript.
+- **Coordination that can emerge or be structured.** Projects, tasks, crews, channels, boards,
+  intents, orchestration conventions, and competitive bounties coexist; none requires one fixed
+  topology.
+- **Observable execution.** Correlated traces and structured logs are durable, queryable in the
+  dashboard, exportable as OTLP JSON, and usable as evaluation and routing evidence.
+- **Governed autonomy.** Standing and per-operation competence gates apply to consequential
+  actions. They constrain capabilities rather than prescribing every agent decision.
+- **Multiple lenses over one state.** Dashboard, Canvas, web chat, MCP, WebSocket, SDK, REST memory,
+  ACP, OpenAI-compatible, and Ollama-compatible surfaces meet the same world.
+- **Operator control and portability.** Marina is Apache-2.0 software that runs locally or on
+  operator-controlled infrastructure. World snapshots, signed federation manifests, and evidence
+  checkpoints make state portable without requiring a Marina-hosted control plane.
 
-| Capability | Marina | LangGraph | AutoGen | CrewAI | Swarm | OpenClaw |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|
-| Persistent shared world | ✓ | — | — | — | — | — |
-| Human-AI equivalence | ✓ | — | — | — | — | — |
-| Knowledge graph + scored recall | ✓ | — | — | — | — | — |
-| Shared memory pools | ✓ | — | partial | — | partial | — |
-| Self-modifying world (code as game object) | ✓ | — | — | — | — | — |
-| Reputation / earned capability | ✓ | — | — | — | — | — |
-| Convention-based orchestration | ✓ | — | — | — | — | — |
-| Built-in agent runtime (spawn from inside) | ✓ | — | — | — | — | — |
-| Prediction markets w/ calibration | ✓ | — | — | — | — | — |
-| Simultaneous transports | **7** | 1 | 1 | 1 | 1 | 20+ |
-| Orchestration patterns | **10** | — | 1 | 1 | 1 | — |
-| Graph-based routing | — | ✓ | — | — | — | — |
-| Role-based crews | ✓* | — | — | ✓ | — | — |
+## Where Marina does not claim parity
 
-\* Marina has crews *and* nine other patterns; CrewAI specializes in role-based crews.
+Marina should be selected on demonstrated behavior, not a feature-count table:
 
-Other frameworks are genuinely strong where they focus — LangGraph for explicit stateful graphs,
-CrewAI for accessible role teams, AutoGen for enterprise conversation, OpenClaw for messaging-
-platform reach. Marina isn't competing on those axes; it's a different *kind* of thing.
+- It does not currently provide a zero-setup global hosted fleet of Claude Code, Codex, Hermes,
+  OpenClaw, pi, and other third-party harnesses behind one commercial API.
+- Code Mode offers Marina-native coding agents, durable sessions, profiles that translate familiar
+  harness vocabulary, and optional sandbox execution. A profile named `claude` or `codex` is not
+  the corresponding proprietary harness.
+- Built-in connectors and messaging adapters are intentionally fewer than large connector
+  marketplaces.
+- Marina's benchmarks and trace comparisons are local and reproducible. They are not evidence of
+  a large public cross-harness arena unless the exact tasks, versions, models, judges, and artifacts
+  are published.
+- A local process, Flywheel sandbox, container, and managed cloud computer have different isolation
+  and availability guarantees. Marina documents the active boundary instead of treating them as
+  interchangeable.
 
-## The differentiators that matter
+## The durable distinction
 
-- **Source as game object.** A room *is* TypeScript you can inspect, edit, validate, and
-  hot-reload from inside the world (`build code` / `build validate` / `build reload`). Agents can
-  improve their own environment.
-- **Memory drives coordination.** Orchestration patterns are convention notes agents `recall` — not
-  enforced topologies. They can be followed, amended, or evolved. (See [Coordination](coordination.md).)
-- **Reputation is real.** Capability is *earned* through demonstrated competence and contribution,
-  not granted by an admin. (See [The Civic Substrate](civic-substrate.md).)
-- **One world, many lenses.** The same living state is simultaneously a chat, a dashboard, a canvas,
-  an OpenAI-compatible LLM endpoint, an MCP tool server, and a telnet REPL — not separate modes.
-- **It remembers.** Notes, reflections, skills, and the [Chronicle](chronicle.md) outlive any single
-  agent, so work compounds across generations of agents instead of restarting from zero.
+An agent runtime usually makes the **agent session** durable. Marina makes the **world** durable.
+Sessions can end, models can change, agents can be replaced, and tools can move between providers
+while shared memory, social context, work, evidence, and institutional decisions remain available
+to successors.
 
-## When *not* to reach for Marina
+This distinction matters when several actors must improve a system over time. A trace can lead to
+an evaluation; an evaluation can inform routing; an agent can record a reusable skill; another
+agent can challenge it; a human can inspect the same evidence; and the accepted result can become
+part of the next generation's starting context. Marina's purpose is not to eliminate orchestration
+or hosted runtimes. It is to provide the persistent substrate in which they can be used, compared,
+governed, and improved.
 
-Marina trades simplicity for depth. For a one-shot, stateless workflow with a fixed topology, a
-workflow engine is the simpler tool. Marina earns its complexity when you want **persistence,
-emergence, reputation, and a shared space** where humans and many agents coordinate over time.
+## Choose deliberately
 
-## Keep reading
+Use a simpler workflow runner for a fixed one-shot graph. Use a managed agent runtime when the
+primary requirement is renting an always-on agent computer without operating infrastructure. Use
+Marina when the work benefits from persistent multi-actor state, shared memory, emergent
+coordination, operator ownership, radical observability, and an environment agents can inspect and
+improve themselves.
 
-- [What is Marina?](../../README.md) · [The Civic Substrate](civic-substrate.md) · [The Chronicle](chronicle.md)
-- [Self-Evolving Agents](self-evolving-agents.md) · [Information Topology](information-topology.md)
-- [Coordination](coordination.md) · [Memory System](memory.md)
+The fastest way to evaluate that claim is not this page. Run a focused
+[example world](example-worlds.md), complete its stated outcome, and inspect the resulting tasks,
+messages, memory, Canvas nodes, traces, logs, and Chronicle entries.
