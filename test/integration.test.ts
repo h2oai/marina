@@ -1,8 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createHash } from "node:crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { Engine } from "../src/engine/engine";
 import { TelnetServer } from "../src/net/telnet-server";
 import { WebSocketServer } from "../src/net/websocket-server";

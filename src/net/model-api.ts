@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { getInternalModelToken } from "../agent/agent-runtime";
 import {
   formatUntrustedContext,
@@ -1224,6 +1225,25 @@ interface ResponseRecord {
   createdAt: number;
   previousResponseId?: string;
   status: "completed" | "failed";
+  /**
+   * Owner key binding this record to the credential that created it. A
+   * different caller (different API key) can never GET/DELETE it, nor thread a
+   * new response onto its conversation — cross-caller access returns 404 (the
+   * record's existence is never revealed to a non-owner). Same key = same owner
+   * (a shared secret is shared by definition).
+   */
+  owner: string;
+}
+
+/** Stable per-credential owner key for Responses records. Hashes the matched
+ *  API key so the raw secret is never stored; internal/open/anon get sentinels. */
+function responseOwnerKey(auth: PassthruAuthResult | undefined): string {
+  if (auth?.matchedKey) {
+    return `k:${createHash("sha256").update(auth.matchedKey).digest("hex")}`;
+  }
+  if (auth?.internal) return "internal";
+  if (auth?.openMode) return "open";
+  return "anon";
 }
 
 const responseIndex = new Map<string, ResponseRecord>();
@@ -1292,8 +1312,13 @@ function formatResponseRecord(rec: ResponseRecord): unknown {
   };
 }
 
-async function handleResponsesCreate(req: Request, engine: Engine): Promise<Response> {
+async function handleResponsesCreate(
+  req: Request,
+  engine: Engine,
+  auth: PassthruAuthResult | undefined,
+): Promise<Response> {
   trimResponseIndex();
+  const owner = responseOwnerKey(auth);
   try {
     const body = (await req.json()) as {
       model?: string;
@@ -1320,7 +1345,9 @@ async function handleResponsesCreate(req: Request, engine: Engine): Promise<Resp
     let previousResponseId: string | undefined;
     if (body.previous_response_id) {
       const prior = responseIndex.get(body.previous_response_id);
-      if (!prior) {
+      // Owner check: a caller can only thread onto a conversation it owns.
+      // Not-found and not-owned are indistinguishable (404, no existence leak).
+      if (!prior || prior.owner !== owner) {
         return errorJson(404, `previous_response_id not found: ${body.previous_response_id}`);
       }
       conversationId = prior.conversationId;
@@ -1351,6 +1378,7 @@ async function handleResponsesCreate(req: Request, engine: Engine): Promise<Resp
         createdAt: Date.now(),
         previousResponseId,
         status: "completed",
+        owner,
       };
       if (body.store !== false) {
         responseIndex.set(id, rec);
@@ -1373,16 +1401,27 @@ async function handleResponsesCreate(req: Request, engine: Engine): Promise<Resp
   }
 }
 
-function handleResponsesGet(id: string): Response {
+function handleResponsesGet(id: string, auth: PassthruAuthResult | undefined): Response {
   trimResponseIndex();
   const rec = responseIndex.get(id);
-  if (!rec) return errorJson(404, `Response not found: ${id}`);
+  // Owner-scoped: a non-owner cannot read (or confirm the existence of) another
+  // caller's response — not-found and not-owned both return 404.
+  if (!rec || rec.owner !== responseOwnerKey(auth)) {
+    return errorJson(404, `Response not found: ${id}`);
+  }
   return json(formatResponseRecord(rec));
 }
 
-function handleResponsesDelete(id: string, engine: Engine): Response {
+function handleResponsesDelete(
+  id: string,
+  auth: PassthruAuthResult | undefined,
+  engine: Engine,
+): Response {
   const rec = responseIndex.get(id);
-  if (!rec) return errorJson(404, `Response not found: ${id}`);
+  // Owner-scoped: only the creating credential may delete; others get 404.
+  if (!rec || rec.owner !== responseOwnerKey(auth)) {
+    return errorJson(404, `Response not found: ${id}`);
+  }
   responseIndex.delete(id);
   // If no other responses reference this conversation, drop the channel too.
   let stillReferenced = false;
@@ -1453,8 +1492,13 @@ export async function handleModelApi(
     authResult = outcome.auth;
   }
 
-  // Per-IP rate limiting for mutation endpoints
-  if (rateLimiter && method === "POST") {
+  // Per-IP rate limiting. Covers POST (mutation) plus the enumerable Responses
+  // state surface (GET/DELETE /v1/responses/:id) so a caller can't brute-force
+  // response ids or hammer delete unthrottled. Static reads (models/health)
+  // stay unlimited.
+  const isResponsesStateOp =
+    url.pathname.startsWith("/v1/responses/") && (method === "GET" || method === "DELETE");
+  if (rateLimiter && (method === "POST" || isResponsesStateOp)) {
     const ip = extractIp(req, server);
     if (!rateLimiter.consume(`model:${ip}`)) {
       return errorJson(429, "Rate limited. Please slow down.");
@@ -1489,15 +1533,15 @@ export async function handleModelApi(
   // OpenAI Responses API: /v1/responses, /v1/responses/:id
   // Used by passthru clients for server-side conversation state.
   if (url.pathname === "/v1/responses" && method === "POST") {
-    return await handleResponsesCreate(req, engine);
+    return await handleResponsesCreate(req, engine, authResult);
   }
   if (url.pathname.startsWith("/v1/responses/") && method === "GET") {
     const id = url.pathname.slice("/v1/responses/".length);
-    return handleResponsesGet(id);
+    return handleResponsesGet(id, authResult);
   }
   if (url.pathname.startsWith("/v1/responses/") && method === "DELETE") {
     const id = url.pathname.slice("/v1/responses/".length);
-    return handleResponsesDelete(id, engine);
+    return handleResponsesDelete(id, authResult, engine);
   }
 
   // OpenAI health: /v1/health

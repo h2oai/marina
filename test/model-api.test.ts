@@ -142,6 +142,7 @@ describe("Model API", () => {
 
   afterEach(() => {
     delete process.env.MARINA_OPEN_API;
+    delete process.env.MODEL_API_KEYS;
     db.close();
     cleanupDb(TEST_DB);
   });
@@ -1466,6 +1467,47 @@ describe("Model API", () => {
       });
       const resp = await handleModelApi(url, method, req, engine);
       expect(resp!.status).toBe(404);
+    });
+
+    it("Responses records are owner-scoped: another key cannot GET/DELETE or thread onto them", async () => {
+      // Two distinct credentials; disable open mode so each bearer is a distinct owner.
+      process.env.MODEL_API_KEYS = "keyA,keyB";
+      delete process.env.MARINA_OPEN_API;
+      const keyA = { Authorization: "Bearer keyA" };
+      const keyB = { Authorization: "Bearer keyB" };
+
+      engine.processCommand(conn1.entity!, "channel join model");
+      setupPhase1Agent(cm, conn1.entity!, "Agent1", "owned");
+
+      const [cU, cM, cR] = makeRequest(
+        "/v1/responses",
+        "POST",
+        { model: "assistant", input: "mine" },
+        keyA,
+      );
+      const created = await (await handleModelApi(cU, cM, cR, engine))!.json();
+      expect(created.id).toMatch(/^resp_/);
+
+      // keyB cannot read keyA's response (404 — existence not revealed).
+      const [gU, gM, gR] = makeRequest(`/v1/responses/${created.id}`, "GET", undefined, keyB);
+      expect((await handleModelApi(gU, gM, gR, engine))!.status).toBe(404);
+
+      // keyB cannot delete it either.
+      const [dU, dM, dR] = makeRequest(`/v1/responses/${created.id}`, "DELETE", undefined, keyB);
+      expect((await handleModelApi(dU, dM, dR, engine))!.status).toBe(404);
+
+      // keyB cannot thread a new response onto keyA's conversation.
+      const [pU, pM, pR] = makeRequest(
+        "/v1/responses",
+        "POST",
+        { model: "assistant", input: "hijack", previous_response_id: created.id },
+        keyB,
+      );
+      expect((await handleModelApi(pU, pM, pR, engine))!.status).toBe(404);
+
+      // The owner (keyA) still reads it — the record was never deleted.
+      const [oU, oM, oR] = makeRequest(`/v1/responses/${created.id}`, "GET", undefined, keyA);
+      expect((await handleModelApi(oU, oM, oR, engine))!.status).toBe(200);
     });
 
     it("POST /v1/responses rejects empty input", async () => {
