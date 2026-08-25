@@ -2063,6 +2063,17 @@ ALTER TABLE world_variants ADD COLUMN promotion_evidence TEXT;
 ALTER TABLE world_variants ADD COLUMN promoted_by TEXT;
 `,
   },
+  // Migration 81: opt-in per-session git-worktree isolation. Nullable columns so
+  // existing sessions stay byte-identical (no worktree — shared workspace_root)
+  // until a session explicitly enables it. worktree_path is a Marina-managed dir
+  // outside the repo; worktree_branch is the marina/session-<id> branch.
+  {
+    version: 81,
+    sql: `
+ALTER TABLE coding_sessions ADD COLUMN worktree_path TEXT;
+ALTER TABLE coding_sessions ADD COLUMN worktree_branch TEXT;
+`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -6025,6 +6036,8 @@ export class MarinaDB {
       agent: null,
       driver: null,
       execution_target: "local",
+      worktree_path: null,
+      worktree_branch: null,
     };
     this.db.run(
       `INSERT INTO coding_sessions
@@ -6073,6 +6086,8 @@ export class MarinaDB {
       agent: string | null;
       driver: string | null;
       executionTarget: "local" | "flywheel";
+      worktreePath: string | null;
+      worktreeBranch: string | null;
     }>,
   ): void {
     const sets: string[] = [];
@@ -6104,6 +6119,14 @@ export class MarinaDB {
     if (patch.writer !== undefined) {
       sets.push("writer = ?");
       values.push(patch.writer);
+    }
+    if (patch.worktreePath !== undefined) {
+      sets.push("worktree_path = ?");
+      values.push(patch.worktreePath);
+    }
+    if (patch.worktreeBranch !== undefined) {
+      sets.push("worktree_branch = ?");
+      values.push(patch.worktreeBranch);
     }
     if (sets.length === 0) return;
     sets.push("updated_at = ?");
@@ -7344,6 +7367,13 @@ export interface CodingSessionRow {
   driver: string | null;
   /** Explicit execution provider. Existing sessions default to trusted local mode. */
   execution_target: "local" | "flywheel";
+  /**
+   * Marina-managed git worktree bound to this session (opt-in). NULL means the
+   * session works directly in workspace_root (default, byte-identical to legacy).
+   */
+  worktree_path: string | null;
+  /** The marina/session-<id> branch backing worktree_path, or NULL when off. */
+  worktree_branch: string | null;
 }
 
 export interface CodingProjectRow {

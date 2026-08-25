@@ -2987,3 +2987,236 @@ describe("code host-exec workspace root policy (Finding 2)", () => {
     expect(stripAnsi(sent.join("\n"))).not.toContain("no code workspace is configured");
   });
 });
+
+describe("code worktree (per-session isolation)", () => {
+  const WT_DB = "test_code_worktree.db";
+  let db: MarinaDB;
+  let savedHome: string | undefined;
+
+  beforeEach(() => {
+    db = new MarinaDB(WT_DB);
+    savedHome = process.env.HOME;
+    process.env.HOME = realpathSync(mkdtempSync(join(tmpdir(), "marina-wt-cmd-home-")));
+  });
+  afterEach(() => {
+    db.close();
+    cleanupDb(WT_DB);
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
+  });
+
+  function makeRepoWithCommit(): string {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "marina-wt-cmd-repo-")));
+    writeFileSync(join(root, "example.txt"), "hello\n");
+    const env = {
+      ...process.env,
+      GIT_AUTHOR_NAME: "T",
+      GIT_AUTHOR_EMAIL: "t@e.com",
+      GIT_COMMITTER_NAME: "T",
+      GIT_COMMITTER_EMAIL: "t@e.com",
+    };
+    for (const args of [
+      ["init", "-q"],
+      ["add", "example.txt"],
+      ["commit", "-q", "-m", "init"],
+    ]) {
+      const p = Bun.spawnSync(["git", ...args], { cwd: root, env, stdout: "pipe", stderr: "pipe" });
+      if (p.exitCode !== 0) throw new Error(new TextDecoder().decode(p.stderr));
+    }
+    return root;
+  }
+
+  function commandFor(repo: string, entity: Entity) {
+    return codeCommand({
+      db,
+      getEntity: (id) => (id === entity.id ? entity : undefined),
+      workspaceRegistry: new WorkspaceRegistry({ defaultRoot: repo, roots: [repo] }),
+      getConnectionProtocol: () => "websocket",
+    });
+  }
+
+  it("default OFF: `code start` binds no worktree (byte-identical to legacy)", async () => {
+    const repo = makeRepoWithCommit();
+    try {
+      const entity = makeAgentEntity("u_wt_off", "WtOff");
+      db.saveEntity(entity);
+      grant(db, entity.id, "code.exec");
+      const sent: string[] = [];
+      const command = commandFor(repo, entity);
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Default"));
+      const session = db.listCodingSessions(entity.name, 1)[0]!;
+      expect(session.worktree_path).toBeNull();
+      expect(session.worktree_branch).toBeNull();
+      expect(session.workspace_root).toBe(repo);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("`code worktree on` binds an isolated worktree; edits confine to it, not the base", async () => {
+    const repo = makeRepoWithCommit();
+    try {
+      const entity = makeAgentEntity("u_wt_on", "WtOn");
+      db.saveEntity(entity);
+      grant(db, entity.id, "code.exec");
+      const sent: string[] = [];
+      const command = commandFor(repo, entity);
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start Iso"));
+      sent.length = 0;
+      await command.handler(ctx, inputFor(entity, "code worktree on"));
+      expect(stripAnsi(sent.join("\n"))).toContain("Worktree isolation on");
+
+      const session = db.listCodingSessions(entity.name, 1)[0]!;
+      expect(session.worktree_path).not.toBeNull();
+      expect(session.worktree_branch).toContain("marina/session-");
+      expect(existsSync(session.worktree_path!)).toBe(true);
+      // The worktree is NOT inside the repo.
+      expect(session.worktree_path!.startsWith(repo)).toBe(false);
+
+      // A write through the session workspace lands in the worktree, not base.
+      writeFileSync(join(session.worktree_path!, "example.txt"), "iso-change\n");
+      expect(readFileSync(join(repo, "example.txt"), "utf-8")).toBe("hello\n");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("`code worktree off` auto-removes a clean worktree", async () => {
+    const repo = makeRepoWithCommit();
+    try {
+      const entity = makeAgentEntity("u_wt_clean", "WtClean");
+      db.saveEntity(entity);
+      grant(db, entity.id, "code.exec");
+      const sent: string[] = [];
+      const command = commandFor(repo, entity);
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start C"));
+      await command.handler(ctx, inputFor(entity, "code worktree on"));
+      const path = db.listCodingSessions(entity.name, 1)[0]!.worktree_path!;
+      sent.length = 0;
+      await command.handler(ctx, inputFor(entity, "code worktree off"));
+      expect(stripAnsi(sent.join("\n"))).toContain("Worktree removed");
+      expect(existsSync(path)).toBe(false);
+      expect(db.listCodingSessions(entity.name, 1)[0]!.worktree_path).toBeNull();
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("`code worktree off` KEEPS a dirty worktree and surfaces the path", async () => {
+    const repo = makeRepoWithCommit();
+    try {
+      const entity = makeAgentEntity("u_wt_dirty", "WtDirty");
+      db.saveEntity(entity);
+      grant(db, entity.id, "code.exec");
+      const sent: string[] = [];
+      const command = commandFor(repo, entity);
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start D"));
+      await command.handler(ctx, inputFor(entity, "code worktree on"));
+      const path = db.listCodingSessions(entity.name, 1)[0]!.worktree_path!;
+      writeFileSync(join(path, "example.txt"), "unsaved\n");
+      sent.length = 0;
+      await command.handler(ctx, inputFor(entity, "code worktree off"));
+      const out = stripAnsi(sent.join("\n"));
+      expect(out).toContain("Kept the worktree");
+      expect(out).toContain(path);
+      expect(existsSync(path)).toBe(true);
+      // Binding preserved so the human can recover the work.
+      expect(db.listCodingSessions(entity.name, 1)[0]!.worktree_path).toBe(path);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("`code worktree on` degrades on a non-git root (no worktree, shared root)", async () => {
+    const plain = realpathSync(mkdtempSync(join(tmpdir(), "marina-wt-cmd-plain-")));
+    try {
+      writeFileSync(join(plain, "example.txt"), "hello\n");
+      const entity = makeAgentEntity("u_wt_nogit", "WtNoGit");
+      db.saveEntity(entity);
+      grant(db, entity.id, "code.exec");
+      const sent: string[] = [];
+      const command = commandFor(plain, entity);
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start P"));
+      sent.length = 0;
+      await command.handler(ctx, inputFor(entity, "code worktree on"));
+      expect(stripAnsi(sent.join("\n"))).toContain("not a git repository");
+      expect(db.listCodingSessions(entity.name, 1)[0]!.worktree_path).toBeNull();
+    } finally {
+      rmSync(plain, { recursive: true, force: true });
+    }
+  });
+
+  it("two sessions on one repo get distinct worktrees", async () => {
+    const repo = makeRepoWithCommit();
+    try {
+      const entity = makeAgentEntity("u_wt_two", "WtTwo");
+      db.saveEntity(entity);
+      grant(db, entity.id, "code.exec");
+      const sent: string[] = [];
+      const command = commandFor(repo, entity);
+      const ctx = testRoomContext(sent);
+
+      await command.handler(ctx, inputFor(entity, "code start One"));
+      await command.handler(ctx, inputFor(entity, "code worktree on"));
+      const first = db.listCodingSessions(entity.name, 5)[0]!.worktree_path!;
+
+      await command.handler(ctx, inputFor(entity, "code start Two"));
+      await command.handler(ctx, inputFor(entity, "code worktree on"));
+      const sessions = db.listCodingSessions(entity.name, 5);
+      const paths = sessions.map((s) => s.worktree_path).filter(Boolean);
+      expect(paths.length).toBe(2);
+      expect(new Set(paths).size).toBe(2);
+      expect(paths).toContain(first);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("`code worktree on` is refused over telnet (host-exec deny)", async () => {
+    const repo = makeRepoWithCommit();
+    try {
+      const entity = makeAgentEntity("u_wt_telnet", "WtTelnet");
+      db.saveEntity(entity);
+      grant(db, entity.id, "code.exec");
+      const sent: string[] = [];
+      const command = codeCommand({
+        db,
+        getEntity: (id) => (id === entity.id ? entity : undefined),
+        workspaceRegistry: new WorkspaceRegistry({ defaultRoot: repo, roots: [repo] }),
+        getConnectionProtocol: () => "telnet",
+      });
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start T"));
+      sent.length = 0;
+      await command.handler(ctx, inputFor(entity, "code worktree on"));
+      expect(stripAnsi(sent.join("\n"))).toContain("not available over telnet");
+      expect(db.listCodingSessions(entity.name, 1)[0]!.worktree_path).toBeNull();
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("`code worktree on` is refused without the code.exec gate", async () => {
+    const repo = makeRepoWithCommit();
+    try {
+      const entity = makeAgentEntity("u_wt_ungated", "WtUngated");
+      db.saveEntity(entity);
+      // No grant: code.exec not earned.
+      const sent: string[] = [];
+      const command = commandFor(repo, entity);
+      const ctx = testRoomContext(sent);
+      await command.handler(ctx, inputFor(entity, "code start U"));
+      sent.length = 0;
+      await command.handler(ctx, inputFor(entity, "code worktree on"));
+      expect(stripAnsi(sent.join("\n")).toLowerCase()).toContain("run or apply code");
+      expect(db.listCodingSessions(entity.name, 1)[0]!.worktree_path).toBeNull();
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});

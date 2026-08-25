@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { accessSync, constants as fsConstants, readdirSync, statSync } from "node:fs";
+import { accessSync, existsSync, constants as fsConstants, readdirSync, statSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import type { AgentEvent, AgentHandle } from "../../agent/agent-types";
 import {
@@ -19,11 +19,21 @@ import {
   renderArgv,
   settleExecApproval,
 } from "../../coding/exec-approver";
-import type { WorkspaceRunResult, WorkspaceRuntime } from "../../coding/local-workspace";
+import {
+  LocalWorkspace,
+  type WorkspaceRunResult,
+  type WorkspaceRuntime,
+} from "../../coding/local-workspace";
 import { CodingProjectManager, PROJECT_ARCHIVE_FORMAT } from "../../coding/project-manager";
 import { CodingServiceManager } from "../../coding/service-manager";
 import { summarizeFlywheelEvents, WorkspaceGateway } from "../../coding/workspace-gateway";
 import { WorkspaceRegistry } from "../../coding/workspace-registry";
+import {
+  createSessionWorktree,
+  isGitRepo,
+  removeSessionWorktree,
+  worktreeHasChanges,
+} from "../../coding/worktree";
 import type { ChannelManager } from "../../coordination/channel-manager";
 import { CrewError, type CrewManager } from "../../coordination/crew-manager";
 import type { FlywheelToolBackend } from "../../integrations/flywheel-manager";
@@ -1073,7 +1083,10 @@ export function codeCommand(deps: CodeDeps): CommandDef {
           case "exit":
           case "back":
           case "world":
-            exitCodeMode(ctx, input.entity, entity, depsWithDb);
+            await exitCodeMode(ctx, input.entity, entity, depsWithDb);
+            return;
+          case "worktree":
+            await handleWorktree(ctx, input.entity, entity, depsWithDb, args);
             return;
           case "exec-mode":
             execModeCommand(ctx, input.entity, entity, depsWithDb, args);
@@ -1095,7 +1108,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
             treeSessions(ctx, input.entity, entity, deps.db);
             return;
           case "done":
-            completeSession(ctx, input.entity, entity, depsWithDb, rawAfterSub);
+            await completeSession(ctx, input.entity, entity, depsWithDb, rawAfterSub);
             return;
           case "ask":
             await askCode(ctx, input.entity, entity, depsWithDb, driver, rawAfterSub);
@@ -1342,19 +1355,63 @@ function enterCodeMode(
   );
 }
 
-function exitCodeMode(
+async function exitCodeMode(
   ctx: RoomContext,
   eid: EntityId,
   entity: Entity,
   deps: CodeDeps & { db: MarinaDB },
-): void {
+): Promise<void> {
+  const activeId = getActiveSessionId(entity);
+  const session = activeId ? deps.db.getCodingSession(activeId) : null;
   if (entity.properties[ACTIVE_MODAL_KEY] === "code") {
     delete entity.properties[ACTIVE_MODAL_KEY];
     delete entity.properties[CODE_CONTEXT_KEY];
     deps.db.saveEntity(entity);
   }
   stopCodeStreamsFor(eid); // stop forwarding the bound agent's activity
-  ctx.send(eid, success("Exited Code Mode."));
+  const lines = [success("Exited Code Mode.")];
+  if (session) {
+    const note = await cleanupSessionWorktree(deps, entity, session);
+    if (note) lines.push(note);
+  }
+  ctx.send(eid, lines.join("\n"));
+}
+
+/**
+ * Auto-remove a session's worktree on close IF it has no uncommitted changes
+ * (safe — nothing lost, it can be recreated). If it has work, keep it and return
+ * a note surfacing the path + branch so the human can merge or discard. Never
+ * spawns host git over telnet — keeps the tree and reports the path instead.
+ * Returns a human-facing note, or undefined for the silent clean-remove path.
+ */
+async function cleanupSessionWorktree(
+  deps: CodeDeps & { db: MarinaDB },
+  entity: Entity,
+  session: CodingSessionRow,
+): Promise<string | undefined> {
+  if (!session.worktree_path) return undefined;
+  if (deps.hostExecForbidden === true) {
+    return dim(`Worktree kept (host git unavailable here): ${session.worktree_path}`);
+  }
+  const removal = await removeSessionWorktree(session.workspace_root, session.worktree_path, {
+    hostExecForbidden: false,
+  });
+  if (removal.removed) {
+    deps.db.updateCodingSession(session.id, { worktreePath: null, worktreeBranch: null });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "worktree_removed",
+      payload: { path: session.worktree_path, branch: session.worktree_branch, auto: true },
+    });
+    return undefined; // clean auto-remove: silent
+  }
+  return [
+    `Kept your worktree (uncommitted work): ${session.worktree_path}`,
+    dim(
+      `Branch ${session.worktree_branch ?? "?"} — merge it (code worktree merge) or discard it manually.`,
+    ),
+  ].join("\n");
 }
 
 function handleProfile(
@@ -1633,6 +1690,230 @@ function handleWorkspace(
       type: "list",
       workspace: root,
     },
+  );
+}
+
+/**
+ * Per-session git-worktree isolation (opt-in, default OFF).
+ *
+ *   code worktree [status]  — show binding + dirty state
+ *   code worktree on        — bind an isolated worktree (git repos only)
+ *   code worktree off       — remove it (auto if clean, keep+report if dirty)
+ *   code worktree merge     — human-gated guidance to merge the branch (no auto-merge)
+ *
+ * `on`/`off` run host git, so they take the SAME gates as the other host-exec
+ * verbs: telnet deny, no-code-root deny, and the earned `code.exec` competence.
+ */
+async function handleWorktree(
+  ctx: RoomContext,
+  eid: EntityId,
+  entity: Entity,
+  deps: CodeDeps & { db: MarinaDB },
+  args: string[],
+): Promise<void> {
+  const action = args[0]?.toLowerCase() ?? "status";
+  const session = resolveSession(ctx, eid, entity, deps.db);
+  if (!session) return;
+
+  if (action === "status" || action === "show") {
+    await worktreeStatus(ctx, eid, deps, session);
+    return;
+  }
+  if (action === "merge") {
+    worktreeMergeGuidance(ctx, eid, session);
+    return;
+  }
+  const enabling = action === "on" || action === "enable";
+  const disabling = action === "off" || action === "disable";
+  if (!enabling && !disabling) {
+    ctx.send(eid, "Usage: code worktree [status|on|off|merge]");
+    return;
+  }
+
+  // on/off mutate the host via git — mirror the host-exec gate ladder.
+  if (deps.getConnectionProtocol?.(eid) === "telnet") {
+    ctx.send(eid, TELNET_HOST_EXEC_DENY);
+    return;
+  }
+  if (getWorkspaceRegistry(deps).usesCwdFallback) {
+    ctx.send(eid, NO_CODE_ROOT_DENY);
+    return;
+  }
+  const gate = checkUnattendedGate(deps.db, eid, "code.exec");
+  if (!gate.ok) {
+    ctx.send(
+      eid,
+      gate.reason ??
+        "Running or applying code requires the code.exec capability, which is earned through contribution.",
+    );
+    return;
+  }
+  const hostExecForbidden = deps.hostExecForbidden === true;
+
+  if (enabling) {
+    if (session.worktree_path && existsSync(session.worktree_path)) {
+      ctx.send(
+        eid,
+        `Worktree already active for ${session.id}: ${session.worktree_path} (${session.worktree_branch}).`,
+      );
+      return;
+    }
+    if (!isGitRepo(session.workspace_root)) {
+      ctx.send(
+        eid,
+        `Workspace is not a git repository — worktree isolation unavailable. Staying on the shared root: ${session.workspace_root}`,
+      );
+      return;
+    }
+    const created = await createSessionWorktree(session.workspace_root, session.id, {
+      hostExecForbidden,
+    });
+    if (!created) {
+      ctx.send(
+        eid,
+        `Could not create a worktree (no commits yet, or git error). Staying on the shared root: ${session.workspace_root}`,
+      );
+      return;
+    }
+    deps.db.updateCodingSession(session.id, {
+      worktreePath: created.path,
+      worktreeBranch: created.branch,
+    });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "worktree_enabled",
+      payload: { path: created.path, branch: created.branch },
+    });
+    updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+    sendCode(
+      ctx,
+      eid,
+      [
+        success(`Worktree isolation on for ${session.id}`),
+        `Path: ${created.path}`,
+        `Branch: ${created.branch}`,
+        dim("Edits land on this branch. Merge back with code worktree merge when ready."),
+      ].join("\n"),
+      {
+        commands: ["code worktree status", "code worktree merge", "code worktree off"],
+        event: "worktree_enabled",
+        sessionId: session.id,
+        status: session.status,
+        title: created.branch,
+        type: "session",
+        workspace: created.path,
+      },
+    );
+    return;
+  }
+
+  // disabling
+  if (!session.worktree_path) {
+    ctx.send(eid, `No worktree bound to ${session.id}. It already uses the shared root.`);
+    return;
+  }
+  const removal = await removeSessionWorktree(session.workspace_root, session.worktree_path, {
+    hostExecForbidden,
+  });
+  if (removal.removed) {
+    deps.db.updateCodingSession(session.id, { worktreePath: null, worktreeBranch: null });
+    deps.db.createCodingEvent({
+      sessionId: session.id,
+      actor: entity.name,
+      kind: "worktree_removed",
+      payload: { path: session.worktree_path, branch: session.worktree_branch },
+    });
+    updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+    ctx.send(
+      eid,
+      success(
+        `Worktree removed; ${session.id} is back on the shared root ${session.workspace_root}.`,
+      ),
+    );
+    return;
+  }
+  // Kept (uncommitted work or removal failed) — keep the binding + surface the path.
+  ctx.send(
+    eid,
+    [
+      `Kept the worktree: ${removal.keptReason ?? session.worktree_path}`,
+      dim(`Branch: ${session.worktree_branch ?? "?"}`),
+      dim("Commit or discard the work, then run code worktree off again."),
+    ].join("\n"),
+  );
+}
+
+async function worktreeStatus(
+  ctx: RoomContext,
+  eid: EntityId,
+  deps: CodeDeps & { db: MarinaDB },
+  session: CodingSessionRow,
+): Promise<void> {
+  if (!session.worktree_path) {
+    ctx.send(
+      eid,
+      [
+        `Worktree: off for ${session.id}.`,
+        `Shared root: ${session.workspace_root}`,
+        dim("Enable isolation with code worktree on (git repos only)."),
+      ].join("\n"),
+    );
+    return;
+  }
+  // Probe dirty state only when host git is available here (never over telnet).
+  let dirtyNote = dim("(dirty state not probed)");
+  if (deps.hostExecForbidden !== true && !getWorkspaceRegistry(deps).usesCwdFallback) {
+    const dirty = await worktreeHasChanges(session.worktree_path, { hostExecForbidden: false });
+    dirtyNote = dirty ? "uncommitted changes present" : "clean";
+  }
+  sendCode(
+    ctx,
+    eid,
+    [
+      header("Session Worktree"),
+      separator(),
+      `Session: ${session.id}`,
+      `Path: ${session.worktree_path}`,
+      `Branch: ${session.worktree_branch ?? "?"}`,
+      `Base root: ${session.workspace_root}`,
+      `State: ${dirtyNote}`,
+      dim("code worktree merge for merge guidance | code worktree off to remove"),
+    ].join("\n"),
+    {
+      commands: ["code worktree merge", "code worktree off"],
+      event: "worktree_status",
+      sessionId: session.id,
+      status: session.status,
+      title: session.worktree_branch ?? session.id,
+      type: "session",
+      workspace: session.worktree_path,
+    },
+  );
+}
+
+/**
+ * Merging a session branch into the base is an EXPLICIT, human-gated step —
+ * Marina never auto-merges. This prints the branch + the exact git command to
+ * run from the base repo; it executes nothing.
+ */
+function worktreeMergeGuidance(ctx: RoomContext, eid: EntityId, session: CodingSessionRow): void {
+  if (!session.worktree_branch) {
+    ctx.send(eid, `No worktree branch bound to ${session.id}. Enable one with code worktree on.`);
+    return;
+  }
+  ctx.send(
+    eid,
+    [
+      header("Merge worktree branch"),
+      separator(),
+      `Branch: ${session.worktree_branch}`,
+      `Base repo: ${session.workspace_root}`,
+      `Worktree: ${session.worktree_path ?? "(removed)"}`,
+      dim("Merging into your base branch is a human step. From the base repo run:"),
+      `  git merge ${session.worktree_branch}`,
+      dim("Marina never auto-merges a session branch into your base."),
+    ].join("\n"),
   );
 }
 
@@ -6940,13 +7221,13 @@ function externalLink(
   });
 }
 
-function completeSession(
+async function completeSession(
   ctx: RoomContext,
   eid: EntityId,
   entity: Entity,
   deps: CodeDeps & { db: MarinaDB },
   summary: string,
-): void {
+): Promise<void> {
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
   const text = summary.trim() || "Session completed.";
@@ -6970,14 +7251,18 @@ function completeSession(
     payload: { artifactId: artifact.id, summary: text },
   });
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
+  const worktreeNote = await cleanupSessionWorktree(deps, entity, session);
   sendCode(
     ctx,
     eid,
     [
       success(`Coding session completed: ${session.id}`),
       `Artifact: ${artifact.id}`,
+      worktreeNote ?? "",
       dim("Use: code show last | code tree | code branch <title>"),
-    ].join("\n"),
+    ]
+      .filter(Boolean)
+      .join("\n"),
     {
       artifactId: artifact.id,
       artifactKind: artifact.kind,
@@ -7203,6 +7488,15 @@ function getSelectedWorkspaceRoot(entity: Entity, deps: CodeDeps): string {
 }
 
 function workspaceForSession(deps: CodeDeps, session: CodingSessionRow): WorkspaceRuntime {
+  // When the session is bound to a Marina-managed worktree (opt-in), all file /
+  // exec ops confine to the worktree instead of the shared root. The worktree
+  // lives OUTSIDE the configured roots (~/.marina/worktrees), so it bypasses the
+  // registry allowlist and constructs a LocalWorkspace pinned to that subtree —
+  // path confinement still applies, just relative to the worktree. Default (no
+  // worktree) is byte-identical to before.
+  if (session.worktree_path && existsSync(session.worktree_path)) {
+    return stampHostExecPolicy(new LocalWorkspace(session.worktree_path), deps);
+  }
   return stampHostExecPolicy(
     getWorkspaceRegistry(deps).workspaceForRoot(session.workspace_root),
     deps,

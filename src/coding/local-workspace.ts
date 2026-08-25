@@ -42,6 +42,13 @@ const CODE_RUN_GIT_COMMANDS = new Set([
   "status --porcelain",
   "status --short",
 ]);
+// Per-session worktree isolation adds exactly these git verbs to the controlled
+// exec surface (see src/coding/worktree.ts). `add`/`remove` take dynamic args, so
+// they are validated structurally below rather than by exact-string match; the
+// managed-path invariant (must live under ~/.marina/worktrees) is enforced by the
+// caller before deletion — this layer only bounds the shape of the argv.
+const CODE_RUN_GIT_WORKTREE_SUBCOMMANDS = new Set(["add", "list", "prune", "remove"]);
+const WORKTREE_MANAGED_BRANCH = /^marina\/session-[A-Za-z0-9._-]+$/;
 const CODE_RUN_ENV: Record<string, string> = {
   TERM: "dumb",
   LANG: "en_US.UTF-8",
@@ -666,6 +673,9 @@ function normalizeBunCommand(root: string, args: string[]): string[] {
 }
 
 function normalizeGitCommand(args: string[]): string[] {
+  if (args[0] === "worktree") {
+    return normalizeGitWorktreeCommand(args);
+  }
   const key = args.join(" ");
   if (!CODE_RUN_GIT_COMMANDS.has(key)) {
     throw new Error(
@@ -676,6 +686,75 @@ function normalizeGitCommand(args: string[]): string[] {
     );
   }
   return ["git", ...args];
+}
+
+// Marina-managed worktree git verbs. Shapes accepted (nothing else):
+//   git worktree list [--porcelain]
+//   git worktree prune
+//   git worktree add -b marina/session-<id> <absolute-path> <ref>
+//   git worktree remove [--force] <absolute-path>
+// SHELL_METACHARACTERS were already rejected upstream, so args here are inert
+// tokens; we still bound branch names, ref shape, and require absolute, ".."-free
+// paths. The absolute path is intentionally OUTSIDE the repo root (a worktree is),
+// so the usual in-root confinement doesn't apply — the caller confines it to the
+// managed dir before it ever asks to delete one.
+function normalizeGitWorktreeCommand(args: string[]): string[] {
+  const sub = args[1];
+  if (!sub || !CODE_RUN_GIT_WORKTREE_SUBCOMMANDS.has(sub)) {
+    throw new Error("Allowed git worktree subcommands: add, list, prune, remove.");
+  }
+  const rest = args.slice(2);
+  if (sub === "list") {
+    if (rest.length === 0) return ["git", "worktree", "list"];
+    if (rest.length === 1 && rest[0] === "--porcelain") {
+      return ["git", "worktree", "list", "--porcelain"];
+    }
+    throw new Error("Allowed: git worktree list [--porcelain].");
+  }
+  if (sub === "prune") {
+    if (rest.length !== 0) throw new Error("git worktree prune takes no arguments.");
+    return ["git", "worktree", "prune"];
+  }
+  if (sub === "add") {
+    if (rest[0] !== "-b" || rest.length !== 4) {
+      throw new Error("Allowed: git worktree add -b <marina/session-branch> <path> <ref>.");
+    }
+    const [, branch, path, ref] = rest as [string, string, string, string];
+    assertManagedWorktreeBranch(branch);
+    assertAbsoluteWorktreePath(path);
+    assertGitRef(ref);
+    return ["git", "worktree", "add", "-b", branch, path, ref];
+  }
+  // remove
+  const force = rest[0] === "--force";
+  const pathArgs = force ? rest.slice(1) : rest;
+  if (pathArgs.length !== 1) {
+    throw new Error("Allowed: git worktree remove [--force] <path>.");
+  }
+  assertAbsoluteWorktreePath(pathArgs[0]);
+  return force
+    ? ["git", "worktree", "remove", "--force", pathArgs[0]!]
+    : ["git", "worktree", "remove", pathArgs[0]!];
+}
+
+function assertManagedWorktreeBranch(branch: string | undefined): void {
+  if (!branch || !WORKTREE_MANAGED_BRANCH.test(branch)) {
+    throw new Error("git worktree add only creates marina/session-* branches.");
+  }
+}
+
+function assertAbsoluteWorktreePath(path: string | undefined): void {
+  if (!path?.startsWith("/") || path.includes("\0") || path.split("/").includes("..")) {
+    throw new Error(`Worktree path must be an absolute path without "..": ${path}`);
+  }
+}
+
+function assertGitRef(ref: string | undefined): void {
+  // Reject a leading '-' so an option-shaped ref (e.g. "--lock") can never be
+  // admitted by the allowlist and parsed by git as a flag rather than a commit.
+  if (!ref || ref.startsWith("-") || !/^[A-Za-z0-9._/-]+$/.test(ref)) {
+    throw new Error(`Invalid git ref: ${ref}`);
+  }
 }
 
 function validateRelativeRunPath(root: string, input: string): void {
