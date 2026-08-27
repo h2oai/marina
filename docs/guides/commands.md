@@ -365,7 +365,7 @@ run or promote candidates automatically. See [Native Evolution Protocols](native
 > project Alpha outcome 0.9 | Verified result and lessons
 ```
 
-Orchestration patterns: `nsed`, `chorus`, `foundry`, `swarm`, `pipeline`, `debate`, `mapreduce`, `blackboard`, `symbiosis`, `research`, `custom`
+Orchestration patterns: `deliberation`, `chorus`, `foundry`, `swarm`, `pipeline`, `debate`, `mapreduce`, `blackboard`, `symbiosis`, `research`, `custom`
 
 Recommendations begin with task-shape fit, then use evidence recorded in each
 `orchestration:<pattern>` tradition pool to rank patterns with successful comparable outcomes. Budgets

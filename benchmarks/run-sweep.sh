@@ -5,14 +5,14 @@
 # Multi-substrate / multi-benchmark sweep.
 #
 # Assumes launch-stack.sh has set up Marina + ThinProviders + Translator.
-# This script swaps SmartProvider (or NSEDProvider) answerers between runs,
+# This script swaps SmartProvider (or EnsembleProvider) answerers between runs,
 # and/or runs the harness across multiple benchmarks.
 #
 # Usage:
 #   ./run-sweep.sh mmlu-pro 100 42           # single bench, N=100 seed=42
 #   ./run-sweep.sh "mmlu-pro,ifeval" 50 42   # multiple benches
 #
-# Expects the current SmartProvider/NSEDProvider on channel=model to be the
+# Expects the current SmartProvider/EnsembleProvider on channel=model to be the
 # "answerer under test". Restart it externally between substrates.
 
 set -euo pipefail

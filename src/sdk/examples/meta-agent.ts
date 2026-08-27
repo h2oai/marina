@@ -157,8 +157,8 @@ ${wrongSample}
 
 - passthrough    — bare substrate, no Marina added. use as diagnostic control.
 - smart          — single substrate + translator + recall + pool injection. uses: memory, translator, pools.
-- nsed           — N-substrate ensemble with majority vote on extracted letter. homogeneous temperature spread.
-- nsed-smart     — heterogeneous ensemble + translator + recall + pool. council substrates drawn from diverse vendors.
+- ensemble       — N-substrate ensemble with majority vote on extracted letter. homogeneous temperature spread.
+- ensemble-smart — heterogeneous ensemble + translator + recall + pool. council substrates drawn from diverse vendors.
 - debate         — 2 proposers argue; judge decides when they disagree. params: proposerA, proposerB, judge.
 - pipeline       — parse(council-member) → reason(escalator) → verify(council-member). best for multi-step reasoning.
 - foundry       — worker writes, Gate reviewer approves/rejects with retry. params: worker, reviewer, maxRounds.
@@ -193,7 +193,7 @@ Answer in TWO sections:
   "parentVersion": "${parentVersion}",
   "changeSet": ["specific changes vs parent"],
   "rationale": "one-sentence why this should score higher",
-  "orchestrator": "one of: passthrough|smart|nsed|nsed-smart|debate|pipeline|foundry|adaptive|blackboard|world|synthesis",
+  "orchestrator": "one of: passthrough|smart|ensemble|ensemble-smart|debate|pipeline|foundry|adaptive|blackboard|world|synthesis",
   "orchestratorParams": {
     "council": ["marina:haiku"],
     "strong": "marina:gemini",
@@ -293,7 +293,7 @@ function emitLaunchScript(proposal: Record<string, unknown>, benchmark: string):
   }
   lines.push("", "# 3. Kill previous orchestrator, launch proposed one");
   lines.push(
-    'pkill -f "sdk/examples/(synthesis|adaptive|debate|pipeline|foundry|blackboard|world-coordinator|nsed)-provider" 2>/dev/null || true',
+    'pkill -f "sdk/examples/(synthesis|adaptive|debate|pipeline|foundry|blackboard|world-coordinator|ensemble|ensemble-smart)-provider" 2>/dev/null || true',
     "sleep 3",
     "sqlite3 marina.db \"DELETE FROM channel_members WHERE channel_id='ch:model'\"",
     "",
@@ -364,15 +364,22 @@ function emitLaunchScript(proposal: Record<string, unknown>, benchmark: string):
       `  BLACKBOARD_JUDGE="${(op2.judge as string) ?? "marina:sonnet"}" \\`,
       "  bun run src/sdk/examples/blackboard-provider.ts &",
     );
-  } else if (orch === "nsed" || orch === "nsed-smart") {
+  } else if (
+    orch === "ensemble" ||
+    orch === "ensemble-smart" ||
+    // legacy acronym ids, normalized to the functional names
+    orch === "nsed" ||
+    orch === "nsed-smart"
+  ) {
+    const smart = orch === "ensemble-smart" || orch === "nsed-smart";
     const subs = (
       (op2.council as string[]) ?? ["marina:haiku", "marina:qwen", "marina:gemma", "marina:kimi"]
     ).join(",");
-    const file = orch === "nsed-smart" ? "nsed-smart-provider.ts" : "nsed-provider.ts";
+    const file = smart ? "ensemble-smart-provider.ts" : "ensemble-provider.ts";
     const reflector = (op2.reflector as string) ?? "marina:haiku";
     lines.push(
-      `NSED_SUBSTRATES="${subs}" \\`,
-      orch === "nsed-smart"
+      `ENSEMBLE_SUBSTRATES="${subs}" \\`,
+      smart
         ? `  USE_TRANSLATOR=true \\\n  TRANSLATOR_CHANNEL="${tchan}" \\\n  MEMORY_LEARN=true \\\n  REFLECTION_PROVIDER_MODEL="${reflector}" \\`
         : "",
       `  bun run src/sdk/examples/${file} &`,

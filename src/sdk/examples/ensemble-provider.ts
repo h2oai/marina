@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * NSED Ensemble Provider — answers the Marina LLM endpoint by calling N
- * substrates in parallel (Negotiate), majority-voting on the extracted
- * answer (Select), returning the winner's full response (Execute), and
- * optionally noting any disagreements (Debrief).
+ * Ensemble Provider (formerly "NSED") — answers the Marina LLM endpoint by
+ * calling N substrates in parallel, majority-voting on the extracted answer,
+ * returning the winner's full response, and optionally noting any
+ * disagreements.
  *
  * Self-referential: every substrate call goes through Marina's own
- * /v1/chat/completions. Change NSED_SUBSTRATES to swap models/providers.
+ * /v1/chat/completions. Change ENSEMBLE_SUBSTRATES to swap models/providers.
  *
  * For MCQ benchmarks: the response letter is extracted from each substrate's
  * text and votes are taken on the letter. The WINNER's full response is
@@ -16,41 +16,48 @@
  *
  * Usage:
  *   # 4 Haikus at different temperatures (diversity ensemble)
- *   NSED_SUBSTRATES=marina:haiku,marina:haiku,marina:haiku,marina:haiku \
- *   NSED_TEMPERATURES=0,0.3,0.7,1.0 \
- *   bun run src/sdk/examples/nsed-provider.ts
+ *   ENSEMBLE_SUBSTRATES=marina:haiku,marina:haiku,marina:haiku,marina:haiku \
+ *   ENSEMBLE_TEMPERATURES=0,0.3,0.7,1.0 \
+ *   bun run src/sdk/examples/ensemble-provider.ts
  *
  *   # Mixed-model heterogeneous ensemble
- *   NSED_SUBSTRATES=marina:haiku,marina:qwen,marina:gemma,marina:kimi \
- *   NSED_TEMPERATURES=0,0,0,0 \
- *   bun run src/sdk/examples/nsed-provider.ts
+ *   ENSEMBLE_SUBSTRATES=marina:haiku,marina:qwen,marina:gemma,marina:kimi \
+ *   ENSEMBLE_TEMPERATURES=0,0,0,0 \
+ *   bun run src/sdk/examples/ensemble-provider.ts
  *
  * Env:
  *   WS_URL           — Marina WS (default ws://localhost:3300)
  *   MARINA_ENDPOINT — default http://localhost:3300
- *   AGENT_NAME       — character (default NSEDProvider)
+ *   AGENT_NAME       — character (default EnsembleProvider)
  *   MODEL_CHANNEL    — channel to answer on (default "model")
- *   NSED_SUBSTRATES  — comma-separated model names for each parallel call
- *   NSED_TEMPERATURES — comma-separated temps per call (default 0 for all)
- *   NSED_TRACE       — "true" logs vote tallies per request
+ *   ENSEMBLE_SUBSTRATES  — comma-separated model names for each parallel call
+ *   ENSEMBLE_TEMPERATURES — comma-separated temps per call (default 0 for all)
+ *   ENSEMBLE_TRACE       — "true" logs vote tallies per request
+ *   (legacy NSED_SUBSTRATES / NSED_TEMPERATURES / NSED_TRACE still honored)
  */
 
 import { MarinaAgent, type Perception } from "../client";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
 const MARINA_ENDPOINT = (process.env.MARINA_ENDPOINT ?? "http://localhost:3300").replace(/\/$/, "");
-const AGENT_NAME = process.env.AGENT_NAME ?? "NSEDProvider";
+const AGENT_NAME = process.env.AGENT_NAME ?? "EnsembleProvider";
 const MODEL_CHANNEL = process.env.MODEL_CHANNEL ?? "model";
 const SUBSTRATES = (
-  process.env.NSED_SUBSTRATES ?? "marina:haiku,marina:haiku,marina:haiku,marina:haiku"
+  process.env.ENSEMBLE_SUBSTRATES ??
+  process.env.NSED_SUBSTRATES ??
+  "marina:haiku,marina:haiku,marina:haiku,marina:haiku"
 )
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-const TEMPERATURES = (process.env.NSED_TEMPERATURES ?? SUBSTRATES.map(() => "0").join(","))
+const TEMPERATURES = (
+  process.env.ENSEMBLE_TEMPERATURES ??
+  process.env.NSED_TEMPERATURES ??
+  SUBSTRATES.map(() => "0").join(",")
+)
   .split(",")
   .map((s) => Number.parseFloat(s.trim()) || 0);
-const TRACE = process.env.NSED_TRACE === "true";
+const TRACE = (process.env.ENSEMBLE_TRACE ?? process.env.NSED_TRACE) === "true";
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI strip
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
@@ -178,7 +185,7 @@ async function handleRequest(request: {
     .join(" ");
   const consensus = winnerLetter ? (tally[winnerLetter]! / ballots.length).toFixed(2) : "0";
   console.log(
-    `[nsed] ${request.id} winner=${winnerLetter || "?"} consensus=${consensus} tally=[${tallyStr}] in ${dt}ms`,
+    `[ensemble] ${request.id} winner=${winnerLetter || "?"} consensus=${consensus} tally=[${tallyStr}] in ${dt}ms`,
   );
   if (TRACE) {
     for (const b of ballots) {
@@ -198,12 +205,12 @@ async function handleRequest(request: {
 async function main() {
   const agent = new MarinaAgent(WS_URL, { autoReconnect: true });
   const session = await agent.connect(AGENT_NAME);
-  console.log(`[nsed] logged in as ${session.name} (${session.entityId})`);
-  console.log(`[nsed] ensemble of ${SUBSTRATES.length}:`);
+  console.log(`[ensemble] logged in as ${session.name} (${session.entityId})`);
+  console.log(`[ensemble] ensemble of ${SUBSTRATES.length}:`);
   SUBSTRATES.forEach((s, i) => {
     console.log(`  [${i}] ${s} @ t=${TEMPERATURES[i] ?? 0}`);
   });
-  console.log(`[nsed] answering on channel: ${MODEL_CHANNEL}`);
+  console.log(`[ensemble] answering on channel: ${MODEL_CHANNEL}`);
 
   await agent.command(`channel create ${MODEL_CHANNEL}`);
   await agent.command(`channel join ${MODEL_CHANNEL}`);
@@ -236,7 +243,7 @@ async function main() {
         JSON.stringify({ type: "model_response", id: request.id, content: answer }),
       );
     } catch (err) {
-      console.error(`[nsed] ${request.id} error:`, err);
+      console.error(`[ensemble] ${request.id} error:`, err);
       await agent.channel(
         MODEL_CHANNEL,
         JSON.stringify({
@@ -249,13 +256,13 @@ async function main() {
   });
 
   process.on("SIGINT", () => {
-    console.log("[nsed] shutting down...");
+    console.log("[ensemble] shutting down...");
     agent.disconnect();
     process.exit(0);
   });
 }
 
 main().catch((e) => {
-  console.error("[nsed] fatal:", e);
+  console.error("[ensemble] fatal:", e);
   process.exit(1);
 });

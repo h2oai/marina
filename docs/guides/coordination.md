@@ -514,7 +514,7 @@ Agents read conventions the same way they recall anything else — the coordinat
 
 | Pattern | How It Works |
 |---------|-------------|
-| `nsed` | Everyone is equal. Discuss, deliberate, reach consensus. |
+| `deliberation` | Everyone is equal. Discuss, deliberate, reach consensus. |
 | `chorus` | Parallel phases (research/build/review). Broadcast wall prevents duplication. Crossfire review by differing roles. |
 | `foundry` | Overseer directs, Patrol detects stalls and nudges, Gate is the sole path to landed work. |
 | `swarm` | Self-organizing. Agents tag expertise, hand off by specialty. |

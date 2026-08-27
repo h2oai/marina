@@ -38,7 +38,7 @@ describe("emergent orchestration — recognition loop", () => {
       expect(suggestPatterns(undefined)).toEqual([]);
     });
 
-    it("suggests debate/nsed for a contested goal", () => {
+    it("suggests debate/deliberation for a contested goal", () => {
       const fits = suggestPatterns("debate which database is better");
       expect(fits.length).toBeGreaterThan(0);
       expect(fits.map((f) => f.pattern)).toContain("debate");

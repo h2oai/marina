@@ -875,7 +875,7 @@ const META_ROOM: RoomModule = {
     "pattern-display":
       "A visualization showing cross-market correlations. When geopolitical confidence shifts, how do technology markets respond?",
     "methodology-tracker":
-      "Tracks which orchestration patterns (debate, research, NSED, etc.) produce the most accurate forecasts across resolved markets.",
+      "Tracks which orchestration patterns (debate, research, deliberation, etc.) produce the most accurate forecasts across resolved markets.",
   },
 };
 
@@ -1014,7 +1014,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "to structure research. Recommended: " +
       "'debate' — adversarial positions scored and synthesized. " +
       "'research' — hypothesis-driven investigation loop. " +
-      "'nsed' — peer deliberation for consensus. " +
+      "'deliberation' — peer deliberation for consensus. " +
       "'symbiosis' — collaborative frontier scanning.",
     importance: 9,
     type: "skill",
@@ -1245,7 +1245,7 @@ function seed(db: MarinaDB): void {
     name: "Economics",
     description:
       "Research monetary policy, recession probabilities, and market dynamics for economic predictions",
-    orchestration: "nsed",
+    orchestration: "deliberation",
     tasks: [
       {
         title: "Compile leading economic indicators",
@@ -1266,7 +1266,7 @@ function seed(db: MarinaDB): void {
     poolNotes: [
       {
         content:
-          "Economics research: NSED pattern — propose, cross-evaluate, refine, converge on consensus.",
+          "Economics research: deliberation pattern — propose, cross-evaluate, refine, converge on consensus.",
         importance: 8,
       },
       {

@@ -159,7 +159,7 @@ These commands are also available via the dedicated `canvas` MCP tool (preferred
 | `project create` | `"project create Alpha \| Research project"` | Create a new project with a name and description |
 | `project list` | `"project list"` | List all projects |
 | `project info` | `"project info Alpha"` | View project details |
-| `project orchestrate` | `"project Alpha orchestrate swarm"` | Set orchestration pattern (nsed, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, custom) |
+| `project orchestrate` | `"project Alpha orchestrate swarm"` | Set orchestration pattern (deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, custom) |
 | `project memory` | `"project Alpha memory tiered"` | Set memory architecture (tiered, generative, graph, shared, custom) |
 | `project join` | `"project Alpha join"` | Join a project team |
 | `project status` | `"project Alpha status"` | View project status and team |

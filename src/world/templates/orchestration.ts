@@ -17,7 +17,7 @@ export interface TemplateNote {
  * the generational-memory patterns, then `custom` last.
  */
 export const ORCHESTRATION_PATTERNS = [
-  "nsed",
+  "deliberation",
   "chorus",
   "foundry",
   "swarm",
@@ -31,6 +31,22 @@ export const ORCHESTRATION_PATTERNS = [
 ] as const;
 
 export type OrchestrationPattern = (typeof ORCHESTRATION_PATTERNS)[number];
+
+/**
+ * Deprecated pattern names still accepted on input and possibly present in
+ * persisted rows (project orchestration values, crew formations). Descriptive
+ * names classify organization strategies better than acronyms long-term, so
+ * the acronyms are normalized to their functional form everywhere and never
+ * advertised. `nsed` (Negotiate/Select/Execute/Debrief) → `deliberation`.
+ */
+export const LEGACY_PATTERN_ALIASES: Record<string, OrchestrationPattern> = {
+  nsed: "deliberation",
+};
+
+/** Map a possibly-legacy pattern name to its canonical form. */
+export function normalizePatternName(name: string): string {
+  return LEGACY_PATTERN_ALIASES[name] ?? name;
+}
 
 /** Human-facing help string listing patterns, pipe-separated. */
 export const ORCHESTRATION_HELP = ORCHESTRATION_PATTERNS.join("|");
@@ -57,7 +73,10 @@ export const PATTERN_FIT: Record<
   Exclude<OrchestrationPattern, "custom">,
   { shapes: TaskShape[]; why: string }
 > = {
-  nsed: { shapes: ["contested", "open-ended"], why: "propose → cross-evaluate → converge" },
+  deliberation: {
+    shapes: ["contested", "open-ended"],
+    why: "propose → cross-evaluate → converge",
+  },
   chorus: { shapes: ["parallel", "shared-artifact"], why: "parallel phases + crossfire review" },
   foundry: { shapes: ["hierarchical", "decomposable"], why: "overseer → workers → merge gate" },
   swarm: { shapes: ["parallel", "open-ended"], why: "self-organizing expertise matching" },
@@ -130,19 +149,20 @@ export function suggestPatterns(
     .map(({ pattern, why }) => ({ pattern, why }));
 }
 
-export const NSED_TEMPLATE: TemplateNote[] = [
+export const DELIBERATION_TEMPLATE: TemplateNote[] = [
   {
     content:
-      "This project uses NSED orchestration (Negotiate, Select, Execute, Debrief). " +
-      "All decisions go through a structured cycle: someone proposes, everyone evaluates, " +
-      "the group converges, then executes. Use the project board for proposals.",
+      "This project uses Deliberation orchestration: flat peer deliberation through a " +
+      "propose → evaluate → execute → debrief cycle. All decisions go through the structured " +
+      "cycle: someone proposes, everyone evaluates, the group converges, then executes. " +
+      "Use the project board for proposals.",
     importance: 9,
     type: "skill",
   },
   {
     content:
-      "NSED Propose phase: post a proposal to the project board with a clear title and body. " +
-      "Tag proposals with [proposal]. Others respond with numeric votes (1-10) using " +
+      "Deliberation propose phase: post a proposal to the project board with a clear title and " +
+      "body. Tag proposals with [proposal]. Others respond with numeric votes (1-10) using " +
       "'board vote <board> <post> <score>'. A proposal needs majority support (avg >= 6) " +
       "to advance to execution.",
     importance: 8,
@@ -150,27 +170,27 @@ export const NSED_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "NSED Evaluate phase: read proposals on the board, score them 1-10, and reply with " +
-      "reasoning. Evaluation ends when all active members have voted or after a reasonable " +
+      "Deliberation evaluate phase: read proposals on the board, score them 1-10, and reply " +
+      "with reasoning. Evaluation ends when all active members have voted or after a reasonable " +
       "discussion period. Check scores with 'board scores <board> <post>'.",
     importance: 8,
     type: "skill",
   },
   {
     content:
-      "NSED Execute phase: once a proposal passes, create tasks from it. Assign tasks to " +
-      "the project bundle. Claim and work tasks individually. Submit results for review. " +
+      "Deliberation execute phase: once a proposal passes, create tasks from it. Assign tasks " +
+      "to the project bundle. Claim and work tasks individually. Submit results for review. " +
       "The proposer or project creator approves submissions.",
     importance: 8,
     type: "skill",
   },
   {
     content:
-      "NSED Debrief phase: debrief is not complete until a [lesson] pool note is posted " +
+      "Deliberation debrief phase: debrief is not complete until a [lesson] pool note is posted " +
       "summarizing what worked, what failed, and what to do differently. Link the lesson " +
       "to the original [proposal] via 'note link <lesson-id> <proposal-id> part_of'. " +
-      "Only then does the next Negotiate begin. The cycle only counts if the lesson outlives " +
-      "the cycle — skip the artifact and the cycle was just meetings.",
+      "Only then does the next propose phase begin. The cycle only counts if the lesson " +
+      "outlives the cycle — skip the artifact and the cycle was just meetings.",
     importance: 7,
     type: "skill",
   },

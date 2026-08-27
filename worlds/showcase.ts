@@ -223,7 +223,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "<name> <f>' transitions the formation. 'crew persist <name>' upgrades ephemeral → persisted (auto-" +
       "creates a crew:<name> memory pool). 'crew complete <name> -- <summary>' writes a result note and " +
       "dissolves. 'crew dissolve <name>' force-ends. Members see crew context in 'brief' and 'who'. " +
-      "Formations: nsed, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, " +
+      "Formations: deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, " +
       "research, freeform — same shapes as project orchestration patterns. Use a crew when the work fits " +
       "in one task; use a project when it spans tasks/bundles/governance.",
     importance: 8,
@@ -638,7 +638,7 @@ function seed(db: MarinaDB): void {
       "Recipe: Team Sprint\n" +
         "Stand up a coordinated team effort with structure and accountability.\n\n" +
         "project create <name> | <goal>\n" +
-        "project <name> orchestrate nsed\n" +
+        "project <name> orchestrate deliberation\n" +
         "task create <work item 1> | <description> !<standing> bounty\n" +
         "task create <work item 2> | <description> !<standing> bounty\n" +
         "task create <work item 3> | <description> !<standing> bounty\n" +
@@ -752,7 +752,7 @@ function seed(db: MarinaDB): void {
 
   seedPoolWithNotes(db, "coordination-patterns", [
     {
-      content: "nsed: peer deliberation. All agents discuss, then converge on a decision.",
+      content: "deliberation: peer deliberation. All agents discuss, then converge on a decision.",
       importance: 8,
     },
     {

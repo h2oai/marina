@@ -93,7 +93,7 @@ describe("usecase evolve recipe", () => {
     expect(getRecipe("debate")!("A or B").orchestration).toBe("debate");
     expect(getRecipe("solve")!("hard problem").orchestration).toBe("blackboard");
     expect(getRecipe("explore")!("new domain").orchestration).toBe("symbiosis");
-    expect(getRecipe("plan")!("launch").orchestration).toBe("nsed");
+    expect(getRecipe("plan")!("launch").orchestration).toBe("deliberation");
   });
 
   it("appears in recipe list and info with team-aware display", async () => {

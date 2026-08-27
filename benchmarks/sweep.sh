@@ -10,7 +10,8 @@
 #   passthrough  — no provider on model channel (fallback to proxyToUpstream)
 #                  requires "model" column set to marina:sonnet / :haiku / etc.
 #   smart        — smart-provider (memory + translator)
-#   nsed-smart   — nsed-smart-provider (ensemble + memory + translator)
+#   ensemble-smart — ensemble-smart-provider (ensemble + memory + translator)
+#                  (legacy id "nsed-smart" still accepted)
 #   debate       — debate-provider
 #   pipeline     — pipeline-provider
 #   foundry      — foundry-provider
@@ -43,7 +44,7 @@ echo | tee -a "$SWEEP_LOG"
 echo "orchestrator,benchmark,model,limit,seed,overall,answered,errors,timeouts,duration_s,result_file" > "$CSV"
 
 kill_orchestrators() {
-  for name in smart-provider nsed-smart-provider nsed-provider debate-provider pipeline-provider foundry-provider adaptive-provider blackboard-provider world-coordinator-provider synthesis-provider; do
+  for name in smart-provider ensemble-smart-provider ensemble-provider debate-provider pipeline-provider foundry-provider adaptive-provider blackboard-provider world-coordinator-provider synthesis-provider; do
     pkill -f "sdk/examples/$name" 2>/dev/null || true
   done
   # Also kill task-workers — they're only needed for the `world` orchestrator
@@ -58,7 +59,8 @@ launch_orchestrator() {
   case "$orch" in
     passthrough) return 0 ;;  # no provider needed
     smart)       ofile=smart-provider.ts ;;
-    nsed-smart)  ofile=nsed-smart-provider.ts ;;
+    ensemble-smart|nsed-smart) ofile=ensemble-smart-provider.ts ;;
+    ensemble|nsed)             ofile=ensemble-provider.ts ;;
     debate)      ofile=debate-provider.ts ;;
     pipeline)    ofile=pipeline-provider.ts ;;
     foundry)     ofile=foundry-provider.ts ;;

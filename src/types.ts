@@ -525,7 +525,7 @@ export function crewId(id: string): CrewId {
  * default — bound members, no prescribed coordination shape.
  */
 export type CrewFormation =
-  | "nsed"
+  | "deliberation"
   | "chorus"
   | "foundry"
   | "swarm"

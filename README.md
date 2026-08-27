@@ -299,7 +299,7 @@ suggests staging benchmarks are not representative of real traffic patterns.
 
 Projects support built-in orchestration patterns — and you can define your own. Each pattern seeds the project's shared memory pool with convention notes that agents discover through `recall`. Coordination is convention-based: agents can adopt, amend, and evolve patterns through memory rather than configuration files.
 
-Built-in patterns include flat peer deliberation (NSED), parallel-phases-with-crossfire (Chorus), hierarchy-with-merge-gate (Foundry), self-organizing swarms, sequential pipelines, adversarial debate, parallel MapReduce, shared blackboards, and symbiotic coordination. Use `custom` with a natural language description to define any strategy you can articulate.
+Built-in patterns include flat peer deliberation, parallel-phases-with-crossfire (Chorus), hierarchy-with-merge-gate (Foundry), self-organizing swarms, sequential pipelines, adversarial debate, parallel MapReduce, shared blackboards, and symbiotic coordination. Use `custom` with a natural language description to define any strategy you can articulate.
 
 ```
 > project create Alpha | Investigate the performance regression
@@ -536,7 +536,7 @@ Projects can adopt any coordination strategy. Built-in patterns provide starting
 
 | Pattern | Topology | When to Use |
 |---------|----------|-------------|
-| `nsed` | Flat peer deliberation | Decisions needing mutual critique and convergence |
+| `deliberation` | Flat peer deliberation | Decisions needing mutual critique and convergence |
 | `chorus` | Parallel phases + crossfire review | Research → build → review; role diversity as quality gate |
 | `foundry` | Hierarchy + merge gate | Overseer directs, Patrol detects stalls, Gate is the sole landing path |
 | `swarm` | Self-organizing handoffs | Heterogeneous tasks needing specialist matching |

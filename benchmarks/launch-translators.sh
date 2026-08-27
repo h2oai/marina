@@ -32,7 +32,7 @@
 #   ./benchmarks/launch-translators.sh
 #
 # Then:
-#   TRANSLATOR_CHANNEL=translator-gemini bun run src/sdk/examples/nsed-smart-provider.ts
+#   TRANSLATOR_CHANNEL=translator-gemini bun run src/sdk/examples/ensemble-smart-provider.ts
 
 set -eo pipefail
 cd "$(dirname "$0")/.."

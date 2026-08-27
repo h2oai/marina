@@ -13,9 +13,10 @@ import type {
   Entity,
   RoomContext,
 } from "../../types";
+import { normalizePatternName } from "../../world/templates/orchestration";
 
 const VALID_FORMATIONS: ReadonlySet<CrewFormation> = new Set<CrewFormation>([
-  "nsed",
+  "deliberation",
   "chorus",
   "foundry",
   "swarm",
@@ -81,7 +82,8 @@ function parseCreateArgs(args: string): {
     const key = tok.slice(0, eq).toLowerCase();
     const value = tok.slice(eq + 1).toLowerCase();
     if (key === "formation") {
-      if (!VALID_FORMATIONS.has(value as CrewFormation)) {
+      const canonical = normalizePatternName(value);
+      if (!VALID_FORMATIONS.has(canonical as CrewFormation)) {
         return {
           name,
           members,
@@ -89,7 +91,7 @@ function parseCreateArgs(args: string): {
           error: `Unknown formation "${value}". Valid: ${[...VALID_FORMATIONS].join(", ")}`,
         };
       }
-      formation = value as CrewFormation;
+      formation = canonical as CrewFormation;
     }
   }
 
@@ -125,7 +127,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       "  crew stall <name> <agent> [reason]\n" +
       "  crew complete <name> -- <summary>\n" +
       "  crew dissolve <name> [reason]\n" +
-      "Formations: nsed, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, freeform\n" +
+      "Formations: deliberation, chorus, foundry, swarm, pipeline, debate, mapreduce, blackboard, symbiosis, research, freeform\n" +
       "Artifact kinds: map, reduce, synthesis, draft",
     handler: (ctx: RoomContext, input) => {
       const caller = deps.getEntity(input.entity);
@@ -448,7 +450,10 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       // crew formation <name> <formation> — owner or rank 3+
       if (sub === "formation") {
         const name = tokens[1];
-        const formation = tokens[2]?.toLowerCase() as CrewFormation | undefined;
+        const rawFormation = tokens[2]?.toLowerCase();
+        const formation = (rawFormation ? normalizePatternName(rawFormation) : undefined) as
+          | CrewFormation
+          | undefined;
         if (!name || !formation) {
           ctx.send(input.entity, "Usage: crew formation <name> <formation>");
           return;

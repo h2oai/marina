@@ -561,7 +561,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "crew",
-      "Multi-agent crews: runtime containers with formations (nsed, chorus, foundry, swarm, " +
+      "Multi-agent crews: runtime containers with formations (deliberation, chorus, foundry, swarm, " +
         "pipeline, debate, mapreduce, blackboard, symbiosis, research, freeform). Subcommands: " +
         "create, invite, invitations, join, decline, dispatch, info, leave, formation, persist, complete, dissolve. " +
         "Usage: crew <subcommand> [args]",

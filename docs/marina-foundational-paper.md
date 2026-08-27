@@ -465,7 +465,7 @@ Agents then discover these conventions through `recall`, and can follow, amend, 
 
 | Pattern | Topology | Core Mechanism | Research Basis |
 |---------|----------|----------------|----------------|
-| **NSED** | Flat peer ring | Propose → evaluate → refine → converge | Peeramid-labs (84% on AIME 2025) [16] |
+| **Deliberation** | Flat peer ring | Propose → evaluate → refine → converge | Peeramid-labs NSED (84% on AIME 2025) [16] |
 | **Chorus** | Hub-and-spoke with phases | Parallel delegates across research/build/review, broadcast wall, crossfire review by differing roles | Lineage: Block's Goosetown [17] |
 | **Foundry** | Deep hierarchy + merge gate | Overseer → Patrol → Workers, Gate is the sole landing path; stall detection via engine signals | Lineage: Yegge's Gastown [18] |
 | **Swarm** | Self-organizing mesh | Expertise matching via core memory tags | OpenAI Swarm concept [5] |
@@ -482,7 +482,7 @@ Agents then discover these conventions through `recall`, and can follow, amend, 
     Centralized                                         Decentralized
     ◄──────────────────────────────────────────────────────────────►
 
-    Foundry          Chorus          Pipeline        NSED
+    Foundry          Chorus          Pipeline        Deliberation
     (hierarchy)      (hub-spoke)     (sequential)    (peer ring)
          │               │               │               │
          │          MapReduce        Debate          Swarm
@@ -497,11 +497,11 @@ Agents then discover these conventions through `recall`, and can follow, amend, 
 
 **Figure 4.** Orchestration patterns arranged by centralization. Marina supports the full spectrum from strict hierarchy (Foundry) to fully decentralized self-organization (Swarm, Symbiosis). All patterns operate through the same memory-based discovery mechanism.
 
-### 5.3 NSED Case Study
+### 5.3 Deliberation Case Study
 
-The NSED (Non-Symmetric Evaluation Deliberation) pattern deserves special attention. Research by peeramid-labs demonstrated that three small language models (20B, 8B, 12B parameters) using symmetric cross-evaluation deliberation scored 84% on AIME 2025 — matching DeepSeek-R1's performance versus 54% for naive majority voting.
+The deliberation pattern (rooted in peeramid-labs' NSED — Non-Symmetric Evaluation Deliberation — research) deserves special attention. Research by peeramid-labs demonstrated that three small language models (20B, 8B, 12B parameters) using symmetric cross-evaluation deliberation scored 84% on AIME 2025 — matching DeepSeek-R1's performance versus 54% for naive majority voting.
 
-In Marina, NSED is implemented as pool conventions: agents propose solutions, cross-evaluate each other's proposals (scoring 1–10 on boards), refine based on feedback, and converge through iterative voting. The entire pattern requires no special infrastructure — only the existing board voting system, pool memory, and natural language conventions.
+In Marina, deliberation is implemented as pool conventions: agents propose solutions, cross-evaluate each other's proposals (scoring 1–10 on boards), refine based on feedback, and converge through iterative voting. The entire pattern requires no special infrastructure — only the existing board voting system, pool memory, and natural language conventions.
 
 ---
 
@@ -771,7 +771,7 @@ The markets world seeds four multi-agent research projects, each using a differe
 |---------|---------|------------|
 | Geopolitics | Debate | Take positions, score evidence, synthesize |
 | Technology | Research | Hypothesis-driven hypothesis-test-reflect loops |
-| Economics | NSED | Propose, cross-evaluate, refine, converge |
+| Economics | Deliberation | Propose, cross-evaluate, refine, converge |
 | Meta-Analysis | Symbiosis | Compare methodologies, benchmark against external markets |
 
 Each project includes a task group, memory pool with seeded convention notes, linked boards, and dedicated channels — creating structured research environments where agents develop calibrated forecasting ability.
@@ -1190,7 +1190,7 @@ Building on the NVIDIA AIQ analysis, Marina is developing seven universal intent
 | `build <artifact>` | Sequential stages + review gates | Pipeline view |
 | `solve <problem>` | Blackboard convergence | Convergence funnel |
 | `explore <domain>` | Symbiosis (breadth/depth) | Frontier map |
-| `plan <goal>` | NSED (propose/evaluate/converge) | Decision tree |
+| `plan <goal>` | Deliberation (propose/evaluate/converge) | Decision tree |
 | `monitor <target>` | Long-running tick observation | Timeline |
 
 ### 15.2 Perception Filtering

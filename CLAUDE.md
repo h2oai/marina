@@ -126,7 +126,7 @@ cd dashboard && bun run test  # Frontend smoke tests (vitest, ~24 tests)
 ## Orchestration Patterns (10 patterns, all implemented)
 - All patterns are convention-based pool notes discovered via `recall`, not engine constraints
 - Activated via `project <name> orchestrate <pattern>`
-- Patterns: NSED (negotiate/select/execute/debrief with lesson artifact), Chorus (parallel phases + broadcast wall + crossfire review), Foundry (Overseer/Patrol/Gate hierarchy + merge-queue invariant), Swarm (self-organizing handoffs with payload), Pipeline (sequential stages + contract per stage), Debate (sealed positions + adversarial argumentation), MapReduce (parallel decomposition with independence invariant), Blackboard (shared workspace + no-private-state invariant), Symbiosis (mutual epistemic benefit + entropy-driven mode shifts), Research (iterative experimentation)
+- Patterns: Deliberation (flat peer propose/evaluate/execute/debrief with lesson artifact; formerly "NSED" — legacy name accepted, never advertised), Chorus (parallel phases + broadcast wall + crossfire review), Foundry (Overseer/Patrol/Gate hierarchy + merge-queue invariant), Swarm (self-organizing handoffs with payload), Pipeline (sequential stages + contract per stage), Debate (sealed positions + adversarial argumentation), MapReduce (parallel decomposition with independence invariant), Blackboard (shared workspace + no-private-state invariant), Symbiosis (mutual epistemic benefit + entropy-driven mode shifts), Research (iterative experimentation)
 - Templates in `src/world/templates/orchestration.ts` — 5 detailed notes per pattern
 
 ## Canvas Intent System

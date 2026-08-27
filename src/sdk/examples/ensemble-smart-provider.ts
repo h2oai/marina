@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * NSED + Memory Provider — full-stack answerer:
+ * Ensemble + Memory Provider (formerly "NSED + Memory") — full-stack answerer:
  *   translator → recall → ensemble(N) → vote → reflect.
  *
- * Combines the ensemble voting of nsed-provider with the memory/translator
+ * Combines the ensemble voting of ensemble-provider with the memory/translator
  * scaffolding of smart-provider. All substrates see the same
  * memory-augmented prompt, so recalled principles inform every ensemble
  * member before voting.
@@ -14,18 +14,18 @@
  *   1. Ask TranslatorAgent for retrieval keywords (falls back to raw topic).
  *   2. Recall relevant prior principles (private notes + optional pools).
  *   3. Build memory-augmented messages.
- *   4. Send to N substrates in parallel (negotiate).
- *   5. Extract answer letter from each, majority-vote (select).
- *   6. Return the winning ballot's full response (execute).
+ *   4. Send to N substrates in parallel.
+ *   5. Extract answer letter from each, majority-vote.
+ *   6. Return the winning ballot's full response.
  *   7. Fire-and-forget: distill principle via cheaper substrate, store as
- *      [keywords]::[principle] note (debrief).
+ *      [keywords]::[principle] note.
  *
  * Env:
  *   WS_URL, MARINA_ENDPOINT      — defaults to local Marina
- *   AGENT_NAME                     — default NSEDSmartProvider
+ *   AGENT_NAME                     — default EnsembleSmartProvider
  *   MODEL_CHANNEL                  — default "model"
- *   NSED_SUBSTRATES                — comma-separated, e.g. marina:haiku,marina:qwen,marina:gemma,marina:sonnet
- *   NSED_TEMPERATURES              — comma-separated, default 0 for each
+ *   ENSEMBLE_SUBSTRATES            — comma-separated, e.g. marina:haiku,marina:qwen,marina:gemma,marina:sonnet
+ *   ENSEMBLE_TEMPERATURES          — comma-separated, default 0 for each
  *   TRANSLATOR_CHANNEL             — default "translator"
  *   USE_TRANSLATOR                 — "false" to disable
  *   TRANSLATOR_TIMEOUT_MS          — default 8000
@@ -33,22 +33,29 @@
  *   MEMORY_MAX_BYTES               — default 6000
  *   MEMORY_LEARN                   — "false" disables reflection
  *   REFLECTION_PROVIDER_URL/MODEL  — default self, marina:haiku
- *   NSED_TRACE                     — "true" logs vote tallies
+ *   ENSEMBLE_TRACE                 — "true" logs vote tallies
+ *   (legacy NSED_SUBSTRATES / NSED_TEMPERATURES / NSED_TRACE still honored)
  */
 
 import { MarinaAgent, type Perception } from "../client";
 
 const WS_URL = process.env.WS_URL ?? "ws://localhost:3300";
 const MARINA_ENDPOINT = (process.env.MARINA_ENDPOINT ?? "http://localhost:3300").replace(/\/$/, "");
-const AGENT_NAME = process.env.AGENT_NAME ?? "NSEDSmartProvider";
+const AGENT_NAME = process.env.AGENT_NAME ?? "EnsembleSmartProvider";
 const MODEL_CHANNEL = process.env.MODEL_CHANNEL ?? "model";
 const SUBSTRATES = (
-  process.env.NSED_SUBSTRATES ?? "marina:haiku,marina:haiku,marina:haiku,marina:haiku"
+  process.env.ENSEMBLE_SUBSTRATES ??
+  process.env.NSED_SUBSTRATES ??
+  "marina:haiku,marina:haiku,marina:haiku,marina:haiku"
 )
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-const TEMPERATURES = (process.env.NSED_TEMPERATURES ?? SUBSTRATES.map(() => "0").join(","))
+const TEMPERATURES = (
+  process.env.ENSEMBLE_TEMPERATURES ??
+  process.env.NSED_TEMPERATURES ??
+  SUBSTRATES.map(() => "0").join(",")
+)
   .split(",")
   .map((s) => Number.parseFloat(s.trim()) || 0);
 const TRANSLATOR_CHANNEL = process.env.TRANSLATOR_CHANNEL ?? "translator";
@@ -64,7 +71,7 @@ const REFLECTION_PROVIDER_URL = (
   process.env.REFLECTION_PROVIDER_URL ?? "http://localhost:3300/v1"
 ).replace(/\/$/, "");
 const REFLECTION_PROVIDER_MODEL = process.env.REFLECTION_PROVIDER_MODEL ?? "marina:haiku";
-const TRACE = process.env.NSED_TRACE === "true";
+const TRACE = (process.env.ENSEMBLE_TRACE ?? process.env.NSED_TRACE) === "true";
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI strip
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
@@ -169,11 +176,11 @@ async function gatherMemory(agent: MarinaAgent, topic: string): Promise<string> 
     const priv = perceptionsToText(perc);
     if (TRACE)
       console.log(
-        `[nsed-smart] recall("${topic.slice(0, 60)}...") -> ${perc.length} perceptions, ${priv.length} chars: "${priv.slice(0, 120)}"`,
+        `[ensemble-smart] recall("${topic.slice(0, 60)}...") -> ${perc.length} perceptions, ${priv.length} chars: "${priv.slice(0, 120)}"`,
       );
     if (!isEmptyRecall(priv)) chunks.push(`[private]\n${priv}`);
   } catch (e) {
-    if (TRACE) console.error("[nsed-smart] private recall failed:", e);
+    if (TRACE) console.error("[ensemble-smart] private recall failed:", e);
   }
   for (const pool of POOLS) {
     try {
@@ -181,7 +188,7 @@ async function gatherMemory(agent: MarinaAgent, topic: string): Promise<string> 
       const text = perceptionsToText(perc);
       if (!isEmptyRecall(text)) chunks.push(`[pool:${pool}]\n${text}`);
     } catch (e) {
-      if (TRACE) console.error(`[nsed-smart] pool ${pool} recall failed:`, e);
+      if (TRACE) console.error(`[ensemble-smart] pool ${pool} recall failed:`, e);
     }
   }
   let joined = chunks.join("\n\n");
@@ -229,10 +236,10 @@ async function learnFrom(
     ]);
     if (!principle) return;
     const body = keywords ? `[keywords] ${keywords}\n[principle] ${principle}` : principle;
-    if (TRACE) console.log(`[nsed-smart] learn: ${body.slice(0, 120)}...`);
+    if (TRACE) console.log(`[ensemble-smart] learn: ${body.slice(0, 120)}...`);
     await agent.command(`note ${body}`);
   } catch (e) {
-    if (TRACE) console.error("[nsed-smart] learn failed:", e);
+    if (TRACE) console.error("[ensemble-smart] learn failed:", e);
   }
 }
 
@@ -330,7 +337,7 @@ async function handleRequest(
     .join(" ");
   const consensus = winnerLetter ? (tally[winnerLetter]! / ballots.length).toFixed(2) : "0";
   console.log(
-    `[nsed-smart] ${request.id} winner=${winnerLetter || "?"} consensus=${consensus} tally=[${tallyStr}] mem=${memory.length}B in ${dt}ms`,
+    `[ensemble-smart] ${request.id} winner=${winnerLetter || "?"} consensus=${consensus} tally=[${tallyStr}] mem=${memory.length}B in ${dt}ms`,
   );
   if (TRACE) {
     for (const b of ballots) {
@@ -348,7 +355,7 @@ async function handleRequest(
 
   // Debrief: learn from the ensemble's consensus answer
   learnFrom(agent, request.content, answer).catch((e) => {
-    if (TRACE) console.error("[nsed-smart] learn error:", e);
+    if (TRACE) console.error("[ensemble-smart] learn error:", e);
   });
 
   return answer;
@@ -364,15 +371,15 @@ async function main() {
     commandDrainTimeout: drainTimeout,
   });
   const session = await agent.connect(AGENT_NAME);
-  console.log(`[nsed-smart] logged in as ${session.name} (${session.entityId})`);
-  console.log(`[nsed-smart] ensemble of ${SUBSTRATES.length}:`);
+  console.log(`[ensemble-smart] logged in as ${session.name} (${session.entityId})`);
+  console.log(`[ensemble-smart] ensemble of ${SUBSTRATES.length}:`);
   SUBSTRATES.forEach((s, i) => {
     console.log(`  [${i}] ${s} @ t=${TEMPERATURES[i] ?? 0}`);
   });
   console.log(
-    `[nsed-smart] translator=${USE_TRANSLATOR ? TRANSLATOR_CHANNEL : "off"} learn=${LEARN} reflection=${REFLECTION_PROVIDER_MODEL}`,
+    `[ensemble-smart] translator=${USE_TRANSLATOR ? TRANSLATOR_CHANNEL : "off"} learn=${LEARN} reflection=${REFLECTION_PROVIDER_MODEL}`,
   );
-  console.log(`[nsed-smart] answering on channel: ${MODEL_CHANNEL}`);
+  console.log(`[ensemble-smart] answering on channel: ${MODEL_CHANNEL}`);
 
   await agent.command(`channel create ${MODEL_CHANNEL}`);
   await agent.command(`channel join ${MODEL_CHANNEL}`);
@@ -409,7 +416,7 @@ async function main() {
         JSON.stringify({ type: "model_response", id: request.id, content: answer }),
       );
     } catch (err) {
-      console.error(`[nsed-smart] ${request.id} error:`, err);
+      console.error(`[ensemble-smart] ${request.id} error:`, err);
       await agent.channel(
         MODEL_CHANNEL,
         JSON.stringify({
@@ -422,13 +429,13 @@ async function main() {
   });
 
   process.on("SIGINT", () => {
-    console.log("[nsed-smart] shutting down...");
+    console.log("[ensemble-smart] shutting down...");
     agent.disconnect();
     process.exit(0);
   });
 }
 
 main().catch((e) => {
-  console.error("[nsed-smart] fatal:", e);
+  console.error("[ensemble-smart] fatal:", e);
   process.exit(1);
 });

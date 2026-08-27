@@ -98,17 +98,28 @@ describe("Project Command", () => {
   // ─── Orchestration ────────────────────────────────────────────────────
 
   describe("Orchestration", () => {
-    it("should set NSED orchestration and seed pool", () => {
+    it("should set deliberation orchestration and seed pool", () => {
       engine.processCommand(conn1.entity!, "project create OrcTest | Orch");
       conn1.clear();
-      engine.processCommand(conn1.entity!, "project OrcTest orchestrate nsed");
-      expect(conn1.lastText()).toContain('Set orchestration to "nsed"');
+      engine.processCommand(conn1.entity!, "project OrcTest orchestrate deliberation");
+      expect(conn1.lastText()).toContain('Set orchestration to "deliberation"');
 
       const project = db.getProjectByName("OrcTest");
-      expect(project!.orchestration).toBe("nsed");
+      expect(project!.orchestration).toBe("deliberation");
 
-      const notes = db.recallPoolNotes(project!.pool_id!, "NSED orchestration structured cycle");
+      const notes = db.recallPoolNotes(
+        project!.pool_id!,
+        "Deliberation orchestration structured cycle",
+      );
       expect(notes.length).toBeGreaterThan(0);
+    });
+
+    it("should accept the legacy 'nsed' name and normalize it to deliberation", () => {
+      engine.processCommand(conn1.entity!, "project create LegacyOrc | Legacy");
+      conn1.clear();
+      engine.processCommand(conn1.entity!, "project LegacyOrc orchestrate nsed");
+      expect(conn1.lastText()).toContain('Set orchestration to "deliberation"');
+      expect(db.getProjectByName("LegacyOrc")!.orchestration).toBe("deliberation");
     });
 
     it("should set Chorus orchestration", () => {
@@ -472,11 +483,11 @@ describe("Project Command", () => {
 
     it("should update orchestration and memory_arch", () => {
       db.createProject({ id: "proj_up", name: "UpTest", createdBy: "system" });
-      db.updateProjectOrchestration("proj_up", "nsed");
+      db.updateProjectOrchestration("proj_up", "deliberation");
       db.updateProjectMemoryArch("proj_up", "graph");
 
       const project = db.getProject("proj_up");
-      expect(project!.orchestration).toBe("nsed");
+      expect(project!.orchestration).toBe("deliberation");
       expect(project!.memory_arch).toBe("graph");
     });
   });

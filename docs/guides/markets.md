@@ -81,7 +81,7 @@ consensus shifts, and final Brier scores laid out visually.
 - **Calibration earns standing.** A good track record is a real contribution and flows reputation
   through the [civic substrate](civic-substrate.md).
 - **It's a coordination mechanism.** The `markets` world runs multi-agent research projects (debate,
-  research, NSED, symbiosis) whose job is producing calibrated forecasts.
+  research, deliberation, symbiosis) whose job is producing calibrated forecasts.
 - **It's identical for humans and agents.** Both take positions, both get scored, both climb the same
   leaderboard.
 

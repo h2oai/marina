@@ -100,7 +100,7 @@ DOMAINS: comma-separated list of domains that appear (law, math, science, gramma
 DIFFICULTY: easy | moderate | hard | frontier-level
 CONSTRAINT_STYLE: (none | word-count | forbidden-words | format | multi-constraint)
 KEY_TRAP: one-sentence description of the most likely failure mode
-RECOMMENDED_ORCHESTRATOR: (passthrough | smart | nsed | nsed-smart | debate | pipeline | foundry | adaptive | blackboard | world | synthesis)
+RECOMMENDED_ORCHESTRATOR: (passthrough | smart | ensemble | ensemble-smart | debate | pipeline | foundry | adaptive | blackboard | world | synthesis)
 RECOMMENDED_TRANSLATOR: (haiku | gemini | qwen | nemotron | sonnet | none)
 RECOMMENDED_STRONG: (sonnet | gemini | opus | nemotron | deepseek)
 USE_WEB: (true | false)
@@ -171,7 +171,7 @@ function emitLaunch(benchmark: string, p: Profile): string {
     "./benchmarks/launch-translators.sh  # (if not already)",
     "",
     "# Kill old orchestrator, launch recommended one",
-    'pkill -f "sdk/examples/(nsed|debate|pipeline|foundry|adaptive|blackboard|synthesis|world-coordinator)-provider" 2>/dev/null',
+    'pkill -f "sdk/examples/(ensemble|ensemble-smart|debate|pipeline|foundry|adaptive|blackboard|synthesis|world-coordinator)-provider" 2>/dev/null',
     "sleep 3",
     "sqlite3 marina.db \"DELETE FROM channel_members WHERE channel_id='ch:model'\"",
     "",
@@ -201,19 +201,19 @@ function emitLaunch(benchmark: string, p: Profile): string {
       `BLACKBOARD_JUDGE=${strong} \\`,
       "  bun run src/sdk/examples/blackboard-provider.ts &",
     );
-  } else if (p.orchestrator === "nsed-smart") {
+  } else if (p.orchestrator === "ensemble-smart" || p.orchestrator === "nsed-smart") {
     const tchan = p.translator === "none" ? "translator" : `translator-${p.translator}`;
     lines.push(
-      "NSED_SUBSTRATES=marina:haiku,marina:qwen,marina:gemma,marina:kimi \\",
+      "ENSEMBLE_SUBSTRATES=marina:haiku,marina:qwen,marina:gemma,marina:kimi \\",
       "  USE_TRANSLATOR=true \\",
       `  TRANSLATOR_CHANNEL=${tchan} \\`,
       "  MEMORY_LEARN=true \\",
-      "  bun run src/sdk/examples/nsed-smart-provider.ts &",
+      "  bun run src/sdk/examples/ensemble-smart-provider.ts &",
     );
-  } else if (p.orchestrator === "nsed") {
+  } else if (p.orchestrator === "ensemble" || p.orchestrator === "nsed") {
     lines.push(
-      "NSED_SUBSTRATES=marina:haiku,marina:qwen,marina:gemma,marina:kimi \\",
-      "  bun run src/sdk/examples/nsed-provider.ts &",
+      "ENSEMBLE_SUBSTRATES=marina:haiku,marina:qwen,marina:gemma,marina:kimi \\",
+      "  bun run src/sdk/examples/ensemble-provider.ts &",
     );
   } else if (p.orchestrator === "smart") {
     const tchan = p.translator === "none" ? "translator" : `translator-${p.translator}`;

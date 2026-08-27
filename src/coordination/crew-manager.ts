@@ -25,6 +25,7 @@ import type {
   EntityId,
 } from "../types";
 import { crewId as toCrewId, entityId as toEntityId } from "../types";
+import { normalizePatternName } from "../world/templates/orchestration";
 import type { ChannelManager } from "./channel-manager";
 import { buildFormationBrief } from "./crew-formations";
 
@@ -876,13 +877,15 @@ export class CrewManager {
     this.channels.send(crew.channelId, "__crew_manager__", "crew", lines.join("\n"));
   }
 
-  /** Reconstruct an in-memory Crew from DB rows. */
+  /** Reconstruct an in-memory Crew from DB rows. Legacy formation names
+   * (e.g. imported snapshots predating the nsed → deliberation rename)
+   * normalize here so tradition-pool deposits/recall stay canonical. */
   private crewFromRow(row: CrewRow, memberRows: CrewMemberRow[]): Crew {
     return {
       id: toCrewId(row.id),
       name: row.name,
       goal: row.goal,
-      formation: row.formation as CrewFormation,
+      formation: normalizePatternName(row.formation) as CrewFormation,
       lifetime: "persisted",
       ownerId: toEntityId(row.owner_id),
       members: memberRows.map((m) => ({

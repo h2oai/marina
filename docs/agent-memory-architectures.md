@@ -215,7 +215,7 @@ All three architectures above are per-agent. But Marina is multi-agent. What hap
 ### Research References
 - Generative Agents: agents observe each other's actions (public memory stream)
 - Chorus (Marina-native, lineage: Block's Goosetown): orchestrator maintains shared context across delegate agents via a broadcast wall
-- NSED: deliberation boards are shared memory with cross-evaluation
+- Deliberation: deliberation boards are shared memory with cross-evaluation
 
 ### Marina Mapping
 

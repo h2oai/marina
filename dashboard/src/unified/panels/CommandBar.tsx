@@ -2192,7 +2192,7 @@ const ChannelDetailInline = memo(function ChannelDetailInline({
 // NOTE: keep in sync with src/world/templates/orchestration.ts
 // ORCHESTRATION_PATTERNS. Dashboard bundle is separate so we can't import.
 const ORCHESTRATION_PATTERNS = [
-  "nsed",
+  "deliberation",
   "chorus",
   "foundry",
   "swarm",

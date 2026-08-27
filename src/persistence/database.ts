@@ -153,7 +153,9 @@ interface Migration {
   sql: string;
 }
 
-const MIGRATIONS: Migration[] = [
+/** Exported for migration tests (replaying data-rewrite migrations against
+ * seeded legacy rows). Never mutate at runtime. */
+export const MIGRATIONS: Migration[] = [
   // Migration 1: Channels
   {
     version: 1,
@@ -2072,6 +2074,26 @@ ALTER TABLE world_variants ADD COLUMN promoted_by TEXT;
     sql: `
 ALTER TABLE coding_sessions ADD COLUMN worktree_path TEXT;
 ALTER TABLE coding_sessions ADD COLUMN worktree_branch TEXT;
+`,
+  },
+  // Migration 82: the "nsed" orchestration pattern was renamed to its
+  // functional form "deliberation" (descriptive names over acronyms). Rewrite
+  // persisted pattern references so learned lessons keep accruing in ONE
+  // tradition pool and rank/recall lookups match the canonical name. The
+  // orchestration:nsed pool merges into orchestration:deliberation when both
+  // exist (notes repointed, legacy pool row dropped); otherwise it is renamed
+  // in place. Note CONTENT is untouched — historical text stays historical.
+  {
+    version: 82,
+    sql: `
+UPDATE projects SET orchestration = 'deliberation' WHERE orchestration = 'nsed';
+UPDATE crews SET formation = 'deliberation' WHERE formation = 'nsed';
+UPDATE notes SET pool_id = (SELECT id FROM memory_pools WHERE name = 'orchestration:deliberation')
+  WHERE pool_id = (SELECT id FROM memory_pools WHERE name = 'orchestration:nsed')
+    AND EXISTS (SELECT 1 FROM memory_pools WHERE name = 'orchestration:deliberation');
+DELETE FROM memory_pools WHERE name = 'orchestration:nsed'
+  AND EXISTS (SELECT 1 FROM memory_pools WHERE name = 'orchestration:deliberation');
+UPDATE memory_pools SET name = 'orchestration:deliberation' WHERE name = 'orchestration:nsed';
 `,
   },
 ];

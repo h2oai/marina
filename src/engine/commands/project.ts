@@ -49,9 +49,10 @@ import {
   BLACKBOARD_TEMPLATE,
   CHORUS_TEMPLATE,
   DEBATE_TEMPLATE,
+  DELIBERATION_TEMPLATE,
   FOUNDRY_TEMPLATE,
   MAPREDUCE_TEMPLATE,
-  NSED_TEMPLATE,
+  normalizePatternName,
   ORCHESTRATION_HELP,
   ORCHESTRATION_PATTERNS,
   PIPELINE_TEMPLATE,
@@ -105,8 +106,8 @@ function learnedPatternScore(db: MarinaDB, pattern: string): { average?: number;
 
 function getOrchestrationTemplate(name: string): TemplateNote[] | undefined {
   switch (name) {
-    case "nsed":
-      return NSED_TEMPLATE;
+    case "deliberation":
+      return DELIBERATION_TEMPLATE;
     case "chorus":
       return CHORUS_TEMPLATE;
     case "foundry":
@@ -183,7 +184,7 @@ export function projectCommand(deps: {
   return {
     name: "project",
     aliases: ["proj"],
-    help: "Projects combine tasks, groups, pools, orchestration, verification, and resource envelopes.\nUsage: project create|list|info | project <name> orchestrate|recommend|decompose|memory|join|status|propose|tasks|budget|usage|verify|outcome\n\nExamples:\n  project create Alpha | Investigate grid patterns\n  project Alpha recommend\n  project Alpha orchestrate nsed\n  project Alpha budget tokens 50000 cost 2 duration 1h\n  project Alpha usage 1200 0.03\n  project Alpha verify\n  project Alpha status",
+    help: "Projects combine tasks, groups, pools, orchestration, verification, and resource envelopes.\nUsage: project create|list|info | project <name> orchestrate|recommend|decompose|memory|join|status|propose|tasks|budget|usage|verify|outcome\n\nExamples:\n  project create Alpha | Investigate grid patterns\n  project Alpha recommend\n  project Alpha orchestrate deliberation\n  project Alpha budget tokens 50000 cost 2 duration 1h\n  project Alpha usage 1200 0.03\n  project Alpha verify\n  project Alpha status",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -394,7 +395,8 @@ export function projectCommand(deps: {
 
       switch (action) {
         case "orchestrate": {
-          const pattern = actionArgs[0]?.toLowerCase();
+          const rawPattern = actionArgs[0]?.toLowerCase();
+          const pattern = rawPattern ? normalizePatternName(rawPattern) : undefined;
           if (!pattern) {
             ctx.send(
               input.entity,
@@ -878,7 +880,7 @@ export function projectCommand(deps: {
             );
             return;
           }
-          const pattern = project.orchestration || "custom";
+          const pattern = normalizePatternName(project.orchestration || "custom");
           const content =
             `[project-outcome:${project.id} orchestration:${pattern}] score=${score.toFixed(2)} ` +
             evidence;

@@ -10,7 +10,7 @@ primitive set. All 10 patterns are available as built-in orchestration templates
 
 | Pattern | Topology | Core Pattern |
 |---------|----------|-------------|
-| `nsed` | Flat peer ring | Symmetric cross-evaluation deliberation |
+| `deliberation` | Flat peer ring | Symmetric cross-evaluation deliberation |
 | `chorus` | Hub-and-spoke with phases | Parallel phases + broadcast wall + crossfire review (lineage: Block's Goosetown) |
 | `foundry` | Deep hierarchy with roles | Overseer → Patrol → Workers + merge-queue Gate (lineage: Yegge's Gastown) |
 | `swarm` | Self-organizing mesh | Specialist handoffs via expertise matching |
@@ -31,9 +31,11 @@ primitive set. All 10 patterns are available as built-in orchestration templates
 
 ---
 
-## Architecture 1: NSED — Symmetric Deliberation (Peer Ring)
+## Architecture 1: Deliberation — Symmetric Peer Ring
 
-### What NSED Does
+Marina's `deliberation` pattern (formerly named `nsed`) draws on peeramid-labs' NSED research.
+
+### What Symmetric Deliberation Does
 - N agents work on the same problem in parallel
 - Each proposes a solution, then cross-evaluates all peers' proposals
 - Iterative rounds: propose → evaluate → refine → converge
@@ -410,11 +412,11 @@ All coordination primitives identified during research have been built:
 | Primitive | Status | Used By |
 |---|---|---|
 | Task bundles (parent_task_id) | Done (migration 13) | Foundry convoys, Chorus phases, Pipeline stages, MapReduce chunks |
-| Numeric vote scoring (1-10) | Done (migration 13) | NSED evaluation, Debate argumentation |
+| Numeric vote scoring (1-10) | Done (migration 13) | Deliberation evaluation, Debate argumentation |
 | Room entry guards (canEnter) | Done (Phase 5) | Chorus phase gates, Foundry role rooms |
 | Agent activity tracking | Done (Phase 5) | Foundry patrol, Swarm skill discovery |
 | Task event triggers | Done (Phase 5) | Foundry propulsion, Pipeline stage signals |
-| Score matrix / aggregation | Done (Phase 5) | NSED convergence, Debate scoring |
+| Score matrix / aggregation | Done (Phase 5) | Deliberation convergence, Debate scoring |
 | Core memory (mutable key-value) | Done (migration 14) | Swarm expertise tags |
 | Note links (knowledge graph) | Done (migration 14) | Debate argument structure, Blackboard knowledge graph |
 | Memory pools (shared notes) | Done (migration 14) | MapReduce chunk results, Blackboard workspace, all pattern conventions |

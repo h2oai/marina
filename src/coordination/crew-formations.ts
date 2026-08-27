@@ -19,9 +19,10 @@ import {
   BLACKBOARD_TEMPLATE,
   CHORUS_TEMPLATE,
   DEBATE_TEMPLATE,
+  DELIBERATION_TEMPLATE,
   FOUNDRY_TEMPLATE,
   MAPREDUCE_TEMPLATE,
-  NSED_TEMPLATE,
+  normalizePatternName,
   PIPELINE_TEMPLATE,
   RESEARCH_TEMPLATE,
   SWARM_TEMPLATE,
@@ -44,7 +45,7 @@ const FREEFORM_TEMPLATE: TemplateNote[] = [
 ];
 
 const TEMPLATES: Record<CrewFormation, TemplateNote[]> = {
-  nsed: NSED_TEMPLATE,
+  deliberation: DELIBERATION_TEMPLATE,
   chorus: CHORUS_TEMPLATE,
   foundry: FOUNDRY_TEMPLATE,
   swarm: SWARM_TEMPLATE,
@@ -57,9 +58,11 @@ const TEMPLATES: Record<CrewFormation, TemplateNote[]> = {
   freeform: FREEFORM_TEMPLATE,
 };
 
-/** Return the template notes for a formation. Empty array if unknown. */
+/** Return the template notes for a formation. Empty array if unknown.
+ * Legacy names in persisted crews (e.g. `nsed`) normalize to their
+ * functional form. */
 export function getFormationTemplate(formation: CrewFormation): TemplateNote[] {
-  return TEMPLATES[formation] ?? [];
+  return TEMPLATES[normalizePatternName(formation) as CrewFormation] ?? [];
 }
 
 /**

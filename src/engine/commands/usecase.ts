@@ -369,7 +369,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
   plan: (topic) => ({
     name: "plan",
     description: `Multi-perspective decision plan: ${topic}`,
-    orchestration: "nsed",
+    orchestration: "deliberation",
     tasks: [
       {
         title: "Define outcome and constraints",
@@ -826,7 +826,7 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
   coordinate: (topic) => ({
     name: "coordinate",
     description: `Multi-agent coordination: ${topic}`,
-    orchestration: "nsed",
+    orchestration: "deliberation",
     tasks: [
       {
         title: "Define objectives and roles",
@@ -847,13 +847,13 @@ const BUILTIN_RECIPES: Record<string, RecipeFactory> = {
     ],
     poolNotes: [
       {
-        content: `Coordination goal: ${topic}. Using NSED pattern: Negotiate → Select → Execute → Debrief.`,
+        content: `Coordination goal: ${topic}. Using the deliberation pattern: propose → evaluate → execute → debrief.`,
         importance: 10,
         type: "fact",
       },
       {
         content:
-          "NSED coordination: (1) Negotiate — define roles and interfaces. (2) Select — each agent claims work. (3) Execute — parallel work with tell-based sync. (4) Debrief — integrate results, capture learnings.",
+          "Deliberation coordination: (1) Propose — define roles and interfaces. (2) Evaluate — each agent claims work. (3) Execute — parallel work with tell-based sync. (4) Debrief — integrate results, capture learnings.",
         importance: 9,
         type: "skill",
       },
