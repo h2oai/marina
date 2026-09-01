@@ -1352,19 +1352,44 @@ async function handleAsset(
         return;
       }
       try {
+        const MAX_REMOTE_BYTES = 50 * 1024 * 1024;
         const response = await guardedFetch(url);
         if (response.status >= 400) {
           ctx.send(eid, `Failed to fetch URL: HTTP ${response.status}`);
           return;
         }
-        // arrayBuffer (not text) keeps binary assets byte-accurate.
-        const bodyBytes = new Uint8Array(await response.arrayBuffer());
-        if (bodyBytes.byteLength === 0) {
-          ctx.send(eid, "Downloaded file is empty.");
+        const declared = Number(response.headers.get("content-length"));
+        if (Number.isFinite(declared) && declared > MAX_REMOTE_BYTES) {
+          ctx.send(eid, "File too large (max 50MB for remote URLs).");
           return;
         }
-        if (bodyBytes.byteLength > 50 * 1024 * 1024) {
-          ctx.send(eid, "File too large (max 50MB for remote URLs).");
+        // Stream with a byte cap — buffering first and checking after lets a
+        // hostile server (or one omitting content-length) force an unbounded
+        // in-memory allocation. Bytes stay raw so binary assets are accurate.
+        const chunks: Uint8Array[] = [];
+        let received = 0;
+        const reader = response.body?.getReader();
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            received += value.byteLength;
+            if (received > MAX_REMOTE_BYTES) {
+              await reader.cancel();
+              ctx.send(eid, "File too large (max 50MB for remote URLs).");
+              return;
+            }
+            chunks.push(value);
+          }
+        }
+        const bodyBytes = new Uint8Array(received);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bodyBytes.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        if (bodyBytes.byteLength === 0) {
+          ctx.send(eid, "Downloaded file is empty.");
           return;
         }
         const filename = url.split("/").pop()?.split("?")[0] ?? "download";

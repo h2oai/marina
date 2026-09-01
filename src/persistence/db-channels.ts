@@ -176,6 +176,18 @@ export function createBoard(
   );
 }
 
+/** Raise a board's write/pin rank floors (never lowers an existing rank). */
+export function raiseBoardRanks(
+  db: Database,
+  boardId: string,
+  ranks: { writeRank?: number; pinRank?: number },
+): void {
+  db.run(
+    "UPDATE boards SET write_rank = MAX(write_rank, ?), pin_rank = MAX(pin_rank, ?) WHERE id = ?",
+    [ranks.writeRank ?? 0, ranks.pinRank ?? 0, boardId],
+  );
+}
+
 export function getBoard(db: Database, id: string): BoardRow | undefined {
   return (db.query("SELECT * FROM boards WHERE id = ?").get(id) as BoardRow | null) ?? undefined;
 }

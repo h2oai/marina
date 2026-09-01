@@ -70,8 +70,10 @@ ENV DB_PATH=/app/data/marina.db \
 
 VOLUME ["/app/data"]
 
-# WS/web/dashboard/API · MCP · log server
-EXPOSE 3300 3301 3302
+# WS/web/dashboard/API · MCP. The log server (3302) is intentionally NOT
+# EXPOSEd: it has no auth, and `docker run -P` publishes every EXPOSEd port —
+# reach it via an explicit loopback publish (-p 127.0.0.1:3302:3302) if needed.
+EXPOSE 3300 3301
 
 # Dependency-free health probe against the HTTP /health route.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

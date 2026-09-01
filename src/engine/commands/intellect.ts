@@ -193,7 +193,9 @@ function show(
     ctx.send(caller, `Intellect "${selector ?? ""}" was not found or is ambiguous.`);
     return;
   }
-  const events = db.listIntellectEvents(intellect.id);
+  // Newest 200 events for display; the lifecycle state comes from a dedicated
+  // keyed query so a long event tail can never hide the last lifecycle change.
+  const events = db.listIntellectEvents(intellect.id, 200);
   const instances = db.listIntellectInstances(intellect.id);
   const signedEvents = events.filter((event) => event.signature_json);
   // Cap Ed25519 verification on this rank-0 command; newest window only.
@@ -201,16 +203,14 @@ function show(
   const validSignatures = checkedEvents.filter(
     (event) => db.verifyIntellectEvent(event).valid,
   ).length;
-  const latestLifecycle = [...events]
-    .reverse()
-    .find((event) => ["dormant", "revived", "terminated", "last_observed"].includes(event.kind));
+  const lifecycleKind = db.getLatestIntellectLifecycleKind(intellect.id);
   const lines = [
     header(`Intellect: ${intellect.display_name}`),
     separator(),
     `${bold("ID:")} ${intellect.id}`,
     `${bold("Origin:")} ${intellect.origin_marina}`,
     `${bold("Purpose:")} ${intellect.purpose || dim("undeclared")}`,
-    `${bold("Observed state:")} ${status(latestLifecycle?.kind ?? "created", latestLifecycle?.kind === "terminated" ? "warn" : "info")}`,
+    `${bold("Observed state:")} ${status(lifecycleKind ?? "created", lifecycleKind === "terminated" ? "warn" : "info")}`,
     `${bold("Instances:")} ${instances.length}`,
     `${bold("Signatures:")} ${validSignatures}/${checkedEvents.length} signed events verify${signedEvents.length > checkedEvents.length ? ` (newest 100 of ${signedEvents.length} checked)` : ""}`,
   ];
@@ -218,7 +218,7 @@ function show(
     lines.push(
       `  ${row.id} · model=${row.model_ref ?? "unknown"} · harness=${row.harness_ref ?? "unknown"} · principal=${row.local_principal_id ?? "detached"}`,
     );
-  lines.push("", bold("Lifecycle:"));
+  lines.push("", bold(events.length === 200 ? "Lifecycle (newest 200):" : "Lifecycle:"));
   for (const event of events)
     lines.push(
       `  #${event.id} ${event.kind} — ${event.actor_id}${event.related_intellect_id ? ` · ${event.related_intellect_id}` : ""}${event.signature_json ? " · signed" : ""}`,

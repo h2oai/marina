@@ -327,6 +327,22 @@ export function importState(
         result.tablesImported++;
       }
 
+      // Snapshots exported before migration 94 have no `seq` column, so their
+      // rows land with NULL seq — which would sort before every real seq and
+      // corrupt replay projections. Backfill from rowid (insertion order,
+      // which for a snapshot import equals the exported order).
+      for (const table of [
+        "association_events",
+        "association_relations",
+        "association_links",
+        "economic_events",
+        "simulation_events",
+        "civilization_mutations",
+        "mesh_membership_events",
+      ]) {
+        db.run(`UPDATE "${table}" SET seq = rowid WHERE seq IS NULL`);
+      }
+
       const violations = db.query("PRAGMA foreign_key_check").all() as Array<{
         table: string;
         rowid: number | null;

@@ -250,6 +250,37 @@ describe("Trace API", () => {
     ]);
   });
 
+  it("a user-supplied traceId cannot poison the unfiltered listing cache", async () => {
+    db.logEvent({
+      type: "agent_turn_start",
+      name: "Ada",
+      runId: "poison-run",
+      traceId: "poison-trace",
+      spanId: "poison-turn",
+      timestamp: 400,
+    });
+    // A traceId of "*" matches nothing — its (empty) projection must be cached
+    // under a namespaced key, never the key the unfiltered listing reads.
+    const poisonUrl = new URL("http://localhost:3300/api/traces?traceId=*");
+    await handleDashboardApi(
+      new Request(poisonUrl, { headers: { Authorization: `Bearer ${token}` } }),
+      poisonUrl,
+      "GET",
+      engine,
+      db,
+    );
+    const listUrl = new URL("http://localhost:3300/api/traces");
+    const response = await handleDashboardApi(
+      new Request(listUrl, { headers: { Authorization: `Bearer ${token}` } }),
+      listUrl,
+      "GET",
+      engine,
+      db,
+    );
+    const body = (await response!.json()) as { traces: Array<{ traceId: string }> };
+    expect(body.traces.some((trace) => trace.traceId === "poison-trace")).toBe(true);
+  });
+
   it("bounds durable event reads and reports truncation", () => {
     for (let index = 0; index < 3; index++) {
       db.logEvent({

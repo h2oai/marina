@@ -147,7 +147,15 @@ export function meshCommand(deps: {
         const mesh = resolve(deps.db, input.tokens[1] ?? "");
         const row = input.tokens[2] ? deps.db.getMeshEvent(input.tokens[2]) : undefined;
         const found = mesh && row && row.mesh_id === mesh.id ? row : undefined;
-        ctx.send(input.entity, found ? deps.db.exportMeshEvent(found) : "Mesh event not found.");
+        if (!found) {
+          ctx.send(input.entity, "Mesh event not found.");
+          return;
+        }
+        try {
+          ctx.send(input.entity, deps.db.exportMeshEvent(found));
+        } catch (cause) {
+          ctx.send(input.entity, `Export refused: ${getErrorMessage(cause)}`);
+        }
         return;
       }
       if (sub === "replicate") {

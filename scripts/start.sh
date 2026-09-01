@@ -19,7 +19,9 @@ fi
 
 # Defaults (can be overridden via .env or environment)
 export WS_PORT="${WS_PORT:-3300}"
-export TELNET_PORT="${TELNET_PORT:-4000}"
+# Telnet is plaintext + unauthenticated and OFF by default (matches src/main.ts).
+# Opt in explicitly with TELNET_PORT=4000 on a trusted network only.
+export TELNET_PORT="${TELNET_PORT:-0}"
 export MCP_PORT="${MCP_PORT:-3301}"
 export TICK_MS="${TICK_MS:-1000}"
 export START_ROOM="${START_ROOM:-}"

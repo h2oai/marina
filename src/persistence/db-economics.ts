@@ -186,10 +186,17 @@ export function appendEconomicEvent(
   );
   return db.query("SELECT * FROM economic_events WHERE id=?").get(document.id) as EconomicEventRow;
 }
-export function listEconomicEvents(db: Database, contractId: string): EconomicEventRow[] {
+// Newest-window fetch (ascending return): rank-0 `economy show` hydrates every
+// returned row, so the read must not scale with unbounded ledger growth.
+export function listEconomicEvents(
+  db: Database,
+  contractId: string,
+  limit = 1000,
+): EconomicEventRow[] {
   return db
-    .query("SELECT * FROM economic_events WHERE contract_id=? ORDER BY seq")
-    .all(contractId) as EconomicEventRow[];
+    .query("SELECT * FROM economic_events WHERE contract_id=? ORDER BY seq DESC LIMIT ?")
+    .all(contractId, Math.max(1, Math.min(limit, 5000)))
+    .reverse() as EconomicEventRow[];
 }
 export function verifyEconomicEvent(row: EconomicEventRow) {
   if (!row.signature_json) return { valid: false, keyId: null, error: "Event is unsigned" };

@@ -518,7 +518,11 @@ export async function handleDashboardApi(
       }
     }
     const incomingKey = body.publicKey ?? body.signature?.publicKey;
-    if (existingPeer?.public_key && incomingKey && incomingKey !== existingPeer.public_key) {
+    if (
+      existingPeer?.public_key &&
+      incomingKey &&
+      !sameBase64Key(incomingKey, existingPeer.public_key)
+    ) {
       return json(
         { error: "Manifest public key differs from the pinned peer key; operator must re-pin" },
         409,
@@ -1669,10 +1673,14 @@ function getEvents(engine: Engine, url: URL): Response {
 // and every dashboard tab polls it every 5s. Cache validity keys on
 // MAX(event_log.id) — an O(1) rowid-max lookup — so concurrent tabs share one
 // projection while any new event invalidates immediately (never stale).
-const traceProjectionCache = new Map<
-  string,
-  { maxEventId: number; projected: ReturnType<typeof projectTraces>; truncated: boolean }
->();
+// Scoped per MarinaDB instance (WeakMap) so two engines in one process can
+// never serve each other's projections on a coincidentally equal max id.
+type TraceProjectionEntry = {
+  maxEventId: number;
+  projected: ReturnType<typeof projectTraces>;
+  truncated: boolean;
+};
+const traceProjectionCaches = new WeakMap<MarinaDB, Map<string, TraceProjectionEntry>>();
 
 function projectRecentTraces(
   engine: Engine,
@@ -1680,7 +1688,14 @@ function projectRecentTraces(
   traceId: string | undefined,
 ): { projected: ReturnType<typeof projectTraces>; truncated: boolean } {
   if (!db) return { projected: projectTraces(engine.getEventLog()), truncated: false };
-  const key = traceId ?? "*";
+  let traceProjectionCache = traceProjectionCaches.get(db);
+  if (!traceProjectionCache) {
+    traceProjectionCache = new Map();
+    traceProjectionCaches.set(db, traceProjectionCache);
+  }
+  // Prefix the per-trace key so no user-supplied traceId (e.g. "*") can
+  // collide with — and poison — the unfiltered-listing key.
+  const key = traceId ? `t:${traceId}` : "*";
   const maxEventId = db.getMaxEventId();
   const cached = traceProjectionCache.get(key);
   if (cached && cached.maxEventId === maxEventId) return cached;
@@ -1695,8 +1710,26 @@ function projectRecentTraces(
     for (const [k, v] of traceProjectionCache) {
       if (v.maxEventId !== maxEventId) traceProjectionCache.delete(k);
     }
+    // Hard cap regardless of staleness: a caller issuing many distinct
+    // traceId queries between two event-log writes would otherwise grow the
+    // map without bound (every entry shares the current maxEventId). Map
+    // iteration order is insertion order, so this evicts oldest-first.
+    while (traceProjectionCache.size > 200) {
+      const oldest = traceProjectionCache.keys().next().value;
+      if (oldest === undefined) break;
+      traceProjectionCache.delete(oldest);
+    }
   }
   return entry;
+}
+
+/** Compare two base64 keys by decoded bytes (padding/encoding-variance safe). */
+function sameBase64Key(a: string, b: string): boolean {
+  try {
+    return Buffer.from(a.trim(), "base64").equals(Buffer.from(b.trim(), "base64"));
+  } catch {
+    return false;
+  }
 }
 
 function getTraces(engine: Engine, url: URL, db?: MarinaDB): Response {

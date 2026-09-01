@@ -219,6 +219,18 @@ export function countMeshEvents(db: Database, meshId: string): number {
 }
 
 export function exportMeshEvent(row: MeshEventRow): string {
+  let payload: unknown;
+  let parentIds: unknown;
+  let signature: unknown;
+  try {
+    payload = JSON.parse(row.payload_json);
+    parentIds = JSON.parse(row.parent_ids_json);
+    signature = row.signature_json ? JSON.parse(row.signature_json) : null;
+  } catch {
+    // A corrupt row cannot be exported faithfully — its content hash would no
+    // longer verify on the receiving side anyway.
+    throw new Error(`Mesh event ${row.id} has malformed stored JSON and cannot be exported.`);
+  }
   return Buffer.from(
     JSON.stringify({
       schema: "marina.mesh.event.v1",
@@ -227,11 +239,11 @@ export function exportMeshEvent(row: MeshEventRow): string {
       originWorldId: row.origin_world_id,
       sequence: row.sequence,
       kind: row.kind,
-      payload: JSON.parse(row.payload_json),
-      parentIds: JSON.parse(row.parent_ids_json),
+      payload,
+      parentIds,
       createdAt: row.created_at,
       contentHash: row.content_hash,
-      signature: row.signature_json ? JSON.parse(row.signature_json) : null,
+      signature,
     }),
   ).toString("base64url");
 }

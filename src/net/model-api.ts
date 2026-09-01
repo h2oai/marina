@@ -519,15 +519,17 @@ const ADAPTIVE_HISTORY_EVENT_LIMIT = 2_000;
 // to recompute per request. It depends only on event-log contents, so the memo
 // keys on MAX(event_log.id): an O(1) rowid-max lookup that stays cached across
 // a request burst and invalidates the moment any new event lands (never stale).
-let adaptiveAdviceCache: {
-  maxEventId: number;
-  advice: ReturnType<typeof adviseTraceRouting>;
-} | null = null;
+// Scoped per Engine (WeakMap) so co-hosted engines never share advice.
+const adaptiveAdviceCaches = new WeakMap<
+  Engine,
+  { maxEventId: number; advice: ReturnType<typeof adviseTraceRouting> }
+>();
 
 function adaptiveRoutingAdvice(engine: Engine): ReturnType<typeof adviseTraceRouting> {
   const maxEventId = engine.db?.getMaxEventId() ?? -1;
-  if (adaptiveAdviceCache && adaptiveAdviceCache.maxEventId === maxEventId && maxEventId >= 0) {
-    return adaptiveAdviceCache.advice;
+  const cached = adaptiveAdviceCaches.get(engine);
+  if (cached && cached.maxEventId === maxEventId && maxEventId >= 0) {
+    return cached.advice;
   }
   const history = engine.db?.getRecentTraceEvents(ADAPTIVE_HISTORY_EVENT_LIMIT);
   // Routing advice is decided purely from observed mechanics (adviseTraceRouting
@@ -536,7 +538,7 @@ function adaptiveRoutingAdvice(engine: Engine): ReturnType<typeof adviseTraceRou
   // remain on the /api/traces display path (dashboard-api.ts).
   const evidence = history ? projectTraces(history.events) : [];
   const advice = adviseTraceRouting(compareTraceCohorts(evidence, "route"), "route");
-  adaptiveAdviceCache = { maxEventId, advice };
+  adaptiveAdviceCaches.set(engine, { maxEventId, advice });
   return advice;
 }
 

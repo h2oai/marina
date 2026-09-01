@@ -81,8 +81,10 @@ export function projectEngineEvent(event: EngineEvent): ProjectedCognitiveEvent[
     // agent_text_delta / agent_thinking_delta are deliberately NOT projected:
     // one hash-chained (and, when signing is configured, Ed25519-signed)
     // transactional INSERT per streamed token chunk makes the ledger unusable
-    // under load and adds no provenance the agent_turn_end output row doesn't
-    // already carry.
+    // under load. Deliberate trade-off: the ledger records THAT an output
+    // occurred (agent_turn_end carries model, token counts, cost, duration)
+    // but not the output text itself — full text lives in notes/channels/
+    // artifacts, which the refs/journey plane links to.
     case "agent_tool_call":
       return [
         {

@@ -802,9 +802,18 @@ interface Proposal {
 
 function ensureProposalsBoard(db: MarinaDB): string {
   const existing = db.getBoardByName(PROPOSALS_BOARD);
-  if (existing) return existing.id;
+  if (existing) {
+    db.raiseBoardRanks(existing.id, { writeRank: LEDGER_BOARD_RANK, pinRank: LEDGER_BOARD_RANK });
+    return existing.id;
+  }
   const id = `board:${PROPOSALS_BOARD}`;
-  db.createBoard({ id, name: PROPOSALS_BOARD, scopeType: "global" });
+  db.createBoard({
+    id,
+    name: PROPOSALS_BOARD,
+    scopeType: "global",
+    writeRank: LEDGER_BOARD_RANK,
+    pinRank: LEDGER_BOARD_RANK,
+  });
   return id;
 }
 
@@ -1063,11 +1072,29 @@ function handleReject(
 
 // ─── Persistence: paper-orders board ───────────────────────────────────────
 
+// The order ledger is a SECURITY CONTROL (the P&L floor, position list, and
+// the no-self-hedge invariant all replay it), not a display log. writeRank 5
+// blocks rank-0 forgery via `board post` — a forged close order could mint
+// profit and re-open trading past the floor. The position command's own
+// writes go through db.createBoardPost directly, which the board-command rank
+// gate does not apply to, so this changes nothing for legitimate orders.
+// pinRank 5 too: pinning reshuffles the bounded read window in listAllOrders.
+const LEDGER_BOARD_RANK = 5;
+
 function ensurePositionsBoard(db: MarinaDB): string {
   const existing = db.getBoardByName(POSITIONS_BOARD);
-  if (existing) return existing.id;
+  if (existing) {
+    db.raiseBoardRanks(existing.id, { writeRank: LEDGER_BOARD_RANK, pinRank: LEDGER_BOARD_RANK });
+    return existing.id;
+  }
   const id = `board:${POSITIONS_BOARD}`;
-  db.createBoard({ id, name: POSITIONS_BOARD, scopeType: "global" });
+  db.createBoard({
+    id,
+    name: POSITIONS_BOARD,
+    scopeType: "global",
+    writeRank: LEDGER_BOARD_RANK,
+    pinRank: LEDGER_BOARD_RANK,
+  });
   return id;
 }
 
@@ -1131,7 +1158,10 @@ function ensureResolvingWatch(
 function listAllOrders(db: MarinaDB): OrderRecord[] {
   const board = db.getBoardByName(POSITIONS_BOARD);
   if (!board) return [];
-  const posts = db.listBoardPosts(board.id, { limit: 1000 });
+  // High bound: the P&L replay and no-self-hedge invariant need the FULL order
+  // history — a truncated window silently drops old opens, which erases their
+  // later realized losses (basis-less closes are skipped).
+  const posts = db.listBoardPosts(board.id, { limit: 10_000 });
   const out: OrderRecord[] = [];
   for (const p of posts) {
     try {

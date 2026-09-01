@@ -7,6 +7,7 @@ import type {
   SimulationMode,
 } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
+import { getErrorMessage } from "../errors";
 
 const MODES = ["live", "recorded", "synthetic", "hybrid", "long-duration"] as const;
 const LEVELS = [
@@ -88,8 +89,10 @@ export function labCommand(deps: {
             data: { declarationOnly: true },
             createdBy: String(actor.id),
           });
-        } catch {
-          // Non-critical: the run row exists; the started marker is decorative.
+        } catch (cause) {
+          // Non-critical (the run row exists; the marker is decorative) — but a
+          // real DB failure here likely precedes bigger ones, so surface it.
+          console.warn(`[lab] started marker failed for ${row.id}:`, getErrorMessage(cause));
         }
         ctx.send(
           input.entity,

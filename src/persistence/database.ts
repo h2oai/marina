@@ -3068,6 +3068,9 @@ export class MarinaDB {
   findIntellectsByIdPrefix(selector: string) {
     return intellectsDb.findIntellectsByIdPrefix(this.reader, selector);
   }
+  getLatestIntellectLifecycleKind(intellectId: string) {
+    return intellectsDb.getLatestIntellectLifecycleKind(this.reader, intellectId);
+  }
   createIntellectInstance(input: Parameters<typeof intellectsDb.createIntellectInstance>[1]) {
     return intellectsDb.createIntellectInstance(this.db, input);
   }
@@ -3077,8 +3080,8 @@ export class MarinaDB {
   appendIntellectEvent(input: Parameters<typeof intellectsDb.appendIntellectEvent>[1]) {
     return intellectsDb.appendIntellectEvent(this.db, input);
   }
-  listIntellectEvents(intellectId: string) {
-    return intellectsDb.listIntellectEvents(this.reader, intellectId);
+  listIntellectEvents(intellectId: string, limit?: number) {
+    return intellectsDb.listIntellectEvents(this.reader, intellectId, limit);
   }
   verifyIntellectEvent(row: intellectsDb.IntellectEventRow) {
     return intellectsDb.verifyIntellectEvent(row);
@@ -3242,8 +3245,8 @@ export class MarinaDB {
   appendEconomicEvent(input: Parameters<typeof economicsDb.appendEconomicEvent>[1]) {
     return economicsDb.appendEconomicEvent(this.db, input);
   }
-  listEconomicEvents(id: string) {
-    return economicsDb.listEconomicEvents(this.reader, id);
+  listEconomicEvents(id: string, limit?: number) {
+    return economicsDb.listEconomicEvents(this.reader, id, limit);
   }
   verifyEconomicEvent(row: economicsDb.EconomicEventRow) {
     return economicsDb.verifyEconomicEvent(row);
@@ -3411,6 +3414,10 @@ export class MarinaDB {
   getBoard(id: string): BoardRow | undefined {
     return channelsDb.getBoard(this.db, id);
   }
+  raiseBoardRanks(boardId: string, ranks: { writeRank?: number; pinRank?: number }): void {
+    channelsDb.raiseBoardRanks(this.db, boardId, ranks);
+  }
+
   getBoardByName(name: string): BoardRow | undefined {
     return channelsDb.getBoardByName(this.db, name);
   }

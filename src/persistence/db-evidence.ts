@@ -91,14 +91,29 @@ export function listEvidenceReceipts(reader: Database, limit = 100): EvidenceRec
     .all(bounded) as EvidenceReceiptRow[];
 }
 
-export function verifyEvidenceChain(reader: Database): EvidenceVerification {
-  const rows = reader
-    .query("SELECT * FROM evidence_receipts ORDER BY sequence ASC")
-    .all() as EvidenceReceiptRow[];
-  let previous: string | null = null;
-  for (let index = 0; index < rows.length; index++) {
-    const row = rows[index]!;
-    const expectedSequence = index + 1;
+export function verifyEvidenceChain(reader: Database, windowLimit = 1_000): EvidenceVerification {
+  // Bounded window: this backs UNAUTHENTICATED discovery routes
+  // (/api/federation/manifest, /api/evidence/checkpoint), so a full-table
+  // rehash would be a free O(n) CPU amplifier. The newest window still
+  // verifies hash continuity within itself (its first previous_hash anchors
+  // it to the rest of the chain), and the genesis row is checked whenever it
+  // falls inside the window.
+  const total = (reader.query("SELECT COUNT(*) AS n FROM evidence_receipts").get() as { n: number })
+    .n;
+  const bounded = Math.min(Math.max(Math.floor(windowLimit), 1), 10_000);
+  const rows = (
+    reader
+      .query("SELECT * FROM evidence_receipts ORDER BY sequence DESC LIMIT ?")
+      .all(bounded) as EvidenceReceiptRow[]
+  ).reverse();
+  const headHash = rows.at(-1)?.entry_hash ?? null;
+  const first = rows[0];
+  if (first && first.sequence === 1 && first.previous_hash !== null) {
+    return { valid: false, entries: total, headHash, firstInvalidSequence: 1 };
+  }
+  let previous: string | null = first?.previous_hash ?? null;
+  let expectedSequence = first?.sequence ?? 1;
+  for (const row of rows) {
     const expectedHash = entryHash({
       sequence: row.sequence,
       event_type: row.event_type,
@@ -112,19 +127,10 @@ export function verifyEvidenceChain(reader: Database): EvidenceVerification {
       row.previous_hash !== previous ||
       row.entry_hash !== expectedHash
     ) {
-      return {
-        valid: false,
-        entries: rows.length,
-        headHash: rows.at(-1)?.entry_hash ?? null,
-        firstInvalidSequence: row.sequence,
-      };
+      return { valid: false, entries: total, headHash, firstInvalidSequence: row.sequence };
     }
     previous = row.entry_hash;
+    expectedSequence++;
   }
-  return {
-    valid: true,
-    entries: rows.length,
-    headHash: rows.at(-1)?.entry_hash ?? null,
-    firstInvalidSequence: null,
-  };
+  return { valid: true, entries: total, headHash, firstInvalidSequence: null };
 }

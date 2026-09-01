@@ -1279,7 +1279,7 @@ export class Engine {
     }
 
     // 3. Periodic maintenance (boards auto-archive, channel pruning, note importance adjustment)
-    if (this.tickCount % BOARD_ARCHIVE_INTERVAL === 0 && this.boardManager) {
+    if (this.tickCount % BOARD_ARCHIVE_INTERVAL === 300 && this.boardManager) {
       const bm = this.boardManager;
       tryLog(this.logger, "tick", "Board auto-archive failed", () =>
         bm.autoArchive(BOARD_ARCHIVE_AGE_DAYS, 0),

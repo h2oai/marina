@@ -239,10 +239,33 @@ export function appendIntellectEvent(
   return append();
 }
 
-export function listIntellectEvents(db: Database, intellectId: string): IntellectEventRow[] {
+/** Latest lifecycle kind via a keyed query — correct regardless of how many
+ *  non-lifecycle events follow it (a bounded event window could miss it). */
+export function getLatestIntellectLifecycleKind(
+  db: Database,
+  intellectId: string,
+): IntellectEventKind | undefined {
+  const row = db
+    .query(
+      `SELECT kind FROM intellect_events
+       WHERE intellect_id = ? AND kind IN ('dormant','revived','terminated','last_observed')
+       ORDER BY id DESC LIMIT 1`,
+    )
+    .get(intellectId) as { kind: IntellectEventKind } | null;
+  return row?.kind;
+}
+
+// Newest-window fetch (ascending return): rank-0 `intellect show` hydrates
+// every returned row, so the read must not scale with unbounded ledger growth.
+export function listIntellectEvents(
+  db: Database,
+  intellectId: string,
+  limit = 1000,
+): IntellectEventRow[] {
   return db
-    .query("SELECT * FROM intellect_events WHERE intellect_id = ? ORDER BY created_at, id")
-    .all(intellectId) as IntellectEventRow[];
+    .query("SELECT * FROM intellect_events WHERE intellect_id = ? ORDER BY id DESC LIMIT ?")
+    .all(intellectId, Math.max(1, Math.min(limit, 5000)))
+    .reverse() as IntellectEventRow[];
 }
 
 export function verifyIntellectEvent(row: IntellectEventRow): {
