@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-09-01
+
+This release pairs the open-ended cognitive ecology and the August
+observability/CLI/Flywheel waves with a full security-and-correctness audit of
+everything shipped since 0.6.0. Every audit finding — high, medium, and low —
+was fixed, independently re-verified, and regression-tested (2,885 backend +
+245 dashboard tests).
+
+### Added
+
+- Open-ended cognitive ecology: journeys and desires, portable intellect
+  identity, open associations, genome/mutation/reproduction lineage,
+  transparent multi-mesh federation, asset-neutral economic provenance,
+  simulation labs, and an opt-in hash-chained cognitive-provenance ledger
+  (migrations 83–94, 12 new commands).
+- End-to-end execution tracing with span projection, judgments ledger,
+  eval-json/OTLP export, `/api/traces`, the rank-0 `trace` command, and
+  opt-in trace-informed adaptive routing.
+- Folder-first coding CLI with per-folder session resume, one-shot `-p` mode
+  with exit codes, and opt-in per-session git-worktree isolation.
+- Flywheel sandbox functional slices M1–M5: durable reconciliation, explicit
+  session routing, sandbox projects with bounded transfer, managed services
+  with probe/screenshot/publish, and production gates.
+- Focused single-outcome worlds (prediction-lab, deep-research, red-team,
+  due-diligence, data-investigation) and the world-collective control plane
+  for spawning and managing descendant Marina instances.
+
+### Security
+
+- Every listener now binds loopback by default. The real-time log viewer
+  (which streamed entity movement and full chat text on `0.0.0.0` with no
+  authentication) and the telnet server honor the same
+  `WS_HOST`/`MARINA_PUBLIC` opt-in as WebSocket and MCP; `scripts/start.sh`
+  no longer enables telnet implicitly.
+- Container posture aligned with the source defaults: the image no longer
+  ships or exposes telnet, the unauthenticated log viewer is no longer
+  `EXPOSE`d, and docker-compose publishes all ports to the host's
+  `127.0.0.1` unless the operator deliberately widens them.
+- Cross-world mesh replication is signed-by-default: unsigned events are
+  refused (opt-in via `MARINA_FEDERATION_ALLOW_UNSIGNED` for trusted dev
+  networks), origin worlds registered in `federation_peers` are checked
+  against their pinned public key and trust status, refused replications
+  write nothing, and manifest re-registration can no longer silently rotate
+  a pinned key.
+- The paper-trading order ledger is protected as the security control it is:
+  the `paper-orders`/`paper-proposals` boards require rank 5 to post, closing
+  rank-0 forgery of close orders that could mint profit past the daily-loss
+  floor or defeat the no-self-hedge invariant. The daily-loss floor itself is
+  now enforced (close-realized losses since UTC midnight, average-cost basis).
+- Rank-0 CPU exhaustion closed: Ed25519 verification is capped in
+  `association`/`economy`/`intellect` inspection and `provenance verify`, and
+  the evidence-chain check backing the unauthenticated federation discovery
+  routes verifies a bounded window instead of rehashing the full table.
+- `desire` treats participant input as data (untrusted-context wrapping, same
+  rule as `ask`/`dig`) and rate-limits its model pass per entity; canvas
+  remote-URL uploads use pinned-resolution fetching (closing a DNS-rebinding
+  TOCTOU) with a streamed 50 MB cap; a crafted `?traceId` can no longer
+  poison the `/api/traces` projection cache.
+- Updated vulnerable transitive HTTP, URL parsing, IP address, WebSocket, and
+  protobuf dependencies. Upgraded optional better-auth support to the patched
+  1.7 line and added an automatic, backward-compatible issuer migration for
+  auth databases created by Marina 0.6.0.
+
+### Fixed
+
+- `marina-descend` shares one collective manager per database, so descendant
+  Marina processes can be stopped again (previously orphaned holding four
+  ports), live variants are no longer marked failed by unrelated commands,
+  and double-spawns are blocked. Descendants no longer inherit a telnet port.
+- Ecology event replay is deterministic and VACUUM-safe: migration 94 adds
+  monotonic `seq` ordering to the seven ecology event tables (same-millisecond
+  events previously misordered under UUID ordering, and implicit-rowid
+  ordering could silently flip participant state after `VACUUM`). Snapshot
+  imports from pre-0.7.0 exports are backfilled.
+- Corrupt stored JSON can no longer crash rank-0 commands (`provenance
+  verify`, `mesh export`, genome/mutation/reproduction inspection); intellect
+  lifecycle signatures bind their row id so a valid signature cannot be
+  replayed onto another row; explicit SQL parameter lists replace
+  order-fragile positional binding.
+- Selector resolution for associations, intellects, and meshes searches the
+  whole table (bounded SQL prefix lookup) instead of a capped scan that
+  silently missed older rows; binary canvas assets survive remote upload
+  byte-accurately.
+
+### Performance
+
+- The durable event log is bounded: streaming token deltas and tick events
+  are no longer written to SQLite (previously one synchronous INSERT per
+  token chunk per agent), and the log is pruned hourly to a configurable
+  retention (`MARINA_EVENT_RETENTION`).
+- Trace consumers stopped rescanning: expression indexes plus
+  `MAX(event_log.id)`-keyed memoization for adaptive routing and
+  `/api/traces`; OTLP export fetches each flush in one indexed batch instead
+  of up to 1,000 five-thousand-row scans; trace judgments load per page in a
+  single query.
+- The Responses API record index is size-capped with oldest-first eviction;
+  the dashboard snapshot reads agent configs in one bulk query; hourly
+  maintenance jobs are staggered across distinct tick phases; `journey list`,
+  mesh event lookup, passthru context injection, and per-perception agent
+  hot paths shed their N+1 queries and redundant work; cognitive provenance
+  no longer writes a signed row per streamed token.
+
 ### Changed
 
 - Refined the README, documentation landing page, GitHub Pages metadata, and contribution
@@ -16,12 +118,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   added a first-run Start Here card with direct login, orientation, and next-action guidance.
 - Completed the local Electrobun dashboard bridge for clickable API-key management, live model and
   role discovery, default-model selection, and agent launch, attention, and stop actions.
-
-### Security
-
-- Updated vulnerable transitive HTTP, URL parsing, IP address, WebSocket, and protobuf
-  dependencies. Upgraded optional better-auth support to the patched 1.7 line and added an
-  automatic, backward-compatible issuer migration for auth databases created by Marina 0.6.0.
 
 ## [0.6.0] — 2026-08-18
 

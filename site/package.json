@@ -2,7 +2,7 @@
   "name": "marina-site",
   "private": true,
   "type": "module",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "license": "Apache-2.0",
   "scripts": {
     "sync-docs": "bun run scripts/sync-docs.ts",
