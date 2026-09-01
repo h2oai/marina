@@ -274,13 +274,14 @@ const stateInterval = setInterval(
 
 const otlpConfig = loadOtlpExporterConfig();
 const otlpExporter = otlpConfig
-  ? new MarinaOtlpExporter(otlpConfig, (traceIds) =>
-      traceIds.flatMap((traceId) =>
-        projectTraces(db.getRecentTraceEvents(5_000, traceId).events).filter(
-          (trace) => trace.traceId === traceId,
-        ),
-      ),
-    )
+  ? new MarinaOtlpExporter(otlpConfig, (traceIds) => {
+      // One indexed batch fetch + one projection for the whole flush — the
+      // previous per-trace-id 5,000-row scan ran up to 1,000 times per flush.
+      const wanted = new Set(traceIds);
+      return projectTraces(db.getTraceEventsByTraceIds(traceIds)).filter((trace) =>
+        wanted.has(trace.traceId),
+      );
+    })
   : undefined;
 if (otlpExporter) {
   engine.setOtlpStatusProvider(() => otlpExporter.getStatus());
@@ -316,6 +317,7 @@ const logServer =
   LOG_PORT > 0
     ? new LogServer({
         port: LOG_PORT,
+        hostname: RESOLVED_WS_HOST,
         resolveEntity: (id) => engine.entities.get(id)?.name,
       })
     : undefined;

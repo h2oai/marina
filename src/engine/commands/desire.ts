@@ -5,13 +5,19 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
 
+// One model-backed grounding pass per entity per window — `desire` is rank 0
+// and each pass is a (up to 45s) LLM call; without a cooldown it is a free
+// upstream-spend amplifier. The journey itself is always preserved.
+const MODEL_PASS_COOLDOWN_MS = 15_000;
+
 /** A one-sentence front door that preserves the existing command parser. */
 export function desireCommand(deps: {
   db: MarinaDB;
   getEntity: (id: string) => Entity | undefined;
   interpretDesire?: (expression: string, context: string) => Promise<string | undefined>;
-  captureCognition?: boolean;
+  captureCognition?: () => boolean;
 }): CommandDef {
+  const lastModelPass = new Map<string, number>();
   return {
     name: "desire",
     aliases: ["pursue"],
@@ -38,7 +44,8 @@ export function desireCommand(deps: {
         requesterName: entity.name,
         expression,
       });
-      const inputEvent = deps.captureCognition
+      const capture = deps.captureCognition?.() ?? false;
+      const inputEvent = capture
         ? deps.db.appendCognitiveEvent({
             kind: "input",
             actorId: entity.id,
@@ -62,12 +69,27 @@ export function desireCommand(deps: {
       );
 
       if (!deps.interpretDesire) return;
+      const now = Date.now();
+      const last = lastModelPass.get(entity.id) ?? 0;
+      if (now - last < MODEL_PASS_COOLDOWN_MS) {
+        ctx.send(
+          input.entity,
+          dim("Model grounding skipped (one pass per 15s per entity). Your journey is preserved."),
+        );
+        return;
+      }
+      lastModelPass.set(entity.id, now);
+      if (lastModelPass.size > 5000) {
+        for (const [key, at] of lastModelPass) {
+          if (now - at > MODEL_PASS_COOLDOWN_MS) lastModelPass.delete(key);
+        }
+      }
       const context = collectContext(deps.db, entity.name, expression);
       try {
         const response = await deps.interpretDesire(expression, context);
         if (!response?.trim()) return;
         const grounding = parseGroundingResponse(response);
-        if (deps.captureCognition) {
+        if (capture) {
           deps.db.appendCognitiveEvent({
             kind: "output",
             actorId: "marina:model",

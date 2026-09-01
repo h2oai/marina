@@ -4,7 +4,7 @@
 import { join } from "node:path";
 import { record as recordStanding } from "../../agent/standing";
 import { header, separator } from "../../net/ansi";
-import { validateFetchUrl } from "../../net/url-guard";
+import { guardedFetch } from "../../net/url-guard";
 import type { CanvasIntentData, MarinaDB } from "../../persistence/database";
 import { parseCanvasIntent } from "../../persistence/database";
 import type { StorageProvider } from "../../storage/provider";
@@ -1342,27 +1342,23 @@ async function handleAsset(
         return;
       }
 
-      // Remote URL fetch
+      // Remote URL fetch. ctx.fetch remains the capability gate (contexts
+      // without HTTP stay without it), but the request itself goes through
+      // guardedFetch: resolve-validate-pin per hop, so a DNS rebind can't swap
+      // in a private address between the check and the connect (the old
+      // validateFetchUrl-then-ctx.fetch split was exactly that TOCTOU).
       if (!ctx.fetch) {
         ctx.send(eid, "HTTP fetch not available in this context.");
         return;
       }
-      const ssrfError = await validateFetchUrl(url);
-      if (ssrfError) {
-        ctx.send(eid, `Upload blocked: ${ssrfError}`);
-        return;
-      }
       try {
-        const response = await ctx.fetch(url);
-        if ("error" in response) {
-          ctx.send(eid, `Failed to fetch URL: ${response.error}`);
-          return;
-        }
+        const response = await guardedFetch(url);
         if (response.status >= 400) {
           ctx.send(eid, `Failed to fetch URL: HTTP ${response.status}`);
           return;
         }
-        const bodyBytes = new TextEncoder().encode(response.body);
+        // arrayBuffer (not text) keeps binary assets byte-accurate.
+        const bodyBytes = new Uint8Array(await response.arrayBuffer());
         if (bodyBytes.byteLength === 0) {
           ctx.send(eid, "Downloaded file is empty.");
           return;

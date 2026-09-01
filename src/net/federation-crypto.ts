@@ -92,7 +92,18 @@ export function signFederationDocument<T extends Record<string, unknown>>(
   return { ...document, signature: { algorithm: "Ed25519", publicKey, keyId, value } };
 }
 
-export function verifyFederationDocument(document: SignedDocument): {
+export function verifyFederationDocument(
+  document: SignedDocument,
+  opts?: {
+    /**
+     * Trust anchor: when set, the document's embedded public key must equal this
+     * pinned key (base64 SPKI, e.g. from federation_peers.public_key). Without a
+     * pin, a valid signature proves integrity + key possession only — any minted
+     * keypair verifies — never provenance.
+     */
+    pinnedPublicKey?: string | null;
+  },
+): {
   valid: boolean;
   keyId: string | null;
   error?: string;
@@ -107,6 +118,14 @@ export function verifyFederationDocument(document: SignedDocument): {
     const expectedKeyId = `sha256:${createHash("sha256").update(publicDer).digest("hex")}`;
     if (signature.keyId !== expectedKeyId) {
       return { valid: false, keyId: signature.keyId, error: "Public-key fingerprint mismatch" };
+    }
+    const pinned = opts?.pinnedPublicKey?.trim();
+    if (pinned && !Buffer.from(pinned, "base64").equals(publicDer)) {
+      return {
+        valid: false,
+        keyId: signature.keyId,
+        error: "Signing key does not match the pinned peer key",
+      };
     }
     const publicKey = createPublicKey({ key: publicDer, format: "der", type: "spki" });
     if (publicKey.asymmetricKeyType !== "ed25519") {

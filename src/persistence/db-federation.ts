@@ -32,7 +32,8 @@ export function upsertFederationPeer(
      (world_id,name,base_url,public_key,trust_status,manifest,first_seen_at,last_seen_at)
      VALUES (?,?,?,?, 'unverified',?,?,?)
      ON CONFLICT(world_id) DO UPDATE SET
-       name=excluded.name,base_url=excluded.base_url,public_key=excluded.public_key,
+       name=excluded.name,base_url=excluded.base_url,
+       public_key=COALESCE(excluded.public_key, federation_peers.public_key),
        manifest=excluded.manifest,last_seen_at=excluded.last_seen_at`,
     [
       input.worldId,

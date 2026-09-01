@@ -144,6 +144,120 @@ describe("transparent multi-mesh federation", () => {
     b.close();
   });
 
+  it("refuses unsigned replication by default and leaves no row behind", () => {
+    delete process.env.MARINA_FEDERATION_SIGNING_KEY;
+    const a = new MarinaDB(DB_A);
+    const b = new MarinaDB(DB_B);
+    a.createMesh({
+      id: "mesh:quiet",
+      name: "Quiet",
+      charterRef: "charter:v1",
+      protocol: "transparent.v1",
+      createdBy: "world-a",
+    });
+    b.createMesh({
+      id: "mesh:quiet",
+      name: "Quiet",
+      charterRef: "charter:v1",
+      protocol: "transparent.v1",
+      createdBy: "world-b",
+    });
+    const original = a.appendMeshEvent({
+      meshId: "mesh:quiet",
+      originWorldId: "world-a",
+      kind: "result",
+      payload: { claim: "unsigned" },
+    });
+    const token = a.exportMeshEvent(original);
+    expect(() => b.importMeshEvent(token)).toThrow(/unsigned/i);
+    expect(b.listMeshEvents("mesh:quiet")).toHaveLength(0);
+    // Explicit opt-in accepts unsigned events.
+    process.env.MARINA_FEDERATION_ALLOW_UNSIGNED = "true";
+    try {
+      expect(b.importMeshEvent(token).id).toBe(original.id);
+    } finally {
+      delete process.env.MARINA_FEDERATION_ALLOW_UNSIGNED;
+    }
+    a.close();
+    b.close();
+  });
+
+  it("refuses replication into the wrong mesh before any row is written", () => {
+    const { privateKey } = generateKeyPairSync("ed25519");
+    process.env.MARINA_FEDERATION_SIGNING_KEY = privateKey
+      .export({ format: "der", type: "pkcs8" })
+      .toString("base64");
+    const a = new MarinaDB(DB_A);
+    a.createMesh({
+      id: "mesh:alpha",
+      name: "Alpha",
+      charterRef: "c",
+      protocol: "p",
+      createdBy: "x",
+    });
+    const original = a.appendMeshEvent({
+      meshId: "mesh:alpha",
+      originWorldId: "world-a",
+      kind: "result",
+      payload: { claim: "x" },
+    });
+    const token = a.exportMeshEvent(original);
+    const b = new MarinaDB(DB_B);
+    b.createMesh({ id: "mesh:beta", name: "Beta", charterRef: "c", protocol: "p", createdBy: "y" });
+    expect(() => b.importMeshEvent(token, { expectedMeshId: "mesh:beta" })).toThrow(
+      /another mesh/i,
+    );
+    expect(b.listMeshEvents("mesh:alpha")).toHaveLength(0);
+    expect(b.listMeshEvents("mesh:beta")).toHaveLength(0);
+    a.close();
+    b.close();
+  });
+
+  it("enforces the operator trust anchor: blocked origins and pinned-key mismatches are refused", () => {
+    const { privateKey } = generateKeyPairSync("ed25519");
+    process.env.MARINA_FEDERATION_SIGNING_KEY = privateKey
+      .export({ format: "der", type: "pkcs8" })
+      .toString("base64");
+    const a = new MarinaDB(DB_A);
+    a.createMesh({ id: "mesh:t", name: "T", charterRef: "c", protocol: "p", createdBy: "x" });
+    const original = a.appendMeshEvent({
+      meshId: "mesh:t",
+      originWorldId: "world-a",
+      kind: "result",
+      payload: { claim: "x" },
+    });
+    const token = a.exportMeshEvent(original);
+    const b = new MarinaDB(DB_B);
+    b.createMesh({ id: "mesh:t", name: "T", charterRef: "c", protocol: "p", createdBy: "y" });
+
+    // Blocked peer is refused regardless of a valid signature.
+    b.upsertFederationPeer({
+      worldId: "world-a",
+      name: "World A",
+      baseUrl: "https://a.example",
+      manifest: {},
+    });
+    b.setFederationTrust("world-a", "blocked");
+    expect(() => b.importMeshEvent(token)).toThrow(/blocked/i);
+
+    // A pinned key that doesn't match the signing key is refused.
+    const otherKey = generateKeyPairSync("ed25519")
+      .publicKey.export({ format: "der", type: "spki" })
+      .toString("base64");
+    b.setFederationTrust("world-a", "unverified");
+    b.upsertFederationPeer({
+      worldId: "world-a",
+      name: "World A",
+      baseUrl: "https://a.example",
+      publicKey: otherKey,
+      manifest: {},
+    });
+    expect(() => b.importMeshEvent(token)).toThrow(/does not verify/i);
+    expect(b.listMeshEvents("mesh:t")).toHaveLength(0);
+    a.close();
+    b.close();
+  });
+
   it("supports overlapping meshes and explicit translators without merging governance", () => {
     const db = new MarinaDB(DB_A);
     db.createMesh({ id: "mesh:a", name: "A", charterRef: "a", protocol: "alpha", createdBy: "x" });

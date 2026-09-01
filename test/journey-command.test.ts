@@ -172,7 +172,7 @@ describe("journey command", () => {
     const command = desireCommand({
       db,
       getEntity: (id) => engine.entities.get(id as EntityId),
-      captureCognition: true,
+      captureCognition: () => true,
       interpretDesire: async (_expression, _context) =>
         "You want a reversible decision. First compare the options against your constraints.",
     });

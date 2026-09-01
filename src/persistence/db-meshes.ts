@@ -28,6 +28,8 @@ export interface MeshMembershipEventRow {
   actor_id: string;
   signature_json: string | null;
   created_at: number;
+  /** Monotonic insertion order (migration 94) — `.at(-1)` latest-membership reads depend on it. */
+  seq: number;
 }
 export interface MeshEventRow {
   id: string;
@@ -75,15 +77,28 @@ export function createMesh(
   };
   db.run(
     "INSERT INTO meshes (id,name,charter_ref,protocol,created_by,created_at) VALUES (?,?,?,?,?,?)",
-    Object.values(row),
+    [row.id, row.name, row.charter_ref, row.protocol, row.created_by, row.created_at],
   );
   return row;
 }
 export function getMesh(db: Database, id: string): MeshRow | undefined {
   return (db.query("SELECT * FROM meshes WHERE id=?").get(id) as MeshRow | null) ?? undefined;
 }
-export function listMeshes(db: Database): MeshRow[] {
-  return db.query("SELECT * FROM meshes ORDER BY created_at DESC,id").all() as MeshRow[];
+export function listMeshes(db: Database, limit = 200): MeshRow[] {
+  return db
+    .query("SELECT * FROM meshes ORDER BY created_at DESC,id LIMIT ?")
+    .all(Math.max(1, Math.min(limit, 1000))) as MeshRow[];
+}
+
+/**
+ * Bounded selector resolution over the WHOLE table (a capped list scan would
+ * silently miss older rows). Returns up to 2 rows: 1 = unambiguous.
+ */
+export function findMeshesBySelector(db: Database, selector: string): MeshRow[] {
+  const prefix = `${selector.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+  return db
+    .query("SELECT * FROM meshes WHERE id LIKE ? ESCAPE '\\' OR name = ? COLLATE NOCASE LIMIT 2")
+    .all(prefix, selector) as MeshRow[];
 }
 
 export function appendMeshMembershipEvent(
@@ -111,7 +126,7 @@ export function appendMeshMembershipEvent(
   };
   const signature = sign({ schema: "marina.mesh.membership.v1", ...row });
   db.run(
-    "INSERT INTO mesh_membership_events (id,mesh_id,world_id,kind,visibility_from,disclosure_json,actor_id,signature_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+    "INSERT INTO mesh_membership_events (id,mesh_id,world_id,kind,visibility_from,disclosure_json,actor_id,signature_json,created_at,seq) VALUES (?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(seq),0)+1 FROM mesh_membership_events))",
     [
       row.id,
       row.meshId,
@@ -130,7 +145,7 @@ export function appendMeshMembershipEvent(
 }
 export function listMeshMembershipEvents(db: Database, meshId: string): MeshMembershipEventRow[] {
   return db
-    .query("SELECT * FROM mesh_membership_events WHERE mesh_id=? ORDER BY created_at,id")
+    .query("SELECT * FROM mesh_membership_events WHERE mesh_id=? ORDER BY seq")
     .all(meshId) as MeshMembershipEventRow[];
 }
 
@@ -186,10 +201,21 @@ export function appendMeshEvent(
   );
   return db.query("SELECT * FROM mesh_events WHERE id=?").get(content.id) as MeshEventRow;
 }
-export function listMeshEvents(db: Database, meshId: string): MeshEventRow[] {
+export function listMeshEvents(db: Database, meshId: string, limit = 500): MeshEventRow[] {
   return db
-    .query("SELECT * FROM mesh_events WHERE mesh_id=? ORDER BY created_at,id")
-    .all(meshId) as MeshEventRow[];
+    .query("SELECT * FROM mesh_events WHERE mesh_id=? ORDER BY created_at DESC,id DESC LIMIT ?")
+    .all(meshId, Math.max(1, Math.min(limit, 2000)))
+    .reverse() as MeshEventRow[];
+}
+export function getMeshEvent(db: Database, id: string): MeshEventRow | undefined {
+  return (
+    (db.query("SELECT * FROM mesh_events WHERE id=?").get(id) as MeshEventRow | null) ?? undefined
+  );
+}
+export function countMeshEvents(db: Database, meshId: string): number {
+  return (
+    db.query("SELECT COUNT(*) AS n FROM mesh_events WHERE mesh_id=?").get(meshId) as { n: number }
+  ).n;
 }
 
 export function exportMeshEvent(row: MeshEventRow): string {
@@ -210,7 +236,11 @@ export function exportMeshEvent(row: MeshEventRow): string {
   ).toString("base64url");
 }
 
-export function importMeshEvent(db: Database, token: string): MeshEventRow {
+export function importMeshEvent(
+  db: Database,
+  token: string,
+  opts?: { expectedMeshId?: string },
+): MeshEventRow {
   if (!token || token.length > 100_000)
     throw new Error("Mesh event token is invalid or too large.");
   let document: Record<string, unknown>;
@@ -233,11 +263,34 @@ export function importMeshEvent(db: Database, token: string): MeshEventRow {
     typeof document.contentHash !== "string"
   )
     throw new Error("Mesh event document is invalid.");
+  // Every rejection below happens BEFORE the insert — a refused replication
+  // must leave no row behind.
+  if (opts?.expectedMeshId && document.meshId !== opts.expectedMeshId)
+    throw new Error("Event belongs to another mesh.");
   const { contentHash, signature, ...content } = document;
   const expected = `sha256:${createHash("sha256").update(canonicalFederationJson(content)).digest("hex")}`;
   if (contentHash !== expected) throw new Error("Mesh event content hash does not verify.");
-  if (signature && !verifyFederationDocument(document).valid)
-    throw new Error("Mesh event signature does not verify.");
+  // Trust anchor: originWorldId is attacker-supplied. A blocked peer is always
+  // refused; a peer with a pinned public key must sign with exactly that key.
+  const peer = db
+    .query("SELECT public_key, trust_status FROM federation_peers WHERE world_id=?")
+    .get(document.originWorldId) as { public_key: string | null; trust_status: string } | null;
+  if (peer?.trust_status === "blocked")
+    throw new Error("Origin world is blocked by operator trust policy.");
+  if (!signature) {
+    // Unsigned cross-world evidence is refused by default — otherwise any
+    // logged-in entity can fabricate events attributed to any origin world.
+    if (process.env.MARINA_FEDERATION_ALLOW_UNSIGNED !== "true")
+      throw new Error(
+        "Mesh event is unsigned. Signed replication is required (MARINA_FEDERATION_ALLOW_UNSIGNED=true accepts unsigned events on trusted networks).",
+      );
+  } else {
+    const verification = verifyFederationDocument(document, {
+      pinnedPublicKey: peer?.public_key,
+    });
+    if (!verification.valid)
+      throw new Error(`Mesh event signature does not verify: ${verification.error ?? "invalid"}`);
+  }
   const existing = db
     .query("SELECT * FROM mesh_events WHERE id=?")
     .get(document.id) as MeshEventRow | null;
@@ -292,10 +345,18 @@ export function witnessMeshEvent(
   );
   return db.query("SELECT * FROM mesh_witnesses WHERE id=?").get(id) as MeshWitnessRow;
 }
-export function listMeshWitnesses(db: Database, meshId: string): MeshWitnessRow[] {
+export function listMeshWitnesses(db: Database, meshId: string, limit = 500): MeshWitnessRow[] {
   return db
-    .query("SELECT * FROM mesh_witnesses WHERE mesh_id=? ORDER BY created_at,id")
-    .all(meshId) as MeshWitnessRow[];
+    .query("SELECT * FROM mesh_witnesses WHERE mesh_id=? ORDER BY created_at DESC,id DESC LIMIT ?")
+    .all(meshId, Math.max(1, Math.min(limit, 2000)))
+    .reverse() as MeshWitnessRow[];
+}
+export function countMeshWitnesses(db: Database, meshId: string): number {
+  return (
+    db.query("SELECT COUNT(*) AS n FROM mesh_witnesses WHERE mesh_id=?").get(meshId) as {
+      n: number;
+    }
+  ).n;
 }
 
 export function createMeshTranslation(

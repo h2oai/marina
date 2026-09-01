@@ -3,6 +3,7 @@
 
 import type { MarinaDB, MeshMembershipEventRow, MeshWitnessRow } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
+import { getErrorMessage } from "../errors";
 
 const HELP = `Transparent, voluntary, overlapping Marina meshes.
 Usage:
@@ -37,6 +38,17 @@ export function meshCommand(deps: {
         const [id = "", name = "", charterRef = "", protocol = "", ...extra] = fields(raw);
         if (!id || !name || !charterRef || !protocol || extra.length) {
           ctx.send(input.entity, HELP);
+          return;
+        }
+        if (!SAFE_MESH_ID.test(id)) {
+          ctx.send(
+            input.entity,
+            "Mesh id must be 3-64 chars: letters, digits, and : . _ - (starting alphanumeric).",
+          );
+          return;
+        }
+        if (deps.db.getMesh(id)) {
+          ctx.send(input.entity, `Mesh ${id} already exists.`);
           return;
         }
         const row = deps.db.createMesh({
@@ -133,10 +145,9 @@ export function meshCommand(deps: {
       }
       if (sub === "export") {
         const mesh = resolve(deps.db, input.tokens[1] ?? "");
-        const row = mesh
-          ? deps.db.listMeshEvents(mesh.id).find((e) => e.id === input.tokens[2])
-          : undefined;
-        ctx.send(input.entity, row ? deps.db.exportMeshEvent(row) : "Mesh event not found.");
+        const row = input.tokens[2] ? deps.db.getMeshEvent(input.tokens[2]) : undefined;
+        const found = mesh && row && row.mesh_id === mesh.id ? row : undefined;
+        ctx.send(input.entity, found ? deps.db.exportMeshEvent(found) : "Mesh event not found.");
         return;
       }
       if (sub === "replicate") {
@@ -147,8 +158,9 @@ export function meshCommand(deps: {
           return;
         }
         try {
-          const row = deps.db.importMeshEvent(token);
-          if (row.mesh_id !== mesh.id) throw new Error("Event belongs to another mesh.");
+          // importMeshEvent refuses (before any insert) events for another mesh,
+          // unsigned events, invalid signatures, and blocked/key-mismatched origins.
+          const row = deps.db.importMeshEvent(token, { expectedMeshId: mesh.id });
           deps.db.witnessMeshEvent({
             meshId: mesh.id,
             eventId: row.id,
@@ -157,10 +169,10 @@ export function meshCommand(deps: {
           });
           ctx.send(
             input.entity,
-            `Replicated and witnessed ${row.id}; origin signature ${deps.db.verifyMeshEvent(row).valid ? "verifies" : "is absent or invalid"}.`,
+            `Replicated and witnessed ${row.id}; origin signature ${row.signature_json ? "verifies" : "absent (accepted by MARINA_FEDERATION_ALLOW_UNSIGNED)"}.`,
           );
         } catch (cause) {
-          ctx.send(input.entity, cause instanceof Error ? cause.message : "Replication failed.");
+          ctx.send(input.entity, `Replication refused: ${getErrorMessage(cause)}`);
         }
         return;
       }
@@ -215,11 +227,9 @@ export function meshCommand(deps: {
           return;
         }
         const memberships = deps.db.listMeshMembershipEvents(mesh.id);
-        const events = deps.db.listMeshEvents(mesh.id);
-        const witnesses = deps.db.listMeshWitnesses(mesh.id);
         ctx.send(
           input.entity,
-          `${mesh.name} (${mesh.id})\nCharter: ${mesh.charter_ref}\nProtocol: ${mesh.protocol}\nMembership events: ${memberships.length}\nReplicated events: ${events.length}\nWitness records: ${witnesses.length}\nTranslations: ${deps.db.listMeshTranslations(mesh.id).length}`,
+          `${mesh.name} (${mesh.id})\nCharter: ${mesh.charter_ref}\nProtocol: ${mesh.protocol}\nMembership events: ${memberships.length}\nReplicated events: ${deps.db.countMeshEvents(mesh.id)}\nWitness records: ${deps.db.countMeshWitnesses(mesh.id)}\nTranslations: ${deps.db.listMeshTranslations(mesh.id).length}`,
         );
         return;
       }
@@ -237,6 +247,8 @@ export function meshCommand(deps: {
     },
   };
 }
+const SAFE_MESH_ID = /^[a-z0-9][a-z0-9:._-]{2,63}$/i;
+
 function fields(raw: string) {
   return raw.split("|").map((x) => x.trim());
 }
@@ -249,10 +261,9 @@ function object(text: string): Record<string, unknown> {
   return { text };
 }
 function resolve(db: MarinaDB, selector: string) {
+  if (!selector) return undefined;
   const exact = db.getMesh(selector);
   if (exact) return exact;
-  const matches = db
-    .listMeshes()
-    .filter((m) => m.id.startsWith(selector) || m.name.toLowerCase() === selector.toLowerCase());
+  const matches = db.findMeshesBySelector(selector);
   return matches.length === 1 ? matches[0] : undefined;
 }

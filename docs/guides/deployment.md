@@ -64,10 +64,15 @@ The image builds the dashboard SPA, runs as an unprivileged `bun` user, and ship
 ```bash
 docker build -t marina .
 docker run -d --name marina \
-  -p 3300:3300 \
+  -p 127.0.0.1:3300:3300 \
   -v marina-data:/app/data \
   --env-file .env \
+  -e MARINA_ALLOW_INSECURE_PUBLIC=true \
   marina
+# The 127.0.0.1: publish prefix keeps the instance host-local (that's why the
+# acknowledgment flag is safe here — the container-internal bind is 0.0.0.0 so
+# the mapping works at all). Widening to -p 3300:3300 exposes passwordless
+# login to the network: enable MARINA_AUTH=better-auth first.
 ```
 
 ## Configuration essentials
@@ -94,7 +99,7 @@ Marina's HTTP API requires authentication **by default** — but it's easy to we
 - [ ] **Enable dashboard sign-in** with `MARINA_AUTH=better-auth` (+ `BETTER_AUTH_SECRET`) for any human-facing public host — see [authentication.md](../authentication.md). Without it the dashboard is open to anyone who can reach it.
 - [ ] **Encrypt API keys at rest** with `MARINA_KEY_SECRET` (≥ 16 chars; `openssl rand -base64 32`) if you store provider keys in the Admin → Keys panel — values are then AES-256-GCM encrypted in the DB. Without it they're plaintext; either set the secret, or prefer the provider **env vars** (`ANTHROPIC_API_KEY`, …, `LLAMA_API_KEY`), which are read live and never persisted. Admin → Security shows the live state. (Back up the secret — losing it orphans stored keys.)
 - [ ] **Set `ALLOWED_ORIGINS`** to your real dashboard origin(s) if clients run cross-origin. Unset = same-origin only (no CORS header), which is the safe default.
-- [ ] **Don't publish ports 4000 (telnet) and 3302 (log viewer)** — neither is authenticated. Telnet is off by default now (`TELNET_PORT=0`); if you enable it, keep it (and the log viewer) off your public load balancer / security group.
+- [ ] **Don't publish ports 4000 (telnet) and 3302 (log viewer)** — neither is authenticated. Telnet is off by default (`TELNET_PORT=0`), and both listeners now bind the resolved `WS_HOST` (loopback unless you opt into exposure), but the publish spec is still your boundary: keep them off your public load balancer / security group. The default docker-compose publishes all ports to the host's `127.0.0.1` only.
 - [ ] **Set `GATEWAY_SECRET`** if (and only if) you use [federation](federation.md). Otherwise leave it unset.
 - [ ] **Terminate TLS at a reverse proxy** (next section). Marina speaks plain HTTP/WS; never expose `3300` directly to the internet.
 - [ ] Rate limits are built in (WS 5/s, MCP 5/s, Model API 2/s per IP, Memory API 10/s per agent) but a proxy-level limit is still wise.

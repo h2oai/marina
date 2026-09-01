@@ -196,7 +196,9 @@ function show(
   const events = db.listIntellectEvents(intellect.id);
   const instances = db.listIntellectInstances(intellect.id);
   const signedEvents = events.filter((event) => event.signature_json);
-  const validSignatures = signedEvents.filter(
+  // Cap Ed25519 verification on this rank-0 command; newest window only.
+  const checkedEvents = signedEvents.slice(-100);
+  const validSignatures = checkedEvents.filter(
     (event) => db.verifyIntellectEvent(event).valid,
   ).length;
   const latestLifecycle = [...events]
@@ -210,7 +212,7 @@ function show(
     `${bold("Purpose:")} ${intellect.purpose || dim("undeclared")}`,
     `${bold("Observed state:")} ${status(latestLifecycle?.kind ?? "created", latestLifecycle?.kind === "terminated" ? "warn" : "info")}`,
     `${bold("Instances:")} ${instances.length}`,
-    `${bold("Signatures:")} ${validSignatures}/${signedEvents.length} signed events verify`,
+    `${bold("Signatures:")} ${validSignatures}/${checkedEvents.length} signed events verify${signedEvents.length > checkedEvents.length ? ` (newest 100 of ${signedEvents.length} checked)` : ""}`,
   ];
   for (const row of instances)
     lines.push(
@@ -242,7 +244,7 @@ function resolve(db: MarinaDB, selector: string) {
   if (!selector) return undefined;
   const exact = db.getIntellect(selector);
   if (exact) return exact;
-  const matches = db.listIntellects(500).filter((row) => row.id.startsWith(selector));
+  const matches = db.findIntellectsByIdPrefix(selector);
   return matches.length === 1 ? matches[0] : undefined;
 }
 

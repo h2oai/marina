@@ -126,9 +126,14 @@ function relate(
   const source = parseTypedRef(sourceText ?? "");
   const target = parseTypedRef(targetText ?? "");
   const direction = isDirection(directionText) ? directionText : undefined;
-  const prior = priorId
-    ? db.listAssociationRelations(association?.id ?? "").find((row) => row.id === priorId)
-    : undefined;
+  // Keyed lookup (not a full-list scan), constrained to the named association.
+  const prior =
+    priorId && association
+      ? (() => {
+          const row = db.getAssociationRelation(priorId);
+          return row?.association_id === association.id ? row : undefined;
+        })()
+      : undefined;
   if (
     !association ||
     !source ||
@@ -243,19 +248,31 @@ function show(
   const relations = db.listAssociationRelations(association.id);
   const links = db.listAssociationLinks(association.id);
   const projection = db.projectAssociation(association.id);
-  const signed = [...events, ...relations, ...links].filter((row) => row.signature_json);
-  const valid = [
-    ...events.map((row) => db.verifyAssociationEvent(row)),
-    ...relations.map((row) => db.verifyAssociationRelation(row)),
-    ...links.map((row) => db.verifyAssociationLink(row)),
-  ].filter((result) => result.valid).length;
+  // Signature checks are CPU-bound Ed25519 verifications on a rank-0 command —
+  // cap the checked window so a large association can't stall the engine thread.
+  const VERIFY_CAP = 100;
+  const signedChecks = [
+    ...events
+      .filter((row) => row.signature_json)
+      .map((row) => () => db.verifyAssociationEvent(row)),
+    ...relations
+      .filter((row) => row.signature_json)
+      .map((row) => () => db.verifyAssociationRelation(row)),
+    ...links.filter((row) => row.signature_json).map((row) => () => db.verifyAssociationLink(row)),
+  ];
+  const checked = signedChecks.slice(-VERIFY_CAP);
+  const valid = checked.filter((verify) => verify().valid).length;
+  const verifySummary =
+    signedChecks.length > checked.length
+      ? `${valid}/${checked.length} of the newest ${VERIFY_CAP} signed records verify (${signedChecks.length} total)`
+      : `${valid}/${signedChecks.length} signed records verify`;
   const lines = [
     header(`Association: ${association.name}`),
     separator(),
     `${bold("ID:")} ${association.id}`,
     `${bold("Purpose:")} ${association.purpose || dim("undeclared")}`,
     `${bold("Observed state:")} ${status(projection.active ? "active" : "dissolved", projection.active ? "active" : "warn")}`,
-    `${bold("Signatures:")} ${valid}/${signed.length} signed records verify`,
+    `${bold("Signatures:")} ${verifySummary}`,
     "",
     bold("Participants:"),
   ];
@@ -330,10 +347,7 @@ function resolve(db: MarinaDB, selector: string) {
   if (!selector) return undefined;
   const exact = db.getAssociation(selector);
   if (exact) return exact;
-  const normalized = selector.toLowerCase();
-  const matches = db
-    .listAssociations(500)
-    .filter((row) => row.id.startsWith(selector) || row.name.toLowerCase() === normalized);
+  const matches = db.findAssociationsBySelector(selector);
   return matches.length === 1 ? matches[0] : undefined;
 }
 

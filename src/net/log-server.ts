@@ -17,6 +17,8 @@ interface LogWSData {
 
 interface LogServerOptions {
   port: number;
+  /** Bind hostname — loopback by default so the viewer is never silently public. */
+  hostname?: string;
   resolveEntity: (id: EntityId) => string | undefined;
 }
 
@@ -28,11 +30,13 @@ export class LogServer {
   private clients = new Set<ServerWebSocket<LogWSData>>();
   private buffer: string[] = []; // pre-serialized LogEntry JSON strings
   private port: number;
+  private hostname: string;
   private resolveEntity: (id: EntityId) => string | undefined;
   private viewerInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: LogServerOptions) {
     this.port = opts.port;
+    this.hostname = opts.hostname ?? "127.0.0.1";
     this.resolveEntity = opts.resolveEntity;
   }
 
@@ -41,6 +45,7 @@ export class LogServer {
 
     this.server = Bun.serve<LogWSData>({
       port: this.port,
+      hostname: this.hostname,
       fetch: (req, server) => {
         const url = new URL(req.url);
 

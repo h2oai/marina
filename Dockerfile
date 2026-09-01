@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1
 # ── Marina container image ──────────────────────────────────────────────
 # Single-process server: WebSocket + web chat + dashboard SPA + OpenAI/Ollama
-# compat API on WS_PORT, plus Telnet, MCP, and the log server. All persistent
-# state is a single SQLite file (WAL mode) under /app/data — mount a volume
-# there. See docs/guides/deployment.md.
+# compat API on WS_PORT, plus MCP and the log server. Telnet is plaintext and
+# unauthenticated, so it is OFF by default (set TELNET_PORT to enable it on a
+# trusted network only). All persistent state is a single SQLite file (WAL
+# mode) under /app/data — mount a volume there. See docs/guides/deployment.md.
 
 # ── builder: install deps and build the dashboard SPA into dist/dashboard ───
 FROM oven/bun:1 AS builder
@@ -55,17 +56,22 @@ RUN mkdir -p data/assets data/scratch && chown -R bun:bun /app/data
 USER bun
 
 # Keep all persistent state inside the mounted volume by default.
+# WS_HOST=0.0.0.0 is the CONTAINER-INTERNAL bind — without it the server binds
+# loopback inside the network namespace and published ports go nowhere. Actual
+# exposure is decided by the publish spec (`-p` / compose `ports:`), which
+# defaults to host-loopback in docker-compose.yml. Telnet stays off (no
+# TELNET_PORT) — plaintext and unauthenticated.
 ENV DB_PATH=/app/data/marina.db \
     ASSETS_DIR=/app/data/assets \
     WS_PORT=3300 \
-    TELNET_PORT=4000 \
+    WS_HOST=0.0.0.0 \
     MCP_PORT=3301 \
     LOG_PORT=3302
 
 VOLUME ["/app/data"]
 
-# WS/web/dashboard/API · Telnet · MCP · log server
-EXPOSE 3300 4000 3301 3302
+# WS/web/dashboard/API · MCP · log server
+EXPOSE 3300 3301 3302
 
 # Dependency-free health probe against the HTTP /health route.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

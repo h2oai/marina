@@ -7,6 +7,7 @@ import type { Engine } from "../engine/engine";
 import type { Connection, EntityId, Perception } from "../types";
 import { A } from "./ansi";
 import { formatPerception } from "./formatter";
+import { resolveWsBindHostname } from "./websocket-server";
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — strip telnet control chars
 const CONTROL_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
@@ -31,7 +32,9 @@ export class TelnetServer {
     const rateLimiter = this.rateLimiter;
 
     this.server = Bun.listen<TelnetData>({
-      hostname: "0.0.0.0",
+      // Telnet honors the same bind resolution as every other listener:
+      // loopback unless WS_HOST/MARINA_PUBLIC explicitly opts into exposure.
+      hostname: resolveWsBindHostname(),
       port: this.port,
 
       socket: {

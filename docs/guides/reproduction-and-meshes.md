@@ -59,9 +59,13 @@ mesh replicate mesh:open-science <event-token>
 mesh witness mesh:open-science <event-id> disputed
 ```
 
-Replication verifies the content hash and any supplied origin signature, then adds a distinct local
-witness. Departure never removes the replica. Exact global ordering, truth, permission, ownership,
-and merit are not inferred.
+Replication verifies the content hash and **requires a valid origin signature by default** — an
+unsigned event's `originWorldId` is an unverifiable claim, so unsigned replication is refused
+unless the operator sets `MARINA_FEDERATION_ALLOW_UNSIGNED=true` (trusted dev networks only).
+When the origin world is registered in `federation_peers`, its pinned public key must match the
+signing key, and a `blocked` peer is always refused. A refused replication writes nothing.
+Accepted events add a distinct local witness. Departure never removes the replica. Exact global
+ordering, truth, permission, ownership, and merit are not inferred.
 
 Incompatible meshes can use explicit translators without merging governance:
 

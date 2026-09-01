@@ -27,7 +27,7 @@ import { isKeyEncryptionEnabled } from "../persistence/key-crypto";
 import { logsToOtlpJson } from "../telemetry/otlp-log-exporter";
 import type { Connection, EntityId, Perception, RoomId } from "../types";
 import { ORCHESTRATION_PATTERNS } from "../world/templates/orchestration";
-import { WorldCollectiveManager } from "../world/world-collective-manager";
+import { collectiveManager } from "../world/world-collective-manager";
 import { authenticateRequest, isOperatorPrincipal, isSentinelPrincipal } from "./auth-middleware";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "./canvas-principal";
 import { authorizeCanvasSubscription } from "./canvas-ws";
@@ -43,17 +43,6 @@ import { type EndpointConfig, getEndpointConfig, setEndpointConfig } from "./mod
 
 const ROOMS_DIR = join(import.meta.dir, "../../rooms");
 const PROJECT_ROOT = resolve(import.meta.dir, "../..");
-const collectiveManagers = new WeakMap<MarinaDB, WorldCollectiveManager>();
-
-function collectiveManager(db: MarinaDB): WorldCollectiveManager {
-  let manager = collectiveManagers.get(db);
-  if (!manager) {
-    manager = new WorldCollectiveManager(db, PROJECT_ROOT);
-    collectiveManagers.set(db, manager);
-  }
-  return manager;
-}
-
 function serializeWorldVariant(variant: WorldVariantRow) {
   return {
     id: variant.id,
@@ -516,11 +505,24 @@ export async function handleDashboardApi(
     ) {
       return json({ error: "A valid Marina federation manifest is required" }, 400);
     }
+    // Key continuity: once a peer has a pinned public key, a manifest signed
+    // with (or declaring) a different key is refused — key rotation requires
+    // the operator to clear the pin, not a silent re-registration.
+    const existingPeer = db.getFederationPeer(body.worldId);
     if (body.schema === "marina.federation.manifest.v2") {
-      const verification = verifyFederationDocument(body as Record<string, unknown>);
+      const verification = verifyFederationDocument(body as Record<string, unknown>, {
+        pinnedPublicKey: existingPeer?.public_key,
+      });
       if (!verification.valid) {
-        return json({ error: verification.error ?? "Manifest signature is invalid" }, 400);
+        return json({ error: verification.error ?? "Manifest signature is invalid" }, 409);
       }
+    }
+    const incomingKey = body.publicKey ?? body.signature?.publicKey;
+    if (existingPeer?.public_key && incomingKey && incomingKey !== existingPeer.public_key) {
+      return json(
+        { error: "Manifest public key differs from the pinned peer key; operator must re-pin" },
+        409,
+      );
     }
     if (
       JSON.stringify(body).length > 32_768 ||
@@ -1663,6 +1665,40 @@ function getEvents(engine: Engine, url: URL): Response {
   return json(events);
 }
 
+// The 5,000-row fetch + full projection is the expensive half of /api/traces,
+// and every dashboard tab polls it every 5s. Cache validity keys on
+// MAX(event_log.id) — an O(1) rowid-max lookup — so concurrent tabs share one
+// projection while any new event invalidates immediately (never stale).
+const traceProjectionCache = new Map<
+  string,
+  { maxEventId: number; projected: ReturnType<typeof projectTraces>; truncated: boolean }
+>();
+
+function projectRecentTraces(
+  engine: Engine,
+  db: MarinaDB | undefined,
+  traceId: string | undefined,
+): { projected: ReturnType<typeof projectTraces>; truncated: boolean } {
+  if (!db) return { projected: projectTraces(engine.getEventLog()), truncated: false };
+  const key = traceId ?? "*";
+  const maxEventId = db.getMaxEventId();
+  const cached = traceProjectionCache.get(key);
+  if (cached && cached.maxEventId === maxEventId) return cached;
+  const history = db.getRecentTraceEvents(5000, traceId);
+  const entry = {
+    maxEventId,
+    projected: projectTraces(history.events),
+    truncated: history.truncated,
+  };
+  traceProjectionCache.set(key, entry);
+  if (traceProjectionCache.size > 200) {
+    for (const [k, v] of traceProjectionCache) {
+      if (v.maxEventId !== maxEventId) traceProjectionCache.delete(k);
+    }
+  }
+  return entry;
+}
+
 function getTraces(engine: Engine, url: URL, db?: MarinaDB): Response {
   const format = url.searchParams.get("format");
   if (format && format !== "otlp-json" && format !== "eval-json") {
@@ -1681,10 +1717,8 @@ function getTraces(engine: Engine, url: URL, db?: MarinaDB): Response {
   } catch (cause) {
     return json({ error: cause instanceof Error ? cause.message : "Invalid trace query." }, 400);
   }
-  const history = db
-    ? db.getRecentTraceEvents(5000, traceId)
-    : { events: engine.getEventLog(), truncated: false };
-  const projected = projectTraces(history.events);
+  const history = projectRecentTraces(engine, db, traceId);
+  const projected = history.projected;
   let page: TracePage;
   try {
     page = queryTraces(
@@ -1694,9 +1728,13 @@ function getTraces(engine: Engine, url: URL, db?: MarinaDB): Response {
   } catch (cause) {
     return json({ error: cause instanceof Error ? cause.message : "Invalid trace cursor." }, 400);
   }
+  // One batched judgments query for the page (previously one query per trace).
+  const judgmentsByTrace = db
+    ? db.getTraceJudgmentsByTraceIds(page.traces.map((trace) => trace.traceId))
+    : new Map<string, never[]>();
   const evidence = page.traces.map((trace) => ({
     ...trace,
-    judgments: db ? db.getTraceJudgments(trace.traceId) : [],
+    judgments: judgmentsByTrace.get(trace.traceId) ?? [],
   }));
   const traces = evidence.map((trace) => ({ ...trace, evaluation: evaluateTrace(trace) }));
   if (format === "otlp-json") {
@@ -1739,7 +1777,7 @@ function getTraces(engine: Engine, url: URL, db?: MarinaDB): Response {
     partial: history.truncated || traces.some((trace) => trace.partial),
     truncated: history.truncated,
     source: db ? "event-log" : "memory",
-    retention: db ? "operator-managed" : "bounded-memory",
+    retention: db ? "pruned-hourly (MARINA_EVENT_RETENTION rows)" : "bounded-memory",
     otlp: engine.getOtlpExporterStatus(),
   };
   return traceExportResponse(native, url, "marina-traces.json", page.nextCursor);

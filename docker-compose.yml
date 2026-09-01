@@ -9,10 +9,17 @@ services:
     env_file:
       - path: .env
         required: false
+    # SECURE-BY-DEFAULT publish: ports bind the HOST's loopback interface, so a
+    # fresh `docker compose up` is reachable from this machine only. To expose
+    # Marina to a network, drop the `127.0.0.1:` prefix — and BEFORE you do,
+    # enable real auth (MARINA_AUTH=better-auth) or set MODEL_API_KEYS; see the
+    # SECURITY block below and docs/guides/deployment.md.
     ports:
-      - "3300:3300" # WebSocket + Web Chat + Dashboard + OpenAI/Ollama API
-      - "4000:4000" # Telnet (optional — drop this line to keep it internal)
-      - "3301:3301" # MCP    (optional — drop this line to keep it internal)
+      - "127.0.0.1:3300:3300" # WebSocket + Web Chat + Dashboard + OpenAI/Ollama API
+      - "127.0.0.1:3301:3301" # MCP (optional — drop this line to keep it internal)
+      # Telnet is plaintext + unauthenticated and OFF by default. To enable on a
+      # trusted network: set TELNET_PORT=4000 in `environment:` and publish it:
+      # - "127.0.0.1:4000:4000"
     volumes:
       # Docker-managed storage works on first run without host UID/GID repair.
       # Operators who need host-visible files can set MARINA_DATA_VOLUME to an
@@ -31,6 +38,15 @@ services:
       - LOG_FORMAT=json
       # World to load: default | commons | research | personal | evolve | craft | markets | demos | empty
       - MARINA_WORLD=default
+
+      # The image binds 0.0.0.0 INSIDE the container (WS_HOST in the Dockerfile
+      # — required for published ports to work). Marina's startup gate refuses a
+      # non-loopback bind with passwordless login unless acknowledged. This ack
+      # is safe HERE because the `ports:` publish spec above pins exposure to
+      # the host's 127.0.0.1 — the container-internal bind is not reachable from
+      # any network. If you widen `ports:` to the public internet, this flag is
+      # no longer a safe default: enable MARINA_AUTH=better-auth instead.
+      - MARINA_ALLOW_INSECURE_PUBLIC=true
 
       # Unified Canvas (heavy ReactFlow alternate UI) is retired from the standard
       # dashboard. Set true to expose it as a standalone surface at /?unified.

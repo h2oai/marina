@@ -127,6 +127,17 @@ export function economyCommand(deps: {
           ctx.send(input.entity, HELP);
           return;
         }
+        if (!SAFE_ADAPTER_ID.test(id)) {
+          ctx.send(
+            input.entity,
+            "Adapter id must be 3-64 chars: letters, digits, and : . _ - (starting alphanumeric).",
+          );
+          return;
+        }
+        if (deps.db.listEconomicAdapters().some((adapter) => adapter.id === id)) {
+          ctx.send(input.entity, `Adapter ${id} already exists.`);
+          return;
+        }
         const row = deps.db.createEconomicAdapter({
           id,
           kind,
@@ -148,10 +159,12 @@ export function economyCommand(deps: {
           ctx.send(input.entity, "Economic contract not found.");
           return;
         }
-        const events = deps.db.listEconomicEvents(row.id);
+        // Cap the displayed/verified window — per-event Ed25519 verification on
+        // a rank-0 command must not scale with unbounded ledger growth.
+        const events = deps.db.listEconomicEvents(row.id).slice(-100);
         ctx.send(
           input.entity,
-          `${row.id} · goal ${row.goal_ref}\nAsset: ${row.asset_ref ?? "none"} via ${row.settlement_adapter ?? "no adapter"}\nVerification: ${row.verification_method}\nDispute: ${row.dispute_method}\nEvents:\n${
+          `${row.id} · goal ${row.goal_ref}\nAsset: ${row.asset_ref ?? "none"} via ${row.settlement_adapter ?? "no adapter"}\nVerification: ${row.verification_method}\nDispute: ${row.dispute_method}\nEvents (newest ${events.length}):\n${
             events
               .map((event) => {
                 const signature = event.signature_json
@@ -180,6 +193,8 @@ export function economyCommand(deps: {
     },
   };
 }
+const SAFE_ADAPTER_ID = /^[a-z0-9][a-z0-9:._-]{2,63}$/i;
+
 function fields(raw: string) {
   return raw.split("|").map((x) => x.trim());
 }
