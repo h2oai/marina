@@ -10,10 +10,12 @@ import {
 import { parseExecUnrestricted } from "../coding/exec-approver";
 import { registerBuiltinResolvers } from "../resolvers";
 import type { EntityId, RoomId } from "../types";
+import { WorldCollectiveManager } from "../world/world-collective-manager";
 import { adapterCommand } from "./commands/adapter";
 import { adminCommand } from "./commands/admin";
 import { agentCommand } from "./commands/agent";
 import { askCommand } from "./commands/ask";
+import { associationCommand } from "./commands/association";
 import { bankrollCommand } from "./commands/bankroll";
 import { batchCommand } from "./commands/batch";
 import { benchmarkCommand } from "./commands/benchmark";
@@ -31,13 +33,16 @@ import { connectCommand } from "./commands/connect";
 import { crewCommand } from "./commands/crew";
 import { debriefCommand } from "./commands/debrief";
 import { demoCommand } from "./commands/demo";
+import { desireCommand } from "./commands/desire";
 import { digCommand } from "./commands/dig";
+import { economyCommand } from "./commands/economy";
 import { emoteCommand } from "./commands/emote";
 import { evolveCommand } from "./commands/evolve";
 import { experimentCommand } from "./commands/experiment";
 import { exportCommand } from "./commands/export-cmd";
 import { feedCommand } from "./commands/feed";
 import { gatewayCommand } from "./commands/gateway";
+import { genomeCommand } from "./commands/genome";
 import { gotoCommand } from "./commands/goto";
 import { groupCommand } from "./commands/group";
 import { guideCommand } from "./commands/guide";
@@ -46,17 +51,23 @@ import { ignoreCommand, isIgnoring } from "./commands/ignore";
 import { imageCommand } from "./commands/image";
 import { inheritCommand } from "./commands/inherit";
 import { inheritanceCommand } from "./commands/inheritance";
+import { intellectCommand } from "./commands/intellect";
 import { inventoryCommand } from "./commands/inventory";
 import { dropCommand, getCommand, giveCommand } from "./commands/items";
+import { journeyCommand } from "./commands/journey";
 import { keyCommand } from "./commands/key";
+import { labCommand } from "./commands/lab";
 import { linkCommand } from "./commands/link";
 import { lookCommand } from "./commands/look";
 import { lsCommand } from "./commands/ls";
 import { macroCommand } from "./commands/macro";
 import { mapCommand } from "./commands/map";
+import { marinaDescendCommand } from "./commands/marina-descend";
 import { marketCommand } from "./commands/market";
 import { memoryCommand } from "./commands/memory";
+import { meshCommand } from "./commands/mesh";
 import { moveCommand } from "./commands/move";
+import { mutationCommand } from "./commands/mutation";
 import { nextCommand } from "./commands/next";
 import { noteCommand } from "./commands/note";
 import { noveltyCommand } from "./commands/novelty";
@@ -68,6 +79,7 @@ import { positionCommand } from "./commands/position";
 import { probeCommand } from "./commands/probe";
 import { productivityCommand } from "./commands/productivity";
 import { projectCommand } from "./commands/project";
+import { provenanceCommand } from "./commands/provenance";
 import { questCommand } from "./commands/quest";
 import { quitCommand } from "./commands/quit";
 import { rankCommand } from "./commands/rank";
@@ -76,6 +88,7 @@ import { recallCommand } from "./commands/recall";
 import { recapCommand } from "./commands/recap";
 import { recruitCommand } from "./commands/recruit";
 import { reflectCommand } from "./commands/reflect";
+import { reproduceCommand } from "./commands/reproduce";
 import { roleCommand } from "./commands/role";
 import { runCommand } from "./commands/run";
 import { sayCommand } from "./commands/say";
@@ -323,6 +336,52 @@ export function registerBuiltinCommands(engine: Engine): void {
   // Citation flows `chronicled` standing via the name → id resolver.
   // See docs/chronicle.md.
   if (engine.db) {
+    engine.commands.registerBuiltin(
+      associationCommand({
+        db: engine.db,
+        getEntity: (id) => engine.entities.get(id as EntityId),
+      }),
+    );
+    engine.commands.registerBuiltin(
+      reproduceCommand({ db: engine.db, getEntity: (id) => engine.entities.get(id as EntityId) }),
+    );
+    engine.commands.registerBuiltin(
+      genomeCommand({ db: engine.db, getEntity: (id) => engine.entities.get(id as EntityId) }),
+    );
+    engine.commands.registerBuiltin(
+      marinaDescendCommand({
+        db: engine.db,
+        manager: () => new WorldCollectiveManager(engine.db!),
+        getEntity: (id) => engine.entities.get(id as EntityId),
+      }),
+    );
+    engine.commands.registerBuiltin(
+      meshCommand({ db: engine.db, getEntity: (id) => engine.entities.get(id as EntityId) }),
+    );
+    engine.commands.registerBuiltin(
+      economyCommand({ db: engine.db, getEntity: (id) => engine.entities.get(id as EntityId) }),
+    );
+    engine.commands.registerBuiltin(
+      labCommand({ db: engine.db, getEntity: (id) => engine.entities.get(id as EntityId) }),
+    );
+    engine.commands.registerBuiltin(
+      mutationCommand({ db: engine.db, getEntity: (id) => engine.entities.get(id as EntityId) }),
+    );
+    engine.commands.registerBuiltin(
+      desireCommand({
+        db: engine.db,
+        getEntity: (id) => engine.entities.get(id as EntityId),
+        captureCognition: process.env.MARINA_COGNITIVE_PROVENANCE === "true",
+        interpretDesire:
+          process.env.MARINA_ASK_MODEL === "false" || !engine.agentRuntime.isAvailable()
+            ? undefined
+            : (expression, context) =>
+                answerViaLocalModel(
+                  `A participant expressed this desire: ${expression}\n\nPerform a useful first cognitive pass now. Return JSON only with: {"understanding":"a concise reflection","kind":"question|result","text":"..."}. Use kind=question only when one answer would materially change the desired outcome or approach; ask exactly one question. Otherwise use kind=result and provide a useful evidence-conscious partial answer now, not a plan or promise. State uncertainty and do not claim external actions occurred.`,
+                  context,
+                ),
+      }),
+    );
     engine.commands.registerBuiltin(
       chronicleCommand({
         getEntity: (id) => engine.entities.get(id as EntityId),
@@ -614,6 +673,21 @@ export function registerBuiltinCommands(engine: Engine): void {
       getOtlpStatus: () => engine.getOtlpExporterStatus(),
     }),
   );
+  if (engine.db) {
+    engine.commands.registerBuiltin(
+      intellectCommand({
+        db: engine.db,
+        getEntity: (id) => engine.entities.get(id as EntityId),
+      }),
+    );
+    engine.commands.registerBuiltin(provenanceCommand(engine.db));
+    engine.commands.registerBuiltin(
+      journeyCommand({
+        db: engine.db,
+        getEntity: (id) => engine.entities.get(id as EntityId),
+      }),
+    );
+  }
   engine.commands.registerBuiltin(inheritanceCommand(engine.db));
   engine.commands.registerBuiltin(
     inheritCommand({

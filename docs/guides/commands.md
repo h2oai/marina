@@ -86,6 +86,62 @@ curates them. See [Cross-world Inheritance](inheritance.md).
 Trace views are read-only and omit prompts, outputs, thinking text, and tool arguments. See
 [Execution Traces and Evaluations](observability.md) for retention and interpretation boundaries.
 
+## Journeys and Open-Ended Evolution
+
+```text
+> desire <ordinary-language intention>       Create a journey without rewriting the desire
+> journey list                               List your journeys
+> journey show <id>                          Inspect state and canonical links
+> journey progress <id>                      Explain meaningful activity with evidence
+> journey result <id>                        Show the current result, dissent, and open threads
+> journey changes <id>                       Show changes since your last view
+> journey steer <id> <context>               Append direction without replacing history
+
+> provenance status                          Show cognitive capture and signing status
+> provenance list                            List recent cognitive events
+> provenance show <id>                       Inspect and verify one event
+> provenance verify                          Verify the local cognitive hash chain
+
+> intellect create <name> | <purpose>        Declare portable intellect identity
+> intellect instance <id> | <principal> | <model> | <harness> | <environment>
+> intellect event <id> <kind> | <detail>
+> intellect show <id>                        Inspect instances, lineage, and lifecycle
+
+> association create <name> | <purpose>
+> association join <id> | <kind>:<ref> | <role>
+> association relate <id> | <kind>:<ref> | <direction> | <semantics> | <kind>:<ref>
+> association show <id>                      Inspect relationship semantics and history
+
+> reproduce intellect <parents> | <name> | <purpose> | <components JSON> | <contributors>
+> genome create <world-template> | <components> | <compatibility> | <notes>
+> marina-descend create <genome> | <name> | <parents> | <mode> | <hypothesis>
+> mesh create <id> | <name> | <charter-ref> | <protocol>
+> mesh publish <id> | <kind> | <payload JSON>  Append a portable mesh event
+> mesh export <id> <event>                    Export an exact event token
+> mesh replicate <id> <token>                 Replicate without merging governance
+
+> economy contract <goal-ref> | <terms JSON> | <verification> | <dispute>
+> economy event <contract> <kind> | <actor> | <subject> | <amount> | <asset> | <external-ref> | <causal refs> | <data JSON>
+> economy show <contract>                     Inspect claims and signature status
+
+> lab manifest <scenario JSON>                Create a content-addressed scenario
+> lab run <manifest> | <mode> | <reproducibility> | <seed> | <treatments JSON>
+> lab fork <run> | <fork-point> | <treatments JSON>
+> lab replicate <manifest> | <mode> | <reproducibility> | <count> | <seed-prefix>
+> lab compare <runs> | <questions> | <measures JSON> | <interpretation>
+
+> mutation record <domain> <target-ref> | <disposition> | <summary> | <patch JSON>
+> mutation genome <parent-genome> | <summary> | <patch JSON>
+> mutation lineage <domain> <target-ref>
+```
+
+These surfaces are additive. Claims do not imply truth or ownership; declared simulations do not
+invent outcomes; mutations do not bypass subsystem activation or safety boundaries. See
+[Journeys](journeys.md), [Cognitive Provenance](cognitive-provenance.md),
+[Intellect Lifecycle](intellect-lifecycle.md), [Associations](associations.md),
+[Reproduction and Meshes](reproduction-and-meshes.md), and
+[Economics, Simulation, and Recursive Evolution](economics-simulation-and-recursion.md).
+
 ## Knowledge & Cognition
 
 Evidence-aware memory extends the existing `note <text>` workflow:

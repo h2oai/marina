@@ -19,6 +19,9 @@ and operate the environment. Start with one path below; the full catalog follows
 | Review human and agent identity controls | [Identity and workload security](identity.md) | [Authentication](../authentication.md) |
 | Run isolated A/B Marina variants | [World Collective](world-collective.md) | [Execution Traces](observability.md) |
 | Register another Marina without assuming trust | [Federation discovery](federation-discovery.md) | [Inheritance](inheritance.md) |
+| Follow a desire from expression to evidence | [Journeys](journeys.md) | [Cognitive Provenance](cognitive-provenance.md) |
+| Create portable intellects and associations | [Intellect Lifecycle](intellect-lifecycle.md) | [Associations](associations.md) |
+| Reproduce cognition or a Marina | [Reproduction and Meshes](reproduction-and-meshes.md) | [Economics, Simulation, and Recursion](economics-simulation-and-recursion.md) |
 | Qualify a public release without skipped claims | [Release qualification](release-qualification.md) | [Troubleshooting](troubleshooting.md) |
 | Investigate execution or export OTLP | [Execution Traces](observability.md) | [Configuration](configuration.md) |
 
@@ -30,6 +33,12 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [Getting Started](getting-started.md) | Source and desktop setup, first reviewed result, provider setup, troubleshooting |
 | [Configuration](configuration.md) | Environment variables, worlds, and tuning |
 | [Identity and workload security](identity.md) | Durable principals, agent credentials, lifecycle, and explicit trust boundaries |
+| [Journeys](journeys.md) | Desire-first collaboration, truthful state, evidence, results, steering, and return visits |
+| [Cognitive Provenance](cognitive-provenance.md) | Optional signed cognitive event chains and their inspection boundaries |
+| [Intellect Lifecycle](intellect-lifecycle.md) | Portable intellect identity, instances, lineage, migration, dormancy, and revival |
+| [Associations](associations.md) | Open-ended relationships among humans, intellects, organizations, Marinas, and meshes |
+| [Reproduction and Meshes](reproduction-and-meshes.md) | Cognitive descendants, Marina genomes, sovereign descent, and transparent multi-mesh exchange |
+| [Economics, Simulation, and Recursive Evolution](economics-simulation-and-recursion.md) | Asset-neutral provenance, reproducible laboratories, and recursive mutation lineage |
 | [World Collective](world-collective.md) | Local child worlds, isolated A/B variants, readiness, and explicit promotion |
 | [Federation discovery](federation-discovery.md) | Passive peer manifests, local trust decisions, and current cryptographic boundaries |
 | [Release qualification](release-qualification.md) | Deterministic local gate plus explicit provider-backed qualification boundaries |

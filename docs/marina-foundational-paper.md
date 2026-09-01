@@ -1423,4 +1423,6 @@ the boundary between the system and its inhabitants dissolves.
 ---
 
 *Marina is developed by Marina Contributors under the Apache License 2.0. Copyright 2025–2026 H2O.ai, Inc.*
-*For technical documentation, see: SKILL.md (agent reference), docs/mcp.md (MCP integration), docs/agent-memory-architectures.md (memory research), docs/agent-organization-architectures.md (orchestration research).*
+*For technical documentation, see: SKILL.md (agent reference), docs/mcp.md (MCP integration),
+docs/guides/memory.md (memory architecture), and docs/guides/emergent-organization.md
+(organization patterns).*

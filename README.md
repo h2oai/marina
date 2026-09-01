@@ -52,6 +52,12 @@ state.
 - **World Collective experiments** — a source checkout can launch isolated child Marinas with their
   own storage and dashboard, compare variants, and record an evidence-referenced preferred
   candidate without silently replacing the parent.
+- **Open-ended cognitive journeys** — preserve a person's exact desire, correlate action and
+  evidence, return a useful result, and continue evolving afterward.
+- **Reproductive identity and plural federation** — portable intellects and content-addressed
+  Marina genomes create attributable descendants that can join multiple transparent meshes.
+- **Economic and scientific legibility** — asset-neutral claims, explicit replay levels,
+  counterfactual forks, and recursive mutation lineage remain inspectable without a universal judge.
 
 The full system tour is in the [documentation overview](https://h2oai.github.io/marina/docs/overview/).
 The complete command reference and operational manual live in [SKILL.md](SKILL.md). README is the
@@ -780,7 +786,7 @@ dashboard/          React dashboard + infinite canvas (Vite + Tailwind + React F
 marina-desktop/     Electrobun desktop app (macOS/Windows/Linux)
 test/               Test suite
 scripts/            Server start, CI build, backup/restore, export/import
-docs/               Architecture research, MCP docs, load test results
+docs/               User guides, operations, integrations, demos, and reference material
 ```
 
 ## Rank System
@@ -878,10 +884,16 @@ See [docs/load-test-results.md](docs/load-test-results.md) for full results.
 | [docs/guides/memory-api.md](docs/guides/memory-api.md) | Memory API — persistent memory for any agent |
 | [docs/guides/autonomous-quality-loops.md](docs/guides/autonomous-quality-loops.md) | Shared contradiction resolution, outcome learning, and productivity analytics |
 | [docs/guides/agent-prompt-architecture.md](docs/guides/agent-prompt-architecture.md) | Model-agnostic pi-agent contract, context trust boundaries, compaction, and prompt evaluation |
+| [docs/guides/journeys.md](docs/guides/journeys.md) | Desire-first journeys, truthful progress, evidence, results, steering, and return visits |
+| [docs/guides/cognitive-provenance.md](docs/guides/cognitive-provenance.md) | Optional signed cognitive history and verification |
+| [docs/guides/intellect-lifecycle.md](docs/guides/intellect-lifecycle.md) | Portable intellect identity, instances, lineage, migration, and lifecycle |
+| [docs/guides/associations.md](docs/guides/associations.md) | Open-ended associations across humans, intellects, organizations, Marinas, and meshes |
+| [docs/guides/reproduction-and-meshes.md](docs/guides/reproduction-and-meshes.md) | Cognitive and Marina reproduction plus transparent multi-mesh federation |
+| [docs/guides/economics-simulation-and-recursion.md](docs/guides/economics-simulation-and-recursion.md) | Asset-neutral economics, simulation replay levels, and recursive mutation lineage |
 | [docs/mcp.md](docs/mcp.md) | MCP server setup and tool reference |
 | [docs/load-test-results.md](docs/load-test-results.md) | Performance benchmarks |
-| [docs/agent-memory-architectures.md](docs/agent-memory-architectures.md) | Research: memory architecture patterns |
-| [docs/agent-organization-architectures.md](docs/agent-organization-architectures.md) | Research: organization patterns |
+| [docs/guides/memory.md](docs/guides/memory.md) | Memory architecture and everyday memory workflows |
+| [docs/guides/emergent-organization.md](docs/guides/emergent-organization.md) | Bottom-up coordination and organization patterns |
 
 ## License
 

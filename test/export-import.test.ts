@@ -166,6 +166,216 @@ describe("Export/Import", () => {
       url: "https://brave.example.com/mcp",
       createdBy: "Alice",
     });
+
+    // Journey + correlation + evidence
+    srcDb.createJourney({
+      id: "journey_1",
+      requesterId: "e_1",
+      requesterName: "Alice",
+      expression: "Understand the whole journey",
+    });
+    srcDb.addJourneyLink({
+      journeyId: "journey_1",
+      kind: "task",
+      ref: "1",
+      relationship: "pursues",
+      actorId: "e_1",
+      actorName: "Alice",
+    });
+    const journeyEvent = srcDb.appendJourneyEvent({
+      journeyId: "journey_1",
+      kind: "action_started",
+      summary: "Alice began the linked task",
+      actorId: "e_1",
+      actorName: "Alice",
+      refKind: "task",
+      ref: "1",
+    });
+    srcDb.witnessJourney("journey_1", "e_1", journeyEvent.id);
+    srcDb.appendCognitiveEvent({
+      kind: "input",
+      actorId: "e_1",
+      journeyId: "journey_1",
+      payload: { expression: "Understand the whole journey" },
+    });
+    srcDb.createIntellect({
+      id: "intellect_1",
+      displayName: "Lumen",
+      purpose: "Carry learning forward",
+      originMarina: "test",
+      createdBy: "e_1",
+    });
+    srcDb.createIntellectInstance({
+      id: "instance_1",
+      intellectId: "intellect_1",
+      modelRef: "provider/model",
+      harnessRef: "marina/default",
+      createdBy: "e_1",
+    });
+    srcDb.createAssociation({
+      id: "association_1",
+      name: "Test constellation",
+      purpose: "Prove portable association history",
+      createdBy: "e_1",
+    });
+    srcDb.appendAssociationEvent({
+      id: "association_event_joined_1",
+      associationId: "association_1",
+      kind: "joined",
+      actorId: "e_1",
+      subjectKind: "intellect",
+      subjectRef: "intellect_1",
+      data: { role: "explorer" },
+    });
+    srcDb.declareAssociationRelation({
+      id: "association_relation_1",
+      associationId: "association_1",
+      sourceKind: "human",
+      sourceRef: "e_1",
+      targetKind: "intellect",
+      targetRef: "intellect_1",
+      semantics: "learns beside",
+      direction: "reciprocal",
+      actorId: "e_1",
+    });
+    srcDb.linkAssociation({
+      id: "association_link_1",
+      associationId: "association_1",
+      kind: "project",
+      ref: "p_1",
+      relationship: "coordinates",
+      actorId: "e_1",
+    });
+    srcDb.recordCognitiveReproduction({
+      id: "reproduction_1",
+      descendantIntellectId: "intellect_1",
+      mode: "counterfactual",
+      parentIds: [],
+      contributors: ["e_1"],
+      components: [{ kind: "model", ref: "provider/model", disposition: "introduced" }],
+      createdBy: "e_1",
+    });
+    const genome = srcDb.createMarinaGenome({
+      manifest: { worldTemplate: "default", components: ["intellect:intellect_1"] },
+      createdBy: "e_1",
+    });
+    srcDb.createMarinaDescendant({
+      id: "marina_descendant_1",
+      name: "Child Marina",
+      genomeHash: genome.hash,
+      parentWorldIds: [srcDb.getOrCreateWorldId()],
+      mode: "selected-inheritance",
+      createdBy: "e_1",
+    });
+    srcDb.createMesh({
+      id: "mesh_1",
+      name: "Test Mesh",
+      charterRef: "charter:test",
+      protocol: "transparent.v1",
+      createdBy: "e_1",
+    });
+    srcDb.appendMeshMembershipEvent({
+      meshId: "mesh_1",
+      worldId: srcDb.getOrCreateWorldId(),
+      kind: "joined",
+      actorId: "e_1",
+    });
+    const meshEvent = srcDb.appendMeshEvent({
+      meshId: "mesh_1",
+      originWorldId: srcDb.getOrCreateWorldId(),
+      kind: "result",
+      payload: { ref: "journey_1" },
+    });
+    srcDb.witnessMeshEvent({
+      meshId: "mesh_1",
+      eventId: meshEvent.id,
+      witnessWorldId: srcDb.getOrCreateWorldId(),
+      observation: "witnessed",
+    });
+    srcDb.createMesh({
+      id: "mesh_2",
+      name: "Other Mesh",
+      charterRef: "charter:other",
+      protocol: "other.v1",
+      createdBy: "e_1",
+    });
+    srcDb.createMeshTranslation({
+      sourceMeshId: "mesh_1",
+      targetMeshId: "mesh_2",
+      translatorRef: "intellect:intellect_1",
+      protocolMap: { result: "finding" },
+      actorId: "e_1",
+    });
+    srcDb.createEconomicAdapter({
+      id: "adapter_1",
+      kind: "stablecoin",
+      network: "test-chain",
+      capability: "reference",
+      createdBy: "e_1",
+    });
+    srcDb.createEconomicContract({
+      id: "contract_1",
+      goalRef: "journey_1",
+      terms: { deliverable: "result" },
+      verificationMethod: "peer review",
+      disputeMethod: "appeal",
+      settlementAdapter: "adapter_1",
+      assetRef: "asset:test",
+      createdBy: "e_1",
+    });
+    srcDb.appendEconomicEvent({
+      id: "economic_event_1",
+      contractId: "contract_1",
+      kind: "settlement",
+      actorRef: "e_1",
+      externalRef: "tx:test",
+    });
+    const simulationManifest = srcDb.createSimulationManifest({
+      manifest: { world: "default", goal: "journey_1" },
+      createdBy: "e_1",
+    });
+    srcDb.createSimulationRun({
+      id: "simulation_1",
+      manifestHash: simulationManifest.hash,
+      mode: "recorded",
+      reproducibility: "recorded-response",
+      seed: "one",
+      createdBy: "e_1",
+    });
+    srcDb.createSimulationRun({
+      id: "simulation_2",
+      manifestHash: simulationManifest.hash,
+      mode: "recorded",
+      reproducibility: "recorded-response",
+      seed: "two",
+      createdBy: "e_1",
+    });
+    srcDb.appendSimulationEvent({
+      id: "simulation_event_1",
+      runId: "simulation_1",
+      kind: "observation",
+      data: { result: "conditional" },
+      createdBy: "e_1",
+    });
+    srcDb.createSimulationComparison({
+      id: "comparison_1",
+      runIds: ["simulation_1", "simulation_2"],
+      questions: ["what happened"],
+      measures: { evidence: 1 },
+      interpretation: "single-run fixture",
+      dataset: { runs: ["simulation_1", "simulation_2"] },
+      createdBy: "e_1",
+    });
+    srcDb.appendCivilizationMutation({
+      id: "mutation_1",
+      domain: "reproduction",
+      targetRef: `genome:${genome.hash}`,
+      summary: "Test recursive inheritance",
+      patch: { method: "recombination" },
+      descendantRef: "genome:test-child",
+      disposition: "branched",
+      createdBy: "e_1",
+    });
   }
 
   // ─── Export Tests ──────────────────────────────────────────────────
@@ -179,7 +389,7 @@ describe("Export/Import", () => {
 
       expect(snapshot.format).toBe("marina-snapshot");
       expect(snapshot.version).toBe(1);
-      expect(snapshot.schema_version).toBe(82);
+      expect(snapshot.schema_version).toBe(93);
       expect(snapshot.exported_at).toBeTruthy();
 
       // Verify key tables are present
@@ -212,6 +422,35 @@ describe("Export/Import", () => {
       // connectors is secret-gated — omitted by default (see the dedicated secrets test)
       expect(snapshot.tables.connectors).toBeUndefined();
       expect(snapshot.tables.room_store).toHaveLength(1);
+      expect(snapshot.tables.journeys).toHaveLength(1);
+      expect(snapshot.tables.journey_links).toHaveLength(1);
+      expect(snapshot.tables.journey_events).toHaveLength(1);
+      expect(snapshot.tables.journey_witnesses).toHaveLength(1);
+      expect(snapshot.tables.cognitive_events).toHaveLength(1);
+      expect(snapshot.tables.intellects).toHaveLength(1);
+      expect(snapshot.tables.intellect_instances).toHaveLength(1);
+      expect(snapshot.tables.intellect_events).toHaveLength(2);
+      expect(snapshot.tables.associations).toHaveLength(1);
+      expect(snapshot.tables.association_events).toHaveLength(2);
+      expect(snapshot.tables.association_relations).toHaveLength(1);
+      expect(snapshot.tables.association_links).toHaveLength(1);
+      expect(snapshot.tables.cognitive_reproductions).toHaveLength(1);
+      expect(snapshot.tables.cognitive_reproduction_components).toHaveLength(1);
+      expect(snapshot.tables.marina_genomes).toHaveLength(1);
+      expect(snapshot.tables.marina_descendants).toHaveLength(1);
+      expect(snapshot.tables.meshes).toHaveLength(2);
+      expect(snapshot.tables.mesh_membership_events).toHaveLength(1);
+      expect(snapshot.tables.mesh_events).toHaveLength(1);
+      expect(snapshot.tables.mesh_witnesses).toHaveLength(1);
+      expect(snapshot.tables.mesh_translations).toHaveLength(1);
+      expect(snapshot.tables.economic_contracts).toHaveLength(1);
+      expect(snapshot.tables.economic_events).toHaveLength(2);
+      expect(snapshot.tables.economic_adapters).toHaveLength(1);
+      expect(snapshot.tables.simulation_manifests).toHaveLength(1);
+      expect(snapshot.tables.simulation_runs).toHaveLength(2);
+      expect(snapshot.tables.simulation_events).toHaveLength(1);
+      expect(snapshot.tables.simulation_comparisons).toHaveLength(1);
+      expect(snapshot.tables.civilization_mutations).toHaveLength(1);
 
       // FTS tables should NOT be in the export
       expect(snapshot.tables.board_posts_fts).toBeUndefined();
@@ -370,6 +609,34 @@ describe("Export/Import", () => {
       // Room store
       const storeVal = verifyDb.getRoomStoreValue(roomId("core/nexus"), "counter");
       expect(storeVal).toBe(42);
+
+      // Journey correlation and evidence
+      expect(verifyDb.getJourney("journey_1")?.expression).toBe("Understand the whole journey");
+      expect(verifyDb.listJourneyLinks("journey_1")).toHaveLength(1);
+      expect(verifyDb.listJourneyEvents("journey_1")[0]?.kind).toBe("action_started");
+      expect(verifyDb.getJourneyWitness("journey_1", "e_1")?.witnessed_event_id).toBeGreaterThan(0);
+      expect(verifyDb.listCognitiveEvents({ journeyId: "journey_1" })[0]?.kind).toBe("input");
+      expect(verifyDb.getIntellect("intellect_1")?.display_name).toBe("Lumen");
+      expect(verifyDb.listIntellectInstances("intellect_1")[0]?.model_ref).toBe("provider/model");
+      expect(verifyDb.getAssociation("association_1")?.name).toBe("Test constellation");
+      expect(verifyDb.projectAssociation("association_1").participants[0]?.active).toBe(true);
+      expect(verifyDb.listAssociationRelations("association_1")[0]?.semantics).toBe(
+        "learns beside",
+      );
+      expect(verifyDb.listAssociationLinks("association_1")[0]?.kind).toBe("project");
+      expect(verifyDb.getCognitiveReproduction("reproduction_1")?.mode).toBe("counterfactual");
+      expect(verifyDb.listMarinaDescendants()[0]?.name).toBe("Child Marina");
+      expect(verifyDb.listMeshEvents("mesh_1")[0]?.kind).toBe("result");
+      expect(verifyDb.listMeshWitnesses("mesh_1")[0]?.observation).toBe("witnessed");
+      expect(verifyDb.listMeshTranslations("mesh_1")[0]?.target_mesh_id).toBe("mesh_2");
+      expect(verifyDb.getEconomicContract("contract_1")?.asset_ref).toBe("asset:test");
+      expect(
+        verifyDb.listEconomicEvents("contract_1").find((event) => event.kind === "settlement")
+          ?.external_ref,
+      ).toBe("tx:test");
+      expect(verifyDb.getSimulationRun("simulation_1")?.reproducibility).toBe("recorded-response");
+      expect(verifyDb.listSimulationEvents("simulation_1")[0]?.kind).toBe("observation");
+      expect(verifyDb.getCivilizationMutation("mutation_1")?.domain).toBe("reproduction");
 
       verifyDb.close();
     });
@@ -554,6 +821,25 @@ describe("Export/Import", () => {
       });
       expect(result.valid).toBe(false);
     });
+
+    it("should reject malformed table and row shapes", () => {
+      expect(
+        validateSnapshot({
+          format: "marina-snapshot",
+          version: 1,
+          schema_version: 93,
+          tables: [],
+        }).valid,
+      ).toBe(false);
+      expect(
+        validateSnapshot({
+          format: "marina-snapshot",
+          version: 1,
+          schema_version: 93,
+          tables: { entities: ["not a row"] },
+        }).valid,
+      ).toBe(false);
+    });
   });
 
   // ─── Error Handling ────────────────────────────────────────────────
@@ -615,6 +901,36 @@ describe("Export/Import", () => {
       expect(result.errors).toHaveLength(0);
       expect(result.tablesImported).toBe(0);
       expect(result.rowsImported).toBe(0);
+    });
+
+    it("should atomically reject snapshots with orphaned causal records", () => {
+      srcDb.close();
+      const dstDb = new MarinaDB(DST_DB);
+      dstDb.close();
+      const result = importState(DST_DB, {
+        format: "marina-snapshot",
+        version: 1,
+        schema_version: 93,
+        exported_at: new Date().toISOString(),
+        tables: {
+          economic_events: [
+            {
+              id: "orphan",
+              contract_id: "missing",
+              kind: "offer",
+              actor_ref: "alice",
+              causal_refs_json: "[]",
+              data_json: "{}",
+              created_at: 1,
+            },
+          ],
+        },
+      });
+      expect(result.errors.join(" ")).toContain("Foreign-key violation");
+      expect(result.rowsImported).toBe(0);
+      const verifyDb = new MarinaDB(DST_DB);
+      expect(verifyDb.listEconomicEvents("missing")).toHaveLength(0);
+      verifyDb.close();
     });
   });
 

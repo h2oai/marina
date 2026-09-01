@@ -371,6 +371,13 @@ export async function handleDashboardApi(
         "logs.read.v1",
         "evidence.checkpoint.v1",
         "inheritance.unverified.v1",
+        "cognition.reproduction.v1",
+        "marina.genome.v1",
+        "mesh.transparent.v1",
+        "mesh.event.replication.v1",
+        "economic.provenance.v1",
+        "simulation.manifest.v1",
+        "civilization.mutation.v1",
         ...(signed ? ["federation.signed-envelope.v1"] : []),
       ],
       evidenceCheckpoint: {

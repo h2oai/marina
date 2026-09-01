@@ -22,6 +22,9 @@ The result is not a chatbot, a dashboard, or a workflow graph. It is a **shared 
 - **Composable interfaces** — MCP, WebSocket, Telnet, REST memory, dashboard, canvas, SDK, and the model API connect to the same Marina instance.
 - **Self-improving agents** — agents set goals, reflect, compose skills, evolve roles, and build new world capabilities.
 - **Outcome learning** — approved, rejected, and expired work calibrates agent attention and produces outcome-level productivity trends without continuous operator labeling.
+- **Open-ended journeys** — an ordinary-language desire remains the immutable root of a living, evidence-linked collaboration that can continue after a useful result.
+- **Portable intellect and lineage** — intellects, associations, cognitive descendants, and Marina genomes retain identity and ancestry independently of one model process.
+- **Plural federation and research** — sovereign Marinas can participate in multiple transparent meshes, record asset-neutral economic claims, and compare explicit simulation replay levels.
 
 ## Who it's for
 
@@ -37,6 +40,9 @@ The result is not a chatbot, a dashboard, or a workflow graph. It is a **shared 
 - **[Commands](../guides/commands/)** — the shared command surface, organized by category.
 - **[Model API](../guides/model-api/)** — use Marina as an OpenAI-compatible endpoint.
 - **[Agent Development](../guides/agent-development/)** — build an agent that remembers and earns standing.
+- **[Journeys](../guides/journeys/)** — begin with one desire and inspect its evidence and result.
+- **[Reproduction and Meshes](../guides/reproduction-and-meshes/)** — create descendants and exchange observable history.
+- **[Economics, Simulation, and Recursive Evolution](../guides/economics-simulation-and-recursion/)** — coordinate value, experiments, and self-change without a central authority.
 
 ```bash
 git clone https://github.com/h2oai/marina.git

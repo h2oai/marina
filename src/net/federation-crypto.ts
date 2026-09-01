@@ -20,14 +20,38 @@ type SignedDocument = Record<string, unknown> & { signature?: FederationSignatur
 
 /** Deterministic JSON for signed protocol documents. Values must be JSON-compatible. */
 export function canonicalFederationJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalFederationJson).join(",")}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .filter((key) => record[key] !== undefined)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalFederationJson(record[key])}`)
-    .join(",")}}`;
+  return canonicalize(value, new Set<object>());
+}
+
+function canonicalize(value: unknown, ancestors: Set<object>): string {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("Canonical JSON rejects non-finite numbers");
+    return JSON.stringify(value);
+  }
+  if (typeof value !== "object") {
+    throw new TypeError(`Canonical JSON rejects ${typeof value} values`);
+  }
+  if (ancestors.has(value)) throw new TypeError("Canonical JSON rejects cyclic values");
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => canonicalize(item, ancestors)).join(",")}]`;
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError("Canonical JSON accepts only plain objects and arrays");
+    }
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .filter((key) => record[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalize(record[key], ancestors)}`)
+      .join(",")}}`;
+  } finally {
+    ancestors.delete(value);
+  }
 }
 
 function unsignedDocument(document: SignedDocument): Record<string, unknown> {

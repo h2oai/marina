@@ -44,6 +44,21 @@ describe("FirstRunGuide", () => {
     expect(openKeys).toHaveBeenCalledOnce();
   });
 
+  it("begins a journey from one ordinary-language desire", () => {
+    const sendCommand = vi.fn(() => true);
+    const focusChat = vi.fn();
+    useChatState.setState({ loggedIn: true, entityName: "Kira", sendCommand });
+    render(<FirstRunGuide onFocusChat={focusChat} onOpenKeys={() => {}} />);
+
+    fireEvent.change(screen.getByLabelText(/what would you like to explore, understand, decide/i), {
+      target: { value: "Decide where to live" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Begin" }));
+
+    expect(focusChat).toHaveBeenCalledOnce();
+    expect(sendCommand).toHaveBeenCalledWith("desire Decide where to live");
+  });
+
   it("can be reopened after dismissal", () => {
     render(<FirstRunGuide onFocusChat={() => {}} onOpenKeys={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: /dismiss getting-started guide/i }));

@@ -24,6 +24,35 @@ export const EXPORT_TABLES = [
   "event_log",
   "trace_judgments",
   "evidence_receipts",
+  "journeys",
+  "journey_links",
+  "journey_events",
+  "journey_witnesses",
+  "cognitive_events",
+  "intellects",
+  "intellect_instances",
+  "intellect_events",
+  "associations",
+  "association_events",
+  "association_relations",
+  "association_links",
+  "cognitive_reproductions",
+  "cognitive_reproduction_components",
+  "marina_genomes",
+  "marina_descendants",
+  "meshes",
+  "mesh_membership_events",
+  "mesh_events",
+  "mesh_witnesses",
+  "mesh_translations",
+  "economic_contracts",
+  "economic_events",
+  "economic_adapters",
+  "simulation_manifests",
+  "simulation_runs",
+  "simulation_events",
+  "simulation_comparisons",
+  "civilization_mutations",
   "users",
   "principals",
   "world_variants",
@@ -218,13 +247,13 @@ export function importState(
   snapshot: MarinaSnapshot,
   opts?: ImportOptions,
 ): ImportResult {
-  // Validate snapshot format
-  if (snapshot.format !== "marina-snapshot" || snapshot.version !== 1) {
+  const validation = validateSnapshot(snapshot);
+  if (!validation.valid) {
     return {
       tablesImported: 0,
       rowsImported: 0,
       tablesSkipped: [],
-      errors: ["Invalid snapshot format. Expected marina-snapshot v1."],
+      errors: [validation.error],
     };
   }
 
@@ -291,11 +320,23 @@ export function importState(
             stmt.run(...(values as (string | number | bigint | null)[]));
             result.rowsImported++;
           } catch (err) {
-            result.errors.push(`${table}: ${getErrorMessage(err)}`);
+            throw new Error(`${table}: ${getErrorMessage(err)}`);
           }
         }
 
         result.tablesImported++;
+      }
+
+      const violations = db.query("PRAGMA foreign_key_check").all() as Array<{
+        table: string;
+        rowid: number | null;
+        parent: string;
+      }>;
+      if (violations.length) {
+        const first = violations[0]!;
+        throw new Error(
+          `Foreign-key violation in ${first.table} row ${first.rowid ?? "unknown"} referencing ${first.parent}`,
+        );
       }
     })();
 
@@ -303,6 +344,8 @@ export function importState(
     rebuildFtsIndexes(db, result);
   } catch (err) {
     result.errors.push(`Transaction failed: ${getErrorMessage(err)}`);
+    result.tablesImported = 0;
+    result.rowsImported = 0;
   } finally {
     db.exec("PRAGMA foreign_keys=ON");
     db.close();
@@ -330,15 +373,30 @@ export function validateSnapshot(
     return { valid: false, error: `Unsupported snapshot version: ${obj.version}` };
   }
 
-  if (typeof obj.schema_version !== "number") {
+  if (
+    typeof obj.schema_version !== "number" ||
+    !Number.isSafeInteger(obj.schema_version) ||
+    obj.schema_version < 0
+  ) {
     return { valid: false, error: "Missing schema_version." };
   }
 
-  if (!obj.tables || typeof obj.tables !== "object") {
+  if (!isRecord(obj.tables)) {
     return { valid: false, error: "Missing tables object." };
   }
 
+  for (const [table, rows] of Object.entries(obj.tables)) {
+    if (!Array.isArray(rows)) return { valid: false, error: `Table ${table} must be an array.` };
+    if (rows.some((row) => !isRecord(row))) {
+      return { valid: false, error: `Table ${table} contains a non-object row.` };
+    }
+  }
+
   return { valid: true, snapshot: data as MarinaSnapshot };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

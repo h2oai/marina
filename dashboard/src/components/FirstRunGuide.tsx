@@ -28,6 +28,7 @@ export function FirstRunGuide({ onFocusChat, onOpenKeys }: FirstRunGuideProps) {
   const commandHistory = useChatState((state) => state.commandHistory);
   const sendCommand = useChatState((state) => state.sendCommand);
   const [open, setOpen] = useState(() => !readDismissed());
+  const [desire, setDesire] = useState("");
 
   const commandsSent = ORIENTATION_COMMANDS.filter((command) => commandHistory.includes(command));
 
@@ -43,6 +44,14 @@ export function FirstRunGuide({ onFocusChat, onOpenKeys }: FirstRunGuideProps) {
   const run = (command: (typeof ORIENTATION_COMMANDS)[number]) => {
     onFocusChat();
     sendCommand(command);
+  };
+
+  const beginJourney = () => {
+    const expression = desire.trim();
+    if (!expression) return;
+    onFocusChat();
+    sendCommand(`desire ${expression}`);
+    setDesire("");
   };
 
   return (
@@ -88,9 +97,38 @@ export function FirstRunGuide({ onFocusChat, onOpenKeys }: FirstRunGuideProps) {
                   Welcome{entityName ? `, ${entityName}` : ""}
                 </h2>
                 <p className="mb-3 text-xs leading-relaxed text-text-muted">
-                  Run these safe commands in order. Their responses appear in Web Chat and teach the
-                  same command interface agents use.
+                  Tell Marina what matters in one sentence, or explore the existing command world
+                  directly. Both paths use the same durable records.
                 </p>
+                <form
+                  className="mb-3 flex gap-1.5"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    beginJourney();
+                  }}
+                >
+                  <label htmlFor="first-run-desire" className="sr-only">
+                    What would you like to explore, understand, decide, improve, or create?
+                  </label>
+                  <input
+                    id="first-run-desire"
+                    value={desire}
+                    onChange={(event) => setDesire(event.target.value)}
+                    maxLength={4000}
+                    placeholder="What would you like to explore, decide, or create?"
+                    className="min-w-0 flex-1 rounded border border-border bg-bg px-2 py-1.5 text-xs text-text-bright outline-none focus:border-primary"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!desire.trim()}
+                    className="rounded bg-primary px-2.5 py-1.5 text-[11px] font-bold text-bg disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Begin
+                  </button>
+                </form>
+                <div className="mb-1 text-[10px] font-bold tracking-wide text-text-muted">
+                  EXPLORE MARINA
+                </div>
                 <div className="grid gap-1.5">
                   <GuideButton
                     label="Look around"

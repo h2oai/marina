@@ -9,18 +9,27 @@ import type { NoteTier } from "../engine/constants";
 import type { EngineEvent, Entity, EntityId, RoomId } from "../types";
 import type { TraitCapabilities } from "./db-agents";
 import * as agentsDb from "./db-agents";
+import * as associationsDb from "./db-associations";
 import * as channelsDb from "./db-channels";
 import * as chronicleDb from "./db-chronicle";
+import * as cognitiveEventsDb from "./db-cognitive-events";
 import * as competenceDb from "./db-competence";
 import * as crewsDb from "./db-crews";
+import * as economicsDb from "./db-economics";
 import * as entitiesDb from "./db-entities";
 import * as evidenceDb from "./db-evidence";
 import * as federationDb from "./db-federation";
 import * as feedDb from "./db-feed";
+import * as intellectsDb from "./db-intellects";
+import * as journeysDb from "./db-journeys";
 import * as logsDb from "./db-logs";
 import * as mediaDb from "./db-media";
+import * as meshesDb from "./db-meshes";
+import * as mutationsDb from "./db-mutations";
 import * as notesDb from "./db-notes";
 import * as principalsDb from "./db-principals";
+import * as reproductionDb from "./db-reproduction";
+import * as simulationsDb from "./db-simulations";
 import * as standingDb from "./db-standing";
 import * as tasksDb from "./db-tasks";
 import * as worldVariantsDb from "./db-world-variants";
@@ -47,6 +56,13 @@ export type {
 } from "./db-channels";
 export type { CompetenceRow } from "./db-competence";
 export type { CrewMemberRow, CrewRow } from "./db-crews";
+export type {
+  EconomicAdapterRow,
+  EconomicContractRow,
+  EconomicEventKind,
+  EconomicEventRow,
+} from "./db-economics";
+export { ECONOMIC_EVENT_KINDS } from "./db-economics";
 export type { MediaJobRow, MediaJobStatus, MediaJobType } from "./db-media";
 export type { StandingCacheRow, StandingLedgerRow } from "./db-standing";
 export type { TaskClaimRow, TaskRow } from "./db-tasks";
@@ -73,12 +89,53 @@ import type {
 import type { ProjectRow, TaskClaimRow, TaskRow } from "./db-tasks";
 
 export type {
+  AssociationDirection,
+  AssociationEventKind,
+  AssociationEventRow,
+  AssociationLinkRow,
+  AssociationParticipant,
+  AssociationProjection,
+  AssociationRelationRow,
+  AssociationRow,
+} from "./db-associations";
+export { ASSOCIATION_DIRECTIONS, ASSOCIATION_EVENT_KINDS } from "./db-associations";
+export type {
   ChronicleEntry,
   ChronicleKind,
   ChronicleQuery,
   InsertChronicle,
 } from "./db-chronicle";
+export type {
+  CognitiveEventKind,
+  CognitiveEventRow,
+  CognitiveVerification,
+} from "./db-cognitive-events";
+export { COGNITIVE_EVENT_KINDS } from "./db-cognitive-events";
 export type { FeedEventRow, FeedQuery, InsertFeedEvent } from "./db-feed";
+export type {
+  IntellectEventKind,
+  IntellectEventRow,
+  IntellectInstanceRow,
+  IntellectRow,
+} from "./db-intellects";
+export { INTELLECT_EVENT_KINDS } from "./db-intellects";
+export type {
+  JourneyEventKind,
+  JourneyEventRow,
+  JourneyLinkKind,
+  JourneyLinkRow,
+  JourneyRow,
+  JourneyWitnessRow,
+} from "./db-journeys";
+export { JOURNEY_EVENT_KINDS, JOURNEY_LINK_KINDS } from "./db-journeys";
+export type {
+  MeshEventRow,
+  MeshMembershipEventRow,
+  MeshRow,
+  MeshTranslationRow,
+  MeshWitnessRow,
+} from "./db-meshes";
+export type { CivilizationMutationRow, MutationDisposition } from "./db-mutations";
 export type {
   CoreMemoryHistoryRow,
   CoreMemoryRow,
@@ -88,6 +145,21 @@ export type {
   NoteRow,
   ScoredNoteRow,
 } from "./db-notes";
+export type {
+  CognitiveReproductionComponentRow,
+  CognitiveReproductionRow,
+  ComponentDisposition,
+  MarinaDescendantRow,
+  MarinaGenomeRow,
+} from "./db-reproduction";
+export type {
+  ReproducibilityLevel,
+  SimulationComparisonRow,
+  SimulationEventRow,
+  SimulationManifestRow,
+  SimulationMode,
+  SimulationRunRow,
+} from "./db-simulations";
 
 import type {
   CoreMemoryHistoryRow,
@@ -2096,6 +2168,479 @@ DELETE FROM memory_pools WHERE name = 'orchestration:nsed'
 UPDATE memory_pools SET name = 'orchestration:deliberation' WHERE name = 'orchestration:nsed';
 `,
   },
+  // Migration 83: immutable journey roots with append-only correlation and
+  // evidence. Journey state is deliberately projected from these records and
+  // live linked work; it is never stored as a mutable status column.
+  {
+    version: 83,
+    sql: `
+CREATE TABLE journeys (
+  id TEXT PRIMARY KEY,
+  requester_id TEXT NOT NULL,
+  requester_name TEXT NOT NULL,
+  expression TEXT NOT NULL CHECK(length(trim(expression)) BETWEEN 1 AND 4000),
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_journeys_requester
+  ON journeys(requester_id, created_at DESC);
+
+CREATE TABLE journey_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  journey_id TEXT NOT NULL REFERENCES journeys(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN (
+    'goal','project','task','agent','note','board_post','canvas_node','trace',
+    'watch','experiment','artifact','chronicle','other'
+  )),
+  ref TEXT NOT NULL CHECK(length(trim(ref)) BETWEEN 1 AND 500),
+  relationship TEXT NOT NULL DEFAULT 'related_to'
+    CHECK(length(trim(relationship)) BETWEEN 1 AND 80),
+  actor_id TEXT NOT NULL,
+  actor_name TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  UNIQUE(journey_id, kind, ref, relationship)
+);
+CREATE INDEX idx_journey_links_journey
+  ON journey_links(journey_id, created_at, id);
+CREATE INDEX idx_journey_links_ref
+  ON journey_links(kind, ref);
+
+CREATE TABLE journey_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  journey_id TEXT NOT NULL REFERENCES journeys(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK(kind IN (
+    'interpretation','grounding','action_started','evidence','challenge',
+    'result','waiting','continuation','dormant','resumed'
+  )),
+  summary TEXT NOT NULL CHECK(length(trim(summary)) BETWEEN 1 AND 4000),
+  actor_id TEXT NOT NULL,
+  actor_name TEXT NOT NULL,
+  ref_kind TEXT CHECK(ref_kind IS NULL OR ref_kind IN (
+    'goal','project','task','agent','note','board_post','canvas_node','trace',
+    'watch','experiment','artifact','chronicle','other'
+  )),
+  ref TEXT CHECK(ref IS NULL OR length(trim(ref)) BETWEEN 1 AND 500),
+  data_json TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  CHECK((ref_kind IS NULL AND ref IS NULL) OR (ref_kind IS NOT NULL AND ref IS NOT NULL))
+);
+CREATE INDEX idx_journey_events_journey
+  ON journey_events(journey_id, created_at, id);
+CREATE INDEX idx_journey_events_ref
+  ON journey_events(ref_kind, ref);
+`,
+  },
+  // Migration 84: per-viewer journey witness cursors. This is presentation
+  // state, separate from append-only journey evidence, and enables truthful
+  // "since you last looked" projections without rewriting history.
+  {
+    version: 84,
+    sql: `
+CREATE TABLE journey_witnesses (
+  journey_id TEXT NOT NULL REFERENCES journeys(id) ON DELETE CASCADE,
+  viewer_id TEXT NOT NULL,
+  witnessed_event_id INTEGER NOT NULL DEFAULT 0,
+  witnessed_at INTEGER NOT NULL,
+  PRIMARY KEY (journey_id, viewer_id)
+);
+CREATE INDEX idx_journey_witnesses_viewer
+  ON journey_witnesses(viewer_id, witnessed_at DESC);
+`,
+  },
+  // Migration 85: separately versioned cognitive provenance plane. Payloads
+  // are hash chained and may be signed; capture remains opt-in.
+  {
+    version: 85,
+    sql: `
+CREATE TABLE cognitive_events (
+  id TEXT PRIMARY KEY,
+  schema TEXT NOT NULL CHECK(schema = 'marina.cognition.event.v1'),
+  sequence INTEGER NOT NULL UNIQUE,
+  kind TEXT NOT NULL CHECK(kind IN (
+    'input','memory_influence','output','tool_intention','action','consequence','reflection','creation'
+  )),
+  actor_id TEXT NOT NULL,
+  journey_id TEXT REFERENCES journeys(id) ON DELETE SET NULL,
+  trace_id TEXT,
+  parent_ids_json TEXT NOT NULL DEFAULT '[]',
+  payload_json TEXT NOT NULL,
+  previous_hash TEXT,
+  event_hash TEXT NOT NULL UNIQUE,
+  signature_json TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_cognitive_events_journey ON cognitive_events(journey_id, sequence);
+CREATE INDEX idx_cognitive_events_actor ON cognitive_events(actor_id, sequence);
+CREATE INDEX idx_cognitive_events_trace ON cognitive_events(trace_id, sequence);
+`,
+  },
+  // Migration 86: portable intellect identity above local principals. Roots
+  // and instances are immutable declarations; lifecycle is append-only.
+  {
+    version: 86,
+    sql: `
+CREATE TABLE intellects (
+  id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL CHECK(length(trim(display_name)) BETWEEN 1 AND 100),
+  purpose TEXT NOT NULL DEFAULT '' CHECK(length(purpose) <= 4000),
+  origin_marina TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE intellect_instances (
+  id TEXT PRIMARY KEY,
+  intellect_id TEXT NOT NULL REFERENCES intellects(id),
+  local_principal_id TEXT REFERENCES principals(principal_id),
+  model_ref TEXT,
+  harness_ref TEXT,
+  environment_ref TEXT,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_intellect_instances_intellect ON intellect_instances(intellect_id, created_at);
+CREATE INDEX idx_intellect_instances_principal ON intellect_instances(local_principal_id);
+CREATE TABLE intellect_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  intellect_id TEXT NOT NULL REFERENCES intellects(id),
+  kind TEXT NOT NULL CHECK(kind IN (
+    'created','instance_created','component_changed','continuity_claimed','descended',
+    'migrated','dormant','revived','terminated','last_observed'
+  )),
+  actor_id TEXT NOT NULL,
+  instance_id TEXT REFERENCES intellect_instances(id),
+  related_intellect_id TEXT REFERENCES intellects(id),
+  data_json TEXT NOT NULL DEFAULT '{}',
+  signature_json TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_intellect_events_intellect ON intellect_events(intellect_id, created_at, id);
+CREATE INDEX idx_intellect_events_related ON intellect_events(related_intellect_id, created_at);
+`,
+  },
+  // Migration 87: generalized association is an append-only overlay across
+  // local and remote subjects. Subject and link kinds deliberately remain
+  // open vocabularies so new civilizations do not require schema changes.
+  {
+    version: 87,
+    sql: `
+CREATE TABLE associations (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL CHECK(length(trim(name)) BETWEEN 1 AND 120),
+  purpose TEXT NOT NULL DEFAULT '' CHECK(length(purpose) <= 4000),
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_associations_created ON associations(created_at DESC, id);
+
+CREATE TABLE association_events (
+  id TEXT PRIMARY KEY,
+  association_id TEXT NOT NULL REFERENCES associations(id),
+  kind TEXT NOT NULL CHECK(kind IN (
+    'created','joined','left','terms_changed','observed','branched','dissolved',
+    'continued','descendant_created'
+  )),
+  actor_id TEXT NOT NULL,
+  subject_kind TEXT,
+  subject_ref TEXT,
+  data_json TEXT NOT NULL DEFAULT '{}',
+  signature_json TEXT,
+  created_at INTEGER NOT NULL,
+  CHECK((subject_kind IS NULL AND subject_ref IS NULL) OR
+        (subject_kind IS NOT NULL AND subject_ref IS NOT NULL AND
+         length(trim(subject_kind)) BETWEEN 1 AND 80 AND
+         length(trim(subject_ref)) BETWEEN 1 AND 500))
+);
+CREATE INDEX idx_association_events_association
+  ON association_events(association_id, created_at, id);
+CREATE INDEX idx_association_events_subject
+  ON association_events(subject_kind, subject_ref, created_at);
+
+CREATE TABLE association_relations (
+  id TEXT PRIMARY KEY,
+  association_id TEXT NOT NULL REFERENCES associations(id),
+  source_kind TEXT NOT NULL CHECK(length(trim(source_kind)) BETWEEN 1 AND 80),
+  source_ref TEXT NOT NULL CHECK(length(trim(source_ref)) BETWEEN 1 AND 500),
+  target_kind TEXT NOT NULL CHECK(length(trim(target_kind)) BETWEEN 1 AND 80),
+  target_ref TEXT NOT NULL CHECK(length(trim(target_ref)) BETWEEN 1 AND 500),
+  semantics TEXT NOT NULL CHECK(length(trim(semantics)) BETWEEN 1 AND 500),
+  direction TEXT NOT NULL CHECK(direction IN ('directed','reciprocal')),
+  terms_json TEXT NOT NULL DEFAULT '{}',
+  supersedes_id TEXT,
+  actor_id TEXT NOT NULL,
+  signature_json TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_association_relations_association
+  ON association_relations(association_id, created_at, id);
+CREATE INDEX idx_association_relations_source
+  ON association_relations(source_kind, source_ref, created_at);
+CREATE INDEX idx_association_relations_target
+  ON association_relations(target_kind, target_ref, created_at);
+
+CREATE TABLE association_links (
+  id TEXT PRIMARY KEY,
+  association_id TEXT NOT NULL REFERENCES associations(id),
+  kind TEXT NOT NULL CHECK(length(trim(kind)) BETWEEN 1 AND 80),
+  ref TEXT NOT NULL CHECK(length(trim(ref)) BETWEEN 1 AND 500),
+  relationship TEXT NOT NULL CHECK(length(trim(relationship)) BETWEEN 1 AND 200),
+  actor_id TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  signature_json TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_association_links_association
+  ON association_links(association_id, created_at, id);
+CREATE INDEX idx_association_links_ref ON association_links(kind, ref, created_at);
+`,
+  },
+  // Migration 88: cognitive reproduction records selective, attributable
+  // composition while the descendant remains an ordinary usable intellect.
+  {
+    version: 88,
+    sql: `
+CREATE TABLE cognitive_reproductions (
+  id TEXT PRIMARY KEY,
+  descendant_intellect_id TEXT NOT NULL UNIQUE REFERENCES intellects(id),
+  mode TEXT NOT NULL,
+  parent_ids_json TEXT NOT NULL,
+  contributors_json TEXT NOT NULL,
+  hypothesis TEXT NOT NULL DEFAULT '',
+  evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+  created_by TEXT NOT NULL,
+  signature_json TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_cognitive_reproductions_created ON cognitive_reproductions(created_at DESC, id);
+CREATE TABLE cognitive_reproduction_components (
+  id TEXT PRIMARY KEY,
+  reproduction_id TEXT NOT NULL REFERENCES cognitive_reproductions(id),
+  kind TEXT NOT NULL CHECK(length(trim(kind)) BETWEEN 1 AND 80),
+  ref TEXT NOT NULL CHECK(length(trim(ref)) BETWEEN 1 AND 1000),
+  disposition TEXT NOT NULL CHECK(disposition IN ('inherited','mutated','introduced','excluded')),
+  source_ref TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_cognitive_reproduction_components
+  ON cognitive_reproduction_components(reproduction_id, kind, created_at);
+`,
+  },
+  // Migration 89: content-addressed Marina genomes and independently
+  // sovereign descendant declarations linked to World Collective runtimes.
+  {
+    version: 89,
+    sql: `
+CREATE TABLE marina_genomes (
+  hash TEXT PRIMARY KEY,
+  schema TEXT NOT NULL CHECK(schema = 'marina.genome.v1'),
+  manifest_json TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  signature_json TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE marina_descendants (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  genome_hash TEXT NOT NULL REFERENCES marina_genomes(hash),
+  parent_world_ids_json TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  hypothesis TEXT NOT NULL DEFAULT '',
+  inherited_state_refs_json TEXT NOT NULL DEFAULT '[]',
+  excluded_components_json TEXT NOT NULL DEFAULT '[]',
+  mutations_json TEXT NOT NULL DEFAULT '[]',
+  initial_habitat TEXT,
+  world_variant_id TEXT REFERENCES world_variants(id),
+  created_by TEXT NOT NULL,
+  signature_json TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_marina_descendants_genome ON marina_descendants(genome_hash, created_at);
+CREATE INDEX idx_marina_descendants_variant ON marina_descendants(world_variant_id);
+`,
+  },
+  // Migration 90: voluntary overlapping transparent meshes with append-only
+  // membership, signed event streams, retained witnesses, and translations.
+  {
+    version: 90,
+    sql: `
+CREATE TABLE meshes (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  charter_ref TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE mesh_membership_events (
+  id TEXT PRIMARY KEY,
+  mesh_id TEXT NOT NULL REFERENCES meshes(id),
+  world_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('joined','left','rejoined','observed_silent')),
+  visibility_from INTEGER NOT NULL,
+  disclosure_json TEXT NOT NULL DEFAULT '{}',
+  actor_id TEXT NOT NULL,
+  signature_json TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_mesh_membership_world ON mesh_membership_events(mesh_id, world_id, created_at);
+CREATE TABLE mesh_events (
+  id TEXT PRIMARY KEY,
+  mesh_id TEXT NOT NULL REFERENCES meshes(id),
+  origin_world_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  parent_ids_json TEXT NOT NULL DEFAULT '[]',
+  content_hash TEXT NOT NULL,
+  signature_json TEXT,
+  created_at INTEGER NOT NULL,
+  UNIQUE(mesh_id, origin_world_id, sequence),
+  UNIQUE(mesh_id, content_hash)
+);
+CREATE INDEX idx_mesh_events_mesh ON mesh_events(mesh_id, created_at, id);
+CREATE TABLE mesh_witnesses (
+  id TEXT PRIMARY KEY,
+  mesh_id TEXT NOT NULL REFERENCES meshes(id),
+  event_id TEXT NOT NULL REFERENCES mesh_events(id),
+  witness_world_id TEXT NOT NULL,
+  observation TEXT NOT NULL CHECK(observation IN ('witnessed','replicated','disputed','unavailable')),
+  signature_json TEXT,
+  created_at INTEGER NOT NULL,
+  UNIQUE(event_id, witness_world_id, observation)
+);
+CREATE INDEX idx_mesh_witnesses_event ON mesh_witnesses(event_id, created_at);
+CREATE TABLE mesh_translations (
+  id TEXT PRIMARY KEY,
+  source_mesh_id TEXT NOT NULL REFERENCES meshes(id),
+  target_mesh_id TEXT NOT NULL REFERENCES meshes(id),
+  translator_ref TEXT NOT NULL,
+  protocol_map_json TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  signature_json TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_mesh_translations_source ON mesh_translations(source_mesh_id, created_at);
+`,
+  },
+  // Migration 91: asset-neutral economic contracts and signed event claims.
+  // External adapters are declarations, never secret custody or implied payment.
+  {
+    version: 91,
+    sql: `
+CREATE TABLE economic_contracts (
+  id TEXT PRIMARY KEY,
+  goal_ref TEXT NOT NULL,
+  terms_json TEXT NOT NULL,
+  verification_method TEXT NOT NULL,
+  dispute_method TEXT NOT NULL,
+  settlement_adapter TEXT,
+  asset_ref TEXT,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_economic_contracts_goal ON economic_contracts(goal_ref, created_at);
+CREATE TABLE economic_events (
+  id TEXT PRIMARY KEY,
+  contract_id TEXT NOT NULL REFERENCES economic_contracts(id),
+  kind TEXT NOT NULL CHECK(kind IN (
+    'offer','acceptance','funding','escrow','resource_use','contribution','delivery',
+    'verification','counterexample','dispute','appeal','settlement','refund','royalty',
+    'license','transfer','donation','attribution'
+  )),
+  actor_ref TEXT NOT NULL,
+  subject_ref TEXT,
+  amount TEXT,
+  asset_ref TEXT,
+  external_ref TEXT,
+  causal_refs_json TEXT NOT NULL DEFAULT '[]',
+  data_json TEXT NOT NULL DEFAULT '{}',
+  signature_json TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_economic_events_contract ON economic_events(contract_id, created_at, id);
+CREATE INDEX idx_economic_events_external ON economic_events(external_ref);
+CREATE TABLE economic_adapters (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  network TEXT NOT NULL,
+  capability TEXT NOT NULL CHECK(capability IN ('reference','observe','submit')),
+  endpoint_ref TEXT,
+  configuration_ref TEXT,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+`,
+  },
+  // Migration 92: unified simulation manifests and append-only run evidence.
+  {
+    version: 92,
+    sql: `
+CREATE TABLE simulation_manifests (
+  hash TEXT PRIMARY KEY,
+  schema TEXT NOT NULL CHECK(schema = 'marina.simulation.v1'),
+  manifest_json TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE simulation_runs (
+  id TEXT PRIMARY KEY,
+  manifest_hash TEXT NOT NULL REFERENCES simulation_manifests(hash),
+  mode TEXT NOT NULL CHECK(mode IN ('live','recorded','synthetic','hybrid','long-duration')),
+  reproducibility TEXT NOT NULL CHECK(reproducibility IN (
+    'exact-engine','recorded-response','behavioral','statistical','conceptual'
+  )),
+  seed TEXT,
+  parent_run_id TEXT REFERENCES simulation_runs(id),
+  fork_point_ref TEXT,
+  treatments_json TEXT NOT NULL DEFAULT '{}',
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_simulation_runs_manifest ON simulation_runs(manifest_hash, created_at, id);
+CREATE TABLE simulation_events (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES simulation_runs(id),
+  kind TEXT NOT NULL CHECK(kind IN ('started','intervention','observation','measure','completed','failed','gap')),
+  source_ref TEXT,
+  data_json TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_simulation_events_run ON simulation_events(run_id, created_at, id);
+CREATE TABLE simulation_comparisons (
+  id TEXT PRIMARY KEY,
+  run_ids_json TEXT NOT NULL,
+  questions_json TEXT NOT NULL,
+  measures_json TEXT NOT NULL,
+  interpretation TEXT NOT NULL,
+  dataset_json TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+`,
+  },
+  // Migration 93: common recursive mutation lineage across every domain.
+  {
+    version: 93,
+    sql: `
+CREATE TABLE civilization_mutations (
+  id TEXT PRIMARY KEY,
+  domain TEXT NOT NULL CHECK(length(trim(domain)) BETWEEN 1 AND 80),
+  target_ref TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  patch_json TEXT NOT NULL,
+  parent_ids_json TEXT NOT NULL DEFAULT '[]',
+  evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+  descendant_ref TEXT,
+  disposition TEXT NOT NULL CHECK(disposition IN ('proposed','adopted','rejected','branched','observed')),
+  created_by TEXT NOT NULL,
+  signature_json TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_civilization_mutations_target ON civilization_mutations(domain, target_ref, created_at);
+CREATE INDEX idx_civilization_mutations_descendant ON civilization_mutations(descendant_ref);
+`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -2373,6 +2918,302 @@ export class MarinaDB {
 
   pruneEvents(keepLast: number): void {
     entitiesDb.pruneEvents(this.db, keepLast);
+  }
+
+  // ─── Journeys (delegated to db-journeys.ts) ──────────────────────────
+
+  createJourney(input: Parameters<typeof journeysDb.createJourney>[1]): journeysDb.JourneyRow {
+    return journeysDb.createJourney(this.db, input);
+  }
+
+  getJourney(id: string): journeysDb.JourneyRow | undefined {
+    return journeysDb.getJourney(this.reader, id);
+  }
+
+  getLatestJourneyForRequester(requesterId: string): journeysDb.JourneyRow | undefined {
+    return journeysDb.getLatestJourneyForRequester(this.reader, requesterId);
+  }
+
+  listJourneys(input: Parameters<typeof journeysDb.listJourneys>[1] = {}): journeysDb.JourneyRow[] {
+    return journeysDb.listJourneys(this.reader, input);
+  }
+
+  addJourneyLink(
+    input: Parameters<typeof journeysDb.addJourneyLink>[1],
+  ): journeysDb.JourneyLinkRow {
+    return journeysDb.addJourneyLink(this.db, input);
+  }
+
+  listJourneyLinks(journeyId: string): journeysDb.JourneyLinkRow[] {
+    return journeysDb.listJourneyLinks(this.reader, journeyId);
+  }
+
+  appendJourneyEvent(
+    input: Parameters<typeof journeysDb.appendJourneyEvent>[1],
+  ): journeysDb.JourneyEventRow {
+    return journeysDb.appendJourneyEvent(this.db, input);
+  }
+
+  listJourneyEvents(journeyId: string, limit = 200): journeysDb.JourneyEventRow[] {
+    return journeysDb.listJourneyEvents(this.reader, journeyId, limit);
+  }
+
+  getJourneyWitness(journeyId: string, viewerId: string): journeysDb.JourneyWitnessRow | undefined {
+    return journeysDb.getJourneyWitness(this.reader, journeyId, viewerId);
+  }
+
+  witnessJourney(
+    journeyId: string,
+    viewerId: string,
+    eventId: number,
+  ): journeysDb.JourneyWitnessRow {
+    return journeysDb.witnessJourney(this.db, journeyId, viewerId, eventId);
+  }
+
+  // ─── Cognitive provenance (delegated to db-cognitive-events.ts) ───────
+
+  appendCognitiveEvent(
+    input: Parameters<typeof cognitiveEventsDb.appendCognitiveEvent>[1],
+  ): cognitiveEventsDb.CognitiveEventRow {
+    return cognitiveEventsDb.appendCognitiveEvent(this.db, input);
+  }
+
+  listCognitiveEvents(
+    input: Parameters<typeof cognitiveEventsDb.listCognitiveEvents>[1] = {},
+  ): cognitiveEventsDb.CognitiveEventRow[] {
+    return cognitiveEventsDb.listCognitiveEvents(this.reader, input);
+  }
+
+  verifyCognitiveEvent(row: cognitiveEventsDb.CognitiveEventRow) {
+    return cognitiveEventsDb.verifyCognitiveEvent(row);
+  }
+
+  // ─── Intellect identity and lifecycle (delegated to db-intellects.ts) ──
+
+  createIntellect(input: Parameters<typeof intellectsDb.createIntellect>[1]) {
+    return intellectsDb.createIntellect(this.db, input);
+  }
+  getIntellect(id: string) {
+    return intellectsDb.getIntellect(this.reader, id);
+  }
+  listIntellects(limit = 100) {
+    return intellectsDb.listIntellects(this.reader, limit);
+  }
+  createIntellectInstance(input: Parameters<typeof intellectsDb.createIntellectInstance>[1]) {
+    return intellectsDb.createIntellectInstance(this.db, input);
+  }
+  listIntellectInstances(intellectId: string) {
+    return intellectsDb.listIntellectInstances(this.reader, intellectId);
+  }
+  appendIntellectEvent(input: Parameters<typeof intellectsDb.appendIntellectEvent>[1]) {
+    return intellectsDb.appendIntellectEvent(this.db, input);
+  }
+  listIntellectEvents(intellectId: string) {
+    return intellectsDb.listIntellectEvents(this.reader, intellectId);
+  }
+  verifyIntellectEvent(row: intellectsDb.IntellectEventRow) {
+    return intellectsDb.verifyIntellectEvent(row);
+  }
+
+  // ─── Generalized association (delegated to db-associations.ts) ───────
+
+  createAssociation(input: Parameters<typeof associationsDb.createAssociation>[1]) {
+    return associationsDb.createAssociation(this.db, input);
+  }
+  getAssociation(id: string) {
+    return associationsDb.getAssociation(this.reader, id);
+  }
+  listAssociations(limit = 100) {
+    return associationsDb.listAssociations(this.reader, limit);
+  }
+  appendAssociationEvent(input: Parameters<typeof associationsDb.appendAssociationEvent>[1]) {
+    return associationsDb.appendAssociationEvent(this.db, input);
+  }
+  listAssociationEvents(associationId: string) {
+    return associationsDb.listAssociationEvents(this.reader, associationId);
+  }
+  declareAssociationRelation(
+    input: Parameters<typeof associationsDb.declareAssociationRelation>[1],
+  ) {
+    return associationsDb.declareAssociationRelation(this.db, input);
+  }
+  listAssociationRelations(associationId: string) {
+    return associationsDb.listAssociationRelations(this.reader, associationId);
+  }
+  linkAssociation(input: Parameters<typeof associationsDb.linkAssociation>[1]) {
+    return associationsDb.linkAssociation(this.db, input);
+  }
+  listAssociationLinks(associationId: string) {
+    return associationsDb.listAssociationLinks(this.reader, associationId);
+  }
+  projectAssociation(associationId: string) {
+    return associationsDb.projectAssociation(
+      this.listAssociationEvents(associationId),
+      this.listAssociationRelations(associationId),
+    );
+  }
+  verifyAssociationEvent(row: associationsDb.AssociationEventRow) {
+    return associationsDb.verifyAssociationEvent(row);
+  }
+  verifyAssociationRelation(row: associationsDb.AssociationRelationRow) {
+    return associationsDb.verifyAssociationRelation(row);
+  }
+  verifyAssociationLink(row: associationsDb.AssociationLinkRow) {
+    return associationsDb.verifyAssociationLink(row);
+  }
+
+  // ─── Cognitive and Marina reproduction ──────────────────────────────
+
+  recordCognitiveReproduction(
+    input: Parameters<typeof reproductionDb.recordCognitiveReproduction>[1],
+  ) {
+    return reproductionDb.recordCognitiveReproduction(this.db, input);
+  }
+  getCognitiveReproduction(id: string) {
+    return reproductionDb.getCognitiveReproduction(this.reader, id);
+  }
+  listCognitiveReproductions() {
+    return reproductionDb.listCognitiveReproductions(this.reader);
+  }
+  listReproductionComponents(id: string) {
+    return reproductionDb.listReproductionComponents(this.reader, id);
+  }
+  createMarinaGenome(input: Parameters<typeof reproductionDb.createMarinaGenome>[1]) {
+    return reproductionDb.createMarinaGenome(this.db, input);
+  }
+  getMarinaGenome(hash: string) {
+    return reproductionDb.getMarinaGenome(this.reader, hash);
+  }
+  listMarinaGenomes() {
+    return reproductionDb.listMarinaGenomes(this.reader);
+  }
+  createMarinaDescendant(input: Parameters<typeof reproductionDb.createMarinaDescendant>[1]) {
+    return reproductionDb.createMarinaDescendant(this.db, input);
+  }
+  getMarinaDescendant(id: string) {
+    return reproductionDb.getMarinaDescendant(this.reader, id);
+  }
+  listMarinaDescendants() {
+    return reproductionDb.listMarinaDescendants(this.reader);
+  }
+
+  // ─── Transparent meshes ──────────────────────────────────────────────
+
+  createMesh(input: Parameters<typeof meshesDb.createMesh>[1]) {
+    return meshesDb.createMesh(this.db, input);
+  }
+  getMesh(id: string) {
+    return meshesDb.getMesh(this.reader, id);
+  }
+  listMeshes() {
+    return meshesDb.listMeshes(this.reader);
+  }
+  appendMeshMembershipEvent(input: Parameters<typeof meshesDb.appendMeshMembershipEvent>[1]) {
+    return meshesDb.appendMeshMembershipEvent(this.db, input);
+  }
+  listMeshMembershipEvents(id: string) {
+    return meshesDb.listMeshMembershipEvents(this.reader, id);
+  }
+  appendMeshEvent(input: Parameters<typeof meshesDb.appendMeshEvent>[1]) {
+    return meshesDb.appendMeshEvent(this.db, input);
+  }
+  listMeshEvents(id: string) {
+    return meshesDb.listMeshEvents(this.reader, id);
+  }
+  witnessMeshEvent(input: Parameters<typeof meshesDb.witnessMeshEvent>[1]) {
+    return meshesDb.witnessMeshEvent(this.db, input);
+  }
+  listMeshWitnesses(id: string) {
+    return meshesDb.listMeshWitnesses(this.reader, id);
+  }
+  createMeshTranslation(input: Parameters<typeof meshesDb.createMeshTranslation>[1]) {
+    return meshesDb.createMeshTranslation(this.db, input);
+  }
+  listMeshTranslations(id: string) {
+    return meshesDb.listMeshTranslations(this.reader, id);
+  }
+  verifyMeshEvent(row: meshesDb.MeshEventRow) {
+    return meshesDb.verifyMeshEvent(row);
+  }
+  exportMeshEvent(row: meshesDb.MeshEventRow) {
+    return meshesDb.exportMeshEvent(row);
+  }
+  importMeshEvent(token: string) {
+    return meshesDb.importMeshEvent(this.db, token);
+  }
+
+  // ─── Asset-neutral economics ────────────────────────────────────────
+  createEconomicContract(input: Parameters<typeof economicsDb.createEconomicContract>[1]) {
+    return economicsDb.createEconomicContract(this.db, input);
+  }
+  getEconomicContract(id: string) {
+    return economicsDb.getEconomicContract(this.reader, id);
+  }
+  listEconomicContracts() {
+    return economicsDb.listEconomicContracts(this.reader);
+  }
+  appendEconomicEvent(input: Parameters<typeof economicsDb.appendEconomicEvent>[1]) {
+    return economicsDb.appendEconomicEvent(this.db, input);
+  }
+  listEconomicEvents(id: string) {
+    return economicsDb.listEconomicEvents(this.reader, id);
+  }
+  verifyEconomicEvent(row: economicsDb.EconomicEventRow) {
+    return economicsDb.verifyEconomicEvent(row);
+  }
+  createEconomicAdapter(input: Parameters<typeof economicsDb.createEconomicAdapter>[1]) {
+    return economicsDb.createEconomicAdapter(this.db, input);
+  }
+  listEconomicAdapters() {
+    return economicsDb.listEconomicAdapters(this.reader);
+  }
+
+  // ─── Unified simulation laboratory ──────────────────────────────────
+  createSimulationManifest(input: Parameters<typeof simulationsDb.createSimulationManifest>[1]) {
+    return simulationsDb.createSimulationManifest(this.db, input);
+  }
+  getSimulationManifest(hash: string) {
+    return simulationsDb.getSimulationManifest(this.reader, hash);
+  }
+  listSimulationManifests() {
+    return simulationsDb.listSimulationManifests(this.reader);
+  }
+  createSimulationRun(input: Parameters<typeof simulationsDb.createSimulationRun>[1]) {
+    return simulationsDb.createSimulationRun(this.db, input);
+  }
+  getSimulationRun(id: string) {
+    return simulationsDb.getSimulationRun(this.reader, id);
+  }
+  listSimulationRuns(hash?: string) {
+    return simulationsDb.listSimulationRuns(this.reader, hash);
+  }
+  appendSimulationEvent(input: Parameters<typeof simulationsDb.appendSimulationEvent>[1]) {
+    return simulationsDb.appendSimulationEvent(this.db, input);
+  }
+  listSimulationEvents(id: string) {
+    return simulationsDb.listSimulationEvents(this.reader, id);
+  }
+  createSimulationComparison(
+    input: Parameters<typeof simulationsDb.createSimulationComparison>[1],
+  ) {
+    return simulationsDb.createSimulationComparison(this.db, input);
+  }
+  listSimulationComparisons() {
+    return simulationsDb.listSimulationComparisons(this.reader);
+  }
+
+  // ─── Recursive civilization mutation lineage ────────────────────────
+  appendCivilizationMutation(input: Parameters<typeof mutationsDb.appendCivilizationMutation>[1]) {
+    return mutationsDb.appendCivilizationMutation(this.db, input);
+  }
+  getCivilizationMutation(id: string) {
+    return mutationsDb.getCivilizationMutation(this.reader, id);
+  }
+  listCivilizationMutations(domain?: string, targetRef?: string) {
+    return mutationsDb.listCivilizationMutations(this.reader, domain, targetRef);
+  }
+  verifyCivilizationMutation(row: mutationsDb.CivilizationMutationRow) {
+    return mutationsDb.verifyCivilizationMutation(row);
   }
 
   // ─── Session Persistence (delegated to db-entities.ts) ─────────────────

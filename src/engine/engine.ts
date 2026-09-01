@@ -48,6 +48,7 @@ import { type LoadedRoom, RoomManager } from "../world/room-manager";
 import type { WorldDefinition } from "../world/world-definition";
 import { BenchmarkRunner } from "./benchmark-runner";
 import { BriefManager } from "./brief-manager";
+import { recordEngineCognition } from "./cognitive-provenance";
 import { registerBuiltinCommands } from "./command-registry";
 import { CommandRouter } from "./command-router";
 import { isLoopbackConnection } from "./commands/code";
@@ -1948,6 +1949,11 @@ export class Engine {
     // task path to preserve per-task.standing values.
     if (this.db) {
       const db = this.db;
+      try {
+        recordEngineCognition(db, event);
+      } catch {
+        // Optional provenance must never interrupt the canonical event path.
+      }
       try {
         recordStandingEvent(
           db,

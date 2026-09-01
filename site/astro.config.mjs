@@ -50,6 +50,10 @@ export default defineConfig({
             { label: "Self-Evolving Agents", slug: "docs/guides/self-evolving-agents" },
             { label: "Information Topology", slug: "docs/guides/information-topology" },
             { label: "Emergent Organization", slug: "docs/guides/emergent-organization" },
+            { label: "Journeys", slug: "docs/guides/journeys" },
+            { label: "Intellect Lifecycle", slug: "docs/guides/intellect-lifecycle" },
+            { label: "Associations", slug: "docs/guides/associations" },
+            { label: "Reproduction & Meshes", slug: "docs/guides/reproduction-and-meshes" },
           ],
         },
         {
@@ -58,6 +62,11 @@ export default defineConfig({
             { label: "Memory System", slug: "docs/guides/memory" },
             { label: "Memory API", slug: "docs/guides/memory-api" },
             { label: "Coordination", slug: "docs/guides/coordination" },
+            { label: "Cognitive Provenance", slug: "docs/guides/cognitive-provenance" },
+            {
+              label: "Economics, Simulation & Recursion",
+              slug: "docs/guides/economics-simulation-and-recursion",
+            },
             { label: "Agent Development", slug: "docs/guides/agent-development" },
           ],
         },

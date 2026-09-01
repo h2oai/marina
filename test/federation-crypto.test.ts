@@ -30,6 +30,22 @@ describe("federation cryptography", () => {
     );
   });
 
+  test("rejects ambiguous or non-JSON signing inputs", () => {
+    expect(() => canonicalFederationJson({ value: Number.NaN })).toThrow("non-finite");
+    expect(() => canonicalFederationJson({ value: 1n })).toThrow("bigint");
+    expect(() => canonicalFederationJson({ value: new Date(0) })).toThrow("plain objects");
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(() => canonicalFederationJson(cyclic)).toThrow("cyclic");
+  });
+
+  test("allows a repeated object when it is not a cycle", () => {
+    const shared = { value: 1 };
+    expect(canonicalFederationJson({ left: shared, right: shared })).toBe(
+      '{"left":{"value":1},"right":{"value":1}}',
+    );
+  });
+
   test("signs and verifies an Ed25519 envelope", () => {
     configureSigningKey();
     const signed = signFederationDocument({
