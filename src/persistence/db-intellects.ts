@@ -111,6 +111,17 @@ export function listIntellects(db: Database, limit = 100): IntellectRow[] {
     .all(Math.max(1, Math.min(limit, 500))) as IntellectRow[];
 }
 
+/**
+ * Bounded id-prefix resolution over the WHOLE table (a capped list scan would
+ * silently miss older rows). Returns up to 2 rows: 1 = unambiguous.
+ */
+export function findIntellectsByIdPrefix(db: Database, selector: string): IntellectRow[] {
+  const prefix = `${selector.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+  return db
+    .query("SELECT * FROM intellects WHERE id LIKE ? ESCAPE '\\' LIMIT 2")
+    .all(prefix) as IntellectRow[];
+}
+
 export function createIntellectInstance(
   db: Database,
   input: {
@@ -186,37 +197,46 @@ export function appendIntellectEvent(
   },
 ): IntellectEventRow {
   const createdAt = input.createdAt ?? Date.now();
-  const document = {
-    schema: "marina.intellect.event.v1",
-    intellectId: input.intellectId,
-    kind: input.kind,
-    actorId: input.actorId,
-    instanceId: input.instanceId ?? null,
-    relatedIntellectId: input.relatedIntellectId ?? null,
-    data: input.data ?? {},
-    createdAt,
-  };
-  const signature = federationSigningAvailable()
-    ? signFederationDocument(document).signature
-    : null;
-  const result = db.run(
-    `INSERT INTO intellect_events
-     (intellect_id, kind, actor_id, instance_id, related_intellect_id, data_json,
-      signature_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      input.intellectId,
-      input.kind,
-      input.actorId,
-      input.instanceId ?? null,
-      input.relatedIntellectId ?? null,
-      JSON.stringify(input.data ?? {}),
-      signature ? JSON.stringify(signature) : null,
-      createdAt,
-    ],
-  );
-  return db
-    .query("SELECT * FROM intellect_events WHERE id = ?")
-    .get(Number(result.lastInsertRowid)) as IntellectEventRow;
+  // The signature binds the row's own id (assigned by the insert) so a valid
+  // signature can't be replayed onto a different event row. Insert-then-sign
+  // runs inside one transaction, mirroring db-economics.
+  const append = db.transaction(() => {
+    const result = db.run(
+      `INSERT INTO intellect_events
+       (intellect_id, kind, actor_id, instance_id, related_intellect_id, data_json,
+        signature_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.intellectId,
+        input.kind,
+        input.actorId,
+        input.instanceId ?? null,
+        input.relatedIntellectId ?? null,
+        JSON.stringify(input.data ?? {}),
+        null,
+        createdAt,
+      ],
+    );
+    const id = Number(result.lastInsertRowid);
+    if (federationSigningAvailable()) {
+      const signature = signFederationDocument({
+        schema: "marina.intellect.event.v1",
+        id,
+        intellectId: input.intellectId,
+        kind: input.kind,
+        actorId: input.actorId,
+        instanceId: input.instanceId ?? null,
+        relatedIntellectId: input.relatedIntellectId ?? null,
+        data: input.data ?? {},
+        createdAt,
+      }).signature;
+      db.run("UPDATE intellect_events SET signature_json = ? WHERE id = ?", [
+        JSON.stringify(signature),
+        id,
+      ]);
+    }
+    return db.query("SELECT * FROM intellect_events WHERE id = ?").get(id) as IntellectEventRow;
+  });
+  return append();
 }
 
 export function listIntellectEvents(db: Database, intellectId: string): IntellectEventRow[] {
@@ -234,6 +254,7 @@ export function verifyIntellectEvent(row: IntellectEventRow): {
   try {
     const document = {
       schema: "marina.intellect.event.v1",
+      id: row.id,
       intellectId: row.intellect_id,
       kind: row.kind,
       actorId: row.actor_id,

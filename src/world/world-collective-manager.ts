@@ -7,6 +7,25 @@ import type { MarinaDB } from "../persistence/database";
 
 const SAFE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,47}$/;
 
+const PROJECT_ROOT = resolve(import.meta.dir, "../..");
+const managers = new WeakMap<MarinaDB, WorldCollectiveManager>();
+
+/**
+ * One manager per database — REQUIRED for every caller (dashboard API and the
+ * `marina-descend` command share it). Constructing a fresh manager per call is
+ * incorrect: the constructor fails over live variant rows, `processes` starts
+ * empty so `stop()` can't reach an already-spawned child, and the
+ * already-running guard never fires.
+ */
+export function collectiveManager(db: MarinaDB, sourceRoot = PROJECT_ROOT): WorldCollectiveManager {
+  let manager = managers.get(db);
+  if (!manager) {
+    manager = new WorldCollectiveManager(db, sourceRoot);
+    managers.set(db, manager);
+  }
+  return manager;
+}
+
 export class WorldCollectiveManager {
   private readonly processes = new Map<string, Bun.Subprocess>();
   readonly sourceRoot: string;
@@ -90,7 +109,10 @@ export class WorldCollectiveManager {
         WS_PORT: String(variant.ws_port),
         MCP_PORT: String(variant.ws_port + 1),
         LOG_PORT: String(variant.ws_port + 2),
-        TELNET_PORT: String(variant.ws_port + 3),
+        // Telnet is plaintext + unauthenticated: descendants never get one
+        // (explicit "0" also prevents inheriting the parent's TELNET_PORT,
+        // which would collide across children).
+        TELNET_PORT: "0",
         AGENT_AUTORESPAWN: "false",
       },
       stdout: "ignore",

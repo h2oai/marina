@@ -44,6 +44,8 @@ export interface AssociationEventRow {
   data_json: string;
   signature_json: string | null;
   created_at: number;
+  /** Monotonic insertion order (migration 94) — replay projections order by this. */
+  seq: number;
 }
 
 export interface AssociationRelationRow {
@@ -60,6 +62,7 @@ export interface AssociationRelationRow {
   actor_id: string;
   signature_json: string | null;
   created_at: number;
+  seq: number;
 }
 
 export interface AssociationLinkRow {
@@ -72,6 +75,7 @@ export interface AssociationLinkRow {
   metadata_json: string;
   signature_json: string | null;
   created_at: number;
+  seq: number;
 }
 
 export interface AssociationParticipant {
@@ -131,6 +135,19 @@ export function listAssociations(db: Database, limit = 100): AssociationRow[] {
     .all(Math.max(1, Math.min(limit, 500))) as AssociationRow[];
 }
 
+/**
+ * Bounded selector resolution over the WHOLE table (a capped list scan would
+ * silently miss older rows). Returns up to 2 rows: 1 = unambiguous.
+ */
+export function findAssociationsBySelector(db: Database, selector: string): AssociationRow[] {
+  const prefix = `${selector.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+  return db
+    .query(
+      "SELECT * FROM associations WHERE id LIKE ? ESCAPE '\\' OR name = ? COLLATE NOCASE LIMIT 2",
+    )
+    .all(prefix, selector) as AssociationRow[];
+}
+
 export function appendAssociationEvent(
   db: Database,
   input: {
@@ -158,7 +175,9 @@ export function appendAssociationEvent(
   db.run(
     `INSERT INTO association_events
      (id, association_id, kind, actor_id, subject_kind, subject_ref, data_json,
-      signature_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      signature_json, created_at, seq)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+       (SELECT COALESCE(MAX(seq), 0) + 1 FROM association_events))`,
     [
       row.id,
       row.associationId,
@@ -176,9 +195,11 @@ export function appendAssociationEvent(
     .get(row.id) as AssociationEventRow;
 }
 
+// Full history in seq order — projectAssociation is a last-writer-wins replay,
+// so truncating here would silently drop participants whose last event is old.
 export function listAssociationEvents(db: Database, associationId: string): AssociationEventRow[] {
   return db
-    .query("SELECT * FROM association_events WHERE association_id = ? ORDER BY created_at, rowid")
+    .query("SELECT * FROM association_events WHERE association_id = ? ORDER BY seq")
     .all(associationId) as AssociationEventRow[];
 }
 
@@ -225,8 +246,9 @@ export function declareAssociationRelation(
   db.run(
     `INSERT INTO association_relations
      (id, association_id, source_kind, source_ref, target_kind, target_ref, semantics,
-      direction, terms_json, supersedes_id, actor_id, signature_json, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      direction, terms_json, supersedes_id, actor_id, signature_json, created_at, seq)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       (SELECT COALESCE(MAX(seq), 0) + 1 FROM association_relations))`,
     [
       row.id,
       row.associationId,
@@ -248,14 +270,23 @@ export function declareAssociationRelation(
     .get(row.id) as AssociationRelationRow;
 }
 
+export function getAssociationRelation(
+  db: Database,
+  id: string,
+): AssociationRelationRow | undefined {
+  return (
+    (db
+      .query("SELECT * FROM association_relations WHERE id = ?")
+      .get(id) as AssociationRelationRow | null) ?? undefined
+  );
+}
+
 export function listAssociationRelations(
   db: Database,
   associationId: string,
 ): AssociationRelationRow[] {
   return db
-    .query(
-      "SELECT * FROM association_relations WHERE association_id = ? ORDER BY created_at, rowid",
-    )
+    .query("SELECT * FROM association_relations WHERE association_id = ? ORDER BY seq")
     .all(associationId) as AssociationRelationRow[];
 }
 
@@ -286,7 +317,9 @@ export function linkAssociation(
   db.run(
     `INSERT INTO association_links
      (id, association_id, kind, ref, relationship, actor_id, metadata_json,
-      signature_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      signature_json, created_at, seq)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+       (SELECT COALESCE(MAX(seq), 0) + 1 FROM association_links))`,
     [
       row.id,
       row.associationId,
@@ -304,7 +337,7 @@ export function linkAssociation(
 
 export function listAssociationLinks(db: Database, associationId: string): AssociationLinkRow[] {
   return db
-    .query("SELECT * FROM association_links WHERE association_id = ? ORDER BY created_at, rowid")
+    .query("SELECT * FROM association_links WHERE association_id = ? ORDER BY seq")
     .all(associationId) as AssociationLinkRow[];
 }
 

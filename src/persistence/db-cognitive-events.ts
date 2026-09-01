@@ -145,7 +145,48 @@ export function listCognitiveEvents(
     .all(...params) as CognitiveEventRow[];
 }
 
+export function countCognitiveEvents(
+  db: Database,
+  input: { journeyId?: string; actorId?: string } = {},
+): number {
+  const clauses: string[] = [];
+  const params: string[] = [];
+  if (input.journeyId) {
+    clauses.push("journey_id = ?");
+    params.push(input.journeyId);
+  }
+  if (input.actorId) {
+    clauses.push("actor_id = ?");
+    params.push(input.actorId);
+  }
+  return (
+    db
+      .query(
+        `SELECT COUNT(*) AS n FROM cognitive_events ${clauses.length ? `WHERE ${clauses.join(" AND ")}` : ""}`,
+      )
+      .get(...params) as { n: number }
+  ).n;
+}
+
 export function verifyCognitiveEvent(row: CognitiveEventRow): CognitiveVerification {
+  // A corrupt or hand-imported row must report as invalid, not throw.
+  let parentIds: unknown;
+  let payload: unknown;
+  let signature: FederationSignature | undefined;
+  try {
+    parentIds = JSON.parse(row.parent_ids_json);
+    payload = JSON.parse(row.payload_json);
+    signature = row.signature_json
+      ? (JSON.parse(row.signature_json) as FederationSignature)
+      : undefined;
+  } catch {
+    return {
+      valid: false,
+      hashValid: false,
+      signatureValid: row.signature_json ? false : null,
+      error: "Malformed stored JSON",
+    };
+  }
   const unsigned = {
     id: row.id,
     schema: row.schema,
@@ -154,17 +195,26 @@ export function verifyCognitiveEvent(row: CognitiveEventRow): CognitiveVerificat
     actorId: row.actor_id,
     journeyId: row.journey_id,
     traceId: row.trace_id,
-    parentIds: JSON.parse(row.parent_ids_json),
-    payload: JSON.parse(row.payload_json),
+    parentIds,
+    payload,
     previousHash: row.previous_hash,
     createdAt: row.created_at,
   };
-  const expected = `sha256:${createHash("sha256")
-    .update(canonicalFederationJson(unsigned))
-    .digest("hex")}`;
-  const hashValid = expected === row.event_hash;
-  if (!row.signature_json) return { valid: hashValid, hashValid, signatureValid: null };
-  const signature = JSON.parse(row.signature_json) as FederationSignature;
+  let hashValid = false;
+  try {
+    const expected = `sha256:${createHash("sha256")
+      .update(canonicalFederationJson(unsigned))
+      .digest("hex")}`;
+    hashValid = expected === row.event_hash;
+  } catch {
+    return {
+      valid: false,
+      hashValid: false,
+      signatureValid: signature ? false : null,
+      error: "Row is not canonicalizable",
+    };
+  }
+  if (!signature) return { valid: hashValid, hashValid, signatureValid: null };
   const signatureResult = verifyFederationDocument({
     ...unsigned,
     eventHash: row.event_hash,

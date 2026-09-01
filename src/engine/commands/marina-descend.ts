@@ -44,7 +44,13 @@ export function marinaDescendCommand(deps: {
           ctx.send(input.entity, HELP);
           return;
         }
-        const manifest = JSON.parse(genome.manifest_json) as { worldTemplate?: string };
+        let manifest: { worldTemplate?: string };
+        try {
+          manifest = JSON.parse(genome.manifest_json) as { worldTemplate?: string };
+        } catch {
+          ctx.send(input.entity, `Genome ${hash} has a malformed manifest; cannot descend.`);
+          return;
+        }
         const variant = deps.manager().create({
           name,
           worldTemplate: manifest.worldTemplate ?? "default",

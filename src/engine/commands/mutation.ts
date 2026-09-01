@@ -79,11 +79,14 @@ export function mutationCommand(deps: {
           ctx.send(input.entity, HELP);
           return;
         }
-        const manifest = {
-          ...(JSON.parse(parent.manifest_json) as Record<string, unknown>),
-          ...patch,
-        };
-        delete manifest.schema;
+        let parentManifest: Record<string, unknown>;
+        try {
+          parentManifest = JSON.parse(parent.manifest_json) as Record<string, unknown>;
+        } catch {
+          ctx.send(input.entity, `Genome ${parent.hash} has a malformed manifest; cannot branch.`);
+          return;
+        }
+        const manifest = { ...parentManifest, ...patch };
         const child = deps.db.createMarinaGenome({ manifest, createdBy: String(actor.id) });
         const row = deps.db.appendCivilizationMutation({
           domain: "reproduction",

@@ -42,7 +42,9 @@ export function labCommand(deps: {
       const sub = input.tokens[0]?.toLowerCase();
       const raw = input.args.slice(sub?.length ?? 0).trim();
       if (sub === "manifest") {
-        const manifest = parseObject(raw);
+        // Require an explicit scenario — a bare `lab manifest` must show help,
+        // not content-address a degenerate `{schema}`-only manifest.
+        const manifest = raw ? parseObject(raw) : undefined;
         if (!manifest) {
           ctx.send(input.entity, HELP);
           return;
@@ -79,12 +81,16 @@ export function labCommand(deps: {
           treatments,
           createdBy: String(actor.id),
         });
-        deps.db.appendSimulationEvent({
-          runId: row.id,
-          kind: "started",
-          data: { declarationOnly: true },
-          createdBy: String(actor.id),
-        });
+        try {
+          deps.db.appendSimulationEvent({
+            runId: row.id,
+            kind: "started",
+            data: { declarationOnly: true },
+            createdBy: String(actor.id),
+          });
+        } catch {
+          // Non-critical: the run row exists; the started marker is decorative.
+        }
         ctx.send(
           input.entity,
           `Run ${row.id} declared as ${row.mode}/${row.reproducibility}. Evidence must be recorded; no result was invented.`,
@@ -221,11 +227,14 @@ export function labCommand(deps: {
           ctx.send(input.entity, "Measures must be a JSON object.");
           return;
         }
+        // Runs and their events are already preserved append-only in their own
+        // tables — the dataset references them instead of embedding full copies
+        // (an embedded copy per comparison grows quadratically and drifts).
         const dataset = {
-          schema: "marina.simulation.comparison.v1",
-          runs: runIds.map((id) => ({
-            run: deps.db.getSimulationRun(id),
-            events: deps.db.listSimulationEvents(id),
+          schema: "marina.simulation.comparison.v2",
+          runRefs: runIds.map((id) => ({
+            run: id,
+            eventCount: deps.db.listSimulationEvents(id).length,
           })),
         };
         const row = deps.db.createSimulationComparison({
@@ -241,7 +250,7 @@ export function labCommand(deps: {
         });
         ctx.send(
           input.entity,
-          `Comparison dataset ${row.id} preserves ${runIds.length} runs without declaring a universal winner.`,
+          `Comparison dataset ${row.id} references ${runIds.length} runs without declaring a universal winner.`,
         );
         return;
       }

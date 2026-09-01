@@ -38,6 +38,8 @@ export interface SimulationEventRow {
   data_json: string;
   created_by: string;
   created_at: number;
+  /** Monotonic insertion order (migration 94). */
+  seq: number;
 }
 export interface SimulationComparisonRow {
   id: string;
@@ -74,10 +76,10 @@ export function getSimulationManifest(
       .get(hash) as SimulationManifestRow | null) ?? undefined
   );
 }
-export function listSimulationManifests(db: Database): SimulationManifestRow[] {
+export function listSimulationManifests(db: Database, limit = 200): SimulationManifestRow[] {
   return db
-    .query("SELECT * FROM simulation_manifests ORDER BY created_at DESC,hash")
-    .all() as SimulationManifestRow[];
+    .query("SELECT * FROM simulation_manifests ORDER BY created_at DESC,hash LIMIT ?")
+    .all(Math.max(1, Math.min(limit, 1000))) as SimulationManifestRow[];
 }
 export function createSimulationRun(
   db: Database,
@@ -121,7 +123,18 @@ export function createSimulationRun(
   };
   db.run(
     "INSERT INTO simulation_runs (id,manifest_hash,mode,reproducibility,seed,parent_run_id,fork_point_ref,treatments_json,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-    Object.values(row),
+    [
+      row.id,
+      row.manifest_hash,
+      row.mode,
+      row.reproducibility,
+      row.seed,
+      row.parent_run_id,
+      row.fork_point_ref,
+      row.treatments_json,
+      row.created_by,
+      row.created_at,
+    ],
   );
   return row;
 }
@@ -131,13 +144,20 @@ export function getSimulationRun(db: Database, id: string): SimulationRunRow | u
     undefined
   );
 }
-export function listSimulationRuns(db: Database, manifestHash?: string): SimulationRunRow[] {
+export function listSimulationRuns(
+  db: Database,
+  manifestHash?: string,
+  limit = 200,
+): SimulationRunRow[] {
+  const bounded = Math.max(1, Math.min(limit, 1000));
   return (
     manifestHash
       ? db
-          .query("SELECT * FROM simulation_runs WHERE manifest_hash=? ORDER BY created_at,id")
-          .all(manifestHash)
-      : db.query("SELECT * FROM simulation_runs ORDER BY created_at DESC,id").all()
+          .query(
+            "SELECT * FROM simulation_runs WHERE manifest_hash=? ORDER BY created_at,id LIMIT ?",
+          )
+          .all(manifestHash, bounded)
+      : db.query("SELECT * FROM simulation_runs ORDER BY created_at DESC,id LIMIT ?").all(bounded)
   ) as SimulationRunRow[];
 }
 export function appendSimulationEvent(
@@ -161,14 +181,14 @@ export function appendSimulationEvent(
     created_at: Date.now(),
   };
   db.run(
-    "INSERT INTO simulation_events (id,run_id,kind,source_ref,data_json,created_by,created_at) VALUES (?,?,?,?,?,?,?)",
-    Object.values(row),
+    "INSERT INTO simulation_events (id,run_id,kind,source_ref,data_json,created_by,created_at,seq) VALUES (?,?,?,?,?,?,?,(SELECT COALESCE(MAX(seq),0)+1 FROM simulation_events))",
+    [row.id, row.run_id, row.kind, row.source_ref, row.data_json, row.created_by, row.created_at],
   );
-  return row;
+  return db.query("SELECT * FROM simulation_events WHERE id=?").get(row.id) as SimulationEventRow;
 }
 export function listSimulationEvents(db: Database, runId: string): SimulationEventRow[] {
   return db
-    .query("SELECT * FROM simulation_events WHERE run_id=? ORDER BY created_at,rowid")
+    .query("SELECT * FROM simulation_events WHERE run_id=? ORDER BY seq")
     .all(runId) as SimulationEventRow[];
 }
 export function createSimulationComparison(
@@ -202,12 +222,21 @@ export function createSimulationComparison(
   };
   db.run(
     "INSERT INTO simulation_comparisons (id,run_ids_json,questions_json,measures_json,interpretation,dataset_json,created_by,created_at) VALUES (?,?,?,?,?,?,?,?)",
-    Object.values(row),
+    [
+      row.id,
+      row.run_ids_json,
+      row.questions_json,
+      row.measures_json,
+      row.interpretation,
+      row.dataset_json,
+      row.created_by,
+      row.created_at,
+    ],
   );
   return row;
 }
-export function listSimulationComparisons(db: Database): SimulationComparisonRow[] {
+export function listSimulationComparisons(db: Database, limit = 200): SimulationComparisonRow[] {
   return db
-    .query("SELECT * FROM simulation_comparisons ORDER BY created_at DESC,id")
-    .all() as SimulationComparisonRow[];
+    .query("SELECT * FROM simulation_comparisons ORDER BY created_at DESC,id LIMIT ?")
+    .all(Math.max(1, Math.min(limit, 1000))) as SimulationComparisonRow[];
 }

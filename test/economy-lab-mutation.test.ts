@@ -121,7 +121,12 @@ describe("phases 11-13", () => {
       `lab compare ${parent.id},${child.id} | did memory alter diffusion | {"diffusion":"observed"} | conditional difference only`,
     );
     const comparison = db.listSimulationComparisons()[0]!;
-    expect(JSON.parse(comparison.dataset_json).runs).toHaveLength(2);
+    // The dataset references runs by id (v2) — runs/events stay in their own
+    // append-only tables rather than being embedded per comparison.
+    const dataset = JSON.parse(comparison.dataset_json);
+    expect(dataset.schema).toBe("marina.simulation.comparison.v2");
+    expect(dataset.runRefs).toHaveLength(2);
+    expect(JSON.parse(comparison.run_ids_json)).toHaveLength(2);
     expect(new Set(runs.map((r) => r.reproducibility))).toEqual(
       new Set(["recorded-response", "statistical"]),
     );

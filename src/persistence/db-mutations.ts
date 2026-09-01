@@ -22,6 +22,8 @@ export interface CivilizationMutationRow {
   created_by: string;
   signature_json: string | null;
   created_at: number;
+  /** Monotonic insertion order (migration 94). */
+  seq: number;
 }
 export function appendCivilizationMutation(
   db: Database,
@@ -68,7 +70,7 @@ export function appendCivilizationMutation(
     ? JSON.stringify(signFederationDocument(document).signature)
     : null;
   db.run(
-    "INSERT INTO civilization_mutations (id,domain,target_ref,summary,patch_json,parent_ids_json,evidence_refs_json,descendant_ref,disposition,created_by,signature_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    "INSERT INTO civilization_mutations (id,domain,target_ref,summary,patch_json,parent_ids_json,evidence_refs_json,descendant_ref,disposition,created_by,signature_json,created_at,seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(seq),0)+1 FROM civilization_mutations))",
     [
       document.id,
       document.domain,
@@ -105,9 +107,7 @@ export function listCivilizationMutations(
 ): CivilizationMutationRow[] {
   if (domain && targetRef)
     return db
-      .query(
-        "SELECT * FROM civilization_mutations WHERE domain=? AND target_ref=? ORDER BY created_at,rowid",
-      )
+      .query("SELECT * FROM civilization_mutations WHERE domain=? AND target_ref=? ORDER BY seq")
       .all(domain, targetRef) as CivilizationMutationRow[];
   if (domain)
     return db

@@ -149,10 +149,10 @@ export function getCognitiveReproduction(
   );
 }
 
-export function listCognitiveReproductions(db: Database): CognitiveReproductionRow[] {
+export function listCognitiveReproductions(db: Database, limit = 200): CognitiveReproductionRow[] {
   return db
-    .query("SELECT * FROM cognitive_reproductions ORDER BY created_at DESC,id")
-    .all() as CognitiveReproductionRow[];
+    .query("SELECT * FROM cognitive_reproductions ORDER BY created_at DESC,id LIMIT ?")
+    .all(Math.max(1, Math.min(limit, 1000))) as CognitiveReproductionRow[];
 }
 
 export function listReproductionComponents(
@@ -190,10 +190,10 @@ export function getMarinaGenome(db: Database, hash: string): MarinaGenomeRow | u
   );
 }
 
-export function listMarinaGenomes(db: Database): MarinaGenomeRow[] {
+export function listMarinaGenomes(db: Database, limit = 200): MarinaGenomeRow[] {
   return db
-    .query("SELECT * FROM marina_genomes ORDER BY created_at DESC,hash")
-    .all() as MarinaGenomeRow[];
+    .query("SELECT * FROM marina_genomes ORDER BY created_at DESC,hash LIMIT ?")
+    .all(Math.max(1, Math.min(limit, 1000))) as MarinaGenomeRow[];
 }
 
 export function createMarinaDescendant(
@@ -251,10 +251,10 @@ export function getMarinaDescendant(db: Database, id: string): MarinaDescendantR
   );
 }
 
-export function listMarinaDescendants(db: Database): MarinaDescendantRow[] {
+export function listMarinaDescendants(db: Database, limit = 200): MarinaDescendantRow[] {
   return db
-    .query("SELECT * FROM marina_descendants ORDER BY created_at DESC,id")
-    .all() as MarinaDescendantRow[];
+    .query("SELECT * FROM marina_descendants ORDER BY created_at DESC,id LIMIT ?")
+    .all(Math.max(1, Math.min(limit, 1000))) as MarinaDescendantRow[];
 }
 
 export function verifySignedJson(document: Record<string, unknown>, signatureJson: string | null) {

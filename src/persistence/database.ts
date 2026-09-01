@@ -2641,6 +2641,51 @@ CREATE INDEX idx_civilization_mutations_target ON civilization_mutations(domain,
 CREATE INDEX idx_civilization_mutations_descendant ON civilization_mutations(descendant_ref);
 `,
   },
+  // Migration 94: explicit monotonic `seq` for ecology event replay + missing
+  // list indexes. `ORDER BY created_at, rowid` was VACUUM-unstable (implicit
+  // rowids may be renumbered) and `ORDER BY created_at, id` misorders
+  // same-millisecond rows (ids are random UUIDs) — projections like
+  // projectAssociation are last-writer-wins replays, so replay order is
+  // load-bearing. Backfill from rowid preserves pre-migration insertion order.
+  {
+    version: 94,
+    sql: `
+ALTER TABLE association_events ADD COLUMN seq INTEGER;
+UPDATE association_events SET seq = rowid;
+CREATE INDEX idx_association_events_seq ON association_events(association_id, seq);
+ALTER TABLE association_relations ADD COLUMN seq INTEGER;
+UPDATE association_relations SET seq = rowid;
+CREATE INDEX idx_association_relations_seq ON association_relations(association_id, seq);
+ALTER TABLE association_links ADD COLUMN seq INTEGER;
+UPDATE association_links SET seq = rowid;
+CREATE INDEX idx_association_links_seq ON association_links(association_id, seq);
+ALTER TABLE economic_events ADD COLUMN seq INTEGER;
+UPDATE economic_events SET seq = rowid;
+CREATE INDEX idx_economic_events_seq ON economic_events(contract_id, seq);
+ALTER TABLE simulation_events ADD COLUMN seq INTEGER;
+UPDATE simulation_events SET seq = rowid;
+CREATE INDEX idx_simulation_events_seq ON simulation_events(run_id, seq);
+ALTER TABLE civilization_mutations ADD COLUMN seq INTEGER;
+UPDATE civilization_mutations SET seq = rowid;
+CREATE INDEX idx_civilization_mutations_seq ON civilization_mutations(domain, target_ref, seq);
+ALTER TABLE mesh_membership_events ADD COLUMN seq INTEGER;
+UPDATE mesh_membership_events SET seq = rowid;
+CREATE INDEX idx_mesh_membership_events_seq ON mesh_membership_events(mesh_id, seq);
+CREATE INDEX idx_mesh_witnesses_mesh ON mesh_witnesses(mesh_id, created_at);
+CREATE INDEX idx_mesh_translations_target ON mesh_translations(target_mesh_id, created_at);
+CREATE INDEX idx_intellects_created ON intellects(created_at DESC);
+CREATE INDEX idx_meshes_created ON meshes(created_at DESC);
+CREATE INDEX idx_marina_genomes_created ON marina_genomes(created_at DESC);
+CREATE INDEX idx_simulation_manifests_created ON simulation_manifests(created_at DESC);
+CREATE INDEX idx_simulation_comparisons_created ON simulation_comparisons(created_at DESC);
+CREATE INDEX idx_event_log_traced ON event_log(id)
+  WHERE json_extract(data, '$.traceId') IS NOT NULL;
+CREATE INDEX idx_event_log_trace_id ON event_log(json_extract(data, '$.traceId'), id)
+  WHERE json_extract(data, '$.traceId') IS NOT NULL;
+CREATE INDEX idx_event_log_entity ON event_log(json_extract(data, '$.entity'), id)
+  WHERE json_extract(data, '$.entity') IS NOT NULL;
+`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -2867,6 +2912,14 @@ export class MarinaDB {
     return entitiesDb.getRecentTraceEvents(this.reader, limit, traceId);
   }
 
+  getTraceEventsByTraceIds(traceIds: readonly string[]): EngineEvent[] {
+    return entitiesDb.getTraceEventsByTraceIds(this.reader, traceIds);
+  }
+
+  getMaxEventId(): number {
+    return entitiesDb.getMaxEventId(this.reader);
+  }
+
   addTraceJudgment(input: entitiesDb.TraceJudgmentInput): entitiesDb.TraceJudgmentRow {
     return this.db.transaction(() => {
       const row = entitiesDb.addTraceJudgment(this.db, input);
@@ -2882,6 +2935,13 @@ export class MarinaDB {
 
   getTraceJudgments(traceId: string, limit = 100): entitiesDb.TraceJudgmentRow[] {
     return entitiesDb.getTraceJudgments(this.reader, traceId, limit);
+  }
+
+  getTraceJudgmentsByTraceIds(
+    traceIds: readonly string[],
+    limitPerTrace = 100,
+  ): Map<string, entitiesDb.TraceJudgmentRow[]> {
+    return entitiesDb.getTraceJudgmentsByTraceIds(this.reader, traceIds, limitPerTrace);
   }
 
   appendEvidenceReceipt(
@@ -2984,6 +3044,12 @@ export class MarinaDB {
     return cognitiveEventsDb.listCognitiveEvents(this.reader, input);
   }
 
+  countCognitiveEvents(
+    input: Parameters<typeof cognitiveEventsDb.countCognitiveEvents>[1] = {},
+  ): number {
+    return cognitiveEventsDb.countCognitiveEvents(this.reader, input);
+  }
+
   verifyCognitiveEvent(row: cognitiveEventsDb.CognitiveEventRow) {
     return cognitiveEventsDb.verifyCognitiveEvent(row);
   }
@@ -2998,6 +3064,9 @@ export class MarinaDB {
   }
   listIntellects(limit = 100) {
     return intellectsDb.listIntellects(this.reader, limit);
+  }
+  findIntellectsByIdPrefix(selector: string) {
+    return intellectsDb.findIntellectsByIdPrefix(this.reader, selector);
   }
   createIntellectInstance(input: Parameters<typeof intellectsDb.createIntellectInstance>[1]) {
     return intellectsDb.createIntellectInstance(this.db, input);
@@ -3039,6 +3108,12 @@ export class MarinaDB {
   }
   listAssociationRelations(associationId: string) {
     return associationsDb.listAssociationRelations(this.reader, associationId);
+  }
+  getAssociationRelation(id: string) {
+    return associationsDb.getAssociationRelation(this.reader, id);
+  }
+  findAssociationsBySelector(selector: string) {
+    return associationsDb.findAssociationsBySelector(this.reader, selector);
   }
   linkAssociation(input: Parameters<typeof associationsDb.linkAssociation>[1]) {
     return associationsDb.linkAssociation(this.db, input);
@@ -3105,8 +3180,11 @@ export class MarinaDB {
   getMesh(id: string) {
     return meshesDb.getMesh(this.reader, id);
   }
-  listMeshes() {
-    return meshesDb.listMeshes(this.reader);
+  listMeshes(limit?: number) {
+    return meshesDb.listMeshes(this.reader, limit);
+  }
+  findMeshesBySelector(selector: string) {
+    return meshesDb.findMeshesBySelector(this.reader, selector);
   }
   appendMeshMembershipEvent(input: Parameters<typeof meshesDb.appendMeshMembershipEvent>[1]) {
     return meshesDb.appendMeshMembershipEvent(this.db, input);
@@ -3117,14 +3195,23 @@ export class MarinaDB {
   appendMeshEvent(input: Parameters<typeof meshesDb.appendMeshEvent>[1]) {
     return meshesDb.appendMeshEvent(this.db, input);
   }
-  listMeshEvents(id: string) {
-    return meshesDb.listMeshEvents(this.reader, id);
+  listMeshEvents(id: string, limit?: number) {
+    return meshesDb.listMeshEvents(this.reader, id, limit);
+  }
+  getMeshEvent(id: string) {
+    return meshesDb.getMeshEvent(this.reader, id);
+  }
+  countMeshEvents(id: string) {
+    return meshesDb.countMeshEvents(this.reader, id);
   }
   witnessMeshEvent(input: Parameters<typeof meshesDb.witnessMeshEvent>[1]) {
     return meshesDb.witnessMeshEvent(this.db, input);
   }
-  listMeshWitnesses(id: string) {
-    return meshesDb.listMeshWitnesses(this.reader, id);
+  listMeshWitnesses(id: string, limit?: number) {
+    return meshesDb.listMeshWitnesses(this.reader, id, limit);
+  }
+  countMeshWitnesses(id: string) {
+    return meshesDb.countMeshWitnesses(this.reader, id);
   }
   createMeshTranslation(input: Parameters<typeof meshesDb.createMeshTranslation>[1]) {
     return meshesDb.createMeshTranslation(this.db, input);
@@ -3138,8 +3225,8 @@ export class MarinaDB {
   exportMeshEvent(row: meshesDb.MeshEventRow) {
     return meshesDb.exportMeshEvent(row);
   }
-  importMeshEvent(token: string) {
-    return meshesDb.importMeshEvent(this.db, token);
+  importMeshEvent(token: string, opts?: { expectedMeshId?: string }) {
+    return meshesDb.importMeshEvent(this.db, token, opts);
   }
 
   // ─── Asset-neutral economics ────────────────────────────────────────
@@ -7484,6 +7571,10 @@ export class MarinaDB {
     input: Parameters<typeof federationDb.upsertFederationPeer>[1],
   ): federationDb.FederationPeerRow {
     return federationDb.upsertFederationPeer(this.db, input);
+  }
+
+  getFederationPeer(worldId: string): federationDb.FederationPeerRow | undefined {
+    return federationDb.getFederationPeer(this.reader, worldId);
   }
 
   listFederationPeers(): federationDb.FederationPeerRow[] {

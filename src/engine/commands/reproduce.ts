@@ -132,7 +132,7 @@ export function reproduceCommand(deps: {
         }
         ctx.send(
           input.entity,
-          `${header("Cognitive reproduction")}\n${separator()}\n${row.id}\nDescendant: ${row.descendant_intellect_id}\nMode: ${row.mode}\nParents: ${JSON.parse(row.parent_ids_json).join(", ")}\nComponents:\n${deps.db
+          `${header("Cognitive reproduction")}\n${separator()}\n${row.id}\nDescendant: ${row.descendant_intellect_id}\nMode: ${row.mode}\nParents: ${parseStringArray(row.parent_ids_json).join(", ")}\nComponents:\n${deps.db
             .listReproductionComponents(row.id)
             .map((c) => `  ${c.disposition} ${c.kind}:${c.ref}`)
             .join("\n")}`,
@@ -152,4 +152,13 @@ export function reproduceCommand(deps: {
       ctx.send(input.entity, HELP);
     },
   };
+}
+
+function parseStringArray(json: string): string[] {
+  try {
+    const value = JSON.parse(json);
+    return Array.isArray(value) ? value.map(String) : [];
+  } catch {
+    return [];
+  }
 }

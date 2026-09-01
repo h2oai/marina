@@ -54,6 +54,8 @@ export interface EconomicEventRow {
   data_json: string;
   signature_json: string | null;
   created_at: number;
+  /** Monotonic insertion order (migration 94). */
+  seq: number;
 }
 export interface EconomicAdapterRow {
   id: string;
@@ -93,7 +95,17 @@ export function createEconomicContract(
   db.transaction(() => {
     db.run(
       "INSERT INTO economic_contracts (id,goal_ref,terms_json,verification_method,dispute_method,settlement_adapter,asset_ref,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-      Object.values(row),
+      [
+        row.id,
+        row.goal_ref,
+        row.terms_json,
+        row.verification_method,
+        row.dispute_method,
+        row.settlement_adapter,
+        row.asset_ref,
+        row.created_by,
+        row.created_at,
+      ],
     );
     appendEconomicEvent(db, {
       contractId: row.id,
@@ -119,10 +131,10 @@ export function getEconomicContract(db: Database, id: string): EconomicContractR
       .get(id) as EconomicContractRow | null) ?? undefined
   );
 }
-export function listEconomicContracts(db: Database): EconomicContractRow[] {
+export function listEconomicContracts(db: Database, limit = 200): EconomicContractRow[] {
   return db
-    .query("SELECT * FROM economic_contracts ORDER BY created_at DESC,id")
-    .all() as EconomicContractRow[];
+    .query("SELECT * FROM economic_contracts ORDER BY created_at DESC,id LIMIT ?")
+    .all(Math.max(1, Math.min(limit, 1000))) as EconomicContractRow[];
 }
 export function appendEconomicEvent(
   db: Database,
@@ -156,7 +168,7 @@ export function appendEconomicEvent(
   };
   const signature = sign(document);
   db.run(
-    "INSERT INTO economic_events (id,contract_id,kind,actor_ref,subject_ref,amount,asset_ref,external_ref,causal_refs_json,data_json,signature_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+    "INSERT INTO economic_events (id,contract_id,kind,actor_ref,subject_ref,amount,asset_ref,external_ref,causal_refs_json,data_json,signature_json,created_at,seq) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,(SELECT COALESCE(MAX(seq),0)+1 FROM economic_events))",
     [
       document.id,
       document.contractId,
@@ -176,7 +188,7 @@ export function appendEconomicEvent(
 }
 export function listEconomicEvents(db: Database, contractId: string): EconomicEventRow[] {
   return db
-    .query("SELECT * FROM economic_events WHERE contract_id=? ORDER BY created_at,rowid")
+    .query("SELECT * FROM economic_events WHERE contract_id=? ORDER BY seq")
     .all(contractId) as EconomicEventRow[];
 }
 export function verifyEconomicEvent(row: EconomicEventRow) {
@@ -225,7 +237,16 @@ export function createEconomicAdapter(
   };
   db.run(
     "INSERT INTO economic_adapters (id,kind,network,capability,endpoint_ref,configuration_ref,created_by,created_at) VALUES (?,?,?,?,?,?,?,?)",
-    Object.values(row),
+    [
+      row.id,
+      row.kind,
+      row.network,
+      row.capability,
+      row.endpoint_ref,
+      row.configuration_ref,
+      row.created_by,
+      row.created_at,
+    ],
   );
   return row;
 }
