@@ -88,7 +88,7 @@ describe("Trace API", () => {
     };
     expect(body).toMatchObject({
       source: "event-log",
-      retention: "operator-managed",
+      retention: "pruned-hourly (MARINA_EVENT_RETENTION rows)",
       partial: false,
       otlp: { enabled: false, exportedSpans: 0, pendingTraces: 0 },
     });
@@ -241,7 +241,10 @@ describe("Trace API", () => {
       retention: string;
       traces: Array<{ traceId: string; status: string }>;
     };
-    expect(body).toMatchObject({ source: "event-log", retention: "operator-managed" });
+    expect(body).toMatchObject({
+      source: "event-log",
+      retention: "pruned-hourly (MARINA_EVENT_RETENTION rows)",
+    });
     expect(body.traces).toEqual([
       expect.objectContaining({ traceId: "durable-trace", status: "running" }),
     ]);

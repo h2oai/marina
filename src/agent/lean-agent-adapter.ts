@@ -153,6 +153,9 @@ function parsePositiveInt(raw: string | undefined): number | undefined {
 /** Lowest context window we'll ever shrink to during overflow recovery. */
 const MIN_EFFECTIVE_CONTEXT = 4096;
 
+/** Per-perception hot path — read the env once, not on every channel message. */
+const CHANNEL_REPLY_COOLDOWN_MS = Number(process.env.AGENT_CHANNEL_REPLY_COOLDOWN_MS) || 30_000;
+
 /** Max characters of any single recalled note / skill / orient block in the prompt. */
 const RECALL_BLOCK_MAX_CHARS = 600;
 
@@ -898,7 +901,7 @@ export class LeanAgentAdapter implements AgentHandle {
             }
             if (this.attentionMode === "open") priority = Math.max(priority, 35);
             if (lastEvent?.type === "channel_message" && lastEvent.speaker && priority < 90) {
-              const cooldownMs = Number(process.env.AGENT_CHANNEL_REPLY_COOLDOWN_MS) || 30_000;
+              const cooldownMs = CHANNEL_REPLY_COOLDOWN_MS;
               if (Date.now() - this.lastChannelResponseAt < cooldownMs) {
                 priority = Math.min(priority, 40);
                 respond = false;

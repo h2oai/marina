@@ -39,6 +39,16 @@ export const MAX_COMMAND_QUEUE_SIZE = 5000;
 /** Max in-memory events before trimming */
 export const MAX_EVENT_LOG = 10_000;
 
+/**
+ * Durable event_log row retention (pruned hourly on the engine tick). Sized
+ * well above the 5,000-row trace-projection window so pruning never truncates
+ * a trace a consumer can still request. Override: MARINA_EVENT_RETENTION.
+ */
+export const EVENT_LOG_DB_RETENTION = Math.max(
+  10_000,
+  Math.min(Number(process.env.MARINA_EVENT_RETENTION) || 100_000, 10_000_000),
+);
+
 /** Trim to this size when over MAX_EVENT_LOG */
 export const EVENT_LOG_TRIM_SIZE = 5_000;
 

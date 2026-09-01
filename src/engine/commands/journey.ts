@@ -111,7 +111,12 @@ function changes(
       : `${bold("Current result:")} none recorded yet`,
   );
   const latestEventId = events.at(-1)?.id ?? 0;
-  db.witnessJourney(journey.id, entity.id, latestEventId);
+  try {
+    db.witnessJourney(journey.id, entity.id, latestEventId);
+  } catch {
+    // Witness cursors are pure presentation state ("since you last looked") —
+    // a failed write must never break a read command.
+  }
   ctx.send(caller, lines.join("\n"));
 }
 
@@ -279,8 +284,10 @@ function list(
     return;
   }
   const lines = [header(all ? "Journeys" : `Journeys: ${entity.name}`), separator()];
+  let sharedProjects: ReturnType<MarinaDB["listProjects"]> | undefined;
+  const getProjects = () => (sharedProjects ??= db.listProjects());
   for (const journey of journeys) {
-    const projection = project(db, journey);
+    const projection = project(db, journey, getProjects);
     lines.push(
       `  ${bold(journey.id)} ${status(projection.state.replaceAll("_", " "), stateTone(projection.state))}`,
       `    ${truncate(journey.expression, 88)}`,
@@ -428,9 +435,19 @@ function record(
   ctx.send(caller, `Recorded journey event #${event.id}. Current state: ${projection.state}.`);
 }
 
-function project(db: MarinaDB, journey: JourneyRow) {
+function project(
+  db: MarinaDB,
+  journey: JourneyRow,
+  getProjects?: () => ReturnType<MarinaDB["listProjects"]>,
+) {
   const links = db.listJourneyLinks(journey.id);
   const work: JourneyWorkEvidence[] = [];
+  // Projects load lazily and AT MOST ONCE per projection — previously
+  // listProjects() (a full-table read) ran inside the per-link loop, and
+  // `journey list` re-ran it per journey. Callers projecting many journeys
+  // pass a shared getProjects to load the table once for the whole batch.
+  let localProjects: ReturnType<MarinaDB["listProjects"]> | undefined;
+  const projects = getProjects ?? (() => (localProjects ??= db.listProjects()));
   for (const link of links) {
     if (link.kind === "task" && /^\d+$/.test(link.ref)) {
       const task = db.getTask(Number(link.ref));
@@ -438,9 +455,9 @@ function project(db: MarinaDB, journey: JourneyRow) {
         work.push({ kind: "task", ref: link.ref, status: task.status, updatedAt: task.updated_at });
       }
     } else if (link.kind === "project") {
-      const project = db
-        .listProjects()
-        .find((candidate) => candidate.id === link.ref || candidate.name === link.ref);
+      const project = projects().find(
+        (candidate) => candidate.id === link.ref || candidate.name === link.ref,
+      );
       if (project) {
         work.push({
           kind: "project",

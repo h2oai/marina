@@ -133,6 +133,14 @@ export class DashboardBroadcaster {
   }
 
   private buildSnapshot(engine: Engine): WorldSnapshot {
+    // One bulk read per snapshot (broadcast every 2s) — a per-entity
+    // getAgentConfig lookup was ~N queries/snapshot just for spawned_by.
+    const spawnedByName = new Map<string, string | null>();
+    if (engine.db) {
+      for (const config of engine.db.getAllAgentConfigs()) {
+        spawnedByName.set(config.name, config.spawned_by);
+      }
+    }
     const entities = engine.entities.all().map((e) => {
       const agentHandle = engine.agentRuntime.get(e.name);
       const agentStatus = agentHandle
@@ -160,7 +168,7 @@ export class DashboardBroadcaster {
       // Origin: world-seeded ("system"), operator-launched ("operator"), or a
       // spawning agent's name (crew). Read from the persisted AgentConfig; only
       // meaningful for agent entities (humans / external agents have no config).
-      const spawnedBy = agentHandle ? engine.db?.getAgentConfig(e.name)?.spawned_by : undefined;
+      const spawnedBy = agentHandle ? (spawnedByName.get(e.name) ?? undefined) : undefined;
 
       return {
         id: e.id,

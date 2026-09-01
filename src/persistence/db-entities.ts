@@ -77,11 +77,13 @@ export function getRoomStoreKeys(reader: Database, roomId: RoomId): string[] {
 // ─── Event Log ──────────────────────────────────────────────────────────
 
 export function logEvent(db: Database, event: EngineEvent): void {
-  db.run("INSERT INTO event_log (type, data, timestamp) VALUES (?, ?, ?)", [
+  // query() reuses bun:sqlite's cached prepared statement; run() would
+  // prepare + finalize on every call, and this is the hottest write path.
+  db.query("INSERT INTO event_log (type, data, timestamp) VALUES (?, ?, ?)").run(
     event.type,
     JSON.stringify(event),
     event.timestamp,
-  ]);
+  );
 }
 
 export function getRecentEvents(db: Database, limit = 100): EngineEvent[] {
@@ -123,6 +125,37 @@ export function getRecentTraceEvents(
       .reverse(),
     truncated,
   };
+}
+
+/**
+ * Fetch trace events for a batch of trace ids in one indexed query per chunk
+ * (vs one 5,000-row scan per id). Serves the OTLP exporter flush, which can
+ * hold up to 1,000 pending trace ids.
+ */
+export function getTraceEventsByTraceIds(db: Database, traceIds: readonly string[]): EngineEvent[] {
+  if (traceIds.length === 0) return [];
+  const events: EngineEvent[] = [];
+  const CHUNK = 200;
+  for (let i = 0; i < traceIds.length; i += CHUNK) {
+    const chunk = traceIds.slice(i, i + CHUNK);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .query(
+        `SELECT data FROM event_log
+         WHERE type IN ('model_request_lifecycle','agent_turn_start','agent_turn_end','agent_tool_call','agent_tool_result')
+           AND json_extract(data, '$.traceId') IN (${placeholders})
+         ORDER BY id`,
+      )
+      .all(...chunk) as { data: string }[];
+    for (const row of rows) {
+      try {
+        events.push(JSON.parse(row.data) as EngineEvent);
+      } catch {
+        // Skip a corrupt row rather than dropping the whole batch.
+      }
+    }
+  }
+  return events;
 }
 
 export interface TraceJudgmentInput {
@@ -216,6 +249,61 @@ export function getTraceJudgments(db: Database, traceId: string, limit = 100): T
     evidenceSpanIds: JSON.parse(row.evidence_span_ids) as string[],
     createdAt: row.created_at,
   }));
+}
+
+/**
+ * Judgments for a page of traces in one query (vs one query per trace).
+ * Returned grouped by traceId, newest first within each trace.
+ */
+export function getTraceJudgmentsByTraceIds(
+  db: Database,
+  traceIds: readonly string[],
+  limitPerTrace = 100,
+): Map<string, TraceJudgmentRow[]> {
+  const grouped = new Map<string, TraceJudgmentRow[]>();
+  if (traceIds.length === 0) return grouped;
+  const CHUNK = 200;
+  for (let i = 0; i < traceIds.length; i += CHUNK) {
+    const chunk = traceIds.slice(i, i + CHUNK);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .query(
+        `SELECT id, trace_id, evaluator_entity, verdict, criterion, rationale,
+                evidence_span_ids, created_at
+         FROM trace_judgments WHERE trace_id IN (${placeholders})
+         ORDER BY created_at DESC, id DESC`,
+      )
+      .all(...chunk) as Array<{
+      id: string;
+      trace_id: string;
+      evaluator_entity: string;
+      verdict: TraceJudgmentRow["verdict"];
+      criterion: string;
+      rationale: string;
+      evidence_span_ids: string;
+      created_at: number;
+    }>;
+    for (const row of rows) {
+      const list = grouped.get(row.trace_id) ?? [];
+      if (list.length >= limitPerTrace) continue;
+      list.push({
+        id: row.id,
+        traceId: row.trace_id,
+        evaluatorEntity: row.evaluator_entity,
+        verdict: row.verdict,
+        criterion: row.criterion,
+        rationale: row.rationale,
+        evidenceSpanIds: JSON.parse(row.evidence_span_ids) as string[],
+        createdAt: row.created_at,
+      });
+      grouped.set(row.trace_id, list);
+    }
+  }
+  return grouped;
+}
+
+export function getMaxEventId(db: Database): number {
+  return (db.query("SELECT MAX(id) AS id FROM event_log").get() as { id: number | null }).id ?? 0;
 }
 
 export function getEventCount(db: Database): number {

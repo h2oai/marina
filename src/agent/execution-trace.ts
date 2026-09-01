@@ -93,6 +93,9 @@ export class AgentExecutionTracer {
 
 /** Extract an explicitly propagated trace from a rendered model-request perception. */
 export function traceParentFromPerception(text: string): TraceParent | undefined {
+  // Cheap substring gate first: this runs on EVERY buffered perception, and
+  // without it any chat message containing braces pays a JSON.parse attempt.
+  if (!text.includes('"model_request"')) return undefined;
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start < 0 || end <= start) return undefined;

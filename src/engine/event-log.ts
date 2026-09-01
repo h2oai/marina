@@ -13,6 +13,16 @@ import type { Logger } from "./logger";
  * Extracted from Engine to reduce god-object surface area.
  * The Engine delegates all event logging through this class.
  */
+/**
+ * High-frequency, zero-retention-value event types that stay in memory and
+ * reach listeners (dashboard, log server) but are NEVER durably persisted.
+ * Streaming deltas arrive once per token chunk per agent — a synchronous
+ * SQLite INSERT each would serialize thousands of writes/sec onto the tick
+ * thread — and `tick` alone is 86k rows/day. Nothing reads any of these back
+ * from the DB (trace projection uses turn/tool/lifecycle events only).
+ */
+const EPHEMERAL_EVENT_TYPES = new Set(["agent_text_delta", "agent_thinking_delta", "tick"]);
+
 export class EventLog {
   private events: EngineEvent[] = [];
   private listeners: Array<(event: EngineEvent) => void> = [];
@@ -29,7 +39,7 @@ export class EventLog {
     if (this.events.length > MAX_EVENT_LOG) {
       this.events = this.events.slice(-EVENT_LOG_TRIM_SIZE);
     }
-    if (this.db) {
+    if (this.db && !EPHEMERAL_EVENT_TYPES.has(event.type)) {
       const db = this.db;
       tryLog(this.logger, "event", "DB log failed", () => db.logEvent(event));
     }

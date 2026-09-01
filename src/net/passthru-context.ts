@@ -157,13 +157,24 @@ function clamp(value: string): string {
  * `MARINA_PASSTHRU_SHARED_POOLS` (comma-separated pool names). Empty by default —
  * fail-closed, so no ungrouped pool is exposed to passthru callers unless named.
  */
+let shareablePoolsCache: { raw: string; set: Set<string> } | null = null;
+
 function passthruShareablePoolNames(): Set<string> {
-  return new Set(
-    (process.env.MARINA_PASSTHRU_SHARED_POOLS ?? "")
-      .split(",")
-      .map((value) => value.trim().toLowerCase())
-      .filter(Boolean),
-  );
+  // Cached on the raw env string — this runs on every context-injected passthru
+  // request, and the env only changes in tests.
+  const raw = process.env.MARINA_PASSTHRU_SHARED_POOLS ?? "";
+  if (shareablePoolsCache?.raw !== raw) {
+    shareablePoolsCache = {
+      raw,
+      set: new Set(
+        raw
+          .split(",")
+          .map((value) => value.trim().toLowerCase())
+          .filter(Boolean),
+      ),
+    };
+  }
+  return shareablePoolsCache.set;
 }
 
 function matchesQuery(content: string, query: string): boolean {
@@ -181,36 +192,54 @@ export async function buildInjectedContext(
   const query = queryFrom(messages);
   if (!name || !query || !engine.db) return { systemAddendum: null };
 
-  const snippets: string[] = [];
+  // Only 6 snippets survive — collect into a Set and stop querying the moment
+  // the budget is full instead of harvesting every source and discarding.
+  const MAX_SNIPPETS = 6;
+  const collected = new Set<string>();
+  const full = () => collected.size >= MAX_SNIPPETS;
   // Own notes only: entity_name-scoped, pool-less (recallNotes enforces
   // `entity_name = ? AND pool_id IS NULL`) so a foreign private note never leaks.
   for (const note of engine.db.recallNotes(name, query).slice(0, 4)) {
-    snippets.push(`Own memory: ${note.content}`);
+    collected.add(`Own memory: ${note.content}`);
+    if (full()) break;
   }
   // Pools: inject ONLY pools the entity is actually a member of, or pools an
   // operator has explicitly marked passthru-shareable. Never every pool — an
   // ungrouped/world pool the caller has no relationship to must not be harvested.
   const shareablePools = passthruShareablePoolNames();
-  for (const pool of engine.db.listMemoryPools()) {
-    const isMember = pool.group_id ? !!engine.db.getGroupMember(pool.group_id, entityId) : false;
-    const isShareable = shareablePools.has(pool.name.trim().toLowerCase());
-    if (!isMember && !isShareable) continue;
-    for (const note of engine.db.recallPoolNotes(pool.id, query).slice(0, 2)) {
-      snippets.push(`Shared pool ${pool.name}: ${note.content}`);
-    }
-  }
-  for (const channel of engine.db.getEntityChannels(entityId)) {
-    for (const message of engine.db.getChannelHistory(channel.id, 20)) {
-      if (matchesQuery(message.content, query)) {
-        snippets.push(`Channel ${channel.name}, ${message.sender_name}: ${message.content}`);
+  if (!full()) {
+    for (const pool of engine.db.listMemoryPools()) {
+      if (full()) break;
+      const isMember = pool.group_id ? !!engine.db.getGroupMember(pool.group_id, entityId) : false;
+      const isShareable = shareablePools.has(pool.name.trim().toLowerCase());
+      if (!isMember && !isShareable) continue;
+      for (const note of engine.db.recallPoolNotes(pool.id, query).slice(0, 2)) {
+        collected.add(`Shared pool ${pool.name}: ${note.content}`);
+        if (full()) break;
       }
     }
   }
-  for (const entry of engine.db.queryChronicle({ limit: 50 })) {
-    const content = `${entry.title}: ${entry.body}`;
-    if (matchesQuery(content, query)) snippets.push(`Chronicle: ${content}`);
+  if (!full()) {
+    for (const channel of engine.db.getEntityChannels(entityId)) {
+      if (full()) break;
+      for (const message of engine.db.getChannelHistory(channel.id, 20)) {
+        if (matchesQuery(message.content, query)) {
+          collected.add(`Channel ${channel.name}, ${message.sender_name}: ${message.content}`);
+          if (full()) break;
+        }
+      }
+    }
   }
-  const unique = [...new Set(snippets)].slice(0, 6);
+  if (!full()) {
+    for (const entry of engine.db.queryChronicle({ limit: 50 })) {
+      const content = `${entry.title}: ${entry.body}`;
+      if (matchesQuery(content, query)) {
+        collected.add(`Chronicle: ${content}`);
+        if (full()) break;
+      }
+    }
+  }
+  const unique = [...collected];
   if (unique.length === 0) return { systemAddendum: null };
   return {
     systemAddendum: clamp(

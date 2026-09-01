@@ -515,6 +515,30 @@ interface RouteOptions {
 }
 
 const ADAPTIVE_HISTORY_EVENT_LIMIT = 2_000;
+// Routing advice is a 2,000-row scan + full trace projection — far too heavy
+// to recompute per request. It depends only on event-log contents, so the memo
+// keys on MAX(event_log.id): an O(1) rowid-max lookup that stays cached across
+// a request burst and invalidates the moment any new event lands (never stale).
+let adaptiveAdviceCache: {
+  maxEventId: number;
+  advice: ReturnType<typeof adviseTraceRouting>;
+} | null = null;
+
+function adaptiveRoutingAdvice(engine: Engine): ReturnType<typeof adviseTraceRouting> {
+  const maxEventId = engine.db?.getMaxEventId() ?? -1;
+  if (adaptiveAdviceCache && adaptiveAdviceCache.maxEventId === maxEventId && maxEventId >= 0) {
+    return adaptiveAdviceCache.advice;
+  }
+  const history = engine.db?.getRecentTraceEvents(ADAPTIVE_HISTORY_EVENT_LIMIT);
+  // Routing advice is decided purely from observed mechanics (adviseTraceRouting
+  // never reads judgments), so skip the per-trace judgment fetch here — it would
+  // cost up to one query per projected trace on the request hot path. Judgments
+  // remain on the /api/traces display path (dashboard-api.ts).
+  const evidence = history ? projectTraces(history.events) : [];
+  const advice = adviseTraceRouting(compareTraceCohorts(evidence, "route"), "route");
+  adaptiveAdviceCache = { maxEventId, advice };
+  return advice;
+}
 
 function selectRouteTarget(
   engine: Engine,
@@ -523,13 +547,7 @@ function selectRouteTarget(
   strategy: NonNullable<RouteOptions["strategy"]>,
 ): { target: string; adviceMode?: "pareto" | "explore" | "insufficient"; reason?: string } {
   if (strategy !== "adaptive") return { target: selectAgent(members, channelId, strategy) };
-  const history = engine.db?.getRecentTraceEvents(ADAPTIVE_HISTORY_EVENT_LIMIT);
-  // Routing advice is decided purely from observed mechanics (adviseTraceRouting
-  // never reads judgments), so skip the per-trace judgment fetch here — it would
-  // cost up to one query per projected trace on the request hot path. Judgments
-  // remain on the /api/traces display path (dashboard-api.ts).
-  const evidence = history ? projectTraces(history.events) : [];
-  const advice = adviseTraceRouting(compareTraceCohorts(evidence, "route"), "route");
+  const advice = adaptiveRoutingAdvice(engine);
   const selected = selectAdaptiveCandidate(members, advice, () =>
     selectAgent(members, channelId, "least-busy"),
   );
@@ -1248,11 +1266,28 @@ function responseOwnerKey(auth: PassthruAuthResult | undefined): string {
 
 const responseIndex = new Map<string, ResponseRecord>();
 const RESPONSE_RETENTION_MS = 24 * 60 * 60 * 1000;
+// Hard size cap: records hold full response content, and a time-only sweep
+// leaves the index unbounded under sustained traffic (~860k live entries at
+// 10 req/s). Insertion order == creation order, so evicting from the front is
+// oldest-first.
+const RESPONSE_INDEX_MAX = 50_000;
+const RESPONSE_SWEEP_INTERVAL_MS = 60_000;
+let lastResponseSweep = 0;
 
 function trimResponseIndex(): void {
-  const cutoff = Date.now() - RESPONSE_RETENTION_MS;
-  for (const [id, rec] of responseIndex) {
-    if (rec.createdAt < cutoff) responseIndex.delete(id);
+  const now = Date.now();
+  // The O(n) time sweep runs at most once per interval, not per request.
+  if (now - lastResponseSweep >= RESPONSE_SWEEP_INTERVAL_MS) {
+    lastResponseSweep = now;
+    const cutoff = now - RESPONSE_RETENTION_MS;
+    for (const [id, rec] of responseIndex) {
+      if (rec.createdAt < cutoff) responseIndex.delete(id);
+    }
+  }
+  while (responseIndex.size > RESPONSE_INDEX_MAX) {
+    const oldest = responseIndex.keys().next().value;
+    if (oldest === undefined) break;
+    responseIndex.delete(oldest);
   }
 }
 

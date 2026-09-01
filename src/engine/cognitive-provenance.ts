@@ -78,24 +78,11 @@ export function projectEngineEvent(event: EngineEvent): ProjectedCognitiveEvent[
           }),
         },
       ];
-    case "agent_text_delta":
-      return [
-        {
-          kind: "output",
-          actorId: event.name,
-          traceId: event.traceId,
-          payload: compact({ delta: event.delta, runId: event.runId, spanId: event.spanId }),
-        },
-      ];
-    case "agent_thinking_delta":
-      return [
-        {
-          kind: "reflection",
-          actorId: event.name,
-          traceId: event.traceId,
-          payload: compact({ delta: event.delta, runId: event.runId, spanId: event.spanId }),
-        },
-      ];
+    // agent_text_delta / agent_thinking_delta are deliberately NOT projected:
+    // one hash-chained (and, when signing is configured, Ed25519-signed)
+    // transactional INSERT per streamed token chunk makes the ledger unusable
+    // under load and adds no provenance the agent_turn_end output row doesn't
+    // already carry.
     case "agent_tool_call":
       return [
         {

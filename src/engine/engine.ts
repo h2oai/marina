@@ -63,6 +63,7 @@ import {
   BOARD_ARCHIVE_INTERVAL,
   CHANNEL_PRUNE_INTERVAL,
   CONVERSATION_CLEANUP_INTERVAL,
+  EVENT_LOG_DB_RETENTION,
   MAX_COMMAND_QUEUE_SIZE,
   MAX_COMMANDS_PER_TICK,
   NOTE_IMPORTANCE_INTERVAL,
@@ -1300,15 +1301,19 @@ export class Engine {
       const crews = this.crewManager;
       tryLog(this.logger, "tick", "Crew tick failed", () => crews.tick());
     }
+    // The hourly jobs below share a 3600-tick interval but run at DISTINCT
+    // phases (`% INTERVAL === phase`) so they never all land on the same tick —
+    // previously board-archive + note-importance + alerts + standing + rank
+    // progression all fired together on tick 3600, outside the tick budget.
     // Hourly: clean up stale model conversation channels
-    if (this.tickCount % CONVERSATION_CLEANUP_INTERVAL === 0 && this.channelManager) {
+    if (this.tickCount % CONVERSATION_CLEANUP_INTERVAL === 600 && this.channelManager) {
       const cm = this.channelManager;
       tryLog(this.logger, "tick", "Conversation cleanup failed", () =>
         cleanupStaleConversationChannels(cm),
       );
     }
     // Hourly: adjust note importance based on recall patterns
-    if (this.tickCount % NOTE_IMPORTANCE_INTERVAL === 0 && this.db) {
+    if (this.tickCount % NOTE_IMPORTANCE_INTERVAL === 1200 && this.db) {
       const db = this.db;
       tryLog(this.logger, "tick", "Note importance adjustment failed", () =>
         db.adjustNoteImportance(),
@@ -1320,7 +1325,7 @@ export class Engine {
         db.refreshContradictionCases(),
       );
     }
-    if (this.tickCount % NOTE_IMPORTANCE_INTERVAL === 0 && this.db && this.taskManager) {
+    if (this.tickCount % NOTE_IMPORTANCE_INTERVAL === 1800 && this.db && this.taskManager) {
       tryLog(this.logger, "tick", "Operational alert sync failed", () =>
         syncOperationalAlerts({
           db: this.db!,
@@ -1335,9 +1340,19 @@ export class Engine {
     // Decay is real-valued; reads recompute on cache stale, but a periodic
     // pass keeps the leaderboard hot without waiting for a read on every
     // entity.
-    if (this.tickCount % NOTE_IMPORTANCE_INTERVAL === 0 && this.db) {
+    if (this.tickCount % NOTE_IMPORTANCE_INTERVAL === 2400 && this.db) {
       const db = this.db;
       tryLog(this.logger, "tick", "Standing recompute failed", () => recomputeStanding(db));
+    }
+
+    // Hourly: trim the durable event log to the retention window. Without this
+    // the table grows without bound for the life of the deployment (traces and
+    // per-entity activity queries degrade linearly with its size).
+    if (this.tickCount % NOTE_IMPORTANCE_INTERVAL === 3300 && this.db) {
+      const db = this.db;
+      tryLog(this.logger, "tick", "Event log prune failed", () =>
+        db.pruneEvents(EVENT_LOG_DB_RETENTION),
+      );
     }
 
     // Periodic: clean up orphaned agents (entities without active connections)
@@ -1346,7 +1361,7 @@ export class Engine {
     }
 
     // Hourly: check rank progression for all online entities
-    if (this.tickCount % NOTE_IMPORTANCE_INTERVAL === 0 && this.db) {
+    if (this.tickCount % NOTE_IMPORTANCE_INTERVAL === 3000 && this.db) {
       const db = this.db;
       for (const entity of this.entities.all()) {
         try {
