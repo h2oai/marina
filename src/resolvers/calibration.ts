@@ -288,7 +288,7 @@ export const inworldMarketResolverFinder: CalibrationFinder = {
  * its shape→outcome prior so successor conductors recall what worked — no
  * gradients, just generational memory. Producer: `conduct track <name>
  * <sampleId> predict=<p>` writes the `[score-run:<sampleId>]` note this pairs
- * with. See docs/conductor-design.md, Phase 5.
+ * with. See the conductor design (private archive: marina-internal design/conductor-design.md), Phase 5.
  */
 export const conductorScoreFinder: CalibrationFinder = {
   name: "conductor-score",

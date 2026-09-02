@@ -186,18 +186,6 @@ export async function placeOrder(
   const base = opts.base ?? process.env.KALSHI_BASE ?? DEFAULT_BASE;
   return await jsonPost<KalshiOrder>(`${base}/portfolio/orders`, req, opts);
 }
-
-export async function getPositions(
-  opts: KalshiClientOpts = {},
-): Promise<KalshiResult<{ positions: KalshiPosition[] }>> {
-  if (isPaperMode(opts)) {
-    // Paper mode has no live positions — caller pulls from board history.
-    return { ok: true, paper: true, response: { positions: [] } };
-  }
-  const base = opts.base ?? process.env.KALSHI_BASE ?? DEFAULT_BASE;
-  return await jsonGet<{ positions: KalshiPosition[] }>(`${base}/portfolio/positions`, opts);
-}
-
 export async function cancelOrder(
   orderId: string,
   opts: KalshiClientOpts = {},

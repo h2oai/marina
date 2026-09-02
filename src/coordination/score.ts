@@ -12,7 +12,7 @@
  * — not a fixed mode.
  *
  * A Score is an artifact any sufficiently-standing agent can author, run, fork,
- * and mutate (see docs/conductor-design.md, Phase 4). The grammar here is pure
+ * and mutate (see the conductor design (private archive: marina-internal design/conductor-design.md), Phase 4). The grammar here is pure
  * and transport-free: validation and topological layering only. Execution lives
  * in score-executor.ts with the worker-dispatch function injected, so the same
  * Score runs over tellAndAwait in production and over a mock in tests.

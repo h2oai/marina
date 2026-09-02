@@ -210,33 +210,3 @@ export async function removeSessionWorktree(
   await runGit(repoRoot, ["git", "worktree", "prune"], hostExecForbidden).catch(() => undefined);
   return { removed: true };
 }
-
-export interface WorktreeListEntry {
-  path: string;
-  branch?: string;
-}
-
-/** Enumerate the repo's registered worktrees (best-effort; [] on any failure). */
-export async function listSessionWorktrees(
-  repoRoot: string,
-  opts: ExecOpts = {},
-): Promise<WorktreeListEntry[]> {
-  if (!isGitRepo(repoRoot)) return [];
-  const res = await runGit(
-    repoRoot,
-    ["git", "worktree", "list", "--porcelain"],
-    opts.hostExecForbidden === true,
-  ).catch(() => null);
-  if (res?.exitCode !== 0) return [];
-  const out: WorktreeListEntry[] = [];
-  for (const block of res.output.split("\n\n")) {
-    let path: string | undefined;
-    let branch: string | undefined;
-    for (const line of block.split("\n")) {
-      if (line.startsWith("worktree ")) path = line.slice("worktree ".length).trim();
-      else if (line.startsWith("branch ")) branch = line.slice("branch ".length).trim();
-    }
-    if (path) out.push({ path, branch });
-  }
-  return out;
-}

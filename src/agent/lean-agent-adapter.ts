@@ -557,7 +557,7 @@ export class LeanAgentAdapter implements AgentHandle {
    * `cycleWaiter.wake()` to cut the loop's sleep short the moment a new
    * perception arrives — eliminating the up-to-2s tick discretization
    * between coordinator and specialist round trips. See
-   * src/agent/interruptible-waiter.ts and docs/crew-fast-dispatch-design.md.
+   * src/agent/interruptible-waiter.ts and the crew fast-dispatch design (private archive: marina-internal design/crew-fast-dispatch-design.md).
    */
   private cycleWaiter = new InterruptibleWaiter();
 
@@ -1225,7 +1225,7 @@ export class LeanAgentAdapter implements AgentHandle {
         // their own cognitive cycle. When nothing is queued, skip the
         // continuation entirely — no LLM call, no token cost, no autonomous
         // drift between coordinator messages. They re-enter the loop the
-        // moment a perception arrives. See docs/crew-fast-dispatch-design.md.
+        // moment a perception arrives. See the crew fast-dispatch design (private archive: marina-internal design/crew-fast-dispatch-design.md).
         if (this.config.crewResponder) {
           const actionable = this.pendingPerceptions.some(
             (perception) => perception.shouldRespond || perception.priority >= 80,
@@ -1558,10 +1558,16 @@ export class LeanAgentAdapter implements AgentHandle {
   }
 
   private getTickRate(): { min: number; normal: number; idle: number } {
-    // Re-check core memory for agent-set pace every 50 cycles
+    // Re-check core memory for agent-set pace every 50 cycles. The read is
+    // async (a `memory get pace` round trip), so it's kicked off here and the
+    // stored `agentPace` takes effect on the NEXT access — the agent sets its
+    // own clock with at most one cycle of lag. (This used to be a complete
+    // no-op: the cache was invalidated and then recomputed from env defaults
+    // without ever reading the memory key the docs promised.)
     if (this.loopIterationCount - this.lastTickRateCheck >= 50) {
       this.lastTickRateCheck = this.loopIterationCount;
-      this.cachedTickRate = null; // force re-read on next access
+      this.cachedTickRate = null; // force recompute on next access
+      void this.refreshAgentPace();
     }
     if (this.cachedTickRate) return this.cachedTickRate;
 
@@ -1571,15 +1577,38 @@ export class LeanAgentAdapter implements AgentHandle {
       Number(process.env.AGENT_ACTIVE_TICK_MS) > 0
         ? Number(process.env.AGENT_ACTIVE_TICK_MS)
         : Math.max(15_000, base);
+    const idle =
+      Number(process.env.AGENT_IDLE_TICK_MS) > 0
+        ? Number(process.env.AGENT_IDLE_TICK_MS)
+        : Math.max(60_000, base * 5);
+    // Agent-set pace scales the defaults: fast halves, slow doubles.
+    const scale = this.agentPace === "fast" ? 0.5 : this.agentPace === "slow" ? 2 : 1;
     this.cachedTickRate = {
-      min: Math.max(1000, Math.round(base * 0.5)),
-      normal: active,
-      idle:
-        Number(process.env.AGENT_IDLE_TICK_MS) > 0
-          ? Number(process.env.AGENT_IDLE_TICK_MS)
-          : Math.max(60_000, base * 5),
+      min: Math.max(1000, Math.round(base * 0.5 * scale)),
+      normal: Math.max(1000, Math.round(active * scale)),
+      idle: Math.max(2000, Math.round(idle * scale)),
     };
     return this.cachedTickRate;
+  }
+
+  /** Agent-declared pace from core memory; applied as a scale in getTickRate. */
+  private agentPace: "fast" | "normal" | "slow" | null = null;
+  private paceRefreshInFlight = false;
+
+  private async refreshAgentPace(): Promise<void> {
+    if (this.paceRefreshInFlight) return;
+    this.paceRefreshInFlight = true;
+    try {
+      const pace = await this.platformMemory.getPace();
+      if (pace !== this.agentPace) {
+        this.agentPace = pace;
+        this.cachedTickRate = null; // apply on next access
+      }
+    } catch {
+      // Pace is a preference, never worth failing a cycle over.
+    } finally {
+      this.paceRefreshInFlight = false;
+    }
   }
 
   /** Called from perception handler when agent sets pace via core memory.
@@ -1587,7 +1616,10 @@ export class LeanAgentAdapter implements AgentHandle {
    *  alias — kept so existing agent memories keep working). */
   parseTickRateFromOutput(output: string): void {
     const match = output.match(/Memory "(?:pace|tick_rate)" set\./);
-    if (match) this.cachedTickRate = null; // invalidate cache, re-read next cycle
+    if (match) {
+      this.cachedTickRate = null;
+      void this.refreshAgentPace();
+    }
   }
 
   // ─── Section Dedup Helper ─────────────────────────────────────────────

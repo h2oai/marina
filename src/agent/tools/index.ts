@@ -645,7 +645,7 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
       // default fire-and-forget tell (cheap, async, lossy on coordination)
       // and the awaitReply variant which suspends this tool call until the
       // addressee replies. The awaitReply variant is the crew-fast-dispatch
-      // primitive — see docs/crew-fast-dispatch-design.md. The simple
+      // primitive — see the crew fast-dispatch design (private archive: marina-internal design/crew-fast-dispatch-design.md). The simple
       // wrap() helper can only build a command string, so this tool is
       // expanded inline to access MarinaClient.tellAndAwait.
       name: "marina_tell",
@@ -685,7 +685,7 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
       // step to its worker via tellAndAwait and threads accessed outputs
       // forward. role:/model: assignees are pre-resolved against the live
       // roster via `conduct resolve`. This is the act of conducting — a Score
-      // becomes a running organization. See docs/conductor-design.md, Phase 4.
+      // becomes a running organization. See the conductor design (private archive: marina-internal design/conductor-design.md), Phase 4.
       name: "marina_conduct",
       label: "Conduct",
       description:

@@ -3,6 +3,7 @@
 
 import type { LogEntry } from "../engine/logger";
 import { otlpSpanId, otlpTraceId } from "../engine/otlp-trace-export";
+import { parseOtlpTimeoutMs } from "./otlp-exporter";
 
 export interface OtlpLogExporterConfig {
   endpoint: string;
@@ -51,7 +52,10 @@ export function loadOtlpLogExporterConfig(
     headers: parsePairs(
       env.OTEL_EXPORTER_OTLP_LOGS_HEADERS ?? env.OTEL_EXPORTER_OTLP_HEADERS ?? "",
     ),
-    timeoutMs: parseDuration(env.OTEL_EXPORTER_OTLP_LOGS_TIMEOUT ?? env.OTEL_EXPORTER_OTLP_TIMEOUT),
+    timeoutMs: parseOtlpTimeoutMs(
+      env.OTEL_EXPORTER_OTLP_LOGS_TIMEOUT ?? env.OTEL_EXPORTER_OTLP_TIMEOUT,
+      10_000,
+    ),
     batchDelayMs: positive(env.MARINA_OTLP_LOGS_BATCH_DELAY_MS, 2_000),
     maxQueue: positive(env.MARINA_OTLP_LOGS_MAX_QUEUE, 2_000),
     serviceName: env.OTEL_SERVICE_NAME?.trim() || "marina",
@@ -249,11 +253,4 @@ function parsePairs(raw: string): Record<string, string> {
 function positive(raw: string | undefined, fallback: number): number {
   const value = Number(raw);
   return Number.isFinite(value) && value > 0 ? Math.trunc(value) : fallback;
-}
-
-function parseDuration(raw: string | undefined): number {
-  if (!raw) return 10_000;
-  const match = raw.trim().match(/^(\d+)(ms|s)?$/);
-  if (!match) throw new Error(`Invalid OTLP log timeout "${raw}".`);
-  return Number(match[1]) * (match[2] === "s" ? 1_000 : 1);
 }

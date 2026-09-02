@@ -107,7 +107,7 @@ export interface AgentConfig {
    * leave this false — they need the full cognitive cycle to drive
    * dispatch decisions between specialist replies.
    *
-   * Crew fast-dispatch fix #2 — see docs/crew-fast-dispatch-design.md.
+   * Crew fast-dispatch fix #2 — see the crew fast-dispatch design (private archive: marina-internal design/crew-fast-dispatch-design.md).
    * Unset = false (backward compatible).
    */
   crewResponder?: boolean;

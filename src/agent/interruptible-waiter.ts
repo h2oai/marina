@@ -6,7 +6,7 @@
  *
  * Used by the autonomous-loop cycle-delay sleep so an arriving perception
  * can wake the loop immediately instead of waiting up to `loopCycleDelay`.
- * Crew fast-dispatch fix #3 — see docs/crew-fast-dispatch-design.md.
+ * Crew fast-dispatch fix #3 — see the crew fast-dispatch design (private archive: marina-internal design/crew-fast-dispatch-design.md).
  *
  * Lifecycle:
  *   1. caller `await waiter.sleep(ms)` — armed, will resolve at deadline

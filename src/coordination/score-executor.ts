@@ -10,7 +10,7 @@
  * executor only knows how to schedule: topological layers, concurrent
  * independent steps, access-output threading, and depth-capped recursion.
  *
- * See docs/conductor-design.md, Phase 4.
+ * See the conductor design (private archive: marina-internal design/conductor-design.md), Phase 4.
  */
 
 import {

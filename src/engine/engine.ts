@@ -1898,13 +1898,15 @@ export class Engine {
 
   /** Find an entity by name across all rooms (for tell) */
   findEntityGlobal(name: string): Entity | undefined {
+    // Two passes, exact first: the old single-pass exact-or-prefix test meant
+    // a prefix match on an earlier-iterated entity beat an exact match on a
+    // later one ("tell Alex ..." reached Alexandra when Alex existed).
     const lower = name.toLowerCase();
-    for (const entity of this.entities.all()) {
-      if (entity.kind !== "agent") continue;
-      if (entity.name.toLowerCase() === lower) return entity;
-      if (entity.name.toLowerCase().startsWith(lower)) return entity;
-    }
-    return undefined;
+    const agents = this.entities.all().filter((entity) => entity.kind === "agent");
+    return (
+      agents.find((entity) => entity.name.toLowerCase() === lower) ??
+      agents.find((entity) => entity.name.toLowerCase().startsWith(lower))
+    );
   }
 
   getOnlineAgents(): Entity[] {

@@ -242,18 +242,6 @@ export async function placeOrder(
   };
 }
 
-export async function getOrders(
-  opts: PolymarketClientOpts = {},
-): Promise<PolymarketResult<{ orders: PolymarketOrder[] }>> {
-  if (isPaperMode(opts)) {
-    return { ok: true, paper: true, response: { orders: [] } };
-  }
-  return {
-    ok: false,
-    error: "Polymarket live trading not yet implemented — use paper mode.",
-  };
-}
-
 export async function cancelOrder(
   orderId: string,
   opts: PolymarketClientOpts = {},

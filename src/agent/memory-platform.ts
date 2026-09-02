@@ -227,6 +227,22 @@ export class PlatformMemoryBackend {
     }
   }
 
+  /** Agent-set pace from core memory (`pace` preferred; `tick_rate` is the
+   *  legacy alias). Returns null when unset or unparseable. */
+  async getPace(): Promise<"fast" | "normal" | "slow" | null> {
+    for (const key of ["pace", "tick_rate"]) {
+      const perceptions = await this.client.command(`memory get ${key}`);
+      const text = extractText(perceptions);
+      const valueMatch = text.match(/\(v\d+\):\s*(.+)/s);
+      const raw = valueMatch?.[1]?.trim().toLowerCase();
+      if (!raw) continue;
+      if (raw.includes("fast")) return "fast";
+      if (raw.includes("slow")) return "slow";
+      if (raw.includes("normal")) return "normal";
+    }
+    return null;
+  }
+
   async orient(): Promise<PlatformMemoryResult> {
     const perceptions = await this.client.command("orient");
     const text = extractText(perceptions);

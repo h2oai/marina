@@ -91,7 +91,13 @@ function extractTellPayload(p: Perception): { sender: string; message: string } 
 
 // ─── Gateway Runtime ─────────────────────────────────────────────────────────
 
-/** Protocol version for gateway relay framing. Increment when message format changes. */
+/**
+ * Protocol version for gateway relay framing. Increment when the message
+ * format changes. Receivers record it per connection
+ * (websocket-server.gatewayPeerVersions), so the legacy regex fallbacks in
+ * extractChannelPayload/extractTellPayload can be gated on peer version and
+ * retired once a bump ships — they are for pre-declaration peers only.
+ */
 export const GATEWAY_PROTOCOL_VERSION = 1;
 
 const RELAY_MIN_MS = 1000;

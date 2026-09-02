@@ -60,7 +60,7 @@ export function loadOtlpExporterConfig(
     headers: parseHeaders(
       env.OTEL_EXPORTER_OTLP_TRACES_HEADERS ?? env.OTEL_EXPORTER_OTLP_HEADERS ?? "",
     ),
-    timeoutMs: parseDurationMs(
+    timeoutMs: parseOtlpTimeoutMs(
       env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT ?? env.OTEL_EXPORTER_OTLP_TIMEOUT,
       DEFAULT_TIMEOUT_MS,
     ),
@@ -292,7 +292,10 @@ function parseHeaders(raw: string): Record<string, string> {
   return headers;
 }
 
-function parseDurationMs(raw: string | undefined, fallback: number): number {
+/** Shared OTLP timeout grammar (`ms`/`s`), clamped to [100ms, 60s]. The log
+ *  exporter used to carry an unclamped near-copy — two adjacent exporters
+ *  should not disagree about whether a timeout can exceed 60s. */
+export function parseOtlpTimeoutMs(raw: string | undefined, fallback: number): number {
   if (!raw?.trim()) return fallback;
   const match = /^(\d+(?:\.\d+)?)(ms|s)?$/.exec(raw.trim());
   if (!match) throw new Error(`Invalid OTLP timeout "${raw}".`);

@@ -312,12 +312,6 @@ export function table(rows: string[][], gap = 2): string {
     .join("\n");
 }
 
-/** Compact entity list: "Alice (agent), Bob (human), Guide (npc)" */
-export function entityList(entities: { name: string; kind: string }[]): string {
-  if (entities.length === 0) return `${A.dim}(empty)${R}`;
-  return entities.map((e) => `${entity(e.name)} ${A.dim}(${e.kind})${R}`).join(`${A.dim}, ${R}`);
-}
-
 /** Key-value pair for room items */
 export function item(name: string, desc: string, maxDesc = 60): string {
   const truncated = desc.length > maxDesc ? `${desc.slice(0, maxDesc - 3)}...` : desc;

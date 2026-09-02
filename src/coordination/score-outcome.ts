@@ -10,7 +10,7 @@
  * shape works for which task class — the non-gradient analogue of the paper's
  * reward-driven topology selection. Good organizations crystallize into priors.
  *
- * See docs/conductor-design.md, Phase 5.
+ * See the conductor design (private archive: marina-internal design/conductor-design.md), Phase 5.
  */
 
 import type { MarinaDB } from "../persistence/database";

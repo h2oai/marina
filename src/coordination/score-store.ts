@@ -7,7 +7,7 @@
  * Shared by the `conduct` command (author/inspect) and the calibration finder
  * (Phase 5 automatic closure), so both agree on how a stored Score is tagged
  * and parsed. Storage is intentionally pool-notes, not a table: Scores are
- * artifacts agents author, fork, and mutate (see docs/conductor-design.md).
+ * artifacts agents author, fork, and mutate (see the conductor design (private archive: marina-internal design/conductor-design.md)).
  */
 
 import type { MarinaDB } from "../persistence/database";

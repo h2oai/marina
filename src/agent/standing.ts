@@ -195,6 +195,30 @@ const CHRONICLED_AMOUNTS: Record<string, number> = {
  * silently — the chronicle records names, not ids, so dangling participants
  * are normal and not a bug.
  */
+/**
+ * Generational credit: when a reader surfaces someone ELSE's reflection-tier
+ * note, the AUTHOR earns `reflection_recalled` — "write for the minds that
+ * come after you" only means something if downstream use pays the writer.
+ * Self-recall is reading, not contribution, and earns nothing. Idempotent per
+ * (author, reflection:<id>), so constant recall traffic can't flood the
+ * ledger. Called from every cross-entity recall surface (recall command's
+ * inherited/linked results, `pool <name> recall`).
+ */
+export function creditRecalledReflections(
+  db: MarinaDB,
+  readerName: string,
+  notes: Array<{ id: number; tier?: string | null; entity_name: string }>,
+  resolveId: (name: string) => string | undefined,
+): void {
+  for (const note of notes) {
+    if (note.tier !== "reflection") continue;
+    if (note.entity_name === readerName) continue;
+    const authorId = resolveId(note.entity_name);
+    if (!authorId) continue;
+    record(db, authorId, note.entity_name, "reflection_recalled", `reflection:${note.id}`);
+  }
+}
+
 export function recordChronicleCitation(
   db: MarinaDB,
   entry: { id: number; kind: string; participants: string[] },

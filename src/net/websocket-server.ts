@@ -94,10 +94,6 @@ const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
  * This is the zero-config desktop path: a local client keeps working, but the
  * principal is explicitly "unauthenticated-but-local" rather than a real entity.
  */
-// Re-exported from the shared canvas-principal module (single source of truth
-// for the loopback trust anchor). Kept exported here for backward compatibility
-// with existing importers/tests.
-export { LOOPBACK_PRINCIPAL };
 
 /**
  * Resolve the bind hostname from the environment. SECURE-BY-DEFAULT: an unset
@@ -139,6 +135,10 @@ export class WebSocketServer {
   private authProvider?: MarinaAuthProvider;
   /** Connection IDs that have successfully completed gateway auth. */
   private gatewayAuthed = new Set<string>();
+  /** Per-connection gateway protocol version (from gateway_auth). Lets the
+   *  gateway runtime retire legacy regex fallbacks per-peer: a peer that
+   *  declared v>=1 speaks the structured envelope. */
+  readonly gatewayPeerVersions = new Map<string, number>();
 
   constructor(
     private engine: Engine,
@@ -629,6 +629,7 @@ export class WebSocketServer {
             token?: string;
             secret?: string;
             internalToken?: string;
+            version?: number;
           };
           try {
             parsed = JSON.parse(raw);
@@ -639,6 +640,14 @@ export class WebSocketServer {
 
           // Gateway shared-secret authentication
           if (parsed.type === "gateway_auth") {
+            // Record the peer's protocol version — previously transmitted but
+            // never read, which made version negotiation write-only and the
+            // gateway's legacy regex fallbacks permanently un-retirable (no
+            // peer could ever be known to speak the structured format).
+            const version = Number(parsed.version);
+            if (Number.isInteger(version) && version > 0) {
+              self.gatewayPeerVersions.set(connId, version);
+            }
             const gatewaySecret = process.env.GATEWAY_SECRET;
             if (gatewaySecret && parsed.secret && secretsEqual(parsed.secret, gatewaySecret)) {
               self.gatewayAuthed.add(connId);
@@ -800,6 +809,7 @@ export class WebSocketServer {
           const connId = ws.data.connId;
           sockets.delete(connId);
           self.gatewayAuthed.delete(connId);
+          self.gatewayPeerVersions.delete(connId);
           engine.removeConnection(connId);
         },
       },

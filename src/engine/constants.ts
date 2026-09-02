@@ -209,7 +209,7 @@ export const HOUR_MS = 3_600_000;
 export const DEFAULT_NOTE_IMPORTANCE = 5;
 
 // ─── Agent Spawn Policy (emergent-organization guardrails) ───────────────────
-// See docs/conductor-design.md, Phase 2. These bound agent-initiated spawning
+// See the conductor design (private archive: marina-internal design/conductor-design.md), Phase 2. These bound agent-initiated spawning
 // so emergence can't become a fork bomb; they do not apply to operators who
 // hold the agent.spawn gate by grant rather than by standing.
 

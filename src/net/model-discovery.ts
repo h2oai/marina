@@ -538,9 +538,4 @@ export async function discoverModels(
   return cache;
 }
 
-/** Test hook: clear the in-process cache. */
-export function clearModelDiscoveryCache(): void {
-  cache = null;
-}
-
 export const MODEL_DISCOVERY_PROVIDERS = PROVIDERS.map((p) => p.provider);

@@ -428,7 +428,7 @@ export class MarinaClient {
    * back from that same target — eliminates the multi-tick handoff that
    * normally separates a coordinator's ask from a specialist's reply.
    *
-   * Crew-fast-dispatch primitive (see docs/crew-fast-dispatch-design.md):
+   * Crew-fast-dispatch primitive (see the crew fast-dispatch design (private archive: marina-internal design/crew-fast-dispatch-design.md)):
    * by registering the perception listener BEFORE firing the command we
    * avoid the race where the reply arrives before the listener is armed.
    * The caller's LLM turn is held open inside this single tool call so

@@ -80,10 +80,6 @@ export function registerProvider(provider: SearchProvider): void {
   providers.push(provider);
 }
 
-export function getProviders(): readonly SearchProvider[] {
-  return providers;
-}
-
 /**
  * Find the best provider for a given engine category.
  * Returns the first registered provider that supports the engine.

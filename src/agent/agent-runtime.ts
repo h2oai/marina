@@ -79,7 +79,7 @@ export function getInternalModelToken(): string {
 // ─── Agent Runtime ──────────────────────────────────────────────────────────
 
 /** Global cap on concurrently running agents. Exported so the spawn
- * command can clamp per-parent budgets to it (see docs/conductor-design.md). */
+ * command can clamp per-parent budgets to it (see the conductor design (private archive: marina-internal design/conductor-design.md)). */
 export const MAX_AGENTS = Number(process.env.MAX_AGENTS) || 30;
 const MAX_AGENT_UPTIME_MS = Number(process.env.MAX_AGENT_UPTIME_MS) || 24 * 60 * 60 * 1000;
 
@@ -119,7 +119,7 @@ function inferToolProfile(role: string | null | undefined): "full" | "crew" | "m
  * perception, answer the coordinator, sleep. No autonomous cognitive
  * cycle (memory health / learning signal / ACE reflection / idle
  * consolidation are all suppressed when crewResponder=true). See
- * `AgentConfig.crewResponder` and docs/crew-fast-dispatch-design.md.
+ * `AgentConfig.crewResponder` and the crew fast-dispatch design (private archive: marina-internal design/crew-fast-dispatch-design.md).
  *
  * Endpoint coordinators are event-driven too: they retain full autonomy over
  * routing and synthesis after a request arrives, but do not wander into

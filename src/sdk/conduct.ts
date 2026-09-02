@@ -11,7 +11,7 @@
  * concrete realization of the Conductor: a Score becomes a running organization.
  *
  * Kept separate from client.ts so the dispatch wiring is unit-testable with a
- * fake `tellAndAwait`. See docs/conductor-design.md, Phase 4.
+ * fake `tellAndAwait`. See the conductor design (private archive: marina-internal design/conductor-design.md), Phase 4.
  */
 
 import type { ParsedAssignee, Score } from "../coordination/score";
