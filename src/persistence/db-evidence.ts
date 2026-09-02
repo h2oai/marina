@@ -3,6 +3,7 @@
 
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
+import { canonicalFederationJson } from "../net/federation-crypto";
 
 export interface EvidenceReceiptRow {
   sequence: number;
@@ -25,19 +26,14 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function canonical(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`)
-    .join(",")}}`;
-}
-
+// Canonicalization is delegated to the ONE canonicalizer that feeds every
+// hash chain (federation-crypto). A local 8-line fork used to live here — no
+// cycle guard, no non-finite rejection — safe only by the accident that this
+// file's input is a fixed array of primitives. Byte-identical output for that
+// input shape, strictly safer for any future one.
 function entryHash(row: Omit<EvidenceReceiptRow, "entry_hash">): string {
   return sha256(
-    canonical([
+    canonicalFederationJson([
       row.sequence,
       row.event_type,
       row.ref,
@@ -60,7 +56,7 @@ export function appendEvidenceReceipt(
       sequence: (previous?.sequence ?? 0) + 1,
       event_type: input.eventType,
       ref: input.ref,
-      payload_hash: sha256(canonical(input.payload)),
+      payload_hash: sha256(canonicalFederationJson(input.payload)),
       previous_hash: previous?.entry_hash ?? null,
       created_at: input.createdAt ?? Date.now(),
     };

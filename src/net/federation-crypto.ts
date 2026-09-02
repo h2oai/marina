@@ -92,6 +92,40 @@ export function signFederationDocument<T extends Record<string, unknown>>(
   return { ...document, signature: { algorithm: "Ed25519", publicKey, keyId, value } };
 }
 
+/**
+ * Sign a complete document, returning the signature as a JSON string for a
+ * `signature_json` column — or null when no signing key is configured. This
+ * is THE wrapper: four persistence modules used to carry byte-identical local
+ * copies (`function sign(document) {...}`); they now import this one.
+ */
+export function signDocumentJson(document: Record<string, unknown>): string | null {
+  if (!federationSigningAvailable()) return null;
+  return JSON.stringify(signFederationDocument(document).signature);
+}
+
+/** Schema-tagging convenience over signDocumentJson. */
+export function signRecordJson(schema: string, record: Record<string, unknown>): string | null {
+  return signDocumentJson({ schema, ...record });
+}
+
+/** Verify a schema-tagged record against its stored `signature_json`. */
+export function verifyRecordJson(
+  schema: string,
+  record: Record<string, unknown>,
+  signatureJson: string | null,
+): { valid: boolean; keyId: string | null; error?: string } {
+  if (!signatureJson) return { valid: false, keyId: null, error: "Record is unsigned" };
+  try {
+    return verifyFederationDocument({
+      schema,
+      ...record,
+      signature: JSON.parse(signatureJson) as FederationSignature,
+    });
+  } catch {
+    return { valid: false, keyId: null, error: "Malformed signature material" };
+  }
+}
+
 export function verifyFederationDocument(
   document: SignedDocument,
   opts?: {

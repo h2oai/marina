@@ -16,6 +16,7 @@ import {
   PROCESS_TIER_QUOTA,
   SIMILAR_NOTE_RELEVANCE_THRESHOLD,
 } from "../engine/constants";
+import { buildFtsQuery } from "./fts";
 
 // ─── Tier inference ────────────────────────────────────────────────────
 //
@@ -187,12 +188,8 @@ export function getNotesByRoom(db: Database, roomId: string, limit = 50): NoteRo
  * who wrote them.
  */
 export function searchAllNotes(db: Database, query: string, limit = 20): NoteRow[] {
-  const safeQuery = query.replace(/['"*()]/g, "").trim();
-  if (!safeQuery) return [];
-  const ftsQuery = safeQuery
-    .split(/\s+/)
-    .map((term) => `"${term}"`)
-    .join(" ");
+  const ftsQuery = buildFtsQuery(query, "and");
+  if (!ftsQuery) return [];
   try {
     return db
       .query(
@@ -210,12 +207,8 @@ export function searchAllNotes(db: Database, query: string, limit = 20): NoteRow
 }
 
 export function searchNotes(db: Database, entityName: string, query: string): NoteRow[] {
-  const safeQuery = query.replace(/['"*()]/g, "").trim();
-  if (!safeQuery) return [];
-  const ftsQuery = safeQuery
-    .split(/\s+/)
-    .map((term) => `"${term}"`)
-    .join(" ");
+  const ftsQuery = buildFtsQuery(query, "and");
+  if (!ftsQuery) return [];
   return db
     .query(
       `SELECT n.* FROM notes n
@@ -585,6 +578,23 @@ export function touchNote(db: Database, id: number): void {
   ]);
 }
 
+/**
+ * The ranked-recall scoring expression — THE definition of what "relevant
+ * memory" means (importance x recency x FTS relevance + confidence +
+ * verification + source freshness/credibility). Binds, in order:
+ * alpha, beta, now, gamma, now. One definition: previously copy-pasted three
+ * times, so a weight change could silently make the recall paths rank
+ * differently.
+ */
+const SCORE_EXPR = `(? * (n.importance / 10.0)) +
+        (? * (1.0 / (1.0 + (? - COALESCE(n.last_accessed, n.created_at)) / 86400000.0))) +
+        (? * (-fts.rank)) + (0.10 * n.confidence) +
+        CASE n.verification_status WHEN 'verified' THEN 0.10 WHEN 'disputed' THEN -0.10 ELSE 0 END +
+        COALESCE((SELECT 0.05 / (1.0 + (? - COALESCE(MAX(ns.observed_at), MAX(ns.retrieved_at))) / 2592000000.0)
+          FROM note_sources ns WHERE ns.note_id=n.id), 0) +
+        COALESCE((SELECT 0.05 * AVG(ns.credibility) FROM note_sources ns WHERE ns.note_id=n.id),0)
+        AS score`;
+
 export function recallNotes(
   db: Database,
   entityName: string,
@@ -599,12 +609,8 @@ export function recallNotes(
     includeProcess?: boolean;
   },
 ): ScoredNoteRow[] {
-  const safeQuery = query.replace(/['"*()]/g, "").trim();
-  if (!safeQuery) return [];
-  const ftsQuery = safeQuery
-    .split(/\s+/)
-    .map((term) => `"${term}"`)
-    .join(" OR ");
+  const ftsQuery = buildFtsQuery(query, "or");
+  if (!ftsQuery) return [];
   const alpha = opts?.weightImportance ?? DEFAULT_WEIGHT_IMPORTANCE;
   const beta = opts?.weightRecency ?? DEFAULT_WEIGHT_RECENCY;
   const gamma = opts?.weightRelevance ?? DEFAULT_WEIGHT_RELEVANCE;
@@ -613,14 +619,7 @@ export function recallNotes(
   return db
     .query(
       `SELECT n.*,
-        (? * (n.importance / 10.0)) +
-        (? * (1.0 / (1.0 + (? - COALESCE(n.last_accessed, n.created_at)) / 86400000.0))) +
-        (? * (-fts.rank)) + (0.10 * n.confidence) +
-        CASE n.verification_status WHEN 'verified' THEN 0.10 WHEN 'disputed' THEN -0.10 ELSE 0 END +
-        COALESCE((SELECT 0.05 / (1.0 + (? - COALESCE(MAX(ns.observed_at), MAX(ns.retrieved_at))) / 2592000000.0)
-          FROM note_sources ns WHERE ns.note_id=n.id), 0) +
-        COALESCE((SELECT 0.05 * AVG(ns.credibility) FROM note_sources ns WHERE ns.note_id=n.id),0)
-        AS score
+        ${SCORE_EXPR}
       FROM notes n
       JOIN notes_fts fts ON n.id = fts.rowid
       WHERE n.entity_name = ? AND n.pool_id IS NULL AND n.verification_status != 'superseded' ${tierClause} AND notes_fts MATCH ?
@@ -637,12 +636,8 @@ export function recallNotesWithType(
   noteType: string,
   opts?: { weightImportance?: number; weightRecency?: number; weightRelevance?: number },
 ): ScoredNoteRow[] {
-  const safeQuery = query.replace(/['"*()]/g, "").trim();
-  if (!safeQuery) return [];
-  const ftsQuery = safeQuery
-    .split(/\s+/)
-    .map((term) => `"${term}"`)
-    .join(" OR ");
+  const ftsQuery = buildFtsQuery(query, "or");
+  if (!ftsQuery) return [];
   const alpha = opts?.weightImportance ?? DEFAULT_WEIGHT_IMPORTANCE;
   const beta = opts?.weightRecency ?? DEFAULT_WEIGHT_RECENCY;
   const gamma = opts?.weightRelevance ?? DEFAULT_WEIGHT_RELEVANCE;
@@ -650,14 +645,7 @@ export function recallNotesWithType(
   return db
     .query(
       `SELECT n.*,
-        (? * (n.importance / 10.0)) +
-        (? * (1.0 / (1.0 + (? - COALESCE(n.last_accessed, n.created_at)) / 86400000.0))) +
-        (? * (-fts.rank)) + (0.10 * n.confidence) +
-        CASE n.verification_status WHEN 'verified' THEN 0.10 WHEN 'disputed' THEN -0.10 ELSE 0 END +
-        COALESCE((SELECT 0.05 / (1.0 + (? - COALESCE(MAX(ns.observed_at), MAX(ns.retrieved_at))) / 2592000000.0)
-          FROM note_sources ns WHERE ns.note_id=n.id), 0) +
-        COALESCE((SELECT 0.05 * AVG(ns.credibility) FROM note_sources ns WHERE ns.note_id=n.id),0)
-        AS score
+        ${SCORE_EXPR}
       FROM notes n
       JOIN notes_fts fts ON n.id = fts.rowid
       WHERE n.entity_name = ? AND n.pool_id IS NULL AND n.note_type = ? AND n.verification_status != 'superseded' AND notes_fts MATCH ?
@@ -673,12 +661,9 @@ export function findSimilarNotes(
   content: string,
   excludeId?: number,
 ): NoteRow[] {
-  const safeQuery = content.replace(/['"*()]/g, "").trim();
-  if (!safeQuery) return [];
   // Take first few meaningful words for FTS search
-  const words = safeQuery.split(/\s+/).slice(0, 5);
-  if (words.length === 0) return [];
-  const ftsQuery = words.map((term) => `"${term}"`).join(" OR ");
+  const ftsQuery = buildFtsQuery(content.split(/\s+/).slice(0, 5).join(" "), "or");
+  if (!ftsQuery) return [];
   try {
     const rows = db
       .query(
@@ -701,12 +686,8 @@ export function countMatchingNotes(
   entityName: string,
   query: string,
 ): { total: number; fading: number } {
-  const safeQuery = query.replace(/['"*()]/g, "").trim();
-  if (!safeQuery) return { total: 0, fading: 0 };
-  const ftsQuery = safeQuery
-    .split(/\s+/)
-    .map((term) => `"${term}"`)
-    .join(" ");
+  const ftsQuery = buildFtsQuery(query, "and");
+  if (!ftsQuery) return { total: 0, fading: 0 };
   try {
     const row = db
       .query(
@@ -1025,12 +1006,8 @@ export function recallPoolNotes(
   query: string,
   opts?: { weightImportance?: number; weightRecency?: number; weightRelevance?: number },
 ): ScoredNoteRow[] {
-  const safeQuery = query.replace(/['"*()]/g, "").trim();
-  if (!safeQuery) return [];
-  const ftsQuery = safeQuery
-    .split(/\s+/)
-    .map((term) => `"${term}"`)
-    .join(" OR ");
+  const ftsQuery = buildFtsQuery(query, "or");
+  if (!ftsQuery) return [];
   const alpha = opts?.weightImportance ?? DEFAULT_WEIGHT_IMPORTANCE;
   const beta = opts?.weightRecency ?? DEFAULT_WEIGHT_RECENCY;
   const gamma = opts?.weightRelevance ?? DEFAULT_WEIGHT_RELEVANCE;
@@ -1038,14 +1015,7 @@ export function recallPoolNotes(
   return db
     .query(
       `SELECT n.*,
-        (? * (n.importance / 10.0)) +
-        (? * (1.0 / (1.0 + (? - COALESCE(n.last_accessed, n.created_at)) / 86400000.0))) +
-        (? * (-fts.rank)) + (0.10 * n.confidence) +
-        CASE n.verification_status WHEN 'verified' THEN 0.10 WHEN 'disputed' THEN -0.10 ELSE 0 END +
-        COALESCE((SELECT 0.05 / (1.0 + (? - COALESCE(MAX(ns.observed_at), MAX(ns.retrieved_at))) / 2592000000.0)
-          FROM note_sources ns WHERE ns.note_id=n.id), 0) +
-        COALESCE((SELECT 0.05 * AVG(ns.credibility) FROM note_sources ns WHERE ns.note_id=n.id),0)
-        AS score
+        ${SCORE_EXPR}
       FROM notes n
       JOIN notes_fts fts ON n.id = fts.rowid
       WHERE n.pool_id = ? AND n.verification_status != 'superseded' AND notes_fts MATCH ?

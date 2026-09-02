@@ -3,6 +3,7 @@
 
 import type { Database } from "bun:sqlite";
 import type { LogEntry, LogLevel } from "../engine/logger";
+import { escapeLike } from "./fts";
 
 export interface LogQuery {
   limit?: number;
@@ -121,10 +122,6 @@ export function pruneLogs(db: Database, keepLast: number): number {
 
 function encodeCursor(id: number): string {
   return Buffer.from(JSON.stringify(["log.v1", id]), "utf8").toString("base64url");
-}
-
-function escapeLike(value: string): string {
-  return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 }
 
 interface LogRow {

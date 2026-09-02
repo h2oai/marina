@@ -3,6 +3,7 @@
 
 import type { Database } from "bun:sqlite";
 import { DAY_MS } from "../engine/constants";
+import { buildFtsQuery } from "./fts";
 
 // ─── Channel Persistence ──────────────────────────────────────────────────
 
@@ -266,12 +267,8 @@ export function listBoardPosts(
 }
 
 export function searchBoardPosts(db: Database, boardId: string, query: string): BoardPostRow[] {
-  const safeQuery = query.replace(/['"*()]/g, "").trim();
-  if (!safeQuery) return [];
-  const ftsQuery = safeQuery
-    .split(/\s+/)
-    .map((term) => `"${term}"`)
-    .join(" ");
+  const ftsQuery = buildFtsQuery(query, "and");
+  if (!ftsQuery) return [];
   return db
     .query(
       `SELECT bp.* FROM board_posts bp
@@ -465,14 +462,8 @@ export function updateGroupMemberRank(
 
 export function globalSearch(db: Database, query: string): GlobalSearchResult[] {
   const results: GlobalSearchResult[] = [];
-  const safeQuery = query.replace(/['"*()]/g, "").trim();
-  if (!safeQuery) return results;
-
-  // Search board posts via FTS5
-  const ftsQuery = safeQuery
-    .split(/\s+/)
-    .map((term) => `"${term}"`)
-    .join(" ");
+  const ftsQuery = buildFtsQuery(query, "and");
+  if (!ftsQuery) return results;
   try {
     const boardResults = db
       .query(
@@ -502,7 +493,7 @@ export function globalSearch(db: Database, query: string): GlobalSearchResult[] 
   }
 
   // Search channel messages via LIKE
-  const likePattern = `%${safeQuery}%`;
+  const likePattern = `%${query.replace(/[%_\\]/g, "").trim()}%`;
   try {
     const msgResults = db
       .query(
@@ -527,6 +518,98 @@ export function globalSearch(db: Database, query: string): GlobalSearchResult[] 
     }
   } catch (err) {
     console.warn("[db] search channel LIKE query failed:", (err as Error).message);
+  }
+
+  try {
+    const taskResults = db
+      .query(
+        `SELECT t.id, t.title, t.status
+         FROM tasks t
+         JOIN tasks_fts fts ON t.id = fts.rowid
+         WHERE tasks_fts MATCH ?
+         ORDER BY fts.rank LIMIT 10`,
+      )
+      .all(ftsQuery) as { id: number; title: string; status: string }[];
+    for (const r of taskResults) {
+      results.push({
+        type: "task",
+        id: String(r.id),
+        title: r.title.slice(0, 80),
+        context: r.status,
+      });
+    }
+  } catch (err) {
+    console.warn("[db] search task FTS5 query failed:", (err as Error).message);
+  }
+
+  try {
+    const marketResults = db
+      .query(
+        `SELECT m.id, m.question, m.status
+         FROM markets m
+         JOIN markets_fts fts ON m.rowid = fts.rowid
+         WHERE markets_fts MATCH ?
+         ORDER BY fts.rank LIMIT 10`,
+      )
+      .all(ftsQuery) as { id: string; question: string; status: string }[];
+    for (const r of marketResults) {
+      results.push({
+        type: "market",
+        id: r.id,
+        title: r.question.slice(0, 80),
+        context: r.status,
+      });
+    }
+  } catch (err) {
+    console.warn("[db] search market FTS5 query failed:", (err as Error).message);
+  }
+
+  // Pool notes — OPEN pools only (group-gated pools stay member-visible; this
+  // surface has no entity context, so anything group-scoped must not appear).
+  // Personal notes (pool_id NULL) and the process tier are excluded for the
+  // same reason.
+  try {
+    const noteResults = db
+      .query(
+        `SELECT n.id, n.content, p.name AS pool_name
+         FROM notes n
+         JOIN notes_fts fts ON n.id = fts.rowid
+         JOIN memory_pools p ON n.pool_id = p.id
+         WHERE notes_fts MATCH ? AND p.group_id IS NULL AND n.tier != 'process'
+         ORDER BY fts.rank LIMIT 10`,
+      )
+      .all(ftsQuery) as { id: number; content: string; pool_name: string }[];
+    for (const r of noteResults) {
+      results.push({
+        type: "pool_note",
+        id: String(r.id),
+        title: r.content.slice(0, 80),
+        context: r.pool_name,
+      });
+    }
+  } catch (err) {
+    console.warn("[db] search note FTS5 query failed:", (err as Error).message);
+  }
+
+  // Chronicle is public by design (rank-0 readable) — LIKE over title+body.
+  try {
+    const chronicleResults = db
+      .query(
+        `SELECT id, kind, title FROM chronicle
+         WHERE title LIKE ? OR body LIKE ?
+         ORDER BY id DESC LIMIT 10`,
+      )
+      .all(likePattern, likePattern) as { id: number; kind: string; title: string }[];
+    for (const r of chronicleResults) {
+      results.push({
+        type: "chronicle",
+        id: String(r.id),
+        title: r.title.slice(0, 80),
+        context: r.kind,
+      });
+    }
+  } catch (err) {
+    console.warn("[db] search chronicle LIKE query failed:", (err as Error).message);
   }
 
   return results;
@@ -612,7 +695,7 @@ export interface BoardVoteRow {
 }
 
 export interface GlobalSearchResult {
-  type: "board_post" | "channel_message" | "room";
+  type: "board_post" | "channel_message" | "room" | "task" | "market" | "pool_note" | "chronicle";
   id: string;
   title: string;
   context: string;

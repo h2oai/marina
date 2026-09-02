@@ -695,6 +695,54 @@ describe("Global Search", () => {
     expect(channelResults.length).toBeGreaterThan(0);
   });
 
+  it("should search tasks", () => {
+    db.createTask({
+      title: "Refactor telescope optics",
+      description: "Align the mirrors",
+      creatorId: "a1",
+      creatorName: "Alice",
+    });
+    const results = db.globalSearch("telescope");
+    const taskResults = results.filter((r) => r.type === "task");
+    expect(taskResults.length).toBeGreaterThan(0);
+    expect(taskResults[0]!.title).toContain("telescope");
+  });
+
+  it("should search markets", () => {
+    db.createMarket({ id: "m1", roomId: "market-floor", question: "Will the volcano erupt?" });
+    const results = db.globalSearch("volcano");
+    const marketResults = results.filter((r) => r.type === "market");
+    expect(marketResults.length).toBeGreaterThan(0);
+    expect(marketResults[0]!.context).toBe("open");
+  });
+
+  it("should search open-pool notes but never group-gated or personal notes", () => {
+    db.createMemoryPool("p_open", "open-pool", "a1");
+    db.createGroup({ id: "g1", name: "secret", leaderId: "a1" });
+    db.createMemoryPool("p_gated", "gated-pool", "a1", "g1");
+    db.createNote("Alice", "Zephyr protocol shared openly", undefined, { poolId: "p_open" });
+    db.createNote("Alice", "Zephyr protocol gated detail", undefined, { poolId: "p_gated" });
+    db.createNote("Alice", "Zephyr protocol private musing");
+    const results = db.globalSearch("zephyr");
+    const noteResults = results.filter((r) => r.type === "pool_note");
+    expect(noteResults.length).toBe(1);
+    expect(noteResults[0]!.title).toContain("openly");
+    expect(noteResults[0]!.context).toBe("open-pool");
+  });
+
+  it("should search chronicle entries", () => {
+    db.appendChronicle({
+      kind: "narrative",
+      source: "chronicler",
+      title: "The obsidian bridge accord",
+      body: "Two crews agreed to share the bridge.",
+    });
+    const results = db.globalSearch("obsidian");
+    const chronicleResults = results.filter((r) => r.type === "chronicle");
+    expect(chronicleResults.length).toBeGreaterThan(0);
+    expect(chronicleResults[0]!.context).toBe("narrative");
+  });
+
   it("should handle empty query", () => {
     const results = db.globalSearch("");
     expect(results.length).toBe(0);

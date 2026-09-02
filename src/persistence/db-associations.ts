@@ -4,11 +4,10 @@
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import {
-  type FederationSignature,
-  federationSigningAvailable,
-  signFederationDocument,
-  verifyFederationDocument,
+  signRecordJson as signRecord,
+  verifyRecordJson as verifyRecord,
 } from "../net/federation-crypto";
+import { escapeLike } from "./fts";
 
 export const ASSOCIATION_EVENT_KINDS = [
   "created",
@@ -140,7 +139,7 @@ export function listAssociations(db: Database, limit = 100): AssociationRow[] {
  * silently miss older rows). Returns up to 2 rows: 1 = unambiguous.
  */
 export function findAssociationsBySelector(db: Database, selector: string): AssociationRow[] {
-  const prefix = `${selector.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+  const prefix = `${escapeLike(selector)}%`;
   return db
     .query(
       "SELECT * FROM associations WHERE id LIKE ? ESCAPE '\\' OR name = ? COLLATE NOCASE LIMIT 2",
@@ -447,27 +446,5 @@ export function verifyAssociationLink(row: AssociationLinkRow) {
     );
   } catch {
     return { valid: false, keyId: null, error: "Malformed association link" };
-  }
-}
-
-function signRecord(schema: string, record: Record<string, unknown>): string | null {
-  if (!federationSigningAvailable()) return null;
-  return JSON.stringify(signFederationDocument({ schema, ...record }).signature);
-}
-
-function verifyRecord(
-  schema: string,
-  record: Record<string, unknown>,
-  signatureJson: string | null,
-): { valid: boolean; keyId: string | null; error?: string } {
-  if (!signatureJson) return { valid: false, keyId: null, error: "Record is unsigned" };
-  try {
-    return verifyFederationDocument({
-      schema,
-      ...record,
-      signature: JSON.parse(signatureJson) as FederationSignature,
-    });
-  } catch {
-    return { valid: false, keyId: null, error: "Malformed association record" };
   }
 }

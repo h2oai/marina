@@ -71,6 +71,56 @@ describe("cognitive and Marina reproduction", () => {
     expect(descendant.genome_hash).toBe(first.hash);
     expect(JSON.parse(descendant.parent_world_ids_json)).toHaveLength(2);
   });
+
+  it("re-verifies write-time signatures from the stored rows", () => {
+    const { privateKey } = generateKeyPairSync("ed25519");
+    process.env.MARINA_FEDERATION_SIGNING_KEY = privateKey
+      .export({ format: "der", type: "pkcs8" })
+      .toString("base64");
+
+    const parent = db.createIntellect({ displayName: "P", originMarina: "t", createdBy: "A" });
+    const child = db.createIntellect({ displayName: "C", originMarina: "t", createdBy: "A" });
+    const row = db.recordCognitiveReproduction({
+      descendantIntellectId: child.id,
+      mode: "descent",
+      parentIds: [parent.id],
+      contributors: ["Alice"],
+      hypothesis: "signed lineage",
+      components: [
+        { kind: "model", ref: "local/small", disposition: "introduced" },
+        { kind: "personality", ref: "skeptical", disposition: "mutated", sourceRef: "curious" },
+      ],
+      createdBy: "Alice",
+    });
+    expect(row.signature_json).not.toBeNull();
+    const verification = db.verifyCognitiveReproduction(db.getCognitiveReproduction(row.id)!);
+    expect(verification.valid).toBe(true);
+    expect(verification.keyId).toStartWith("sha256:");
+
+    // Tampering with a stored field must break verification.
+    const tampered = { ...db.getCognitiveReproduction(row.id)!, hypothesis: "rewritten" };
+    expect(db.verifyCognitiveReproduction(tampered).valid).toBe(false);
+
+    const genome = db.createMarinaGenome({ manifest: { worldTemplate: "signed" }, createdBy: "A" });
+    const genomeCheck = db.verifyMarinaGenome(genome);
+    expect(genomeCheck.hashValid).toBe(true);
+    expect(genomeCheck.valid).toBe(true);
+  });
+
+  it("reports unsigned records as unsigned, not invalid", () => {
+    delete process.env.MARINA_FEDERATION_SIGNING_KEY;
+    const parent = db.createIntellect({ displayName: "P2", originMarina: "t", createdBy: "A" });
+    const child = db.createIntellect({ displayName: "C2", originMarina: "t", createdBy: "A" });
+    const row = db.recordCognitiveReproduction({
+      descendantIntellectId: child.id,
+      mode: "descent",
+      parentIds: [parent.id],
+      contributors: ["Alice"],
+      components: [{ kind: "model", ref: "local/small", disposition: "introduced" }],
+      createdBy: "Alice",
+    });
+    expect(db.verifyCognitiveReproduction(row).valid).toBeNull();
+  });
 });
 
 describe("transparent multi-mesh federation", () => {

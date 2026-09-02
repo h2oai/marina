@@ -9,6 +9,7 @@ import {
   signFederationDocument,
   verifyFederationDocument,
 } from "../net/federation-crypto";
+import { escapeLike } from "./fts";
 
 export const INTELLECT_EVENT_KINDS = [
   "created",
@@ -116,7 +117,7 @@ export function listIntellects(db: Database, limit = 100): IntellectRow[] {
  * silently miss older rows). Returns up to 2 rows: 1 = unambiguous.
  */
 export function findIntellectsByIdPrefix(db: Database, selector: string): IntellectRow[] {
-  const prefix = `${selector.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+  const prefix = `${escapeLike(selector)}%`;
   return db
     .query("SELECT * FROM intellects WHERE id LIKE ? ESCAPE '\\' LIMIT 2")
     .all(prefix) as IntellectRow[];

@@ -5,10 +5,10 @@ import type { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import {
   canonicalFederationJson,
-  federationSigningAvailable,
-  signFederationDocument,
+  signDocumentJson as sign,
   verifyFederationDocument,
 } from "../net/federation-crypto";
+import { escapeLike } from "./fts";
 
 export interface MeshRow {
   id: string;
@@ -95,7 +95,7 @@ export function listMeshes(db: Database, limit = 200): MeshRow[] {
  * silently miss older rows). Returns up to 2 rows: 1 = unambiguous.
  */
 export function findMeshesBySelector(db: Database, selector: string): MeshRow[] {
-  const prefix = `${selector.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+  const prefix = `${escapeLike(selector)}%`;
   return db
     .query("SELECT * FROM meshes WHERE id LIKE ? ESCAPE '\\' OR name = ? COLLATE NOCASE LIMIT 2")
     .all(prefix, selector) as MeshRow[];
@@ -427,10 +427,4 @@ export function verifyMeshEvent(row: MeshEventRow) {
   } catch {
     return { valid: false, keyId: null, error: "Malformed mesh event" };
   }
-}
-
-function sign(document: Record<string, unknown>): string | null {
-  return federationSigningAvailable()
-    ? JSON.stringify(signFederationDocument(document).signature)
-    : null;
 }

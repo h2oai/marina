@@ -3,11 +3,7 @@
 
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
-import {
-  federationSigningAvailable,
-  signFederationDocument,
-  verifyFederationDocument,
-} from "../net/federation-crypto";
+import { signDocumentJson as sign, verifyFederationDocument } from "../net/federation-crypto";
 
 export const ECONOMIC_EVENT_KINDS = [
   "offer",
@@ -259,9 +255,4 @@ export function createEconomicAdapter(
 }
 export function listEconomicAdapters(db: Database): EconomicAdapterRow[] {
   return db.query("SELECT * FROM economic_adapters ORDER BY id").all() as EconomicAdapterRow[];
-}
-function sign(document: Record<string, unknown>) {
-  return federationSigningAvailable()
-    ? JSON.stringify(signFederationDocument(document).signature)
-    : null;
 }

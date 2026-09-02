@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Database } from "bun:sqlite";
+import { buildFtsQuery } from "./fts";
 
 // ─── Task Persistence ─────────────────────────────────────────────────────
 
@@ -256,8 +257,12 @@ export function searchTasks(
   query: string,
   opts?: { status?: string; limit?: number },
 ): (TaskRow & { score: number })[] {
+  // buildFtsQuery neutralizes FTS5 syntax — raw user text used to flow
+  // straight into MATCH, so `ask what's this?` crashed the whole command.
+  const ftsQuery = buildFtsQuery(query, "and");
+  if (!ftsQuery) return [];
   const conditions = ["tasks_fts MATCH ?"];
-  const params: (string | number)[] = [query];
+  const params: (string | number)[] = [ftsQuery];
 
   if (opts?.status) {
     conditions.push("t.status = ?");

@@ -5,8 +5,7 @@ import type { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import {
   canonicalFederationJson,
-  federationSigningAvailable,
-  signFederationDocument,
+  signDocumentJson as sign,
   verifyFederationDocument,
 } from "../net/federation-crypto";
 
@@ -62,6 +61,114 @@ export interface MarinaDescendantRow {
   created_at: number;
 }
 
+/**
+ * Components normalized to a deterministic, storage-faithful shape before
+ * signing so the signature can be re-checked from the stored rows later:
+ * always-present keys (sourceRef null when unset, metadata {} when unset) and
+ * canonical ordering (component insert ids are random UUIDs, so row order is
+ * not reconstruction-safe).
+ */
+function normalizedSignedComponents(
+  components: Array<{
+    kind: string;
+    ref: string;
+    disposition: ComponentDisposition;
+    sourceRef?: string | null;
+    metadata?: Record<string, unknown>;
+  }>,
+): Array<Record<string, unknown>> {
+  return components
+    .map((c) => ({
+      kind: c.kind,
+      ref: c.ref,
+      disposition: c.disposition,
+      sourceRef: c.sourceRef ?? null,
+      metadata: c.metadata ?? {},
+    }))
+    .sort((a, b) =>
+      canonicalFederationJson(a) < canonicalFederationJson(b)
+        ? -1
+        : canonicalFederationJson(a) > canonicalFederationJson(b)
+          ? 1
+          : 0,
+    );
+}
+
+function reproductionDocument(
+  row: CognitiveReproductionRow,
+  components: CognitiveReproductionComponentRow[],
+): Record<string, unknown> {
+  return {
+    schema: "marina.cognitive-reproduction.v1",
+    id: row.id,
+    descendantIntellectId: row.descendant_intellect_id,
+    mode: row.mode,
+    parentIds: JSON.parse(row.parent_ids_json),
+    contributors: JSON.parse(row.contributors_json),
+    hypothesis: row.hypothesis,
+    evidenceRefs: JSON.parse(row.evidence_refs_json),
+    components: normalizedSignedComponents(
+      components.map((c) => ({
+        kind: c.kind,
+        ref: c.ref,
+        disposition: c.disposition,
+        sourceRef: c.source_ref,
+        metadata: JSON.parse(c.metadata_json) as Record<string, unknown>,
+      })),
+    ),
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+  };
+}
+
+export interface StoredSignatureVerification {
+  /** null = record is unsigned (no signing key at write time). */
+  valid: boolean | null;
+  keyId: string | null;
+  error?: string;
+}
+
+/** Re-check a stored reproduction record against its write-time signature. */
+export function verifyCognitiveReproduction(
+  db: Database,
+  row: CognitiveReproductionRow,
+): StoredSignatureVerification {
+  if (!row.signature_json) return { valid: null, keyId: null };
+  try {
+    const document = reproductionDocument(row, listReproductionComponents(db, row.id));
+    const result = verifyFederationDocument({
+      ...document,
+      signature: JSON.parse(row.signature_json),
+    });
+    return { valid: result.valid, keyId: result.keyId, error: result.error };
+  } catch (err) {
+    return { valid: false, keyId: null, error: (err as Error).message };
+  }
+}
+
+/** Re-check a stored genome row: manifest hash + write-time signature. */
+export function verifyMarinaGenome(row: MarinaGenomeRow): StoredSignatureVerification & {
+  hashValid: boolean;
+} {
+  let hashValid = false;
+  try {
+    const expected = `sha256:${createHash("sha256").update(row.manifest_json).digest("hex")}`;
+    hashValid = expected === row.hash;
+  } catch {}
+  if (!row.signature_json) return { valid: null, keyId: null, hashValid };
+  try {
+    const manifest = JSON.parse(row.manifest_json) as Record<string, unknown>;
+    const result = verifyFederationDocument({
+      ...manifest,
+      hash: row.hash,
+      signature: JSON.parse(row.signature_json),
+    });
+    return { valid: result.valid, keyId: result.keyId, error: result.error, hashValid };
+  } catch (err) {
+    return { valid: false, keyId: null, error: (err as Error).message, hashValid };
+  }
+}
+
 export function recordCognitiveReproduction(
   db: Database,
   input: {
@@ -94,7 +201,7 @@ export function recordCognitiveReproduction(
     contributors: input.contributors,
     hypothesis: input.hypothesis ?? "",
     evidenceRefs: input.evidenceRefs ?? [],
-    components: input.components,
+    components: normalizedSignedComponents(input.components),
     createdBy: input.createdBy,
     createdAt,
   };
@@ -264,10 +371,4 @@ export function verifySignedJson(document: Record<string, unknown>, signatureJso
   } catch {
     return { valid: false, keyId: null, error: "Malformed signed record" };
   }
-}
-
-function sign(document: Record<string, unknown>): string | null {
-  return federationSigningAvailable()
-    ? JSON.stringify(signFederationDocument(document).signature)
-    : null;
 }

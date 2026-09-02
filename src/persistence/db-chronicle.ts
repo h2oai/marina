@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Database } from "bun:sqlite";
+import { escapeLike } from "./fts";
 
 /**
  * Chronicle — the canonical, append-only record of the Marina.
@@ -155,7 +156,7 @@ export function queryChronicle(db: Database, q: ChronicleQuery = {}): ChronicleE
   if (q.like) {
     // Topic match against title OR body. Escape SQL LIKE wildcards so an
     // injected `%` or `_` in the query doesn't broaden the match.
-    const escaped = q.like.replace(/[\\%_]/g, "\\$&");
+    const escaped = escapeLike(q.like);
     clauses.push("(title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')");
     args.push(`%${escaped}%`, `%${escaped}%`);
   }
