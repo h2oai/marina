@@ -69,8 +69,10 @@ describe("agent.spawn gate sites refuse supervised-only (no self-certification)"
         room: roomId("test/start"),
       });
 
-      // Refused as supervised-only; nothing was spawned; no demonstration minted.
-      expect(sent.join("\n").toLowerCase()).toContain("supervised-only");
+      // Refused (guarded posture, no witness window); the refusal names the
+      // walkable path instead of a dead end; nothing was spawned; no
+      // demonstration was self-minted.
+      expect(sent.join("\n").toLowerCase()).toContain("witness request agent.spawn");
       expect(spawned).toBe(0);
       expect(db.getCompetence(acting.id, "agent.spawn")?.demonstrations ?? 0).toBe(0);
     } finally {

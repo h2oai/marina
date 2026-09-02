@@ -57,6 +57,7 @@ export const EXPORT_TABLES = [
   "principals",
   "world_variants",
   "federation_peers",
+  "witness_attestations",
   "bans",
   "adapter_links",
   "channels",

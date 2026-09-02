@@ -112,6 +112,7 @@ import { videoCommand } from "./commands/video";
 import { watchCommand } from "./commands/watch";
 import { webCommand } from "./commands/web";
 import { whoCommand } from "./commands/who";
+import { witnessCommand } from "./commands/witness";
 import { workCommand } from "./commands/work";
 import type { Engine } from "./engine";
 import { computeReadiness } from "./readiness";
@@ -480,6 +481,7 @@ export function registerBuiltinCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
       getTotalRoomCount: () => engine.rooms.all().length,
+      getAllCommands: () => engine.commands.allBuiltins(),
     }),
   );
   if (engine.db) {
@@ -740,6 +742,16 @@ export function registerBuiltinCommands(engine: Engine): void {
         db: engine.db,
         getEntity: (id) => engine.entities.get(id as EntityId),
         findAgentByName: (name) => engine.entities.findAgentByName(name),
+      }),
+    );
+    engine.commands.registerBuiltin(
+      witnessCommand({
+        db: engine.db,
+        getEntity: (id) => engine.entities.get(id as EntityId),
+        getAllEntities: () => engine.entities.all(),
+        resolveEntityIdByName: (name) =>
+          engine.entities.findAgentByName(name)?.id ??
+          engine.entities.all().find((e) => e.name.toLowerCase() === name.toLowerCase())?.id,
       }),
     );
     engine.commands.registerBuiltin(

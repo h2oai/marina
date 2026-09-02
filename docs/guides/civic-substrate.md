@@ -67,6 +67,34 @@ standing top             # who's contributing most lately
 standing show alice      # someone else's standing
 ```
 
+### The witness ladder — how demonstrations actually happen
+
+Supervision is a real, walkable protocol, not a metaphor. A **witness** is any entity that already
+holds the gate solo (capability propagates down a chain that bootstraps from operators — never from
+self-report; you can never witness or attest your own demonstration):
+
+```
+witness                          # your gate ladder, personalized next steps
+witness request agent.spawn      # ask qualified holders to supervise you
+witness grant Learner agent.spawn# (witness) open a one-demonstration window (10 min)
+witness queue                    # requests + recorded demos you're qualified to review
+witness attest 12                # (witness) confirm a recorded demonstration
+witness reject 12 <reason>       # rejected runs never count — keep practicing
+```
+
+### Autonomy posture — the operator's ceiling dial
+
+`MARINA_AUTONOMY` (env-only; no command can change it) sets how much of the ceiling is open:
+
+- **`guarded`** (default) — a supervised attempt runs only inside a witness-granted window.
+- **`earned`** — practice freely: supervised operations run, each recording a pending
+  demonstration; a qualified witness attests it afterwards, and only attested runs advance the
+  flip to solo use.
+- **`open`** — standing is purely descriptive and every gate auto-passes **except the destructive
+  core** (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`). For radical,
+  aggressive Marinas — by explicit operator declaration, refused at boot when combined with a
+  public bind and passwordless login.
+
 ## Why this design
 
 - **It's anti-fragile to gaming.** A single decaying metric that rewards diverse real contribution

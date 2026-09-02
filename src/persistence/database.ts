@@ -32,6 +32,7 @@ import * as reproductionDb from "./db-reproduction";
 import * as simulationsDb from "./db-simulations";
 import * as standingDb from "./db-standing";
 import * as tasksDb from "./db-tasks";
+import * as witnessDb from "./db-witness";
 import * as worldVariantsDb from "./db-world-variants";
 
 export type {
@@ -2686,6 +2687,32 @@ CREATE INDEX idx_event_log_entity ON event_log(json_extract(data, '$.entity'), i
   WHERE json_extract(data, '$.entity') IS NOT NULL;
 `,
   },
+  // Migration 95: the witness ledger — the previously-missing earnable path
+  // through the safety gates. Three row kinds: `request` (an agent asking for
+  // supervision), `window` (a witness-granted one-demonstration supervision
+  // window, TTL-bounded), and `pending` (an optimistically-run demonstration
+  // recorded under the `earned` autonomy posture, awaiting attestation).
+  {
+    version: 95,
+    sql: `
+CREATE TABLE witness_attestations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_id TEXT NOT NULL,
+  gate TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('request','window','pending')),
+  status TEXT NOT NULL DEFAULT 'open'
+    CHECK(status IN ('open','attested','rejected','expired','consumed')),
+  evidence TEXT,
+  witness_id TEXT,
+  reason TEXT,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER,
+  resolved_at INTEGER
+);
+CREATE INDEX idx_witness_attestations_open ON witness_attestations(status, gate, created_at);
+CREATE INDEX idx_witness_attestations_entity ON witness_attestations(entity_id, gate, status, kind);
+`,
+  },
 ];
 
 export interface OperationalAlertRow {
@@ -3585,6 +3612,34 @@ export class MarinaDB {
   grantCompetence(entityId: string, gate: string): void {
     competenceDb.grantCompetence(this.db, entityId, gate);
   }
+  // ─── Witness ledger (delegated to db-witness.ts) ─────────────────────
+
+  createWitnessRow(input: Parameters<typeof witnessDb.createWitnessRow>[1]) {
+    return witnessDb.createWitnessRow(this.db, input);
+  }
+  getWitnessRow(id: number) {
+    return witnessDb.getWitnessRow(this.reader, id);
+  }
+  getOpenSupervisionWindow(entityId: string, gate: string, now?: number) {
+    return witnessDb.getOpenWindow(this.db, entityId, gate, now);
+  }
+  consumeSupervisionWindow(entityId: string, gate: string, now?: number) {
+    return witnessDb.consumeWindow(this.db, entityId, gate, now);
+  }
+  resolveWitnessRow(
+    id: number,
+    status: Parameters<typeof witnessDb.resolveWitnessRow>[2],
+    input?: Parameters<typeof witnessDb.resolveWitnessRow>[3],
+  ) {
+    return witnessDb.resolveWitnessRow(this.db, id, status, input);
+  }
+  listOpenWitnessRows(opts?: Parameters<typeof witnessDb.listOpenWitnessRows>[1]) {
+    return witnessDb.listOpenWitnessRows(this.db, opts);
+  }
+  countAttestedDemonstrations(entityId: string, gate: string) {
+    return witnessDb.countAttested(this.reader, entityId, gate);
+  }
+
   revokeCompetence(entityId: string, gate: string): void {
     competenceDb.revokeCompetence(this.db, entityId, gate);
   }

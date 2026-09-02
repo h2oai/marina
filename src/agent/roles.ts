@@ -433,6 +433,16 @@ export function composeRolePrompt(role: ResolvedRole, taskCategory?: string): st
     sections.push(filtered.traitPrompts.join("\n\n"));
   }
 
+  // Suppression is visible, never silent: the agent is told which of its own
+  // traits are dormant for this task, so it can say so when one is missing
+  // instead of mysteriously lacking a capability it nominally has.
+  const dormant = role.traitNames.filter((name) => !filtered.traitNames.includes(name));
+  if (dormant.length > 0) {
+    sections.push(
+      `## Dormant Traits\nThese traits of yours are dormant for the current task category (${taskCategory}): ${dormant.join(", ")}. If the work turns out to need one, say so — the scoping is an inference, not a verdict.`,
+    );
+  }
+
   // Semantic capabilities section (composed from FILTERED traits so
   // suppressed traits don't contribute synergies/tensions either).
   const composed = composeCapabilities(filtered.traitNames, filtered.traitCapabilities);

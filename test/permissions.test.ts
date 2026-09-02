@@ -400,9 +400,11 @@ describe("Command Permissions", () => {
       expect(db.getCompetence(conn1.entity!, "admin.destructive")).toBeUndefined();
 
       await engine.processCommand(conn1.entity!, "admin stats");
-      // Refused — the command did not run…
+      // Refused — the command did not run… (guarded posture, no witness
+      // window; the refusal names the walkable witness path instead of a
+      // dead-end "supervised-only" label)
       expect(conn1.lastText()).not.toContain("Server Stats");
-      expect(conn1.lastText().toLowerCase()).toContain("supervised-only");
+      expect(conn1.lastText().toLowerCase()).toContain("witness request admin.destructive");
 
       // …and no demonstration was self-minted.
       expect(db.getCompetence(conn1.entity!, "admin.destructive")).toBeUndefined();

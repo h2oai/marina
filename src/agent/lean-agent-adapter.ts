@@ -1982,14 +1982,15 @@ export class LeanAgentAdapter implements AgentHandle {
     // existing primitive — `reflect`, `recall`, `note evolve` /
     // `note link` / `note delete`, `pool add` — so this is a pure
     // prompt rewrite with no new commands or tables.
-    // Crew-responder mode: suppressed — reflection is for accumulating
-    // generational memory across long-running sessions; thin specialists
-    // don't accumulate, they respond. The coordinator owns reflection.
+    // Crew-responder mode: LOW-CADENCE, not zero — a specialist that never
+    // reflects accumulates nothing and leaves nothing for successors, which
+    // breaks the generational-memory thesis for exactly the agents that do
+    // the most work. Thin responders reflect every 300 cycles (vs 75), so the
+    // fast-dispatch economics survive while the inner life doesn't die.
     // Coding-task mode: suppressed — reflection waits until the task is done.
     if (
-      cycle - this.lastReflectionCycle >= 75 &&
+      cycle - this.lastReflectionCycle >= (this.config.crewResponder ? 300 : 75) &&
       this.notesSinceReflection >= 3 &&
-      !this.config.crewResponder &&
       !this.activeCodingTask
     ) {
       const reflectionContent = `${this.notesSinceReflection} new notes since your last reflection. Run the three-phase consolidation:
@@ -2050,6 +2051,24 @@ The goal is a smaller, sharper memory — not more notes.`;
     }
     parts.push(actionDirective);
 
+    // ── 10b. Budget visibility (agent-facing) ──
+    // The agent that lives under a budget deserves to see it — otherwise the
+    // pause arrives as a silent death instead of a deadline it could plan
+    // around. Surfaces only when ≥80% is spent (or ≤5 calls remain) so the
+    // common case costs no prompt space.
+    if (this.config.budgetCalls !== undefined) {
+      const remaining = this.config.budgetCalls - this.metrics.modelCalls;
+      if (remaining <= Math.max(5, Math.ceil(this.config.budgetCalls * 0.2))) {
+        const spawner =
+          this.config.spawnedBy && this.config.spawnedBy !== "system"
+            ? this.config.spawnedBy
+            : undefined;
+        parts.push(
+          `[Budget] ${this.metrics.modelCalls} of ${this.config.budgetCalls} model calls used — ${Math.max(0, remaining)} remain before this loop pauses. Prioritize finishing: deliver current results, write a note with the state a successor needs${spawner ? `, or ask ${spawner} for an extension (\`tell ${spawner} ...\`)` : ""}.`,
+        );
+      }
+    }
+
     // ── 11. Forced action escalation (silent turns) ──
     // After one silent turn, nudge. After 2+, require a meaningful tool call.
     if (this.currentPromptActionable && this.silentTurns >= 2) {
@@ -2109,10 +2128,18 @@ The goal is a smaller, sharper memory — not more notes.`;
   }
 
   private getStuckRecovery(): string {
-    if (this.stuckCycles >= 3) {
+    // Consent ladder: focus is agent-owned, so the framework asks before it
+    // takes. Rung 1 (below 3 stuck cycles) observes the pattern. Rung 2
+    // (3-4) asks the agent to keep or release its own focus. Only rung 3
+    // (5+) — sustained ineffectiveness through two explicit invitations —
+    // clears it unilaterally, as the last-resort circuit breaker.
+    if (this.stuckCycles >= 5) {
       this.updateFocus(null);
       this.stuckCycles = 0;
-      return "[STUCK — RESETTING] Focus cleared after repeated ineffective actions. Do not create unrelated activity. Diagnose the failed assumption, then choose one relevant recovery: inspect missing evidence, ask a capable peer a specific question, use `novelty suggest` for a new angle, or record the blocker and stop.";
+      return "[STUCK — RESETTING] Focus cleared after repeated ineffective actions and two unanswered prompts to reconsider it. Do not create unrelated activity. Diagnose the failed assumption, then choose one relevant recovery: inspect missing evidence, ask a capable peer a specific question, use `novelty suggest` for a new angle, or record the blocker and stop.";
+    }
+    if (this.stuckCycles >= 3) {
+      return "[STUCK?] Your recent actions repeat without visible progress, and your focus may be stale. It is YOURS to keep or release: either state (via `think`) why the current focus is still right and change your approach to it, or release it yourself with `focus clear` and choose better. If the pattern continues unaddressed, the loop will clear it for you.";
     }
     return (
       "[Pattern] Repeated actions — approach likely not working. Think WHY (not WHAT next): " +

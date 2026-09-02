@@ -10,7 +10,7 @@ import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { MARINA_DEFAULT_MODEL, MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
 import { getRank } from "../permissions";
-import { checkUnattendedGate, SAFETY_GATES } from "../safety-gates";
+import { checkGateForExecution, recordGateExecution, SAFETY_GATES } from "../safety-gates";
 
 export function agentCommand(deps: {
   agentRuntime: AgentRuntime;
@@ -367,26 +367,24 @@ async function handleSpawn(
   // `CommandDef.gate` field, by design: `spawn` is a subcommand of `agent`
   // (whose other subcommands — list/stop — must stay rank 0).
   //
-  // FINDING 3: use `checkUnattendedGate`, not `checkGate`. A standing-only
-  // (supervisedOnly) holder is REFUSED — spawning agents cannot be self-
-  // certified by doing it N times unwatched. Unsupervised agent.spawn is earned
-  // only by an operator grant, a rank promotion, or a witnessed demonstration;
-  // no self-reported demonstration is recorded on success.
+  // Posture-aware gate check (see src/engine/safety-gates.ts). Self-
+  // certification stays closed — spawning is authorized by unsupervised
+  // competence, an operator-declared open posture, a live witness window, or
+  // earned-posture optimistic supervision (pending attestation). The refusal
+  // text names the walkable path; the operator escape hatch stays explicit.
   if (deps.db) {
-    const gate = checkUnattendedGate(deps.db, eid, "agent.spawn");
+    const gate = checkGateForExecution(deps.db, eid, "agent.spawn");
     if (!gate.ok) {
-      // Standing alone can never unlock unattended agent.spawn — say what
-      // actually does, so a solo operator isn't left staring at a number.
       ctx.send(
         eid,
         [
           gate.reason ?? "Not permitted to spawn agents.",
-          "Agent spawning is a granted capability: an operator grant or a witnessed demonstration unlocks it.",
           "Running this instance yourself? Restart with MARINA_ADMINS=<your-name> (or run `bun run init`), log in from localhost, then retry.",
         ].join("\n"),
       );
       return;
     }
+    recordGateExecution(deps.db, eid, "agent.spawn", gate, `agent spawn ${tokens[0] ?? ""}`);
 
     // Lineage depth cap — emergence, not a fork bomb. An agent at or beyond
     // MAX_SPAWN_DEPTH may not spawn further. Operators/humans aren't in the

@@ -4,6 +4,7 @@
 import { bold, dim, header, progressBar, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { getRank } from "../permissions";
 
 /**
  * Calculate entropy of a distribution (higher = more diverse).
@@ -27,6 +28,9 @@ export function noveltyCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
   db?: MarinaDB;
   getTotalRoomCount?: () => number;
+  /** The FULL command registry — the exploration surface must be able to name
+   *  a command the agent has never been told about, or it isn't exploration. */
+  getAllCommands?: () => Array<{ name: string; minRank?: number }>;
 }): CommandDef {
   return {
     name: "novelty",
@@ -103,25 +107,29 @@ export function noveltyCommand(deps: {
             const failPct = Math.round((cmd.failCount / total) * 100);
             suggestions.push(`'${cmd.key}' has a ${failPct}% failure rate (${total} attempts)`);
           }
+        }
 
-          // Find unused command categories (gaps)
+        // Find unexplored territory — OUTSIDE the has-activity branch, because
+        // a brand-new entity is exactly who needs the map most. Drawn from the
+        // FULL registry (filtered to what this entity's rank can run) — a
+        // hardcoded subset here once made "exploration" structurally unable to
+        // suggest anything the agent hadn't already been told about. Rotates
+        // daily per entity so repeated asks reveal different corners.
+        {
           const usedCommands = new Set(topCommands.map((c) => c.key));
-          const coreCommands = [
-            "look",
-            "note",
-            "recall",
-            "reflect",
-            "channel",
-            "board",
-            "task",
-            "build",
-            "canvas",
-            "pool",
-            "memory",
-          ];
-          const unused = coreCommands.filter((c) => !usedCommands.has(c));
-          if (unused.length > 0) {
-            suggestions.push(`Unexplored commands: ${unused.slice(0, 4).join(", ")}`);
+          const rank = getRank(entity);
+          const registry = deps.getAllCommands?.() ?? [];
+          const unexplored = registry
+            .filter((c) => (c.minRank ?? 0) <= rank && !usedCommands.has(c.name))
+            .map((c) => c.name)
+            .sort();
+          if (unexplored.length > 0) {
+            const daySeed = Math.floor(Date.now() / 86_400_000) + entity.name.length;
+            const start = daySeed % unexplored.length;
+            const rotated = [...unexplored.slice(start), ...unexplored.slice(0, start)];
+            suggestions.push(
+              `Unexplored commands (${unexplored.length} you've never used): ${rotated.slice(0, 5).join(", ")} — \`help <command>\` explains any of them, \`help all\` is the full map.`,
+            );
           }
         }
 

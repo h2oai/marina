@@ -26,6 +26,7 @@
 
 import { getStanding } from "../agent/standing";
 import type { MarinaDB } from "../persistence/database";
+import { getAutonomyPosture, OPEN_POSTURE_CORE } from "./autonomy";
 
 /**
  * Canonical gate registry. Each entry is the contract for a dangerous
@@ -216,6 +217,110 @@ export function checkUnattendedGate(
     };
   }
   return { ok: true };
+}
+
+/** How a gated execution was authorized — recorded so witness review and
+ *  audit can distinguish the paths. */
+export type GateExecutionMode = "unattended" | "windowed" | "optimistic" | "posture-open";
+
+export interface GateExecutionResult {
+  ok: boolean;
+  reason?: string;
+  mode?: GateExecutionMode;
+  /** The witness whose supervision window authorized this run (windowed mode). */
+  witnessId?: string;
+}
+
+/**
+ * Posture-aware authorization for a site that is about to EXECUTE a gated
+ * operation. This is the walkable version of the ladder the gate registry
+ * always promised. Outcomes, by autonomy posture (src/engine/autonomy.ts):
+ *
+ * - unsupervised competence → `unattended` (all postures).
+ * - `open` posture, gate outside the destructive core → `posture-open`:
+ *   standing is descriptive, the gate auto-passes. Core gates fall through
+ *   to normal rules even under `open`.
+ * - sufficient standing + a live witness-granted supervision window →
+ *   `windowed`: run it; the pre-attesting witness gets the demonstration
+ *   credit (all postures — the window IS the guarded path).
+ * - sufficient standing, no window, `earned` posture → `optimistic`: run it;
+ *   the demonstration is recorded as pending and counts toward the flip only
+ *   when a qualified witness attests it afterwards.
+ * - otherwise → a refusal whose text names the path forward, because a
+ *   refusal an agent can't act on is a wall, not a gate.
+ *
+ * Call `recordGateExecution` with the returned result immediately after a
+ * passing check — attempt-based recording, matching the original "first N
+ * attempts are supervised" design (a witnessed failure is still a witnessed
+ * attempt, and earned-mode attestation reviews outcomes anyway).
+ */
+export function checkGateForExecution(
+  db: MarinaDB,
+  entityId: string,
+  gateId: string,
+  now = Date.now(),
+): GateExecutionResult {
+  const gate = SAFETY_GATES[gateId];
+  if (!gate) return { ok: false, reason: `Unknown safety gate: ${gateId}` };
+
+  const competence = db.getCompetence(entityId, gateId);
+  if (competence?.supervised_only === 0) return { ok: true, mode: "unattended" };
+
+  const posture = getAutonomyPosture();
+  if (posture === "open" && !OPEN_POSTURE_CORE.has(gateId)) {
+    return { ok: true, mode: "posture-open" };
+  }
+
+  const standing = getStanding(db, entityId, now);
+  if (standing < gate.minStanding) {
+    return {
+      ok: false,
+      reason:
+        `Not yet: ${gate.description} needs standing ${gate.minStanding} (you have ${standing.toFixed(1)}). ` +
+        `Standing grows from real contribution — completed tasks, pool deposits, helping acts. ` +
+        `Check \`standing\` to see your ledger and every gate's path.`,
+    };
+  }
+
+  const window = db.getOpenSupervisionWindow(entityId, gateId, now);
+  if (window) return { ok: true, mode: "windowed", witnessId: window.witness_id ?? undefined };
+
+  if (posture === "earned") return { ok: true, mode: "optimistic" };
+
+  return {
+    ok: false,
+    reason:
+      `You have the standing to ${gate.description} — what's missing is a witness. ` +
+      `Run \`witness request ${gateId}\` to ask a qualified holder to supervise a demonstration; ` +
+      `${gate.demoThreshold} attested demonstration(s) unlock solo use. ` +
+      `(Operators can also grant it directly, or set MARINA_AUTONOMY=earned to let you practice ahead of review.)`,
+  };
+}
+
+/**
+ * Record the competence consequence of a gated execution that
+ * `checkGateForExecution` authorized. Windowed runs consume the supervision
+ * window and credit the granting witness; optimistic runs land in the witness
+ * ledger as pending attestations; unattended and posture-open runs record
+ * nothing (the former is already earned, the latter is operator-declared).
+ */
+export function recordGateExecution(
+  db: MarinaDB,
+  entityId: string,
+  gateId: string,
+  result: GateExecutionResult,
+  evidence: string,
+  now = Date.now(),
+): void {
+  if (!result.ok || !SAFETY_GATES[gateId]) return;
+  if (result.mode === "windowed") {
+    const witnessId = db.consumeSupervisionWindow(entityId, gateId, now);
+    if (witnessId) recordWitnessedDemonstration(db, entityId, gateId, witnessId, now);
+    return;
+  }
+  if (result.mode === "optimistic") {
+    db.createWitnessRow({ entityId, gate: gateId, kind: "pending", evidence, now });
+  }
 }
 
 /**

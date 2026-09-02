@@ -1460,16 +1460,26 @@ describe("tool profiles", () => {
     expect(COMMAND_ROSTER).toContain("code status");
     expect(COMMAND_ROSTER).toContain("focus");
     expect(COMMAND_ROSTER).toContain("watch");
-    // Compact: under 1.5KB so the schema bump is negligible.
-    expect(COMMAND_ROSTER.length).toBeLessThan(1500);
+    // Discovery lines the roster must never lose again (the inventory found
+    // agents were never told about their own ledger or the full map):
+    expect(COMMAND_ROSTER).toContain("standing");
+    expect(COMMAND_ROSTER).toContain("witness");
+    expect(COMMAND_ROSTER).toContain("desire");
+    expect(COMMAND_ROSTER).toContain("help all");
+    // Compact: raised 1500 → 2100 (2026-09-01) for the Becoming + full-map
+    // lines. Still negligible next to the prompt; raise deliberately only.
+    expect(COMMAND_ROSTER.length).toBeLessThan(2100);
   });
 
-  it("createCommandTool description is terse for verbose mode (full profile)", () => {
-    // Full profile already has 27 typed descriptions; the universal tool
-    // stays terse so we don't double-pay the roster cost.
+  it("createCommandTool description carries the roster for verbose mode too (full profile)", () => {
+    // DELIBERATE inversion fix (2026-09-01): the roster used to ship compact-
+    // only, which gave the most capable (full-profile) agents the LEAST
+    // enumeration of their own world. All profiles now get the map; the
+    // ~2KB schema cost is the price of discovery.
     const tool = createCommandTool({} as never, "verbose");
-    expect(tool.description.length).toBeLessThan(200);
-    expect(tool.description).not.toContain("Common world commands");
+    expect(tool.description).toContain("Common world commands");
+    expect(tool.description).toContain("help all");
+    expect(tool.description.length).toBeLessThan(3000);
   });
 
   it("createCommandTool description embeds the roster for compact mode (crew/minimal)", () => {

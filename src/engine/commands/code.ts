@@ -50,7 +50,12 @@ import type {
 } from "../../types";
 import { sanitizeEntityName } from "../entity-name";
 import { getRank } from "../permissions";
-import { checkUnattendedGate, grant, recordDemonstration } from "../safety-gates";
+import {
+  checkGateForExecution,
+  grant,
+  recordDemonstration,
+  recordGateExecution,
+} from "../safety-gates";
 
 const ACTIVE_SESSION_KEY = "coding_session_id";
 const ACTIVE_MODAL_KEY = "active_modal";
@@ -1045,11 +1050,11 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         }
         // The narrower gated set (earned competence). patch/propose stay rank 0
         // (read/propose are open per policy) and so are NOT gated here.
-        // `checkUnattendedGate` refuses a standing-only (supervisedOnly) holder:
-        // code.exec cannot be self-certified by running the op — it must be
-        // granted or witnessed (Finding 3). No self-reported demonstration here.
+        // Posture-aware check: self-certification stays closed, while witness
+        // windows, earned-posture reviewed practice, and an operator-declared
+        // open posture authorize with their consequence recorded.
         if (CODE_EXEC_SUBCOMMANDS.has(canonicalSub) || mutatesSandbox || isProject) {
-          const gate = checkUnattendedGate(depsWithDb.db, input.entity, "code.exec");
+          const gate = checkGateForExecution(depsWithDb.db, input.entity, "code.exec");
           if (!gate.ok) {
             ctx.send(
               input.entity,
@@ -1058,6 +1063,13 @@ export function codeCommand(deps: CodeDeps): CommandDef {
             );
             return;
           }
+          recordGateExecution(
+            depsWithDb.db,
+            input.entity,
+            "code.exec",
+            gate,
+            `code ${canonicalSub}`,
+          );
         }
 
         switch (canonicalSub) {
@@ -1739,7 +1751,7 @@ async function handleWorktree(
     ctx.send(eid, NO_CODE_ROOT_DENY);
     return;
   }
-  const gate = checkUnattendedGate(deps.db, eid, "code.exec");
+  const gate = checkGateForExecution(deps.db, eid, "code.exec");
   if (!gate.ok) {
     ctx.send(
       eid,
@@ -1748,6 +1760,7 @@ async function handleWorktree(
     );
     return;
   }
+  recordGateExecution(deps.db, eid, "code.exec", gate, "code worktree");
   const hostExecForbidden = deps.hostExecForbidden === true;
 
   if (enabling) {
@@ -2527,10 +2540,11 @@ async function assembleCodingCrew(
     if (!deps.agentRuntime?.spawn) continue;
     if (deps.agentRuntime.isAvailable && !deps.agentRuntime.isAvailable()) continue;
     if (!gateChecked) {
-      const gate = checkUnattendedGate(deps.db, eid, "agent.spawn");
+      const gate = checkGateForExecution(deps.db, eid, "agent.spawn");
       gateChecked = true;
       gateOk = gate.ok;
       gateReason = gate.reason;
+      if (gate.ok) recordGateExecution(deps.db, eid, "agent.spawn", gate, "code crew assembly");
     }
     if (!gateOk) {
       ctx.send(eid, dim(`Skipping ${role}: ${gateReason ?? "not permitted to spawn agents."}`));
@@ -2889,10 +2903,14 @@ async function doCode(
   // before we recruit/bind/spawn a coder and grant IT code.exec on the
   // dispatcher's behalf. Otherwise a standing-0 caller drives arbitrary host
   // execution through a plain Code Mode task, never touching a gated subcommand.
-  // `checkUnattendedGate` also refuses a supervised-only dispatcher — the drive-
-  // by path cannot be self-certified. Delegation of code.exec to the coder is
-  // only legitimate when the dispatcher already holds it.
-  const dispatcherGate = checkUnattendedGate(deps.db, eid, "code.exec");
+  // Posture-aware: the drive-by path still cannot be self-certified, while
+  // witness windows / earned-posture practice / open posture authorize the
+  // dispatcher with the consequence recorded. Delegation of code.exec to the
+  // coder is only legitimate when the dispatcher is itself authorized.
+  const dispatcherGate = checkGateForExecution(deps.db, eid, "code.exec");
+  if (dispatcherGate.ok) {
+    recordGateExecution(deps.db, eid, "code.exec", dispatcherGate, "code task dispatch");
+  }
   if (!dispatcherGate.ok) {
     ctx.send(
       eid,
@@ -3013,14 +3031,15 @@ async function ensureSessionAgent(
     ctx.send(eid, "No LLM provider configured — set a provider key, then a coding agent can run.");
     return null;
   }
-  // agent.spawn via `checkUnattendedGate`: a supervised-only holder cannot
-  // self-certify by spawning coders (Finding 3). No demonstration is recorded
-  // from this self-reported success.
-  const gate = checkUnattendedGate(deps.db, eid, "agent.spawn");
+  // Posture-aware agent.spawn: self-certification stays closed; witness
+  // windows, earned-posture practice, and open posture authorize with the
+  // consequence recorded.
+  const gate = checkGateForExecution(deps.db, eid, "agent.spawn");
   if (!gate.ok) {
     ctx.send(eid, gate.reason ?? "Not permitted to launch a coding agent (requires agent.spawn).");
     return null;
   }
+  recordGateExecution(deps.db, eid, "agent.spawn", gate, "code session coder");
   const name = uniqueSpawnAgentName(deps.agentRuntime.list?.() ?? [], "coder", session.id);
   const modelTarget = modelTargetForAgentSpawn(getSessionModelTarget(deps.db, session.id));
   try {
@@ -3691,14 +3710,16 @@ async function runApprovedSpawnRequest(
   // enforce the agent.spawn safety gate here rather than bypassing it from
   // inside Code Mode. The session-level approval artifact is a human review
   // step; the gate is the civic-substrate competence proof.
-  // checkUnattendedGate: the session-level approval artifact is a human review
-  // of the *request*, not an attestation of gate competence — a supervised-only
-  // entity is still refused (Finding 3) and no demonstration is self-recorded.
-  const gate = checkUnattendedGate(deps.db, eid, "agent.spawn");
+  // Posture-aware: the session-level approval artifact is a human review of
+  // the *request*, not an attestation of gate competence — so the gate is
+  // checked independently, with witness windows / earned practice / open
+  // posture honored and their consequence recorded.
+  const gate = checkGateForExecution(deps.db, eid, "agent.spawn");
   if (!gate.ok) {
     ctx.send(eid, gate.reason ?? "Not permitted to spawn agents.");
     return;
   }
+  recordGateExecution(deps.db, eid, "agent.spawn", gate, "code agent-spawn artifact");
 
   const meta = parseJsonObject(artifact.metadata_json);
   const role = typeof meta.role === "string" ? meta.role : "implementer";

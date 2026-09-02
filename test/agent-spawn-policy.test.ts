@@ -127,8 +127,9 @@ describe("agent spawn command — permission layer (integration)", () => {
     db.recordStandingEarned(alice.entity!, "alice", taskId, 60);
     alice.clear();
     await engine.processCommand(alice.entity!, "agent spawn helper");
-    // Refused as supervised-only — cannot be self-certified by spawning.
-    expect(output()).toContain("Supervised-only");
+    // Refused (guarded posture, no witness window) — cannot be self-certified
+    // by spawning; the refusal names the walkable path instead of a dead end.
+    expect(output()).toContain("witness request agent.spawn");
     // And crucially: no demonstration was minted from the refused attempt.
     expect(db.getCompetence(alice.entity!, "agent.spawn")?.demonstrations ?? 0).toBe(0);
   });

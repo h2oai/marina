@@ -6,6 +6,7 @@ import { getInternalModelToken } from "./agent/agent-runtime";
 import { RateLimiter } from "./auth/rate-limiter";
 import { parseExecUnrestricted } from "./coding/exec-approver";
 import { ensureConfiguredRoots } from "./coding/workspace-registry";
+import { describeAutonomyPosture, getAutonomyPosture } from "./engine/autonomy";
 import {
   DASHBOARD_BROADCAST_INTERVAL_MS,
   MARINA_LOGIN_ATTEMPTS_PER_MIN,
@@ -115,6 +116,30 @@ if (!LOOPBACK_ONLY_BIND && !INSECURE_PUBLIC_ACK) {
     logger.error("security", msg);
     throw new Error(msg);
   }
+}
+
+// Autonomy posture gate: an OPEN posture means any logged-in entity can spawn
+// agents, federate, and execute workspace code — combined with a public bind
+// and passwordless login that would hand those capabilities to the whole
+// network. A radical Marina is the OPERATOR's radical Marina.
+if (
+  getAutonomyPosture() === "open" &&
+  !LOOPBACK_ONLY_BIND &&
+  !AUTH_ENABLED &&
+  !INSECURE_PUBLIC_ACK
+) {
+  const msg =
+    `FATAL: MARINA_AUTONOMY=open combined with a NON-LOOPBACK bind ` +
+    `("${RESOLVED_WS_HOST}") and passwordless login would grant gated capabilities ` +
+    `to anyone who can reach this host. Fix ONE of:\n` +
+    `  • keep it local: unset WS_HOST/MARINA_HOST/MARINA_PUBLIC, or\n` +
+    `  • require sign-in: set MARINA_AUTH=better-auth, or\n` +
+    `  • accept the risk explicitly: set MARINA_ALLOW_INSECURE_PUBLIC=true.`;
+  logger.error("security", msg);
+  throw new Error(msg);
+}
+if (getAutonomyPosture() !== "guarded") {
+  logger.info("autonomy", `Autonomy posture: ${describeAutonomyPosture()}`);
 }
 
 const db = new MarinaDB(DB_PATH);
@@ -550,6 +575,7 @@ if (
       `Marina "${INSTANCE_NAME}" is up · world: ${world.name}`,
       `  ${surfaces.join(" · ")}`,
       `  Federate: gateway add <name> ws://<host>:${boundWsPort}/ws`,
+      `  Autonomy: ${describeAutonomyPosture()}`,
     ].join("\n"),
   );
 }

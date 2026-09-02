@@ -46,6 +46,7 @@ import type {
 import { EntityManager } from "../world/entity-manager";
 import { type LoadedRoom, RoomManager } from "../world/room-manager";
 import type { WorldDefinition } from "../world/world-definition";
+import { getAutonomyPosture } from "./autonomy";
 import { BenchmarkRunner } from "./benchmark-runner";
 import { BriefManager } from "./brief-manager";
 import { recordEngineCognition } from "./cognitive-provenance";
@@ -79,7 +80,7 @@ import { MediaManager } from "./media/manager";
 import { getRank, rankName, setRank } from "./permissions";
 import { computeReadiness } from "./readiness";
 import { RoomSandbox } from "./room-sandbox";
-import { checkUnattendedGate, grantGatesForRank } from "./safety-gates";
+import { checkGateForExecution, grantGatesForRank, recordGateExecution } from "./safety-gates";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
 import { ShellRuntime } from "./shell-runtime";
 
@@ -912,10 +913,17 @@ export class Engine {
       return;
     }
 
-    // Enforce minRank on built-in commands
+    // Enforce minRank on built-in commands. Under the `earned` / `open`
+    // autonomy postures, a command that declares a safety gate defers its
+    // rank check to the gate — auto-derived rank caps at 4 while gated
+    // commands historically demanded 5, which double-locked the ladder the
+    // gate registry promised. The gate (with its standing floor, witness
+    // path, and destructive-core carve-out) is the real authority; the rank
+    // gate remains for ungated commands and for the default guarded posture.
     if (def?.minRank && def.minRank > 0) {
       const rank = getRank(entity);
-      if (rank < def.minRank) {
+      const gateIsAuthority = Boolean(def.gate && this.db && getAutonomyPosture() !== "guarded");
+      if (rank < def.minRank && !gateIsAuthority) {
         this.sendToEntity(
           entityId,
           `You must be at least ${rankName(def.minRank)} (rank ${def.minRank}) to use "${def.name}".`,
@@ -926,24 +934,22 @@ export class Engine {
     }
 
     // Enforce safety gate if declared. A gate is a per-operation competence
-    // proof — see src/engine/safety-gates.ts. Every command that declares
-    // `def.gate` (shell.exec, agent.run, adapter.enable, connect.manage,
-    // gateway.connect, key.manage, admin.destructive) is an UNATTENDED dangerous
-    // op dispatched through the router with no live witness or per-command human
-    // approver in the loop. So this uses `checkUnattendedGate`, NOT `checkGate`:
-    // a standing-only (supervisedOnly) holder is REFUSED. Otherwise the router
-    // itself would let an entity self-certify a gate by running the op N times
-    // unwatched (the demos recorded here). Unsupervised competence is earned
-    // only by an operator grant, a rank promotion (`grantGatesForRank`), or an
-    // externally-witnessed demonstration (`recordWitnessedDemonstration`) —
-    // never self-report.
+    // proof — see src/engine/safety-gates.ts. Self-certification stays closed
+    // (a standing-only holder is refused in guarded posture with no window),
+    // but the ladder is now walkable: `checkGateForExecution` authorizes via
+    // unsupervised competence, an operator-declared open posture (non-core
+    // gates), a live witness-granted supervision window, or — under the
+    // `earned` posture — optimistic supervision whose demonstration counts
+    // only after a qualified witness attests it. `recordGateExecution`
+    // writes the competence consequence of whichever path authorized us.
     if (def?.gate && this.db) {
-      const result = checkUnattendedGate(this.db, entityId, def.gate);
+      const result = checkGateForExecution(this.db, entityId, def.gate);
       if (!result.ok) {
         this.sendToEntity(entityId, result.reason ?? `Gate "${def.gate}" denied.`);
         recordUsage(false);
         return;
       }
+      recordGateExecution(this.db, entityId, def.gate, result, `command:${def.name}`);
     }
 
     const ctx = this.buildCommandContext(entity.room, entityId) ?? this.buildContext(entity.room);

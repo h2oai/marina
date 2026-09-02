@@ -119,10 +119,11 @@ describe("getLeanSystemPrompt", () => {
     });
 
     it("keeps the base prompt within a compact length budget", () => {
-      // Current base prompt (with tool prose) is ~4k chars. The budget is a
-      // tripwire against prompt bloat — if a change legitimately needs more
-      // room, raise this deliberately rather than letting it drift.
-      const BUDGET = 6000;
+      // The budget is a tripwire against prompt bloat — raise it deliberately,
+      // never by drift. Raised 6000 → 7000 (2026-09-01) for the discovery
+      // repair: the Discover/Become lines that tell an agent about `help all`,
+      // `novelty suggest`, its `standing` ledger, and the `witness` ladder.
+      const BUDGET = 7000;
       expect(getLeanSystemPrompt(null).length).toBeLessThan(BUDGET);
     });
   });

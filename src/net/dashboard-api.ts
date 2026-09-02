@@ -13,7 +13,11 @@ import { evolutionBudgetState, parseEvolutionProtocol } from "../engine/evolutio
 import { tracesToOtlpJson } from "../engine/otlp-trace-export";
 import { getRank } from "../engine/permissions";
 import { computeReadiness } from "../engine/readiness";
-import { checkUnattendedGate } from "../engine/safety-gates";
+import {
+  checkGateForExecution,
+  checkUnattendedGate,
+  recordGateExecution,
+} from "../engine/safety-gates";
 import { analyzeTraces } from "../engine/trace-analytics";
 import { buildTraceDataset, compareTraceCohorts } from "../engine/trace-dataset";
 import { evaluateTrace } from "../engine/trace-evaluation";
@@ -250,12 +254,18 @@ function authorizePrivileged(
   if (isOperatorPrincipal(callerId)) return null; // desktop operator credential
   const entity = engine.entities.get(callerId);
   if (entity && getRank(entity) >= 9) return null; // sovereign admin
-  // `checkUnattendedGate`, not `checkGate`: a standing-only (supervisedOnly)
-  // holder must NOT pass a privileged HTTP op — that path has no live witness or
-  // per-command human approver, so a farmed-standing entity would otherwise
-  // self-authorize. Only genuinely unsupervised competence (grant / rank promo /
-  // witnessed demo) qualifies.
-  if (db && checkUnattendedGate(db, callerId, gateId).ok) return null; // granted / earned the gate
+  // Posture-aware execution check: self-certification stays closed (a
+  // standing-only holder is refused in guarded posture with no window), but
+  // the gate authorizes via unsupervised competence, an operator-declared
+  // open posture (non-core gates), a live witness window, or earned-posture
+  // optimistic supervision — with the competence consequence recorded.
+  if (db) {
+    const gate = checkGateForExecution(db, callerId, gateId);
+    if (gate.ok) {
+      recordGateExecution(db, callerId, gateId, gate, `api:${gateId}`);
+      return null;
+    }
+  }
   return json(
     { error: `Not authorized: this action requires an admin or the "${gateId}" capability.` },
     403,

@@ -18,6 +18,7 @@ import {
   parseScore,
   type Score,
 } from "../../coordination/score";
+import { getAutonomyPosture } from "../../engine/autonomy";
 import type { MarinaClient } from "../../sdk/client";
 import { runScore } from "../../sdk/conduct";
 import type { Perception } from "../../types";
@@ -94,21 +95,34 @@ World: look [target], goto <room>, examine <thing>, who, inventory.
 Talk: say <msg>, tell <name> <msg>, channel send <name> <msg>, channel list.
 Memory: note <text>, recall <query>, reflect [topic], pool <name> add <content>, pool <name> recall <query>, skill search <query>, skill store <name> | <desc> | <actions>.
 Self: brief, brief full, focus set <desc>, focus clear, task goal <title> | <desc>, task progress <id> +N, novelty stats, novelty suggest.
+Becoming: standing (your ledger + every gate's path), witness (earn gated capabilities through supervised demonstrations), desire <one sentence> (begin an evidence-linked journey), journey progress.
 Coordination: project list, canvas intent list, canvas intent claim <id>, canvas intent complete <id> <result>, feed list [--kind X --since 30m].
 Code: code status, code files [path], code read <path>, code search <query>, code diff, code verify, code recipe list/run/save, code checkpoint, code revert <id>, code approvals, code approval request <kind> <desc>, code model set <target>, code skill list/add/use, code crew <goal>, code external link <system> <id>, code observe <note>, code patch <title>, code artifacts, code pin <id>, code unpin <id>, code archive <id>.
 Web: web search <query>, web fetch <url>.
 Probe / watch (resolvers): probe <kind> <args>, watch list, watch create <kind> <args>.
 Bettor / markets: market list, market info <id>, market forecast <id>, position open <leg>, position confirm <id>.
+This roster is a sample, not the world: \`help all\` lists every command, \`help <command>\` explains one, \`novelty suggest\` points at territory you haven't touched.
 Recall is intent-aware: "how to X" weights relevance, "when did X" weights recency.`;
+
+/** Extra roster lines surfaced when the operator has opened the ceiling —
+ *  under `earned`/`open` postures agents are TOLD about the open-ended layer
+ *  so emergence gets the chance the ledgers were built for. */
+export const ECOLOGY_ROSTER = `Open-ended (this world's autonomy posture invites you to use these):
+association create/join/relate (open relationships across anything), mesh list/join/publish (transparent cross-Marina federation), intellect declare (portable identity), lab manifest/run (declared experiments), economy contract (asset-neutral claims), reproduce intellect (attributable descendants).`;
 
 export function createCommandTool(
   ctx: ToolContext,
   rosterMode: "compact" | "verbose" = "verbose",
 ): AgentTool<typeof commandSchema> {
+  // The roster ships to EVERY profile. It was previously compact-only, which
+  // inverted discovery: the most capable (full-profile) agents got the least
+  // enumeration of their own world.
+  const posture = getAutonomyPosture();
+  const roster = posture === "guarded" ? COMMAND_ROSTER : `${COMMAND_ROSTER}\n${ECOLOGY_ROSTER}`;
   const description =
     rosterMode === "compact"
-      ? `Execute any raw command in the Marina world. This is your universal escape hatch — anything you can do in a typed tool, you can also do here as a string command.\n\n${COMMAND_ROSTER}`
-      : "Execute any raw command in the Marina world. Prefer dedicated tools when available.";
+      ? `Execute any raw command in the Marina world. This is your universal escape hatch — anything you can do in a typed tool, you can also do here as a string command.\n\n${roster}`
+      : `Execute any raw command in the Marina world. Prefer dedicated tools when available.\n\n${roster}`;
   return {
     name: "marina_command",
     label: "Execute Command",
