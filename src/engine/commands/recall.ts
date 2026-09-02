@@ -19,6 +19,14 @@ import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { DAY_MS } from "../constants";
 import { extractFlags, extractModifiers } from "../parse-input";
 
+/** One-line preview that cuts at a word boundary with an ellipsis instead of
+ *  chopping mid-word (".. the readiness command is ex" reads like a bug). */
+function previewText(s: string, max = 100): string {
+  if (s.length <= max) return s;
+  const cut = s.lastIndexOf(" ", max);
+  return `${s.slice(0, cut > max * 0.6 ? cut : max)}…`;
+}
+
 /** Auto-detect query intent and return adjusted weights */
 function detectIntent(query: string): {
   weightImportance: number;
@@ -224,7 +232,7 @@ export function recallCommand(deps: {
         ...results.flatMap((n) => {
           const age = Math.floor((now - n.created_at) / DAY_MS);
           const ageStr = age === 0 ? "today" : `${age}d ago`;
-          const base = `  ${id(n.id)} ${fmtScore(n.score)} ${importance(n.importance)} ${dim(ageStr)} ${n.content.slice(0, 60)}`;
+          const base = `  ${id(n.id)} ${fmtScore(n.score)} ${importance(n.importance)} ${dim(ageStr)} ${previewText(n.content)}`;
           if (!flags.has("explain")) return [base];
           const sources = db.getNoteSources(n.id);
           const credibility =

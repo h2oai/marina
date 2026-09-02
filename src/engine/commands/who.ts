@@ -13,7 +13,14 @@ export function whoCommand(
   getRoomShort?: (roomId: string) => string | undefined,
   getLastActivityAt?: (entityName: string) => number | null,
   getCrews?: () => Crew[],
+  isRuntimeAgent?: (entityName: string) => boolean,
 ): CommandDef {
+  // Every login shares kind "agent" by design (humans and agents are equal
+  // entities). For the roster, distinguish runtime-driven agents from other
+  // participants (humans, external SDK clients) so a human isn't listed as
+  // an "agent" on their first `who`.
+  const displayKind = (e: Entity): string =>
+    e.kind === "agent" && isRuntimeAgent && !isRuntimeAgent(e.name) ? "participant" : e.kind;
   return {
     name: "who",
     aliases: [],
@@ -25,12 +32,18 @@ export function whoCommand(
         return;
       }
 
-      // Group by kind
+      // Group by display kind
       const kindCounts = new Map<string, number>();
       for (const e of online) {
-        kindCounts.set(e.kind, (kindCounts.get(e.kind) ?? 0) + 1);
+        const k = displayKind(e);
+        kindCounts.set(k, (kindCounts.get(k) ?? 0) + 1);
       }
-      const kindColors: Record<string, string> = { agent: A.yellow, npc: A.green, object: A.dim };
+      const kindColors: Record<string, string> = {
+        agent: A.yellow,
+        participant: A.cyan,
+        npc: A.green,
+        object: A.dim,
+      };
       const summary = [...kindCounts.entries()]
         .map(([k, n]) => `${kindColors[k] ?? A.brightWhite}${n} ${k}${n > 1 ? "s" : ""}${A.reset}`)
         .join(dim(", "));
@@ -45,7 +58,7 @@ export function whoCommand(
         const roomShort = getRoomShort ? (getRoomShort(e.room) ?? e.room) : e.room;
         const idle = formatDuration(now - e.createdAt);
         let silentTag = "";
-        if (e.kind === "agent" && getLastActivityAt) {
+        if (displayKind(e) === "agent" && getLastActivityAt) {
           const lastAt = getLastActivityAt(e.name);
           const silence = lastAt == null ? now - e.createdAt : now - lastAt;
           if (silence >= SILENT_THRESHOLD_MS) {
@@ -54,7 +67,7 @@ export function whoCommand(
         }
         rows.push([
           `  ${entity(e.name)}`,
-          dim(e.kind),
+          dim(displayKind(e)),
           rank(rankVal),
           dim(roomShort),
           dim(idle),

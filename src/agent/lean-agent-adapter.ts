@@ -372,11 +372,14 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
   console.warn(
     `[lean-agent] Provider "${provider}" (from model "${modelStr}") is not recognized by the model registry — falling back to MARINA_DEFAULT_MODEL "${MARINA_DEFAULT_MODEL}". Ensure you have a key for its provider, or pick a supported model.`,
   );
-  const fallback = tryGetModel(dp, dId) ?? tryGetModel("google", "gemini-2.0-flash");
+  // The default may itself be a marina loopback model ("marina/default"),
+  // which the registry doesn't know — resolve it through the marina branch.
+  if (dp === "marina") return resolveModel(MARINA_DEFAULT_MODEL, localPort);
+  const fallback = tryGetModel(dp, dId);
   if (fallback) return fallback;
-  throw new Error(
-    `Cannot resolve model "${modelStr}" or fallback "${MARINA_DEFAULT_MODEL}" — the model registry is unavailable.`,
-  );
+  // Last resort: the self-referential loopback (this instance's /v1 proxy picks
+  // whichever upstream actually has a key) — never a hardcoded vendor.
+  return resolveModel("marina/default", localPort);
 }
 
 /**
@@ -509,6 +512,7 @@ export class LeanAgentAdapter implements AgentHandle {
 
   private metrics = {
     toolCalls: 0,
+    modelCalls: 0,
     errors: 0,
     startedAt: 0,
     lastActivity: 0,
@@ -522,6 +526,8 @@ export class LeanAgentAdapter implements AgentHandle {
   };
   /** Wall-clock when the current LLM turn began (turn_start); 0 when none in flight.
    *  Observability only — used to time turn_start→turn_end latency. */
+  /** True once budgetCalls is spent and the autonomous loop has paused. */
+  private budgetExhausted = false;
   private turnStartedAt = 0;
   /** First streamed output observed during the active turn; zero until observed. */
   private firstTurnOutputAt = 0;
@@ -1179,6 +1185,36 @@ export class LeanAgentAdapter implements AgentHandle {
         await this.cycleWaiter.sleep(this.computeDynamicDelay());
         if (!this.autonomousLoopRunning || !this.autonomousMode) break;
 
+        // Lifetime model-call budget: when spent, pause instead of prompting.
+        // The agent stays connected and inspectable (`agent status`, memory,
+        // notes all intact) — it just never wakes the LLM again. Cheap idle:
+        // no model call happens past this point in the cycle.
+        if (
+          this.config.budgetCalls !== undefined &&
+          this.metrics.modelCalls >= this.config.budgetCalls
+        ) {
+          if (!this.budgetExhausted) {
+            this.budgetExhausted = true;
+            console.warn(
+              `[lean-agent] "${this.name}" spent its model-call budget (${this.config.budgetCalls}) — pausing. Inspect with \`agent status ${this.name}\`, stop with \`agent stop ${this.name}\`, or respawn with a larger budget.`,
+            );
+            this.emitEvent({
+              type: "error",
+              error: `Model-call budget exhausted (${this.config.budgetCalls} calls)`,
+              context: "budget",
+            });
+            if (this.config.spawnedBy && this.config.spawnedBy !== "system") {
+              this.client
+                .command(
+                  `tell ${this.config.spawnedBy} I've spent my model-call budget (${this.config.budgetCalls} calls) and paused. Review my work, then \`agent stop ${this.name}\` or respawn me with a larger budget.`,
+                )
+                .catch(() => {});
+            }
+          }
+          await this.sleep(5000);
+          continue;
+        }
+
         // Wait if LLM is still streaming
         if (this.agent.state.isStreaming) {
           await this.sleep(1000);
@@ -1651,7 +1687,11 @@ export class LeanAgentAdapter implements AgentHandle {
           );
         }
         if (trustedEvents.some((p) => p.shouldRespond)) {
-          parts.push("Events marked [!] await your response.");
+          parts.push(
+            "Events marked [!] await your response. Match the channel of the ask: " +
+              "answer a private tell with `marina_tell` back to the sender — never " +
+              "broadcast a private conversation to a room or channel.",
+          );
         }
       }
 
@@ -2097,6 +2137,8 @@ The goal is a smaller, sharper memory — not more notes.`;
       if (event.type === "turn_start") {
         this.turnStartedAt = Date.now();
         this.firstTurnOutputAt = 0;
+        // One turn == one model call — the budget's unit of account.
+        this.metrics.modelCalls += 1;
         this.emitEvent({
           type: "turn_start",
           traceParent: this.currentPromptTraceParent,
@@ -2439,6 +2481,9 @@ The goal is a smaller, sharper memory — not more notes.`;
       goal: this.config.goal ?? null,
       uptime: this.metrics.startedAt > 0 ? Date.now() - this.metrics.startedAt : 0,
       toolCalls: this.metrics.toolCalls,
+      modelCalls: this.metrics.modelCalls,
+      budgetCalls: this.config.budgetCalls,
+      budgetExhausted: this.budgetExhausted || undefined,
       errors: this.metrics.errors,
       errorReason: state === "error" ? this.lastErrorReason : null,
       lastActivity: this.metrics.lastActivity || this.metrics.startedAt || 0,

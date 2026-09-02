@@ -39,8 +39,12 @@ describe("WorldDefinition: default world", () => {
     expect(defaultWorld.afterAgentsReady).toBeDefined();
   });
 
-  it("ships with no ceremony quests — the guide pool is the inheritance surface", () => {
-    expect(defaultWorld.quests.length).toBe(0);
+  it("ships the First Steps onboarding quest, opt-in (no autoQuest ceremony)", () => {
+    // The quest command's own empty-state points at "quest start First Steps",
+    // so the default world must actually define it (it was removed in v0.3
+    // while the pointer survived — a new user's first suggested action 404'd).
+    // Built purely on the generic trackQuestProgress flags: no bespoke wiring.
+    expect(defaultWorld.quests.map((q) => q.name)).toContain("First Steps");
     expect(defaultWorld.autoQuest).toBeUndefined();
   });
 

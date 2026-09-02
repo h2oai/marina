@@ -2104,6 +2104,33 @@ function resolveProviderKey(engine: Engine, provider: string): string | undefine
   return engine.db?.getApiKeysByProvider(provider)[0]?.encrypted_value;
 }
 
+/**
+ * Human-readable "what would the marina/default channel actually hit right now"
+ * — mirrors proxyToUpstream's selection order without making a request. Used by
+ * the boot wiring summary so it reports the concrete upstream (e.g.
+ * "openai/gpt-4o") instead of the circular "marina/default". Returns undefined
+ * when no upstream is configured at all.
+ */
+export function describeDefaultUpstream(engine: Engine): string | undefined {
+  // 1) Operator-configured concrete default with a usable key wins.
+  const dm = engine.db?.getDefaultModel();
+  if (dm && !isMarinaModel(dm)) {
+    const slash = dm.indexOf("/");
+    const provider = slash >= 0 ? dm.slice(0, slash) : dm;
+    const cfg = PROVIDER_UPSTREAM[provider];
+    const localReady = isLocalProvider(provider) && localProviderConfigured(provider);
+    if (cfg && (resolveProviderKey(engine, provider) || localReady)) return dm;
+  }
+  // 2) Otherwise the first-party-preferred fallback order over available keys.
+  for (const provider of FALLBACK_PRIORITY) {
+    const cfg = PROVIDER_UPSTREAM[provider]!;
+    const localReady = isLocalProvider(provider) && localProviderConfigured(provider);
+    if (!resolveProviderKey(engine, provider) && !localReady) continue;
+    return `${provider}/${getDefaultUpstreamModel(cfg.envKeys[0]!)}`;
+  }
+  return undefined;
+}
+
 const SSE_HEADERS = {
   ...MODEL_CORS,
   "Content-Type": "text/event-stream",

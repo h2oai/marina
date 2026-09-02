@@ -8,7 +8,7 @@ import { getStanding } from "../../agent/standing";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
-import { MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
+import { MARINA_DEFAULT_MODEL, MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
 import { getRank } from "../permissions";
 import { checkUnattendedGate, SAFETY_GATES } from "../safety-gates";
 
@@ -27,7 +27,7 @@ Usage:
   agent list                                 — list running agents
   agent status <name>                        — detailed agent status
   agent diagnose <name>                      — lifecycle health and remediation
-  agent spawn <name> [model <m>] [role <r>] [goal <g>] [key <k>]
+  agent spawn <name> [model <m>] [role <r>] [goal <g>] [key <k>] [budget <n-calls>]
   agent stop <name>                          — stop a running agent (transient; reseeds on restart)
   agent disable <name>                        — retire a seeded agent so it stays gone across restarts
   agent enable <name>                         — clear a disable; the agent returns on next restart/room entry
@@ -296,6 +296,7 @@ function handleStatus(
     `${bold("Goal:")} ${s.goal || dim("none")}`,
     `${bold("Uptime:")} ${upMin}m`,
     `${bold("Tool calls:")} ${s.toolCalls}`,
+    `${bold("Model calls:")} ${s.modelCalls ?? 0}${s.budgetCalls ? ` / ${s.budgetCalls} budget${s.budgetExhausted ? " — EXHAUSTED (paused)" : ""}` : ""}`,
     ...(usage
       ? [
           `${bold("Primitive evidence (7d):")} ${usage.meaningfulActions}/${usage.commands} meaningful · ${usage.primitiveDiversity} families · ${usage.communications} communications`,
@@ -374,7 +375,16 @@ async function handleSpawn(
   if (deps.db) {
     const gate = checkUnattendedGate(deps.db, eid, "agent.spawn");
     if (!gate.ok) {
-      ctx.send(eid, gate.reason ?? "Not permitted to spawn agents.");
+      // Standing alone can never unlock unattended agent.spawn — say what
+      // actually does, so a solo operator isn't left staring at a number.
+      ctx.send(
+        eid,
+        [
+          gate.reason ?? "Not permitted to spawn agents.",
+          "Agent spawning is a granted capability: an operator grant or a witnessed demonstration unlocks it.",
+          "Running this instance yourself? Restart with MARINA_ADMINS=<your-name> (or run `bun run init`), log in from localhost, then retry.",
+        ].join("\n"),
+      );
       return;
     }
 
@@ -427,7 +437,7 @@ async function handleSpawn(
   if (!name) {
     ctx.send(
       eid,
-      "Usage: agent spawn <name> [model <model>] [role <role>] [goal <goal>] [key <key>]",
+      "Usage: agent spawn <name> [model <model>] [role <role>] [goal <goal>] [key <key>] [budget <n-calls>]",
     );
     return;
   }
@@ -451,7 +461,7 @@ async function handleSpawn(
   const opts: Record<string, string> = {};
   for (let i = 1; i < tokens.length - 1; i++) {
     const key = tokens[i]?.toLowerCase();
-    if (key && ["model", "role", "goal", "key"].includes(key)) {
+    if (key && ["model", "role", "goal", "key", "budget"].includes(key)) {
       // goal consumes the rest of the tokens
       if (key === "goal") {
         opts[key] = tokens.slice(i + 1).join(" ");
@@ -464,8 +474,18 @@ async function handleSpawn(
 
   ctx.send(
     eid,
-    `Spawning ${bold(name)} (${opts.model || "google/gemini-2.0-flash"}${opts.role ? `, ${opts.role}` : ""})...`,
+    `Spawning ${bold(name)} (${opts.model || deps.db?.getDefaultModel() || MARINA_DEFAULT_MODEL}${opts.role ? `, ${opts.role}` : ""})...`,
   );
+
+  let budgetCalls: number | undefined;
+  if (opts.budget !== undefined) {
+    const parsed = Number(opts.budget);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      ctx.send(eid, "budget expects a positive whole number of model calls, e.g. `budget 30`.");
+      return;
+    }
+    budgetCalls = parsed;
+  }
 
   try {
     const handle = await deps.agentRuntime.spawn({
@@ -474,6 +494,7 @@ async function handleSpawn(
       role: opts.role,
       goal: opts.goal,
       keyName: opts.key,
+      budgetCalls,
       spawnedBy: spawner.name,
     });
 
@@ -487,7 +508,12 @@ async function handleSpawn(
       timestamp: Date.now(),
     });
 
-    ctx.send(eid, `Agent ${bold(name)} spawned and running.`);
+    // Spend-rate consent: say what an uncapped agent actually burns, at the
+    // moment the operator can still do something about it.
+    const budgetLine = budgetCalls
+      ? `Budget: ${budgetCalls} model calls — the agent pauses (and tells you) when it's spent.`
+      : `Budget: uncapped — an active agent makes roughly 10-20 model calls/min. Cap it with \`agent spawn <name> budget <N>\`.`;
+    ctx.send(eid, `Agent ${bold(name)} spawned and running.\n${dim(budgetLine)}`);
   } catch (error) {
     ctx.send(eid, `Failed to spawn agent: ${error instanceof Error ? error.message : error}`);
   }

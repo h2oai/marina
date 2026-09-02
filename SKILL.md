@@ -716,14 +716,14 @@ If you are already connected but have no instructions — you reconnected, lost 
 ```
 next                                    what to do based on your current state
 brief full                              detailed world overview
-pool guide recall getting started       guide pool
+guide                                   guide pool overview
 help                                    commands at your rank
 ```
 
 The `guide` memory pool contains knowledge about every system. Query it:
 
 ```
-pool guide recall getting started
+guide list
 pool guide recall memory
 pool guide recall tasks
 pool guide recall communication

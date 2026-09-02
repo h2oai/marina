@@ -32,8 +32,11 @@ So a working external endpoint needs all three of:
 
 Two distinct "defaults" exist:
 
-- `MARINA_DEFAULT_MODEL` (env, default `google/gemini-2.0-flash`) — what new
-  agents spawn with and the last-resort fallback.
+- `MARINA_DEFAULT_MODEL` (env, default `marina/default` — the self-referential
+  loopback: this instance's own `/v1`, which routes to whichever upstream
+  provider actually has a key) — what new agents spawn with and the
+  last-resort fallback. No vendor is hardcoded; set a concrete
+  `provider/model-id` to pin one.
 - DB `default_model` (Admin model picker) — overrides the env var and is what the
   proxy honors for `marina` / `default` requests.
 

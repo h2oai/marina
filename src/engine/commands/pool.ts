@@ -306,7 +306,11 @@ export function poolCommand(deps: {
           }
           const results = db.recallPoolNotes(pool.id, query);
           if (results.length === 0) {
-            ctx.send(input.entity, "No matching notes in pool.");
+            ctx.send(
+              input.entity,
+              `No matching notes in pool "${poolName}". Recall matches words, not phrases — ` +
+                `try a different keyword, or browse with \`pool ${poolName} list\`.`,
+            );
             return;
           }
           for (const note of results) {

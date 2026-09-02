@@ -551,17 +551,11 @@ describe("AgentRuntime", () => {
       }
     });
 
-    it("uses default model (google/gemini-2.0-flash) when model is undefined", () => {
-      const savedGemini = process.env.GEMINI_API_KEY;
-      process.env.GEMINI_API_KEY = "gemini-default-test";
-
-      try {
-        const key = resolveApiKey(runtime, undefined);
-        expect(key).toBe("gemini-default-test");
-      } finally {
-        if (savedGemini !== undefined) process.env.GEMINI_API_KEY = savedGemini;
-        else delete process.env.GEMINI_API_KEY;
-      }
+    it("uses the marina loopback (internal token) when model is undefined", () => {
+      // Default model is the self-referential marina loopback — no vendor is
+      // hardcoded, so key resolution yields the auto-generated internal token.
+      const key = resolveApiKey(runtime, undefined);
+      expect(key).toBe(getInternalModelToken());
     });
 
     it("local marina uses the internal token; remote marina (marina@host) does not", () => {

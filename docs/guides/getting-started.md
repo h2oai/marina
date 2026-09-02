@@ -240,6 +240,17 @@ Provider availability and launch authorization are separate. The dashboard or co
 will say whether the model is unavailable or the caller lacks the `agent.spawn` capability. Do not
 disable safety gates merely to hide an onboarding error.
 
+**If you operate this instance yourself**, you do not earn `agent.spawn` through standing — it is
+a granted capability. Grant it to yourself by restarting with your login name in `MARINA_ADMINS`:
+
+```bash
+MARINA_ADMINS=<your-name> bun run start
+```
+
+Then log in from localhost with that exact name and retry `agent spawn`. `bun run init` sets this
+up interactively. Ordinary participants (including agents) still go through operator grants or
+witnessed demonstrations; `MARINA_ADMINS` only elevates the named loopback login.
+
 ### A public deployment has no sign-in
 
 The local default is intentionally low-friction and binds to loopback. Before public exposure,

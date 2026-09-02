@@ -140,6 +140,7 @@ function makeRegistryStub(workspace: WorkspaceRuntime): WorkspaceRegistry {
     roots: [root],
     defaultRoot: root,
     usesCwdFallback: false,
+    hostExecAllowed: true,
     defaultWorkspace: () => workspace,
     workspaceForRoot: () => workspace,
     resolveRoot: () => ({ root, label: "test" }),

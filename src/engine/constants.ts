@@ -146,9 +146,16 @@ export const MARINA_LOGIN_ATTEMPTS_PER_MIN = Number.parseInt(
 // ─── Agent Model Defaults ─────────────────────────────────────────────────────
 
 /** Default model ("provider/model-id") for agents spawned without an explicit
- *  model, and the fallback when a requested model isn't recognized. Override to
- *  match the provider you actually hold a key for. */
-export const MARINA_DEFAULT_MODEL = process.env.MARINA_DEFAULT_MODEL ?? "google/gemini-2.0-flash";
+ *  model, and the fallback when a requested model isn't recognized.
+ *
+ *  The default is the self-referential Marina loopback: agents call this
+ *  instance's own OpenAI-compatible `/v1` endpoint (authenticated with the
+ *  auto-generated internal token), and the proxy fan-out picks the first
+ *  upstream provider that actually has a key (env or Admin → Keys). This makes
+ *  `agent spawn <name>` work with whichever provider the operator configured
+ *  instead of failing on a hardcoded provider they hold no key for. Override
+ *  with a concrete "provider/model-id" to pin every default-model agent. */
+export const MARINA_DEFAULT_MODEL = process.env.MARINA_DEFAULT_MODEL ?? "marina/default";
 
 /** Fraction of a local model's context window reserved for the completion.
  *  Default 1/2 — the compactor (`context-manager.ts`) already reserves at most

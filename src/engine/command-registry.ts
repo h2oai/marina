@@ -212,6 +212,7 @@ export function registerBuiltinCommands(engine: Engine): void {
       (roomId) => engine.rooms.get(roomId as RoomId)?.module.short,
       (entityName) => engine.db?.getLastActivityAt(entityName) ?? null,
       engine.crewManager ? () => engine.crewManager!.list() : undefined,
+      (entityName) => !!engine.agentRuntime?.get(entityName),
     ),
   );
   engine.commands.registerBuiltin(

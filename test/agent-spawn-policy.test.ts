@@ -154,6 +154,23 @@ describe("agent spawn command — permission layer (integration)", () => {
     expect(output()).toContain("1-20 characters");
     expect(db.getAgentConfig("this_name_is_over_twenty_chars")).toBeUndefined();
   });
+
+  it("rejects a non-positive or non-numeric model-call budget before spawning", async () => {
+    grant(db, alice.entity!, "agent.spawn");
+    const saved = process.env.ANTHROPIC_API_KEY;
+    process.env.ANTHROPIC_API_KEY = "test-key-so-runtime-is-available";
+    try {
+      alice.clear();
+      await engine.processCommand(alice.entity!, "agent spawn helper budget 0");
+      expect(output()).toContain("positive whole number");
+      alice.clear();
+      await engine.processCommand(alice.entity!, "agent spawn helper budget lots");
+      expect(output()).toContain("positive whole number");
+    } finally {
+      if (saved !== undefined) process.env.ANTHROPIC_API_KEY = saved;
+      else delete process.env.ANTHROPIC_API_KEY;
+    }
+  });
 });
 
 describe("agent spawn policy — per-entity budget enforcement (cost-DoS cap)", () => {

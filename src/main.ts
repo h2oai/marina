@@ -20,6 +20,7 @@ import { FeedPublisher } from "./net/feed-publisher";
 import { formatPerception } from "./net/formatter";
 import { LogServer } from "./net/log-server";
 import { McpServerAdapter } from "./net/mcp-server";
+import { describeDefaultUpstream } from "./net/model-api";
 import { detectLocalContextWindow } from "./net/model-discovery";
 import { TelnetServer } from "./net/telnet-server";
 import { isLoopbackHostname, resolveWsBindHostname, WebSocketServer } from "./net/websocket-server";
@@ -557,7 +558,9 @@ if (
 // Print the exact baseURL / model / auth so the OpenAI-compatible endpoint can be
 // wired into any client (or another Marina instance) without reading the source.
 {
-  const defaultModel = db.getDefaultModel();
+  // Report the concrete upstream the marina/default channel would hit, not the
+  // (possibly self-referential) configured default-model string.
+  const defaultModel = describeDefaultUpstream(engine) ?? "(no upstream provider yet)";
   const hasUpstream = engine.agentRuntime.isAvailable();
   const authMode = process.env.MODEL_API_KEYS
     ? "Bearer <token from MODEL_API_KEYS>"

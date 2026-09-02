@@ -10,11 +10,10 @@ import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 
 // ─── Test fixture ──────────────────────────────────────────────────────────
 //
-// The default world ships zero quests after the v0.3 onboarding cleanup —
-// agents inherit predecessor wisdom from the guide pool instead. The quest
-// system itself stays as infrastructure for real gated quests (evolve
-// benchmarks, markets FORECASTER, demos). This fixture exercises that
-// infrastructure without depending on any production world definition.
+// This fixture exercises the quest-system primitives without depending on any
+// production world definition. (The default world re-gained a generic-flag
+// "First Steps" quest in the first-ten-minutes usability pass — see
+// test/onboarding-journey.test.ts for the world-level onboarding contract.)
 
 const TUTORIAL_QUEST = {
   id: "tutorial",

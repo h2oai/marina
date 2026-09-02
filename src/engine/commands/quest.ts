@@ -118,6 +118,9 @@ export function questCommand(deps: {
           const lines = [
             header("Available Objectives"),
             separator(),
+            ...(ALL_QUESTS.length === 0
+              ? [dim('  (none in this world — try "next" for a suggestion)')]
+              : []),
             ...ALL_QUESTS.map((q) => {
               const active = entity.properties.active_quest === q.id;
               const completed = (
@@ -141,7 +144,9 @@ export function questCommand(deps: {
           if (!quest) {
             ctx.send(
               input.entity,
-              'Objective not found. Type "quest list" to see available objectives.',
+              ALL_QUESTS.length === 0
+                ? 'No objectives are defined in this world. Try "next" for a suggestion.'
+                : 'Objective not found. Type "quest list" to see available objectives.',
             );
             return;
           }
@@ -171,9 +176,20 @@ export function questCommand(deps: {
         case "status": {
           const questId = entity.properties.active_quest as string | undefined;
           if (!questId) {
+            // Never advertise an objective this world doesn't actually have.
+            const first = ALL_QUESTS.find(
+              (q) =>
+                !((entity.properties.completed_quests as string[] | undefined) ?? []).includes(
+                  q.id,
+                ),
+            );
             ctx.send(
               input.entity,
-              'No active objective. Type "quest list" to see available objectives, or "quest start First Steps" to begin.',
+              first
+                ? `No active objective. Type "quest list" to see available objectives, or "quest start ${first.name}" to begin.`
+                : ALL_QUESTS.length === 0
+                  ? 'No objectives are defined in this world. Try "next" for a suggestion.'
+                  : 'No active objective. Type "quest list" to see available objectives.',
             );
             return;
           }

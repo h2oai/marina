@@ -48,7 +48,7 @@ const DASHBOARD_NOT_BUILT_HTML = `<!doctype html>
 <h1>Dashboard not built yet</h1>
 <p>The Marina server is running, but the dashboard bundle (<code>dist/dashboard/</code>) hasn't been built. Build it once, then reload — no server restart needed:</p>
 <pre>bun run dashboard:build</pre>
-<p>Meanwhile, the <a href="/">web chat</a> works right away.</p>
+<p>Meanwhile, the <a href="/chat">web chat</a> works right away.</p>
 </main></body></html>`;
 
 async function serveDashboardIndex(): Promise<Response> {

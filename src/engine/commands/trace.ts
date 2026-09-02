@@ -105,7 +105,14 @@ export function traceCommand(deps: {
           const query = parseFindQuery(input.tokens.slice(1));
           const loaded = load(undefined, 5000);
           const page = queryTraces(loaded.traces, query);
-          return sendList(ctx, input.entity, page.traces, loaded.truncated, page.nextCursor);
+          return sendList(
+            ctx,
+            input.entity,
+            page.traces,
+            loaded.truncated,
+            page.nextCursor,
+            input.tokens.slice(1).join(" "),
+          );
         } catch (cause) {
           ctx.send(input.entity, cause instanceof Error ? cause.message : "Invalid trace query.");
           return;
@@ -476,9 +483,17 @@ function sendList(
   traces: TraceView[],
   truncated: boolean,
   nextCursor?: string,
+  filterDesc?: string,
 ): void {
   if (traces.length === 0) {
-    ctx.send(entityId, "No traced executions in retained history.");
+    // Distinguish "nothing recorded" from "your filter matched nothing" —
+    // an empty `trace find status=failed` on a healthy instance is good news.
+    ctx.send(
+      entityId,
+      filterDesc
+        ? `No traces match ${filterDesc} in retained history.`
+        : "No traced executions in retained history.",
+    );
     return;
   }
   const lines = [header("Recent Traces"), separator()];

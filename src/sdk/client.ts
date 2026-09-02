@@ -246,17 +246,20 @@ export class MarinaClient {
     return this.session;
   }
 
-  /** Disconnect from the server gracefully. */
+  /** Disconnect from the server gracefully.
+   *
+   * This is a TRANSIENT close: the server keeps the entity alive for its
+   * reconnect grace window so a token-bearing reconnect (e.g. back-to-back
+   * CLI one-shots) rebinds the SAME entity — same id, same properties, same
+   * quest state. Sending `quit` here (the pre-fix behavior) told the server
+   * "I'm done, remove me", which hard-deleted the entity and reset all
+   * property state between invocations. Use `quit()` for explicit teardown. */
   disconnect(): void {
     this.stopPing();
     this.options.autoReconnect = false;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
-    }
-    // Send quit command before closing to clean up server-side entity
-    if (this.session && this.ws && this.connected) {
-      this.send({ type: "command", command: "quit" });
     }
     this.connected = false;
     if (this.ws) {

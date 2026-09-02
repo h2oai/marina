@@ -39,7 +39,7 @@ export function skillCommand(deps: {
               "Usage: skill store <name> | <description> | <action_sequence>\n" +
               "Example: skill store pool-recall-fanout | find a fact when one keyword misses | " +
               "recall <topic> ; pool bench-facts recall <synonym> ; note the hit\n\n" +
-              "Looking for help? Try: evolve, help, pool guide recall getting started",
+              "Looking for help? Try: evolve, help, guide",
           );
         } else {
           ctx.send(

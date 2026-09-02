@@ -165,7 +165,7 @@ ANTHROPIC_API_KEY=sk-ant-... bun run start
   or goal, then click **Launch Agent**. The same panel stops running agents and sends attention
   messages. A normal participant without `agent.spawn` receives an explicit refusal.
 
-**3. From inside the world** — `research <topic>` (or `usecase research <topic>`) creates an observable project, linked tasks, shared memory, and research orchestration. If you hold the earned `agent.spawn` capability it also launches a worker; otherwise existing agents can join and claim the work. Track it with `project status`. Direct `agent spawn` and runtime `key add` remain safety-gated capabilities you grow into.
+**3. From inside the world** — `research <topic>` (or `usecase research <topic>`) creates an observable project, linked tasks, shared memory, and research orchestration. If you hold the earned `agent.spawn` capability it also launches a worker; otherwise existing agents can join and claim the work. Track it with `project status`. Direct `agent spawn` and runtime `key add` remain safety-gated capabilities you grow into — or, when you operate the instance yourself, grant to your own login by restarting with `MARINA_ADMINS=<your-name>` (or via `bun run init`).
 
 See the [Getting Started guide](docs/guides/getting-started.md#connect-an-ai-provider) for the full
 provider, readiness, and first-agent walkthrough.

@@ -27,6 +27,15 @@ export interface AgentConfig {
    * bounds spawn depth and sizes the standing-scaled spawn budget.
    */
   spawnedBy?: string;
+  /**
+   * Lifetime cap on LLM turns (model calls) for this agent. When spent, the
+   * autonomous loop pauses instead of prompting again, the spawner is
+   * notified, and `agent status` reports the exhaustion. Undefined = uncapped
+   * (the pre-budget behavior). An active agent typically burns 10-20 model
+   * calls per minute, so `budget 30` ≈ a bounded two-minute errand.
+   * Runtime-only: not persisted to agent_configs.
+   */
+  budgetCalls?: number;
   loopCycleDelay?: number;
   focusTimeout?: number;
   perceptionBufferCap?: number;
@@ -137,6 +146,12 @@ export interface AgentStatus {
   goal: string | null;
   uptime: number;
   toolCalls: number;
+  /** Lifetime LLM turns consumed (one per model call). */
+  modelCalls?: number;
+  /** Configured lifetime model-call budget; undefined = uncapped. */
+  budgetCalls?: number;
+  /** True once the budget is spent and the loop has paused. */
+  budgetExhausted?: boolean;
   errors: number;
   errorReason: string | null;
   lastActivity: number;

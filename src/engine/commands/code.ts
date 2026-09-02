@@ -1038,7 +1038,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         // host root, so they are NOT refused here. Read-only inspectors stay open.
         if (
           HOST_ROOT_EXEC_SUBCOMMANDS.has(canonicalSub) &&
-          getWorkspaceRegistry(depsWithDb).usesCwdFallback
+          !getWorkspaceRegistry(depsWithDb).hostExecAllowed
         ) {
           ctx.send(input.entity, NO_CODE_ROOT_DENY);
           return;

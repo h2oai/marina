@@ -604,7 +604,8 @@ Replayed terminal events do not retrain twice. Directly addressed events always 
 > agent list                                  List running agents
 > agent status Scout                          Detailed agent status
 > agent diagnose Scout                        Lifecycle health and stuck diagnosis
-> agent spawn Scout model google/gemini-2.0-flash role researcher goal Explore
+> agent spawn Scout role researcher goal Explore     Spawn on the default (marina loopback) model
+> agent spawn Scout model openai/gpt-4o-mini budget 30   Pin a model; pause after 30 model calls
 > agent stop Scout                            Stop a running agent
 > agent attention Scout Check the board       Send attention message
 > agent attention-mode Scout focused          Filter ambience; keep addressed/urgent events
