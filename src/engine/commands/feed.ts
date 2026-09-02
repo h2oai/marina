@@ -5,6 +5,7 @@ import { bold, category, dim, id as fmtId, header, separator, status } from "../
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { extractModifiers } from "../parse-input";
+import { requiresPersistence } from "./command-messages";
 import { formatAge, parseSince } from "./format-duration";
 
 const HELP = `Activity feed — queryable timeline of world events.
@@ -31,7 +32,7 @@ export function feedCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, "Feed requires database support.");
+        ctx.send(input.entity, requiresPersistence("the feed"));
         return;
       }
       const db = deps.db;

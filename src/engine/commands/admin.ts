@@ -50,7 +50,7 @@ export function adminCommand(deps: AdminDeps): CommandDef {
     name: "admin",
     minRank: 5,
     gate: "admin.destructive",
-    help: "Admin commands. Requires rank 9 (sovereign).\nUsage: admin kick|ban|unban|bans|stats|announce|reload|export|snapshot|snapshots\n\nExamples:\n  admin kick Alice\n  admin ban Bob Griefing\n  admin stats\n  admin announce Server restart in 5 minutes\n  admin snapshot default-v1              — clone live DB to seeds/default-v1.db\n  admin snapshot default-v1 --force      — overwrite existing snapshot\n  admin snapshot gen-2 --compact         — clone + prune compaction-chaff before serializing\n  admin snapshots                        — list saved seed snapshots",
+    help: "Admin commands. Requires rank 5 and the admin.destructive gate — see `witness` and `standing` for the earnable path.\nUsage: admin kick|ban|unban|bans|stats|announce|reload|export|snapshot|snapshots\n\nExamples:\n  admin kick Alice\n  admin ban Bob Griefing\n  admin stats\n  admin announce Server restart in 5 minutes\n  admin snapshot default-v1              — clone live DB to seeds/default-v1.db\n  admin snapshot default-v1 --force      — overwrite existing snapshot\n  admin snapshot gen-2 --compact         — clone + prune compaction-chaff before serializing\n  admin snapshots                        — list saved seed snapshots",
     handler(ctx, input) {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -184,7 +184,10 @@ export function adminCommand(deps: AdminDeps): CommandDef {
             return;
           }
           if (!deps.reloadRoom) {
-            ctx.send(input.entity, "Room reloading is not available.");
+            ctx.send(
+              input.entity,
+              "Room reloading isn't wired up in this world. `build reload <room>` is the per-room path.",
+            );
             return;
           }
           deps.reloadRoom(roomId).then(

@@ -6,6 +6,7 @@ import type { TaskManager } from "../../coordination/task-manager";
 import { bold, category, dim, header, id, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { requiresPersistence } from "./command-messages";
 
 /**
  * Debrief — end-of-session synthesis view. Shows what the entity recently
@@ -30,7 +31,7 @@ export function debriefCommand(deps: {
       if (!entity) return;
 
       if (!deps.db) {
-        ctx.send(input.entity, "Debrief requires database support.");
+        ctx.send(input.entity, requiresPersistence("debrief"));
         return;
       }
 

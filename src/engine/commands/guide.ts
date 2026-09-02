@@ -5,6 +5,7 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
 import { DAY_MS } from "../constants";
+import { requiresPersistence } from "./command-messages";
 import { auditKnowledgeNotes, renderKnowledgeHygieneReport } from "./knowledge-hygiene";
 
 /**
@@ -38,7 +39,7 @@ export function guideCommand(deps: {
     help: "Read the platform guide — orientation knowledge for this world.\nUsage: guide | guide <topic> | guide recall <topic> | guide list | guide audit\n\nThe guide is the shared `guide` pool every world seeds. `guide <topic>` recalls relevant notes; `guide audit` (alias `guide lint`) reports hygiene findings (duplicates, overlong notes, stale command references, unsupported claims, stale notes). Read-only.",
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, "Guide requires database support.");
+        ctx.send(input.entity, requiresPersistence("the guide"));
         return;
       }
       const db = deps.db;

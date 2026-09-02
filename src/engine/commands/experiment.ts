@@ -6,6 +6,7 @@ import { bold, dim, id as fmtId, status as fmtStatus, header, separator } from "
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { requireRank } from "../permissions";
+import { requiresPersistence } from "./command-messages";
 
 interface ExperimentConfig {
   arms: string[];
@@ -107,7 +108,7 @@ Examples:
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, "Experiments require database support.");
+        ctx.send(input.entity, requiresPersistence("experiments"));
         return;
       }
       const db = deps.db;

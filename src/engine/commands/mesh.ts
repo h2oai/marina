@@ -4,6 +4,7 @@
 import type { MarinaDB, MeshMembershipEventRow, MeshWitnessRow } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
 import { getErrorMessage } from "../errors";
+import { notFound } from "./command-messages";
 
 const HELP = `Transparent, voluntary, overlapping Marina meshes.
 Usage:
@@ -25,7 +26,7 @@ export function meshCommand(deps: {
   return {
     name: "mesh",
     aliases: ["meshes"],
-    category: "Coordination",
+    category: "Lineage",
     minRank: 0,
     help: HELP,
     handler: (ctx, input) => {
@@ -148,7 +149,7 @@ export function meshCommand(deps: {
         const row = input.tokens[2] ? deps.db.getMeshEvent(input.tokens[2]) : undefined;
         const found = mesh && row && row.mesh_id === mesh.id ? row : undefined;
         if (!found) {
-          ctx.send(input.entity, "Mesh event not found.");
+          ctx.send(input.entity, notFound("mesh event", "mesh show <mesh>"));
           return;
         }
         try {
@@ -231,7 +232,7 @@ export function meshCommand(deps: {
       if (sub === "show") {
         const mesh = resolve(deps.db, input.tokens[1] ?? "");
         if (!mesh) {
-          ctx.send(input.entity, "Mesh not found.");
+          ctx.send(input.entity, notFound("mesh", "mesh list"));
           return;
         }
         const memberships = deps.db.listMeshMembershipEvents(mesh.id);

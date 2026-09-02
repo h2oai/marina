@@ -17,7 +17,7 @@ export function observeCommand(deps: {
   return {
     name: "observe",
     aliases: [],
-    help: "Observe agents. Usage: observe <entity> | observe stats | observe log <entity>",
+    help: "Observe agents. Usage: observe <entity> (rank 3+) | observe stats (rank 2+) | observe log <entity> (rank 7+)",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;

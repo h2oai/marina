@@ -10,6 +10,7 @@ import { parseCanvasIntent } from "../../persistence/database";
 import type { StorageProvider } from "../../storage/provider";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getErrorMessage } from "../errors";
+import { requiresPersistence } from "./command-messages";
 
 const HELP =
   "Canvas management. Subcommands: canvas create <name> [desc] | canvas list | canvas info <name> | canvas visit <self|entity|name> | canvas post [on:<canvas>] [reply:<node_id>] <text> | canvas publish <type> <asset_id> [canvas] [reply:<node_id>] | canvas nodes <name> | canvas edges <name> | canvas layout <grid|timeline|feed> <name> | canvas delete <name> | canvas asset upload|list|info|delete | canvas intent list [canvas] | canvas intent claim <node_id> | canvas intent fail <node_id> [reason] | canvas intent complete <node_id> [--type <type>] <result> | canvas intent complete-rich <node_id> <json> | canvas connect <src_node_id> <tgt_node_id> <relationship> [canvas] | canvas disconnect <edge_id>";
@@ -34,7 +35,7 @@ export function canvasCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, "Canvas requires database support.");
+        ctx.send(input.entity, requiresPersistence("canvas"));
         return;
       }
       const db = deps.db;
@@ -159,7 +160,7 @@ function handleConnect(
   const sourceNode = db.getNode(sourceIdPrefix) ?? resolveNodePrefix(db, sourceIdPrefix);
   const targetNode = db.getNode(targetIdPrefix) ?? resolveNodePrefix(db, targetIdPrefix);
   if (!sourceNode || !targetNode) {
-    ctx.send(eid, "Source or target node not found.");
+    ctx.send(eid, "One of those nodes doesn't exist. `canvas nodes <name>` lists node ids.");
     return;
   }
   if (sourceNode.canvas_id !== targetNode.canvas_id) {
@@ -229,7 +230,7 @@ function handleDisconnect(
   }
   const ok = db.deleteCanvasEdge(edge.id);
   if (!ok) {
-    ctx.send(eid, "Could not delete edge.");
+    ctx.send(eid, "No edge matched those endpoints. `canvas edges <name>` lists what exists.");
     return;
   }
   logEvent?.({

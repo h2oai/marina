@@ -47,8 +47,8 @@ interface BriefDeps {
 export function briefCommand(deps: BriefDeps): CommandDef {
   return {
     name: "brief",
-    aliases: ["sitrep", "compass"],
-    help: "Get oriented. Shows the current shape of the world — who is here, what exists, where to go next. Use 'brief watch [N]' for periodic updates, 'brief unwatch' to stop.",
+    aliases: [],
+    help: "Get oriented. Shows the current shape of the world — who is here, what exists, where to go next. 'brief full' shows the detailed briefing, 'brief social' the social view. Use 'brief watch [N]' for periodic updates, 'brief unwatch' to stop.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -64,20 +64,28 @@ export function briefCommand(deps: BriefDeps): CommandDef {
       if (sub === "social") {
         return sendSocialBrief(ctx, input.entity, entity, deps);
       }
-
-      const full = input.tokens.length > 0;
-      if (full) {
-        sendFullBrief(ctx, input.entity, entity, deps);
-      } else {
-        sendCompass(ctx, input.entity, entity, deps);
+      if (sub === "full") {
+        return sendFullBrief(ctx, input.entity, entity, deps);
       }
+      if (sub !== undefined) {
+        ctx.send(
+          input.entity,
+          "Usage: brief | brief full | brief social | brief watch [N] | brief unwatch",
+        );
+        return;
+      }
+
+      sendCompass(ctx, input.entity, entity, deps);
     },
   };
 }
 
 function handleWatch(ctx: RoomContext, eid: EntityId, tokens: string[], deps: BriefDeps): void {
   if (!deps.subscribeBrief) {
-    ctx.send(eid, "Brief watch is not available.");
+    ctx.send(
+      eid,
+      "Periodic briefs need a live tick loop, which isn't running here. `brief` on demand still works.",
+    );
     return;
   }
 
@@ -104,7 +112,10 @@ function handleWatch(ctx: RoomContext, eid: EntityId, tokens: string[], deps: Br
 
 function handleUnwatch(ctx: RoomContext, eid: EntityId, deps: BriefDeps): void {
   if (!deps.unsubscribeBrief) {
-    ctx.send(eid, "Brief watch is not available.");
+    ctx.send(
+      eid,
+      "Periodic briefs need a live tick loop, which isn't running here. `brief` on demand still works.",
+    );
     return;
   }
 

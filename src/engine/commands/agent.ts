@@ -12,6 +12,9 @@ import { MARINA_DEFAULT_MODEL, MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } fro
 import { getRank } from "../permissions";
 import { checkGateForExecution, recordGateExecution, SAFETY_GATES } from "../safety-gates";
 
+const REQUIRES_BUILDER_RANK =
+  "Requires builder rank (4+) — `agent list` and `agent status <name>` work now.";
+
 export function agentCommand(deps: {
   agentRuntime: AgentRuntime;
   getEntity: (id: EntityId) => Entity | undefined;
@@ -64,7 +67,7 @@ Usage:
 
         case "stop": {
           if (rank < 4) {
-            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
             return;
           }
           return handleStop(ctx, input.entity, tokens[1], deps);
@@ -72,7 +75,7 @@ Usage:
 
         case "restart": {
           if (rank < 4) {
-            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
             return;
           }
           const name = tokens[1];
@@ -97,7 +100,7 @@ Usage:
 
         case "failover": {
           if (rank < 4) {
-            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
             return;
           }
           const name = tokens[1];
@@ -123,7 +126,7 @@ Usage:
 
         case "attention-mode": {
           if (rank < 4) {
-            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
             return;
           }
           const name = tokens[1];
@@ -146,7 +149,7 @@ Usage:
 
         case "attention-feedback": {
           if (rank < 4) {
-            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
             return;
           }
           const name = tokens[1];
@@ -172,7 +175,7 @@ Usage:
 
         case "disable": {
           if (rank < 4) {
-            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
             return;
           }
           return handleDisable(ctx, input.entity, tokens[1], deps);
@@ -180,7 +183,7 @@ Usage:
 
         case "enable": {
           if (rank < 4) {
-            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
             return;
           }
           return handleEnable(ctx, input.entity, tokens[1], deps);
@@ -188,7 +191,7 @@ Usage:
 
         case "attention": {
           if (rank < 4) {
-            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
             return;
           }
           const name = tokens[1];
@@ -202,7 +205,7 @@ Usage:
 
         case "focus": {
           if (rank < 4) {
-            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
             return;
           }
           const name = tokens[1];
@@ -216,7 +219,7 @@ Usage:
 
         case "config": {
           if (rank < 4) {
-            ctx.send(input.entity, "Requires builder rank (4) or higher.");
+            ctx.send(input.entity, REQUIRES_BUILDER_RANK);
             return;
           }
           return handleConfig(ctx, input.entity, tokens.slice(1), deps);
@@ -421,7 +424,7 @@ async function handleSpawn(
       return;
     }
   } else if (rank < 4) {
-    ctx.send(eid, "Requires builder rank (4) or higher.");
+    ctx.send(eid, REQUIRES_BUILDER_RANK);
     return;
   }
 

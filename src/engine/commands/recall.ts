@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { record as recordStanding } from "../../agent/standing";
+import { creditRecalledReflections } from "../../agent/standing";
 import type { TaskManager } from "../../coordination/task-manager";
 import {
   bold,
@@ -15,7 +15,7 @@ import {
   status,
 } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
-import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { DAY_MS } from "../constants";
 import { extractFlags, extractModifiers } from "../parse-input";
 
@@ -58,6 +58,9 @@ export function recallCommand(deps: {
   db?: MarinaDB;
   taskManager?: TaskManager;
   logEvent?: (event: EngineEvent) => void;
+  /** Resolve a note author's entity id so generational credit can flow to the
+   *  WRITER of recalled wisdom, not the reader. */
+  resolveEntityIdByName?: (name: string) => EntityId | undefined;
 }): CommandDef {
   return {
     name: "recall",
@@ -163,22 +166,15 @@ export function recallCommand(deps: {
         }
       }
 
-      // Touch each returned note to update last_accessed and recall_count.
-      // Surfacing a reflection-tier note is a contribution event — recalled
-      // reflections are generational wisdom put back to use. Credit once per
-      // reflection (idempotent on ref=reflection:<id>), so the loop never
-      // floods even though recall runs constantly.
+      // Touch each returned note to update last_accessed and recall_count,
+      // then flow generational credit to the AUTHORS of any cross-entity
+      // reflections surfaced (see creditRecalledReflections — the writer
+      // earns, never the reader).
       for (const note of results) {
         db.touchNote(note.id);
-        if (note.tier === "reflection") {
-          recordStanding(
-            db,
-            entity.id,
-            entity.name,
-            "reflection_recalled",
-            `reflection:${note.id}`,
-          );
-        }
+      }
+      if (deps.resolveEntityIdByName) {
+        creditRecalledReflections(db, entity.name, results, deps.resolveEntityIdByName);
       }
 
       // Emit recall trace so the dashboard can animate spreading activation on the graph

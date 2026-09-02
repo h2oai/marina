@@ -9,16 +9,17 @@ import {
   type InheritanceBundle,
   isExportableInheritancePool,
 } from "../inheritance-bundle";
+import { requiresPersistence } from "./command-messages";
 
 export function inheritanceCommand(db?: MarinaDB): CommandDef {
   return {
     name: "inheritance",
-    aliases: ["dna"],
+    aliases: [],
     category: "Information",
     help: "Inspect or export shared Marina inheritance. Usage: inheritance [list] | inheritance export <guide|tradition-pool>",
     handler: (ctx, input) => {
       if (!db) {
-        ctx.send(input.entity, "Inheritance requires database support.");
+        ctx.send(input.entity, requiresPersistence("inheritance"));
         return;
       }
       const sub = input.tokens[0]?.toLowerCase();

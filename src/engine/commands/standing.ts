@@ -7,6 +7,7 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { getGateProgress } from "../safety-gates";
+import { requiresPersistence } from "./command-messages";
 
 interface StandingDeps {
   db?: MarinaDB;
@@ -25,6 +26,7 @@ export function standingCommand(deps: StandingDeps): CommandDef {
   return {
     name: "standing",
     aliases: [],
+    category: "Civic",
     minRank: 0,
     help:
       "Civic standing — your blended contribution metric (60-day half-life).\n" +
@@ -39,7 +41,7 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       "supervision until it unlocks.",
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, "Standing requires database support.");
+        ctx.send(input.entity, requiresPersistence("standing"));
         return;
       }
       const db = deps.db;

@@ -21,7 +21,7 @@ interface NextDeps {
 export function nextCommand(deps: NextDeps): CommandDef {
   return {
     name: "next",
-    aliases: ["suggest"],
+    aliases: [],
     help: "Context-aware suggestion — tells you the single best thing to do right now.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);

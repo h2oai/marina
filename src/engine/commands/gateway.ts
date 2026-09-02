@@ -7,6 +7,7 @@ import type { CommandDef, Entity, RoomContext } from "../../types";
 import { getErrorMessage } from "../errors";
 import type { GatewayRuntime } from "../gateway-runtime";
 import { getRank } from "../permissions";
+import { requiresPersistence } from "./command-messages";
 
 export function gatewayCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
@@ -19,7 +20,7 @@ export function gatewayCommand(deps: {
     aliases: ["gw"],
     minRank: 5,
     gate: "gateway.connect",
-    help: "Bridge to peer Marina instances. Usage: gateway add <name> <ws-url> | gateway remove <name> | gateway list | gateway status <name> | gateway bridge <name> <channel> | gateway unbridge <name> <channel> | gateway send <name> <entity> <message>",
+    help: "Bridge to peer Marina instances. Gated capability: earn it via `witness request gateway.connect` or an operator grant (see `standing`). Usage: gateway add <name> <ws-url> | gateway remove <name> | gateway list | gateway status <name> | gateway bridge <name> <channel> | gateway unbridge <name> <channel> | gateway send <name> <entity> <message>",
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -27,7 +28,7 @@ export function gatewayCommand(deps: {
       const rank = getRank(entity);
 
       if (!deps.db) {
-        ctx.send(input.entity, "Gateways require database support.");
+        ctx.send(input.entity, requiresPersistence("gateways"));
         return;
       }
       const db = deps.db;

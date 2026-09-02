@@ -4,6 +4,7 @@
 import { category, dim, header, id, separator, success } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { requiresPersistence } from "./command-messages";
 
 /**
  * Share — quick deposit into a shared memory pool.
@@ -28,7 +29,7 @@ export function shareCommand(deps: {
       if (!entity) return;
 
       if (!deps.db) {
-        ctx.send(input.entity, "Share requires database support.");
+        ctx.send(input.entity, requiresPersistence("share"));
         return;
       }
       const db = deps.db;

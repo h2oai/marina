@@ -18,8 +18,8 @@ export function reproduceCommand(deps: {
 }): CommandDef {
   return {
     name: "reproduce",
-    aliases: ["offspring"],
-    category: "Growth",
+    aliases: [],
+    category: "Lineage",
     minRank: 0,
     help: HELP,
     handler: (ctx, input) => {
@@ -130,9 +130,16 @@ export function reproduceCommand(deps: {
           ctx.send(input.entity, "Reproduction not found.");
           return;
         }
+        const verification = deps.db.verifyCognitiveReproduction(row);
+        const signatureLine =
+          verification.valid === null
+            ? "Signature: unsigned (no signing key at record time)"
+            : verification.valid
+              ? `Signature: verified (Ed25519, key ${verification.keyId})`
+              : `Signature: INVALID — record does not match its write-time signature${verification.error ? ` (${verification.error})` : ""}`;
         ctx.send(
           input.entity,
-          `${header("Cognitive reproduction")}\n${separator()}\n${row.id}\nDescendant: ${row.descendant_intellect_id}\nMode: ${row.mode}\nParents: ${parseStringArray(row.parent_ids_json).join(", ")}\nComponents:\n${deps.db
+          `${header("Cognitive reproduction")}\n${separator()}\n${row.id}\nDescendant: ${row.descendant_intellect_id}\nMode: ${row.mode}\nParents: ${parseStringArray(row.parent_ids_json).join(", ")}\n${signatureLine}\nComponents:\n${deps.db
             .listReproductionComponents(row.id)
             .map((c) => `  ${c.disposition} ${c.kind}:${c.ref}`)
             .join("\n")}`,

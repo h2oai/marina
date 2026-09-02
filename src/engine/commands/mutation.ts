@@ -1,7 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+
 import type { MarinaDB, MutationDisposition } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
+import { notFound } from "./command-messages";
 
 const DISPOSITIONS = ["proposed", "adopted", "rejected", "branched", "observed"] as const;
 const HELP = `Recursive, signature-capable mutation lineage across cognition and civilization.
@@ -19,7 +21,7 @@ export function mutationCommand(deps: {
   return {
     name: "mutation",
     aliases: ["mutations"],
-    category: "Growth",
+    category: "Lineage",
     minRank: 0,
     help: HELP,
     handler: (ctx, input) => {
@@ -107,7 +109,7 @@ export function mutationCommand(deps: {
       if (sub === "show") {
         const row = deps.db.getCivilizationMutation(input.tokens[1] ?? "");
         if (!row) {
-          ctx.send(input.entity, "Mutation not found.");
+          ctx.send(input.entity, notFound("mutation", "mutation list"));
           return;
         }
         ctx.send(

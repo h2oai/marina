@@ -4,8 +4,10 @@
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
 import type { WorldCollectiveManager } from "../../world/world-collective-manager";
+import { notFound } from "./command-messages";
 
 const HELP = `Create and operate sovereign Marina descendants through World Collective.
+Gated capability: earn it via \`witness request admin.destructive\` or an operator grant (see \`standing\`).
 Usage:
   marina-descend create <genome-hash> | <name> | <parents csv> | <mode> | <hypothesis> [| mutations csv]
   marina-descend start <descendant-id>
@@ -19,8 +21,8 @@ export function marinaDescendCommand(deps: {
 }): CommandDef {
   return {
     name: "marina-descend",
-    aliases: ["marina-offspring"],
-    category: "Growth",
+    aliases: [],
+    category: "Lineage",
     minRank: 5,
     gate: "admin.destructive",
     help: HELP,
@@ -83,7 +85,7 @@ export function marinaDescendCommand(deps: {
       if (sub === "start" || sub === "stop") {
         const row = deps.db.getMarinaDescendant(input.tokens[1] ?? "");
         if (!row?.world_variant_id) {
-          ctx.send(input.entity, "Descendant runtime not found.");
+          ctx.send(input.entity, notFound("descendant runtime", "marina-descend list"));
           return;
         }
         const variant =

@@ -452,6 +452,9 @@ export function registerBuiltinCommands(engine: Engine): void {
       db: engine.db,
       taskManager: engine.taskManager,
       logEvent: (event) => engine.logEvent(event),
+      resolveEntityIdByName: (name) =>
+        engine.entities.findAgentByName(name)?.id ??
+        engine.entities.all().find((e) => e.name === name)?.id,
     }),
   );
   engine.commands.registerBuiltin(
@@ -467,6 +470,9 @@ export function registerBuiltinCommands(engine: Engine): void {
       db: engine.db,
       logEvent: (event) => engine.logEvent(event),
       getCommandNames: () => engine.commands.allBuiltins().map((cmd) => cmd.name),
+      resolveEntityIdByName: (name) =>
+        engine.entities.findAgentByName(name)?.id ??
+        engine.entities.all().find((e) => e.name === name)?.id,
     }),
   );
   engine.commands.registerBuiltin(

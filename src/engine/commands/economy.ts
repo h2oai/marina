@@ -1,11 +1,13 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+
 import {
   ECONOMIC_EVENT_KINDS,
   type EconomicEventKind,
   type MarinaDB,
 } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
+import { notFound } from "./command-messages";
 
 const HELP = `Asset-neutral economic provenance (signature-capable claims only; no implied transfer).
 Usage:
@@ -21,8 +23,8 @@ export function economyCommand(deps: {
 }): CommandDef {
   return {
     name: "economy",
-    aliases: ["contract"],
-    category: "Coordination",
+    aliases: [],
+    category: "Lineage",
     minRank: 0,
     help: HELP,
     handler: (ctx, input) => {
@@ -156,7 +158,7 @@ export function economyCommand(deps: {
       if (sub === "show") {
         const row = deps.db.getEconomicContract(input.tokens[1] ?? "");
         if (!row) {
-          ctx.send(input.entity, "Economic contract not found.");
+          ctx.send(input.entity, notFound("economic contract", "economy list"));
           return;
         }
         // Cap the displayed/verified window — per-event Ed25519 verification on

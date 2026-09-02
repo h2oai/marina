@@ -45,6 +45,8 @@ Usage:
   bankroll floor <usd>             — max daily loss in USD before trading halts
   bankroll reset                   — clear all bankroll keys
 
+Ranks: 'bankroll show' works at rank 2+; set/kelly/cap/floor/reset need rank 5+.
+
 Examples:
   bankroll set 10000
   bankroll kelly 0.5
@@ -227,7 +229,10 @@ function resetBankroll(ctx: RoomContext, eid: Entity["id"], entity: Entity, db: 
   for (const key of Object.values(BANKROLL_KEYS)) {
     db.deleteCoreMemory(entity.name, key);
   }
-  ctx.send(eid, "Bankroll cleared. Trading effectively disabled until reconfigured.");
+  ctx.send(
+    eid,
+    "Bankroll cleared — trading is disabled until reconfigured. Start over with `bankroll set <usd>`, then `bankroll cap <usd>` and `bankroll floor <usd>`.",
+  );
 }
 
 function fmtUsd(n: number): string {

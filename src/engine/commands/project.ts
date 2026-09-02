@@ -14,6 +14,7 @@ import {
 } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, EntityRank, RoomContext } from "../../types";
+import { requiresPersistence } from "./command-messages";
 
 /** Emit a coordination_change so the dashboard's Projects list refreshes live. */
 function emitProjectChange(
@@ -189,7 +190,7 @@ export function projectCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, "Projects require database support.");
+        ctx.send(input.entity, requiresPersistence("projects"));
         return;
       }
       const db = deps.db;

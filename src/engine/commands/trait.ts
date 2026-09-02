@@ -5,6 +5,7 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB, TraitCapabilities, TraitRow } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getRank } from "../permissions";
+import { requiresPersistence } from "./command-messages";
 import {
   hasTraitCapabilities,
   parseTraitCapabilities,
@@ -147,7 +148,7 @@ export function traitCommand(deps: {
     help: "Manage composable agent traits.\nUsage: trait list | trait view <name> | trait lint <name> | trait diff <a> <b> | trait history <name> | trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2] | trait delete <name>\n\nTraits are atomic prompt fragments used to compose roles.\nOptional capabilities metadata enables semantic composition (synergies/tensions), task gating, and typed behavioral hints.\n`trait lint <name>` reports pragmatic prompt-shaping warnings without changing the trait. `trait history <name>` shows the audited edit trail.",
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, "Traits require database support.");
+        ctx.send(input.entity, requiresPersistence("traits"));
         return;
       }
       const db = deps.db;

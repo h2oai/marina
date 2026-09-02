@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { creditRecalledReflections } from "../../agent/standing";
 import {
   bold,
   dim,
@@ -11,7 +12,7 @@ import {
   separator,
 } from "../../net/ansi";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
-import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { DAY_MS } from "../constants";
 import { auditKnowledgeNotes, renderKnowledgeHygieneReport } from "./knowledge-hygiene";
 
@@ -95,6 +96,8 @@ export function poolCommand(deps: {
   db?: MarinaDB;
   logEvent?: (event: EngineEvent) => void;
   getCommandNames?: () => string[];
+  /** Author lookup so recalled reflections credit their writer (generational). */
+  resolveEntityIdByName?: (name: string) => EntityId | undefined;
 }): CommandDef {
   return {
     name: "pool",
@@ -315,6 +318,12 @@ export function poolCommand(deps: {
           }
           for (const note of results) {
             db.touchNote(note.id);
+          }
+          // Pool recall is THE generational hand-off surface: someone else
+          // reading your deposited reflection is your wisdom put back to use.
+          // Credit flows to the author (idempotent; self-recall earns nothing).
+          if (deps.resolveEntityIdByName) {
+            creditRecalledReflections(db, entity.name, results, deps.resolveEntityIdByName);
           }
           const lines = [
             header(`Pool "${poolName}" recall: "${query}"`),

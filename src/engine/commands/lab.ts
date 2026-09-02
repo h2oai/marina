@@ -1,5 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+
 import type {
   MarinaDB,
   ReproducibilityLevel,
@@ -8,6 +9,7 @@ import type {
 } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
 import { getErrorMessage } from "../errors";
+import { notFound } from "./command-messages";
 
 const MODES = ["live", "recorded", "synthetic", "hybrid", "long-duration"] as const;
 const LEVELS = [
@@ -33,8 +35,8 @@ export function labCommand(deps: {
 }): CommandDef {
   return {
     name: "lab",
-    aliases: ["simulation"],
-    category: "Growth",
+    aliases: [],
+    category: "Experiments",
     minRank: 0,
     help: HELP,
     handler: (ctx, input) => {
@@ -260,7 +262,7 @@ export function labCommand(deps: {
       if (sub === "show") {
         const row = deps.db.getSimulationRun(input.tokens[1] ?? "");
         if (!row) {
-          ctx.send(input.entity, "Simulation run not found.");
+          ctx.send(input.entity, notFound("simulation run", "lab list"));
           return;
         }
         ctx.send(

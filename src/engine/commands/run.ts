@@ -8,6 +8,7 @@ import { getRank } from "../permissions";
 import type { ShellRuntime } from "../shell-runtime";
 
 const HELP = `Execute shell commands.
+Gated capability: earn it via \`witness request agent.run\` or an operator grant (see \`standing\`).
 Usage: run <binary> [args...]
        run quiet <binary> [args...]
        run raw <command string>

@@ -6,6 +6,7 @@ import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import type { ConnectorRuntime } from "../connector-runtime";
 import { search as providerSearch, type SearchResult } from "../search-providers/index";
+import { requiresPersistence } from "./command-messages";
 
 /**
  * Dig — investigate a topic with external evidence.
@@ -40,7 +41,7 @@ export function digCommand(deps: {
       }
 
       if (!deps.db) {
-        ctx.send(input.entity, "Dig requires database support.");
+        ctx.send(input.entity, requiresPersistence("dig"));
         return;
       }
 

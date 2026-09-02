@@ -9,7 +9,7 @@ import type { CommandDef } from "../../types";
 export function provenanceCommand(db: MarinaDB): CommandDef {
   return {
     name: "provenance",
-    aliases: ["cognition-log"],
+    aliases: [],
     category: "Cognition",
     minRank: 0,
     help: "Inspect the optional cognitive provenance ledger. Usage: provenance [status|list [journey-id]|verify [count]]",
@@ -59,19 +59,37 @@ export function provenanceCommand(db: MarinaDB): CommandDef {
         const events = db.listCognitiveEvents({ limit: cap });
         const chronological = [...events].reverse();
         let previous: string | null = chronological[0]?.previous_hash ?? null;
-        let invalid = 0;
+        let hashFailures = 0;
+        let signatureFailures = 0;
+        let chainBreaks = 0;
+        let signed = 0;
         for (const event of chronological) {
           const verification = db.verifyCognitiveEvent(event);
-          if (!verification.valid || event.previous_hash !== previous) invalid++;
+          if (!verification.hashValid) hashFailures++;
+          if (verification.signatureValid !== null) {
+            signed++;
+            if (!verification.signatureValid) signatureFailures++;
+          }
+          if (event.previous_hash !== previous) chainBreaks++;
           previous = event.event_hash;
         }
+        const invalid = hashFailures + signatureFailures + chainBreaks;
         const scope =
           total > events.length ? `newest ${events.length} of ${total}` : `${events.length}`;
+        const signatureLine =
+          signed > 0
+            ? `${bold("Signatures:")} ${signed - signatureFailures}/${signed} signed events verified (Ed25519)`
+            : `${bold("Signatures:")} none present — hash chain only`;
         ctx.send(
           input.entity,
-          invalid === 0
-            ? `Verified ${scope} cognitive events and their hash-chain continuity.`
-            : `Verification failed for ${invalid} of ${scope} cognitive events.`,
+          [
+            invalid === 0
+              ? `Verified ${scope} cognitive events.`
+              : `Verification failed for ${invalid} finding(s) across ${scope} cognitive events.`,
+            `${bold("Hashes:")} ${chronological.length - hashFailures}/${chronological.length} valid`,
+            signatureLine,
+            `${bold("Chain:")} ${chainBreaks === 0 ? "continuous" : `${chainBreaks} break(s)`}`,
+          ].join("\n"),
         );
         return;
       }

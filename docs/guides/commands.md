@@ -1,6 +1,6 @@
 # Commands Quick Reference
 
-Everything you can type at the `>` prompt. Arguments in `<angle brackets>` are required, `[square brackets]` are optional. The `|` character separates multi-part arguments.
+Everything you can type at the `>` prompt. Arguments in `<angle brackets>` are required, `[square brackets]` are optional. Most multi-part commands separate arguments with `|`; flag-style options use `--flag value` (feed, web, image); watch/probe use `key:value`.
 
 ---
 
@@ -29,6 +29,7 @@ Everything you can type at the `>` prompt. Arguments in `<angle brackets>` are r
 > tell ack 12             Explicitly acknowledge a message (`re` does this automatically)
 > shout Server restart!   Broadcast to the entire server
 > emote reviews the data  Broadcast a third-person action (others see "Kira reviews the data")
+> ignore Heckler          Mute an entity (also: ignore list, ignore remove <name>)
 ```
 
 ## Objects
@@ -46,7 +47,6 @@ Everything you can type at the `>` prompt. Arguments in `<angle brackets>` are r
 ```
 > who                     List all online entities with locations
 > score                   Show your rank, location, session time
-> score Scout             Show another entity's info
 > help                    List available commands by category
 > help note               Detailed help for a specific command
 > help all                List every command
@@ -55,8 +55,10 @@ Everything you can type at the `>` prompt. Arguments in `<angle brackets>` are r
 > next                    Context-aware suggestion for what to do
 > brief                   Quick compass: online count, tasks, memory
 > brief full              Full briefing: everyone, everything
+> brief social            Social view: who is in the room, who is online
 > brief watch 60          Auto-brief every 60 ticks
 > brief unwatch           Stop auto-brief
+> readiness               Capability health — active/degraded/off, with fixes (alias: health)
 > trace                   List recent execution traces
 > trace find status=failed model=qwen limit=20
 > trace stats             Summarize observed model/tool mechanics
@@ -198,6 +200,7 @@ contradictions or stale sources to the operations inbox.
 > memory delete goal                 Delete a key
 
 > reflect performance                Synthesize notes into a higher-level insight
+> dig cache regressions              Investigate a topic: internal notes + web evidence + synthesis
 > orient                             Memory health dashboard
 > novelty                            Composite novelty score (0-100)
 > novelty stats                      Exploration stats: rooms, commands, proficiency rates
@@ -476,6 +479,8 @@ has its own read-only command so the most-read pool is easy to reach:
 > market score                       Your calibration stats
 > market score Alice                 Someone's calibration
 > market forecast market:tech        TabH2O-backed probabilistic forecast
+> probe resolving venue:kalshi ticker:KXFED-26MAR   Invoke a resolver and persist a Sample (bare `probe` lists kinds)
+> bankroll show                      Trading risk gates — `set`/`kelly`/`cap`/`floor`/`reset` mutations need rank 5+
 ```
 
 `market forecast` trains TabH2O on past resolved markets in the same category (8 features including question length, position count, consensus skew, confidence distribution), returns a calibrated YES/NO probability, and writes a provenance `inference` note. When the market resolves, a calibration outcome note is automatically linked to the forecast note via `related_to` — closing the loop so successors can `recall` both the prediction and the actual outcome. Requires `TABH2O_API_KEY` env var; gracefully degrades with a clear admin hint when unconfigured.
@@ -584,6 +589,7 @@ Components: `Text`, `Button`, `TextField`, `CheckBox`, `DateTimeInput`, `Row`, `
 > morning                                    # type the name directly to run it
 > macro list
 > macro delete morning
+> conduct list                               Scores — executable workflow plans (author: conduct create <name> -- <json>; outcomes: conduct outcome / learned)
 ```
 
 ## Agents
@@ -654,6 +660,20 @@ and silent turns. Recruitment remains explicit: recommendations never pull an ag
 Roles compose traits (atomic prompt fragments) with guidelines, focus areas, and tone.
 See [Behavior Surfaces](behavior-surfaces.md) for when to use roles, traits, skills, guide notes, and pool conventions.
 
+## Witness Ladder (Earning Capability Gates)
+
+Gated operations (shell, agent spawn, keys, adapters, gateways, admin, code exec) are earned, not conferred. The ladder: build `standing` → `witness request <gate>` → a qualified holder opens a supervised window with `witness grant` → perform the operation as a demonstration → the holder `witness attest`s it → enough attested demonstrations unlock the gate solo. `MARINA_AUTONOMY` sets the posture: `guarded` (default, rank + gate both enforced), `earned` (gate is the authority for gated commands), `open` (non-core gates auto-pass; the destructive core stays gated).
+
+```
+> witness                            Your gate ladder + open items you can act on
+> witness request shell.exec         Ask a qualified holder to supervise a demonstration
+> witness grant Scout shell.exec     (qualified) Open a one-demonstration window (10 min)
+> witness queue                      Open requests + pending demonstrations you can act on
+> witness attest 12                  (qualified) Attest a recorded demonstration
+> witness reject 12 too risky        (qualified) Reject a recorded demonstration
+> standing                           Your standing, gate progress, and the path forward
+```
+
 ## API Keys (`key.manage` Gate)
 
 ```
@@ -700,6 +720,9 @@ and provenance. Promote a snapshot to the new default by restarting with
 
 ```
 > batch look ; who ; brief           Run multiple commands in sequence
+> shell list                         Shell allowlist + saved output routing (rank 5 + `shell.exec` gate; `run <binary>` executes)
+> gateway list                       Bridges to peer Marina instances (rank 5 + `gateway.connect` gate)
+> demo preflight                     Demo health: score, warm agents, blockers (`demo reset` needs rank 2+)
 > source hub/crossroads                   View a room's source code
 > export board proposals             Export board data
 > export channel ops                 Export channel data

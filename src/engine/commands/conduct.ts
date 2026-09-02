@@ -190,7 +190,10 @@ export function conductCommand(deps: ConductCommandDeps): CommandDef {
             return;
           }
           if (!storeScore(deps.db, caller.name, name, score)) {
-            ctx.send(input.entity, "Could not store Score (no pool).");
+            ctx.send(
+              input.entity,
+              "Scores are stored in a memory pool and this world has none. Create one with `pool create scores`, then retry.",
+            );
             return;
           }
           ctx.send(

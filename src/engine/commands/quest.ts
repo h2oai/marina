@@ -196,7 +196,10 @@ export function questCommand(deps: {
 
           const quest = ALL_QUESTS.find((q) => q.id === questId);
           if (!quest) {
-            ctx.send(input.entity, "Unknown objective. Something went wrong.");
+            ctx.send(
+              input.entity,
+              "That objective isn't in the current quest. `quest status` shows your active step; `quest list` shows what's available.",
+            );
             return;
           }
 

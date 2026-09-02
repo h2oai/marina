@@ -33,8 +33,8 @@ export function associationCommand(deps: {
 }): CommandDef {
   return {
     name: "association",
-    aliases: ["associations", "associate"],
-    category: "Coordination",
+    aliases: ["associations"],
+    category: "Lineage",
     minRank: 0,
     help: HELP,
     handler: (ctx, input) => {

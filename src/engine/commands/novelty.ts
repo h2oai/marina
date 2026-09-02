@@ -5,6 +5,7 @@ import { bold, dim, header, progressBar, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { getRank } from "../permissions";
+import { requiresPersistence } from "./command-messages";
 
 /**
  * Calculate entropy of a distribution (higher = more diverse).
@@ -34,13 +35,13 @@ export function noveltyCommand(deps: {
 }): CommandDef {
   return {
     name: "novelty",
-    aliases: ["proficiency"],
+    aliases: [],
     help: "Activity proficiency and exploration coverage. Shows command success rates, coverage gaps, and suggestions for underused capabilities. Usage: novelty | novelty suggest | novelty stats",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, "Novelty requires database support.");
+        ctx.send(input.entity, requiresPersistence("novelty tracking"));
         return;
       }
       const db = deps.db;

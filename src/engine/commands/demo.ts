@@ -22,7 +22,7 @@ export function demoCommand(deps: {
     name: "demo",
     aliases: [],
     minRank: 0,
-    help: "Operate the default demo safely. Usage: demo preflight|qualify|warm|recover|reset|status",
+    help: "Operate the default demo safely. Usage: demo preflight|qualify|warm|recover|reset|status — 'demo reset' needs rank 2+.",
     handler: async (ctx, input) => {
       const action = input.tokens[0]?.toLowerCase() ?? "status";
       const report = deps.readiness();
@@ -74,7 +74,10 @@ export function demoCommand(deps: {
         }
         const project = deps.db.getProjectByName("Demo Pulse");
         if (!project?.bundle_id) {
-          ctx.send(input.entity, "Demo Pulse project is not present in this world.");
+          ctx.send(
+            input.entity,
+            "The Demo Pulse project isn't seeded in this world. `demo preflight` checks what's missing; `project list` shows what exists.",
+          );
           return;
         }
         const count = deps.db.resetProjectTasks(project.bundle_id);

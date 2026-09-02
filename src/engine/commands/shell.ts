@@ -7,8 +7,10 @@ import type { StorageProvider } from "../../storage/provider";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { getRank } from "../permissions";
 import type { ShellRuntime } from "../shell-runtime";
+import { requiresPersistence } from "./command-messages";
 
 const HELP = `Shell management and output routing.
+Gated capability: earn it via \`witness request shell.exec\` or an operator grant (see \`standing\`).
 Usage: shell list | shell allow <binary> | shell deny <binary>
        shell history [n] | shell log [entity] [n]
        shell scratch ls | shell scratch cat <file> | shell scratch rm <file>
@@ -133,7 +135,7 @@ function handleHistory(
   tokens: string[],
 ): void {
   if (!db) {
-    ctx.send(eid, "Shell history requires database support.");
+    ctx.send(eid, requiresPersistence("shell history"));
     return;
   }
   const limit = Number.parseInt(tokens[0] ?? "10", 10) || 10;
@@ -161,7 +163,7 @@ function handleLog(
   tokens: string[],
 ): void {
   if (!db) {
-    ctx.send(eid, "Shell log requires database support.");
+    ctx.send(eid, requiresPersistence("the shell log"));
     return;
   }
   const entityFilter = tokens[0] ?? null;
@@ -270,7 +272,7 @@ async function handleSave(
   switch (target) {
     case "note": {
       if (!db) {
-        ctx.send(eid, "Notes require database support.");
+        ctx.send(eid, requiresPersistence("notes"));
         return;
       }
       const importance = Number.parseInt(tokens[1] ?? "5", 10) || 5;
@@ -299,7 +301,7 @@ async function handleSave(
 
     case "board": {
       if (!db) {
-        ctx.send(eid, "Boards require database support.");
+        ctx.send(eid, requiresPersistence("boards"));
         return;
       }
       const boardName = tokens[1];
@@ -326,7 +328,7 @@ async function handleSave(
 
     case "memory": {
       if (!db) {
-        ctx.send(eid, "Memory requires database support.");
+        ctx.send(eid, requiresPersistence("memory"));
         return;
       }
       const key = tokens[1];
@@ -341,7 +343,7 @@ async function handleSave(
 
     case "canvas": {
       if (!db) {
-        ctx.send(eid, "Canvas requires database support.");
+        ctx.send(eid, requiresPersistence("canvas"));
         return;
       }
       const canvasName = tokens[1] ?? "global";

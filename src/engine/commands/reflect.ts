@@ -4,6 +4,7 @@
 import { bold, category, dim, id as fmtId, header, separator, status } from "../../net/ansi";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { requiresPersistence } from "./command-messages";
 
 /** Extract common themes from a set of notes via word frequency analysis */
 function extractThemes(notes: NoteRow[]): string[] {
@@ -174,7 +175,7 @@ export function reflectCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, "Reflect requires database support.");
+        ctx.send(input.entity, requiresPersistence("reflect"));
         return;
       }
       const db = deps.db;

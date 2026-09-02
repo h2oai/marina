@@ -21,7 +21,7 @@ interface WorkDeps {
 export function workCommand(deps: WorkDeps): CommandDef {
   return {
     name: "work",
-    aliases: ["inbox"],
+    aliases: [],
     category: "Coordination",
     help: "Show the prioritized work inbox: active commitments, reviews, canvas intents, crews, tasks, and social blockers.",
     handler: (ctx, input) => {
@@ -42,7 +42,10 @@ export function workCommand(deps: WorkDeps): CommandDef {
       ).filter((item) => item.kind !== "default" || item.priority > 0);
 
       if (items.length === 0) {
-        ctx.send(input.entity, `${dim("No active work surfaced.")}\n${bold("look")}`);
+        ctx.send(
+          input.entity,
+          `${dim("Nothing is waiting on you.")}\n${bold("Pick something up:")} task list · next · look`,
+        );
         return;
       }
 

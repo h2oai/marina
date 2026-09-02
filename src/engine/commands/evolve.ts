@@ -10,6 +10,7 @@ import {
   evolutionBudgetState,
   parseEvolutionProtocol,
 } from "../evolution-protocol";
+import { requiresPersistence } from "./command-messages";
 
 /**
  * Evolve — the self-improvement coach. A read-only composer over existing
@@ -199,7 +200,7 @@ function handleEvolutionProtocol(
     return;
   }
   if (!db) {
-    ctx.send(input.entity, "Evolution protocols require database support.");
+    ctx.send(input.entity, requiresPersistence("evolution protocols"));
     return;
   }
 

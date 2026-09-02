@@ -4,6 +4,7 @@
 import { bold, dim, header, label, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { requiresPersistence } from "./command-messages";
 
 export function memoryCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
@@ -17,7 +18,7 @@ export function memoryCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, "Memory requires database support.");
+        ctx.send(input.entity, requiresPersistence("memory"));
         return;
       }
       const db = deps.db;

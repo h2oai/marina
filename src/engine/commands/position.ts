@@ -60,6 +60,8 @@ Usage:
 
 Venues: kalshi | polymarket
 
+Ranks: size/list/pnl/propose/reject work at rank 2+; open/close/confirm need rank 5+.
+
 Examples:
   position size kalshi KXFEDDECISION-26MAR-CUT yes 0.72 55
   position open kalshi KXFEDDECISION-26MAR-CUT yes 25 55

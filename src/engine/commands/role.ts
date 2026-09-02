@@ -13,6 +13,7 @@ import type { MarinaDB, RoleRow, TraitCapabilities, TraitRow } from "../../persi
 import type { EditHistoryRow } from "../../persistence/db-agents";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getRank } from "../permissions";
+import { requiresPersistence } from "./command-messages";
 
 interface RoleInspectionMetadata {
   includedTraits: string[];
@@ -150,7 +151,7 @@ export function roleCommand(deps: {
     help: "Manage composable agent roles.\nUsage: role list | role view <name> [goal <text>] | role lint <name> | role diff <a> <b> | role history <name> | role create <name> [traits <t1,t2,...>] [guidelines <g1|g2|...>] [focus <f1,f2,...>] [tone <tone>] | role edit <name> ... | role reload <name> | role delete <name>\n\nRoles are compositions of traits plus guidelines, focus areas, and tone.\n`role view <name> goal <text>` previews the PRISM-gated prompt an agent with that goal actually receives. `role lint <name>` reports pragmatic prompt-shaping warnings without changing the role. `role history <name>` shows the audited edit trail. `role reload <name>` propagates the current definition into running agents bound to it.",
     handler: async (ctx: RoomContext, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, "Roles require database support.");
+        ctx.send(input.entity, requiresPersistence("roles"));
         return;
       }
       const db = deps.db;

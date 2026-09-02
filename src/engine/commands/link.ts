@@ -16,6 +16,11 @@ interface PendingLink {
   createdAt: number;
 }
 
+const LINK_NEEDS_DB =
+  "This world is running without persistence, so account links wouldn't survive a restart. Restart with a database (DB_PATH) to enable linking.";
+const LINK_NEEDS_USER =
+  "No user record exists for this name yet. User records are created at login — log in through a normal session first, then retry.";
+
 const CODE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous chars (0/O, 1/I)
 
@@ -62,13 +67,13 @@ export function linkCommand(deps: {
       if (!sub || sub === "code") {
         // Generate a new link code
         if (!deps.db) {
-          ctx.send(input.entity, "Account linking requires a persistent server.");
+          ctx.send(input.entity, LINK_NEEDS_DB);
           return;
         }
 
         const user = deps.db.getUserByName(entity.name);
         if (!user) {
-          ctx.send(input.entity, "You must be a registered user to link accounts.");
+          ctx.send(input.entity, LINK_NEEDS_USER);
           return;
         }
 
@@ -103,12 +108,12 @@ export function linkCommand(deps: {
 
       if (sub === "status") {
         if (!deps.db) {
-          ctx.send(input.entity, "Account linking requires a persistent server.");
+          ctx.send(input.entity, LINK_NEEDS_DB);
           return;
         }
         const user = deps.db.getUserByName(entity.name);
         if (!user) {
-          ctx.send(input.entity, "You must be a registered user.");
+          ctx.send(input.entity, LINK_NEEDS_USER);
           return;
         }
         const links = deps.db.getUserLinks(user.id);
@@ -131,12 +136,12 @@ export function linkCommand(deps: {
           return;
         }
         if (!deps.db) {
-          ctx.send(input.entity, "Account linking requires a persistent server.");
+          ctx.send(input.entity, LINK_NEEDS_DB);
           return;
         }
         const user = deps.db.getUserByName(entity.name);
         if (!user) {
-          ctx.send(input.entity, "You must be a registered user.");
+          ctx.send(input.entity, LINK_NEEDS_USER);
           return;
         }
         const links = deps.db.getUserLinks(user.id);

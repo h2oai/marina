@@ -6,6 +6,7 @@ import { composeRolePrompt, inferTaskCategory, resolveRole } from "../../agent/r
 import { dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, RoomContext } from "../../types";
+import { requiresPersistence } from "./command-messages";
 import { getRoleInspectionMetadata, renderRoleInspectionMetadata } from "./role";
 
 /**
@@ -47,7 +48,7 @@ export function systemPromptCommand(deps: { db?: MarinaDB }): CommandDef {
       const inspectionLines: string[] = [];
       if (roleName) {
         if (!deps.db) {
-          ctx.send(input.entity, "Roles require database support.");
+          ctx.send(input.entity, requiresPersistence("roles"));
           return;
         }
         const resolved = resolveRole(deps.db, roleName);

@@ -20,7 +20,10 @@ export function quitCommand(deps: {
     handler(ctx, input) {
       const conn = deps.getConnection(input.entity);
       if (!conn) {
-        ctx.send(input.entity, "No active connection found.");
+        ctx.send(
+          input.entity,
+          "You're not connected through a session, so there's nothing to end.",
+        );
         return;
       }
       ctx.send(input.entity, "Goodbye. Your session has ended.");

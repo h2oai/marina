@@ -12,7 +12,7 @@ export function inheritCommand(deps: {
   return {
     name: "inherit",
     aliases: [],
-    category: "Creation",
+    category: "Knowledge",
     minRank: 2,
     help: "Import a bounded Marina inheritance bundle as quarantined evidence. Usage: inherit <bundle-token>",
     handler: (ctx, input) => {

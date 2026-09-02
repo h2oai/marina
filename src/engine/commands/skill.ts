@@ -5,6 +5,7 @@ import { formatSkillContent, loadSkillFile } from "../../agent/skill-import";
 import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { requiresPersistence } from "./command-messages";
 import { auditKnowledgeNotes, renderKnowledgeHygieneReport } from "./knowledge-hygiene";
 
 export function skillCommand(deps: {
@@ -21,7 +22,7 @@ export function skillCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, "Skills require database support.");
+        ctx.send(input.entity, requiresPersistence("skills"));
         return;
       }
       const db = deps.db;

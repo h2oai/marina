@@ -64,6 +64,11 @@ export function askCommand(deps: {
       const poolHits: { pool: string; content: string; noteId: number }[] = [];
       for (const pool of db.listMemoryPools()) {
         if (pool.name === "guide") continue;
+        // Membership guard (same rule as passthru-context): a group-scoped
+        // pool is readable here only by its members — retrieval verbs must
+        // not harvest private group knowledge for outsiders. Ungrouped world
+        // pools stay open by design.
+        if (pool.group_id && !db.getGroupMember(pool.group_id, input.entity)) continue;
         const hits = db.recallPoolNotes(pool.id, query).slice(0, 2);
         for (const hit of hits) {
           db.touchNote(hit.id);
@@ -98,7 +103,11 @@ export function askCommand(deps: {
         }
       }
 
-      const searchHits = db.globalSearch(query).slice(0, 5);
+      // Chronicle hits already have their own section above — drop them here.
+      const searchHits = db
+        .globalSearch(query)
+        .filter((h) => h.type !== "chronicle")
+        .slice(0, 5);
       if (searchHits.length > 0) {
         sections++;
         lines.push(category("World Search"));

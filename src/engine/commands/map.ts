@@ -21,7 +21,10 @@ export function mapCommand(deps: {
     handler: (ctx: RoomContext, input) => {
       const room = deps.getEntityRoom(input.entity);
       if (!room) {
-        ctx.send(input.entity, "You are nowhere.");
+        ctx.send(
+          input.entity,
+          "You're not in a space right now. `ls` shows the spaces you can go to.",
+        );
         return;
       }
 

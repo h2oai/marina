@@ -4,7 +4,7 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
-import { getRank } from "../permissions";
+import { requiresPersistence } from "./command-messages";
 
 export function adapterCommand(deps: {
   db?: MarinaDB;
@@ -14,9 +14,11 @@ export function adapterCommand(deps: {
   return {
     name: "adapter",
     aliases: [],
-    minRank: 5,
+    minRank: 7,
     gate: "adapter.enable",
     help: `Manage platform adapters (Telegram, Discord, Slack, Signal).
+Requires rank 7 and the adapter.enable gate.
+Gated capability: earn it via \`witness request adapter.enable\` or an operator grant (see \`standing\`).
 Usage:
   adapter list                        — show adapters and status
   adapter enable <platform> [config]  — enable an adapter
@@ -24,14 +26,11 @@ Usage:
   adapter status <platform>           — show adapter details`,
     handler: (ctx: RoomContext, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, "Adapter management requires database support.");
+        ctx.send(input.entity, requiresPersistence("adapter management"));
         return;
       }
       const entity = deps.getEntity(input.entity);
-      if (!entity || getRank(entity) < 7) {
-        ctx.send(input.entity, "Requires steward rank (7).");
-        return;
-      }
+      if (!entity) return;
 
       const db = deps.db;
       const tokens = input.tokens;

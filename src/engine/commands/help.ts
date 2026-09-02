@@ -21,8 +21,18 @@ export const COMMAND_CATEGORIES: Record<string, string[]> = {
   Knowledge: ["note", "feed", "chronicle", "search", "bookmark", "export"],
   Cognition: ["memory", "recall", "reflect", "novelty", "orient", "ask", "recap", "debrief", "dig"],
   Growth: ["evolve", "skill", "benchmark"],
+  Lineage: [
+    "genome",
+    "intellect",
+    "mutation",
+    "reproduce",
+    "marina-descend",
+    "association",
+    "mesh",
+    "economy",
+  ],
   "Markets & Forecasting": ["market", "scenario", "bankroll", "position", "probe", "watch"],
-  Experiments: ["experiment", "observe"],
+  Experiments: ["experiment", "observe", "lab"],
   Coordination: [
     "channel",
     "board",
@@ -33,11 +43,12 @@ export const COMMAND_CATEGORIES: Record<string, string[]> = {
     "pool",
     "crew",
     "recruit",
-    "standing",
     "conduct",
     "share",
+    "usecase",
   ],
-  "Canvas & Media": ["canvas", "usecase", "image", "video"],
+  Civic: ["witness", "standing"],
+  "Canvas & Media": ["canvas", "image", "video"],
   Agents: ["agent", "run"],
   Building: ["build", "connect"],
   Federation: ["gateway"],
@@ -142,7 +153,9 @@ function renderCommandList(
     for (const c of catCmds) {
       const aliases = c.aliases?.length ? ` ${dim(`(${c.aliases.join(", ")})`)}` : "";
       const rankTag = c.minRank && c.minRank > 0 ? ` ${fmtRank(c.minRank)}` : "";
-      lines.push(`  ${bold(c.name)}${aliases}${rankTag} \u2014 ${c.help.split(".")[0]}`);
+      // Truncate at a sentence boundary (". " or ".\n" or trailing "."), not at
+      // any bare "." \u2014 "v1.2"-style strings must not fragment.
+      lines.push(`  ${bold(c.name)}${aliases}${rankTag} \u2014 ${c.help.split(/\.(?:\s|$)/)[0]}`);
     }
   }
 

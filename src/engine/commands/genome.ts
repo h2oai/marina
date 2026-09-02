@@ -3,6 +3,7 @@
 
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
+import { notFound } from "./command-messages";
 
 const HELP = `Content-addressed Marina genomes.
 Usage:
@@ -16,7 +17,7 @@ export function genomeCommand(deps: {
   return {
     name: "genome",
     aliases: ["genomes"],
-    category: "Growth",
+    category: "Lineage",
     minRank: 0,
     help: HELP,
     handler: (ctx, input) => {
@@ -55,7 +56,19 @@ export function genomeCommand(deps: {
       }
       if (sub === "show") {
         const row = deps.db.getMarinaGenome(input.tokens[1] ?? "");
-        ctx.send(input.entity, row ? `${row.hash}\n${row.manifest_json}` : "Genome not found.");
+        if (!row) {
+          ctx.send(input.entity, notFound("genome", "genome list"));
+          return;
+        }
+        const verification = deps.db.verifyMarinaGenome(row);
+        const integrityLine = `Integrity: hash ${verification.hashValid ? "valid" : "INVALID"} · signature ${
+          verification.valid === null
+            ? "unsigned"
+            : verification.valid
+              ? `verified (key ${verification.keyId})`
+              : "INVALID"
+        }`;
+        ctx.send(input.entity, `${row.hash}\n${integrityLine}\n${row.manifest_json}`);
         return;
       }
       if (sub === "list" || !sub) {

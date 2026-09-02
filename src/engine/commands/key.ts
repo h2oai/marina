@@ -4,7 +4,7 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
-import { getRank } from "../permissions";
+import { requiresPersistence } from "./command-messages";
 
 // ─── Provider Connectivity Testing ─────────────────────────────────────────
 
@@ -86,9 +86,11 @@ export function keyCommand(deps: {
   return {
     name: "key",
     aliases: [],
-    minRank: 5,
+    minRank: 8,
     gate: "key.manage",
     help: `Manage LLM API keys.
+Requires rank 8 and the key.manage gate.
+Gated capability: earn it via \`witness request key.manage\` or an operator grant (see \`standing\`).
 Usage:
   key list                          — show all keys (masked)
   key add <name> <provider> <value> — store a named key
@@ -98,14 +100,11 @@ Usage:
 Providers: anthropic, openai, google, groq, openrouter, cerebras, xai, mistral, deepseek`,
     handler: async (ctx: RoomContext, input) => {
       if (!deps.db) {
-        ctx.send(input.entity, "Key management requires database support.");
+        ctx.send(input.entity, requiresPersistence("key management"));
         return;
       }
       const entity = deps.getEntity(input.entity);
-      if (!entity || getRank(entity) < 8) {
-        ctx.send(input.entity, "Requires guardian rank (8).");
-        return;
-      }
+      if (!entity) return;
 
       const db = deps.db;
       const tokens = input.tokens;

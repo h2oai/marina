@@ -28,7 +28,7 @@ export function intellectCommand(deps: {
   return {
     name: "intellect",
     aliases: ["intellects"],
-    category: "Growth",
+    category: "Lineage",
     minRank: 0,
     help: HELP,
     handler: (ctx, input) => {

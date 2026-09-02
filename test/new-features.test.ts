@@ -231,7 +231,7 @@ describe("Emote Command", () => {
 
   it("should require emote text", () => {
     engine.processCommand(conn1.entity!, "emote");
-    expect(conn1.lastText()).toContain("what");
+    expect(conn1.lastText()).toContain("Usage: emote <action>");
   });
 
   it("should work with me alias", () => {

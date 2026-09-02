@@ -7,6 +7,7 @@ import type { MarinaDB } from "../../persistence/database";
 import type { ChronicleEntry, ChronicleKind } from "../../persistence/db-chronicle";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { extractModifiers, splitOn } from "../parse-input";
+import { requiresPersistence } from "./command-messages";
 import { formatAge, parseSince } from "./format-duration";
 
 const CHRONICLER_ROLE = "chronicler";
@@ -115,7 +116,7 @@ export function chronicleCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, "Chronicle requires database support.");
+        ctx.send(input.entity, requiresPersistence("the chronicle"));
         return;
       }
       const db = deps.db;
@@ -283,7 +284,7 @@ export function chronicleCommand(deps: {
         if (events.length === 0) {
           ctx.send(
             input.entity,
-            "No un-narrated events. Nothing pending — slow your pace until something happens.",
+            "Nothing pending — every engine event is already narrated. `chronicle` shows the recent record.",
           );
           return;
         }

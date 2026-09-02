@@ -17,6 +17,7 @@ import {
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { DAY_MS, HOUR_MS } from "../constants";
+import { requiresPersistence } from "./command-messages";
 
 function relativeTime(ts: number, now: number): string {
   const diff = now - ts;
@@ -40,7 +41,7 @@ export function orientCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, "Orient requires database support.");
+        ctx.send(input.entity, requiresPersistence("orient"));
         return;
       }
       const db = deps.db;

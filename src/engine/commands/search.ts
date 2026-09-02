@@ -13,7 +13,7 @@ export function searchCommand(deps: {
   return {
     name: "search",
     aliases: [],
-    help: "Global search across boards, spaces, and channels. Usage: search <query>",
+    help: "Global search across rooms, boards, channels, tasks, markets, open pools, and the chronicle. Usage: search <query>",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -43,27 +43,28 @@ export function searchCommand(deps: {
         }
       }
 
-      // 2. Search DB (boards + channels). Without a DB this surface is
-      // room-only — say so rather than silently omitting board/channel hits.
+      // 2. Search DB. Without a DB this surface is room-only — say so rather
+      // than silently omitting the other sections.
       if (!deps.db) {
-        lines.push(dim("(boards & channels not searched — no database backend)"));
+        lines.push(
+          dim("(boards, channels, tasks, markets, pools not searched — no database backend)"),
+        );
       }
       if (deps.db) {
         const dbResults = deps.db.globalSearch(query);
-        const boardResults = dbResults.filter((r) => r.type === "board_post");
-        const channelResults = dbResults.filter((r) => r.type === "channel_message");
-
-        if (boardResults.length > 0) {
-          lines.push(category("Board Posts"));
-          for (const r of boardResults) {
-            lines.push(`  [${r.context}] ${r.title}`);
-            totalResults++;
-          }
-        }
-
-        if (channelResults.length > 0) {
-          lines.push(category("Channel Messages"));
-          for (const r of channelResults) {
+        const sections: { type: string; label: string }[] = [
+          { type: "board_post", label: "Board Posts" },
+          { type: "channel_message", label: "Channel Messages" },
+          { type: "task", label: "Tasks" },
+          { type: "market", label: "Markets" },
+          { type: "pool_note", label: "Pool Notes" },
+          { type: "chronicle", label: "Chronicle" },
+        ];
+        for (const section of sections) {
+          const hits = dbResults.filter((r) => r.type === section.type);
+          if (hits.length === 0) continue;
+          lines.push(category(section.label));
+          for (const r of hits) {
             lines.push(`  [${r.context}] ${r.title}`);
             totalResults++;
           }

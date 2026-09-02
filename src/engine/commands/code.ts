@@ -10,6 +10,7 @@ import {
   type CodingAgentRuntime,
 } from "../../coding/code-session-driver";
 import {
+  clearSessionExecState,
   type ExecApprover,
   type ExecAuditSink,
   getPendingExecApproval,
@@ -56,6 +57,7 @@ import {
   recordDemonstration,
   recordGateExecution,
 } from "../safety-gates";
+import { requiresPersistence } from "./command-messages";
 
 const ACTIVE_SESSION_KEY = "coding_session_id";
 const ACTIVE_MODAL_KEY = "active_modal";
@@ -971,7 +973,7 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, "Coding sessions require database support.");
+        ctx.send(input.entity, requiresPersistence("coding sessions"));
         return;
       }
       // Resolve the acting caller's transport ONCE. A telnet-origin caller is
@@ -7262,6 +7264,9 @@ async function completeSession(
     createdBy: entity.name,
   });
   deps.db.updateCodingSession(session.id, { status: "complete", mode: "done" });
+  // A closed session must not leave live exec grants behind: drop its
+  // approve-always allow-set and deny any still-pending exec prompts.
+  clearSessionExecState(session.id);
   // Persist the closing summary into the bound project pool (if any) + a
   // personal note, so the session's takeaways outlive the ephemeral artifacts.
   if (summary.trim()) depositSessionSummary(deps, entity, session, text);

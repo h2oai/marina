@@ -1475,7 +1475,7 @@ export function universalIntentCommands(deps: UseCaseCommandDeps): CommandDef[] 
   return UNIVERSAL_INTENTS.map((intent) => ({
     name: intent,
     aliases: [],
-    category: "Agents",
+    category: "Coordination",
     help: `${intent} <goal> — launch an observable ${intent} project with tasks, shared memory, a fitting orchestration pattern, and an agent.`,
     handler: (ctx, input) => {
       const topic = input.args.trim();

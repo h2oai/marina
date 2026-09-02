@@ -36,6 +36,68 @@ describe("Standing — civic-contribution ledger", () => {
     expect(STANDING_HALF_LIFE_DAYS).toBe(60);
   });
 
+  it("reflection_recalled credits the AUTHOR of the recalled reflection, never the reader", async () => {
+    // Generational memory only compounds if downstream use pays the writer:
+    // Bob recalling Alice's pool reflection must credit Alice. Pool recall is
+    // the generational hand-off surface (plain `recall` reads only own notes).
+    db.createMemoryPool("pool_wisdom", "wisdom", "Alice");
+    const noteId = db.createNote("Alice", "Always verify assumptions before scaling.", "r_test", {
+      noteType: "reflection",
+      poolId: "pool_wisdom",
+    });
+    const resolveId = (name: string) =>
+      name === "Alice" ? entityId("e_alice") : name === "Bob" ? entityId("e_bob") : undefined;
+    const makeActor = (id: string, name: string) => ({
+      id: entityId(id),
+      kind: "agent" as const,
+      name,
+      short: name,
+      long: name,
+      room: "r_test" as never,
+      properties: {},
+      inventory: [],
+      createdAt: Date.now(),
+    });
+    const bob = makeActor("e_bob", "Bob");
+    const alice = makeActor("e_alice", "Alice");
+    const { poolCommand } = await import("../src/engine/commands/pool");
+    const command = poolCommand({
+      getEntity: (id) =>
+        String(id) === "e_bob" ? bob : String(id) === "e_alice" ? alice : undefined,
+      db,
+      resolveEntityIdByName: resolveId,
+    });
+    const invoke = (actor: { id: ReturnType<typeof entityId> }, args: string) =>
+      command.handler(
+        { send: () => {} } as never,
+        {
+          raw: `pool ${args}`,
+          verb: "pool",
+          args,
+          tokens: args.split(/\s+/),
+          entity: actor.id,
+          room: "r_test",
+        } as never,
+      );
+
+    await invoke(bob, "wisdom recall verify assumptions");
+    const aliceLedger = ledgerFor(db, "e_alice");
+    const bobLedger = ledgerFor(db, "e_bob");
+    expect(
+      aliceLedger.some(
+        (row) => row.kind === "reflection_recalled" && row.ref === `reflection:${noteId}`,
+      ),
+    ).toBe(true);
+    expect(bobLedger.some((row) => row.kind === "reflection_recalled")).toBe(false);
+
+    // Self-recall is reading, not contribution — and the credit is idempotent,
+    // so repeated recalls by anyone add nothing.
+    await invoke(alice, "wisdom recall verify assumptions");
+    await invoke(bob, "wisdom recall verify assumptions");
+    const after = ledgerFor(db, "e_alice").filter((row) => row.kind === "reflection_recalled");
+    expect(after).toHaveLength(1);
+  });
+
   it("record() appends a ledger row and standing reads back the amount", () => {
     record(db, "e_alice", "Alice", "pool_note", "pool_note:1");
     expect(computeFromLedger(db, "e_alice")).toBeCloseTo(STANDING_AMOUNTS.pool_note, 2);

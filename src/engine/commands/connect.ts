@@ -8,6 +8,7 @@ import type { CommandDef, Entity, RoomContext } from "../../types";
 import type { ConnectorRuntime } from "../connector-runtime";
 import { getErrorMessage } from "../errors";
 import { getRank } from "../permissions";
+import { requiresPersistence } from "./command-messages";
 
 export function connectCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
@@ -19,7 +20,7 @@ export function connectCommand(deps: {
     aliases: ["conn"],
     minRank: 5,
     gate: "connect.manage",
-    help: "Manage external MCP connectors. Usage: connect add <name> <url> | connect add <name> stdio <cmd> [args] | connect remove <name> | connect list | connect tools <name> | connect call <name> <tool> [json] | connect auth <name> bearer <token> | connect auth <name> header <key> <value>",
+    help: "Manage external MCP connectors. Gated capability: earn it via `witness request connect.manage` or an operator grant (see `standing`). Usage: connect add <name> <url> | connect add <name> stdio <cmd> [args] (rank 9; spawns a local process) | connect remove <name> | connect list | connect tools <name> | connect call <name> <tool> [json] | connect auth <name> bearer <token> | connect auth <name> header <key> <value>",
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -27,7 +28,7 @@ export function connectCommand(deps: {
       const rank = getRank(entity);
 
       if (!deps.db) {
-        ctx.send(input.entity, "Connectors require database support.");
+        ctx.send(input.entity, requiresPersistence("connectors"));
         return;
       }
       const db = deps.db;

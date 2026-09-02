@@ -14,6 +14,7 @@ import {
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { extractModifiers, int as parseIntSafe } from "../parse-input";
+import { requiresPersistence } from "./command-messages";
 
 const STOP_WORDS = new Set([
   "the",
@@ -169,7 +170,7 @@ export function noteCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, "Notes require database support.");
+        ctx.send(input.entity, requiresPersistence("notes"));
         return;
       }
       const db = deps.db;

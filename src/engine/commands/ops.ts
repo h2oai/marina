@@ -7,6 +7,7 @@ import { bold, dim, header, separator, status } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef } from "../../types";
 import type { ReadinessReport } from "../readiness";
+import { notFound } from "./command-messages";
 
 export interface OpsDependencies {
   db: MarinaDB;
@@ -173,7 +174,7 @@ export function opsCommand(deps: OpsDependencies): CommandDef {
           input.entity,
           ok
             ? `Alert #${id} ${action === "ack" ? "acknowledged" : "resolved"}.`
-            : "Alert not found.",
+            : notFound("alert", "ops inbox"),
         );
         return;
       }

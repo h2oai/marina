@@ -989,7 +989,7 @@ export function buildCommand(deps: BuildDeps): CommandDef {
     name: "build",
     aliases: [],
     minRank: 4,
-    help: "In-game building for rooms, templates, and dynamic commands.\nUsage: build room|modify|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command\n\nExamples:\n  build room my/garden A Quiet Garden\n  build modify my/garden long Flowers bloom in every direction.\n  build link my/garden north hub/crossroads\n  build command create weather\n  build command reload weather",
+    help: "In-game building for rooms, templates, and dynamic commands.\nUsage: build room|modify|link|unlink|code|validate|reload|diff|audit|revert|destroy|template|command\n\nRank notes: most subcommands need rank 4; `build code`, `build reload`, `build revert`, `build destroy`, and the matching `build command code|reload|destroy` variants need rank 5.\n\nExamples:\n  build room my/garden A Quiet Garden\n  build modify my/garden long Flowers bloom in every direction.\n  build link my/garden north hub/crossroads\n  build command create weather\n  build command reload weather",
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;

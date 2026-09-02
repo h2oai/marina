@@ -548,7 +548,7 @@ describe("Chronicle — canonical append-only record", () => {
       conn.clear();
       engine.processCommand(entityId, "chronicle pending");
       const text = stripAnsi(conn.lastText());
-      expect(text).toContain("No un-narrated events");
+      expect(text).toContain("Nothing pending — every engine event is already narrated");
     });
 
     it("lists event entries when no narrative has been written yet", () => {
