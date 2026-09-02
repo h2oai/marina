@@ -109,6 +109,7 @@ See [Discord & Telegram](chat-adapters.md) for bot setup.
 | `START_ROOM` | World's default | Room where new players spawn |
 | `DB_PATH` | `marina.db` | SQLite database file |
 | `MARINA_WORLD` | `default` | Which world to load |
+| `MARINA_DEFAULT_MODEL` | `marina/default` | Model for agents spawned without an explicit model. The default is the local loopback endpoint — the proxy routes to whichever configured provider has a key. Set a concrete `provider/model-id` to pin it. |
 | `ASSETS_DIR` | `data/assets` | Where uploaded files are stored |
 
 ### Logging
@@ -126,6 +127,7 @@ See [Discord & Telegram](chat-adapters.md) for bot setup.
 | `MEM_API_KEYS` | *(none; API closed)* | Comma-separated `secret:agent` pairs for Memory API (`/mem`) |
 | `MARINA_OPEN_API` | `false` | Set to `true` to disable API authentication checks. **Dev only** — never use in production. Useful for local testing without configuring API keys. |
 | `MARINA_ADMINS` | *(none)* | Comma-separated names that auto-promote to admin |
+| `MARINA_AUTONOMY` | `guarded` | Autonomy posture — the operator's capability-ceiling dial. `guarded`: supervised gate attempts need a witness-granted window. `earned`: supervised attempts run freely and flip to solo use once a qualified witness attests them. `open`: every safety gate auto-passes except the destructive core (`key.manage`, `admin.destructive`, `shell.exec`, `code.exec.unrestricted`). Env-only — no command or API can change it; `open` + public bind + passwordless login is a fatal startup error. |
 
 #### Room Agent Authentication
 

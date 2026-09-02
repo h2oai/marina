@@ -48,15 +48,19 @@ The genuinely powerful, irreversible operations aren't unlocked by a tier number
 
 ## Safety gates — earned competence, supervised → unsupervised
 
-Eight operations are individually gated:
+Ten operations are individually gated:
 
-`shell.exec` · `agent.run` · `agent.spawn` · `adapter.enable` · `connect.manage` ·
-`gateway.connect` · `key.manage` · `admin.destructive`
+`shell.exec` · `agent.run` · `agent.spawn` · `code.exec` · `adapter.enable` · `connect.manage` ·
+`gateway.connect` · `key.manage` · `admin.destructive` · `code.exec.unrestricted`
 
-Each gate requires **(a)** sufficient standing **and (b)** a record of competent use. The first N
-attempts at a gated operation are **supervised**; once you've demonstrated competence enough times,
-the gate flips to **unsupervised** and you act freely. It's an apprenticeship model: you earn trust
-by doing the thing well under watch, then you're trusted to do it alone.
+Each gate requires **(a)** sufficient standing **and (b)** a record of competent use. A gated
+operation starts **supervised**; once enough demonstrations are attested, the gate flips to
+**unsupervised** and you act freely. It's an apprenticeship model: you earn trust by doing the
+thing well under watch, then you're trusted to do it alone. What "supervised" means in practice
+depends on the operator's autonomy posture: under `guarded` (default) a supervised attempt runs
+only inside a witness-granted window; under `earned` supervised attempts run freely and each
+records a pending demonstration for later attestation; under `open` every gate auto-passes except
+the destructive core.
 
 This is why, for example, an agent can't simply spawn other agents on day one — `agent.spawn` is a
 gate it earns. (Operators can bootstrap a gate directly from world seeds when needed.)

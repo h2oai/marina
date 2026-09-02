@@ -163,7 +163,7 @@ export const DELIBERATION_TEMPLATE: TemplateNote[] = [
     content:
       "Deliberation propose phase: post a proposal to the project board with a clear title and " +
       "body. Tag proposals with [proposal]. Others respond with numeric votes (1-10) using " +
-      "'board vote <board> <post> <score>'. A proposal needs majority support (avg >= 6) " +
+      "`board vote <postId> up|down [score 1-10]`. A proposal needs majority support (avg >= 6) " +
       "to advance to execution.",
     importance: 8,
     type: "skill",
@@ -172,7 +172,7 @@ export const DELIBERATION_TEMPLATE: TemplateNote[] = [
     content:
       "Deliberation evaluate phase: read proposals on the board, score them 1-10, and reply " +
       "with reasoning. Evaluation ends when all active members have voted or after a reasonable " +
-      "discussion period. Check scores with 'board scores <board> <post>'.",
+      "discussion period. Check scores with `board scores <postId>`.",
     importance: 8,
     type: "skill",
   },
@@ -188,7 +188,7 @@ export const DELIBERATION_TEMPLATE: TemplateNote[] = [
     content:
       "Deliberation debrief phase: debrief is not complete until a [lesson] pool note is posted " +
       "summarizing what worked, what failed, and what to do differently. Link the lesson " +
-      "to the original [proposal] via 'note link <lesson-id> <proposal-id> part_of'. " +
+      "to the original [proposal] via `note link <lesson-id> <proposal-id> part_of`. " +
       "Only then does the next propose phase begin. The cycle only counts if the lesson " +
       "outlives the cycle — skip the artifact and the cycle was just meetings.",
     importance: 7,
@@ -210,11 +210,11 @@ export const CHORUS_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Chorus phases: the project creator creates three convoys via 'bundle' — 'research', " +
-      "'build', 'review'. Research completes before build; build before review. Inside a " +
-      "phase every task is parallel-claimable. Research outputs land in the pool tagged " +
-      "[research-finding]. Build tasks cite the findings they used with 'note link " +
-      "<build-note> <finding-note> supports'. Review tasks score build outputs.",
+      "Chorus phases: the project creator creates three convoys via `task bundle <name>` — " +
+      "'research', 'build', 'review'. Research completes before build; build before review. " +
+      "Inside a phase every task is parallel-claimable. Research outputs land in the pool tagged " +
+      "[research-finding]. Build tasks cite the findings they used with `note link " +
+      "<build-note> <finding-note> supports`. Review tasks score build outputs.",
     importance: 8,
     type: "skill",
   },
@@ -232,7 +232,7 @@ export const CHORUS_TEMPLATE: TemplateNote[] = [
     content:
       "Chorus role diversity: assign the same phase to agents with different roles/traits. " +
       "For Review, assign agents whose role lineage differs from the builders (adversarial " +
-      "by construction). Use 'role <name>' and composed traits. A chorus with all the same " +
+      "by construction). Use `role view <name>` and composed traits. A chorus with all the same " +
       "role is just one voice repeated — diversity is the mechanism, not the decoration.",
     importance: 8,
     type: "skill",
@@ -241,7 +241,7 @@ export const CHORUS_TEMPLATE: TemplateNote[] = [
     content:
       "Chorus crossfire review gate: a build task is not done until >=2 independent reviewers " +
       "(different roles) post scores on the board, average >=6, with at least one [critique] " +
-      "reply. Reviewers link via 'note link <review> <build> supports|contradicts' to build " +
+      "reply. Reviewers link via `note link <review> <build> supports|contradicts` to build " +
       "the argument graph. Rework until crossfire passes. Record the ruling in the pool " +
       "tagged [crossfire-ruling]. Cite rulings in future chorus runs instead of re-arguing.",
     importance: 7,
@@ -262,9 +262,10 @@ export const FOUNDRY_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Foundry hierarchy: the project creator is the Overseer. They promote one or more " +
-      "members to Patrol (rank >=4) and to Gate (rank >=4). Workers (any rank) claim tasks " +
-      "freely. The Overseer routes outside 'tell's and public requests — don't bother workers " +
+      "Foundry hierarchy: the project creator is the Overseer. They designate established " +
+      "members as Patrol and as Gate — supervision capability follows standing and witnessed " +
+      "competence under the world's autonomy posture, not a tier number. Workers (any rank) claim " +
+      "tasks freely. The Overseer routes outside 'tell's and public requests — don't bother workers " +
       "directly. Patrol and Gate never claim worker tasks; their job is supervision, not " +
       "execution.",
     importance: 8,
@@ -272,7 +273,7 @@ export const FOUNDRY_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Foundry convoys: organize work into named convoys via 'bundle <convoy-name>'. Each " +
+      "Foundry convoys: organize work into named convoys via `task bundle <name>`. Each " +
       "convoy has a landing target posted to the board. Workers claim from convoys; they " +
       "never claim loose tasks. A convoy lands as a unit — every task in it must pass the " +
       "Gate before the convoy is marked landed. Post convoy status updates to the board " +
@@ -282,10 +283,10 @@ export const FOUNDRY_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Foundry Patrol and nudges: Patrol runs 'observe' and 'novelty stats' each cycle " +
+      "Foundry Patrol and nudges: Patrol runs `observe` and `novelty stats` each cycle " +
       "looking for stuck workers — no progress in 20 min, repeated identical actions, or " +
-      "failure rate >60% on a task. On detection: 'tell <worker> nudge: <specific " +
-      "suggestion>', or reassign the task and post [stall] on the board with reason. The " +
+      "failure rate >60% on a task. On detection: `tell <worker> nudge: <specific " +
+      "suggestion>`, or reassign the task and post [stall] on the board with reason. The " +
       "engine already tracks this in entity_activity — Patrol's job is to act on it, not " +
       "recompute it.",
     importance: 8,
@@ -307,24 +308,24 @@ export const SWARM_TEMPLATE: TemplateNote[] = [
   {
     content:
       "This project uses Swarm orchestration (self-organizing specialist handoffs). " +
-      "There is no fixed leader. Each agent declares expertise via 'memory set expertise <domain>'. " +
+      "There is no fixed leader. Each agent declares expertise via `memory set expertise <domain>`. " +
       "Tasks are self-claimed based on skill match. Work flows from specialist to specialist " +
-      "through 'tell' handoffs.",
+      "through `tell` handoffs.",
     importance: 9,
     type: "skill",
   },
   {
     content:
-      "Swarm expertise: on joining, set your expertise with 'memory set expertise <skills>'. " +
+      "Swarm expertise: on joining, set your expertise with `memory set expertise <skills>`. " +
       "Before claiming a task, check if another agent's expertise is a better fit by using " +
-      "'observe' to see who is active and 'recall expertise' to find specialist knowledge.",
+      "`observe` to see who is active and `recall expertise` to find specialist knowledge.",
     importance: 8,
     type: "skill",
   },
   {
     content:
-      "Swarm claiming: browse open tasks with 'task list'. Self-claim tasks that match " +
-      "your expertise using 'task claim <id>'. If a task needs skills you lack, do not " +
+      "Swarm claiming: browse open tasks with `task list`. Self-claim tasks that match " +
+      "your expertise using `task claim <id>`. If a task needs skills you lack, do not " +
       "claim it — leave it for a better-matched agent. Maximize parallel work.",
     importance: 8,
     type: "skill",
@@ -332,7 +333,7 @@ export const SWARM_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Swarm handoff payload: a handoff is not valid unless it carries three things in one " +
-      "'tell <agent> ...' message — (1) the expertise being invoked ('calling you for X'), " +
+      "`tell <agent> ...` message — (1) the expertise being invoked ('calling you for X'), " +
       "(2) the pool note id of the prior work ('see pool note #42'), and (3) the expected " +
       "next step ('produce Y, then hand off to someone who does Z'). Handoffs without all " +
       "three are context loss. Add a matching pool note tagged [handoff] linking old work " +
@@ -342,8 +343,8 @@ export const SWARM_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Swarm convergence: periodically check project status with 'project <name> tasks'. " +
-      "If tasks are stalling, post to the board to attract attention. Use 'reflect' to " +
+      "Swarm convergence: periodically check project status with `project <name> tasks`. " +
+      "If tasks are stalling, post to the board to attract attention. Use `reflect` to " +
       "consolidate learnings across handoffs. The swarm self-organizes — no one waits " +
       "for permission.",
     importance: 7,
@@ -392,8 +393,8 @@ export const PIPELINE_TEMPLATE: TemplateNote[] = [
     content:
       "Pipeline quality: each stage reviews the previous stage's output against the " +
       "contract before processing. If the input violates the contract, reject by replying " +
-      "on the board and notifying via channel. The upstream agent reworks. Use 'pool <name> " +
-      "add <lesson>' to record stage lessons for future pipeline runs.",
+      "on the board and notifying via channel. The upstream agent reworks. Use `pool <name> " +
+      "add <lesson>` to record stage lessons for future pipeline runs.",
     importance: 7,
     type: "skill",
   },
@@ -412,7 +413,7 @@ export const DEBATE_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Debate independence invariant: draft your position in your own notes BEFORE reading " +
-      "any board posts. Use 'note add <position> type draft' privately, then post to the " +
+      "any board posts. Use `note <position> type decision` privately, then post to the " +
       "board only when the judge signals the sealed phase is over. Reading others' positions " +
       "before drafting collapses the debate into groupthink — independence is the quality " +
       "mechanism. Post positions tagged [position:sealed] until the judge opens them.",
@@ -421,17 +422,17 @@ export const DEBATE_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Debate argumentation: once positions are unsealed, respond using 'board reply' with " +
-      "supporting or opposing arguments. Use 'note link <id> <id> supports' or 'note link " +
-      "<id> <id> contradicts' to build a structured argument graph. Score positions with " +
-      "'board vote <board> <post> <score>' (1-10).",
+      "Debate argumentation: once positions are unsealed, respond using `board reply` with " +
+      "supporting or opposing arguments. Use `note link <id> <id> supports` or `note link " +
+      "<id> <id> contradicts` to build a structured argument graph. Score positions with " +
+      "`board vote <postId> up|down [score 1-10]`.",
     importance: 8,
     type: "skill",
   },
   {
     content:
       "Debate judging: the project creator or designated judge reviews all positions " +
-      "and scores with 'board scores <board> <post>'. The judge posts a synthesis " +
+      "and scores with `board scores <postId>`. The judge posts a synthesis " +
       "tagged [ruling] that weighs arguments. The ruling becomes a task or action item.",
     importance: 8,
     type: "skill",
@@ -439,8 +440,8 @@ export const DEBATE_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Debate record: after each ruling, add the decision and reasoning to the pool " +
-      "using 'pool <name> add'. Use 'reflect' to consolidate debate learnings. " +
-      "Future debates should reference prior rulings via 'pool <name> recall' to " +
+      "using `pool <name> add`. Use `reflect` to consolidate debate learnings. " +
+      "Future debates should reference prior rulings via `pool <name> recall` to " +
       "build on precedent rather than re-arguing settled questions.",
     importance: 7,
     type: "skill",
@@ -468,7 +469,7 @@ export const MAPREDUCE_TEMPLATE: TemplateNote[] = [
     content:
       "MapReduce execution: work your chunk in isolation. Do not read other workers' " +
       "outputs or coordinate with them - independence is the key invariant. Add your " +
-      "chunk results to the pool with 'pool <name> add chunk-N: <result>' and submit " +
+      "chunk results to the pool with `pool <name> add chunk-N: <result>` and submit " +
       "your task when done.",
     importance: 8,
     type: "skill",
@@ -476,17 +477,17 @@ export const MAPREDUCE_TEMPLATE: TemplateNote[] = [
   {
     content:
       "MapReduce reduction: once all chunk tasks are completed (check with " +
-      "'project <name> tasks'), the reducer collects all results from the pool using " +
-      "'pool <name> recall chunk'. The reducer synthesizes a merged output and posts " +
+      "`project <name> tasks`), the reducer collects all results from the pool using " +
+      "`pool <name> recall chunk`. The reducer synthesizes a merged output and posts " +
       "it to the board as [merged-result].",
     importance: 8,
     type: "skill",
   },
   {
     content:
-      "MapReduce tracking: use 'project <name> status' to monitor chunk completion. " +
+      "MapReduce tracking: use `project <name> status` to monitor chunk completion. " +
       "If a chunk stalls, the coordinator can reassign it. After reduction, add the " +
-      "final synthesis to the pool and use 'reflect' to capture lessons about chunk " +
+      "final synthesis to the pool and use `reflect` to capture lessons about chunk " +
       "granularity for future MapReduce runs.",
     importance: 7,
     type: "skill",
@@ -507,10 +508,10 @@ export const SYMBIOSIS_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Symbiosis profiling: on joining, describe your exploration profile in the pool with " +
-      "'pool <name> add [profile] ...' — what domains you know, what you're curious about, " +
+      "`pool <name> add [profile] ...` — what domains you know, what you're curious about, " +
       "whether you tend to go deep (deepening), scan wide (broadening), pivot rapidly " +
       "(shifting), or are looking for direction (stagnating). Update your profile as your " +
-      "interests evolve. Use 'observe' to see what others are working on and 'recall' to " +
+      "interests evolve. Use `observe` to see what others are working on and `recall` to " +
       "understand their profiles.",
     importance: 8,
     type: "skill",
@@ -518,8 +519,8 @@ export const SYMBIOSIS_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Symbiosis frontier scanning: periodically scan for epistemic frontiers — knowledge " +
-      "gaps the team hasn't explored. Use 'pool <name> recall' across topics to find sparse " +
-      "areas. Use 'note graph' to find disconnected clusters. Post frontier proposals to the " +
+      "gaps the team hasn't explored. Use `pool <name> recall` across topics to find sparse " +
+      "areas. Use `note graph` to find disconnected clusters. Post frontier proposals to the " +
       "board tagged [frontier] with three scores: novelty (how unexplored), complexity " +
       "(contradictions/links), and virginity (how unvisited). Others vote on which frontiers " +
       "to pursue.",
@@ -539,7 +540,7 @@ export const SYMBIOSIS_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Symbiosis mode triggers: measure coverage with 'novelty stats' — the engine already " +
+      "Symbiosis mode triggers: measure coverage with `novelty stats` — the engine already " +
       "computes action entropy. Any Patrol agent runs this every 20 ticks and posts " +
       "[mediation] to the board when the mode shifts. Thresholds: entropy < 0.3 → Recovery " +
       "(coverage stalling, everyone broadens, drop current focus). 0.3–0.6 → Breadth " +
@@ -564,10 +565,10 @@ export const RESEARCH_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Research cycle — before each iteration, set your hypothesis: " +
-      "'memory set hypothesis <what you expect to happen>'. " +
+      "`memory set hypothesis <what you expect to happen>`. " +
       "Then act: explore, build, modify, communicate — whatever the hypothesis requires. " +
-      "After acting, measure: use 'orient' for memory health, 'score' for standing, " +
-      "'novelty' for exploration coverage, 'experiment record <project> <metric> <value>' " +
+      "After acting, measure: use `orient` for memory health, `score` for standing, " +
+      "`novelty` for exploration coverage, `experiment record <project> <metric> <value>` " +
       "for structured data. Every iteration must produce a measurement.",
     importance: 9,
     type: "skill",
@@ -575,10 +576,10 @@ export const RESEARCH_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Research recording — after each iteration, record results with: " +
-      "'note Gen N: hypothesis=X metric=Y result=Z importance 8 type episode'. " +
+      "`note Gen N: hypothesis=X metric=Y result=Z importance 8 type episode`. " +
       "Post to the project board for team visibility: " +
-      "'board post project:<name> Gen N | hypothesis=X result=Z'. " +
-      "Add key findings to the pool: 'pool project:<name> add <finding> importance <N>'. " +
+      "`board post project:<name> Gen N | hypothesis=X result=Z`. " +
+      "Add key findings to the pool: `pool project:<name> add <finding> importance <N>`. " +
       "Consistent recording lets the team recall what worked across all agents.",
     importance: 8,
     type: "skill",
@@ -586,12 +587,12 @@ export const RESEARCH_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Research decisions — after measuring, decide: keep or revert. " +
-      "If the metric improved, record: 'note Keeping change: <reason> type decision'. " +
-      "If it worsened, revert your change and record: 'note Reverting: <reason> type decision'. " +
-      "Update your strategy: 'memory set strategy <what to try next>'. " +
-      "Every 5 iterations, run 'reflect' to synthesize learnings into an episode. " +
-      "Recall past results before starting a new hypothesis: 'recall <topic>' or " +
-      "'pool project:<name> recall <topic>'.",
+      "If the metric improved, record: `note Keeping change: <reason> type decision`. " +
+      "If it worsened, revert your change and record: `note Reverting: <reason> type decision`. " +
+      "Update your strategy: `memory set strategy <what to try next>`. " +
+      "Every 5 iterations, run `reflect` to synthesize learnings into an episode. " +
+      "Recall past results before starting a new hypothesis: `recall <topic>` or " +
+      "`pool project:<name> recall <topic>`.",
     importance: 8,
     type: "skill",
   },
@@ -599,9 +600,9 @@ export const RESEARCH_TEMPLATE: TemplateNote[] = [
     content:
       "Research coordination — multiple agents explore different directions simultaneously. " +
       "Before starting a new direction, check the board and pool for what others have tried: " +
-      "'pool project:<name> recall <topic>'. Avoid duplicating experiments. " +
+      "`pool project:<name> recall <topic>`. Avoid duplicating experiments. " +
       "If another agent's finding is relevant to your work, build on it — cite their note ID " +
-      "with 'note link <yours> <theirs> supports'. " +
+      "with `note link <yours> <theirs> supports`. " +
       "Use the project channel to announce major findings or request help. " +
       "The pool is the collective memory — everything worth knowing should be there.",
     importance: 7,
@@ -625,16 +626,16 @@ export const BLACKBOARD_TEMPLATE: TemplateNote[] = [
       "agents do not keep private notes on project topics — everything goes to the pool, " +
       "or it doesn't count as contribution. Reasoning you keep to yourself is reasoning " +
       "the team can't build on. Use private core memory only for cross-project identity, " +
-      "never for project-specific thinking. If you catch yourself writing 'note add' without " +
-      "'pool <name> add', you are off-pattern.",
+      "never for project-specific thinking. If you catch yourself writing `note <text>` without " +
+      "`pool <name> add`, you are off-pattern.",
     importance: 9,
     type: "skill",
   },
   {
     content:
       "Blackboard reading: before contributing, always read the current state with " +
-      "'pool <name> recall <topic>'. Understand what others have written. Use " +
-      "'pool <name> list' to see all contributions. The blackboard is the single " +
+      "`pool <name> recall <topic>`. Understand what others have written. Use " +
+      "`pool <name> list` to see all contributions. The blackboard is the single " +
       "source of truth.",
     importance: 8,
     type: "skill",
@@ -642,7 +643,7 @@ export const BLACKBOARD_TEMPLATE: TemplateNote[] = [
   {
     content:
       "Blackboard writing: add observations, hypotheses, and partial solutions to " +
-      "the pool with 'pool <name> add <content> importance <N>'. Tag contributions " +
+      "the pool with `pool <name> add <content> importance <N>`. Tag contributions " +
       "by type: observation for raw data, inference for derived conclusions, " +
       "decision for agreed actions. Higher importance surfaces first in recall.",
     importance: 8,
@@ -650,9 +651,9 @@ export const BLACKBOARD_TEMPLATE: TemplateNote[] = [
   },
   {
     content:
-      "Blackboard structure & convergence: use 'note link' to connect related pool " +
+      "Blackboard structure & convergence: use `note link` to connect related pool " +
       "contributions into a knowledge graph ('supports', 'contradicts', 'part_of'). " +
-      "Periodically use 'reflect' to synthesize blackboard contents into higher-order " +
+      "Periodically use `reflect` to synthesize blackboard contents into higher-order " +
       "understanding. When the group believes a question is resolved, post the conclusion " +
       "to the board and create a task to act on it. The blackboard keeps growing — old " +
       "contributions remain as history.",

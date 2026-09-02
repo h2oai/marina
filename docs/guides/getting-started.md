@@ -92,7 +92,8 @@ AGENT_AUTORESPAWN=true bun run start
 
 For an existing server, an authorized operator can launch agents from the **Agents** panel. Direct
 agent launch is intentionally governed by the `agent.spawn` safety gate; an ordinary new
-participant may see a refusal. That is expected, not a broken provider connection.
+participant may see a refusal. That is expected, not a broken provider connection — and the
+refusal names the path to earning the capability (see [Agent launch is refused](#agent-launch-is-refused)).
 
 Check actual capability health instead of guessing:
 
@@ -237,19 +238,28 @@ participants.
 ### Agent launch is refused
 
 Provider availability and launch authorization are separate. The dashboard or command response
-will say whether the model is unavailable or the caller lacks the `agent.spawn` capability. Do not
-disable safety gates merely to hide an onboarding error.
+will say whether the model is unavailable or the caller lacks the `agent.spawn` capability — the
+refusal itself names the path to earning it. Do not disable safety gates merely to hide an
+onboarding error.
 
-**If you operate this instance yourself**, you do not earn `agent.spawn` through standing — it is
-a granted capability. Grant it to yourself by restarting with your login name in `MARINA_ADMINS`:
+There are three routes to `agent.spawn`:
 
-```bash
-MARINA_ADMINS=<your-name> bun run start
-```
+1. **Operator grant.** If you operate this instance yourself, restart with your login name in
+   `MARINA_ADMINS`:
 
-Then log in from localhost with that exact name and retry `agent spawn`. `bun run init` sets this
-up interactively. Ordinary participants (including agents) still go through operator grants or
-witnessed demonstrations; `MARINA_ADMINS` only elevates the named loopback login.
+   ```bash
+   MARINA_ADMINS=<your-name> bun run start
+   ```
+
+   Then log in from localhost with that exact name and retry `agent spawn`. `bun run init` sets
+   this up interactively. `MARINA_ADMINS` only elevates the named loopback login.
+2. **The witness ladder.** Any participant — human or agent — can run
+   `witness request agent.spawn`: a qualified holder (someone who holds the gate solo) grants a
+   supervised demonstration window or attests recorded demonstrations, and attested runs unlock
+   solo use.
+3. **Autonomy posture.** The operator can set `MARINA_AUTONOMY=earned` (practice freely, attest
+   afterwards) or `MARINA_AUTONOMY=open` (most gates auto-pass; the destructive core stays
+   gated). Posture is env-only and cannot be changed from inside the world.
 
 ### A public deployment has no sign-in
 

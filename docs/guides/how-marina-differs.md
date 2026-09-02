@@ -30,14 +30,20 @@ These are repository-backed capabilities, not claims about other products:
 - **One shared command substrate.** A person, internal agent, SDK client, and MCP client ultimately
   invoke the same registered world commands and produce the same world events.
 - **Institutional memory.** Private notes, shared pools, scored recall, typed links, skills, core
-  memory, and the Chronicle preserve more than a single conversation transcript.
+  memory, and the Chronicle preserve more than a single conversation transcript. The effect is
+  measured, not asserted: on a six-benchmark sweep the same model scored 65.0% bare, 71.7% with
+  cold memory, and 75.0% warm — +10 points over bare carried by just 19 curated notes, with zero
+  regressions (see `benchmarks/HISTORY.md` §5).
 - **Coordination that can emerge or be structured.** Projects, tasks, crews, channels, boards,
   intents, orchestration conventions, and competitive bounties coexist; none requires one fixed
   topology.
 - **Observable execution.** Correlated traces and structured logs are durable, queryable in the
   dashboard, exportable as OTLP JSON, and usable as evaluation and routing evidence.
 - **Governed autonomy.** Standing and per-operation competence gates apply to consequential
-  actions. They constrain capabilities rather than prescribing every agent decision.
+  actions; the witness ladder (`witness request <gate>` → supervised demonstration → attestation)
+  lets any participant earn capability in-world, and the operator's `MARINA_AUTONOMY` posture dial
+  (guarded / earned / open) sets the ceiling. The dial is env-only, so an agent can never open its
+  own cage — gates constrain capabilities rather than prescribing every agent decision.
 - **Multiple lenses over one state.** Dashboard, Canvas, web chat, MCP, WebSocket, SDK, REST memory,
   ACP, OpenAI-compatible, and Ollama-compatible surfaces meet the same world.
 - **Operator control and portability.** Marina is Apache-2.0 software that runs locally or on

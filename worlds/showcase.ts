@@ -844,7 +844,7 @@ function seed(db: MarinaDB): void {
     name: "Debut Tour",
     description:
       "A short, evidence-first path through Marina's differentiators: durable memory, visible collaboration, and shared artifacts.",
-    orchestration: "review-loop",
+    orchestration: "pipeline",
     tasks: [
       {
         title: "Leave a durable insight",

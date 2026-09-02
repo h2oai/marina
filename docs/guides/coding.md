@@ -131,7 +131,10 @@ project. Keep the task bounded and name the checks that define completion.
 > patches are open to everyone, but `code run`/`verify`/`test` and `code apply`/`revert` require the
 > `code.exec` safety gate (low bar — standing 5; operators are granted it) so a freshly-spawned,
 > untrusted agent can't execute arbitrary host code. If `code run` is refused, you haven't earned
-> `code.exec` yet — contribute a little first, or have an operator grant it.
+> `code.exec` yet — three paths: contribute a little to raise standing, run
+> `witness request code.exec` so a qualified holder can supervise or attest a demonstration, or
+> have an operator grant it. Under `MARINA_AUTONOMY=earned` supervised attempts run freely pending
+> attestation; under `open` this gate auto-passes (only the destructive core stays gated).
 
 ## TL;DR — just talk to it (like Codex / Claude Code / Cursor)
 

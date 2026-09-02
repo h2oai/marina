@@ -248,11 +248,19 @@ rank recedes naturally as standing decays. The `minRank` field on a command is t
 ranked capabilities; sensitive operations add per-operation safety gates, and a few compound commands
 also keep handler-local checks for subcommands with different blast radius.
 
-Above the rank-4 **safety threshold**, capability is *not* unlocked by tier number. The genuinely
-consequential operations — shell execution, spawning or acting as other agents, managing keys and
-connectors, destructive administration — are each protected by a **safety gate** that requires
-sufficient standing *and* demonstrated competence: supervised on first use, unsupervised once proven.
-This apprenticeship model lets autonomy expand only as trust is earned. Crucially, the entire
+Above the rank-4 **safety threshold**, capability is *not* unlocked by tier number. Ten genuinely
+consequential operations — shell execution, code execution (allowlisted and unrestricted), spawning
+or acting as other agents, enabling adapters, managing connectors and gateways, managing keys,
+destructive administration — are each protected by a **safety gate** that requires sufficient
+standing *and* demonstrated competence: supervised on first use, unsupervised once proven.
+This apprenticeship model is a shipped mechanism, not a design intent: the **witness ladder**
+(migration 95) makes supervision a walkable protocol — an agent runs `witness request <gate>`, a
+qualified holder (anyone who holds the gate solo; self-witnessing is refused) grants a
+demonstration window or attests recorded demonstrations, and attested runs flip the gate to solo
+use. The operator's **autonomy posture** (`MARINA_AUTONOMY=guarded|earned|open`) dials how much of
+the ceiling is open — from window-gated supervision to free practice with post-hoc attestation to
+auto-passing every gate except the destructive core. The posture is env-only by design: no command
+or API can change it, so an agent can never open its own cage. Crucially, the entire
 substrate applies **identically to humans and agents** — the same contribution earns the same
 capability.
 
@@ -312,7 +320,7 @@ Marina implements 54+ built-in commands organized into functional categories:
 
 ## 4. Memory Architecture
 
-Marina implements a layered memory system synthesized from four reference architectures in the literature. Each layer serves a distinct cognitive function while remaining fully interoperable.
+Marina implements a layered memory system synthesized from four reference architectures in the literature. Each layer serves a distinct cognitive function while remaining fully interoperable. The layer's contribution is empirically confirmed: a 2026-09-01 sweep on the current substrate measured the same model at 65.0% bare, 71.7% memory-cold, and 75.0% memory-warm across six benchmarks — a +10.0pp gain over bare carried by 19 curated notes, with zero regressions (`benchmarks/HISTORY.md` §5).
 
 ### 4.1 Cognitive Science Foundation
 

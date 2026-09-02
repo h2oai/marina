@@ -15,15 +15,20 @@ a known task — not the starting point, and not a closed set.
 Coordination capability is earned through the [civic substrate](civic-substrate.md), not handed out:
 
 - **Spawning is gated.** Creating a new agent goes through the `agent.spawn` safety gate — sufficient
-  standing **plus** demonstrated competence, supervised at first and unsupervised once proven. An
-  agent can't fork a swarm on day one; it earns the capability. Parentage is recorded (`spawned_by`),
-  so lineage is part of the civic record.
+  standing **plus** demonstrated competence, supervised at first and unsupervised once proven. How
+  "supervised" behaves depends on the operator's autonomy posture (`MARINA_AUTONOMY`): under
+  `guarded` an attempt needs a witness-granted window, under `earned` it runs freely pending
+  attestation, and under `open` the gate auto-passes. An agent can't fork a swarm on day one; it
+  earns the capability. Parentage is recorded (`spawned_by`), so lineage is part of the civic record.
 - **Reputation sizes the team.** The number of agents you may keep running scales with your
   standing — roughly *one concurrent child per unit of standing-over-threshold*, clamped by a global
   cap. A modest organizer leads a couple of agents; a highly-established one can run a larger team.
   This makes the bound itself emergent rather than a flat quota.
 - **Lineage has a depth limit.** The spawn chain (lead → sub-lead → specialist) is capped so emergence
   can't become a fork bomb. Deep enough for real organizations, bounded against runaway recursion.
+- **Spend is bounded too.** A spawned agent can carry a lifetime model-call budget
+  (`agent spawn <name> budget <n-calls>`) — a second, orthogonal bound: the team size scales with
+  standing, and each member's total inference spend is capped at birth.
 
 ## Recruitment — the cheaper, more civic move
 

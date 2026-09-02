@@ -12,7 +12,7 @@ export default focusedExampleWorld({
     name: "Example Company Diligence",
     description:
       "Evaluate an example company without confusing missing evidence for positive evidence.",
-    orchestration: "decompose",
+    orchestration: "mapreduce",
     tasks: [
       {
         title: "Write the initial thesis",

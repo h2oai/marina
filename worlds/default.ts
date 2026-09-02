@@ -158,7 +158,7 @@ function seed(db: MarinaDB): void {
     name: "Demo Pulse",
     description:
       "A visible queue of small, evidence-backed collaborations that keeps the Workbench active without manufacturing noise.",
-    orchestration: "review-loop",
+    orchestration: "pipeline",
     tasks: [
       {
         title: "Turn a launch brief into a reviewed artifact",

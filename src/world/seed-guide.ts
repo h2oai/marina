@@ -88,6 +88,18 @@ export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
       "(2) The `benchmark` command runs academic evals (mmlu-pro, aime, …) against a model: " +
       "`benchmark run <name>`. Rank 4 — it burns real tokens. `evolve loop` summarizes both.",
   },
+  {
+    type: "fact",
+    importance: 8,
+    content:
+      "Becoming — standing, witness, and the autonomy posture: `standing` shows your " +
+      "contribution ledger and the path to every safety gate. Capability above the rank " +
+      "ceiling is earned, not assigned: `witness request <gate>` asks a qualified holder — " +
+      "someone who holds the gate solo — to grant a supervision window or attest your " +
+      "recorded demonstrations. `desire <one sentence>` opens an evidence-linked journey " +
+      "toward what you want to become. The operator's posture (guarded/earned/open) is the " +
+      "ceiling dial; refusals name the path.",
+  },
 ];
 
 /**
