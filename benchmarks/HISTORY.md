@@ -184,3 +184,50 @@ historical anchor, not a current benchmark.
 The next confirming sweep should use `usecase experiment <generation-name>`
 (see `src/engine/commands/usecase.ts`) — the in-world recipe that replaced
 the deleted `benchmarks/big-experiment.sh` and `gen1-experiment.sh`.
+
+---
+
+## 5. Migration-94 confirmation sweep — N=10, 2026-09-01
+
+The confirming sweep §4 called for, run on the current substrate (migration
+94: tiered recall + seq-ordered replay + the v0.7.0 hardening). Deliberately
+bounded and honestly labeled: **N=10, seed=42, gpt-4o-mini**, six of the
+thirteen benchmarks (truthfulqa/ifeval dataset downloads were unavailable at
+run time), and the **SmartProvider memory wrapper** (recall + reflect-per-QA
+into private notes and a shared pool) rather than the full answerer specialist
+crew — this isolates the memory variable from crew-dispatch effects. Bare =
+thin passthrough to the same model. Warm = the same questions, same seed,
+rerun on the DB the cold pass accumulated (the same memory-reuse design as
+the original Gen-1).
+
+| Benchmark | Bare | Memory cold | Memory warm | cold→warm | warm vs bare |
+|---|---|---|---|---|---|
+| simple-qa | 10.0% | 20.0% | 20.0% | 0 | **+10.0** |
+| gsm8k | 90.0% | 100.0% | 100.0% | 0 | **+10.0** |
+| math | 80.0% | 90.0% | 90.0% | 0 | **+10.0** |
+| hellaswag | 70.0% | 70.0% | **90.0%** | **+20.0** | **+20.0** |
+| arc-challenge | 80.0% | 80.0% | 80.0% | 0 | 0 |
+| musr | 60.0% | 70.0% | 70.0% | 0 | **+10.0** |
+| **Average** | **65.0%** | **71.7%** | **75.0%** | **+3.3** | **+10.0** |
+
+**The stair-step reproduces on the current code: bare 65.0 → cold 71.7 →
+warm 75.0.** Three observations:
+
+1. **No regressions.** The original Gen-1's failure mode (IFEval −12,
+   SimpleQA −12 from recall pollution) does not appear: zero benchmarks
+   declined cold→warm. This is the tier-filter working as designed — the
+   warm substrate held 19 notes (9 fact, 10 skill), zero process-tier chaff,
+   versus the 7,738-note pre-tier Gen-1.
+2. **Warm is faster, not just better.** Latency dropped cold→warm on 5/6
+   benchmarks (hellaswag 114.8s→96.7s, arc 136.2s→96.4s, musr
+   137.2s→100.3s) — recalled principles substitute for re-derivation.
+3. **19 notes moved the average +10pp over bare.** The memory that did this
+   is small and curated (reflect-mode distillation), not voluminous —
+   quality-over-volume, the exact lesson §4 paid for.
+
+Caveats, unchanged in kind from §4: N=10 is weak significance; the substrate
+model differs from the historical table (gpt-4o-mini vs Sonnet 4.6), so
+absolute scores are not comparable across sections — only the within-run
+bare/cold/warm deltas are the claim. Total run cost ≈ $1. Runner script
+preserved in the session scratchpad (`genbench/run-pass.sh`); a full N=50 ×
+13-benchmark × answerer-crew rerun remains the operator-approval item.

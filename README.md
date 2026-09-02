@@ -52,12 +52,9 @@ state.
 - **World Collective experiments** — a source checkout can launch isolated child Marinas with their
   own storage and dashboard, compare variants, and record an evidence-referenced preferred
   candidate without silently replacing the parent.
-- **Open-ended cognitive journeys** — preserve a person's exact desire, correlate action and
-  evidence, return a useful result, and continue evolving afterward.
-- **Reproductive identity and plural federation** — portable intellects and content-addressed
-  Marina genomes create attributable descendants that can join multiple transparent meshes.
-- **Economic and scientific legibility** — asset-neutral claims, explicit replay levels,
-  counterfactual forks, and recursive mutation lineage remain inspectable without a universal judge.
+- **Desire-first journeys** — `desire <one sentence>` preserves a person's exact words, grounds a
+  first response in their own notes and world evidence, and tracks truthful progress against real
+  linked work — no autonomous work is claimed until evidence of it exists.
 
 The full system tour is in the [documentation overview](https://h2oai.github.io/marina/docs/overview/).
 The complete command reference and operational manual live in [SKILL.md](SKILL.md). README is the

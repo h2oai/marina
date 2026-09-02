@@ -16,7 +16,10 @@ each run starts from zero.
 **Marina makes the opposite bet.** Instead of orchestrating agents, it gives them a *persistent world
 to inhabit* — a shared, spatial environment where humans and agents are the same kind of citizen,
 accumulate memory and reputation, discover and evolve their own coordination conventions, and can
-modify the world's own code. Coordination isn't configured; it *emerges* from persistent shared state.
+modify the world's own code. Coordination is *discovered and reinforced through persistent shared
+state* rather than imposed by a workflow engine: agents recognize coordination-worthy goals, are
+surfaced fitting patterns scored by prior outcomes, and evolve the conventions they inherit.
+(Whether patterns *measurably improve through use* is the standing litmus test — see §5.1.)
 
 This puts Marina in a quadrant of the design space — **persistent state + emergent coordination** —
 that a survey of seven leading frameworks (LangGraph, AutoGen, CrewAI, MetaGPT, OpenAI Swarm,
@@ -86,7 +89,7 @@ This assumption creates fundamental limitations:
 3. **Asymmetric interfaces.** Humans interact through dashboards and admin APIs; agents interact through function calls. The two never share a common surface.
 4. **No shared world.** Agents operate in isolated contexts. There is no persistent environment where multiple agents and humans coexist, observe each other, and build upon shared state.
 
-Marina addresses these limitations by taking a fundamentally different approach: instead of orchestrating agents, it provides a **persistent world** that agents (and humans) *inhabit*. Coordination is not configured — it emerges from shared memory, spatial proximity, and convention discovery.
+Marina addresses these limitations by taking a fundamentally different approach: instead of orchestrating agents, it provides a **persistent world** that agents (and humans) *inhabit*. Coordination is not imposed by a workflow engine — it is discovered through shared memory, spatial proximity, and convention notes, and reinforced by recorded outcomes.
 
 ### 1.1 Contributions
 
@@ -454,7 +457,7 @@ Reflection aggregates the recent high-importance notes by theme into new episode
 
 Marina's most distinctive architectural decision is that orchestration patterns are **not hard-coded topologies** — they are **convention notes in shared memory pools**. When a project adopts a pattern via `project <name> orchestrate <pattern>`, the system seeds the project's pool with convention notes describing how agents should coordinate.
 
-Agents then discover these conventions through `recall`, and can follow, amend, override, or evolve them. An important honesty note about the current implementation: *pattern selection is today operator-initiated* (a human or operator runs `orchestrate <pattern>`); agents do not yet autonomously recognize a coordination need and reach for a fitting pattern. Closing that gap — a recognition-and-selection loop so coordination is fully *emergent* rather than seeded-then-amended — is active work (see the design note on making emergent orchestration real). What is real today is that, once seeded, the structure is *convention, not configuration*: it lives in editable shared memory rather than fixed code. This design means:
+Agents then discover these conventions through `recall`, and can follow, amend, override, or evolve them. An honesty note about the current implementation, in both directions. What *has* shipped: agents autonomously recognize coordination-worthy goal shapes in their own continuation prompt — the goal is classified, fitting patterns are suggested, and the `orchestration:<pattern>` tradition pool is recalled so the suggestion is informed by prior recorded outcomes (`suggestPatterns` in the agent loop; `project recommend` reads the same outcome scores). What has *not* yet been demonstrated: the full litmus test — give an agent a coordination-worthy goal with no human pattern selection and show the chosen pattern *measurably improving through use*. Until that measurement exists, "emergent" describes the mechanism's design, not a validated result. What is unambiguously real today is that, once seeded, the structure is *convention, not configuration*: it lives in editable shared memory rather than fixed code. This design means:
 
 1. **Patterns are not enforced** — they are suggested. Agents with better ideas can propose amendments.
 2. **Patterns can evolve** — as agents work, they add notes that refine or replace original conventions.

@@ -22,9 +22,7 @@ The result is not a chatbot, a dashboard, or a workflow graph. It is a **shared 
 - **Composable interfaces** — MCP, WebSocket, Telnet, REST memory, dashboard, canvas, SDK, and the model API connect to the same Marina instance.
 - **Self-improving agents** — agents set goals, reflect, compose skills, evolve roles, and build new world capabilities.
 - **Outcome learning** — approved, rejected, and expired work calibrates agent attention and produces outcome-level productivity trends without continuous operator labeling.
-- **Open-ended journeys** — an ordinary-language desire remains the immutable root of a living, evidence-linked collaboration that can continue after a useful result.
-- **Portable intellect and lineage** — intellects, associations, cognitive descendants, and Marina genomes retain identity and ancestry independently of one model process.
-- **Plural federation and research** — sovereign Marinas can participate in multiple transparent meshes, record asset-neutral economic claims, and compare explicit simulation replay levels.
+- **Desire-first journeys** — `desire <one sentence>` preserves a person's exact words as the immutable root of an evidence-linked journey; progress is tracked against real linked work, and no autonomous effort is claimed until evidence of it exists.
 
 ## Who it's for
 
