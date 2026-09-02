@@ -5,6 +5,7 @@ import type { TaskManager } from "../../coordination/task-manager";
 import { category, dim, header, id, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { gatherRetrievalContext } from "./retrieval-core";
 
 export function askCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
@@ -31,58 +32,40 @@ export function askCommand(deps: {
         return;
       }
 
-      const db = deps.db;
       const lines: string[] = [header(`Ask: ${query}`), separator()];
       const contextLines: string[] = [];
       let sections = 0;
 
-      const memories = db.recallNotes(entity.name, query).slice(0, 5);
-      if (memories.length > 0) {
+      const retrieved = gatherRetrievalContext(
+        deps.db,
+        { id: input.entity, name: entity.name },
+        query,
+      );
+
+      if (retrieved.personal.length > 0) {
         sections++;
         lines.push(category("Personal Memory"));
-        for (const note of memories) {
-          db.touchNote(note.id);
+        for (const note of retrieved.personal) {
           lines.push(`  ${id(note.id)} ${note.content}`);
           contextLines.push(`[personal:${note.id}] ${note.content}`);
         }
       }
 
-      const guide = db.getMemoryPool("guide");
-      if (guide) {
-        const guideNotes = db.recallPoolNotes(guide.id, query).slice(0, 5);
-        if (guideNotes.length > 0) {
-          sections++;
-          lines.push(category("Guide"));
-          for (const note of guideNotes) {
-            db.touchNote(note.id);
-            lines.push(`  ${id(note.id)} ${note.content}`);
-            contextLines.push(`[guide:${note.id}] ${note.content}`);
-          }
+      if (retrieved.guide.length > 0) {
+        sections++;
+        lines.push(category("Guide"));
+        for (const note of retrieved.guide) {
+          lines.push(`  ${id(note.id)} ${note.content}`);
+          contextLines.push(`[guide:${note.id}] ${note.content}`);
         }
       }
 
-      const poolHits: { pool: string; content: string; noteId: number }[] = [];
-      for (const pool of db.listMemoryPools()) {
-        if (pool.name === "guide") continue;
-        // Membership guard (same rule as passthru-context): a group-scoped
-        // pool is readable here only by its members — retrieval verbs must
-        // not harvest private group knowledge for outsiders. Ungrouped world
-        // pools stay open by design.
-        if (pool.group_id && !db.getGroupMember(pool.group_id, input.entity)) continue;
-        const hits = db.recallPoolNotes(pool.id, query).slice(0, 2);
-        for (const hit of hits) {
-          db.touchNote(hit.id);
-          poolHits.push({ pool: pool.name, content: hit.content, noteId: hit.id });
-          if (poolHits.length >= 6) break;
-        }
-        if (poolHits.length >= 6) break;
-      }
-      if (poolHits.length > 0) {
+      if (retrieved.pools.length > 0) {
         sections++;
         lines.push(category("Shared Pools"));
-        for (const hit of poolHits) {
-          lines.push(`  ${id(hit.noteId)} [${hit.pool}] ${hit.content}`);
-          contextLines.push(`[pool:${hit.pool}:${hit.noteId}] ${hit.content}`);
+        for (const hit of retrieved.pools) {
+          lines.push(`  ${id(hit.note.id)} [${hit.pool}] ${hit.note.content}`);
+          contextLines.push(`[pool:${hit.pool}:${hit.note.id}] ${hit.note.content}`);
         }
       }
 
@@ -91,11 +74,10 @@ export function askCommand(deps: {
       // Chronicler interpreted it (narrative + digest), not just what's in
       // notes/pools. "Impart intelligence everywhere": canonical history
       // reaches LLM synthesis.
-      const chronicleHits = db.queryChronicle({ like: query, limit: 5 });
-      if (chronicleHits.length > 0) {
+      if (retrieved.chronicle.length > 0) {
         sections++;
         lines.push(category("Chronicle"));
-        for (const e of chronicleHits) {
+        for (const e of retrieved.chronicle) {
           const title = e.title.length > 90 ? `${e.title.slice(0, 87)}…` : e.title;
           lines.push(`  ${id(e.id)} [${e.kind}] ${title}`);
           const body = e.body ? ` — ${e.body.slice(0, 120)}` : "";
@@ -103,15 +85,10 @@ export function askCommand(deps: {
         }
       }
 
-      // Chronicle hits already have their own section above — drop them here.
-      const searchHits = db
-        .globalSearch(query)
-        .filter((h) => h.type !== "chronicle")
-        .slice(0, 5);
-      if (searchHits.length > 0) {
+      if (retrieved.world.length > 0) {
         sections++;
         lines.push(category("World Search"));
-        for (const hit of searchHits) {
+        for (const hit of retrieved.world) {
           lines.push(`  [${hit.type}:${hit.context}] ${hit.title}`);
           contextLines.push(`[world:${hit.type}:${hit.context}] ${hit.title}`);
         }

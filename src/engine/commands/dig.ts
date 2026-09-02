@@ -7,6 +7,7 @@ import type { CommandDef, Entity, RoomContext } from "../../types";
 import type { ConnectorRuntime } from "../connector-runtime";
 import { search as providerSearch, type SearchResult } from "../search-providers/index";
 import { requiresPersistence } from "./command-messages";
+import { gatherRetrievalContext } from "./retrieval-core";
 
 /**
  * Dig — investigate a topic with external evidence.
@@ -45,30 +46,31 @@ export function digCommand(deps: {
         return;
       }
 
-      const db = deps.db;
       const lines: string[] = [header(`Dig: ${query}`), separator()];
       const contextLines: string[] = [];
 
-      const memories = db.recallNotes(entity.name, query).slice(0, 4);
-      if (memories.length > 0) {
+      // Dig grounds on personal + guide notes only — the web evidence below is
+      // its distinctive source; pools/chronicle/world-search stay recap's job.
+      const retrieved = gatherRetrievalContext(
+        deps.db,
+        { id: input.entity, name: entity.name },
+        query,
+        { personal: 4, guide: 3, pools: 0, chronicle: 0, world: 0 },
+      );
+
+      if (retrieved.personal.length > 0) {
         lines.push(category("Your Notes"));
-        for (const note of memories) {
-          db.touchNote(note.id);
+        for (const note of retrieved.personal) {
           lines.push(`  ${id(note.id)} ${note.content}`);
           contextLines.push(`[personal:${note.id}] ${note.content}`);
         }
       }
 
-      const guide = db.getMemoryPool("guide");
-      if (guide) {
-        const guideNotes = db.recallPoolNotes(guide.id, query).slice(0, 3);
-        if (guideNotes.length > 0) {
-          lines.push(category("Guide"));
-          for (const note of guideNotes) {
-            db.touchNote(note.id);
-            lines.push(`  ${id(note.id)} ${note.content}`);
-            contextLines.push(`[guide:${note.id}] ${note.content}`);
-          }
+      if (retrieved.guide.length > 0) {
+        lines.push(category("Guide"));
+        for (const note of retrieved.guide) {
+          lines.push(`  ${id(note.id)} ${note.content}`);
+          contextLines.push(`[guide:${note.id}] ${note.content}`);
         }
       }
 

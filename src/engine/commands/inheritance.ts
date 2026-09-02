@@ -3,23 +3,42 @@
 
 import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
-import type { CommandDef } from "../../types";
+import type { CommandDef, CommandInput, Entity, RoomContext } from "../../types";
 import {
+  decodeInheritanceBundle,
   encodeInheritanceBundle,
   type InheritanceBundle,
+  inheritanceDigest,
   isExportableInheritancePool,
 } from "../inheritance-bundle";
+import { getRank } from "../permissions";
 import { requiresPersistence } from "./command-messages";
 
-export function inheritanceCommand(db?: MarinaDB): CommandDef {
+/**
+ * One command for the whole inheritance domain. Historically `inheritance`
+ * (list/export) and `inherit` (import) were separate commands with
+ * near-identical names — a coin-flip discovery problem. `inherit <token>` is
+ * kept as an alias that routes straight to import.
+ */
+export function inheritanceCommand(deps: {
+  db?: MarinaDB;
+  getEntity: (id: string) => Entity | undefined;
+}): CommandDef {
   return {
     name: "inheritance",
-    aliases: [],
-    category: "Information",
-    help: "Inspect or export shared Marina inheritance. Usage: inheritance [list] | inheritance export <guide|tradition-pool>",
+    aliases: ["inherit"],
+    category: "Knowledge",
+    minRank: 0,
+    help: "Inspect, export, or import shared Marina inheritance. Usage: inheritance [list] | inheritance export <guide|tradition-pool> | inheritance import <bundle-token> (import: rank 2+; `inherit <token>` also works)",
     handler: (ctx, input) => {
-      if (!db) {
+      if (!deps.db) {
         ctx.send(input.entity, requiresPersistence("inheritance"));
+        return;
+      }
+      const db = deps.db;
+      // Back-compat: invoked as `inherit`, the whole argument is a token.
+      if (input.verb === "inherit") {
+        importBundle(ctx, input, db, deps.getEntity, input.args.trim());
         return;
       }
       const sub = input.tokens[0]?.toLowerCase();
@@ -34,12 +53,19 @@ export function inheritanceCommand(db?: MarinaDB): CommandDef {
         lines.push(
           "  Exported bundles contain shared evidence only; private memory is never included.",
         );
-        lines.push("  Use: inheritance export <pool>");
+        lines.push("  Use: inheritance export <pool> | inheritance import <bundle-token>");
         ctx.send(input.entity, lines.join("\n"));
         return;
       }
+      if (sub === "import") {
+        importBundle(ctx, input, db, deps.getEntity, input.tokens.slice(1).join(" ").trim());
+        return;
+      }
       if (sub !== "export") {
-        ctx.send(input.entity, "Usage: inheritance [list] | inheritance export <pool>");
+        ctx.send(
+          input.entity,
+          "Usage: inheritance [list] | inheritance export <pool> | inheritance import <bundle-token>",
+        );
         return;
       }
       const name = input.tokens.slice(1).join(" ").trim();
@@ -84,4 +110,53 @@ export function inheritanceCommand(db?: MarinaDB): CommandDef {
       }
     },
   };
+}
+
+/** Import a bounded bundle as quarantined evidence. Requires rank 2+. */
+function importBundle(
+  ctx: RoomContext,
+  input: CommandInput,
+  db: MarinaDB,
+  getEntity: (id: string) => Entity | undefined,
+  token: string,
+): void {
+  const entity = getEntity(input.entity);
+  if (!entity) return;
+  if (!token) {
+    ctx.send(input.entity, "Usage: inheritance import <bundle-token>");
+    return;
+  }
+  // Import writes a new pool — kept at the old `inherit` command's rank floor.
+  if (getRank(entity) < 2) {
+    ctx.send(input.entity, "Importing an inheritance bundle requires rank 2+.");
+    return;
+  }
+  try {
+    const bundle = decodeInheritanceBundle(token);
+    const digest = inheritanceDigest(token);
+    const poolName = `inheritance:${digest.slice(0, 12)}`;
+    const existing = db.getMemoryPool(poolName);
+    if (existing) {
+      ctx.send(input.entity, `Inheritance bundle already imported as pool "${poolName}".`);
+      return;
+    }
+    const poolId = `pool_inheritance_${digest.slice(0, 24)}`;
+    db.createMemoryPool(poolId, poolName, entity.name);
+    for (const artifact of bundle.artifacts) {
+      const provenance = `[Unverified inheritance · claimed source=${bundle.assertedSource} · original pool=${artifact.pool} · claimed author=${artifact.author}]`;
+      db.addPoolNote(
+        poolId,
+        entity.name,
+        `${provenance} ${artifact.content}`,
+        artifact.importance,
+        "evidence",
+      );
+    }
+    ctx.send(
+      input.entity,
+      `Imported ${bundle.artifacts.length} artifacts into "${poolName}" as unverified evidence. Nothing was activated, executed, or merged into guide/tradition memory.`,
+    );
+  } catch (cause) {
+    ctx.send(input.entity, cause instanceof Error ? cause.message : "Inheritance import failed.");
+  }
 }

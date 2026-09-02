@@ -73,6 +73,25 @@ describe("Marina inheritance bundles", () => {
     expect(notes[0]?.content).toContain("claimed author=Ada");
   });
 
+  it("imports via the merged `inheritance import` subcommand and enforces the rank floor", async () => {
+    db.createMemoryPool("pool_tradition2", "orchestration:pipeline", "system");
+    db.addPoolNote("pool_tradition2", "Ada", "Stage contracts before handoff.", 7, "reflection");
+    await engine.processCommand(entityId, "inheritance export orchestration:pipeline");
+    const token = stripAnsi(conn.lastText()).match(/inherit ([A-Za-z0-9_-]+)/)?.[1];
+    expect(token).toBeDefined();
+
+    // Below the rank floor, import refuses (list/export stay open at rank 0).
+    setRank(engine.entities.get(entityId)!, 0);
+    conn.clear();
+    await engine.processCommand(entityId, `inheritance import ${token}`);
+    expect(stripAnsi(conn.lastText())).toContain("requires rank 2+");
+
+    setRank(engine.entities.get(entityId)!, 2);
+    conn.clear();
+    await engine.processCommand(entityId, `inheritance import ${token}`);
+    expect(stripAnsi(conn.lastText())).toContain("as unverified evidence");
+  });
+
   it("does not export ordinary shared or private pools", async () => {
     db.createMemoryPool("pool_project", "project-private", "Curator", "group-1");
     db.addPoolNote("pool_project", "Curator", "private plan", 5, "note");

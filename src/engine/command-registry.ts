@@ -49,7 +49,6 @@ import { guideCommand } from "./commands/guide";
 import { helpCommand } from "./commands/help";
 import { ignoreCommand, isIgnoring } from "./commands/ignore";
 import { imageCommand } from "./commands/image";
-import { inheritCommand } from "./commands/inherit";
 import { inheritanceCommand } from "./commands/inheritance";
 import { intellectCommand } from "./commands/intellect";
 import { inventoryCommand } from "./commands/inventory";
@@ -702,9 +701,8 @@ export function registerBuiltinCommands(engine: Engine): void {
       }),
     );
   }
-  engine.commands.registerBuiltin(inheritanceCommand(engine.db));
   engine.commands.registerBuiltin(
-    inheritCommand({
+    inheritanceCommand({
       db: engine.db,
       getEntity: (id) => engine.entities.get(id as EntityId),
     }),

@@ -12,10 +12,11 @@ inheritance export orchestration:research
 The export ends with a directly reusable command:
 
 ```text
-inherit <bundle-token>
+inheritance import <bundle-token>
 ```
 
-`inherit` requires coordinator rank. It validates strict size and field bounds, computes a stable
+(`inherit <bundle-token>` is an equivalent alias — the historical short form.) Importing requires
+coordinator rank (2+). It validates strict size and field bounds, computes a stable
 digest, and creates an `inheritance:<digest>` pool. Imported artifacts are labelled **unverified
 evidence**, attributed to the importing entity while retaining the peer's claimed source, pool, and
 author inside the provenance label. Re-importing the same token is idempotent.
@@ -26,5 +27,6 @@ useful evidence into a local behavior surface. The source field is a claim, not 
 federation identity; a future signed world forum can bind the same bundle schema to authenticated
 transport provenance without changing its evidence semantics.
 
-For agents, both commands are available through the normal Marina command tool. This makes the
+For agents, the whole flow lives under the single `inheritance` command through the normal Marina
+command tool. This makes the
 workflow entirely copy/pasteable between worlds while preserving the same human/agent permissions.

@@ -5,6 +5,7 @@ import { bold, category, dim, header, id, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { ChronicleEntry } from "../../persistence/db-chronicle";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { gatherRetrievalContext } from "./retrieval-core";
 
 const HELP =
   "Show what the world remembers about a topic — no synthesis. " +
@@ -128,76 +129,43 @@ export function recapCommand(deps: {
       const lines: string[] = [header(`Recap: ${query}`), separator()];
       let sections = 0;
 
-      const memories = db.recallNotes(entity.name, query).slice(0, 5);
-      if (memories.length > 0) {
+      const retrieved = gatherRetrievalContext(db, { id: input.entity, name: entity.name }, query);
+
+      if (retrieved.personal.length > 0) {
         sections++;
         lines.push(category("Your Notes"));
-        for (const note of memories) {
-          db.touchNote(note.id);
-          lines.push(`  ${id(note.id)} ${note.content}`);
-        }
+        for (const note of retrieved.personal) lines.push(`  ${id(note.id)} ${note.content}`);
       }
 
-      const guide = db.getMemoryPool("guide");
-      if (guide) {
-        const guideNotes = db.recallPoolNotes(guide.id, query).slice(0, 5);
-        if (guideNotes.length > 0) {
-          sections++;
-          lines.push(category("Guide"));
-          for (const note of guideNotes) {
-            db.touchNote(note.id);
-            lines.push(`  ${id(note.id)} ${note.content}`);
-          }
-        }
+      if (retrieved.guide.length > 0) {
+        sections++;
+        lines.push(category("Guide"));
+        for (const note of retrieved.guide) lines.push(`  ${id(note.id)} ${note.content}`);
       }
 
-      const poolHits: { pool: string; content: string; noteId: number }[] = [];
-      for (const pool of db.listMemoryPools()) {
-        if (pool.name === "guide") continue;
-        // Membership guard (same rule as passthru-context): a group-scoped
-        // pool is readable here only by its members — retrieval verbs must
-        // not harvest private group knowledge for outsiders. Ungrouped world
-        // pools stay open by design.
-        if (pool.group_id && !db.getGroupMember(pool.group_id, input.entity)) continue;
-        const hits = db.recallPoolNotes(pool.id, query).slice(0, 2);
-        for (const hit of hits) {
-          db.touchNote(hit.id);
-          poolHits.push({ pool: pool.name, content: hit.content, noteId: hit.id });
-          if (poolHits.length >= 6) break;
-        }
-        if (poolHits.length >= 6) break;
-      }
-      if (poolHits.length > 0) {
+      if (retrieved.pools.length > 0) {
         sections++;
         lines.push(category("Shared Pools"));
-        for (const hit of poolHits) {
-          lines.push(`  ${id(hit.noteId)} [${hit.pool}] ${hit.content}`);
+        for (const hit of retrieved.pools) {
+          lines.push(`  ${id(hit.note.id)} [${hit.pool}] ${hit.note.content}`);
         }
       }
 
       // Chronicle entries that mention the topic — the canonical record as a
-      // retrieval source. Bias toward synthesized kinds (narrative + digest)
-      // since those are interpretation; raw events are still findable but
-      // capped lower so they don't crowd the section.
-      const chronicleHits = db.queryChronicle({ like: query, limit: 5 });
-      if (chronicleHits.length > 0) {
+      // retrieval source.
+      if (retrieved.chronicle.length > 0) {
         sections++;
         lines.push(category("Chronicle"));
-        for (const e of chronicleHits) {
+        for (const e of retrieved.chronicle) {
           const title = e.title.length > 90 ? `${e.title.slice(0, 87)}…` : e.title;
           lines.push(`  ${id(e.id)} [${e.kind}] ${title}`);
         }
       }
 
-      // Chronicle hits already have their own section above — drop them here.
-      const searchHits = db
-        .globalSearch(query)
-        .filter((h) => h.type !== "chronicle")
-        .slice(0, 5);
-      if (searchHits.length > 0) {
+      if (retrieved.world.length > 0) {
         sections++;
         lines.push(category("World Search"));
-        for (const hit of searchHits) {
+        for (const hit of retrieved.world) {
           lines.push(`  [${hit.type}:${hit.context}] ${hit.title}`);
         }
       }

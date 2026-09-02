@@ -85,6 +85,26 @@ describe("debrief", () => {
     cleanupDb(TEST_DB);
   });
 
+  it("never surfaces group-gated pool notes to non-members (retrieval core guard)", () => {
+    db.createGroup({ id: "g_sec", name: "sealed", leaderId: "someone-else" });
+    db.createMemoryPool("pool_sealed", "sealed-pool", "someone-else", "g_sec");
+    db.addPoolNote("pool_sealed", "Insider", "zephyr launch codes are staged", 9, "note");
+    db.createMemoryPool("pool_open", "open-pool", "system");
+    db.addPoolNote("pool_open", "Helper", "zephyr weather patterns are mild", 5, "note");
+    conn.clear();
+
+    // recap and ask share gatherRetrievalContext — both must respect the guard.
+    engine.processCommand(conn.entity!, "recap zephyr");
+    const recapText = lastFor(conn);
+    expect(recapText).toContain("weather patterns");
+    expect(recapText).not.toContain("launch codes");
+
+    conn.clear();
+    engine.processCommand(conn.entity!, "ask zephyr");
+    const askText = lastFor(conn);
+    expect(askText).not.toContain("launch codes");
+  });
+
   it("shows a no-notes message when the entity hasn't captured anything", () => {
     engine.processCommand(conn.entity!, "debrief");
     const text = lastFor(conn);

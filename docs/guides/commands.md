@@ -79,8 +79,10 @@ Shared guide and tradition evidence can move between Marina worlds without carry
 ```text
 > inheritance list
 > inheritance export orchestration:research
-> inherit <bundle-token>
+> inheritance import <bundle-token>
 ```
+
+(`inherit <bundle-token>` still works as an alias for the import; importing requires rank 2+.)
 
 Imports remain quarantined as unverified evidence until a human or agent deliberately reviews and
 curates them. See [Cross-world Inheritance](inheritance.md).

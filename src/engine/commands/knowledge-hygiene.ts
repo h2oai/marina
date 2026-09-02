@@ -48,6 +48,7 @@ const KNOWN_SUBCOMMANDS: Record<string, Set<string>> = {
   code: new Set(["apply", "diff", "run", "session", "status"]),
   conduct: new Set(["learned", "resolve", "run"]),
   feed: new Set(["kinds", "list"]),
+  inheritance: new Set(["export", "import", "list"]),
   memory: new Set(["delete", "get", "history", "list", "set"]),
   note: new Set([
     "correct",
