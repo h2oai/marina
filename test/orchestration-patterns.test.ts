@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import { detectTaskShapes, suggestPatterns } from "../src/world/templates/orchestration";
+import { buildFormationBrief } from "../src/coordination/crew-formations";
+import type { CrewFormation } from "../src/types";
+import {
+  detectTaskShapes,
+  ORCHESTRATION_PATTERNS,
+  PATTERN_VALIDATION,
+  suggestPatterns,
+} from "../src/world/templates/orchestration";
 
 describe("emergent orchestration — recognition loop", () => {
   describe("detectTaskShapes", () => {
@@ -59,6 +66,43 @@ describe("emergent orchestration — recognition loop", () => {
       expect(fits.length).toBeLessThanOrEqual(2);
       // Every suggestion carries a one-line rationale.
       for (const f of fits) expect(f.why.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe("PATTERN_VALIDATION (2026-09 sweep evidence)", () => {
+    it("covers every non-custom pattern with a status and evidence line", () => {
+      for (const pattern of ORCHESTRATION_PATTERNS) {
+        if (pattern === "custom") continue;
+        const v = PATTERN_VALIDATION[pattern];
+        expect(v).toBeDefined();
+        expect(["validated", "partial", "unvalidated"]).toContain(v.status);
+        expect(v.evidence.length).toBeGreaterThan(0);
+      }
+    });
+  });
+
+  describe("formation brief protocol priority", () => {
+    it("every formation brief leads with the model_response-over-process rule", () => {
+      // Measured 2026-09: process-heavy briefs displaced the response protocol
+      // (crew solved the questions but never replied). The preamble is the fix.
+      const formations: CrewFormation[] = [
+        "freeform",
+        "deliberation",
+        "chorus",
+        "foundry",
+        "swarm",
+        "pipeline",
+        "debate",
+        "mapreduce",
+        "blackboard",
+        "symbiosis",
+        "research",
+      ];
+      for (const f of formations) {
+        const brief = buildFormationBrief(f, "test goal");
+        expect(brief).toContain("model_request");
+        expect(brief).toContain("takes precedence over formation process");
+      }
     });
   });
 });

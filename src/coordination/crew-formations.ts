@@ -66,6 +66,19 @@ export function getFormationTemplate(formation: CrewFormation): TemplateNote[] {
 }
 
 /**
+ * Protocol-priority preamble prepended to every formation brief. Measured in
+ * the 2026-09 orchestration sweep: process-heavy briefs (deliberation,
+ * mapreduce, debate, symbiosis) displaced the model_response protocol in
+ * small-model crews — the crew SOLVED the questions but never replied, so
+ * every request timed out. Formation process must never outrank answering.
+ */
+const PROTOCOL_PRIORITY =
+  "PRIORITY: if this crew serves a model endpoint, answering `model_request` " +
+  "messages (post `{type:'model_response',id,content}` back on the request's " +
+  "channel) always takes precedence over formation process. Apply the " +
+  "formation to HOW you work, never as a reason to delay or skip a reply.";
+
+/**
  * Build the single-message formation brief that gets posted to the crew
  * channel on activation. Concatenates the template notes — they're already
  * written as standalone paragraphs in the orchestration module.
@@ -73,7 +86,7 @@ export function getFormationTemplate(formation: CrewFormation): TemplateNote[] {
 export function buildFormationBrief(formation: CrewFormation, goal: string): string {
   const notes = getFormationTemplate(formation);
   const header = `[formation:${formation}] crew goal: ${goal || "(unspecified)"}`;
-  if (notes.length === 0) return header;
+  if (notes.length === 0) return `${header}\n${PROTOCOL_PRIORITY}`;
   const body = notes.map((n) => `• ${n.content}`).join("\n");
-  return `${header}\n${body}`;
+  return `${header}\n${PROTOCOL_PRIORITY}\n${body}`;
 }

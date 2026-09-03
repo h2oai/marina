@@ -88,6 +88,36 @@ export const PATTERN_FIT: Record<
   research: { shapes: ["open-ended"], why: "hypothesis → act → measure → record loop" },
 };
 
+/**
+ * Empirical validation status per pattern, from the 2026-09-02 orchestration
+ * sweep (gpt-4o-mini crews, N=10 seed=42, request-serving context; report in
+ * the private archive: marina-internal design/orchestration-pattern-sweep-2026-09.md).
+ *
+ * - `validated`: crew stayed protocol-compliant and answered every request.
+ * - `partial`: some requests stalled (formation process displaced the reply).
+ * - `unvalidated`: most or all requests stalled as-written.
+ *
+ * Honest scope note: the sweep measured REQUEST-SERVING crews. Process-heavy
+ * patterns were designed for long-horizon project coordination and have not
+ * yet been measured in that habitat — `unvalidated` means "no passing
+ * evidence yet", not "proven bad". Update this map when new sweeps land.
+ */
+export const PATTERN_VALIDATION: Record<
+  Exclude<OrchestrationPattern, "custom">,
+  { status: "validated" | "partial" | "unvalidated"; evidence: string }
+> = {
+  chorus: { status: "validated", evidence: "2026-09 sweep: 10/10 answered, top score" },
+  blackboard: { status: "validated", evidence: "2026-09 sweep: 10/10 answered, top score" },
+  foundry: { status: "validated", evidence: "2026-09 sweep: 10/10 answered" },
+  pipeline: { status: "partial", evidence: "2026-09 sweep: 7/10 answered, 3 stalls" },
+  swarm: { status: "partial", evidence: "2026-09 sweep: 7/10 answered, 3 stalls" },
+  research: { status: "partial", evidence: "2026-09 sweep: 6/10 answered, 4 stalls" },
+  debate: { status: "unvalidated", evidence: "2026-09 sweep: 2/10 answered, 8 stalls" },
+  symbiosis: { status: "unvalidated", evidence: "2026-09 sweep: 1/10 answered, 9 stalls" },
+  deliberation: { status: "unvalidated", evidence: "2026-09 sweep: 0/10 answered" },
+  mapreduce: { status: "unvalidated", evidence: "2026-09 sweep: 0/10 answered" },
+};
+
 const SHAPE_PATTERNS: { shape: TaskShape; re: RegExp }[] = [
   {
     shape: "contested",

@@ -2017,8 +2017,14 @@ export function seedOrchestrationCrews(
         "You serve the marina:council endpoint. On a model_request, broadcast the question to the " +
         "crew on channel crew-bench: `channel crew-bench {ask}{<question>}`. Collect responses from " +
         "Mathematician, Historian, Scholar. If 2 or 3 agree, that's the answer. If all disagree, pick " +
-        "the response from the agent whose domain matches the question best. Post your final answer " +
-        "back on model-council.",
+        "the response from the agent whose domain matches the question best. " +
+        "RESPONSE PROTOCOL (mandatory): the request arrives as " +
+        "`{type:'model_request', id:'req-XXX', content:'<question>', target:'<your-entity-id>'}` on " +
+        "model-council. Your reply MUST be one message on the SAME channel with the exact envelope " +
+        "`channel send model-council {\"type\":\"model_response\",\"id\":\"<requestId>\",\"content\":\"<answer>\"}` — " +
+        "bare text without this envelope is never delivered to the caller and the request times out. " +
+        "Send the model_response before any optional notes; if voting stalls, answer with your own " +
+        "best result rather than staying silent.",
       capabilities: {
         strengths: ["vote-tallying", "majority-rule", "crew-broadcast"],
         preferences: ["consensus-first", "tie-break-by-domain"],
@@ -2039,7 +2045,14 @@ export function seedOrchestrationCrews(
         "You serve the marina:debate endpoint. On a model_request: `tell ProposerA <question>` AND " +
         "`tell ProposerB <question>`. Wait for both to reply. If they agree, return that answer. " +
         "If they disagree, `tell Judge Proposer A said X, Proposer B said Y — decide` and return the " +
-        "Judge's pick. Adversarial reasoning catches more errors than a single shot.",
+        "Judge's pick. Adversarial reasoning catches more errors than a single shot. " +
+        "RESPONSE PROTOCOL (mandatory): the request arrives as " +
+        "`{type:'model_request', id:'req-XXX', content:'<question>', target:'<your-entity-id>'}` on " +
+        "model-debate. Your reply MUST be one message on the SAME channel with the exact envelope " +
+        "`channel send model-debate {\"type\":\"model_response\",\"id\":\"<requestId>\",\"content\":\"<answer>\"}` — " +
+        "bare text without this envelope is never delivered to the caller and the request times out. " +
+        "Send the model_response before any optional notes; if the debate stalls, answer with your " +
+        "own best result rather than staying silent.",
       capabilities: {
         strengths: ["adversarial-framing", "disagreement-detection", "judge-arbitration"],
         preferences: ["parallel-proposers", "explicit-judge"],
@@ -2060,7 +2073,15 @@ export function seedOrchestrationCrews(
         "You serve the marina:decompose endpoint. Break the question into 2-4 sub-questions, assign " +
         "each to the most-fit specialist via `tell <specialist> Sub-question N: <text>`. Collect " +
         "replies. Compose the final answer by chaining sub-answers. This pays off on multi-hop " +
-        "questions (FRAMES, MuSR) where a single pass misses the composition.",
+        "questions (FRAMES, MuSR) where a single pass misses the composition. " +
+        "RESPONSE PROTOCOL (mandatory): the request arrives as " +
+        "`{type:'model_request', id:'req-XXX', content:'<question>', target:'<your-entity-id>'}` on " +
+        "model-decompose. Your reply MUST be one message on the SAME channel with the exact envelope " +
+        "`channel send model-decompose {\"type\":\"model_response\",\"id\":\"<requestId>\",\"content\":\"<answer>\"}` — " +
+        "bare text without this envelope is never delivered to the caller and the request times out " +
+        "(measured 2026-09: bare 'C'/'D'/'A' posts scored 0/10 despite correct work). Send the " +
+        "model_response before any optional notes; if decomposition stalls, answer with your own " +
+        "best result rather than staying silent.",
       capabilities: {
         strengths: ["decomposition", "specialist-routing", "answer-composition"],
         preferences: ["parallel-subquestions", "chain-final-synthesis"],
