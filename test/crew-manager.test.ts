@@ -301,6 +301,98 @@ describe("CrewManager", () => {
   });
 });
 
+describe("CrewManager: formation mediators", () => {
+  let db: MarinaDB;
+  let channels: ChannelManager;
+  let crews: CrewManager;
+
+  beforeEach(() => {
+    cleanupDb(TEST_DB);
+    db = new MarinaDB(TEST_DB);
+    channels = new ChannelManager(db, () => {});
+    crews = new CrewManager({ channels, onEvent: () => {}, now: () => 1_700_000_000_000 });
+  });
+
+  afterEach(() => {
+    db.close();
+    cleanupDb(TEST_DB);
+  });
+
+  function texts(crewChannelId: string): string[] {
+    return channels.getHistory(crewChannelId, 20).map((m) => m.content);
+  }
+
+  it("posts a structural nudge on dispatch for mediated formations", () => {
+    const crew = crews.create({
+      name: "mr",
+      goal: "sum the shards",
+      owner: OWNER,
+      formation: "mapreduce",
+      members: [{ agentName: "lead", role: "lead" }, { agentName: "worker" }],
+    });
+    crews.dispatch(crew.id, "go");
+    const history = texts(crew.channelId!);
+    expect(history.some((t) => t.startsWith("[formation-mediator]"))).toBe(true);
+    expect(history.some((t) => t.includes("independent chunks"))).toBe(true);
+  });
+
+  it("stays silent for unmediated formations (freeform)", () => {
+    const crew = crews.create({
+      name: "ff",
+      goal: "anything",
+      owner: OWNER,
+      members: [{ agentName: "solo" }],
+    });
+    crews.dispatch(crew.id, "go");
+    expect(texts(crew.channelId!).some((t) => t.startsWith("[formation-mediator]"))).toBe(false);
+  });
+
+  it("nudges the next pipeline stage owner on stage completion", () => {
+    const crew = crews.create({
+      name: "pl",
+      goal: "staged build",
+      owner: OWNER,
+      formation: "pipeline",
+      members: [{ agentName: "alice" }, { agentName: "bob" }],
+    });
+    crews.dispatch(crew.id, "go");
+    crews.recordStageCompleted(crew.id, "draft", "alice");
+    const history = texts(crew.channelId!);
+    expect(history.some((t) => t.includes('Stage "draft" completed by alice'))).toBe(true);
+  });
+
+  it("guides mapreduce merge on map/reduce artifact deposits", () => {
+    const crew = crews.create({
+      name: "mr2",
+      goal: "merge results",
+      owner: OWNER,
+      formation: "mapreduce",
+      members: [{ agentName: "lead", role: "lead" }, { agentName: "worker" }],
+    });
+    crews.dispatch(crew.id, "go");
+    crews.recordArtifactDeposit(crew.id, "worker", "note:1", "map");
+    crews.recordArtifactDeposit(crew.id, "lead", "note:2", "reduce");
+    const history = texts(crew.channelId!);
+    expect(history.some((t) => t.includes("Map chunk landed from worker"))).toBe(true);
+    expect(history.some((t) => t.includes("Reduce deposited by lead"))).toBe(true);
+  });
+
+  it("every formation brief carries its runtime crew brief", () => {
+    const crew = crews.create({
+      name: "db8",
+      goal: "settle it",
+      owner: OWNER,
+      formation: "debate",
+      members: [{ agentName: "a" }, { agentName: "b" }, { agentName: "judge" }],
+    });
+    crews.dispatch(crew.id, "go");
+    const brief = texts(crew.channelId!).find((t) => t.startsWith("[formation:debate]"));
+    expect(brief).toBeDefined();
+    expect(brief!).toContain("SEALED positions");
+    expect(brief!).toContain("takes precedence over formation process");
+  });
+});
+
 describe("CrewManager: persistence", () => {
   const PERSIST_DB = "test_crew_persist.db";
 

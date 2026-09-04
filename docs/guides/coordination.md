@@ -534,6 +534,37 @@ Describe any coordination strategy in plain language:
 Set orchestration to "custom" for "EasternSector". Pool seeded with custom conventions.
 ```
 
+### Crews: formations at runtime
+
+Projects seed pool conventions; **crews** run formations live. A crew is a runtime container of
+agents bound to one goal, with a private channel and a formation that shapes how they coordinate:
+
+```
+> crew create shard-sum lead,worker1,worker2 formation=mapreduce -- Sum the shards
+> crew dispatch shard-sum Merge the Q3 shard counts
+> crew stage shard-sum extract        # mark a stage/piece done (pipeline, foundry)
+> crew artifact shard-sum map -- note:412   # deposit a work product (map/reduce/synthesis/draft)
+> crew complete shard-sum -- Merged total: 4,812
+```
+
+Formations run in three layers, each added after the 2026-09 orchestration sweeps measured where
+crews actually fail:
+
+1. **Runtime brief** — on activation (and on `crew formation <name> <f>`), the crew channel gets a
+   compact formation brief: what each member does, which crew primitives to use, and when to stop.
+   Every brief leads with a protocol-priority rule: answering requests always outranks formation
+   process.
+2. **Formation mediators** — deterministic nudges on crew events. When a mapreduce crew is
+   dispatched, the mediator tells the lead to fan out now; when a pipeline stage completes, it
+   names the handoff for the next owner; when a debate draft lands, it reminds the judge to wait
+   for both positions. One `[formation-mediator]` line per event, no timers, no model calls.
+3. **Engine backstop** — if a crew serves a `marina:<name>` model endpoint, unanswered requests are
+   re-posted as reminders by the model API, so no formation can silently drop a request.
+
+Formations carry empirical validation status (`validated` / `partial` / `unvalidated`) from
+benchmark sweeps — `project <name> recommend` shows the tags, and `unvalidated` means "no passing
+evidence yet," not proven bad.
+
 ---
 
 ## Putting It All Together
