@@ -217,6 +217,63 @@ function errorJson(status: number, message: string): Response {
 
 const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.MODEL_REQUEST_TIMEOUT_MS ?? "600000", 10);
 
+/**
+ * Pending-request reminders — the mechanical backstop for coordinator drift.
+ *
+ * Measured in the 2026-09 orchestration sweeps: a small-model coordinator
+ * receives a model_request, starts the work (delegates, calcs), and then its
+ * autonomous continuation cycle displaces the final reply — the request
+ * silently times out even though the answer exists. Prompt-side fixes
+ * (envelope teaching, protocol-priority briefs) reduce but do not eliminate
+ * this. The engine-side guarantee: while a request is unanswered, re-post it
+ * as a reminder (same `model_request` type and id, `reminder: true`, original
+ * content included) so the target re-perceives it and can still answer even
+ * if it lost its own thread. Duplicate replies are harmless — the waiter
+ * takes the first match.
+ *
+ * Fires at 25% and 60% of REQUEST_TIMEOUT_MS (150s/360s at the 600s default,
+ * so the first reminder also lands inside a 300s client window). Disable
+ * with MODEL_REQUEST_REMINDERS=0.
+ */
+const REQUEST_REMINDER_FRACTIONS = [0.25, 0.6];
+export function scheduleRequestReminders(
+  cm: ChannelManager,
+  channelId: string,
+  requestId: string,
+  target: string,
+  userContent: string,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): () => void {
+  if (process.env.MODEL_REQUEST_REMINDERS === "0") return () => {};
+  const timers = REQUEST_REMINDER_FRACTIONS.map((fraction) =>
+    setTimeout(
+      () => {
+        const age = Math.round((timeoutMs * fraction) / 1000);
+        cm.send(
+          channelId,
+          "__model_api__",
+          "model-api",
+          JSON.stringify({
+            type: "model_request",
+            id: requestId,
+            reminder: true,
+            target,
+            content:
+              `REMINDER (${age}s elapsed, request ${requestId} still unanswered): reply NOW on this ` +
+              `channel with {"type":"model_response","id":"${requestId}","content":"<your best answer>"} — ` +
+              `send your best current answer immediately; do not wait on further coordination. ` +
+              `Original question: ${userContent.slice(0, 1500)}`,
+          }),
+        );
+      },
+      Math.round(timeoutMs * fraction),
+    ),
+  );
+  return () => {
+    for (const timer of timers) clearTimeout(timer);
+  };
+}
+
 /** Close a ReadableStreamDefaultController safely. The stream may have been
  *  closed already by a client disconnect, a prior end-of-response, or a
  *  response race with the cleanup timer. Swallow the second-close throw. */
@@ -640,6 +697,7 @@ async function routeToChannel(
   });
 
   incrementPending(target);
+  const cancelReminders = scheduleRequestReminders(cm, channel.id, requestId, target, userContent);
 
   try {
     const result = await new Promise<RouteResult>((resolve, reject) => {
@@ -726,6 +784,7 @@ async function routeToChannel(
     });
     throw error;
   } finally {
+    cancelReminders();
     decrementPending(target);
   }
 }
@@ -1096,10 +1155,12 @@ function routeToChannelStreaming(
   let unsub: (() => void) | undefined;
   let settled = false;
   let traceFinished = false;
+  let cancelReminders: (() => void) | undefined;
   const cleanup = () => {
     if (settled) return;
     settled = true;
     if (timer) clearTimeout(timer);
+    cancelReminders?.();
     unsub?.();
     decrementPending(target);
   };
@@ -1208,6 +1269,7 @@ function routeToChannelStreaming(
       });
 
       cm.send(channel.id, "__model_api__", "model-api", payload);
+      cancelReminders = scheduleRequestReminders(cm, channel.id, reqId, target, userContent);
     },
     cancel() {
       // Client disconnected mid-stream — release the channel listener and the

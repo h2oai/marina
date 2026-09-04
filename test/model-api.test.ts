@@ -12,6 +12,7 @@ import {
   prepareLlamaBody,
   prepareUpstreamBody,
   roundRobinCounters,
+  scheduleRequestReminders,
   selectAgent,
   tryVerifiedArithmetic,
 } from "../src/net/model-api";
@@ -360,6 +361,84 @@ describe("Model API", () => {
     unsub();
     engine.processCommand(conn1.entity!, "channel send testchan world");
     expect(callCount).toBe(1);
+  });
+
+  it("pending-request reminders re-post the request and cancel cleanly", async () => {
+    engine.processCommand(conn1.entity!, "channel create remindchan");
+    const channel = cm.getChannelByName("remindchan")!;
+    const seen: { reminder?: boolean; id?: string; content?: string }[] = [];
+    cm.onMessage((channelId, senderId, _n, content) => {
+      if (channelId !== channel.id || senderId !== "__model_api__") return;
+      try {
+        seen.push(JSON.parse(content));
+      } catch {}
+    });
+
+    // Fast timeout: reminders fire at 25% (50ms) and 60% (120ms) of 200ms.
+    const cancel = scheduleRequestReminders(
+      cm,
+      channel.id,
+      "req-test1234",
+      "e_target",
+      "What is 2+2?",
+      200,
+    );
+    await new Promise((r) => setTimeout(r, 90));
+    expect(seen.length).toBe(1);
+    expect(seen[0]!.reminder).toBe(true);
+    expect(seen[0]!.id).toBe("req-test1234");
+    expect(seen[0]!.content).toContain("model_response");
+    expect(seen[0]!.content).toContain("What is 2+2?");
+
+    // Cancel before the second reminder — no further posts.
+    cancel();
+    await new Promise((r) => setTimeout(r, 120));
+    expect(seen.length).toBe(1);
+  });
+
+  it("an agent that only reacts to the reminder still completes the request", async () => {
+    engine.processCommand(conn1.entity!, "channel join model");
+    // This agent ignores the original request and answers ONLY reminder posts —
+    // the coordinator-drift scenario the backstop exists for.
+    cm.onMessage((channelId, senderId, _senderName, content) => {
+      if (senderId !== "__model_api__") return;
+      try {
+        const parsed = JSON.parse(content);
+        if (parsed.type === "model_request" && parsed.reminder === true) {
+          cm.send(
+            channelId,
+            conn1.entity!,
+            "Agent1",
+            JSON.stringify({ type: "model_response", id: parsed.id, content: "42 (late)" }),
+          );
+        }
+      } catch {}
+    });
+    // Directly drive the reminder scheduler against the live model channel at
+    // test speed; the routed waiter uses the module-level 600s timeout, so we
+    // verify the reroute mechanics rather than wait minutes.
+    const channel = cm.getChannelByName("model")!;
+    let answered: string | undefined;
+    cm.onMessage((channelId, senderId, _n, content) => {
+      if (channelId !== channel.id || senderId === "__model_api__") return;
+      try {
+        const parsed = JSON.parse(content);
+        if (parsed.type === "model_response" && parsed.id === "req-late42") {
+          answered = parsed.content;
+        }
+      } catch {}
+    });
+    const cancel = scheduleRequestReminders(
+      cm,
+      channel.id,
+      "req-late42",
+      conn1.entity!,
+      "meaning of everything?",
+      100,
+    );
+    await new Promise((r) => setTimeout(r, 80));
+    cancel();
+    expect(answered).toBe("42 (late)");
   });
 
   // --- Compatibility tests ---
