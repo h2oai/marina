@@ -51,7 +51,11 @@ export async function query(
       const data = (await resp.json()) as {
         choices: { message: { content: string } }[];
       };
-      return data.choices[0].message.content;
+      const content = data.choices[0]?.message?.content;
+      if (content === undefined) {
+        throw new Error("API response missing choices[0].message.content");
+      }
+      return content;
     } finally {
       clearTimeout(timer);
     }

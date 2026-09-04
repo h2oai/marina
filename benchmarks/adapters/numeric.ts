@@ -11,7 +11,12 @@ import type { BenchmarkConfig, DatasetItem, Message, ResultItem } from "../types
  *   3. "answer is X"
  *   4. Last number/fraction in the response
  */
-function extractAnswer(response: string): string {
+export function extractAnswer(rawResponse: string): string {
+  // JSON-escape repair: agent answers arrive inside a JSON envelope, where a
+  // literal `\b`/`\f` (as in \boxed{…} or \frac{a}{b}) is a legal escape —
+  // JSON.parse turns them into backspace/formfeed control chars and the LaTeX
+  // markers below never match ("\x08oxed{25}"). Restore them before matching.
+  const response = rawResponse.replace(/\x08/g, "\\b").replace(/\f/g, "\\f");
   // 1. \boxed{…} — MATH uses this. Take the INNERMOST content.
   const boxed = [...response.matchAll(/\\boxed\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/g)];
   if (boxed.length > 0) return boxed[boxed.length - 1]![1]!.trim();
