@@ -168,7 +168,13 @@ const tellSchema = Type.Object({
 
 const channelSchema = Type.Object({
   action: Type.String({ description: "Action: send, join, leave, list, read" }),
-  channel: Type.Optional(Type.String({ description: "Channel name" })),
+  channel: Type.Optional(
+    Type.String({
+      description:
+        "Channel name — REQUIRED for send/join/leave/read (only `list` works without it). " +
+        "Never put the message here.",
+    }),
+  ),
   message: Type.Optional(Type.String({ description: "Message to send" })),
 });
 

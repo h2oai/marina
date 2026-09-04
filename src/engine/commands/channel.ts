@@ -111,6 +111,16 @@ export function channelCommand(
 
         case "send": {
           const name = tokens[1];
+          // Common agent mistake (measured in the 2026-09 sweep): omitting the
+          // channel name so the JSON payload lands in the name slot. Catch it
+          // with a specific correction instead of a generic usage line.
+          if (name?.startsWith("{")) {
+            ctx.send(
+              input.entity,
+              "You omitted the channel name — the message cannot come first. Usage: channel send <name> <message>",
+            );
+            return;
+          }
           if (!name || tokens.length < 3) {
             ctx.send(input.entity, "Usage: channel send <name> <message>");
             return;

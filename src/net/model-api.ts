@@ -245,6 +245,11 @@ export function scheduleRequestReminders(
   timeoutMs = REQUEST_TIMEOUT_MS,
 ): () => void {
   if (process.env.MODEL_REQUEST_REMINDERS === "0") return () => {};
+  // Name the channel EXPLICITLY and give the exact command. Measured failure
+  // (2026-09 swarm run): a reminder saying "reply on this channel" led the
+  // agent to run `channel send {json}` with no channel name — the JSON parsed
+  // as the channel name, every send failed, and the crew stalled to 0/10.
+  const channelName = cm.getChannel(channelId)?.name ?? channelId;
   const timers = REQUEST_REMINDER_FRACTIONS.map((fraction) =>
     setTimeout(
       () => {
@@ -259,9 +264,10 @@ export function scheduleRequestReminders(
             reminder: true,
             target,
             content:
-              `REMINDER (${age}s elapsed, request ${requestId} still unanswered): reply NOW on this ` +
-              `channel with {"type":"model_response","id":"${requestId}","content":"<your best answer>"} — ` +
-              `send your best current answer immediately; do not wait on further coordination. ` +
+              `REMINDER (${age}s elapsed, request ${requestId} still unanswered): send your best ` +
+              `current answer immediately — do not wait on further coordination. Run EXACTLY: ` +
+              `channel send ${channelName} {"type":"model_response","id":"${requestId}","content":"<your best answer>"} ` +
+              `(the channel name "${channelName}" is required — never omit it). ` +
               `Original question: ${userContent.slice(0, 1500)}`,
           }),
         );
