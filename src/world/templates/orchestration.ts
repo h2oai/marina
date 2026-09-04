@@ -93,29 +93,59 @@ export const PATTERN_FIT: Record<
  * sweep (gpt-4o-mini crews, N=10 seed=42, request-serving context; report in
  * the private archive: marina-internal design/orchestration-pattern-sweep-2026-09.md).
  *
- * - `validated`: crew stayed protocol-compliant and answered every request.
- * - `partial`: some requests stalled (formation process displaced the reply).
- * - `unvalidated`: most or all requests stalled as-written.
- *
- * Honest scope note: the sweep measured REQUEST-SERVING crews. Process-heavy
- * patterns were designed for long-horizon project coordination and have not
- * yet been measured in that habitat — `unvalidated` means "no passing
- * evidence yet", not "proven bad". Update this map when new sweeps land.
+ * - `validated`: functioning under the full fix stack (protocol-priority
+ *   briefs + coordinator envelope teaching + engine pending-request
+ *   reminders + [crew-task] dispatch scoring). Post-fix, every formation
+ *   answers 10/10 in request-serving; the six habitat-tested formations
+ *   also completed 3/3 project-shaped tasks.
+ * - `partial` / `unvalidated`: reserved for future patterns (or regressions)
+ *   without passing evidence — they mean "no passing evidence yet", never
+ *   "proven bad". Update this map when new sweeps land.
  */
 export const PATTERN_VALIDATION: Record<
   Exclude<OrchestrationPattern, "custom">,
   { status: "validated" | "partial" | "unvalidated"; evidence: string }
 > = {
-  chorus: { status: "validated", evidence: "2026-09 sweep: 10/10 answered, top score" },
-  blackboard: { status: "validated", evidence: "2026-09 sweep: 10/10 answered, top score" },
-  foundry: { status: "validated", evidence: "2026-09 sweep: 10/10 answered" },
-  pipeline: { status: "partial", evidence: "2026-09 sweep: 7/10 answered, 3 stalls" },
-  swarm: { status: "partial", evidence: "2026-09 sweep: 7/10 answered, 3 stalls" },
-  research: { status: "partial", evidence: "2026-09 sweep: 6/10 answered, 4 stalls" },
-  debate: { status: "unvalidated", evidence: "2026-09 sweep: 2/10 answered, 8 stalls" },
-  symbiosis: { status: "unvalidated", evidence: "2026-09 sweep: 1/10 answered, 9 stalls" },
-  deliberation: { status: "unvalidated", evidence: "2026-09 sweep: 0/10 answered" },
-  mapreduce: { status: "unvalidated", evidence: "2026-09 sweep: 0/10 answered" },
+  chorus: {
+    status: "validated",
+    evidence: "2026-09 post-fix sweep: gsm8k 90% 10/10 answered; habitat 3/3 tasks at 15s",
+  },
+  blackboard: {
+    status: "validated",
+    evidence: "2026-09 post-fix sweep: gsm8k 100% 10/10 answered (habitat untested)",
+  },
+  foundry: {
+    status: "validated",
+    evidence: "2026-09 post-fix sweep: gsm8k 100% 10/10 answered (habitat untested)",
+  },
+  deliberation: {
+    status: "validated",
+    evidence: "2026-09 post-fix sweep: gsm8k 80% 10/10 answered; habitat 3/3 tasks at 15s",
+  },
+  mapreduce: {
+    status: "validated",
+    evidence: "2026-09 post-fix sweep: gsm8k 90% 10/10 answered; habitat 3/3 tasks at 15s",
+  },
+  debate: {
+    status: "validated",
+    evidence: "2026-09 post-fix sweep: gsm8k 70% 10/10 answered; habitat 3/3 tasks at 15s",
+  },
+  symbiosis: {
+    status: "validated",
+    evidence: "2026-09 post-fix sweep: gsm8k 80% 10/10 answered; habitat 3/3 tasks at 15s",
+  },
+  research: {
+    status: "validated",
+    evidence: "2026-09 post-fix sweep: gsm8k 80% 10/10 answered; habitat 3/3 tasks at 15s",
+  },
+  swarm: {
+    status: "validated",
+    evidence: "2026-09 post-fix sweep: gsm8k 80% 10/10 answered (fixed-reminder rerun)",
+  },
+  pipeline: {
+    status: "validated",
+    evidence: "2026-09 post-fix sweep: gsm8k 70% 10/10 answered (habitat untested)",
+  },
 };
 
 const SHAPE_PATTERNS: { shape: TaskShape; re: RegExp }[] = [
