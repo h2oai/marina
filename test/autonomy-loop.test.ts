@@ -69,7 +69,9 @@ describe("autonomous coordination loop", () => {
     expect(stripAnsi(alice.lastText())).toContain("delivered #1");
     const receipt = db.getDirectMessage(1)!;
     expect(receipt.status).toBe("delivered");
-    expect(receipt.deadline_at! - receipt.created_at).toBe(30_000);
+    // TTL is computed from a separate Date.now() than created_at — allow 1-tick skew.
+    expect(receipt.deadline_at! - receipt.created_at).toBeGreaterThanOrEqual(29_990);
+    expect(receipt.deadline_at! - receipt.created_at).toBeLessThanOrEqual(30_010);
 
     engine.processCommand(alice.entity!, "tell Bob --ttl=30s Please verify artifact #42");
     expect(stripAnsi(alice.lastText())).toContain("Duplicate suppressed");

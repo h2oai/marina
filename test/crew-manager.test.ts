@@ -34,6 +34,7 @@ describe("CrewManager", () => {
   });
 
   afterEach(() => {
+    crews.stop();
     db.close();
     cleanupDb(TEST_DB);
   });
@@ -106,7 +107,7 @@ describe("CrewManager", () => {
     const channel = channels.getChannel(crew.channelId!);
     expect(channel?.type).toBe("crew");
     const history = channels.getHistory(crew.channelId!, 10);
-    expect(history.at(-1)?.content).toBe("[crew-task] go");
+    expect(history.at(-1)?.content).toStartWith("[crew-task] go");
   });
 
   it("forAgent indexes membership and excludes dissolved crews", () => {
@@ -246,7 +247,7 @@ describe("CrewManager", () => {
     expect(history.length).toBeGreaterThanOrEqual(2);
     expect(history[0]!.content).toContain("[formation:pipeline]");
     expect(history[0]!.content).toContain("ship phase 2");
-    expect(history[1]!.content).toBe("[crew-task] begin");
+    expect(history[1]!.content).toStartWith("[crew-task] begin");
   });
 
   it("re-dispatch does NOT re-post the formation brief", () => {
@@ -314,6 +315,7 @@ describe("CrewManager: formation mediators", () => {
   });
 
   afterEach(() => {
+    crews.stop();
     db.close();
     cleanupDb(TEST_DB);
   });
@@ -393,6 +395,99 @@ describe("CrewManager: formation mediators", () => {
   });
 });
 
+describe("CrewManager: deposit echo (dedup visibility)", () => {
+  let db: MarinaDB;
+  let channels: ChannelManager;
+  let crews: CrewManager;
+
+  beforeEach(() => {
+    cleanupDb(TEST_DB);
+    db = new MarinaDB(TEST_DB);
+    channels = new ChannelManager(db, () => {});
+    crews = new CrewManager({ channels, onEvent: () => {}, now: () => 1_700_000_000_000 });
+  });
+
+  afterEach(() => {
+    crews.stop();
+    db.close();
+    cleanupDb(TEST_DB);
+  });
+
+  it("echoes a member's pool deposit on the active crew channel", () => {
+    const crew = crews.create({
+      name: "dedup",
+      goal: "one deposit only",
+      owner: OWNER,
+      members: [{ agentName: "alice" }, { agentName: "bob" }],
+    });
+    crews.dispatch(crew.id, "do the task");
+    crews.onMemberPoolDeposit("alice", "eval-artifacts", "T1 PRIMES: 83, 89, 97");
+    const history = channels.getHistory(crew.channelId!, 10).map((m) => m.content);
+    const echo = history.find((c) => c.startsWith("[crew-deposit]"));
+    expect(echo).toBeDefined();
+    expect(echo!).toContain("alice → eval-artifacts");
+    expect(echo!).toContain("do not");
+    expect(echo!).toContain("83, 89, 97");
+  });
+
+  it("dispatch pre-assigns a designated depositor and rotates it per dispatch", () => {
+    const crew = crews.create({
+      name: "assign",
+      goal: "one deliverable",
+      owner: OWNER,
+      members: [{ agentName: "alice" }, { agentName: "bob" }, { agentName: "cara" }],
+    });
+    crews.dispatch(crew.id, "task one");
+    crews.dispatch(crew.id, "task two");
+    crews.dispatch(crew.id, "task three");
+    crews.dispatch(crew.id, "task four");
+    const dispatches = channels
+      .getHistory(crew.channelId!, 20)
+      .map((m) => m.content)
+      .filter((c) => c.startsWith("[crew-task]"));
+    expect(dispatches).toHaveLength(4);
+    const depositors = dispatches.map((d) => d.match(/Designated depositor: (\w+)\./)?.[1]);
+    // Round-robin across all three members, wrapping on the fourth.
+    expect(depositors).toEqual(["alice", "bob", "cara", "alice"]);
+    expect(dispatches[0]!).toContain("only alice writes the final deliverable");
+    expect(dispatches[0]!).toContain("Never write a competing deliverable");
+    expect(dispatches[0]!).toContain("Everyone works the task");
+  });
+
+  it("stays silent for non-members and inactive crews", () => {
+    const crew = crews.create({
+      name: "quiet",
+      goal: "g",
+      owner: OWNER,
+      members: [{ agentName: "alice" }],
+    });
+    // Not yet dispatched — no channel, must not throw.
+    crews.onMemberPoolDeposit("alice", "pool-x", "content");
+    crews.dispatch(crew.id, "go");
+    const before = channels.getHistory(crew.channelId!, 20).length;
+    // Non-member deposit — no echo.
+    crews.onMemberPoolDeposit("mallory", "pool-x", "content");
+    expect(channels.getHistory(crew.channelId!, 20).length).toBe(before);
+  });
+
+  it("truncates long deposit snippets", () => {
+    const crew = crews.create({
+      name: "trunc",
+      goal: "g",
+      owner: OWNER,
+      members: [{ agentName: "alice" }],
+    });
+    crews.dispatch(crew.id, "go");
+    crews.onMemberPoolDeposit("alice", "p", "x".repeat(300));
+    const echo = channels
+      .getHistory(crew.channelId!, 10)
+      .map((m) => m.content)
+      .find((c) => c.startsWith("[crew-deposit]"));
+    expect(echo!.length).toBeLessThan(220);
+    expect(echo!).toContain("…");
+  });
+});
+
 describe("CrewManager: persistence", () => {
   const PERSIST_DB = "test_crew_persist.db";
 
@@ -418,6 +513,7 @@ describe("CrewManager: persistence", () => {
     });
     m1.dispatch(crew.id, "go");
     const channelId = crew.channelId!;
+    m1.stop();
     db1.close();
 
     // Restart: new DB instance + new manager

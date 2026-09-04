@@ -355,15 +355,137 @@ export class CrewManager {
     // social scoring ranks it at 90 (like a tell), so members reliably act on
     // it instead of filing it with ambient channel chatter. Measured 2026-09:
     // unmarked dispatches scored 40 and idle crews never picked up the task.
+    //
+    // DESIGNATED DEPOSITOR (pre-assignment, in the same perception): every
+    // member's turn starts simultaneously at dispatch, so duplicates land
+    // 0-4s after the first deposit — before any post-hoc signal (claim
+    // etiquette, deposit echo) can reach a turn already in flight. Measured
+    // 2026-09: claim-protocol prose was obeyed by 1 of 7 crews; deposit
+    // echoes fired and were futile. A role statement in the dispatch itself
+    // ("you are / are not the depositor") is the only slot that precedes the
+    // race. Rotates per dispatch so no member is starved of deposit credit.
+    const depositor = this.pickDepositor(crew);
+    // "Everyone works, one writes": members all engage the task, but their
+    // results go on the CHANNEL (visible, mergeable contributions) while only
+    // the designated depositor writes the deliverable. Measured 2026-09:
+    // suppress-everyone-else ("only X works") solved duplication (63→12
+    // notes) but halved completion — one member's dropped turn had no cover.
+    const depositorLine = depositor
+      ? `\n(Designated depositor: ${depositor}. Everyone works the task, but post your result ` +
+        `ON THIS CHANNEL — only ${depositor} writes the final deliverable (pool note / crew ` +
+        `artifact), consolidating what lands here. Never write a competing deliverable.)`
+      : "";
     this.channels.send(
       crew.channelId!,
       sender?.id ?? "__crew_manager__",
       sender?.name ?? "crew",
-      `[crew-task] ${message}`,
+      `[crew-task] ${message}${depositorLine}`,
     );
     this.postMediatorNudge(crew, (m, view) => m.onDispatch?.(view, message));
+    this.armDepositFallback(crew, depositor);
     this.touch(crew);
     this.persistRow(crew);
+  }
+
+  /** Fallback nudge schedule after a dispatch with no member deposit:
+   *  first shot targets the depositor, second demands anyone deliver.
+   *  Two-shot mirrors the model-api pending-request reminders (25%/60% of
+   *  timeout), which measurably un-stuck coordinators; one shot left 5/21
+   *  habitat tasks unrecovered. */
+  private static readonly DEPOSIT_FALLBACK_SCHEDULE_MS = [90_000, 150_000];
+  private depositFallbacks = new Map<CrewId, ReturnType<typeof setTimeout>[]>();
+
+  /**
+   * Cancel every pending deposit-fallback timer. Engine.stop() calls this so
+   * a timer armed by a dispatch can never fire into a stopped engine or a
+   * closed database (measured: a test's 90s fallback fired after db.close(),
+   * crashing an unrelated later test file).
+   */
+  stop(): void {
+    for (const id of [...this.depositFallbacks.keys()]) this.clearDepositFallbacks(id);
+  }
+
+  private clearDepositFallbacks(id: CrewId): void {
+    for (const timer of this.depositFallbacks.get(id) ?? []) clearTimeout(timer);
+    this.depositFallbacks.delete(id);
+  }
+
+  /**
+   * Coverage backstop for the designated-depositor scheme: if no member pool
+   * deposit lands after a dispatch, nudge at 90s (depositor-focused) and
+   * again at 150s (any member must deliver). Re-armed per dispatch, cleared
+   * on deposit/dissolve.
+   */
+  private armDepositFallback(crew: Crew, depositor: string | undefined): void {
+    this.clearDepositFallbacks(crew.id);
+    if (!crew.channelId) return;
+    const channelId = crew.channelId;
+    const timers = CrewManager.DEPOSIT_FALLBACK_SCHEDULE_MS.map((delay, shot) => {
+      const timer = setTimeout(() => {
+        if (this.crews.get(crew.id)?.state !== "active") return;
+        const text =
+          shot === 0
+            ? `[formation-mediator] No deliverable has been deposited yet. ` +
+              `${depositor ? `${depositor}: deposit your best current result NOW. ` : ""}` +
+              `Use what teammates posted on this channel — consolidation beats perfection.`
+            : `[formation-mediator] STILL no deliverable. EVERY member: if you have any result, ` +
+              `deposit it into the requested pool immediately — a good-enough deliverable now ` +
+              `beats a perfect one that never lands. Duplicates are acceptable at this point.`;
+        this.channels.send(channelId, "__crew_manager__", "crew", text);
+      }, delay);
+      // Timers must not keep a test process (or a shutting-down engine) alive.
+      timer.unref?.();
+      return timer;
+    });
+    this.depositFallbacks.set(crew.id, timers);
+  }
+
+  /** Per-crew dispatch counter for depositor rotation (in-memory; resets on
+   *  restart, which only re-starts the rotation — harmless). */
+  private dispatchCounts = new Map<CrewId, number>();
+
+  /**
+   * Pick the designated depositor: the crew LEAD when present, else
+   * round-robin. Measured 2026-09: round-robin across all members handed
+   * deposit duty to narrow specialists (curator/translator roles) whose
+   * identity conflicts with "write the deliverable" — those tasks failed even
+   * with a fallback nudge. Every formation brief already routes delivery
+   * through the lead ("lead merges and delivers"), so lead-first aligns the
+   * assignment with the coordination shape agents are told to follow.
+   */
+  private pickDepositor(crew: Crew): string | undefined {
+    if (crew.members.length === 0) return undefined;
+    const lead = crew.members.find((m) => m.role === "lead");
+    if (lead) return lead.agentName;
+    if (crew.members.length === 1) return crew.members[0]!.agentName;
+    const count = this.dispatchCounts.get(crew.id) ?? 0;
+    this.dispatchCounts.set(crew.id, count + 1);
+    return crew.members[count % crew.members.length]!.agentName;
+  }
+
+  /**
+   * Deposit echo — closes the crew visibility hole. Pool deposits are silent
+   * DB writes (the depositor's own output + a feed event no agent perceives),
+   * so crew members could not know a task was already done: the 2026-09
+   * habitat eval measured 2.3-3x duplicate deposits in EVERY formation, with
+   * duplicates landing up to 21s after the first (innocent — nothing to see).
+   * The engine forwards member pool deposits here; one `[crew-deposit]` line
+   * on the crew channel makes completed work peer-visible so a member about
+   * to duplicate can stand down or switch to verifying.
+   */
+  onMemberPoolDeposit(agentName: string, poolName: string, content: string): void {
+    for (const crew of this.forAgent(agentName)) {
+      if (crew.state !== "active" || !crew.channelId) continue;
+      this.clearDepositFallbacks(crew.id);
+      const snippet = content.length > 100 ? `${content.slice(0, 97)}…` : content;
+      this.channels.send(
+        crew.channelId,
+        "__crew_manager__",
+        "crew",
+        `[crew-deposit] ${agentName} → ${poolName} (already delivered — verify it, do not ` +
+          `write a competing version): ${snippet}`,
+      );
+    }
   }
 
   /** Minimal crew view handed to formation mediators. */
@@ -480,6 +602,7 @@ export class CrewManager {
   dissolve(id: CrewId, reason: string): void {
     const crew = this.requireCrew(id);
     if (crew.state === "dissolved") return;
+    this.clearDepositFallbacks(id);
 
     this.transition(crew, "dissolved");
     this.byName.delete(crew.name);

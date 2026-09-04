@@ -1153,6 +1153,7 @@ export class Engine {
       clearTimeout(timer);
     }
     this.entityEvictionTimers.clear();
+    this.crewManager?.stop();
     this.mediaManager?.stop();
     this.logger.info("engine", "Marina engine stopped.");
   }
@@ -1966,6 +1967,20 @@ export class Engine {
     // Crews react to agent stops — depart the crew when the agent goes away.
     if (event.type === "agent_stop" && this.crewManager) {
       this.crewManager.onAgentStopped(event.name);
+    }
+    // Pool deposits by crew members echo on their crew channels (dedup
+    // visibility). Both write paths: share/pool-add emit pool_note with the
+    // name inline; `note … pool:<x>` emits note_created with poolId.
+    if (this.crewManager) {
+      if (event.type === "pool_note") {
+        const name = this.entities.get(event.entity)?.name;
+        if (name) this.crewManager.onMemberPoolDeposit(name, event.poolName, event.content);
+      } else if (event.type === "note_created" && event.poolId && this.db) {
+        const poolName = this.db.listMemoryPools().find((p) => p.id === event.poolId)?.name;
+        if (poolName) {
+          this.crewManager.onMemberPoolDeposit(event.authorName, poolName, event.content);
+        }
+      }
     }
     // Standing ledger absorbs civic-contribution events (pool notes today;
     // more kinds wired as later phases land). Task standing stays on the
