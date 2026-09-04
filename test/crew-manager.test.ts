@@ -106,7 +106,7 @@ describe("CrewManager", () => {
     const channel = channels.getChannel(crew.channelId!);
     expect(channel?.type).toBe("crew");
     const history = channels.getHistory(crew.channelId!, 10);
-    expect(history.at(-1)?.content).toBe("go");
+    expect(history.at(-1)?.content).toBe("[crew-task] go");
   });
 
   it("forAgent indexes membership and excludes dissolved crews", () => {
@@ -246,7 +246,7 @@ describe("CrewManager", () => {
     expect(history.length).toBeGreaterThanOrEqual(2);
     expect(history[0]!.content).toContain("[formation:pipeline]");
     expect(history[0]!.content).toContain("ship phase 2");
-    expect(history[1]!.content).toBe("begin");
+    expect(history[1]!.content).toBe("[crew-task] begin");
   });
 
   it("re-dispatch does NOT re-post the formation brief", () => {

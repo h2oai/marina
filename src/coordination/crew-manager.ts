@@ -347,11 +347,15 @@ export class CrewManager {
     }
 
     this.transition(crew, "active");
+    // The [crew-task] marker makes a dispatch a DIRECTED-work perception:
+    // social scoring ranks it at 90 (like a tell), so members reliably act on
+    // it instead of filing it with ambient channel chatter. Measured 2026-09:
+    // unmarked dispatches scored 40 and idle crews never picked up the task.
     this.channels.send(
       crew.channelId!,
       sender?.id ?? "__crew_manager__",
       sender?.name ?? "crew",
-      message,
+      `[crew-task] ${message}`,
     );
     this.touch(crew);
     this.persistRow(crew);

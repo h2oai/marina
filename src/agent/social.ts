@@ -213,6 +213,12 @@ export class SocialAwareness {
     ) {
       return 95;
     }
+    // A crew dispatch is directed work for every member — rank it with tells
+    // (100) and model requests (95), above the channel-reply cooldown cutoff
+    // (90), so members act instead of filing it as ambient chatter.
+    if (event.type === "channel_message" && event.message?.startsWith("[crew-task]")) {
+      return 90;
+    }
     if (event.message?.toLowerCase().includes(lowerName)) return 80;
 
     switch (event.type) {
