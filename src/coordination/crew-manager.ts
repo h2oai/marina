@@ -27,7 +27,11 @@ import type {
 import { crewId as toCrewId, entityId as toEntityId } from "../types";
 import { normalizePatternName } from "../world/templates/orchestration";
 import type { ChannelManager } from "./channel-manager";
-import { buildFormationBrief } from "./crew-formations";
+import {
+  buildFormationBrief,
+  getFormationMediator,
+  type MediatorCrewView,
+} from "./crew-formations";
 
 /** Ephemeral crews idle longer than this get auto-dissolved. */
 const IDLE_GC_MS = 10 * 60 * 1000;
@@ -353,8 +357,40 @@ export class CrewManager {
       sender?.name ?? "crew",
       message,
     );
+    this.postMediatorNudge(crew, (m, view) => m.onDispatch?.(view, message));
     this.touch(crew);
     this.persistRow(crew);
+  }
+
+  /** Minimal crew view handed to formation mediators. */
+  private mediatorView(crew: Crew): MediatorCrewView {
+    return {
+      name: crew.name,
+      goal: crew.goal,
+      memberNames: crew.members.map((m) => m.agentName),
+      leadName: crew.members.find((m) => m.role === "lead")?.agentName,
+    };
+  }
+
+  /**
+   * Formation mediation (Phase 4): deterministic event-driven nudges. At most
+   * one `[formation-mediator]` line per crew event, posted on the crew
+   * channel. Silent when the formation has no mediator, the hook returns
+   * nothing, or the channel isn't provisioned yet.
+   */
+  private postMediatorNudge(
+    crew: Crew,
+    pick: (
+      mediator: NonNullable<ReturnType<typeof getFormationMediator>>,
+      view: MediatorCrewView,
+    ) => string | undefined,
+  ): void {
+    if (!crew.channelId) return;
+    const mediator = getFormationMediator(crew.formation);
+    if (!mediator) return;
+    const nudge = pick(mediator, this.mediatorView(crew));
+    if (!nudge) return;
+    this.channels.send(crew.channelId, "__crew_manager__", "crew", `[formation-mediator] ${nudge}`);
   }
 
   /**
@@ -645,6 +681,7 @@ export class CrewManager {
       agentName,
       timestamp: this.now(),
     });
+    this.postMediatorNudge(crew, (m, view) => m.onStageCompleted?.(view, stage, agentName));
   }
 
   /**
@@ -675,6 +712,7 @@ export class CrewManager {
       kind,
       timestamp: this.now(),
     });
+    this.postMediatorNudge(crew, (m, view) => m.onArtifact?.(view, kind, artifactRef, agentName));
   }
 
   /**

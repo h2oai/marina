@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
-import { buildFormationBrief } from "../src/coordination/crew-formations";
+import {
+  buildFormationBrief,
+  CREW_BRIEFS,
+  FORMATION_MEDIATORS,
+} from "../src/coordination/crew-formations";
 import type { CrewFormation } from "../src/types";
 import {
   detectTaskShapes,
@@ -77,6 +81,24 @@ describe("emergent orchestration — recognition loop", () => {
         expect(v).toBeDefined();
         expect(["validated", "partial", "unvalidated"]).toContain(v.status);
         expect(v.evidence.length).toBeGreaterThan(0);
+      }
+    });
+  });
+
+  describe("runtime crew briefs", () => {
+    it("every formation has a compact, structure-light runtime brief", () => {
+      for (const [formation, brief] of Object.entries(CREW_BRIEFS)) {
+        expect(brief.length).toBeGreaterThan(40);
+        // Structure-light by design (sweep evidence: process-heavy prose
+        // displaced the crew's actual work).
+        expect(brief.length).toBeLessThan(450);
+        expect(formation.length).toBeGreaterThan(0);
+      }
+    });
+
+    it("mediated formations are a subset of known formations", () => {
+      for (const key of Object.keys(FORMATION_MEDIATORS)) {
+        expect(Object.keys(CREW_BRIEFS)).toContain(key);
       }
     });
   });
