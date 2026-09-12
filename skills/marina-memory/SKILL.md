@@ -59,13 +59,22 @@ search result as the current or historically valid assertion; intervals are `[fr
 Revise a record using `memory_service`, operation `revise`, `id: RECORD_ID`, and
 `input: {expected_version: CURRENT_VERSION, content: NEW_TEXT, claim: NEW_CLAIM}`. Omitting
 `claim` retains it; `claim: null` removes it. On conflict, read the new version before deciding.
-Use `depends_on` when storing a conclusion derived from another record.
+Use `depends_on` and `dependency_versions: {RECORD_ID: VERSION}` when storing a conclusion
+derived from records you read. A correction marks current dependents stale transitively;
+default retrieval excludes them. Inspect `get` or `include_stale:true` for review. Read changed
+premises before explicitly rebinding all dependency versions on a revised conclusion; editing
+its text alone does not clear stale status. A current binding is not a truth certification.
 
 Save resumable work with `operation: "save_checkpoint", id: "work"` and
 `input: {expected_version: VERSION, source_cursor: ACKNOWLEDGED_CURSOR, source_ids: [SOURCE_ID], data: {goal, next, record_ids}}`.
 Use version 0 for a new checkpoint. Acknowledge only evidence already processed. The service
 validates declared checkpoint source references at commit. External agents must capture their
-own context; Marina residents automatically archive originals before lossy compaction.
+own context; Marina residents journal completed messages and archive originals before lossy
+compaction. Follow `data.journal.manifest_source_id` and its previous-manifest links to read
+recent completed messages. Partial streaming and external tool effects are not transactional.
+
+For many sources, use `capture_batch` with 1–64 `items`, each carrying its own `key`,
+`content` and optional `session_id` (1 MiB total). Keep item keys when regrouping retries.
 
 Reuse the same mutation `key` and payload after a timeout or disconnect; do not assume an
 ambiguous write failed. Check `isError` / `ok`, not only the text response. Use `grant` only

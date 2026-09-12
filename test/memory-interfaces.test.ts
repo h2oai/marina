@@ -117,6 +117,39 @@ it("shares one symbolic memory across world MCP, HTTP, resident SDK and human co
     ]);
     expect(left.result.results[0]?.claim?.predicate).toBe("status");
     expect(right.result.results[0]?.claim?.predicate).toBe("build:runtime");
+    const batch = await call<MemoryReceipt & { receipts: MemoryReceipt[] }>(
+      agent,
+      "memory_service",
+      {
+        operation: "capture_batch",
+        key: "mcp-batch",
+        input: { items: [{ content: "review evidence", key: "mcp-evidence" }] },
+      },
+    );
+    const derived = await call<MemoryReceipt>(agent, "memory_remember", {
+      content: "Use the current runtime",
+      depends_on: [saved.result.id],
+      dependency_versions: { [saved.result.id]: 1 },
+      source_ids: [batch.result.receipts[0]!.id],
+      claim: {
+        subject: "project:derived",
+        predicate: "uses",
+        object: { kind: "entity", id: "runtime:bun" },
+      },
+    });
+    await http.revise(space, saved.result.id, 1, { content: "Runtime contract changed" });
+    expect(
+      (await call<MemoryQueryResult>(agent, "memory_query", { subject: "project:derived" })).result
+        .results,
+    ).toHaveLength(0);
+    expect(
+      (
+        await call<MemoryQueryResult>(agent, "memory_query", {
+          subject: "project:derived",
+          include_stale: true,
+        })
+      ).result.results[0],
+    ).toMatchObject({ id: derived.result.id, freshness: "stale" });
   } finally {
     resident?.disconnect();
     await agent.close();
@@ -260,6 +293,9 @@ sys.path.insert(0, ${JSON.stringify(resolve("src/sdk"))})
 from marina_memory import MarinaMemory
 with open(sys.argv[1]) as f: identity = json.load(f)
 memory = MarinaMemory(sys.argv[2], identity['token'], identity['spaceId'])
+batch = memory.capture_batch([{'content': 'Python original', 'key': 'python-original'}], key='python-batch')
+assert memory.capture_batch([{'content': 'Python original', 'key': 'python-original'}], key='regrouped-python')['receipts'] == batch['receipts']
+assert memory.source_range(batch['receipts'][0]['id'])['text'] == 'Python original'
 found = memory.query(subject='project:portable', object={'kind': 'literal', 'value': True})
 assert found['results'][0]['claim']['object']['value'] is True
 graph = memory.graph('project:portable')

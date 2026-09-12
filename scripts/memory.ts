@@ -9,6 +9,7 @@ import { ollamaEmbeddings } from "../src/memory/embeddings";
 import { localEmbeddings } from "../src/memory/local-embeddings";
 import { serveMemory } from "../src/memory/server";
 import { MarinaDB } from "../src/persistence/database";
+import { snapshotMemoryDatabase } from "../src/persistence/db-memory-maintenance";
 
 const { values, positionals } = parseArgs({
   args: Bun.argv.slice(2),
@@ -26,13 +27,21 @@ const { values, positionals } = parseArgs({
     "embedding-model": { type: "string" },
     "embedding-revision": { type: "string" },
     credential: { type: "string" },
+    output: { type: "string" },
+    backup: { type: "string" },
   },
 });
 
 try {
   const dbPath = resolve(values.db);
   const command = positionals[0];
-  if (command === "init") {
+  if (command === "backup" || command === "restore") {
+    const source = command === "backup" ? dbPath : values.backup;
+    const target = command === "backup" ? values.output : dbPath;
+    if (!source || !target)
+      throw new Error("backup requires --output; restore requires --backup and a new --db path");
+    console.log(JSON.stringify(await snapshotMemoryDatabase(source, target)));
+  } else if (command === "init") {
     if (!values.name) throw new Error("--name is required");
     mkdirSync(dirname(dbPath), { recursive: true, mode: 0o700 });
     const db = new MarinaDB(dbPath, { durability: "full" });
@@ -105,7 +114,7 @@ try {
     process.on("SIGINT", close);
   } else
     console.log(
-      "Usage: bun run memory init --name NAME [--credentials FILE] [--db FILE]\n       bun run memory serve [--db FILE] [--port 3301] [--embeddings none|local|ollama]\n       bun run memory revoke --credential ID [--db FILE]",
+      "Usage: bun run memory init --name NAME [--credentials FILE] [--db FILE]\n       bun run memory serve [--db FILE] [--port 3301] [--embeddings none|local|ollama]\n       bun run memory revoke --credential ID [--db FILE]\n       bun run memory backup --db FILE --output NEW_FILE\n       bun run memory restore --backup FILE --db NEW_FILE",
     );
 } catch (error) {
   console.error(getErrorMessage(error));

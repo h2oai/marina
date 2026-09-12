@@ -142,7 +142,10 @@ if (getAutonomyPosture() !== "guarded") {
   logger.info("autonomy", `Autonomy posture: ${describeAutonomyPosture()}`);
 }
 
-const db = new MarinaDB(DB_PATH);
+const durability = process.env.MARINA_DB_DURABILITY ?? "full";
+if (durability !== "full" && durability !== "normal")
+  throw new Error("MARINA_DB_DURABILITY must be full or normal");
+const db = new MarinaDB(DB_PATH, { durability });
 const structuredLogRetention = Math.max(
   100,
   Math.min(Number(process.env.MARINA_LOG_RETENTION) || 10_000, 1_000_000),

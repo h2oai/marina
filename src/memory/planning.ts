@@ -85,9 +85,26 @@ export function planSteps(value: unknown): MemoryPlanStep[] {
       input = object(step.input),
       output: Record<string, unknown> = {};
     const fields: Record<string, string[]> = {
-      query: ["subject", "predicate", "object", "type", "tier", "valid_at", "limit"],
-      graph: ["subject", "predicates", "direction", "max_depth", "valid_at", "limit"],
-      search: ["query", "mode", "subject", "limit"],
+      query: [
+        "subject",
+        "predicate",
+        "object",
+        "type",
+        "tier",
+        "valid_at",
+        "limit",
+        "include_stale",
+      ],
+      graph: [
+        "subject",
+        "predicates",
+        "direction",
+        "max_depth",
+        "valid_at",
+        "limit",
+        "include_stale",
+      ],
+      search: ["query", "mode", "subject", "limit", "include_stale"],
       source_search: ["query", "match", "session_id", "limit"],
     };
     const allowed =
@@ -98,6 +115,11 @@ export function planSteps(value: unknown): MemoryPlanStep[] {
       throw new MemoryError(400, "invalid_plan", "Unknown operation or unsupported query field");
     const limit = integer(input.limit ?? 5, "limit", 1, 20);
     output.limit = limit;
+    if (input.include_stale !== undefined) {
+      if (typeof input.include_stale !== "boolean")
+        throw new MemoryError(400, "invalid_plan", "include_stale must be boolean");
+      output.include_stale = input.include_stale;
+    }
     if (step.operation === "query") {
       for (const name of ["subject", "predicate", "type", "tier"])
         if (input[name] !== undefined) output[name] = textValue(input[name], name, 256);
@@ -210,7 +232,7 @@ export async function createMemoryPlan(
     };
   }
   const fresh = service.repository.authorize(actor, space);
-  if (fresh.generation !== current.generation)
+  if (fresh.retrieval_generation !== current.retrieval_generation)
     throw new MemoryError(409, "plan_changed", "Space changed while planning; retry");
   const assumptions = proposed.assumptions ?? [];
   if (!Array.isArray(assumptions) || assumptions.length > 8)
@@ -245,6 +267,7 @@ export async function createMemoryPlan(
     schema: "marina.memory.plan.v1",
     space_id: space,
     generation: current.generation,
+    retrieval_generation: current.retrieval_generation,
     vocabulary_version: vocabulary.version,
     task,
     planner,
@@ -265,6 +288,10 @@ export async function executeMemoryPlan(
   if (plan.schema !== "marina.memory.plan.v1" || plan.space_id !== space)
     throw new MemoryError(400, "invalid_plan", "Plan belongs to a different space or schema");
   const generation = integer(plan.generation, "generation", 0, Number.MAX_SAFE_INTEGER);
+  const retrievalGeneration =
+    plan.retrieval_generation === undefined
+      ? undefined
+      : integer(plan.retrieval_generation, "retrieval_generation", 0, Number.MAX_SAFE_INTEGER);
   const vocabularyVersion = integer(
     plan.vocabulary_version,
     "vocabulary_version",
@@ -272,8 +299,11 @@ export async function executeMemoryPlan(
     Number.MAX_SAFE_INTEGER,
   );
   const check = () => {
+    const current = service.repository.authorize(actor, space);
     if (
-      service.repository.authorize(actor, space).generation !== generation ||
+      (retrievalGeneration === undefined
+        ? current.generation !== generation
+        : current.retrieval_generation !== retrievalGeneration) ||
       service.repository.vocabulary(actor, space).version !== vocabularyVersion
     )
       throw new MemoryError(409, "plan_changed", "Plan is stale; replan against current memory");

@@ -19,11 +19,18 @@ import {
   recordInput,
 } from "../memory/service-types";
 import type { MemorySourceSearch } from "../sdk/memory-types";
+import { captureMemoryBatch } from "./db-memory-capture";
 import {
   memoryVocabulary,
   saveMemoryVocabulary,
   validateMemoryContract,
 } from "./db-memory-contracts";
+import {
+  pinMemoryDependencies,
+  staleMemoryDependents,
+  storeMemoryDependencyVersions,
+} from "./db-memory-dependencies";
+import { memoryDatabaseHealth } from "./db-memory-maintenance";
 import { readMemorySourceRange, searchMemorySources } from "./db-memory-sources";
 import { createNote, deleteNote, getNote, reviseNote } from "./db-notes";
 import type { MemoryActor, MemoryScope } from "./db-principals";
@@ -90,6 +97,10 @@ export function event(
     [space, operation, ref ?? null, version ?? null, actor.principalId, Date.now()],
   );
   db.run("UPDATE memory_spaces SET generation=generation+1 WHERE id=?", [space]);
+  if (operation !== "checkpoint.saved" && operation !== "memory.reindex")
+    db.run("UPDATE memory_spaces SET retrieval_generation=retrieval_generation+1 WHERE id=?", [
+      space,
+    ]);
   return Number(row.lastInsertRowid);
 }
 
@@ -198,6 +209,8 @@ export function grantMemorySpace(
 }
 
 type RecordRow = {
+  stale: number;
+  stale_reason: string | null;
   id: string;
   space_id: string;
   version: number;
@@ -238,6 +251,9 @@ function hydrate(db: Database, entry: RecordRow, version = entry.version): Memor
     importance: note.importance,
     created_at: note.created_at,
     ...attributes,
+    freshness: version !== entry.version ? "historical" : entry.stale ? "stale" : "current",
+    stale_reason:
+      version === entry.version && entry.stale_reason ? JSON.parse(entry.stale_reason) : null,
   };
 }
 
@@ -273,6 +289,8 @@ function hydrateCurrent(entry: CurrentRecordRow): MemoryRecord {
           source_ids: [],
           depends_on: [],
         }),
+    freshness: entry.stale ? "stale" : "current",
+    stale_reason: entry.stale_reason ? JSON.parse(entry.stale_reason) : null,
   };
 }
 
@@ -410,6 +428,12 @@ export function rememberRecord(
   authorizeMemorySpace(db, actor, space, "memory:write");
   input = recordInput(input);
   return mutation(db, actor, space, key, "memory.remember", input, () => {
+    const pins = pinMemoryDependencies(
+      db,
+      space,
+      input.depends_on ?? [],
+      input.dependency_versions,
+    );
     const vocabularyVersion = validateMemoryContract(db, actor, space, input);
     const id = randomUUID();
     const note = createNote(db, `memory:${actor.principalId}`, input.content, undefined, {
@@ -432,6 +456,7 @@ export function rememberRecord(
           metadata: input.metadata ?? {},
           source_ids: [...new Set(input.source_ids ?? [])],
           depends_on: [...new Set(input.depends_on ?? [])],
+          dependency_versions: pins,
           claim: input.claim ?? null,
           valid_time: input.valid_time ?? null,
           vocabulary_version: vocabularyVersion,
@@ -439,6 +464,7 @@ export function rememberRecord(
       ],
     );
     dependencies(db, space, id, input);
+    storeMemoryDependencyVersions(db, id, 1, input.depends_on ?? [], pins);
     writeClaim(db, space, id, input.claim);
     db.run("UPDATE memory_records SET valid_from=?,valid_until=? WHERE id=?", [
       input.valid_time?.from ?? null,
@@ -471,6 +497,18 @@ export function reviseRecord(
     if (previous.version !== expected)
       throw new MemoryError(409, "version_conflict", "Expected version is stale");
     const previousAttributes = hydrate(db, previous);
+    const dependencyIds = input.depends_on ?? previousAttributes.depends_on;
+    const rebinding = input.depends_on !== undefined || input.dependency_versions !== undefined;
+    if (previous.stale && rebinding && dependencyIds.length && !input.dependency_versions)
+      throw new MemoryError(
+        409,
+        "dependency_review_required",
+        "Supply dependency_versions after reviewing changed premises",
+      );
+    const pins = rebinding
+      ? pinMemoryDependencies(db, space, dependencyIds, input.dependency_versions)
+      : (previousAttributes.dependency_versions ?? {});
+    staleMemoryDependents(db, space, id, expected + 1);
     const validTime =
       input.valid_time === undefined ? previousAttributes.valid_time : input.valid_time;
     const vocabularyVersion = validateMemoryContract(
@@ -524,6 +562,7 @@ export function reviseRecord(
           metadata: input.metadata ?? previousAttributes.metadata,
           source_ids: [...new Set(input.source_ids ?? previousAttributes.source_ids)],
           depends_on: [...new Set(input.depends_on ?? previousAttributes.depends_on)],
+          dependency_versions: pins,
           claim: input.claim === undefined ? (previousAttributes.claim ?? null) : input.claim,
           valid_time: validTime ?? null,
           vocabulary_version: vocabularyVersion,
@@ -533,6 +572,8 @@ export function reviseRecord(
     // Lineage is cumulative across versions: forgetting a source must reach old
     // revisions too. New evidence never erases historical source dependencies.
     dependencies(db, space, id, input);
+    storeMemoryDependencyVersions(db, id, version, dependencyIds, pins);
+    if (rebinding) db.run("UPDATE memory_records SET stale=0,stale_reason=NULL WHERE id=?", [id]);
     writeClaim(db, space, id, input.claim);
     db.run("UPDATE memory_records SET valid_from=?,valid_until=? WHERE id=?", [
       validTime?.from ?? null,
@@ -670,12 +711,15 @@ export function readMemoryCheckpoint(
 }
 
 export interface MemoryFilter {
+  include_stale?: boolean;
   subject?: string;
   type?: string;
   tier?: string;
 }
 /** Fixed column names and bound values keep optional filters selective and injection-safe. */
 function memoryFilters(filter: MemoryFilter) {
+  if (filter.include_stale !== undefined && typeof filter.include_stale !== "boolean")
+    throw new MemoryError(400, "invalid_input", "include_stale must be boolean");
   const conditions: string[] = [],
     values: string[] = [];
   for (const [key, column] of [
@@ -688,6 +732,7 @@ function memoryFilters(filter: MemoryFilter) {
       values.push(filter[key]!);
     }
   }
+  if (!filter.include_stale) conditions.push("r.stale=0");
   return { sql: conditions.length ? ` AND ${conditions.join(" AND ")}` : "", values };
 }
 
@@ -738,6 +783,7 @@ export function lexicalMemoryCandidates(
     db
       .query(`SELECT r.id FROM notes_fts f CROSS JOIN memory_records r ON r.current_note_id=f.rowid CROSS JOIN notes n ON n.id=f.rowid
     WHERE notes_fts MATCH ? AND r.space_id=? AND r.status='active' AND n.verification_status!='superseded'
+    ${filter.include_stale === true ? "" : "AND r.stale=0"}
     AND (? IS NULL OR r.subject=?) AND (? IS NULL OR n.note_type=?) AND (? IS NULL OR n.tier=?)
     ORDER BY f.rank,r.id LIMIT 200`)
       .all(
@@ -925,7 +971,7 @@ export function forgetMemory(
         .query("SELECT note_id FROM memory_record_versions WHERE record_id=?")
         .all(id) as { note_id: number }[];
       db.run(
-        "UPDATE memory_records SET status='forgotten',metadata='{}',subject=NULL,current_note_id=NULL WHERE id=?",
+        "UPDATE memory_records SET status='forgotten',metadata='{}',subject=NULL,current_note_id=NULL,stale=0,stale_reason=NULL WHERE id=?",
         [id],
       );
       for (const version of versions) {
@@ -935,6 +981,10 @@ export function forgetMemory(
       db.run("DELETE FROM memory_derivations WHERE record_id=?", [id]);
       db.run("DELETE FROM memory_claims WHERE record_id=?", [id]);
       db.run("DELETE FROM memory_dependencies WHERE record_id=? OR depends_on_id=?", [id, id]);
+      db.run("DELETE FROM memory_revision_dependencies WHERE record_id=? OR depends_on_id=?", [
+        id,
+        id,
+      ]);
       event(db, actor, space, "memory.forgotten", id);
     }
     for (const source of input.source_ids ?? [])
@@ -958,7 +1008,7 @@ export function forgetMemory(
 export function exportMemorySpace(db: Database, actor: MemoryActor, space: string) {
   authorizeMemorySpace(db, actor, space, "memory:export");
   return db.transaction(() => {
-    const records = memoryCandidates(db, actor, space);
+    const records = memoryCandidates(db, actor, space, { include_stale: true });
     const sources = memorySources(db, actor, space, 0, 10001);
     if (records.length > 10000 || sources.length > 10000)
       throw new MemoryError(
@@ -1006,10 +1056,16 @@ export function queryMemory(
       type: input.type,
       tier: input.tier,
       valid_at: input.valid_at,
+      include_stale: input.include_stale,
     });
     let after = "";
     if (input.cursor) {
-      let cursor: { generation: number; fingerprint: string; after: string };
+      let cursor: {
+        generation: number;
+        retrieval_generation?: number;
+        fingerprint: string;
+        after: string;
+      };
       try {
         cursor = JSON.parse(Buffer.from(input.cursor, "base64url").toString());
       } catch {
@@ -1017,7 +1073,11 @@ export function queryMemory(
       }
       if (!cursor || cursor.fingerprint !== fingerprint || typeof cursor.after !== "string")
         throw new MemoryError(400, "invalid_cursor", "Cursor belongs to another query");
-      if (cursor.generation !== current.generation)
+      if (
+        cursor.retrieval_generation !== undefined
+          ? cursor.retrieval_generation !== current.retrieval_generation
+          : cursor.generation !== current.generation
+      )
         throw new MemoryError(
           409,
           "query_changed",
@@ -1068,6 +1128,7 @@ export function queryMemory(
           ? Buffer.from(
               JSON.stringify({
                 generation: current.generation,
+                retrieval_generation: current.retrieval_generation,
                 fingerprint,
                 after: page.at(-1)!.id,
               }),
@@ -1113,6 +1174,7 @@ export function graphMemory(
       .join(" UNION ");
     const statement = db.query(`SELECT ${currentColumns} FROM ${currentTables}
       WHERE r.space_id=? AND r.status='active' AND n.verification_status!='superseded'
+      ${input.include_stale === true ? "" : "AND r.stale=0"}
       AND (? IS NULL OR ((r.valid_from IS NULL OR r.valid_from<=?) AND (r.valid_until IS NULL OR r.valid_until>?)))
       AND r.id IN (${lookup}) AND r.id NOT IN (SELECT value FROM json_each(?))
       ORDER BY r.id LIMIT ?`);
@@ -1171,6 +1233,9 @@ export function graphMemory(
  * the standalone HTTP server and the full-world adapter consume. */
 export function memoryRepository(db: Database) {
   return {
+    healthy: () => memoryDatabaseHealth(db),
+    captureBatch: (actor: MemoryActor, space: string, items: unknown, key: string) =>
+      captureMemoryBatch(db, actor, space, items, key),
     vocabulary: (actor: MemoryActor, space: string, version?: number) =>
       memoryVocabulary(db, actor, space, version),
     saveVocabulary: (

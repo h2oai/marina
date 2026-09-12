@@ -134,6 +134,7 @@ export const EXPORT_TABLES = [
   "memory_sources",
   "memory_derivations",
   "memory_dependencies",
+  "memory_revision_dependencies",
   "memory_requests",
   "memory_service_events",
   "memory_checkpoints",

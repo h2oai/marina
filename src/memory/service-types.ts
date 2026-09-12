@@ -135,7 +135,26 @@ export function recordInput(value: unknown): MemoryRecordInput {
     )
       throw new MemoryError(400, "invalid_input", `${key} must contain at most 32 identifiers`);
   }
+  let dependencyVersions: Record<string, number> | undefined;
+  if (input.dependency_versions !== undefined) {
+    const versions = object(input.dependency_versions);
+    if (Object.keys(versions).length > 32)
+      throw new MemoryError(
+        400,
+        "invalid_dependencies",
+        "At most 32 dependency versions are supported",
+      );
+    dependencyVersions = Object.create(null);
+    for (const [id, version] of Object.entries(versions))
+      dependencyVersions![textValue(id, "dependency id", 128)] = integer(
+        version,
+        "dependency version",
+        1,
+        Number.MAX_SAFE_INTEGER,
+      );
+  }
   return {
+    dependency_versions: dependencyVersions,
     valid_time: validTime,
     expected_vocabulary_version: expectedVocabulary,
     content,

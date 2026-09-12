@@ -2,7 +2,7 @@
 
 Marina Memory v1 stores evidence, versioned memories and resumable work over HTTP. It can run
 without a world, residents, model routing or standing. An external agent only needs a URL, a
-memory credential and a space ID. The [current implementation record](../research/memory-portable-implementation.md)
+memory credential and a space ID. The [reliability implementation record](../research/memory-reliability-implementation.md)
 separates demonstrated behavior from the remaining roadmap.
 
 ## Start a private service
@@ -115,6 +115,7 @@ require `Idempotency-Key: KEY`. JSON bodies are limited to 2 MiB. Errors have
 | `POST /spaces/:space/reindex` | `{expected_generation}`; enqueue missing vectors for the configured model, returning `job_ids` |
 | `POST /spaces/:space/grants` | Owner grants `{principal_id, role:"reader"\|"writer"\|null}`; `null` revokes access |
 | `POST /spaces/:space/forget` | `{record_ids}` or `{source_ids}`; whole-space deletion requires `{all:true, expected_generation}` from its owner |
+| `POST /spaces/:space/sources/batch` | Atomically capture 1–64 sources (1 MiB total), retaining individual retry keys |
 | `GET /spaces/:space/export` | Authorized `marina.memory.bundle.v1` snapshot of current records, raw sources and checkpoints |
 
 Memory credentials have a separate audience from world and model credentials. Scopes are
@@ -289,3 +290,96 @@ bounded model request, validates the returned plan, and pairs text discovery acr
 and sources. Model errors remain errors; there is no silent downgrade. Permissions and generation
 are checked again after model work and between execution steps. Model planning can incur the
 router's normal inference cost. It does not perform writes or answer the task.
+
+
+## Reliable corrections and retries
+
+`depends_on` binds a conclusion to the current revision of each declared premise. Supply
+`dependency_versions: {RECORD_ID: VERSION}` to pin the revisions you actually read; a racing
+change rejects the write. Correcting a premise atomically marks its direct and transitive
+current dependents `freshness: "stale"`. Their original contents, ownership and history remain
+available. Default query, graph, search and context retrieval exclude stale conclusions.
+Use `include_stale: true` for review, or `get` a known record directly. `freshness: "current"`
+means its declared premises have not changed; it is not a truth or trust certification.
+
+A text-only revision does not clear stale status. After reviewing the evidence, explicitly
+supply all current `dependency_versions` when revising the conclusion. Revalidate upstream
+premises first. Removing `depends_on` explicitly asserts independent support; historical
+lineage still controls forgetting. Older dependencies with no recorded revision bindings
+require review after migration. No model automatically corrects or reaffirms conclusions.
+
+```ts
+const premise = await memory.get(space, premiseId);
+const conclusion = await memory.get(space, conclusionId);
+await memory.revise(space, conclusion.id, conclusion.version, {
+  content: "Updated conclusion based on the reviewed evidence.",
+  depends_on: [premise.id],
+  dependency_versions: { [premise.id]: premise.version },
+});
+```
+
+New plans and query cursors carry `retrieval_generation`. Evidence, assertions, vocabulary,
+permissions and forgetting invalidate it; checkpoint saves and reindex requests do not.
+The existing `generation` still tracks all service mutations. Old plans/cursors without the
+new marker retain the stricter generation check. Every execution rechecks live authorization.
+
+For bursts, use TypeScript `captureBatch`, Python `capture_batch`, or generic MCP operation
+`capture_batch`, with `items: [{content, key, session_id?}]`. The whole batch is atomic. Keep
+both batch and item keys stable when retrying; individual receipts survive regrouping.
+
+The TypeScript SDK exports opt-in `retryMemoryOperation`. Build the exact request and mutation
+key **outside** its callback. It defaults to five attempts for timeouts, network failures,
+408/429/502/503/504, with bounded backoff and service `Retry-After` support. It does not retry
+permission denials or version conflicts. Residents use this helper internally. Retry exhaustion
+surfaces the failure; it never counts as successful persistence.
+
+```ts
+import { retryMemoryOperation } from "marina/memory";
+const key = crypto.randomUUID();
+const items = [{ content: originalToolOutput, key: `${key}:source` }];
+await retryMemoryOperation(() => memory.captureBatch(space, items, key));
+```
+
+Residents journal completed user, assistant and tool-result messages privately through the
+same authenticated service, awaiting acknowledgement before the runtime advances. Journal
+manifests link to previous manifests; read `checkpoint.data.journal.manifest_source_id` to
+start navigating. Compaction also preserves the original transcript before shrinking context.
+The source cursor advances at archival, so later journal evidence remains replayable. Explicit
+compaction pool configuration still shares only its summary. Storage failures retain local
+context and fail the current run; discarded checkpoints require restart before local re-archival.
+This does not make external tool side effects transactional: a tool can act before its result
+is captured, and unfinished streaming output is not a completed-message receipt.
+
+## Backup and restore
+
+Both standalone memory and the normal world entry point use SQLite `synchronous=FULL` by
+default. `MARINA_DB_DURABILITY=normal` is an explicit world-server tradeoff for fewer syncs;
+it weakens the power-loss guarantee. Hardware and filesystem behavior still matter. See
+[SQLite synchronous semantics](https://www.sqlite.org/pragma.html#pragma_synchronous).
+
+Back up the **whole database**, including any world data and credentials, using operator CLI
+access. This is not a scoped memory API export. Snapshot files are private (0600), verified
+with integrity and foreign-key checks, hashed, synced, and atomically published at a new path.
+A live WAL database is supported through
+[SQLite VACUUM INTO](https://www.sqlite.org/lang_vacuum.html#vacuum_with_an_into_clause).
+
+```bash
+bun run memory backup --db data/memory.db --output /secure-backups/memory-001.db
+bun run memory restore --backup /secure-backups/memory-001.db --db data/restored-memory.db
+bun run memory serve --db data/restored-memory.db --embeddings none
+```
+
+Restore always creates a new database; it refuses to overwrite an existing destination.
+The JSON receipt includes SHA-256, byte size and schema version. Test the restored instance
+before changing the deployment's database path. Restores recover the snapshot's point-in-time
+credentials and content: later revocations and forgetting must be reapplied when appropriate.
+A process killed during backup can leave a private `.marina-snapshot-*` staging directory;
+an incomplete file is never published as the requested destination. Operators own retention,
+encryption, off-host copies and cleanup of abandoned staging directories. Health checks confirm
+a schema read succeeds; they do not certify writable capacity or power-loss protection.
+
+Reproduce process recovery and lost-receipt tests with:
+
+```bash
+bun run qualify:memory:reliability --cycles 100 --output /tmp/marina-memory-recovery.json
+```

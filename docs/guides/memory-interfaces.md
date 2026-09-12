@@ -37,8 +37,9 @@ are distinct objects. Symbols are case-sensitive, without stemming, alias resolu
 normalization. Use stable namespaced IDs shared by your applications. Numbers use JSON's
 JavaScript numeric representation; use strings for identifiers and exact large integers.
 
-A query page contains records, `generation` and `next_cursor`. A mutation invalidates existing
-cursors with `409 query_changed`; restart to avoid silently mixing states. Graph paths contain
+A query page contains records, `generation` and `next_cursor`. Evidence or access changes invalidate existing
+cursors with `409 query_changed`; restart to avoid silently mixing states. Checkpoint-only saves
+do not invalidate new cursors. Graph paths contain
 record IDs, and each edge contains the full current record. `truncated` means at least one reachable assertion was omitted by the edge or depth budget.
 The boundary is checked, so a terminal node or fully visited cycle does not produce a false flag.
 
@@ -60,7 +61,7 @@ bun run scripts/memory-mcp.ts --url http://127.0.0.1:3301 --credentials /absolut
 It exposes `memory_service`, `memory_remember`, `memory_query` and `memory_graph`. The generic
 service tool accepts `{operation, space_id?, id?, input?, key?}`. Its operations match the HTTP
 client: `capabilities`, `me`, `spaces`, `create_space`, `space`, `remember`, `get`, `revise`,
-`query`, `graph`, `search`, `context`, `capture`, `sources`, `source_search`, `source_range`,
+`query`, `graph`, `search`, `context`, `capture`, `capture_batch`, `sources`, `source_search`, `source_range`,
 `plan`, `execute_plan`, `vocabulary`, `save_vocabulary`, `checkpoint`, `save_checkpoint`,
 `grant`, `forget`, `export`, `job`, `reindex`. `id` is the record, checkpoint name or job ID
 as appropriate; `input` is the HTTP body, or GET options such as `version`, `after`, `limit`.
@@ -144,7 +145,10 @@ Use explicit grants to share a space between an external service principal and a
 Read the principal IDs through each interface's `me` operation. Existing `memory set/get`,
 `note`, `recall` and pools retain their legacy interfaces; there is no bulk migration.
 
-Resident checkpoints now use the private durable service. Every lossy context transform awaits
+Resident checkpoints and completed-message journals use the private durable service. The runtime
+awaits capture of each completed user, assistant and tool-result message before advancing.
+Read `checkpoint.data.journal.manifest_source_id` and follow previous-manifest links for recent
+messages. Every lossy context transform also awaits
 capture of the complete original message array before returning a compacted view. The archive
 uses ordered, UTF-8-safe source parts (`json-utf8-parts-v1`) plus a SHA-256 integrity hash in the
 `resident` checkpoint. Each archive also captures an immutable manifest with
@@ -158,7 +162,10 @@ A failed capture or checkpoint acknowledgment aborts compaction and retains loca
 Forgetting invalidates checkpoints. A running resident that has observed a checkpoint will
 refuse to recreate it after invalidation; restart that resident before further checkpointing.
 This prevents automatic re-archival of its old local buffer. It does not erase context already
-held by an external client. Capture occurs at lossy transforms, not after every message; an
-abrupt process death before capture can still lose recent in-memory turns. Raw archives remain
-private. Existing `compactionPool` configuration still shares a bounded summary after durable
+held by an external client. Unfinished streaming output can still be lost on abrupt process
+death; external tool effects are not transactional with their result capture. Raw archives
+remain private. Existing `compactionPool` configuration still shares a bounded summary after durable
 capture; this explicit opt-in is best-effort and does not publish the raw archive.
+
+For revision-aware dependency review, bounded batch/retry contracts and operational snapshots,
+see the [reliability guide](memory-service.md#reliable-corrections-and-retries).

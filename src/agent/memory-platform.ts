@@ -213,6 +213,10 @@ export class PlatformMemoryBackend {
     }
   }
 
+  async journalMessage(message: unknown): Promise<void> {
+    await this.durable.journal(message);
+  }
+
   async saveCheckpoint(data: Record<string, unknown>): Promise<PlatformMemoryResult> {
     await this.durable.save(data);
     return { success: true, text: "Durable resident checkpoint saved" };

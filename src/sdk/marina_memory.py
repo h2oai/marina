@@ -74,6 +74,9 @@ class MarinaMemory:
     def capture(self, content, session_id=None, key=None):
         return self.request(self._path("/sources"), "POST", {"content": content, "session_id": session_id} if session_id is not None else {"content": content}, key)
 
+    def capture_batch(self, items, key=None):
+        return self.request(self._path("/sources/batch"), "POST", {"items": items}, key)
+
     def sources(self, after=0, limit=100):
         return self.request(self._path("/sources?after=" + str(after) + "&limit=" + str(limit)))
 

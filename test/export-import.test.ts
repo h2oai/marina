@@ -3,6 +3,9 @@
 
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { MarinaDB, MIGRATIONS } from "../src/persistence/database";
 import {
   EXPORT_TABLES,
@@ -13,22 +16,22 @@ import {
   validateSnapshot,
 } from "../src/persistence/export-import";
 import { entityId, roomId } from "../src/types";
-import { cleanupDb } from "./helpers";
 
-const SRC_DB = "test_export_src.db";
-const DST_DB = "test_export_dst.db";
+let SRC_DB: string, DST_DB: string, directory: string;
 
 describe("Export/Import", () => {
   let srcDb: MarinaDB;
 
   beforeEach(() => {
+    directory = mkdtempSync(join(tmpdir(), "marina-export-import-"));
+    SRC_DB = join(directory, "source.db");
+    DST_DB = join(directory, "destination.db");
     srcDb = new MarinaDB(SRC_DB);
   });
 
   afterEach(() => {
     srcDb.close();
-    cleanupDb(SRC_DB);
-    cleanupDb(DST_DB);
+    rmSync(directory, { recursive: true, force: true });
   });
 
   it("restores symbolic current claims and revision history without vectors or credentials", () => {

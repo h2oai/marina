@@ -2144,7 +2144,10 @@ The goal is a smaller, sharper memory — not more notes.`;
   // ─── Action Tracking ──────────────────────────────────────────────────
 
   private setupActionTracking(): void {
-    this.agent.subscribe((event) => {
+    this.agent.subscribe(async (event) => {
+      // pi-agent-core awaits message_end listeners before progressing to tools,
+      // another model call, or idle. Partial streaming deltas are not receipts.
+      if (event.type === "message_end") await this.platformMemory.journalMessage(event.message);
       // Reset in-run recovery counter on each new prompt() call so we
       // can attempt followUp-based recovery fresh every cycle.
       if (event.type === "agent_start") {
@@ -2435,6 +2438,11 @@ The goal is a smaller, sharper memory — not more notes.`;
 
       const sections: string[] = [`**Last Session** (${ageStr}):`];
       sections.push(`- Intent: ${checkpoint.lastIntent}`);
+      const journal = checkpoint.journal as { manifest_source_id?: string } | undefined;
+      if (journal?.manifest_source_id)
+        sections.push(
+          `- Latest completed message journal: ${journal.manifest_source_id}. Read source_range and follow previous_manifest_source_id to recover messages in reverse chronological order.`,
+        );
       const archive = checkpoint.archive as
         | { source_ids?: string[]; summary?: string; manifest_source_id?: string }
         | undefined;

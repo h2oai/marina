@@ -82,6 +82,7 @@
     "soak:churn:local": "bun run scripts/run-churn-soak-local.ts",
     "memory": "bun run scripts/memory.ts",
     "qualify:memory": "bun run scripts/qualify-memory-service.ts",
+    "qualify:memory:reliability": "bun run scripts/qualify-memory-reliability.ts",
     "build:memory": "bun build src/sdk/memory.ts --target browser --outfile dist/memory.js",
     "memory:mcp": "bun run scripts/memory-mcp.ts"
   },

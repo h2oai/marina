@@ -108,7 +108,7 @@ export function validateMemoryContract(
   if (def.cardinality === "one") {
     const conflicts = db
       .query(`SELECT c.record_id,c.object_json FROM memory_claims c JOIN memory_records r ON r.id=c.record_id
-      WHERE c.space_id=? AND c.subject=? AND c.predicate=? AND c.record_id!=? AND r.status='active'
+      WHERE c.space_id=? AND c.subject=? AND c.predicate=? AND c.record_id!=? AND r.status='active' AND r.stale=0
       AND (? IS NULL OR r.valid_until IS NULL OR r.valid_until>?)
       AND (? IS NULL OR r.valid_from IS NULL OR r.valid_from<?)`)
       .all(
@@ -162,7 +162,7 @@ export function saveMemoryVocabulary(
     const version = expected + 1;
     const claims = db
       .query(`SELECT c.record_id,c.subject,c.predicate,c.object_json,r.valid_from,r.valid_until FROM memory_claims c
-      JOIN memory_records r ON r.id=c.record_id WHERE c.space_id=? AND r.status='active' LIMIT 10001`)
+      JOIN memory_records r ON r.id=c.record_id WHERE c.space_id=? AND r.status='active' AND r.stale=0 LIMIT 10001`)
       .all(space) as {
       record_id: string;
       subject: string;

@@ -10,6 +10,7 @@ export interface MemoryClaim {
   object: MemoryTerm;
 }
 export interface MemoryQuery {
+  include_stale?: boolean;
   valid_at?: number;
   subject?: string;
   predicate?: string;
@@ -27,6 +28,7 @@ export interface MemoryQueryResult {
   next_cursor: string | null;
 }
 export interface MemoryGraphQuery {
+  include_stale?: boolean;
   valid_at?: number;
   subject: string;
   predicates?: string[];
@@ -42,6 +44,7 @@ export interface MemoryGraphResult {
   truncated: boolean;
 }
 export interface MemoryRecordInput {
+  dependency_versions?: Record<string, number>;
   valid_time?: MemoryValidity | null;
   expected_vocabulary_version?: number;
   content: string;
@@ -55,6 +58,9 @@ export interface MemoryRecordInput {
   claim?: MemoryClaim | null;
 }
 export interface MemoryRecord {
+  freshness?: "current" | "stale" | "historical";
+  stale_reason?: { kind: string; record_id?: string; observed_version?: number } | null;
+  dependency_versions?: Record<string, number | null>;
   valid_time?: MemoryValidity | null;
   vocabulary_version?: number;
   id: string;
@@ -95,6 +101,7 @@ export interface MemoryPlanStep {
   input: Record<string, unknown>;
 }
 export interface MemoryPlan {
+  retrieval_generation?: number;
   schema: "marina.memory.plan.v1";
   space_id: string;
   generation: number;
@@ -119,6 +126,7 @@ export interface MemoryPlanResult {
   answer_sufficiency: "not_assessed";
 }
 export interface MemorySpace {
+  retrieval_generation: number;
   id: string;
   owner_id: string;
   name: string;
@@ -181,6 +189,7 @@ export interface MemoryReceipt {
 }
 
 export interface MemoryFilter {
+  include_stale?: boolean;
   subject?: string;
   type?: string;
   tier?: string;

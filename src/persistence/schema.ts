@@ -2735,4 +2735,30 @@ CREATE TABLE memory_vocabularies (
 );
 `,
   },
+  {
+    version: 104,
+    sql: `
+ALTER TABLE memory_spaces ADD COLUMN retrieval_generation INTEGER NOT NULL DEFAULT 0;
+UPDATE memory_spaces SET retrieval_generation=generation;
+ALTER TABLE memory_records ADD COLUMN stale INTEGER NOT NULL DEFAULT 0 CHECK(stale IN (0,1));
+ALTER TABLE memory_records ADD COLUMN stale_reason TEXT;
+CREATE TABLE memory_revision_dependencies (
+ record_id TEXT NOT NULL REFERENCES memory_records(id), record_version INTEGER NOT NULL,
+ depends_on_id TEXT NOT NULL REFERENCES memory_records(id), depends_on_version INTEGER,
+ PRIMARY KEY(record_id,record_version,depends_on_id)
+);
+CREATE INDEX idx_memory_revision_dependency_target ON memory_revision_dependencies(depends_on_id,record_id,record_version);
+INSERT INTO memory_revision_dependencies
+ SELECT DISTINCT v.record_id,v.version,j.value,NULL FROM memory_record_versions v,
+ json_each(v.attributes,'$.depends_on') j JOIN memory_records r ON r.id=j.value
+ WHERE v.attributes IS NOT NULL;
+INSERT OR IGNORE INTO memory_revision_dependencies
+ SELECT r.id,r.version,d.depends_on_id,NULL FROM memory_records r
+ JOIN memory_record_versions v ON v.record_id=r.id AND v.version=r.version
+ JOIN memory_dependencies d ON d.record_id=r.id WHERE v.attributes IS NULL;
+UPDATE memory_records SET stale=1,stale_reason='{"kind":"unversioned_dependency"}'
+ WHERE status='active' AND EXISTS (SELECT 1 FROM memory_revision_dependencies d
+ WHERE d.record_id=memory_records.id AND d.record_version=memory_records.version);
+`,
+  },
 ];

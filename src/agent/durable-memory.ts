@@ -5,10 +5,26 @@ import { createHash } from "node:crypto";
 import type { MarinaClient } from "../sdk/client";
 import { MemoryClientError } from "../sdk/memory-client";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
+import { retryMemoryOperation } from "../sdk/memory-retry";
 import type { MemoryCheckpoint, MemoryReceipt } from "../sdk/memory-types";
 
-/** Uses the resident's existing authenticated world connection. Writes serialize
- * locally, use CAS remotely, and never turn a failed acknowledgment into success. */
+type Archive = { source_ids: string[]; manifest_source_id?: string; sha256: string };
+const digest = (text: string) => createHash("sha256").update(text).digest("hex");
+const references = (data: Record<string, unknown> | undefined) => {
+  const ids: string[] = [];
+  for (const kind of ["archive", "journal"]) {
+    const archive = data?.[kind] as Archive | undefined;
+    if (archive)
+      ids.push(
+        ...archive.source_ids,
+        ...(archive.manifest_source_id ? [archive.manifest_source_id] : []),
+      );
+  }
+  return [...new Set(ids)];
+};
+
+/** Private resident evidence; serialized writes, stable retry keys and remote CAS.
+ * No inference, goal selection or implicit sharing is performed here. */
 export class DurableResidentMemory {
   private pending: Promise<unknown> = Promise.resolve();
   private session = crypto.randomUUID();
@@ -16,11 +32,18 @@ export class DurableResidentMemory {
   private hadCheckpoint = false;
   constructor(private client: Pick<MarinaClient, "memoryService">) {}
 
-  private async call<T>(request: MemoryOperationRequest): Promise<T> {
-    const result = await this.client.memoryService(request);
-    if (!result.ok)
-      throw new MemoryClientError(result.error.status, result.error.code, result.error.message);
-    return result.result as T;
+  private call<T>(request: MemoryOperationRequest): Promise<T> {
+    return retryMemoryOperation(async () => {
+      const result = await this.client.memoryService(request);
+      if (!result.ok)
+        throw new MemoryClientError(
+          result.error.status,
+          result.error.code,
+          result.error.message,
+          result.error.retry_after_ms,
+        );
+      return result.result as T;
+    });
   }
   private serialize<T>(run: () => Promise<T>): Promise<T> {
     const next = this.pending.then(run, run);
@@ -29,7 +52,9 @@ export class DurableResidentMemory {
   }
   async checkpoint(): Promise<MemoryCheckpoint | null> {
     try {
-      return await this.call<MemoryCheckpoint>({ operation: "checkpoint", id: "resident" });
+      const result = await this.call<MemoryCheckpoint>({ operation: "checkpoint", id: "resident" });
+      this.hadCheckpoint = true;
+      return result;
     } catch (error) {
       if (
         error instanceof MemoryClientError &&
@@ -40,29 +65,6 @@ export class DurableResidentMemory {
       throw error;
     }
   }
-  save(data: Record<string, unknown>): Promise<void> {
-    return this.serialize(async () => {
-      const previous = await this.writableCheckpoint();
-      const archive = previous?.data.archive as
-        | { source_ids?: string[]; manifest_source_id?: string }
-        | undefined;
-      await this.call({
-        operation: "save_checkpoint",
-        id: "resident",
-        key: crypto.randomUUID(),
-        input: {
-          expected_version: previous?.version ?? 0,
-          source_cursor: previous?.source_cursor ?? 0,
-          source_ids: [
-            ...(archive?.source_ids ?? []),
-            ...(archive?.manifest_source_id ? [archive.manifest_source_id] : []),
-          ],
-          data: { ...previous?.data, ...data },
-        },
-      });
-      this.hadCheckpoint = true;
-    });
-  }
   private async writableCheckpoint(): Promise<MemoryCheckpoint | null> {
     const previous = await this.checkpoint();
     if (!previous && this.hadCheckpoint)
@@ -71,96 +73,141 @@ export class DurableResidentMemory {
         "checkpoint_invalidated",
         "Resident checkpoint was invalidated; restart before archiving local context",
       );
-    this.hadCheckpoint = previous !== null;
     return previous;
   }
-  archive(messages: unknown[], summary: string): Promise<void> {
+  save(data: Record<string, unknown>): Promise<void> {
+    const snapshot = JSON.parse(JSON.stringify(data));
     return this.serialize(async () => {
-      const bytes = Buffer.from(JSON.stringify(messages));
-      const digest = createHash("sha256").update(bytes).digest("hex");
       const previous = await this.writableCheckpoint();
-      const priorArchive = previous?.data.archive as
-        | { sha256?: string; manifest_source_id?: string }
-        | undefined;
-      if (priorArchive?.sha256 === digest) return;
-      const sourceIds: string[] = [];
-      const retained = new Map<string, MemoryReceipt>();
-      let cursor = 0;
-      // Stable message boundaries avoid re-uploading the entire growing history
-      // when one message is appended. The ordered parts still form exact JSON.
-      const segments = [
-        "[",
-        ...messages.map((message, index) => `${index ? "," : ""}${JSON.stringify(message)}`),
-        "]",
-      ];
-      for (const segment of segments) {
-        const chunk = Buffer.from(segment);
-        for (let start = 0; start < chunk.length; ) {
-          let end = Math.min(chunk.length, start + 16384);
-          while (end < chunk.length && (chunk[end]! & 0xc0) === 0x80) end--;
-          const content = chunk.subarray(start, end).toString("utf8");
-          const partHash = createHash("sha256").update(content).digest("hex");
-          const receipt =
-            this.parts.get(partHash) ??
-            (await this.call<MemoryReceipt>({
-              operation: "capture",
-              key: `archive:${this.session}:${partHash}`,
-              input: {
-                content,
-                session_id: this.session,
-              },
-            }));
-          this.parts.set(partHash, receipt);
-          retained.set(partHash, receipt);
-          sourceIds.push(receipt.id);
-          cursor = Math.max(cursor, receipt.seq!);
-          start = end;
-        }
-      }
-      // Keep an immutable manifest so later compactions cannot erase the order
-      // of earlier archives. This links archival sources, not inferred memories.
-      const manifest = await this.call<MemoryReceipt>({
-        operation: "capture",
-        key: `archive-manifest:${this.session}:${digest}:${previous?.version ?? 0}`,
-        input: {
-          session_id: this.session,
-          content: {
-            format: "json-utf8-parts-v1",
-            source_ids: sourceIds,
-            sha256: digest,
-            previous_manifest_source_id: priorArchive?.manifest_source_id ?? null,
-          },
-        },
-      });
-      cursor = Math.max(cursor, manifest.seq!);
-      // All parts are durable before the checkpoint can refer to them. Rejected
-      // or lost acknowledgments leave the caller's original context intact.
+      const merged = { ...previous?.data, ...snapshot };
       await this.call({
         operation: "save_checkpoint",
         id: "resident",
-        key: `archive-checkpoint:${this.session}:${digest}:${previous?.version ?? 0}`,
+        key: crypto.randomUUID(),
         input: {
           expected_version: previous?.version ?? 0,
-          source_cursor: cursor,
-          source_ids: [...sourceIds, manifest.id],
-          data: {
-            lastIntent: "Resume the preserved conversation",
-            ...previous?.data,
-            archive: {
-              format: "json-utf8-parts-v1",
-              source_ids: sourceIds,
-              manifest_source_id: manifest.id,
-              sha256: digest,
-              session_id: this.session,
-              message_count: messages.length,
-              summary: summary.slice(0, 16000),
-            },
-            timestamp: Date.now(),
-          },
+          source_cursor: previous?.source_cursor ?? 0,
+          source_ids: references(merged),
+          data: merged,
         },
       });
-      this.parts = retained;
       this.hadCheckpoint = true;
     });
+  }
+  archive(messages: unknown[], summary: string): Promise<void> {
+    // Snapshot before entering the asynchronous queue: callers may keep appending.
+    const originals = JSON.stringify(messages),
+      count = messages.length;
+    return this.serialize(() => this.persist(originals, count, summary, "archive"));
+  }
+  journal(message: unknown): Promise<void> {
+    const original = JSON.stringify([message]);
+    return this.serialize(() => this.persist(original, 1, "", "journal"));
+  }
+  private async persist(
+    original: string,
+    messageCount: number,
+    summary: string,
+    kind: "archive" | "journal",
+  ): Promise<void> {
+    const hash = digest(original);
+    const previous = await this.writableCheckpoint();
+    const prior = previous?.data[kind] as Archive | undefined;
+    if (kind === "archive" && prior?.sha256 === hash) return;
+    const operation = kind === "journal" ? crypto.randomUUID() : hash;
+    const messages = JSON.parse(original) as unknown[];
+    const segments = [
+      "[",
+      ...messages.map((message, i) => `${i ? "," : ""}${JSON.stringify(message)}`),
+      "]",
+    ];
+    const ordered: string[] = [];
+    const missing = new Map<string, string>();
+    for (const segment of segments) {
+      const chunk = Buffer.from(segment);
+      for (let start = 0; start < chunk.length; ) {
+        let end = Math.min(chunk.length, start + 16384);
+        while (end < chunk.length && (chunk[end]! & 0xc0) === 0x80) end--;
+        const text = chunk.subarray(start, end).toString("utf8"),
+          partHash = digest(text);
+        ordered.push(partHash);
+        if (!this.parts.has(partHash)) missing.set(partHash, text);
+        start = end;
+      }
+    }
+    if (ordered.length > 2000)
+      throw new MemoryClientError(
+        413,
+        "archive_capacity",
+        "Archive exceeds 2000 parts; original context retained",
+      );
+    const entries = [...missing];
+    for (let offset = 0; offset < entries.length; ) {
+      const batch: [string, string][] = [];
+      let bytes = 0;
+      while (offset < entries.length && batch.length < 64) {
+        const item = entries[offset]!;
+        const size = Buffer.byteLength(JSON.stringify(item[1])) + 512;
+        if (batch.length && bytes + size > 512 * 1024) break;
+        batch.push(item);
+        bytes += size;
+        offset++;
+      }
+      const receipt = await this.call<MemoryReceipt & { receipts: MemoryReceipt[] }>({
+        operation: "capture_batch",
+        key: `archive-batch:${this.session}:${digest(JSON.stringify(batch.map(([id]) => id)))}`,
+        input: {
+          items: batch.map(([id, content]) => ({
+            content,
+            session_id: this.session,
+            key: `archive:${this.session}:${id}`,
+          })),
+        },
+      });
+      for (const [index, [id]] of batch.entries()) this.parts.set(id, receipt.receipts[index]!);
+    }
+    const sourceIds = ordered.map((id) => this.parts.get(id)!.id);
+    const manifest = await this.call<MemoryReceipt>({
+      operation: "capture",
+      key: `manifest:${this.session}:${operation}:${previous?.version ?? 0}`,
+      input: {
+        session_id: this.session,
+        content: {
+          format: "json-utf8-parts-v1",
+          source_ids: sourceIds,
+          sha256: hash,
+          kind,
+          previous_manifest_source_id: prior?.manifest_source_id ?? null,
+        },
+      },
+    });
+    const data = {
+      lastIntent: "Resume the preserved conversation",
+      ...previous?.data,
+      [kind]: {
+        format: "json-utf8-parts-v1",
+        source_ids: sourceIds,
+        sha256: hash,
+        manifest_source_id: manifest.id,
+        session_id: this.session,
+        message_count: messageCount,
+        ...(kind === "archive" ? { summary: summary.slice(0, 16000) } : {}),
+      },
+      timestamp: Date.now(),
+    };
+    await this.call({
+      operation: "save_checkpoint",
+      id: "resident",
+      key: `checkpoint:${this.session}:${operation}:${previous?.version ?? 0}`,
+      input: {
+        expected_version: previous?.version ?? 0,
+        source_cursor: kind === "archive" ? manifest.seq! : (previous?.source_cursor ?? 0),
+        source_ids: references(data),
+        data,
+      },
+    });
+    this.hadCheckpoint = true;
+    // A bounded local optimization only; evicted entries still deduplicate remotely.
+    while (this.parts.size > 4096) this.parts.delete(this.parts.keys().next().value!);
   }
 }

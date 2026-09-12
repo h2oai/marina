@@ -22,6 +22,11 @@ const headers = {
   "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
 };
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers });
+function includeStale(body: Record<string, unknown>): boolean | undefined {
+  if (body.include_stale !== undefined && typeof body.include_stale !== "boolean")
+    throw new MemoryError(400, "invalid_input", "include_stale must be boolean");
+  return body.include_stale as boolean | undefined;
+}
 
 async function readBody(req: Request): Promise<Record<string, unknown>> {
   const reader = req.body?.getReader();
@@ -58,6 +63,7 @@ function searchInput(body: Record<string, unknown>): MemorySearchInput {
   for (const key of ["subject", "type", "tier"] as const)
     if (body[key] !== undefined) textValue(body[key], key, 256);
   return {
+    include_stale: includeStale(body),
     query,
     limit,
     mode: body.mode as MemorySearchInput["mode"],
@@ -76,8 +82,13 @@ export async function handleMemoryServiceApi(
     const url = new URL(req.url);
     const path = url.pathname.replace(/\/$/, "");
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
-    if (path === "/v1/memory/health" && req.method === "GET")
-      return json({ status: "ok", service: "marina-memory", version: 1 });
+    if (path === "/v1/memory/health" && req.method === "GET") {
+      const healthy = service.repository.healthy();
+      return json(
+        { status: healthy ? "ok" : "unavailable", service: "marina-memory", version: 1 },
+        healthy ? 200 : 503,
+      );
+    }
     const token = req.headers.get("Authorization")?.match(/^Bearer (.+)$/)?.[1];
     const actor = token ? service.db.verifyMemoryCredential(token) : undefined;
     if (!actor)
@@ -197,6 +208,7 @@ export async function handleMemoryServiceApi(
         body[name] === undefined ? undefined : textValue(body[name], name, max);
       return json(
         repo.query(actor, space, {
+          include_stale: includeStale(body),
           subject: optional("subject"),
           predicate: optional("predicate"),
           type: optional("type"),
@@ -229,6 +241,7 @@ export async function handleMemoryServiceApi(
         );
       return json(
         repo.graph(actor, space, {
+          include_stale: includeStale(body),
           subject: textValue(body.subject, "subject", 256),
           valid_at:
             body.valid_at === undefined
@@ -323,6 +336,10 @@ export async function handleMemoryServiceApi(
               budget_tokens: integer(body.budget_tokens ?? 2048, "budget_tokens", 32, 32768),
             }),
       );
+    }
+    if (rest === "sources/batch" && req.method === "POST") {
+      const body = await readBody(req);
+      return json(repo.captureBatch(actor, space, body.items, key), 201);
     }
     if (rest === "sources") {
       if (req.method === "POST") {

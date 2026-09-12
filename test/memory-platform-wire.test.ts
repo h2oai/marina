@@ -70,6 +70,8 @@ it("carries full memory over the real SDK/WebSocket path across a clean server r
       .join("\n");
     expect(sharedArchive).toContain("[compaction] Archived complete wire evidence");
     expect(sharedArchive).not.toContain("originalwire");
+    const completed = { role: "assistant", content: "completed after compaction" };
+    await runtime.memory.journalMessage(completed);
     const previous = runtime;
     runtime = undefined;
     await stop(previous);
@@ -86,6 +88,14 @@ it("carries full memory over the real SDK/WebSocket path across a clean server r
       if (reply.ok) restored += (reply.result as { text: string }).text;
     }
     expect(restored).toBe(JSON.stringify(originals));
+    const journal = resumed!.journal as { source_ids: string[] };
+    let journalText = "";
+    for (const id of journal.source_ids) {
+      const reply = await runtime.client.memoryService({ operation: "source_range", id });
+      expect(reply.ok).toBe(true);
+      if (reply.ok) journalText += (reply.result as { text: string }).text;
+    }
+    expect(JSON.parse(journalText)).toEqual([completed]);
     expect(
       (await runtime.memory.search("wireneedle")).results?.some(
         (note) => note.content === evidence,

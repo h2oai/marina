@@ -17,6 +17,7 @@ export const MEMORY_OPERATIONS = [
   "search",
   "context",
   "capture",
+  "capture_batch",
   "sources",
   "source_search",
   "source_range",
@@ -42,7 +43,10 @@ export interface MemoryOperationRequest {
 }
 export type MemoryOperationResult =
   | { ok: true; result: unknown; space_id?: string }
-  | { ok: false; error: { code: string; message: string; status: number } };
+  | {
+      ok: false;
+      error: { code: string; message: string; status: number; retry_after_ms?: number };
+    };
 
 /** Shared transport vocabulary. The service validates all operation payloads. */
 export async function runMemoryOperation(
@@ -90,6 +94,8 @@ export async function runMemoryOperation(
       );
     case "capture":
       return client.request(`${base}/sources`, "POST", input, request.key);
+    case "capture_batch":
+      return client.request(`${base}/sources/batch`, "POST", input, request.key);
     case "sources": {
       const params = new URLSearchParams();
       for (const name of ["after", "limit"])
@@ -127,7 +133,12 @@ export function memoryOperationError(error: unknown): MemoryOperationResult {
     ok: false,
     error:
       error instanceof MemoryClientError
-        ? { code: error.code, message: error.message, status: error.status }
+        ? {
+            code: error.code,
+            message: error.message,
+            status: error.status,
+            retry_after_ms: error.retryAfterMs,
+          }
         : { code: "memory_failed", message: "Memory operation failed", status: 500 },
   };
 }

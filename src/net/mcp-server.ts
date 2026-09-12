@@ -953,6 +953,7 @@ function registerMemoryTools(
       expected_vocabulary_version: z.number().int().nonnegative().optional(),
       source_ids: z.array(z.string()).optional(),
       depends_on: z.array(z.string()).optional(),
+      dependency_versions: z.record(z.string(), z.number().int().positive()).optional(),
       type: z.enum(["fact", "observation", "decision", "inference", "skill", "episode"]).optional(),
       metadata: z.record(z.string(), z.unknown()).optional(),
       key: z.string().optional(),
@@ -962,7 +963,7 @@ function registerMemoryTools(
   );
   mcp.tool(
     "memory_query",
-    "Exact symbolic query. Symbols and literal types match exactly; no vectors, models or approximate ranking. Omit filters to list records. A changed space invalidates the pagination cursor.",
+    "Exact symbolic query. Symbols and literal types match exactly; no vectors, models or approximate ranking. Omit filters to list records. Changed evidence or access invalidates the pagination cursor; checkpoint-only writes do not.",
     {
       space_id: space,
       subject: z.string().optional(),
@@ -973,6 +974,10 @@ function registerMemoryTools(
       limit: z.number().int().min(1).max(100).optional(),
       cursor: z.string().optional(),
       valid_at: z.number().int().nonnegative().optional(),
+      include_stale: z
+        .boolean()
+        .optional()
+        .describe("Include unchanged authored conclusions whose premises need review"),
     },
     async ({ space_id, ...input }, extra) => runCmd({ operation: "query", space_id, input }, extra),
   );
@@ -986,6 +991,10 @@ function registerMemoryTools(
       direction: z.enum(["out", "in", "both"]).optional(),
       max_depth: z.number().int().min(1).max(5).optional(),
       valid_at: z.number().int().nonnegative().optional(),
+      include_stale: z
+        .boolean()
+        .optional()
+        .describe("Include unchanged authored conclusions whose premises need review"),
       limit: z.number().int().min(1).max(200).optional(),
     },
     async ({ space_id, ...input }, extra) => runCmd({ operation: "graph", space_id, input }, extra),

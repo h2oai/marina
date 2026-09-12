@@ -251,6 +251,8 @@ it("uploads only new resident segments and stops local re-archival after forgett
   const durable = new DurableResidentMemory({
     memoryService: async (request) => {
       if (request.operation === "capture") captures++;
+      if (request.operation === "capture_batch")
+        captures += (request.input?.items as unknown[]).length;
       return residentMemoryOperation(db, "Resident", request);
     },
   });

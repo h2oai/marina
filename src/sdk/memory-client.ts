@@ -31,6 +31,7 @@ export class MemoryClientError extends Error {
     public status: number,
     public code: string,
     message: string,
+    public retryAfterMs?: number,
   ) {
     super(message);
   }
@@ -63,12 +64,36 @@ export class MarinaMemoryClient {
         redirect: "error",
       }),
     );
-    const result = (await response.json()) as T & { error?: { code: string; message: string } };
+    const retryAfter = /^(\d+)(\.\d+)?$/.test(response.headers.get("Retry-After") ?? "")
+      ? Number(response.headers.get("Retry-After")) * 1000
+      : undefined;
+    let result: T & { error?: { code: string; message: string } };
+    try {
+      result = await response.json();
+    } catch (error) {
+      // Proxies can return plain-text failures after an upstream write committed.
+      // Preserve the status so explicit same-key retries can recover its receipt.
+      if (!response.ok)
+        throw new MemoryClientError(
+          response.status,
+          "request_failed",
+          "Memory request failed",
+          retryAfter,
+        );
+      if (error instanceof SyntaxError)
+        throw new MemoryClientError(
+          502,
+          "invalid_response",
+          "Memory service returned invalid JSON",
+        );
+      throw error;
+    }
     if (!response.ok)
       throw new MemoryClientError(
         response.status,
-        result.error?.code ?? "request_failed",
-        result.error?.message ?? "Memory request failed",
+        result?.error?.code ?? "request_failed",
+        result?.error?.message ?? "Memory request failed",
+        retryAfter,
       );
     return result;
   }
@@ -152,6 +177,18 @@ export class MarinaMemoryClient {
   sources(space: string, after = 0, limit = 100) {
     return this.request<{ sources: MemorySource[]; next_cursor: number }>(
       this.path(space, `/sources?after=${after}&limit=${limit}`),
+    );
+  }
+  captureBatch(
+    space: string,
+    items: { content: unknown; session_id?: string; key: string }[],
+    key?: string,
+  ) {
+    return this.request<MemoryReceipt & { receipts: MemoryReceipt[] }>(
+      this.path(space, "/sources/batch"),
+      "POST",
+      { items },
+      key,
     );
   }
   sourceSearch(space: string, input: MemorySourceSearch) {
