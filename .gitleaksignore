@@ -9,3 +9,4 @@ fe683112527dc3cddae8c7f43ed3408c10b7e2db:test/key-crypto.test.ts:generic-api-key
 8c1aab94c727a319e9b0c26ea32734037a4d0356:test/canvas.test.ts:generic-api-key:186
 8c1aab94c727a319e9b0c26ea32734037a4d0356:test/canvas.test.ts:generic-api-key:217
 8c1aab94c727a319e9b0c26ea32734037a4d0356:worlds/seed.ts:generic-api-key:916
+72189d16a535829031cd9458431bf2ff077ca0ec:docs/guides/getting-started.md:curl-auth-header:196
