@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MemoryActor } from "../persistence/db-principals";
+import { withMemoryAbort } from "../sdk/memory-abort";
 import type {
   MemoryGraphQuery,
   MemoryPlan,
@@ -19,6 +20,7 @@ export interface MemoryPlanner {
   plan(
     task: string,
     vocabulary: MemoryVocabulary,
+    signal?: AbortSignal,
   ): Promise<{ steps: unknown; assumptions?: unknown }>;
 }
 
@@ -39,11 +41,11 @@ export function routerMemoryPlanner(url: string, model: string, token?: string):
     throw new Error("Invalid memory planner URL");
   return {
     id: `marina-router:${model}`,
-    async plan(task, vocabulary) {
+    async plan(task, vocabulary, signal) {
       const response = await fetch(new URL("chat/completions", base), {
         method: "POST",
         redirect: "error",
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]),
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -173,7 +175,9 @@ export async function createMemoryPlan(
   actor: MemoryActor,
   space: string,
   body: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<MemoryPlan> {
+  signal?.throwIfAborted();
   const current = service.repository.authorize(actor, space);
   const task = textValue(body.task, "task", 8192);
   const vocabulary = service.repository.vocabulary(actor, space);
@@ -192,7 +196,10 @@ export async function createMemoryPlan(
     if (!service.planner)
       throw new MemoryError(503, "planner_not_configured", "No memory planner is configured");
     planner = service.planner.id;
-    proposed = object(await service.planner.plan(task, vocabulary)) as typeof proposed;
+    const provider = service.planner;
+    proposed = object(
+      await withMemoryAbort(() => provider.plan(task, vocabulary, signal), signal),
+    ) as typeof proposed;
   } else {
     planner = "deterministic-keywords-v1";
     const stop = new Set([
@@ -231,6 +238,7 @@ export async function createMemoryPlan(
       assumptions: ["Keyword plan; no paraphrase or entity resolution was inferred."],
     };
   }
+  signal?.throwIfAborted();
   const fresh = service.repository.authorize(actor, space);
   if (fresh.retrieval_generation !== current.retrieval_generation)
     throw new MemoryError(409, "plan_changed", "Space changed while planning; retry");
@@ -282,6 +290,7 @@ export async function executeMemoryPlan(
   actor: MemoryActor,
   space: string,
   raw: unknown,
+  signal?: AbortSignal,
 ): Promise<MemoryPlanResult> {
   const plan = object(raw),
     budget = object(plan.budget);
@@ -299,6 +308,7 @@ export async function executeMemoryPlan(
     Number.MAX_SAFE_INTEGER,
   );
   const check = () => {
+    signal?.throwIfAborted();
     const current = service.repository.authorize(actor, space);
     if (
       (retrievalGeneration === undefined
@@ -345,7 +355,12 @@ export async function executeMemoryPlan(
       evidence = result.results;
       incomplete = result.truncated;
     } else {
-      const result = await service.search(actor, space, step.input as unknown as { query: string });
+      const result = await service.search(
+        actor,
+        space,
+        step.input as unknown as { query: string },
+        signal,
+      );
       evidence = result.results;
       incomplete = result.results.length >= Number(step.input.limit);
     }

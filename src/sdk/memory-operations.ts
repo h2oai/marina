@@ -5,6 +5,7 @@ import { type MarinaMemoryClient, MemoryClientError } from "./memory-client";
 
 export const MEMORY_OPERATIONS = [
   "capabilities",
+  "usage",
   "me",
   "spaces",
   "create_space",
@@ -53,7 +54,10 @@ export async function runMemoryOperation(
   client: MarinaMemoryClient,
   request: MemoryOperationRequest,
   defaultSpace?: string,
+  signal?: AbortSignal,
 ): Promise<unknown> {
+  if (signal) client = client.withSignal(signal);
+  signal?.throwIfAborted();
   if (!request || !MEMORY_OPERATIONS.includes(request.operation))
     throw new MemoryClientError(400, "invalid_operation", "Unknown memory operation");
   const field = (value: unknown, name: string) => {
@@ -62,6 +66,7 @@ export async function runMemoryOperation(
     return encodeURIComponent(value);
   };
   const operation = request.operation;
+  if (operation === "usage") return client.usage();
   if (operation === "capabilities") return client.capabilities();
   if (operation === "me") return client.me();
   if (operation === "spaces") return client.spaces();

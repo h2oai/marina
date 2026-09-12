@@ -2761,4 +2761,193 @@ UPDATE memory_records SET stale=1,stale_reason='{"kind":"unversioned_dependency"
  WHERE d.record_id=memory_records.id AND d.record_version=memory_records.version);
 `,
   },
+  // Logical storage accounting is a rebuildable projection, not a retention policy.
+  {
+    version: 105,
+    sql: `
+CREATE INDEX idx_memory_spaces_owner ON memory_spaces(owner_id,status);
+CREATE TABLE memory_storage_usage (
+ space_id TEXT PRIMARY KEY REFERENCES memory_spaces(id) ON DELETE CASCADE,
+ logical_bytes INTEGER NOT NULL DEFAULT 0, sources INTEGER NOT NULL DEFAULT 0,
+ revisions INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE memory_storage_items (
+ kind TEXT NOT NULL, ref TEXT NOT NULL, space_id TEXT NOT NULL REFERENCES memory_spaces(id) ON DELETE CASCADE,
+ bytes INTEGER NOT NULL CHECK(bytes>=0), PRIMARY KEY(kind,ref)
+);
+CREATE INDEX idx_memory_storage_space ON memory_storage_items(space_id);
+CREATE TRIGGER memory_storage_items_ai AFTER INSERT ON memory_storage_items BEGIN
+ INSERT INTO memory_storage_usage(space_id) VALUES(new.space_id) ON CONFLICT DO NOTHING;
+ UPDATE memory_storage_usage SET logical_bytes=logical_bytes+new.bytes,
+ sources=sources+(new.kind='source'),revisions=revisions+(new.kind='revision') WHERE space_id=new.space_id;
+END;
+CREATE TRIGGER memory_storage_items_ad AFTER DELETE ON memory_storage_items BEGIN
+ UPDATE memory_storage_usage SET logical_bytes=logical_bytes-old.bytes,
+ sources=sources-(old.kind='source'),revisions=revisions-(old.kind='revision') WHERE space_id=old.space_id;
+END;
+CREATE TRIGGER memory_storage_items_au AFTER UPDATE ON memory_storage_items BEGIN
+ UPDATE memory_storage_usage SET logical_bytes=logical_bytes-old.bytes,
+ sources=sources-(old.kind='source'),revisions=revisions-(old.kind='revision') WHERE space_id=old.space_id;
+ INSERT INTO memory_storage_usage(space_id) VALUES(new.space_id) ON CONFLICT DO NOTHING;
+ UPDATE memory_storage_usage SET logical_bytes=logical_bytes+new.bytes,
+ sources=sources+(new.kind='source'),revisions=revisions+(new.kind='revision') WHERE space_id=new.space_id;
+END;
+CREATE TRIGGER memory_storage_space_insert AFTER INSERT ON memory_spaces BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'space' AS kind,t.id AS ref,t.id AS space_id,length(CAST(t.name AS BLOB))+128 AS bytes FROM memory_spaces t WHERE t.id=NEW.id
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_space_update AFTER UPDATE ON memory_spaces BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'space' AS kind,t.id AS ref,t.id AS space_id,length(CAST(t.name AS BLOB))+128 AS bytes FROM memory_spaces t WHERE t.id=NEW.id
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_space_delete AFTER DELETE ON memory_spaces BEGIN
+ DELETE FROM memory_storage_items WHERE kind='space' AND ref=old.id;
+END;
+CREATE TRIGGER memory_storage_source_insert AFTER INSERT ON memory_sources BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'source' AS kind,t.id AS ref,t.space_id AS space_id,length(CAST(t.body AS BLOB))+length(CAST(coalesce(t.session_id,'') AS BLOB))+128 AS bytes FROM memory_sources t WHERE t.id=NEW.id
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_source_update AFTER UPDATE ON memory_sources BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'source' AS kind,t.id AS ref,t.space_id AS space_id,length(CAST(t.body AS BLOB))+length(CAST(coalesce(t.session_id,'') AS BLOB))+128 AS bytes FROM memory_sources t WHERE t.id=NEW.id
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_source_delete AFTER DELETE ON memory_sources BEGIN
+ DELETE FROM memory_storage_items WHERE kind='source' AND ref=old.id;
+END;
+CREATE TRIGGER memory_storage_revision_insert AFTER INSERT ON memory_record_versions BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'revision' AS kind,json_array(t.record_id,t.version) AS ref,r.space_id AS space_id,length(CAST(n.content AS BLOB))+length(CAST(coalesce(t.attributes,'') AS BLOB))+128 AS bytes FROM memory_record_versions t JOIN memory_records r ON r.id=t.record_id JOIN notes n ON n.id=t.note_id WHERE t.record_id=NEW.record_id AND t.version=NEW.version
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_revision_update AFTER UPDATE ON memory_record_versions BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'revision' AS kind,json_array(t.record_id,t.version) AS ref,r.space_id AS space_id,length(CAST(n.content AS BLOB))+length(CAST(coalesce(t.attributes,'') AS BLOB))+128 AS bytes FROM memory_record_versions t JOIN memory_records r ON r.id=t.record_id JOIN notes n ON n.id=t.note_id WHERE t.record_id=NEW.record_id AND t.version=NEW.version
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_revision_delete AFTER DELETE ON memory_record_versions BEGIN
+ DELETE FROM memory_storage_items WHERE kind='revision' AND ref=json_array(old.record_id,old.version);
+END;
+CREATE TRIGGER memory_storage_checkpoint_insert AFTER INSERT ON memory_checkpoints BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'checkpoint' AS kind,json_array(t.space_id,t.name) AS ref,t.space_id AS space_id,length(CAST(t.data AS BLOB))+length(CAST(t.name AS BLOB))+128 AS bytes FROM memory_checkpoints t WHERE t.space_id=NEW.space_id AND t.name=NEW.name
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_checkpoint_update AFTER UPDATE ON memory_checkpoints BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'checkpoint' AS kind,json_array(t.space_id,t.name) AS ref,t.space_id AS space_id,length(CAST(t.data AS BLOB))+length(CAST(t.name AS BLOB))+128 AS bytes FROM memory_checkpoints t WHERE t.space_id=NEW.space_id AND t.name=NEW.name
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_checkpoint_delete AFTER DELETE ON memory_checkpoints BEGIN
+ DELETE FROM memory_storage_items WHERE kind='checkpoint' AND ref=json_array(old.space_id,old.name);
+END;
+CREATE TRIGGER memory_storage_vocabulary_insert AFTER INSERT ON memory_vocabularies BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'vocabulary' AS kind,json_array(t.space_id,t.version) AS ref,t.space_id AS space_id,length(CAST(t.definition AS BLOB))+128 AS bytes FROM memory_vocabularies t WHERE t.space_id=NEW.space_id AND t.version=NEW.version
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_vocabulary_update AFTER UPDATE ON memory_vocabularies BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'vocabulary' AS kind,json_array(t.space_id,t.version) AS ref,t.space_id AS space_id,length(CAST(t.definition AS BLOB))+128 AS bytes FROM memory_vocabularies t WHERE t.space_id=NEW.space_id AND t.version=NEW.version
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_vocabulary_delete AFTER DELETE ON memory_vocabularies BEGIN
+ DELETE FROM memory_storage_items WHERE kind='vocabulary' AND ref=json_array(old.space_id,old.version);
+END;
+CREATE TRIGGER memory_storage_receipt_insert AFTER INSERT ON memory_requests BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'receipt' AS kind,json_array(t.principal_id,t.space_id,t.request_key) AS ref,s.id AS space_id,length(CAST(t.response AS BLOB))+length(CAST(t.request_key AS BLOB))+192 AS bytes FROM memory_requests t JOIN memory_spaces s ON s.id=CASE WHEN t.space_id='' THEN json_extract(t.response,'$.id') ELSE t.space_id END WHERE t.principal_id=NEW.principal_id AND t.space_id=NEW.space_id AND t.request_key=NEW.request_key
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_receipt_update AFTER UPDATE ON memory_requests BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'receipt' AS kind,json_array(t.principal_id,t.space_id,t.request_key) AS ref,s.id AS space_id,length(CAST(t.response AS BLOB))+length(CAST(t.request_key AS BLOB))+192 AS bytes FROM memory_requests t JOIN memory_spaces s ON s.id=CASE WHEN t.space_id='' THEN json_extract(t.response,'$.id') ELSE t.space_id END WHERE t.principal_id=NEW.principal_id AND t.space_id=NEW.space_id AND t.request_key=NEW.request_key
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_receipt_delete AFTER DELETE ON memory_requests BEGIN
+ DELETE FROM memory_storage_items WHERE kind='receipt' AND ref=json_array(old.principal_id,old.space_id,old.request_key);
+END;
+CREATE TRIGGER memory_storage_event_insert AFTER INSERT ON memory_service_events BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'event' AS kind,CAST(t.seq AS TEXT) AS ref,t.space_id AS space_id,length(CAST(t.operation AS BLOB))+length(CAST(coalesce(t.reference_id,'') AS BLOB))+128 AS bytes FROM memory_service_events t WHERE t.seq=NEW.seq
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_event_update AFTER UPDATE ON memory_service_events BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'event' AS kind,CAST(t.seq AS TEXT) AS ref,t.space_id AS space_id,length(CAST(t.operation AS BLOB))+length(CAST(coalesce(t.reference_id,'') AS BLOB))+128 AS bytes FROM memory_service_events t WHERE t.seq=NEW.seq
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_event_delete AFTER DELETE ON memory_service_events BEGIN
+ DELETE FROM memory_storage_items WHERE kind='event' AND ref=CAST(old.seq AS TEXT);
+END;
+CREATE TRIGGER memory_storage_grant_insert AFTER INSERT ON memory_grants BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'grant' AS kind,json_array(t.space_id,t.principal_id) AS ref,t.space_id AS space_id,128 AS bytes FROM memory_grants t WHERE t.space_id=NEW.space_id AND t.principal_id=NEW.principal_id
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_grant_update AFTER UPDATE ON memory_grants BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'grant' AS kind,json_array(t.space_id,t.principal_id) AS ref,t.space_id AS space_id,128 AS bytes FROM memory_grants t WHERE t.space_id=NEW.space_id AND t.principal_id=NEW.principal_id
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_grant_delete AFTER DELETE ON memory_grants BEGIN
+ DELETE FROM memory_storage_items WHERE kind='grant' AND ref=json_array(old.space_id,old.principal_id);
+END;
+CREATE TRIGGER memory_storage_job_insert AFTER INSERT ON memory_index_jobs BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'job' AS kind,t.id AS ref,t.space_id AS space_id,length(CAST(t.model AS BLOB))+256 AS bytes FROM memory_index_jobs t WHERE t.id=NEW.id
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_job_update AFTER UPDATE ON memory_index_jobs BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'job' AS kind,t.id AS ref,t.space_id AS space_id,length(CAST(t.model AS BLOB))+256 AS bytes FROM memory_index_jobs t WHERE t.id=NEW.id
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_job_delete AFTER DELETE ON memory_index_jobs BEGIN
+ DELETE FROM memory_storage_items WHERE kind='job' AND ref=old.id;
+END;
+CREATE TRIGGER memory_storage_vector_insert AFTER INSERT ON memory_vectors BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'vector' AS kind,json_array(t.note_id,t.model) AS ref,r.space_id AS space_id,length(CAST(t.vector AS BLOB))+length(CAST(t.model AS BLOB))+128 AS bytes FROM memory_vectors t JOIN memory_record_versions v ON v.note_id=t.note_id JOIN memory_records r ON r.id=v.record_id WHERE t.note_id=NEW.note_id AND t.model=NEW.model
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_vector_update AFTER UPDATE ON memory_vectors BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes)
+ SELECT 'vector' AS kind,json_array(t.note_id,t.model) AS ref,r.space_id AS space_id,length(CAST(t.vector AS BLOB))+length(CAST(t.model AS BLOB))+128 AS bytes FROM memory_vectors t JOIN memory_record_versions v ON v.note_id=t.note_id JOIN memory_records r ON r.id=v.record_id WHERE t.note_id=NEW.note_id AND t.model=NEW.model
+ ON CONFLICT(kind,ref) DO UPDATE SET space_id=excluded.space_id,bytes=excluded.bytes;
+END;
+CREATE TRIGGER memory_storage_vector_delete AFTER DELETE ON memory_vectors BEGIN
+ DELETE FROM memory_storage_items WHERE kind='vector' AND ref=json_array(old.note_id,old.model);
+END;
+CREATE TRIGGER memory_storage_note_update AFTER UPDATE OF content ON notes BEGIN
+ UPDATE memory_storage_items SET bytes=length(CAST(new.content AS BLOB))+128+
+ (SELECT length(CAST(coalesce(v.attributes,'') AS BLOB)) FROM memory_record_versions v WHERE v.note_id=new.id)
+ WHERE kind='revision' AND ref=(SELECT json_array(v.record_id,v.version) FROM memory_record_versions v WHERE v.note_id=new.id);
+END;
+CREATE VIEW memory_storage_projection AS
+SELECT 'space' AS kind,t.id AS ref,t.id AS space_id,length(CAST(t.name AS BLOB))+128 AS bytes FROM memory_spaces t
+UNION ALL
+SELECT 'source' AS kind,t.id AS ref,t.space_id AS space_id,length(CAST(t.body AS BLOB))+length(CAST(coalesce(t.session_id,'') AS BLOB))+128 AS bytes FROM memory_sources t
+UNION ALL
+SELECT 'revision' AS kind,json_array(t.record_id,t.version) AS ref,r.space_id AS space_id,length(CAST(n.content AS BLOB))+length(CAST(coalesce(t.attributes,'') AS BLOB))+128 AS bytes FROM memory_record_versions t JOIN memory_records r ON r.id=t.record_id JOIN notes n ON n.id=t.note_id
+UNION ALL
+SELECT 'checkpoint' AS kind,json_array(t.space_id,t.name) AS ref,t.space_id AS space_id,length(CAST(t.data AS BLOB))+length(CAST(t.name AS BLOB))+128 AS bytes FROM memory_checkpoints t
+UNION ALL
+SELECT 'vocabulary' AS kind,json_array(t.space_id,t.version) AS ref,t.space_id AS space_id,length(CAST(t.definition AS BLOB))+128 AS bytes FROM memory_vocabularies t
+UNION ALL
+SELECT 'receipt' AS kind,json_array(t.principal_id,t.space_id,t.request_key) AS ref,s.id AS space_id,length(CAST(t.response AS BLOB))+length(CAST(t.request_key AS BLOB))+192 AS bytes FROM memory_requests t JOIN memory_spaces s ON s.id=CASE WHEN t.space_id='' THEN json_extract(t.response,'$.id') ELSE t.space_id END
+UNION ALL
+SELECT 'event' AS kind,CAST(t.seq AS TEXT) AS ref,t.space_id AS space_id,length(CAST(t.operation AS BLOB))+length(CAST(coalesce(t.reference_id,'') AS BLOB))+128 AS bytes FROM memory_service_events t
+UNION ALL
+SELECT 'grant' AS kind,json_array(t.space_id,t.principal_id) AS ref,t.space_id AS space_id,128 AS bytes FROM memory_grants t
+UNION ALL
+SELECT 'job' AS kind,t.id AS ref,t.space_id AS space_id,length(CAST(t.model AS BLOB))+256 AS bytes FROM memory_index_jobs t
+UNION ALL
+SELECT 'vector' AS kind,json_array(t.note_id,t.model) AS ref,r.space_id AS space_id,length(CAST(t.vector AS BLOB))+length(CAST(t.model AS BLOB))+128 AS bytes FROM memory_vectors t JOIN memory_record_versions v ON v.note_id=t.note_id JOIN memory_records r ON r.id=v.record_id;
+INSERT INTO memory_storage_items SELECT * FROM memory_storage_projection;
+`,
+  },
 ];

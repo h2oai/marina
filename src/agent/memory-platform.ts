@@ -194,8 +194,10 @@ export class PlatformMemoryBackend {
     messages: unknown[],
     summary: string,
     compactionPool?: string,
+    signal?: AbortSignal,
   ): Promise<void> {
-    await this.durable.archive(messages, summary);
+    await this.durable.archive(messages, summary, signal);
+    signal?.throwIfAborted();
     if (compactionPool) {
       try {
         const shared = await this.share(
@@ -213,8 +215,8 @@ export class PlatformMemoryBackend {
     }
   }
 
-  async journalMessage(message: unknown): Promise<void> {
-    await this.durable.journal(message);
+  async journalMessage(message: unknown, signal?: AbortSignal): Promise<void> {
+    await this.durable.journal(message, signal);
   }
 
   async saveCheckpoint(data: Record<string, unknown>): Promise<PlatformMemoryResult> {

@@ -16,6 +16,8 @@ import type {
   UserMessage,
 } from "@mariozechner/pi-ai";
 
+import { withMemoryAbort } from "../sdk/memory-abort";
+
 // ─── Token Estimation ───────────────────────────────────────────────────────
 
 // Characters per token. ~4 holds for English prose, but agent transcripts are
@@ -46,8 +48,16 @@ export interface ContextManagerOptions {
   pruneTarget?: number;
   maxToolResultTokens?: number;
   minRecentMessages?: number;
-  onBeforeCompact?: (originalMessages: AgentMessage[], summary: string) => void | Promise<void>;
-  summarizeWithLLM?: (messages: AgentMessage[], ruleBasedFallback: string) => Promise<string>;
+  onBeforeCompact?: (
+    originalMessages: AgentMessage[],
+    summary: string,
+    signal?: AbortSignal,
+  ) => void | Promise<void>;
+  summarizeWithLLM?: (
+    messages: AgentMessage[],
+    ruleBasedFallback: string,
+    signal?: AbortSignal,
+  ) => Promise<string>;
 }
 
 /**
@@ -79,15 +89,25 @@ export function createContextManager(options: ContextManagerOptions) {
     summarizeWithLLM,
   } = options;
 
-  return async (messages: AgentMessage[]): Promise<AgentMessage[]> => {
+  return async (messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> => {
+    signal?.throwIfAborted();
     const finish = async (result: AgentMessage[]) => {
+      signal?.throwIfAborted();
       if (
         onBeforeCompact &&
         (result.length !== messages.length || result.some((message, i) => message !== messages[i]))
       ) {
         try {
-          await onBeforeCompact(messages, summarizeMessages(messages as Message[]));
+          await withMemoryAbort(
+            () =>
+              Promise.resolve(
+                onBeforeCompact(messages, summarizeMessages(messages as Message[]), signal),
+              ),
+            signal,
+          );
+          signal?.throwIfAborted();
         } catch (cause) {
+          signal?.throwIfAborted();
           throw new ContextPersistenceError("Context archival failed; original messages retained", {
             cause,
           });
@@ -145,7 +165,11 @@ export function createContextManager(options: ContextManagerOptions) {
       const budgetForMessages = contextWindow * targetRatio - systemTokens;
 
       if (budgetForMessages <= 0) {
-        return truncateOversizedToolResults(messages.slice(-keepRecent), maxToolResultTokens);
+        return await finish(
+          stripOrphanedToolResults(
+            truncateOversizedToolResults(messages.slice(-keepRecent), maxToolResultTokens),
+          ),
+        );
       }
 
       const first = messages[0]!;
@@ -171,8 +195,12 @@ export function createContextManager(options: ContextManagerOptions) {
         let summary: string;
         if (summarizeWithLLM) {
           try {
-            summary = await summarizeWithLLM(middleMessages, ruleBasedSummary);
+            summary = await withMemoryAbort(
+              () => summarizeWithLLM(middleMessages, ruleBasedSummary, signal),
+              signal,
+            );
           } catch {
+            signal?.throwIfAborted();
             summary = ruleBasedSummary;
           }
         } else {
@@ -226,6 +254,7 @@ export function createContextManager(options: ContextManagerOptions) {
       // run this last so no path escapes without the pairing invariant.
       return await finish(stripOrphanedToolResults(finalResult));
     } catch (error) {
+      signal?.throwIfAborted();
       if (error instanceof ContextPersistenceError) throw error;
       console.error("[context-manager] Error during context transform, passing through:", error);
       // Even on the error path, don't pass through a corrupted history.

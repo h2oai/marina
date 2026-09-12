@@ -5,7 +5,8 @@ import { MemoryClientError } from "../sdk/memory-client";
 import type { MemoryOperationRequest, MemoryOperationResult } from "../sdk/memory-operations";
 
 export const MEMORY_SERVICE_HELP = `Portable memory service (private to your durable world account):
-  memory service                         show your space and capabilities
+  memory service                         show service capabilities
+  memory usage                           show your storage usage and limits
   memory remember <text>                 store a plain memory
   memory claim <subject> <predicate> <JSON scalar>
   memory relate <subject> <predicate> <entity ID>
@@ -37,6 +38,8 @@ export function parseMemoryServiceCommand(args: string): MemoryOperationRequest 
     }
   };
   switch (sub) {
+    case "usage":
+      return { operation: "usage" };
     case "service":
       return { operation: "capabilities" };
     case "api":

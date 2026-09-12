@@ -71,6 +71,9 @@ class MarinaMemory:
     def reindex(self, expected_generation, key=None):
         return self.request(self._path("/reindex"), "POST", {"expected_generation": expected_generation}, key)
 
+    def usage(self):
+        return self.request("/usage")
+
     def capture(self, content, session_id=None, key=None):
         return self.request(self._path("/sources"), "POST", {"content": content, "session_id": session_id} if session_id is not None else {"content": content}, key)
 

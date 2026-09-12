@@ -6,6 +6,7 @@ import { statSync } from "node:fs";
 import type { AgentSupports } from "../agent/agent-types";
 import type { Session } from "../auth/session-manager";
 import type { NoteTier } from "../engine/constants";
+import type { MemoryStorageAmounts } from "../sdk/memory-types";
 import type { EngineEvent, Entity, EntityId, RoomId } from "../types";
 import type { TraitCapabilities } from "./db-agents";
 import * as agentsDb from "./db-agents";
@@ -24,6 +25,7 @@ import * as intellectsDb from "./db-intellects";
 import * as journeysDb from "./db-journeys";
 import * as logsDb from "./db-logs";
 import * as mediaDb from "./db-media";
+import { configureMemoryStorage, memoryLimitsFromEnv } from "./db-memory-storage";
 import * as meshesDb from "./db-meshes";
 import * as mutationsDb from "./db-mutations";
 import * as notesDb from "./db-notes";
@@ -292,9 +294,18 @@ export class MarinaDB {
 
   readonly durability: "normal" | "full";
 
-  constructor(path = "marina.db", options: { durability?: "normal" | "full" } = {}) {
+  constructor(
+    path = "marina.db",
+    options: { durability?: "normal" | "full"; memoryLimits?: Partial<MemoryStorageAmounts> } = {},
+  ) {
     this.durability = options.durability ?? "normal";
     this.db = new Database(path);
+    try {
+      configureMemoryStorage(this.db, options.memoryLimits ?? memoryLimitsFromEnv());
+    } catch (error) {
+      this.db.close();
+      throw error;
+    }
     this.db.exec("PRAGMA journal_mode=WAL");
     this.db.exec(
       this.durability === "full" ? "PRAGMA synchronous=FULL" : "PRAGMA synchronous=NORMAL",

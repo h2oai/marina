@@ -53,6 +53,12 @@ if (mode === "inspect") {
     after = page.sources.at(-1)!.seq;
   }
   require(count === cycle * 2, "Duplicated or missing source writes");
+  const storage = await client.usage();
+  require(storage.usage.sources === count &&
+    storage.usage.revisions === cycle * 3 &&
+    storage.usage.spaces === 1, "Storage accounting did not survive restart/restore");
+  require(storage.over_limit.length === 0 &&
+    storage.usage.logical_bytes > 0, "Unexpected storage admission state");
   require((await client.sourceRange(space, checkpoint.data.original as string)).text ===
     original(cycle), "Original bytes lost");
   console.log(
@@ -60,6 +66,7 @@ if (mode === "inspect") {
       passed: true,
       checkpoint_version: checkpoint.version,
       sources: count,
+      storage: storage.usage,
       root_version: root.version,
       derived: derived.freshness,
     }),

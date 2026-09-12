@@ -156,6 +156,7 @@ try {
       "Same item and batch keys after agent exit before SDK receipt, followed by server SIGKILL",
     assertions: [
       "exactly one source per item",
+      "owner storage accounting survives restart and snapshot restore",
       "fresh agent resumes checkpoint",
       "original Unicode bytes preserved",
       "revision CAS rejects stale review",

@@ -32,6 +32,7 @@ import {
 } from "./db-memory-dependencies";
 import { memoryDatabaseHealth } from "./db-memory-maintenance";
 import { readMemorySourceRange, searchMemorySources } from "./db-memory-sources";
+import { enforceMemoryStorage, memoryStorageUsage } from "./db-memory-storage";
 import { createNote, deleteNote, getNote, reviseNote } from "./db-notes";
 import type { MemoryActor, MemoryScope } from "./db-principals";
 import { buildFtsQuery } from "./fts";
@@ -140,6 +141,14 @@ export function mutation<T extends MemoryReceipt>(
         throw new MemoryError(409, "idempotency_conflict", "This key was used for different input");
       return JSON.parse(previous.response) as T;
     }
+    const owner = space
+      ? (
+          db.query("SELECT owner_id FROM memory_spaces WHERE id=?").get(space) as {
+            owner_id: string;
+          }
+        ).owner_id
+      : actor.principalId;
+    const before = memoryStorageUsage(db, owner).usage;
     const result = run();
     db.run("INSERT INTO memory_requests VALUES (?,?,?,?,?,?)", [
       actor.principalId,
@@ -149,6 +158,12 @@ export function mutation<T extends MemoryReceipt>(
       JSON.stringify(result),
       Date.now(),
     ]);
+    // Explicit removal and revocation remain possible at the admission limit.
+    if (
+      operation !== "memory.forget" &&
+      !(operation === "space.grant" && (input as { role?: unknown }).role === null)
+    )
+      enforceMemoryStorage(db, owner, before);
     return result;
   })();
 }
@@ -843,6 +858,7 @@ export function finishMemoryIndexJob(
   db: Database,
   job: MemoryIndexJob,
   vector?: number[],
+  failure: "embedding_failed" | "quota_exceeded" = "embedding_failed",
 ): boolean {
   return db.transaction(() => {
     const current = db
@@ -853,9 +869,10 @@ export function finishMemoryIndexJob(
     if (!current) return false;
     if (!vector) {
       db.run(
-        "UPDATE memory_index_jobs SET state=?,error='embedding_failed',lease_token=NULL,lease_until=? WHERE id=?",
+        "UPDATE memory_index_jobs SET state=?,error=?,lease_token=NULL,lease_until=? WHERE id=?",
         [
           job.attempts >= 3 ? "failed" : "pending",
+          failure,
           Date.now() + 1000 * 2 ** Math.min(job.attempts, 6),
           job.id,
         ],
@@ -878,6 +895,12 @@ export function finishMemoryIndexJob(
         "embedding_dimension_changed",
         "Embedding dimensions changed without a model version change",
       );
+    const owner = (
+      db.query("SELECT owner_id FROM memory_spaces WHERE id=?").get(job.space_id) as {
+        owner_id: string;
+      }
+    ).owner_id;
+    const before = memoryStorageUsage(db, owner).usage;
     db.run(
       "INSERT INTO memory_vectors VALUES (?,?,?,?) ON CONFLICT(note_id,model) DO UPDATE SET dimensions=excluded.dimensions,vector=excluded.vector",
       [job.note_id, job.model, vector.length, JSON.stringify(vector)],
@@ -886,6 +909,7 @@ export function finishMemoryIndexJob(
       "UPDATE memory_index_jobs SET state='ready',error=NULL,lease_token=NULL,lease_until=NULL WHERE id=?",
       [job.id],
     );
+    enforceMemoryStorage(db, owner, before);
     return true;
   })();
 }
@@ -1234,6 +1258,10 @@ export function graphMemory(
 export function memoryRepository(db: Database) {
   return {
     healthy: () => memoryDatabaseHealth(db),
+    usage: (actor: MemoryActor) => {
+      requireActor(db, actor, "memory:read");
+      return memoryStorageUsage(db, actor.principalId);
+    },
     captureBatch: (actor: MemoryActor, space: string, items: unknown, key: string) =>
       captureMemoryBatch(db, actor, space, items, key),
     vocabulary: (actor: MemoryActor, space: string, version?: number) =>
@@ -1321,7 +1349,11 @@ export function memoryRepository(db: Database) {
     reindex: (actor: MemoryActor, space: string, expected: number, model: string, key: string) =>
       reindexMemorySpace(db, actor, space, expected, model, key),
     claimJob: (model: string) => claimMemoryIndexJob(db, model),
-    finishJob: (job: MemoryIndexJob, vector?: number[]) => finishMemoryIndexJob(db, job, vector),
+    finishJob: (
+      job: MemoryIndexJob,
+      vector?: number[],
+      failure?: "embedding_failed" | "quota_exceeded",
+    ) => finishMemoryIndexJob(db, job, vector, failure),
     job: (actor: MemoryActor, space: string, id: string) =>
       readMemoryIndexJob(db, actor, space, id),
     forget: (actor: MemoryActor, space: string, input: ForgetMemoryInput, key: string) =>

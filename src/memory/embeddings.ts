@@ -6,7 +6,7 @@ import { MemoryError } from "./service-types";
 export interface EmbeddingProvider {
   /** Include the immutable model revision and preprocessing version. */
   id: string;
-  embed(text: string): Promise<number[]>;
+  embed(text: string, signal?: AbortSignal): Promise<number[]>;
 }
 
 export function validEmbedding(vector: unknown): vector is number[] {
@@ -33,12 +33,12 @@ export function ollamaEmbeddings(
     throw new Error("An embedding model and immutable revision are required");
   return {
     id: `ollama:${model}@${revision}:raw-v1`,
-    async embed(text) {
+    async embed(text, signal) {
       const response = await fetch(new URL("/api/embed", base), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model, input: text, truncate: false }),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]),
         redirect: "error",
       });
       if (!response.ok)

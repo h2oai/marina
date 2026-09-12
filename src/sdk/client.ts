@@ -236,7 +236,9 @@ export class MarinaClient {
   memoryService(
     request: MemoryOperationRequest,
     timeoutMs = 35_000,
+    signal?: AbortSignal,
   ): Promise<MemoryOperationResult> {
+    if (signal?.aborted) return Promise.reject(signal.reason);
     if (!this.session) return Promise.reject(new Error("Not connected. Call connect() first."));
     const requestId = crypto.randomUUID();
     return new Promise((resolve, reject) => {
@@ -258,6 +260,10 @@ export class MarinaClient {
           ),
         );
       };
+      const aborted = () => {
+        cleanup();
+        reject(signal?.reason);
+      };
       const timer = setTimeout(() => {
         cleanup();
         reject(
@@ -272,13 +278,20 @@ export class MarinaClient {
         clearTimeout(timer);
         this.offPerception(handler);
         this.off("disconnect", disconnected);
+        signal?.removeEventListener("abort", aborted);
       };
       this.onPerception(handler);
       this.on("disconnect", disconnected);
-      this.send({
-        type: "command",
-        command: `memory api ${JSON.stringify({ ...request, request_id: requestId })}`,
-      });
+      signal?.addEventListener("abort", aborted, { once: true });
+      try {
+        this.send({
+          type: "command",
+          command: `memory api ${JSON.stringify({ ...request, request_id: requestId })}`,
+        });
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
     });
   }
 

@@ -273,7 +273,8 @@ unsupported fields are rejected. Plans contain up to eight read steps, with up t
 per step and a total limit of 100 evidence items. `max_bytes` bounds serialized evidence items
 (256–131,072 bytes), not the entire response envelope. Traces expose inputs, evidence and
 truncation. `answer_sufficiency:"not_assessed"` explicitly leaves answer evaluation to the agent.
-Any space mutation or vocabulary change makes the plan stale and requires replanning.
+Evidence, vocabulary or access changes make the plan stale and require replanning.
+Checkpoint-only writes preserve new plans carrying `retrieval_generation`.
 
 To ask Marina's existing model router to generate the read plan, configure the memory server:
 
@@ -383,3 +384,90 @@ Reproduce process recovery and lost-receipt tests with:
 ```bash
 bun run qualify:memory:reliability --cycles 100 --output /tmp/marina-memory-recovery.json
 ```
+
+
+## Storage admission and failure recovery
+
+`GET /v1/memory/usage`, TypeScript/Python `usage()`, generic MCP `{operation:"usage"}`, and
+in-world `memory usage` report the authenticated principal's owned-space totals, configured
+limits and `over_limit` dimensions. A shared writer consumes the space owner's budget; usage
+never reveals another owner's private totals. Inspecting usage does not create a resident space.
+
+Migration **105** adds rebuildable accounting projections and backfills existing memory.
+Limits apply to both world and standalone entry points. Configure positive safe integers in
+the environment and restart, or pass `memoryLimits` when constructing `MarinaDB`:
+
+| Setting | Default | Counted scope |
+|---|---:|---|
+| `MARINA_MEMORY_MAX_BYTES` | 1,073,741,824 | Logical UTF-8 payload bytes plus row allowances |
+| `MARINA_MEMORY_MAX_SOURCES` | 100,000 | Retained original source rows |
+| `MARINA_MEMORY_MAX_REVISIONS` | 100,000 | All retained record revisions, including superseded revisions |
+| `MARINA_MEMORY_MAX_SPACES` | 256 | Active owned spaces |
+
+Logical bytes include original source JSON, record revisions and attributes, current checkpoints,
+vocabulary versions, operation receipts/events, grants, optional index jobs and vectors. Row
+allowances cover bookkeeping approximately. Retry receipts are retained and charged, including
+receipts in forgotten spaces. Replacing a checkpoint can grow usage even when its current payload
+has the same size. There is no automatic TTL, history pruning, or model-selected eviction.
+
+A growing write that exceeds a dimension fails with `507 quota_exceeded`; its content, receipts,
+events and accounting roll back together. Atomic batches roll back in full. Same-key receipt
+replays consume no additional budget. Existing over-budget data stays readable after an operator
+lowers limits. Explicit forgetting and revocation remain admitted even when their audit receipts
+increase usage; these exceptions mean the budget is not an absolute ceiling. Existing SQLite
+pages, FTS indexes, WAL, other world tables and backups require separate deployment disk quotas,
+monitoring and retention. Forgetting does not necessarily shrink the physical database file.
+
+| Error | HTTP | Recovery |
+|---|---:|---|
+| `storage_busy` | 503, `Retry-After: 1` | Bounded same-key retry after contention clears |
+| `quota_exceeded` | 507 | Inspect usage; explicitly forget appropriate data or raise the owner's configured budget |
+| `storage_full` | 507 | Operator restores capacity before retrying the same request |
+| `storage_read_only` | 500 | Operator repairs write access |
+| `storage_io_error` | 500 | Operator investigates storage; preserve the original key for receipt recovery |
+| `storage_corrupt` | 500 | Operator verifies storage and performs a controlled restore |
+
+Fault classification uses real SQLite result codes, not error-message text. Generic failures
+never echo SQL or source content. The SDK does not automatically retry 500 or 507. A lost response
+or cancellation cannot prove that a write failed; after recovery, replay the exact payload and
+original idempotency key. Optional vector admission failures retain a pending job with
+`error:"quota_exceeded"`; the existing bounded retry policy eventually marks it failed. After
+raising capacity, a failed job needs an explicit reindex request. Original memories remain usable
+without vectors.
+
+## Request cancellation
+
+Use a per-operation TypeScript client view and pass the same signal to the retry helper:
+
+```ts
+const controller = new AbortController();
+const operation = memory.withSignal(controller.signal);
+const key = crypto.randomUUID();
+const payload = { tool: "test", result: "original result" };
+const pending = retryMemoryOperation(
+  () => operation.capture(space, payload, "task:123", key),
+  { signal: controller.signal },
+);
+// Attach your caller's usual error handling before cancelling.
+controller.abort();
+await pending; // Rejects with the cancellation reason.
+```
+
+`withSignal` leaves concurrent users of the base client unaffected. Cancellation stops local
+fetch/body waits, index polling and retry backoff, including non-cooperative custom transports.
+The memory-only MCP bridge forwards protocol cancellation to HTTP. Incoming HTTP requests check
+cancellation while reading bodies and waiting on query-planning or optional semantic providers.
+A cancelled optional query does not silently return degraded evidence. Cooperative configured
+providers receive the signal; synchronous SQLite work and already-sent commands are not
+preempted or rolled back by an abort.
+
+Residents pass the runtime signal through completed-message journals and the compaction archival
+barrier. Aborting a stalled capture prevents the next model call and keeps original local context;
+a cancelled queued journal will not start later. WebSocket `memoryService(request, timeoutMs,
+signal)` cancels its local response wait and removes listeners. World MCP commands already queued
+in the engine may still run. The synchronous Python SDK retains its existing timeout behavior;
+it does not expose `AbortSignal` cancellation.
+
+**Cancellation is not a rollback receipt.** A request sent before cancellation can still commit.
+Keep mutation keys outside retry callbacks and preserve them until the remote outcome is known.
+Cancellation does not make external tools transactional or retract already exported evidence.

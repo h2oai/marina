@@ -45,6 +45,8 @@ export async function residentMemoryOperation(
     binding = { client, expiresAt: credential.expiresAt };
     cache.set(user.id, binding);
   }
+  if (["usage", "capabilities", "me", "spaces", "create_space"].includes(request.operation))
+    return { ok: true as const, result: await runMemoryOperation(binding.client, request) };
   const space =
     request.space_id ??
     (await (binding.space ??= binding.client

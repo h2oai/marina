@@ -733,8 +733,17 @@ export class LeanAgentAdapter implements AgentHandle {
 
     // Every lossy context transform awaits durable capture of the original
     // messages. Failure aborts the model call without discarding local history.
-    const onBeforeCompact = async (messages: AgentMessage[], summary: string): Promise<void> => {
-      await this.platformMemory.archiveContext(messages, summary, this.config.compactionPool);
+    const onBeforeCompact = async (
+      messages: AgentMessage[],
+      summary: string,
+      signal?: AbortSignal,
+    ): Promise<void> => {
+      await this.platformMemory.archiveContext(
+        messages,
+        summary,
+        this.config.compactionPool,
+        signal,
+      );
     };
 
     // Context manager — transforms messages before each LLM call, prunes
@@ -2144,10 +2153,11 @@ The goal is a smaller, sharper memory — not more notes.`;
   // ─── Action Tracking ──────────────────────────────────────────────────
 
   private setupActionTracking(): void {
-    this.agent.subscribe(async (event) => {
+    this.agent.subscribe(async (event, signal) => {
       // pi-agent-core awaits message_end listeners before progressing to tools,
       // another model call, or idle. Partial streaming deltas are not receipts.
-      if (event.type === "message_end") await this.platformMemory.journalMessage(event.message);
+      if (event.type === "message_end")
+        await this.platformMemory.journalMessage(event.message, signal);
       // Reset in-run recovery counter on each new prompt() call so we
       // can attempt followUp-based recovery fresh every cycle.
       if (event.type === "agent_start") {

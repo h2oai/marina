@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import type { MarinaClient } from "../sdk/client";
+import { withMemoryAbort } from "../sdk/memory-abort";
 import { MemoryClientError } from "../sdk/memory-client";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
 import { retryMemoryOperation } from "../sdk/memory-retry";
@@ -32,27 +33,37 @@ export class DurableResidentMemory {
   private hadCheckpoint = false;
   constructor(private client: Pick<MarinaClient, "memoryService">) {}
 
-  private call<T>(request: MemoryOperationRequest): Promise<T> {
-    return retryMemoryOperation(async () => {
-      const result = await this.client.memoryService(request);
-      if (!result.ok)
-        throw new MemoryClientError(
-          result.error.status,
-          result.error.code,
-          result.error.message,
-          result.error.retry_after_ms,
-        );
-      return result.result as T;
-    });
+  private call<T>(request: MemoryOperationRequest, signal?: AbortSignal): Promise<T> {
+    return retryMemoryOperation(
+      async () => {
+        const result = await this.client.memoryService(request, undefined, signal);
+        if (!result.ok)
+          throw new MemoryClientError(
+            result.error.status,
+            result.error.code,
+            result.error.message,
+            result.error.retry_after_ms,
+          );
+        return result.result as T;
+      },
+      { signal },
+    );
   }
-  private serialize<T>(run: () => Promise<T>): Promise<T> {
-    const next = this.pending.then(run, run);
+  private serialize<T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const guarded = () => {
+      signal?.throwIfAborted();
+      return run();
+    };
+    const next = this.pending.then(guarded, guarded);
     this.pending = next.catch(() => {});
-    return next;
+    return withMemoryAbort(() => next, signal);
   }
-  async checkpoint(): Promise<MemoryCheckpoint | null> {
+  async checkpoint(signal?: AbortSignal): Promise<MemoryCheckpoint | null> {
     try {
-      const result = await this.call<MemoryCheckpoint>({ operation: "checkpoint", id: "resident" });
+      const result = await this.call<MemoryCheckpoint>(
+        { operation: "checkpoint", id: "resident" },
+        signal,
+      );
       this.hadCheckpoint = true;
       return result;
     } catch (error) {
@@ -65,8 +76,8 @@ export class DurableResidentMemory {
       throw error;
     }
   }
-  private async writableCheckpoint(): Promise<MemoryCheckpoint | null> {
-    const previous = await this.checkpoint();
+  private async writableCheckpoint(signal?: AbortSignal): Promise<MemoryCheckpoint | null> {
+    const previous = await this.checkpoint(signal);
     if (!previous && this.hadCheckpoint)
       throw new MemoryClientError(
         409,
@@ -75,43 +86,47 @@ export class DurableResidentMemory {
       );
     return previous;
   }
-  save(data: Record<string, unknown>): Promise<void> {
+  save(data: Record<string, unknown>, signal?: AbortSignal): Promise<void> {
     const snapshot = JSON.parse(JSON.stringify(data));
     return this.serialize(async () => {
-      const previous = await this.writableCheckpoint();
+      const previous = await this.writableCheckpoint(signal);
       const merged = { ...previous?.data, ...snapshot };
-      await this.call({
-        operation: "save_checkpoint",
-        id: "resident",
-        key: crypto.randomUUID(),
-        input: {
-          expected_version: previous?.version ?? 0,
-          source_cursor: previous?.source_cursor ?? 0,
-          source_ids: references(merged),
-          data: merged,
+      await this.call(
+        {
+          operation: "save_checkpoint",
+          id: "resident",
+          key: crypto.randomUUID(),
+          input: {
+            expected_version: previous?.version ?? 0,
+            source_cursor: previous?.source_cursor ?? 0,
+            source_ids: references(merged),
+            data: merged,
+          },
         },
-      });
+        signal,
+      );
       this.hadCheckpoint = true;
-    });
+    }, signal);
   }
-  archive(messages: unknown[], summary: string): Promise<void> {
+  archive(messages: unknown[], summary: string, signal?: AbortSignal): Promise<void> {
     // Snapshot before entering the asynchronous queue: callers may keep appending.
     const originals = JSON.stringify(messages),
       count = messages.length;
-    return this.serialize(() => this.persist(originals, count, summary, "archive"));
+    return this.serialize(() => this.persist(originals, count, summary, "archive", signal), signal);
   }
-  journal(message: unknown): Promise<void> {
+  journal(message: unknown, signal?: AbortSignal): Promise<void> {
     const original = JSON.stringify([message]);
-    return this.serialize(() => this.persist(original, 1, "", "journal"));
+    return this.serialize(() => this.persist(original, 1, "", "journal", signal), signal);
   }
   private async persist(
     original: string,
     messageCount: number,
     summary: string,
     kind: "archive" | "journal",
+    signal?: AbortSignal,
   ): Promise<void> {
     const hash = digest(original);
-    const previous = await this.writableCheckpoint();
+    const previous = await this.writableCheckpoint(signal);
     const prior = previous?.data[kind] as Archive | undefined;
     if (kind === "archive" && prior?.sha256 === hash) return;
     const operation = kind === "journal" ? crypto.randomUUID() : hash;
@@ -153,34 +168,40 @@ export class DurableResidentMemory {
         bytes += size;
         offset++;
       }
-      const receipt = await this.call<MemoryReceipt & { receipts: MemoryReceipt[] }>({
-        operation: "capture_batch",
-        key: `archive-batch:${this.session}:${digest(JSON.stringify(batch.map(([id]) => id)))}`,
-        input: {
-          items: batch.map(([id, content]) => ({
-            content,
-            session_id: this.session,
-            key: `archive:${this.session}:${id}`,
-          })),
+      const receipt = await this.call<MemoryReceipt & { receipts: MemoryReceipt[] }>(
+        {
+          operation: "capture_batch",
+          key: `archive-batch:${this.session}:${digest(JSON.stringify(batch.map(([id]) => id)))}`,
+          input: {
+            items: batch.map(([id, content]) => ({
+              content,
+              session_id: this.session,
+              key: `archive:${this.session}:${id}`,
+            })),
+          },
         },
-      });
+        signal,
+      );
       for (const [index, [id]] of batch.entries()) this.parts.set(id, receipt.receipts[index]!);
     }
     const sourceIds = ordered.map((id) => this.parts.get(id)!.id);
-    const manifest = await this.call<MemoryReceipt>({
-      operation: "capture",
-      key: `manifest:${this.session}:${operation}:${previous?.version ?? 0}`,
-      input: {
-        session_id: this.session,
-        content: {
-          format: "json-utf8-parts-v1",
-          source_ids: sourceIds,
-          sha256: hash,
-          kind,
-          previous_manifest_source_id: prior?.manifest_source_id ?? null,
+    const manifest = await this.call<MemoryReceipt>(
+      {
+        operation: "capture",
+        key: `manifest:${this.session}:${operation}:${previous?.version ?? 0}`,
+        input: {
+          session_id: this.session,
+          content: {
+            format: "json-utf8-parts-v1",
+            source_ids: sourceIds,
+            sha256: hash,
+            kind,
+            previous_manifest_source_id: prior?.manifest_source_id ?? null,
+          },
         },
       },
-    });
+      signal,
+    );
     const data = {
       lastIntent: "Resume the preserved conversation",
       ...previous?.data,
@@ -195,17 +216,20 @@ export class DurableResidentMemory {
       },
       timestamp: Date.now(),
     };
-    await this.call({
-      operation: "save_checkpoint",
-      id: "resident",
-      key: `checkpoint:${this.session}:${operation}:${previous?.version ?? 0}`,
-      input: {
-        expected_version: previous?.version ?? 0,
-        source_cursor: kind === "archive" ? manifest.seq! : (previous?.source_cursor ?? 0),
-        source_ids: references(data),
-        data,
+    await this.call(
+      {
+        operation: "save_checkpoint",
+        id: "resident",
+        key: `checkpoint:${this.session}:${operation}:${previous?.version ?? 0}`,
+        input: {
+          expected_version: previous?.version ?? 0,
+          source_cursor: kind === "archive" ? manifest.seq! : (previous?.source_cursor ?? 0),
+          source_ids: references(data),
+          data,
+        },
       },
-    });
+      signal,
+    );
     this.hadCheckpoint = true;
     // A bounded local optimization only; evicted entries still deduplicate remotely.
     while (this.parts.size > 4096) this.parts.delete(this.parts.keys().next().value!);

@@ -911,7 +911,10 @@ function memoryMcpResult(result: MemoryOperationResult): McpResult {
 /** Identical service tools for world sessions and credential-bound stdio clients. */
 function registerMemoryTools(
   mcp: McpServer,
-  runCmd: (request: MemoryOperationRequest, extra: { sessionId?: string }) => Promise<McpResult>,
+  runCmd: (
+    request: MemoryOperationRequest,
+    extra: { sessionId?: string; signal?: AbortSignal },
+  ) => Promise<McpResult>,
 ) {
   const space = z
     .string()
@@ -1008,14 +1011,18 @@ export function createMemoryMcpServer(client: MarinaMemoryClient, defaultSpace: 
     { capabilities: { tools: {} } },
   );
   const limiter = new RateLimiter();
-  async function runCmd(request: MemoryOperationRequest): Promise<McpResult> {
+  async function runCmd(
+    request: MemoryOperationRequest,
+    extra: { signal?: AbortSignal },
+  ): Promise<McpResult> {
+    extra.signal?.throwIfAborted();
     if (!limiter.consume("memory"))
       return memoryMcpResult({
         ok: false,
         error: { code: "rate_limited", message: "Rate limited. Please slow down.", status: 429 },
       });
     try {
-      const result = await runMemoryOperation(client, request, defaultSpace);
+      const result = await runMemoryOperation(client, request, defaultSpace, extra.signal);
       return memoryMcpResult({ ok: true, space_id: request.space_id ?? defaultSpace, result });
     } catch (error) {
       return memoryMcpResult(memoryOperationError(error));

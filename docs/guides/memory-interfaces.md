@@ -9,7 +9,7 @@ and the [current validation record](../research/memory-portable-implementation.m
 
 Build the package with `bun run build:memory`. In this checkout or a package containing that
 build, `marina/memory` exports a fetch-only client and public TypeScript types. It runs under
-Node (with fetch), Bun and browser bundlers. This source change has not been published to npm.
+Node, Bun and browser bundlers with `fetch` and `AbortSignal.any`/`timeout` support. This source change has not been published to npm.
 Keep server credentials in server code; a browser client must receive its own appropriately
 scoped credential and have network/CORS access.
 
@@ -60,7 +60,7 @@ bun run scripts/memory-mcp.ts --url http://127.0.0.1:3301 --credentials /absolut
 
 It exposes `memory_service`, `memory_remember`, `memory_query` and `memory_graph`. The generic
 service tool accepts `{operation, space_id?, id?, input?, key?}`. Its operations match the HTTP
-client: `capabilities`, `me`, `spaces`, `create_space`, `space`, `remember`, `get`, `revise`,
+client: `capabilities`, `usage`, `me`, `spaces`, `create_space`, `space`, `remember`, `get`, `revise`,
 `query`, `graph`, `search`, `context`, `capture`, `capture_batch`, `sources`, `source_search`, `source_range`,
 `plan`, `execute_plan`, `vocabulary`, `save_vocabulary`, `checkpoint`, `save_checkpoint`,
 `grant`, `forget`, `export`, `job`, `reindex`. `id` is the record, checkpoint name or job ID
@@ -169,3 +169,13 @@ capture; this explicit opt-in is best-effort and does not publish the raw archiv
 
 For revision-aware dependency review, bounded batch/retry contracts and operational snapshots,
 see the [reliability guide](memory-service.md#reliable-corrections-and-retries).
+
+
+Storage usage is available through `memory.usage()` (TypeScript/Python), the MCP service operation
+`usage`, or the human command `memory usage`. Limits aggregate all spaces owned by the current
+principal and include history and retry receipts. See [storage admission and recovery](memory-service.md#storage-admission-and-failure-recovery).
+
+TypeScript callers can use `memory.withSignal(signal)` and `retryMemoryOperation(..., {signal})`
+to stop local waits and retries. The memory-only MCP bridge forwards protocol cancellation;
+resident journaling uses the agent runtime signal. A sent write can still commit after abort:
+[reuse its original request key to recover the receipt](memory-service.md#request-cancellation).

@@ -3,6 +3,7 @@
 
 import { Database } from "bun:sqlite";
 import { getErrorMessage } from "../engine/errors";
+import { rebuildMemoryStorage } from "./db-memory-storage";
 
 // ─── Export Format ──────────────────────────────────────────────────────────
 
@@ -184,6 +185,7 @@ const SECRET_TABLES = new Set<string>([
  * every real table is either in EXPORT_TABLES or matches one of these.
  */
 export function isExcludedFromExport(table: string): boolean {
+  if (table === "memory_storage_items" || table === "memory_storage_usage") return true;
   if (table === "memory_source_text") return true; // Rebuilt from canonical sources on import.
   return (
     table === "sessions" ||
@@ -369,6 +371,7 @@ export function importState(
           "INSERT INTO memory_source_text SELECT seq,CASE WHEN json_type(body)='text' THEN json_extract(body,'$') ELSE body END FROM memory_sources",
         );
       }
+      if (tableExists(db, "memory_storage_items")) rebuildMemoryStorage(db);
       const violations = db.query("PRAGMA foreign_key_check").all() as Array<{
         table: string;
         rowid: number | null;

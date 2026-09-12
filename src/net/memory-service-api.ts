@@ -12,7 +12,9 @@ import {
   recordInput,
   textValue,
 } from "../memory/service-types";
+import { memoryStorageFailure } from "../persistence/db-memory-failures";
 import type { MemoryActor } from "../persistence/db-principals";
+import { withMemoryAbort } from "../sdk/memory-abort";
 
 const limiters = new WeakMap<MemoryService, RateLimiter>();
 const headers = {
@@ -20,6 +22,7 @@ const headers = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key",
   "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
+  "Access-Control-Expose-Headers": "Retry-After",
 };
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers });
 function includeStale(body: Record<string, unknown>): boolean | undefined {
@@ -29,26 +32,31 @@ function includeStale(body: Record<string, unknown>): boolean | undefined {
 }
 
 async function readBody(req: Request): Promise<Record<string, unknown>> {
+  req.signal.throwIfAborted();
   const reader = req.body?.getReader();
   if (!reader) throw new MemoryError(400, "invalid_json", "A JSON body is required");
   const chunks: Uint8Array[] = [];
   let bytes = 0;
   try {
     while (true) {
-      const { value, done } = await reader.read();
+      const { value, done } = await withMemoryAbort(() => reader.read(), req.signal);
       if (done) break;
       bytes += value.byteLength;
       if (bytes > 2 * 1024 * 1024) {
-        await reader.cancel();
+        // A custom stream may never settle cancellation; rejection must stay bounded.
+        void reader.cancel().catch(() => {});
         throw new MemoryError(413, "body_too_large", "JSON body exceeds 2 MiB");
       }
       chunks.push(value);
     }
+    req.signal.throwIfAborted();
     return object(JSON.parse(Buffer.concat(chunks).toString("utf8")));
   } catch (error) {
+    req.signal.throwIfAborted();
     if (error instanceof MemoryError) throw error;
     throw new MemoryError(400, "invalid_json", "Invalid JSON body");
   } finally {
+    if (req.signal.aborted) void reader.cancel(req.signal.reason).catch(() => {});
     reader.releaseLock();
   }
 }
@@ -79,6 +87,12 @@ export async function handleMemoryServiceApi(
   service: MemoryService,
 ): Promise<Response> {
   try {
+    if (req.signal.aborted)
+      throw new MemoryError(
+        499,
+        "request_cancelled",
+        "Request cancelled; an earlier write may still have committed",
+      );
     const url = new URL(req.url);
     const path = url.pathname.replace(/\/$/, "");
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers });
@@ -131,6 +145,7 @@ export async function handleMemoryServiceApi(
         "An Idempotency-Key of 1–128 characters is required",
       );
     const repo = service.repository;
+    if (path === "/v1/memory/usage" && req.method === "GET") return json(repo.usage(actor));
     if (path === "/v1/memory" && req.method === "GET") return json(service.capabilities());
     if (path === "/v1/memory/me" && req.method === "GET")
       return json({
@@ -151,9 +166,9 @@ export async function handleMemoryServiceApi(
     const rest = match[2] ?? "";
     if (!rest && req.method === "GET") return json(repo.authorize(actor, space));
     if (rest === "plan" && req.method === "POST")
-      return json(await createMemoryPlan(service, actor, space, await readBody(req)));
+      return json(await createMemoryPlan(service, actor, space, await readBody(req), req.signal));
     if (rest === "execute_plan" && req.method === "POST")
-      return json(await executeMemoryPlan(service, actor, space, await readBody(req)));
+      return json(await executeMemoryPlan(service, actor, space, await readBody(req), req.signal));
     if (rest === "vocabulary") {
       if (req.method === "GET")
         return json(
@@ -330,11 +345,16 @@ export async function handleMemoryServiceApi(
       const input = searchInput(body);
       return json(
         rest === "search"
-          ? await service.search(actor, space, input)
-          : await service.context(actor, space, {
-              ...input,
-              budget_tokens: integer(body.budget_tokens ?? 2048, "budget_tokens", 32, 32768),
-            }),
+          ? await service.search(actor, space, input, req.signal)
+          : await service.context(
+              actor,
+              space,
+              {
+                ...input,
+                budget_tokens: integer(body.budget_tokens ?? 2048, "budget_tokens", 32, 32768),
+              },
+              req.signal,
+            ),
       );
     }
     if (rest === "sources/batch" && req.method === "POST") {
@@ -426,8 +446,30 @@ export async function handleMemoryServiceApi(
     if (rest === "export" && req.method === "GET") return json(repo.export(actor, space));
     throw new MemoryError(404, "route_not_found", "Memory route not found");
   } catch (error) {
+    if (req.signal.aborted)
+      return json(
+        {
+          error: {
+            code: "request_cancelled",
+            message: "Request cancelled; a sent write may still have committed",
+          },
+        },
+        499,
+      );
     if (error instanceof MemoryError)
       return json({ error: { code: error.code, message: error.message } }, error.status);
+    const storage = memoryStorageFailure(error);
+    if (storage)
+      return Response.json(
+        { error: { code: storage.code, message: storage.message } },
+        {
+          status: storage.status,
+          headers: {
+            ...headers,
+            ...(storage.retryAfter ? { "Retry-After": storage.retryAfter } : {}),
+          },
+        },
+      );
     // Never echo SQL, provider bodies or caller content through generic errors.
     return json({ error: { code: "internal_error", message: "Memory operation failed" } }, 500);
   }

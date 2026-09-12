@@ -226,3 +226,16 @@ export interface MemoryJobStatus {
   error: string | null;
   created_at: number;
 }
+
+export interface MemoryStorageAmounts {
+  logical_bytes: number;
+  sources: number;
+  revisions: number;
+  spaces: number;
+}
+export interface MemoryStorageUsage {
+  owner_id: string;
+  usage: MemoryStorageAmounts;
+  limits: Readonly<MemoryStorageAmounts>;
+  over_limit: (keyof MemoryStorageAmounts)[];
+}

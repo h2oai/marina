@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { memoryRetryDelay, withMemoryAbort } from "./memory-abort";
 import type {
   ForgetMemoryInput,
   MemoryCheckpoint,
@@ -22,6 +23,7 @@ import type {
   MemorySourceSearch,
   MemorySourceSearchResult,
   MemorySpace,
+  MemoryStorageUsage,
   MemoryVocabulary,
   MemoryVocabularyDefinition,
 } from "./memory-types";
@@ -44,33 +46,48 @@ export class MarinaMemoryClient {
     private token: string,
     private timeoutMs = 35_000,
     private fetcher: (request: Request) => Promise<Response> = fetch,
+    private signal?: AbortSignal,
   ) {}
+  /** A per-operation view; concurrent users of the original client are unaffected. */
+  withSignal(signal: AbortSignal): MarinaMemoryClient {
+    return new MarinaMemoryClient(this.url, this.token, this.timeoutMs, this.fetcher, signal);
+  }
   async request<T>(
     path: string,
     method = "GET",
     body?: unknown,
     key: string = crypto.randomUUID(),
   ): Promise<T> {
-    const response = await this.fetcher(
-      new Request(`${this.url.replace(/\/$/, "")}/v1/memory${path}`, {
-        method,
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          "Content-Type": "application/json",
-          "Idempotency-Key": key,
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(this.timeoutMs),
-        redirect: "error",
-      }),
+    this.signal?.throwIfAborted();
+    const signal = AbortSignal.any([
+      AbortSignal.timeout(this.timeoutMs),
+      ...(this.signal ? [this.signal] : []),
+    ]);
+    const response = await withMemoryAbort(
+      () =>
+        this.fetcher(
+          new Request(`${this.url.replace(/\/$/, "")}/v1/memory${path}`, {
+            method,
+            headers: {
+              Authorization: `Bearer ${this.token}`,
+              "Content-Type": "application/json",
+              "Idempotency-Key": key,
+            },
+            body: body === undefined ? undefined : JSON.stringify(body),
+            signal,
+            redirect: "error",
+          }),
+        ),
+      signal,
     );
     const retryAfter = /^(\d+)(\.\d+)?$/.test(response.headers.get("Retry-After") ?? "")
       ? Number(response.headers.get("Retry-After")) * 1000
       : undefined;
     let result: T & { error?: { code: string; message: string } };
     try {
-      result = await response.json();
+      result = await withMemoryAbort(() => response.json(), signal);
     } catch (error) {
+      signal.throwIfAborted();
       // Proxies can return plain-text failures after an upstream write committed.
       // Preserve the status so explicit same-key retries can recover its receipt.
       if (!response.ok)
@@ -102,6 +119,9 @@ export class MarinaMemoryClient {
   }
   me() {
     return this.request<{ principal_id: string; credential_id: string; scopes: string[] }>("/me");
+  }
+  usage() {
+    return this.request<MemoryStorageUsage>("/usage");
   }
   capabilities() {
     return this.request<Record<string, unknown>>("");
@@ -289,7 +309,7 @@ export class MarinaMemoryClient {
       if (job.state === "ready") return;
       if (job.state === "failed" || job.state === "cancelled")
         throw new MemoryClientError(409, "index_job_failed", `Index job is ${job.state}`);
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await memoryRetryDelay(200, this.signal);
     }
     throw new MemoryClientError(
       408,
