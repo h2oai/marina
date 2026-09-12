@@ -33,3 +33,7 @@ marina-desktop/artifacts/
 # Generated Python client bytecode
 __pycache__/
 *.py[cod]
+
+# Internal research and qualification reports belong in marina-internal.
+/docs/research/*
+!/docs/research/README.md

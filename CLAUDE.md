@@ -12,6 +12,7 @@ cd dashboard && bun run test  # Frontend smoke tests (vitest, ~24 tests)
 ```
 
 ## Code Style
+- **Documentation placement**: sensitive plans, strategy, competitive analysis, internal audits and qualification reports belong in the private `marina-internal` repository. Public documentation should contain user guides and reference material. Reusable source code, tests and qualification tools can remain public; save their internal reports outside this repository.
 - **Formatter**: Biome — line width 100, indent 2 spaces
 - **Imports**: alphabetical by path (biome organizeImports)
 - **Types**: branded `EntityId`, `RoomId` — cast in tests: `"e_1" as EntityId`

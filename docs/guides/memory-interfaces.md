@@ -2,8 +2,8 @@
 
 Marina's durable memory is text, evidence, typed claims and versioned state. Embeddings are
 optional indexes. Exact symbolic queries and graph traversal work with `--embeddings none`,
-without model downloads or inference. See the [service guide](memory-service.md) for provisioning
-and the [current validation record](../research/memory-portable-implementation.md) for limits.
+without model downloads or inference. See the [service guide](memory-service.md) for provisioning,
+API contracts, operating limits and reproducible checks.
 
 ## TypeScript and JavaScript
 
