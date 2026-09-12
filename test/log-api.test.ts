@@ -24,6 +24,8 @@ describe("structured log API", () => {
     const login = engine.login(connection.id, "LogReader");
     if ("error" in login) throw new Error(login.error);
     token = login.token;
+    // Global operational evidence requires an explicit operator identity.
+    engine.entities.get(connection.entity!)!.properties.rank = 9;
     db.appendStructuredLog({
       timestamp: 100,
       level: "error",

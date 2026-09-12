@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { formatSkillContent, loadSkillFile } from "../../agent/skill-import";
+import { memoryAccess } from "../../memory/access";
+import { memoryNoteResults, memoryResult } from "../../memory/command-result";
 import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
@@ -26,12 +28,12 @@ export function skillCommand(deps: {
         return;
       }
       const db = deps.db;
+      const access = memoryAccess(db, entity);
       const sub = input.tokens[0]?.toLowerCase();
 
       if (!sub) {
         // Check if agent has any skills — if not, guide them
-        const notes = db.getNotesByEntity(entity.name, 100);
-        const skills = notes.filter((n) => n.note_type === "skill");
+        const skills = db.getNotesByType(entity.name, "skill");
         if (skills.length === 0) {
           ctx.send(
             input.entity,
@@ -83,7 +85,12 @@ export function skillCommand(deps: {
         case "search": {
           const query = input.tokens.slice(1).join(" ");
           if (!query) {
-            ctx.send(input.entity, "Usage: skill search <query>");
+            ctx.send(
+              input.entity,
+              "Usage: skill search <query>",
+              undefined,
+              memoryResult("skill-search", { success: false, error: "Query required" }),
+            );
             return;
           }
           const results = db.recallNotesWithType(entity.name, query, "skill", {
@@ -92,7 +99,12 @@ export function skillCommand(deps: {
             weightRelevance: 0.4,
           });
           if (results.length === 0) {
-            ctx.send(input.entity, "No matching skills found.");
+            ctx.send(
+              input.entity,
+              "No matching skills found.",
+              undefined,
+              memoryResult("skill-search", { success: true, notes: [] }),
+            );
             return;
           }
           // Touch each to track recall
@@ -106,7 +118,12 @@ export function skillCommand(deps: {
               return `  #${n.id} [imp=${n.importance} score=${n.score.toFixed(2)}]: ${n.content.slice(0, 80)}`;
             }),
           ];
-          ctx.send(input.entity, lines.join("\n"));
+          ctx.send(
+            input.entity,
+            lines.join("\n"),
+            undefined,
+            memoryResult("skill-search", { success: true, notes: memoryNoteResults(results) }),
+          );
           return;
         }
 
@@ -117,7 +134,7 @@ export function skillCommand(deps: {
             return;
           }
           const note = db.getNote(id);
-          if (note?.note_type !== "skill") {
+          if (!access.write(note) || note.note_type !== "skill") {
             ctx.send(input.entity, `Skill #${id} not found.`);
             return;
           }
@@ -176,8 +193,7 @@ export function skillCommand(deps: {
         }
 
         case "list": {
-          const notes = db.getNotesByEntity(entity.name, 100);
-          const skills = notes.filter((n) => n.note_type === "skill");
+          const skills = db.getNotesByType(entity.name, "skill");
           if (skills.length === 0) {
             ctx.send(input.entity, "No skills stored.");
             return;
@@ -200,9 +216,7 @@ export function skillCommand(deps: {
         }
 
         case "audit": {
-          const notes = db
-            .getNotesByEntity(entity.name, 500)
-            .filter((n) => n.note_type === "skill");
+          const notes = db.getNotesByType(entity.name, "skill", 500);
           const report = auditKnowledgeNotes(notes, { knownCommands: deps.getCommandNames?.() });
           ctx.send(input.entity, renderKnowledgeHygieneReport("Skill library", report));
           return;
@@ -216,12 +230,12 @@ export function skillCommand(deps: {
             return;
           }
           const note = db.getNote(id);
-          if (note?.note_type !== "skill") {
+          if (!access.write(note) || note.note_type !== "skill") {
             ctx.send(input.entity, `Skill #${id} not found.`);
             return;
           }
           const pool = db.getMemoryPool(poolName);
-          if (!pool) {
+          if (!pool || !access.pool(pool)) {
             ctx.send(input.entity, `Pool "${poolName}" not found.`);
             return;
           }
@@ -260,8 +274,8 @@ export function skillCommand(deps: {
           }
           const skills = ids
             .map((id) => db.getNote(id))
-            .filter((n): n is NonNullable<typeof n> => n !== undefined && n.note_type === "skill");
-          if (skills.length < 2) {
+            .filter((n): n is NonNullable<typeof n> => access.read(n) && n.note_type === "skill");
+          if (skills.length < 2 || skills.length !== ids.length) {
             ctx.send(input.entity, "Need at least 2 valid skill notes to compose.");
             return;
           }

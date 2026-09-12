@@ -13,6 +13,8 @@ import {
   WS_MAX_TOTAL_CONNECTIONS,
 } from "../engine/constants";
 import type { Engine } from "../engine/engine";
+import type { MemoryService } from "../memory/service";
+import { worldMemoryService } from "../memory/world-service";
 import type { MarinaDB } from "../persistence/database";
 import type { StorageProvider } from "../storage/provider";
 import type { Connection, Perception } from "../types";
@@ -33,6 +35,7 @@ import { handleDashboardApi } from "./dashboard-api";
 import type { DashboardBroadcaster, DashboardWSData } from "./dashboard-ws";
 import { handleEntityApi } from "./entity-api";
 import { handleMemApi } from "./mem-api";
+import { handleMemoryServiceApi } from "./memory-service-api";
 import { handleModelApi } from "./model-api";
 import { handleProbeApi } from "./probe-api";
 
@@ -126,6 +129,7 @@ export class WebSocketServer {
   private ipConnections = new Map<string, number>();
   private totalConnections = 0;
   private broadcaster: DashboardBroadcaster | null = null;
+  private memoryService?: MemoryService;
   readonly canvasBroadcaster = new CanvasBroadcaster();
   private db?: MarinaDB;
   private storage?: StorageProvider;
@@ -152,6 +156,7 @@ export class WebSocketServer {
 
   setDb(db: MarinaDB): void {
     this.db = db;
+    this.memoryService = worldMemoryService(db);
   }
 
   setOnNodeCreated(cb: (event: CanvasNodeCreatedEvent) => void): void {
@@ -417,6 +422,9 @@ export class WebSocketServer {
           const entityResp = await handleEntityApi(url, req.method, self.db, engine);
           if (entityResp) return entityResp;
         }
+
+        if (url.pathname.startsWith("/v1/memory") && self.memoryService)
+          return handleMemoryServiceApi(req, self.memoryService);
 
         // Model API routes (OpenAI + Ollama compatible)
         if (url.pathname.startsWith("/v1/")) {

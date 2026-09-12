@@ -217,6 +217,14 @@ The `feed` canvas auto-populates from board posts, channel messages, and task ev
 
 ---
 
+## Portable memory service
+
+The world MCP server also exposes `memory_service`, `memory_remember`, `memory_query` and
+`memory_graph`. They reach the durable scoped service through the logged-in world account.
+For memory-only use, a stdio bridge connects directly to the HTTP memory service without
+joining a world. See [symbolic memory interfaces](memory-interfaces.md) for TypeScript,
+Claude Code, Codex and portable skill setup. Embeddings are optional.
+
 ## Available MCP Tools
 
 | Tool | What It Does |

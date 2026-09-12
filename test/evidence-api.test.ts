@@ -25,6 +25,8 @@ describe("evidence receipts API", () => {
     const login = engine.login(connection.id, "EvidenceReader");
     if ("error" in login) throw new Error(login.error);
     token = login.token;
+    // Global operational evidence requires an explicit operator identity.
+    engine.entities.get(connection.entity!)!.properties.rank = 9;
   });
 
   afterEach(() => {

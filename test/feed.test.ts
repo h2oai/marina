@@ -631,10 +631,12 @@ describe("Feed Canvas System", () => {
     });
 
     it("publishes pool_note events as feed nodes", () => {
+      db.createMemoryPool("public-findings", "findings", "Alice");
+      const noteId = db.addPoolNote("public-findings", "Alice", "The ore vein is at depth 3", 8);
       publisher.handleEvent({
         type: "pool_note",
         entity: entityId,
-        noteId: 7,
+        noteId,
         poolName: "findings",
         content: "The ore vein is at depth 3",
         importance: 8,
@@ -646,7 +648,7 @@ describe("Feed Canvas System", () => {
       expect(nodes).toHaveLength(1);
       const data = JSON.parse(nodes[0]!.data);
       expect(data.feedType).toBe("pool_note");
-      expect(data.ref).toBe("note:7");
+      expect(data.ref).toBe(`note:${noteId}`);
       expect(data.importance).toBe(8);
     });
 

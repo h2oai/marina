@@ -3,7 +3,7 @@
 
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { MarinaDB } from "../src/persistence/database";
+import { MarinaDB, MIGRATIONS } from "../src/persistence/database";
 import {
   EXPORT_TABLES,
   exportState,
@@ -29,6 +29,63 @@ describe("Export/Import", () => {
     srcDb.close();
     cleanupDb(SRC_DB);
     cleanupDb(DST_DB);
+  });
+
+  it("restores symbolic current claims and revision history without vectors or credentials", () => {
+    const principal = srcDb.ensurePrincipal({ type: "service", displayName: "symbolic-export" });
+    const credential = srcDb.issueMemoryCredential(principal.principal_id);
+    const actor = srcDb.verifyMemoryCredential(credential.token)!;
+    const repo = srcDb.memoryRepository();
+    const space = repo.createSpace(actor, "portable", "space").id;
+    const first = repo.remember(
+      actor,
+      space,
+      {
+        content: "original",
+        claim: {
+          subject: "task:portable",
+          predicate: "status",
+          object: { kind: "literal", value: false },
+        },
+      },
+      "first",
+    );
+    repo.revise(
+      actor,
+      space,
+      first.id,
+      1,
+      {
+        content: "current",
+        claim: {
+          subject: "task:portable",
+          predicate: "status",
+          object: { kind: "literal", value: true },
+        },
+      },
+      "revision",
+    );
+    const snapshot = exportState(SRC_DB);
+    expect(snapshot.tables.memory_claims).toHaveLength(1);
+    const destination = new MarinaDB(DST_DB);
+    destination.close();
+    expect(importState(DST_DB, snapshot).errors).toEqual([]);
+    const restored = new MarinaDB(DST_DB);
+    try {
+      expect(restored.verifyMemoryCredential(credential.token)).toBeUndefined();
+      const newCredential = restored.issueMemoryCredential(principal.principal_id);
+      const newActor = restored.verifyMemoryCredential(newCredential.token)!;
+      const records = restored
+        .memoryRepository()
+        .query(newActor, space, { subject: "task:portable" }).results;
+      expect(records[0]?.claim?.object).toEqual({ kind: "literal", value: true });
+      expect(restored.memoryRepository().read(newActor, space, first.id, 1).claim?.object).toEqual({
+        kind: "literal",
+        value: false,
+      });
+    } finally {
+      restored.close();
+    }
   });
 
   // ─── Seed helpers ──────────────────────────────────────────────────
@@ -389,7 +446,7 @@ describe("Export/Import", () => {
 
       expect(snapshot.format).toBe("marina-snapshot");
       expect(snapshot.version).toBe(1);
-      expect(snapshot.schema_version).toBe(95);
+      expect(snapshot.schema_version).toBe(MIGRATIONS.at(-1)!.version);
       expect(snapshot.exported_at).toBeTruthy();
 
       // Verify key tables are present

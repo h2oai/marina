@@ -1,0 +1,11 @@
+{
+  "name": "@marina/local-embeddings",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@huggingface/tokenizers": "0.2.0",
+    "onnxruntime-node": "1.21.0"
+  }
+}

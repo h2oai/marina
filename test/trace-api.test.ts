@@ -26,6 +26,8 @@ describe("Trace API", () => {
     const login = engine.login(conn.id, "TraceReader");
     if ("error" in login) throw new Error(`login failed: ${login.error}`);
     token = login.token;
+    // Global operational evidence requires an explicit operator identity.
+    engine.entities.get(conn.entity!)!.properties.rank = 9;
   });
 
   afterEach(() => {

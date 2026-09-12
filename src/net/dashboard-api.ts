@@ -42,6 +42,7 @@ import {
   verifyFederationDocument,
 } from "./federation-crypto";
 import { formatPerception } from "./formatter";
+import { memoryObserver } from "./memory-visibility";
 import { discoverModels } from "./model-discovery";
 import { type EndpointConfig, getEndpointConfig, setEndpointConfig } from "./model-endpoint";
 
@@ -399,6 +400,14 @@ export async function handleDashboardApi(
   const auth = authenticateRequest(req, engine);
   if ("error" in auth) return auth.error;
   const callerId = auth.entityId;
+  const memory = memoryObserver(engine, callerId);
+  if (
+    (url.pathname === "/api/traces" ||
+      url.pathname === "/api/logs" ||
+      url.pathname.startsWith("/api/evidence/")) &&
+    !memory.privilegedRead
+  )
+    return json({ error: "Operator read capability required" }, 403);
 
   // Logout: revoke the bearer token used for this request. Only affects the
   // token presented; other sessions for the same entity (e.g. another device)
@@ -416,7 +425,7 @@ export async function handleDashboardApi(
     return getEntities(engine);
   }
   if (url.pathname === "/api/events") {
-    return getEvents(engine, url);
+    return getEvents(engine, url, memory.event);
   }
   if (url.pathname === "/api/traces" && method === "GET") {
     return getTraces(engine, url, db);
@@ -692,17 +701,27 @@ export async function handleDashboardApi(
     return ok ? json({ ok: true }) : json({ error: "Alert not found" }, 404);
   }
   if (url.pathname === "/api/memory/quality" && method === "GET" && db) {
-    return json(db.getMemoryQualitySummary(url.searchParams.get("entity") ?? undefined));
+    const entity = url.searchParams.get("entity") ?? memory.entity?.name;
+    if (!memory.privilegedRead && entity !== memory.entity?.name)
+      return json({ error: "Not authorized" }, 403);
+    return json(db.getMemoryQualitySummary(entity));
   }
   if (url.pathname === "/api/memory/contradictions" && method === "GET" && db) {
     db.refreshContradictionCases();
     const status = url.searchParams.get("status") === "resolved" ? "resolved" : "open";
     return json(
-      db.listContradictionCases(status, 100).map((conflict) => ({
-        ...conflict,
-        left: db.getNote(conflict.left_note_id),
-        right: db.getNote(conflict.right_note_id),
-      })),
+      db
+        .listContradictionCases(status, 100)
+        .filter(
+          (conflict) =>
+            memory.read(db.getNote(conflict.left_note_id)) &&
+            memory.read(db.getNote(conflict.right_note_id)),
+        )
+        .map((conflict) => ({
+          ...conflict,
+          left: db.getNote(conflict.left_note_id),
+          right: db.getNote(conflict.right_note_id),
+        })),
     );
   }
   const contradictionResolveMatch = url.pathname.match(
@@ -720,6 +739,13 @@ export async function handleDashboardApi(
       !body?.rationale
     )
       return json({ error: "resolution and rationale required" }, 400);
+    const conflict = db.getContradictionCase(Number(contradictionResolveMatch[1]));
+    if (
+      !conflict ||
+      !memory.write(db.getNote(conflict.left_note_id)) ||
+      !memory.write(db.getNote(conflict.right_note_id))
+    )
+      return json({ error: "Open case not found" }, 404);
     const actor = engine.entities.get(callerId)?.name ?? String(callerId);
     const ok = db.resolveContradictionCase(
       Number(contradictionResolveMatch[1]),
@@ -969,22 +995,26 @@ export async function handleDashboardApi(
       Number.isFinite(limitParam) && limitParam > 0 && limitParam <= 2000 ? limitParam : 500;
     const snapshot = db.getGraphSnapshot(limit);
     return json({
-      notes: snapshot.notes.map((n) => ({
-        id: n.id,
-        entityName: n.entity_name,
-        content: n.content.length > 240 ? `${n.content.slice(0, 240)}…` : n.content,
-        importance: n.importance,
-        noteType: n.note_type,
-        createdAt: n.created_at,
-        lastAccessed: n.last_accessed,
-        roomId: n.room_id,
-        poolId: n.pool_id,
-      })),
-      links: snapshot.links.map((l) => ({
-        sourceId: l.source_id,
-        targetId: l.target_id,
-        relationship: l.relationship,
-      })),
+      notes: snapshot.notes
+        .filter((n) => memory.read(db.getNote(n.id)))
+        .map((n) => ({
+          id: n.id,
+          entityName: n.entity_name,
+          content: n.content.length > 240 ? `${n.content.slice(0, 240)}…` : n.content,
+          importance: n.importance,
+          noteType: n.note_type,
+          createdAt: n.created_at,
+          lastAccessed: n.last_accessed,
+          roomId: n.room_id,
+          poolId: n.pool_id,
+        })),
+      links: snapshot.links
+        .filter((l) => memory.read(db.getNote(l.source_id)) && memory.read(db.getNote(l.target_id)))
+        .map((l) => ({
+          sourceId: l.source_id,
+          targetId: l.target_id,
+          relationship: l.relationship,
+        })),
     });
   }
 
@@ -993,7 +1023,7 @@ export async function handleDashboardApi(
     const entityName = decodeURIComponent(graphMatch[1]!);
     const denied = authorizeEntityRead(engine, db, callerId, entityName);
     if (denied) return denied;
-    const notes = db.getNotesByEntity(entityName, 50);
+    const notes = db.getNotesByEntity(entityName, 50).filter(memory.read);
     const graph: {
       noteId: number;
       content: string;
@@ -1002,7 +1032,7 @@ export async function handleDashboardApi(
       links: { targetId: number; relationship: string }[];
     }[] = [];
     for (const note of notes) {
-      const links = db.getNoteLinks(note.id);
+      const links = memory.links(note.id);
       if (links.length > 0) {
         graph.push({
           noteId: note.id,
@@ -1031,7 +1061,7 @@ export async function handleDashboardApi(
     const projects = db.listProjects("active");
     const openTasks = db.listTasks({ status: "open", limit: 100 });
     const myClaims = db.getActiveClaimsByName(entityName);
-    const pools = db.listMemoryPools();
+    const pools = db.listMemoryPools().filter(memory.pool);
     const memoryCount = db.listCoreMemory(entityName).length;
     // goal/focus are private core memory. Expose them only to the entity itself
     // or an operator; other authenticated callers still get the (non-sensitive)
@@ -1096,7 +1126,7 @@ export async function handleDashboardApi(
     // scoped like the dedicated memory routes below.
     const denied = authorizeEntityRead(engine, db, callerId, entityName);
     if (denied) return denied;
-    return getEntityDetail(engine, db, entityName);
+    return getEntityDetail(engine, db, entityName, memory);
   }
 
   const memNotesMatch = url.pathname.match(/^\/api\/memory\/notes\/(.+)$/);
@@ -1104,7 +1134,7 @@ export async function handleDashboardApi(
     const entityName = decodeURIComponent(memNotesMatch[1]!);
     const denied = authorizeEntityRead(engine, db, callerId, entityName);
     if (denied) return denied;
-    return getMemoryNotes(db, entityName);
+    return json(db.getNotesByEntity(entityName, 50).filter(memory.read));
   }
 
   // Single-note detail: content, author, links, supersession chain
@@ -1113,14 +1143,8 @@ export async function handleDashboardApi(
     const id = Number(noteDetailMatch[1]);
     const note = db.getNote(id);
     if (!note) return json({ error: "Note not found" }, 404);
-    // A private note is owner/operator-scoped like the /api/memory/* routes.
-    // Notes deposited in a shared pool are intentional coordination artifacts —
-    // readable by anyone — so they are exempt from the owner check.
-    if (!note.pool_id) {
-      const denied = authorizeEntityRead(engine, db, callerId, note.entity_name);
-      if (denied) return denied;
-    }
-    const links = db.getNoteLinks(id);
+    if (!memory.read(note)) return json({ error: "Not authorized to read this memory." }, 403);
+    const links = memory.links(id);
     // Hydrate each link with the other note's brief preview for the UI
     const hydratedLinks = links.map((l) => {
       const otherId = l.source_id === id ? l.target_id : l.source_id;
@@ -1149,11 +1173,14 @@ export async function handleDashboardApi(
       lastAccessed: note.last_accessed,
       roomId: note.room_id,
       poolId: note.pool_id,
-      supersedesId: note.supersedes_id,
+      supersedesId:
+        note.supersedes_id && memory.read(db.getNote(note.supersedes_id))
+          ? note.supersedes_id
+          : null,
       confidence: note.confidence ?? 0.5,
       verificationStatus: note.verification_status ?? "unverified",
       claimKey: note.claim_key ?? null,
-      sources: db.getNoteSources(id),
+      sources: memory.sources(id),
       verifications: db.getNoteVerifications(id),
       links: hydratedLinks,
     });
@@ -1168,7 +1195,7 @@ export async function handleDashboardApi(
   }
 
   if (url.pathname === "/api/memory/pools" && db) {
-    return json(db.listMemoryPools());
+    return json(db.listMemoryPools().filter(memory.pool));
   }
   if (url.pathname === "/api/coordination/boards" && db) {
     return getBoards(db);
@@ -1601,7 +1628,12 @@ function getEntities(engine: Engine): Response {
   return json(entities);
 }
 
-function getEntityDetail(engine: Engine, db: MarinaDB | undefined, name: string): Response {
+function getEntityDetail(
+  engine: Engine,
+  db: MarinaDB | undefined,
+  name: string,
+  memory: ReturnType<typeof memoryObserver>,
+): Response {
   const entity = engine.findEntityGlobal(name);
   if (!entity) return json({ error: "Entity not found" }, 404);
 
@@ -1617,7 +1649,7 @@ function getEntityDetail(engine: Engine, db: MarinaDB | undefined, name: string)
 
   if (db) {
     result.coreMemory = db.listCoreMemory(entity.name);
-    result.notes = db.getNotesByEntity(entity.name, 10);
+    result.notes = db.getNotesByEntity(entity.name, 10).filter(memory.read);
     result.recentActivity = db.getEventsByEntity(entity.id, 20);
     // Civic standing — surfaced in the entity view now that Entities is the
     // primary observe/control surface.
@@ -1670,11 +1702,15 @@ function getSystem(engine: Engine, db?: MarinaDB): Response {
   return json(result);
 }
 
-function getEvents(engine: Engine, url: URL): Response {
+function getEvents(
+  engine: Engine,
+  url: URL,
+  visible: ReturnType<typeof memoryObserver>["event"],
+): Response {
   const limit = Math.min(Number(url.searchParams.get("limit")) || 100, 500);
   const events = engine
     .getEventLog()
-    .filter((e) => e.type !== "tick")
+    .filter((e) => e.type !== "tick" && visible(e))
     .slice(-limit);
   return json(events);
 }
@@ -1976,10 +2012,6 @@ function traceExportResponse(
       ...cursorHeaders,
     },
   });
-}
-
-function getMemoryNotes(db: MarinaDB, entityName: string): Response {
-  return json(db.getNotesByEntity(entityName, 50));
 }
 
 function getMemoryCore(db: MarinaDB, entityName: string): Response {

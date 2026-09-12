@@ -261,10 +261,10 @@ describe("MCP Server", () => {
   // ── Tool Registration ───────────────────────────────────────────────────
 
   describe("tool registration", () => {
-    it("should register all 32 tools", async () => {
+    it("should register all 36 tools", async () => {
       const sid = await initSession(url);
       const tools = await toolList(url, sid);
-      expect(tools.length).toBe(32);
+      expect(tools.length).toBe(36);
     });
 
     it("should include all expected tool names", async () => {
@@ -291,6 +291,10 @@ describe("MCP Server", () => {
         "look",
         "market",
         "memory",
+        "memory_service",
+        "memory_remember",
+        "memory_query",
+        "memory_graph",
         "move",
         "next",
         "probe",

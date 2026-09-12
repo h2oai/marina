@@ -5,6 +5,8 @@ import type { Score } from "../coordination/score";
 import type { ScoreRun } from "../coordination/score-executor";
 import type { EntityId, Perception, RoomId } from "../types";
 import { type RunScoreDeps, runScore } from "./conduct";
+import { MemoryClientError } from "./memory-client";
+import type { MemoryOperationRequest, MemoryOperationResult } from "./memory-operations";
 
 export type { Perception };
 
@@ -227,6 +229,56 @@ export class MarinaClient {
         }, this.options.commandDrainTimeout),
       };
       this.commandResolvers.push(entry);
+    });
+  }
+
+  /** Correlated service reply; independent of the short command perception-drain window. */
+  memoryService(
+    request: MemoryOperationRequest,
+    timeoutMs = 35_000,
+  ): Promise<MemoryOperationResult> {
+    if (!this.session) return Promise.reject(new Error("Not connected. Call connect() first."));
+    const requestId = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const handler = (p: Perception) => {
+        const result = p.data?.memory_service as
+          | (MemoryOperationResult & { request_id?: string })
+          | undefined;
+        if (result?.request_id !== requestId) return;
+        cleanup();
+        resolve(result);
+      };
+      const disconnected = () => {
+        cleanup();
+        reject(
+          new MemoryClientError(
+            503,
+            "disconnected",
+            "Disconnected before the memory reply; retry mutations with the same key",
+          ),
+        );
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(
+          new MemoryClientError(
+            408,
+            "memory_timeout",
+            "Memory reply timed out; retry mutations with the same key",
+          ),
+        );
+      }, timeoutMs);
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.offPerception(handler);
+        this.off("disconnect", disconnected);
+      };
+      this.onPerception(handler);
+      this.on("disconnect", disconnected);
+      this.send({
+        type: "command",
+        command: `memory api ${JSON.stringify({ ...request, request_id: requestId })}`,
+      });
     });
   }
 

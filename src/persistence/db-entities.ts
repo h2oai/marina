@@ -36,6 +36,15 @@ export function loadAllEntities(reader: Database): Entity[] {
   return rows.map(rowToEntity);
 }
 
+/** A legacy authenticated memory namespace may map to one persisted world actor.
+ * Ambiguous names grant no group authority. */
+export function findEntityIdByName(db: Database, name: string): string | undefined {
+  const rows = db
+    .query("SELECT id FROM entities WHERE name = ? AND kind = 'agent' LIMIT 2")
+    .all(name) as { id: string }[];
+  return rows.length === 1 ? rows[0]!.id : undefined;
+}
+
 export function deleteEntity(db: Database, id: EntityId): void {
   db.run("DELETE FROM entities WHERE id = ?", [id]);
 }

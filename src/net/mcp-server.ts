@@ -5,10 +5,19 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import { version as MARINA_VERSION } from "../../package.json";
-import type { RateLimiter } from "../auth/rate-limiter";
+import { RateLimiter } from "../auth/rate-limiter";
 import { WS_IDLE_TIMEOUT_SECONDS } from "../engine/constants";
 import type { Engine } from "../engine/engine";
 import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
+import { formatMemoryOperation } from "../memory/human-interface";
+import type { MarinaMemoryClient } from "../sdk/memory-client";
+import {
+  MEMORY_OPERATIONS,
+  type MemoryOperationRequest,
+  type MemoryOperationResult,
+  memoryOperationError,
+  runMemoryOperation,
+} from "../sdk/memory-operations";
 import type { Connection, EntityId, Perception } from "../types";
 import {
   buildConnectManifest,
@@ -24,6 +33,7 @@ interface McpSession {
   connId: string;
   entityId: EntityId | null;
   perceptionBuffer: Perception[];
+  commandTail: Promise<unknown>;
   transport: WebStandardStreamableHTTPServerTransport;
   mcp: McpServer;
 }
@@ -34,7 +44,11 @@ import { formatPerception } from "./formatter";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type McpResult = { content: [{ type: "text"; text: string }] };
+type McpResult = {
+  content: [{ type: "text"; text: string }];
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+};
 
 function text(msg: string): McpResult {
   return { content: [{ type: "text" as const, text: msg }] };
@@ -62,20 +76,32 @@ function withSession(
 }
 
 /** Shorthand: resolve session, check rate limit, run command, drain output. */
-function cmdTool(
+async function cmdTool(
   engine: Engine,
   sessions: Map<string, McpSession>,
   extra: { sessionId?: string },
   cmd: string,
   rateLimiter?: RateLimiter,
-): McpResult {
+): Promise<McpResult> {
   const resolved = withSession(sessions, extra);
-  if ("error" in resolved) return resolved.error;
+  if ("error" in resolved) return { ...resolved.error, isError: true };
   if (rateLimiter && !rateLimiter.consume(`mcp:${resolved.entityId}`)) {
-    return text("Rate limited. Please slow down.");
+    return { ...text("Rate limited. Please slow down."), isError: true };
   }
-  engine.processCommand(resolved.entityId, cmd);
-  return text(drainPerceptions(resolved.session));
+  const session = resolved.session;
+  const pending = session.commandTail.then(async () => {
+    await engine.processCommand(resolved.entityId, cmd);
+    const perceptions = session.perceptionBuffer.splice(0);
+    const envelope = perceptions.map((p) => p.data?.memory_service).findLast(Boolean) as
+      | MemoryOperationResult
+      | undefined;
+    if (envelope) return memoryMcpResult(envelope);
+    return text(
+      perceptions.map((p) => formatPerception(p, "markdown")).join("\n\n") || "(no output)",
+    );
+  });
+  session.commandTail = pending.catch(() => undefined);
+  return pending;
 }
 
 // ─── McpServerAdapter ─────────────────────────────────────────────────────────
@@ -89,7 +115,7 @@ export class McpServerAdapter {
   constructor(
     private engine: Engine,
     private port: number,
-    private rateLimiter?: RateLimiter,
+    private rateLimiter: RateLimiter = new RateLimiter(),
     private flywheel: FlywheelToolBackend | undefined = engine.flywheel,
   ) {}
 
@@ -156,6 +182,7 @@ export class McpServerAdapter {
                 connId,
                 entityId: null,
                 perceptionBuffer: [],
+                commandTail: Promise.resolve(),
                 transport,
                 mcp,
               };
@@ -281,9 +308,16 @@ export class McpServerAdapter {
     }
 
     /** Local wrapper that captures rateLimiter from closure. */
-    function runCmd(extra: { sessionId?: string }, command: string): McpResult {
+    function runCmd(extra: { sessionId?: string }, command: string): Promise<McpResult> {
       return cmdTool(engine, sessions, extra, command, rateLimiter);
     }
+
+    registerMemoryTools(mcp, async (request, extra) => {
+      const result = await runCmd(extra, `memory api ${JSON.stringify(request)}`);
+      // Missing persistence or a failed world session must not look like a
+      // successful memory write to a coding agent.
+      return result.structuredContent ? result : { ...result, isError: true };
+    });
 
     // ── Bootstrap ─────────────────────────────────────────────────────────
 
@@ -674,10 +708,10 @@ export class McpServerAdapter {
       { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
       async ({ action, image, keep_alive, command, args, cwd, port }, extra) => {
         const resolved = withSession(sessions, extra);
-        if ("error" in resolved) return resolved.error;
+        if ("error" in resolved) return { ...resolved.error, isError: true };
         if (!flywheel) return text("Flywheel is not configured. Set FLYWHEEL_TOKEN on Marina.");
         if (rateLimiter && !rateLimiter.consume(`mcp:${resolved.entityId}`)) {
-          return text("Rate limited. Please slow down.");
+          return { ...text("Rate limited. Please slow down."), isError: true };
         }
         try {
           switch (action) {
@@ -864,4 +898,120 @@ export class McpServerAdapter {
 
     return mcp;
   }
+}
+
+function memoryMcpResult(result: MemoryOperationResult): McpResult {
+  return {
+    content: [{ type: "text", text: formatMemoryOperation(result) }],
+    structuredContent: { ...result },
+    isError: !result.ok,
+  };
+}
+
+/** Identical service tools for world sessions and credential-bound stdio clients. */
+function registerMemoryTools(
+  mcp: McpServer,
+  runCmd: (request: MemoryOperationRequest, extra: { sessionId?: string }) => Promise<McpResult>,
+) {
+  const space = z
+    .string()
+    .optional()
+    .describe("Space ID; omit to use your configured private space");
+  const term = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("entity"), id: z.string() }),
+    z.object({
+      kind: z.literal("literal"),
+      value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+    }),
+  ]);
+  mcp.tool(
+    "memory_service",
+    "Portable memory service: capabilities, identity, spaces, full records, evidence capture, CAS revisions/checkpoints, grants, forgetting and export. All operations use the same authenticated API. Claims are assertions, not verified truth.",
+    {
+      operation: z.enum(MEMORY_OPERATIONS),
+      space_id: space,
+      id: z.string().optional(),
+      input: z.record(z.string(), z.unknown()).optional(),
+      key: z.string().optional().describe("Reuse the same key and payload to retry a mutation"),
+    },
+    async (request, extra) => runCmd(request, extra),
+  );
+  mcp.tool(
+    "memory_remember",
+    "Store portable text, optional typed claim and evidence references. No embedding model is required.",
+    {
+      space_id: space,
+      content: z.string(),
+      claim: z.object({ subject: z.string(), predicate: z.string(), object: term }).optional(),
+      valid_time: z
+        .object({
+          from: z.number().int().nonnegative().nullable(),
+          until: z.number().int().nonnegative().nullable(),
+        })
+        .nullable()
+        .optional(),
+      expected_vocabulary_version: z.number().int().nonnegative().optional(),
+      source_ids: z.array(z.string()).optional(),
+      depends_on: z.array(z.string()).optional(),
+      type: z.enum(["fact", "observation", "decision", "inference", "skill", "episode"]).optional(),
+      metadata: z.record(z.string(), z.unknown()).optional(),
+      key: z.string().optional(),
+    },
+    async ({ space_id, key, ...input }, extra) =>
+      runCmd({ operation: "remember", space_id, key, input }, extra),
+  );
+  mcp.tool(
+    "memory_query",
+    "Exact symbolic query. Symbols and literal types match exactly; no vectors, models or approximate ranking. Omit filters to list records. A changed space invalidates the pagination cursor.",
+    {
+      space_id: space,
+      subject: z.string().optional(),
+      predicate: z.string().optional(),
+      object: term.optional(),
+      type: z.string().optional(),
+      tier: z.string().optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+      cursor: z.string().optional(),
+      valid_at: z.number().int().nonnegative().optional(),
+    },
+    async ({ space_id, ...input }, extra) => runCmd({ operation: "query", space_id, input }, extra),
+  );
+  mcp.tool(
+    "memory_graph",
+    "Bounded traversal of asserted relations. Each edge includes a full record and the record IDs in its path. This does not infer new facts.",
+    {
+      space_id: space,
+      subject: z.string(),
+      predicates: z.array(z.string()).max(16).optional(),
+      direction: z.enum(["out", "in", "both"]).optional(),
+      max_depth: z.number().int().min(1).max(5).optional(),
+      valid_at: z.number().int().nonnegative().optional(),
+      limit: z.number().int().min(1).max(200).optional(),
+    },
+    async ({ space_id, ...input }, extra) => runCmd({ operation: "graph", space_id, input }, extra),
+  );
+}
+
+/** MCP memory-only bridge: transport over HTTP; no world login or database access. */
+export function createMemoryMcpServer(client: MarinaMemoryClient, defaultSpace: string): McpServer {
+  const mcp = new McpServer(
+    { name: "marina-memory", version: MARINA_VERSION },
+    { capabilities: { tools: {} } },
+  );
+  const limiter = new RateLimiter();
+  async function runCmd(request: MemoryOperationRequest): Promise<McpResult> {
+    if (!limiter.consume("memory"))
+      return memoryMcpResult({
+        ok: false,
+        error: { code: "rate_limited", message: "Rate limited. Please slow down.", status: 429 },
+      });
+    try {
+      const result = await runMemoryOperation(client, request, defaultSpace);
+      return memoryMcpResult({ ok: true, space_id: request.space_id ?? defaultSpace, result });
+    } catch (error) {
+      return memoryMcpResult(memoryOperationError(error));
+    }
+  }
+  registerMemoryTools(mcp, runCmd);
+  return mcp;
 }

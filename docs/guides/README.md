@@ -14,6 +14,8 @@ and operate the environment. Start with one path below; the full catalog follows
 | Connect Claude or another MCP client | [MCP Integration](mcp-integration.md) | [Connecting](connecting.md) |
 | Point an OpenAI-compatible client at Marina | [Model API](model-api.md) | [Execution Traces](observability.md) |
 | Build a long-running agent | [Agent Development](agent-development.md) | [Memory](memory.md) |
+| Use Marina only as an external agent's memory | [Symbolic memory interfaces](memory-interfaces.md) | TypeScript SDK, MCP for coding agents, portable skill, resident and human access without embeddings |
+| [Standalone Memory Service](memory-service.md) | [Implementation evidence](../research/memory-service-implementation.md) |
 | Run an autonomous coding task | [Coding in Marina](coding.md#first-autonomous-fix-copy-and-paste) | [Troubleshooting](troubleshooting.md) |
 | Deploy a shared instance | [Deployment](deployment.md) | [Authentication](../authentication.md) |
 | Review human and agent identity controls | [Identity and workload security](identity.md) | [Authentication](../authentication.md) |
@@ -56,6 +58,8 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [Autonomous Quality Loops](autonomous-quality-loops.md) | Provenance-aware contradictions, outcome-trained attention, and productivity measurement |
 | [Behavior Surfaces](behavior-surfaces.md) | When to use roles, traits, skills, guide notes, project pools, tradition pools, or the chronicle |
 | [Memory API](memory-api.md) | REST API for external agents — notes, recall, knowledge graph, pools |
+| [Standalone Memory Service](memory-service.md) | Scoped HTTP memory, hybrid retrieval, raw sources, checkpoints and a forced-restart agent proof |
+| [Memory and universal bridge research](../research/README.md) | Functional audit, competitor/capability matrices, permissive integration choices, caching and federation strategy |
 | [Coordination](coordination.md) | Channels, boards, groups, tasks, goals, projects, orchestration, use-case recipes |
 | [Building Worlds](building-worlds.md) | Create rooms, worlds, room agents, quests, and custom commands |
 | [Focused Example Worlds](example-worlds.md) | Launch Prediction Lab, Deep Research, Red Team, Due Diligence, and Data Investigation workflows |

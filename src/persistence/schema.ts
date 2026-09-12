@@ -2549,4 +2549,190 @@ CREATE INDEX idx_witness_attestations_open ON witness_attestations(status, gate,
 CREATE INDEX idx_witness_attestations_entity ON witness_attestations(entity_id, gate, status, kind);
 `,
   },
+  // Migration 96: repair unambiguous legacy memory revisions. Both scope and
+  // provenance must agree; do not retire another author's records or guess
+  // from a bare pointer. Keep all content for explicit historical inspection.
+  {
+    version: 96,
+    sql: `
+UPDATE notes AS previous SET verification_status = 'superseded'
+WHERE EXISTS (
+  SELECT 1 FROM notes AS successor
+  JOIN note_links AS link ON link.source_id = successor.id
+    AND link.target_id = previous.id AND link.relationship = 'supersedes'
+  WHERE successor.supersedes_id = previous.id AND successor.id > previous.id
+    AND successor.entity_name = previous.entity_name
+    AND successor.pool_id IS previous.pool_id
+);
+-- Old consolidation wrote a forward pointer on the retired record. The
+-- keeper->retired edge remains the authoritative consolidation relationship.
+UPDATE notes AS retired SET supersedes_id = NULL
+WHERE retired.verification_status = 'superseded'
+  AND EXISTS (
+    SELECT 1 FROM notes AS keeper
+    JOIN note_links AS link ON link.source_id = keeper.id
+      AND link.target_id = retired.id AND link.relationship = 'supersedes'
+    WHERE keeper.id = retired.supersedes_id
+      AND keeper.entity_name = retired.entity_name
+      AND keeper.pool_id IS retired.pool_id
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM note_links WHERE source_id = retired.id
+      AND target_id = retired.supersedes_id AND relationship = 'supersedes'
+  );
+`,
+  },
+  // Migration 97: remove automatically published private/group-memory copies
+  // from the global feed. Canonical notes are retained under their owner policy.
+  {
+    version: 97,
+    sql: `
+DELETE FROM canvas_nodes
+WHERE canvas_id IN (SELECT id FROM canvases WHERE name='feed' AND scope='global')
+AND json_extract(CASE WHEN json_valid(data) THEN data ELSE '{}' END,'$.feedType') IN ('note_created','pool_note','note_link_created')
+AND NOT (
+  json_extract(CASE WHEN json_valid(data) THEN data ELSE '{}' END,'$.feedType') IN ('note_created','pool_note') AND EXISTS (
+    SELECT 1 FROM notes n JOIN memory_pools p ON p.id=n.pool_id
+    WHERE json_extract(CASE WHEN json_valid(canvas_nodes.data) THEN canvas_nodes.data ELSE '{}' END,'$.ref')='note:'||n.id AND p.group_id IS NULL
+  )
+);
+DELETE FROM feed_events
+WHERE kind IN ('note_created','pool_note','note_link_created')
+AND NOT (kind IN ('note_created','pool_note') AND EXISTS (
+  SELECT 1 FROM notes n JOIN memory_pools p ON p.id=n.pool_id
+  WHERE feed_events.ref='note:'||n.id AND p.group_id IS NULL
+));
+`,
+  },
+  // Migration 98: principal-bound memory service over the canonical notes store.
+  // Events and idempotency receipts contain identifiers, never copied memory text.
+  {
+    version: 98,
+    sql: `
+CREATE TABLE memory_spaces (
+ id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES principals(principal_id),
+ name TEXT NOT NULL, generation INTEGER NOT NULL DEFAULT 0,
+ status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','forgotten')), created_at INTEGER NOT NULL
+);
+CREATE TABLE memory_grants (
+ space_id TEXT NOT NULL REFERENCES memory_spaces(id), principal_id TEXT NOT NULL REFERENCES principals(principal_id),
+ role TEXT NOT NULL CHECK(role IN ('reader','writer')), PRIMARY KEY(space_id,principal_id)
+);
+CREATE TABLE memory_records (
+ id TEXT PRIMARY KEY, space_id TEXT NOT NULL REFERENCES memory_spaces(id),
+ version INTEGER NOT NULL, current_note_id INTEGER REFERENCES notes(id) ON DELETE SET NULL,
+ subject TEXT, metadata TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_memory_records_space ON memory_records(space_id,status,created_at,id);
+CREATE TABLE memory_record_versions (
+ record_id TEXT NOT NULL REFERENCES memory_records(id), version INTEGER NOT NULL,
+ note_id INTEGER NOT NULL UNIQUE REFERENCES notes(id) ON DELETE CASCADE, PRIMARY KEY(record_id,version)
+);
+CREATE TABLE memory_sources (
+ seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+ space_id TEXT NOT NULL REFERENCES memory_spaces(id), session_id TEXT,
+ body TEXT NOT NULL, content_hash TEXT NOT NULL, created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_memory_sources_space ON memory_sources(space_id,seq);
+CREATE TABLE memory_derivations (
+ record_id TEXT NOT NULL REFERENCES memory_records(id), source_id TEXT NOT NULL REFERENCES memory_sources(id) ON DELETE CASCADE,
+ PRIMARY KEY(record_id,source_id)
+);
+CREATE TABLE memory_dependencies (
+ record_id TEXT NOT NULL REFERENCES memory_records(id), depends_on_id TEXT NOT NULL REFERENCES memory_records(id),
+ PRIMARY KEY(record_id,depends_on_id), CHECK(record_id != depends_on_id)
+);
+CREATE TABLE memory_requests (
+ principal_id TEXT NOT NULL, space_id TEXT NOT NULL, request_key TEXT NOT NULL, request_hash TEXT NOT NULL,
+ response TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(principal_id,space_id,request_key)
+);
+CREATE TABLE memory_service_events (
+ seq INTEGER PRIMARY KEY AUTOINCREMENT, space_id TEXT NOT NULL REFERENCES memory_spaces(id),
+ operation TEXT NOT NULL, reference_id TEXT, version INTEGER, actor_id TEXT NOT NULL, created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_memory_service_events_space ON memory_service_events(space_id,seq);
+CREATE TABLE memory_checkpoints (
+ space_id TEXT NOT NULL REFERENCES memory_spaces(id), name TEXT NOT NULL,
+ version INTEGER NOT NULL, source_cursor INTEGER NOT NULL, data TEXT NOT NULL, updated_at INTEGER NOT NULL,
+ PRIMARY KEY(space_id,name)
+);
+CREATE TABLE memory_index_jobs (
+ id TEXT PRIMARY KEY, space_id TEXT NOT NULL REFERENCES memory_spaces(id), record_id TEXT NOT NULL REFERENCES memory_records(id),
+ note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE, model TEXT NOT NULL,
+ state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','running','ready','failed','cancelled')),
+ attempts INTEGER NOT NULL DEFAULT 0, lease_until INTEGER, lease_token TEXT, error TEXT, created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_memory_index_jobs_pending ON memory_index_jobs(state,lease_until,created_at);
+CREATE TABLE memory_vectors (
+ note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE, model TEXT NOT NULL,
+ dimensions INTEGER NOT NULL, vector TEXT NOT NULL, PRIMARY KEY(note_id,model)
+);
+`,
+  },
+  // Migration 99: immutable per-version attributes. NULL marks older versions
+  // whose attributes were not recorded; never invent historical metadata.
+  { version: 99, sql: `ALTER TABLE memory_record_versions ADD COLUMN attributes TEXT;` },
+  // Explicit current claims; historical meaning stays in revision attributes.
+  {
+    version: 100,
+    sql: `
+CREATE TABLE memory_claims (
+ record_id TEXT PRIMARY KEY REFERENCES memory_records(id) ON DELETE CASCADE,
+ space_id TEXT NOT NULL REFERENCES memory_spaces(id), subject TEXT NOT NULL,
+ predicate TEXT NOT NULL, object_json TEXT NOT NULL, object_entity TEXT
+);
+CREATE INDEX idx_memory_claims_subject ON memory_claims(space_id,subject,predicate,record_id);
+CREATE INDEX idx_memory_claims_object ON memory_claims(space_id,object_entity,predicate,record_id);
+`,
+  },
+  // Selective symbolic filters and ID-ordered pagination without space scans.
+  {
+    version: 101,
+    sql: `
+CREATE INDEX idx_memory_records_id ON memory_records(space_id,status,id);
+CREATE INDEX idx_memory_records_note ON memory_records(current_note_id);
+CREATE INDEX idx_memory_records_subject ON memory_records(space_id,status,subject,id);
+CREATE INDEX idx_memory_claims_predicate ON memory_claims(space_id,predicate,object_json,record_id);
+CREATE INDEX idx_memory_claims_value ON memory_claims(space_id,object_json,predicate,record_id);
+`,
+  },
+  // Rebuildable source text projection; canonical source JSON remains unchanged.
+  {
+    version: 102,
+    sql: `
+CREATE TABLE memory_source_text (
+ seq INTEGER PRIMARY KEY REFERENCES memory_sources(seq) ON DELETE CASCADE, text TEXT NOT NULL
+);
+CREATE VIRTUAL TABLE memory_source_fts USING fts5(text,content=memory_source_text,content_rowid=seq);
+CREATE TRIGGER memory_source_text_ai AFTER INSERT ON memory_source_text BEGIN
+ INSERT INTO memory_source_fts(rowid,text) VALUES(new.seq,new.text);
+END;
+CREATE TRIGGER memory_source_text_ad AFTER DELETE ON memory_source_text BEGIN
+ INSERT INTO memory_source_fts(memory_source_fts,rowid,text) VALUES('delete',old.seq,old.text);
+END;
+CREATE TRIGGER memory_source_text_au AFTER UPDATE ON memory_source_text BEGIN
+ INSERT INTO memory_source_fts(memory_source_fts,rowid,text) VALUES('delete',old.seq,old.text);
+ INSERT INTO memory_source_fts(rowid,text) VALUES(new.seq,new.text);
+END;
+CREATE TRIGGER memory_sources_text_ai AFTER INSERT ON memory_sources BEGIN
+ INSERT INTO memory_source_text VALUES(new.seq,CASE WHEN json_type(new.body)='text' THEN json_extract(new.body,'$') ELSE new.body END);
+END;
+CREATE TRIGGER memory_sources_text_au AFTER UPDATE OF body ON memory_sources BEGIN
+ UPDATE memory_source_text SET text=CASE WHEN json_type(new.body)='text' THEN json_extract(new.body,'$') ELSE new.body END WHERE seq=new.seq;
+END;
+INSERT INTO memory_source_text SELECT seq,CASE WHEN json_type(body)='text' THEN json_extract(body,'$') ELSE body END FROM memory_sources;
+CREATE INDEX idx_memory_sources_session ON memory_sources(space_id,session_id,seq);
+`,
+  },
+  {
+    version: 103,
+    sql: `
+ALTER TABLE memory_records ADD COLUMN valid_from INTEGER;
+ALTER TABLE memory_records ADD COLUMN valid_until INTEGER;
+CREATE TABLE memory_vocabularies (
+ space_id TEXT NOT NULL REFERENCES memory_spaces(id), version INTEGER NOT NULL,
+ definition TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(space_id,version)
+);
+`,
+  },
 ];

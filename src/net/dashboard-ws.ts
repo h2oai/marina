@@ -5,10 +5,12 @@ import type { ServerWebSocket } from "bun";
 import type { AgentSupports } from "../agent/agent-types";
 import type { Engine } from "../engine/engine";
 import type { EngineEvent } from "../types";
+import { memoryObserver } from "./memory-visibility";
 
 export interface DashboardWSData {
   connId: string;
   isDashboard: true;
+  principal?: string;
 }
 
 export interface WorldSnapshot {
@@ -56,12 +58,12 @@ export interface WorldSnapshot {
 }
 
 export class DashboardBroadcaster {
-  private clients = new Set<ServerWebSocket<DashboardWSData>>();
+  private clients = new Map<ServerWebSocket<DashboardWSData>, Engine>();
 
   addClient(ws: ServerWebSocket<DashboardWSData>, engine: Engine): void {
-    this.clients.add(ws);
+    this.clients.set(ws, engine);
     // Send initial snapshot
-    const snapshot = this.buildSnapshot(engine);
+    const snapshot = this.buildSnapshot(engine, ws.data.principal);
     ws.send(JSON.stringify({ type: "snapshot", data: snapshot }));
   }
 
@@ -75,9 +77,9 @@ export class DashboardBroadcaster {
     const filtered = this.filterEvent(event);
     if (!filtered) return;
     const msg = JSON.stringify({ type: "event", data: filtered });
-    for (const ws of this.clients) {
+    for (const [ws, engine] of this.clients) {
       try {
-        ws.send(msg);
+        if (memoryObserver(engine, ws.data.principal).event(event)) ws.send(msg);
       } catch (err) {
         console.warn("[dashboard-ws] broadcast event send failed:", (err as Error).message);
         this.clients.delete(ws);
@@ -116,11 +118,11 @@ export class DashboardBroadcaster {
 
   broadcastState(engine: Engine): void {
     if (this.clients.size === 0) return;
-    const snapshot = this.buildSnapshot(engine);
-    const msg = JSON.stringify({ type: "state", data: snapshot });
-    for (const ws of this.clients) {
+    for (const [ws] of this.clients) {
       try {
-        ws.send(msg);
+        ws.send(
+          JSON.stringify({ type: "state", data: this.buildSnapshot(engine, ws.data.principal) }),
+        );
       } catch (err) {
         console.warn("[dashboard-ws] broadcast state send failed:", (err as Error).message);
         this.clients.delete(ws);
@@ -132,7 +134,8 @@ export class DashboardBroadcaster {
     return this.clients.size;
   }
 
-  private buildSnapshot(engine: Engine): WorldSnapshot {
+  private buildSnapshot(engine: Engine, principal?: string): WorldSnapshot {
+    const observer = memoryObserver(engine, principal);
     // One bulk read per snapshot (broadcast every 2s) — a per-entity
     // getAgentConfig lookup was ~N queries/snapshot just for spawned_by.
     const spawnedByName = new Map<string, string | null>();
@@ -142,6 +145,7 @@ export class DashboardBroadcaster {
       }
     }
     const entities = engine.entities.all().map((e) => {
+      const privateView = observer.privilegedRead || observer.entity?.id === e.id;
       const agentHandle = engine.agentRuntime.get(e.name);
       const agentStatus = agentHandle
         ? (() => {
@@ -150,11 +154,11 @@ export class DashboardBroadcaster {
               state: s.state,
               model: s.model,
               role: s.role,
-              focus: s.focus,
+              focus: privateView ? s.focus : null,
               uptime: s.uptime,
               toolCalls: s.toolCalls,
               errors: s.errors,
-              errorReason: s.errorReason,
+              errorReason: privateView ? s.errorReason : null,
               supports: s.supports,
               // Liveness signals (observability): "last acted", model latency,
               // and the stuck counter — let the roster show alive/idle/stuck/dead.
@@ -175,7 +179,9 @@ export class DashboardBroadcaster {
         name: e.name,
         kind: e.kind,
         room: e.room as string,
-        properties: e.properties,
+        properties: privateView
+          ? e.properties
+          : { rank: e.properties.rank, role: e.properties.role },
         agentStatus,
         spawnedBy,
       };

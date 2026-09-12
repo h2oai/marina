@@ -38,7 +38,7 @@ import type {
   AgentSupports,
 } from "./agent-types";
 
-import { createContextManager, hardTrimMessages } from "./context-manager";
+import { createContextManager } from "./context-manager";
 import {
   type TraceParent,
   traceParentFromPerception,
@@ -731,49 +731,15 @@ export class LeanAgentAdapter implements AgentHandle {
       }
     };
 
-    // Compaction is the moment when short-term conversational memory
-    // transitions to long-term generational memory. Write the summary to
-    // the pool so this agent (and future agents with the same name) can
-    // recall what happened during the compacted window via normal memory
-    // retrieval. No recall = no continuity = no emergence.
-    // Compaction-note size cap — summarizeMessages concatenates a ~100-char
-    // line per dropped message, so a long-running agent's compaction can run
-    // to tens of KB. Those notes then surface in future recall() results,
-    // stacking many KB per turn into the LLM context — which caused
-    // HTTP 413 "Request exceeds the maximum size" storms during the
-    // 2026-04-22 warm-DB runs. Cap to 2000 chars; readable gist preserved.
-    const COMPACTION_NOTE_MAX = 2000;
-    const onBeforeCompact = (droppedMessages: AgentMessage[], summary: string): void => {
-      const trimmed =
-        summary.length > COMPACTION_NOTE_MAX
-          ? `${summary.slice(0, COMPACTION_NOTE_MAX)}\n[...${summary.length - COMPACTION_NOTE_MAX} chars truncated]`
-          : summary;
-      const content = `[compaction] ${trimmed}`;
-      // Personal note — always written. Low importance so recall ranking
-      // surfaces real insights first; this is metadata, not wisdom.
-      this.platformMemory
-        .write("insight", content, "low", [
-          "consolidation",
-          `model:${this.model.id}`,
-          `n:${droppedMessages.length}`,
-        ])
-        .catch(() => {
-          // Non-critical. Compaction proceeds even if pool write fails.
-        });
-      // Group pool — opt-in per-agent via config.compactionPool. Enables
-      // peers in the same project to benefit from one agent's
-      // consolidation. Skipped silently if no pool is configured.
-      const poolName = this.config.compactionPool;
-      if (poolName) {
-        this.platformMemory.share(content, poolName, 3).catch(() => {
-          // Non-critical.
-        });
-      }
+    // Every lossy context transform awaits durable capture of the original
+    // messages. Failure aborts the model call without discarding local history.
+    const onBeforeCompact = async (messages: AgentMessage[], summary: string): Promise<void> => {
+      await this.platformMemory.archiveContext(messages, summary, this.config.compactionPool);
     };
 
     // Context manager — transforms messages before each LLM call, prunes
-    // when over threshold, and (critically) consolidates dropped history
-    // into pool reflections via onBeforeCompact.
+    // when over threshold, and archives original history in the resident's
+    // private durable space through onBeforeCompact.
     const contextTransform = createContextManager({
       // Budget against the self-calibrating effective window, not the nominal
       // one — this is how the compactor tracks a smaller-than-advertised server.
@@ -1466,12 +1432,8 @@ export class LeanAgentAdapter implements AgentHandle {
       MIN_EFFECTIVE_CONTEXT,
       Math.min(this.effectiveContextWindow, fromPeak),
     );
-    // Hard-trim live history so the retry fits even before the transform reruns.
-    try {
-      this.agent.state.messages = hardTrimMessages(this.agent.state.messages, 6);
-    } catch {
-      // Non-critical — the transform will still compact on the next call.
-    }
+    // The next context transform archives before trimming. Never discard the
+    // live history here: an overflow response is not a durable capture receipt.
     // Progress = the window actually shrank. Once it's floored at
     // MIN_EFFECTIVE_CONTEXT, further recoveries make no progress.
     return this.effectiveContextWindow < before;
@@ -2473,6 +2435,20 @@ The goal is a smaller, sharper memory — not more notes.`;
 
       const sections: string[] = [`**Last Session** (${ageStr}):`];
       sections.push(`- Intent: ${checkpoint.lastIntent}`);
+      const archive = checkpoint.archive as
+        | { source_ids?: string[]; summary?: string; manifest_source_id?: string }
+        | undefined;
+      if (archive?.source_ids?.length) {
+        sections.push(`- Preserved source parts (ordered): ${archive.source_ids.join(", ")}`);
+        sections.push(
+          "- Read these through memory_service source_range; concatenate text parts to reconstruct the original conversation.",
+        );
+        if (archive.summary) sections.push(`- Historical summary: ${archive.summary}`);
+        if (archive.manifest_source_id)
+          sections.push(
+            `- Archive manifest: ${archive.manifest_source_id}. Read source_range and follow previous_manifest_source_id for earlier conversations.`,
+          );
+      }
       if (checkpoint.currentGoal) sections.push(`- Goal: ${checkpoint.currentGoal}`);
       if (checkpoint.location) sections.push(`- Location: ${checkpoint.location}`);
       if (Array.isArray(checkpoint.recentActions) && checkpoint.recentActions.length > 0) {

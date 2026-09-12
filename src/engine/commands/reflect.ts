@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { memoryAccess } from "../../memory/access";
 import { bold, category, dim, id as fmtId, header, separator, status } from "../../net/ansi";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
@@ -179,6 +180,12 @@ export function reflectCommand(deps: {
         return;
       }
       const db = deps.db;
+      const access = memoryAccess(db, entity);
+      const eligibleSource = (note: NoteRow) =>
+        access.read(note) &&
+        note.verification_status !== "superseded" &&
+        note.tier !== "process" &&
+        note.tier !== "reflection";
       const args = input.args?.trim() ?? "";
       const tokens = args.split(/\s+/);
 
@@ -197,6 +204,7 @@ export function reflectCommand(deps: {
             weightRecency: 0.5,
             weightRelevance: 0.2,
           })
+          .filter(eligibleSource)
           .slice(0, 5);
 
         // Build failure analysis
@@ -208,6 +216,7 @@ export function reflectCommand(deps: {
         const reflectionId = db.createNote(entity.name, content, input.room, {
           importance: 8,
           noteType: "episode",
+          tier: "reflection",
         });
         deps.logEvent?.({
           type: "note_created",
@@ -263,17 +272,19 @@ export function reflectCommand(deps: {
             weightRecency: 0.3,
             weightRelevance: 0.3,
           })
+          .filter(eligibleSource)
           .slice(0, 10);
       } else {
         sourceNotes = db
           .getNotesByEntity(entity.name, 50)
+          .filter(eligibleSource)
           .filter((n) => n.importance >= 6)
           .slice(0, 10);
       }
 
       if (sourceNotes.length < 2) {
         // Not enough to synthesize — show diagnostic instead
-        const allNotes = db.getNotesByEntity(entity.name, 100);
+        const allNotes = db.getNotesByEntity(entity.name, 100).filter(eligibleSource);
         const nonEpisode = allNotes.filter((n) => n.note_type !== "episode");
         if (nonEpisode.length < 2) {
           ctx.send(input.entity, "Not enough notes to reflect on. Take more notes first.");
@@ -342,6 +353,7 @@ export function reflectCommand(deps: {
       const reflectionId = db.createNote(entity.name, content, input.room, {
         importance: reflectionImportance,
         noteType: "episode",
+        tier: "reflection",
       });
       deps.logEvent?.({
         type: "note_created",

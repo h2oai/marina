@@ -3,6 +3,8 @@
 
 import { creditRecalledReflections } from "../../agent/standing";
 import type { TaskManager } from "../../coordination/task-manager";
+import { memoryNoteResults, memoryResult } from "../../memory/command-result";
+import { expandMemoryRecall } from "../../memory/retrieval";
 import {
   bold,
   dim,
@@ -70,13 +72,23 @@ export function recallCommand(deps: {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
-        ctx.send(input.entity, "Recall requires database support.");
+        ctx.send(
+          input.entity,
+          "Recall requires database support.",
+          undefined,
+          memoryResult("recall", { success: false, error: "Persistence unavailable" }),
+        );
         return;
       }
       const db = deps.db;
       const args = input.args;
       if (!args) {
-        ctx.send(input.entity, "Usage: recall <query> [recent | important] [type <type>]");
+        ctx.send(
+          input.entity,
+          "Usage: recall <query> [recent | important] [type <type>]",
+          undefined,
+          memoryResult("recall", { success: false, error: "Query required" }),
+        );
         return;
       }
 
@@ -116,7 +128,12 @@ export function recallCommand(deps: {
       }
 
       if (!query) {
-        ctx.send(input.entity, "Usage: recall <query> [recent | important] [type <type>]");
+        ctx.send(
+          input.entity,
+          "Usage: recall <query> [recent | important] [type <type>]",
+          undefined,
+          memoryResult("recall", { success: false, error: "Query required" }),
+        );
         return;
       }
 
@@ -124,47 +141,10 @@ export function recallCommand(deps: {
       let results = noteType
         ? db.recallNotesWithType(entity.name, query, noteType, weights)
         : db.recallNotes(entity.name, query, weights);
-      if (flags.has("trusted")) {
-        results = results.filter((note) => {
-          const sources = db.getNoteSources(note.id);
-          return (
-            note.verification_status === "verified" ||
-            ((note.confidence ?? 0.5) >= 0.7 && sources.some((source) => source.credibility >= 0.6))
-          );
-        });
-      }
-
-      // Graph-enhanced recall: spread activation from top results to linked notes
-      if (results.length > 0 && results.length < 20) {
-        const SPREAD_DAMPING = 0.3;
-        const resultIds = new Set(results.map((r) => r.id));
-        const linkedBoosts = new Map<number, number>();
-
-        // Walk 1-hop links from top-5 results
-        for (const note of results.slice(0, 5)) {
-          const links = db.getNoteLinks(note.id);
-          for (const link of links) {
-            const linkedId = link.source_id === note.id ? link.target_id : link.source_id;
-            if (!resultIds.has(linkedId)) {
-              const boost = note.score * SPREAD_DAMPING;
-              linkedBoosts.set(linkedId, Math.max(linkedBoosts.get(linkedId) ?? 0, boost));
-            }
-          }
-        }
-
-        // Fetch and insert graph-discovered notes
-        if (linkedBoosts.size > 0) {
-          for (const [noteId, boost] of linkedBoosts) {
-            const linkedNote = db.getNote(noteId);
-            if (linkedNote && linkedNote.entity_name === entity.name && !linkedNote.pool_id) {
-              results.push({ ...linkedNote, score: boost } as (typeof results)[0]);
-            }
-          }
-          // Re-sort by score and cap at 20
-          results.sort((a, b) => b.score - a.score);
-          results = results.slice(0, 20);
-        }
-      }
+      results = expandMemoryRecall(db, results, entity.name, {
+        noteType,
+        trusted: flags.has("trusted"),
+      });
 
       // Touch each returned note to update last_accessed and recall_count,
       // then flow generational credit to the AUTHORS of any cross-entity
@@ -216,7 +196,12 @@ export function recallCommand(deps: {
       }
 
       if (results.length === 0 && taskLines.length === 0) {
-        ctx.send(input.entity, "No matching memories found.");
+        ctx.send(
+          input.entity,
+          "No matching memories found.",
+          undefined,
+          memoryResult("recall", { success: true, notes: [] }),
+        );
         return;
       }
 
@@ -261,7 +246,12 @@ export function recallCommand(deps: {
 
       lines.push(...taskLines);
 
-      ctx.send(input.entity, lines.join("\n"));
+      ctx.send(
+        input.entity,
+        lines.join("\n"),
+        undefined,
+        memoryResult("recall", { success: true, notes: memoryNoteResults(results) }),
+      );
     },
   };
 }

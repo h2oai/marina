@@ -38,7 +38,13 @@
     "dist/dashboard",
     ".env.example",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "dist/memory.js",
+    "skills/marina-memory",
+    "extensions/local-embeddings/index.ts",
+    "extensions/local-embeddings/package.json",
+    "extensions/local-embeddings/bun.lock",
+    "extensions/local-embeddings/README.md"
   ],
   "engines": {
     "bun": ">=1.1.0"
@@ -47,7 +53,7 @@
     "start": "bun run src/main.ts",
     "code": "bun run scripts/code.ts",
     "dev": "bun run src/main.ts",
-    "build": "bun build src/main.ts --outdir dist --target bun",
+    "build": "bun build src/main.ts --outdir dist --target bun && bun run build:memory",
     "test": "bun test --path-ignore-patterns '**/dashboard/**' --path-ignore-patterns '**/examples/coding-agent-demo/**'",
     "typecheck": "tsc --noEmit",
     "lint": "biome check src/ test/ dashboard/src/",
@@ -55,7 +61,7 @@
     "dashboard:dev": "cd dashboard && bunx vite",
     "dashboard:build": "cd dashboard && bun install && bunx vite build",
     "test:canvas:browser": "bun run dashboard:build && cd dashboard && bun run test:browser",
-    "prepack": "bun run dashboard:build",
+    "prepack": "bun run dashboard:build && bun run build:memory",
     "usecase-ui:dev": "cd examples/usecase-ui && bun run dev",
     "usecase-ui:build": "cd examples/usecase-ui && bun run build",
     "clean": "rm -f marina.db marina.db-shm marina.db-wal data/marina.db && rm -rf data/scratch/*",
@@ -73,7 +79,11 @@
     "trial:evolution:local": "bun run scripts/run-evolution-trial-local.ts",
     "soak": "bun run test/load/flood.ts",
     "soak:churn": "bun run test/load/churn.ts",
-    "soak:churn:local": "bun run scripts/run-churn-soak-local.ts"
+    "soak:churn:local": "bun run scripts/run-churn-soak-local.ts",
+    "memory": "bun run scripts/memory.ts",
+    "qualify:memory": "bun run scripts/qualify-memory-service.ts",
+    "build:memory": "bun build src/sdk/memory.ts --target browser --outfile dist/memory.js",
+    "memory:mcp": "bun run scripts/memory-mcp.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
@@ -100,15 +110,15 @@
     "basic-ftp": "^5.3.1",
     "body-parser": "^2.3.0",
     "express-rate-limit": "^8.2.2",
-    "fast-uri": "^3.1.5",
+    "fast-uri": "^3.1.6",
     "fast-xml-builder": "^1.1.7",
     "fast-xml-parser": "^5.7.0",
-    "hono": "^4.12.34",
+    "hono": "^4.13.5",
     "ip-address": "^10.3.1",
     "lodash": "^4.18.0",
     "path-to-regexp": "^8.4.0",
     "protobufjs": "^7.6.3",
-    "qs": "^6.15.2",
+    "qs": "^6.16.0",
     "undici": "^6.28.0",
     "ws": "^8.20.1",
     "zod": "4.3.6"
@@ -116,5 +126,12 @@
   "optionalDependencies": {
     "better-auth": "^1.6.22",
     "jose": "^6.2.3"
+  },
+  "exports": {
+    "./memory": {
+      "types": "./src/sdk/memory.ts",
+      "default": "./dist/memory.js"
+    },
+    "./*": "./*"
   }
 }

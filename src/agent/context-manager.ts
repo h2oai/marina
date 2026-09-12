@@ -46,7 +46,7 @@ export interface ContextManagerOptions {
   pruneTarget?: number;
   maxToolResultTokens?: number;
   minRecentMessages?: number;
-  onBeforeCompact?: (droppedMessages: AgentMessage[], summary: string) => void;
+  onBeforeCompact?: (originalMessages: AgentMessage[], summary: string) => void | Promise<void>;
   summarizeWithLLM?: (messages: AgentMessage[], ruleBasedFallback: string) => Promise<string>;
 }
 
@@ -63,6 +63,8 @@ function reservedTokens(model: Model<string>, contextWindow: number): number {
   return output + margin;
 }
 
+export class ContextPersistenceError extends Error {}
+
 // ─── Context Manager Factory ────────────────────────────────────────────────
 
 export function createContextManager(options: ContextManagerOptions) {
@@ -78,6 +80,21 @@ export function createContextManager(options: ContextManagerOptions) {
   } = options;
 
   return async (messages: AgentMessage[]): Promise<AgentMessage[]> => {
+    const finish = async (result: AgentMessage[]) => {
+      if (
+        onBeforeCompact &&
+        (result.length !== messages.length || result.some((message, i) => message !== messages[i]))
+      ) {
+        try {
+          await onBeforeCompact(messages, summarizeMessages(messages as Message[]));
+        } catch (cause) {
+          throw new ContextPersistenceError("Context archival failed; original messages retained", {
+            cause,
+          });
+        }
+      }
+      return result;
+    };
     try {
       if (messages.length === 0) return messages;
 
@@ -103,7 +120,7 @@ export function createContextManager(options: ContextManagerOptions) {
       const usageRatio = totalTokens / contextWindow;
 
       if (usageRatio < pruneThreshold) {
-        return truncateOversizedToolResults(messages, maxToolResultTokens);
+        return await finish(truncateOversizedToolResults(messages, maxToolResultTokens));
       }
 
       // Tiered compaction
@@ -146,14 +163,6 @@ export function createContextManager(options: ContextManagerOptions) {
 
       const middleEnd = messages.length - recentCount;
       const middleMessages = middleEnd > 1 ? messages.slice(1, middleEnd) : [];
-
-      if (onBeforeCompact && middleMessages.length > 0) {
-        try {
-          onBeforeCompact(middleMessages, summarizeMessages(middleMessages as Message[]));
-        } catch {
-          // Transcript archival is non-critical
-        }
-      }
 
       const result: AgentMessage[] = [first];
 
@@ -215,11 +224,12 @@ export function createContextManager(options: ContextManagerOptions) {
       // rejects orphaned toolResult messages with a permanent 400, which
       // poisons the agent's conversation for the rest of its life. Always
       // run this last so no path escapes without the pairing invariant.
-      return stripOrphanedToolResults(finalResult);
+      return await finish(stripOrphanedToolResults(finalResult));
     } catch (error) {
+      if (error instanceof ContextPersistenceError) throw error;
       console.error("[context-manager] Error during context transform, passing through:", error);
       // Even on the error path, don't pass through a corrupted history.
-      return stripOrphanedToolResults(messages);
+      return await finish(stripOrphanedToolResults(messages));
     }
   };
 }

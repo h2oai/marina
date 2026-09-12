@@ -66,11 +66,11 @@ export interface AgentConfig {
    */
   maxRetryDelayMs?: number;
   /**
-   * When the agent's context is compacted, also write the LLM-generated
+   * When the agent's context is compacted, also write the bounded archival
    * summary to this named pool so peers working the same project can
-   * benefit from the consolidation. Personal notes are always written;
-   * the pool write is additional and opt-in per agent. Omit if the
-   * agent should only consolidate into personal memory.
+   * benefit from the consolidation. Originals are captured in the private
+   * durable service first; pool sharing is additional and best-effort.
+   * Omit to keep compaction entirely private.
    */
   compactionPool?: string;
   /**

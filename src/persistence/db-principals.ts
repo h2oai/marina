@@ -166,3 +166,71 @@ export function revokeWorkloadCredential(db: Database, credentialId: string): bo
   );
   return result.changes > 0;
 }
+
+export const MEMORY_SCOPES = [
+  "memory:read",
+  "memory:write",
+  "memory:share",
+  "memory:export",
+] as const;
+export type MemoryScope = (typeof MEMORY_SCOPES)[number];
+export interface MemoryActor {
+  principalId: string;
+  credentialId: string;
+  scopes: MemoryScope[];
+}
+
+export function issueMemoryCredential(
+  db: Database,
+  principalId: string,
+  scopes: readonly MemoryScope[] = MEMORY_SCOPES,
+  ttlMs = 30 * 86_400_000,
+) {
+  const principal = db
+    .query("SELECT * FROM principals WHERE principal_id=? AND status='active'")
+    .get(principalId);
+  if (
+    !principal ||
+    !scopes.length ||
+    scopes.some((scope) => !MEMORY_SCOPES.includes(scope)) ||
+    !Number.isFinite(ttlMs) ||
+    ttlMs < 1000 ||
+    ttlMs > 30 * 86_400_000
+  )
+    throw new Error("Invalid memory principal, scopes or credential lifetime");
+  const credentialId = randomUUID();
+  const token = `marina-memory-${randomBytes(32).toString("base64url")}`;
+  const expiresAt = Date.now() + ttlMs;
+  db.run(
+    "INSERT INTO principal_credentials (credential_id,principal_id,token_hash,audience,scopes,issued_at,expires_at) VALUES (?,?,?,?,?,?,?)",
+    [
+      credentialId,
+      principalId,
+      tokenHash(token),
+      "marina:memory",
+      JSON.stringify(scopes),
+      Date.now(),
+      expiresAt,
+    ],
+  );
+  return { credentialId, token, principalId, expiresAt };
+}
+
+export function verifyMemoryCredential(db: Database, token: string): MemoryActor | undefined {
+  const row = db
+    .query(`SELECT c.credential_id,c.principal_id,c.scopes FROM principal_credentials c
+    JOIN principals p ON p.principal_id=c.principal_id WHERE c.token_hash=? AND c.audience='marina:memory'
+    AND c.revoked_at IS NULL AND c.expires_at>? AND p.status='active'`)
+    .get(tokenHash(token), Date.now()) as {
+    credential_id: string;
+    principal_id: string;
+    scopes: string;
+  } | null;
+  return row
+    ? {
+        principalId: row.principal_id,
+        credentialId: row.credential_id,
+        scopes: JSON.parse(row.scopes),
+      }
+    : undefined;
+}

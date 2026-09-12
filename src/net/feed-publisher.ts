@@ -8,6 +8,7 @@ import type { StorageProvider } from "../storage/provider";
 import type { EngineEvent, EntityId } from "../types";
 import { enrichNodeData } from "./canvas-api";
 import type { CanvasBroadcaster } from "./canvas-ws";
+import { isPublicMemory } from "./memory-visibility";
 
 const FEED_CANVAS_NAME = "feed";
 /** Max nodes kept on the feed canvas. Older nodes are trimmed on insert. */
@@ -491,6 +492,7 @@ export class FeedPublisher {
   }
 
   private publishPoolNote(event: EngineEvent & { type: "pool_note" }): void {
+    if (!isPublicMemory(this.db, event.noteId)) return;
     const canvas = this.ensureFeedCanvas();
     if (!canvas) return;
 
@@ -755,7 +757,7 @@ export class FeedPublisher {
   private publishNoteCreated(event: EngineEvent & { type: "note_created" }): void {
     // Only surface notes worth looking at in the feed — auto-linked low-importance
     // notes would spam the timeline.
-    if (event.importance < 6) return;
+    if (event.importance < 6 || !isPublicMemory(this.db, event.noteId)) return;
     const canvas = this.ensureFeedCanvas();
     if (!canvas) return;
 
@@ -791,7 +793,12 @@ export class FeedPublisher {
   private publishNoteLinkCreated(event: EngineEvent & { type: "note_link_created" }): void {
     // Surface only semantic links (supports, contradicts, supersedes, part_of).
     // Auto-generated related_to links would flood the feed.
-    if (event.relationship === "related_to") return;
+    if (
+      event.relationship === "related_to" ||
+      !isPublicMemory(this.db, event.sourceId) ||
+      !isPublicMemory(this.db, event.targetId)
+    )
+      return;
     const canvas = this.ensureFeedCanvas();
     if (!canvas) return;
 

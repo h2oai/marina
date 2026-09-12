@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { memoryAccess } from "../../memory/access";
 import {
   bold,
   category,
@@ -174,6 +175,7 @@ export function noteCommand(deps: {
         return;
       }
       const db = deps.db;
+      const access = memoryAccess(db, entity);
       const tokens = input.tokens;
       const sub = tokens[0]?.toLowerCase();
 
@@ -230,7 +232,7 @@ export function noteCommand(deps: {
           const id = Number.parseInt(tokens[1] ?? "", 10);
           const reference = tokens[2];
           const note = db.getNote(id);
-          if (!note || note.entity_name !== entity.name || !reference) {
+          if (!access.write(note) || !reference) {
             ctx.send(
               input.entity,
               "Usage: note source <your-note-id> <url|note:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]",
@@ -247,7 +249,7 @@ export function noteCommand(deps: {
             : undefined;
           if (
             sourceNoteId !== undefined &&
-            (!Number.isInteger(sourceNoteId) || !db.getNote(sourceNoteId))
+            (!Number.isInteger(sourceNoteId) || !access.read(db.getNote(sourceNoteId)))
           ) {
             ctx.send(input.entity, `Source note ${reference} was not found.`);
             return;
@@ -287,7 +289,7 @@ export function noteCommand(deps: {
           const sourceId = Number(tokens[2]);
           const note = db.getNote(id);
           const source = db.getNote(sourceId);
-          if (!note || note.entity_name !== entity.name || !source) {
+          if (!access.write(note) || !access.read(source)) {
             ctx.send(input.entity, "Usage: note derive <your-note-id> <source-note-id>");
             return;
           }
@@ -314,8 +316,8 @@ export function noteCommand(deps: {
           const confidence =
             tokens[3] === undefined ? (note?.confidence ?? 0.5) : Number(tokens[3]);
           if (
-            !note ||
-            note.entity_name !== entity.name ||
+            !access.write(note) ||
+            note.verification_status === "superseded" ||
             !Number.isFinite(confidence) ||
             !["unverified", "verified", "disputed"].includes(verification)
           ) {
@@ -343,12 +345,16 @@ export function noteCommand(deps: {
         case "explain": {
           const id = Number.parseInt(tokens[1] ?? "", 10);
           const note = db.getNote(id);
-          if (!note || note.entity_name !== entity.name) {
+          if (!access.write(note)) {
             ctx.send(input.entity, `Note #${tokens[1] ?? "?"} not found or not yours.`);
             return;
           }
-          const sources = db.getNoteSources(id);
-          const links = db.getNoteLinks(id);
+          const sources = db
+            .getNoteSources(id)
+            .filter(
+              (source) => !source.source_note_id || access.read(db.getNote(source.source_note_id)),
+            );
+          const links = access.links(id);
           const verifications = db.getNoteVerifications(id);
           const lines = [
             header(`Memory #${id}`),
@@ -374,7 +380,9 @@ export function noteCommand(deps: {
         }
 
         case "contradictions": {
-          const candidates = db.findMemoryContradictions(entity.name);
+          const candidates = db
+            .findMemoryContradictions(entity.name)
+            .filter((candidate) => access.read(candidate.left) && access.read(candidate.right));
           if (candidates.length === 0) {
             ctx.send(input.entity, "No unresolved contradiction candidates found.");
             return;
@@ -396,7 +404,13 @@ export function noteCommand(deps: {
         case "conflicts": {
           const filter = tokens[1] === "resolved" ? "resolved" : "open";
           db.refreshContradictionCases();
-          const cases = db.listContradictionCases(filter, 50);
+          const cases = db
+            .listContradictionCases(filter, 50)
+            .filter(
+              (conflict) =>
+                access.read(db.getNote(conflict.left_note_id)) &&
+                access.read(db.getNote(conflict.right_note_id)),
+            );
           if (cases.length === 0) {
             ctx.send(input.entity, `No ${filter} shared contradiction cases.`);
             return;
@@ -433,7 +447,14 @@ export function noteCommand(deps: {
             );
             return;
           }
-          const ok = db.resolveContradictionCase(caseId, resolution, entity.name, rationale);
+          const conflict = db.getContradictionCase(caseId);
+          // Resolution changes both notes' verification state, so it requires
+          // write authority over both claims. Shared adjudication needs its own policy.
+          const ok =
+            !!conflict &&
+            access.write(db.getNote(conflict.left_note_id)) &&
+            access.write(db.getNote(conflict.right_note_id)) &&
+            db.resolveContradictionCase(caseId, resolution, entity.name, rationale);
           ctx.send(
             input.entity,
             ok
@@ -453,6 +474,10 @@ export function noteCommand(deps: {
             );
             return;
           }
+          if (![keeper, ...duplicates].every((id) => access.write(db.getNote(id)))) {
+            ctx.send(input.entity, "One or more notes not found or not yours.");
+            return;
+          }
           const changed = db.consolidateNotes(entity.name, keeper, duplicates);
           ctx.send(
             input.entity,
@@ -462,7 +487,7 @@ export function noteCommand(deps: {
         }
 
         case "list": {
-          const notes = db.getNotesByEntity(entity.name);
+          const notes = db.getNotesByEntity(entity.name).filter(access.read);
           if (notes.length === 0) {
             ctx.send(input.entity, "You have no notes.");
             return;
@@ -488,7 +513,7 @@ export function noteCommand(deps: {
         }
 
         case "room": {
-          const notes = db.getNotesByRoom(input.room);
+          const notes = db.getNotesByRoom(input.room).filter(access.read);
           if (notes.length === 0) {
             ctx.send(input.entity, "No notes for this room.");
             return;
@@ -511,7 +536,7 @@ export function noteCommand(deps: {
             ctx.send(input.entity, "Usage: note search <query>");
             return;
           }
-          const notes = db.searchNotes(entity.name, query);
+          const notes = db.searchNotes(entity.name, query).filter(access.read);
           if (notes.length === 0) {
             ctx.send(input.entity, "No matching notes found.");
             return;
@@ -534,7 +559,7 @@ export function noteCommand(deps: {
             ctx.send(input.entity, "Usage: note delete <id>");
             return;
           }
-          const deleted = db.deleteNote(id, entity.name);
+          const deleted = access.write(db.getNote(id)) && db.deleteNote(id, entity.name);
           if (deleted) {
             deps.logEvent?.({
               type: "note_deleted",
@@ -566,7 +591,7 @@ export function noteCommand(deps: {
           }
           const note1 = db.getNote(id1);
           const note2 = db.getNote(id2);
-          if (!note1 || !note2) {
+          if (!access.write(note1) || !access.read(note2)) {
             ctx.send(input.entity, "One or both notes not found.");
             return;
           }
@@ -595,7 +620,10 @@ export function noteCommand(deps: {
             ctx.send(input.entity, "Usage: note unlink <id1> <id2> <relationship>");
             return;
           }
-          const removed = db.removeNoteLink(id1, id2, rel);
+          const removed =
+            access.write(db.getNote(id1)) &&
+            access.read(db.getNote(id2)) &&
+            db.removeNoteLink(id1, id2, rel);
           if (!removed) {
             ctx.send(input.entity, `No link #${id1} -> #${id2} (${rel}) found.`);
             return;
@@ -619,7 +647,7 @@ export function noteCommand(deps: {
             return;
           }
           const oldNote = db.getNote(id);
-          if (!oldNote) {
+          if (!access.write(oldNote)) {
             ctx.send(input.entity, `Note #${id} not found.`);
             return;
           }
@@ -631,11 +659,17 @@ export function noteCommand(deps: {
           const parsed = parseNoteText(newText);
           const newImportance = parsed.importance ?? oldNote.importance;
           const newType = parsed.noteType ?? oldNote.note_type;
-          const newId = db.createNote(entity.name, parsed.content, input.room, {
+          const newId = db.reviseNote(entity.name, id, parsed.content, {
             importance: newImportance,
             noteType: newType,
-            supersedesId: id,
           });
+          if (newId === undefined) {
+            ctx.send(
+              input.entity,
+              `Note #${id} is no longer current. Recall the current version before correcting it.`,
+            );
+            return;
+          }
           deps.logEvent?.({
             type: "note_created",
             entity: input.entity,
@@ -647,7 +681,6 @@ export function noteCommand(deps: {
             roomId: input.room,
             timestamp: Date.now(),
           });
-          db.createNoteLink(newId, id, "supersedes");
           deps.logEvent?.({
             type: "note_link_created",
             entity: input.entity,
@@ -666,7 +699,7 @@ export function noteCommand(deps: {
             ctx.send(input.entity, "Usage: note trace <id>");
             return;
           }
-          const graph = db.traceNoteGraph(id, 2);
+          const graph = access.trace(id, 2);
           if (graph.length === 0) {
             ctx.send(input.entity, `Note #${id} not found.`);
             return;
@@ -716,12 +749,12 @@ export function noteCommand(deps: {
             return;
           }
           const oldNote = db.getNote(id);
-          if (!oldNote) {
+          if (!access.write(oldNote)) {
             ctx.send(input.entity, `Note #${id} not found.`);
             return;
           }
           // Gather linked notes for context
-          const graph = db.traceNoteGraph(id, 1);
+          const graph = access.trace(id, 1);
           const contextParts = [oldNote.content];
           for (const entry of graph) {
             if (entry.note.id !== id) {
@@ -735,11 +768,17 @@ export function noteCommand(deps: {
               ? `[Evolved from #${id} with ${linkedCount} linked notes] ${contextParts.join(" | ")}`
               : `[Evolved from #${id}] ${oldNote.content}`;
           const newImportance = Math.min(oldNote.importance + 1, 10);
-          const newId = db.createNote(entity.name, evolvedContent, input.room, {
+          const newId = db.reviseNote(entity.name, id, evolvedContent, {
             importance: newImportance,
             noteType: oldNote.note_type,
-            supersedesId: id,
           });
+          if (newId === undefined) {
+            ctx.send(
+              input.entity,
+              `Note #${id} is no longer current. Recall the current version before evolving it.`,
+            );
+            return;
+          }
           deps.logEvent?.({
             type: "note_created",
             entity: input.entity,
@@ -751,7 +790,6 @@ export function noteCommand(deps: {
             roomId: input.room,
             timestamp: Date.now(),
           });
-          db.createNoteLink(newId, id, "supersedes");
           deps.logEvent?.({
             type: "note_link_created",
             entity: input.entity,
@@ -761,7 +799,7 @@ export function noteCommand(deps: {
             timestamp: Date.now(),
           });
           // Copy existing links to the evolved note
-          const oldLinks = db.getNoteLinks(id);
+          const oldLinks = access.links(id);
           for (const link of oldLinks) {
             const otherId = link.source_id === id ? link.target_id : link.source_id;
             if (link.relationship !== "supersedes") {
@@ -788,7 +826,7 @@ export function noteCommand(deps: {
         }
 
         case "graph": {
-          const notes = db.getNotesByEntity(entity.name);
+          const notes = db.getNotesByEntity(entity.name).filter(access.read);
           if (notes.length === 0) {
             ctx.send(input.entity, "No notes to graph.");
             return;
@@ -802,7 +840,7 @@ export function noteCommand(deps: {
           const edgeCounts: Record<string, number> = {};
           const linkedIds = new Set<number>();
           for (const n of notes) {
-            const links = db.getNoteLinks(n.id);
+            const links = access.links(n.id);
             for (const link of links) {
               linkedIds.add(link.source_id);
               linkedIds.add(link.target_id);
@@ -893,7 +931,7 @@ export function noteCommand(deps: {
           const autoLinked: number[] = [];
           try {
             const similar = db.findSimilarNotes(entity.name, parsed.content, id);
-            for (const s of similar.slice(0, 3)) {
+            for (const s of similar.filter(access.read).slice(0, 3)) {
               try {
                 db.createNoteLink(id, s.id, "related_to");
                 deps.logEvent?.({

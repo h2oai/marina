@@ -21,6 +21,7 @@ import {
 import { getAutonomyPosture } from "../../engine/autonomy";
 import type { MarinaClient } from "../../sdk/client";
 import { runScore } from "../../sdk/conduct";
+import { MEMORY_OPERATIONS } from "../../sdk/memory-operations";
 import type { Perception } from "../../types";
 import type { AgentSupports } from "../agent-types";
 import type { GameStateManager } from "../game-state";
@@ -93,7 +94,8 @@ const commandSchema = Type.Object({
 export const COMMAND_ROSTER = `Common world commands you can pass here:
 World: look [target], goto <room>, examine <thing>, who, inventory.
 Talk: say <msg>, tell <name> <msg>, channel send <name> <msg>, channel list.
-Memory: note <text>, recall <query>, reflect [topic], pool <name> add <content>, pool <name> recall <query>, skill search <query>, skill store <name> | <desc> | <actions>.
+Memory service: memory service, memory claim <subject> <predicate> <JSON scalar>, memory relate <subject> <predicate> <entity>, memory query <JSON filters>, memory graph <subject>, memory remember <text>, memory api <JSON request>.
+Legacy memory: note <text>, recall <query>, reflect [topic], pool <name> add <content>, pool <name> recall <query>, skill search <query>, skill store <name> | <desc> | <actions>.
 Self: brief, brief full, focus set <desc>, focus clear, task goal <title> | <desc>, task progress <id> +N, novelty stats, novelty suggest.
 Becoming: standing (your ledger + every gate's path), witness (earn gated capabilities through supervised demonstrations), desire <one sentence> (begin an evidence-linked journey), journey progress.
 Coordination: project list, canvas intent list, canvas intent claim <id>, canvas intent complete <id> <result>, feed list [--kind X --since 30m].
@@ -1882,6 +1884,29 @@ function createMediaTools(ctx: ToolContext): AgentTool[] {
   ];
 }
 
+const memoryServiceSchema = Type.Object({
+  operation: Type.Union(MEMORY_OPERATIONS.map((op) => Type.Literal(op))),
+  space_id: Type.Optional(Type.String()),
+  id: Type.Optional(Type.String()),
+  input: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  key: Type.Optional(
+    Type.String({ description: "Reuse the same key and payload when retrying a mutation" }),
+  ),
+});
+export function createMemoryServiceTool(ctx: ToolContext): AgentTool<typeof memoryServiceSchema> {
+  return {
+    name: "marina_memory_service",
+    label: "Portable Memory Service",
+    description:
+      'Durable private/shared memory, evidence and checkpoints. Start with capabilities or query (input: {}). Exact symbolic query accepts subject, predicate and typed object. remember accepts content and optional claim: {subject,predicate,object:{kind:"entity",id} or {kind:"literal",value}}. graph follows asserted relations with record citations. No embeddings required. Omit space_id for your private space. Use save_checkpoint with id, expected_version, source_cursor and data to resume long tasks. Prefer this service for portable memory; claims are assertions, not verified truth.',
+    parameters: memoryServiceSchema,
+    execute: async (_id, request) => {
+      const result = await ctx.client.memoryService(request);
+      return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    },
+  };
+}
+
 // ─── All Tools ──────────────────────────────────────────────────────────────
 
 export function createAllTools(
@@ -1896,6 +1921,7 @@ export function createAllTools(
     ...createMediaTools(ctx),
     createThinkTool() as unknown as AgentTool,
     createMemoryTool(platformMemory) as unknown as AgentTool,
+    createMemoryServiceTool(ctx) as unknown as AgentTool,
   ];
 }
 

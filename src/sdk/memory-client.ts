@@ -1,0 +1,263 @@
+// Copyright 2025-2026 H2O.ai, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+import type {
+  ForgetMemoryInput,
+  MemoryCheckpoint,
+  MemoryGraphQuery,
+  MemoryGraphResult,
+  MemoryJobStatus,
+  MemoryPlan,
+  MemoryPlanResult,
+  MemoryPlanStep,
+  MemoryQuery,
+  MemoryQueryResult,
+  MemoryReceipt,
+  MemoryRecord,
+  MemoryRecordInput,
+  MemorySearchInput,
+  MemorySearchResult,
+  MemorySource,
+  MemorySourceRange,
+  MemorySourceSearch,
+  MemorySourceSearchResult,
+  MemorySpace,
+  MemoryVocabulary,
+  MemoryVocabularyDefinition,
+} from "./memory-types";
+
+export class MemoryClientError extends Error {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** Fetch-only client. It never opens a DB, joins a world, or invokes a model. */
+export class MarinaMemoryClient {
+  constructor(
+    readonly url: string,
+    private token: string,
+    private timeoutMs = 35_000,
+    private fetcher: (request: Request) => Promise<Response> = fetch,
+  ) {}
+  async request<T>(
+    path: string,
+    method = "GET",
+    body?: unknown,
+    key: string = crypto.randomUUID(),
+  ): Promise<T> {
+    const response = await this.fetcher(
+      new Request(`${this.url.replace(/\/$/, "")}/v1/memory${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          "Content-Type": "application/json",
+          "Idempotency-Key": key,
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(this.timeoutMs),
+        redirect: "error",
+      }),
+    );
+    const result = (await response.json()) as T & { error?: { code: string; message: string } };
+    if (!response.ok)
+      throw new MemoryClientError(
+        response.status,
+        result.error?.code ?? "request_failed",
+        result.error?.message ?? "Memory request failed",
+      );
+    return result;
+  }
+  private path(space: string, rest = "") {
+    return `/spaces/${encodeURIComponent(space)}${rest}`;
+  }
+  me() {
+    return this.request<{ principal_id: string; credential_id: string; scopes: string[] }>("/me");
+  }
+  capabilities() {
+    return this.request<Record<string, unknown>>("");
+  }
+  spaces() {
+    return this.request<{ spaces: MemorySpace[] }>("/spaces");
+  }
+  createSpace(name: string, key?: string) {
+    return this.request<MemoryReceipt>("/spaces", "POST", { name }, key);
+  }
+  space(id: string) {
+    return this.request<MemorySpace>(this.path(id));
+  }
+  remember(space: string, input: MemoryRecordInput, key?: string) {
+    return this.request<MemoryReceipt>(this.path(space, "/records"), "POST", input, key);
+  }
+  get(space: string, id: string, version?: number) {
+    return this.request<MemoryRecord>(
+      this.path(
+        space,
+        `/records/${encodeURIComponent(id)}${version === undefined ? "" : `?version=${version}`}`,
+      ),
+    );
+  }
+  revise(
+    space: string,
+    id: string,
+    expected_version: number,
+    input: MemoryRecordInput,
+    key?: string,
+  ) {
+    return this.request<MemoryReceipt>(
+      this.path(space, `/records/${encodeURIComponent(id)}`),
+      "PATCH",
+      { ...input, expected_version },
+      key,
+    );
+  }
+  search(space: string, input: MemorySearchInput) {
+    return this.request<MemorySearchResult>(this.path(space, "/search"), "POST", input);
+  }
+  query(space: string, input: MemoryQuery = {}) {
+    return this.request<MemoryQueryResult>(this.path(space, "/query"), "POST", input);
+  }
+  graph(space: string, input: MemoryGraphQuery) {
+    return this.request<MemoryGraphResult>(this.path(space, "/graph"), "POST", input);
+  }
+  reindex(space: string, expected_generation: number, key?: string) {
+    return this.request<MemoryReceipt & { model: string; job_ids: string[] }>(
+      this.path(space, "/reindex"),
+      "POST",
+      { expected_generation },
+      key,
+    );
+  }
+  context(space: string, input: MemorySearchInput & { budget_tokens?: number }) {
+    return this.request<{
+      text: string;
+      citations: { id: string; version: number; source_ids: string[]; truncated: boolean }[];
+      estimated_tokens: number;
+      generation: number;
+      degraded: string[];
+    }>(this.path(space, "/context"), "POST", input);
+  }
+  capture(space: string, content: unknown, session_id?: string, key?: string) {
+    return this.request<MemoryReceipt>(
+      this.path(space, "/sources"),
+      "POST",
+      { content, session_id },
+      key,
+    );
+  }
+  sources(space: string, after = 0, limit = 100) {
+    return this.request<{ sources: MemorySource[]; next_cursor: number }>(
+      this.path(space, `/sources?after=${after}&limit=${limit}`),
+    );
+  }
+  sourceSearch(space: string, input: MemorySourceSearch) {
+    return this.request<MemorySourceSearchResult>(
+      this.path(space, "/source_search"),
+      "POST",
+      input,
+    );
+  }
+  vocabulary(space: string, version?: number) {
+    return this.request<MemoryVocabulary>(
+      this.path(space, `/vocabulary${version === undefined ? "" : `?version=${version}`}`),
+    );
+  }
+  plan(
+    space: string,
+    input: {
+      task: string;
+      use_model?: boolean;
+      steps?: MemoryPlanStep[];
+      max_results?: number;
+      max_bytes?: number;
+    },
+  ) {
+    return this.request<MemoryPlan>(this.path(space, "/plan"), "POST", input);
+  }
+  executePlan(space: string, plan: MemoryPlan) {
+    return this.request<MemoryPlanResult>(this.path(space, "/execute_plan"), "POST", plan);
+  }
+  saveVocabulary(
+    space: string,
+    expected_version: number,
+    definition: MemoryVocabularyDefinition,
+    key?: string,
+  ) {
+    return this.request<MemoryReceipt>(
+      this.path(space, "/vocabulary"),
+      "POST",
+      { expected_version, definition },
+      key,
+    );
+  }
+  sourceRange(
+    space: string,
+    id: string,
+    input: { start?: number; end?: number; text_hash?: string } = {},
+  ) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(input))
+      if (value !== undefined) params.set(key, String(value));
+    return this.request<MemorySourceRange>(
+      this.path(space, `/sources/${encodeURIComponent(id)}?${params}`),
+    );
+  }
+  checkpoint(space: string, name: string) {
+    return this.request<MemoryCheckpoint>(
+      this.path(space, `/checkpoints/${encodeURIComponent(name)}`),
+    );
+  }
+  saveCheckpoint(
+    space: string,
+    name: string,
+    expected_version: number,
+    data: Record<string, unknown>,
+    source_cursor = 0,
+    key?: string,
+    source_ids: string[] = [],
+  ) {
+    return this.request<MemoryReceipt>(
+      this.path(space, `/checkpoints/${encodeURIComponent(name)}`),
+      "POST",
+      { expected_version, data, source_cursor, source_ids },
+      key,
+    );
+  }
+  grant(space: string, principal_id: string, role: "reader" | "writer" | null, key?: string) {
+    return this.request<MemoryReceipt>(
+      this.path(space, "/grants"),
+      "POST",
+      { principal_id, role },
+      key,
+    );
+  }
+  forget(space: string, input: ForgetMemoryInput, key?: string) {
+    return this.request<MemoryReceipt>(this.path(space, "/forget"), "POST", input, key);
+  }
+  export(space: string) {
+    return this.request<Record<string, unknown>>(this.path(space, "/export"));
+  }
+  job(space: string, id: string) {
+    return this.request<MemoryJobStatus>(this.path(space, `/jobs/${encodeURIComponent(id)}`));
+  }
+  async waitForIndex(space: string, receipt: MemoryReceipt, timeoutMs = 30_000): Promise<void> {
+    if (!receipt.job_id) return;
+    const until = Date.now() + timeoutMs;
+    while (Date.now() < until) {
+      const job = await this.job(space, receipt.job_id);
+      if (job.state === "ready") return;
+      if (job.state === "failed" || job.state === "cancelled")
+        throw new MemoryClientError(409, "index_job_failed", `Index job is ${job.state}`);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    throw new MemoryClientError(
+      408,
+      "index_timeout",
+      "Index did not become ready within the requested wait",
+    );
+  }
+}

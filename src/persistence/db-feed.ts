@@ -45,7 +45,22 @@ export interface FeedQuery {
 }
 
 export function queryFeedEvents(db: Database, q: FeedQuery = {}): FeedEventRow[] {
-  const clauses: string[] = [];
+  const clauses: string[] = [
+    `(
+    kind NOT IN ('note_created','pool_note','note_link_created')
+    OR (kind IN ('note_created','pool_note') AND EXISTS (
+      SELECT 1 FROM notes n JOIN memory_pools p ON p.id=n.pool_id
+      WHERE feed_events.ref='note:'||n.id AND p.group_id IS NULL
+    ))
+    OR (kind='note_link_created' AND EXISTS (
+      SELECT 1 FROM notes a JOIN memory_pools pa ON pa.id=a.pool_id,
+        notes b JOIN memory_pools pb ON pb.id=b.pool_id
+      WHERE a.id=json_extract(feed_events.payload,'$.sourceId')
+        AND b.id=json_extract(feed_events.payload,'$.targetId')
+        AND pa.group_id IS NULL AND pb.group_id IS NULL
+    ))
+  )`,
+  ];
   const args: (string | number)[] = [];
   if (q.since !== undefined) {
     clauses.push("created_at >= ?");

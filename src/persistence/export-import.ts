@@ -127,6 +127,20 @@ export const EXPORT_TABLES = [
   "crew_members",
   "crew_invitations",
   "feed_events",
+  "memory_spaces",
+  "memory_grants",
+  "memory_records",
+  "memory_record_versions",
+  "memory_sources",
+  "memory_derivations",
+  "memory_dependencies",
+  "memory_requests",
+  "memory_service_events",
+  "memory_checkpoints",
+  "memory_index_jobs",
+  "memory_vectors",
+  "memory_claims",
+  "memory_vocabularies",
   "canvas_edges",
   "benchmark_runs",
   "adapters",
@@ -169,6 +183,7 @@ const SECRET_TABLES = new Set<string>([
  * every real table is either in EXPORT_TABLES or matches one of these.
  */
 export function isExcludedFromExport(table: string): boolean {
+  if (table === "memory_source_text") return true; // Rebuilt from canonical sources on import.
   return (
     table === "sessions" ||
     table === "principal_credentials" ||
@@ -272,6 +287,9 @@ export function importState(
 
   try {
     db.transaction(() => {
+      // This projection is regenerated from canonical source rows. Foreign-key
+      // cascades are disabled during restore, so clear it explicitly first.
+      if (tableExists(db, "memory_source_text")) db.run("DELETE FROM memory_source_text");
       // Process tables in FK-safe order
       for (const table of EXPORT_TABLES) {
         if (opts?.skipEventLog && table === "event_log") continue;
@@ -344,6 +362,12 @@ export function importState(
         db.run(`UPDATE "${table}" SET seq = rowid WHERE seq IS NULL`);
       }
 
+      if (tableExists(db, "memory_source_text")) {
+        db.run("DELETE FROM memory_source_text");
+        db.run(
+          "INSERT INTO memory_source_text SELECT seq,CASE WHEN json_type(body)='text' THEN json_extract(body,'$') ELSE body END FROM memory_sources",
+        );
+      }
       const violations = db.query("PRAGMA foreign_key_check").all() as Array<{
         table: string;
         rowid: number | null;

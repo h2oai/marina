@@ -29,3 +29,7 @@ artifacts/flywheel/
 *.key
 *.p12
 marina-desktop/artifacts/
+
+# Generated Python client bytecode
+__pycache__/
+*.py[cod]

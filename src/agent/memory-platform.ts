@@ -1,8 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { getErrorMessage } from "../engine/errors";
+import { type MemoryNoteResult, readMemoryResult } from "../memory/command-result";
+import { stripAnsi } from "../net/ansi";
 import type { MarinaClient } from "../sdk/client";
 import type { Perception } from "../types";
+import { DurableResidentMemory } from "./durable-memory";
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
@@ -45,7 +49,16 @@ function extractText(perceptions: Perception[]): string {
       return "";
     })
     .filter(Boolean)
+    .map(stripAnsi)
     .join("\n");
+}
+
+function coreValue(perceptions: Perception[]): string | undefined {
+  const result = readMemoryResult(perceptions, "core-get");
+  if (result) return result.success ? result.entry?.value : undefined;
+  return extractText(perceptions)
+    .match(/\(v\d+\):\s*([\s\S]*)/)?.[1]
+    ?.trim();
 }
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -57,22 +70,17 @@ export interface PlatformMemoryResult {
   results?: PlatformNoteResult[];
 }
 
-export interface PlatformNoteResult {
-  id: string;
-  content: string;
-  importance: number;
-  noteType: string;
-  score?: number;
-  age?: string;
-}
+export type PlatformNoteResult = MemoryNoteResult;
 
 // ─── Platform Memory Backend ────────────────────────────────────────────────
 
 export class PlatformMemoryBackend {
   private client: MarinaClient;
+  private durable: DurableResidentMemory;
 
   constructor(client: MarinaClient) {
     this.client = client;
+    this.durable = new DurableResidentMemory(client);
   }
 
   async write(
@@ -89,7 +97,7 @@ export class PlatformMemoryBackend {
     const text = extractText(perceptions);
     const idMatch = text.match(/Note #(\d+)/);
     return {
-      success: !text.includes("Error"),
+      success: !!idMatch,
       text,
       noteId: idMatch?.[1] ? Number.parseInt(idMatch[1], 10) : undefined,
     };
@@ -100,24 +108,25 @@ export class PlatformMemoryBackend {
     opts?: { noteType?: string; mode?: "recent" | "important"; trusted?: boolean },
   ): Promise<PlatformMemoryResult> {
     let cmd = `recall ${query}`;
-    if (opts?.noteType) cmd += ` type ${opts.noteType}`;
     if (opts?.mode === "recent") cmd += " recent";
     if (opts?.mode === "important") cmd += " important";
     if (opts?.trusted) cmd += " trusted";
+    if (opts?.noteType) cmd += ` type ${opts.noteType}`;
 
     const perceptions = await this.client.command(cmd);
     const text = extractText(perceptions);
-    const results = this.parseRecallResults(text);
-    if (opts?.trusted && results.length === 0) {
-      return this.search(query, { noteType: opts.noteType, mode: opts.mode });
-    }
-    return { success: true, text, results };
+    const result = readMemoryResult(perceptions, "recall");
+    return {
+      success: result?.success ?? true,
+      text,
+      results: result ? (result.notes ?? []) : this.parseRecallResults(text),
+    };
   }
 
   async update(noteId: string, newContent: string): Promise<PlatformMemoryResult> {
     const perceptions = await this.client.command(`note correct ${noteId} ${newContent}`);
     const text = extractText(perceptions);
-    return { success: !text.includes("not found"), text };
+    return { success: /Note #\d+ created, superseding #\d+/.test(text), text };
   }
 
   async remove(noteId: string): Promise<PlatformMemoryResult> {
@@ -154,14 +163,18 @@ export class PlatformMemoryBackend {
       `pool ${poolName} add ${content} importance ${importance}`,
     );
     const text = extractText(perceptions);
-    return { success: !text.includes("Error"), text };
+    return { success: /Added note #\d+/.test(text), text };
   }
 
   async importShared(poolName: string, query: string): Promise<PlatformMemoryResult> {
     const perceptions = await this.client.command(`pool ${poolName} recall ${query}`);
     const text = extractText(perceptions);
-    const results = this.parseRecallResults(text);
-    return { success: true, text, results };
+    const result = readMemoryResult(perceptions, "pool-recall");
+    return {
+      success: result?.success ?? !text.includes("not found"),
+      text,
+      results: result ? (result.notes ?? []) : this.parseRecallResults(text),
+    };
   }
 
   /**
@@ -177,24 +190,36 @@ export class PlatformMemoryBackend {
     return { text, active };
   }
 
+  async archiveContext(
+    messages: unknown[],
+    summary: string,
+    compactionPool?: string,
+  ): Promise<void> {
+    await this.durable.archive(messages, summary);
+    if (compactionPool) {
+      try {
+        const shared = await this.share(
+          `[compaction] ${summary.slice(0, 2000)}`,
+          compactionPool,
+          3,
+        );
+        if (!shared.success) console.warn("[memory] Optional compaction summary sharing failed");
+      } catch (error) {
+        console.warn(
+          "[memory] Optional compaction summary sharing failed:",
+          getErrorMessage(error),
+        );
+      }
+    }
+  }
+
   async saveCheckpoint(data: Record<string, unknown>): Promise<PlatformMemoryResult> {
-    const json = JSON.stringify(data);
-    const perceptions = await this.client.command(`memory set checkpoint ${json}`);
-    const text = extractText(perceptions);
-    return { success: true, text };
+    await this.durable.save(data);
+    return { success: true, text: "Durable resident checkpoint saved" };
   }
 
   async getCheckpoint(): Promise<Record<string, unknown> | null> {
-    const perceptions = await this.client.command("memory get checkpoint");
-    const text = extractText(perceptions);
-    if (text.includes("not found") || text.includes("No entry")) return null;
-    try {
-      const valueMatch = text.match(/\(v\d+\):\s*(.+)/s);
-      if (valueMatch?.[1]) return JSON.parse(valueMatch[1].trim());
-      return JSON.parse(text.trim());
-    } catch {
-      return null;
-    }
+    return (await this.durable.checkpoint())?.data ?? null;
   }
 
   /**
@@ -208,16 +233,21 @@ export class PlatformMemoryBackend {
   ): Promise<PlatformMemoryResult> {
     const cmd = focus ? `memory set focus ${JSON.stringify(focus)}` : "memory delete focus";
     const perceptions = await this.client.command(cmd);
-    return { success: true, text: extractText(perceptions) };
+    const text = extractText(perceptions);
+    return {
+      success:
+        readMemoryResult(perceptions, focus ? "core-set" : "core-delete")?.success ??
+        /Memory "focus" (set|deleted)\./.test(text),
+      text,
+    };
   }
 
   async getFocus(): Promise<{ description: string; startedAt: number } | null> {
     const perceptions = await this.client.command("memory get focus");
-    const text = extractText(perceptions);
-    const valueMatch = text.match(/\(v\d+\):\s*(.+)/s);
-    if (!valueMatch?.[1]) return null;
+    const value = coreValue(perceptions);
+    if (value === undefined) return null;
     try {
-      const parsed = JSON.parse(valueMatch[1].trim());
+      const parsed = JSON.parse(value);
       if (parsed && typeof parsed.description === "string") {
         return { description: parsed.description, startedAt: Number(parsed.startedAt) || 0 };
       }
@@ -232,9 +262,7 @@ export class PlatformMemoryBackend {
   async getPace(): Promise<"fast" | "normal" | "slow" | null> {
     for (const key of ["pace", "tick_rate"]) {
       const perceptions = await this.client.command(`memory get ${key}`);
-      const text = extractText(perceptions);
-      const valueMatch = text.match(/\(v\d+\):\s*(.+)/s);
-      const raw = valueMatch?.[1]?.trim().toLowerCase();
+      const raw = coreValue(perceptions)?.trim().toLowerCase();
       if (!raw) continue;
       if (raw.includes("fast")) return "fast";
       if (raw.includes("slow")) return "slow";
@@ -286,14 +314,21 @@ export class PlatformMemoryBackend {
   async searchSkills(query: string): Promise<PlatformMemoryResult> {
     const perceptions = await this.client.command(`skill search ${query}`);
     const text = extractText(perceptions);
-    const results = this.parseSkillResults(text);
-    return { success: true, text, results };
+    const result = readMemoryResult(perceptions, "skill-search");
+    return {
+      success: result?.success ?? true,
+      text,
+      results: result ? (result.notes ?? []) : this.parseSkillResults(text),
+    };
   }
 
   private parseRecallResults(text: string): PlatformNoteResult[] {
     const results: PlatformNoteResult[] = [];
     for (const line of text.split("\n")) {
-      const match = line.match(/\s*#(\d+)\s+\[score=([\d.]+)\s+imp=(\d+)\s+([^\]]+)\]:\s*(.+)/);
+      const match =
+        line.match(
+          /\s*#(\d+)\s+\[score=([\d.]+)\s+imp=(\d+)\s+([^\]]+)\](?:\s+\([^)]*\))?:\s*(.+)/,
+        ) ?? line.match(/^\s*#(\d+)\s+([\d.]+)\s+!(\d+)\s+(today|\d+d ago)\s+(.+)$/);
       if (match) {
         results.push({
           id: match[1] ?? "",

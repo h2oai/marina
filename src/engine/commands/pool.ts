@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { creditRecalledReflections } from "../../agent/standing";
+import { memoryAccess } from "../../memory/access";
+import { memoryNoteResults, memoryResult } from "../../memory/command-result";
 import {
   bold,
   dim,
@@ -111,6 +113,7 @@ export function poolCommand(deps: {
         return;
       }
       const db = deps.db;
+      const access = memoryAccess(db, entity);
       const tokens = input.tokens;
       const sub = tokens[0]?.toLowerCase();
 
@@ -123,7 +126,7 @@ export function poolCommand(deps: {
       }
 
       if (sub === "list") {
-        const pools = db.listMemoryPools();
+        const pools = db.listMemoryPools().filter(access.pool);
         if (pools.length === 0) {
           ctx.send(input.entity, "No memory pools exist.");
           return;
@@ -167,10 +170,12 @@ export function poolCommand(deps: {
       const action = tokens[1]?.toLowerCase();
       const pool = db.getMemoryPool(poolName);
 
-      if (!pool) {
+      if (!pool || !access.pool(pool)) {
         ctx.send(
           input.entity,
-          `Pool "${poolName}" not found. Use "pool create ${poolName}" to create.`,
+          `Pool "${poolName}" not found or inaccessible.`,
+          undefined,
+          memoryResult("pool-recall", { success: false, error: "Pool not found" }),
         );
         return;
       }
@@ -313,6 +318,8 @@ export function poolCommand(deps: {
               input.entity,
               `No matching notes in pool "${poolName}". Recall matches words, not phrases — ` +
                 `try a different keyword, or browse with \`pool ${poolName} list\`.`,
+              undefined,
+              memoryResult("pool-recall", { success: true, notes: [] }),
             );
             return;
           }
@@ -335,7 +342,12 @@ export function poolCommand(deps: {
               return `  #${n.id} [score=${n.score.toFixed(2)} imp=${n.importance} ${ageStr}] (${n.entity_name}): ${n.content.slice(0, 60)}`;
             }),
           ];
-          ctx.send(input.entity, lines.join("\n"));
+          ctx.send(
+            input.entity,
+            lines.join("\n"),
+            undefined,
+            memoryResult("pool-recall", { success: true, notes: memoryNoteResults(results) }),
+          );
           return;
         }
 

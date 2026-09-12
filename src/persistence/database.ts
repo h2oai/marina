@@ -177,6 +177,7 @@ import type {
 
 // Schema + migrations live in ./schema.ts (pure data). Re-exported for the
 // tests and tools that introspect the migration chain.
+import * as memoryServiceDb from "./db-memory-service";
 import { BASE_SCHEMA, MIGRATIONS } from "./schema";
 
 export { MIGRATIONS } from "./schema";
@@ -289,10 +290,15 @@ export class MarinaDB {
   private db: Database;
   private reader: Database;
 
-  constructor(path = "marina.db") {
+  readonly durability: "normal" | "full";
+
+  constructor(path = "marina.db", options: { durability?: "normal" | "full" } = {}) {
+    this.durability = options.durability ?? "normal";
     this.db = new Database(path);
     this.db.exec("PRAGMA journal_mode=WAL");
-    this.db.exec("PRAGMA synchronous=NORMAL");
+    this.db.exec(
+      this.durability === "full" ? "PRAGMA synchronous=FULL" : "PRAGMA synchronous=NORMAL",
+    );
     this.db.exec("PRAGMA foreign_keys=ON");
     this.db.exec("PRAGMA busy_timeout=5000"); // Wait up to 5s for locks instead of failing immediately
     this.db.exec("PRAGMA cache_size=-64000"); // 64MB page cache (negative = KB)
@@ -360,6 +366,10 @@ export class MarinaDB {
 
   loadAllEntities(): Entity[] {
     return entitiesDb.loadAllEntities(this.reader);
+  }
+
+  findEntityIdByName(name: string): string | undefined {
+    return entitiesDb.findEntityIdByName(this.db, name);
   }
 
   deleteEntity(id: EntityId): void {
@@ -1680,6 +1690,28 @@ export class MarinaDB {
     return notesDb.getNotesByEntity(this.db, entityName, limit);
   }
 
+  getNotesByType(entityName: string, noteType: string, limit = 100): NoteRow[] {
+    return notesDb.getNotesByType(this.db, entityName, noteType, limit);
+  }
+
+  createNoteWithLinks(
+    entityName: string,
+    content: string,
+    opts: { importance?: number; noteType?: string },
+    links: { target: number; relationship: string }[],
+  ): number {
+    return notesDb.createNoteWithLinks(this.db, entityName, content, opts, links);
+  }
+
+  reviseNote(
+    entityName: string,
+    noteId: number,
+    content: string,
+    opts?: { importance?: number; noteType?: string },
+  ): number | undefined {
+    return notesDb.reviseNote(this.db, entityName, noteId, content, opts);
+  }
+
   getNotesByRoom(roomId: string, limit = 50): NoteRow[] {
     return notesDb.getNotesByRoom(this.db, roomId, limit);
   }
@@ -1725,6 +1757,9 @@ export class MarinaDB {
   }
   refreshContradictionCases(): number {
     return notesDb.refreshContradictionCases(this.db);
+  }
+  getContradictionCase(id: number): notesDb.ContradictionCaseRow | undefined {
+    return notesDb.getContradictionCase(this.db, id);
   }
   listContradictionCases(
     status?: "open" | "resolved",
@@ -2581,8 +2616,9 @@ export class MarinaDB {
   traceNoteGraph(
     noteId: number,
     depth = 2,
+    include?: (note: NoteRow) => boolean,
   ): { note: NoteRow; links: NoteLinkRow[]; depth: number }[] {
-    return notesDb.traceNoteGraph(this.db, noteId, depth);
+    return notesDb.traceNoteGraph(this.db, noteId, depth, include);
   }
 
   /** Count total note links for an entity's notes */
@@ -2603,6 +2639,10 @@ export class MarinaDB {
 
   getMemoryPool(name: string): MemoryPoolRow | undefined {
     return notesDb.getMemoryPool(this.db, name);
+  }
+
+  getMemoryPoolById(id: string): MemoryPoolRow | undefined {
+    return notesDb.getMemoryPoolById(this.db, id);
   }
 
   listMemoryPools(): MemoryPoolRow[] {
@@ -2630,12 +2670,34 @@ export class MarinaDB {
   recallPoolNotes(
     poolId: string,
     query: string,
-    opts?: { weightImportance?: number; weightRecency?: number; weightRelevance?: number },
+    opts?: {
+      weightImportance?: number;
+      weightRecency?: number;
+      weightRelevance?: number;
+      includeProcess?: boolean;
+    },
   ): ScoredNoteRow[] {
     return notesDb.recallPoolNotes(this.db, poolId, query, opts);
   }
 
   // ─── Memory API Keys (delegated to db-notes.ts) ────────────────────────
+
+  memoryRepository(): memoryServiceDb.MemoryRepository {
+    return memoryServiceDb.memoryRepository(this.db);
+  }
+  isServiceMemoryNote(id: number): boolean {
+    return memoryServiceDb.isServiceMemoryNote(this.db, id);
+  }
+  issueMemoryCredential(
+    ...args: Parameters<typeof principalsDb.issueMemoryCredential> extends [unknown, ...infer R]
+      ? R
+      : never
+  ) {
+    return principalsDb.issueMemoryCredential(this.db, ...args);
+  }
+  verifyMemoryCredential(token: string) {
+    return principalsDb.verifyMemoryCredential(this.db, token);
+  }
 
   createMemApiKey(id: string, secret: string, agentName: string): void {
     notesDb.createMemApiKey(this.db, id, secret, agentName);

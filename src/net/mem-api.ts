@@ -14,7 +14,9 @@
  */
 
 import type { RateLimiter } from "../auth/rate-limiter";
-import type { MarinaDB, ScoredNoteRow } from "../persistence/database";
+import { memoryAccess } from "../memory/access";
+import { expandMemoryRecall } from "../memory/retrieval";
+import type { MarinaDB } from "../persistence/database";
 import { corsHeaders } from "./cors";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -267,41 +269,6 @@ function detectIntent(query: string): {
 
 // ─── Spreading Activation ────────────────────────────────────────────────────
 
-function spreadActivation(
-  db: MarinaDB,
-  initial: ScoredNoteRow[],
-  agentName: string,
-): ScoredNoteRow[] {
-  if (initial.length === 0 || initial.length >= 20) return initial;
-
-  const SPREAD_DAMPING = 0.3;
-  const resultIds = new Set(initial.map((r) => r.id));
-  const linkedBoosts = new Map<number, number>();
-
-  for (const note of initial.slice(0, 5)) {
-    const links = db.getNoteLinks(note.id);
-    for (const link of links) {
-      const linkedId = link.source_id === note.id ? link.target_id : link.source_id;
-      if (!resultIds.has(linkedId)) {
-        const boost = note.score * SPREAD_DAMPING;
-        linkedBoosts.set(linkedId, Math.max(linkedBoosts.get(linkedId) ?? 0, boost));
-      }
-    }
-  }
-
-  if (linkedBoosts.size === 0) return initial;
-
-  const expanded = [...initial];
-  for (const [noteId, boost] of linkedBoosts) {
-    const linkedNote = db.getNote(noteId);
-    if (linkedNote && linkedNote.entity_name === agentName && !linkedNote.pool_id) {
-      expanded.push({ ...linkedNote, score: boost } as ScoredNoteRow);
-    }
-  }
-  expanded.sort((a, b) => b.score - a.score);
-  return expanded.slice(0, 20);
-}
-
 // ─── Route Handler ───────────────────────────────────────────────────────────
 
 export async function handleMemApi(
@@ -327,6 +294,7 @@ export async function handleMemApi(
   const auth = authenticate(req, db);
   if ("error" in auth) return auth.error;
   const agent = auth.agent;
+  const access = memoryAccess(db, { name: agent });
 
   // Per-agent rate limiting
   if (rateLimiter && !rateLimiter.consume(`mem:${agent}`)) {
@@ -343,7 +311,10 @@ export async function handleMemApi(
       return error(400, "content is required (string)");
     }
     const importance = body.importance as number | undefined;
-    if (importance !== undefined && (importance < 1 || importance > 10)) {
+    if (
+      importance !== undefined &&
+      (!Number.isFinite(importance) || importance < 1 || importance > 10)
+    ) {
       return error(400, "importance must be 1-10");
     }
     const noteType = (body.type as string) ?? "observation";
@@ -351,24 +322,23 @@ export async function handleMemApi(
       return error(400, `Invalid type. Valid: ${[...VALID_NOTE_TYPES].join(", ")}`);
     }
 
-    const id = db.createNote(agent, content, undefined, {
-      importance,
-      noteType,
-    });
-
-    // Auto-link if requested
-    const links = body.links as Array<{ target: number; relationship: string }> | undefined;
-    if (links && Array.isArray(links)) {
-      for (const link of links) {
-        if (link.target && VALID_RELATIONSHIPS.has(link.relationship)) {
-          try {
-            db.createNoteLink(id, link.target, link.relationship);
-          } catch {
-            // Skip invalid links silently
-          }
-        }
-      }
+    // Validate every dependency before persisting any part of the request.
+    if (body.links !== undefined && !Array.isArray(body.links))
+      return error(400, "links must be an array");
+    const links: { target: number; relationship: string }[] = [];
+    for (const value of (body.links as unknown[] | undefined) ?? []) {
+      if (!value || typeof value !== "object") return error(400, "Invalid link");
+      const link = value as { target: number; relationship: string };
+      if (
+        !Number.isSafeInteger(link.target) ||
+        link.target <= 0 ||
+        !VALID_RELATIONSHIPS.has(link.relationship)
+      )
+        return error(400, "Invalid link target or relationship");
+      if (!access.read(db.getNote(link.target))) return error(404, "Target note not found");
+      links.push(link);
     }
+    const id = db.createNoteWithLinks(agent, content, { importance, noteType }, links);
 
     const note = db.getNote(id);
     return json({ id, note }, 201);
@@ -377,7 +347,7 @@ export async function handleMemApi(
   // GET /mem/notes — list notes
   if (path === "/mem/notes" && method === "GET") {
     const limit = Math.min(Number(url.searchParams.get("limit")) || 50, 200);
-    const notes = db.getNotesByEntity(agent, limit);
+    const notes = db.getNotesByEntity(agent, limit).filter(access.read);
     return json({ notes, count: notes.length });
   }
 
@@ -396,12 +366,17 @@ export async function handleMemApi(
       weightRelevance: number;
     };
 
-    if (wi || wr || wrel) {
+    if (wi !== null || wr !== null || wrel !== null) {
       weights = {
-        weightImportance: Number(wi) || 0.33,
-        weightRecency: Number(wr) || 0.33,
-        weightRelevance: Number(wrel) || 0.34,
+        weightImportance: wi === null ? 0.33 : Number(wi),
+        weightRecency: wr === null ? 0.33 : Number(wr),
+        weightRelevance: wrel === null ? 0.34 : Number(wrel),
       };
+      if (
+        [wi, wr, wrel].some((value) => value !== null && !value.trim()) ||
+        Object.values(weights).some((value) => !Number.isFinite(value) || value < 0 || value > 1)
+      )
+        return error(400, "Weights must be finite numbers between 0 and 1");
     } else {
       weights = detectIntent(q) ?? {
         weightImportance: 0.33,
@@ -411,7 +386,7 @@ export async function handleMemApi(
     }
 
     let results = db.recallNotes(agent, q, weights);
-    results = spreadActivation(db, results, agent);
+    results = expandMemoryRecall(db, results, agent);
 
     // Touch recalled notes
     for (const note of results) {
@@ -429,15 +404,15 @@ export async function handleMemApi(
     // GET /mem/notes/:id
     if (method === "GET") {
       const note = db.getNote(noteId);
-      if (!note || note.entity_name !== agent) return error(404, "Note not found");
-      const links = db.getNoteLinks(noteId);
+      if (!access.read(note)) return error(404, "Note not found");
+      const links = access.links(noteId);
       return json({ note, links });
     }
 
     // DELETE /mem/notes/:id
     if (method === "DELETE") {
       const note = db.getNote(noteId);
-      if (!note || note.entity_name !== agent) return error(404, "Note not found");
+      if (!access.write(note)) return error(404, "Note not found");
       db.deleteNote(noteId, agent);
       return json({ ok: true, id: noteId });
     }
@@ -448,7 +423,7 @@ export async function handleMemApi(
   if (linkMatch && method === "POST") {
     const sourceId = Number(linkMatch[1]);
     const sourceNote = db.getNote(sourceId);
-    if (!sourceNote || sourceNote.entity_name !== agent) {
+    if (!access.write(sourceNote)) {
       return error(404, "Source note not found");
     }
 
@@ -463,7 +438,8 @@ export async function handleMemApi(
     }
 
     const targetNote = db.getNote(targetId);
-    if (!targetNote || targetNote.entity_name !== agent) {
+    if (!access.write(db.getNote(sourceId))) return error(404, "Source note not found");
+    if (!access.read(targetNote)) {
       return error(404, "Target note not found");
     }
 
@@ -476,14 +452,11 @@ export async function handleMemApi(
   if (traceMatch && method === "GET") {
     const noteId = Number(traceMatch[1]);
     const note = db.getNote(noteId);
-    if (!note || note.entity_name !== agent) return error(404, "Note not found");
+    if (!access.read(note)) return error(404, "Note not found");
 
     const depth = Math.min(Number(url.searchParams.get("depth")) || 2, 5);
-    const graph = db.traceNoteGraph(noteId, depth);
-
-    // Filter to only this agent's notes
-    const filtered = graph.filter((g) => g.note.entity_name === agent);
-    return json({ root: noteId, depth, graph: filtered });
+    const graph = access.trace(noteId, depth);
+    return json({ root: noteId, depth, graph });
   }
 
   // ─── Core Memory ─────────────────────────────────────────────────────
@@ -539,7 +512,7 @@ export async function handleMemApi(
 
   // GET /mem/pools — list pools
   if (path === "/mem/pools" && method === "GET") {
-    const pools = db.listMemoryPools();
+    const pools = db.listMemoryPools().filter(access.pool);
     return json({ pools, count: pools.length });
   }
 
@@ -564,17 +537,21 @@ export async function handleMemApi(
     const poolName = decodeURIComponent(poolMatch[1]!);
     const sub = poolMatch[2] ?? "";
     const pool = db.getMemoryPool(poolName);
-    if (!pool) return error(404, "Pool not found");
+    if (!pool || !access.pool(pool)) return error(404, "Pool not found");
 
     // POST /mem/pools/:name/notes — add note to pool
     if (sub === "/notes" && method === "POST") {
       const body = (await req.json()) as Record<string, unknown>;
+      if (!access.pool(db.getMemoryPoolById(pool.id))) return error(404, "Pool not found");
       const content = body.content as string | undefined;
       if (!content || typeof content !== "string") {
         return error(400, "content is required (string)");
       }
       const importance = body.importance as number | undefined;
-      if (importance !== undefined && (importance < 1 || importance > 10)) {
+      if (
+        importance !== undefined &&
+        (!Number.isFinite(importance) || importance < 1 || importance > 10)
+      ) {
         return error(400, "importance must be 1-10");
       }
       const noteType = (body.type as string) ?? "observation";

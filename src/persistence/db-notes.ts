@@ -121,6 +121,7 @@ function findDuplicateForWrite(
            AND note_type = ?
            AND ${factLikeClause("notes")}
            AND content = ?
+           AND verification_status != 'superseded'
          LIMIT 1`,
       )
       .get(entityName, noteType, content) as NoteRow | null;
@@ -179,6 +180,73 @@ export function getNotesByRoom(db: Database, roomId: string, limit = 50): NoteRo
   return db
     .query("SELECT * FROM notes WHERE room_id = ? ORDER BY id DESC LIMIT ?")
     .all(roomId, limit) as NoteRow[];
+}
+
+export function getNotesByType(
+  db: Database,
+  entityName: string,
+  noteType: string,
+  limit = 100,
+): NoteRow[] {
+  return db
+    .query(
+      "SELECT * FROM notes WHERE entity_name = ? AND note_type = ? AND pool_id IS NULL AND verification_status != 'superseded' ORDER BY id DESC LIMIT ?",
+    )
+    .all(entityName, noteType, limit) as NoteRow[];
+}
+
+/** Atomic create/link operation; authorization belongs to the calling service. */
+export function createNoteWithLinks(
+  db: Database,
+  entityName: string,
+  content: string,
+  opts: { importance?: number; noteType?: string },
+  links: { target: number; relationship: string }[],
+): number {
+  return db.transaction(() => {
+    const id = createNote(db, entityName, content, undefined, opts);
+    for (const link of links) {
+      db.run(
+        "INSERT OR IGNORE INTO note_links (source_id, target_id, relationship, created_at) VALUES (?, ?, ?, ?)",
+        [id, link.target, link.relationship, Date.now()],
+      );
+    }
+    return id;
+  })();
+}
+
+/** The predecessor ID is the optimistic concurrency token. Retire it and create
+ * its successor/edge in one transaction; stale edits cannot fork active state. */
+export function reviseNote(
+  db: Database,
+  entityName: string,
+  noteId: number,
+  content: string,
+  opts?: { importance?: number; noteType?: string },
+): number | undefined {
+  return db.transaction(() => {
+    const previous = getNote(db, noteId);
+    if (
+      !previous ||
+      previous.entity_name !== entityName ||
+      previous.verification_status === "superseded"
+    )
+      return undefined;
+    const noteType = opts?.noteType ?? previous.note_type;
+    const id = createNote(db, entityName, content, previous.room_id ?? undefined, {
+      importance: opts?.importance ?? previous.importance,
+      noteType,
+      poolId: previous.pool_id ?? undefined,
+      supersedesId: noteId,
+      tier:
+        opts?.noteType && opts.noteType !== previous.note_type
+          ? inferTier(content, noteType)
+          : previous.tier,
+    });
+    db.run("UPDATE notes SET verification_status = 'superseded' WHERE id = ?", [noteId]);
+    createNoteLink(db, id, noteId, "supersedes");
+    return id;
+  })();
 }
 
 /**
@@ -336,11 +404,10 @@ export function recordNoteVerification(
      VALUES (?,?,?,?,?,?,?)`,
     [noteId, verifier, status, bounded, rationale ?? null, evidenceSourceId ?? null, Date.now()],
   );
-  db.run("UPDATE notes SET confidence=?,verification_status=? WHERE id=?", [
-    bounded,
-    status,
-    noteId,
-  ]);
+  db.run(
+    "UPDATE notes SET confidence=?,verification_status=? WHERE id=? AND verification_status!='superseded'",
+    [bounded, status, noteId],
+  );
   return Number(result.lastInsertRowid);
 }
 
@@ -366,7 +433,7 @@ export function updateNoteQuality(
   if (!["unverified", "verified", "disputed", "superseded"].includes(verification)) return false;
   return (
     db.run(
-      "UPDATE notes SET confidence = ?, verification_status = ? WHERE id = ? AND entity_name = ?",
+      "UPDATE notes SET confidence = ?, verification_status = ? WHERE id = ? AND entity_name = ? AND verification_status != 'superseded'",
       [Math.max(0, Math.min(1, confidence)), verification, id, entityName],
     ).changes > 0
   );
@@ -479,6 +546,14 @@ export function listContradictionCases(
     .all(limit) as ContradictionCaseRow[];
 }
 
+export function getContradictionCase(db: Database, id: number): ContradictionCaseRow | undefined {
+  return (
+    (db
+      .query("SELECT * FROM contradiction_cases WHERE id=?")
+      .get(id) as ContradictionCaseRow | null) ?? undefined
+  );
+}
+
 export function resolveContradictionCase(
   db: Database,
   id: number,
@@ -492,7 +567,13 @@ export function resolveContradictionCase(
   if (!row) return false;
   const left = getNote(db, row.left_note_id);
   const right = getNote(db, row.right_note_id);
-  if (!left || !right) return false;
+  if (
+    !left ||
+    !right ||
+    left.verification_status === "superseded" ||
+    right.verification_status === "superseded"
+  )
+    return false;
   const winners =
     resolution === "left"
       ? [left]
@@ -549,18 +630,21 @@ export function consolidateNotes(
   duplicateIds: number[],
 ): number {
   const keeper = getNote(db, keeperId);
-  if (!keeper || keeper.entity_name !== entityName) return 0;
+  if (!keeper || keeper.entity_name !== entityName || keeper.verification_status === "superseded")
+    return 0;
   let changed = 0;
   db.transaction(() => {
     for (const id of [...new Set(duplicateIds)]) {
       if (id === keeperId) continue;
       const note = getNote(db, id);
-      if (!note || note.entity_name !== entityName || note.verification_status === "superseded")
+      if (
+        !note ||
+        note.entity_name !== entityName ||
+        note.pool_id !== keeper.pool_id ||
+        note.verification_status === "superseded"
+      )
         continue;
-      db.run(
-        "UPDATE notes SET verification_status = 'superseded', supersedes_id = ? WHERE id = ?",
-        [keeperId, id],
-      );
+      db.run("UPDATE notes SET verification_status = 'superseded' WHERE id = ?", [id]);
       db.run(
         "INSERT OR IGNORE INTO note_links (source_id, target_id, relationship, created_at) VALUES (?, ?, 'supersedes', ?)",
         [keeperId, id, Date.now()],
@@ -898,6 +982,7 @@ export function traceNoteGraph(
   db: Database,
   noteId: number,
   depth = 2,
+  include: (note: NoteRow) => boolean = () => true,
 ): { note: NoteRow; links: NoteLinkRow[]; depth: number }[] {
   const visited = new Set<number>();
   const results: { note: NoteRow; links: NoteLinkRow[]; depth: number }[] = [];
@@ -909,9 +994,12 @@ export function traceNoteGraph(
     visited.add(current.id);
 
     const note = getNote(db, current.id);
-    if (!note) continue;
+    if (!note || !include(note)) continue;
 
-    const links = getNoteLinks(db, current.id);
+    const links = getNoteLinks(db, current.id).filter((link) => {
+      const other = getNote(db, link.source_id === current.id ? link.target_id : link.source_id);
+      return !!other && include(other);
+    });
     results.push({ note, links, depth: current.depth });
 
     if (current.depth < depth) {
@@ -967,6 +1055,13 @@ export function getMemoryPool(db: Database, name: string): MemoryPoolRow | undef
   );
 }
 
+export function getMemoryPoolById(db: Database, id: string): MemoryPoolRow | undefined {
+  return (
+    (db.query("SELECT * FROM memory_pools WHERE id = ?").get(id) as MemoryPoolRow | null) ??
+    undefined
+  );
+}
+
 export function listMemoryPools(db: Database): MemoryPoolRow[] {
   return db.query("SELECT * FROM memory_pools ORDER BY name").all() as MemoryPoolRow[];
 }
@@ -1004,7 +1099,12 @@ export function recallPoolNotes(
   db: Database,
   poolId: string,
   query: string,
-  opts?: { weightImportance?: number; weightRecency?: number; weightRelevance?: number },
+  opts?: {
+    weightImportance?: number;
+    weightRecency?: number;
+    weightRelevance?: number;
+    includeProcess?: boolean;
+  },
 ): ScoredNoteRow[] {
   const ftsQuery = buildFtsQuery(query, "or");
   if (!ftsQuery) return [];
@@ -1018,7 +1118,7 @@ export function recallPoolNotes(
         ${SCORE_EXPR}
       FROM notes n
       JOIN notes_fts fts ON n.id = fts.rowid
-      WHERE n.pool_id = ? AND n.verification_status != 'superseded' AND notes_fts MATCH ?
+      WHERE n.pool_id = ? AND n.verification_status != 'superseded' ${opts?.includeProcess ? "" : `AND ${factLikeClause("n")}`} AND notes_fts MATCH ?
       ORDER BY score DESC
       LIMIT 20`,
     )
