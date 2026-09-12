@@ -7,6 +7,9 @@ import type { MemoryOperationRequest, MemoryOperationResult } from "../sdk/memor
 export const MEMORY_SERVICE_HELP = `Portable memory service (private to your durable world account):
   memory service                         show service capabilities
   memory usage                           show your storage usage and limits
+  memory review [JSON filters]            review stale/competing assertions
+  memory reaffirm <ID> <version> <JSON pins>
+                                         reaffirm after explicitly reviewing premises
   memory remember <text>                 store a plain memory
   memory claim <subject> <predicate> <JSON scalar>
   memory relate <subject> <predicate> <entity ID>
@@ -14,7 +17,9 @@ export const MEMORY_SERVICE_HELP = `Portable memory service (private to your dur
   memory graph <subject>                 follow asserted relationships
   memory show <record ID>                inspect a full record and provenance
   memory sources <query>                 search original source text
-  memory source <source ID>              read the first stable source range
+  memory source <source ID> [start end]  read a stable UTF-8 byte range
+  memory federation                     list explicitly mounted peers
+  memory across <JSON query>            search explicitly selected peers
   memory plan <task>                     inspect a bounded retrieval plan
   memory vocabulary                      inspect the current vocabulary
   memory api <JSON request>              full service operations
@@ -38,6 +43,26 @@ export function parseMemoryServiceCommand(args: string): MemoryOperationRequest 
     }
   };
   switch (sub) {
+    case "federation":
+      return { operation: "federation_mounts" };
+    case "across":
+      return { operation: "federated_search", input: json(rest) };
+    case "review":
+      return { operation: "review", input: json(rest || "{}") };
+    case "reaffirm": {
+      const fields = rest.match(/^(\S+)\s+(\d+)\s+([\s\S]+)$/);
+      if (!fields)
+        throw new MemoryClientError(
+          400,
+          "invalid_input",
+          "Use: memory reaffirm ID VERSION JSON_DEPENDENCY_VERSIONS",
+        );
+      return {
+        operation: "reaffirm",
+        id: fields[1],
+        input: { expected_version: Number(fields[2]), dependency_versions: json(fields[3]!) },
+      };
+    }
     case "usage":
       return { operation: "usage" };
     case "service":
@@ -50,8 +75,19 @@ export function parseMemoryServiceCommand(args: string): MemoryOperationRequest 
       return { operation: "query", input: json(rest || "{}") };
     case "sources":
       return { operation: "source_search", input: { query: rest } };
-    case "source":
-      return { operation: "source_range", id: rest };
+    case "source": {
+      const fields = rest.match(/^(\S+)(?:\s+(\d+)(?:\s+(\d+))?)?$/);
+      if (!fields)
+        throw new MemoryClientError(400, "invalid_input", "Use: memory source ID [START [END]]");
+      return {
+        operation: "source_range",
+        id: fields[1],
+        input: {
+          ...(fields[2] ? { start: Number(fields[2]) } : {}),
+          ...(fields[3] ? { end: Number(fields[3]) } : {}),
+        },
+      };
+    }
     case "plan":
       return { operation: "plan", input: { task: rest } };
     case "vocabulary":

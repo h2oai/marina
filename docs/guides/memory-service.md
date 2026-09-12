@@ -2,8 +2,8 @@
 
 Marina Memory v1 stores evidence, versioned memories and resumable work over HTTP. It can run
 without a world, residents, model routing or standing. An external agent only needs a URL, a
-memory credential and a space ID. The [reliability implementation record](../research/memory-reliability-implementation.md)
-separates demonstrated behavior from the remaining roadmap.
+memory credential and a space ID. This guide covers setup, API contracts, operating limits and
+reproducible checks with disposable data.
 
 ## Start a private service
 
@@ -112,11 +112,22 @@ require `Idempotency-Key: KEY`. JSON bodies are limited to 2 MiB. Errors have
 | `POST /spaces/:space/execute_plan` | Executes a returned plan against its exact space generation and vocabulary version |
 | `GET/POST /spaces/:space/checkpoints/:name` | Get state; write `{expected_version, data, source_cursor?, source_ids?}` atomically. Use version 0 for first write. |
 | `GET /spaces/:space/jobs/:id` | Durable embedding job state; worker lease secrets are excluded |
-| `POST /spaces/:space/reindex` | `{expected_generation}`; enqueue missing vectors for the configured model, returning `job_ids` |
+| `POST /spaces/:space/reindex` | `{expected_generation, limit?, cursor?}`; page missing-vector jobs with `job_ids`, `examined`, next `generation`, and `next_cursor` |
 | `POST /spaces/:space/grants` | Owner grants `{principal_id, role:"reader"\|"writer"\|null}`; `null` revokes access |
 | `POST /spaces/:space/forget` | `{record_ids}` or `{source_ids}`; whole-space deletion requires `{all:true, expected_generation}` from its owner |
 | `POST /spaces/:space/sources/batch` | Atomically capture 1–64 sources (1 MiB total), retaining individual retry keys |
 | `GET /spaces/:space/export` | Authorized `marina.memory.bundle.v1` snapshot of current records, raw sources and checkpoints |
+| `POST /spaces/:space/review` | `{kind?:"all"\|"stale"\|"competing", limit?, cursor?}`; premise versions and temporally overlapping competing assertions |
+| `POST /spaces/:space/reaffirm` | `{id, expected_version, dependency_versions, content?}`; explicit reviewed replacement revision |
+| `POST /spaces/:space/cache/delete` | Exact cache identity; delete only this principal's reusable result, preserving authored memory |
+| `POST /spaces/:space/cache/get` | `{inputs, model, policy}`; live-authorized hit or an inspectable miss reason |
+| `POST /spaces/:space/cache/put` | Identity plus `{value, records?, sources?, expires_at}`; 1–32 explicit version/hash pins |
+| `POST /spaces/:space/acknowledge` | `{keys}`; acknowledge 1–100 consumed receipts belonging to the caller |
+| `GET/POST /spaces/:space/bundle` | Export/import the versioned `marina.memory.bundle.v2` history envelope |
+| `GET /spaces/:space/federation_mounts` | List aliases configured for the caller's principal |
+| `POST /spaces/:space/federated_search` | `{mounts, query, kind?:"records"\|"sources", mode?, limit?, max_bytes?, allow_partial?}` |
+| `POST /spaces/:space/federated_read` | `{mount, kind:"record"\|"source", id, version?, start?, end?}`; fresh peer authorization |
+
 
 Memory credentials have a separate audience from world and model credentials. Scopes are
 `memory:read`, `memory:write`, `memory:share` and `memory:export`; provisioning currently issues
@@ -144,14 +155,24 @@ Only an explicit `mode:"hybrid"` requests embeddings. `/search` searches memory 
 
 Hybrid search combines FTS5 and cosine similarity using reciprocal rank fusion (`k=60`). It
 returns current heads, applies scope and record filters, and identifies the embedding model.
-The native implementation scans at most 10,000 eligible active records. It reports a capacity
-error above that bound instead of silently omitting memories; this is not an ANN scale claim.
+Lexical search selects at most 200 authorized current candidates through FTS5 before hydrating
+results; it no longer loads all record heads or stops at 10,000 records. Optional semantic search
+streams every eligible vector while retaining the top 200. `coverage` reports candidate counts
+and scored/missing/invalid vectors. Semantic work remains exact O(records × dimensions), with
+bounded JavaScript ranking memory; this is not an approximate-nearest-neighbor index.
+
+Broad synchronous SQLite queries can delay other work; size the deployment from measured
+workloads and use exact filters where available. The default admission policy allows 100,000
+retained revisions. Native history bundles and vocabulary changes have separate documented bounds.
 
 Writes are durable before asynchronous semantic indexing finishes. Wait for the receipt's job
 to become `ready`. Hybrid search fails with `503 retrieval_incomplete` if the provider or eligible
 vectors are unavailable. An explicit `allow_degraded:true` returns available results with reasons;
 it does not disguise lexical results as semantic success. After enabling or changing a model,
-read the space generation, call `reindex`, and wait for the returned jobs. Model identities include
+read the space generation, call `reindex`, and wait for the returned jobs. Reindex scans 1,000
+records per page by default (`limit` 1–10,000). Continue with the returned `generation` and
+`next_cursor`, using a new request key for each page; a changed evidence generation invalidates
+the cursor. Stop when `next_cursor` is null. Model identities include
 preprocessing versions, preventing accidental mixing of incompatible embeddings.
 
 `budget_tokens` conservatively limits the **UTF-8 bytes of returned evidence text**, including
@@ -200,14 +221,10 @@ using HTTP only, kills the server with `SIGKILL`, starts fresh processes, and ch
 artifact integrity, checkpoint recovery, retrieval, revisions, bounded context, sharing,
 revocation and forgetting. It cleans up its temporary database and does not use your memories.
 
-That qualification agent uses a deterministic policy, not an LLM. In the recorded eleven-record corpus,
-hybrid search recovered all three paraphrased facts at rank three or better; lexical search
-recovered none. This demonstrates the service boundary and a small semantic benefit. Broader
-agent-task improvement, competitor parity, multi-day operation and scale remain unproven.
-
-A separate [LLM comparison](../research/memory-portable-implementation.md) runs the same fresh
-HTTP-only agent and six tasks without memory, with portable memory, and with optional embeddings.
-Its traces and failures are retained; it does not establish general agent or competitor parity.
+That qualification agent uses a deterministic policy. Use it to check service behavior across
+restarts. To compare task outcomes from LLM agents, run the utility harness described under
+[sustained qualification](#backup-rotation-receipt-retention-and-sustained-qualification) with
+your approved model budget and retain its report privately.
 
 ## Original sources and stable ranges
 
@@ -413,7 +430,7 @@ has the same size. There is no automatic TTL, history pruning, or model-selected
 A growing write that exceeds a dimension fails with `507 quota_exceeded`; its content, receipts,
 events and accounting roll back together. Atomic batches roll back in full. Same-key receipt
 replays consume no additional budget. Existing over-budget data stays readable after an operator
-lowers limits. Explicit forgetting and revocation remain admitted even when their audit receipts
+lowers limits. Explicit forgetting, cache deletion and revocation remain admitted even when their audit receipts
 increase usage; these exceptions mean the budget is not an absolute ceiling. Existing SQLite
 pages, FTS indexes, WAL, other world tables and backups require separate deployment disk quotas,
 monitoring and retention. Forgetting does not necessarily shrink the physical database file.
@@ -471,3 +488,180 @@ it does not expose `AbortSignal` cancellation.
 **Cancellation is not a rollback receipt.** A request sent before cancellation can still commit.
 Keep mutation keys outside retry callbacks and preserve them until the remote outcome is known.
 Cancellation does not make external tools transactional or retract already exported evidence.
+
+
+## Review and reusable results
+
+`review` returns the record, source IDs, declared premise IDs with pinned/current versions,
+and competing assertions with overlapping half-open validity intervals. It does not decide
+which assertion is true. A cursor is valid only while the evidence/access generation is stable.
+Resolve upstream premises first; `reaffirm` requires the revision you reviewed and every current
+premise version, including `{}` for a conclusion with no premises. Racing changes return `409`.
+
+```ts
+const page = await memory.review(space, { kind: "stale" });
+for (const item of page.items) {
+  console.log(item.record, item.premises, item.competing_records);
+  // Read the indicated sources and premises before explicitly submitting a revision.
+}
+await memory.reaffirm(space, conclusionId, reviewedVersion, reviewedPremiseVersions,
+  "The conclusion supported by the reviewed evidence.");
+```
+
+Humans can use `memory review`, `memory show ID`, `memory source ID START END`, and
+`memory reaffirm ID VERSION JSON_PINS`. Full JSON retains provenance and continuation cursors.
+Python exposes `review` and `reaffirm`; generic MCP uses the same operation names through
+Marina's existing authenticated, rate-limited command path.
+
+Reusable results are explicit and scoped to the calling principal in a space. They are stored
+separately from authored memories and checkpoints, charged to the space owner's byte budget,
+and excluded from portable memory bundles. `inputs`, immutable model identity, and policy
+identity form an exact cache key. Pin 1–32 current record versions and/or source content hashes;
+`expires_at` is an absolute UTC millisecond expiration. Entries are bounded to 64 KiB, with
+32 KiB inputs. Empty pin sets are refused.
+
+```ts
+const identity = { inputs: { task: "validate build", revision: "abc123" },
+  model: "router:model@revision", policy: "validation-v2" };
+await memory.cachePut(space, { ...identity, value: { passed: true },
+  records: [{ id: evidence.id, version: evidence.version }],
+  expires_at: Date.now() + 3600000 });
+const cached = await memory.cacheGet(space, identity);
+if (cached.hit) console.log(cached.value);
+```
+
+Every read checks live authorization, expiration, evidence generation and declared pins.
+Corrections, vocabulary/access changes and forgetting invalidate reuse conservatively;
+forgetting also deletes stored cache values in that space. Checkpoint/cache-only writes do not
+invalidate evidence. Expired values remain charged until replaced, deleted with `cacheDelete` (Python `cache_delete`,
+MCP `cache_delete`), or removed by explicit forgetting;
+deletion preserves authored sources and other principals' cached results. There is no automatic
+source eviction. Include time, locale and external-tool version assumptions in inputs/policy. The cache does not certify a result's truth or memoize
+external side effects. Its pins are local; federated results require fresh remote reads.
+
+## Portable history and compatibility imports
+
+```ts
+const bundle = await memory.exportBundle(space);
+await destination.importBundle(emptyOwnedSpace, bundle, "transfer-001");
+```
+
+Bundle v2 preserves portable record/source IDs, structured source bodies, Unicode source ranges,
+revision attributes, stale state, vocabulary versions and checkpoints. Destination import is
+atomic, owner-only, and requires an empty space. Existing IDs, including forgotten record
+tombstones, cause a collision error instead of silent merging or resurrection. Checkpoint source
+cursors are mapped to their destination sequence numbers; opaque data is preserved without
+rewriting embedded application-specific space IDs. Original timestamps describe the supplied
+history, not an authenticity guarantee. Imported assertions remain unverified.
+
+The envelope and original bodies have SHA-256 checksums. Canonical envelope JSON recursively sorts
+object keys by JavaScript UTF-16 code-unit order, preserves array order, and uses JSON.stringify
+number/string encodings without Unicode normalization. `memoryPortableDigest` is the public
+implementation. A checksum detects corruption; authorization and explicit source provenance
+establish who may import. Invalid attributes, missing references, cyclic current dependencies and
+missing historical vocabulary versions roll back the whole import.
+
+Online bundles are bounded to 1.5 MiB, 2,000 records/sources, and 2,000 versions per record.
+Oversize exports fail explicitly. Use scoped paginated reads for application-specific transfers,
+or operator snapshots for larger exact database transfers. Credentials, grants, receipts,
+indexes and cached outputs are not part of portable history; the importing owner establishes
+new access grants. Explicit exports are independent copies: revocation or forgetting at the
+origin cannot retract already exported data.
+
+`translateMemoryExport(format, raw, {origin, imported_at})` in the fetch-only TypeScript SDK
+converts two named formats to a native bundle and returns an explicit `losses` report:
+
+- `mcp-knowledge-graph-v1`: `{entities, relations}` from the MCP reference memory server. Entities,
+  observations and directed relationships become explicit records/claims. The complete supplied
+  export remains an original source. [Reference format](https://github.com/modelcontextprotocol/servers/blob/main/src/memory/README.md).
+- `langgraph-items-v1`: an array of `{namespace: string[], key, value}` items. Namespace/key identity
+  and values are preserved. This is item import, not a BaseStore, checkpoint, batch, TTL, or vector
+  API replacement. [LangGraph store contract](https://github.com/langchain-ai/docs/blob/main/src/oss/langgraph/stores.mdx).
+
+Import time is explicitly labeled when source history is unknown. No original revision history,
+authorization or dependency semantics are invented. These adapters are original Apache-2.0 Marina
+code and add no runtime package dependency.
+
+## Explicit federation
+
+Set `MARINA_MEMORY_FEDERATION_CONFIG` to an operator-owned JSON array of mounts and restart:
+
+```json
+[{"owner_principal_id":"LOCAL_PRINCIPAL","alias":"research",
+  "url":"https://peer.example","space_id":"PEER_SPACE","token_env":"RESEARCH_MEMORY_TOKEN"}]
+```
+
+Supply the peer token through deployment secret configuration. Mounts bind to a local principal;
+callers cannot provide arbitrary URLs or choose another principal. The peer receives its configured
+credential. Local caller credentials are never forwarded. Up to eight mounts per principal may be
+selected explicitly per query:
+
+```ts
+const evidence = await memory.federatedSearch(space, {
+  mounts: ["research"], kind: "sources", query: "migration approval",
+});
+const original = await memory.federatedRead(space, {
+  mount: "research", kind: "source", id: evidence.results[0].origin.id,
+});
+```
+
+Record ranking combines peer ranks, retaining mount, space, record ID and version. Source queries
+remain lexical and return source hashes/excerpts for follow-up range reads. Result counts/bytes
+are bounded, and truncation is explicit. A selected peer's failure fails the query by default;
+`allow_partial:true` returns failures and `incomplete:true`. Local access and mount identity are
+checked again after network waits. Every new peer request uses live peer authorization, so future
+reads observe revocation and deletion. No source is automatically replicated, and no distributed
+atomic snapshot or retraction of already consumed evidence is promised.
+
+## Backup rotation, receipt retention and sustained qualification
+
+Migration **106** adds acknowledged/retired request markers, a stale-review index, and separately
+accounted principal-scoped cached results. Existing migrations are unchanged. Backup and restore
+include this state; ordinary memory bundle imports do not import grants or cached outputs.
+
+```bash
+bun run memory rotate-backups --db data/memory.db --directory /secure-backups/memory --keep 7
+```
+
+Rotation first publishes and verifies a new snapshot and durable manifest, then prunes only verified
+managed snapshots for that same source path. Unrelated files, invalid manifests and corrupted
+snapshots are preserved and reported as skipped. Concurrent rotation is refused by an exclusive
+lock. After a crashed operator process, inspect the lock's PID/run before removing a stale lock.
+Snapshots remain point-in-time copies; reapply later revocations/forgetting after a restore.
+
+An agent may call `acknowledge(space, keys)` only after consuming those outcomes. The operator can
+preview and apply bounded compaction of acknowledged receipts:
+
+```bash
+bun run memory compact-receipts --db data/memory.db --before UTC_MILLISECONDS --limit 1000
+bun run memory compact-receipts --db data/memory.db --before UTC_MILLISECONDS --limit 1000 --apply
+```
+
+Unacknowledged receipts are never selected. Compaction keeps key/fingerprint tombstones permanently:
+a late retry receives `410 receipt_retired` and never executes the mutation again. A different
+payload still returns an idempotency conflict. This releases logical payload bytes, not necessarily
+filesystem space. Tombstones and audit history still consume space; there is no automatic TTL.
+
+Reproduce qualification with disposable data:
+
+```bash
+bun run qualify:memory:storage /tmp/memory-storage.json
+bun run qualify:memory:scale 1000000 /tmp/memory-scale.json
+bun run qualify:memory:sustained --directory /tmp/memory-48h --duration-ms 172800000
+bun run qualify:memory:utility --offline --repetitions 1 --output /tmp/memory-protocol.json
+```
+
+The Linux storage drill requires user/mount namespaces, mount tools and a C compiler. It exhausts
+only a private 32 MiB tmpfs, tests read-only startup refusal, and injects EIO at the libc write/sync
+boundary. It does not simulate damaged hardware or controller power loss. The sustained harness
+records actual elapsed runtime, completed cycles and errors in `status.json`; it never substitutes
+an accelerated clock for days of observation. It exercises real resident journals/compaction and
+clean server restarts with deterministic messages, without LLM calls. Resume requires the same
+harness/duration; inspect stale locks after a crash. Keep its disposable database/report for review.
+
+The utility harness has twelve synthetic structured tasks, balanced condition order and repeated
+fresh HTTP-only agents. It records exact outcome/citation/abstention/correction scores, functional
+retry-configuration checks, latency, tokens and estimated cost. Live model runs require an explicit
+`--budget-usd` and configured OpenAI credentials, using the pinned GPT-4o-mini snapshot through
+Marina's router. `--model-cache EXISTING_CACHE` adds the optional embedding condition without
+downloading a model. `--offline` proves protocol/grader execution only; it is not LLM task evidence.

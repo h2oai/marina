@@ -25,6 +25,7 @@ import * as intellectsDb from "./db-intellects";
 import * as journeysDb from "./db-journeys";
 import * as logsDb from "./db-logs";
 import * as mediaDb from "./db-media";
+import { compactMemoryReceipts } from "./db-memory-retention";
 import { configureMemoryStorage, memoryLimitsFromEnv } from "./db-memory-storage";
 import * as meshesDb from "./db-meshes";
 import * as mutationsDb from "./db-mutations";
@@ -289,6 +290,9 @@ export interface DirectMessageRow {
 // ─── Database Class ──────────────────────────────────────────────────────────
 
 export class MarinaDB {
+  compactMemoryReceipts(options: Parameters<typeof compactMemoryReceipts>[1]) {
+    return compactMemoryReceipts(this.db, options);
+  }
   private db: Database;
   private reader: Database;
 
@@ -300,32 +304,35 @@ export class MarinaDB {
   ) {
     this.durability = options.durability ?? "normal";
     this.db = new Database(path);
+    let reader: Database | undefined;
     try {
       configureMemoryStorage(this.db, options.memoryLimits ?? memoryLimitsFromEnv());
+      this.db.exec("PRAGMA journal_mode=WAL");
+      this.db.exec(
+        this.durability === "full" ? "PRAGMA synchronous=FULL" : "PRAGMA synchronous=NORMAL",
+      );
+      this.db.exec("PRAGMA foreign_keys=ON");
+      this.db.exec("PRAGMA busy_timeout=5000"); // Wait up to 5s for locks instead of failing immediately
+      this.db.exec("PRAGMA cache_size=-64000"); // 64MB page cache (negative = KB)
+      this.db.exec("PRAGMA mmap_size=268435456"); // 256MB memory-mapped I/O for reads
+      this.db.exec("PRAGMA temp_store=MEMORY"); // Keep temp tables in memory
+      this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); // Flush WAL so read-only connection can open
+
+      this.db.exec(BASE_SCHEMA);
+      this.runMigrations();
+
+      // Checkpoint so the readonly reader can see all schema/migration changes
+      this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+
+      reader = new Database(path, { readonly: true });
+      reader.exec("PRAGMA mmap_size=268435456");
+      reader.exec("PRAGMA cache_size=-64000");
+      this.reader = reader;
     } catch (error) {
+      reader?.close();
       this.db.close();
       throw error;
     }
-    this.db.exec("PRAGMA journal_mode=WAL");
-    this.db.exec(
-      this.durability === "full" ? "PRAGMA synchronous=FULL" : "PRAGMA synchronous=NORMAL",
-    );
-    this.db.exec("PRAGMA foreign_keys=ON");
-    this.db.exec("PRAGMA busy_timeout=5000"); // Wait up to 5s for locks instead of failing immediately
-    this.db.exec("PRAGMA cache_size=-64000"); // 64MB page cache (negative = KB)
-    this.db.exec("PRAGMA mmap_size=268435456"); // 256MB memory-mapped I/O for reads
-    this.db.exec("PRAGMA temp_store=MEMORY"); // Keep temp tables in memory
-    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); // Flush WAL so read-only connection can open
-
-    this.db.exec(BASE_SCHEMA);
-    this.runMigrations();
-
-    // Checkpoint so the readonly reader can see all schema/migration changes
-    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-
-    this.reader = new Database(path, { readonly: true });
-    this.reader.exec("PRAGMA mmap_size=268435456");
-    this.reader.exec("PRAGMA cache_size=-64000");
   }
 
   private runMigrations(): void {

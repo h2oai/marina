@@ -9,6 +9,7 @@ import { ollamaEmbeddings } from "../src/memory/embeddings";
 import { localEmbeddings } from "../src/memory/local-embeddings";
 import { serveMemory } from "../src/memory/server";
 import { MarinaDB } from "../src/persistence/database";
+import { rotateMemoryBackups } from "../src/persistence/db-memory-backups";
 import { snapshotMemoryDatabase } from "../src/persistence/db-memory-maintenance";
 
 const { values, positionals } = parseArgs({
@@ -29,13 +30,42 @@ const { values, positionals } = parseArgs({
     credential: { type: "string" },
     output: { type: "string" },
     backup: { type: "string" },
+    before: { type: "string" },
+    limit: { type: "string", default: "1000" },
+    apply: { type: "boolean", default: false },
+    directory: { type: "string" },
+    keep: { type: "string", default: "7" },
   },
 });
 
 try {
   const dbPath = resolve(values.db);
   const command = positionals[0];
-  if (command === "backup" || command === "restore") {
+  if (command === "rotate-backups") {
+    if (!values.directory) throw new Error("rotate-backups requires --directory");
+    console.log(
+      JSON.stringify(await rotateMemoryBackups(dbPath, values.directory, Number(values.keep))),
+    );
+  } else if (command === "compact-receipts") {
+    if (!values.before)
+      throw new Error(
+        "compact-receipts requires --before UTC_MILLISECONDS; preview first, then --apply",
+      );
+    const db = new MarinaDB(dbPath, { durability: "full" });
+    try {
+      console.log(
+        JSON.stringify(
+          db.compactMemoryReceipts({
+            before: Number(values.before),
+            limit: Number(values.limit),
+            apply: values.apply,
+          }),
+        ),
+      );
+    } finally {
+      db.close();
+    }
+  } else if (command === "backup" || command === "restore") {
     const source = command === "backup" ? dbPath : values.backup;
     const target = command === "backup" ? values.output : dbPath;
     if (!source || !target)
@@ -114,7 +144,7 @@ try {
     process.on("SIGINT", close);
   } else
     console.log(
-      "Usage: bun run memory init --name NAME [--credentials FILE] [--db FILE]\n       bun run memory serve [--db FILE] [--port 3301] [--embeddings none|local|ollama]\n       bun run memory revoke --credential ID [--db FILE]\n       bun run memory backup --db FILE --output NEW_FILE\n       bun run memory restore --backup FILE --db NEW_FILE",
+      "Usage: bun run memory init --name NAME [--credentials FILE] [--db FILE]\n       bun run memory serve [--db FILE] [--port 3301] [--embeddings none|local|ollama]\n       bun run memory revoke --credential ID [--db FILE]\n       bun run memory backup --db FILE --output NEW_FILE\n       bun run memory restore --backup FILE --db NEW_FILE\n       bun run memory rotate-backups --db FILE --directory DIR [--keep 7]\n       bun run memory compact-receipts --db FILE --before UTC_MS [--limit 1000] [--apply]",
     );
 } catch (error) {
   console.error(getErrorMessage(error));

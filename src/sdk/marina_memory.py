@@ -45,6 +45,49 @@ class MarinaMemory:
     def _path(self, suffix=""):
         return "/spaces/" + quote(self.space_id, safe="") + suffix
 
+    def review(self, **filters):
+        return self.request(self._path("/review"), "POST", filters)
+
+    def reaffirm(self, record_id, expected_version, dependency_versions, content=None, key=None):
+        body = {"id": record_id, "expected_version": expected_version,
+                "dependency_versions": dependency_versions}
+        if content is not None:
+            body["content"] = content
+        return self.request(self._path("/reaffirm"), "POST", body, key)
+
+    def cache_delete(self, inputs, model, policy, key=None):
+        return self.request(self._path("/cache/delete"), "POST",
+                            {"inputs": inputs, "model": model, "policy": policy}, key)
+
+    def cache_get(self, inputs, model, policy):
+        return self.request(self._path("/cache/get"), "POST",
+                            {"inputs": inputs, "model": model, "policy": policy})
+
+    def cache_put(self, inputs, model, policy, value, expires_at, records=None, sources=None, key=None):
+        return self.request(self._path("/cache/put"), "POST",
+                            {"inputs": inputs, "model": model, "policy": policy, "value": value,
+                             "expires_at": expires_at, "records": records or [], "sources": sources or []}, key)
+
+    def acknowledge(self, keys):
+        return self.request(self._path("/acknowledge"), "POST", {"keys": keys})
+
+    def export_bundle(self):
+        return self.request(self._path("/bundle"))
+
+    def import_bundle(self, bundle, key=None):
+        return self.request(self._path("/bundle"), "POST", bundle, key)
+
+    def federation_mounts(self):
+        return self.request(self._path("/federation_mounts"))
+
+    def federated_search(self, mounts, query, **options):
+        return self.request(self._path("/federated_search"), "POST",
+                            {"mounts": mounts, "query": query, **options})
+
+    def federated_read(self, mount, record_id, kind="record", **options):
+        return self.request(self._path("/federated_read"), "POST",
+                            {"mount": mount, "id": record_id, "kind": kind, **options})
+
     def remember(self, content, key=None, **attributes):
         return self.request(self._path("/records"), "POST", {"content": content, **attributes}, key)
 
@@ -68,8 +111,8 @@ class MarinaMemory:
     def context(self, query, budget_tokens=2048, **options):
         return self.request(self._path("/context"), "POST", {"query": query, "budget_tokens": budget_tokens, **options})
 
-    def reindex(self, expected_generation, key=None):
-        return self.request(self._path("/reindex"), "POST", {"expected_generation": expected_generation}, key)
+    def reindex(self, expected_generation, key=None, **page):
+        return self.request(self._path("/reindex"), "POST", {"expected_generation": expected_generation, **page}, key)
 
     def usage(self):
         return self.request("/usage")

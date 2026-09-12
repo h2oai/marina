@@ -15,13 +15,13 @@ import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { MarinaClient } from "../src/sdk/client";
 import { MarinaMemoryClient } from "../src/sdk/memory-client";
-import type { MemoryQueryResult, MemoryReceipt } from "../src/sdk/memory-types";
+import type { MemoryQueryResult, MemoryReceipt, MemoryReviewResult } from "../src/sdk/memory-types";
 import { roomId } from "../src/types";
 import { makeTestRoom } from "./helpers";
 
 async function call<T>(client: Client, name: string, args: Record<string, unknown>) {
   const response = await client.callTool({ name, arguments: args });
-  expect(response.isError).toBeFalsy();
+  expect(response.isError, JSON.stringify(response)).toBeFalsy();
   const result = response.structuredContent as { ok: boolean; space_id: string; result: T };
   expect(result.ok).toBe(true);
   return result;
@@ -150,6 +150,42 @@ it("shares one symbolic memory across world MCP, HTTP, resident SDK and human co
         })
       ).result.results[0],
     ).toMatchObject({ id: derived.result.id, freshness: "stale" });
+    const review = await call<MemoryReviewResult>(agent, "memory_service", {
+      operation: "review",
+      input: { kind: "stale" },
+    });
+    expect(review.result.items[0]?.record.id).toBe(derived.result.id);
+    const humanReview = await agent.callTool({
+      name: "command",
+      arguments: { input: 'memory review {"kind":"stale"}' },
+    });
+    expect(JSON.stringify(humanReview)).toContain(derived.result.id);
+    await call(agent, "memory_service", {
+      operation: "reaffirm",
+      id: derived.result.id,
+      input: { expected_version: 1, dependency_versions: { [saved.result.id]: 2 } },
+    });
+    expect((await http.review(space, { kind: "stale" })).items).toHaveLength(0);
+    const identity = { inputs: { task: "verify" }, model: "fixture:1", policy: "reviewed:1" };
+    await call(agent, "memory_service", {
+      operation: "cache_put",
+      input: {
+        ...identity,
+        value: "supported result",
+        records: [{ id: derived.result.id, version: 2 }],
+        expires_at: Date.now() + 60000,
+      },
+    });
+    expect(await http.cacheGet(space, identity)).toMatchObject({
+      hit: true,
+      value: "supported result",
+    });
+    await call(agent, "memory_service", { operation: "cache_delete", input: identity });
+    expect(await http.cacheGet(space, identity)).toMatchObject({ hit: false });
+    expect(
+      (await call<{ schema: string }>(agent, "memory_service", { operation: "export_bundle" }))
+        .result.schema,
+    ).toBe("marina.memory.bundle.v2");
   } finally {
     resident?.disconnect();
     await agent.close();
@@ -300,6 +336,22 @@ found = memory.query(subject='project:portable', object={'kind': 'literal', 'val
 assert found['results'][0]['claim']['object']['value'] is True
 graph = memory.graph('project:portable')
 assert graph['edges'][0]['record']['id'] == found['results'][0]['id']
+premise = memory.remember('old premise')
+conclusion = memory.remember('derived', depends_on=[premise['id']])
+memory.revise(premise['id'], 1, 'new premise')
+assert memory.review(kind='stale')['items'][0]['record']['id'] == conclusion['id']
+memory.reaffirm(conclusion['id'], 1, {premise['id']: 2})
+assert memory.review(kind='stale')['items'] == []
+import time
+memory.cache_put({'task': 'python'}, 'model:1', 'policy:1', 'answer', int(time.time()*1000)+60000,
+                 records=[{'id': conclusion['id'], 'version': 2}], key='python-cache')
+assert memory.cache_get({'task': 'python'}, 'model:1', 'policy:1')['value'] == 'answer'
+assert memory.acknowledge(['python-cache'])['acknowledged'] == ['python-cache']
+assert memory.cache_delete({'task': 'python'}, 'model:1', 'policy:1')['removed'] is True
+assert memory.cache_get({'task': 'python'}, 'model:1', 'policy:1')['hit'] is False
+assert memory.export_bundle()['schema'] == 'marina.memory.bundle.v2'
+assert memory.federation_mounts()['mounts'] == []
+
 print(json.dumps({'id': found['results'][0]['id']}))
 `,
     );
@@ -309,3 +361,71 @@ print(json.dumps({'id': found['results'][0]['id']}))
     rmSync(directory, { recursive: true });
   }
 }, 20000);
+
+it("reads original sources across two real HTTP services without replication", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "marina-federation-wire-"));
+  const local = serveMemory({ dbPath: join(directory, "local.db"), port: 0 });
+  const remote = serveMemory({ dbPath: join(directory, "remote.db"), port: 0 });
+  try {
+    const principal = local.db.ensurePrincipal({
+      type: "service",
+      displayName: "local",
+    }).principal_id;
+    const remotePrincipal = remote.db.ensurePrincipal({
+      type: "service",
+      displayName: "remote",
+    }).principal_id;
+    const remoteCredential = remote.db.issueMemoryCredential(remotePrincipal);
+    const client = new MarinaMemoryClient(
+      `http://127.0.0.1:${local.server.port}`,
+      local.db.issueMemoryCredential(principal).token,
+    );
+    const peer = new MarinaMemoryClient(
+      `http://127.0.0.1:${remote.server.port}`,
+      remoteCredential.token,
+    );
+    const space = (await client.createSpace("local")).id,
+      peerSpace = (await peer.createSpace("remote")).id;
+    const source = await peer.capture(peerSpace, "Federatedoriginal α🙂 exact evidence");
+    local.service.federation.mount(principal, "evidence", peer, peerSpace);
+    const results = await client.federatedSearch(space, {
+      mounts: ["evidence"],
+      query: "Federatedoriginal",
+      kind: "sources",
+    });
+    expect(results.results[0]).toMatchObject({
+      kind: "source",
+      origin: { id: source.id, mount: "evidence" },
+    });
+    expect(
+      (await client.federatedRead(space, { mount: "evidence", id: source.id, kind: "source" }))
+        .result,
+    ).toMatchObject({ text: "Federatedoriginal α🙂 exact evidence" });
+    expect((await client.sources(space)).sources).toHaveLength(0);
+    await peer.forget(peerSpace, { source_ids: [source.id] });
+    await expect(
+      client.federatedRead(space, { mount: "evidence", id: source.id, kind: "source" }),
+    ).rejects.toMatchObject({ code: "peer_not_found", status: 404 });
+    expect(
+      (
+        await client.federatedSearch(space, {
+          mounts: ["evidence"],
+          query: "Federatedoriginal",
+          kind: "sources",
+        })
+      ).results,
+    ).toHaveLength(0);
+    remote.db.revokeWorkloadCredential(remoteCredential.credentialId);
+    await expect(
+      client.federatedSearch(space, {
+        mounts: ["evidence"],
+        query: "Federatedoriginal",
+        kind: "sources",
+      }),
+    ).rejects.toMatchObject({ code: "federation_incomplete" });
+  } finally {
+    await local.close();
+    await remote.close();
+    rmSync(directory, { recursive: true });
+  }
+}, 10000);

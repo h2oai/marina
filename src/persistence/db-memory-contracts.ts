@@ -35,7 +35,7 @@ function readVocabulary(db: Database, space: string, version?: number): MemoryVo
     : { version: 0, definition: { closed: false, predicates: {} } };
 }
 
-function definitionInput(value: unknown): MemoryVocabularyDefinition {
+export function definitionInput(value: unknown): MemoryVocabularyDefinition {
   const input = object(value),
     predicates = object(input.predicates);
   if (typeof input.closed !== "boolean" || Object.keys(predicates).length > 128)

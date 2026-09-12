@@ -4,6 +4,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  integer,
   type MemoryCheckpoint,
   type MemoryClaim,
   MemoryError,
@@ -19,6 +20,8 @@ import {
   recordInput,
 } from "../memory/service-types";
 import type { MemorySourceSearch } from "../sdk/memory-types";
+import { exportMemoryBundle, importMemoryBundle } from "./db-memory-bundles";
+import { deleteMemoryCache, getMemoryCache, putMemoryCache } from "./db-memory-cache";
 import { captureMemoryBatch } from "./db-memory-capture";
 import {
   memoryVocabulary,
@@ -31,13 +34,16 @@ import {
   storeMemoryDependencyVersions,
 } from "./db-memory-dependencies";
 import { memoryDatabaseHealth } from "./db-memory-maintenance";
+import { rankMemoryVectors } from "./db-memory-ranking";
+import { acknowledgeMemoryRequests } from "./db-memory-retention";
+import { reaffirmMemory, reviewMemory } from "./db-memory-review";
 import { readMemorySourceRange, searchMemorySources } from "./db-memory-sources";
 import { enforceMemoryStorage, memoryStorageUsage } from "./db-memory-storage";
 import { createNote, deleteNote, getNote, reviseNote } from "./db-notes";
 import type { MemoryActor, MemoryScope } from "./db-principals";
 import { buildFtsQuery } from "./fts";
 
-function canonical(value: unknown): string {
+export function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object")
     return `{${Object.entries(value)
@@ -47,7 +53,7 @@ function canonical(value: unknown): string {
       .join(",")}}`;
   return JSON.stringify(value) ?? "null";
 }
-function hash(value: unknown) {
+export function hash(value: unknown) {
   return createHash("sha256").update(canonical(value)).digest("hex");
 }
 
@@ -98,7 +104,12 @@ export function event(
     [space, operation, ref ?? null, version ?? null, actor.principalId, Date.now()],
   );
   db.run("UPDATE memory_spaces SET generation=generation+1 WHERE id=?", [space]);
-  if (operation !== "checkpoint.saved" && operation !== "memory.reindex")
+  if (
+    operation !== "checkpoint.saved" &&
+    operation !== "memory.reindex" &&
+    operation !== "cache.saved" &&
+    operation !== "cache.deleted"
+  )
     db.run("UPDATE memory_spaces SET retrieval_generation=retrieval_generation+1 WHERE id=?", [
       space,
     ]);
@@ -133,12 +144,22 @@ export function mutation<T extends MemoryReceipt>(
     else requireActor(db, actor, "memory:write");
     const previous = db
       .query(
-        "SELECT request_hash,response FROM memory_requests WHERE principal_id=? AND space_id=? AND request_key=?",
+        "SELECT request_hash,response,retired_at FROM memory_requests WHERE principal_id=? AND space_id=? AND request_key=?",
       )
-      .get(actor.principalId, space, key) as { request_hash: string; response: string } | null;
+      .get(actor.principalId, space, key) as {
+      request_hash: string;
+      response: string;
+      retired_at: number | null;
+    } | null;
     if (previous) {
       if (previous.request_hash !== fingerprint)
         throw new MemoryError(409, "idempotency_conflict", "This key was used for different input");
+      if (previous.retired_at !== null)
+        throw new MemoryError(
+          410,
+          "receipt_retired",
+          "This acknowledged request key was permanently retired; it cannot execute again",
+        );
       return JSON.parse(previous.response) as T;
     }
     const owner = space
@@ -150,17 +171,14 @@ export function mutation<T extends MemoryReceipt>(
       : actor.principalId;
     const before = memoryStorageUsage(db, owner).usage;
     const result = run();
-    db.run("INSERT INTO memory_requests VALUES (?,?,?,?,?,?)", [
-      actor.principalId,
-      space,
-      key,
-      fingerprint,
-      JSON.stringify(result),
-      Date.now(),
-    ]);
+    db.run(
+      "INSERT INTO memory_requests(principal_id,space_id,request_key,request_hash,response,created_at) VALUES (?,?,?,?,?,?)",
+      [actor.principalId, space, key, fingerprint, JSON.stringify(result), Date.now()],
+    );
     // Explicit removal and revocation remain possible at the admission limit.
     if (
       operation !== "memory.forget" &&
+      operation !== "cache.delete" &&
       !(operation === "space.grant" && (input as { role?: unknown }).role === null)
     )
       enforceMemoryStorage(db, owner, before);
@@ -398,38 +416,88 @@ export function reindexMemorySpace(
   expected: number,
   model: string,
   key: string,
+  page: { cursor?: string; limit?: number } = {},
 ) {
   authorizeMemorySpace(db, actor, space, "memory:write");
-  return mutation(db, actor, space, key, "memory.reindex", { expected, model }, () => {
-    if (authorizeMemorySpace(db, actor, space, "memory:write").generation !== expected)
-      throw new MemoryError(409, "generation_conflict", "Space generation is stale");
-    const records = db
-      .query(`SELECT id,current_note_id FROM memory_records
-      WHERE space_id=? AND status='active' ORDER BY id LIMIT 10001`)
-      .all(space) as { id: string; current_note_id: number }[];
-    if (records.length > 10000)
-      throw new MemoryError(413, "reindex_capacity", "Reindex exceeds the 10,000 record limit");
-    const jobs: string[] = [];
-    for (const record of records) {
-      if (
-        db
-          .query("SELECT 1 FROM memory_vectors WHERE note_id=? AND model=?")
-          .get(record.current_note_id, model)
-      )
-        continue;
-      const pending = db
-        .query(`SELECT id FROM memory_index_jobs WHERE note_id=? AND model=?
+  const limit = integer(page.limit ?? 1000, "limit", 1, 10000);
+  return mutation(
+    db,
+    actor,
+    space,
+    key,
+    "memory.reindex",
+    Object.keys(page).length ? { expected, model, ...page } : { expected, model },
+    () => {
+      if (authorizeMemorySpace(db, actor, space, "memory:write").generation !== expected)
+        throw new MemoryError(409, "generation_conflict", "Space generation is stale");
+      const current = authorizeMemorySpace(db, actor, space, "memory:write");
+      let after = "";
+      if (page.cursor) {
+        let cursor: { space: string; model: string; generation: number; after: string };
+        try {
+          cursor = JSON.parse(Buffer.from(page.cursor, "base64url").toString());
+        } catch {
+          throw new MemoryError(400, "invalid_cursor", "Malformed reindex cursor");
+        }
+        if (
+          !cursor ||
+          cursor.space !== space ||
+          cursor.model !== model ||
+          typeof cursor.after !== "string"
+        )
+          throw new MemoryError(
+            400,
+            "invalid_cursor",
+            "Reindex cursor belongs to another space/model",
+          );
+        if (cursor.generation !== current.retrieval_generation)
+          throw new MemoryError(
+            409,
+            "query_changed",
+            "Evidence changed; restart reindex pagination",
+          );
+        after = cursor.after;
+      }
+      const rows = db
+        .query(`SELECT id,current_note_id FROM memory_records
+      WHERE space_id=? AND status='active' AND id>? ORDER BY id LIMIT ?`)
+        .all(space, after, limit + 1) as { id: string; current_note_id: number }[];
+      const records = rows.slice(0, limit);
+      const jobs: string[] = [];
+      for (const record of records) {
+        if (
+          db
+            .query("SELECT 1 FROM memory_vectors WHERE note_id=? AND model=?")
+            .get(record.current_note_id, model)
+        )
+          continue;
+        const pending = db
+          .query(`SELECT id FROM memory_index_jobs WHERE note_id=? AND model=?
         AND state IN ('pending','running') ORDER BY created_at LIMIT 1`)
-        .get(record.current_note_id, model) as { id: string } | null;
-      jobs.push(pending?.id ?? indexJob(db, space, record.id, record.current_note_id, model)!);
-    }
-    return {
-      id: space,
-      seq: event(db, actor, space, "memory.reindex", space),
-      model,
-      job_ids: jobs,
-    };
-  });
+          .get(record.current_note_id, model) as { id: string } | null;
+        jobs.push(pending?.id ?? indexJob(db, space, record.id, record.current_note_id, model)!);
+      }
+      return {
+        id: space,
+        seq: event(db, actor, space, "memory.reindex", space),
+        model,
+        job_ids: jobs,
+        examined: records.length,
+        next_cursor:
+          rows.length > limit
+            ? Buffer.from(
+                JSON.stringify({
+                  space,
+                  model,
+                  generation: current.retrieval_generation,
+                  after: records.at(-1)!.id,
+                }),
+              ).toString("base64url")
+            : null,
+        generation: current.generation + 1,
+      };
+    },
+  );
 }
 
 export function rememberRecord(
@@ -732,7 +800,7 @@ export interface MemoryFilter {
   tier?: string;
 }
 /** Fixed column names and bound values keep optional filters selective and injection-safe. */
-function memoryFilters(filter: MemoryFilter) {
+export function memoryFilters(filter: MemoryFilter) {
   if (filter.include_stale !== undefined && typeof filter.include_stale !== "boolean")
     throw new MemoryError(400, "invalid_input", "include_stale must be boolean");
   const conditions: string[] = [],
@@ -796,11 +864,11 @@ export function lexicalMemoryCandidates(
   if (!fts) return [];
   return (
     db
-      .query(`SELECT r.id FROM notes_fts f CROSS JOIN memory_records r ON r.current_note_id=f.rowid CROSS JOIN notes n ON n.id=f.rowid
+      .query(`SELECT r.id FROM notes_fts f CROSS JOIN memory_records r INDEXED BY idx_memory_records_note ON r.current_note_id=f.rowid CROSS JOIN notes n ON n.id=f.rowid
     WHERE notes_fts MATCH ? AND r.space_id=? AND r.status='active' AND n.verification_status!='superseded'
     ${filter.include_stale === true ? "" : "AND r.stale=0"}
     AND (? IS NULL OR r.subject=?) AND (? IS NULL OR n.note_type=?) AND (? IS NULL OR n.tier=?)
-    ORDER BY f.rank,r.id LIMIT 200`)
+    ORDER BY f.rank LIMIT 200`)
       .all(
         fts,
         space,
@@ -1016,6 +1084,7 @@ export function forgetMemory(
     // Opaque checkpoints may contain copied context. Invalidate all checkpoints
     // in the affected space rather than pretending to infer their dependencies.
     db.run("DELETE FROM memory_checkpoints WHERE space_id=?", [space]);
+    db.run("DELETE FROM memory_cached_results WHERE space_id=?", [space]);
     if (input.all) {
       db.run("DELETE FROM memory_vocabularies WHERE space_id=?", [space]);
       db.run("DELETE FROM memory_sources WHERE space_id=?", [space]);
@@ -1258,6 +1327,27 @@ export function graphMemory(
 export function memoryRepository(db: Database) {
   return {
     healthy: () => memoryDatabaseHealth(db),
+    exportBundle: (actor: MemoryActor, space: string) => exportMemoryBundle(db, actor, space),
+    importBundle: (actor: MemoryActor, space: string, input: unknown, key: string) =>
+      importMemoryBundle(db, actor, space, input, key),
+    acknowledge: (actor: MemoryActor, space: string, keys: unknown) =>
+      acknowledgeMemoryRequests(db, actor, space, keys),
+    review: (actor: MemoryActor, space: string, input?: unknown) =>
+      reviewMemory(db, actor, space, input),
+    reaffirm: (
+      actor: MemoryActor,
+      space: string,
+      id: string,
+      input: unknown,
+      key: string,
+      model?: string,
+    ) => reaffirmMemory(db, actor, space, id, input, key, model),
+    cacheDelete: (actor: MemoryActor, space: string, raw: unknown, key: string) =>
+      deleteMemoryCache(db, actor, space, raw, key),
+    cacheGet: (actor: MemoryActor, space: string, input: unknown) =>
+      getMemoryCache(db, actor, space, input),
+    cachePut: (actor: MemoryActor, space: string, input: unknown, key: string) =>
+      putMemoryCache(db, actor, space, input, key),
     usage: (actor: MemoryActor) => {
       requireActor(db, actor, "memory:read");
       return memoryStorageUsage(db, actor.principalId);
@@ -1344,10 +1434,23 @@ export function memoryRepository(db: Database) {
       memoryCandidates(db, actor, space, filter),
     lexical: (actor: MemoryActor, space: string, query: string, filter?: MemoryFilter) =>
       lexicalMemoryCandidates(db, actor, space, query, filter),
+    rankVectors: (
+      actor: MemoryActor,
+      space: string,
+      model: string,
+      vector: number[],
+      filter?: MemoryFilter,
+    ) => rankMemoryVectors(db, actor, space, model, vector, filter),
     vectors: (actor: MemoryActor, space: string, model: string) =>
       memoryVectors(db, actor, space, model),
-    reindex: (actor: MemoryActor, space: string, expected: number, model: string, key: string) =>
-      reindexMemorySpace(db, actor, space, expected, model, key),
+    reindex: (
+      actor: MemoryActor,
+      space: string,
+      expected: number,
+      model: string,
+      key: string,
+      page?: { cursor?: string; limit?: number },
+    ) => reindexMemorySpace(db, actor, space, expected, model, key, page),
     claimJob: (model: string) => claimMemoryIndexJob(db, model),
     finishJob: (
       job: MemoryIndexJob,

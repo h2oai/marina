@@ -6,6 +6,17 @@ import { type MarinaMemoryClient, MemoryClientError } from "./memory-client";
 export const MEMORY_OPERATIONS = [
   "capabilities",
   "usage",
+  "federation_mounts",
+  "federated_search",
+  "federated_read",
+  "export_bundle",
+  "import_bundle",
+  "acknowledge",
+  "review",
+  "reaffirm",
+  "cache_delete",
+  "cache_get",
+  "cache_put",
   "me",
   "spaces",
   "create_space",
@@ -76,6 +87,28 @@ export async function runMemoryOperation(
   const base = `/spaces/${space}`;
   const input = request.input;
   switch (operation) {
+    case "federation_mounts":
+      return client.request(`${base}/federation_mounts`);
+    case "federated_search":
+      return client.request(`${base}/federated_search`, "POST", input);
+    case "federated_read":
+      return client.request(`${base}/federated_read`, "POST", input);
+    case "export_bundle":
+      return client.request(`${base}/bundle`);
+    case "import_bundle":
+      return client.request(`${base}/bundle`, "POST", input, request.key);
+    case "acknowledge":
+      return client.request(`${base}/acknowledge`, "POST", input);
+    case "review":
+      return client.request(`${base}/review`, "POST", input ?? {});
+    case "reaffirm":
+      return client.request(`${base}/reaffirm`, "POST", { ...input, id: request.id }, request.key);
+    case "cache_delete":
+      return client.request(`${base}/cache/delete`, "POST", input, request.key);
+    case "cache_get":
+      return client.request(`${base}/cache/get`, "POST", input);
+    case "cache_put":
+      return client.request(`${base}/cache/put`, "POST", input, request.key);
     case "vocabulary":
       return client.request(
         `${base}/vocabulary${input?.version === undefined ? "" : `?version=${field(String(input.version), "version")}`}`,

@@ -137,6 +137,10 @@ export async function handleMemoryServiceApi(
       !path.endsWith("/source_search") &&
       !path.endsWith("/plan") &&
       !path.endsWith("/execute_plan") &&
+      !path.endsWith("/review") &&
+      !path.endsWith("/cache/get") &&
+      !path.endsWith("/federated_search") &&
+      !path.endsWith("/federated_read") &&
       (!key || key.length > 128)
     )
       throw new MemoryError(
@@ -165,6 +169,54 @@ export async function handleMemoryServiceApi(
     const space = decodeURIComponent(match[1]!);
     const rest = match[2] ?? "";
     if (!rest && req.method === "GET") return json(repo.authorize(actor, space));
+    if (rest === "federation_mounts" && req.method === "GET") {
+      repo.authorize(actor, space);
+      return json({ mounts: service.federation.list(actor.principalId) });
+    }
+    if (rest === "federated_search" && req.method === "POST")
+      return json(
+        await service.federation.search(
+          actor.principalId,
+          await readBody(req),
+          () => repo.authorize(actor, space),
+          req.signal,
+        ),
+      );
+    if (rest === "federated_read" && req.method === "POST")
+      return json(
+        await service.federation.read(
+          actor.principalId,
+          await readBody(req),
+          () => repo.authorize(actor, space),
+          req.signal,
+        ),
+      );
+    if (rest === "bundle" && req.method === "GET") return json(repo.exportBundle(actor, space));
+    if (rest === "bundle" && req.method === "POST")
+      return json(repo.importBundle(actor, space, await readBody(req), key), 201);
+    if (rest === "acknowledge" && req.method === "POST")
+      return json(repo.acknowledge(actor, space, (await readBody(req)).keys));
+    if (rest === "review" && req.method === "POST")
+      return json(repo.review(actor, space, await readBody(req)));
+    if (rest === "reaffirm" && req.method === "POST") {
+      const body = await readBody(req);
+      return json(
+        repo.reaffirm(
+          actor,
+          space,
+          textValue(body.id, "id", 128),
+          body,
+          key,
+          service.embeddings?.id,
+        ),
+      );
+    }
+    if (rest === "cache/delete" && req.method === "POST")
+      return json(repo.cacheDelete(actor, space, await readBody(req), key));
+    if (rest === "cache/get" && req.method === "POST")
+      return json(repo.cacheGet(actor, space, await readBody(req)));
+    if (rest === "cache/put" && req.method === "POST")
+      return json(repo.cachePut(actor, space, await readBody(req), key));
     if (rest === "plan" && req.method === "POST")
       return json(await createMemoryPlan(service, actor, space, await readBody(req), req.signal));
     if (rest === "execute_plan" && req.method === "POST")
@@ -286,6 +338,12 @@ export async function handleMemoryServiceApi(
           integer(body.expected_generation, "expected_generation", 0, Number.MAX_SAFE_INTEGER),
           service.embeddings.id,
           key,
+          {
+            ...(body.cursor === undefined
+              ? {}
+              : { cursor: textValue(body.cursor, "cursor", 4096) }),
+            ...(body.limit === undefined ? {} : { limit: integer(body.limit, "limit", 1, 10000) }),
+          },
         ),
         202,
       );

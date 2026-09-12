@@ -139,6 +139,7 @@ export const EXPORT_TABLES = [
   "memory_requests",
   "memory_service_events",
   "memory_checkpoints",
+  "memory_cached_results",
   "memory_index_jobs",
   "memory_vectors",
   "memory_claims",

@@ -8,7 +8,8 @@ import type { MemoryRepository } from "../persistence/db-memory-service";
 import type { MemoryActor } from "../persistence/db-principals";
 import { withMemoryAbort } from "../sdk/memory-abort";
 import type { MemorySearchInput, MemorySearchResult } from "../sdk/memory-types";
-import { cosine, type EmbeddingProvider, validEmbedding } from "./embeddings";
+import { type EmbeddingProvider, validEmbedding } from "./embeddings";
+import { configuredMemoryFederation, type MemoryFederation } from "./federation";
 import { configuredMemoryPlanner, type MemoryPlanner } from "./planning";
 import { MemoryError } from "./service-types";
 
@@ -24,6 +25,7 @@ export class MemoryService {
     readonly db: MarinaDB,
     readonly embeddings?: EmbeddingProvider,
     readonly planner: MemoryPlanner | undefined = configuredMemoryPlanner(),
+    readonly federation: MemoryFederation = configuredMemoryFederation(),
   ) {
     this.repository = db.memoryRepository();
   }
@@ -45,8 +47,16 @@ export class MemoryService {
       },
       semantic: this.embeddings?.id ?? null,
       fusion: "reciprocal-rank-fusion:k=60",
-      max_active_records_per_search: 10000,
+      max_active_records_per_search: null,
+      candidate_limit_per_ranker: 200,
+      semantic_ranking: "exact-streaming",
       source_capture: "verbatim",
+      portable_bundle: {
+        schema: "marina.memory.bundle.v2",
+        history: true,
+        identity: "preserved-or-rejected",
+        max_bytes: 1572864,
+      },
       storage_budget: {
         scope: "owner",
         accounting: "utf8-payloads-plus-row-allowances",
@@ -67,7 +77,13 @@ export class MemoryService {
       checkpoints: true,
       source_forgetting: true,
       context_budget: "utf8-bytes-upper-bound",
-      federation: false,
+      federation: {
+        mode: "explicit-principal-mounts",
+        replication: false,
+        partial_results: "opt-in",
+      },
+      review_queue: "stale-and-competing-assertions",
+      reusable_results: "exact-input-model-policy:revision-pinned:live-authorization",
     };
   }
 
@@ -157,34 +173,21 @@ export class MemoryService {
     // network await; neither permission nor a revision is frozen across it.
     return this.repository.readSnapshot(() => {
       const current = this.repository.authorize(actor, space);
-      const candidates = this.repository.heads(actor, space, input);
-      if (candidates.length > 10000)
-        throw new MemoryError(
-          503,
-          "index_capacity",
-          "This native search exceeds its declared 10,000-record capacity",
-        );
-      const byId = new Map(candidates.map((item) => [item.id, item]));
       const lexical = this.repository.lexical(actor, space, input.query, input);
       let semantic: string[] = [];
+      let coverage: { scored: number; missing: number; invalid: number } | undefined;
       if (queryVector && this.embeddings) {
-        const vectors = new Map(
-          this.repository
-            .vectors(actor, space, this.embeddings.id)
-            .map((v) => [v.note_id, v.vector]),
+        const ranked = this.repository.rankVectors(
+          actor,
+          space,
+          this.embeddings.id,
+          queryVector,
+          input,
         );
-        if (candidates.some((c) => !vectors.has(c.noteId))) degraded.push("index_incomplete");
-        try {
-          semantic = candidates
-            .filter((c) => vectors.has(c.noteId))
-            .map((c) => ({ id: c.id, score: cosine(queryVector!, vectors.get(c.noteId)!) }))
-            .filter((c) => c.score > 0)
-            .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
-            .slice(0, 200)
-            .map((c) => c.id);
-        } catch {
-          degraded.push("embedding_dimension_mismatch");
-        }
+        semantic = ranked.ids;
+        coverage = { scored: ranked.scored, missing: ranked.missing, invalid: ranked.invalid };
+        if (ranked.missing) degraded.push("index_incomplete");
+        if (ranked.invalid) degraded.push("embedding_dimension_mismatch");
       }
       if (degraded.length && !input.allow_degraded)
         throw new MemoryError(503, "retrieval_incomplete", degraded.join(", "));
@@ -197,7 +200,6 @@ export class MemoryService {
         ["semantic", semantic],
       ] as const) {
         for (const [i, id] of list.entries()) {
-          if (!byId.has(id)) continue;
           const result = ranked.get(id) ?? { score: 0, ranks: {} };
           result.score += 1 / (60 + i + 1);
           result.ranks[kind] = i + 1;
@@ -231,6 +233,11 @@ export class MemoryService {
         generation: current.generation,
         mode,
         model: this.embeddings?.id ?? null,
+        coverage: {
+          candidate_limit: 200,
+          lexical_candidates: lexical.length,
+          semantic: coverage ?? null,
+        },
         degraded,
         results,
       };

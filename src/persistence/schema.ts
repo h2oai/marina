@@ -2950,4 +2950,57 @@ SELECT 'vector' AS kind,json_array(t.note_id,t.model) AS ref,r.space_id AS space
 INSERT INTO memory_storage_items SELECT * FROM memory_storage_projection;
 `,
   },
+  // Acknowledged receipts may be compacted, but their keys are permanently retired.
+  {
+    version: 106,
+    sql: `
+ALTER TABLE memory_requests ADD COLUMN acknowledged_at INTEGER;
+ALTER TABLE memory_requests ADD COLUMN retired_at INTEGER;
+CREATE INDEX idx_memory_requests_retention ON memory_requests(acknowledged_at) WHERE retired_at IS NULL;
+CREATE INDEX idx_memory_review_stale ON memory_records(space_id,id) WHERE stale=1 AND status='active';
+CREATE TABLE memory_cached_results (
+ space_id TEXT NOT NULL REFERENCES memory_spaces(id),
+ principal_id TEXT NOT NULL,
+ name TEXT NOT NULL,
+ version INTEGER NOT NULL,
+ data TEXT NOT NULL,
+ updated_at INTEGER NOT NULL,
+ PRIMARY KEY(space_id,principal_id,name)
+);
+CREATE TRIGGER memory_storage_cache_insert AFTER INSERT ON memory_cached_results BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes) VALUES
+ ('cache',json_array(new.space_id,new.principal_id,new.name),new.space_id,length(CAST(new.data AS BLOB))+length(CAST(new.name AS BLOB))+192);
+END;
+CREATE TRIGGER memory_storage_cache_update AFTER UPDATE ON memory_cached_results BEGIN
+ UPDATE memory_storage_items SET bytes=length(CAST(new.data AS BLOB))+length(CAST(new.name AS BLOB))+192
+ WHERE kind='cache' AND ref=json_array(new.space_id,new.principal_id,new.name);
+END;
+CREATE TRIGGER memory_storage_cache_delete AFTER DELETE ON memory_cached_results BEGIN
+ DELETE FROM memory_storage_items WHERE kind='cache' AND ref=json_array(old.space_id,old.principal_id,old.name);
+END;
+DROP VIEW memory_storage_projection;
+CREATE VIEW memory_storage_projection AS
+SELECT 'space' AS kind,t.id AS ref,t.id AS space_id,length(CAST(t.name AS BLOB))+128 AS bytes FROM memory_spaces t
+UNION ALL
+SELECT 'source' AS kind,t.id AS ref,t.space_id AS space_id,length(CAST(t.body AS BLOB))+length(CAST(coalesce(t.session_id,'') AS BLOB))+128 AS bytes FROM memory_sources t
+UNION ALL
+SELECT 'revision' AS kind,json_array(t.record_id,t.version) AS ref,r.space_id AS space_id,length(CAST(n.content AS BLOB))+length(CAST(coalesce(t.attributes,'') AS BLOB))+128 AS bytes FROM memory_record_versions t JOIN memory_records r ON r.id=t.record_id JOIN notes n ON n.id=t.note_id
+UNION ALL
+SELECT 'checkpoint' AS kind,json_array(t.space_id,t.name) AS ref,t.space_id AS space_id,length(CAST(t.data AS BLOB))+length(CAST(t.name AS BLOB))+128 AS bytes FROM memory_checkpoints t
+UNION ALL
+SELECT 'vocabulary' AS kind,json_array(t.space_id,t.version) AS ref,t.space_id AS space_id,length(CAST(t.definition AS BLOB))+128 AS bytes FROM memory_vocabularies t
+UNION ALL
+SELECT 'receipt' AS kind,json_array(t.principal_id,t.space_id,t.request_key) AS ref,s.id AS space_id,length(CAST(t.response AS BLOB))+length(CAST(t.request_key AS BLOB))+192 AS bytes FROM memory_requests t JOIN memory_spaces s ON s.id=CASE WHEN t.space_id='' THEN json_extract(t.response,'$.id') ELSE t.space_id END
+UNION ALL
+SELECT 'event' AS kind,CAST(t.seq AS TEXT) AS ref,t.space_id AS space_id,length(CAST(t.operation AS BLOB))+length(CAST(coalesce(t.reference_id,'') AS BLOB))+128 AS bytes FROM memory_service_events t
+UNION ALL
+SELECT 'grant' AS kind,json_array(t.space_id,t.principal_id) AS ref,t.space_id AS space_id,128 AS bytes FROM memory_grants t
+UNION ALL
+SELECT 'job' AS kind,t.id AS ref,t.space_id AS space_id,length(CAST(t.model AS BLOB))+256 AS bytes FROM memory_index_jobs t
+UNION ALL
+SELECT 'vector' AS kind,json_array(t.note_id,t.model) AS ref,r.space_id AS space_id,length(CAST(t.vector AS BLOB))+length(CAST(t.model AS BLOB))+128 AS bytes FROM memory_vectors t JOIN memory_record_versions v ON v.note_id=t.note_id JOIN memory_records r ON r.id=v.record_id
+UNION ALL
+SELECT 'cache' AS kind,json_array(t.space_id,t.principal_id,t.name) AS ref,t.space_id AS space_id,length(CAST(t.data AS BLOB))+length(CAST(t.name AS BLOB))+192 AS bytes FROM memory_cached_results t;
+`,
+  },
 ];

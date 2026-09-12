@@ -4,7 +4,14 @@
 import { memoryRetryDelay, withMemoryAbort } from "./memory-abort";
 import type {
   ForgetMemoryInput,
+  MemoryBundle,
+  MemoryCacheInput,
+  MemoryCacheResult,
+  MemoryCacheWrite,
   MemoryCheckpoint,
+  MemoryFederatedRead,
+  MemoryFederatedResult,
+  MemoryFederatedSearch,
   MemoryGraphQuery,
   MemoryGraphResult,
   MemoryJobStatus,
@@ -16,6 +23,7 @@ import type {
   MemoryReceipt,
   MemoryRecord,
   MemoryRecordInput,
+  MemoryReviewResult,
   MemorySearchInput,
   MemorySearchResult,
   MemorySource,
@@ -117,6 +125,75 @@ export class MarinaMemoryClient {
   private path(space: string, rest = "") {
     return `/spaces/${encodeURIComponent(space)}${rest}`;
   }
+  review(
+    space: string,
+    input: { kind?: "all" | "stale" | "competing"; limit?: number; cursor?: string } = {},
+  ) {
+    return this.request<MemoryReviewResult>(this.path(space, "/review"), "POST", input);
+  }
+  reaffirm(
+    space: string,
+    id: string,
+    expected_version: number,
+    dependency_versions: Record<string, number>,
+    content?: string,
+    key?: string,
+  ) {
+    return this.request<MemoryReceipt>(
+      this.path(space, "/reaffirm"),
+      "POST",
+      { id, expected_version, dependency_versions, content },
+      key,
+    );
+  }
+  cacheDelete(space: string, input: MemoryCacheInput, key?: string) {
+    return this.request<MemoryReceipt & { removed: boolean }>(
+      this.path(space, "/cache/delete"),
+      "POST",
+      input,
+      key,
+    );
+  }
+  cacheGet(space: string, input: MemoryCacheInput) {
+    return this.request<MemoryCacheResult>(this.path(space, "/cache/get"), "POST", input);
+  }
+  cachePut(space: string, input: MemoryCacheWrite, key?: string) {
+    return this.request<MemoryReceipt>(this.path(space, "/cache/put"), "POST", input, key);
+  }
+  acknowledge(space: string, keys: string[]) {
+    return this.request<{ acknowledged: string[]; missing: string[] }>(
+      this.path(space, "/acknowledge"),
+      "POST",
+      { keys },
+    );
+  }
+  exportBundle(space: string) {
+    return this.request<MemoryBundle>(this.path(space, "/bundle"));
+  }
+  importBundle(space: string, bundle: MemoryBundle | Record<string, unknown>, key?: string) {
+    return this.request<MemoryReceipt & { portable_ids_preserved: boolean }>(
+      this.path(space, "/bundle"),
+      "POST",
+      bundle,
+      key,
+    );
+  }
+  federationMounts(space: string) {
+    return this.request<{ mounts: string[] }>(this.path(space, "/federation_mounts"));
+  }
+  federatedSearch(space: string, input: MemoryFederatedSearch) {
+    return this.request<MemoryFederatedResult>(
+      this.path(space, "/federated_search"),
+      "POST",
+      input,
+    );
+  }
+  federatedRead(space: string, input: MemoryFederatedRead) {
+    return this.request<{
+      origin: { mount: string; space_id: string; id: string };
+      result: MemoryRecord | MemorySourceRange;
+    }>(this.path(space, "/federated_read"), "POST", input);
+  }
   me() {
     return this.request<{ principal_id: string; credential_id: string; scopes: string[] }>("/me");
   }
@@ -169,13 +246,21 @@ export class MarinaMemoryClient {
   graph(space: string, input: MemoryGraphQuery) {
     return this.request<MemoryGraphResult>(this.path(space, "/graph"), "POST", input);
   }
-  reindex(space: string, expected_generation: number, key?: string) {
-    return this.request<MemoryReceipt & { model: string; job_ids: string[] }>(
-      this.path(space, "/reindex"),
-      "POST",
-      { expected_generation },
-      key,
-    );
+  reindex(
+    space: string,
+    expected_generation: number,
+    key?: string,
+    page: { cursor?: string; limit?: number } = {},
+  ) {
+    return this.request<
+      MemoryReceipt & {
+        model: string;
+        job_ids: string[];
+        examined: number;
+        next_cursor: string | null;
+        generation: number;
+      }
+    >(this.path(space, "/reindex"), "POST", { expected_generation, ...page }, key);
   }
   context(space: string, input: MemorySearchInput & { budget_tokens?: number }) {
     return this.request<{

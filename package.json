@@ -84,7 +84,11 @@
     "qualify:memory": "bun run scripts/qualify-memory-service.ts",
     "qualify:memory:reliability": "bun run scripts/qualify-memory-reliability.ts",
     "build:memory": "bun build src/sdk/memory.ts --target browser --outfile dist/memory.js",
-    "memory:mcp": "bun run scripts/memory-mcp.ts"
+    "memory:mcp": "bun run scripts/memory-mcp.ts",
+    "qualify:memory:storage": "bun run scripts/qualify-memory-storage.ts",
+    "qualify:memory:sustained": "bun run scripts/qualify-memory-sustained.ts",
+    "qualify:memory:scale": "bun run scripts/research/memory-scale-qualification.ts",
+    "qualify:memory:utility": "bun run scripts/research/memory-utility-qualification.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",

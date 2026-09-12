@@ -201,6 +201,11 @@ export interface MemorySearchInput extends MemoryFilter {
   allow_degraded?: boolean;
 }
 export interface MemorySearchResult {
+  coverage?: {
+    candidate_limit: number;
+    lexical_candidates: number;
+    semantic: { scored: number; missing: number; invalid: number } | null;
+  };
   space_id: string;
   generation: number;
   mode: "lexical" | "hybrid";
@@ -238,4 +243,101 @@ export interface MemoryStorageUsage {
   usage: MemoryStorageAmounts;
   limits: Readonly<MemoryStorageAmounts>;
   over_limit: (keyof MemoryStorageAmounts)[];
+}
+
+export interface MemoryReviewResult {
+  space_id: string;
+  retrieval_generation: number;
+  items: {
+    record: MemoryRecord;
+    premises: {
+      id: string;
+      pinned_version: number | null;
+      current_version: number | null;
+      state: string;
+    }[];
+    competing_records: MemoryRecord[];
+    competing_truncated: boolean;
+  }[];
+  next_cursor: string | null;
+}
+export interface MemoryCacheInput {
+  inputs: unknown;
+  model: string;
+  policy: string;
+}
+export interface MemoryCacheWrite extends MemoryCacheInput {
+  value: unknown;
+  records?: { id: string; version: number }[];
+  sources?: { id: string; content_hash: string }[];
+  expires_at: number;
+}
+export type MemoryCacheResult =
+  | { hit: false; reason: string }
+  | {
+      hit: true;
+      value: unknown;
+      records: { id: string; version: number }[];
+      sources: { id: string; content_hash: string }[];
+      expires_at: number;
+    };
+
+/** Portable history envelope. Authorization and indexes are deliberately excluded. */
+export interface MemoryBundle {
+  schema: "marina.memory.bundle.v2";
+  sha256: string;
+  payload: {
+    origin_space: string;
+    sources: (MemorySource & { body_sha256: string })[];
+    records: {
+      id: string;
+      version: number;
+      created_at: number;
+      stale: number;
+      stale_reason: string | null;
+      versions: { record: MemoryRecord; attributes: Record<string, unknown> | null }[];
+    }[];
+    vocabularies: { version: number; definition: string; created_at: number }[];
+    checkpoints: {
+      name: string;
+      version: number;
+      source_cursor: number;
+      data: string;
+      updated_at: number;
+    }[];
+  };
+  excluded: string[];
+}
+export interface MemoryFederatedSearch {
+  mounts: string[];
+  query: string;
+  kind?: "records" | "sources";
+  mode?: "lexical" | "hybrid";
+  limit?: number;
+  max_bytes?: number;
+  allow_partial?: boolean;
+}
+export type MemoryFederatedEntry = {
+  origin: { mount: string; space_id: string; id: string; version?: number };
+  score: number;
+} & (
+  | { kind: "record"; record: MemoryRecord }
+  | { kind: "source"; source: MemorySourceSearchResult["results"][number] }
+);
+export interface MemoryFederatedResult {
+  results: MemoryFederatedEntry[];
+  failures: { mount: string; code: string }[];
+  incomplete: boolean;
+  bytes: number;
+  truncated: boolean;
+  consistency: "per-peer-read-snapshots";
+  replicated: false;
+}
+export interface MemoryFederatedRead {
+  mount: string;
+  id: string;
+  kind: "record" | "source";
+  version?: number;
+  start?: number;
+  end?: number;
 }
