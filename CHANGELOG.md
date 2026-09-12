@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Formation runtime formalized: `CREW_BRIEFS` give every crew formation a
+  compact, structure-light runtime brief (led by a protocol-priority preamble
+  so answering a `model_request` always outranks process), and
+  `FORMATION_MEDIATORS` deliver the long-promised Phase-4 hooks — the crew
+  manager posts at most one deterministic `[formation-mediator]` next-step
+  line per dispatch, stage completion, or artifact (pipeline handoffs,
+  mapreduce fan-out/merge, foundry merge-gate, debate sealed positions,
+  deliberation one-round bound, blackboard no-fork). The coordination guide
+  gains a "Crews: formations at runtime" section.
+- Pending-request reminders in the model API: while a routed `model_request`
+  is unanswered, the engine re-posts it at 25% and 60% of
+  `MODEL_REQUEST_TIMEOUT_MS` with the exact `channel send <name> {json}`
+  command to run — a mechanical backstop for small-model coordinators whose
+  continuation cycle displaced their final reply. `MODEL_REQUEST_REMINDERS=0`
+  disables.
+- Single-writer crew deliverables: each dispatch pre-assigns a designated
+  depositor (crew lead when present, else round-robin) in the same perception
+  that starts the race; everyone works the task, only the depositor writes
+  the deliverable. A two-shot coverage fallback nudges at 90s/150s when no
+  deposit lands, and a `[crew-deposit]` echo marks delivered work "verify,
+  don't redo". Measured duplicate deposits per task fell from ~3x to ~1x.
+- `PATTERN_VALIDATION` records per-pattern sweep evidence beside
+  `PATTERN_FIT`; `project recommend` tags each suggestion
+  `[validated|partial|unvalidated]`. After the fix stack landed, all ten
+  patterns are validated (every formation answers 10/10 on gsm8k; all seven
+  habitat-tested formations complete 3/3 project tasks).
+- Councilor, Debater, and Decomposer traits teach the explicit RESPONSE
+  PROTOCOL envelope (seed-guarded — fresh worlds only).
+
+### Changed
+
+- `inherit` and `inheritance` merged into one `inheritance` command
+  (`list | export <pool> | import <token>`); `inherit <token>` survives as an
+  alias routed to `import`, which keeps its rank-2 floor.
+- `ask`, `recap`, and `dig` share one retrieval core
+  (`src/engine/commands/retrieval-core.ts`) for source gathering and the
+  group-pool privacy guard; rendering stays per verb, and `dig` still grounds
+  on personal + guide notes only.
+
+### Fixed
+
+- Crew dispatches are directed work: `[crew-task]` messages score 90 in the
+  social scorer (above the channel-reply cooldown cutoff, below tells) instead
+  of 40 as ambient chatter, so idle crews now pick up project tasks.
+- The pending-request reminder names the channel explicitly; the previous
+  "reply on this channel" phrasing led agents to run `channel send {json}`
+  with the JSON parsed as the channel name. `channel send` now returns a
+  specific correction when the channel name is omitted, and the channel tool
+  schema marks it required.
+- Benchmark answer extraction repairs JSON-escape-mangled LaTeX (`\boxed`,
+  `\frac` arriving as backspace/formfeed control characters) before matching;
+  a 9/10-correct gsm8k run previously scored 10%.
+- Crew deposit-fallback timers can no longer fire into a closed database.
+  `Engine.stop()` tears down crew timers even when the engine was never
+  started, a timer that outlives its channel store degrades to a logged
+  warning instead of an unhandled throw, and the schedule is injectable for
+  tests. This leak surfaced as "Database has closed" errors between unrelated
+  test files, failing the suite with zero failing tests.
+
 ## [0.7.0] — 2026-09-01
 
 This release pairs the open-ended cognitive ecology and the August

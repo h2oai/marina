@@ -653,3 +653,75 @@ describe("CrewManager: persistence", () => {
     db.close();
   });
 });
+
+describe("CrewManager: deposit-fallback timer teardown", () => {
+  // bun runs every test file in one process, so a 90s fallback timer armed
+  // here would fire into whatever file happens to be running later — this
+  // exact leak surfaced as "Database has closed" thrown between unrelated
+  // tests. Millisecond schedules make the timers observable.
+  const TEARDOWN_DB = "test_crew_teardown.db";
+  let db: MarinaDB;
+  let channels: ChannelManager;
+  let sent: string[];
+
+  beforeEach(() => {
+    cleanupDb(TEARDOWN_DB);
+    db = new MarinaDB(TEARDOWN_DB);
+    channels = new ChannelManager(db, () => {});
+    sent = [];
+    const orig = channels.send.bind(channels);
+    channels.send = (channelId, senderId, senderName, content) => {
+      sent.push(content);
+      return orig(channelId, senderId, senderName, content);
+    };
+  });
+
+  afterEach(() => cleanupDb(TEARDOWN_DB));
+
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  function dispatchOnce(crews: CrewManager): void {
+    const crew = crews.create({
+      name: "alpha",
+      goal: "ship",
+      owner: OWNER,
+      members: [{ agentName: "alice" }, { agentName: "bob" }],
+    });
+    crews.dispatch(crew.id, "go");
+  }
+
+  it("fires the two-shot nudge on the injected schedule when nothing is deposited", async () => {
+    const crews = new CrewManager({ channels, depositFallbackScheduleMs: [5, 15] });
+    dispatchOnce(crews);
+    await wait(60);
+    const nudges = sent.filter((m) => m.startsWith("[formation-mediator]"));
+    expect(nudges.some((m) => m.includes("No deliverable has been deposited yet"))).toBe(true);
+    expect(nudges.some((m) => m.includes("STILL no deliverable"))).toBe(true);
+    crews.stop();
+    db.close();
+  });
+
+  it("stop() cancels armed timers so nothing fires after the owner tears down", async () => {
+    const crews = new CrewManager({ channels, depositFallbackScheduleMs: [5, 15] });
+    dispatchOnce(crews);
+    const before = sent.length;
+    crews.stop();
+    db.close();
+    await wait(60);
+    expect(sent.length).toBe(before);
+  });
+
+  it("a timer that outlives the DB degrades to a logged warning, never an unhandled throw", async () => {
+    const warnings: string[] = [];
+    const logger = {
+      warn: (_cat: string, message: string) => warnings.push(message),
+    } as unknown as import("../src/engine/logger").Logger;
+    const crews = new CrewManager({ channels, logger, depositFallbackScheduleMs: [5] });
+    dispatchOnce(crews);
+    // Simulate the leak: owner closes the DB without stopping the manager.
+    db.close();
+    await wait(40);
+    expect(warnings).toContain("deposit fallback nudge failed");
+    crews.stop();
+  });
+});

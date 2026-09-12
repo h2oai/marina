@@ -32,6 +32,7 @@ describe("crew command (integration)", () => {
   });
 
   afterEach(() => {
+    engine.stop(); // clears crew deposit-fallback timers armed by `crew dispatch`
     db.close();
     cleanupDb(dbPath);
   });

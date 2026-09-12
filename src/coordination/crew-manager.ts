@@ -11,6 +11,8 @@
  */
 
 import { record as recordStanding } from "../agent/standing";
+import { getErrorMessage } from "../engine/errors";
+import type { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
 import type { CrewMemberRow, CrewRow } from "../persistence/db-crews";
 import type {
@@ -56,6 +58,14 @@ export interface CrewManagerDeps {
    * names). Returning undefined skips the credit silently.
    */
   resolveAgentId?: (agentName: string) => string | undefined;
+  /** Optional logger for non-fatal runtime failures (e.g. a fallback nudge
+   *  that fires after the channel store is gone). Silent when absent. */
+  logger?: Logger;
+  /**
+   * Deposit-fallback nudge schedule override (ms after dispatch). Tests inject
+   * millisecond delays to exercise the timers; production keeps the default.
+   */
+  depositFallbackScheduleMs?: readonly number[];
 }
 
 export interface CreateCrewOpts {
@@ -94,6 +104,8 @@ export class CrewManager {
   private readonly emit: (event: EngineEvent) => void;
   private readonly now: () => number;
   private readonly resolveAgentId: (agentName: string) => string | undefined;
+  private readonly logger: Logger | undefined;
+  private readonly depositFallbackSchedule: readonly number[];
 
   private readonly crews = new Map<CrewId, Crew>();
   private readonly byName = new Map<string, CrewId>();
@@ -109,6 +121,9 @@ export class CrewManager {
     this.emit = deps.onEvent ?? (() => {});
     this.now = deps.now ?? (() => Date.now());
     this.resolveAgentId = deps.resolveAgentId ?? (() => undefined);
+    this.logger = deps.logger;
+    this.depositFallbackSchedule =
+      deps.depositFallbackScheduleMs ?? CrewManager.DEPOSIT_FALLBACK_SCHEDULE_MS;
   }
 
   /**
@@ -420,7 +435,7 @@ export class CrewManager {
     this.clearDepositFallbacks(crew.id);
     if (!crew.channelId) return;
     const channelId = crew.channelId;
-    const timers = CrewManager.DEPOSIT_FALLBACK_SCHEDULE_MS.map((delay, shot) => {
+    const timers = this.depositFallbackSchedule.map((delay, shot) => {
       const timer = setTimeout(() => {
         if (this.crews.get(crew.id)?.state !== "active") return;
         const text =
@@ -431,7 +446,17 @@ export class CrewManager {
             : `[formation-mediator] STILL no deliverable. EVERY member: if you have any result, ` +
               `deposit it into the requested pool immediately — a good-enough deliverable now ` +
               `beats a perfect one that never lands. Duplicates are acceptable at this point.`;
-        this.channels.send(channelId, "__crew_manager__", "crew", text);
+        // Defensive: stop() clears these timers, but an owner that tears the
+        // DB down without stopping the manager must degrade to a warning, not
+        // an unhandled "Database has closed" thrown from a timer.
+        try {
+          this.channels.send(channelId, "__crew_manager__", "crew", text);
+        } catch (err) {
+          this.logger?.warn("crew", "deposit fallback nudge failed", {
+            crew: crew.name,
+            error: getErrorMessage(err),
+          });
+        }
       }, delay);
       // Timers must not keep a test process (or a shutting-down engine) alive.
       timer.unref?.();

@@ -158,6 +158,7 @@ describe("code crew dispatch (Phase 4a)", () => {
   });
 
   afterEach(() => {
+    engine.stop(); // clears crew deposit-fallback timers armed by the real dispatch
     db.close();
     cleanupDb(TEST_DB);
   });

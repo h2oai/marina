@@ -233,6 +233,7 @@ export class Engine {
         db: this.db,
         onEvent: (event) => this.logEvent(event),
         resolveAgentId: (name) => this.entities.findAgentByName(name)?.id,
+        logger: this.logger,
       });
       // Reattach persisted crews from previous boot. Idempotent.
       this.crewManager.loadFromDb();
@@ -1140,6 +1141,11 @@ export class Engine {
   }
 
   stop(): void {
+    // Crew fallback timers are armed by dispatch, not by start(), so a
+    // constructed-but-never-started engine (tests, aborted boots) can own
+    // live timers. Tear them down before the running guard so stop() is
+    // always a complete teardown.
+    this.crewManager?.stop();
     if (!this.running) return;
     this.running = false;
     if (this.tickTimer) {
@@ -1153,7 +1159,6 @@ export class Engine {
       clearTimeout(timer);
     }
     this.entityEvictionTimers.clear();
-    this.crewManager?.stop();
     this.mediaManager?.stop();
     this.logger.info("engine", "Marina engine stopped.");
   }
