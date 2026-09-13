@@ -1274,8 +1274,16 @@ function routeToChannelStreaming(
         }
       });
 
-      cm.send(channel.id, "__model_api__", "model-api", payload);
-      cancelReminders = scheduleRequestReminders(cm, channel.id, reqId, target, userContent);
+      try {
+        cancelReminders = scheduleRequestReminders(cm, channel.id, reqId, target, userContent);
+        // A local listener can finish the stream inside send(). Install all
+        // cleanup handles first so a completed request cannot leave reminders.
+        cm.send(channel.id, "__model_api__", "model-api", payload);
+      } catch (error) {
+        cleanup();
+        finishTrace("failed", "Request dispatch failed");
+        throw error;
+      }
     },
     cancel() {
       // Client disconnected mid-stream — release the channel listener and the
