@@ -2278,7 +2278,7 @@ async function dispatchOpenAICompatible(
  * finish chunk is emitted at the end (`tool_calls` when any textual call was
  * converted). pi-ai's accumulator reads `delta.tool_calls` by index.
  */
-function normalizeToolCallSSE(
+export function normalizeToolCallSSE(
   upstream: ReadableStream<Uint8Array>,
   fallbackModel: string,
 ): ReadableStream<Uint8Array> {
@@ -2294,9 +2294,13 @@ function normalizeToolCallSSE(
   let roleSent = false;
   let pendingFinish: string | null = null;
   let finishEmitted = false;
+  let emittedFrames = 0;
+  let cancelled = false;
 
-  const send = (c: ReadableStreamDefaultController<Uint8Array>, frame: string) =>
+  const send = (c: ReadableStreamDefaultController<Uint8Array>, frame: string) => {
+    emittedFrames++;
     c.enqueue(encoder.encode(frame));
+  };
   const chunk = (delta: unknown, finishReason: string | null = null) =>
     `data: ${JSON.stringify({ id, object: "chat.completion.chunk", created, model, choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`;
 
@@ -2327,6 +2331,7 @@ function normalizeToolCallSSE(
   };
 
   const processLine = (line: string, c: ReadableStreamDefaultController<Uint8Array>) => {
+    if (finishEmitted) return;
     const trimmed = line.trim();
     if (!trimmed.startsWith("data:")) return;
     const payload = trimmed.slice(5).trim();
@@ -2334,6 +2339,7 @@ function normalizeToolCallSSE(
     let parsed: {
       id?: string;
       model?: string;
+      usage?: unknown;
       choices?: { delta?: Record<string, unknown>; finish_reason?: string | null }[];
     };
     try {
@@ -2343,6 +2349,10 @@ function normalizeToolCallSSE(
     }
     if (typeof parsed.id === "string") id = parsed.id;
     if (typeof parsed.model === "string") model = parsed.model;
+    // Providers may emit usage after the last choice's finish_reason. Preserve
+    // it before the authoritative DONE frame so resident accounting sees it.
+    if (parsed.usage !== undefined && parsed.usage !== null)
+      send(c, `data: ${JSON.stringify({ ...parsed, choices: [] })}\n\n`);
     const choice = parsed.choices?.[0];
     const delta = choice?.delta ?? {};
     if (choice?.finish_reason) pendingFinish = choice.finish_reason;
@@ -2363,28 +2373,40 @@ function normalizeToolCallSSE(
       send(c, openaiStreamRoleChunk(id, model));
       roleSent = true;
     }
-    if (choice?.finish_reason) emitFinish(c);
   };
 
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
-        const { done, value } = await reader.read();
-        if (done) {
-          if (sseBuf.trim()) processLine(sseBuf, controller);
-          emitFinish(controller);
-          controller.close();
-          return;
+        const before = emittedFrames;
+        // A network fragment, heartbeat or held tool-call prefix may produce
+        // no output. Keep reading until this pull satisfies downstream demand.
+        while (!cancelled && emittedFrames === before) {
+          const { done, value } = await reader.read();
+          if (cancelled) return;
+          if (done) {
+            sseBuf += decoder.decode();
+            if (sseBuf.trim()) processLine(sseBuf, controller);
+            emitFinish(controller);
+            controller.close();
+            return;
+          }
+          sseBuf += decoder.decode(value, { stream: true });
+          const parts = sseBuf.split("\n");
+          sseBuf = parts.pop() ?? "";
+          for (const part of parts) processLine(part, controller);
+          if (finishEmitted) {
+            controller.close();
+            reader.cancel().catch(() => {});
+            return;
+          }
         }
-        sseBuf += decoder.decode(value, { stream: true });
-        const parts = sseBuf.split("\n");
-        sseBuf = parts.pop() ?? "";
-        for (const part of parts) processLine(part, controller);
       } catch (err) {
         controller.error(err);
       }
     },
     cancel(reason) {
+      cancelled = true;
       reader.cancel(reason).catch(() => {});
     },
   });
