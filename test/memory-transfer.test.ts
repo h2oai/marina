@@ -16,10 +16,11 @@ import { MarinaMemoryClient } from "../src/sdk/memory-client";
 import { memoryPortableDigest } from "../src/sdk/memory-portable";
 import { retryMemoryOperation } from "../src/sdk/memory-retry";
 import type { MemoryTransferPage } from "../src/sdk/memory-transfer";
+import { resumeMemoryTransfer } from "../src/sdk/memory-transfer-client";
 
-const cleanups: (() => void)[] = [];
-afterEach(() => {
-  for (const fn of cleanups.splice(0).reverse()) fn();
+const cleanups: (() => void | Promise<void>)[] = [];
+afterEach(async () => {
+  for (const fn of cleanups.splice(0).reverse()) await fn();
 });
 async function fixture(name: string) {
   const directory = mkdtempSync(join(tmpdir(), "marina-transfer-"));
@@ -27,7 +28,7 @@ async function fixture(name: string) {
     service = new MemoryService(db);
   const owner = db.ensurePrincipal({ type: "service", displayName: name }).principal_id;
   const credential = db.issueMemoryCredential(owner);
-  const client = new MarinaMemoryClient(`http://${name}.test`, credential.token, 35000, (req) =>
+  const client = new MarinaMemoryClient(`http://${name}.test`, credential.token, 130000, (req) =>
     handleMemoryServiceApi(req, service),
   );
   const space = (await client.createSpace(name)).id;
@@ -37,7 +38,8 @@ async function fixture(name: string) {
     actor: db.verifyMemoryCredential(credential.token)!,
     raw: (db as unknown as { db: Database }).db,
   });
-  cleanups.push(() => {
+  cleanups.push(async () => {
+    await service.close();
     db.close();
     rmSync(directory, { recursive: true });
   });
@@ -206,7 +208,9 @@ it("transfers more than 2,000 records and 1.5 MiB with exact history, bounded pa
   await expect(destination.client.abortTransfer(destination.space, transfer)).rejects.toMatchObject(
     { code: "transfer_committed" },
   );
-}, 60000);
+  // Includes fixture creation, thousands of revisions, transfer/restart and
+  // publication. The service independently enforces its 120-second writer limit.
+}, 180000);
 
 it("rolls back invalid dependency history at publication and detects changed staged bytes", async () => {
   const source = await fixture("source"),
@@ -369,7 +373,18 @@ it("keeps staging owner-only, rejects expired writes, and cleans staged content 
   await expect(shared.beginTransfer(destination.space, page.header)).rejects.toMatchObject({
     code: "owner_required",
   });
+  await expect(shared.transfers(destination.space)).rejects.toMatchObject({
+    code: "owner_required",
+  });
   raw.run("UPDATE memory_transfers SET expires_at=0 WHERE id=?", [transfer.id]);
+  expect(
+    (await destination.client.transfers(destination.space, { expired: true })).transfers.map(
+      (t) => t.id,
+    ),
+  ).toEqual([transfer.id]);
+  expect(
+    (await destination.client.transfers(destination.space, { expired: false })).transfers,
+  ).toEqual([]);
   const next = await source.client.exportTransferPage(source.space, page.next_cursor!);
   await expect(
     destination.client.appendTransfer(destination.space, transfer.id, next),
@@ -389,3 +404,134 @@ it("keeps staging owner-only, rejects expired writes, and cleans staged content 
   });
   expect(raw.query("SELECT count(*) n FROM memory_transfer_parts").get()).toEqual({ n: 0 });
 });
+
+it("discovers lost transfer IDs, pages status and resumes from the durable source cursor", async () => {
+  const source = await fixture("source"),
+    destination = await fixture("destination");
+  await source.client.capture(source.space, "original 🙂".repeat(50000));
+  const first = await source.client.exportTransferPage(source.space);
+  const abandoned = await destination.client.beginTransfer(destination.space, first.header);
+  await destination.client.abortTransfer(destination.space, abandoned.id);
+  const started = await destination.client.beginTransfer(destination.space, first.header);
+  await destination.client.appendTransfer(destination.space, started.id, first);
+  destination.restart();
+  const listing = await destination.client.transfers(destination.space, { limit: 1 });
+  expect(listing.transfers).toHaveLength(1);
+  const rest = await destination.client.transfers(destination.space, {
+    limit: 1,
+    cursor: listing.next_cursor!,
+  });
+  expect(new Set([...listing.transfers, ...rest.transfers].map((t) => t.id))).toEqual(
+    new Set([abandoned.id, started.id]),
+  );
+  expect(rest.next_cursor).toBeNull();
+  const recovered = (await destination.client.transfers(destination.space, { state: "receiving" }))
+    .transfers[0]!;
+  expect(recovered.next_cursor).toBe(first.next_cursor);
+  await expect(
+    resumeMemoryTransfer(destination.client, destination.space, recovered.id),
+  ).rejects.toMatchObject({ code: "source_required" });
+  const complete = await resumeMemoryTransfer(destination.client, destination.space, recovered.id, {
+    source: source.client,
+  });
+  expect(complete.state).toBe("committed");
+  expect(await resumeMemoryTransfer(destination.client, destination.space, recovered.id)).toEqual(
+    complete,
+  );
+  await expect(
+    destination.client.transfers(destination.space, { state: "invalid" as "ready" }),
+  ).rejects.toMatchObject({ code: "invalid_input" });
+  await expect(
+    destination.client.transfers(destination.space, { limit: 101 }),
+  ).rejects.toMatchObject({ code: "invalid_input" });
+});
+
+it("keeps another tenant's reads live during publication, rejects writers and recovers after cancellation", async () => {
+  const source = await fixture("source"),
+    destination = await fixture("destination");
+  await source.client.capture(source.space, "evidence".repeat(50000));
+  const bundle = await source.client.exportBundle(source.space);
+  const { db, service, actor, raw } = destination.get();
+  const other = db.ensurePrincipal({ type: "service", displayName: "other" });
+  const credential = db.issueMemoryCredential(other.principal_id);
+  const tenant = db.verifyMemoryCredential(credential.token)!;
+  const space = service.repository.createSpace(tenant, "other", "space").id;
+  const record = service.repository.remember(
+    tenant,
+    space,
+    { content: "unchanged evidence" },
+    "remember",
+  );
+  const prior = raw.query("PRAGMA busy_timeout").get();
+  const controller = new AbortController();
+  const publication = service.importBundle(
+    actor,
+    destination.space,
+    bundle,
+    "publication",
+    controller.signal,
+  );
+  expect(service.repository.read(tenant, space, record.id).content).toBe("unchanged evidence");
+  expect(() => service.repository.remember(tenant, space, { content: "later" }, "later")).toThrow(
+    "publication is in progress",
+  );
+  controller.abort();
+  await expect(publication).rejects.toMatchObject({ name: "AbortError" });
+  expect(raw.query("PRAGMA busy_timeout").get()).toEqual(prior);
+  const receipt = await service.importBundle(actor, destination.space, bundle, "publication");
+  expect(await service.importBundle(actor, destination.space, bundle, "publication")).toEqual(
+    receipt,
+  );
+  expect(service.repository.remember(tenant, space, { content: "later" }, "later").id).toBeString();
+});
+
+it("propagates imported staleness down a deep DAG while another tenant reads through the writer lock", async () => {
+  const source = await fixture("source"),
+    destination = await fixture("destination");
+  const s = source.get();
+  s.raw.transaction(() => {
+    for (let i = 0; i < 600; i++)
+      s.service.repository.remember(s.actor, source.space, { content: `chain ${i}` }, `c${i}`);
+  })();
+  const bundle = await source.client.exportBundle(source.space);
+  const chain = bundle.payload.records;
+  chain[0]!.stale = 1;
+  chain[0]!.stale_reason = '{"kind":"review_required"}';
+  for (let i = 1; i < chain.length; i++) {
+    const attrs = chain[i]!.versions[0]!.attributes!;
+    attrs.depends_on = [chain[i - 1]!.id];
+    attrs.dependency_versions = { [chain[i - 1]!.id]: 1 };
+  }
+  const last = chain.at(-1)!.id;
+  bundle.payload.records.reverse();
+  bundle.sha256 = await memoryPortableDigest(bundle.payload);
+  const d = destination.get(),
+    tenant = d.db.ensurePrincipal({ type: "service", displayName: "read during import" });
+  const actor = d.db.verifyMemoryCredential(d.db.issueMemoryCredential(tenant.principal_id).token)!;
+  const space = d.service.repository.createSpace(actor, "other", "other").id;
+  const record = d.service.repository.remember(actor, space, { content: "readable" }, "evidence");
+  let reads = 0,
+    lockedReads = 0;
+  const timer = setInterval(() => {
+    let locked = false;
+    try {
+      d.raw.exec("BEGIN IMMEDIATE");
+      d.raw.exec("ROLLBACK");
+    } catch (error) {
+      if ((error as { code?: string }).code === "SQLITE_BUSY") locked = true;
+      else throw error;
+    }
+    expect(d.service.repository.read(actor, space, record.id).content).toBe("readable");
+    reads++;
+    if (locked) lockedReads++;
+  }, 5);
+  try {
+    await d.service.importBundle(d.actor, destination.space, bundle, "chain");
+  } finally {
+    clearInterval(timer);
+  }
+  expect(reads).toBeGreaterThan(0);
+  expect(lockedReads).toBeGreaterThan(0);
+  expect((await destination.client.get(destination.space, last)).freshness).toBe("stale");
+  expect((await destination.client.query(destination.space)).results).toEqual([]);
+}, 30000);

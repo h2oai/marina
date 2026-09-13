@@ -15,6 +15,7 @@ export const MEMORY_OPERATIONS = [
   "export_page",
   "transfer_begin",
   "transfer_status",
+  "transfers",
   "transfer_page",
   "transfer_commit",
   "transfer_abort",
@@ -32,12 +33,18 @@ export const MEMORY_OPERATIONS = [
   "get",
   "revise",
   "query",
+  "join",
+  "json_store",
+  "save_rule",
+  "run_rule",
+  "materialize_rule",
   "graph",
   "search",
   "context",
   "capture",
   "capture_batch",
   "sources",
+  "source_headers",
   "source_search",
   "source_range",
   "vocabulary",
@@ -94,6 +101,12 @@ export async function runMemoryOperation(
   const base = `/spaces/${space}`;
   const input = request.input;
   switch (operation) {
+    case "save_rule":
+      return client.request(`${base}/rules`, "POST", input, request.key);
+    case "run_rule":
+      return client.request(`${base}/rules/run`, "POST", input);
+    case "materialize_rule":
+      return client.request(`${base}/rules/materialize`, "POST", input, request.key);
     case "federation_mounts":
       return client.request(`${base}/federation_mounts`);
     case "knowledge_graph":
@@ -112,6 +125,12 @@ export async function runMemoryOperation(
       return client.request(`${base}/transfers`, "POST", input, request.key);
     case "transfer_status":
       return client.request(`${base}/transfers/${field(request.id, "id")}`);
+    case "transfers": {
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(input ?? {}))
+        if (value !== undefined) params.set(key, String(value));
+      return client.request(`${base}/transfers?${params}`);
+    }
     case "transfer_page":
       return client.request(
         `${base}/transfers/${field(request.id, "id")}/pages`,
@@ -172,11 +191,12 @@ export async function runMemoryOperation(
       return client.request(`${base}/sources`, "POST", input, request.key);
     case "capture_batch":
       return client.request(`${base}/sources/batch`, "POST", input, request.key);
+    case "source_headers":
     case "sources": {
       const params = new URLSearchParams();
       for (const name of ["after", "limit"])
         if (input?.[name] !== undefined) params.set(name, String(input[name]));
-      return client.request(`${base}/sources?${params}`);
+      return client.request(`${base}/${operation}?${params}`);
     }
     case "source_range": {
       const params = new URLSearchParams();

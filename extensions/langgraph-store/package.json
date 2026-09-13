@@ -1,0 +1,9 @@
+{
+  "name": "@marina/langgraph-store",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "dependencies": { "@langchain/langgraph-checkpoint": "^1.0.0" },
+  "devDependencies": { "@langchain/langgraph": "^1.0.0" }
+}

@@ -198,11 +198,30 @@ export async function handleMemoryServiceApi(
       );
     if (rest === "bundle" && req.method === "GET") return json(repo.exportBundle(actor, space));
     if (rest === "bundle" && req.method === "POST")
-      return json(repo.importBundle(actor, space, await readBody(req), key), 201);
+      return json(
+        await service.importBundle(actor, space, await readBody(req), key, req.signal),
+        201,
+      );
     if (rest === "transfer" && req.method === "GET")
       return json(repo.exportPage(actor, space, url.searchParams.get("cursor") ?? undefined));
     if (rest === "transfers" && req.method === "POST")
       return json(repo.beginTransfer(actor, space, await readBody(req), key), 201);
+    if (rest === "transfers" && req.method === "GET") {
+      const expired = url.searchParams.get("expired");
+      if (expired !== null && !["true", "false"].includes(expired))
+        throw new MemoryError(400, "invalid_input", "expired must be true or false");
+      return json(
+        repo.transfers(actor, space, {
+          state:
+            (url.searchParams.get(
+              "state",
+            ) as import("../sdk/memory-transfer").MemoryTransferStatus["state"]) ?? undefined,
+          expired: expired === null ? undefined : expired === "true",
+          limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
+          cursor: url.searchParams.get("cursor") ?? undefined,
+        }),
+      );
+    }
     const transfer = rest.match(/^transfers\/([^/]+)(?:\/(pages|commit|abort))?$/);
     if (transfer) {
       const id = textValue(decodeURIComponent(transfer[1]!), "transfer id", 128);
@@ -211,12 +230,13 @@ export async function handleMemoryServiceApi(
         return json(repo.appendTransfer(actor, space, id, await readBody(req), key));
       if (transfer[2] === "commit" && req.method === "POST")
         return json(
-          repo.commitTransfer(
+          await service.commitTransfer(
             actor,
             space,
             id,
             textValue((await readBody(req)).sha256, "sha256", 64),
             key,
+            req.signal,
           ),
         );
       if (transfer[2] === "abort" && req.method === "POST")
@@ -224,6 +244,16 @@ export async function handleMemoryServiceApi(
     }
     if (rest === "acknowledge" && req.method === "POST")
       return json(repo.acknowledge(actor, space, (await readBody(req)).keys));
+    if (rest === "json_store" && req.method === "POST")
+      return json(repo.jsonStore(actor, space, await readBody(req), key));
+    if (rest === "join" && req.method === "POST")
+      return json(repo.join(actor, space, await readBody(req)));
+    if (rest === "rules" && req.method === "POST")
+      return json(repo.saveRule(actor, space, await readBody(req), key), 201);
+    if (rest === "rules/run" && req.method === "POST")
+      return json(repo.runRule(actor, space, await readBody(req)));
+    if (rest === "rules/materialize" && req.method === "POST")
+      return json(repo.materializeRule(actor, space, await readBody(req), key), 201);
     if (rest === "review" && req.method === "POST")
       return json(repo.review(actor, space, await readBody(req)));
     if (rest === "reaffirm" && req.method === "POST") {
@@ -452,6 +482,17 @@ export async function handleMemoryServiceApi(
       const body = await readBody(req);
       return json(repo.captureBatch(actor, space, body.items, key), 201);
     }
+    if (rest === "source_headers" && req.method === "GET") {
+      const after = integer(
+        Number(url.searchParams.get("after") ?? 0),
+        "after",
+        0,
+        Number.MAX_SAFE_INTEGER,
+      );
+      const limit = integer(Number(url.searchParams.get("limit") ?? 20), "limit", 1, 100);
+      const sources = repo.sourceHeaders(actor, space, after, limit);
+      return json({ sources, next_cursor: sources.length === limit ? sources.at(-1)!.seq : null });
+    }
     if (rest === "sources") {
       if (req.method === "POST") {
         const body = await readBody(req);
@@ -548,7 +589,13 @@ export async function handleMemoryServiceApi(
         499,
       );
     if (error instanceof MemoryError)
-      return json({ error: { code: error.code, message: error.message } }, error.status);
+      return Response.json(
+        { error: { code: error.code, message: error.message } },
+        {
+          status: error.status,
+          headers: { ...headers, ...(error.status === 503 ? { "Retry-After": "1" } : {}) },
+        },
+      );
     const storage = memoryStorageFailure(error);
     if (storage)
       return Response.json(

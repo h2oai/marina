@@ -15,6 +15,7 @@ import type {
 import { memoryQueryExpansion } from "./query-expansion";
 import type { MemoryService } from "./service";
 import { integer, MemoryError, memoryTerm, object, textValue } from "./service-types";
+import { memoryJoin } from "./symbolic";
 
 export interface MemoryPlanner {
   id: string;
@@ -107,6 +108,7 @@ export function planSteps(value: unknown): MemoryPlanStep[] {
         "limit",
         "include_stale",
       ],
+      join: ["patterns", "select", "valid_at", "limit"],
       search: ["query", "mode", "subject", "limit", "include_stale", "expansion"],
       source_search: ["query", "match", "session_id", "limit", "expansion"],
     };
@@ -123,7 +125,9 @@ export function planSteps(value: unknown): MemoryPlanStep[] {
         throw new MemoryError(400, "invalid_plan", "include_stale must be boolean");
       output.include_stale = input.include_stale;
     }
-    if (step.operation === "query") {
+    if (step.operation === "join") {
+      Object.assign(output, memoryJoin({ ...input, limit }));
+    } else if (step.operation === "query") {
       for (const name of ["subject", "predicate", "type", "tier"])
         if (input[name] !== undefined) output[name] = textValue(input[name], name, 256);
       if (input.object !== undefined) output.object = memoryTerm(input.object);
@@ -167,7 +171,7 @@ export function planSteps(value: unknown): MemoryPlanStep[] {
       throw new MemoryError(
         400,
         "invalid_plan",
-        "Plans may only query, graph, search or source_search",
+        "Plans may only query, join, graph, search or source_search",
       );
     return { operation: step.operation as MemoryPlanStep["operation"], input: output };
   });
@@ -337,7 +341,11 @@ export async function executeMemoryPlan(
     }
     let evidence: unknown[],
       incomplete = false;
-    if (step.operation === "query") {
+    if (step.operation === "join") {
+      const result = service.repository.join(actor, space, step.input);
+      evidence = result.results;
+      incomplete = result.truncated;
+    } else if (step.operation === "query") {
       const result = service.repository.query(actor, space, step.input as MemoryQuery);
       evidence = result.results;
       incomplete = result.next_cursor !== null;

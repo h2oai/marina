@@ -89,8 +89,8 @@ function CanvasInner() {
   const [notice, setNotice] = useState<{ tone: "success" | "error"; message: string } | null>(null);
   const handledGenerationRef = useRef(0);
   const skipNextConnectionRecoveryRef = useRef(true);
-  const fittedSnapshotRef = useRef<string>();
-  const resolvedNodeLinkRef = useRef<string>();
+  const fittedSnapshotRef = useRef<string | undefined>(undefined);
+  const resolvedNodeLinkRef = useRef<string | undefined>(undefined);
 
   // Load canvas list on mount. Prefer the auto-populated activity feed so a
   // running Marina opens on visible work rather than an empty workspace.

@@ -7,6 +7,9 @@ import type { MemoryOperationRequest, MemoryOperationResult } from "../sdk/memor
 export const MEMORY_SERVICE_HELP = `Portable memory service (private to your durable world account):
   memory service                         show service capabilities
   memory usage                           show your storage usage and limits
+  memory transfers [JSON filters]         discover your staged imports
+  memory transfer <ID>                    inspect an import
+  memory transfer-abort <ID>              explicitly discard unpublished staging
   memory review [JSON filters]            review stale/competing assertions
   memory reaffirm <ID> <version> <JSON pins>
                                          reaffirm after explicitly reviewing premises
@@ -14,6 +17,10 @@ export const MEMORY_SERVICE_HELP = `Portable memory service (private to your dur
   memory claim <subject> <predicate> <JSON scalar>
   memory relate <subject> <predicate> <entity ID>
   memory query <JSON filters>            exact symbolic query; {} lists records
+  memory join <JSON patterns>            typed joins with supporting record versions
+  memory rule-save <JSON request>        author or revise a bounded symbolic rule
+  memory rule-run <JSON request>         inspect conclusions without saving them
+  memory rule-materialize <JSON request> explicitly save dependency-pinned conclusions
   memory graph <subject>                 follow asserted relationships
   memory show <record ID>                inspect a full record and provenance
   memory sources <query>                 search original source text
@@ -43,6 +50,12 @@ export function parseMemoryServiceCommand(args: string): MemoryOperationRequest 
     }
   };
   switch (sub) {
+    case "transfers":
+      return { operation: "transfers", input: json(rest || "{}") };
+    case "transfer":
+      return { operation: "transfer_status", id: rest };
+    case "transfer-abort":
+      return { operation: "transfer_abort", id: rest };
     case "federation":
       return { operation: "federation_mounts" };
     case "across":
@@ -73,6 +86,14 @@ export function parseMemoryServiceCommand(args: string): MemoryOperationRequest 
       return { operation: "remember", input: { content: rest } };
     case "query":
       return { operation: "query", input: json(rest || "{}") };
+    case "join":
+      return { operation: "join", input: json(rest) };
+    case "rule-save":
+      return { operation: "save_rule", input: json(rest) };
+    case "rule-run":
+      return { operation: "run_rule", input: json(rest) };
+    case "rule-materialize":
+      return { operation: "materialize_rule", input: json(rest) };
     case "sources":
       return { operation: "source_search", input: { query: rest } };
     case "source": {

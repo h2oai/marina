@@ -1,10 +1,14 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  outputDir:
+    process.env.MARINA_BROWSER_ARTIFACTS ?? join(tmpdir(), "marina-dashboard-browser-results"),
   testMatch: "**/*.spec.ts",
   timeout: 30_000,
   expect: { timeout: 8_000 },

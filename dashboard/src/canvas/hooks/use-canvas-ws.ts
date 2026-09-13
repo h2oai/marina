@@ -189,6 +189,7 @@ export function useCanvasEventSocket(
         } catch {
           return;
         }
+        if (!canvasId) return;
         const event = parseCanvasEvent(payload, canvasId);
         if (!event) return;
         if (!readyRef.current) {

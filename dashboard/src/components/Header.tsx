@@ -36,6 +36,7 @@ interface HeaderProps {
   onOpenAttention?: () => void;
   onOpenPulse?: () => void;
   onOpenWork?: () => void;
+  onOpenMemory?: () => void;
   onOpenTraces?: () => void;
 }
 
@@ -57,6 +58,7 @@ export function Header({
   onOpenAttention,
   onOpenPulse,
   onOpenWork,
+  onOpenMemory,
   onOpenTraces,
 }: HeaderProps) {
   const entities = useWorldState((s) => s.entities);
@@ -98,6 +100,9 @@ export function Header({
       </div>
 
       <div className="flex items-center gap-3 text-[11px]">
+        <button type="button" onClick={onOpenMemory} className="text-text-dim hover:text-primary">
+          Memory
+        </button>
         <button
           type="button"
           onClick={onOpenPulse}

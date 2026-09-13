@@ -9,6 +9,7 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { serveMemory } from "../../src/memory/server";
 import { MarinaMemoryClient } from "../../src/sdk/memory-client";
+import { retryAfterGraderSource } from "./memory-coding-graders";
 import { snapshotMemoryQualification } from "./memory-qualification-sources";
 
 const { values } = parseArgs({
@@ -19,9 +20,15 @@ const { values } = parseArgs({
     task: { type: "string", default: "rook" },
     profile: { type: "string", default: "native" },
     "budget-usd": { type: "string" },
+    "repair-rounds": { type: "string", default: "0" },
   },
 });
 const budget = Number(values["budget-usd"]);
+const repairRounds = Number(values["repair-rounds"]);
+if (![0, 1].includes(repairRounds) || (repairRounds && values.client !== "codex"))
+  throw new Error(
+    "At most one repair round is supported, using Codex under the same cumulative upstream budget",
+  );
 if (
   !values.directory ||
   !["claude", "codex"].includes(values.client ?? "") ||
@@ -51,7 +58,7 @@ const source = await client.capture(
   space,
   sdkTask
     ? `Rook Marina SDK contract ${code}: append an exported function createMemoryCitation(evidence: MemoryEvidence, quote: string): MemoryCitation to the existing memory-answer.ts module. It must throw RangeError when quote is empty/whitespace or is not an exact substring of evidence.text. It returns a fresh citation containing only kind, space_id, id, quote and the record version OR source text_hash/start/end as appropriate. Preserve the exact quote, never trim or change it. Do not mutate evidence. Do not include text or freshness in the citation. This constructs a caller-selected quotation, not a truth or freshness judgment. Preserve all existing exports and behavior.`
-    : `Rook parser acceptance contract ${code}: parseRetryAfter(value, nowMs) returns delay milliseconds. Decimal digits are seconds (trim whitespace); HTTP date is milliseconds until that date, clamped to zero. Invalid values return null. Values must be strings; do not coerce numbers/null. Never return NaN or Infinity.`,
+    : `Rook parser acceptance contract ${code}: parseRetryAfter(value, nowMs) returns delay milliseconds. Trim whitespace. Only unsigned decimal digits denote seconds; signs, fractional numbers, exponents and hexadecimal forms are invalid. An IMF-fixdate HTTP date (weekday, day month year time GMT) denotes milliseconds until that date, clamped to zero. Invalid values return null. Values must be strings; do not coerce numbers/null. Nonfinite nowMs always returns null. Reject delays that are not finite safe integers; never return NaN or Infinity.`,
 );
 await client.remember(space, {
   content: `Rook ${values.task} contract ${code}. Read original source ${source.id} before implementing.`,
@@ -320,26 +327,72 @@ assert.equal(JSON.stringify([record,source]),before);
 assert.equal(validateMemoryAnswer({schema:{type:'string'},evidence:'required'}, {status:'answered',answer:'yes',citations:[createMemoryCitation(source,'α🙂')]},[source]).ok,true);
 console.log('10 SDK behavior checks passed');
 `
-      : `import {strict as assert} from 'node:assert';\nimport {parseRetryAfter} from ${JSON.stringify(`${workspace}/${filename}`)};\nconst now=Date.parse('Wed, 21 Oct 2015 07:27:00 GMT');\nfor(const [value,expected] of [['120',120000],[' 2 ',2000],['0',0],['Wed, 21 Oct 2015 07:28:00 GMT',60000],['Wed, 21 Oct 2015 07:26:00 GMT',0],['nonsense',null],[null,null],[2,null],[{},null]]) assert.equal(parseRetryAfter(value,now),expected,String(value));\nconsole.log('9 functional cases passed');\n`,
+      : retryAfterGraderSource(`${workspace}/${filename}`),
   );
-  const verify = Bun.spawn([process.execPath, test], {
-    cwd: workspace,
-    env: { PATH: process.env.PATH ?? "" },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const verifyTimer = setTimeout(() => verify.kill("SIGKILL"), 5000);
-  try {
-    const [out, err, code] = await Promise.all([
-      new Response(verify.stdout).text(),
-      new Response(verify.stderr).text(),
-      verify.exited,
-    ]);
-    report.verification = { code, stdout: out, stderr: err };
-    assert.equal(code, 0, err);
-  } finally {
-    clearTimeout(verifyTimer);
+  const validations: {
+    round: number;
+    code: number;
+    stdout: string;
+    stderr: string;
+    patch: string;
+  }[] = [];
+  report.validations = validations;
+  for (let round = 0; round <= repairRounds; round++) {
+    const verify = Bun.spawn([process.execPath, "--no-env-file", test], {
+      cwd: workspace,
+      env: { PATH: process.env.PATH ?? "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const verifyTimer = setTimeout(() => verify.kill("SIGKILL"), 5000);
+    let out: string, err: string, code: number;
+    try {
+      [out, err, code] = await Promise.all([
+        new Response(verify.stdout).text(),
+        new Response(verify.stderr).text(),
+        verify.exited,
+      ]);
+    } finally {
+      clearTimeout(verifyTimer);
+    }
+    const validation = {
+      round,
+      code,
+      stdout: out,
+      stderr: err,
+      patch: readFileSync(`${workspace}/${filename}`, "utf8"),
+    };
+    validations.push(validation);
+    report.verification = validation;
+    report.patch = validation.patch;
+    if (code === 0) break;
+    if (round === repairRounds) assert.equal(code, 0, err);
+    const diagnostic = (err.match(/AssertionError:([^\n]*)/)?.[1] ?? "behavior check")
+      .trim()
+      .slice(0, 100);
+    const repairPrompt = `Your implementation failed independent functional validation at ${JSON.stringify(diagnostic)}. Re-read the original Rook contract in Marina and repair ${filename}. Preserve exports. Do not create or edit tests. The completion checkpoint already exists and can remain. Do not guess missing requirements; read the stored source.`;
+    const repair = Bun.spawn([...args.slice(0, -1), repairPrompt], {
+      cwd: workspace,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const repairTimer = setTimeout(() => repair.kill("SIGKILL"), 180000);
+    try {
+      const [out, err, code] = await Promise.all([
+        new Response(repair.stdout).text(),
+        new Response(repair.stderr).text(),
+        repair.exited,
+      ]);
+      writeFileSync(`${directory}/repair-${round + 1}.jsonl`, out, { mode: 0o600 });
+      writeFileSync(`${directory}/repair-${round + 1}.stderr`, err, { mode: 0o600 });
+      stdout += out;
+      assert.equal(code, 0, err.slice(-1000));
+    } finally {
+      clearTimeout(repairTimer);
+    }
   }
+  report.elapsed_ms = performance.now() - start;
   assert.ok(
     graphProfile
       ? stdout.includes("create_relations") &&
@@ -354,10 +407,11 @@ console.log('10 SDK behavior checks passed');
   report.error = error instanceof Error ? error.message : "Coding client qualification failed";
   process.exitCode = 1;
 } finally {
+  report.repair_rounds_allowed = repairRounds;
   report.upstream = upstream;
   report.reserved_upper_bound_usd = values.client === "codex" ? reserved : null;
   report.upstream_attempts = attempts;
-  report.limits = `${sdkTask ? "A disposable copy of Marina's answer module with its quotation helper removed; ten behavior checks." : "One disposable TypeScript parser module and nine functional cases."} Local MCP stdio service; no app-wide or large-repository claim. Claude uses its CLI budget limit; Codex uses a per-upstream-attempt conservative reservation. Generated code is executed on the host in a separate scrubbed process, not an OS sandbox.`;
+  report.limits = `${sdkTask ? "A disposable copy of Marina's answer module with its quotation helper removed; ten behavior checks." : "One disposable TypeScript parser module and 38 functional cases."} Local MCP stdio service; no app-wide or large-repository claim. Claude uses its CLI budget limit; Codex uses a per-upstream-attempt conservative reservation. Generated code is executed on the host in a separate scrubbed process, not an OS sandbox.`;
   writeFileSync(`${directory}/report.json`, JSON.stringify(report, null, 2), { mode: 0o600 });
   gate?.stop(true);
   await memory.close();

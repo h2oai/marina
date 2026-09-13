@@ -7,9 +7,11 @@ import { integer, MemoryError, object, textValue } from "../memory/service-types
 import { canonicalPortableMemory } from "../sdk/memory-portable";
 import {
   MEMORY_TRANSFER_KINDS,
+  type MemoryTransferFilter,
   type MemoryTransferFragment,
   type MemoryTransferHeader,
   type MemoryTransferKind,
+  type MemoryTransferList,
   type MemoryTransferPage,
   type MemoryTransferStatus,
 } from "../sdk/memory-transfer";
@@ -277,6 +279,45 @@ function status(row: TransferRow): MemoryTransferStatus {
 }
 export function memoryTransferStatus(db: Database, actor: MemoryActor, space: string, id: string) {
   return status(transfer(db, actor, space, id));
+}
+export function listMemoryTransfers(
+  db: Database,
+  actor: MemoryActor,
+  space: string,
+  input: MemoryTransferFilter = {},
+): MemoryTransferList {
+  const owner = authorizeMemorySpace(db, actor, space);
+  if (owner.owner_id !== actor.principalId)
+    throw new MemoryError(403, "owner_required", "Transfer staging is visible only to its owner");
+  const limit = integer(input.limit ?? 20, "limit", 1, 100);
+  if (
+    input.state !== undefined &&
+    !["receiving", "ready", "committed", "aborted"].includes(input.state)
+  )
+    throw new MemoryError(400, "invalid_input", "Unknown transfer state");
+  if (input.expired !== undefined && typeof input.expired !== "boolean")
+    throw new MemoryError(400, "invalid_input", "expired must be boolean");
+  const cursor = input.cursor === undefined ? "" : textValue(input.cursor, "cursor", 128);
+  const now = Date.now();
+  const rows = db
+    .query(`SELECT * FROM memory_transfers WHERE space_id=? AND principal_id=? AND id>?
+    AND (? IS NULL OR state=?) AND (? IS NULL OR (expires_at<=?)=?) ORDER BY id LIMIT ?`)
+    .all(
+      space,
+      actor.principalId,
+      cursor,
+      input.state ?? null,
+      input.state ?? null,
+      input.expired === undefined ? null : Number(input.expired),
+      now,
+      input.expired === undefined ? null : Number(input.expired),
+      limit + 1,
+    ) as TransferRow[];
+  const selected = rows.slice(0, limit);
+  return {
+    transfers: selected.map((row) => ({ ...status(row), expired: row.expires_at <= now })),
+    next_cursor: rows.length > limit ? selected.at(-1)!.id : null,
+  };
 }
 export function beginMemoryTransfer(
   db: Database,

@@ -8,7 +8,9 @@ import type {
   MemoryGraphResults,
 } from "./memory-knowledge-graph";
 import type {
+  MemoryTransferFilter,
   MemoryTransferHeader,
+  MemoryTransferList,
   MemoryTransferPage,
   MemoryTransferStatus,
 } from "./memory-transfer";
@@ -218,6 +220,12 @@ export class MarinaMemoryClient {
       this.path(space, `/transfers/${encodeURIComponent(id)}`),
     );
   }
+  transfers(space: string, input: MemoryTransferFilter = {}) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(input))
+      if (value !== undefined) params.set(key, String(value));
+    return this.request<MemoryTransferList>(this.path(space, `/transfers?${params}`));
+  }
   appendTransfer(space: string, id: string, page: MemoryTransferPage, key?: string) {
     return this.request<MemoryTransferStatus>(
       this.path(space, `/transfers/${encodeURIComponent(id)}/pages`),
@@ -312,6 +320,47 @@ export class MarinaMemoryClient {
   search(space: string, input: MemorySearchInput) {
     return this.request<MemorySearchResult>(this.path(space, "/search"), "POST", input);
   }
+  join(space: string, input: import("./memory-symbolic").MemoryJoin) {
+    return this.request<import("./memory-symbolic").MemoryJoinResult>(
+      this.path(space, "/join"),
+      "POST",
+      input,
+    );
+  }
+  saveRule(
+    space: string,
+    rule: import("./memory-symbolic").MemoryRule,
+    options: { id?: string; expected_version?: number; source_ids?: string[] } = {},
+    key?: string,
+  ) {
+    return this.request<MemoryReceipt>(
+      this.path(space, "/rules"),
+      "POST",
+      { ...options, rule },
+      key,
+    );
+  }
+  runRule(space: string, id: string, expected_version: number, valid_at?: number) {
+    return this.request<import("./memory-symbolic").MemoryRuleResult>(
+      this.path(space, "/rules/run"),
+      "POST",
+      { id, expected_version, valid_at },
+    );
+  }
+  materializeRule(
+    space: string,
+    id: string,
+    expected_version: number,
+    valid_at?: number,
+    key?: string,
+  ) {
+    return this.request<MemoryReceipt & { records: MemoryReceipt[] }>(
+      this.path(space, "/rules/materialize"),
+      "POST",
+      { id, expected_version, valid_at },
+      key,
+    );
+  }
   query(space: string, input: MemoryQuery = {}) {
     return this.request<MemoryQueryResult>(this.path(space, "/query"), "POST", input);
   }
@@ -354,6 +403,11 @@ export class MarinaMemoryClient {
   sources(space: string, after = 0, limit = 100) {
     return this.request<{ sources: MemorySource[]; next_cursor: number }>(
       this.path(space, `/sources?after=${after}&limit=${limit}`),
+    );
+  }
+  sourceHeaders(space: string, after = 0, limit = 20) {
+    return this.request<{ sources: Omit<MemorySource, "body">[]; next_cursor: number | null }>(
+      this.path(space, `/source_headers?after=${after}&limit=${limit}`),
     );
   }
   captureBatch(

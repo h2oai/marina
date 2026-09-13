@@ -25,6 +25,7 @@ import { CoordinationCard } from "./components/CoordinationCard";
 import { EntityRoster } from "./components/EntityRoster";
 import { FirstRunGuide } from "./components/FirstRunGuide";
 import { Header } from "./components/Header";
+import { MemoryWorkspace } from "./components/MemoryWorkspace";
 import { NarrativePlayback } from "./components/NarrativePlayback";
 import { PulseDrawer } from "./components/PulseDrawer";
 import { RoomDetail } from "./components/RoomDetail";
@@ -173,6 +174,7 @@ export default function App() {
   const [attentionOpen, setAttentionOpen] = useState(false);
   const [pulseOpen, setPulseOpen] = useState(false);
   const [workOpen, setWorkOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   // Realtime core tenet: bootstrap queries invalidate on matching WS events.
   useGlobalRealtimeInvalidations();
   const { data: worldData } = useWorld();
@@ -442,16 +444,25 @@ export default function App() {
         onRenameLayoutPreset={handleRenamePreset}
         onDeleteLayoutPreset={handleDeletePreset}
         onOpenAttention={() => {
+          setMemoryOpen(false);
           setWorkOpen(false);
           setPulseOpen(false);
           setAttentionOpen((open) => !open);
         }}
         onOpenPulse={() => {
+          setMemoryOpen(false);
           setAttentionOpen(false);
           setWorkOpen(false);
           setPulseOpen((open) => !open);
         }}
+        onOpenMemory={() => {
+          setAttentionOpen(false);
+          setPulseOpen(false);
+          setWorkOpen(false);
+          setMemoryOpen((open) => !open);
+        }}
         onOpenWork={() => {
+          setMemoryOpen(false);
           setAttentionOpen(false);
           setPulseOpen(false);
           setWorkOpen((open) => !open);
@@ -465,6 +476,7 @@ export default function App() {
       <AttentionDrawer open={attentionOpen} onClose={() => setAttentionOpen(false)} />
       <PulseDrawer open={pulseOpen} onClose={() => setPulseOpen(false)} />
       <WorkDrawer open={workOpen} onClose={() => setWorkOpen(false)} />
+      <MemoryWorkspace open={memoryOpen} onClose={() => setMemoryOpen(false)} />
 
       <FirstRunGuide
         onFocusChat={() => {

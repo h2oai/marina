@@ -25,6 +25,7 @@ import * as intellectsDb from "./db-intellects";
 import * as journeysDb from "./db-journeys";
 import * as logsDb from "./db-logs";
 import * as mediaDb from "./db-media";
+import { admitMemoryImport } from "./db-memory-admission";
 import { compactMemoryReceipts } from "./db-memory-retention";
 import { configureMemoryStorage, memoryLimitsFromEnv } from "./db-memory-storage";
 import * as meshesDb from "./db-meshes";
@@ -2702,6 +2703,9 @@ export class MarinaDB {
 
   memoryRepository(): memoryServiceDb.MemoryRepository {
     return memoryServiceDb.memoryRepository(this.db);
+  }
+  admitMemoryImport() {
+    return admitMemoryImport(this.db);
   }
   isServiceMemoryNote(id: number): boolean {
     return memoryServiceDb.isServiceMemoryNote(this.db, id);

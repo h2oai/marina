@@ -179,3 +179,77 @@ An unchanged restored peer can validate existing entries again. Same-key acknowl
 recovery remains available during an outage, but it does not return cached content.
 Federated caching adds network validation work; it is useful when that costs less than
 recomputing the derived result. It does not automatically cache model tokens.
+
+## Transfer discovery and recovery
+
+Owners can list imports without retaining their IDs:
+
+```ts
+const imports = await memory.transfers(space, { state: "receiving", limit: 20 });
+const next = imports.next_cursor;
+const status = await memory.transferStatus(space, imports.transfers[0]!.id);
+```
+
+`state`, `expired`, `limit` and `cursor` are optional filters. Listing is owner-only, uses an ID cursor, and reflects current status. Expired staging remains charged to its owner until explicitly aborted or forgotten.
+
+```sh
+bun run memory transfer-list --url http://localhost:3301 --credentials destination.json
+bun run memory transfer-status --credentials destination.json --transfer TRANSFER_ID
+bun run memory transfer-resume --credentials destination.json --transfer TRANSFER_ID \
+  --source-url http://source:3301 --source-credentials source.json
+bun run memory transfer-abort --credentials destination.json --transfer TRANSFER_ID
+```
+
+Use `--url` for a destination outside the default local service. Resume supplies the original source connection again; Marina does not store its credentials. A ready transfer can be committed without reconnecting to the source. The TypeScript `resumeMemoryTransfer(destination, space, id, { source, signal, progress })` helper follows the durable cursor and retries with stable request keys. Original source generations must remain unchanged.
+
+Large publication runs in a trusted local subprocess, retaining one atomic SQLite transaction. Other tenants can continue reading. SQLite still permits only one writer: memory writes receive retryable `503 import_busy` during publication, and other database writers fail promptly on lock contention. Publication has a 120-second limit. Use a client timeout above that limit for large commits; the CLI uses 130 seconds. Cancellation waits for the child to exit, but a write may already have committed. Inspect status and retry with the same key to recover its receipt. File-backed databases and the bundled `dist/memory-import.js` entry are required for background publication; normal source installs include its TypeScript entry.
+
+## Typed joins and authored rules
+
+Joins match explicit typed claims. Entity IDs and literal strings remain distinct:
+
+```ts
+const person = { variable: "person", type: "entity" } as const;
+const project = { variable: "project", type: "entity" } as const;
+const query = {
+  patterns: [
+    { subject: person, predicate: "reviews", object: project },
+    { subject: project, predicate: "status", object: { kind: "literal", value: "active" } },
+  ],
+  select: ["person"],
+  valid_at: Date.now(),
+} satisfies import("marina/memory").MemoryJoin;
+const result = await memory.join(space, query);
+```
+
+Each match includes bindings, supporting record IDs and versions, and the intersection of their valid-time ranges. `valid_at` is optional; when supplied it uses UTC milliseconds and half-open ranges. Predicate variables use type `symbol`; literal variables use `string`, `number`, `boolean` or `null`. Repeated variables must agree in both type and value. Stale records are excluded.
+
+Joins allow up to eight patterns, 256 distinct candidate queries, 8,000 candidates, 20,000 comparisons and 2,000 intermediate matches. Candidate and intermediate data each have a 4 MiB budget. Exceeding an intermediate budget returns `symbolic_budget_exceeded`. Final results are limited to 100 and report `truncated`; they never silently imply complete coverage. A caller-authored retrieval plan can include a `join` step.
+
+Store a reusable rule as a native versioned memory:
+
+```ts
+const rule = await memory.saveRule(space, {
+  schema: "marina.memory.rule.v1",
+  name: "Reviewers of active projects",
+  query,
+  conclusion: { subject: person, predicate: "activeReviewer", object: project },
+}, { source_ids: [policySourceId] });
+const preview = await memory.runRule(space, rule.id, 1);
+// An explicit authored write, after deciding to save the conclusions:
+const saved = await memory.materializeRule(space, rule.id, 1);
+```
+
+A saved query retains its `valid_at` value. Pass a new `valid_at` to `runRule` or `materializeRule` when evaluating another time. Rules are nonrecursive pattern programs; they do not execute arbitrary code or infer verified truth. Their heads can use constants and variables bound by the body. Preview is read-only. Materialization refuses truncated results and saves inference records pinned to the rule and every supporting record version. Changing either can mark conclusions stale. Reaffirmation remains an explicit review action. To revise a rule, pass its `id` and `expected_version` to `saveRule`; native record history and portable transfers preserve its prior definitions.
+
+World commands expose the same operations through `memory join`, `memory rule-save`, `memory rule-run` and `memory rule-materialize`, each accepting JSON. Native MCP callers can use `memory_service` with `join`, `save_rule`, `run_rule` or `materialize_rule`.
+
+## Human workspace and MCP resources
+
+Open **Memory** in the dashboard header after signing into world chat. The workspace uses that resident's authenticated connection and existing grants. It supports memory search, original source ranges, revision comparison, competing assertions, explicit reaffirmation, and transfer inspection or abort. Switching identity clears the displayed data. Service credentials are not stored in the browser.
+
+`sourceHeaders(space, after, limit)` lists source metadata without loading original bodies; `sourceRange` reads the immutable text by byte range. These also appear as `source_headers` and `source_range` native operations.
+
+The memory-only MCP bridge exposes `memory://space` in the native profile and `memory://knowledge-graph` in the reference graph profile. Resource reads recheck authorization. Subscriptions watch one configured resource per connection, poll at one-second intervals, and notify about HTTP and resident changes too. Notifications contain the resource URI; clients reread for content. Unsubscribe and disconnect stop polling. Access failure stops a subscription, which must be explicitly renewed after recovery. Resource bodies are limited to 1 MiB; use paged tools for larger data. These follow the [MCP resource protocol](https://modelcontextprotocol.io/specification/2025-06-18/server/resources).
+
+For LangGraph namespace storage, see the optional [JSON store adapter](../../extensions/langgraph-store/README.md). Its `langgraph-store-json-v1` profile supports authored JSON and exact filters without an embedding model.

@@ -387,12 +387,23 @@ export function applyMemoryImport(
       SELECT 1 FROM memory_revision_dependencies d JOIN memory_records p ON p.id=d.depends_on_id WHERE d.record_id=memory_records.id AND d.record_version=memory_records.version AND (d.depends_on_version IS NULL OR d.depends_on_version!=p.version OR p.stale=1))`,
     [space],
   );
-  let changed = 1;
-  while (changed)
-    changed = db.run(
-      `UPDATE memory_records SET stale=1,stale_reason='{"kind":"import_requires_review"}' WHERE space_id=? AND stale=0 AND EXISTS (SELECT 1 FROM memory_revision_dependencies d JOIN memory_records p ON p.id=d.depends_on_id WHERE d.record_id=memory_records.id AND d.record_version=memory_records.version AND p.stale=1)`,
-      [space],
-    ).changes;
+  // DFS completion order places premises before conclusions. Propagate once,
+  // avoiding a whole-space SQL scan for every level of a long dependency chain.
+  const stale = new Set(
+    (
+      db.query("SELECT id FROM memory_records WHERE space_id=? AND stale=1").all(space) as {
+        id: string;
+      }[]
+    ).map((row) => row.id),
+  );
+  const markStale = db.query(
+    `UPDATE memory_records SET stale=1,stale_reason='{"kind":"import_requires_review"}' WHERE id=? AND space_id=?`,
+  );
+  for (const id of visited)
+    if (!stale.has(id) && (dependencies.get(id) ?? []).some((parent) => stale.has(parent))) {
+      markStale.run(id, space);
+      stale.add(id);
+    }
   const vocabularyVersions = new Set<number>([0]);
   for (const v of payload.vocabularies) {
     integer(v.version, "vocabulary version", 1, Number.MAX_SAFE_INTEGER);

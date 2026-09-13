@@ -3085,4 +3085,11 @@ UNION ALL
 SELECT 'transfer_part',json_array(transfer_id,position),space_id,length(CAST(data AS BLOB))+length(CAST(item_id AS BLOB))+256 FROM memory_transfer_parts;
 `,
   },
+  {
+    version: 108,
+    sql: `
+CREATE INDEX idx_memory_transfers_space_owner_id ON memory_transfers(space_id,principal_id,id);
+CREATE INDEX idx_memory_records_format ON memory_records(space_id,json_extract(metadata,'$.format'),created_at,id) WHERE status='active';
+`,
+  },
 ];

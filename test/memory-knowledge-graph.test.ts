@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { ResourceUpdatedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { MemoryService } from "../src/memory/service";
 import { createMemoryMcpServer } from "../src/net/mcp-server";
 import { handleMemoryServiceApi } from "../src/net/memory-service-api";
@@ -204,4 +205,42 @@ it("preserves profile data through native transfer and requires explicit review 
   await expect(http.knowledgeGraph(space, "read_graph")).rejects.toMatchObject({
     code: "invalid_compat_record",
   });
+});
+
+it("serves the reference resource, notices external writes and stops notifications on revocation", async () => {
+  const { db, http, space, token } = await fixture();
+  const mcp = createMemoryMcpServer(http, space, "knowledge-graph"),
+    client = new Client({ name: "resources", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await mcp.connect(a);
+  await client.connect(b);
+  const notifications: string[] = [];
+  client.setNotificationHandler(ResourceUpdatedNotificationSchema, (event) => {
+    notifications.push(event.params.uri);
+  });
+  const uri = "memory://knowledge-graph";
+  try {
+    expect(client.getServerCapabilities()?.resources?.subscribe).toBe(true);
+    expect((await client.listResources()).resources.map((r) => r.uri)).toEqual([uri]);
+    await expect(client.subscribeResource({ uri: "memory://unknown" })).rejects.toThrow(
+      "Unknown memory resource",
+    );
+    await client.subscribeResource({ uri });
+    await http.knowledgeGraph(space, "create_entities", { entities: [alice] });
+    const until = Date.now() + 4000;
+    while (!notifications.length && Date.now() < until) await Bun.sleep(20);
+    expect(notifications).toEqual([uri]);
+    const resource = await client.readResource({ uri });
+    expect(JSON.parse((resource.contents[0]! as { text: string }).text).entities[0].name).toBe(
+      "Alice",
+    );
+    db.revokeWorkloadCredential(db.verifyMemoryCredential(token)!.credentialId);
+    await expect(client.readResource({ uri })).rejects.toThrow("Memory resource unavailable");
+    await Bun.sleep(1200);
+    expect(notifications).toEqual([uri]);
+    await client.unsubscribeResource({ uri });
+  } finally {
+    await client.close();
+    await mcp.close();
+  }
 });

@@ -101,6 +101,11 @@ class MarinaMemory:
     def transfer_status(self, transfer_id):
         return self.request(self._path("/transfers/" + quote(transfer_id, safe="")))
 
+    def transfers(self, **filters):
+        values = {key: str(value).lower() if isinstance(value, bool) else value
+                  for key, value in filters.items() if value is not None}
+        return self.request(self._path("/transfers?" + urlencode(values)))
+
     def append_transfer(self, transfer_id, page, key=None):
         return self.request(self._path("/transfers/" + quote(transfer_id, safe="") + "/pages"), "POST", page, key)
 
@@ -135,6 +140,18 @@ class MarinaMemory:
     def query(self, **filters):
         return self.request(self._path("/query"), "POST", filters)
 
+    def join(self, patterns, **options):
+        return self.request(self._path("/join"), "POST", {"patterns": patterns, **options})
+
+    def save_rule(self, rule, key=None, **options):
+        return self.request(self._path("/rules"), "POST", {"rule": rule, **options}, key)
+
+    def run_rule(self, record_id, expected_version, **options):
+        return self.request(self._path("/rules/run"), "POST", {"id": record_id, "expected_version": expected_version, **options})
+
+    def materialize_rule(self, record_id, expected_version, key=None, **options):
+        return self.request(self._path("/rules/materialize"), "POST", {"id": record_id, "expected_version": expected_version, **options}, key)
+
     def graph(self, subject, **options):
         return self.request(self._path("/graph"), "POST", {"subject": subject, **options})
 
@@ -158,6 +175,9 @@ class MarinaMemory:
 
     def sources(self, after=0, limit=100):
         return self.request(self._path("/sources?after=" + str(after) + "&limit=" + str(limit)))
+
+    def source_headers(self, after=0, limit=20):
+        return self.request(self._path("/source_headers?" + urlencode({"after": after, "limit": limit})))
 
     def source_search(self, query, **options):
         return self.request(self._path("/source_search"), "POST", {"query": query, **options})

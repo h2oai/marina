@@ -36,13 +36,17 @@ export type { MemoryOperationRequest, MemoryOperationResult } from "./memory-ope
 export { MEMORY_OPERATIONS, runMemoryOperation } from "./memory-operations";
 export { canonicalPortableMemory, memoryPortableDigest } from "./memory-portable";
 export { retryMemoryOperation } from "./memory-retry";
+export type * from "./memory-symbolic";
 export type { MemoryTaskMessage, MemoryTaskOptions, MemoryTaskResult } from "./memory-task";
 export { runMemoryTask } from "./memory-task";
 export type {
+  MemoryTransferFilter,
   MemoryTransferFragment,
   MemoryTransferHeader,
   MemoryTransferKind,
+  MemoryTransferList,
   MemoryTransferPage,
   MemoryTransferStatus,
 } from "./memory-transfer";
+export { resumeMemoryTransfer } from "./memory-transfer-client";
 export type * from "./memory-types";

@@ -26,6 +26,7 @@ import {
   negotiateConnectCapabilities,
   registerConnectEndpoint,
 } from "./connect-api";
+import { registerMemoryResources } from "./memory-mcp-resources";
 import { resolveWsBindHostname } from "./websocket-server";
 
 // ─── Session State ────────────────────────────────────────────────────────────
@@ -1035,6 +1036,7 @@ export function createMemoryMcpServer(
   }
   if (profile === "knowledge-graph") registerKnowledgeGraphTools(mcp, runCmd);
   else registerMemoryTools(mcp, runCmd);
+  registerMemoryResources(mcp, profile, runCmd);
   return mcp;
 }
 

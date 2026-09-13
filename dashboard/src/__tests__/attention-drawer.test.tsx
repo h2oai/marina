@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AttentionDrawer } from "../components/AttentionDrawer";
 
 const refetch = vi.fn(async () => undefined);
-const postApi = vi.fn(async () => ({ ok: true }));
+const postApi = vi.fn(async (..._args: unknown[]) => ({ ok: true }));
 const useOperationalAlerts = vi.fn();
 
 vi.mock("../hooks/use-api", () => ({ useOperationalAlerts: () => useOperationalAlerts() }));

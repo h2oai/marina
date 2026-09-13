@@ -43,3 +43,13 @@ export interface MemoryTransferStatus {
   next_cursor: string | null;
   expires_at: number;
 }
+export interface MemoryTransferList {
+  transfers: (MemoryTransferStatus & { expired: boolean })[];
+  next_cursor: string | null;
+}
+export interface MemoryTransferFilter {
+  state?: MemoryTransferStatus["state"];
+  expired?: boolean;
+  limit?: number;
+  cursor?: string;
+}

@@ -10,6 +10,7 @@ import { withMemoryAbort } from "../sdk/memory-abort";
 import type { MemorySearchInput, MemorySearchResult } from "../sdk/memory-types";
 import { type EmbeddingProvider, validEmbedding } from "./embeddings";
 import { configuredMemoryFederation, type MemoryFederation } from "./federation";
+import { runMemoryImport } from "./import-runner";
 import { configuredMemoryPlanner, type MemoryPlanner } from "./planning";
 import { memoryQueryExpansion } from "./query-expansion";
 import { MemoryError } from "./service-types";
@@ -21,6 +22,7 @@ export class MemoryService {
   private worker: ReturnType<typeof setInterval> | undefined;
   private working = false;
   private stopping = false;
+  private publications = new Set<Promise<unknown>>();
   private logger = new Logger();
   constructor(
     readonly db: MarinaDB,
@@ -40,6 +42,14 @@ export class MemoryService {
       symbolic: {
         claims: "typed-subject-predicate-object",
         query: "exact",
+        joins: {
+          max_patterns: 8,
+          max_candidates: 8000,
+          max_comparisons: 20000,
+          max_intermediate_matches: 2000,
+          max_results: 100,
+        },
+        rules: "authored-versioned-nonrecursive:explicit-materialization:dependency-pinned",
         graph: "asserted-relations",
         vectors_required: false,
         vocabulary: "versioned-object-types-and-cardinality",
@@ -54,10 +64,18 @@ export class MemoryService {
       source_capture: "verbatim",
       compatibility: {
         profile: "mcp-memory-tools-v1",
+        json_store: {
+          profile: "langgraph-store-json-v1",
+          max_batch: 64,
+          max_value_bytes: 65536,
+          max_query_candidates: 2000,
+          max_query_bytes: 4194304,
+          semantic_query: false,
+        },
         tools: 9,
         max_records: 2000,
         max_bytes: 1048576,
-        resource_subscriptions: false,
+        resource_subscriptions: "one-scoped-resource:1-second-poll:stop-on-access-failure",
       },
       portable_bundle: {
         schema: "marina.memory.bundle.v2",
@@ -71,6 +89,9 @@ export class MemoryService {
         max_row_bytes: 4194304,
         page_bytes: 262144,
         resume: true,
+        discovery: "owner-only-filtered-keyset-list",
+        large_publication: "separate-process:reads-live:writes-retry-503",
+        publication_timeout_ms: 120000,
         consistency: "unchanged-source-generation",
         publication: "atomic-empty-owned-space",
         staging: "durable-quota-accounted:explicit-abort:24-hour-write-expiry",
@@ -136,6 +157,58 @@ export class MemoryService {
   async close() {
     this.stopWorker();
     while (this.working) await Bun.sleep(5);
+    await Promise.allSettled([...this.publications]);
+  }
+  private publication(input: Parameters<typeof runMemoryImport>[1], signal?: AbortSignal) {
+    const promise = runMemoryImport(this.db, input, signal);
+    this.publications.add(promise);
+    void promise.finally(() => this.publications.delete(promise)).catch(() => {});
+    return promise;
+  }
+  async commitTransfer(
+    actor: MemoryActor,
+    space: string,
+    id: string,
+    digest: string,
+    key: string,
+    signal?: AbortSignal,
+  ) {
+    signal?.throwIfAborted();
+    this.repository.authorize(actor, space, "memory:write");
+    const status = this.repository.transferStatus(actor, space, id);
+    if (
+      status.bytes <= 262144 &&
+      Object.values(status.header.counts).reduce((a, b) => a + b, 0) <= 200
+    )
+      return this.repository.commitTransfer(actor, space, id, digest, key);
+    return this.publication(
+      {
+        kind: "transfer",
+        actor,
+        space,
+        id,
+        digest,
+        key,
+        limits: this.repository.usage(actor).limits,
+      },
+      signal,
+    );
+  }
+  async importBundle(
+    actor: MemoryActor,
+    space: string,
+    bundle: unknown,
+    key: string,
+    signal?: AbortSignal,
+  ) {
+    signal?.throwIfAborted();
+    this.repository.authorize(actor, space, "memory:write");
+    if (Buffer.byteLength(JSON.stringify(bundle)) <= 65536)
+      return this.repository.importBundle(actor, space, bundle, key);
+    return this.publication(
+      { kind: "bundle", actor, space, bundle, key, limits: this.repository.usage(actor).limits },
+      signal,
+    );
   }
 
   async runIndexJobs(limit = 8): Promise<number> {

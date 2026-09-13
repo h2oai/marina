@@ -99,7 +99,7 @@ export interface MemoryVocabulary {
   definition: MemoryVocabularyDefinition;
 }
 export interface MemoryPlanStep {
-  operation: "query" | "graph" | "search" | "source_search";
+  operation: "query" | "graph" | "search" | "source_search" | "join";
   input: Record<string, unknown>;
 }
 export interface MemoryPlan {

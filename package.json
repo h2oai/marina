@@ -44,7 +44,11 @@
     "extensions/local-embeddings/index.ts",
     "extensions/local-embeddings/package.json",
     "extensions/local-embeddings/bun.lock",
-    "extensions/local-embeddings/README.md"
+    "extensions/local-embeddings/README.md",
+    "extensions/langgraph-store/index.ts",
+    "extensions/langgraph-store/package.json",
+    "extensions/langgraph-store/bun.lock",
+    "extensions/langgraph-store/README.md"
   ],
   "engines": {
     "bun": ">=1.1.0"
@@ -53,7 +57,7 @@
     "start": "bun run src/main.ts",
     "code": "bun run scripts/code.ts",
     "dev": "bun run src/main.ts",
-    "build": "bun build src/main.ts --outdir dist --target bun && bun run build:memory",
+    "build": "bun build src/main.ts --outdir dist --target bun && bun build src/memory/import-process.ts --outfile dist/memory-import.js --target bun && bun run build:memory",
     "test": "bun test --path-ignore-patterns '**/dashboard/**' --path-ignore-patterns '**/examples/coding-agent-demo/**'",
     "typecheck": "tsc --noEmit",
     "lint": "biome check src/ test/ dashboard/src/",

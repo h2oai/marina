@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { getErrorMessage } from "../src/engine/errors";
@@ -11,6 +11,9 @@ import { serveMemory } from "../src/memory/server";
 import { MarinaDB } from "../src/persistence/database";
 import { rotateMemoryBackups } from "../src/persistence/db-memory-backups";
 import { snapshotMemoryDatabase } from "../src/persistence/db-memory-maintenance";
+import { MarinaMemoryClient } from "../src/sdk/memory-client";
+import type { MemoryTransferFilter } from "../src/sdk/memory-transfer";
+import { resumeMemoryTransfer } from "../src/sdk/memory-transfer-client";
 
 const { values, positionals } = parseArgs({
   args: Bun.argv.slice(2),
@@ -19,6 +22,14 @@ const { values, positionals } = parseArgs({
     db: { type: "string", default: "data/memory.db" },
     name: { type: "string" },
     credentials: { type: "string" },
+    url: { type: "string", default: "http://127.0.0.1:3301" },
+    space: { type: "string" },
+    transfer: { type: "string" },
+    state: { type: "string" },
+    expired: { type: "boolean" },
+    cursor: { type: "string" },
+    "source-url": { type: "string" },
+    "source-credentials": { type: "string" },
     port: { type: "string", default: "3301" },
     host: { type: "string", default: "127.0.0.1" },
     embeddings: { type: "string", default: "none" },
@@ -31,7 +42,7 @@ const { values, positionals } = parseArgs({
     output: { type: "string" },
     backup: { type: "string" },
     before: { type: "string" },
-    limit: { type: "string", default: "1000" },
+    limit: { type: "string" },
     apply: { type: "boolean", default: false },
     directory: { type: "string" },
     keep: { type: "string", default: "7" },
@@ -41,7 +52,44 @@ const { values, positionals } = parseArgs({
 try {
   const dbPath = resolve(values.db);
   const command = positionals[0];
-  if (command === "rotate-backups") {
+  if (command?.startsWith("transfer-")) {
+    if (!values.credentials)
+      throw new Error("Supply --credentials for the destination memory service");
+    const identity = JSON.parse(readFileSync(values.credentials, "utf8"));
+    const space = values.space ?? identity.spaceId;
+    if (typeof identity.token !== "string" || typeof space !== "string")
+      throw new Error("Invalid destination credentials or space");
+    const client = new MarinaMemoryClient(values.url, identity.token, 130000);
+    let result: unknown;
+    if (command === "transfer-list") {
+      result = await client.transfers(space, {
+        state: values.state as MemoryTransferFilter["state"],
+        expired: values.expired,
+        cursor: values.cursor,
+        limit: Number(values.limit ?? 20),
+      });
+    } else {
+      if (!values.transfer)
+        throw new Error("Supply --transfer ID; use transfer-list to discover IDs");
+      if (command === "transfer-status")
+        result = await client.transferStatus(space, values.transfer);
+      else if (command === "transfer-abort")
+        result = await client.abortTransfer(space, values.transfer, `${values.transfer}:abort`);
+      else if (command === "transfer-resume") {
+        let source: MarinaMemoryClient | undefined;
+        if (values["source-credentials"] || values["source-url"]) {
+          if (!values["source-credentials"] || !values["source-url"])
+            throw new Error("Supply both --source-url and --source-credentials");
+          const identity = JSON.parse(readFileSync(values["source-credentials"], "utf8"));
+          if (typeof identity.token !== "string") throw new Error("Invalid source credentials");
+          source = new MarinaMemoryClient(values["source-url"], identity.token);
+        }
+        result = await resumeMemoryTransfer(client, space, values.transfer, { source });
+      } else
+        throw new Error("Use transfer-list, transfer-status, transfer-resume or transfer-abort");
+    }
+    console.log(JSON.stringify(result));
+  } else if (command === "rotate-backups") {
     if (!values.directory) throw new Error("rotate-backups requires --directory");
     console.log(
       JSON.stringify(await rotateMemoryBackups(dbPath, values.directory, Number(values.keep))),
@@ -57,7 +105,7 @@ try {
         JSON.stringify(
           db.compactMemoryReceipts({
             before: Number(values.before),
-            limit: Number(values.limit),
+            limit: Number(values.limit ?? 1000),
             apply: values.apply,
           }),
         ),
@@ -144,7 +192,7 @@ try {
     process.on("SIGINT", close);
   } else
     console.log(
-      "Usage: bun run memory init --name NAME [--credentials FILE] [--db FILE]\n       bun run memory serve [--db FILE] [--port 3301] [--embeddings none|local|ollama]\n       bun run memory revoke --credential ID [--db FILE]\n       bun run memory backup --db FILE --output NEW_FILE\n       bun run memory restore --backup FILE --db NEW_FILE\n       bun run memory rotate-backups --db FILE --directory DIR [--keep 7]\n       bun run memory compact-receipts --db FILE --before UTC_MS [--limit 1000] [--apply]",
+      "Usage: bun run memory transfer-list --credentials FILE [--url URL] [--space ID] [--state receiving|ready|committed|aborted] [--expired] [--limit 20] [--cursor ID]\n       bun run memory transfer-status|transfer-abort|transfer-resume --credentials FILE --transfer ID [--url URL] [--source-url URL --source-credentials FILE]\n       bun run memory init --name NAME [--credentials FILE] [--db FILE]\n       bun run memory serve [--db FILE] [--port 3301] [--embeddings none|local|ollama]\n       bun run memory revoke --credential ID [--db FILE]\n       bun run memory backup --db FILE --output NEW_FILE\n       bun run memory restore --backup FILE --db NEW_FILE\n       bun run memory rotate-backups --db FILE --directory DIR [--keep 7]\n       bun run memory compact-receipts --db FILE --before UTC_MS [--limit 1000] [--apply]",
     );
 } catch (error) {
   console.error(getErrorMessage(error));

@@ -20,6 +20,7 @@ import {
   recordInput,
 } from "../memory/service-types";
 import type { MemorySourceSearch } from "../sdk/memory-types";
+import { requireMemoryWriter } from "./db-memory-admission";
 import { exportMemoryBundle, importMemoryBundle } from "./db-memory-bundles";
 import { deleteMemoryCache, getMemoryCache, putMemoryCache } from "./db-memory-cache";
 import { captureMemoryBatch } from "./db-memory-capture";
@@ -40,12 +41,20 @@ import { acknowledgeMemoryRequests } from "./db-memory-retention";
 import { reaffirmMemory, reviewMemory } from "./db-memory-review";
 import { readMemorySourceRange, searchMemorySources } from "./db-memory-sources";
 import { enforceMemoryStorage, memoryStorageUsage } from "./db-memory-storage";
+import { memoryJsonStore } from "./db-memory-store";
+import {
+  joinMemory,
+  materializeMemoryRule,
+  runMemoryRule,
+  saveMemoryRule,
+} from "./db-memory-symbolic";
 import {
   abortMemoryTransfer,
   appendMemoryTransfer,
   beginMemoryTransfer,
   commitMemoryTransfer,
   exportMemoryTransferPage,
+  listMemoryTransfers,
   memoryTransferStatus,
 } from "./db-memory-transfer";
 import { createNote, deleteNote, getNote, reviseNote } from "./db-notes";
@@ -135,6 +144,7 @@ export function mutation<T extends MemoryReceipt>(
   input: unknown,
   run: () => T,
 ): T {
+  requireMemoryWriter(db);
   if (!key || key.length > 128)
     throw new MemoryError(
       400,
@@ -754,6 +764,21 @@ export function memorySources(
       .query("SELECT * FROM memory_sources WHERE space_id=? AND seq>? ORDER BY seq LIMIT ?")
       .all(space, after, limit) as (Omit<MemorySource, "body"> & { body: string })[]
   ).map((source) => ({ ...source, body: JSON.parse(source.body) }));
+}
+
+export function memorySourceHeaders(
+  db: Database,
+  actor: MemoryActor,
+  space: string,
+  after = 0,
+  limit = 20,
+) {
+  authorizeMemorySpace(db, actor, space);
+  return db
+    .query(
+      "SELECT id,space_id,seq,session_id,content_hash,created_at FROM memory_sources WHERE space_id=? AND seq>? ORDER BY seq LIMIT ?",
+    )
+    .all(space, after, limit) as Omit<MemorySource, "body">[];
 }
 
 export function saveMemoryCheckpoint(
@@ -1394,6 +1419,11 @@ export function memoryRepository(db: Database) {
       beginMemoryTransfer(db, actor, space, header, key),
     transferStatus: (actor: MemoryActor, space: string, id: string) =>
       memoryTransferStatus(db, actor, space, id),
+    transfers: (
+      actor: MemoryActor,
+      space: string,
+      input?: import("../sdk/memory-transfer").MemoryTransferFilter,
+    ) => listMemoryTransfers(db, actor, space, input),
     appendTransfer: (actor: MemoryActor, space: string, id: string, page: unknown, key: string) =>
       appendMemoryTransfer(db, actor, space, id, page, key),
     commitTransfer: (actor: MemoryActor, space: string, id: string, digest: string, key: string) =>
@@ -1543,6 +1573,18 @@ export function memoryRepository(db: Database) {
     forget: (actor: MemoryActor, space: string, input: ForgetMemoryInput, key: string) =>
       forgetMemory(db, actor, space, input, key),
     export: (actor: MemoryActor, space: string) => exportMemorySpace(db, actor, space),
+    sourceHeaders: (actor: MemoryActor, space: string, after: number, limit: number) =>
+      memorySourceHeaders(db, actor, space, after, limit),
+    jsonStore: (actor: MemoryActor, space: string, input: unknown, key: string) =>
+      memoryJsonStore(db, actor, space, input, key),
+    join: (actor: MemoryActor, space: string, input: unknown) =>
+      joinMemory(db, actor, space, input),
+    saveRule: (actor: MemoryActor, space: string, input: unknown, key: string) =>
+      saveMemoryRule(db, actor, space, input, key),
+    runRule: (actor: MemoryActor, space: string, input: unknown) =>
+      runMemoryRule(db, actor, space, input),
+    materializeRule: (actor: MemoryActor, space: string, input: unknown, key: string) =>
+      materializeMemoryRule(db, actor, space, input, key),
     query: (actor: MemoryActor, space: string, input: MemoryQuery) =>
       queryMemory(db, actor, space, input),
     graph: (actor: MemoryActor, space: string, input: MemoryGraphQuery) =>
