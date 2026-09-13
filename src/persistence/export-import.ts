@@ -140,6 +140,8 @@ export const EXPORT_TABLES = [
   "memory_service_events",
   "memory_checkpoints",
   "memory_cached_results",
+  "memory_transfers",
+  "memory_transfer_parts",
   "memory_index_jobs",
   "memory_vectors",
   "memory_claims",

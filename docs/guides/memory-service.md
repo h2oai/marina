@@ -5,6 +5,9 @@ without a world, residents, model routing or standing. An external agent only ne
 memory credential and a space ID. This guide covers setup, API contracts, operating limits and
 reproducible checks with disposable data.
 
+See [portable memory extensions](memory-extensions.md) for resumable larger history transfers,
+the reference MCP knowledge-graph profile, explicit query expansion and federated cache pins.
+
 ## Start a private service
 
 From the repository root, install dependencies with `bun install`, then provision an identity:
@@ -101,11 +104,11 @@ require `Idempotency-Key: KEY`. JSON bodies are limited to 2 MiB. Errors have
 | `PATCH /spaces/:space/records/:id` | Full replacement content plus `expected_version`; omitted attributes are retained |
 | `POST /spaces/:space/query` | Exact `{subject?, predicate?, object?, type?, tier?, valid_at?, limit?, cursor?}`; no embeddings; current records and generation-bound pagination |
 | `POST /spaces/:space/graph` | `{subject, predicates?, direction?, max_depth?, valid_at?, limit?}`; asserted relationships with record-cited paths; no inference |
-| `POST /spaces/:space/search` | `{query, mode?, limit?, subject?, type?, tier?, allow_degraded?}`; current records, source IDs, component ranks and generation |
+| `POST /spaces/:space/search` | `{query, expansion?, mode?, limit?, subject?, type?, tier?, allow_degraded?}`; current records, source IDs, component ranks and generation |
 | `POST /spaces/:space/context` | Search plus `budget_tokens`; bounded evidence text, revision citations and truncation flags |
 | `POST /spaces/:space/sources` | Original JSON `{content, session_id?}`; returns durable source ID and cursor |
 | `GET /spaces/:space/sources?after=N&limit=100` | Ordered source replay with `next_cursor` |
-| `POST /spaces/:space/source_search` | `{query, match?:"all"\|"any"\|"phrase", session_id?, limit?}` searches original sources, including those with no derived record |
+| `POST /spaces/:space/source_search` | `{query, expansion?, match?:"all"\|"any"\|"phrase", session_id?, limit?}` searches original sources, including those with no derived record |
 | `GET /spaces/:space/sources/:id?start=N&end=N&text_hash=HASH` | Read an immutable UTF-8 byte range with representation/hash/continuation metadata |
 | `GET/POST /spaces/:space/vocabulary` | Read latest (or `?version=N`); owner writes `{expected_version, definition}` with CAS |
 | `POST /spaces/:space/plan` | `{task, use_model?, steps?, max_results?, max_bytes?}` creates an inspectable read plan |
@@ -121,7 +124,7 @@ require `Idempotency-Key: KEY`. JSON bodies are limited to 2 MiB. Errors have
 | `POST /spaces/:space/reaffirm` | `{id, expected_version, dependency_versions, content?}`; explicit reviewed replacement revision |
 | `POST /spaces/:space/cache/delete` | Exact cache identity; delete only this principal's reusable result, preserving authored memory |
 | `POST /spaces/:space/cache/get` | `{inputs, model, policy}`; live-authorized hit or an inspectable miss reason |
-| `POST /spaces/:space/cache/put` | Identity plus `{value, records?, sources?, expires_at}`; 1–32 explicit version/hash pins |
+| `POST /spaces/:space/cache/put` | Identity plus `{value, records?, sources?, federated?, expires_at}`; 1–32 explicit version/hash pins |
 | `POST /spaces/:space/acknowledge` | `{keys}`; acknowledge 1–100 consumed receipts belonging to the caller |
 | `GET/POST /spaces/:space/bundle` | Export/import the versioned `marina.memory.bundle.v2` history envelope |
 | `GET /spaces/:space/federation_mounts` | List aliases configured for the caller's principal |

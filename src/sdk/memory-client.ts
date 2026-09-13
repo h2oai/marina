@@ -3,6 +3,16 @@
 
 import { memoryRetryDelay, withMemoryAbort } from "./memory-abort";
 import type {
+  MemoryGraphAction,
+  MemoryGraphInputs,
+  MemoryGraphResults,
+} from "./memory-knowledge-graph";
+import type {
+  MemoryTransferHeader,
+  MemoryTransferPage,
+  MemoryTransferStatus,
+} from "./memory-transfer";
+import type {
   ForgetMemoryInput,
   MemoryBundle,
   MemoryCacheInput,
@@ -125,6 +135,21 @@ export class MarinaMemoryClient {
   private path(space: string, rest = "") {
     return `/spaces/${encodeURIComponent(space)}${rest}`;
   }
+  knowledgeGraph<A extends MemoryGraphAction>(
+    space: string,
+    action: A,
+    ...args: A extends "read_graph"
+      ? [input?: MemoryGraphInputs[A], key?: string]
+      : [input: MemoryGraphInputs[A], key?: string]
+  ) {
+    const [input = {}, key] = args;
+    return this.request<MemoryGraphResults[A]>(
+      this.path(space, "/knowledge_graph"),
+      "POST",
+      { ...input, action },
+      key,
+    );
+  }
   review(
     space: string,
     input: { kind?: "all" | "stale" | "competing"; limit?: number; cursor?: string } = {},
@@ -169,6 +194,53 @@ export class MarinaMemoryClient {
   }
   exportBundle(space: string) {
     return this.request<MemoryBundle>(this.path(space, "/bundle"));
+  }
+  exportTransferPage(space: string, cursor?: string) {
+    return this.request<MemoryTransferPage>(
+      this.path(space, `/transfer${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`),
+    );
+  }
+  async *exportTransferPages(space: string, cursor?: string): AsyncGenerator<MemoryTransferPage> {
+    for (;;) {
+      const page = await this.exportTransferPage(space, cursor);
+      yield page;
+      if (page.done) return;
+      if (!page.next_cursor || page.next_cursor === cursor)
+        throw new MemoryClientError(502, "invalid_transfer", "Export cursor did not advance");
+      cursor = page.next_cursor;
+    }
+  }
+  beginTransfer(space: string, header: MemoryTransferHeader, key?: string) {
+    return this.request<MemoryTransferStatus>(this.path(space, "/transfers"), "POST", header, key);
+  }
+  transferStatus(space: string, id: string) {
+    return this.request<MemoryTransferStatus>(
+      this.path(space, `/transfers/${encodeURIComponent(id)}`),
+    );
+  }
+  appendTransfer(space: string, id: string, page: MemoryTransferPage, key?: string) {
+    return this.request<MemoryTransferStatus>(
+      this.path(space, `/transfers/${encodeURIComponent(id)}/pages`),
+      "POST",
+      page,
+      key,
+    );
+  }
+  commitTransfer(space: string, id: string, sha256: string, key?: string) {
+    return this.request<MemoryReceipt & { portable_ids_preserved: boolean }>(
+      this.path(space, `/transfers/${encodeURIComponent(id)}/commit`),
+      "POST",
+      { sha256 },
+      key,
+    );
+  }
+  abortTransfer(space: string, id: string, key?: string) {
+    return this.request<MemoryReceipt>(
+      this.path(space, `/transfers/${encodeURIComponent(id)}/abort`),
+      "POST",
+      {},
+      key,
+    );
   }
   importBundle(space: string, bundle: MemoryBundle | Record<string, unknown>, key?: string) {
     return this.request<MemoryReceipt & { portable_ids_preserved: boolean }>(

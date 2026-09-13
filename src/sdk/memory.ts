@@ -17,10 +17,32 @@ export {
 } from "./memory-answer";
 /** Portable public SDK: fetch and Web APIs only; no Bun, SQLite or model imports. */
 export { MarinaMemoryClient, MemoryClientError } from "./memory-client";
+export type {
+  MemoryExpansionCoverage,
+  MemoryQueryExpansion,
+  MemoryQueryVocabulary,
+} from "./memory-expansion";
+export { expandMemoryQuery, normalizeMemoryExpansion } from "./memory-expansion";
+export type {
+  MemoryGraphAction,
+  MemoryGraphEntity,
+  MemoryGraphInputs,
+  MemoryGraphRelation,
+  MemoryGraphResults,
+  MemoryKnowledgeGraph,
+} from "./memory-knowledge-graph";
+export { MEMORY_GRAPH_ACTIONS } from "./memory-knowledge-graph";
 export type { MemoryOperationRequest, MemoryOperationResult } from "./memory-operations";
 export { MEMORY_OPERATIONS, runMemoryOperation } from "./memory-operations";
 export { canonicalPortableMemory, memoryPortableDigest } from "./memory-portable";
 export { retryMemoryOperation } from "./memory-retry";
 export type { MemoryTaskMessage, MemoryTaskOptions, MemoryTaskResult } from "./memory-task";
 export { runMemoryTask } from "./memory-task";
+export type {
+  MemoryTransferFragment,
+  MemoryTransferHeader,
+  MemoryTransferKind,
+  MemoryTransferPage,
+  MemoryTransferStatus,
+} from "./memory-transfer";
 export type * from "./memory-types";

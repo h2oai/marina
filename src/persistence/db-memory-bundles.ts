@@ -175,254 +175,274 @@ export function importMemoryBundle(
   for (const name of ["sources", "records", "vocabularies", "checkpoints"] as const)
     if (!Array.isArray(payload[name]) || payload[name].length > 2000)
       throw new MemoryError(400, "invalid_bundle", `Invalid ${name} section`);
+  for (const record of payload.records)
+    if (!Array.isArray(record.versions) || !record.versions.length || record.versions.length > 2000)
+      throw new MemoryError(400, "invalid_bundle", "Invalid record history");
   return mutation(db, actor, space, key, "bundle.import", envelope, () => {
-    const target = authorizeMemorySpace(db, actor, space, "memory:write");
-    if (target.owner_id !== actor.principalId)
-      throw new MemoryError(403, "owner_required", "Import requires the space owner");
-    for (const table of [
-      "memory_records",
-      "memory_sources",
-      "memory_vocabularies",
-      "memory_checkpoints",
-    ])
-      if (db.query(`SELECT 1 FROM ${table} WHERE space_id=? LIMIT 1`).get(space))
-        throw new MemoryError(409, "import_not_empty", "Import requires an empty destination");
-    const sourceIds = new Set<string>(),
-      recordIds = new Set<string>(),
-      cursors = new Map<number, number>();
-    for (const s of payload.sources) {
-      textValue(s.id, "source id", 128);
-      integer(s.seq, "source seq", 1, Number.MAX_SAFE_INTEGER);
-      if (cursors.has(s.seq) || !Object.hasOwn(s, "body"))
-        throw new MemoryError(400, "invalid_bundle", "Duplicate source sequence or missing body");
-      integer(s.created_at, "created_at", 0, Number.MAX_SAFE_INTEGER);
-      if (s.session_id !== null) textValue(s.session_id, "session_id", 256);
-      if (sourceIds.has(s.id) || db.query("SELECT 1 FROM memory_sources WHERE id=?").get(s.id))
-        throw new MemoryError(409, "identity_collision", "Source identity already exists");
-      textValue(s.content_hash, "content_hash", 128);
-      if (s.body_sha256 !== bodyDigest(s.body))
-        throw new MemoryError(400, "invalid_bundle", "Source content hash mismatch");
-      sourceIds.add(s.id);
-      const row = db.run(
-        "INSERT INTO memory_sources(id,space_id,session_id,body,content_hash,created_at) VALUES (?,?,?,?,?,?)",
-        [s.id, space, s.session_id, JSON.stringify(s.body), s.content_hash, s.created_at],
-      );
-      cursors.set(s.seq, Number(row.lastInsertRowid));
-    }
-    for (const r of payload.records) {
-      textValue(r.id, "record id", 128);
-      integer(r.version, "version", 1, Number.MAX_SAFE_INTEGER);
-      integer(r.created_at, "created_at", 0, Number.MAX_SAFE_INTEGER);
-      if (recordIds.has(r.id) || db.query("SELECT 1 FROM memory_records WHERE id=?").get(r.id))
-        throw new MemoryError(409, "identity_collision", "Record identity already exists");
-      if (
-        !Array.isArray(r.versions) ||
-        !r.versions.length ||
-        r.versions.length > 2000 ||
-        ![0, 1].includes(r.stale)
-      )
-        throw new MemoryError(400, "invalid_bundle", "Invalid record history");
-      recordIds.add(r.id);
-      const seen = new Set<number>();
-      let head: number | undefined;
-      db.run(
-        "INSERT INTO memory_records(id,space_id,version,created_at,stale,stale_reason) VALUES (?,?,?,?,?,?)",
-        [
-          r.id,
-          space,
-          r.version,
-          r.created_at,
-          r.stale,
-          r.stale_reason === null ? null : JSON.stringify(object(JSON.parse(r.stale_reason))),
-        ],
-      );
-      for (const version of r.versions) {
-        const v = version.record;
-        integer(v.version, "version", 1, r.version);
-        integer(v.created_at, "created_at", 0, Number.MAX_SAFE_INTEGER);
-        if (v.id !== r.id || seen.has(v.version))
-          throw new MemoryError(400, "invalid_bundle", "Duplicate or mismatched record version");
-        seen.add(v.version);
-        // Unknown legacy attributes stay NULL, never reconstructed as known history.
-        const attrs = version.attributes === null ? null : object(version.attributes);
-        if (attrs && Object.keys(attrs).some((key) => !ATTRIBUTE_KEYS.has(key)))
-          throw new MemoryError(400, "invalid_bundle", "Unknown revision attribute");
-        if (attrs?.vocabulary_version !== undefined)
-          integer(attrs.vocabulary_version, "vocabulary_version", 0, Number.MAX_SAFE_INTEGER);
-        const input = recordInput({
-          ...attrs,
-          content: v.content,
-          type: v.type,
-          tier: v.tier,
-          importance: v.importance,
-          subject: attrs?.subject ?? (attrs === null ? (v.subject ?? undefined) : undefined),
-          metadata: attrs?.metadata ?? (attrs === null ? v.metadata : undefined),
-          dependency_versions: undefined,
-        });
-        if (attrs && (input.subject ?? null) !== (attrs.subject ?? null))
-          throw new MemoryError(400, "invalid_bundle", "Claim and subject disagree");
-        const note = createNote(db, `memory:${actor.principalId}`, v.content, undefined, {
-          noteType: input.type,
-          tier: input.tier,
-          importance: input.importance,
-          skipDedup: true,
-        });
-        db.run("UPDATE notes SET created_at=?,verification_status=? WHERE id=?", [
-          v.created_at,
-          v.version === r.version ? "unverified" : "superseded",
-          note,
-        ]);
-        db.run(
-          "INSERT INTO memory_record_versions(record_id,version,note_id,attributes) VALUES (?,?,?,?)",
-          [r.id, v.version, note, attrs === null ? null : JSON.stringify(attrs)],
-        );
-        if (v.version === r.version) {
-          head = note;
-          db.run(
-            "UPDATE memory_records SET current_note_id=?,subject=?,metadata=?,valid_from=?,valid_until=? WHERE id=?",
-            [
-              head,
-              input.subject ?? null,
-              JSON.stringify(input.metadata ?? {}),
-              input.valid_time?.from ?? null,
-              input.valid_time?.until ?? null,
-              r.id,
-            ],
-          );
-          if (input.claim)
-            db.run("INSERT INTO memory_claims VALUES (?,?,?,?,?,?)", [
-              r.id,
-              space,
-              input.claim.subject,
-              input.claim.predicate,
-              canonical(input.claim.object),
-              input.claim.object.kind === "entity" ? input.claim.object.id : null,
-            ]);
-        }
-      }
-      if (!head) throw new MemoryError(400, "invalid_bundle", "Current revision is absent");
-    }
-    for (const r of payload.records)
-      for (const version of r.versions) {
-        const attrs = version.attributes;
-        if (!attrs) continue;
-        const sources = (attrs.source_ids ?? []) as string[],
-          parents = (attrs.depends_on ?? []) as string[];
-        const pins =
-          attrs.dependency_versions === undefined ? {} : object(attrs.dependency_versions);
-        if (Object.keys(pins).some((id) => !parents.includes(id)))
-          throw new MemoryError(400, "invalid_bundle", "Unexpected dependency pin");
-        for (const id of sources) {
-          if (!sourceIds.has(id))
-            throw new MemoryError(400, "invalid_bundle", "Missing source lineage");
-          db.run("INSERT OR IGNORE INTO memory_derivations VALUES (?,?)", [r.id, id]);
-        }
-        for (const id of parents) {
-          if (id === r.id || !recordIds.has(id))
-            throw new MemoryError(400, "invalid_bundle", "Missing or self-referential dependency");
-          const pin = pins[id] ?? null;
-          if (
-            pin !== null &&
-            !db
-              .query("SELECT 1 FROM memory_record_versions WHERE record_id=? AND version=?")
-              .get(id, integer(pin, "dependency version", 1, Number.MAX_SAFE_INTEGER))
-          )
-            throw new MemoryError(400, "invalid_bundle", "Missing premise revision");
-          db.run("INSERT OR IGNORE INTO memory_dependencies VALUES (?,?)", [r.id, id]);
-          db.run("INSERT INTO memory_revision_dependencies VALUES (?,?,?,?)", [
-            r.id,
-            version.record.version,
-            id,
-            pin as number | null,
-          ]);
-        }
-      }
-    // Validate the current dependency DAG in linear space/time. Historical
-    // dependencies may differ; they remain inspectable without governing the head.
-    const dependencies = new Map(
-      payload.records.map((r) => [
-        r.id,
-        (r.versions.find((v) => v.record.version === r.version)?.attributes?.depends_on ??
-          []) as string[],
-      ]),
-    );
-    const visited = new Set<string>(),
-      active = new Set<string>();
-    const visit = (id: string) => {
-      if (active.has(id))
-        throw new MemoryError(400, "invalid_bundle", "Cyclic current dependencies");
-      if (visited.has(id)) return;
-      active.add(id);
-      for (const parent of dependencies.get(id) ?? []) visit(parent);
-      active.delete(id);
-      visited.add(id);
-    };
-    for (const id of dependencies.keys()) visit(id);
-    // Never import an apparently current conclusion whose declared basis disagrees.
-    db.run(
-      `UPDATE memory_records SET stale=1,stale_reason='{"kind":"import_requires_review"}' WHERE space_id=? AND EXISTS (
-      SELECT 1 FROM memory_revision_dependencies d JOIN memory_records p ON p.id=d.depends_on_id WHERE d.record_id=memory_records.id AND d.record_version=memory_records.version AND (d.depends_on_version IS NULL OR d.depends_on_version!=p.version OR p.stale=1))`,
-      [space],
-    );
-    let changed = 1;
-    while (changed)
-      changed = db.run(
-        `UPDATE memory_records SET stale=1,stale_reason='{"kind":"import_requires_review"}' WHERE space_id=? AND stale=0 AND EXISTS (SELECT 1 FROM memory_revision_dependencies d JOIN memory_records p ON p.id=d.depends_on_id WHERE d.record_id=memory_records.id AND d.record_version=memory_records.version AND p.stale=1)`,
-        [space],
-      ).changes;
-    const vocabularyVersions = new Set<number>([0]);
-    for (const v of payload.vocabularies) {
-      integer(v.version, "vocabulary version", 1, Number.MAX_SAFE_INTEGER);
-      if (vocabularyVersions.has(v.version))
-        throw new MemoryError(400, "invalid_bundle", "Duplicate vocabulary version");
-      vocabularyVersions.add(v.version);
-      definitionInput(JSON.parse(v.definition));
-      db.run("INSERT INTO memory_vocabularies VALUES (?,?,?,?)", [
-        space,
-        v.version,
-        v.definition,
-        integer(v.created_at, "created_at", 0, Number.MAX_SAFE_INTEGER),
-      ]);
-    }
-    for (const r of payload.records) {
-      for (const version of r.versions) {
-        const vocabulary = version.attributes?.vocabulary_version;
-        if (vocabulary !== undefined && !vocabularyVersions.has(vocabulary as number))
-          throw new MemoryError(400, "invalid_bundle", "Historical vocabulary version is absent");
-      }
-      const current = readMemoryRecord(db, actor, space, r.id);
-      if (current.freshness !== "stale")
-        validateMemoryContract(
-          db,
-          actor,
-          space,
-          { content: current.content, claim: current.claim, valid_time: current.valid_time },
-          r.id,
-        );
-    }
-    for (const c of payload.checkpoints) {
-      textValue(c.name, "checkpoint name", 128);
-      object(JSON.parse(c.data));
-      const cursor = c.source_cursor === 0 ? 0 : cursors.get(c.source_cursor);
-      if (cursor === undefined)
-        throw new MemoryError(400, "invalid_bundle", "Checkpoint cursor has no source");
-      db.run("INSERT INTO memory_checkpoints VALUES (?,?,?,?,?,?)", [
-        space,
-        c.name,
-        integer(c.version, "checkpoint version", 1, Number.MAX_SAFE_INTEGER),
-        cursor,
-        c.data,
-        integer(c.updated_at, "updated_at", 0, Number.MAX_SAFE_INTEGER),
-      ]);
-    }
+    const result = applyMemoryImport(db, actor, space, payload);
     return {
       id: space,
       seq: event(db, actor, space, "bundle.imported", String(envelope.sha256)),
-      origin_space: payload.origin_space,
-      sources: payload.sources.length,
-      records: payload.records.length,
-      portable_ids_preserved: true,
-      excluded: ["credentials", "grants", "receipts", "indexes", "cached_results"],
+      ...result,
     };
   });
+}
+
+/** Re-iterable rows let a staged transfer publish without materializing an entire
+ * history. Only call inside an enclosing mutation transaction. */
+export interface MemoryImportRows {
+  origin_space: string;
+  sources: Iterable<BundlePayload["sources"][number]>;
+  records: Iterable<Omit<BundleRecord, "versions"> & { versions: Iterable<Version> }>;
+  vocabularies: Iterable<BundlePayload["vocabularies"][number]>;
+  checkpoints: Iterable<BundlePayload["checkpoints"][number]>;
+}
+export function applyMemoryImport(
+  db: Database,
+  actor: MemoryActor,
+  space: string,
+  payload: MemoryImportRows,
+) {
+  const target = authorizeMemorySpace(db, actor, space, "memory:write");
+  if (target.owner_id !== actor.principalId)
+    throw new MemoryError(403, "owner_required", "Import requires the space owner");
+  for (const table of [
+    "memory_records",
+    "memory_sources",
+    "memory_vocabularies",
+    "memory_checkpoints",
+  ])
+    if (db.query(`SELECT 1 FROM ${table} WHERE space_id=? LIMIT 1`).get(space))
+      throw new MemoryError(409, "import_not_empty", "Import requires an empty destination");
+  const sourceIds = new Set<string>(),
+    recordIds = new Set<string>(),
+    cursors = new Map<number, number>();
+  for (const s of payload.sources) {
+    textValue(s.id, "source id", 128);
+    integer(s.seq, "source seq", 1, Number.MAX_SAFE_INTEGER);
+    if (cursors.has(s.seq) || !Object.hasOwn(s, "body"))
+      throw new MemoryError(400, "invalid_bundle", "Duplicate source sequence or missing body");
+    integer(s.created_at, "created_at", 0, Number.MAX_SAFE_INTEGER);
+    if (s.session_id !== null) textValue(s.session_id, "session_id", 256);
+    if (sourceIds.has(s.id) || db.query("SELECT 1 FROM memory_sources WHERE id=?").get(s.id))
+      throw new MemoryError(409, "identity_collision", "Source identity already exists");
+    textValue(s.content_hash, "content_hash", 128);
+    if (s.body_sha256 !== bodyDigest(s.body))
+      throw new MemoryError(400, "invalid_bundle", "Source content hash mismatch");
+    sourceIds.add(s.id);
+    const row = db.run(
+      "INSERT INTO memory_sources(id,space_id,session_id,body,content_hash,created_at) VALUES (?,?,?,?,?,?)",
+      [s.id, space, s.session_id, JSON.stringify(s.body), s.content_hash, s.created_at],
+    );
+    cursors.set(s.seq, Number(row.lastInsertRowid));
+  }
+  const dependencies = new Map<string, string[]>();
+  for (const r of payload.records) {
+    textValue(r.id, "record id", 128);
+    integer(r.version, "version", 1, Number.MAX_SAFE_INTEGER);
+    integer(r.created_at, "created_at", 0, Number.MAX_SAFE_INTEGER);
+    if (recordIds.has(r.id) || db.query("SELECT 1 FROM memory_records WHERE id=?").get(r.id))
+      throw new MemoryError(409, "identity_collision", "Record identity already exists");
+    if (![0, 1].includes(r.stale))
+      throw new MemoryError(400, "invalid_bundle", "Invalid record history");
+    recordIds.add(r.id);
+    const seen = new Set<number>();
+    let head: number | undefined;
+    db.run(
+      "INSERT INTO memory_records(id,space_id,version,created_at,stale,stale_reason) VALUES (?,?,?,?,?,?)",
+      [
+        r.id,
+        space,
+        r.version,
+        r.created_at,
+        r.stale,
+        r.stale_reason === null ? null : JSON.stringify(object(JSON.parse(r.stale_reason))),
+      ],
+    );
+    for (const version of r.versions) {
+      const v = version.record;
+      integer(v.version, "version", 1, r.version);
+      integer(v.created_at, "created_at", 0, Number.MAX_SAFE_INTEGER);
+      if (v.id !== r.id || seen.has(v.version))
+        throw new MemoryError(400, "invalid_bundle", "Duplicate or mismatched record version");
+      seen.add(v.version);
+      // Unknown legacy attributes stay NULL, never reconstructed as known history.
+      const attrs = version.attributes === null ? null : object(version.attributes);
+      if (attrs && Object.keys(attrs).some((key) => !ATTRIBUTE_KEYS.has(key)))
+        throw new MemoryError(400, "invalid_bundle", "Unknown revision attribute");
+      if (attrs?.vocabulary_version !== undefined)
+        integer(attrs.vocabulary_version, "vocabulary_version", 0, Number.MAX_SAFE_INTEGER);
+      const input = recordInput({
+        ...attrs,
+        content: v.content,
+        type: v.type,
+        tier: v.tier,
+        importance: v.importance,
+        subject: attrs?.subject ?? (attrs === null ? (v.subject ?? undefined) : undefined),
+        metadata: attrs?.metadata ?? (attrs === null ? v.metadata : undefined),
+        dependency_versions: undefined,
+      });
+      if (attrs && (input.subject ?? null) !== (attrs.subject ?? null))
+        throw new MemoryError(400, "invalid_bundle", "Claim and subject disagree");
+      const note = createNote(db, `memory:${actor.principalId}`, v.content, undefined, {
+        noteType: input.type,
+        tier: input.tier,
+        importance: input.importance,
+        skipDedup: true,
+      });
+      db.run("UPDATE notes SET created_at=?,verification_status=? WHERE id=?", [
+        v.created_at,
+        v.version === r.version ? "unverified" : "superseded",
+        note,
+      ]);
+      db.run(
+        "INSERT INTO memory_record_versions(record_id,version,note_id,attributes) VALUES (?,?,?,?)",
+        [r.id, v.version, note, attrs === null ? null : JSON.stringify(attrs)],
+      );
+      if (v.version === r.version) {
+        dependencies.set(r.id, input.depends_on ?? []);
+        head = note;
+        db.run(
+          "UPDATE memory_records SET current_note_id=?,subject=?,metadata=?,valid_from=?,valid_until=? WHERE id=?",
+          [
+            head,
+            input.subject ?? null,
+            JSON.stringify(input.metadata ?? {}),
+            input.valid_time?.from ?? null,
+            input.valid_time?.until ?? null,
+            r.id,
+          ],
+        );
+        if (input.claim)
+          db.run("INSERT INTO memory_claims VALUES (?,?,?,?,?,?)", [
+            r.id,
+            space,
+            input.claim.subject,
+            input.claim.predicate,
+            canonical(input.claim.object),
+            input.claim.object.kind === "entity" ? input.claim.object.id : null,
+          ]);
+      }
+    }
+    if (!head) throw new MemoryError(400, "invalid_bundle", "Current revision is absent");
+  }
+  for (const r of payload.records)
+    for (const version of r.versions) {
+      const attrs = version.attributes;
+      if (!attrs) continue;
+      const sources = (attrs.source_ids ?? []) as string[],
+        parents = (attrs.depends_on ?? []) as string[];
+      const pins = attrs.dependency_versions === undefined ? {} : object(attrs.dependency_versions);
+      if (Object.keys(pins).some((id) => !parents.includes(id)))
+        throw new MemoryError(400, "invalid_bundle", "Unexpected dependency pin");
+      for (const id of sources) {
+        if (!sourceIds.has(id))
+          throw new MemoryError(400, "invalid_bundle", "Missing source lineage");
+        db.run("INSERT OR IGNORE INTO memory_derivations VALUES (?,?)", [r.id, id]);
+      }
+      for (const id of parents) {
+        if (id === r.id || !recordIds.has(id))
+          throw new MemoryError(400, "invalid_bundle", "Missing or self-referential dependency");
+        const pin = pins[id] ?? null;
+        if (
+          pin !== null &&
+          !db
+            .query("SELECT 1 FROM memory_record_versions WHERE record_id=? AND version=?")
+            .get(id, integer(pin, "dependency version", 1, Number.MAX_SAFE_INTEGER))
+        )
+          throw new MemoryError(400, "invalid_bundle", "Missing premise revision");
+        db.run("INSERT OR IGNORE INTO memory_dependencies VALUES (?,?)", [r.id, id]);
+        db.run("INSERT INTO memory_revision_dependencies VALUES (?,?,?,?)", [
+          r.id,
+          version.record.version,
+          id,
+          pin as number | null,
+        ]);
+      }
+    }
+  // Validate the current dependency DAG in linear space/time. Historical
+  // dependencies may differ; they remain inspectable without governing the head.
+  const visited = new Set<string>(),
+    active = new Set<string>();
+  for (const root of dependencies.keys()) {
+    const stack: { id: string; exit: boolean }[] = [{ id: root, exit: false }];
+    while (stack.length) {
+      const next = stack.pop()!;
+      if (next.exit) {
+        active.delete(next.id);
+        visited.add(next.id);
+        continue;
+      }
+      if (active.has(next.id))
+        throw new MemoryError(400, "invalid_bundle", "Cyclic current dependencies");
+      if (visited.has(next.id)) continue;
+      active.add(next.id);
+      stack.push({ id: next.id, exit: true });
+      for (const parent of dependencies.get(next.id) ?? []) stack.push({ id: parent, exit: false });
+    }
+  }
+  // Never import an apparently current conclusion whose declared basis disagrees.
+  db.run(
+    `UPDATE memory_records SET stale=1,stale_reason='{"kind":"import_requires_review"}' WHERE space_id=? AND EXISTS (
+      SELECT 1 FROM memory_revision_dependencies d JOIN memory_records p ON p.id=d.depends_on_id WHERE d.record_id=memory_records.id AND d.record_version=memory_records.version AND (d.depends_on_version IS NULL OR d.depends_on_version!=p.version OR p.stale=1))`,
+    [space],
+  );
+  let changed = 1;
+  while (changed)
+    changed = db.run(
+      `UPDATE memory_records SET stale=1,stale_reason='{"kind":"import_requires_review"}' WHERE space_id=? AND stale=0 AND EXISTS (SELECT 1 FROM memory_revision_dependencies d JOIN memory_records p ON p.id=d.depends_on_id WHERE d.record_id=memory_records.id AND d.record_version=memory_records.version AND p.stale=1)`,
+      [space],
+    ).changes;
+  const vocabularyVersions = new Set<number>([0]);
+  for (const v of payload.vocabularies) {
+    integer(v.version, "vocabulary version", 1, Number.MAX_SAFE_INTEGER);
+    if (vocabularyVersions.has(v.version))
+      throw new MemoryError(400, "invalid_bundle", "Duplicate vocabulary version");
+    vocabularyVersions.add(v.version);
+    definitionInput(JSON.parse(v.definition));
+    db.run("INSERT INTO memory_vocabularies VALUES (?,?,?,?)", [
+      space,
+      v.version,
+      v.definition,
+      integer(v.created_at, "created_at", 0, Number.MAX_SAFE_INTEGER),
+    ]);
+  }
+  for (const r of payload.records) {
+    for (const version of r.versions) {
+      const vocabulary = version.attributes?.vocabulary_version;
+      if (vocabulary !== undefined && !vocabularyVersions.has(vocabulary as number))
+        throw new MemoryError(400, "invalid_bundle", "Historical vocabulary version is absent");
+    }
+    const current = readMemoryRecord(db, actor, space, r.id);
+    if (current.freshness !== "stale")
+      validateMemoryContract(
+        db,
+        actor,
+        space,
+        { content: current.content, claim: current.claim, valid_time: current.valid_time },
+        r.id,
+      );
+  }
+  for (const c of payload.checkpoints) {
+    textValue(c.name, "checkpoint name", 128);
+    object(JSON.parse(c.data));
+    const cursor = c.source_cursor === 0 ? 0 : cursors.get(c.source_cursor);
+    if (cursor === undefined)
+      throw new MemoryError(400, "invalid_bundle", "Checkpoint cursor has no source");
+    db.run("INSERT INTO memory_checkpoints VALUES (?,?,?,?,?,?)", [
+      space,
+      c.name,
+      integer(c.version, "checkpoint version", 1, Number.MAX_SAFE_INTEGER),
+      cursor,
+      c.data,
+      integer(c.updated_at, "updated_at", 0, Number.MAX_SAFE_INTEGER),
+    ]);
+  }
+  return {
+    origin_space: payload.origin_space,
+    sources: sourceIds.size,
+    records: recordIds.size,
+    portable_ids_preserved: true,
+    excluded: ["credentials", "grants", "receipts", "indexes", "cached_results"],
+  };
 }

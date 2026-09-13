@@ -9,6 +9,7 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { serveMemory } from "../../src/memory/server";
 import { MarinaMemoryClient } from "../../src/sdk/memory-client";
+import { snapshotMemoryQualification } from "./memory-qualification-sources";
 
 const { values } = parseArgs({
   args: Bun.argv.slice(2),
@@ -16,6 +17,7 @@ const { values } = parseArgs({
     directory: { type: "string" },
     client: { type: "string" },
     task: { type: "string", default: "rook" },
+    profile: { type: "string", default: "native" },
     "budget-usd": { type: "string" },
   },
 });
@@ -24,6 +26,7 @@ if (
   !values.directory ||
   !["claude", "codex"].includes(values.client ?? "") ||
   !["rook", "marina-sdk"].includes(values.task) ||
+  !["native", "knowledge-graph"].includes(values.profile) ||
   !Number.isFinite(budget) ||
   budget <= 0 ||
   budget > 5
@@ -32,6 +35,7 @@ if (
 const directory = resolve(values.directory),
   workspace = `${directory}/workspace`;
 mkdirSync(workspace, { recursive: true, mode: 0o700 });
+const sourceHashes = snapshotMemoryQualification(directory);
 const memory = serveMemory({ dbPath: `${directory}/memory.db`, port: 0 });
 const credential = memory.db.issueMemoryCredential(
   memory.db.ensurePrincipal({ type: "service", displayName: "coding-client" }).principal_id,
@@ -40,6 +44,7 @@ const client = new MarinaMemoryClient(`http://127.0.0.1:${memory.server.port}`, 
 const space = (await client.createSpace("coding-task")).id;
 const code = `client-${crypto.randomUUID().slice(0, 8)}`;
 const sdkTask = values.task === "marina-sdk";
+const graphProfile = values.profile === "knowledge-graph";
 const filename = sdkTask ? "memory-answer.ts" : "retry-after.ts";
 const checkpointName = sdkTask ? "sdk-complete" : "rook-complete";
 const source = await client.capture(
@@ -52,6 +57,16 @@ await client.remember(space, {
   content: `Rook ${values.task} contract ${code}. Read original source ${source.id} before implementing.`,
   source_ids: [source.id],
 });
+if (graphProfile)
+  await client.knowledgeGraph(space, "create_entities", {
+    entities: [
+      {
+        name: "Rook",
+        entityType: "specification",
+        observations: [(await client.sourceRange(space, source.id)).text],
+      },
+    ],
+  });
 let seed = sdkTask
   ? readFileSync(resolve("src/sdk/memory-answer.ts"), "utf8")
   : "export function parseRetryAfter(value: unknown, nowMs: number): number | null {\n  return null;\n}\n";
@@ -82,6 +97,8 @@ const mcpArgs = [
   client.url,
   "--credentials",
   credentials,
+  "--profile",
+  values.profile,
 ];
 const mcpConfig = `${directory}/mcp.json`;
 writeFileSync(
@@ -91,7 +108,9 @@ writeFileSync(
   }),
   { mode: 0o600 },
 );
-const prompt = `Use the configured Marina MCP memory service to discover the Rook specification and read its original source. Implement ${filename} in this workspace. Then save a durable checkpoint named ${checkpointName} using memory_service operation save_checkpoint, id ${checkpointName}, input {expected_version:0,data:{file:'${filename}',source_id:SOURCE_ID},source_ids:[SOURCE_ID]}. Finish by identifying the source ID and what changed. You may read and edit workspace files. The independent harness runs functional tests after you finish; do not create or modify tests. Memory tools are already configured; use them directly.`;
+const prompt = graphProfile
+  ? `Use the configured Marina MCP memory service's reference knowledge-graph tools to find the Rook specification and read its original observation. Implement ${filename} in this workspace. Then create entity ${checkpointName} of type implementation with observation ${JSON.stringify(filename)} and create relation {from:${JSON.stringify(checkpointName)},to:"Rook",relationType:"implements"}. Finish by describing what changed. You may read and edit workspace files. The independent harness runs functional tests after you finish; do not create or modify tests. Memory tools are already configured; use them directly.`
+  : `Use the configured Marina MCP memory service to discover the Rook specification and read its original source. Implement ${filename} in this workspace. Then save a durable checkpoint named ${checkpointName} using memory_service operation save_checkpoint, id ${checkpointName}, input {expected_version:0,data:{file:'${filename}',source_id:SOURCE_ID},source_ids:[SOURCE_ID]}. Finish by identifying the source ID and what changed. You may read and edit workspace files. The independent harness runs functional tests after you finish; do not create or modify tests. Memory tools are already configured; use them directly.`;
 const env: Record<string, string> = {
   PATH: process.env.PATH ?? "",
   MARINA_MEMORY_URL: client.url,
@@ -105,8 +124,10 @@ const upstream: { status: number; bytes: number }[] = [];
 let gate: ReturnType<typeof Bun.serve> | undefined;
 const report: Record<string, unknown> = {
   schema: "marina.memory.coding-client.v1",
+  source_hashes: sourceHashes,
   client: values.client,
   task: values.task,
+  profile: values.profile,
   source_id: source.id,
   source_text: (await client.sourceRange(space, source.id)).text,
   budget_usd: budget,
@@ -253,9 +274,32 @@ try {
   report.exit_code = exit;
   report.elapsed_ms = performance.now() - start;
   assert.equal(exit, 0, `Client failed: ${stderr.slice(-1500)}`);
-  const checkpoint = await client.checkpoint(space, checkpointName);
-  assert.equal(checkpoint.data.source_id, source.id);
-  report.checkpoint = checkpoint;
+  if (graphProfile) {
+    const graph = await client.knowledgeGraph(space, "read_graph");
+    const entities = graph.entities as {
+      name: string;
+      entityType: string;
+      observations: string[];
+    }[];
+    assert.ok(
+      entities.some(
+        (e) =>
+          e.name === checkpointName &&
+          e.entityType === "implementation" &&
+          e.observations.includes(filename),
+      ),
+    );
+    assert.ok(
+      (graph.relations as { from: string; to: string; relationType: string }[]).some(
+        (r) => r.from === checkpointName && r.to === "Rook" && r.relationType === "implements",
+      ),
+    );
+    report.graph = graph;
+  } else {
+    const checkpoint = await client.checkpoint(space, checkpointName);
+    assert.equal(checkpoint.data.source_id, source.id);
+    report.checkpoint = checkpoint;
+  }
   const patch = readFileSync(`${workspace}/${filename}`, "utf8");
   assert.notEqual(patch, seed, "The client must implement a file change");
   report.patch = patch;
@@ -297,7 +341,12 @@ console.log('10 SDK behavior checks passed');
     clearTimeout(verifyTimer);
   }
   assert.ok(
-    stdout.includes("memory_service") || stdout.includes("memory_search"),
+    graphProfile
+      ? stdout.includes("create_relations") &&
+          (stdout.includes("search_nodes") ||
+            stdout.includes("open_nodes") ||
+            stdout.includes("read_graph"))
+      : stdout.includes("memory_service") || stdout.includes("memory_search"),
     "Client log must contain an actual MCP operation",
   );
   report.passed = true;

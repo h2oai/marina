@@ -3,6 +3,7 @@
 
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
+import { memoryQueryExpansion } from "../memory/query-expansion";
 import { integer, MemoryError, textValue } from "../memory/service-types";
 import type {
   MemorySourceRange,
@@ -27,6 +28,44 @@ export function searchMemorySources(
     if (!["all", "any", "phrase"].includes(mode))
       throw new MemoryError(400, "invalid_input", "match must be all, any or phrase");
     if (input.session_id !== undefined) textValue(input.session_id, "session_id", 256);
+    const expansion = memoryQueryExpansion(input.query, input.expansion);
+    if (expansion) {
+      const lists = [input.query, ...expansion.queries].map((query) =>
+        searchMemorySources(db, actor, space, {
+          ...input,
+          query,
+          expansion: undefined,
+          limit: 100,
+        }),
+      );
+      const ranked = new Map<string, MemorySourceSearchResult["results"][number]>();
+      for (const [index, list] of lists.entries()) {
+        for (const [i, row] of list.results.entries()) {
+          const result = ranked.get(row.id) ?? { ...row, score: 0, ranks: {} };
+          result.score! += 1 / ((index === 0 ? 1 : expansion.queries.length) * (60 + i + 1));
+          if (index === 0) result.ranks!.lexical = i + 1;
+          else {
+            result.ranks!.expansion ??= Array(expansion.queries.length).fill(null);
+            result.ranks!.expansion[index - 1] = i + 1;
+          }
+          ranked.set(row.id, result);
+        }
+      }
+      return {
+        space_id: space,
+        generation: current.generation,
+        results: [...ranked.values()]
+          .sort((a, b) => b.score! - a.score! || a.seq - b.seq)
+          .slice(0, limit),
+        truncated: ranked.size > limit || lists.some((list) => list.truncated),
+        expansion: {
+          ...expansion,
+          candidates: lists.slice(1).map((list) => list.results.length),
+          candidate_limit: 100,
+          fusion: "mean-alternatives-rrf:k=60" as const,
+        },
+      };
+    }
     const fts =
       mode === "phrase"
         ? `"${input.query.replaceAll('"', '""')}"`

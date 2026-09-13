@@ -15,6 +15,7 @@ try {
       url: { type: "string", default: process.env.MARINA_MEMORY_URL ?? "http://127.0.0.1:3301" },
       credentials: { type: "string" },
       space: { type: "string" },
+      profile: { type: "string", default: "native" },
     },
   });
   const credentials = values.credentials
@@ -28,7 +29,9 @@ try {
     );
   const client = new MarinaMemoryClient(values.url, token);
   await client.space(space); // Fail startup clearly for expired credentials or inaccessible space.
-  const server = createMemoryMcpServer(client, space);
+  if (values.profile !== "native" && values.profile !== "knowledge-graph")
+    throw new Error("Use --profile native or knowledge-graph");
+  const server = createMemoryMcpServer(client, space, values.profile);
   await server.connect(new StdioServerTransport());
 } catch (error) {
   console.error(`Marina memory MCP: ${getErrorMessage(error)}`);

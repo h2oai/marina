@@ -63,10 +63,11 @@ class MarinaMemory:
         return self.request(self._path("/cache/get"), "POST",
                             {"inputs": inputs, "model": model, "policy": policy})
 
-    def cache_put(self, inputs, model, policy, value, expires_at, records=None, sources=None, key=None):
+    def cache_put(self, inputs, model, policy, value, expires_at, records=None, sources=None, key=None, federated=None):
         return self.request(self._path("/cache/put"), "POST",
                             {"inputs": inputs, "model": model, "policy": policy, "value": value,
-                             "expires_at": expires_at, "records": records or [], "sources": sources or []}, key)
+                             "expires_at": expires_at, "records": records or [], "sources": sources or [],
+                             "federated": federated or []}, key)
 
     def acknowledge(self, keys):
         return self.request(self._path("/acknowledge"), "POST", {"keys": keys})
@@ -76,6 +77,38 @@ class MarinaMemory:
 
     def import_bundle(self, bundle, key=None):
         return self.request(self._path("/bundle"), "POST", bundle, key)
+
+    def knowledge_graph(self, action, key=None, **arguments):
+        return self.request(self._path("/knowledge_graph"), "POST", {**arguments, "action": action}, key)
+
+    def export_page(self, cursor=None):
+        return self.request(self._path("/transfer" + ("?cursor=" + quote(cursor, safe="") if cursor else "")))
+
+    def export_pages(self, cursor=None):
+        while True:
+            page = self.export_page(cursor)
+            yield page
+            if page["done"]:
+                return
+            next_cursor = page["next_cursor"]
+            if not next_cursor or next_cursor == cursor:
+                raise ValueError("Export cursor did not advance")
+            cursor = next_cursor
+
+    def begin_transfer(self, header, key=None):
+        return self.request(self._path("/transfers"), "POST", header, key)
+
+    def transfer_status(self, transfer_id):
+        return self.request(self._path("/transfers/" + quote(transfer_id, safe="")))
+
+    def append_transfer(self, transfer_id, page, key=None):
+        return self.request(self._path("/transfers/" + quote(transfer_id, safe="") + "/pages"), "POST", page, key)
+
+    def commit_transfer(self, transfer_id, sha256, key=None):
+        return self.request(self._path("/transfers/" + quote(transfer_id, safe="") + "/commit"), "POST", {"sha256": sha256}, key)
+
+    def abort_transfer(self, transfer_id, key=None):
+        return self.request(self._path("/transfers/" + quote(transfer_id, safe="") + "/abort"), "POST", {}, key)
 
     def federation_mounts(self):
         return self.request(self._path("/federation_mounts"))

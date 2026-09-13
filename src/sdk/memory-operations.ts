@@ -11,6 +11,13 @@ export const MEMORY_OPERATIONS = [
   "federated_read",
   "export_bundle",
   "import_bundle",
+  "knowledge_graph",
+  "export_page",
+  "transfer_begin",
+  "transfer_status",
+  "transfer_page",
+  "transfer_commit",
+  "transfer_abort",
   "acknowledge",
   "review",
   "reaffirm",
@@ -89,12 +96,43 @@ export async function runMemoryOperation(
   switch (operation) {
     case "federation_mounts":
       return client.request(`${base}/federation_mounts`);
+    case "knowledge_graph":
+      return client.request(`${base}/knowledge_graph`, "POST", input, request.key);
     case "federated_search":
       return client.request(`${base}/federated_search`, "POST", input);
     case "federated_read":
       return client.request(`${base}/federated_read`, "POST", input);
     case "export_bundle":
       return client.request(`${base}/bundle`);
+    case "export_page":
+      return client.request(
+        `${base}/transfer${input?.cursor === undefined ? "" : `?cursor=${field(input.cursor, "cursor")}`}`,
+      );
+    case "transfer_begin":
+      return client.request(`${base}/transfers`, "POST", input, request.key);
+    case "transfer_status":
+      return client.request(`${base}/transfers/${field(request.id, "id")}`);
+    case "transfer_page":
+      return client.request(
+        `${base}/transfers/${field(request.id, "id")}/pages`,
+        "POST",
+        input,
+        request.key,
+      );
+    case "transfer_commit":
+      return client.request(
+        `${base}/transfers/${field(request.id, "id")}/commit`,
+        "POST",
+        input,
+        request.key,
+      );
+    case "transfer_abort":
+      return client.request(
+        `${base}/transfers/${field(request.id, "id")}/abort`,
+        "POST",
+        {},
+        request.key,
+      );
     case "import_bundle":
       return client.request(`${base}/bundle`, "POST", input, request.key);
     case "acknowledge":

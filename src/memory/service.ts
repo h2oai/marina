@@ -11,6 +11,7 @@ import type { MemorySearchInput, MemorySearchResult } from "../sdk/memory-types"
 import { type EmbeddingProvider, validEmbedding } from "./embeddings";
 import { configuredMemoryFederation, type MemoryFederation } from "./federation";
 import { configuredMemoryPlanner, type MemoryPlanner } from "./planning";
+import { memoryQueryExpansion } from "./query-expansion";
 import { MemoryError } from "./service-types";
 
 export type { MemorySearchInput, MemorySearchResult } from "../sdk/memory-types";
@@ -51,11 +52,28 @@ export class MemoryService {
       candidate_limit_per_ranker: 200,
       semantic_ranking: "exact-streaming",
       source_capture: "verbatim",
+      compatibility: {
+        profile: "mcp-memory-tools-v1",
+        tools: 9,
+        max_records: 2000,
+        max_bytes: 1048576,
+        resource_subscriptions: false,
+      },
       portable_bundle: {
         schema: "marina.memory.bundle.v2",
         history: true,
         identity: "preserved-or-rejected",
         max_bytes: 1572864,
+      },
+      portable_transfer: {
+        schema: "marina.memory.transfer.v1",
+        max_bytes: 67108864,
+        max_row_bytes: 4194304,
+        page_bytes: 262144,
+        resume: true,
+        consistency: "unchanged-source-generation",
+        publication: "atomic-empty-owned-space",
+        staging: "durable-quota-accounted:explicit-abort:24-hour-write-expiry",
       },
       storage_budget: {
         scope: "owner",
@@ -67,6 +85,12 @@ export class MemoryService {
       dependencies: "revision-pinned:explicit-review-after-correction",
       stale_retrieval: "excluded-by-default:include_stale-for-review",
       source_search: "fts5:all-any-phrase",
+      query_expansion: {
+        mode: "explicit-caller-queries",
+        max_queries: 4,
+        fusion: "mean-alternatives-rrf:k=60",
+        recursive: false,
+      },
       source_ranges: "immutable-utf8-bytes:sha256",
       planning: { deterministic: true, model: this.planner?.id ?? null, mutations: false },
       extraction: false,
@@ -81,6 +105,7 @@ export class MemoryService {
         mode: "explicit-principal-mounts",
         replication: false,
         partial_results: "opt-in",
+        cache_pins: "live-peer-identity-generation-and-content:fail-closed",
       },
       review_queue: "stale-and-competing-assertions",
       reusable_results: "exact-input-model-policy:revision-pinned:live-authorization",
@@ -152,6 +177,7 @@ export class MemoryService {
     signal?.throwIfAborted();
     this.repository.authorize(actor, space);
     const mode = input.mode ?? "lexical";
+    const expansion = memoryQueryExpansion(input.query, input.expansion);
     const degraded: string[] = [];
     let queryVector: number[] | undefined;
     if (mode === "hybrid") {
@@ -174,6 +200,9 @@ export class MemoryService {
     return this.repository.readSnapshot(() => {
       const current = this.repository.authorize(actor, space);
       const lexical = this.repository.lexical(actor, space, input.query, input);
+      const alternatives =
+        expansion?.queries.map((query) => this.repository.lexical(actor, space, query, input)) ??
+        [];
       let semantic: string[] = [];
       let coverage: { scored: number; missing: number; invalid: number } | undefined;
       if (queryVector && this.embeddings) {
@@ -193,7 +222,7 @@ export class MemoryService {
         throw new MemoryError(503, "retrieval_incomplete", degraded.join(", "));
       const ranked = new Map<
         string,
-        { score: number; ranks: { lexical?: number; semantic?: number } }
+        { score: number; ranks: MemorySearchResult["results"][number]["ranks"] }
       >();
       for (const [kind, list] of [
         ["lexical", lexical],
@@ -203,6 +232,15 @@ export class MemoryService {
           const result = ranked.get(id) ?? { score: 0, ranks: {} };
           result.score += 1 / (60 + i + 1);
           result.ranks[kind] = i + 1;
+          ranked.set(id, result);
+        }
+      }
+      for (const [index, list] of alternatives.entries()) {
+        for (const [i, id] of list.entries()) {
+          const result = ranked.get(id) ?? { score: 0, ranks: {} };
+          result.score += 1 / (alternatives.length * (60 + i + 1));
+          result.ranks.expansion ??= Array(alternatives.length).fill(null);
+          result.ranks.expansion[index] = i + 1;
           ranked.set(id, result);
         }
       }
@@ -239,6 +277,16 @@ export class MemoryService {
           semantic: coverage ?? null,
         },
         degraded,
+        ...(expansion
+          ? {
+              expansion: {
+                ...expansion,
+                candidates: alternatives.map((list) => list.length),
+                candidate_limit: 200,
+                fusion: "mean-alternatives-rrf:k=60" as const,
+              },
+            }
+          : {}),
         results,
       };
     });

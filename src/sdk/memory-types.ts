@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { MemoryExpansionCoverage, MemoryQueryExpansion } from "./memory-expansion";
+
 export type MemoryTerm =
   | { kind: "entity"; id: string }
   | { kind: "literal"; value: string | number | boolean | null };
@@ -145,6 +147,7 @@ export interface MemorySource {
 }
 export interface MemorySourceSearch {
   query: string;
+  expansion?: MemoryQueryExpansion;
   match?: "all" | "any" | "phrase";
   session_id?: string;
   limit?: number;
@@ -162,6 +165,7 @@ export interface MemorySourceRange {
   text: string;
 }
 export interface MemorySourceSearchResult {
+  expansion?: MemoryExpansionCoverage;
   space_id: string;
   generation: number;
   results: {
@@ -170,6 +174,8 @@ export interface MemorySourceSearchResult {
     session_id: string | null;
     content_hash: string;
     excerpt: string;
+    score?: number;
+    ranks?: { lexical?: number; expansion?: (number | null)[] };
   }[];
   truncated: boolean;
 }
@@ -196,11 +202,13 @@ export interface MemoryFilter {
 }
 export interface MemorySearchInput extends MemoryFilter {
   query: string;
+  expansion?: MemoryQueryExpansion;
   limit?: number;
   mode?: "lexical" | "hybrid";
   allow_degraded?: boolean;
 }
 export interface MemorySearchResult {
+  expansion?: MemoryExpansionCoverage;
   coverage?: {
     candidate_limit: number;
     lexical_candidates: number;
@@ -211,7 +219,10 @@ export interface MemorySearchResult {
   mode: "lexical" | "hybrid";
   model: string | null;
   degraded: string[];
-  results: (MemoryRecord & { score: number; ranks: { lexical?: number; semantic?: number } })[];
+  results: (MemoryRecord & {
+    score: number;
+    ranks: { lexical?: number; semantic?: number; expansion?: (number | null)[] };
+  })[];
 }
 export interface ForgetMemoryInput {
   record_ids?: string[];
@@ -270,6 +281,7 @@ export interface MemoryCacheWrite extends MemoryCacheInput {
   value: unknown;
   records?: { id: string; version: number }[];
   sources?: { id: string; content_hash: string }[];
+  federated?: MemoryFederatedPin[];
   expires_at: number;
 }
 export type MemoryCacheResult =
@@ -279,8 +291,15 @@ export type MemoryCacheResult =
       value: unknown;
       records: { id: string; version: number }[];
       sources: { id: string; content_hash: string }[];
+      federated?: MemoryFederatedPin[];
       expires_at: number;
     };
+
+/** Explicit remote provenance; mounts are configured by the operator, never URLs. */
+export type MemoryFederatedPin = { mount: string; space_id: string; id: string } & (
+  | { kind: "record"; version: number }
+  | { kind: "source"; content_hash: string }
+);
 
 /** Portable history envelope. Authorization and indexes are deliberately excluded. */
 export interface MemoryBundle {

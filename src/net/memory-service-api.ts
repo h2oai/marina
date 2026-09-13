@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { RateLimiter } from "../auth/rate-limiter";
+import { getFederatedMemoryCache, putFederatedMemoryCache } from "../memory/cache";
 import { createMemoryPlan, executeMemoryPlan } from "../memory/planning";
 import type { MemorySearchInput, MemoryService } from "../memory/service";
 import {
@@ -73,6 +74,7 @@ function searchInput(body: Record<string, unknown>): MemorySearchInput {
   return {
     include_stale: includeStale(body),
     query,
+    expansion: body.expansion as MemorySearchInput["expansion"],
     limit,
     mode: body.mode as MemorySearchInput["mode"],
     allow_degraded: body.allow_degraded as boolean | undefined,
@@ -141,6 +143,7 @@ export async function handleMemoryServiceApi(
       !path.endsWith("/cache/get") &&
       !path.endsWith("/federated_search") &&
       !path.endsWith("/federated_read") &&
+      !path.endsWith("/knowledge_graph") &&
       (!key || key.length > 128)
     )
       throw new MemoryError(
@@ -169,6 +172,8 @@ export async function handleMemoryServiceApi(
     const space = decodeURIComponent(match[1]!);
     const rest = match[2] ?? "";
     if (!rest && req.method === "GET") return json(repo.authorize(actor, space));
+    if (rest === "knowledge_graph" && req.method === "POST")
+      return json(repo.knowledgeGraph(actor, space, await readBody(req), key));
     if (rest === "federation_mounts" && req.method === "GET") {
       repo.authorize(actor, space);
       return json({ mounts: service.federation.list(actor.principalId) });
@@ -194,6 +199,29 @@ export async function handleMemoryServiceApi(
     if (rest === "bundle" && req.method === "GET") return json(repo.exportBundle(actor, space));
     if (rest === "bundle" && req.method === "POST")
       return json(repo.importBundle(actor, space, await readBody(req), key), 201);
+    if (rest === "transfer" && req.method === "GET")
+      return json(repo.exportPage(actor, space, url.searchParams.get("cursor") ?? undefined));
+    if (rest === "transfers" && req.method === "POST")
+      return json(repo.beginTransfer(actor, space, await readBody(req), key), 201);
+    const transfer = rest.match(/^transfers\/([^/]+)(?:\/(pages|commit|abort))?$/);
+    if (transfer) {
+      const id = textValue(decodeURIComponent(transfer[1]!), "transfer id", 128);
+      if (!transfer[2] && req.method === "GET") return json(repo.transferStatus(actor, space, id));
+      if (transfer[2] === "pages" && req.method === "POST")
+        return json(repo.appendTransfer(actor, space, id, await readBody(req), key));
+      if (transfer[2] === "commit" && req.method === "POST")
+        return json(
+          repo.commitTransfer(
+            actor,
+            space,
+            id,
+            textValue((await readBody(req)).sha256, "sha256", 64),
+            key,
+          ),
+        );
+      if (transfer[2] === "abort" && req.method === "POST")
+        return json(repo.abortTransfer(actor, space, id, key));
+    }
     if (rest === "acknowledge" && req.method === "POST")
       return json(repo.acknowledge(actor, space, (await readBody(req)).keys));
     if (rest === "review" && req.method === "POST")
@@ -214,9 +242,13 @@ export async function handleMemoryServiceApi(
     if (rest === "cache/delete" && req.method === "POST")
       return json(repo.cacheDelete(actor, space, await readBody(req), key));
     if (rest === "cache/get" && req.method === "POST")
-      return json(repo.cacheGet(actor, space, await readBody(req)));
+      return json(
+        await getFederatedMemoryCache(service, actor, space, await readBody(req), req.signal),
+      );
     if (rest === "cache/put" && req.method === "POST")
-      return json(repo.cachePut(actor, space, await readBody(req), key));
+      return json(
+        await putFederatedMemoryCache(service, actor, space, await readBody(req), key, req.signal),
+      );
     if (rest === "plan" && req.method === "POST")
       return json(await createMemoryPlan(service, actor, space, await readBody(req), req.signal));
     if (rest === "execute_plan" && req.method === "POST")
@@ -248,6 +280,7 @@ export async function handleMemoryServiceApi(
       return json(
         repo.sourceSearch(actor, space, {
           query: textValue(body.query, "query", 8192),
+          expansion: body.expansion as MemorySearchInput["expansion"],
           match: body.match as "all" | "any" | "phrase" | undefined,
           session_id:
             body.session_id === undefined

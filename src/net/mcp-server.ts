@@ -11,6 +11,7 @@ import type { Engine } from "../engine/engine";
 import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
 import { formatMemoryOperation } from "../memory/human-interface";
 import type { MarinaMemoryClient } from "../sdk/memory-client";
+import { MEMORY_GRAPH_ACTIONS, type MemoryGraphAction } from "../sdk/memory-knowledge-graph";
 import {
   MEMORY_OPERATIONS,
   type MemoryOperationRequest,
@@ -1005,7 +1006,11 @@ function registerMemoryTools(
 }
 
 /** MCP memory-only bridge: transport over HTTP; no world login or database access. */
-export function createMemoryMcpServer(client: MarinaMemoryClient, defaultSpace: string): McpServer {
+export function createMemoryMcpServer(
+  client: MarinaMemoryClient,
+  defaultSpace: string,
+  profile: "native" | "knowledge-graph" = "native",
+): McpServer {
   const mcp = new McpServer(
     { name: "marina-memory", version: MARINA_VERSION },
     { capabilities: { tools: {} } },
@@ -1028,6 +1033,70 @@ export function createMemoryMcpServer(client: MarinaMemoryClient, defaultSpace: 
       return memoryMcpResult(memoryOperationError(error));
     }
   }
-  registerMemoryTools(mcp, runCmd);
+  if (profile === "knowledge-graph") registerKnowledgeGraphTools(mcp, runCmd);
+  else registerMemoryTools(mcp, runCmd);
   return mcp;
+}
+
+/** Reference memory tool names over the same scoped, rate-limited service. */
+function registerKnowledgeGraphTools(
+  mcp: McpServer,
+  runCmd: (request: MemoryOperationRequest, extra: { signal?: AbortSignal }) => Promise<McpResult>,
+) {
+  const entity = z.object({
+    name: z.string(),
+    entityType: z.string(),
+    observations: z.array(z.string()),
+  });
+  const relation = z.object({ from: z.string(), to: z.string(), relationType: z.string() });
+  const schemas: Record<MemoryGraphAction, z.ZodRawShape> = {
+    create_entities: { entities: z.array(entity) },
+    create_relations: { relations: z.array(relation) },
+    add_observations: {
+      observations: z.array(z.object({ entityName: z.string(), contents: z.array(z.string()) })),
+    },
+    delete_entities: { entityNames: z.array(z.string()) },
+    delete_observations: {
+      deletions: z.array(z.object({ entityName: z.string(), observations: z.array(z.string()) })),
+    },
+    delete_relations: { relations: z.array(relation) },
+    read_graph: {},
+    search_nodes: { query: z.string() },
+    open_nodes: { names: z.array(z.string()) },
+  };
+  const descriptions: Record<MemoryGraphAction, string> = {
+    create_entities:
+      "Create named entities and verbatim observations; existing names are preserved.",
+    create_relations: "Assert relations between existing entities.",
+    add_observations: "Add verbatim observations to existing entities.",
+    delete_entities: "Forget selected entities, their observations and incident relations.",
+    delete_observations: "Forget selected observation text and its lineage.",
+    delete_relations: "Forget selected asserted relations.",
+    read_graph: "Read this credential's configured memory graph.",
+    search_nodes:
+      "Find entities by case-insensitive substring and include their incident relations.",
+    open_nodes: "Read named entities and include their incident relations.",
+  };
+  for (const action of MEMORY_GRAPH_ACTIONS)
+    mcp.tool(action, descriptions[action], schemas[action], async (input, extra) => {
+      const response = await runCmd(
+        { operation: "knowledge_graph", input: { ...input, action } },
+        extra,
+      );
+      const envelope = response.structuredContent as MemoryOperationResult | undefined;
+      if (!envelope?.ok) return response;
+      const result = envelope.result as Record<string, unknown>;
+      const content =
+        action === "create_entities"
+          ? result.entities
+          : action === "create_relations"
+            ? result.relations
+            : action === "add_observations"
+              ? result.results
+              : result;
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(content, null, 2) }],
+        structuredContent: result,
+      };
+    });
 }

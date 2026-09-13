@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { readFileSync } from "node:fs";
+import { hash } from "../persistence/db-memory-service";
 import { MarinaMemoryClient, MemoryClientError } from "../sdk/memory-client";
 import type {
   MemoryFederatedEntry,
+  MemoryFederatedPin,
   MemoryFederatedResult,
   MemoryRecord,
   MemorySearchInput,
@@ -16,6 +18,39 @@ interface Mount {
   alias: string;
   client: MarinaMemoryClient;
   space: string;
+}
+export interface MemoryFederatedSeal {
+  pin: MemoryFederatedPin;
+  origin: string;
+  generation: number;
+  digest: string;
+}
+
+export function federatedCachePins(raw: unknown): MemoryFederatedPin[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw) || raw.length > 32)
+    throw new MemoryError(400, "invalid_pins", "Use at most 32 federated pins");
+  return raw.map((value) => {
+    const pin = object(value);
+    const common = {
+      mount: textValue(pin.mount, "mount", 128),
+      space_id: textValue(pin.space_id, "space_id", 128),
+      id: textValue(pin.id, "id", 128),
+    };
+    if (pin.kind === "record")
+      return {
+        ...common,
+        kind: "record",
+        version: integer(pin.version, "version", 1, Number.MAX_SAFE_INTEGER),
+      };
+    if (pin.kind === "source")
+      return {
+        ...common,
+        kind: "source",
+        content_hash: textValue(pin.content_hash, "content_hash", 128),
+      };
+    throw new MemoryError(400, "invalid_pins", "Use record or source pins");
+  });
 }
 /** Operator-defined capabilities, bound to a local principal. Callers explicitly
  * select aliases; no request-controlled URLs, credential forwarding or replication. */
@@ -55,6 +90,71 @@ export class MemoryFederation {
         "mount_changed",
         "Federation configuration changed during retrieval",
       );
+  }
+  /** A read on each peer at lookup time, never a TTL-only authorization cache.
+   * Seals bind endpoint, principal, space, generation and exact record bytes.
+   * This is per-peer consistency, not a distributed transaction. */
+  async seal(
+    owner: string,
+    pins: MemoryFederatedPin[],
+    authorize: () => unknown,
+    signal?: AbortSignal,
+  ): Promise<MemoryFederatedSeal[]> {
+    if (!pins.length) return [];
+    const mounts = this.select(owner, [...new Set(pins.map((pin) => pin.mount))]);
+    this.check(owner, mounts, authorize, signal);
+    const sealed = await Promise.all(
+      mounts.map(async (mount) => {
+        const client = signal ? mount.client.withSignal(signal) : mount.client;
+        const selected = pins.filter((pin) => pin.mount === mount.alias);
+        if (selected.some((pin) => pin.space_id !== mount.space))
+          throw new MemoryError(409, "cache_basis_changed", "Pinned space differs from its mount");
+        const before = await client.space(mount.space);
+        const identity = await client.request<{ principal_id: string }>("/me");
+        if (
+          typeof identity.principal_id !== "string" ||
+          !identity.principal_id ||
+          before.id !== mount.space ||
+          !Number.isSafeInteger(before.retrieval_generation) ||
+          before.retrieval_generation < 0
+        )
+          throw new MemoryError(502, "invalid_peer", "Peer identity is unavailable");
+        const origin = hash({
+          url: mount.client.url.replace(/\/$/, ""),
+          space: mount.space,
+          principal: identity.principal_id,
+        });
+        const result = await Promise.all(
+          selected.map(async (pin): Promise<MemoryFederatedSeal> => {
+            let digest: string;
+            if (pin.kind === "record") {
+              const record = await client.get(mount.space, pin.id);
+              if (
+                record.id !== pin.id ||
+                record.space_id !== pin.space_id ||
+                record.version !== pin.version ||
+                record.freshness !== "current"
+              )
+                throw new MemoryError(409, "cache_basis_changed", "Pinned remote record changed");
+              digest = hash(record);
+            } else {
+              const source = await client.sourceRange(mount.space, pin.id, { start: 0, end: 0 });
+              if (source.id !== pin.id || source.content_hash !== pin.content_hash)
+                throw new MemoryError(409, "cache_basis_changed", "Pinned remote source changed");
+              digest = hash({ content_hash: source.content_hash, text_hash: source.text_hash });
+            }
+            return { pin, origin, generation: before.retrieval_generation, digest };
+          }),
+        );
+        const after = await client.space(mount.space);
+        if (after.id !== mount.space || before.retrieval_generation !== after.retrieval_generation)
+          throw new MemoryError(409, "cache_basis_changed", "Peer changed during validation");
+        return result;
+      }),
+    );
+    this.check(owner, mounts, authorize, signal);
+    const byPin = new Map(sealed.flat().map((seal) => [hash(seal.pin), seal]));
+    return pins.map((pin) => byPin.get(hash(pin))!);
   }
   async search(
     owner: string,

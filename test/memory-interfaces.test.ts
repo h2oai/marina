@@ -15,6 +15,8 @@ import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { MarinaClient } from "../src/sdk/client";
 import { MarinaMemoryClient } from "../src/sdk/memory-client";
+import type { MemoryGraphEntity } from "../src/sdk/memory-knowledge-graph";
+import type { MemoryTransferPage } from "../src/sdk/memory-transfer";
 import type { MemoryQueryResult, MemoryReceipt, MemoryReviewResult } from "../src/sdk/memory-types";
 import { roomId } from "../src/types";
 import { makeTestRoom } from "./helpers";
@@ -186,6 +188,27 @@ it("shares one symbolic memory across world MCP, HTTP, resident SDK and human co
       (await call<{ schema: string }>(agent, "memory_service", { operation: "export_bundle" }))
         .result.schema,
     ).toBe("marina.memory.bundle.v2");
+    await http.capture(space, "Original large world source α🙂\n".repeat(10000));
+    const page = await call<MemoryTransferPage>(agent, "memory_service", {
+      operation: "export_page",
+    });
+    expect(
+      page.result.fragments.reduce((n, part) => n + Buffer.from(part.base64, "base64").length, 0),
+    ).toBe(262144);
+    expect(page.result.next_cursor).not.toBeNull();
+    const graph = await call<{ entities: MemoryGraphEntity[] }>(agent, "memory_service", {
+      operation: "knowledge_graph",
+      input: {
+        action: "create_entities",
+        entities: [
+          { name: "World", entityType: "place", observations: ["Shared durable service"] },
+        ],
+      },
+    });
+    expect(graph.result.entities).toHaveLength(1);
+    expect((await http.knowledgeGraph(space, "read_graph")).entities).toEqual(
+      graph.result.entities,
+    );
   } finally {
     resident?.disconnect();
     await agent.close();
@@ -309,7 +332,7 @@ it("runs the fetch-only TypeScript bundle in Node and the Python symbolic client
       program,
       `import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
-import {MarinaMemoryClient} from './memory.js';
+import {MarinaMemoryClient, expandMemoryQuery} from './memory.js';
 const identity = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const client = new MarinaMemoryClient(process.argv[3], identity.token);
 const space = identity.spaceId;
@@ -317,6 +340,8 @@ const saved = await client.remember(space, {content: 'portable across runtimes',
 const query = await client.query(space, {subject: 'project:portable'});
 assert.equal(query.results[0].id, saved.id);
 assert.equal(query.results[0].claim.object.value, true);
+const expansion = expandMemoryQuery('transportable', {policy:'test:v1',rules:[{term:'transportable',alternatives:['portable']}]});
+assert.equal((await client.search(space, expansion)).results[0].id, saved.id);
 console.log(JSON.stringify({id: saved.id, mode: query.mode}));`,
     );
     const node = await run(["node", program, credentials, url]);
@@ -329,6 +354,17 @@ sys.path.insert(0, ${JSON.stringify(resolve("src/sdk"))})
 from marina_memory import MarinaMemory
 with open(sys.argv[1]) as f: identity = json.load(f)
 memory = MarinaMemory(sys.argv[2], identity['token'], identity['spaceId'])
+memory.knowledge_graph('create_entities', entities=[{'name':'Python','entityType':'runtime','observations':['Uses portable memory']}])
+assert memory.knowledge_graph('open_nodes', names=['Python'])['entities'][0]['name'] == 'Python'
+assert memory.search('transportable', expansion={'policy':'test:v1','queries':['portable']})['results']
+page = memory.export_page()
+target = memory.request('/spaces', 'POST', {'name':'python-staging'})['id']
+staging = MarinaMemory(sys.argv[2], identity['token'], target)
+transfer = staging.begin_transfer(page['header'])
+staging.append_transfer(transfer['id'], page, key='python-page')
+assert staging.transfer_status(transfer['id'])['state'] == 'ready'
+staging.abort_transfer(transfer['id'])
+assert staging.transfer_status(transfer['id'])['state'] == 'aborted'
 batch = memory.capture_batch([{'content': 'Python original', 'key': 'python-original'}], key='python-batch')
 assert memory.capture_batch([{'content': 'Python original', 'key': 'python-original'}], key='regrouped-python')['receipts'] == batch['receipts']
 assert memory.source_range(batch['receipts'][0]['id'])['text'] == 'Python original'

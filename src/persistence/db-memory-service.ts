@@ -33,12 +33,21 @@ import {
   staleMemoryDependents,
   storeMemoryDependencyVersions,
 } from "./db-memory-dependencies";
+import { memoryKnowledgeGraph } from "./db-memory-knowledge-graph";
 import { memoryDatabaseHealth } from "./db-memory-maintenance";
 import { rankMemoryVectors } from "./db-memory-ranking";
 import { acknowledgeMemoryRequests } from "./db-memory-retention";
 import { reaffirmMemory, reviewMemory } from "./db-memory-review";
 import { readMemorySourceRange, searchMemorySources } from "./db-memory-sources";
 import { enforceMemoryStorage, memoryStorageUsage } from "./db-memory-storage";
+import {
+  abortMemoryTransfer,
+  appendMemoryTransfer,
+  beginMemoryTransfer,
+  commitMemoryTransfer,
+  exportMemoryTransferPage,
+  memoryTransferStatus,
+} from "./db-memory-transfer";
 import { createNote, deleteNote, getNote, reviseNote } from "./db-notes";
 import type { MemoryActor, MemoryScope } from "./db-principals";
 import { buildFtsQuery } from "./fts";
@@ -108,7 +117,8 @@ export function event(
     operation !== "checkpoint.saved" &&
     operation !== "memory.reindex" &&
     operation !== "cache.saved" &&
-    operation !== "cache.deleted"
+    operation !== "cache.deleted" &&
+    !(operation.startsWith("transfer.") && operation !== "transfer.committed")
   )
     db.run("UPDATE memory_spaces SET retrieval_generation=retrieval_generation+1 WHERE id=?", [
       space,
@@ -179,11 +189,46 @@ export function mutation<T extends MemoryReceipt>(
     if (
       operation !== "memory.forget" &&
       operation !== "cache.delete" &&
+      operation !== "transfer.abort" &&
       !(operation === "space.grant" && (input as { role?: unknown }).role === null)
     )
       enforceMemoryStorage(db, owner, before);
     return result;
   })();
+}
+
+/** Recover an already committed response before an optional remote validation.
+ * A receipt is acknowledgement, never permission to reuse its cached value. */
+export function memoryMutationReceipt(
+  db: Database,
+  actor: MemoryActor,
+  space: string,
+  key: string,
+  operation: string,
+  input: unknown,
+): MemoryReceipt | undefined {
+  authorizeMemorySpace(db, actor, space, "memory:write");
+  if (!key || key.length > 128)
+    throw new MemoryError(
+      400,
+      "idempotency_required",
+      "Use an Idempotency-Key of 1–128 characters",
+    );
+  const row = db
+    .query(
+      "SELECT request_hash,response,retired_at FROM memory_requests WHERE principal_id=? AND space_id=? AND request_key=?",
+    )
+    .get(actor.principalId, space, key) as {
+    request_hash: string;
+    response: string;
+    retired_at: number | null;
+  } | null;
+  if (!row) return undefined;
+  if (row.request_hash !== hash({ operation, input }))
+    throw new MemoryError(409, "idempotency_conflict", "This key was used for different input");
+  if (row.retired_at !== null)
+    throw new MemoryError(410, "receipt_retired", "This acknowledged key was permanently retired");
+  return JSON.parse(row.response) as MemoryReceipt;
 }
 
 export function createMemorySpace(
@@ -1085,6 +1130,17 @@ export function forgetMemory(
     // in the affected space rather than pretending to infer their dependencies.
     db.run("DELETE FROM memory_checkpoints WHERE space_id=?", [space]);
     db.run("DELETE FROM memory_cached_results WHERE space_id=?", [space]);
+    // Compatibility receipts may contain authored tool results. Explicit
+    // forgetting retires those keys and removes their copied content as well.
+    db.run(
+      "UPDATE memory_requests SET response=json_object('id',space_id,'retired',1),retired_at=? WHERE space_id=? AND retired_at IS NULL AND json_extract(response,'$.compat_graph')=1",
+      [Date.now(), space],
+    );
+    db.run("DELETE FROM memory_transfer_parts WHERE space_id=?", [space]);
+    db.run(
+      "UPDATE memory_transfers SET state='aborted',cursor=NULL WHERE space_id=? AND state IN ('receiving','ready')",
+      [space],
+    );
     if (input.all) {
       db.run("DELETE FROM memory_vocabularies WHERE space_id=?", [space]);
       db.run("DELETE FROM memory_sources WHERE space_id=?", [space]);
@@ -1327,9 +1383,23 @@ export function graphMemory(
 export function memoryRepository(db: Database) {
   return {
     healthy: () => memoryDatabaseHealth(db),
+    knowledgeGraph: (actor: MemoryActor, space: string, input: unknown, key: string) =>
+      memoryKnowledgeGraph(db, actor, space, input, key),
     exportBundle: (actor: MemoryActor, space: string) => exportMemoryBundle(db, actor, space),
     importBundle: (actor: MemoryActor, space: string, input: unknown, key: string) =>
       importMemoryBundle(db, actor, space, input, key),
+    exportPage: (actor: MemoryActor, space: string, cursor?: string) =>
+      exportMemoryTransferPage(db, actor, space, cursor),
+    beginTransfer: (actor: MemoryActor, space: string, header: unknown, key: string) =>
+      beginMemoryTransfer(db, actor, space, header, key),
+    transferStatus: (actor: MemoryActor, space: string, id: string) =>
+      memoryTransferStatus(db, actor, space, id),
+    appendTransfer: (actor: MemoryActor, space: string, id: string, page: unknown, key: string) =>
+      appendMemoryTransfer(db, actor, space, id, page, key),
+    commitTransfer: (actor: MemoryActor, space: string, id: string, digest: string, key: string) =>
+      commitMemoryTransfer(db, actor, space, id, digest, key),
+    abortTransfer: (actor: MemoryActor, space: string, id: string, key: string) =>
+      abortMemoryTransfer(db, actor, space, id, key),
     acknowledge: (actor: MemoryActor, space: string, keys: unknown) =>
       acknowledgeMemoryRequests(db, actor, space, keys),
     review: (actor: MemoryActor, space: string, input?: unknown) =>
@@ -1348,6 +1418,17 @@ export function memoryRepository(db: Database) {
       getMemoryCache(db, actor, space, input),
     cachePut: (actor: MemoryActor, space: string, input: unknown, key: string) =>
       putMemoryCache(db, actor, space, input, key),
+    cacheReceipt: (actor: MemoryActor, space: string, input: unknown, key: string) =>
+      memoryMutationReceipt(db, actor, space, key, "cache.put", input),
+    cacheCandidate: (actor: MemoryActor, space: string, input: unknown) =>
+      getMemoryCache(db, actor, space, input, true),
+    cachePutValidated: (
+      actor: MemoryActor,
+      space: string,
+      input: unknown,
+      key: string,
+      seals: import("../memory/federation").MemoryFederatedSeal[],
+    ) => putMemoryCache(db, actor, space, input, key, seals),
     usage: (actor: MemoryActor) => {
       requireActor(db, actor, "memory:read");
       return memoryStorageUsage(db, actor.principalId);

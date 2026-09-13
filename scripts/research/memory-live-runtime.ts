@@ -10,6 +10,7 @@ import { WebSocketServer } from "../../src/net/websocket-server";
 import { MarinaDB } from "../../src/persistence/database";
 import type { MemoryAnswerContract } from "../../src/sdk/memory-answer";
 import { MarinaMemoryClient } from "../../src/sdk/memory-client";
+import type { MemoryQueryVocabulary } from "../../src/sdk/memory-expansion";
 import type { MemoryOperationRequest } from "../../src/sdk/memory-operations";
 import type { MemoryTaskResult } from "../../src/sdk/memory-task";
 import { roomId } from "../../src/types";
@@ -21,6 +22,7 @@ export interface LiveTask {
   instructions?: string;
   operations: MemoryOperationRequest["operation"][];
   maxTurns?: number;
+  expansionVocabulary?: MemoryQueryVocabulary;
 }
 export interface LiveResult extends MemoryTaskResult {
   usage: {

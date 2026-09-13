@@ -6,6 +6,7 @@ import { PlatformMemoryBackend } from "../../src/agent/memory-platform";
 import { MarinaClient } from "../../src/sdk/client";
 import type { MemoryAnswerContract } from "../../src/sdk/memory-answer";
 import { MarinaMemoryClient } from "../../src/sdk/memory-client";
+import { expandMemoryQuery, type MemoryQueryVocabulary } from "../../src/sdk/memory-expansion";
 import { type MemoryOperationRequest, runMemoryOperation } from "../../src/sdk/memory-operations";
 import { retryMemoryOperation } from "../../src/sdk/memory-retry";
 import { runMemoryTask } from "../../src/sdk/memory-task";
@@ -16,6 +17,7 @@ const input = JSON.parse(await Bun.stdin.text()) as {
   instructions?: string;
   operations: MemoryOperationRequest["operation"][];
   maxTurns?: number;
+  expansionVocabulary?: MemoryQueryVocabulary;
 };
 const http = new MarinaMemoryClient(
   process.env.MARINA_MEMORY_URL!,
@@ -163,6 +165,14 @@ try {
         process.env.MARINA_EVAL_CONDITION === "direct"
       )
         return { results: [], error: "No persistent memory is available in this condition" };
+      if (
+        input.expansionVocabulary &&
+        ["search", "source_search"].includes(request.operation) &&
+        typeof request.input?.query === "string"
+      ) {
+        const expansion = expandMemoryQuery(request.input.query, input.expansionVocabulary);
+        request = { ...request, input: { ...request.input, expansion: expansion.expansion } };
+      }
       if (resident) {
         const reply = await resident.memoryService(request, undefined, signal);
         if (!reply.ok) throw new Error(`${reply.error.code}: ${reply.error.message}`);

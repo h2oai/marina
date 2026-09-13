@@ -3003,4 +3003,86 @@ UNION ALL
 SELECT 'cache' AS kind,json_array(t.space_id,t.principal_id,t.name) AS ref,t.space_id AS space_id,length(CAST(t.data AS BLOB))+length(CAST(t.name AS BLOB))+192 AS bytes FROM memory_cached_results t;
 `,
   },
+
+  // Resumable portable transfers stage operational bytes outside authored memory.
+  {
+    version: 107,
+    sql: `
+CREATE TABLE memory_transfers (
+ id TEXT PRIMARY KEY,
+ space_id TEXT NOT NULL REFERENCES memory_spaces(id),
+ principal_id TEXT NOT NULL,
+ header TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('receiving','ready','committed','aborted')),
+ position INTEGER NOT NULL,
+ chain TEXT NOT NULL,
+ bytes INTEGER NOT NULL,
+ cursor TEXT,
+ expires_at INTEGER NOT NULL
+);
+CREATE INDEX idx_memory_transfers_owner ON memory_transfers(principal_id,state);
+CREATE TABLE memory_transfer_parts (
+ transfer_id TEXT NOT NULL REFERENCES memory_transfers(id) ON DELETE CASCADE,
+ space_id TEXT NOT NULL REFERENCES memory_spaces(id),
+ position INTEGER NOT NULL,
+ kind TEXT NOT NULL,
+ item_id TEXT NOT NULL,
+ item_version INTEGER NOT NULL,
+ byte_offset INTEGER NOT NULL,
+ size INTEGER NOT NULL,
+ sha256 TEXT NOT NULL,
+ data TEXT NOT NULL,
+ PRIMARY KEY(transfer_id,position),
+ UNIQUE(transfer_id,kind,item_id,item_version,byte_offset)
+);
+CREATE TRIGGER memory_storage_transfer_insert AFTER INSERT ON memory_transfers BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes) VALUES
+ ('transfer',new.id,new.space_id,length(CAST(new.header AS BLOB))+length(CAST(coalesce(new.cursor,'') AS BLOB))+256);
+END;
+CREATE TRIGGER memory_storage_transfer_update AFTER UPDATE ON memory_transfers BEGIN
+ UPDATE memory_storage_items SET bytes=length(CAST(new.header AS BLOB))+length(CAST(coalesce(new.cursor,'') AS BLOB))+256 WHERE kind='transfer' AND ref=new.id;
+END;
+CREATE TRIGGER memory_storage_transfer_delete AFTER DELETE ON memory_transfers BEGIN
+ DELETE FROM memory_storage_items WHERE kind='transfer' AND ref=old.id;
+END;
+CREATE TRIGGER memory_storage_transfer_part_insert AFTER INSERT ON memory_transfer_parts BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes) VALUES
+ ('transfer_part',json_array(new.transfer_id,new.position),new.space_id,length(CAST(new.data AS BLOB))+length(CAST(new.item_id AS BLOB))+256);
+END;
+CREATE TRIGGER memory_storage_transfer_part_delete AFTER DELETE ON memory_transfer_parts BEGIN
+ DELETE FROM memory_storage_items WHERE kind='transfer_part' AND ref=json_array(old.transfer_id,old.position);
+END;
+CREATE TRIGGER memory_storage_transfer_part_update AFTER UPDATE ON memory_transfer_parts BEGIN
+ UPDATE memory_storage_items SET bytes=length(CAST(new.data AS BLOB))+length(CAST(new.item_id AS BLOB))+256
+ WHERE kind='transfer_part' AND ref=json_array(new.transfer_id,new.position);
+END;
+DROP VIEW memory_storage_projection;
+CREATE VIEW memory_storage_projection AS
+SELECT 'space' AS kind,t.id AS ref,t.id AS space_id,length(CAST(t.name AS BLOB))+128 AS bytes FROM memory_spaces t
+UNION ALL
+SELECT 'source' AS kind,t.id AS ref,t.space_id AS space_id,length(CAST(t.body AS BLOB))+length(CAST(coalesce(t.session_id,'') AS BLOB))+128 AS bytes FROM memory_sources t
+UNION ALL
+SELECT 'revision' AS kind,json_array(t.record_id,t.version) AS ref,r.space_id AS space_id,length(CAST(n.content AS BLOB))+length(CAST(coalesce(t.attributes,'') AS BLOB))+128 AS bytes FROM memory_record_versions t JOIN memory_records r ON r.id=t.record_id JOIN notes n ON n.id=t.note_id
+UNION ALL
+SELECT 'checkpoint' AS kind,json_array(t.space_id,t.name) AS ref,t.space_id AS space_id,length(CAST(t.data AS BLOB))+length(CAST(t.name AS BLOB))+128 AS bytes FROM memory_checkpoints t
+UNION ALL
+SELECT 'vocabulary' AS kind,json_array(t.space_id,t.version) AS ref,t.space_id AS space_id,length(CAST(t.definition AS BLOB))+128 AS bytes FROM memory_vocabularies t
+UNION ALL
+SELECT 'receipt' AS kind,json_array(t.principal_id,t.space_id,t.request_key) AS ref,s.id AS space_id,length(CAST(t.response AS BLOB))+length(CAST(t.request_key AS BLOB))+192 AS bytes FROM memory_requests t JOIN memory_spaces s ON s.id=CASE WHEN t.space_id='' THEN json_extract(t.response,'$.id') ELSE t.space_id END
+UNION ALL
+SELECT 'event' AS kind,CAST(t.seq AS TEXT) AS ref,t.space_id AS space_id,length(CAST(t.operation AS BLOB))+length(CAST(coalesce(t.reference_id,'') AS BLOB))+128 AS bytes FROM memory_service_events t
+UNION ALL
+SELECT 'grant' AS kind,json_array(t.space_id,t.principal_id) AS ref,t.space_id AS space_id,128 AS bytes FROM memory_grants t
+UNION ALL
+SELECT 'job' AS kind,t.id AS ref,t.space_id AS space_id,length(CAST(t.model AS BLOB))+256 AS bytes FROM memory_index_jobs t
+UNION ALL
+SELECT 'vector' AS kind,json_array(t.note_id,t.model) AS ref,r.space_id AS space_id,length(CAST(t.vector AS BLOB))+length(CAST(t.model AS BLOB))+128 AS bytes FROM memory_vectors t JOIN memory_record_versions v ON v.note_id=t.note_id JOIN memory_records r ON r.id=v.record_id
+UNION ALL
+SELECT 'cache' AS kind,json_array(t.space_id,t.principal_id,t.name) AS ref,t.space_id AS space_id,length(CAST(t.data AS BLOB))+length(CAST(t.name AS BLOB))+192 AS bytes FROM memory_cached_results t
+UNION ALL
+SELECT 'transfer',id,space_id,length(CAST(header AS BLOB))+length(CAST(coalesce(cursor,'') AS BLOB))+256 FROM memory_transfers
+UNION ALL
+SELECT 'transfer_part',json_array(transfer_id,position),space_id,length(CAST(data AS BLOB))+length(CAST(item_id AS BLOB))+256 FROM memory_transfer_parts;
+`,
+  },
 ];

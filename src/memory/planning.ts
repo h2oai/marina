@@ -12,6 +12,7 @@ import type {
   MemorySourceSearch,
   MemoryVocabulary,
 } from "../sdk/memory-types";
+import { memoryQueryExpansion } from "./query-expansion";
 import type { MemoryService } from "./service";
 import { integer, MemoryError, memoryTerm, object, textValue } from "./service-types";
 
@@ -106,8 +107,8 @@ export function planSteps(value: unknown): MemoryPlanStep[] {
         "limit",
         "include_stale",
       ],
-      search: ["query", "mode", "subject", "limit", "include_stale"],
-      source_search: ["query", "match", "session_id", "limit"],
+      search: ["query", "mode", "subject", "limit", "include_stale", "expansion"],
+      source_search: ["query", "match", "session_id", "limit", "expansion"],
     };
     const allowed =
       typeof step.operation === "string" && Object.hasOwn(fields, step.operation)
@@ -145,6 +146,8 @@ export function planSteps(value: unknown): MemoryPlanStep[] {
       }
     } else if (step.operation === "search" || step.operation === "source_search") {
       output.query = textValue(input.query, "query", 8192);
+      if (input.expansion !== undefined)
+        output.expansion = memoryQueryExpansion(output.query as string, input.expansion);
       if (step.operation === "search") {
         if (
           input.mode !== undefined &&
