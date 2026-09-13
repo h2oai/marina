@@ -13,6 +13,7 @@ export function evaluationBudgetFetch(
     attempts: number;
     maxAttempts: number;
     model: string;
+    tokenParameter?: "max_tokens" | "max_completion_tokens";
     inputPerMillion: number;
     outputPerMillion: number;
   },
@@ -29,11 +30,16 @@ export function evaluationBudgetFetch(
       const body = JSON.parse(text) as {
         model: string;
         max_tokens: number;
+        max_completion_tokens: number;
         messages: { content: string }[];
       };
+      const tokenParameter = state.tokenParameter ?? "max_tokens";
+      const otherParameter =
+        tokenParameter === "max_tokens" ? "max_completion_tokens" : "max_tokens";
       if (
         body.model !== state.model ||
-        body.max_tokens !== 500 ||
+        body[tokenParameter] !== 500 ||
+        body[otherParameter] !== undefined ||
         !Array.isArray(body.messages) ||
         body.messages.some((m) => typeof m.content !== "string")
       )
@@ -116,6 +122,31 @@ if (import.meta.main) {
   );
   assert.ok(failureState.reserved > 0);
   assert.equal(failureState.attempts, 1);
+  const modernState = {
+    ...state,
+    ceiling: 1,
+    reserved: 0,
+    attempts: 0,
+    model: "gpt-5.6-luna",
+    tokenParameter: "max_completion_tokens" as const,
+    inputPerMillion: 0.25, // Includes the maximum cache-write input price.
+    outputPerMillion: 1.2,
+  };
+  const modern = evaluationBudgetFetch(network, modernState);
+  const modernRequest = (limits: Record<string, number>) =>
+    modern("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      body: JSON.stringify({ model: modernState.model, ...limits, messages: [] }),
+    });
+  await assert.rejects(() => modernRequest({ max_tokens: 500 }), /token limit/);
+  await assert.rejects(
+    () => modernRequest({ max_tokens: 500, max_completion_tokens: 500 }),
+    /token limit/,
+  );
+  await assert.rejects(() => modernRequest({ max_completion_tokens: 501 }), /token limit/);
+  await modernRequest({ max_completion_tokens: 500 });
+  assert.equal(modernState.attempts, 1);
+  assert.ok(modernState.reserved >= (500 * 1.2) / 1e6);
   console.log(
     "Evaluation budget checks passed: upstream/model isolation, actual-attempt reservation, redirect refusal, local traffic, ambiguous failure.",
   );

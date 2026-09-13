@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, it } from "bun:test";
+import {
+  regradeUtilityGrounding,
+  returnedEvidenceIds,
+} from "../scripts/research/memory-evidence-ids";
 import { gradeUtility, utilityCases } from "../scripts/research/memory-utility-cases";
 
 it("requires an exact functional coding result and returned supporting citations", () => {
@@ -29,6 +33,70 @@ it("requires an exact functional coding result and returned supporting citations
       ["current"],
     ).functional,
   ).toBe(false);
+});
+
+it("accepts returned provenance and source identities without trusting payload IDs", () => {
+  const record = {
+    id: "record",
+    space_id: "space",
+    version: 2,
+    content: "Current fact",
+    source_ids: ["provenance", 123],
+    depends_on: ["unread-premise"],
+    metadata: { id: "metadata-id", source_ids: ["metadata-source"] },
+  };
+  const hit = { id: "hit", seq: 1, content_hash: "hash", excerpt: "source excerpt" };
+  const source = { id: "source", seq: 2, content_hash: "hash", body: { id: "payload-id" } };
+  const range = {
+    id: "range",
+    content_hash: "hash",
+    representation: "utf8-source-text-v1",
+    text: '{"id":"text-id"}',
+  };
+  expect(
+    returnedEvidenceIds([
+      { trace: [{ input: { id: "requested-id" }, evidence: [record, hit] }] },
+      { results: [record, hit] },
+      { edges: [{ record, path: ["unread-path"] }] },
+      source,
+      range,
+      { error: "not found", id: "error-id", source_ids: ["error-source"] },
+    ]),
+  ).toEqual(new Set(["record", "provenance", "hit", "source", "range"]));
+});
+
+it("regrades only citation availability while preserving saved responses and other decisions", () => {
+  const trace = [
+    {
+      result: {
+        results: [
+          { id: "record", space_id: "space", version: 1, content: "fact", source_ids: ["source"] },
+        ],
+      },
+    },
+  ];
+  const row = {
+    answer: "saved answer",
+    citations: ["record", "source"],
+    trace,
+    correct: true,
+    cited: true,
+    grounded: false,
+    functional: null,
+    supported_success: false,
+  };
+  const updated = regradeUtilityGrounding(row);
+  expect(updated.supported_success).toBe(true);
+  expect(updated.previous_citation_grade.supported_success).toBe(false);
+  expect(updated.trace).toBe(trace);
+  expect(updated.answer).toBe(row.answer);
+  expect(row.supported_success).toBe(false);
+  expect(regradeUtilityGrounding({ ...row, citations: ["fabricated"] }).supported_success).toBe(
+    false,
+  );
+  expect(regradeUtilityGrounding({ ...row, correct: false }).supported_success).toBe(false);
+  expect(regradeUtilityGrounding({ ...row, cited: false }).supported_success).toBe(false);
+  expect(regradeUtilityGrounding({ ...row, functional: false }).supported_success).toBe(false);
 });
 
 it("scores abstention independently and refuses answers containing expected substrings", () => {

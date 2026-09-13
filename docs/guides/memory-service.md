@@ -205,9 +205,12 @@ copies, erase downloaded exports, remote model inputs or backups, or promise for
 of SQLite free pages/WAL. Receipt hashes and identifier-only audit/tombstone rows remain for
 safe retries. These are logical API deletion guarantees within recorded lineage.
 
-Export currently contains current revisions, not full historical bundles. There is no bundle
-import, Mem0 compatibility endpoint, automatic extraction, temporal inference, distributed
-store, semantic response cache or federation in v1. All are explicit roadmap gates.
+The `export` endpoint contains current revisions. For bounded history transfers, use
+[portable bundles](#portable-history-and-compatibility-imports), which preserve revisions and
+support atomic import into an empty owned space. [Federation](#explicit-federation) supports
+explicit peer reads; [reusable results](#review-and-reusable-results) use exact keys and local evidence pins.
+These contracts do not provide Mem0 API emulation, automatic extraction, inferred temporal facts,
+a distributed atomic store, or semantic response caching.
 
 ## Reproduce the external-agent proof
 
@@ -661,7 +664,45 @@ harness/duration; inspect stale locks after a crash. Keep its disposable databas
 
 The utility harness has twelve synthetic structured tasks, balanced condition order and repeated
 fresh HTTP-only agents. It records exact outcome/citation/abstention/correction scores, functional
-retry-configuration checks, latency, tokens and estimated cost. Live model runs require an explicit
-`--budget-usd` and configured OpenAI credentials, using the pinned GPT-4o-mini snapshot through
-Marina's router. `--model-cache EXISTING_CACHE` adds the optional embedding condition without
-downloading a model. `--offline` proves protocol/grader execution only; it is not LLM task evidence.
+retry-configuration checks, latency, tokens and estimated cost. The harness seeds memories; the
+agents choose read operations and answers. It does not test agent-authored memory, actual repository
+edits, or multi-day LLM work. Live runs require an explicit `--budget-usd` and configured OpenAI
+credentials. The default is `gpt-5.6-luna`, using no reasoning effort for these short retrieval
+tasks. Historical GPT-4o-mini and GPT-4.1-mini snapshots remain selectable. All run through
+Marina's router:
+
+```bash
+bun run qualify:memory:utility --repetitions 3 --budget-usd 1 --output /tmp/memory-utility.json
+# Historical baselines: --model gpt-4o-mini-2024-07-18 or --model gpt-4.1-mini-2025-04-14
+```
+
+`--model-cache EXISTING_CACHE` adds the optional embedding condition without downloading a model.
+The gateway reserves a conservative cost bound before each actual upstream attempt, including
+retries and Luna's cache-write input premium. Luna uses `max_completion_tokens`; historical models
+use `max_tokens`. Both are capped at 500. The [Luna model catalog](https://developers.openai.com/api/docs/models/gpt-5.6-luna)
+currently lists the model ID without a dated snapshot, so reports label that distinction and record
+returned model IDs. Reports include model/pricing identities, source hashes, task traces and expected evidence
+IDs, which are never sent to the agents. `--offline` proves protocol/grader execution only; it is
+not LLM task evidence. Keep internal qualification reports outside the public checkout.
+
+Citation scoring accepts record/source IDs returned by tools, including a record's explicit
+`source_ids`. It ignores IDs embedded in metadata or source bodies. Returned provenance establishes
+citation identity; it does not establish that the agent read the source body or that every sentence
+is entailed by it. Exact answer, current supporting citation and retry-functionality checks remain
+separate. To correct citation-availability grading in an older saved report without making model
+calls or modifying its original responses:
+
+```bash
+bun run scripts/research/memory-utility-regrade.ts --input /tmp/original.json --output /tmp/regraded.json
+```
+
+The output must be a new file. It retains prior citation grades and records the original report's
+hash and the scorer's hash. Task/prompt changes require a new experiment; do not silently regrade
+formatting failures as successes.
+
+Use `--agent-protocol v2` for the experimental structured-answer agent. It accepts the requested
+JSON value directly in the answer envelope and separates malformed model envelopes from memory
+service errors, with bounded repair turns. Reports preserve intermediate model replies and protocol
+errors for inspection. `v1` remains the default for reproducing the original prompt and behavior.
+The graders and task fixtures are identical across protocols; report protocol comparisons as new
+experiments. Valid JSON alone does not prove that the agent retrieved evidence or answered correctly.

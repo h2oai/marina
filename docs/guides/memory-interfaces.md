@@ -63,7 +63,9 @@ service tool accepts `{operation, space_id?, id?, input?, key?}`. Its operations
 client: `capabilities`, `usage`, `me`, `spaces`, `create_space`, `space`, `remember`, `get`, `revise`,
 `query`, `graph`, `search`, `context`, `capture`, `capture_batch`, `sources`, `source_search`, `source_range`,
 `plan`, `execute_plan`, `vocabulary`, `save_vocabulary`, `checkpoint`, `save_checkpoint`,
-`grant`, `forget`, `export`, `job`, `reindex`. `id` is the record, checkpoint name or job ID
+`grant`, `forget`, `export`, `job`, `reindex`, `review`, `reaffirm`, `cache_get`, `cache_put`,
+`cache_delete`, `export_bundle`, `import_bundle`, `federation_mounts`, `federated_search`,
+`federated_read`, `acknowledge`. `id` is the record, checkpoint name or job ID
 as appropriate; `input` is the HTTP body, or GET options such as `version`, `after`, `limit`.
 Capture uses `input: {content, session_id?}`; checkpoint writes use
 `input: {expected_version, source_cursor, source_ids?, data}`. Space omission uses the configured default.

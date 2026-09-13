@@ -20,6 +20,7 @@ import { MarinaDB } from "../../src/persistence/database";
 import { MarinaMemoryClient } from "../../src/sdk/memory-client";
 import { roomId } from "../../src/types";
 import { evaluationBudgetFetch } from "./memory-evaluation-budget";
+import { returnedEvidenceIds } from "./memory-evidence-ids";
 import { gradeUtility, utilityCases } from "./memory-utility-cases";
 
 // Qualification endpoints stay local regardless of deployment defaults.
@@ -32,6 +33,8 @@ const { values } = parseArgs({
     repetitions: { type: "string", default: "3" },
     "budget-usd": { type: "string" },
     "model-cache": { type: "string" },
+    model: { type: "string", default: "gpt-5.6-luna" },
+    "agent-protocol": { type: "string", default: "v1" },
     offline: { type: "boolean", default: false },
   },
 });
@@ -42,18 +45,42 @@ if (
   !Number.isInteger(repetitions) ||
   repetitions < 1 ||
   repetitions > 20 ||
+  !["v1", "v2"].includes(values["agent-protocol"]) ||
   (!values.offline && (!Number.isFinite(budget) || budget <= 0 || budget > 20))
 )
   throw new Error(
-    "Use --output FILE --repetitions 1..20 [--model-cache EXISTING_CACHE] and --offline or --budget-usd 0..20",
+    "Use --output FILE --repetitions 1..20 [--model-cache EXISTING_CACHE] [--agent-protocol v1|v2] and --offline or --budget-usd 0..20",
   );
-const upstream = "openai/gpt-4o-mini-2024-07-18";
-const pricing = {
-  input_per_million: 0.15,
-  output_per_million: 0.6,
-  verified_on: "2026-09-12",
-  source: "https://developers.openai.com/api/docs/models/gpt-4o-mini",
+const models = {
+  "gpt-5.6-luna": {
+    input_per_million: 0.2,
+    output_per_million: 1.2,
+    cache_write_per_million: 0.25,
+    cached_input_per_million: 0.02,
+    verified_on: "2026-09-13",
+    source: "https://developers.openai.com/api/docs/models/gpt-5.6-luna",
+  },
+  "gpt-4o-mini-2024-07-18": {
+    input_per_million: 0.15,
+    output_per_million: 0.6,
+    verified_on: "2026-09-12",
+    source: "https://developers.openai.com/api/docs/models/gpt-4o-mini",
+  },
+  "gpt-4.1-mini-2025-04-14": {
+    input_per_million: 0.4,
+    output_per_million: 1.6,
+    verified_on: "2026-09-13",
+    source: "https://developers.openai.com/api/docs/models/gpt-4.1-mini",
+  },
 };
+if (!Object.hasOwn(models, values.model))
+  throw new Error(`Use a supported --model: ${Object.keys(models).join(", ")}`);
+const upstream = `openai/${values.model}`;
+const pricing = models[values.model as keyof typeof models];
+const modern = values.model === "gpt-5.6-luna";
+const tokenParameter: "max_completion_tokens" | "max_tokens" = modern
+  ? "max_completion_tokens"
+  : "max_tokens";
 const directory = mkdtempSync(join(tmpdir(), "marina-utility-"));
 const routerDb = new MarinaDB(join(directory, "router.db"));
 routerDb.setSetting("default_model", upstream);
@@ -77,8 +104,12 @@ const spending = {
   reserved: 0,
   attempts: 0,
   maxAttempts: maxCalls,
-  model: "gpt-4o-mini-2024-07-18",
-  inputPerMillion: pricing.input_per_million,
+  model: values.model,
+  tokenParameter,
+  inputPerMillion:
+    "cache_write_per_million" in pricing
+      ? pricing.cache_write_per_million
+      : pricing.input_per_million,
   outputPerMillion: pricing.output_per_million,
 };
 const originalFetch = globalThis.fetch;
@@ -94,12 +125,16 @@ const gate = Bun.serve({
     const body = (await req.json()) as {
       messages: { role: string; content: string }[];
       max_tokens: number;
+      max_completion_tokens: number;
+      reasoning_effort?: string;
       model: string;
     };
     if (
       !Array.isArray(body.messages) ||
       body.messages.some((m) => typeof m.content !== "string") ||
-      body.max_tokens !== 500 ||
+      body[tokenParameter] !== 500 ||
+      body[modern ? "max_tokens" : "max_completion_tokens"] !== undefined ||
+      (modern && body.reasoning_effort !== "none") ||
       body.model !== "marina/default"
     )
       return new Response("Invalid evaluation request", { status: 400 });
@@ -125,12 +160,25 @@ const gate = Bun.serve({
       signal: AbortSignal.timeout(60000),
     });
     const result = (await response.json()) as {
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+      };
     };
     actual +=
       ((result.usage?.prompt_tokens ?? 0) * pricing.input_per_million +
         (result.usage?.completion_tokens ?? 0) * pricing.output_per_million) /
       1e6;
+    if ("cache_write_per_million" in pricing) {
+      const details = result.usage?.prompt_tokens_details;
+      actual +=
+        ((details?.cache_write_tokens ?? 0) *
+          (pricing.cache_write_per_million - pricing.input_per_million) +
+          (details?.cached_tokens ?? 0) *
+            (pricing.cached_input_per_million - pricing.input_per_million)) /
+        1e6;
+    }
     return Response.json(result, { status: response.status });
   },
 });
@@ -141,15 +189,26 @@ const report = () => ({
   protocol_only: values.offline,
   complete: results.length === repetitions * utilityCases.length * (provider ? 3 : 2),
   upstream: values.offline ? "offline-protocol-fixture" : upstream,
+  upstream_is_dated_snapshot: !modern,
+  request_contract: {
+    token_parameter: tokenParameter,
+    output_limit: 500,
+    temperature: 0,
+    reasoning_effort: modern ? "none" : null,
+  },
   pricing,
   repetitions,
   embedding: provider?.id ?? null,
   conditions: provider ? ["none", "portable", "portable+embeddings"] : ["none", "portable"],
+  citation_contract: "returned-evidence-ids-v2",
+  agent_protocol: values["agent-protocol"],
   source_hashes: Object.fromEntries(
     [
       "examples/memory-service/task-agent.ts",
+      "examples/memory-service/task-agent-protocol.ts",
       "scripts/research/memory-utility-cases.ts",
       "scripts/research/memory-evaluation-budget.ts",
+      "scripts/research/memory-evidence-ids.ts",
       "scripts/research/memory-utility-qualification.ts",
     ].map((path) => [path, createHash("sha256").update(readFileSync(path)).digest("hex")]),
   ),
@@ -212,9 +271,11 @@ try {
               MARINA_MEMORY_TOKEN: reader.token,
               MARINA_MEMORY_SPACE: space,
               MARINA_EVAL_CONDITION: condition,
+              MARINA_EVAL_AGENT_PROTOCOL: values["agent-protocol"],
               MARINA_EVAL_ROUTER_URL: `http://127.0.0.1:${gate.port}`,
               MARINA_EVAL_ROUTER_TOKEN: gateToken,
               MARINA_EVAL_MODEL: "marina/default",
+              MARINA_EVAL_TOKEN_PARAMETER: tokenParameter,
             },
           },
         );
@@ -231,18 +292,9 @@ try {
         }
         if (status) throw new Error(`Agent failed ${condition}/${task.id}: ${err.slice(-1000)}`);
         const result = JSON.parse(out.trim());
-        const available = new Set<string>();
-        const inspect = (value: unknown) => {
-          if (Array.isArray(value)) {
-            for (const item of value) inspect(item);
-          } else if (value && typeof value === "object") {
-            for (const [key, item] of Object.entries(value)) {
-              if (key === "id" && typeof item === "string") available.add(item);
-              else inspect(item);
-            }
-          }
-        };
-        for (const trace of result.trace) inspect(trace.result);
+        const available = returnedEvidenceIds(
+          result.trace.map((trace: { result: unknown }) => trace.result),
+        );
         const grade = gradeUtility(
           task,
           result.answer,
@@ -256,6 +308,7 @@ try {
           task: task.id,
           domain: task.domain,
           correction: task.correction,
+          expected_ids: expected.get(task.id) ?? [],
           ...grade,
           ...result,
         });
