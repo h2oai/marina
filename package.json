@@ -88,7 +88,11 @@
     "qualify:memory:storage": "bun run scripts/qualify-memory-storage.ts",
     "qualify:memory:sustained": "bun run scripts/qualify-memory-sustained.ts",
     "qualify:memory:scale": "bun run scripts/research/memory-scale-qualification.ts",
-    "qualify:memory:utility": "bun run scripts/research/memory-utility-qualification.ts"
+    "qualify:memory:utility": "bun run scripts/research/memory-utility-qualification.ts",
+    "qualify:memory:workflow": "bun run scripts/research/memory-workflow-qualification.ts",
+    "qualify:memory:resident": "bun run scripts/research/memory-resident-qualification.ts",
+    "qualify:memory:clients": "bun run scripts/research/memory-coding-client-qualification.ts",
+    "qualify:memory:load": "bun run scripts/qualify-memory-load.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",

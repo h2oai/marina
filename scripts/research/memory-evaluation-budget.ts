@@ -14,6 +14,7 @@ export function evaluationBudgetFetch(
     maxAttempts: number;
     model: string;
     tokenParameter?: "max_tokens" | "max_completion_tokens";
+    outputLimit?: number;
     inputPerMillion: number;
     outputPerMillion: number;
   },
@@ -31,22 +32,40 @@ export function evaluationBudgetFetch(
         model: string;
         max_tokens: number;
         max_completion_tokens: number;
-        messages: { content: string }[];
+        messages: {
+          role?: string;
+          content: string | { type: string; text?: string }[] | null;
+          tool_calls?: unknown[];
+        }[];
       };
       const tokenParameter = state.tokenParameter ?? "max_tokens";
+      const outputLimit = state.outputLimit ?? 500;
       const otherParameter =
         tokenParameter === "max_tokens" ? "max_completion_tokens" : "max_tokens";
       if (
         body.model !== state.model ||
-        body[tokenParameter] !== 500 ||
+        !Number.isSafeInteger(outputLimit) ||
+        outputLimit < 1 ||
+        outputLimit > 4096 ||
+        body[tokenParameter] !== outputLimit ||
         body[otherParameter] !== undefined ||
         !Array.isArray(body.messages) ||
-        body.messages.some((m) => typeof m.content !== "string")
+        body.messages.some(
+          (m) =>
+            typeof m.content !== "string" &&
+            !(m.role === "assistant" && m.content === null && Array.isArray(m.tool_calls)) &&
+            !(
+              Array.isArray(m.content) &&
+              m.content.every((part) => part.type === "text" && typeof part.text === "string")
+            ),
+        )
       )
-        throw new Error("Evaluation refused an unapproved model or token limit");
+        throw new Error(
+          `Evaluation refused an unapproved model or token limit (model=${body.model}, ${tokenParameter}=${body[tokenParameter]}, ${otherParameter}=${body[otherParameter]}, content_types=${body.messages?.map((message) => (message.content === null ? "null" : typeof message.content)).join(",")})`,
+        );
       const bound =
         ((Buffer.byteLength(text) + 128 * body.messages.length) * state.inputPerMillion) / 1e6 +
-        (500 * state.outputPerMillion) / 1e6;
+        (outputLimit * state.outputPerMillion) / 1e6;
       if (state.attempts >= state.maxAttempts || state.reserved + bound > state.ceiling)
         throw new Error("Evaluation spending limit reached");
       state.reserved += bound;

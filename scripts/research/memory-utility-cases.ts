@@ -116,6 +116,7 @@ export function gradeUtility(
   citations: unknown[],
   available: Set<string>,
   expectedIds: string[],
+  completionStatus = "legacy-unreported",
 ) {
   let parsed: unknown;
   try {
@@ -156,6 +157,12 @@ export function gradeUtility(
     cited,
     grounded,
     functional,
-    supported_success: correct && cited && grounded && functional !== false,
+    completed: ["answered", "abstained", "legacy-unreported"].includes(completionStatus),
+    supported_success:
+      ["answered", "abstained", "legacy-unreported"].includes(completionStatus) &&
+      correct &&
+      cited &&
+      grounded &&
+      functional !== false,
   };
 }

@@ -301,6 +301,7 @@ try {
           result.citations,
           available,
           expected.get(task.id) ?? [],
+          result.status ?? "missing-completion-status",
         );
         results.push({
           repetition,

@@ -706,3 +706,87 @@ service errors, with bounded repair turns. Reports preserve intermediate model r
 errors for inspection. `v1` remains the default for reproducing the original prompt and behavior.
 The graders and task fixtures are identical across protocols; report protocol comparisons as new
 experiments. Valid JSON alone does not prove that the agent retrieved evidence or answered correctly.
+
+## Validate answers against evidence you actually read
+
+The TypeScript entry point `marina/memory` exports `validateMemoryAnswer`,
+`collectMemoryEvidence`, `createMemoryCitation` and the optional model-neutral `runMemoryTask`
+loop. These helpers run in the caller. They require no embedding provider or model package.
+
+```typescript
+import {
+  collectMemoryEvidence, createMemoryCitation, validateMemoryAnswer,
+  type MemoryAnswerContract,
+} from "marina/memory";
+
+const contract: MemoryAnswerContract = {
+  schema: {
+    type: "object",
+    properties: { count: { type: "integer" } },
+    required: ["count"],
+    additionalProperties: false,
+  },
+  evidence: "required",
+};
+const range = await memory.sourceRange(spaceId, sourceId);
+const evidence = collectMemoryEvidence(range, spaceId);
+const citation = createMemoryCitation(evidence[0]!, "The corrected count is 17.");
+const checked = validateMemoryAnswer(contract, {
+  status: "answered", answer: { count: 17 }, citations: [citation],
+}, evidence);
+if (!checked.ok) console.error(checked.errors);
+```
+
+Supply authenticated read results to `collectMemoryEvidence`, never model output or arbitrary
+documents. Source search excerpts, write receipts and a record's `source_ids` do not count as
+source reads. Source citations pin the space, ID, text hash and exact returned UTF-8 range;
+record citations pin the space, ID and version. Quotations must occur in the witnessed text.
+`createMemoryCitation` copies those fields for a quotation the caller explicitly selects.
+
+The schema subset supports string, boolean, null, finite number, safe integer, homogeneous arrays
+and objects with `properties`, `required` and `additionalProperties:false`. `description` is optional.
+Unsupported keywords are rejected; there is no coercion. Schema nesting is limited to 12 levels.
+Historical/stale record witnesses require explicit `allow_historical:true`. Validation checks
+shape and quotations; it does not establish entailment, resolve competing claims, reauthorize a
+previous read or detect concurrent changes after it. Reread evidence when current state matters.
+
+`runMemoryTask` takes a task, space, contract, an operation allowlist, a `next(messages, signal)`
+model callback and a `dispatch(request, signal)` memory callback. It binds operations to the
+declared space, generates a mutation key, retains replies and traces, and permits bounded repair.
+Use `runMemoryOperation` for HTTP dispatch; retry the same request/key with `retryMemoryOperation`.
+The loop marks older witnesses historical after observing a newer revision. It distinguishes
+`answered`, explicit `abstained`, `exhausted`, `error` and `cancelled`; only the first two have a
+completion. Cancellation stops local waiting and does not undo a mutation already committed.
+
+See [the native-function caller](../../examples/memory-service/workflow-agent.ts) for a complete
+OpenAI-compatible example and its resident WebSocket variant. Native functions expose actual
+operations to the model; the portable loop also works with callers that return JSON envelopes.
+For resumable work, explicitly ask the successor to read its named checkpoint, read original
+sources, preserve a correction, revise using the observed version and save the next checkpoint.
+Verify required mutations and executable outcomes separately from the answer contract.
+
+## Qualify workflows and installed clients
+
+These tools use disposable services and require an explicit output directory. Live tools require
+a spending ceiling and locally configured provider credentials; never put provider keys in prompts.
+
+```bash
+bun run qualify:memory:workflow --directory /tmp/memory-workflows --budget-usd 2
+bun run qualify:memory:resident --directory /tmp/memory-resident --budget-usd 2
+bun run qualify:memory:clients --directory /tmp/memory-claude --client claude --budget-usd 1
+bun run qualify:memory:clients --directory /tmp/memory-codex --client codex --budget-usd 1
+bun run qualify:memory:load --directory /tmp/memory-load --tenants 16 --operations 40
+```
+
+Workflow qualification compares fresh agents with memory, without memory and with direct source
+context, then checks long sources, graph/vocabulary/time queries, competing claims, multilingual
+queries and distractions. `--suite lifecycle|retrieval` selects a subset. Resident qualification
+runs the real `LeanAgentAdapter` in fresh processes and inspects durable checkpoints and journals.
+Client qualification runs installed Claude Code or Codex with temporary MCP settings and tests
+the resulting file independently. `--task marina-sdk` uses a copy of Marina's citation module.
+The load test records latency including retries, tenant isolation, rate limiting and recovery of
+writes whose callers cancelled after commit. Reports state the tested scope and remaining limits.
+
+For headless Codex, `approval_policy="never"` does not itself approve MCP operations. Configure
+the named server/tool approval mode intentionally for your credential's authorized scope. The
+qualification harness approves its disposable Marina server only; it leaves global settings alone.

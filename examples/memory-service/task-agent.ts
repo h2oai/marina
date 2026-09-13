@@ -34,6 +34,7 @@ let answer = "UNKNOWN",
   cacheWriteTokens = 0,
   outputTokens = 0,
   modelCalls = 0;
+let status: "answered" | "abstained" | "exhausted" = "exhausted";
 const started = performance.now();
 for (let turn = 0; turn < 6; turn++) {
   const response = await fetch(`${process.env.MARINA_EVAL_ROUTER_URL}/chat/completions`, {
@@ -86,6 +87,7 @@ for (let turn = 0; turn < 6; turn++) {
     if (parsed.kind === "answer") {
       answer = parsed.answer;
       citations = parsed.citations;
+      status = answer.trim().toUpperCase() === "UNKNOWN" ? "abstained" : "answered";
       break;
     }
     action = parsed;
@@ -100,6 +102,7 @@ for (let turn = 0; turn < 6; turn++) {
   if (typeof action.answer === "string") {
     answer = action.answer;
     citations = Array.isArray(action.citations) ? action.citations : [];
+    status = answer.trim().toUpperCase() === "UNKNOWN" ? "abstained" : "answered";
     break;
   }
   const input = action.input ?? {};
@@ -141,6 +144,7 @@ for (let turn = 0; turn < 6; turn++) {
 }
 console.log(
   JSON.stringify({
+    status,
     answer,
     citations,
     trace,
