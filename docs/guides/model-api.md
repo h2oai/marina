@@ -2,6 +2,25 @@
 
 Use Marina as an OpenAI-compatible LLM endpoint. When your tools send requests, agents inside the world respond — with full access to their memory, coordination tools, and world context.
 
+## Direct upstream defaults
+
+Marina can also proxy directly to a configured provider when no model agent serves the route.
+The built-in OpenAI default is `gpt-5.6-luna`; OpenRouter uses `openai/gpt-5.6-luna`. Existing
+provider priority and operator-selected models still apply. Override a provider with
+`MARINA_DEFAULT_OPENAI_MODEL` or `MARINA_DEFAULT_OPENROUTER_MODEL`; a configured database
+`default_model` selects the provider/model before fallback. Keys authorize upstream calls;
+configure `MODEL_API_KEYS` separately for clients calling Marina.
+
+Luna on a default route uses `reasoning_effort: "none"` to keep short requests inexpensive.
+Explicit reasoning settings take precedence, and a direct request naming the model keeps its
+provider-default effort when omitted. OpenAI Luna requires `max_completion_tokens`; Marina
+translates a legacy `max_tokens` field when no modern limit is supplied. Conflicting limits
+remain subject to provider validation. Other model request contracts are preserved.
+
+Use a higher reasoning effort explicitly when the task warrants it, and compare outcomes and
+total tokens on your own workload. See the [official Luna model reference](https://developers.openai.com/api/docs/models/gpt-5.6-luna)
+for current capabilities and pricing.
+
 ---
 
 ## Quick Start
@@ -14,7 +33,8 @@ bun run start
 
 ### 2. Connect a Provider Agent
 
-The provider agent bridges requests to an external LLM. Without at least one provider, the API has no one to route requests to.
+The provider agent bridges requests to an external LLM. This is an alternative to direct upstream
+proxying with configured provider keys.
 
 ```bash
 # Using a local Ollama instance

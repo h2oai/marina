@@ -1069,6 +1069,48 @@ describe("Model API", () => {
       }
     }
 
+    it("uses Luna for the default OpenAI route while preserving explicit model overrides", async () => {
+      const previous = process.env.MARINA_DEFAULT_OPENAI_MODEL;
+      delete process.env.MARINA_DEFAULT_OPENAI_MODEL;
+      setEndpointConfig(db, { mode: "passthru" });
+      const forwarded: Record<string, unknown>[] = [];
+      try {
+        await withOpenAiUpstream(
+          async (input, init) => {
+            forwarded.push(await new Request(input, init).json());
+            return upstreamCompletion();
+          },
+          async () => {
+            const send = async () => {
+              const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+                model: "marina/default",
+                messages: [{ role: "user", content: "Return a short greeting." }],
+                max_tokens: 500,
+              });
+              expect((await handleModelApi(url, method, req, engine))?.status).toBe(200);
+            };
+            await send();
+            process.env.MARINA_DEFAULT_OPENAI_MODEL = "gpt-4o-mini-2024-07-18";
+            await send();
+            db.setSetting("default_model", "openai/gpt-4.1-mini-2025-04-14");
+            await send();
+          },
+        );
+        expect(forwarded[0]).toMatchObject({
+          model: "gpt-5.6-luna",
+          max_completion_tokens: 500,
+          reasoning_effort: "none",
+        });
+        expect(forwarded[0]).not.toHaveProperty("max_tokens");
+        expect(forwarded[1]).toMatchObject({ model: "gpt-4o-mini-2024-07-18", max_tokens: 500 });
+        expect(forwarded[1]).not.toHaveProperty("reasoning_effort");
+        expect(forwarded[2]).toMatchObject({ model: "gpt-4.1-mini-2025-04-14", max_tokens: 500 });
+      } finally {
+        if (previous === undefined) delete process.env.MARINA_DEFAULT_OPENAI_MODEL;
+        else process.env.MARINA_DEFAULT_OPENAI_MODEL = previous;
+      }
+    });
+
     it("non-streaming chat completion x-request-id equals the traced traceId", async () => {
       engine.processCommand(conn1.entity!, "channel join model");
       setupPhase1Agent(cm, conn1.entity!, "Agent1", "traced answer");
@@ -1182,7 +1224,7 @@ describe("Model API", () => {
       expect(lifecycle.at(-1)).toMatchObject({
         phase: "failed",
         routeKind: "passthru",
-        target: "openai/gpt-4o",
+        target: "openai/gpt-5.6-luna",
         errorKind: "rate_limit",
       });
       expect(resp.headers.get("x-request-id")).toBe(lifecycle.at(-1)?.traceId ?? null);
@@ -1649,6 +1691,34 @@ describe("prepareLlamaBody (llama upstream prep)", () => {
 });
 
 describe("prepareUpstreamBody (cloud fallback prep)", () => {
+  it("adapts Luna token limits without mutating requests or overwriting reasoning choices", () => {
+    const body = { model: "gpt-5.6-luna", max_tokens: 500, messages: [] };
+    const prepared = prepareUpstreamBody(body, "openai", true);
+    expect(prepared).toEqual({
+      model: body.model,
+      max_completion_tokens: 500,
+      messages: [],
+      reasoning_effort: "none",
+    });
+    expect(body).toEqual({ model: "gpt-5.6-luna", max_tokens: 500, messages: [] });
+    expect(prepareUpstreamBody(body, "openai")).not.toHaveProperty("reasoning_effort");
+    expect(
+      prepareUpstreamBody({ ...body, reasoning_effort: "high" }, "openai", true).reasoning_effort,
+    ).toBe("high");
+    expect(
+      prepareUpstreamBody(
+        { ...body, max_tokens: undefined, max_completion_tokens: 1000 },
+        "openai",
+        true,
+      ).max_completion_tokens,
+    ).toBe(1000);
+    const openrouter = { model: "openai/gpt-5.6-luna", reasoning: { effort: "high" } };
+    expect(prepareUpstreamBody(openrouter, "openrouter", true)).toEqual(openrouter);
+    expect(
+      prepareUpstreamBody({ model: openrouter.model }, "openrouter", true).reasoning_effort,
+    ).toBe("none");
+  });
+
   it("clamps completion budgets when falling back to OpenAI", () => {
     expect(prepareUpstreamBody({ max_tokens: 32_000 }, "openai").max_tokens).toBe(16_384);
     expect(

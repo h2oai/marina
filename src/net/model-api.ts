@@ -2069,9 +2069,9 @@ async function handleOllamaGenerate(req: Request, engine: Engine): Promise<Respo
  */
 const BUILTIN_DEFAULT_MODELS: Record<string, string> = {
   ANTHROPIC_API_KEY: "claude-sonnet-4-5-20250929",
-  OPENAI_API_KEY: "gpt-4o",
+  OPENAI_API_KEY: "gpt-5.6-luna",
   GEMINI_API_KEY: "gemini-2.0-flash",
-  OPENROUTER_API_KEY: "openai/gpt-4o-mini",
+  OPENROUTER_API_KEY: "openai/gpt-5.6-luna",
   GROQ_API_KEY: "llama-3.3-70b-versatile",
   LLAMA_API_KEY: LOCAL_PROVIDERS.llama!.defaultModel,
   OLLAMA_API_KEY: LOCAL_PROVIDERS.ollama!.defaultModel,
@@ -2083,7 +2083,7 @@ function getDefaultUpstreamModel(envKey: string): string {
   const overrideKey = `MARINA_DEFAULT_${providerName}_MODEL`;
   const override = process.env[overrideKey];
   if (override && override.trim().length > 0) return override.trim();
-  return BUILTIN_DEFAULT_MODELS[envKey] ?? "gpt-4o";
+  return BUILTIN_DEFAULT_MODELS[envKey] ?? "gpt-5.6-luna";
 }
 
 function isMarinaModel(model: string): boolean {
@@ -2435,10 +2435,24 @@ export function prepareLlamaBody(
 export function prepareUpstreamBody(
   body: Record<string, unknown>,
   provider: string,
+  defaultRoute = false,
 ): Record<string, unknown> {
-  const prepared = prepareLlamaBody(body, provider);
+  let prepared = prepareLlamaBody(body, provider);
+  const luna =
+    (provider === "openai" && body.model === "gpt-5.6-luna") ||
+    (provider === "openrouter" && body.model === "openai/gpt-5.6-luna");
+  // Preserve the former non-reasoning default's latency/cost role. Explicit
+  // effort settings and direct model requests retain the caller's choices.
+  if (luna && defaultRoute && body.reasoning_effort === undefined && body.reasoning === undefined)
+    prepared = { ...prepared, reasoning_effort: "none" };
   if (provider !== "openai") return prepared;
   const bounded = { ...prepared };
+  // Luna requires the modern token field. Preserve an explicitly supplied
+  // max_completion_tokens and let the provider reject conflicting fields.
+  if (luna && bounded.max_tokens !== undefined && bounded.max_completion_tokens === undefined) {
+    bounded.max_completion_tokens = bounded.max_tokens;
+    delete bounded.max_tokens;
+  }
   for (const field of ["max_tokens", "max_completion_tokens"] as const) {
     const value = bounded[field];
     if (typeof value === "number" && value > 16_384) bounded[field] = 16_384;
@@ -2534,7 +2548,7 @@ async function proxyToUpstream(
       const r = await dispatchOpenAICompatible(
         cfg.url,
         key ?? "",
-        prepareUpstreamBody({ ...body, model: upstreamModel }, provider),
+        prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault),
         wantStream,
       );
       if (r.response) return finish(r.response, lastTarget);
@@ -2560,7 +2574,7 @@ async function proxyToUpstream(
     const r = await dispatchOpenAICompatible(
       cfg.url,
       key ?? "",
-      prepareUpstreamBody({ ...body, model: requestModel }, provider),
+      prepareUpstreamBody({ ...body, model: requestModel }, provider, isDefault),
       wantStream,
     );
     if (r.response) return finish(r.response, lastTarget);
