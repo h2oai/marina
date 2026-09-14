@@ -15,6 +15,11 @@ import { localOutputBudget, MARINA_DEFAULT_MODEL } from "../engine/constants";
 import { getErrorMessage } from "../engine/errors";
 import { isLocalProfile } from "../engine/trust-profile";
 import {
+  renderUnifiedContext,
+  truncateToBytes,
+  UNIFIED_TIER_LABELS,
+} from "../memory/unified-context";
+import {
   isLocalProvider,
   localProviderBaseUrl,
   localProviderContextWindow,
@@ -162,9 +167,15 @@ function clampText(text: string, maxChars = RECALL_BLOCK_MAX_CHARS): string {
 /** Max recalled notes (both tiers combined) in the Relevant Notes section. */
 const RELEVANT_NOTES_MAX = 5;
 
-/** Tier labels for the Relevant Notes section — the agent reads these verbatim. */
-export const RELEVANT_NOTES_TRUSTED_LABEL = "[trusted]";
-export const RELEVANT_NOTES_UNVERIFIED_LABEL = "[unverified — own notes, verify before relying]";
+/** Tier labels for the Relevant Notes section — the agent reads these verbatim.
+ *  Shared with the unified context so every surface labels tiers identically. */
+export const RELEVANT_NOTES_TRUSTED_LABEL = UNIFIED_TIER_LABELS.trusted;
+export const RELEVANT_NOTES_UNVERIFIED_LABEL = UNIFIED_TIER_LABELS.unverified;
+
+/** Content budget for the unified Relevant Memory section (~600 tokens). */
+const RELEVANT_MEMORY_BUDGET_BYTES = 2048;
+/** Bound on the archive summary / preserved excerpt shown at boot resume. */
+const BOOT_ARCHIVE_SUMMARY_BYTES = 600;
 
 /**
  * Render the two recall tiers of the Relevant Notes section. Trusted hits
@@ -1922,47 +1933,54 @@ export class LeanAgentAdapter implements AgentHandle {
       }
     }
 
-    // ── 4. Relevant notes for current focus (cached, re-query on focus change or 60 cycles) ──
-    // Three parallel queries: `recall <focus> trusted` (verified / sourced
-    // notes), plain `recall <focus>` (the agent's own, mostly unverified
-    // notes), and `skill search` (skill-tier procedures). Skills surface as
-    // <example> blocks per the few-shot retrieval convention (DSPy
-    // BootstrapFewShotWithRandomSearch and Anthropic's prompt-engineering
-    // guide both note that worked examples beat bullet-formatted recalls
-    // when the model is solving a procedural task). Recall hits render in
-    // two labeled tiers — `[trusted]` first, then `[unverified — own notes,
-    // verify before relying]` for ordinary hits not already in the trusted
-    // set — so the agent still sees its own notes (every plain `note` is
-    // written unverified) without the backend's strict `trusted` flag
-    // silently falling back. Capped at 2 skills + 5 notes overall (trusted
-    // first) so the section stays under ~600 tokens.
+    // ── 4. Relevant memory for current focus (cached, re-query on focus change or 60 cycles) ──
+    // ONE server-side retrieval (`recall <focus> all`) returns the unified,
+    // byte-budgeted context both memory silos feed: skills as <example>
+    // blocks (few-shot retrieval convention — worked examples beat bullet
+    // recalls on procedural tasks), then `[trusted]` verified/sourced notes,
+    // `[evidence]` durable records + captured sources, `[proposal]` finished
+    // assistance answers, and finally `[unverified — own notes, verify before
+    // relying]` — trusted-first so a wall of unverified notes can't crowd out
+    // sourced evidence. The 2048-byte budget keeps the section ≲600 tokens.
+    // Fallback: a server without the unified payload (context === null) gets
+    // the previous two-tier legacy render so older worlds keep working.
     if (this.focus) {
       try {
         const focusDesc = this.focus.description;
         this.notesCacheAge++;
         if (focusDesc !== this.lastNotesQuery || this.notesCacheAge > 60) {
-          const [tiers, skillResult] = await Promise.all([
-            this.platformMemory.searchTiered(focusDesc),
-            this.platformMemory.searchSkills(focusDesc).catch(() => ({ results: [] })),
-          ]);
-          const blocks: string[] = [];
-          if (skillResult.results && skillResult.results.length > 0) {
-            const exampleBlocks = skillResult.results
-              .slice(0, 2)
-              .map(
-                (s) =>
-                  `<example skill="#${s.id}" imp="${s.importance}">\n${clampText(s.content)}\n</example>`,
-              );
-            blocks.push(exampleBlocks.join("\n"));
+          const unified = await this.platformMemory
+            .unifiedContext(focusDesc, RELEVANT_MEMORY_BUDGET_BYTES)
+            .catch(() => ({ success: false, text: "", context: null }));
+          if (unified.context) {
+            this.cachedNotes = renderUnifiedContext(unified.context);
+          } else {
+            const [tiers, skillResult] = await Promise.all([
+              this.platformMemory.searchTiered(focusDesc),
+              this.platformMemory.searchSkills(focusDesc).catch(() => ({ results: [] })),
+            ]);
+            const blocks: string[] = [];
+            if (skillResult.results && skillResult.results.length > 0) {
+              const exampleBlocks = skillResult.results
+                .slice(0, 2)
+                .map(
+                  (s) =>
+                    `<example skill="#${s.id}" imp="${s.importance}">\n${clampText(s.content)}\n</example>`,
+                );
+              blocks.push(exampleBlocks.join("\n"));
+            }
+            blocks.push(...renderRelevantNoteTiers(tiers.trusted, tiers.ordinary));
+            const body = blocks.join("\n\n");
+            this.cachedNotes = body
+              ? `[Relevant Memory — evidence, preserve provenance]\n${body}`
+              : "";
           }
-          blocks.push(...renderRelevantNoteTiers(tiers.trusted, tiers.ordinary));
-          this.cachedNotes = blocks.join("\n\n");
           this.lastNotesQuery = focusDesc;
           this.notesCacheAge = 0;
         }
         if (this.cachedNotes && this.shouldIncludeSection("relevant_notes", this.cachedNotes)) {
           this.currentTrustSources.add("memory");
-          parts.push(`[Relevant Notes — evidence, preserve provenance]\n${this.cachedNotes}`);
+          parts.push(this.cachedNotes);
         }
       } catch {
         // Non-critical
@@ -2513,7 +2531,9 @@ The goal is a smaller, sharper memory — not more notes.`;
 
       const sections: string[] = [`**Last Session** (${ageStr}):`];
       sections.push(`- Intent: ${checkpoint.lastIntent}`);
-      const journal = checkpoint.journal as { manifest_source_id?: string } | undefined;
+      const journal = checkpoint.journal as
+        | { manifest_source_id?: string; source_ids?: string[] }
+        | undefined;
       if (journal?.manifest_source_id)
         sections.push(
           `- Latest completed message journal: ${journal.manifest_source_id}. Read source_range and follow previous_manifest_source_id to recover messages in reverse chronological order.`,
@@ -2526,11 +2546,26 @@ The goal is a smaller, sharper memory — not more notes.`;
         sections.push(
           "- Read these through memory_service source_range; concatenate text parts to reconstruct the original conversation.",
         );
-        if (archive.summary) sections.push(`- Historical summary: ${archive.summary}`);
         if (archive.manifest_source_id)
           sections.push(
             `- Archive manifest: ${archive.manifest_source_id}. Read source_range and follow previous_manifest_source_id for earlier conversations.`,
           );
+      }
+      // The most recent preserved content, inline and bounded, so the agent
+      // resumes with substance rather than only manifest ids: the archive's
+      // own summary when present, else the newest archived/journaled message
+      // part read back through source_range. The hints above stay either way.
+      const summary = archive?.summary?.trim()
+        ? truncateToBytes(archive.summary.trim(), BOOT_ARCHIVE_SUMMARY_BYTES)
+        : await this.recoverPreservedExcerpt(
+            archive?.source_ids?.length ? archive.source_ids : journal?.source_ids,
+          );
+      if (summary) {
+        sections.push(
+          archive?.summary?.trim()
+            ? `- Historical summary: ${summary}`
+            : `- Most recent preserved excerpt: ${summary}`,
+        );
       }
       if (checkpoint.currentGoal) sections.push(`- Goal: ${checkpoint.currentGoal}`);
       if (checkpoint.location) sections.push(`- Location: ${checkpoint.location}`);
@@ -2541,6 +2576,19 @@ The goal is a smaller, sharper memory — not more notes.`;
     } catch {
       return "";
     }
+  }
+
+  /**
+   * Bounded (≤ BOOT_ARCHIVE_SUMMARY_BYTES) excerpt of the newest preserved
+   * message part, read through the durable service. Empty string when there
+   * are no parts or the read fails — never throws, never blocks boot.
+   */
+  private async recoverPreservedExcerpt(sourceIds: string[] | undefined): Promise<string> {
+    const latest = sourceIds?.at(-1);
+    if (!latest) return "";
+    const text = await this.platformMemory.readSourceExcerpt(latest, BOOT_ARCHIVE_SUMMARY_BYTES);
+    if (!text) return "";
+    return truncateToBytes(text.replace(/\s+/g, " ").trim(), BOOT_ARCHIVE_SUMMARY_BYTES);
   }
 
   private startCheckpointTimer(): void {

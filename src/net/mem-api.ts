@@ -16,6 +16,7 @@
 import type { RateLimiter } from "../auth/rate-limiter";
 import { memoryAccess } from "../memory/access";
 import { expandMemoryRecall } from "../memory/retrieval";
+import { buildUnifiedContext, type UnifiedScope } from "../memory/unified-context";
 import type { MarinaDB } from "../persistence/database";
 import { corsHeaders } from "./cors";
 
@@ -102,6 +103,29 @@ const API_DESCRIPTION = {
           procedural: "how to, steps, procedure → relevance-heavy",
           decision: "should I, trade-off, choice → importance-heavy",
           semantic: "what is, define, explain → balanced",
+        },
+      },
+      "GET /mem/context": {
+        description:
+          "Unified, byte-budgeted memory context (schema marina.memory.context.v1) — the same " +
+          "tiers the continuation prompt, `recall <q> all`, the MCP think(context) action and " +
+          "passthru injection render. Ordered tiers: skills, [trusted] (verified/sourced notes), " +
+          "[evidence] (durable resident-space records + captured source excerpts), [proposal] " +
+          "(finished assistance answers with citation counts), [unverified] (own notes).",
+        params: {
+          q: "string (required) — search query",
+          budget: "number — total content byte budget (256-65536, default 2048)",
+          scope: "all (default) | evidence (durable tiers only) | legacy (notes only)",
+        },
+        response: {
+          tiers:
+            "[{tier, label, items: [{id, content, provenance, bytes, score, truncated?, meta?}], omitted}]",
+          truncated:
+            "true when any item was cut or dropped for budget (tier headers are never dropped silently)",
+          degraded:
+            "[{tier, code, message}] — durable tiers are skipped, not failed, when your namespace has no " +
+            "world account (code world_identity_required: log into the world under this name first) or the " +
+            "memory service errors; legacy tiers still return.",
         },
       },
     },
@@ -412,6 +436,34 @@ export async function handleMemApi(
     }
 
     return json({ query: q, weights, results, count: results.length });
+  }
+
+  // GET /mem/context — unified two-silo context (legacy tiers + durable evidence/proposals)
+  if (path === "/mem/context" && method === "GET") {
+    const q = url.searchParams.get("q");
+    if (!q?.trim()) return error(400, "q parameter required");
+    const budgetRaw = url.searchParams.get("budget");
+    let budgetBytes: number | undefined;
+    if (budgetRaw !== null) {
+      budgetBytes = Number(budgetRaw);
+      if (
+        !budgetRaw.trim() ||
+        !Number.isFinite(budgetBytes) ||
+        budgetBytes < 256 ||
+        budgetBytes > 65_536
+      )
+        return error(400, "budget must be a number between 256 and 65536");
+    }
+    const scopeRaw = url.searchParams.get("scope") ?? "all";
+    if (!["all", "evidence", "legacy"].includes(scopeRaw))
+      return error(400, "scope must be all, evidence, or legacy");
+    // Legacy tiers are namespace-scoped by `agent`; durable tiers bind to the
+    // world account of the same name (server-resolved) and degrade otherwise.
+    const context = await buildUnifiedContext(db, agent, q, {
+      budgetBytes,
+      scope: scopeRaw as UnifiedScope,
+    });
+    return json(context);
   }
 
   // Note by ID routes: /mem/notes/:id

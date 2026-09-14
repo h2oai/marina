@@ -3,9 +3,11 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
+import { buildUnifiedContext, type UnifiedContextResult } from "../src/memory/unified-context";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
+import { FIXTURE_QUERY, seedUnifiedFixture, tierIds } from "./fixtures/unified-memory-fixture";
 import { cleanupDb, makeTestRoom } from "./helpers";
 
 const TEST_DB = "test_mem_api.db";
@@ -545,6 +547,86 @@ describe("Memory API", () => {
       headers: { "X-Agent-Name": "isolated-agent-xyz" },
     });
     expect(res.status).toBe(404);
+  });
+
+  // ── Unified context ────────────────────────────────────────────────────
+
+  describe("GET /mem/context", () => {
+    it("returns the same unified tiers/ids as buildUnifiedContext for a world account", async () => {
+      const fx = await seedUnifiedFixture(engine, db, {
+        owner: "ContextAda",
+        worker: "ContextBea",
+      });
+      const direct = await buildUnifiedContext(db, fx.owner, FIXTURE_QUERY);
+      const res = await fetch(`${BASE}/context?q=${encodeURIComponent(FIXTURE_QUERY)}`, {
+        headers: { "X-Agent-Name": fx.owner },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as UnifiedContextResult;
+      expect(body.schema).toBe("marina.memory.context.v1");
+      expect(body.entity).toBe(fx.owner);
+      expect(body.degraded).toEqual([]);
+      expect(body.budgetBytes).toBe(2048);
+      const sorted = (m: Record<string, string[]>) =>
+        Object.fromEntries(Object.entries(m).map(([k, v]) => [k, [...v].sort()]));
+      expect(sorted(tierIds(body))).toEqual(sorted(tierIds(direct)));
+      expect(tierIds(body).proposal).toEqual([fx.jobId]);
+      expect(tierIds(body).evidence!.sort()).toEqual([fx.recordId, fx.sourceId].sort());
+
+      // budget + scope params
+      const small = (await (
+        await fetch(
+          `${BASE}/context?q=${encodeURIComponent(FIXTURE_QUERY)}&budget=300&scope=evidence`,
+          { headers: { "X-Agent-Name": fx.owner } },
+        )
+      ).json()) as UnifiedContextResult;
+      expect(small.budgetBytes).toBe(300);
+      expect(small.scope).toBe("evidence");
+      expect(Object.keys(tierIds(small)).every((t) => t === "evidence" || t === "proposal")).toBe(
+        true,
+      );
+    });
+
+    it("degrades durable tiers for a namespace without a world account (legacy still served)", async () => {
+      await fetch(`${BASE}/notes`, {
+        method: "POST",
+        headers: { "X-Agent-Name": "ghost-namespace", "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "Amber deployment port scratch note" }),
+      });
+      const res = await fetch(`${BASE}/context?q=${encodeURIComponent(FIXTURE_QUERY)}`, {
+        headers: { "X-Agent-Name": "ghost-namespace" },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as UnifiedContextResult;
+      expect(tierIds(body).unverified).toHaveLength(1);
+      expect(body.degraded.map((d) => `${d.tier}:${d.code}`).sort()).toEqual([
+        "evidence:world_identity_required",
+        "proposal:world_identity_required",
+      ]);
+    });
+
+    it("validates parameters", async () => {
+      expect((await fetch(`${BASE}/context`, { headers: HEADERS })).status).toBe(400);
+      expect((await fetch(`${BASE}/context?q=x&budget=abc`, { headers: HEADERS })).status).toBe(
+        400,
+      );
+      expect((await fetch(`${BASE}/context?q=x&budget=10`, { headers: HEADERS })).status).toBe(400);
+      expect((await fetch(`${BASE}/context?q=x&scope=nope`, { headers: HEADERS })).status).toBe(
+        400,
+      );
+    });
+
+    it("is documented in the API description", async () => {
+      const body = (await (await fetch(BASE)).json()) as {
+        endpoints: {
+          recall: Record<string, { params?: Record<string, string>; response?: unknown }>;
+        };
+      };
+      const doc = body.endpoints.recall["GET /mem/context"];
+      expect(doc).toBeDefined();
+      expect(doc!.params!.q).toBeDefined();
+      expect(JSON.stringify(doc!.response)).toContain("world_identity_required");
+    });
   });
 
   // ── Connect manifest ───────────────────────────────────────────────────

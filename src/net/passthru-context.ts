@@ -4,6 +4,7 @@
 import type { Engine } from "../engine/engine";
 import { sanitizeEntityName } from "../engine/entity-name";
 import { isLocalProfile } from "../engine/trust-profile";
+import { buildUnifiedContext } from "../memory/unified-context";
 import type { Entity, EntityId } from "../types";
 import type { PassthruAuthResult } from "./model-api";
 
@@ -11,6 +12,8 @@ export const DEFAULT_PASSTHRU_ENTITY = "passthru";
 export const INJECTION_MARKER = "[marina:shared-world-context]";
 const CONTEXT_OPT_IN_PROP = "passthruContext";
 const MAX_ADDENDUM_CHARS = 2048;
+/** Own-memory share of the addendum — leaves room for pool/channel/chronicle lines. */
+const OWN_MEMORY_BUDGET_BYTES = 1200;
 
 export interface OpenAIMessage {
   role: string;
@@ -197,14 +200,35 @@ export async function buildInjectedContext(
 
   // Only 6 snippets survive — collect into a Set and stop querying the moment
   // the budget is full instead of harvesting every source and discarding.
-  const MAX_SNIPPETS = 6;
+  // The 2048-char clamp is the real bound; these caps keep pools/channels/
+  // chronicle from being starved by own memory (≤ 6 items, ≤ 1200 bytes).
+  const MAX_SNIPPETS = 10;
+  const MAX_OWN_SNIPPETS = 6;
   const collected = new Set<string>();
   const full = () => collected.size >= MAX_SNIPPETS;
-  // Own notes only: entity_name-scoped, pool-less (recallNotes enforces
-  // `entity_name = ? AND pool_id IS NULL`) so a foreign private note never leaks.
-  for (const note of engine.db.recallNotes(name, query).slice(0, 4)) {
-    collected.add(`Own memory: ${note.content}`);
-    if (full()) break;
+  // Own memory through the unified surface — the same tiers the entity's own
+  // continuation prompt sees: skills, [trusted], [evidence] (durable records +
+  // captured sources), [proposal] (finished assistance answers), [unverified].
+  // Legacy tiers stay entity_name-scoped and pool-less (a foreign private note
+  // never leaks); durable tiers bind to the entity's server-resolved world
+  // account and are silently skipped (degraded) when it has none — the shared
+  // anonymous passthru entity never reaches here at all. Each line keeps its
+  // tier label so the upstream model can weigh provenance.
+  try {
+    const unified = await buildUnifiedContext(engine.db, name, query, {
+      budgetBytes: OWN_MEMORY_BUDGET_BYTES,
+      perTier: { skill: 1, trusted: 2, evidence: 2, proposal: 1, unverified: 1 },
+    });
+    let own = 0;
+    for (const tier of unified.tiers) {
+      for (const item of tier.items) {
+        if (own >= MAX_OWN_SNIPPETS || full()) break;
+        collected.add(`Own memory ${tier.label} (${item.provenance}): ${item.content}`);
+        own++;
+      }
+    }
+  } catch {
+    // Context injection is best-effort; a memory failure never blocks inference.
   }
   // Pools: inject ONLY pools the entity is actually a member of, or pools an
   // operator has explicitly marked passthru-shareable. Never every pool — an

@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { Engine } from "../src/engine/engine";
 import type { FlywheelToolBackend } from "../src/integrations/flywheel-manager";
+import { buildUnifiedContext, type UnifiedContextResult } from "../src/memory/unified-context";
 import { McpServerAdapter } from "../src/net/mcp-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
+import { FIXTURE_QUERY, seedUnifiedFixture, tierIds } from "./fixtures/unified-memory-fixture";
 import { cleanupDb, makeTestRoom } from "./helpers";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -98,6 +100,36 @@ async function toolCall(
     sessionId,
   );
   return extractText(response);
+}
+
+/** Call an MCP tool, returning the raw result (text + structuredContent). */
+async function toolCallRaw(
+  baseUrl: string,
+  sessionId: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  id = 101,
+): Promise<{ text: string; structuredContent?: Record<string, unknown>; isError?: boolean }> {
+  const { response } = await mcpRequest(
+    baseUrl,
+    {
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: { name: toolName, arguments: args },
+    },
+    sessionId,
+  );
+  const result = (
+    response as {
+      result?: { structuredContent?: Record<string, unknown>; isError?: boolean };
+    }
+  )?.result;
+  return {
+    text: extractText(response),
+    structuredContent: result?.structuredContent,
+    isError: result?.isError,
+  };
 }
 
 /** List all tools from an MCP session. */
@@ -604,6 +636,62 @@ describe("MCP Server", () => {
         modifier: "important",
       });
       expect(text.length).toBeGreaterThan(0);
+    });
+
+    it("think(context) returns the unified memory context as structuredContent — same tiers/ids as the builder", async () => {
+      // Seed both silos for the owner, then let it go offline so the MCP
+      // session can log in under the same world account.
+      const fx = await seedUnifiedFixture(engine, db, {
+        owner: "McpAda",
+        worker: "McpBea",
+        disconnect: true,
+      });
+      const direct = await buildUnifiedContext(db, fx.owner, FIXTURE_QUERY, { budgetBytes: 4096 });
+      const sid = await initSession(url);
+      await toolCall(url, sid, "login", { name: fx.owner });
+
+      const result = await toolCallRaw(url, sid, "think", {
+        action: "context",
+        text: FIXTURE_QUERY,
+      });
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent?.schema).toBe("marina.memory.command.v1");
+      expect(result.structuredContent?.operation).toBe("recall");
+      const context = result.structuredContent?.context as UnifiedContextResult;
+      expect(context?.schema).toBe("marina.memory.context.v1");
+      const sorted = (m: Record<string, string[]>) =>
+        Object.fromEntries(Object.entries(m).map(([k, v]) => [k, [...v].sort()]));
+      expect(sorted(tierIds(context))).toEqual(sorted(tierIds(direct)));
+      expect(tierIds(context).proposal).toEqual([fx.jobId]);
+      expect(context.degraded).toEqual([]);
+      // Human text carries the same labels for clients that only read text.
+      expect(result.text).toContain("[evidence]");
+      expect(result.text).toContain("[proposal]");
+      expect(result.text).toContain(`record ${fx.recordId} v1`);
+
+      // scope + budget flow through to the command.
+      const evidence = await toolCallRaw(url, sid, "think", {
+        action: "context",
+        text: FIXTURE_QUERY,
+        scope: "evidence",
+        budget: 300,
+      });
+      const ev = evidence.structuredContent?.context as UnifiedContextResult;
+      expect(ev.scope).toBe("evidence");
+      expect(ev.budgetBytes).toBe(300);
+      expect(Object.keys(tierIds(ev)).every((t) => t === "evidence" || t === "proposal")).toBe(
+        true,
+      );
+    });
+
+    it("think(recall) now also exposes the legacy payload as structuredContent (additive)", async () => {
+      const sid = await initSession(url);
+      await toolCall(url, sid, "login", { name: "StructBot" });
+      await toolCall(url, sid, "think", { action: "note", text: "Structured payload probe" });
+      const result = await toolCallRaw(url, sid, "think", { action: "recall", text: "payload" });
+      expect(result.structuredContent?.schema).toBe("marina.memory.command.v1");
+      expect(Array.isArray(result.structuredContent?.notes)).toBe(true);
+      expect(result.structuredContent?.context).toBeUndefined();
     });
 
     it("should set and get memory", async () => {

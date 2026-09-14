@@ -98,9 +98,17 @@ async function cmdTool(
       | MemoryOperationResult
       | undefined;
     if (envelope) return memoryMcpResult(envelope);
-    return text(
-      perceptions.map((p) => formatPerception(p, "markdown")).join("\n\n") || "(no output)",
-    );
+    const rendered =
+      perceptions.map((p) => formatPerception(p, "markdown")).join("\n\n") || "(no output)";
+    // Legacy-memory commands (`recall`, `skill search`, `memory get` …) attach a
+    // `marina.memory.command.v1` payload; surface it as structuredContent so MCP
+    // clients (Claude Code, Codex, Cursor) parse tiers/ids instead of prose.
+    const memory = perceptions.map((p) => p.data?.memory).findLast(Boolean) as
+      | Record<string, unknown>
+      | undefined;
+    if (memory && memory.schema === "marina.memory.command.v1")
+      return { ...text(rendered), structuredContent: { ...memory } };
+    return text(rendered);
   });
   session.commandTail = pending.catch(() => undefined);
   return pending;
@@ -378,14 +386,30 @@ export class McpServerAdapter {
     mcp.tool(
       "think",
       "Your cognitive tool — take notes, recall memories, or reflect on what you know. " +
-        "Use 'note' to record observations, 'recall' to search memories, 'reflect' to synthesize.",
+        "Use 'note' to record observations, 'recall' to search memories, 'reflect' to synthesize, " +
+        "'context' for the unified, budgeted view across both memory systems (skills, [trusted], " +
+        "[evidence] durable records + sources, [proposal] assistance answers, [unverified] own notes) " +
+        "returned as structuredContent.context (schema marina.memory.context.v1).",
       {
-        action: z.enum(["note", "recall", "reflect"]).describe("Cognitive action to perform"),
+        action: z
+          .enum(["note", "recall", "reflect", "context"])
+          .describe("Cognitive action to perform"),
         text: z
           .string()
           .describe(
-            "For note: what you observed. For recall: search query. For reflect: optional topic.",
+            "For note: what you observed. For recall/context: search query. For reflect: optional topic.",
           ),
+        scope: z
+          .enum(["all", "evidence"])
+          .optional()
+          .describe("For context: 'all' (default) or 'evidence' (durable tiers only)"),
+        budget: z
+          .number()
+          .int()
+          .min(256)
+          .max(65536)
+          .optional()
+          .describe("For context: total content byte budget (default 4096)"),
         importance: z
           .number()
           .min(1)
@@ -401,7 +425,10 @@ export class McpServerAdapter {
           .optional()
           .describe("Recall modifier — weight recent or important notes"),
       },
-      async ({ action, text: content, importance, type: noteType, modifier }, extra) => {
+      async (
+        { action, text: content, importance, type: noteType, modifier, scope, budget },
+        extra,
+      ) => {
         switch (action) {
           case "note": {
             let cmd = `note ${content}`;
@@ -412,6 +439,13 @@ export class McpServerAdapter {
           case "recall": {
             let cmd = `recall ${content}`;
             if (modifier) cmd += ` ${modifier}`;
+            return runCmd(extra, cmd);
+          }
+          case "context": {
+            if (!content.trim())
+              return { ...text("Query required for think context."), isError: true };
+            let cmd = `recall ${content} ${scope === "evidence" ? "evidence" : "all"}`;
+            if (budget !== undefined) cmd += ` budget ${budget}`;
             return runCmd(extra, cmd);
           }
           case "reflect": {

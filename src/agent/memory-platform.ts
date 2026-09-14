@@ -3,8 +3,11 @@
 
 import { getErrorMessage } from "../engine/errors";
 import { type MemoryNoteResult, readMemoryResult } from "../memory/command-result";
+import { isUnifiedContextResult, type UnifiedContextResult } from "../memory/unified-context";
 import { stripAnsi } from "../net/ansi";
 import type { MarinaClient } from "../sdk/client";
+import type { MemoryOperationResult } from "../sdk/memory-operations";
+import type { MemorySourceRange } from "../sdk/memory-types";
 import type { Perception } from "../types";
 import { DurableResidentMemory } from "./durable-memory";
 
@@ -51,6 +54,13 @@ function extractText(perceptions: Perception[]): string {
     .filter(Boolean)
     .map(stripAnsi)
     .join("\n");
+}
+
+/** Last durable-service envelope (`data.memory_service`) in a command's perceptions. */
+function serviceEnvelope(perceptions: Perception[]): MemoryOperationResult | undefined {
+  return perceptions.map((p) => p.data?.memory_service).findLast(Boolean) as
+    | MemoryOperationResult
+    | undefined;
 }
 
 function coreValue(perceptions: Perception[]): string | undefined {
@@ -147,6 +157,55 @@ export class PlatformMemoryBackend {
         .catch(() => empty),
     ]);
     return { trusted, ordinary };
+  }
+
+  /**
+   * The unified retrieval surface (`recall <q> all`): skills, `[trusted]`,
+   * `[evidence]` (durable records + captured sources), `[proposal]` (finished
+   * assistance answers) and `[unverified]` own notes, budgeted server-side.
+   * Transport-agnostic — the adapter never touches the DB; it reads the
+   * additive `context` field of the `marina.memory.command.v1` payload.
+   * `context` is null when the server predates the unified payload, so the
+   * caller can fall back to `searchTiered` + `searchSkills`.
+   */
+  async unifiedContext(
+    query: string,
+    budgetBytes?: number,
+  ): Promise<{ success: boolean; text: string; context: UnifiedContextResult | null }> {
+    let cmd = `recall ${query} all`;
+    if (budgetBytes && Number.isFinite(budgetBytes)) cmd += ` budget ${Math.floor(budgetBytes)}`;
+    const perceptions = await this.client.command(cmd);
+    const text = extractText(perceptions);
+    const result = readMemoryResult(perceptions, "recall");
+    const context = (result as { context?: unknown } | undefined)?.context;
+    return {
+      success: result?.success ?? false,
+      text,
+      context: isUnifiedContextResult(context) ? context : null,
+    };
+  }
+
+  /**
+   * Read the first `maxBytes` of a durable source (an archived/journaled
+   * message part) via `source_range`. Used by boot recovery to surface the
+   * most recent preserved text instead of only a manifest id. Null on any
+   * failure — recovery hints stay useful without it.
+   */
+  async readSourceExcerpt(sourceId: string, maxBytes: number): Promise<string | null> {
+    try {
+      const request = {
+        operation: "source_range",
+        id: sourceId,
+        input: { start: 0, end: Math.max(1, Math.floor(maxBytes)) },
+      };
+      const perceptions = await this.client.command(`memory api ${JSON.stringify(request)}`);
+      const envelope = serviceEnvelope(perceptions);
+      if (!envelope?.ok) return null;
+      const range = envelope.result as Partial<MemorySourceRange> | undefined;
+      return typeof range?.text === "string" && range.text.trim() ? range.text : null;
+    } catch {
+      return null;
+    }
   }
 
   async update(noteId: string, newContent: string): Promise<PlatformMemoryResult> {
