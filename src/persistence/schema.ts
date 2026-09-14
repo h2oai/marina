@@ -3092,4 +3092,38 @@ CREATE INDEX idx_memory_transfers_space_owner_id ON memory_transfers(space_id,pr
 CREATE INDEX idx_memory_records_format ON memory_records(space_id,json_extract(metadata,'$.format'),created_at,id) WHERE status='active';
 `,
   },
+  // Migration 109: key reputation ledgers by the durable world account.
+  // entity_standing / entity_competence / witness_attestations were keyed by
+  // transient entity ids, which are minted afresh after the reconnect grace
+  // evicts an entity — standing, rank progression and gate competence were
+  // silently orphaned on every re-login. Move rows onto users.id (stable,
+  // keyed by name) wherever a matching account exists. Standing rows carry
+  // entity_name; competence/witness rows resolve through the persisted
+  // entities table. Duplicate (entity, kind, ref) rows that collide after the
+  // move are dropped (they are the same idempotent event credited twice to
+  // two dead ids). Cache rows are rebuildable and are cleared for moved ids.
+  {
+    version: 109,
+    sql: `
+UPDATE OR IGNORE entity_standing
+   SET entity_id = (SELECT u.id FROM users u WHERE u.name = entity_standing.entity_name)
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM users u WHERE u.name = entity_standing.entity_name);
+DELETE FROM entity_standing
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM users u WHERE u.name = entity_standing.entity_name);
+DELETE FROM entity_standing_cache WHERE entity_id NOT IN (SELECT id FROM users);
+UPDATE OR IGNORE entity_competence
+   SET entity_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = entity_competence.entity_id)
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = entity_competence.entity_id);
+DELETE FROM entity_competence
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = entity_competence.entity_id);
+UPDATE witness_attestations
+   SET entity_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = witness_attestations.entity_id)
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = witness_attestations.entity_id);
+`,
+  },
 ];

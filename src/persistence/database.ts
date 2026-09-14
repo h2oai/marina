@@ -1099,33 +1099,65 @@ export class MarinaDB {
     return crewsDb.getOpenCrewInvitations(this.db);
   }
 
+  // ─── Durable identity key ───────────────────────────────────────────────
+  //
+  // Entity ids are transient: an entity evicted after the reconnect grace is
+  // hard-deleted and the next name-login mints a fresh id. Reputation ledgers
+  // (standing, competence, witness attestations) must therefore be keyed by
+  // the durable world account — `users.id`, a stable UUID keyed by name that
+  // the durable memory service already binds to. Call sites keep passing
+  // entity ids; the delegates below resolve them here (migration 109
+  // backfilled legacy rows). Ids with no entity/user row (tests, service
+  // principals) pass through unchanged.
+
+  private durableKeyCache = new Map<string, string>();
+
+  durableEntityKey(entityId: string): string {
+    const cached = this.durableKeyCache.get(entityId);
+    if (cached) return cached;
+    const row = this.db
+      .query("SELECT u.id AS id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = ?")
+      .get(entityId) as { id: string } | null;
+    if (!row) return entityId;
+    this.durableKeyCache.set(entityId, row.id);
+    return row.id;
+  }
+
+  /** Durable key for a world account by name, or undefined when no account exists. */
+  durableKeyForName(name: string): string | undefined {
+    return this.getUserByName(name)?.id;
+  }
+
   // ─── Competence Persistence (delegated to db-competence.ts) ─────────────
 
   getCompetence(entityId: string, gate: string) {
-    return competenceDb.getCompetence(this.db, entityId, gate);
+    return competenceDb.getCompetence(this.db, this.durableEntityKey(entityId), gate);
   }
   listCompetenceForEntity(entityId: string) {
-    return competenceDb.listCompetenceForEntity(this.db, entityId);
+    return competenceDb.listCompetenceForEntity(this.db, this.durableEntityKey(entityId));
   }
   recordDemonstration(entityId: string, gate: string, unlockAt: number, now: number): void {
-    competenceDb.recordDemonstration(this.db, entityId, gate, unlockAt, now);
+    competenceDb.recordDemonstration(this.db, this.durableEntityKey(entityId), gate, unlockAt, now);
   }
   grantCompetence(entityId: string, gate: string): void {
-    competenceDb.grantCompetence(this.db, entityId, gate);
+    competenceDb.grantCompetence(this.db, this.durableEntityKey(entityId), gate);
   }
   // ─── Witness ledger (delegated to db-witness.ts) ─────────────────────
 
   createWitnessRow(input: Parameters<typeof witnessDb.createWitnessRow>[1]) {
-    return witnessDb.createWitnessRow(this.db, input);
+    return witnessDb.createWitnessRow(this.db, {
+      ...input,
+      entityId: this.durableEntityKey(input.entityId),
+    });
   }
   getWitnessRow(id: number) {
     return witnessDb.getWitnessRow(this.reader, id);
   }
   getOpenSupervisionWindow(entityId: string, gate: string, now?: number) {
-    return witnessDb.getOpenWindow(this.db, entityId, gate, now);
+    return witnessDb.getOpenWindow(this.db, this.durableEntityKey(entityId), gate, now);
   }
   consumeSupervisionWindow(entityId: string, gate: string, now?: number) {
-    return witnessDb.consumeWindow(this.db, entityId, gate, now);
+    return witnessDb.consumeWindow(this.db, this.durableEntityKey(entityId), gate, now);
   }
   resolveWitnessRow(
     id: number,
@@ -1135,29 +1167,44 @@ export class MarinaDB {
     return witnessDb.resolveWitnessRow(this.db, id, status, input);
   }
   listOpenWitnessRows(opts?: Parameters<typeof witnessDb.listOpenWitnessRows>[1]) {
-    return witnessDb.listOpenWitnessRows(this.db, opts);
+    return witnessDb.listOpenWitnessRows(
+      this.db,
+      opts?.entityId ? { ...opts, entityId: this.durableEntityKey(opts.entityId) } : opts,
+    );
   }
   countAttestedDemonstrations(entityId: string, gate: string) {
-    return witnessDb.countAttested(this.reader, entityId, gate);
+    return witnessDb.countAttested(this.reader, this.durableEntityKey(entityId), gate);
   }
 
   revokeCompetence(entityId: string, gate: string): void {
-    competenceDb.revokeCompetence(this.db, entityId, gate);
+    competenceDb.revokeCompetence(this.db, this.durableEntityKey(entityId), gate);
   }
 
   // ─── Standing Persistence (delegated to db-standing.ts) ─────────────────
 
   appendStandingEvent(row: Parameters<typeof standingDb.appendStandingEvent>[1]): void {
-    standingDb.appendStandingEvent(this.db, row);
+    standingDb.appendStandingEvent(this.db, {
+      ...row,
+      entityId: this.durableEntityKey(row.entityId),
+    });
   }
   computeStanding(entityId: string, halfLifeMs: number, horizonMs: number, now: number): number {
-    return standingDb.computeStanding(this.db, entityId, halfLifeMs, horizonMs, now);
+    return standingDb.computeStanding(
+      this.db,
+      this.durableEntityKey(entityId),
+      halfLifeMs,
+      horizonMs,
+      now,
+    );
+  }
+  countStandingEvents(entityId: string, kind: string, since: number): number {
+    return standingDb.countStandingEvents(this.db, this.durableEntityKey(entityId), kind, since);
   }
   getStandingCache(entityId: string) {
-    return standingDb.getStandingCache(this.db, entityId);
+    return standingDb.getStandingCache(this.db, this.durableEntityKey(entityId));
   }
   setStandingCache(entityId: string, standing: number, now: number): void {
-    standingDb.setStandingCache(this.db, entityId, standing, now);
+    standingDb.setStandingCache(this.db, this.durableEntityKey(entityId), standing, now);
   }
   listStandingEntities(): string[] {
     return standingDb.listStandingEntities(this.db);
@@ -1169,7 +1216,7 @@ export class MarinaDB {
     return standingDb.standingLeaderboard(this.db, limit);
   }
   ledgerForEntity(entityId: string, limit: number) {
-    return standingDb.ledgerForEntity(this.db, entityId, limit);
+    return standingDb.ledgerForEntity(this.db, this.durableEntityKey(entityId), limit);
   }
 
   // ─── Task Persistence (delegated to db-tasks.ts) ────────────────────────
@@ -2674,8 +2721,9 @@ export class MarinaDB {
     content: string,
     importance?: number,
     noteType?: string,
+    opts?: Parameters<typeof notesDb.addPoolNote>[6],
   ): number {
-    return notesDb.addPoolNote(this.db, poolId, entityName, content, importance, noteType);
+    return notesDb.addPoolNote(this.db, poolId, entityName, content, importance, noteType, opts);
   }
 
   getPoolNotes(poolId: string, limit = 100): NoteRow[] {

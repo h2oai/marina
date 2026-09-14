@@ -21,6 +21,7 @@
  * procedure, not a sub-zero number.
  */
 
+import { createHash } from "node:crypto";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
 
@@ -31,6 +32,9 @@ export const STANDING_HALF_LIFE_DAYS = Math.max(
 );
 
 const HALF_LIFE_MS = STANDING_HALF_LIFE_DAYS * 24 * 60 * 60 * 1000;
+
+/** Max `pool_note` credits one entity can earn per UTC day (anti-farming). */
+export const POOL_NOTE_DAILY_CAP = 10;
 
 /** Events older than this don't contribute to the rollup (still ledgered). */
 const ROLLUP_HORIZON_MS = 365 * 24 * 60 * 60 * 1000;
@@ -70,7 +74,7 @@ export const STANDING_AMOUNTS: Record<StandingKind, number> = {
   // isn't a dead end. Kept small: it moves a newcomer toward Citizen (rank 1 =
   // 5) without, on its own, clearing capability gates (e.g. code.exec = 5).
   quest_complete: 3,
-  pool_note: 1,
+  pool_note: 0.25,
   reflection_recalled: 0.5,
   crew_complete_member: 5,
   crew_complete_lead: 10,
@@ -253,8 +257,19 @@ export function recordFromEvent(
 ): void {
   switch (event.type) {
     case "pool_note": {
+      // Anti-farming: credit is keyed by normalized CONTENT (re-posting the
+      // same text earns nothing) and capped per UTC day. Before this, one
+      // credit per note id with no cap let ~100 `pool scratch add x` calls
+      // auto-promote an entity to rank 4 (the safety threshold) in an hour.
       const name = lookupName(event.entity) ?? "unknown";
-      record(db, event.entity, name, "pool_note", `pool_note:${event.noteId}`);
+      const dayStart = new Date(event.timestamp).setUTCHours(0, 0, 0, 0);
+      const today = db.countStandingEvents(event.entity, "pool_note", dayStart);
+      if (today >= POOL_NOTE_DAILY_CAP) return;
+      const digest = createHash("sha256")
+        .update(`${event.poolName}\n${event.content.trim().toLowerCase().replace(/\s+/g, " ")}`)
+        .digest("hex")
+        .slice(0, 16);
+      record(db, event.entity, name, "pool_note", `pool_note:${digest}`);
       return;
     }
     case "crew_stage_completed": {

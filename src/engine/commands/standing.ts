@@ -58,8 +58,10 @@ export function standingCommand(deps: StandingDeps): CommandDef {
         const lines = [header(`Standing leaderboard (top ${board.length})`), separator()];
         for (let i = 0; i < board.length; i++) {
           const row = board[i]!;
-          const entity = deps.getEntity(row.entityId);
-          const name = entity?.name ?? row.entityId;
+          // Ledger keys are durable account ids (users.id) since migration 109;
+          // legacy rows may still carry an entity id. Resolve either to a name.
+          const name =
+            deps.getEntity(row.entityId)?.name ?? db.getUser(row.entityId)?.name ?? row.entityId;
           lines.push(
             `  ${dim(String(i + 1).padStart(2))}. ${bold(name)} ${dim(`— ${row.standing.toFixed(1)}`)}`,
           );
@@ -69,16 +71,28 @@ export function standingCommand(deps: StandingDeps): CommandDef {
       }
 
       // standing | standing show <name>
+      // Standing belongs to the durable world account, so `show` works for
+      // entities that are offline (evicted) as long as the account exists.
       const targetName = sub === "show" ? tokens[1] : undefined;
-      const target = targetName ? deps.findAgentByName(targetName) : deps.getEntity(input.entity);
-      if (!target) {
+      const liveTarget = targetName
+        ? deps.findAgentByName(targetName)
+        : deps.getEntity(input.entity);
+      const account = targetName && !liveTarget ? db.getUserByName(targetName) : undefined;
+      if (!liveTarget && !account) {
         ctx.send(input.entity, `Unknown entity: ${targetName ?? input.entity}`);
         return;
       }
+      const target = liveTarget
+        ? {
+            id: liveTarget.id as string,
+            name: liveTarget.name,
+            rank: (liveTarget.properties.rank as number | undefined) ?? 0,
+          }
+        : { id: account!.id, name: account!.name, rank: account!.rank };
 
       const standing = getStanding(db, target.id);
       const derived = deriveRankFromStanding(standing);
-      const currentRank = (target.properties.rank as number | undefined) ?? 0;
+      const currentRank = target.rank;
       const ledger = ledgerFor(db, target.id, 12);
 
       const lines: string[] = [

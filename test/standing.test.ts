@@ -107,14 +107,14 @@ describe("Standing — civic-contribution ledger", () => {
     record(db, "e_alice", "Alice", "pool_note", "pool_note:1");
     record(db, "e_alice", "Alice", "pool_note", "pool_note:1");
     record(db, "e_alice", "Alice", "pool_note", "pool_note:1");
-    expect(computeFromLedger(db, "e_alice")).toBeCloseTo(1, 2); // not 3
+    expect(computeFromLedger(db, "e_alice")).toBeCloseTo(STANDING_AMOUNTS.pool_note, 2); // not 3×
   });
 
   it("different refs accumulate", () => {
     record(db, "e_alice", "Alice", "pool_note", "pool_note:1");
     record(db, "e_alice", "Alice", "pool_note", "pool_note:2");
     record(db, "e_alice", "Alice", "pool_note", "pool_note:3");
-    expect(computeFromLedger(db, "e_alice")).toBeCloseTo(3, 2);
+    expect(computeFromLedger(db, "e_alice")).toBeCloseTo(3 * STANDING_AMOUNTS.pool_note, 2);
   });
 
   it("decays exponentially with the configured half-life", () => {
@@ -172,7 +172,9 @@ describe("Standing — civic-contribution ledger", () => {
     const ledger = ledgerFor(db, "e_alice");
     expect(ledger).toHaveLength(1);
     expect(ledger[0]!.kind).toBe("pool_note");
-    expect(ledger[0]!.ref).toBe("pool_note:42");
+    // Ref is a content digest (anti-farming: re-posting the same text under a
+    // new note id earns nothing), not the note id.
+    expect(ledger[0]!.ref).toMatch(/^pool_note:[0-9a-f]{16}$/);
   });
 
   it("recordFromEvent skips events that don't map to standing kinds", () => {

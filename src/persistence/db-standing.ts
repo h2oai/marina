@@ -96,6 +96,21 @@ export function computeStanding(
   return row.total;
 }
 
+/** Number of ledger rows of one kind earned by an entity since `since` (ms). */
+export function countStandingEvents(
+  db: Database,
+  entityId: string,
+  kind: string,
+  since: number,
+): number {
+  const row = db
+    .query(
+      "SELECT COUNT(*) AS n FROM entity_standing WHERE entity_id = ? AND kind = ? AND earned_at >= ?",
+    )
+    .get(entityId, kind, since) as { n: number };
+  return row.n;
+}
+
 export function getStandingCache(db: Database, entityId: string): StandingCacheRow | undefined {
   return (
     (db
