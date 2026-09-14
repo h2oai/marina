@@ -16,7 +16,15 @@ import { parseMemoryServiceCommand } from "../src/memory/human-interface";
 import { MemoryService } from "../src/memory/service";
 import { handleMemoryServiceApi } from "../src/net/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
-import { closedValidity, independentEvidence } from "../src/persistence/db-memory-resolve";
+import {
+  closedValidity,
+  independentEvidence,
+  RELIABILITY_FLOOR,
+  SYBIL_POOL_CAP,
+  SYBIL_STANDING_FLOOR,
+  sybilPoolWeight,
+  writerReliability,
+} from "../src/persistence/db-memory-resolve";
 import { MarinaMemoryAssistance } from "../src/sdk/memory-assistance-client";
 import { MarinaMemoryClient } from "../src/sdk/memory-client";
 import { MEMORY_OPERATIONS } from "../src/sdk/memory-operations";
@@ -36,6 +44,18 @@ const make = (name: string) => {
   return { client, ...credential };
 };
 const raw = () => new Database(join(directory, "world.db"));
+/** World account (users.id = human principal id) so civic standing binds to
+ * the same durable key the memory service authorizes. */
+const makeUser = (name: string, standing = 0) => {
+  const id = crypto.randomUUID();
+  db.createUser({ id, name });
+  if (standing > 0) db.setStandingCache(id, standing, now);
+  const credential = db.issueMemoryCredential(id);
+  const client = new MarinaMemoryClient("http://test", credential.token, 35000, (r) =>
+    handleMemoryServiceApi(r, service),
+  );
+  return { client, principalId: id };
+};
 
 beforeEach(async () => {
   directory = mkdtempSync(join(tmpdir(), "marina-resolve-"));
@@ -218,19 +238,7 @@ it("evidence_weighted counts independent sources only and never produces an empt
 });
 
 it("evidence_weighted is Sybil-resistant: five fresh accounts corroborating A lose to one standing-40 writer with an independent source for B", async () => {
-  // World accounts (users.id = human principal id) so civic standing binds
-  // to the same durable key the memory service authorizes.
-  const makeUser = (name: string) => {
-    const id = crypto.randomUUID();
-    db.createUser({ id, name });
-    const credential = db.issueMemoryCredential(id);
-    const client = new MarinaMemoryClient("http://test", credential.token, 35000, (r) =>
-      handleMemoryServiceApi(r, service),
-    );
-    return { client, principalId: id };
-  };
-  const vera = makeUser("Vera");
-  db.setStandingCache(vera.principalId, 40, now);
+  const vera = makeUser("Vera", 40);
   const sybils = [1, 2, 3, 4, 5].map((i) => makeUser(`Sybil${i}`));
   for (const writer of [vera, ...sybils]) await owner.grant(space, writer.principalId, "writer");
 
@@ -272,32 +280,172 @@ it("evidence_weighted is Sybil-resistant: five fresh accounts corroborating A lo
   );
   expect(result.winner).toBe(b.id);
   // A: Sybil1 is the record author, so its own sighting is excluded once four
-  // OTHER writers support the claim → 4 independent pairs at reliability 0.05
-  // each (0.20). B: one writer at standing 40 → 0.05 + 0.95 * 0.4 = 0.43.
+  // OTHER writers support the claim → 4 independent fresh writers, pooled
+  // sublinearly: min(0.15, 0.05 * sqrt(4)) = 0.10. B: one established writer
+  // at standing 40 → 0.05 + 0.95 * 0.4 = 0.43.
   expect(result.evidence_counts).toEqual({ [a.id]: 4, [b.id]: 1 });
   const winner = await owner.get(space, b.id);
   expect(winner.metadata.resolution).toMatchObject({
     policy: "evidence_weighted",
     status: "winner",
     reliability_floor: 0.05,
+    sybil_standing_floor: SYBIL_STANDING_FLOOR,
+    sybil_pool_cap: SYBIL_POOL_CAP,
     evidence_weights: {
-      [a.id]: { weight: 0.2, independent_authors: 4, self_excluded: 1 },
-      [b.id]: { weight: 0.43, independent_authors: 1, self_excluded: 0 },
+      [a.id]: { weight: 0.1, independent_authors: 4, self_excluded: 1, sybil_writers: 4 },
+      [b.id]: { weight: 0.43, independent_authors: 1, self_excluded: 0, sybil_writers: 0 },
     },
   });
+  const weights = (winner.metadata.resolution as { evidence_weights: Record<string, unknown> })
+    .evidence_weights;
+  expect(weights[a.id]).toMatchObject({ sybil_pool: 0.1 });
+  expect(weights[b.id]).toMatchObject({ sybil_pool: 0 });
   expect(result.superseded.map((s) => s.id)).toEqual([a.id]);
 
-  // Same rows, same writers, but Vera at standing 0: pure writer count decides
-  // and the five-account claim wins — standing is what makes the difference.
+  // Same rows, same writers, but Vera at standing 0: she is a fresh writer too,
+  // so both sides are pools — 4 fresh (0.10) vs 1 fresh (0.05) — and the
+  // five-account claim wins. Standing is what makes the difference.
   db.setStandingCache(vera.principalId, 0, now);
   const nowA = await owner.get(space, a.id);
   const nowB = await owner.get(space, b.id);
   const recount = new Map(
     [nowA, nowB].map((record) => [record.id, independentEvidence(raw(), record)]),
   );
-  expect(recount.get(a.id)!.weight).toBeCloseTo(0.2, 9);
+  expect(recount.get(a.id)!.weight).toBeCloseTo(0.1, 9);
   expect(recount.get(b.id)!.weight).toBeCloseTo(0.05, 9);
   expect(recount.get(a.id)!.authors).toHaveLength(4);
+  expect(recount.get(b.id)!).toMatchObject({ sybil_writers: 1, sybil_pool: 0.05 });
+});
+
+/** Claim A written by the first fresh account, "corroborated" by one distinct
+ * sighting from each of `n` fresh accounts; claim B written by an established
+ * writer with ONE independent source. Returns both records. */
+async function seedSybilRace(n: number, established: { client: MarinaMemoryClient }) {
+  const sybils = Array.from({ length: n }, (_, i) => makeUser(`S${i + 1}`));
+  for (const writer of sybils) await owner.grant(space, writer.principalId, "writer");
+  const sightings = [];
+  for (const [i, sybil] of sybils.entries()) {
+    now += 10;
+    sightings.push(await sybil.client.capture(space, { doc: `sighting ${i + 1}: Berlin office` }));
+  }
+  now += 1000;
+  const a = await sybils[0]!.client.remember(space, {
+    content: "The office is in Berlin",
+    claim: claim("berlin"),
+    valid_time: { from: 0, until: null },
+    source_ids: sightings.map((s) => s.id),
+  });
+  now += 1000;
+  const extract = await established.client.capture(space, {
+    doc: `Companies register extract ${n}: registered office Paris`,
+  });
+  now += 1000;
+  const b = await established.client.remember(space, {
+    content: "The office is in Paris",
+    claim: claim("paris"),
+    valid_time: { from: 100, until: null },
+    source_ids: [extract.id],
+  });
+  now += 1000;
+  return { a, b };
+}
+
+// 32 is the admission cap on `source_ids` per record ("at most 32
+// identifiers"), so 32 distinct fresh corroborators is the largest race a
+// single record can stage; the 50-writer bound is asserted on the formula
+// below (the pool is constant at the cap from n = 9 onwards anyway).
+it.each([10, 32])(
+  "evidence_weighted stays Sybil-resistant at scale: %i fresh accounts corroborating A lose to one standing-40 writer for B",
+  async (n) => {
+    const vera = makeUser("Vera", 40);
+    await owner.grant(space, vera.principalId, "writer");
+    const { a, b } = await seedSybilRace(n, vera);
+    const result = await owner.resolve(
+      space,
+      a.id,
+      { policy: "evidence_weighted", competing: [b.id], rationale: "pool the fresh writers" },
+      `sybil-${n}`,
+    );
+    expect(result.winner).toBe(b.id);
+    // n-1 OTHER fresh writers (the author's own sighting is excluded) all sit
+    // in one pool: min(0.15, 0.05*sqrt(n-1)) = 0.15 for both 10 and 50 — the
+    // pool is bounded, so adding accounts stops helping. B: 0.43.
+    expect(result.evidence_counts).toEqual({ [a.id]: n - 1, [b.id]: 1 });
+    const winner = await owner.get(space, b.id);
+    const weights = (winner.metadata.resolution as { evidence_weights: Record<string, unknown> })
+      .evidence_weights;
+    expect(weights[a.id]).toMatchObject({
+      weight: SYBIL_POOL_CAP,
+      independent_authors: n - 1,
+      sybil_writers: n - 1,
+      sybil_pool: SYBIL_POOL_CAP,
+    });
+    expect(weights[b.id]).toMatchObject({ weight: 0.43, sybil_writers: 0, sybil_pool: 0 });
+    expect(sybilPoolWeight(n - 1)).toBe(SYBIL_POOL_CAP);
+    // 50 (and 10 000) fresh writers are worth exactly the same bounded pool,
+    // still under one standing-40 writer (0.43).
+    for (const many of [49, 50, 10_000]) {
+      expect(sybilPoolWeight(many)).toBe(SYBIL_POOL_CAP);
+      expect(sybilPoolWeight(many)).toBeLessThan(writerReliability(40));
+    }
+    // Even a barely-established single writer (standing 11 → 0.1545) beats the
+    // whole pool; one fresh writer alone is unchanged at the floor.
+    expect(writerReliability(11)).toBeGreaterThan(SYBIL_POOL_CAP);
+    expect(sybilPoolWeight(1)).toBe(RELIABILITY_FLOOR);
+    expect(sybilPoolWeight(2)).toBeLessThan(2 * RELIABILITY_FLOOR);
+  },
+);
+
+it("evidence_weighted: two established writers beat one — established writers still add linearly", async () => {
+  // Est1 + Est2 at standing 20 each → 2 × (0.05 + 0.95·0.20) = 0.48 for A;
+  // Vera at standing 40 → 0.43 for B. The pool is for fresh writers only.
+  const est1 = makeUser("Est1", 20);
+  const est2 = makeUser("Est2", 20);
+  const vera = makeUser("Vera", 40);
+  for (const writer of [est1, est2, vera]) await owner.grant(space, writer.principalId, "writer");
+  now += 10;
+  const s1 = await est1.client.capture(space, { doc: "lease agreement: Berlin office" });
+  now += 10;
+  const s2 = await est2.client.capture(space, { doc: "utility bill: Berlin office" });
+  now += 1000;
+  const a = await owner.remember(space, {
+    content: "The office is in Berlin",
+    claim: claim("berlin"),
+    valid_time: { from: 0, until: null },
+    source_ids: [s1.id, s2.id],
+  });
+  now += 1000;
+  const extract = await vera.client.capture(space, { doc: "register extract: Paris office" });
+  now += 1000;
+  const b = await vera.client.remember(space, {
+    content: "The office is in Paris",
+    claim: claim("paris"),
+    valid_time: { from: 100, until: null },
+    source_ids: [extract.id],
+  });
+  now += 1000;
+  const result = await owner.resolve(
+    space,
+    b.id,
+    { policy: "evidence_weighted", competing: [a.id], rationale: "two vouch for Berlin" },
+    "two-established",
+  );
+  expect(result.winner).toBe(a.id);
+  expect(result.evidence_counts).toEqual({ [a.id]: 2, [b.id]: 1 });
+  const winner = await owner.get(space, a.id);
+  const weights = (winner.metadata.resolution as { evidence_weights: Record<string, unknown> })
+    .evidence_weights;
+  expect(weights[a.id]).toMatchObject({
+    weight: 0.48,
+    independent_authors: 2,
+    sybil_writers: 0,
+    sybil_pool: 0,
+  });
+  expect(weights[b.id]).toMatchObject({ weight: 0.43, sybil_writers: 0 });
+  // Boundary: standing exactly at the floor counts as established (linear).
+  const edge = independentEvidence(raw(), await owner.get(space, a.id));
+  expect(edge.authors.every((w) => w.standing >= SYBIL_STANDING_FLOOR)).toBe(true);
+  expect(edge.weight).toBeCloseTo(0.48, 9);
 });
 
 it("await_confirmation lists the set under kind pending until a later reaffirm or resolve", async () => {

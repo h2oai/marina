@@ -17,6 +17,7 @@ import {
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { DAY_MS, HOUR_MS } from "../constants";
+import { ACCUMULATION_NOTE_PREFIX, parseAccumulationReceipt } from "../memory-dispatch";
 import { HYGIENE_NOTE_PREFIX } from "../memory-hygiene";
 import { requiresPersistence } from "./command-messages";
 
@@ -137,6 +138,24 @@ export function orientCommand(deps: {
       if (hygiene) {
         const summary = hygiene.content.slice(HYGIENE_NOTE_PREFIX.length).trim();
         lines.push(`    Hygiene: ${summary} ${dim(relativeTime(hygiene.created_at, now))}`);
+      }
+
+      // Latest accumulation receipt (process-tier `[accumulation] job=… topic=…
+      // notes=N max_note=M` note written by runAccumulationDispatch when ≥ N
+      // same-topic notes were handed to a reflector). The count of the
+      // caller's OPEN assistance jobs is deliberately not shown: `work_open`
+      // is derived through the async assistance lease check (`assist_jobs`),
+      // orient is synchronous, and MarinaDB exposes no direct jobs accessor —
+      // `memory jobs` is the live view; the receipt names the job id.
+      const receipt = allNotes.find(
+        (n) => n.pool_id == null && n.content.startsWith(ACCUMULATION_NOTE_PREFIX),
+      );
+      if (receipt) {
+        const parsed = parseAccumulationReceipt(receipt.content);
+        const summary = parsed
+          ? `${parsed.notes} notes about "${parsed.topic}" handed to reflector job ${parsed.jobId}`
+          : receipt.content.slice(ACCUMULATION_NOTE_PREFIX.length).trim();
+        lines.push(`    Accumulation: ${summary} ${dim(relativeTime(receipt.created_at, now))}`);
       }
       lines.push("");
 

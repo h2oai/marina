@@ -16,12 +16,16 @@
  *                         principal) pairs, excluding self-derived/twin sources,
  *                         and excluding sources captured by the record's own
  *                         author whenever another author supports it. Each
- *                         independent writer is weighted by civic reliability
- *                         (`RELIABILITY_FLOOR + (1 - floor) * clamp(standing/100)`),
- *                         so N fresh low-standing accounts corroborating one
- *                         claim do not outweigh one established writer with an
- *                         independent source (the Sybil rule). Ties fall back to
- *                         raw pair count, then recency.
+ *                         ESTABLISHED writer (standing ≥ `SYBIL_STANDING_FLOOR`)
+ *                         adds its civic reliability linearly
+ *                         (`RELIABILITY_FLOOR + (1 - floor) * clamp(standing/100)`);
+ *                         every LOW-standing writer contributes through one
+ *                         shared, sublinear, bounded pool
+ *                         (`min(SYBIL_POOL_CAP, RELIABILITY_FLOOR * sqrt(n))`),
+ *                         so N fresh accounts corroborating one claim never
+ *                         outweigh one established writer with an independent
+ *                         source — for ANY N (the Sybil rule). Ties fall back
+ *                         to raw pair count, then recency.
  *  - await_confirmation — nothing changes; the set is listed under review kind
  *                         `pending` until a later `resolve` or `reaffirm`.
  *  - keep_both          — the conflict is irreducible (TANGLE-style): every
@@ -69,26 +73,57 @@ const SELF_DERIVED_MARKERS = ["marina-memory://", "marina.memory.assistance.requ
 /**
  * Reliability floor for an independent writer with zero (or unknown)
  * standing. Kept strictly positive so a single genuine fresh account still
- * counts as evidence, and small enough that five of them (0.25) lose to one
- * writer at standing 40 (0.05 + 0.95 * 0.40 = 0.43). Standing is read from
- * the same durable-principal rollup cache the shared-ranking term uses.
+ * counts as evidence (one fresh writer = 0.05, well under one writer at
+ * standing 40 = 0.05 + 0.95 * 0.40 = 0.43). Standing is read from the same
+ * durable-principal rollup cache the shared-ranking term uses.
  */
 export const RELIABILITY_FLOOR = 0.05;
+
+/**
+ * Sybil aggregation. Writers whose standing is below this floor (= below
+ * rank 1, the same line `LOW_STANDING_WRITE_THRESHOLD` draws for shared-write
+ * review) are "fresh": individually they are indistinguishable from throwaway
+ * accounts, so they never add linearly. All fresh writers on one record share
+ * ONE pool:
+ *
+ *     pool(n) = min(SYBIL_POOL_CAP, RELIABILITY_FLOOR * sqrt(n))
+ *
+ * sublinear (the 2nd fresh account is worth less than the 1st, the 100th
+ * almost nothing) and bounded (10, 50 or 10 000 fresh accounts together are
+ * worth at most 0.15 — less than a single writer at standing 11:
+ * 0.05 + 0.95 * 0.11 = 0.1545). One fresh writer alone is unchanged (0.05).
+ * Established writers (standing ≥ floor) still add `writerReliability`
+ * linearly, so two established writers beat one:
+ *
+ *     weight = Σ_established writerReliability(standing) + pool(n_fresh)
+ */
+export const SYBIL_STANDING_FLOOR = 5;
+export const SYBIL_POOL_CAP = 0.15;
 
 export function writerReliability(standing: number): number {
   const unit = Math.min(1, Math.max(0, standing / REPUTATION_STANDING_CEILING));
   return RELIABILITY_FLOOR + (1 - RELIABILITY_FLOOR) * unit;
 }
 
+/** Pooled contribution of `n` fresh (below-floor) writers — see SYBIL_STANDING_FLOOR. */
+export function sybilPoolWeight(n: number): number {
+  if (n <= 0) return 0;
+  return Math.min(SYBIL_POOL_CAP, RELIABILITY_FLOOR * Math.sqrt(n));
+}
+
 export interface IndependentEvidence {
   /** Distinct (content hash, author principal) pairs after every exclusion. */
   count: number;
-  /** Sum of writer reliability over the distinct independent authors. */
+  /** Σ established writer reliability + the fresh-writer pool (see SYBIL_STANDING_FLOOR). */
   weight: number;
   /** Independent authors (principal ids; `null` = author unknown) with their standing. */
   authors: { author: string | null; standing: number; pairs: number }[];
   /** Pairs dropped because the record's own author captured them while another author supports it. */
   self_excluded: number;
+  /** Independent authors below SYBIL_STANDING_FLOOR — they share `sybil_pool`. */
+  sybil_writers: number;
+  /** The bounded pooled weight those fresh writers contributed together. */
+  sybil_pool: number;
 }
 
 /**
@@ -99,7 +134,14 @@ export interface IndependentEvidence {
  * body citing the record itself are provenance, never evidence.
  */
 export function independentEvidence(db: Database, record: MemoryRecord): IndependentEvidence {
-  const empty: IndependentEvidence = { count: 0, weight: 0, authors: [], self_excluded: 0 };
+  const empty: IndependentEvidence = {
+    count: 0,
+    weight: 0,
+    authors: [],
+    self_excluded: 0,
+    sybil_writers: 0,
+    sybil_pool: 0,
+  };
   if (!record.source_ids.length) return empty;
   const rows = db
     .query(
@@ -138,11 +180,17 @@ export function independentEvidence(db: Database, record: MemoryRecord): Indepen
       pairs: count,
     }))
     .sort((a, b) => (a.author ?? "").localeCompare(b.author ?? ""));
+  // Established writers add linearly; fresh writers share one bounded pool.
+  const established = authors.filter((entry) => entry.standing >= SYBIL_STANDING_FLOOR);
+  const fresh = authors.length - established.length;
+  const pool = sybilPoolWeight(fresh);
   return {
     count: kept.length,
-    weight: authors.reduce((sum, entry) => sum + writerReliability(entry.standing), 0),
+    weight: established.reduce((sum, entry) => sum + writerReliability(entry.standing), 0) + pool,
     authors,
     self_excluded: others.length > 0 ? selfPairs : 0,
+    sybil_writers: fresh,
+    sybil_pool: pool,
   };
 }
 
@@ -362,10 +410,17 @@ export function resolveMemory(
                       weight: Number(found.weight.toFixed(4)),
                       independent_authors: found.authors.length,
                       self_excluded: found.self_excluded,
+                      // Sybil aggregation: how many fresh writers were pooled
+                      // and what the whole pool was worth (≤ sybil_pool_cap).
+                      sybil_writers: found.sybil_writers,
+                      sybil_pool: Number(found.sybil_pool.toFixed(4)),
                     },
                   ]),
                 ),
                 reliability_floor: RELIABILITY_FLOOR,
+                // weight = Σ established writerReliability + min(cap, floor·√n_fresh)
+                sybil_standing_floor: SYBIL_STANDING_FLOOR,
+                sybil_pool_cap: SYBIL_POOL_CAP,
               }
             : {}),
         });

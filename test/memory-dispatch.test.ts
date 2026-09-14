@@ -30,19 +30,24 @@ import {
   ACCUMULATION_TASK_MARKER,
   ACCUMULATION_TRIGGER_NOTES,
   ACCUMULATION_WINDOW_MS,
+  accumulationNotifyKey,
   clusterNotesByTopic,
   createDispatchState,
+  DISPATCH_STATE_OWNER,
   dispatchSharedWriteReview,
   engineSharedWriteHook,
+  formatAccumulationReceipt,
   helperSpawnCommand,
   isMemoryAccumulationTick,
   LOW_STANDING_WRITE_THRESHOLD,
   MEMORY_ACCUMULATION_PHASE,
   type MemoryDispatchDeps,
   type MemoryDispatchState,
+  parseAccumulationReceipt,
   runAccumulationDispatch,
   SHARED_WRITE_DEBOUNCE_MS,
   SHARED_WRITE_REVIEW_MARKER,
+  sharedWriteDebounceKey,
 } from "../src/engine/memory-dispatch";
 import { MEMORY_HYGIENE_PHASE } from "../src/engine/memory-hygiene";
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
@@ -283,7 +288,7 @@ describe("accumulation → reflector", () => {
     expect(tells).toHaveLength(1);
     // Cooldown elapsed (the window and the cooldown are both 24h, so age the
     // last notification rather than the clock — the notes must stay in-window).
-    state.notified.set(`accumulation:${OWNER_ID}`, now - ACCUMULATION_NOTIFY_COOLDOWN_MS - 1);
+    state.notified.set(accumulationNotifyKey(OWNER), now - ACCUMULATION_NOTIFY_COOLDOWN_MS - 1);
     const [nextDay] = await runAccumulationDispatch(db, noHelper, state, now + HOUR);
     expect(nextDay!.notified).toBe(true);
     expect(tells).toHaveLength(2);
@@ -291,6 +296,58 @@ describe("accumulation → reflector", () => {
     const [filed] = await runAccumulationDispatch(db, deps(), state, now + 2 * HOUR);
     expect(filed!.dispatched).toBe(true);
     expect(await openJobs()).toHaveLength(1);
+  });
+
+  it("the once-a-day notification survives a restart (durable stamp, cache read-through)", async () => {
+    setTrustProfile("shared");
+    seedAccumulation(ACCUMULATION_TRIGGER_NOTES);
+    const now = Date.now();
+    const noHelper = deps({ findRunningHelper: () => undefined });
+    const [first] = await runAccumulationDispatch(db, noHelper, state, now);
+    expect(first).toMatchObject({ notified: true, skipped: "no-helper" });
+    expect(tells).toHaveLength(1);
+    // The stamp is a core-memory row owned by the system namespace, keyed by
+    // the entity NAME (ids are re-minted per login) — never by anyone's login.
+    const row = db.getCoreMemory(DISPATCH_STATE_OWNER, accumulationNotifyKey(OWNER));
+    expect(row?.value).toBe(String(now));
+    expect(db.listCoreMemory(OWNER)).toEqual([]);
+    // "Restart": a brand-new in-process state against the same DB.
+    const rebooted = createDispatchState();
+    expect(rebooted.notified.size).toBe(0);
+    const [again] = await runAccumulationDispatch(db, noHelper, rebooted, now + HOUR);
+    expect(again).toMatchObject({ notified: false, skipped: "no-helper" });
+    expect(tells).toHaveLength(1);
+    // The miss populated the cache; subsequent reads never touch the DB.
+    expect(rebooted.notified.get(accumulationNotifyKey(OWNER))).toBe(now);
+    // Past the cooldown the fresh process notifies again and re-stamps. The
+    // window and the cooldown are both 24h, so age the DURABLE stamp rather
+    // than the clock (the notes must stay in-window) — a fresh process must
+    // read the row, not a cache it does not have.
+    db.setCoreMemory(
+      DISPATCH_STATE_OWNER,
+      accumulationNotifyKey(OWNER),
+      String(now - ACCUMULATION_NOTIFY_COOLDOWN_MS - 1),
+    );
+    const [nextDay] = await runAccumulationDispatch(
+      db,
+      noHelper,
+      createDispatchState(),
+      now + HOUR,
+    );
+    expect(nextDay!.notified).toBe(true);
+    expect(tells).toHaveLength(2);
+    expect(db.getCoreMemory(DISPATCH_STATE_OWNER, accumulationNotifyKey(OWNER))?.value).toBe(
+      String(now + HOUR),
+    );
+  });
+
+  it("receipt notes round-trip through format/parse (orient reads them)", () => {
+    const receipt = { jobId: "job-42", topic: "amber deploy", notes: 8, maxNote: 917 };
+    const line = formatAccumulationReceipt(receipt);
+    expect(line).toBe("[accumulation] job=job-42 topic=amber deploy notes=8 max_note=917");
+    expect(parseAccumulationReceipt(line)).toEqual(receipt);
+    expect(parseAccumulationReceipt("[accumulation] malformed")).toBeUndefined();
+    expect(parseAccumulationReceipt("[hygiene] stale=1")).toBeUndefined();
   });
 
   it("clusters deterministically by the most shared term", () => {
@@ -405,6 +462,43 @@ describe("low-standing shared write → evaluator", () => {
     expect(fourth.dispatched).toBe(true);
     expect(fourth.jobId).not.toBe(first.jobId);
     expect(await openJobs()).toHaveLength(1);
+    expect(tells).toEqual([]);
+  });
+
+  it("the per-writer hour debounce survives a restart (durable stamp, cache read-through)", async () => {
+    setTrustProfile("shared");
+    standings.set(OWNER_ID, 0);
+    const now = Date.now();
+    const first = await dispatchSharedWriteReview(db, deps(), state, write(1), now);
+    expect(first.dispatched).toBe(true);
+    const key = sharedWriteDebounceKey(OWNER);
+    expect(db.getCoreMemory(DISPATCH_STATE_OWNER, key)?.value).toBe(String(now));
+    expect(db.listCoreMemory(OWNER)).toEqual([]); // nothing leaks into the writer's own core memory
+    // The first review is withdrawn so the open-job guard cannot mask the
+    // debounce; then "restart" with a fresh in-process state.
+    await op(OWNER, { operation: "assist_cancel", id: first.jobId! });
+    expect(await openJobs()).toEqual([]);
+    const rebooted = createDispatchState();
+    const second = await dispatchSharedWriteReview(db, deps(), rebooted, write(2), now + 60_000);
+    expect(second).toMatchObject({ dispatched: false, skipped: "debounced" });
+    expect(await openJobs()).toEqual([]);
+    expect(rebooted.sharedWriteFiled.get(key)).toBe(now); // populated by the read-through
+    // Same fresh process, hour elapsed → files, and the durable stamp advances.
+    const later = now + SHARED_WRITE_DEBOUNCE_MS;
+    const third = await dispatchSharedWriteReview(db, deps(), rebooted, write(3), later);
+    expect(third.dispatched).toBe(true);
+    expect(db.getCoreMemory(DISPATCH_STATE_OWNER, key)?.value).toBe(String(later));
+    // A corrupt stamp behaves like a missing one (the guard degrades open, never wedges).
+    db.setCoreMemory(DISPATCH_STATE_OWNER, key, "not-a-time");
+    await op(OWNER, { operation: "assist_cancel", id: third.jobId! });
+    const fourth = await dispatchSharedWriteReview(
+      db,
+      deps(),
+      createDispatchState(),
+      write(4),
+      later + 60_000,
+    );
+    expect(fourth.dispatched).toBe(true);
     expect(tells).toEqual([]);
   });
 

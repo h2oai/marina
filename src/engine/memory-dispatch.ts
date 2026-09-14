@@ -33,11 +33,21 @@
  * to have linked notes already, which the accumulation case by definition
  * lacks.
  *
- * Debounce state is in-process (`MemoryDispatchState`), reset on restart.
- * The durable guards — one open marked job per account/role, and the
- * `[accumulation] … max_note=<id>` process note — survive restarts; the
- * in-memory maps only suppress notification/refile chatter inside a process
- * lifetime.
+ * Debounce state is DURABLE. The two stamps — "owner told there is no
+ * reflector" (once a day) and "shared-write review filed for this writer"
+ * (once an hour) — live in the existing core-memory KV under the
+ * system-owned row owner `DISPATCH_STATE_OWNER` (`memory:dispatch`), keyed by
+ * the writer's entity NAME (entity ids are re-minted on every login, names
+ * are the durable identity). Login names are sanitized to `[A-Za-z0-9_]`, so
+ * the `memory:` owner can never collide with a real entity and never shows
+ * in anyone's `memory list` / `orient`. No migration: one row per stamp,
+ * `INSERT`/`UPDATE` by primary key, written synchronously off the hot path
+ * (the hook already runs detached). The in-process maps in
+ * `MemoryDispatchState` are a read-through cache over those rows: a cache
+ * hit never touches the DB, a miss reads the row once, every write updates
+ * both. A restart therefore still honours a stamp written minutes earlier.
+ * The other durable guards — one open marked job per account/role, and the
+ * `[accumulation] … max_note=<id>` process note — are unchanged.
  */
 
 import { getStanding } from "../agent/standing";
@@ -159,11 +169,16 @@ export interface MemoryDispatchDeps {
   warn?: (message: string, detail?: Record<string, unknown>) => void;
 }
 
-/** In-process debounce state; one per engine (see `engineDispatchState`). */
+/**
+ * Read-through cache over the durable debounce stamps; one per engine (see
+ * `engineDispatchState`). Both maps are keyed by the SAME string as the
+ * core-memory row (`accumulationNotifyKey` / `sharedWriteDebounceKey`), so a
+ * fresh state against the same DB sees every stamp an earlier process wrote.
+ */
 export interface MemoryDispatchState {
-  /** Last "no helper running" notification per `<trigger>:<entity>` key. */
+  /** Last "no helper running" notification, per `accumulationNotifyKey(name)`. */
   notified: Map<string, number>;
-  /** Last shared-write review filed per writer entity id. */
+  /** Last shared-write review filed, per `sharedWriteDebounceKey(name)`. */
   sharedWriteFiled: Map<string, number>;
 }
 
@@ -171,8 +186,57 @@ export function createDispatchState(): MemoryDispatchState {
   return { notified: new Map(), sharedWriteFiled: new Map() };
 }
 
+/** System-owned core-memory row owner for the durable debounce stamps. */
+export const DISPATCH_STATE_OWNER = "memory:dispatch";
+
+/** Core-memory key of the "owner told no reflector is running" stamp. */
+export function accumulationNotifyKey(entityName: string): string {
+  return `accumulation:notified:${entityName}`;
+}
+
+/** Core-memory key of the "shared-write review filed for this writer" stamp. */
+export function sharedWriteDebounceKey(entityName: string): string {
+  return `shared-write:last:${entityName}`;
+}
+
+/** Last stamp for `key`: the cache first, then the durable row (cached on hit). */
+function readStamp(db: MarinaDB, cache: Map<string, number>, key: string): number | undefined {
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  let durable: number | undefined;
+  try {
+    const row = db.getCoreMemory(DISPATCH_STATE_OWNER, key);
+    const parsed = row ? Number(row.value) : Number.NaN;
+    if (Number.isFinite(parsed)) durable = parsed;
+  } catch {
+    // An unreadable stamp behaves like a missing one: the in-memory guard still holds.
+  }
+  if (durable !== undefined) cache.set(key, durable);
+  return durable;
+}
+
+/** Stamp `key` at `now` in the cache AND the durable row (best effort). */
+function writeStamp(
+  db: MarinaDB,
+  cache: Map<string, number>,
+  key: string,
+  now: number,
+  warn?: MemoryDispatchDeps["warn"],
+): void {
+  cache.set(key, now);
+  try {
+    db.setCoreMemory(DISPATCH_STATE_OWNER, key, String(now));
+  } catch (error) {
+    warn?.("Memory dispatch debounce stamp not persisted", {
+      key,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 /** A helper is offline: tell the owner the spawn command at most once per cooldown. */
 function notifyOnce(
+  db: MarinaDB,
   deps: MemoryDispatchDeps,
   state: MemoryDispatchState,
   key: string,
@@ -181,9 +245,9 @@ function notifyOnce(
   now: number,
   cooldownMs: number,
 ): boolean {
-  const last = state.notified.get(key);
+  const last = readStamp(db, state.notified, key);
   if (last !== undefined && now - last < cooldownMs) return false;
-  state.notified.set(key, now);
+  writeStamp(db, state.notified, key, now, deps.warn);
   deps.tell(entity, text);
   return true;
 }
@@ -346,6 +410,30 @@ function lastAccumulatedMaxId(notes: NoteRow[]): number {
   return match ? Number(match[1]) : 0;
 }
 
+export interface AccumulationReceipt {
+  jobId: string;
+  topic: string;
+  notes: number;
+  maxNote: number;
+}
+
+/** Render the receipt note — one source for the writer and `parseAccumulationReceipt`. */
+export function formatAccumulationReceipt(receipt: AccumulationReceipt): string {
+  return `${ACCUMULATION_NOTE_PREFIX} job=${receipt.jobId} topic=${receipt.topic} notes=${receipt.notes} max_note=${receipt.maxNote}`;
+}
+
+/** Parse a `[accumulation] job=… topic=… notes=N max_note=M` receipt (`orient` reads it). */
+export function parseAccumulationReceipt(content: string): AccumulationReceipt | undefined {
+  const match = content.match(/^\[accumulation\] job=(\S+) topic=(.+?) notes=(\d+) max_note=(\d+)/);
+  if (!match) return undefined;
+  return {
+    jobId: match[1]!,
+    topic: match[2]!,
+    notes: Number(match[3]),
+    maxNote: Number(match[4]),
+  };
+}
+
 export async function runAccumulationDispatch(
   db: MarinaDB,
   deps: MemoryDispatchDeps,
@@ -420,9 +508,10 @@ async function accumulationForEntity(
   const helper = deps.findRunningHelper(helperRoleName("reflector"));
   if (!helper) {
     const notified = notifyOnce(
+      db,
       deps,
       state,
-      `accumulation:${entity.id}`,
+      accumulationNotifyKey(entity.name),
       entity.id,
       `Memory: ${ids.length} recent notes about "${cluster.topic}" could be consolidated into one lesson. No memory-reflector is running — start one with: ${helperSpawnCommand("reflector")}`,
       now,
@@ -438,7 +527,7 @@ async function accumulationForEntity(
   });
   db.createNote(
     entity.name,
-    `${ACCUMULATION_NOTE_PREFIX} job=${jobId} topic=${cluster.topic} notes=${ids.length} max_note=${maxId}`,
+    formatAccumulationReceipt({ jobId, topic: cluster.topic, notes: ids.length, maxNote: maxId }),
     undefined,
     { tier: "process", noteType: "observation", importance: 3 },
   );
@@ -509,7 +598,9 @@ export async function dispatchSharedWriteReview(
   if (deps.standing(write.entity, now) >= LOW_STANDING_WRITE_THRESHOLD) {
     return { ...base, skipped: "sufficient-standing" };
   }
-  const last = state.sharedWriteFiled.get(write.entity);
+  // Durable per-writer debounce (survives restarts; see module doc).
+  const debounceKey = sharedWriteDebounceKey(write.name);
+  const last = readStamp(db, state.sharedWriteFiled, debounceKey);
   if (last !== undefined && now - last < SHARED_WRITE_DEBOUNCE_MS) {
     return { ...base, skipped: "debounced" };
   }
@@ -522,7 +613,7 @@ export async function dispatchSharedWriteReview(
   const op: ResidentOp = (request) => deps.residentMemoryOperation(write.name, request);
   const open = await findOpenMarkedJob(op, user.id, "evaluator", SHARED_WRITE_REVIEW_MARKER);
   if (open) {
-    state.sharedWriteFiled.set(write.entity, now);
+    writeStamp(db, state.sharedWriteFiled, debounceKey, now, deps.warn);
     return { ...base, jobId: open, skipped: "open-job" };
   }
   const jobId = await fileHelperJob(op, {
@@ -531,7 +622,7 @@ export async function dispatchSharedWriteReview(
     helper,
     task: sharedWriteReviewTask(write),
   });
-  state.sharedWriteFiled.set(write.entity, now);
+  writeStamp(db, state.sharedWriteFiled, debounceKey, now, deps.warn);
   return { ...base, jobId, dispatched: true };
 }
 
