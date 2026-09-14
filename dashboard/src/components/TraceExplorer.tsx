@@ -16,6 +16,8 @@ import type {
   TracesResponse,
   TraceView,
 } from "../lib/types";
+import { parseReceiptAttribute } from "./memory-ops/format";
+import { MemoryReceiptBlock } from "./memory-ops/MemoryReceiptBlock";
 
 const STATUS_CLASS: Record<TraceStatus, string> = {
   running: "text-cyan-300",
@@ -496,6 +498,17 @@ function metricDetails(span: TraceSpanView): string | undefined {
   return values.length > 0 ? values.join(" · ") : undefined;
 }
 
+/**
+ * A span that carried a `marina.memory.receipt.v1` receipt renders a Memory
+ * block. `cacheHit` is a separate optional attribute the response cache stamps.
+ */
+function memoryReceiptDetails(span: TraceSpanView) {
+  const receipt = parseReceiptAttribute(span.attributes.memoryReceipt);
+  if (!receipt) return undefined;
+  const cacheHit = span.attributes.memoryCacheHit;
+  return { receipt, cacheHit: typeof cacheHit === "boolean" ? cacheHit : undefined };
+}
+
 function TraceRow({
   trace,
   selected,
@@ -548,6 +561,7 @@ function SpanTree({ trace }: { trace: TraceView }) {
       {trace.spans.map((span) => {
         const routing = routeDetails(span);
         const metrics = metricDetails(span);
+        const memory = memoryReceiptDetails(span);
         return (
           <div
             key={span.spanId}
@@ -575,6 +589,7 @@ function SpanTree({ trace }: { trace: TraceView }) {
                 {metrics}
               </div>
             )}
+            {memory && <MemoryReceiptBlock receipt={memory.receipt} cacheHit={memory.cacheHit} />}
           </div>
         );
       })}

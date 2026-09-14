@@ -350,6 +350,84 @@ describe("TraceExplorerView", () => {
   });
 });
 
+describe("TraceExplorerView · memory receipt", () => {
+  it("renders a Memory block from a span's memoryReceipt attribute", () => {
+    const receipt = {
+      schema: "marina.memory.receipt.v1",
+      requestId: "req-visible",
+      entity: "Ada",
+      tiers: [
+        {
+          tier: "evidence",
+          ids: [
+            { id: "r1", version: 2 },
+            { id: "r2", version: 1 },
+          ],
+          bytes: 900,
+        },
+        { tier: "trusted", ids: [{ id: "n1" }], bytes: 300 },
+      ],
+      budgetBytes: 2048,
+      usedBytes: 1200,
+      truncated: true,
+      degraded: ["proposal:world_identity_required"],
+    };
+    const withReceipt = {
+      ...data,
+      traces: [
+        {
+          ...data.traces[0]!,
+          spans: data.traces[0]!.spans.map((span) =>
+            span.spanId === "request"
+              ? {
+                  ...span,
+                  attributes: {
+                    ...span.attributes,
+                    memoryReceipt: JSON.stringify(receipt),
+                    memoryCacheHit: true,
+                  },
+                }
+              : span,
+          ),
+        },
+      ],
+    };
+    render(<TraceExplorerView data={withReceipt} isLoading={false} onRefresh={() => {}} />);
+    const block = screen.getByLabelText("Memory receipt");
+    expect(block).toHaveTextContent("Memory");
+    expect(block).toHaveTextContent("1.2 KB / 2.0 KB (59%)");
+    expect(block).toHaveTextContent("truncated");
+    expect(block).toHaveTextContent("cache hit");
+    expect(block).toHaveTextContent("degraded: proposal:world_identity_required");
+    const segments = [...block.querySelectorAll<HTMLElement>("[data-tier]")];
+    expect(segments.map((segment) => segment.dataset.tier)).toEqual(["trusted", "evidence"]);
+    expect(segments[1]!.dataset.bytes).toBe("900");
+    // Legend carries the per-tier counts.
+    expect(block).toHaveTextContent("evidence×2");
+    // Existing routing rendering is untouched.
+    expect(screen.getByText(/strategy: adaptive/)).toBeInTheDocument();
+  });
+
+  it("ignores a malformed receipt attribute instead of throwing", () => {
+    const broken = {
+      ...data,
+      traces: [
+        {
+          ...data.traces[0]!,
+          spans: data.traces[0]!.spans.map((span) =>
+            span.spanId === "request"
+              ? { ...span, attributes: { ...span.attributes, memoryReceipt: "{not json" } }
+              : span,
+          ),
+        },
+      ],
+    };
+    render(<TraceExplorerView data={broken} isLoading={false} onRefresh={() => {}} />);
+    expect(screen.queryByLabelText("Memory receipt")).not.toBeInTheDocument();
+    expect(screen.getByText("req-visible")).toBeInTheDocument();
+  });
+});
+
 describe("traceSpanDepth", () => {
   it("bounds malformed cycles instead of looping", () => {
     const spans: TraceSpanView[] = [

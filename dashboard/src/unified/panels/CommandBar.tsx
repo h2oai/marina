@@ -24,6 +24,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { MemoryOpsTab } from "../../components/MemoryOpsTab";
 import {
   useAdapters,
   useBenchmarks,
@@ -94,6 +95,7 @@ export type MessageType =
   | "adapters"
   | "mcp"
   | "config"
+  | "memory"
   | "markets"
   | "experiments"
   | "benchmarks"
@@ -220,6 +222,7 @@ const ADMIN_TABS: TabDef[] = [
   { key: "connectors", label: "Integrations" },
   { key: "mcp", label: "MCP" },
   { key: "config", label: "Config" },
+  { key: "memory", label: "Memory" },
 ];
 
 const _ALL_DATA_TAB_KEYS = new Set([...COORD_TABS, ...ADMIN_TABS].map((t) => t.key));
@@ -2437,6 +2440,24 @@ export const CommandBar = memo(
     const [activeTab, setActiveTab] = useState<MessageType>("all");
     const [cmdExpanded, setCmdExpanded] = useState(false);
     const [coordDetail, setCoordDetail] = useState<CoordDetail | null>(null);
+    const [memoryFocusJobId, setMemoryFocusJobId] = useState<string | undefined>();
+
+    // Hand-off from the canvas MEMORY layer inspector (unified/lib/
+    // memory-map-admin-link.ts). `preventDefault()` tells the dispatcher this
+    // surface claimed the event, so the inspector hides its fallback hint.
+    useEffect(() => {
+      const openAdmin = (event: Event) => {
+        const detail = (event as CustomEvent<{ tab?: string; jobId?: string }>).detail;
+        if (detail?.tab !== "memory") return;
+        event.preventDefault();
+        setMemoryFocusJobId(detail.jobId);
+        setActiveTab("memory");
+        setCoordDetail(null);
+        setCmdExpanded(true);
+      };
+      window.addEventListener("marina:open-admin", openAdmin);
+      return () => window.removeEventListener("marina:open-admin", openAdmin);
+    }, []);
     const [inputValue, setInputValue] = useState("");
     const [loginName, setLoginName] = useState("");
     const inputRef = useRef<HTMLInputElement>(null);
@@ -3149,6 +3170,16 @@ export const CommandBar = memo(
         {/* Adapters merged into Integrations tab */}
         {isCoordTab && !coordDetail && activeTab === "mcp" && <McpAdminTab />}
         {isCoordTab && !coordDetail && activeTab === "config" && <ConfigAdminTab />}
+        {isCoordTab && !coordDetail && activeTab === "memory" && (
+          <div className="uc-cmd-msgs" style={{ overflow: "auto", padding: "6px" }}>
+            <MemoryOpsTab
+              focusJobId={memoryFocusJobId}
+              onOpenTrace={(traceId) =>
+                window.dispatchEvent(new CustomEvent("marina:open-traces", { detail: { traceId } }))
+              }
+            />
+          </div>
+        )}
 
         {/* Login row — shown when not logged in */}
         {!loggedIn && (

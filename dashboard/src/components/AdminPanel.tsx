@@ -38,6 +38,7 @@ import { deleteApi, describeApiError, fetchApi, patchApi, postApi, putApi } from
 import { traceIdFromSearch } from "../lib/trace-links";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { LogExplorer } from "./LogExplorer";
+import { MemoryOpsTab } from "./MemoryOpsTab";
 import { ModelSelect } from "./ModelSelect";
 import { TraceExplorer } from "./TraceExplorer";
 
@@ -66,8 +67,25 @@ type Tab =
   | "identity"
   | "collective"
   | "ops"
+  | "memory"
   | "traces"
   | "logs";
+
+const ADMIN_TABS: Tab[] = [
+  "keys",
+  "endpoint",
+  "adapters",
+  "roles",
+  "mcp",
+  "config",
+  "security",
+  "identity",
+  "collective",
+  "ops",
+  "memory",
+  "traces",
+  "logs",
+];
 
 export function AdminPanel({
   backContent,
@@ -77,9 +95,20 @@ export function AdminPanel({
   const initialTraceId = traceIdFromSearch(window.location.search);
   const [tab, setTab] = useState<Tab>(initialTraceId ? "traces" : "keys");
   const [requestedTraceId, setRequestedTraceId] = useState<string | undefined>(initialTraceId);
+  const [requestedJobId, setRequestedJobId] = useState<string | undefined>();
 
   useEffect(() => {
     const openOperations = () => setTab("ops");
+    // Hand-off from the unified canvas MEMORY layer (see
+    // unified/lib/memory-map-admin-link.ts): `preventDefault()` tells the
+    // dispatcher an admin surface claimed the event.
+    const openAdmin = (event: Event) => {
+      const detail = (event as CustomEvent<{ tab?: string; jobId?: string }>).detail;
+      if (!detail?.tab || !ADMIN_TABS.includes(detail.tab as Tab)) return;
+      event.preventDefault();
+      if (detail.tab === "memory") setRequestedJobId(detail.jobId);
+      setTab(detail.tab as Tab);
+    };
     const openKeys = () => setTab("keys");
     const openTraces = (event: Event) => {
       const detail = (event as CustomEvent<{ traceId?: string }>).detail;
@@ -89,7 +118,9 @@ export function AdminPanel({
     window.addEventListener("marina:open-operations", openOperations);
     window.addEventListener("marina:open-keys", openKeys);
     window.addEventListener("marina:open-traces", openTraces);
+    window.addEventListener("marina:open-admin", openAdmin);
     return () => {
+      window.removeEventListener("marina:open-admin", openAdmin);
       window.removeEventListener("marina:open-operations", openOperations);
       window.removeEventListener("marina:open-keys", openKeys);
       window.removeEventListener("marina:open-traces", openTraces);
@@ -105,22 +136,7 @@ export function AdminPanel({
       onToggleFocus={onToggleFocus}
     >
       <div className="flex overflow-x-auto border-b border-border text-[10px]">
-        {(
-          [
-            "keys",
-            "endpoint",
-            "adapters",
-            "roles",
-            "mcp",
-            "config",
-            "security",
-            "identity",
-            "collective",
-            "ops",
-            "traces",
-            "logs",
-          ] as Tab[]
-        ).map((t) => (
+        {ADMIN_TABS.map((t) => (
           <button
             key={t}
             type="button"
@@ -144,6 +160,15 @@ export function AdminPanel({
         {tab === "identity" && <IdentityTab />}
         {tab === "collective" && <CollectiveTab />}
         {tab === "ops" && <OperationsTab />}
+        {tab === "memory" && (
+          <MemoryOpsTab
+            focusJobId={requestedJobId}
+            onOpenTrace={(traceId) => {
+              setRequestedTraceId(traceId);
+              setTab("traces");
+            }}
+          />
+        )}
         {tab === "traces" && <TraceExplorer requestedTraceId={requestedTraceId} />}
         {tab === "logs" && <LogExplorer />}
       </div>
