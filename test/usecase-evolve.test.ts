@@ -129,6 +129,8 @@ describe("usecase evolve recipe", () => {
 
     const pool = db.getMemoryPool("usecase:evolve: improve autonomous research synthesis");
     expect(pool).toBeDefined();
+    // Use-case pools are members-only: scoped to the use-case group.
+    expect(pool!.group_id).toBe(project!.group_id);
     const tasks = db.listTasks({ groupId: project!.group_id ?? undefined, limit: 10 });
     expect(tasks.length).toBe(5);
     expect(tasks.some((t) => t.title === "Publish lineage")).toBe(true);

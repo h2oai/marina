@@ -272,11 +272,7 @@ export function projectCommand(deps: {
           creatorName: entity.name,
         });
 
-        // 2. Create memory pool
-        const poolId = `pool_project_${name.toLowerCase().replace(/\s+/g, "_")}_${Date.now()}`;
-        db.createMemoryPool(poolId, `project:${name}`, entity.name);
-
-        // 3. Create group (auto-creates channel + board)
+        // 2. Create group (auto-creates channel + board)
         const groupId = `project_${name.toLowerCase().replace(/\s+/g, "_")}`;
         deps.groupManager.create({
           id: groupId,
@@ -284,6 +280,11 @@ export function projectCommand(deps: {
           description: description || `Project: ${name}`,
           leaderId: input.entity,
         });
+
+        // 3. Create memory pool, scoped to the project group so only members
+        // (joined via `project <name> join`) can read or deposit.
+        const poolId = `pool_project_${name.toLowerCase().replace(/\s+/g, "_")}_${Date.now()}`;
+        db.createMemoryPool(poolId, `project:${name}`, entity.name, groupId);
 
         // 4. Insert project row
         const projectId = `proj_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;

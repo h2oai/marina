@@ -30,8 +30,8 @@
  *     sequence the skill encodes.
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { basename, join, resolve, sep } from "node:path";
 
 export interface SkillImport {
   name: string;
@@ -91,6 +91,39 @@ export function parseSkillMarkdown(source: string): SkillImport {
  */
 export function formatSkillContent(skill: SkillImport): string {
   return `[Skill: ${skill.name}] ${skill.description} || Actions: ${skill.body}`;
+}
+
+/**
+ * Confine a user-supplied skill path to the server's working directory.
+ *
+ * `skill import` is a host file read driven by in-world input, so the path is
+ * resolved against `process.cwd()` and must stay inside it (or inside a
+ * `skills/` directory under it — the same root, spelled for the common case).
+ * `..` segments, absolute paths outside cwd, and symlinks that resolve outside
+ * the root are all rejected. Returns the real (symlink-resolved) path.
+ */
+export function resolveConfinedSkillPath(path: string, root = process.cwd()): string {
+  const trimmed = path.trim();
+  if (!trimmed) throw new Error("skill import: empty path");
+  if (trimmed.split(/[\\/]+/).includes("..")) {
+    throw new Error("skill import: path may not contain '..' segments");
+  }
+  const realRoot = realpathSync(root);
+  const candidate = resolve(realRoot, trimmed);
+  const inside = (p: string) => p === realRoot || p.startsWith(realRoot + sep);
+  if (!inside(candidate)) {
+    throw new Error(`skill import: path must be inside ${realRoot} (or its skills/ directory)`);
+  }
+  let real: string;
+  try {
+    real = realpathSync(candidate);
+  } catch {
+    throw new Error(`skill import: file not found: ${trimmed}`);
+  }
+  if (!inside(real)) {
+    throw new Error("skill import: path resolves (via symlink) outside the working directory");
+  }
+  return real;
 }
 
 /**

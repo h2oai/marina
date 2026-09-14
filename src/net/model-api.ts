@@ -1425,6 +1425,23 @@ function formatResponseRecord(rec: ResponseRecord): unknown {
   };
 }
 
+/** True when `owner` may thread onto `conversationId`: either a stored response
+ *  record already binds that conversation to this owner, or nothing (no record,
+ *  no `model-conv-<id>` channel) claims it yet. A conversation known only via
+ *  its channel — records evicted/expired, or created by another surface — is
+ *  treated as not-owned: the owner binding is gone, so nobody can resume it. */
+function callerOwnsConversation(engine: Engine, owner: string, conversationId: string): boolean {
+  let seen = false;
+  for (const rec of responseIndex.values()) {
+    if (rec.conversationId !== conversationId) continue;
+    if (rec.owner === owner) return true;
+    seen = true;
+  }
+  if (seen) return false;
+  const cm = engine.channelManager;
+  return !cm?.getChannelByName(`model-conv-${conversationId}`);
+}
+
 async function handleResponsesCreate(
   req: Request,
   engine: Engine,
@@ -1466,6 +1483,13 @@ async function handleResponsesCreate(
       conversationId = prior.conversationId;
       previousResponseId = prior.id;
     } else if (body.conversation_id) {
+      // Owner check mirrors previous_response_id: an explicit conversation_id
+      // must belong to this caller. Unknown to the index AND no live channel
+      // → a fresh conversation the caller may claim. Anything else that isn't
+      // ours is 404 — not-found and not-owned stay indistinguishable.
+      if (!callerOwnsConversation(engine, owner, body.conversation_id)) {
+        return errorJson(404, `conversation_id not found: ${body.conversation_id}`);
+      }
       conversationId = body.conversation_id;
     } else {
       conversationId = crypto.randomUUID();

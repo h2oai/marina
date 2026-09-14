@@ -1,7 +1,11 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { formatSkillContent, loadSkillFile } from "../../agent/skill-import";
+import {
+  formatSkillContent,
+  loadSkillFile,
+  resolveConfinedSkillPath,
+} from "../../agent/skill-import";
 import { memoryAccess } from "../../memory/access";
 import { memoryNoteResults, memoryResult } from "../../memory/command-result";
 import { header, separator } from "../../net/ansi";
@@ -19,7 +23,7 @@ export function skillCommand(deps: {
   return {
     name: "skill",
     aliases: [],
-    help: "Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path>. Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.",
+    help: "Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd). Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -47,7 +51,7 @@ export function skillCommand(deps: {
         } else {
           ctx.send(
             input.entity,
-            "Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path>",
+            "Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+)",
           );
         }
         return;
@@ -339,6 +343,13 @@ export function skillCommand(deps: {
         }
 
         case "import": {
+          // Host file read driven by in-world input: rank-gated and confined
+          // to the server's working directory (see resolveConfinedSkillPath).
+          const rank = (entity.properties.rank as number | undefined) ?? 0;
+          if (rank < 3) {
+            ctx.send(input.entity, "skill import requires rank 3+ (host file access)");
+            return;
+          }
           const path = input.tokens.slice(1).join(" ").trim();
           if (!path) {
             ctx.send(
@@ -357,7 +368,7 @@ export function skillCommand(deps: {
           }
           let parsed: ReturnType<typeof loadSkillFile>;
           try {
-            parsed = loadSkillFile(path);
+            parsed = loadSkillFile(resolveConfinedSkillPath(path));
           } catch (err) {
             ctx.send(input.entity, err instanceof Error ? err.message : String(err));
             return;
@@ -387,7 +398,7 @@ export function skillCommand(deps: {
         default: {
           ctx.send(
             input.entity,
-            "Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path>",
+            "Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+)",
           );
         }
       }

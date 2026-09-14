@@ -1,14 +1,21 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import {
   discoverSkillFiles,
   formatSkillContent,
   parseSkillMarkdown,
+  resolveConfinedSkillPath,
 } from "../src/agent/skill-import";
+import { Engine } from "../src/engine/engine";
+import { setRank } from "../src/engine/permissions";
+import { MarinaDB } from "../src/persistence/database";
+import { roomId } from "../src/types";
+import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
 
 describe("parseSkillMarkdown", () => {
   it("parses a minimal valid skill", () => {
@@ -134,5 +141,107 @@ describe("discoverSkillFiles", () => {
       "z-third.md",
     ]);
     rmSync(tmp, { recursive: true, force: true });
+  });
+});
+
+describe("resolveConfinedSkillPath", () => {
+  const root = join(tmpdir(), `marina-skill-confine-${process.pid}`);
+  const outside = join(tmpdir(), `marina-skill-outside-${process.pid}`);
+
+  beforeEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+    mkdirSync(join(root, "skills"), { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(root, "skills", "ok.md"), "---\nname: ok\ndescription: d\n---\nbody");
+    writeFileSync(join(outside, "secret.md"), "---\nname: s\ndescription: d\n---\nbody");
+    symlinkSync(join(outside, "secret.md"), join(root, "skills", "escape.md"));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it("accepts relative and absolute paths inside the root", () => {
+    const real = realpathSync(join(root, "skills", "ok.md"));
+    expect(resolveConfinedSkillPath("skills/ok.md", root)).toBe(real);
+    expect(resolveConfinedSkillPath(join(root, "skills", "ok.md"), root)).toBe(real);
+  });
+
+  it("rejects .. segments", () => {
+    expect(() => resolveConfinedSkillPath("skills/../../etc/passwd", root)).toThrow(/'\.\.'/);
+    expect(() => resolveConfinedSkillPath("../secret.md", root)).toThrow(/'\.\.'/);
+  });
+
+  it("rejects absolute paths outside the root", () => {
+    expect(() => resolveConfinedSkillPath(join(outside, "secret.md"), root)).toThrow(
+      /must be inside/,
+    );
+    expect(() => resolveConfinedSkillPath("/etc/passwd", root)).toThrow(/must be inside/);
+  });
+
+  it("rejects symlinks that resolve outside the root", () => {
+    expect(() => resolveConfinedSkillPath("skills/escape.md", root)).toThrow(/symlink/);
+  });
+
+  it("reports a missing file without leaking anything else", () => {
+    expect(() => resolveConfinedSkillPath("skills/nope.md", root)).toThrow(/not found/);
+  });
+});
+
+describe("skill import command (rank gate + cwd confinement)", () => {
+  const TEST_DB = "test_skill_import_cmd.db";
+  let db: MarinaDB;
+  let engine: Engine;
+  let conn: MockConnection;
+
+  beforeEach(() => {
+    cleanupDb(TEST_DB);
+    db = new MarinaDB(TEST_DB);
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+    conn = new MockConnection("c1");
+    engine.addConnection(conn);
+    engine.spawnEntity("c1", "Alice");
+    conn.clear();
+  });
+
+  afterEach(() => {
+    engine.shutdown();
+    db.close();
+    cleanupDb(TEST_DB);
+  });
+
+  it("refuses below rank 3", () => {
+    engine.processCommand(conn.entity!, "skill import seeds/skills/answer-request.md");
+    expect(stripAnsi(conn.lastText())).toContain(
+      "skill import requires rank 3+ (host file access)",
+    );
+    expect(db.getNotesByType("Alice", "skill").length).toBe(0);
+  });
+
+  it("at rank 3 refuses paths that escape the working directory", () => {
+    setRank(engine.entities.get(conn.entity!)!, 3);
+    engine.processCommand(conn.entity!, "skill import ../../etc/passwd");
+    expect(stripAnsi(conn.lastText())).toContain("may not contain '..'");
+    conn.clear();
+    engine.processCommand(conn.entity!, "skill import /etc/passwd");
+    expect(stripAnsi(conn.lastText())).toContain("must be inside");
+    expect(db.getNotesByType("Alice", "skill").length).toBe(0);
+  });
+
+  it("at rank 3 imports a skill file that lives under cwd", () => {
+    setRank(engine.entities.get(conn.entity!)!, 3);
+    engine.processCommand(conn.entity!, "skill import seeds/skills/answer-request.md");
+    const text = stripAnsi(conn.lastText());
+    expect(text).toContain("answer-request");
+    const skills = db.getNotesByType("Alice", "skill");
+    expect(skills.length).toBe(1);
+    expect(skills[0]?.content).toContain("[Skill: answer-request]");
+    // Same file via its absolute path is also fine (inside cwd).
+    conn.clear();
+    engine.processCommand(conn.entity!, `skill import ${resolve("seeds/skills/solve-math.md")}`);
+    expect(db.getNotesByType("Alice", "skill").length).toBe(2);
   });
 });

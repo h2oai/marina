@@ -116,11 +116,24 @@ describe("memory tiers", () => {
       expect(second).not.toBe(first);
     });
 
-    it("pool notes skip dedup (coordination artifacts can repeat)", () => {
+    it("pool notes dedup exact same-author content; skipDedup and other authors insert", () => {
+      // Phase 0 (2026-09-13): `share`/`pool add` re-depositing the same line
+      // used to fork duplicate rows (and farm standing). Same author + exact
+      // content in one pool now returns the existing active row.
       db.createMemoryPool("pool-x", "x", "alice");
       const first = db.addPoolNote("pool-x", "alice", "heads up", 5, "insight");
       const second = db.addPoolNote("pool-x", "alice", "heads up", 5, "insight");
-      expect(second).not.toBe(first);
+      expect(second).toBe(first);
+      const forced = db.addPoolNote("pool-x", "alice", "heads up", 5, "insight", {
+        skipDedup: true,
+      });
+      expect(forced).not.toBe(first);
+      const other = db.addPoolNote("pool-x", "bob", "heads up", 5, "insight");
+      expect(other).not.toBe(first);
+      // Coordination artifacts still repeat: process-tier notes are exempt.
+      const c1 = db.addPoolNote("pool-x", "alice", "[compaction] window", 3, "insight");
+      const c2 = db.addPoolNote("pool-x", "alice", "[compaction] window", 3, "insight");
+      expect(c2).not.toBe(c1);
     });
 
     it("process notes skip dedup (each [compaction] is a distinct window)", () => {

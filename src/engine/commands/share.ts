@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { memoryAccess } from "../../memory/access";
+import { depositPoolNote } from "../../memory/pool-deposit";
 import { category, dim, header, id, separator, success } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
@@ -42,15 +44,31 @@ export function shareCommand(deps: {
       }
 
       const pool = db.getMemoryPool(poolName);
-      if (!pool) {
+      // Same ACL as `pool <name> add`: a group-scoped pool is invisible to
+      // non-members — not-found and inaccessible read identically.
+      if (!pool || !memoryAccess(db, entity).pool(pool)) {
         ctx.send(
           input.entity,
-          `Pool "${poolName}" not found. List pools with \`pool list\`, or create one with \`pool create ${poolName}\`.`,
+          `Pool "${poolName}" not found or inaccessible. List pools with \`pool list\`, or create one with \`pool create ${poolName}\`.`,
         );
         return;
       }
 
-      const noteId = db.addPoolNote(pool.id, entity.name, content, 6, "observation");
+      const { id: noteId, existing } = depositPoolNote(
+        db,
+        pool.id,
+        entity.name,
+        content,
+        6,
+        "observation",
+      );
+      if (existing) {
+        ctx.send(
+          input.entity,
+          `Already shared to ${pool.name} as #${noteId} — identical note by you is still active.`,
+        );
+        return;
+      }
       deps.logEvent?.({
         type: "pool_note",
         entity: input.entity,

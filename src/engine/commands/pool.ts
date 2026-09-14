@@ -4,6 +4,7 @@
 import { creditRecalledReflections } from "../../agent/standing";
 import { memoryAccess } from "../../memory/access";
 import { memoryNoteResults, memoryResult } from "../../memory/command-result";
+import { depositPoolNote } from "../../memory/pool-deposit";
 import {
   bold,
   dim,
@@ -104,7 +105,7 @@ export function poolCommand(deps: {
   return {
     name: "pool",
     aliases: [],
-    help: "Shared memory pools for collaborative knowledge.\nUsage: pool create <name> | pool <name> add|recall|list|status|audit | pool list\n\nExamples:\n  pool create findings\n  pool findings add The decode room responds to binary input importance 7\n  pool findings recall binary\n  pool findings list\n  pool findings status\n  pool findings audit",
+    help: "Shared memory pools for collaborative knowledge.\nUsage: pool create <name> [group <groupName>] | pool <name> add|recall|list|status|audit | pool list\n\nExamples:\n  pool create findings\n  pool create crew-notes group project:Beta   (members-only pool; you must belong to the group)\n  pool findings add The decode room responds to binary input importance 7\n  pool findings recall binary\n  pool findings list\n  pool findings status\n  pool findings audit",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -120,7 +121,7 @@ export function poolCommand(deps: {
       if (!sub) {
         ctx.send(
           input.entity,
-          "Usage: pool create <name> | pool <name> add|recall|list|status|audit | pool list",
+          "Usage: pool create <name> [group <groupName>] | pool <name> add|recall|list|status|audit | pool list",
         );
         return;
       }
@@ -143,7 +144,7 @@ export function poolCommand(deps: {
       if (sub === "create") {
         const name = tokens[1];
         if (!name) {
-          ctx.send(input.entity, "Usage: pool create <name>");
+          ctx.send(input.entity, "Usage: pool create <name> [group <groupName>]");
           return;
         }
         const existing = db.getMemoryPool(name);
@@ -151,8 +152,28 @@ export function poolCommand(deps: {
           ctx.send(input.entity, `Pool "${name}" already exists.`);
           return;
         }
+        // Optional group scope: `pool create <name> group <groupName>` makes
+        // the pool members-only. The creator must already belong to the group
+        // (leader or member) — you can't fence off a group you're not in.
+        let groupId: string | undefined;
+        if (tokens[2]) {
+          if (tokens[2].toLowerCase() !== "group" || !tokens[3]) {
+            ctx.send(input.entity, "Usage: pool create <name> [group <groupName>]");
+            return;
+          }
+          const groupName = tokens.slice(3).join(" ");
+          const group = db.getGroupByName(groupName) ?? db.getGroup(groupName);
+          if (!group || !db.getGroupMember(group.id, input.entity)) {
+            ctx.send(
+              input.entity,
+              `Group "${groupName}" not found or you are not a member. Join it first, or create the pool without a group.`,
+            );
+            return;
+          }
+          groupId = group.id;
+        }
         const id = `pool_${name}_${Date.now()}`;
-        db.createMemoryPool(id, name, entity.name);
+        db.createMemoryPool(id, name, entity.name, groupId);
         deps.logEvent?.({
           type: "coordination_change",
           resource: "pool",
@@ -161,7 +182,12 @@ export function poolCommand(deps: {
           name,
           timestamp: Date.now(),
         });
-        ctx.send(input.entity, `Memory pool "${name}" created.`);
+        ctx.send(
+          input.entity,
+          groupId
+            ? `Memory pool "${name}" created (members-only: group ${tokens.slice(3).join(" ")}).`
+            : `Memory pool "${name}" created.`,
+        );
         return;
       }
 
@@ -292,7 +318,20 @@ export function poolCommand(deps: {
               }
             }
           }
-          const noteId = db.addPoolNote(pool.id, entity.name, content, importance);
+          const { id: noteId, existing } = depositPoolNote(
+            db,
+            pool.id,
+            entity.name,
+            content,
+            importance,
+          );
+          if (existing) {
+            ctx.send(
+              input.entity,
+              `Already shared as #${noteId} in pool "${poolName}" — identical note by you is still active.`,
+            );
+            return;
+          }
           deps.logEvent?.({
             type: "pool_note",
             entity: input.entity,

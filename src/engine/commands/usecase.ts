@@ -1282,11 +1282,7 @@ Examples:
       ctx.send(input.entity, `Launching ${bold(recipeName)} use case: ${topic}...`);
 
       try {
-        // 1. Create memory pool
-        const poolId = `pool_uc_${recipeName}_${Date.now()}`;
-        db.createMemoryPool(poolId, `usecase:${projectName}`, entity.name);
-
-        // 2. Create group (auto-creates channel + board)
+        // 1. Create group (auto-creates channel + board)
         const groupId = `uc_${recipeName}_${Date.now()}`;
         deps.groupManager.create({
           id: groupId,
@@ -1294,6 +1290,10 @@ Examples:
           description: recipe.description,
           leaderId: input.entity,
         });
+
+        // 2. Create memory pool, scoped to the use-case group (members-only).
+        const poolId = `pool_uc_${recipeName}_${Date.now()}`;
+        db.createMemoryPool(poolId, `usecase:${projectName}`, entity.name, groupId);
 
         // 3. Create the project task bundle. Child tasks link to it so
         // `project status` and `project tasks` report honest progress.

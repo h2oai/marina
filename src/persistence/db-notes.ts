@@ -1066,6 +1066,29 @@ export function listMemoryPools(db: Database): MemoryPoolRow[] {
   return db.query("SELECT * FROM memory_pools ORDER BY name").all() as MemoryPoolRow[];
 }
 
+/** Find an active (non-superseded) fact-like note in `poolId` whose author and
+ *  exact content match. This is the pool-side twin of `findDuplicateForWrite`:
+ *  `share` / `pool add` re-depositing the same line must not fork a second row.
+ *  `[compaction]` summaries and other process-tier notes are exempt — each one
+ *  records a distinct consolidation window. */
+export function findActivePoolNote(
+  db: Database,
+  poolId: string,
+  entityName: string,
+  content: string,
+): NoteRow | undefined {
+  return (
+    (db
+      .query(
+        `SELECT * FROM notes
+         WHERE pool_id = ? AND entity_name = ? AND content = ?
+           AND verification_status != 'superseded' AND ${factLikeClause("notes")}
+         ORDER BY id DESC LIMIT 1`,
+      )
+      .get(poolId, entityName, content) as NoteRow | null) ?? undefined
+  );
+}
+
 export function addPoolNote(
   db: Database,
   poolId: string,
@@ -1073,7 +1096,17 @@ export function addPoolNote(
   content: string,
   importance?: number,
   noteType?: string,
+  opts?: {
+    /** Skip the exact-content pool dedup (default false). Process-tier /
+     *  `[compaction]` notes are never deduped regardless of this flag. */
+    skipDedup?: boolean;
+  },
 ): number {
+  const tier = inferTier(content, noteType ?? "observation");
+  if (!opts?.skipDedup && FACT_LIKE_TIERS.includes(tier)) {
+    const existing = findActivePoolNote(db, poolId, entityName, content);
+    if (existing) return existing.id;
+  }
   return createNote(db, entityName, content, undefined, {
     importance,
     noteType,
