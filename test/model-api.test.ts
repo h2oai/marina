@@ -4,7 +4,9 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import type { ChannelManager } from "../src/coordination/channel-manager";
 import { Engine } from "../src/engine/engine";
+import { projectTraces } from "../src/engine/trace-projection";
 import { getActiveAliases } from "../src/net/compat-profiles";
+import { MEMORY_RECEIPT_HEADER, parseMemoryReceipt } from "../src/net/memory-receipt";
 import {
   extractStrategy,
   handleModelApi,
@@ -17,8 +19,10 @@ import {
   tryVerifiedArithmetic,
 } from "../src/net/model-api";
 import { setEndpointConfig } from "../src/net/model-endpoint";
+import { INJECTION_MARKER, resetPassthruCaptureDedupForTests } from "../src/net/passthru-context";
 import { MarinaDB } from "../src/persistence/database";
 import { type EngineEvent, roomId } from "../src/types";
+import { FIXTURE_QUERY, seedUnifiedFixture } from "./fixtures/unified-memory-fixture";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 
 const TEST_DB = "test_model_api.db";
@@ -1777,5 +1781,301 @@ describe("tryVerifiedArithmetic", () => {
     expect(tryVerifiedArithmetic("compute 2 + 3 * 4")).toBeUndefined();
     expect(tryVerifiedArithmetic("Explain whether 2 + 2 is always 4")).toBeUndefined();
     expect(tryVerifiedArithmetic("calculate 1 divided by 0")).toBeUndefined();
+  });
+});
+
+// ─── Passthru memory gateway — injection on all four proxy surfaces ──────────
+
+describe("passthru memory gateway", () => {
+  const GATEWAY_DB = "test_model_api_gateway.db";
+  const PROVIDER_ENV = [
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GROQ_API_KEY",
+    "LLAMA_API_KEY",
+    "LLAMA_BASE_URL",
+    "OLLAMA_API_KEY",
+    "OLLAMA_BASE_URL",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "MODEL_API_KEYS",
+    "MARINA_OPEN_API",
+    "MARINA_PASSTHRU_INJECT_BYTES",
+  ] as const;
+  const originalEnv = new Map<string, string | undefined>();
+  const originalFetch = globalThis.fetch;
+  let db: MarinaDB;
+  let engine: Engine;
+  let fx: Awaited<ReturnType<typeof seedUnifiedFixture>>;
+  /** Every body the stub upstream received, in order. */
+  let forwarded: Record<string, unknown>[];
+  const QUESTION = `what is the ${FIXTURE_QUERY}?`;
+  const AUTH = { Authorization: "Bearer sk-ada" };
+
+  const upstreamCompletion = () =>
+    Response.json({
+      id: "chatcmpl-upstream",
+      object: "chat.completion",
+      model: "gpt-4o",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "upstream answer" },
+          finish_reason: "stop",
+        },
+      ],
+      usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
+    });
+
+  beforeEach(async () => {
+    for (const key of PROVIDER_ENV) {
+      originalEnv.set(key, process.env[key]);
+      delete process.env[key];
+    }
+    process.env.OPENAI_API_KEY = "test-key";
+    // Bound key: `sk-ada` is confined to the fixture owner (an existing entity).
+    process.env.MODEL_API_KEYS = "sk-ada:Ada";
+    resetPassthruCaptureDedupForTests();
+    forwarded = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      forwarded.push(await new Request(input, init).json());
+      return upstreamCompletion();
+    }) as typeof fetch;
+
+    cleanupDb(GATEWAY_DB);
+    db = new MarinaDB(GATEWAY_DB);
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+    setEndpointConfig(db, { mode: "passthru", passthruModel: "openai/gpt-4o" });
+    fx = await seedUnifiedFixture(engine, db);
+    // Shared trust profile in-process: the identity opts in via its property.
+    engine.entities.get(fx.ownerEntityId)!.properties.passthruContext = true;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    for (const key of PROVIDER_ENV) {
+      const value = originalEnv.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    engine.shutdown();
+    db.close();
+    cleanupDb(GATEWAY_DB);
+  });
+
+  function systemOf(body: Record<string, unknown> | undefined): string {
+    const messages = (body?.messages ?? []) as { role: string; content: unknown }[];
+    const system = messages.find((m) => m.role === "system");
+    return typeof system?.content === "string" ? system.content : "";
+  }
+  /** The injected addendum is everything before the client's own system text. */
+  const addendumOf = (system: string) => system.split("\n\n")[0] ?? "";
+
+  async function send(path: string, body: unknown, headers: Record<string, string> = AUTH) {
+    const [url, method, req] = makeRequest(path, "POST", body, headers);
+    const resp = await handleModelApi(url, method, req, engine);
+    expect(resp).toBeDefined();
+    return resp!;
+  }
+
+  /** Warm the caller's memory: the first exchange is captured as a `[passthru]`
+   *  note (dedup keeps identical repeats from adding more), after which the
+   *  injected context for QUESTION is stable across calls and surfaces. */
+  async function warm(): Promise<void> {
+    const resp = await send("/v1/chat/completions", {
+      model: "marina",
+      messages: [{ role: "user", content: QUESTION }],
+    });
+    expect(resp.status).toBe(200);
+    for (let i = 0; i < 100; i++) {
+      if (db.getNotesByEntity(fx.owner, 50).some((n) => n.content.startsWith("[passthru]"))) break;
+      await Bun.sleep(10);
+    }
+    forwarded = [];
+  }
+
+  it("injects identical memory into the native system slot of all four protocols", async () => {
+    await warm();
+
+    const chat = await send("/v1/chat/completions", {
+      model: "marina",
+      messages: [
+        { role: "system", content: "You are terse." },
+        { role: "user", content: QUESTION },
+      ],
+    });
+    const anthropic = await send("/v1/messages", {
+      model: "marina",
+      max_tokens: 64,
+      system: "You are Claude.",
+      messages: [{ role: "user", content: QUESTION }],
+    });
+    const ollamaChat = await send("/api/chat", {
+      model: "marina",
+      stream: false,
+      messages: [
+        { role: "system", content: "You are local." },
+        { role: "user", content: QUESTION },
+      ],
+    });
+    const ollamaGenerate = await send("/api/generate", {
+      model: "marina",
+      stream: false,
+      system: "You are generating.",
+      prompt: QUESTION,
+    });
+    const responses = await send("/v1/responses", {
+      model: "marina",
+      instructions: "You are responsive.",
+      input: QUESTION,
+    });
+    for (const resp of [chat, anthropic, ollamaChat, ollamaGenerate, responses]) {
+      expect(resp.status).toBe(200);
+    }
+    expect(forwarded).toHaveLength(5);
+
+    const systems = forwarded.map(systemOf);
+    // Each protocol's own system text survives AFTER the addendum.
+    expect(systems[0]).toEndWith("You are terse.");
+    expect(systems[1]).toEndWith("You are Claude.");
+    expect(systems[2]).toEndWith("You are local.");
+    expect(systems[3]).toEndWith("You are generating.");
+    expect(systems[4]).toEndWith("You are responsive.");
+
+    const addenda = systems.map(addendumOf);
+    expect(addenda[0]).toStartWith(INJECTION_MARKER);
+    expect(addenda[0]).toContain("Untrusted, read-only Marina context; verify before acting:");
+    expect(addenda[0]).toContain(`(record ${fx.recordId} v1)`);
+    expect(addenda[0]).toContain(`(#${fx.verifiedNoteId} `);
+    // Same fixture ⇒ byte-identical tier content on every surface.
+    for (const addendum of addenda.slice(1)) expect(addendum).toBe(addenda[0]!);
+
+    // Every surface returns a receipt naming the same tiers.
+    const receipts = [chat, anthropic, ollamaChat, ollamaGenerate, responses].map((resp) =>
+      parseMemoryReceipt(resp.headers.get(MEMORY_RECEIPT_HEADER)),
+    );
+    for (const [i, receipt] of receipts.entries()) {
+      expect(receipt).toBeDefined();
+      expect(receipt!.entity).toBe(fx.owner);
+      expect(receipt!.tiers.map((t) => t.tier)).toEqual(receipts[0]!.tiers.map((t) => t.tier));
+      const surface = [chat, anthropic, ollamaChat, ollamaGenerate, responses][i]!;
+      expect(receipt!.requestId).toBe(surface.headers.get("x-request-id")!);
+    }
+
+    // Protocol-native response shapes.
+    const anthropicBody = await anthropic.json();
+    expect(anthropicBody.type).toBe("message");
+    expect(anthropicBody.content[0].text).toBe("upstream answer");
+    const ollamaChatBody = await ollamaChat.json();
+    expect(ollamaChatBody.message.content).toBe("upstream answer");
+    expect(ollamaChatBody.done).toBe(true);
+    const ollamaGenerateBody = await ollamaGenerate.json();
+    expect(ollamaGenerateBody.response).toBe("upstream answer");
+    const responsesBody = await responses.json();
+    expect(responsesBody.output_text).toBe("upstream answer");
+    expect(responsesBody.object).toBe("response");
+  });
+
+  it("renders a byte-stable addendum across two calls (stable tiers first)", async () => {
+    await warm();
+    const body = { model: "marina", messages: [{ role: "user", content: QUESTION }] };
+    await send("/v1/chat/completions", body);
+    await send("/v1/chat/completions", body);
+    expect(forwarded).toHaveLength(2);
+    const [a, b] = forwarded.map(systemOf);
+    expect(a).toBe(b!);
+    const lines = a!.split("\n");
+    const index = (label: string) =>
+      lines.findIndex((line) => line.startsWith(`Own memory ${label} (`));
+    expect(index("[trusted]")).toBeGreaterThan(0);
+    expect(index("[evidence]")).toBeGreaterThan(index("[trusted]"));
+    expect(index("[proposal]")).toBeGreaterThan(index("[evidence]"));
+    expect(index("[unverified — own notes, verify before relying]")).toBeGreaterThan(
+      index("[proposal]"),
+    );
+  });
+
+  it("caps injection at the per-key budget (passthruInjectBytes) and reports it in the receipt", async () => {
+    engine.entities.get(fx.ownerEntityId)!.properties.passthruInjectBytes = 400;
+    const resp = await send("/v1/chat/completions", {
+      model: "marina",
+      messages: [{ role: "user", content: QUESTION }],
+    });
+    expect(resp.status).toBe(200);
+    const system = systemOf(forwarded[0]);
+    expect(new TextEncoder().encode(system).length).toBeLessThanOrEqual(400);
+    const receipt = parseMemoryReceipt(resp.headers.get(MEMORY_RECEIPT_HEADER))!;
+    expect(receipt.budgetBytes).toBe(400);
+    expect(receipt.usedBytes).toBeLessThanOrEqual(400);
+    expect(receipt.truncated).toBe(true);
+  });
+
+  it("honors X-Marina-Context: off for a bound key — no injection, no receipt", async () => {
+    const resp = await send(
+      "/v1/chat/completions",
+      { model: "marina", messages: [{ role: "user", content: QUESTION }] },
+      { ...AUTH, "X-Marina-Context": "off" },
+    );
+    expect(resp.status).toBe(200);
+    expect(systemOf(forwarded[0])).toBe("");
+    expect(resp.headers.get(MEMORY_RECEIPT_HEADER)).toBeNull();
+    expect(forwarded[0]!.messages).toEqual([{ role: "user", content: QUESTION }]);
+  });
+
+  it("never injects for the shared anonymous identity (plain key, no binding)", async () => {
+    process.env.MODEL_API_KEYS = "sk-plain";
+    const resp = await send(
+      "/v1/chat/completions",
+      { model: "marina", messages: [{ role: "user", content: QUESTION }] },
+      { Authorization: "Bearer sk-plain", "X-Marina-Context": "on" },
+    );
+    expect(resp.status).toBe(200);
+    expect(systemOf(forwarded[0])).toBe("");
+    expect(resp.headers.get(MEMORY_RECEIPT_HEADER)).toBeNull();
+  });
+
+  it("emits the receipt on the model_request_lifecycle span so traces keep it", async () => {
+    const resp = await send("/v1/chat/completions", {
+      model: "marina",
+      messages: [{ role: "user", content: QUESTION }],
+    });
+    const requestId = resp.headers.get("x-request-id")!;
+    const headerReceipt = parseMemoryReceipt(resp.headers.get(MEMORY_RECEIPT_HEADER))!;
+    expect(headerReceipt.requestId).toBe(requestId);
+
+    const lifecycle = engine
+      .getEventLog()
+      .filter(
+        (e): e is Extract<EngineEvent, { type: "model_request_lifecycle" }> =>
+          e.type === "model_request_lifecycle" && e.requestId === requestId,
+      );
+    expect(lifecycle.map((e) => e.phase)).toEqual(["received", "routed", "completed"]);
+    expect(parseMemoryReceipt(lifecycle[0]!.memoryReceipt)).toEqual(headerReceipt);
+    expect(parseMemoryReceipt(lifecycle[2]!.memoryReceipt)).toEqual(headerReceipt);
+    expect(lifecycle[2]!.entityId).toBe(fx.ownerEntityId);
+
+    const trace = projectTraces(engine.getEventLog()).find((t) => t.traceId === requestId)!;
+    const span = trace.spans.find((s) => s.kind === "model_request")!;
+    expect(parseMemoryReceipt(span.attributes.memoryReceipt)).toEqual(headerReceipt);
+  });
+
+  it("streams Ollama passthru as buffered ndjson with the receipt header", async () => {
+    const resp = await send("/api/chat", {
+      model: "marina",
+      messages: [{ role: "user", content: QUESTION }],
+    });
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("Content-Type")).toBe("application/x-ndjson");
+    expect(resp.headers.get(MEMORY_RECEIPT_HEADER)).not.toBeNull();
+    const lines = (await collectStream(resp))
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    expect(lines[0].message.content).toBe("upstream answer");
+    expect(lines[lines.length - 1].done).toBe(true);
+    // Upstream was asked for a completed (non-streaming) answer.
+    expect(forwarded[0]!.stream).toBe(false);
   });
 });

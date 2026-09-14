@@ -101,6 +101,56 @@ describe("trace command", () => {
     expect(output).toContain("fell back to least-busy");
   });
 
+  it("renders a Memory section from the span's memory receipt", async () => {
+    const receipt = {
+      schema: "marina.memory.receipt.v1",
+      requestId: "req-memory",
+      entity: "Ada",
+      tiers: [
+        { tier: "trusted", ids: [{ id: "12" }], bytes: 90 },
+        { tier: "evidence", ids: [{ id: "r_1", version: 1 }], bytes: 120 },
+      ],
+      budgetBytes: 2048,
+      usedBytes: 330,
+      truncated: false,
+      degraded: [],
+    };
+    engine.logEvent({
+      type: "model_request_lifecycle",
+      phase: "received",
+      requestId: "req-memory",
+      runId: "req-memory",
+      traceId: "req-memory",
+      spanId: "span-memory",
+      model: "marina",
+      routeKind: "passthru",
+      memoryReceipt: JSON.stringify(receipt),
+      timestamp: 200,
+    });
+    engine.logEvent({
+      type: "model_request_lifecycle",
+      phase: "completed",
+      requestId: "req-memory",
+      runId: "req-memory",
+      traceId: "req-memory",
+      spanId: "span-memory",
+      model: "marina",
+      routeKind: "passthru",
+      memoryReceipt: JSON.stringify(receipt),
+      durationMs: 30,
+      timestamp: 230,
+    });
+    await engine.processCommand(entityId, "trace show req-memory");
+    const out = stripAnsi(conn.lastText());
+    expect(out).toContain("Memory: entity=Ada");
+    expect(out).toContain("budget=2048B");
+    expect(out).toContain("used=330B");
+    expect(out).toContain("[trusted] 12 (90B)");
+    expect(out).toContain("[evidence] r_1 v1 (120B)");
+    // Injected content itself never appears — only tiers, ids and byte counts.
+    expect(out).not.toContain("Amber");
+  });
+
   it("shows objective checks and evidence", async () => {
     await engine.processCommand(entityId, "trace eval req-command");
     const output = stripAnsi(conn.lastText());

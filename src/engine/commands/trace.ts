@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { header, separator } from "../../net/ansi";
+import { parseMemoryReceipt, renderMemoryReceiptLines } from "../../net/memory-receipt";
 import type { MarinaDB } from "../../persistence/database";
 import type { OtlpExporterStatus } from "../../telemetry/otlp-exporter";
 import type { CommandDef, EngineEvent, RoomContext } from "../../types";
@@ -599,6 +600,13 @@ function sendTrace(
         : undefined,
     ].filter(Boolean);
     if (metrics.length > 0) lines.push(`  ${"  ".repeat(depth + 1)}${metrics.join(" · ")}`);
+    // Memory section: the receipt of what was injected into a proxied request.
+    const receipt = parseMemoryReceipt(span.attributes.memoryReceipt);
+    if (receipt) {
+      for (const line of renderMemoryReceiptLines(receipt)) {
+        lines.push(`  ${"  ".repeat(depth + 1)}${line}`);
+      }
+    }
   }
   if (trace.spans.length > visible.length)
     lines.push(`  … ${trace.spans.length - visible.length} more spans`);

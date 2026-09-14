@@ -445,6 +445,58 @@ describe("Trace API", () => {
     );
   });
 
+  it("keeps the memory receipt on the native span attributes", async () => {
+    const receipt = {
+      schema: "marina.memory.receipt.v1",
+      requestId: "req-receipt",
+      entity: "Ada",
+      tiers: [{ tier: "evidence", ids: [{ id: "r_1", version: 1 }], bytes: 120 }],
+      budgetBytes: 2048,
+      usedBytes: 200,
+      truncated: false,
+      degraded: [],
+    };
+    engine.logEvent({
+      type: "model_request_lifecycle",
+      phase: "received",
+      requestId: "req-receipt",
+      runId: "req-receipt",
+      traceId: "req-receipt",
+      spanId: "span-req-receipt",
+      model: "marina",
+      routeKind: "passthru",
+      memoryReceipt: JSON.stringify(receipt),
+      timestamp: 100,
+    });
+    engine.logEvent({
+      type: "model_request_lifecycle",
+      phase: "completed",
+      requestId: "req-receipt",
+      runId: "req-receipt",
+      traceId: "req-receipt",
+      spanId: "span-req-receipt",
+      model: "marina",
+      routeKind: "passthru",
+      durationMs: 25,
+      timestamp: 125,
+    });
+    const url = new URL("http://localhost:3300/api/traces?traceId=req-receipt&limit=1");
+    const response = await handleDashboardApi(
+      new Request(url, { headers: { Authorization: `Bearer ${token}` } }),
+      url,
+      "GET",
+      engine,
+      db,
+    );
+    expect(response?.status).toBe(200);
+    const body = (await response!.json()) as {
+      traces: Array<{ spans: Array<{ attributes: Record<string, unknown> }> }>;
+    };
+    const attributes = body.traces[0]?.spans[0]?.attributes ?? {};
+    expect(typeof attributes.memoryReceipt).toBe("string");
+    expect(JSON.parse(attributes.memoryReceipt as string)).toEqual(receipt);
+  });
+
   it("exports completed spans as an OTLP/JSON request without changing native IDs", async () => {
     db.logEvent({
       type: "model_request_lifecycle",

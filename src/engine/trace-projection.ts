@@ -96,6 +96,9 @@ export function projectTraces(events: readonly EngineEvent[]): TraceView[] {
           ...(event.costUsd === undefined ? {} : { costUsd: event.costUsd }),
           ...(event.errorKind ? { errorKind: event.errorKind } : {}),
           ...(event.detail ? { detail: event.detail } : {}),
+          // Compact JSON receipt (marina.memory.receipt.v1) of the memory
+          // injected into a proxied request; `trace show` renders it.
+          ...(event.memoryReceipt ? { memoryReceipt: event.memoryReceipt } : {}),
         },
       });
     } else if (event.type === "agent_turn_start" || event.type === "agent_turn_end") {

@@ -180,6 +180,129 @@ the trace id to pass to `trace show`.
 
 ---
 
+## Memory injection, receipts and response cache
+
+In **passthru** endpoint mode (Admin → Model Endpoint, or `setEndpointConfig({ mode: "passthru" })`)
+Marina is a memory gateway in front of any upstream model: point an OpenAI SDK, the Anthropic
+SDK, an Ollama client, or an editor (Cursor, Claude Code, Codex) at Marina's base URL and every
+identified caller's requests are enriched with that caller's own Marina memory before they reach
+the upstream provider.
+
+### Surfaces
+
+Injection behaves identically on all four proxy surfaces; only the *slot* differs, because each
+protocol carries system context in its own place:
+
+| Surface | Native slot the memory lands in |
+|---------|--------------------------------|
+| `POST /v1/chat/completions` | first `system` message (prepended; created when absent) |
+| `POST /v1/messages` (Anthropic) | the `system` field (string or block array) |
+| `POST /api/chat` (Ollama) | first `system`-role message |
+| `POST /api/generate` (Ollama) | the `system` string |
+| `POST /v1/responses` | the `instructions` string |
+
+The Ollama routes and `/v1/responses` proxy upstream in passthru mode (previously they only routed
+to world agents). Ollama passthru always asks the upstream for a completed answer; a client that
+requested Ollama's default streaming receives it as a buffered ndjson stream. `/v1/responses`
+passthru is text-only (Responses tool schemas are not translated) and keeps `previous_response_id`
+threading through the conversation channel.
+
+### Identity — who gets memory
+
+The caller is mapped to a Marina entity fail-closed (`src/net/passthru-context.ts`):
+
+- `MODEL_API_KEYS=secret:Alice` — a **bound** key, confined to entity `Alice` (lazily created).
+- `MODEL_API_KEYS=secret:*` — an operator key that may name an **existing** entity with
+  `X-Marina-Agent: <name>`. A header can never create an entity.
+- Anything else collapses onto the shared anonymous `passthru` entity, which never receives
+  injection, never has its transcripts captured, and never caches.
+
+Injection is **on** for identified callers under the `local` trust profile. Elsewhere it is
+opt-in: the entity property `passthruContext: true`, or — for bound keys only —
+`X-Marina-Context: on`. A bound key can opt a single request out with `X-Marina-Context: off`;
+name-mapped targets ignore the header entirely (their stored consent stands). The old behaviour
+where a client-supplied `[marina:shared-world-context]` marker suppressed injection is gone.
+
+### What is injected, in what order
+
+The addendum comes from `buildUnifiedContext` (scope `all`) for the caller's latest user message,
+plus the world sections the entity may read (member / `MARINA_PASSTHRU_SHARED_POOLS` pools, its
+channels, the chronicle), framed as untrusted:
+
+```
+[marina:shared-world-context]
+Untrusted, read-only Marina context; verify before acting:
+Marina memory for Alice.
+Own memory [skills] (…): …                ┐ stable — renders first so a provider
+Own memory [trusted] (#12 imp=8 verified): … │ prefix cache (Anthropic/OpenAI) can hit
+Own memory [evidence] (record r_1 v1): …   ┘
+Own memory [proposal] (…): …               ┐
+Own memory [unverified — own notes, …] (…): … │ volatile — renders last
+Shared pool …  /  Channel …  /  Chronicle: … ┘
+```
+
+Tier order and separators are byte-stable across calls: the same memory state yields the same
+bytes on every surface.
+
+**Budget.** `MARINA_PASSTHRU_INJECT_BYTES` (default 2048, clamped 256–65536) bounds the whole
+addendum including the framing lines. Override per bound key with the entity property
+`passthruInjectBytes`. Items that do not fit are cut with a visible marker or dropped, and the
+receipt flags `truncated: true`.
+
+**Capture.** Each identified, injected exchange is recorded once in the caller's own memory as a
+`[passthru] User/Assistant` observation (one pair per request). Identical exchanges are captured
+once per entity per 24h window, so retries and replays do not multiply notes.
+
+### Memory receipts
+
+Every injected response carries `x-marina-memory-receipt` — compact JSON
+(`marina.memory.receipt.v1`, ≤ 2 KB) listing the tiers, ids (record versions / source hashes for
+durable evidence), bytes per tier, the budget, the bytes used, whether it was truncated, and any
+degraded tiers. When the full receipt would exceed 2 KB the header carries
+`{ schema, requestId, truncatedHeader: true }`; the full receipt is always on the trace:
+
+```bash
+curl -si http://localhost:3300/v1/chat/completions -H "Authorization: Bearer secret" \
+  -d '{"model":"marina","messages":[{"role":"user","content":"what port does Amber use?"}]}' \
+  | grep -i -e x-request-id -e x-marina-memory-receipt
+```
+
+The receipt's `requestId` equals the response's `x-request-id`; `trace show <id>` renders a
+**Memory** section (entity, budget, used bytes, one line per tier with ids), and the native
+`GET /api/traces` format exposes it as the span attribute `memoryReceipt`. Receipts are on in every
+trust profile — YOLO applies to permissions, never to records.
+
+### Response cache
+
+An exact-match completion cache stored on the durable memory service's pinned result cache
+(`cache_put` / `cache_get`, see [memory-service.md](memory-service.md)). Opt in per bound key with
+the entity property `passthruResponseCache: true`, or under the `local` profile with
+`MARINA_PASSTHRU_RESPONSE_CACHE=on`. `MARINA_PASSTHRU_RESPONSE_CACHE_TTL_MS` sets the entry
+lifetime (default 1h).
+
+- **Key**: SHA-256 of the canonicalized *effective* request — model identity, messages /
+  instructions **after** injection, tools and sampling parameters. Stream flags and client tags
+  are excluded. A different memory context is therefore a different key.
+- **Pins**: the receipt's durable `[evidence]` records (by version) and captured sources (by content
+  hash). The service refuses an empty pin set, so a completion is cached **only when at least one
+  pinned record or source shaped the prompt** — legacy notes and proposals alone never cache.
+  Revising or forgetting a pinned record, or any change to the space's evidence generation,
+  invalidates the entry; forgetting deletes stored values.
+- **Never cached**: streaming responses, tool-call responses, non-2xx responses, and anything from
+  the shared anonymous identity. Identities are isolated by construction (one resident space per
+  world account).
+- **Hit**: the cached completion is returned with `x-marina-cache: hit`, a fresh `x-request-id`,
+  and the *original* receipt of the request that produced it.
+- **Expect** the first repeat after a *new* exchange to miss: the captured transcript adds an
+  `[unverified]` line to the injected context, changing the effective request. From then on,
+  identical requests hit.
+- **Requires** the bound entity to have a durable world account (it has logged into the world at
+  least once). Without one, injection still works from legacy tiers, and the cache is a silent miss.
+- Semantic (similarity-based) caching is explicitly out of scope: the key is byte-exact so a hit
+  can never change an answer.
+
+---
+
 ## Authentication
 
 By default, the API is open (no key required). To require authentication:

@@ -21,6 +21,13 @@ import { buildAliasMap } from "./compat-profiles";
 import { corsHeaders } from "./cors";
 import { handleMediaApi } from "./media-api";
 import {
+  encodeMemoryReceiptAttribute,
+  encodeMemoryReceiptHeader,
+  finalizeMemoryReceipt,
+  MEMORY_RECEIPT_HEADER,
+  type MemoryReceipt,
+} from "./memory-receipt";
+import {
   isLocalProvider,
   LOCAL_PROVIDERS,
   localProviderBaseUrl,
@@ -33,8 +40,15 @@ import {
   capturePassthruTranscript,
   messageText,
   type OpenAIMessage,
+  type PassthruIdentity,
   resolvePassthruIdentity,
 } from "./passthru-context";
+import {
+  lookupResponseCache,
+  RESPONSE_CACHE_HEADER,
+  responseCacheEnabled,
+  storeResponseCache,
+} from "./response-cache";
 import {
   normalizeTextualToolCalls,
   type StreamEvent,
@@ -43,9 +57,25 @@ import {
 
 const MODEL_CORS = corsHeaders(null, {
   methods: "GET, POST, OPTIONS",
-  headers: "Content-Type, Authorization, X-Conversation-Id, X-Load-Balance",
-  expose: "X-Conversation-Id, x-request-id",
+  headers:
+    "Content-Type, Authorization, X-Conversation-Id, X-Load-Balance, X-Marina-Agent, X-Marina-Context",
+  expose: `X-Conversation-Id, x-request-id, ${MEMORY_RECEIPT_HEADER}, ${RESPONSE_CACHE_HEADER}`,
 });
+
+/** Response headers a passthru surface forwards from the proxied upstream reply
+ *  when it re-encodes the body into its own protocol (Anthropic, Ollama, Responses). */
+const PASSTHRU_FORWARDED_HEADERS = ["x-request-id", MEMORY_RECEIPT_HEADER, RESPONSE_CACHE_HEADER];
+
+function forwardPassthruHeaders(
+  from: Headers,
+  into: Record<string, string>,
+): Record<string, string> {
+  for (const name of PASSTHRU_FORWARDED_HEADERS) {
+    const value = from.get(name);
+    if (value) into[name] = value;
+  }
+  return into;
+}
 
 // --- API key authentication ---
 // When MODEL_API_KEYS is set, only requests with a valid Bearer token are accepted.
@@ -1495,13 +1525,23 @@ async function handleResponsesCreate(
       conversationId = crypto.randomUUID();
     }
 
+    const ec = getEndpointConfig(engine.db);
+    if (ec.mode === "passthru") {
+      return await runResponsesPassthru(engine, req, auth, {
+        model,
+        body,
+        userInput,
+        conversationId,
+        previousResponseId,
+        owner,
+      });
+    }
+
     const opts: RouteOptions = {
       context: body.instructions ? `system: ${body.instructions}` : undefined,
       conversationId,
       // Explicit X-Load-Balance wins; otherwise the operator-configured strategy.
-      strategy: req.headers.has("X-Load-Balance")
-        ? extractStrategy(req)
-        : getEndpointConfig(engine.db).strategy,
+      strategy: req.headers.has("X-Load-Balance") ? extractStrategy(req) : ec.strategy,
     };
 
     try {
@@ -1536,6 +1576,109 @@ async function handleResponsesCreate(
     if (e instanceof HttpError) return errorJson(e.status, e.message);
     return errorJson(500, "Internal error");
   }
+}
+
+/**
+ * Responses-API passthru: memory lands in the native `instructions` slot, the
+ * conversation channel supplies prior turns (same server-side state contract
+ * as agent routing), and the completion is stored as a response record so
+ * `previous_response_id` threading keeps working against an upstream model.
+ * Text-only by design — Responses tool schemas are not translated here.
+ */
+async function runResponsesPassthru(
+  engine: Engine,
+  req: Request,
+  auth: PassthruAuthResult | undefined,
+  input: {
+    model: string;
+    body: {
+      instructions?: string;
+      temperature?: unknown;
+      top_p?: unknown;
+      max_output_tokens?: unknown;
+      store?: boolean;
+    };
+    userInput: string;
+    conversationId: string;
+    previousResponseId?: string;
+    owner: string;
+  },
+): Promise<Response> {
+  const ec = getEndpointConfig(engine.db);
+  const cm = engine.channelManager;
+  const convChannel = cm ? getOrCreateConversationChannel(cm, input.conversationId) : undefined;
+  const history: OpenAIMessage[] =
+    cm && convChannel
+      ? buildHistory(cm, convChannel.id).map((entry) => ({
+          role: entry.role,
+          content: entry.content,
+        }))
+      : [];
+  const turns: OpenAIMessage[] = [...history, { role: "user", content: input.userInput }];
+  const prep = await preparePassthru(engine, req, auth, turns);
+  const native: Record<string, unknown> = { instructions: input.body.instructions };
+  applyInjection(native, prep.addendum, "responses");
+  const instructions = typeof native.instructions === "string" ? native.instructions : "";
+  const body: Record<string, unknown> = {
+    model: input.model,
+    messages: [...(instructions ? [{ role: "system", content: instructions }] : []), ...turns],
+    stream: false,
+    ...(typeof input.body.temperature === "number" ? { temperature: input.body.temperature } : {}),
+    ...(typeof input.body.top_p === "number" ? { top_p: input.body.top_p } : {}),
+    ...(typeof input.body.max_output_tokens === "number"
+      ? { max_tokens: input.body.max_output_tokens }
+      : {}),
+  };
+
+  const cached = await passthruCacheLookup(engine, prep, body, ec.passthruModel);
+  const resp =
+    cached ??
+    (await proxyToUpstream(engine, body, ec.passthruModel || undefined, {
+      routeKind: "passthru",
+      entityId: prep.identity?.entityId,
+      requestId: prep.requestId,
+      memoryReceipt: prep.receipt,
+    }));
+  if (!resp.ok) {
+    let message = resp.statusText || "Upstream request failed";
+    try {
+      const data = (await resp.json()) as { error?: { message?: unknown } };
+      if (typeof data.error?.message === "string") message = data.error.message;
+    } catch {
+      // Keep the status-derived message.
+    }
+    return errorJson(resp.status, message);
+  }
+  if (!cached && prep.identity?.contextOptIn) {
+    void capturePassthruResponse(engine, prep.identity.entityId, turns, resp);
+    passthruCacheStore(engine, prep, body, ec.passthruModel, resp);
+  }
+  const content = await extractResponseText(resp.clone());
+  if (cm && convChannel) {
+    // Same sender convention as agent routing: `__model_conv__` marks the user
+    // turn; any other non-agent sender reads back as the assistant.
+    cm.send(convChannel.id, "__model_conv__", "user", input.userInput);
+    cm.send(convChannel.id, "__model_passthru__", "assistant", content);
+  }
+  const rec: ResponseRecord = {
+    id: newResponseId(),
+    conversationId: input.conversationId,
+    model: input.model,
+    content,
+    createdAt: Date.now(),
+    previousResponseId: input.previousResponseId,
+    status: "completed",
+    owner: input.owner,
+  };
+  if (input.body.store !== false) responseIndex.set(rec.id, rec);
+  return json(
+    formatResponseRecord(rec),
+    200,
+    forwardPassthruHeaders(resp.headers, {
+      "X-Conversation-Id": input.conversationId,
+      "x-request-id": prep.requestId,
+    }),
+  );
 }
 
 function handleResponsesGet(id: string, auth: PassthruAuthResult | undefined): Response {
@@ -1662,8 +1805,26 @@ export async function handleModelApi(
   // translates Anthropic <-> OpenAI and drives the existing chat/proxy path via
   // the runInternal callback below.
   if (url.pathname === "/v1/messages" && method === "POST") {
-    return await handleAnthropicMessages(req, {
-      runInternal: (openaiBody, opts) => runOpenaiChat(engine, req, openaiBody, authResult, opts),
+    // The bridge re-encodes the body into an Anthropic message and drops the
+    // internal response headers; carry the traced request id, memory receipt
+    // and cache marker across so this surface is inspectable like the others.
+    let internalHeaders: Headers | undefined;
+    const anthropic = await handleAnthropicMessages(req, {
+      runInternal: async (openaiBody, opts) => {
+        const internal = await runOpenaiChat(engine, req, openaiBody, authResult, opts);
+        internalHeaders = internal.headers;
+        return internal;
+      },
+    });
+    if (!internalHeaders) return anthropic;
+    const forwarded = forwardPassthruHeaders(internalHeaders, {});
+    if (Object.keys(forwarded).length === 0) return anthropic;
+    const headers = new Headers(anthropic.headers);
+    for (const [name, value] of Object.entries(forwarded)) headers.set(name, value);
+    return new Response(anthropic.body, {
+      status: anthropic.status,
+      statusText: anthropic.statusText,
+      headers,
     });
   }
 
@@ -1693,12 +1854,12 @@ export async function handleModelApi(
 
   // Ollama: POST /api/chat
   if (url.pathname === "/api/chat" && method === "POST") {
-    return await handleOllamaChat(req, engine);
+    return await handleOllamaChat(req, engine, authResult);
   }
 
   // Ollama: POST /api/generate
   if (url.pathname === "/api/generate" && method === "POST") {
-    return await handleOllamaGenerate(req, engine);
+    return await handleOllamaGenerate(req, engine, authResult);
   }
 
   return undefined;
@@ -1763,7 +1924,7 @@ function maybePassthruIdentity(
   engine: Engine,
   req: Request,
   authResult?: PassthruAuthResult,
-): { entityId: EntityId; name: string; contextOptIn: boolean } | undefined {
+): PassthruIdentity | undefined {
   if (!authResult) return undefined;
   if (!passthruSignalPresent(req, authResult)) return undefined;
   const identity = resolvePassthruIdentity(engine, req.headers, authResult);
@@ -1774,6 +1935,133 @@ function maybePassthruIdentity(
   // existing entity — participates in the shared world.
   if (identity.shared) return undefined;
   return identity;
+}
+
+function newRequestId(): string {
+  return `req-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+/**
+ * Everything the four proxy surfaces share before they touch their protocol:
+ * the resolved identity, the injected addendum (built once from the unified
+ * memory surface for the caller's query), the finalized receipt and the
+ * pre-minted request id that ties header, trace and cache together.
+ */
+interface PassthruPrep {
+  identity?: PassthruIdentity;
+  addendum: string | null;
+  receipt?: MemoryReceipt;
+  requestId: string;
+}
+
+async function preparePassthru(
+  engine: Engine,
+  req: Request,
+  authResult: PassthruAuthResult | undefined,
+  messages: OpenAIMessage[],
+): Promise<PassthruPrep> {
+  const requestId = newRequestId();
+  const identity = maybePassthruIdentity(engine, req, authResult);
+  if (!identity?.contextOptIn) return { identity, addendum: null, requestId };
+  const built = await buildInjectedContext(engine, identity.entityId, messages);
+  return {
+    identity,
+    addendum: built.systemAddendum,
+    receipt: built.receipt ? finalizeMemoryReceipt(built.receipt, requestId) : undefined,
+    requestId,
+  };
+}
+
+/** The identity string the response cache keys on — the pinned passthru model
+ *  when the operator set one, else whatever the client asked for. */
+function passthruModelIdentity(body: Record<string, unknown>, forceModel: string): string {
+  return forceModel || (typeof body.model === "string" ? body.model : "marina");
+}
+
+/**
+ * Response-cache read for an identified, opted-in, non-streaming passthru
+ * request. Returns a ready OpenAI-shaped Response on a hit (with its own
+ * lifecycle spans so `trace show` still works), undefined otherwise.
+ */
+async function passthruCacheLookup(
+  engine: Engine,
+  prep: PassthruPrep,
+  body: Record<string, unknown>,
+  forceModel: string,
+): Promise<Response | undefined> {
+  if (!prep.identity?.contextOptIn || !engine.db || body.stream === true) return undefined;
+  const entity = engine.entities.get(prep.identity.entityId);
+  if (!entity || !responseCacheEnabled(entity)) return undefined;
+  const lookup = await lookupResponseCache(
+    engine.db,
+    prep.identity.name,
+    body,
+    passthruModelIdentity(body, forceModel),
+  );
+  if (!lookup.hit) return undefined;
+  const requestedModel = typeof body.model === "string" ? body.model : "marina";
+  const now = Date.now();
+  const receipt = encodeMemoryReceiptAttribute(lookup.value.receipt);
+  engine.logEvent({
+    type: "model_request_lifecycle",
+    phase: "received",
+    requestId: prep.requestId,
+    ...requestTrace(prep.requestId),
+    model: requestedModel,
+    routeKind: "passthru",
+    entityId: prep.identity.entityId,
+    memoryReceipt: receipt,
+    timestamp: now,
+  });
+  engine.logEvent({
+    type: "model_request_lifecycle",
+    phase: "completed",
+    requestId: prep.requestId,
+    ...requestTrace(prep.requestId),
+    model: requestedModel,
+    target: "response-cache",
+    routeKind: "passthru",
+    entityId: prep.identity.entityId,
+    memoryReceipt: receipt,
+    durationMs: Date.now() - now,
+    timestamp: Date.now(),
+  });
+  return new Response(JSON.stringify(lookup.value.body), {
+    status: lookup.value.status,
+    headers: {
+      ...MODEL_CORS,
+      "Content-Type": lookup.value.contentType || "application/json",
+      "x-request-id": prep.requestId,
+      [RESPONSE_CACHE_HEADER]: "hit",
+      // The ORIGINAL receipt: the tiers that shaped the cached answer.
+      [MEMORY_RECEIPT_HEADER]: encodeMemoryReceiptHeader(lookup.value.receipt),
+    },
+  });
+}
+
+/** Fire-and-forget response-cache write; the RESPONSE checks live in `storeResponseCache`. */
+function passthruCacheStore(
+  engine: Engine,
+  prep: PassthruPrep,
+  body: Record<string, unknown>,
+  forceModel: string,
+  resp: Response,
+): void {
+  if (!prep.identity?.contextOptIn || !prep.receipt || !engine.db) return;
+  if (body.stream === true || !resp.ok) return;
+  const entity = engine.entities.get(prep.identity.entityId);
+  if (!entity || !responseCacheEnabled(entity)) return;
+  const db = engine.db;
+  void storeResponseCache(
+    db,
+    prep.identity.name,
+    body,
+    passthruModelIdentity(body, forceModel),
+    resp.clone(),
+    prep.receipt,
+  ).catch(() => {
+    // Best-effort: a cache write failure never affects the caller's response.
+  });
 }
 
 /** Best-effort text extraction from a completed (non-streaming) proxy response. */
@@ -1876,17 +2164,22 @@ async function runOpenaiChat(
     // no injected bytes, no memory writes — byte-identical to the un-instrumented
     // path (see `maybePassthruIdentity`).
     if (ec.mode === "passthru") {
-      const identity = maybePassthruIdentity(engine, req, authResult);
-      if (identity?.contextOptIn) {
-        const { systemAddendum } = await buildInjectedContext(engine, identity.entityId, messages);
-        if (systemAddendum) applyInjection(body, systemAddendum, "openai");
-      }
+      // Also the `/v1/messages` path: the Anthropic bridge translates its body
+      // to this shape first, so the addendum lands in the OpenAI system message
+      // here and `proxyToAnthropic` moves it into the native `system` field.
+      const prep = await preparePassthru(engine, req, authResult, messages);
+      if (prep.addendum) applyInjection(body, prep.addendum, "openai");
+      const cached = await passthruCacheLookup(engine, prep, body, ec.passthruModel);
+      if (cached) return cached;
       const resp = await proxyToUpstream(engine, body, ec.passthruModel || undefined, {
         routeKind: "passthru",
-        entityId: identity?.entityId,
+        entityId: prep.identity?.entityId,
+        requestId: prep.requestId,
+        memoryReceipt: prep.receipt,
       });
-      if (identity?.contextOptIn) {
-        void capturePassthruResponse(engine, identity.entityId, messages, resp);
+      if (prep.identity?.contextOptIn) {
+        void capturePassthruResponse(engine, prep.identity.entityId, messages, resp);
+        passthruCacheStore(engine, prep, body, ec.passthruModel, resp);
       }
       return resp;
     }
@@ -1998,7 +2291,108 @@ async function runOpenaiChat(
   }
 }
 
-async function handleOllamaChat(req: Request, engine: Engine): Promise<Response> {
+/**
+ * Ollama-surface passthru: translate to the OpenAI shape, inject memory in the
+ * protocol's native slot (a system-role message for `/api/chat`, the `system`
+ * string for `/api/generate`), proxy, then re-encode the completion as Ollama
+ * JSON. The upstream call is always non-streaming; a client that asked for
+ * Ollama's default streaming gets the completed answer as a buffered ndjson
+ * stream (one content chunk + the terminal record).
+ */
+async function runOllamaPassthru(
+  engine: Engine,
+  req: Request,
+  authResult: PassthruAuthResult | undefined,
+  input: {
+    kind: "chat" | "generate";
+    model: string;
+    wantStream: boolean;
+    messages?: OpenAIMessage[];
+    prompt?: string;
+    system?: string;
+    options?: Record<string, unknown>;
+  },
+): Promise<Response> {
+  const ec = getEndpointConfig(engine.db);
+  const isChat = input.kind === "chat";
+  const inbound: OpenAIMessage[] = isChat
+    ? (input.messages ?? [])
+    : [{ role: "user", content: input.prompt ?? "" }];
+  const prep = await preparePassthru(engine, req, authResult, inbound);
+
+  let messages: OpenAIMessage[];
+  if (isChat) {
+    const chat: Record<string, unknown> = { messages: [...inbound] };
+    applyInjection(chat, prep.addendum, "openai");
+    messages = chat.messages as OpenAIMessage[];
+  } else {
+    const gen: Record<string, unknown> = { system: input.system };
+    applyInjection(gen, prep.addendum, "ollama-generate");
+    messages = [
+      ...(typeof gen.system === "string" && gen.system
+        ? [{ role: "system", content: gen.system }]
+        : []),
+      { role: "user", content: input.prompt ?? "" },
+    ];
+  }
+  const options = input.options ?? {};
+  const body: Record<string, unknown> = {
+    model: input.model,
+    messages,
+    stream: false,
+    ...(typeof options.temperature === "number" ? { temperature: options.temperature } : {}),
+    ...(typeof options.top_p === "number" ? { top_p: options.top_p } : {}),
+    ...(typeof options.num_predict === "number" && options.num_predict > 0
+      ? { max_tokens: options.num_predict }
+      : {}),
+    ...(Array.isArray(options.stop) ? { stop: options.stop } : {}),
+  };
+
+  const cached = await passthruCacheLookup(engine, prep, body, ec.passthruModel);
+  const resp =
+    cached ??
+    (await proxyToUpstream(engine, body, ec.passthruModel || undefined, {
+      routeKind: "passthru",
+      entityId: prep.identity?.entityId,
+      requestId: prep.requestId,
+      memoryReceipt: prep.receipt,
+    }));
+  if (!resp.ok) return resp;
+  if (!cached && prep.identity?.contextOptIn) {
+    void capturePassthruResponse(engine, prep.identity.entityId, inbound, resp);
+    passthruCacheStore(engine, prep, body, ec.passthruModel, resp);
+  }
+  const text = await extractResponseText(resp.clone());
+  const headers = forwardPassthruHeaders(resp.headers, { ...MODEL_CORS });
+  if (input.wantStream) {
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(enc.encode(ollamaStreamChunk(input.model, text, isChat)));
+        controller.enqueue(enc.encode(ollamaStreamEnd(input.model, isChat)));
+        safeClose(controller);
+      },
+    });
+    return new Response(stream, {
+      headers: {
+        ...headers,
+        "Content-Type": "application/x-ndjson",
+        "Transfer-Encoding": "chunked",
+      },
+    });
+  }
+  return json(
+    isChat ? ollamaChatResponse(input.model, text) : ollamaGenerateResponse(input.model, text),
+    200,
+    headers,
+  );
+}
+
+async function handleOllamaChat(
+  req: Request,
+  engine: Engine,
+  authResult?: PassthruAuthResult,
+): Promise<Response> {
   try {
     const body = await req.json();
     const model = body.model ?? "marina";
@@ -2006,6 +2400,16 @@ async function handleOllamaChat(req: Request, engine: Engine): Promise<Response>
 
     const userMsg = [...messages].reverse().find((m: { role: string }) => m.role === "user");
     if (!userMsg) return errorJson(400, "No user message found");
+
+    if (getEndpointConfig(engine.db).mode === "passthru") {
+      return await runOllamaPassthru(engine, req, authResult, {
+        kind: "chat",
+        model,
+        wantStream: body.stream !== false,
+        messages,
+        options: body.options && typeof body.options === "object" ? body.options : undefined,
+      });
+    }
 
     const contextParts: string[] = [];
     for (const msg of messages) {
@@ -2048,12 +2452,27 @@ async function handleOllamaChat(req: Request, engine: Engine): Promise<Response>
   }
 }
 
-async function handleOllamaGenerate(req: Request, engine: Engine): Promise<Response> {
+async function handleOllamaGenerate(
+  req: Request,
+  engine: Engine,
+  authResult?: PassthruAuthResult,
+): Promise<Response> {
   try {
     const body = await req.json();
     const model = body.model ?? "marina";
     const prompt = body.prompt;
     if (!prompt) return errorJson(400, "No prompt provided");
+
+    if (getEndpointConfig(engine.db).mode === "passthru") {
+      return await runOllamaPassthru(engine, req, authResult, {
+        kind: "generate",
+        model,
+        wantStream: body.stream !== false,
+        prompt: String(prompt),
+        system: typeof body.system === "string" ? body.system : undefined,
+        options: body.options && typeof body.options === "object" ? body.options : undefined,
+      });
+    }
 
     const context = body.system ? `system: ${body.system}` : undefined;
     const conversationId = extractConversationId(req, body);
@@ -2522,6 +2941,12 @@ async function proxyToUpstream(
     routeKind: "passthru" | "fallback" | "synthesis";
     /** Resolved passthru identity, tagged onto every lifecycle span. */
     entityId?: EntityId;
+    /** Pre-minted request id (passthru surfaces mint it before injection so the
+     *  receipt, header and trace agree). Minted here when absent. */
+    requestId?: string;
+    /** Memory receipt for the injected context — emitted on the received and
+     *  terminal lifecycle events and returned as `x-marina-memory-receipt`. */
+    memoryReceipt?: MemoryReceipt;
   },
 ): Promise<Response> {
   const wantStream = body.stream === true;
@@ -2530,8 +2955,11 @@ async function proxyToUpstream(
   let lastErrorKind: ProxyTraceMetrics["errorKind"];
   const requestedModel = typeof body.model === "string" ? body.model : "marina";
   const entityId = traceOptions?.entityId;
+  const memoryReceipt = traceOptions?.memoryReceipt
+    ? encodeMemoryReceiptAttribute(traceOptions.memoryReceipt)
+    : undefined;
   const startedAt = Date.now();
-  const requestId = traceOptions ? `req-${crypto.randomUUID().slice(0, 8)}` : undefined;
+  const requestId = traceOptions ? (traceOptions.requestId ?? newRequestId()) : undefined;
   if (requestId) {
     engine.logEvent({
       type: "model_request_lifecycle",
@@ -2541,6 +2969,7 @@ async function proxyToUpstream(
       model: requestedModel,
       routeKind: traceOptions!.routeKind,
       ...(entityId ? { entityId } : {}),
+      ...(memoryReceipt ? { memoryReceipt } : {}),
       timestamp: startedAt,
     });
   }
@@ -2570,6 +2999,7 @@ async function proxyToUpstream(
       target,
       routeKind: traceOptions!.routeKind,
       entityId,
+      memoryReceipt: traceOptions!.memoryReceipt,
       startedAt,
       errorKind,
     });
@@ -2673,12 +3103,21 @@ async function traceProxyResponse(
     target?: string;
     routeKind: "passthru" | "fallback" | "synthesis";
     entityId?: EntityId;
+    memoryReceipt?: MemoryReceipt;
     startedAt: number;
     errorKind?: ProxyTraceMetrics["errorKind"];
   },
 ): Promise<Response> {
   const headers = new Headers(response.headers);
   headers.set("x-request-id", trace.requestId);
+  // The receipt rides every injected response — including failures, so a
+  // client can see what was injected into a request that the upstream refused.
+  if (trace.memoryReceipt) {
+    headers.set(MEMORY_RECEIPT_HEADER, encodeMemoryReceiptHeader(trace.memoryReceipt));
+  }
+  const memoryReceipt = trace.memoryReceipt
+    ? encodeMemoryReceiptAttribute(trace.memoryReceipt)
+    : undefined;
   let terminal = false;
   const finish = (
     phase: "completed" | "failed",
@@ -2696,6 +3135,7 @@ async function traceProxyResponse(
       target: trace.target,
       routeKind: trace.routeKind,
       ...(trace.entityId ? { entityId: trace.entityId } : {}),
+      ...(memoryReceipt ? { memoryReceipt } : {}),
       durationMs: Date.now() - trace.startedAt,
       ...metrics,
       ...(detail ? { detail } : {}),

@@ -818,6 +818,9 @@ export type EngineEvent =
       /** Resolved passthru identity for per-caller attribution (light
        * governance). Absent on anonymous/internal-routed requests. */
       entityId?: string;
+      /** JSON `marina.memory.receipt.v1` — which memory tiers/ids were injected
+       * into a proxied request (`src/net/memory-receipt.ts`). Passthru only. */
+      memoryReceipt?: string;
       durationMs?: number;
       ttftMs?: number;
       inputTokens?: number;

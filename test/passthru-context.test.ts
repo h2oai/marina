@@ -7,9 +7,14 @@ import { buildUnifiedContext, UNIFIED_TIER_LABELS } from "../src/memory/unified-
 import {
   applyInjection,
   buildInjectedContext,
+  CAPTURE_DEDUP_WINDOW_MS,
   capturePassthruTranscript,
   DEFAULT_PASSTHRU_ENTITY,
+  DEFAULT_PASSTHRU_INJECT_BYTES,
+  INJECTION_FRAMING,
   INJECTION_MARKER,
+  resetPassthruCaptureDedupForTests,
+  resolveInjectBudget,
   resolvePassthruIdentity,
 } from "../src/net/passthru-context";
 import { MarinaDB } from "../src/persistence/database";
@@ -31,6 +36,7 @@ describe("passthru-context", () => {
 
   beforeEach(() => {
     cleanupDb(TEST_DB);
+    resetPassthruCaptureDedupForTests();
     db = new MarinaDB(TEST_DB);
     engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
     engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
@@ -390,20 +396,157 @@ describe("passthru-context", () => {
       expect(body.system).toBe("ONLY");
     });
 
-    it("is idempotent (marker guard) across openai + anthropic", () => {
-      const add = `${INJECTION_MARKER} once`;
-      const oa = { messages: [{ role: "system", content: "s" }] };
-      applyInjection(oa, add, "openai");
-      applyInjection(oa, add, "openai");
-      const occurrences = (oa.messages[0]!.content.match(/marina:shared-world-context/g) ?? [])
-        .length;
-      expect(occurrences).toBe(1);
+    it("a client-supplied marker in the body NO LONGER suppresses injection", () => {
+      // The literal marker used to be a client-controlled kill switch. Opt-out is
+      // now the explicit `X-Marina-Context: off` header (bound keys only).
+      const oa = { messages: [{ role: "system", content: `${INJECTION_MARKER} echoed` }] };
+      applyInjection(oa, "FRESH", "openai");
+      expect(oa.messages[0]!.content.startsWith("FRESH")).toBe(true);
+      const an = { system: `${INJECTION_MARKER} echoed` };
+      applyInjection(an, "FRESH", "anthropic");
+      expect((an.system as string).startsWith("FRESH")).toBe(true);
+    });
 
-      const an = { system: "s" };
-      applyInjection(an, add, "anthropic");
-      applyInjection(an, add, "anthropic");
-      const anOcc = ((an.system as string).match(/marina:shared-world-context/g) ?? []).length;
-      expect(anOcc).toBe(1);
+    it("prepends to the Ollama /api/generate `system` string", () => {
+      const withBase: Record<string, unknown> = { prompt: "hi", system: "base" };
+      applyInjection(withBase, "ADD", "ollama-generate");
+      expect(withBase.system).toBe("ADD\n\nbase");
+      const bare: Record<string, unknown> = { prompt: "hi" };
+      applyInjection(bare, "ADD", "ollama-generate");
+      expect(bare.system).toBe("ADD");
+    });
+
+    it("prepends to the Responses API `instructions` string", () => {
+      const withBase: Record<string, unknown> = { input: "hi", instructions: "base" };
+      applyInjection(withBase, "ADD", "responses");
+      expect(withBase.instructions).toBe("ADD\n\nbase");
+      const bare: Record<string, unknown> = { input: "hi" };
+      applyInjection(bare, "ADD", "responses");
+      expect(bare.instructions).toBe("ADD");
+    });
+  });
+
+  // ─── Header opt-out, budget, ordering, receipt ─────────────────────────────
+
+  describe("X-Marina-Context: off", () => {
+    it("opts a BOUND key out even when its stored property opts in", () => {
+      const first = resolvePassthruIdentity(engine, headers({}), { boundEntityName: "OptOut" });
+      engine.entities.get(first.entityId)!.properties.passthruContext = true;
+      const on = resolvePassthruIdentity(engine, headers({}), { boundEntityName: "OptOut" });
+      expect(on.contextOptIn).toBe(true);
+      expect(on.bound).toBe(true);
+      const off = resolvePassthruIdentity(engine, headers({ "X-Marina-Context": "off" }), {
+        boundEntityName: "OptOut",
+      });
+      expect(off.contextOptIn).toBe(false);
+    });
+
+    it("is IGNORED for a name-mapped target (a header can neither force nor strip consent)", () => {
+      engine.entities.create({
+        kind: "agent",
+        name: "Mapped",
+        short: "Mapped",
+        long: "opted in by property",
+        room: engine.config.startRoom,
+        properties: { passthruContext: true },
+      });
+      const mapped = resolvePassthruIdentity(
+        engine,
+        headers({ "X-Marina-Agent": "Mapped", "X-Marina-Context": "off" }),
+        { canNameMap: true },
+      );
+      expect(mapped.bound).toBe(false);
+      expect(mapped.contextOptIn).toBe(true); // header ignored — stored consent stands
+    });
+  });
+
+  describe("budget, ordering and receipt", () => {
+    it("resolves the budget from the entity property, then the env, then the default", () => {
+      const prev = process.env.MARINA_PASSTHRU_INJECT_BYTES;
+      try {
+        delete process.env.MARINA_PASSTHRU_INJECT_BYTES;
+        const me = resolvePassthruIdentity(engine, headers({}), { boundEntityName: "Budget" });
+        const entity = engine.entities.get(me.entityId)!;
+        expect(resolveInjectBudget(entity)).toBe(DEFAULT_PASSTHRU_INJECT_BYTES);
+        process.env.MARINA_PASSTHRU_INJECT_BYTES = "4096";
+        expect(resolveInjectBudget(entity)).toBe(4096);
+        entity.properties.passthruInjectBytes = 600;
+        expect(resolveInjectBudget(entity)).toBe(600);
+        entity.properties.passthruInjectBytes = "10"; // clamped to the floor
+        expect(resolveInjectBudget(entity)).toBe(256);
+      } finally {
+        if (prev === undefined) delete process.env.MARINA_PASSTHRU_INJECT_BYTES;
+        else process.env.MARINA_PASSTHRU_INJECT_BYTES = prev;
+      }
+    });
+
+    it("renders stable tiers first, volatile last, byte-stable across calls, and reports a receipt", async () => {
+      const fx = await seedUnifiedFixture(engine, db);
+      const me = resolvePassthruIdentity(engine, headers({ "X-Marina-Agent": fx.owner }), {
+        canNameMap: true,
+      });
+      const messages = [{ role: "user", content: `what is the ${FIXTURE_QUERY}?` }];
+      const first = await buildInjectedContext(engine, me.entityId, messages);
+      const second = await buildInjectedContext(engine, me.entityId, messages);
+      expect(first.systemAddendum).not.toBeNull();
+      expect(second.systemAddendum).toBe(first.systemAddendum);
+
+      const lines = first.systemAddendum!.split("\n");
+      expect(lines[0]).toBe(INJECTION_MARKER);
+      expect(lines[1]).toBe(INJECTION_FRAMING);
+      expect(lines[2]).toBe(`Marina memory for ${fx.owner}.`);
+      const order = (label: string) =>
+        lines.findIndex((line) => line.startsWith(`Own memory ${label} (`));
+      const skill = order(UNIFIED_TIER_LABELS.skill);
+      const trusted = order(UNIFIED_TIER_LABELS.trusted);
+      const evidence = order(UNIFIED_TIER_LABELS.evidence);
+      const proposal = order(UNIFIED_TIER_LABELS.proposal);
+      const unverified = order(UNIFIED_TIER_LABELS.unverified);
+      expect(skill).toBeGreaterThan(2);
+      expect(trusted).toBeGreaterThan(skill);
+      expect(evidence).toBeGreaterThan(trusted);
+      expect(proposal).toBeGreaterThan(evidence);
+      expect(unverified).toBeGreaterThan(proposal);
+
+      const receipt = first.receipt!;
+      expect(receipt.schema).toBe("marina.memory.receipt.v1");
+      expect(receipt.entity).toBe(fx.owner);
+      expect(receipt.budgetBytes).toBe(DEFAULT_PASSTHRU_INJECT_BYTES);
+      expect(receipt.usedBytes).toBe(new TextEncoder().encode(first.systemAddendum!).length);
+      expect(receipt.usedBytes).toBeLessThanOrEqual(receipt.budgetBytes);
+      const tiers = Object.fromEntries(receipt.tiers.map((t) => [t.tier, t.ids]));
+      expect(tiers.trusted).toEqual([{ id: String(fx.verifiedNoteId) }]);
+      expect(tiers.evidence).toContainEqual({ id: fx.recordId, version: 1 });
+      expect(tiers.evidence!.some((ref) => ref.id === fx.sourceId && ref.hash)).toBe(true);
+      expect(tiers.proposal).toEqual([{ id: fx.jobId }]);
+      expect(tiers.unverified).toEqual([{ id: String(fx.plainNoteId) }]);
+      for (const tier of receipt.tiers) expect(tier.bytes).toBeGreaterThan(0);
+    });
+
+    it("enforces the per-identity byte budget over the whole addendum and flags truncation", async () => {
+      const fx = await seedUnifiedFixture(engine, db);
+      const me = resolvePassthruIdentity(engine, headers({ "X-Marina-Agent": fx.owner }), {
+        canNameMap: true,
+      });
+      engine.entities.get(me.entityId)!.properties.passthruInjectBytes = 300;
+      const built = await buildInjectedContext(engine, me.entityId, [
+        { role: "user", content: `what is the ${FIXTURE_QUERY}?` },
+      ]);
+      expect(built.systemAddendum).not.toBeNull();
+      const bytes = new TextEncoder().encode(built.systemAddendum!).length;
+      expect(bytes).toBeLessThanOrEqual(300);
+      expect(built.receipt!.budgetBytes).toBe(300);
+      expect(built.receipt!.usedBytes).toBe(bytes);
+      expect(built.receipt!.truncated).toBe(true);
+      // An explicit option overrides the property.
+      const wide = await buildInjectedContext(
+        engine,
+        me.entityId,
+        [{ role: "user", content: `what is the ${FIXTURE_QUERY}?` }],
+        { budgetBytes: 4096 },
+      );
+      expect(wide.receipt!.budgetBytes).toBe(4096);
+      expect(wide.receipt!.usedBytes).toBeGreaterThan(bytes);
     });
   });
 
@@ -438,6 +581,34 @@ describe("passthru-context", () => {
       // Bob has no passthru note.
       const bobNotes = db.getNotesByEntity("Bob", 50);
       expect(bobNotes.length).toBe(0);
+    });
+
+    it("captures an identical exchange once per entity per 24h window", () => {
+      const me = resolvePassthruIdentity(engine, headers({}), { boundEntityName: "Dedup" });
+      const other = resolvePassthruIdentity(engine, headers({}), { boundEntityName: "Other" });
+      const msgs = [{ role: "user", content: "what is the capital of France?" }];
+      const t0 = Date.now();
+      expect(capturePassthruTranscript(engine, me.entityId, msgs, "Paris.", t0)).toBe(true);
+      expect(capturePassthruTranscript(engine, me.entityId, msgs, "Paris.", t0 + 1000)).toBe(false);
+      // A different answer is a different exchange.
+      expect(capturePassthruTranscript(engine, me.entityId, msgs, "Paris, France.", t0)).toBe(true);
+      // Dedup is per entity — another identity records its own copy.
+      expect(capturePassthruTranscript(engine, other.entityId, msgs, "Paris.", t0)).toBe(true);
+      // After the window the same exchange is captured again.
+      expect(
+        capturePassthruTranscript(
+          engine,
+          me.entityId,
+          msgs,
+          "Paris.",
+          t0 + CAPTURE_DEDUP_WINDOW_MS + 1,
+        ),
+      ).toBe(true);
+      const mine = db
+        .getNotesByEntity(me.name, 50)
+        .filter((n) => n.content.startsWith("[passthru]"));
+      // DB-level exact dedup also collapses the post-window repeat onto the first note.
+      expect(mine.length).toBe(2);
     });
   });
 });
