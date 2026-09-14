@@ -82,6 +82,19 @@ export type ResponseCacheLookup =
   | { hit: true; key: string; value: CachedPassthruResponse }
   | { hit: false; key: string; reason: string };
 
+/**
+ * In-memory process counters read by the memory observability overview
+ * (`/api/memory/overview` → `receipts.cache`). Observability only — they
+ * never influence caching decisions and reset with the process.
+ */
+export const responseCacheCounters = { hits: 0, misses: 0, stores: 0 };
+
+export function resetResponseCacheCounters(): void {
+  responseCacheCounters.hits = 0;
+  responseCacheCounters.misses = 0;
+  responseCacheCounters.stores = 0;
+}
+
 export function responseCacheEnabled(
   entity: Entity,
   env: NodeJS.ProcessEnv = process.env,
@@ -173,14 +186,22 @@ export async function lookupResponseCache(
       input: cacheIdentity(key, modelIdentity),
     });
     const outcome = result.result as MemoryCacheResult;
-    if (!outcome.hit) return { hit: false, key, reason: outcome.reason };
-    if (!isCachedResponse(outcome.value)) return { hit: false, key, reason: "invalid" };
+    if (!outcome.hit) {
+      responseCacheCounters.misses++;
+      return { hit: false, key, reason: outcome.reason };
+    }
+    if (!isCachedResponse(outcome.value)) {
+      responseCacheCounters.misses++;
+      return { hit: false, key, reason: "invalid" };
+    }
+    responseCacheCounters.hits++;
     return { hit: true, key, value: outcome.value };
   } catch (error) {
     const code =
       error && typeof error === "object" && "code" in error
         ? String((error as { code: unknown }).code)
         : "error";
+    responseCacheCounters.misses++;
     return { hit: false, key, reason: code };
   }
 }
@@ -243,6 +264,7 @@ export async function storeResponseCache(
       // never mistaken for a replay of the earlier one.
       key: `passthru-cache:${key.slice(0, 40)}:${now.toString(36)}`,
     });
+    responseCacheCounters.stores++;
     return { stored: true, key };
   } catch (error) {
     const code =

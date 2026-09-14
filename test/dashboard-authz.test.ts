@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { setRank } from "../src/engine/permissions";
 import { grant } from "../src/engine/safety-gates";
+import { residentMemoryOperation } from "../src/memory/resident-service";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
@@ -103,5 +104,58 @@ describe("dashboard privileged-op authorization (spawn)", () => {
     const [url, method, req] = spawnReq();
     const resp = await handleDashboardApi(req, url, method, engine, db);
     expect(resp?.status).toBe(403);
+  });
+
+  // ─── Memory job cancel (src/net/memory-observability.ts) ────────────────────
+  it("only the requester or an operator may cancel a memory assistance job", async () => {
+    const ownerToken = await loginToken("Owner");
+    const helperToken = await loginToken("Helper");
+    const randoToken = await loginToken("Rando");
+    const created = await residentMemoryOperation(db, "Owner", {
+      operation: "assist_create",
+      key: "authz-create",
+      input: { role: "librarian", worker_name: "Helper", task: "Find the deployment note" },
+    });
+    const jobId = (created.result as { id: string }).id;
+    const cancelReq = (token?: string): [URL, string, Request] => {
+      const url = new URL(`http://localhost:3300/api/memory/jobs/${jobId}/cancel`);
+      const req = new Request(url.toString(), {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      return [url, "POST", req];
+    };
+
+    // No session → 401; unrelated resident → the job does not exist for it.
+    let [url, method, req] = cancelReq();
+    expect((await handleDashboardApi(req, url, method, engine, db))?.status).toBe(401);
+    [url, method, req] = cancelReq(randoToken);
+    expect((await handleDashboardApi(req, url, method, engine, db))?.status).toBe(404);
+    // The worker may see the job but not withdraw it.
+    [url, method, req] = cancelReq(helperToken);
+    expect((await handleDashboardApi(req, url, method, engine, db))?.status).toBe(403);
+    // Dev-open opens reads only — never a write.
+    process.env.MARINA_OPEN_API = "true";
+    [url, method, req] = cancelReq();
+    expect((await handleDashboardApi(req, url, method, engine, db))?.status).toBe(403);
+    delete process.env.MARINA_OPEN_API;
+    // Still open after every refusal; the requester withdraws it.
+    [url, method, req] = cancelReq(ownerToken);
+    const resp = await handleDashboardApi(req, url, method, engine, db);
+    expect(resp?.status).toBe(200);
+    expect(await resp!.json()).toMatchObject({ id: jobId, state: "cancelled", workOpen: false });
+    // The task text is visible to the requester on its own job view.
+    const [gUrl, gMethod, gReq] = [
+      new URL(`http://localhost:3300/api/memory/jobs/${jobId}`),
+      "GET",
+      new Request(`http://localhost:3300/api/memory/jobs/${jobId}`, {
+        headers: { Authorization: `Bearer ${ownerToken}` },
+      }),
+    ] as const;
+    const view = (await (await handleDashboardApi(gReq, gUrl, gMethod, engine, db))!.json()) as {
+      task?: string;
+      state: string;
+    };
+    expect(view).toMatchObject({ state: "cancelled", task: "Find the deployment note" });
   });
 });

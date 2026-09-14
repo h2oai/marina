@@ -21,6 +21,7 @@ import { TaskManager } from "../coordination/task-manager";
 import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywheel-manager";
 import type { AdapterManager } from "../net/adapter-manager";
 import { connects, disconnects } from "../net/ansi";
+import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory-observability";
 import { cleanupStaleConversationChannels } from "../net/model-api";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import type { MarinaDB } from "../persistence/database";
@@ -1386,6 +1387,14 @@ export class Engine {
       void tryLogAsync(this.logger, "tick", "Memory accumulation dispatch failed", async () => {
         await runEngineAccumulationDispatch(this);
       });
+    }
+
+    // ~2 s: memory observability poller. Reads `memory_service_events` past
+    // the last seen seq (indexed, O(new rows), capped per call) and emits
+    // `memory_job` / `memory_service_event` for dashboard clients. Sync SQL —
+    // never awaits; the first call only primes the cursor.
+    if (this.db && this.tickCount % memoryObservabilityPollTicks(this.config.tickInterval) === 0) {
+      tryLog(this.logger, "tick", "Memory observability poll failed", () => pollMemoryEvents(this));
     }
 
     // Hourly: trim the durable event log to the retention window. Without this

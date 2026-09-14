@@ -32,7 +32,12 @@ import { logsToOtlpJson } from "../telemetry/otlp-log-exporter";
 import type { Connection, EntityId, Perception, RoomId } from "../types";
 import { ORCHESTRATION_PATTERNS } from "../world/templates/orchestration";
 import { collectiveManager } from "../world/world-collective-manager";
-import { authenticateRequest, isOperatorPrincipal, isSentinelPrincipal } from "./auth-middleware";
+import {
+  authenticateRequest,
+  isOperatorPrincipal,
+  isSentinelPrincipal,
+  OPEN_API_ENTITY_ID,
+} from "./auth-middleware";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "./canvas-principal";
 import { authorizeCanvasSubscription } from "./canvas-ws";
 import { corsHeaders } from "./cors";
@@ -42,6 +47,14 @@ import {
   verifyFederationDocument,
 } from "./federation-crypto";
 import { formatPerception } from "./formatter";
+import {
+  buildMemoryGraph,
+  buildMemoryOverview,
+  cancelMemoryJob,
+  getMemoryJob,
+  listMemoryJobs,
+  memoryObserverScope,
+} from "./memory-observability";
 import { memoryObserver } from "./memory-visibility";
 import { discoverModels } from "./model-discovery";
 import { type EndpointConfig, getEndpointConfig, setEndpointConfig } from "./model-endpoint";
@@ -700,6 +713,55 @@ export async function handleDashboardApi(
     const ok = db.snoozeOperationalAlert(Number(opsAlertSnoozeMatch[1]), Date.now() + durationMs);
     return ok ? json({ ok: true }) : json({ error: "Alert not found" }, 404);
   }
+  // ─── Memory observability (src/net/memory-observability.ts) ──────────────
+  // Observer-scoped: operators / sovereigns / desktop token / dev-open see
+  // everything; a resident sees only its own jobs, spaces, notes and credits.
+  if (url.pathname === "/api/memory/overview" && method === "GET" && db) {
+    return json(buildMemoryOverview(engine, memoryObserverScope(engine, callerId)));
+  }
+  if (url.pathname === "/api/memory/jobs" && method === "GET" && db) {
+    const stateParam = url.searchParams.get("state");
+    const limitParam = Number.parseInt(url.searchParams.get("limit") ?? "", 10);
+    try {
+      return json(
+        listMemoryJobs(db, memoryObserverScope(engine, callerId), {
+          state: stateParam === "all" ? "all" : "open",
+          role: url.searchParams.get("role") ?? undefined,
+          entity: url.searchParams.get("entity") ?? undefined,
+          limit: Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 50,
+          cursor: url.searchParams.get("cursor"),
+        }),
+      );
+    } catch (cause) {
+      return json({ error: getErrorMessage(cause) }, 400);
+    }
+  }
+  const memoryJobMatch = url.pathname.match(/^\/api\/memory\/jobs\/([^/]+)(\/cancel)?$/);
+  if (memoryJobMatch && db) {
+    const jobId = decodeURIComponent(memoryJobMatch[1]!);
+    const scope = memoryObserverScope(engine, callerId);
+    if (!memoryJobMatch[2] && method === "GET") {
+      const job = getMemoryJob(db, scope, jobId);
+      return job ? json(job) : json({ error: "Job not found" }, 404);
+    }
+    if (memoryJobMatch[2] && method === "POST") {
+      // The dev-open sentinel authorizes reads only; cancelling is a write.
+      if (callerId === OPEN_API_ENTITY_ID)
+        return json({ error: "Operator credential or requester session required" }, 403);
+      const result = await cancelMemoryJob(db, scope, jobId);
+      return result.ok ? json(result.job) : json({ error: result.error }, result.status);
+    }
+  }
+  if (url.pathname === "/api/memory/graph" && method === "GET" && db) {
+    const limitParam = Number.parseInt(url.searchParams.get("limit") ?? "", 10);
+    return json(
+      buildMemoryGraph(engine, memoryObserverScope(engine, callerId), {
+        entity: url.searchParams.get("entity") ?? undefined,
+        limit: Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 400,
+      }),
+    );
+  }
+
   if (url.pathname === "/api/memory/quality" && method === "GET" && db) {
     const entity = url.searchParams.get("entity") ?? memory.entity?.name;
     if (!memory.privilegedRead && entity !== memory.entity?.name)

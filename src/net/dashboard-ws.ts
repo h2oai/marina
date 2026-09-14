@@ -77,9 +77,14 @@ export class DashboardBroadcaster {
     const filtered = this.filterEvent(event);
     if (!filtered) return;
     const msg = JSON.stringify({ type: "event", data: filtered });
+    // Memory observability events are already reduced to ids/names/states by
+    // the poller (no task, answer or record content), so every authenticated
+    // dashboard client may receive them; per-principal content scoping happens
+    // in the REST endpoints (`/api/memory/jobs/:id` etc.).
+    const publicShape = event.type === "memory_job" || event.type === "memory_service_event";
     for (const [ws, engine] of this.clients) {
       try {
-        if (memoryObserver(engine, ws.data.principal).event(event)) ws.send(msg);
+        if (publicShape || memoryObserver(engine, ws.data.principal).event(event)) ws.send(msg);
       } catch (err) {
         console.warn("[dashboard-ws] broadcast event send failed:", (err as Error).message);
         this.clients.delete(ws);
@@ -111,6 +116,11 @@ export class DashboardBroadcaster {
         // So the bare command event is either empty noise or a duplicate of a
         // better row beside it. Same rationale as connect/disconnect above.
         return null;
+      case "memory_job":
+      case "memory_service_event":
+        // Emitted by src/net/memory-observability.ts with ids/names/states
+        // only (never task/answer/record content) — pass through unchanged.
+        return event as Record<string, unknown>;
       default:
         return event as Record<string, unknown>;
     }

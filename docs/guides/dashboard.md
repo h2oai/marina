@@ -156,6 +156,54 @@ The Admin panel has these tabs:
   can be adjudicated with rationale in place.
 - **Security** — live posture overview: dashboard auth (`MARINA_AUTH`), API-key encryption at rest, the `MARINA_OPEN_API` dev flag, and key/agent counts. It reads the real server state — if auth is off it points you to [authentication.md](../authentication.md).
 
+### Admin → Memory tab
+
+Operators get a live view of the memory system from **Admin → Memory** (also the `Memory` admin tab
+of the unified canvas command bar): posture (trust profile, autonomy, response-cache hit rate, 24 h
+dispatch counts), the assistance **Jobs** table (state, role, marker, worker → requester, remaining
+operations, deadline countdown; expand a row for the task and cited answer when you are allowed to
+see them; **Cancel** open jobs), recent **resolutions** and institutional **ratifications**,
+assistance **standing credits**, passthru **memory receipts** (tier bars by bytes, one click to the
+trace), the parsed **hygiene** line per entity, and institutional spaces. Empty states print the exact
+`memory assist …` / `agent spawn … role memory-evaluator` commands. In the Traces tab, a span that
+carries a memory receipt shows a **Memory** block with the injected tiers, bytes used against the
+budget, truncation and cache-hit flags.
+
+On the unified canvas (`?unified`), the **MEMORY** layer (key `5`) maps the same objects onto the note
+graph: durable twin records beside their notes, jobs as state-colored rings around the requester's
+notes, proposals that turn solid when adopted, resolutions as policy diamonds between winner and
+losers, institutional spaces as peripheral hulls, and helper agents orbiting the space they serve.
+Select any of them for details in the inspector; its action link opens Admin → Memory on that job.
+
+### Memory Observability API
+
+The memory surface (assistance jobs, contradiction resolutions, institutional ratifications, standing
+credits, passthru receipts, the hygiene line) is served by a small observer-scoped API under
+`/api/memory/*` (`src/net/memory-observability.ts`; JSON contract in
+`src/net/memory-observability-types.ts`). Every route sits behind the dashboard auth gate.
+
+| Route | Returns |
+| --- | --- |
+| `GET /api/memory/overview` | `MemoryOverview` — trust profile, latest `[hygiene]` line per entity, open/24h job counts by marker, recent resolutions, ratifications, standing credits, recent memory receipts + response-cache counters, dispatch counts, institutional spaces. |
+| `GET /api/memory/jobs?state=open\|all&role=&entity=&limit=50&cursor=` | `{ jobs: MemoryJobView[], nextCursor }` — keyset-paged; never includes task/answer text. |
+| `GET /api/memory/jobs/:id` | One `MemoryJobView` **with** `task`/`answer` (≤ 2 KB) when the caller is the requester, the worker, or an operator. |
+| `POST /api/memory/jobs/:id/cancel` | Cancels as the requester (requester or operator only); runs the ordinary `assist_cancel` through the requester's resident binding so the assistance audit trail is unchanged. |
+| `GET /api/memory/graph?entity=<name>&limit=400` | `MemoryGraph` for the memory map: legacy notes + `twin` records, jobs with `worker`/`requester` edges, proposals with `cites`/`adopted_as`, resolutions (`resolves`, `superseded_by`), institutional spaces (`in_space`), running helper agents. `truncated` flips when a cap is hit. |
+
+**Scoping.** Operators, sovereigns (rank ≥ 9), the desktop capability token and the
+`MARINA_OPEN_API` dev sentinel see everything. An ordinary signed-in resident sees only jobs it
+requested or works, resolutions in spaces it owns or is granted, its own standing credits, hygiene
+line and receipts, and the legacy notes the existing memory-access predicate already lets it read.
+Institutional spaces (`guide`, tradition pools) are public-read, so ratified-record previews
+(≤ 160 chars) are visible to every principal. Credentials, tokens, IPs and raw input never appear.
+
+**Live updates.** The engine tick polls `memory_service_events` (about every 2 s) and broadcasts two
+WebSocket events to every authenticated dashboard client: `memory_job` (a `MemoryJobView` without
+`task`/`answer` on create / claim / finish / cancel / adopt) and `memory_service_event` (`kind`,
+`spaceId`, `spaceName`, `ownerName`, `referenceId`, `actorName`, `seq` for resolve / adopt / forget /
+space and grant changes). Both carry ids, names and states only; the dashboard fetches content it is
+allowed to see over REST.
+
 The header alert indicator remains visible from every dashboard layout. Its severity color and pulse
 show whether actionable warnings or critical failures exist; click it to open the Attention drawer
 without navigating away.

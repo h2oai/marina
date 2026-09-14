@@ -470,4 +470,88 @@ describe("dashboard-api HTTP authorization hardening", () => {
       expect(bobResp?.status).toBe(404);
     });
   });
+
+  // ─── Memory observability routes (src/net/memory-observability.ts) ─────────
+  // Deep scoping (job task/answer, twins, ratifications) is covered in
+  // test/memory-observability.test.ts; this is the gate-level contract.
+  describe("memory observability routes", () => {
+    const routes = ["/api/memory/overview", "/api/memory/jobs", "/api/memory/graph"];
+
+    it("requires a session on every memory observability route", async () => {
+      for (const path of [...routes, "/api/memory/jobs/nope", "/api/memory/jobs/nope/cancel"]) {
+        const method = path.endsWith("/cancel") ? "POST" : "GET";
+        const [req, url] = jsonReq(path, method);
+        const resp = await handleDashboardApi(req, url, method, engine, db);
+        expect(resp?.status).toBe(401);
+      }
+    });
+
+    it("serves an empty, well-formed overview / jobs / graph to a fresh resident", async () => {
+      const token = loginToken("Alice");
+      for (const path of routes) {
+        const [req, url, method] = jsonReq(path, "GET", { token });
+        const resp = await handleDashboardApi(req, url, method, engine, db);
+        expect(resp?.status).toBe(200);
+      }
+      const [oReq, oUrl, oMethod] = jsonReq("/api/memory/overview", "GET", { token });
+      const overview = (await (await handleDashboardApi(
+        oReq,
+        oUrl,
+        oMethod,
+        engine,
+        db,
+      ))!.json()) as {
+        trust: { profile: string };
+        jobs: { open: number };
+        receipts: { cache: { hits: number; misses: number; stores: number } };
+        spaces: { institutional: unknown[] };
+      };
+      expect(overview.trust.profile).toBe("shared");
+      expect(overview.jobs.open).toBe(0);
+      expect(overview.receipts.cache).toEqual({
+        hits: expect.any(Number),
+        misses: expect.any(Number),
+        stores: expect.any(Number),
+      });
+      expect(Array.isArray(overview.spaces.institutional)).toBe(true);
+      const [jReq, jUrl, jMethod] = jsonReq("/api/memory/jobs?state=all", "GET", { token });
+      expect(await (await handleDashboardApi(jReq, jUrl, jMethod, engine, db))!.json()).toEqual({
+        jobs: [],
+        nextCursor: null,
+      });
+      const [gReq, gUrl, gMethod] = jsonReq("/api/memory/graph", "GET", { token });
+      const graph = (await (await handleDashboardApi(gReq, gUrl, gMethod, engine, db))!.json()) as {
+        nodes: unknown[];
+        edges: unknown[];
+        truncated: boolean;
+      };
+      expect(graph).toMatchObject({ nodes: [], edges: [], truncated: false });
+    });
+
+    it("returns 404 for an unknown job to residents and operators alike", async () => {
+      const token = loginToken("Alice");
+      process.env.MARINA_DESKTOP_API_TOKEN = "desktop-capability-token-at-least-32-chars";
+      for (const opts of [{ token }, { desktopToken: process.env.MARINA_DESKTOP_API_TOKEN }]) {
+        const [req, url, method] = jsonReq("/api/memory/jobs/does-not-exist", "GET", opts);
+        const resp = await handleDashboardApi(req, url, method, engine, db);
+        expect(resp?.status).toBe(404);
+        const [cReq, cUrl, cMethod] = jsonReq(
+          "/api/memory/jobs/does-not-exist/cancel",
+          "POST",
+          opts,
+        );
+        const cancel = await handleDashboardApi(cReq, cUrl, cMethod, engine, db);
+        expect(cancel?.status).toBe(404);
+      }
+    });
+
+    it("rejects a malformed jobs cursor with 400", async () => {
+      const token = loginToken("Alice");
+      const [req, url, method] = jsonReq("/api/memory/jobs?cursor=not-base64-json", "GET", {
+        token,
+      });
+      const resp = await handleDashboardApi(req, url, method, engine, db);
+      expect(resp?.status).toBe(400);
+    });
+  });
 });

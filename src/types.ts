@@ -1004,6 +1004,30 @@ export type EngineEvent =
       kind: "map" | "reduce" | "synthesis" | "draft";
       timestamp: number;
     }
+  // Memory observability (src/net/memory-observability.ts): polled from the
+  // durable service's `memory_service_events` and broadcast to dashboard
+  // clients. Both carry ids, names and states ONLY — never task/answer text or
+  // record content; content is fetched per-principal over REST.
+  | {
+      type: "memory_job";
+      job: Omit<
+        import("./net/memory-observability-types").MemoryJobView,
+        "task" | "answer" | "citations"
+      >;
+      timestamp: number;
+    }
+  | {
+      type: "memory_service_event";
+      kind: string;
+      spaceId: string;
+      spaceName?: string;
+      ownerName?: string;
+      referenceId?: string;
+      version?: number;
+      actorName?: string;
+      seq: number;
+      timestamp: number;
+    }
   // Lifecycle of a coordination container (project / group / channel / pool /
   // board / connector / command). These resources have no high-frequency
   // content event of their own (unlike board_post / channel_message), so the
