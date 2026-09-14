@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { creditRecalledReflections } from "../../agent/standing";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import type { GlobalSearchResult } from "../../persistence/db-channels";
 import type { ChronicleEntry } from "../../persistence/db-chronicle";
@@ -89,6 +90,15 @@ export function gatherRetrievalContext(
     }
   }
 
+  // Generational credit (Phase 3.7): a shared reflection surfacing in
+  // someone ELSE's recap/ask/dig is the author's wisdom put back to use —
+  // the same rule `recall` and `pool … recall` apply. Credit goes to the
+  // author's durable key (`users.id`, so offline authors are paid too);
+  // self-reads and non-reflection tiers earn nothing, and the ledger is
+  // idempotent per reflection id. Personal notes are excluded: they are the
+  // reader's own. Never allowed to break retrieval.
+  creditSharedReflections(db, entity.name, [...guide, ...pools.map((hit) => hit.note)]);
+
   const chronicle =
     want.chronicle > 0 ? db.queryChronicle({ like: query, limit: want.chronicle }) : [];
 
@@ -115,4 +125,15 @@ export function gatherRetrievalContext(
       chronicle.length === 0 &&
       world.length === 0,
   };
+}
+
+/** Pay authors of cross-entity reflection-tier hits from shared pools. Idempotent; never throws. */
+export function creditSharedReflections(db: MarinaDB, readerName: string, notes: NoteRow[]): void {
+  const foreign = notes.filter((n) => n.tier === "reflection" && n.entity_name !== readerName);
+  if (foreign.length === 0) return;
+  try {
+    creditRecalledReflections(db, readerName, foreign, (name) => db.durableKeyForName(name));
+  } catch {
+    // Standing is a side ledger — a failed credit must never fail a read.
+  }
 }

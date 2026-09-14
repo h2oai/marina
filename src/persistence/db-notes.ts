@@ -716,6 +716,36 @@ const SCORE_EXPR = `(? * (n.importance / 10.0)) +
 // for it — so they are excluded from every source-derived ranking and
 // confidence term above and in calibrateMemoryConfidence.
 
+/**
+ * Reputation weight for SHARED retrieval only (Phase 3.6). A pool note's
+ * writer earns at most this much extra score from their civic standing:
+ * `REPUTATION_WEIGHT * clamp(writer_standing / 100, 0, 1)`. Standing 100 is
+ * the rank-4 safety threshold, so the term saturates exactly where rank stops
+ * auto-deriving. Bounded on purpose — it can reorder near-ties between
+ * writers, never outrank a strong lexical match, and never make an unknown
+ * writer (standing 0) score below where they score today.
+ *
+ * Personal recall (`recallNotes`, `recallNotesWithType`) deliberately does NOT
+ * carry this term: an entity's own notes are not weighted by its own standing.
+ * The writer's standing is read from `entity_standing_cache` through `users`
+ * (cache rows are keyed by the durable `users.id` since migration 109); a
+ * writer with no world account or no cache row contributes 0. The cache has a
+ * 6h TTL and is refreshed by the engine tick — ranking tolerates that lag.
+ */
+export const REPUTATION_WEIGHT = 0.1;
+export const REPUTATION_STANDING_CEILING = 100;
+const REPUTATION_TERM = `(${REPUTATION_WEIGHT} * MIN(1.0, MAX(0.0,
+          COALESCE((SELECT sc.standing FROM users u
+                    JOIN entity_standing_cache sc ON sc.entity_id = u.id
+                    WHERE u.name = n.entity_name), 0) / ${REPUTATION_STANDING_CEILING}.0)))`;
+/** SCORE_EXPR plus the bounded writer-reputation term — shared (pool) recall only. */
+const SHARED_SCORE_EXPR = SCORE_EXPR.replace(
+  /\s*AS score$/,
+  ` +
+        ${REPUTATION_TERM}
+        AS score`,
+);
+
 export function recallNotes(
   db: Database,
   entityName: string,
@@ -891,12 +921,40 @@ export function calibrateMemoryConfidence(db: Database): number {
   const disputed = db.run(
     "UPDATE notes SET confidence=MIN(confidence,0.25) WHERE verification_status='disputed'",
   ).changes;
+  // Corroboration counts INDEPENDENT sources — writers, not rows. Two rows
+  // that trace back to the same writer are one source; twins are none.
   const corroborated = db.run(
     `UPDATE notes SET confidence=MAX(confidence,0.60) WHERE verification_status='unverified'
-     AND (SELECT COUNT(*) FROM note_sources ns WHERE ns.note_id=notes.id
+     AND (SELECT COUNT(DISTINCT ${INDEPENDENT_SOURCE_KEY}) FROM note_sources ns WHERE ns.note_id=notes.id
           AND ns.url NOT LIKE 'marina-memory://%') >= 2`,
   ).changes;
   return verified + disputed + corroborated;
+}
+
+/**
+ * Independence key for one `note_sources` row (Phase 3.6 — "writers, not
+ * rows"). External origins (`url` / `dataset` source types) are independent
+ * per URL: the note author captures its own URL sources by construction, so
+ * `captured_by` alone would collapse every two-URL claim to one source.
+ * Writer-produced evidence (`note` / `message` / `observation` / `artifact`)
+ * keys on the writer — `source_entity` first (the entity whose note or
+ * message is cited), then `captured_by` — so N citations of the same
+ * writer's material corroborate once. `marina-memory://` twins are excluded
+ * by every caller before this key applies.
+ */
+const INDEPENDENT_SOURCE_KEY = `CASE WHEN ns.source_type IN ('url','dataset') THEN ns.url
+          ELSE COALESCE(NULLIF(ns.source_entity,''), NULLIF(ns.captured_by,''), ns.url) END`;
+
+/** Distinct independent sources for a note — the same rule calibrateMemoryConfidence applies. */
+export function countIndependentSources(db: Database, noteId: number): number {
+  return (
+    db
+      .query(
+        `SELECT COUNT(DISTINCT ${INDEPENDENT_SOURCE_KEY}) AS c FROM note_sources ns
+         WHERE ns.note_id=? AND ns.url NOT LIKE 'marina-memory://%'`,
+      )
+      .get(noteId) as { c: number }
+  ).c;
 }
 
 // ─── Core Memory Persistence ───────────────────────────────────────────
@@ -1139,9 +1197,17 @@ export function addPoolNote(
     /** Skip the exact-content pool dedup (default false). Process-tier /
      *  `[compaction]` notes are never deduped regardless of this flag. */
     skipDedup?: boolean;
+    /** Explicit tier — `reflection` lets `reflect --share <pool>` deposit a
+     *  lesson that `creditRecalledReflections` pays the author for. Default:
+     *  inferred from content + noteType. */
+    tier?: NoteTier;
+    /** Inherited authority (TMA-NM non-laundering): a shared summary carries
+     *  the lowest confidence / verification of its inputs. */
+    confidence?: number;
+    verificationStatus?: string;
   },
 ): number {
-  const tier = inferTier(content, noteType ?? "observation");
+  const tier = opts?.tier ?? inferTier(content, noteType ?? "observation");
   if (!opts?.skipDedup && FACT_LIKE_TIERS.includes(tier)) {
     const existing = findActivePoolNote(db, poolId, entityName, content);
     if (existing) return existing.id;
@@ -1150,6 +1216,9 @@ export function addPoolNote(
     importance,
     noteType,
     poolId,
+    tier,
+    confidence: opts?.confidence,
+    verificationStatus: opts?.verificationStatus,
   });
 }
 
@@ -1184,10 +1253,13 @@ export function recallPoolNotes(
   const beta = opts?.weightRecency ?? DEFAULT_WEIGHT_RECENCY;
   const gamma = opts?.weightRelevance ?? DEFAULT_WEIGHT_RELEVANCE;
   const now = Date.now();
+  // Shared retrieval: the bounded writer-reputation term applies here and
+  // nowhere else (see REPUTATION_WEIGHT). Bind order is unchanged — the term
+  // carries no placeholders.
   return db
     .query(
       `SELECT n.*,
-        ${SCORE_EXPR}
+        ${SHARED_SCORE_EXPR}
       FROM notes n
       JOIN notes_fts fts ON n.id = fts.rowid
       WHERE n.pool_id = ? AND n.verification_status != 'superseded' ${opts?.includeProcess ? "" : `AND ${factLikeClause("n")}`} AND notes_fts MATCH ?

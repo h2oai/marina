@@ -16,7 +16,7 @@ import { parseMemoryServiceCommand } from "../src/memory/human-interface";
 import { MemoryService } from "../src/memory/service";
 import { handleMemoryServiceApi } from "../src/net/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
-import { closedValidity } from "../src/persistence/db-memory-resolve";
+import { closedValidity, independentEvidence } from "../src/persistence/db-memory-resolve";
 import { MarinaMemoryAssistance } from "../src/sdk/memory-assistance-client";
 import { MarinaMemoryClient } from "../src/sdk/memory-client";
 import { MEMORY_OPERATIONS } from "../src/sdk/memory-operations";
@@ -215,6 +215,89 @@ it("evidence_weighted counts independent sources only and never produces an empt
   expect(closedValidity({ from: 100, until: null }, 0)).toEqual({ from: 100, until: 101 });
   expect(closedValidity({ from: 0, until: 50 }, 100)).toBeUndefined();
   expect(closedValidity(null, 100)).toEqual({ from: null, until: 100 });
+});
+
+it("evidence_weighted is Sybil-resistant: five fresh accounts corroborating A lose to one standing-40 writer with an independent source for B", async () => {
+  // World accounts (users.id = human principal id) so civic standing binds
+  // to the same durable key the memory service authorizes.
+  const makeUser = (name: string) => {
+    const id = crypto.randomUUID();
+    db.createUser({ id, name });
+    const credential = db.issueMemoryCredential(id);
+    const client = new MarinaMemoryClient("http://test", credential.token, 35000, (r) =>
+      handleMemoryServiceApi(r, service),
+    );
+    return { client, principalId: id };
+  };
+  const vera = makeUser("Vera");
+  db.setStandingCache(vera.principalId, 40, now);
+  const sybils = [1, 2, 3, 4, 5].map((i) => makeUser(`Sybil${i}`));
+  for (const writer of [vera, ...sybils]) await owner.grant(space, writer.principalId, "writer");
+
+  // Claim A: written by Sybil1, "corroborated" by a distinct sighting from each
+  // of the five fresh accounts (five rows, five hashes, five writers at standing 0).
+  const sightings = [];
+  for (const [i, sybil] of sybils.entries()) {
+    now += 10;
+    sightings.push(
+      await sybil.client.capture(space, { doc: `sighting ${i + 1}: the office is in Berlin` }),
+    );
+  }
+  now += 1000;
+  const a = await sybils[0]!.client.remember(space, {
+    content: "The office is in Berlin",
+    claim: claim("berlin"),
+    valid_time: { from: 0, until: null },
+    source_ids: sightings.map((s) => s.id),
+  });
+  // Claim B: written by Vera with ONE independent external source she captured.
+  now += 1000;
+  const extract = await vera.client.capture(space, {
+    doc: "Companies register extract: registered office Paris",
+  });
+  now += 1000;
+  const b = await vera.client.remember(space, {
+    content: "The office is in Paris",
+    claim: claim("paris"),
+    valid_time: { from: 100, until: null },
+    source_ids: [extract.id],
+  });
+  now += 1000;
+
+  const result = await owner.resolve(
+    space,
+    a.id,
+    { policy: "evidence_weighted", competing: [b.id], rationale: "weigh writers, not rows" },
+    "sybil-1",
+  );
+  expect(result.winner).toBe(b.id);
+  // A: Sybil1 is the record author, so its own sighting is excluded once four
+  // OTHER writers support the claim → 4 independent pairs at reliability 0.05
+  // each (0.20). B: one writer at standing 40 → 0.05 + 0.95 * 0.4 = 0.43.
+  expect(result.evidence_counts).toEqual({ [a.id]: 4, [b.id]: 1 });
+  const winner = await owner.get(space, b.id);
+  expect(winner.metadata.resolution).toMatchObject({
+    policy: "evidence_weighted",
+    status: "winner",
+    reliability_floor: 0.05,
+    evidence_weights: {
+      [a.id]: { weight: 0.2, independent_authors: 4, self_excluded: 1 },
+      [b.id]: { weight: 0.43, independent_authors: 1, self_excluded: 0 },
+    },
+  });
+  expect(result.superseded.map((s) => s.id)).toEqual([a.id]);
+
+  // Same rows, same writers, but Vera at standing 0: pure writer count decides
+  // and the five-account claim wins — standing is what makes the difference.
+  db.setStandingCache(vera.principalId, 0, now);
+  const nowA = await owner.get(space, a.id);
+  const nowB = await owner.get(space, b.id);
+  const recount = new Map(
+    [nowA, nowB].map((record) => [record.id, independentEvidence(raw(), record)]),
+  );
+  expect(recount.get(a.id)!.weight).toBeCloseTo(0.2, 9);
+  expect(recount.get(b.id)!.weight).toBeCloseTo(0.05, 9);
+  expect(recount.get(a.id)!.authors).toHaveLength(4);
 });
 
 it("await_confirmation lists the set under kind pending until a later reaffirm or resolve", async () => {

@@ -182,6 +182,23 @@ records per page by default (`limit` 1–10,000). Continue with the returned `ge
 the cursor. Stop when `next_cursor` is null. Model identities include
 preprocessing versions, preventing accidental mixing of incompatible embeddings.
 
+Ranking is lexical-first and reputation-bounded. Within the actor's own records nothing is
+weighted by the actor's standing. For records written by ANOTHER principal (shared, granted or
+institutional spaces, or a co-writer in your own space) the page is re-sorted after rank fusion
+by a bounded writer-reputation term — `0.10 × clamp(author_standing / 100, 0, 1)`, expressed in
+units of a rank-1 RRF hit — so an established writer can win a near-tie but never outrank a
+stronger lexical match, and an unknown writer scores exactly as before. Authorship is the
+principal on the record's first `memory.created` event; standing is the civic rollup keyed by the
+same durable `users.id`. The helper (`applyReputationRerank` in `src/persistence/db-memory-ranking.ts`)
+returns an inspectable `ranking` block (`weight`, `standing_ceiling`, `applied`, per-record
+`authors`). Legacy pool recall applies the identical term in SQL (`REPUTATION_WEIGHT` next to
+`SCORE_EXPR`). Corroboration is counted over **writers, not rows**: `evidence_weighted`
+resolution counts distinct (content hash, capturing principal) pairs, drops the record author's own
+captures whenever another author supports the claim, and weights each independent writer by
+`0.05 + 0.95 × clamp(standing / 100)` — so five fresh accounts (0.25) lose to one writer at standing
+40 (0.43) with an independent source. The winner's `resolution.evidence_weights` records the weights
+and the reliability floor.
+
 `budget_tokens` conservatively limits the **UTF-8 bytes of returned evidence text**, including
 its framing and inline citations. This is an upper-bound estimate for byte-based tokenizers,
 not an exact provider tokenizer or a budget for the entire JSON response/system prompt. Truncated

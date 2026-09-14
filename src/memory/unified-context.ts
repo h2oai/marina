@@ -18,16 +18,27 @@
  * (reported in `degraded`) when the entity has no world account or the
  * service errors — a missing account is a deployment posture, not a failure.
  *
- * This module never writes. Touching recalled notes / crediting reflection
- * authors stays with the `recall` command so REST and passthru reads stay
- * side-effect free.
+ * This module does not touch notes (last_accessed / recall_count stay with
+ * the `recall` command so REST and passthru reads do not mutate memory). Its
+ * ONE side effect is generational credit (Phase 3.7): a cross-author
+ * reflection-tier note surfacing under `[trusted]` / `[unverified]` pays its
+ * author through `creditRecalledReflections` — idempotent per reflection id,
+ * never self, never a failure of the read. Legacy tiers are owner-scoped
+ * today, so this fires only when a shared reflection reaches those tiers.
+ *
+ * `[proposal]` items carry INHERITED authority (TMA-NM non-laundering, Phase
+ * 3.7): a helper's summary can be no more trustworthy than the least
+ * trustworthy note it cites, so the item reports `confidence = min(cited)` and
+ * is `verified` only when every cited legacy twin is verified.
  */
 
+import { creditRecalledReflections } from "../agent/standing";
 import { getErrorMessage } from "../engine/errors";
-import type { MarinaDB, ScoredNoteRow } from "../persistence/database";
+import type { MarinaDB, NoteRow, ScoredNoteRow } from "../persistence/database";
 import type { MemoryAssistanceJob, MemoryAssistancePage } from "../sdk/memory-assistance";
 import { MemoryClientError } from "../sdk/memory-client";
 import type { MemorySearchResult, MemorySourceSearchResult } from "../sdk/memory-types";
+import { findLegacyNotesForRecord } from "./legacy-bridge";
 import { residentMemoryOperation } from "./resident-service";
 import { expandMemoryRecall } from "./retrieval";
 
@@ -121,6 +132,8 @@ export interface UnifiedContextOptions {
   weights?: { weightImportance: number; weightRecency: number; weightRelevance: number };
   /** Restrict legacy note tiers to one note_type (mirrors `recall … type <t>`). */
   noteType?: string;
+  /** Pay authors of cross-author reflection hits in the legacy tiers (default true). */
+  creditReflections?: boolean;
 }
 
 export const DEFAULT_UNIFIED_BUDGET_BYTES = 2048;
@@ -191,11 +204,45 @@ function noteItem(tier: UnifiedTier, note: ScoredNoteRow): UnifiedContextItem {
     score: note.score,
     meta: {
       noteType: note.note_type,
+      noteTier: note.tier,
+      author: note.entity_name,
       importance: note.importance,
       verification: note.verification_status ?? "unverified",
       confidence: note.confidence ?? 0.5,
       age: ageDays(note.created_at),
     },
+  };
+}
+
+/** Authority a summary inherits from its inputs — the lowest, never the highest. */
+export interface InheritedAuthority {
+  /** min(confidence) over the inputs; null when nothing citable was found. */
+  confidence: number | null;
+  /** `verified` only when every input is verified; otherwise `unverified`. */
+  verification: "verified" | "unverified";
+  /** How many inputs were considered. */
+  inputs: number;
+}
+
+/**
+ * TMA-NM non-laundering rule: summarising N notes must not produce a note
+ * more authoritative than the weakest of them. Shared by `reflect adopt`,
+ * the template reflection and the `[proposal]` tier.
+ */
+export function inheritedAuthority(
+  inputs: readonly Pick<NoteRow, "confidence" | "verification_status">[],
+): InheritedAuthority {
+  if (inputs.length === 0) return { confidence: null, verification: "unverified", inputs: 0 };
+  let confidence = 1;
+  let allVerified = true;
+  for (const input of inputs) {
+    confidence = Math.min(confidence, input.confidence ?? 0.5);
+    if (input.verification_status !== "verified") allVerified = false;
+  }
+  return {
+    confidence,
+    verification: allVerified ? "verified" : "unverified",
+    inputs: inputs.length,
   };
 }
 
@@ -244,11 +291,30 @@ function sourceItem(
   };
 }
 
-function proposalItem(job: MemoryAssistanceJob): UnifiedContextItem | null {
+/** Legacy twins (owned by `entityName`) of the records a proposal cites — its citable inputs. */
+function citedLegacyInputs(db: MarinaDB, entityName: string, job: MemoryAssistanceJob): NoteRow[] {
+  const inputs: NoteRow[] = [];
+  const seen = new Set<string>();
+  for (const citation of job.result?.status === "answered" ? job.result.citations : []) {
+    if (citation.kind !== "record" || citation.space_id !== job.space_id) continue;
+    if (seen.has(citation.id)) continue;
+    seen.add(citation.id);
+    inputs.push(...findLegacyNotesForRecord(db, entityName, citation.id, { currentOnly: true }));
+  }
+  return inputs;
+}
+
+function proposalItem(
+  job: MemoryAssistanceJob,
+  inherited: InheritedAuthority,
+): UnifiedContextItem | null {
   const result = job.result;
   if (result?.status !== "answered") return null;
   const answer = typeof result.answer === "string" ? result.answer : JSON.stringify(result.answer);
   const citations = result.citations.length;
+  // Provenance stays byte-identical to Phase 1 (surfaces assert it verbatim);
+  // the inherited authority rides in `meta` and is rendered as a marker after
+  // the bracket by `renderUnifiedContext`.
   return {
     tier: "proposal",
     id: job.id,
@@ -265,8 +331,21 @@ function proposalItem(job: MemoryAssistanceJob): UnifiedContextItem | null {
       result_record_id: job.result_record_id,
       citations: result.citations,
       created_at: job.created_at,
+      // Inherited, not asserted: the summary is only as trustworthy as its inputs.
+      inherited,
     },
   };
+}
+
+/** `(unverified · inherited confidence 0.30)` for a proposal — the non-laundering marker the agent reads. */
+function authorityMarker(item: UnifiedContextItem): string {
+  const inherited = item.meta?.inherited as InheritedAuthority | undefined;
+  if (item.tier !== "proposal" || !inherited) return "";
+  const confidence =
+    inherited.confidence === null
+      ? "no citable inputs"
+      : `inherited confidence ${inherited.confidence.toFixed(2)}`;
+  return ` (${inherited.verification} · ${confidence})`;
 }
 
 function sortItems(items: UnifiedContextItem[]): UnifiedContextItem[] {
@@ -412,7 +491,11 @@ async function fetchDurable(
           operation: "assist_get",
           id: job.id,
         });
-        const item = proposalItem(full.result as MemoryAssistanceJob);
+        const fullJob = full.result as MemoryAssistanceJob;
+        const item = proposalItem(
+          fullJob,
+          inheritedAuthority(citedLegacyInputs(db, entityName, fullJob)),
+        );
         if (item) out.items.proposal!.push(item);
       } catch (error) {
         const { code } = errorCode(error);
@@ -527,7 +610,7 @@ export async function buildUnifiedContext(
   }
 
   const budgeted = applyBudget(fetched, perTier, budgetBytes, itemMaxBytes);
-  return {
+  const result: UnifiedContextResult = {
     schema: UNIFIED_CONTEXT_SCHEMA,
     entity: entityName,
     query: trimmed,
@@ -538,6 +621,40 @@ export async function buildUnifiedContext(
     tiers: budgeted.tiers,
     degraded,
   };
+  if (opts.creditReflections !== false) creditUnifiedReflections(db, result);
+  return result;
+}
+
+/** Legacy tiers whose hits are recalled wisdom (skills are worked examples, not lessons). */
+const CREDITED_TIERS: readonly UnifiedTier[] = ["trusted", "unverified"];
+
+/**
+ * Generational credit for the rendered `[trusted]` / `[unverified]` items:
+ * every reflection-tier note by ANOTHER author pays that author (durable key
+ * via `users.id`). Idempotent per reflection id; self-hits and other tiers
+ * are skipped; a failed ledger write never fails the read. Returns the number
+ * of cross-author reflections considered.
+ */
+export function creditUnifiedReflections(db: MarinaDB, result: UnifiedContextResult): number {
+  const hits: { id: number; tier: string; entity_name: string }[] = [];
+  for (const tier of result.tiers) {
+    if (!CREDITED_TIERS.includes(tier.tier)) continue;
+    for (const item of tier.items) {
+      const author = item.meta?.author;
+      const noteTier = item.meta?.noteTier;
+      const id = Number(item.id);
+      if (typeof author !== "string" || author === result.entity) continue;
+      if (noteTier !== "reflection" || !Number.isInteger(id)) continue;
+      hits.push({ id, tier: "reflection", entity_name: author });
+    }
+  }
+  if (hits.length === 0) return 0;
+  try {
+    creditRecalledReflections(db, result.entity, hits, (name) => db.durableKeyForName(name));
+  } catch {
+    // Standing is a side ledger; reads never fail on it.
+  }
+  return hits.length;
 }
 
 /** Tiers that carry something to show (items or budget-omitted matches). */
@@ -582,7 +699,8 @@ export function renderUnifiedContext(
           `<example skill="${item.provenance.split(" ")[0]}" imp="${item.meta?.importance ?? ""}">\n${item.content}\n</example>`,
         );
     } else {
-      for (const item of tier.items) lines.push(`- [${item.provenance}] ${item.content}`);
+      for (const item of tier.items)
+        lines.push(`- [${item.provenance}]${authorityMarker(item)} ${item.content}`);
     }
     if (tier.omitted > 0) lines.push(`  (+${tier.omitted} more omitted for budget)`);
     blocks.push(lines.join("\n"));

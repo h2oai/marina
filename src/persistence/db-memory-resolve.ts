@@ -11,8 +11,17 @@
  *                         others have `valid_time.until` closed at the winner's
  *                         `valid_from` (or now) through an ordinary revision.
  *  - evidence_weighted  — the assertion with the most *independent* supporting
- *                         sources wins (distinct content hashes, excluding
- *                         self-derived/twin sources); ties fall back to recency.
+ *                         evidence wins. Independence is counted over WRITERS,
+ *                         not rows (Phase 3.6): distinct (content hash, author
+ *                         principal) pairs, excluding self-derived/twin sources,
+ *                         and excluding sources captured by the record's own
+ *                         author whenever another author supports it. Each
+ *                         independent writer is weighted by civic reliability
+ *                         (`RELIABILITY_FLOOR + (1 - floor) * clamp(standing/100)`),
+ *                         so N fresh low-standing accounts corroborating one
+ *                         claim do not outweigh one established writer with an
+ *                         independent source (the Sybil rule). Ties fall back to
+ *                         raw pair count, then recency.
  *  - await_confirmation — nothing changes; the set is listed under review kind
  *                         `pending` until a later `resolve` or `reaffirm`.
  *  - keep_both          — the conflict is irreducible (TANGLE-style): every
@@ -36,6 +45,12 @@ import type {
   MemoryValidity,
 } from "../sdk/memory-types";
 import {
+  principalStandingFromCache,
+  REPUTATION_STANDING_CEILING,
+  recordAuthors,
+  sourceAuthors,
+} from "./db-memory-ranking";
+import {
   authorizeMemorySpace,
   event,
   hash,
@@ -51,26 +66,89 @@ import type { MemoryActor } from "./db-principals";
 const SELF_DERIVED_SESSION = "legacy-notes";
 const SELF_DERIVED_MARKERS = ["marina-memory://", "marina.memory.assistance.request.v1"];
 
-export function independentEvidenceCount(db: Database, record: MemoryRecord): number {
-  if (!record.source_ids.length) return 0;
+/**
+ * Reliability floor for an independent writer with zero (or unknown)
+ * standing. Kept strictly positive so a single genuine fresh account still
+ * counts as evidence, and small enough that five of them (0.25) lose to one
+ * writer at standing 40 (0.05 + 0.95 * 0.40 = 0.43). Standing is read from
+ * the same durable-principal rollup cache the shared-ranking term uses.
+ */
+export const RELIABILITY_FLOOR = 0.05;
+
+export function writerReliability(standing: number): number {
+  const unit = Math.min(1, Math.max(0, standing / REPUTATION_STANDING_CEILING));
+  return RELIABILITY_FLOOR + (1 - RELIABILITY_FLOOR) * unit;
+}
+
+export interface IndependentEvidence {
+  /** Distinct (content hash, author principal) pairs after every exclusion. */
+  count: number;
+  /** Sum of writer reliability over the distinct independent authors. */
+  weight: number;
+  /** Independent authors (principal ids; `null` = author unknown) with their standing. */
+  authors: { author: string | null; standing: number; pairs: number }[];
+  /** Pairs dropped because the record's own author captured them while another author supports it. */
+  self_excluded: number;
+}
+
+/**
+ * Independent evidence for one record — writers, not rows. A source counts
+ * only once per (hash, author); the record author's own captures are ignored
+ * whenever at least one OTHER author supports the record (a writer cannot
+ * corroborate itself against a peer); twins, assistance envelopes and any
+ * body citing the record itself are provenance, never evidence.
+ */
+export function independentEvidence(db: Database, record: MemoryRecord): IndependentEvidence {
+  const empty: IndependentEvidence = { count: 0, weight: 0, authors: [], self_excluded: 0 };
+  if (!record.source_ids.length) return empty;
   const rows = db
     .query(
-      `SELECT content_hash,session_id,body FROM memory_sources
+      `SELECT id,content_hash,session_id,body FROM memory_sources
        WHERE space_id=? AND id IN (SELECT value FROM json_each(?))`,
     )
     .all(record.space_id, JSON.stringify(record.source_ids)) as {
+    id: string;
     content_hash: string;
     session_id: string | null;
     body: string;
   }[];
-  const hashes = new Set<string>();
+  const captured = sourceAuthors(
+    db,
+    rows.map((row) => row.id),
+  );
+  const recordAuthor = recordAuthors(db, [record.id]).get(record.id) ?? null;
+  const pairs = new Map<string, { hash: string; author: string | null }>();
   for (const row of rows) {
     if (row.session_id === SELF_DERIVED_SESSION) continue;
     if (SELF_DERIVED_MARKERS.some((marker) => row.body.includes(marker))) continue;
     if (row.body.includes(record.id)) continue;
-    hashes.add(row.content_hash);
+    const author = captured.get(row.id) ?? null;
+    pairs.set(`${row.content_hash}\u0000${author ?? ""}`, { hash: row.content_hash, author });
   }
-  return hashes.size;
+  const others = [...pairs.values()].filter((pair) => pair.author !== recordAuthor);
+  const selfPairs = pairs.size - others.length;
+  // Self-captured evidence stands only when nobody else vouches for the claim.
+  const kept = others.length > 0 ? others : [...pairs.values()];
+  const byAuthor = new Map<string | null, number>();
+  for (const pair of kept) byAuthor.set(pair.author, (byAuthor.get(pair.author) ?? 0) + 1);
+  const authors = [...byAuthor.entries()]
+    .map(([author, count]) => ({
+      author,
+      standing: principalStandingFromCache(db, author),
+      pairs: count,
+    }))
+    .sort((a, b) => (a.author ?? "").localeCompare(b.author ?? ""));
+  return {
+    count: kept.length,
+    weight: authors.reduce((sum, entry) => sum + writerReliability(entry.standing), 0),
+    authors,
+    self_excluded: others.length > 0 ? selfPairs : 0,
+  };
+}
+
+/** Backwards-compatible count — the independent (hash, author) pairs. */
+export function independentEvidenceCount(db: Database, record: MemoryRecord): number {
+  return independentEvidence(db, record).count;
 }
 
 /** Most recently revised first; deterministic on ties. */
@@ -216,12 +294,23 @@ export function resolveMemory(
         }
       } else {
         let ordered = [...set].sort(byRecency);
+        let evidence: Record<string, IndependentEvidence> | undefined;
         if (input.policy === "evidence_weighted") {
-          const counts = Object.fromEntries(
-            set.map((record) => [record.id, independentEvidenceCount(db, record)]),
+          evidence = Object.fromEntries(
+            set.map((record) => [record.id, independentEvidence(db, record)]),
           );
-          result.evidence_counts = counts;
-          ordered = ordered.sort((a, b) => counts[b.id]! - counts[a.id]! || byRecency(a, b));
+          const found = evidence;
+          result.evidence_counts = Object.fromEntries(
+            set.map((record) => [record.id, found[record.id]!.count]),
+          );
+          // Reliability-weighted writers first; raw pair count breaks weight
+          // ties (equal-standing writers), recency breaks the rest.
+          ordered = ordered.sort(
+            (a, b) =>
+              found[b.id]!.weight - found[a.id]!.weight ||
+              found[b.id]!.count - found[a.id]!.count ||
+              byRecency(a, b),
+          );
         }
         const winner = ordered[0]!;
         const losers = ordered.slice(1);
@@ -264,6 +353,21 @@ export function resolveMemory(
           status: "winner",
           competitors: losers.map((loser) => loser.id),
           ...(result.evidence_counts ? { evidence_counts: result.evidence_counts } : {}),
+          ...(evidence
+            ? {
+                evidence_weights: Object.fromEntries(
+                  Object.entries(evidence).map(([id, found]) => [
+                    id,
+                    {
+                      weight: Number(found.weight.toFixed(4)),
+                      independent_authors: found.authors.length,
+                      self_excluded: found.self_excluded,
+                    },
+                  ]),
+                ),
+                reliability_floor: RELIABILITY_FLOOR,
+              }
+            : {}),
         });
         members.push({ record: winner.id, role: "winner" });
       }

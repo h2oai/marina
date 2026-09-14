@@ -167,6 +167,78 @@ a claim of that shape that would survive review:
 None of this means §5 was wrong. It means it cannot be cited as a result. This harness is the
 instrument that can produce one.
 
+## successor — cold start and transmission fidelity (Tier 4 scaffold)
+
+`benchmarks/memory/successor.ts` asks the generational question genbench cannot: **does a fresh
+account that inherits a predecessor's shared knowledge get productive faster than one that does
+not, and how much of that knowledge survives being re-summarised down a chain of successors?**
+
+```bash
+# Offline, deterministic — what the test runs
+bun --env-file=/dev/null run benchmarks/memory/successor.ts --seeds 5
+
+# Fewer items, more generations
+bun --env-file=/dev/null run benchmarks/memory/successor.ts --seeds 3 --limit 60 --generations 4
+```
+
+Results land next to genbench's (`benchmarks/results/memory/`, gitignored) as one JSON
+(`schema: marina.memory.successor.v1`, `config.kind: successor`) plus a markdown summary.
+
+### Protocol
+
+Per seed, `synthetic-v1` is split with genbench's `splitItems` into the facts the **predecessor**
+learned (seed set) and the **successor's task stream** (eval set, in split order). The predecessor
+deposits one `Q: … | A: <gold>` lesson per learned fact into the shared pool
+`tradition:predecessor` as a reflection-tier note. Then two fresh `Successor` accounts run the same
+task stream in two fresh worlds:
+
+| Arm | Shared pool | What it isolates |
+|---|---|---|
+| `fresh` | empty | A newcomer with nothing but its own accumulating notes. |
+| `inherit` | the predecessor's lessons | The same newcomer with a predecessor's pool to consult. |
+
+Both arms read through `gatherRetrievalContext` — the retrieval core behind `recap` / `ask` /
+`dig` (own notes + guide pool + shared pools, with the group-pool membership guard) — rendered with
+per-line provenance (`[pool tradition:predecessor by Predecessor] …`). The answering model is
+genbench's stub (correct iff the item is in the fixed 60% "known" subset or the gold answer is in
+the injected context); the judge is genbench's exact match. Both arms learn a Q/A note after every
+answer (`--no-learn` disables).
+
+Per arm and seed the harness records **time-to-first-correct** (1-based position of the first
+correct answer), **time-to-first-transfer** (first correct answer the stub did *not* already know —
+pure memory transfer), **first-k success** (`--first-k`, default 5), pooled accuracy with a Wilson
+95% interval, transfer rate, and how often the injected context contained inherited material.
+
+**Transmission fidelity.** The predecessor's lessons are generation 0. Each generation `g ≥ 1`
+summarises what it inherited under a byte budget that shrinks by 0.7× per generation
+(`FIDELITY_BUDGET_BYTES`, `FIDELITY_BUDGET_DECAY`) and hands the digest on. Retention per
+generation is **embedding-free**: a fact is retained when its normalized gold answer is contained
+in the digest. The shipped summariser is a deterministic truncating digest (whole lines survive or
+drop in a seed-stable order, never paraphrased) — a stand-in that exercises the metric.
+`Summarizer` is the seam for a model-backed summariser later.
+
+### Inheritance mechanism
+
+The successor inherits via a **shared pool**, recorded as `config.inheritance = "shared-pool"`. The
+portable `inheritance export/import` bundle (`marina.inheritance.v1`) is the same knowledge in
+token form but is capped at 12 artifacts per token, so the harness seeds the pool directly rather
+than pretend a 25-fact inheritance fits one bundle.
+
+### What it does NOT prove
+
+- `--model stub` is the only wired model in this scaffold (a non-stub id is refused rather than
+  silently routed). Stub numbers are plumbing checks: they show the read path surfaces inherited
+  lessons and that the metrics compute; they say nothing about a real model.
+- Fidelity with the stub summariser measures truncation loss only. Paraphrase drift — the way real
+  re-summarisation actually corrupts facts — needs a model-backed `Summarizer`.
+- The synthetic domain is 50 fictional facts × 2 paraphrases; transfer means "recall the sibling
+  paraphrase's lesson", not generalisation.
+
+### Files
+
+- `successor.ts` — harness and CLI (`runSuccessorBenchmark`, `fidelityChain`, `buildSuccessorContext`, `validateSuccessorResult`).
+- `../../test/successor-benchmark.test.ts` — offline pipeline test.
+
 ## What this does NOT prove
 
 - A stub-model run proves the pipeline is wired correctly. It says nothing about any real
