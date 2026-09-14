@@ -8,14 +8,17 @@ import { join } from "node:path";
 import {
   ARMS,
   type ArmResult,
+  defaultSplitMode,
   exactMatchJudge,
   loadSyntheticItems,
   type MemoryBenchmarkReport,
   RESIDENT_CONTEXT_VERSION,
   RESULT_SCHEMA,
+  reachableFraction,
   runMemoryBenchmark,
   STUB_KNOWN_FRACTION,
   splitItems,
+  splitParaphrases,
   stableHash,
   stubKnows,
   tokenF1,
@@ -40,6 +43,29 @@ describe("genbench primitives", () => {
     expect(a.seedSet.length + a.evalSet.length).toBe(items.length);
     expect(a.fingerprint).toBe(b.fingerprint);
     expect(a.fingerprint).not.toBe(c.fingerprint);
+  });
+
+  test("paraphrase split holds out exactly one paraphrase per fact, so every eval item is reachable", () => {
+    const items = loadSyntheticItems();
+    expect(defaultSplitMode(items)).toBe("paraphrase");
+    expect(defaultSplitMode([{ id: "x" }])).toBe("item");
+    const a = splitParaphrases(items, 1, "v1", 0.5);
+    const b = splitParaphrases(items, 2, "v1", 0.5);
+    expect(a.seedSet.length + a.evalSet.length).toBe(items.length);
+    expect(new Set([...a.seedSet, ...a.evalSet].map((i) => i.id)).size).toBe(items.length);
+    expect(a.reachable).toBe(1);
+    const facts = new Set(items.map((i) => String(i.metadata?.factId)));
+    expect(a.evalSet.length).toBe(facts.size);
+    expect(new Set(a.evalSet.map((i) => String(i.metadata?.factId))).size).toBe(facts.size);
+    expect(a.fingerprint).not.toBe(b.fingerprint);
+    expect(splitParaphrases(items, 1, "v1", 0.5)).toEqual(a);
+    // The item split leaves a sibling in the seed set only by chance: its
+    // ceiling sits near the seed fraction, and the harness now reports it.
+    const plain = splitItems(items, 1, "v1", 0.5);
+    expect(plain.reachable).not.toBeNull();
+    expect(plain.reachable as number).toBeLessThan(0.8);
+    expect(reachableFraction(plain.seedSet, plain.evalSet)).toBe(plain.reachable);
+    expect(reachableFraction([{ id: "a" }], [{ id: "b" }])).toBeNull();
   });
 
   test("wilson95 brackets the point estimate and clamps to [0,1]", () => {

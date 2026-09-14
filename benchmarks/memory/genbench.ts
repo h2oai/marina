@@ -94,6 +94,15 @@ export interface MemoryBenchmarkOptions {
   splitSalt?: string;
   /** Fraction of items assigned to the seed set (rest is eval). */
   seedFraction?: number;
+  /**
+   * `item`: every item is assigned independently (a paraphrase's sibling lands
+   * in the seed set only by chance — the reachable ceiling is ≈ seedFraction).
+   * `paraphrase`: for datasets whose items carry `metadata.factId`, exactly one
+   * paraphrase of every fact is held out and the rest are seeded, so every
+   * eval item is reachable. Default: `paraphrase` when every item has a
+   * factId (synthetic-v1), else `item`.
+   */
+  split?: SplitMode;
   /** `model`: warm DB holds what the model learned on the seed set. `gold`: oracle-seeded ceiling. */
   seedSource?: "model" | "gold";
   /** bm25 control top-k. */
@@ -115,6 +124,14 @@ export interface MemoryBenchmarkOptions {
   /** Worker count for arms that do not mutate memory (bare/fullcontext/bm25). */
   concurrency?: number;
   requestTimeoutMs?: number;
+  /**
+   * Sampling temperature sent to the model and the LLM judge. `null` (the
+   * default) omits the field so the provider default applies: the Claude 5
+   * family rejects an explicit temperature and GPT-5 reasoning models ignore
+   * or reject non-default values, so a pinned 0 is not portable. Recorded in
+   * `config.temperature`.
+   */
+  temperature?: number | null;
 }
 
 export interface QueryRecord {
@@ -149,6 +166,8 @@ export interface SeedSummary {
   correct: number;
   accuracy: number;
   tokenF1Mean: number;
+  /** Transfer ceiling of this seed's split (see `Split.reachable`). */
+  reachable: number | null;
   /** Seeding-pass bookkeeping (never scored): notes written + seed-set accuracy. */
   seedPass?: { items: number; correct: number; notes: number };
 }
@@ -176,6 +195,12 @@ export interface ArmMetrics {
     seedCi95: Interval;
   };
   tokenF1: { mean: number; perSeed: number[] };
+  /**
+   * Eval-weighted mean of the per-seed reachable ceilings — the accuracy a
+   * perfect memory could reach on this split. Compare memory arms against it,
+   * not against 100 %. `null` for datasets without fact groups.
+   */
+  reachable: number | null;
   memoryHitRate: number;
   injectedTokens: { mean: number; p95: number; max: number };
   injectedChars: { mean: number; p95: number };
@@ -196,11 +221,13 @@ export interface ArmConfig {
   seeds: number[];
   splitSalt: string;
   seedFraction: number;
+  splitMode: SplitMode;
   seedSource: "model" | "gold";
   learn: boolean;
   topK: number;
   contextBudgetTokens: number;
   endpoint: string | null;
+  temperature: number | null;
   harnessGitSha: string;
   residentContextVersion: string;
   memoryOwner: string;
@@ -250,19 +277,41 @@ export function stableHash(input: string): number {
 }
 
 /** Seed/eval split by seed-stable hash. Disjoint by construction; covers every item. */
-export function splitItems<T extends { id: string }>(
-  items: readonly T[],
-  seed: number,
-  salt: string,
-  seedFraction: number,
-): { seedSet: T[]; evalSet: T[]; fingerprint: string } {
-  const seedSet: T[] = [];
-  const evalSet: T[] = [];
-  for (const item of items) {
-    const unit = stableHash(`${seed}:${salt}:${item.id}`) / 0x1_0000_0000;
-    (unit < seedFraction ? seedSet : evalSet).push(item);
-  }
-  const fingerprint = stableHash(
+export type SplitMode = "item" | "paraphrase";
+
+export interface Split<T> {
+  seedSet: T[];
+  evalSet: T[];
+  fingerprint: string;
+  /**
+   * Fraction of eval items whose fact (`metadata.factId`) has at least one
+   * paraphrase in the seed set — the transfer CEILING for this split. `null`
+   * when no eval item carries a factId (downloaded sets), where a Q/A note
+   * about one item rarely helps another and the notion does not apply.
+   */
+  reachable: number | null;
+}
+
+type FactItem = { id: string; metadata?: Record<string, unknown> };
+
+const factIdOf = (item: FactItem): string | undefined => {
+  const value = item.metadata?.factId;
+  return value === undefined || value === null ? undefined : String(value);
+};
+
+/** Share of eval items whose fact is represented in the seed set (see `Split.reachable`). */
+export function reachableFraction<T extends FactItem>(
+  seedSet: readonly T[],
+  evalSet: readonly T[],
+): number | null {
+  const seeded = new Set(seedSet.map(factIdOf).filter((f): f is string => f !== undefined));
+  const withFact = evalSet.filter((item) => factIdOf(item) !== undefined);
+  if (withFact.length === 0) return null;
+  return withFact.filter((item) => seeded.has(factIdOf(item)!)).length / withFact.length;
+}
+
+function fingerprintOf(evalSet: readonly { id: string }[]): string {
+  return stableHash(
     evalSet
       .map((i) => i.id)
       .sort()
@@ -270,7 +319,86 @@ export function splitItems<T extends { id: string }>(
   )
     .toString(16)
     .padStart(8, "0");
-  return { seedSet, evalSet, fingerprint };
+}
+
+/**
+ * Paraphrase split: every fact with ≥ 2 paraphrases holds out exactly one
+ * (chosen by a seed-stable hash of the factId) and seeds the rest; items
+ * without a factId, or alone in their fact, fall back to the item split.
+ * Disjoint and exhaustive by construction; reachable = 1 for the grouped part.
+ */
+export function splitParaphrases<T extends FactItem>(
+  items: readonly T[],
+  seed: number,
+  salt: string,
+  seedFraction: number,
+): Split<T> {
+  const groups = new Map<string, T[]>();
+  const loose: T[] = [];
+  for (const item of items) {
+    const fact = factIdOf(item);
+    if (fact === undefined) loose.push(item);
+    else groups.set(fact, [...(groups.get(fact) ?? []), item]);
+  }
+  const seedSet: T[] = [];
+  const evalSet: T[] = [];
+  for (const [fact, members] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (members.length < 2) {
+      loose.push(...members);
+      continue;
+    }
+    const ordered = [...members].sort((a, b) => a.id.localeCompare(b.id));
+    const held = stableHash(`${seed}:${salt}:${fact}`) % ordered.length;
+    ordered.forEach((item, index) => (index === held ? evalSet : seedSet).push(item));
+  }
+  const rest = splitItems(loose, seed, salt, seedFraction);
+  seedSet.push(...rest.seedSet);
+  evalSet.push(...rest.evalSet);
+  return {
+    seedSet,
+    evalSet,
+    fingerprint: fingerprintOf(evalSet),
+    reachable: reachableFraction(seedSet, evalSet),
+  };
+}
+
+/** Choose the split for a dataset: `paraphrase` iff every item carries a factId. */
+export function defaultSplitMode(items: readonly FactItem[]): SplitMode {
+  return items.length > 0 && items.every((item) => factIdOf(item) !== undefined)
+    ? "paraphrase"
+    : "item";
+}
+
+export function splitDataset<T extends FactItem>(
+  items: readonly T[],
+  seed: number,
+  salt: string,
+  seedFraction: number,
+  mode: SplitMode,
+): Split<T> {
+  return mode === "paraphrase"
+    ? splitParaphrases(items, seed, salt, seedFraction)
+    : splitItems(items, seed, salt, seedFraction);
+}
+
+export function splitItems<T extends { id: string }>(
+  items: readonly T[],
+  seed: number,
+  salt: string,
+  seedFraction: number,
+): Split<T> {
+  const seedSet: T[] = [];
+  const evalSet: T[] = [];
+  for (const item of items) {
+    const unit = stableHash(`${seed}:${salt}:${item.id}`) / 0x1_0000_0000;
+    (unit < seedFraction ? seedSet : evalSet).push(item);
+  }
+  return {
+    seedSet,
+    evalSet,
+    fingerprint: fingerprintOf(evalSet),
+    reachable: reachableFraction(seedSet as FactItem[], evalSet as FactItem[]),
+  };
 }
 
 /** Wilson score interval, 95%. */
@@ -494,7 +622,7 @@ interface ModelReply {
   usage?: { promptTokens?: number; completionTokens?: number };
 }
 
-interface AnsweringModel {
+export interface AnsweringModel {
   id: string;
   answer(messages: Message[], item: DatasetItem, memoryContext: string): Promise<ModelReply>;
 }
@@ -535,13 +663,18 @@ async function openaiChat(
   messages: Message[],
   apiKey: string | undefined,
   timeoutMs: number,
+  temperature: number | null = null,
 ): Promise<ModelReply> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   const response = await fetch(`${endpoint.replace(/\/$/, "")}/v1/chat/completions`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ model, messages, temperature: 0 }),
+    body: JSON.stringify({
+      model,
+      messages,
+      ...(temperature === null ? {} : { temperature }),
+    }),
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
@@ -566,15 +699,16 @@ async function openaiChat(
  * to `endpoint`; provider credentials stay inside Marina. Pass `--api-key`
  * (or MARINA_API_KEY / MODEL_API_KEY) when the instance requires one.
  */
-function createRemoteModel(
+export function createRemoteModel(
   id: string,
   endpoint: string,
   apiKey: string | undefined,
   timeoutMs: number,
+  temperature: number | null = null,
 ): AnsweringModel {
   return {
     id,
-    answer: (messages) => openaiChat(endpoint, id, messages, apiKey, timeoutMs),
+    answer: (messages) => openaiChat(endpoint, id, messages, apiKey, timeoutMs, temperature),
   };
 }
 
@@ -632,6 +766,7 @@ function createLlmJudge(
   endpoint: string,
   apiKey: string | undefined,
   timeoutMs: number,
+  temperature: number | null = null,
 ): Judge {
   return {
     id,
@@ -640,7 +775,14 @@ function createLlmJudge(
       const content = JUDGE_PROMPT_V1.replace("{question}", item.question)
         .replace("{gold}", goldText(item))
         .replace("{prediction}", prediction.slice(0, 2000));
-      const reply = await openaiChat(endpoint, id, [{ role: "user", content }], apiKey, timeoutMs);
+      const reply = await openaiChat(
+        endpoint,
+        id,
+        [{ role: "user", content }],
+        apiKey,
+        timeoutMs,
+        temperature,
+      );
       return /^\W*CORRECT/i.test(reply.text.trim());
     },
   };
@@ -675,12 +817,14 @@ interface Resolved {
   judge: Judge;
   seeds: number[];
   splitSalt: string;
+  split?: SplitMode;
   seedFraction: number;
   seedSource: "model" | "gold";
   topK: number;
   contextBudgetTokens: number;
   learn: boolean;
   endpoint: string | null;
+  temperature: number | null;
   priceIn?: number;
   priceOut?: number;
   resultsDir: string;
@@ -693,6 +837,7 @@ function resolveOptions(options: MemoryBenchmarkOptions): Resolved {
   const offline = options.offline ?? (options.model === "stub" && options.judge === "stub");
   const endpoint = options.endpoint ?? "http://localhost:3300";
   const timeout = options.requestTimeoutMs ?? 120_000;
+  const temperature = options.temperature ?? null;
   const apiKey = options.apiKey ?? process.env.MARINA_API_KEY ?? process.env.MODEL_API_KEY;
   if (offline && (options.model !== "stub" || options.judge !== "stub")) {
     throw new Error("offline mode requires --model stub and --judge stub");
@@ -710,7 +855,7 @@ function resolveOptions(options: MemoryBenchmarkOptions): Resolved {
     model:
       options.model === "stub"
         ? createStubModel()
-        : createRemoteModel(options.model, endpoint, apiKey, timeout),
+        : createRemoteModel(options.model, endpoint, apiKey, timeout, temperature),
     judge:
       options.judge === "stub"
         ? createStubJudge()
@@ -719,15 +864,18 @@ function resolveOptions(options: MemoryBenchmarkOptions): Resolved {
             options.judgeEndpoint ?? endpoint,
             options.judgeApiKey ?? apiKey,
             timeout,
+            temperature,
           ),
     seeds,
     splitSalt: options.splitSalt ?? "v1",
     seedFraction: options.seedFraction ?? 0.5,
+    split: options.split,
     seedSource: options.seedSource ?? "model",
     topK: options.topK ?? 5,
     contextBudgetTokens: options.contextBudgetTokens ?? 8000,
     learn: options.learn ?? true,
     endpoint: options.model === "stub" && options.judge === "stub" ? null : endpoint,
+    temperature,
     priceIn: options.priceInPerMillion,
     priceOut: options.priceOutPerMillion,
     resultsDir: options.resultsDir ?? DEFAULT_RESULTS_DIR,
@@ -973,6 +1121,14 @@ function summarize(records: QueryRecord[], perSeed: SeedSummary[], r: Resolved):
       seedCi95: { low: Math.max(0, seedMean - seedHalf), high: Math.min(1, seedMean + seedHalf) },
     },
     tokenF1: { mean: mean(ok.map((x) => x.tokenF1)), perSeed: perSeed.map((s) => s.tokenF1Mean) },
+    reachable: (() => {
+      const withCeiling = perSeed.filter((s) => s.reachable !== null && s.evalSetSize > 0);
+      const evalItems = withCeiling.reduce((acc, s) => acc + s.evalSetSize, 0);
+      return evalItems === 0
+        ? null
+        : withCeiling.reduce((acc, s) => acc + (s.reachable as number) * s.evalSetSize, 0) /
+            evalItems;
+    })(),
     memoryHitRate: n > 0 ? records.filter((x) => x.memoryHits > 0).length / n : 0,
     injectedTokens: {
       mean: mean(records.map((x) => x.injectedTokens)),
@@ -1028,30 +1184,30 @@ export function renderSummaryMarkdown(results: ArmResult[]): string {
     lines.push(
       `# genbench — ${head.config.dataset} · model=${head.config.model} · judge=${head.config.judge}`,
       "",
-      `seeds=${head.config.seeds.join(",")} · split=${head.config.splitSalt}/${head.config.seedFraction} · seed-source=${head.config.seedSource} · learn=${head.config.learn} · harness=${head.config.harnessGitSha.slice(0, 12)} · context=${head.config.residentContextVersion}`,
+      `seeds=${head.config.seeds.join(",")} · split=${head.config.splitMode}/${head.config.splitSalt}/${head.config.seedFraction} · seed-source=${head.config.seedSource} · learn=${head.config.learn} · temperature=${head.config.temperature ?? "provider-default"} · harness=${head.config.harnessGitSha.slice(0, 12)} · context=${head.config.residentContextVersion}`,
       "",
     );
   }
   lines.push(
-    "| Arm | Model | n (eval×seeds) | Judge acc | Wilson 95% | Seed-mean ± CI | Token-F1 | Hit rate | Injected tok mean/p95 | Latency p50/p95 ms | Cost USD |",
-    "|---|---|---|---|---|---|---|---|---|---|---|",
+    "| Arm | Model | n (eval×seeds) | Judge acc | Wilson 95% | Ceiling | Seed-mean ± CI | Token-F1 | Hit rate | Injected tok mean/p95 | Latency p50/p95 ms | Cost USD |",
+    "|---|---|---|---|---|---|---|---|---|---|---|---|",
   );
   for (const r of results) {
     const m = r.metrics;
     if (m.skipped) {
       lines.push(
-        `| ${r.config.arm} | ${r.config.model} | 0 | skipped | — | — | — | — | — | — | ${m.skipped} |`,
+        `| ${r.config.arm} | ${r.config.model} | 0 | skipped | — | — | — | — | — | — | — | ${m.skipped} |`,
       );
       continue;
     }
     const seedCi = `${fmtPct(m.judgeAccuracy.seedMean)} ± ${fmtPct(m.judgeAccuracy.seedMean - m.judgeAccuracy.seedCi95.low)}`;
     lines.push(
-      `| ${r.config.arm} | ${r.config.model} | ${m.n} | ${fmtPct(m.judgeAccuracy.pooled)} | ${fmtCi(m.judgeAccuracy.wilson95)} | ${seedCi} | ${m.tokenF1.mean.toFixed(3)} | ${fmtPct(m.memoryHitRate)} | ${m.injectedTokens.mean.toFixed(0)}/${m.injectedTokens.p95} | ${m.latencyMs.total.p50.toFixed(1)}/${m.latencyMs.total.p95.toFixed(1)} | ${m.costUsd === null ? "n/a" : m.costUsd.toFixed(4)} |`,
+      `| ${r.config.arm} | ${r.config.model} | ${m.n} | ${fmtPct(m.judgeAccuracy.pooled)} | ${fmtCi(m.judgeAccuracy.wilson95)} | ${m.reachable === null ? "n/a" : fmtPct(m.reachable)} | ${seedCi} | ${m.tokenF1.mean.toFixed(3)} | ${fmtPct(m.memoryHitRate)} | ${m.injectedTokens.mean.toFixed(0)}/${m.injectedTokens.p95} | ${m.latencyMs.total.p50.toFixed(1)}/${m.latencyMs.total.p95.toFixed(1)} | ${m.costUsd === null ? "n/a" : m.costUsd.toFixed(4)} |`,
     );
   }
   lines.push(
     "",
-    "Injected tokens use the chars/4 heuristic; `promptTokens` in the JSON carries provider-reported usage when a real model ran. Held-out: every scored item is in the eval split; every note came from the seed split or from earlier eval items in the same arm (cold/warm learning).",
+    "Injected tokens use the chars/4 heuristic; `promptTokens` in the JSON carries provider-reported usage when a real model ran. Held-out: every scored item is in the eval split; every note came from the seed split or from earlier eval items in the same arm (cold/warm learning). Ceiling = share of eval items whose fact has a seeded paraphrase (the accuracy a perfect memory could reach on this split); n/a for datasets without fact groups.",
   );
   return `${lines.join("\n")}\n`;
 }
@@ -1134,13 +1290,11 @@ export async function runMemoryBenchmark(
     );
 
     // Per-seed split + seed corpus, shared across arms so controls are matched.
-    const perSeedState = new Map<
-      number,
-      { split: ReturnType<typeof splitItems<DatasetItem>>; corpus: SeedCorpus }
-    >();
+    const splitMode = r.split ?? defaultSplitMode(items);
+    const perSeedState = new Map<number, { split: Split<DatasetItem>; corpus: SeedCorpus }>();
     const needsCorpus = r.arms.some((a) => a !== "bare" && a !== "cold");
     for (const seed of r.seeds) {
-      const split = splitItems(items, seed, r.splitSalt, r.seedFraction);
+      const split = splitDataset(items, seed, r.splitSalt, r.seedFraction, splitMode);
       if (split.evalSet.length === 0 || split.seedSet.length === 0) {
         throw new Error(
           `seed ${seed}: degenerate split (${split.seedSet.length}/${split.evalSet.length})`,
@@ -1151,7 +1305,7 @@ export async function runMemoryBenchmark(
         : { notes: [], seedPass: undefined };
       perSeedState.set(seed, { split, corpus });
       log(
-        `  seed ${seed}: seed-set=${split.seedSet.length} eval-set=${split.evalSet.length} fingerprint=${split.fingerprint}${corpus.seedPass ? ` seed-pass acc=${fmtPct(corpus.seedPass.correct / Math.max(1, corpus.seedPass.items))} notes=${corpus.seedPass.notes}` : ""}`,
+        `  seed ${seed}: seed-set=${split.seedSet.length} eval-set=${split.evalSet.length} fingerprint=${split.fingerprint}${split.reachable === null ? "" : ` reachable=${fmtPct(split.reachable)}`}${corpus.seedPass ? ` seed-pass acc=${fmtPct(corpus.seedPass.correct / Math.max(1, corpus.seedPass.items))} notes=${corpus.seedPass.notes}` : ""}`,
       );
     }
 
@@ -1184,6 +1338,7 @@ export async function runMemoryBenchmark(
           correct,
           accuracy: out.records.length > 0 ? correct / out.records.length : 0,
           tokenF1Mean: mean(out.records.filter((x) => !x.error).map((x) => x.tokenF1)),
+          reachable: split.reachable,
           seedPass: arm === "bare" || arm === "cold" ? undefined : corpus.seedPass,
         });
       }
@@ -1202,11 +1357,13 @@ export async function runMemoryBenchmark(
           seeds: r.seeds,
           splitSalt: r.splitSalt,
           seedFraction: r.seedFraction,
+          splitMode,
           seedSource: r.seedSource,
           learn: r.learn,
           topK: r.topK,
           contextBudgetTokens: r.contextBudgetTokens,
           endpoint: r.endpoint,
+          temperature: r.temperature,
           harnessGitSha: sha,
           residentContextVersion: RESIDENT_CONTEXT_VERSION,
           memoryOwner: MEMORY_OWNER,
@@ -1221,7 +1378,7 @@ export async function runMemoryBenchmark(
         items: records,
       });
       log(
-        `  ${arm.padEnd(11)} acc=${fmtPct(metrics.judgeAccuracy.pooled)} ${fmtCi(metrics.judgeAccuracy.wilson95)} f1=${metrics.tokenF1.mean.toFixed(3)} hits=${fmtPct(metrics.memoryHitRate)} inj=${metrics.injectedTokens.mean.toFixed(0)}tok${skipped ? ` SKIPPED: ${skipped}` : ""}`,
+        `  ${arm.padEnd(11)} acc=${fmtPct(metrics.judgeAccuracy.pooled)} ${fmtCi(metrics.judgeAccuracy.wilson95)}${metrics.reachable === null ? "" : ` ceiling=${fmtPct(metrics.reachable)}`} f1=${metrics.tokenF1.mean.toFixed(3)} hits=${fmtPct(metrics.memoryHitRate)} inj=${metrics.injectedTokens.mean.toFixed(0)}tok${skipped ? ` SKIPPED: ${skipped}` : ""}`,
       );
     }
 
@@ -1271,6 +1428,7 @@ Options:
   --seed-start <n>        first seed (default 1)
   --limit <n>             cap items before the split
   --split-salt <s>        salt for the seed/eval hash (default v1)
+  --split <mode>          item | paraphrase (default: paraphrase when every item has metadata.factId, else item)
   --seed-fraction <f>     fraction of items in the seed set (default 0.5)
   --seed-source <m>       model (default: warm holds what the model learned) | gold (oracle ceiling)
   --top-k <n>             bm25 control top-k (default 5)
@@ -1281,6 +1439,8 @@ Options:
   --judge-endpoint <url>  endpoint for the LLM judge (default: --endpoint)
   --price-in <usd/M>      input price per million tokens (enables cost estimate)
   --price-out <usd/M>     output price per million tokens
+  --temperature <n|none>  sampling temperature for model + judge (default none = provider default;
+                          Claude 5 rejects an explicit value, GPT-5 reasoning models ignore it)
   --results-dir <dir>     default benchmarks/results/memory (gitignored)
   --concurrency <n>       workers for non-mutating arms (default 4 for real models, 1 for stub)
   --online                allow network even with stub model+judge (default: offline when both stub)
@@ -1300,6 +1460,7 @@ export async function runCli(argv: string[]): Promise<number> {
       "seed-start": { type: "string", default: "1" },
       limit: { type: "string" },
       "split-salt": { type: "string", default: "v1" },
+      split: { type: "string" },
       "seed-fraction": { type: "string", default: "0.5" },
       "seed-source": { type: "string", default: "model" },
       "top-k": { type: "string", default: "5" },
@@ -1311,6 +1472,7 @@ export async function runCli(argv: string[]): Promise<number> {
       "price-in": { type: "string" },
       "price-out": { type: "string" },
       "results-dir": { type: "string" },
+      temperature: { type: "string" },
       concurrency: { type: "string" },
       online: { type: "boolean", default: false },
       quiet: { type: "boolean", default: false },
@@ -1341,6 +1503,7 @@ export async function runCli(argv: string[]): Promise<number> {
     seedStart: Number(values["seed-start"] ?? "1"),
     limit: num(values.limit),
     splitSalt: values["split-salt"],
+    split: values.split === "item" || values.split === "paraphrase" ? values.split : undefined,
     seedFraction: Number(values["seed-fraction"] ?? "0.5"),
     seedSource,
     topK: Number(values["top-k"] ?? "5"),
@@ -1352,6 +1515,10 @@ export async function runCli(argv: string[]): Promise<number> {
     priceInPerMillion: num(values["price-in"]),
     priceOutPerMillion: num(values["price-out"]),
     resultsDir: values["results-dir"],
+    temperature:
+      values.temperature === undefined || values.temperature === "none"
+        ? null
+        : Number(values.temperature),
     concurrency: num(values.concurrency),
     offline: values.online ? false : undefined,
     quiet: values.quiet,

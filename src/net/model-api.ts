@@ -3239,6 +3239,61 @@ function classifyProxyError(status: number): ProxyTraceMetrics["errorKind"] {
   return "unknown";
 }
 
+/**
+ * Concatenate the text blocks of an Anthropic Messages response. Thinking,
+ * tool-use and any future non-text blocks are skipped; `content[0].text` is
+ * NOT sufficient because the Claude 5 family emits a `thinking` block first.
+ */
+/**
+ * Error text for a failed Anthropic response — includes the upstream reason
+ * (e.g. the Claude 5 family rejecting an explicit `temperature`) instead of a
+ * bare status text, so operators can see WHY passthru failed.
+ */
+async function anthropicErrorMessage(resp: Response): Promise<string> {
+  const detail = await resp.text().catch(() => "");
+  let reason = "";
+  try {
+    reason = String((JSON.parse(detail) as { error?: { message?: unknown } }).error?.message ?? "");
+  } catch {
+    reason = detail.slice(0, 200);
+  }
+  return `Anthropic API error: ${resp.statusText}${reason ? ` — ${reason.slice(0, 300)}` : ""}`;
+}
+
+/**
+ * Anthropic takes one top-level `system` string. Concatenate every system
+ * message (string content, or the text parts of an OpenAI content array) in
+ * order, separated by a blank line, so nothing a client put in the system slot
+ * is lost.
+ */
+export function anthropicSystemPrompt(
+  messages: ReadonlyArray<{ role: string; content: unknown }>,
+): string {
+  const parts: string[] = [];
+  for (const message of messages) {
+    if (message.role !== "system") continue;
+    if (typeof message.content === "string") {
+      if (message.content.trim()) parts.push(message.content);
+    } else if (Array.isArray(message.content)) {
+      for (const part of message.content as Array<{ type?: string; text?: string }>) {
+        if ((part.type === undefined || part.type === "text") && part.text?.trim())
+          parts.push(part.text);
+      }
+    }
+  }
+  return parts.join("\n\n");
+}
+
+export function anthropicTextContent(
+  blocks: ReadonlyArray<{ type?: string; text?: string }> | undefined,
+): string {
+  if (!blocks) return "";
+  return blocks
+    .filter((block) => (block.type === undefined || block.type === "text") && block.text)
+    .map((block) => block.text as string)
+    .join("");
+}
+
 async function proxyToAnthropic(
   body: Record<string, unknown>,
   apiKey: string,
@@ -3246,7 +3301,10 @@ async function proxyToAnthropic(
   wantStream = false,
 ): Promise<Response> {
   const messages = (body.messages as Array<{ role: string; content: string }>) ?? [];
-  const systemMsg = messages.find((m) => m.role === "system");
+  // Every system message, in order — OpenAI-style clients (and Marina's own
+  // memory injection) send the memory context as a SECOND system message;
+  // forwarding only the first silently dropped it for Anthropic upstreams.
+  const systemText = anthropicSystemPrompt(messages);
   const nonSystemMsgs = messages.filter((m) => m.role !== "system");
 
   const requestModel = isMarinaModel(body.model as string) ? defaultModel : (body.model as string);
@@ -3266,13 +3324,13 @@ async function proxyToAnthropic(
           max_tokens: (body.max_tokens as number) ?? 4096,
           stream: true,
           ...(typeof body.temperature === "number" ? { temperature: body.temperature } : {}),
-          ...(systemMsg ? { system: systemMsg.content } : {}),
+          ...(systemText ? { system: systemText } : {}),
           messages: nonSystemMsgs.map((m) => ({ role: m.role, content: m.content })),
         }),
       });
 
       if (!resp.ok) {
-        return errorJson(resp.status, `Anthropic API error: ${resp.statusText}`);
+        return errorJson(resp.status, await anthropicErrorMessage(resp));
       }
 
       const completionId = `chatcmpl-${crypto.randomUUID().slice(0, 8)}`;
@@ -3371,7 +3429,7 @@ async function proxyToAnthropic(
         model: requestModel,
         max_tokens: (body.max_tokens as number) ?? 4096,
         ...(typeof body.temperature === "number" ? { temperature: body.temperature } : {}),
-        ...(systemMsg ? { system: systemMsg.content } : {}),
+        ...(systemText ? { system: systemText } : {}),
         messages: nonSystemMsgs.map((m) => ({ role: m.role, content: m.content })),
       }),
     });
@@ -3379,11 +3437,14 @@ async function proxyToAnthropic(
     if (resp.ok) {
       const data = (await resp.json()) as {
         id?: string;
-        content?: Array<{ text?: string }>;
+        content?: Array<{ type?: string; text?: string }>;
         stop_reason?: string;
         usage?: { input_tokens?: number; output_tokens?: number };
       };
-      const content = data.content?.[0]?.text ?? "";
+      // Claude 5 models return a `thinking` block BEFORE the `text` block (and
+      // may return several text blocks); reading `content[0]` alone yields an
+      // empty answer with non-zero completion tokens. Join every text block.
+      const content = anthropicTextContent(data.content);
       const completionId = data.id ?? `chatcmpl-${crypto.randomUUID().slice(0, 8)}`;
 
       const openaiResponse = {
@@ -3409,7 +3470,7 @@ async function proxyToAnthropic(
         headers: { ...MODEL_CORS, "Content-Type": "application/json" },
       });
     }
-    return errorJson(resp.status, `Anthropic API error: ${resp.statusText}`);
+    return errorJson(resp.status, await anthropicErrorMessage(resp));
   } catch (e) {
     return errorJson(502, `Anthropic proxy error: ${e instanceof Error ? e.message : String(e)}`);
   }

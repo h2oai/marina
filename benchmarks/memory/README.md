@@ -14,13 +14,19 @@ bun --env-file=/dev/null run scripts/qualify-memory-benchmark.ts
 # Same thing, explicit
 bun --env-file=/dev/null run benchmarks/memory/genbench.ts --model stub --judge stub --seeds 5
 
-# Real model through a running Marina instance (never calls a provider directly)
+# Real model through a running Marina instance (never calls a provider directly).
+# `marina` is the passthru id (`/v1/models` lists it); `marina/default` is the
+# in-world agents channel and 404s when no agent is bound to it.
 bun --env-file=/dev/null run benchmarks/memory/genbench.ts \
   --dataset gsm8k --limit 200 --seeds 5 \
-  --model marina/default --judge marina/default \
+  --model marina --judge marina \
   --endpoint http://localhost:3300 --api-key "$MARINA_API_KEY" \
   --price-in 0.15 --price-out 0.60
 ```
+
+The harness sends no `temperature` unless `--temperature <n>` is given: the Claude 5 family
+rejects an explicit value and GPT-5 reasoning models ignore or reject non-default ones, so a pinned
+0 is not portable across providers. Whatever was used is recorded as `config.temperature`.
 
 Results land in `benchmarks/results/memory/` (gitignored) as one JSON per arm plus a markdown
 summary. Files are never overwritten. Commit the harness, this README, and
@@ -127,10 +133,24 @@ plumbing checks, not evidence about any real model.**
 
 ### Split
 
-`splitItems(items, seed, salt, fraction)` assigns each item by `stableHash("<seed>:<salt>:<id>")`
-(FNV-1a with a murmur3 finalizer). The split is disjoint and exhaustive by construction and
-differs per seed, so the seed-level CI includes split variance. `--split-salt` pins or
-deliberately changes the family of splits. The sorted eval-id fingerprint is recorded per seed.
+Two modes, recorded as `config.splitMode`:
+
+- `item` — `splitItems(items, seed, salt, fraction)` assigns each item independently by
+  `stableHash("<seed>:<salt>:<id>")` (FNV-1a with a murmur3 finalizer). On a paraphrase dataset
+  this leaves an eval item's sibling in the seed set only by chance, so the accuracy a *perfect*
+  memory could reach is ≈ the seed fraction (measured: 56.6 % on synthetic-v1 with fraction 0.5).
+  The first real-model run hit exactly that ceiling, which is how the artifact was found.
+- `paraphrase` (default whenever every item carries `metadata.factId`) — `splitParaphrases`
+  holds out exactly one paraphrase of every fact (chosen by a seed-stable hash of the factId) and
+  seeds the rest; items without a factId fall back to the item rule. Every eval item is reachable.
+
+Both are disjoint and exhaustive by construction and differ per seed, so the seed-level CI
+includes split variance. `--split-salt` pins or deliberately changes the family of splits;
+`--split item|paraphrase` overrides the default. Every result records the **ceiling** — the
+share of eval items whose fact has a seeded paraphrase (`metrics.reachable`, `perSeed[].reachable`,
+the "Ceiling" column) — so memory arms are read against what was reachable, never against 100 %.
+It is `null` for downloaded datasets, where a Q/A note about one item rarely helps another. The
+sorted eval-id fingerprint is recorded per seed.
 
 ## How to reproduce the §5 stair-step honestly
 
@@ -179,7 +199,18 @@ bun --env-file=/dev/null run benchmarks/memory/successor.ts --seeds 5
 
 # Fewer items, more generations
 bun --env-file=/dev/null run benchmarks/memory/successor.ts --seeds 3 --limit 60 --generations 4
+
+# Real model through a running Marina instance (answering AND re-summarising)
+bun --env-file=/dev/null run benchmarks/memory/successor.ts --model marina \
+  --endpoint http://localhost:3300 --seeds 5 --generations 3
 ```
+
+With a real model the summariser defaults to `model` (the answering model rewrites each
+generation's inheritance into a digest that must fit the shrinking byte budget; anything over is
+hard-truncated), so the fidelity chain measures paraphrase drift as well as loss. `--summarizer stub`
+keeps the truncating digest for an apples-to-apples comparison. The predecessor/successor split
+uses the same `paraphrase` default as genbench, so the inheriting successor's ceiling is 100 %
+and `fresh` is the empirical prior (≈ 0 on fictional facts).
 
 Results land next to genbench's (`benchmarks/results/memory/`, gitignored) as one JSON
 (`schema: marina.memory.successor.v1`, `config.kind: successor`) plus a markdown summary.

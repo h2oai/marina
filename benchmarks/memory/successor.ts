@@ -47,7 +47,9 @@ import { MarinaDB } from "../../src/persistence/database";
 import type { EntityId } from "../../src/types";
 import type { DatasetItem } from "../types";
 import {
+  createRemoteModel,
   createStubModel,
+  defaultSplitMode,
   estimateTokens,
   exactMatchJudge,
   goldText,
@@ -55,7 +57,8 @@ import {
   learnNoteText,
   loadSyntheticItems,
   normalizeAnswer,
-  splitItems,
+  type SplitMode,
+  splitDataset,
   stableHash,
   stubKnows,
   tokenF1,
@@ -94,6 +97,8 @@ export interface SuccessorOptions {
   /** Cap on items before the split. */
   limit?: number;
   splitSalt?: string;
+  /** `paraphrase` (default: one paraphrase of every fact held out, its sibling learned) | `item`. */
+  split?: SplitMode;
   /** Fraction of items the predecessor learns (rest is the successor's task stream). */
   seedFraction?: number;
   /** k for first-k success. Default 5. */
@@ -104,11 +109,15 @@ export interface SuccessorOptions {
   learn?: boolean;
   endpoint?: string;
   apiKey?: string;
+  /** `model` (default for a real model: the answering model re-summarises) or `stub` (truncating digest). */
+  summarizer?: "model" | "stub";
   resultsDir?: string;
   /** Refuse all network. Default: true iff model is `stub`. */
   offline?: boolean;
   quiet?: boolean;
   requestTimeoutMs?: number;
+  /** Sampling temperature; `null` (default) omits it so the provider default applies. */
+  temperature?: number | null;
 }
 
 export interface SuccessorQueryRecord {
@@ -137,6 +146,8 @@ export interface SuccessorSeedSummary {
   seed: number;
   arm: SuccessorArm;
   splitFingerprint: string;
+  /** Transfer ceiling of this seed's split (share of tasks whose fact the predecessor learned). */
+  reachable: number | null;
   predecessorNotes: number;
   n: number;
   correct: number;
@@ -193,6 +204,7 @@ export interface SuccessorConfig {
   judge: "stub";
   seeds: number[];
   splitSalt: string;
+  splitMode: SplitMode;
   seedFraction: number;
   firstK: number;
   generations: number;
@@ -267,6 +279,42 @@ export function createStubSummarizer(): Summarizer {
         used += size;
       }
       return kept.join("\n");
+    },
+  };
+}
+
+/**
+ * Model-backed summariser: the answering model rewrites what a generation
+ * inherited into a digest that must fit the byte budget, with an explicit
+ * instruction to keep every distinct fact and its exact values. Anything over
+ * budget is hard-truncated (a real successor's context is finite too), so a
+ * verbose model loses facts exactly the way an over-long handover would. This
+ * is the paraphrase-drift condition the stub cannot study.
+ */
+export function createModelSummarizer(model: AnsweringModel): Summarizer {
+  return {
+    id: `model-digest:${model.id}`,
+    async summarize(inherited, budgetBytes) {
+      if (inherited.length === 0) return "";
+      const messages = [
+        {
+          role: "system" as const,
+          content:
+            "You are handing your knowledge to a successor who will never see the original notes. " +
+            `Rewrite the lessons below into a compact digest of at most ${budgetBytes} characters. ` +
+            "Keep every distinct fact with its exact names, numbers and units; merge duplicates; " +
+            "drop only what the limit forces you to drop. Output the digest only, one fact per line.",
+        },
+        { role: "user" as const, content: inherited.join("\n") },
+      ];
+      const reply = await model.answer(
+        messages,
+        { id: "summarize", question: "", answer: "", category: "synthetic" } as DatasetItem,
+        "",
+      );
+      let digest = reply.text.trim();
+      while (bytes(digest) > budgetBytes) digest = digest.slice(0, -1);
+      return digest;
     },
   };
 }
@@ -378,6 +426,7 @@ interface Resolved {
   summarizer: Summarizer;
   seeds: number[];
   splitSalt: string;
+  split?: SplitMode;
   seedFraction: number;
   firstK: number;
   generations: number;
@@ -393,28 +442,42 @@ const DEFAULT_RESULTS_DIR = join(import.meta.dir, "..", "results", "memory");
 function resolveOptions(options: SuccessorOptions): Resolved {
   const offline = options.offline ?? options.model === "stub";
   if (offline && options.model !== "stub") throw new Error("offline mode requires --model stub");
-  if (options.model !== "stub") {
-    // Real models route through the same OpenAI-compatible endpoint genbench
-    // uses. The scaffold ships the stub path only; wiring a remote model is a
-    // deliberate later step so this file cannot spend money by accident.
-    throw new Error(
-      `successor: model "${options.model}" is not wired yet — the Tier-4 scaffold runs --model stub only`,
-    );
-  }
+  // Real models route through the same OpenAI-compatible endpoint genbench
+  // uses: the harness only ever talks to a Marina instance; provider
+  // credentials stay inside Marina. Never reached with the default `stub`, so
+  // this file still cannot spend money by accident.
+  const endpoint =
+    options.model === "stub"
+      ? null
+      : (options.endpoint ?? process.env.MARINA_ENDPOINT ?? "http://localhost:3300");
+  const model =
+    options.model === "stub"
+      ? createStubModel()
+      : createRemoteModel(
+          options.model,
+          endpoint!,
+          options.apiKey ?? process.env.MARINA_API_KEY ?? process.env.MODEL_API_KEY,
+          options.requestTimeoutMs ?? 120_000,
+          options.temperature ?? null,
+        );
+  const summarizerKind = options.summarizer ?? (options.model === "stub" ? "stub" : "model");
+  if (summarizerKind === "model" && options.model === "stub")
+    throw new Error("--summarizer model needs a real --model");
   const seeds = Array.from(
     { length: Math.max(1, options.seeds) },
     (_, i) => (options.seedStart ?? 1) + i,
   );
   return {
-    model: createStubModel(),
-    summarizer: createStubSummarizer(),
+    model,
+    summarizer: summarizerKind === "model" ? createModelSummarizer(model) : createStubSummarizer(),
     seeds,
     splitSalt: options.splitSalt ?? "v1",
+    split: options.split,
     seedFraction: options.seedFraction ?? 0.5,
     firstK: Math.max(1, options.firstK ?? 5),
     generations: Math.max(1, options.generations ?? 3),
     learn: options.learn ?? true,
-    endpoint: null,
+    endpoint,
     resultsDir: options.resultsDir ?? DEFAULT_RESULTS_DIR,
     offline,
     quiet: options.quiet ?? false,
@@ -542,7 +605,10 @@ async function runSuccessorArm(
         expected: item.answer,
         prediction: prediction.slice(0, 500),
         correct,
-        transfer: correct && !stubKnows(item.id),
+        // Stub: correct AND outside its fixed "known" subset. Real model: the
+        // facts are fictional (no model can know them), so every correct
+        // answer is transfer; the `fresh` arm's accuracy is the empirical prior.
+        transfer: correct && (r.model.id === "stub" ? !stubKnows(item.id) : true),
         tokenF1: error ? 0 : tokenF1(prediction, goldText(item)),
         memoryHits: context.hits,
         inheritedHits: context.inheritedHits,
@@ -570,6 +636,7 @@ async function runSuccessorArm(
         seed,
         arm,
         splitFingerprint: fingerprint,
+        reachable: null,
         predecessorNotes: deposited,
         n: records.length,
         correct,
@@ -674,7 +741,9 @@ export function renderSuccessorMarkdown(result: SuccessorResult): string {
     "|---|---|",
     ...result.fidelity.meanRetention.map((r, g) => `| ${g} | ${fmtPct(r)} |`),
     "",
-    "Stub-model numbers are plumbing checks, not evidence about any real model. Retention is exact-match containment of the gold answer in each generation's digest (embedding-free); the stub summariser drops whole lines under a shrinking byte budget and never paraphrases.",
+    result.config.model === "stub"
+      ? "Stub-model numbers are plumbing checks, not evidence about any real model. Retention is exact-match containment of the gold answer in each generation's digest (embedding-free); the stub summariser drops whole lines under a shrinking byte budget and never paraphrases."
+      : `Real-model run (${result.config.model}; summariser ${result.fidelity.summarizer}). Retention is exact-match containment of the gold answer in each generation's digest (embedding-free), so a paraphrased value that changes units or wording counts as lost — a conservative bound on transmission fidelity.`,
   );
   return `${lines.join("\n")}\n`;
 }
@@ -757,15 +826,16 @@ export async function runSuccessorBenchmark(options: SuccessorOptions): Promise<
     const records: SuccessorQueryRecord[] = [];
     const perSeed: SuccessorSeedSummary[] = [];
     const fidelityPerSeed: SuccessorFidelity["perSeed"] = [];
+    const splitMode = r.split ?? defaultSplitMode(items);
     for (const seed of r.seeds) {
-      const split = splitItems(items, seed, r.splitSalt, r.seedFraction);
+      const split = splitDataset(items, seed, r.splitSalt, r.seedFraction, splitMode);
       if (split.seedSet.length === 0 || split.evalSet.length === 0)
         throw new Error(`seed ${seed}: degenerate split`);
       const lessons = predecessorLessons(split.seedSet);
       for (const arm of SUCCESSOR_ARMS) {
         const out = await runSuccessorArm(r, arm, seed, split.evalSet, lessons, split.fingerprint);
         records.push(...out.records);
-        perSeed.push(out.summary);
+        perSeed.push({ ...out.summary, reachable: split.reachable });
         log(
           `  seed ${seed} ${arm.padEnd(7)} acc=${fmtPct(out.summary.accuracy)} first-${r.firstK}=${out.summary.firstK.correct}/${Math.min(r.firstK, out.summary.n)} ttfc=${fmtPos(out.summary.timeToFirstCorrect)} ttft=${fmtPos(out.summary.timeToFirstTransfer)}`,
         );
@@ -801,6 +871,7 @@ export async function runSuccessorBenchmark(options: SuccessorOptions): Promise<
         judge: "stub",
         seeds: r.seeds,
         splitSalt: r.splitSalt,
+        splitMode,
         seedFraction: r.seedFraction,
         firstK: r.firstK,
         generations: r.generations,
@@ -871,15 +942,20 @@ Usage:
   bun --env-file=/dev/null run benchmarks/memory/successor.ts [options]
 
 Options:
-  --model <id>            stub (default; the only wired model in this scaffold)
+  --model <id>            stub (default, offline) | any model id routed via --endpoint (e.g. marina)
+  --endpoint <url>        Marina OpenAI-compatible endpoint (default http://localhost:3300)
+  --api-key <key>         bearer for --endpoint (or MARINA_API_KEY / MODEL_API_KEY)
+  --summarizer <kind>     model (default with a real model: the model re-summarises) | stub (truncating digest)
   --seeds <n>             number of seeds (default 5)
   --seed-start <n>        first seed (default 1)
   --limit <n>             cap items before the split
   --split-salt <s>        salt for the predecessor/successor split (default v1)
+  --split <mode>          paraphrase (default) | item
   --seed-fraction <f>     fraction of facts the predecessor learned (default 0.5)
   --first-k <n>           k for first-k success (default 5)
   --generations <n>       re-summarisation generations for fidelity (default 3)
   --no-learn              successor does not write Q/A notes while answering
+  --temperature <n|none>  sampling temperature (default none = provider default)
   --results-dir <dir>     default benchmarks/results/memory (gitignored)
   --online                allow network even with the stub model
   --quiet
@@ -895,11 +971,16 @@ export async function runCli(argv: string[]): Promise<number> {
       "seed-start": { type: "string", default: "1" },
       limit: { type: "string" },
       "split-salt": { type: "string", default: "v1" },
+      split: { type: "string" },
       "seed-fraction": { type: "string", default: "0.5" },
       "first-k": { type: "string", default: "5" },
       generations: { type: "string", default: "3" },
       "no-learn": { type: "boolean", default: false },
+      endpoint: { type: "string" },
+      "api-key": { type: "string" },
+      summarizer: { type: "string" },
       "results-dir": { type: "string" },
+      temperature: { type: "string" },
       online: { type: "boolean", default: false },
       quiet: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
@@ -917,11 +998,20 @@ export async function runCli(argv: string[]): Promise<number> {
     seedStart: Number(values["seed-start"] ?? "1"),
     limit: num(values.limit),
     splitSalt: values["split-salt"],
+    split: values.split === "item" || values.split === "paraphrase" ? values.split : undefined,
     seedFraction: Number(values["seed-fraction"] ?? "0.5"),
     firstK: Number(values["first-k"] ?? "5"),
     generations: Number(values.generations ?? "3"),
     learn: !values["no-learn"],
+    endpoint: values.endpoint,
+    apiKey: values["api-key"],
+    summarizer:
+      values.summarizer === "stub" || values.summarizer === "model" ? values.summarizer : undefined,
     resultsDir: values["results-dir"],
+    temperature:
+      values.temperature === undefined || values.temperature === "none"
+        ? null
+        : Number(values.temperature),
     offline: values.online ? false : undefined,
     quiet: values.quiet,
   });

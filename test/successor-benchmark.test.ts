@@ -9,8 +9,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadSyntheticItems, splitItems } from "../benchmarks/memory/genbench";
+import { loadSyntheticItems, splitDataset, splitItems } from "../benchmarks/memory/genbench";
 import {
+  createModelSummarizer,
   createStubSummarizer,
   factsRetained,
   fidelityChain,
@@ -67,13 +68,41 @@ describe("successor primitives", () => {
     expect(again).toEqual(chain);
   });
 
-  test("refuses a non-stub model instead of routing it silently", async () => {
+  test("a real model with an unreachable endpoint fails loudly instead of falling back to the stub", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "successor-unreachable-"));
+    try {
+      await expect(
+        runSuccessorBenchmark({
+          model: "marina",
+          seeds: 1,
+          limit: 4,
+          quiet: true,
+          offline: false,
+          endpoint: "http://127.0.0.1:9",
+          requestTimeoutMs: 2_000,
+          resultsDir: dir,
+        }),
+      ).rejects.toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
     await expect(
-      runSuccessorBenchmark({ model: "marina/default", seeds: 1, quiet: true, offline: false }),
-    ).rejects.toThrow(/not wired/);
-    await expect(
-      runSuccessorBenchmark({ model: "marina/default", seeds: 1, quiet: true, offline: true }),
+      runSuccessorBenchmark({ model: "marina", seeds: 1, quiet: true, offline: true }),
     ).rejects.toThrow(/offline mode requires/);
+    await expect(
+      runSuccessorBenchmark({ model: "stub", seeds: 1, quiet: true, summarizer: "model" }),
+    ).rejects.toThrow(/needs a real --model/);
+  });
+
+  test("the model summariser keeps the digest inside the byte budget", async () => {
+    const summarizer = createModelSummarizer({
+      id: "fake",
+      answer: async () => ({ text: "x".repeat(500) }),
+    });
+    expect(summarizer.id).toBe("model-digest:fake");
+    const digest = await summarizer.summarize(["Q: a | A: b", "Q: c | A: d"], 120);
+    expect(new TextEncoder().encode(digest).length).toBeLessThanOrEqual(120);
+    expect(await summarizer.summarize([], 120)).toBe("");
   });
 });
 
@@ -96,6 +125,11 @@ describe("successor offline run", () => {
 
   afterAll(() => {
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("defaults to the paraphrase split, so the inheriting successor's ceiling is 100%", () => {
+    expect(report.result.config.splitMode).toBe("paraphrase");
+    for (const seed of report.result.perSeed) expect(seed.reachable).toBe(1);
   });
 
   test("produces a valid marina.memory.successor.v1 result with both arms and no network", () => {
@@ -133,7 +167,7 @@ describe("successor offline run", () => {
     // Held-out by construction: no eval item is in its seed's predecessor set.
     const items = loadSyntheticItems().slice(0, 60);
     for (const seed of report.result.config.seeds) {
-      const { seedSet } = splitItems(items, seed, "v1", 0.5);
+      const { seedSet } = splitDataset(items, seed, "v1", 0.5, report.result.config.splitMode);
       const learned = new Set(seedSet.map((i) => i.id));
       for (const record of report.result.items.filter((x) => x.seed === seed))
         expect(learned.has(record.id)).toBe(false);
