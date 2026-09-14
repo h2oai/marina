@@ -199,6 +199,21 @@ An optional [Ollama embedding adapter](https://docs.ollama.com/api/embed) is ava
 The operator must keep that revision identifier aligned with the deployed model. It has not
 been live-qualified here. No Hindsight, Graphiti or Mem0 backend is installed by this slice.
 
+The world server (`bun run start`) constructs the same providers from the environment.
+`MARINA_MEMORY_EMBEDDINGS=none|local|ollama` (default `none`) selects the provider;
+`local` reads `MARINA_MEMORY_EMBEDDING_CACHE` / `MARINA_MEMORY_EMBEDDING_LOCAL_ONLY`, and
+`ollama` requires `MARINA_MEMORY_EMBEDDING_MODEL`, `MARINA_MEMORY_EMBEDDING_REVISION` and
+optionally `MARINA_MEMORY_EMBEDDING_URL`. Unset or `none` keeps both memory silos lexical, and an
+explicit `mode:"hybrid"` then fails with `503 retrieval_incomplete` (`semantic_not_configured`)
+rather than quietly returning lexical results. An invalid value fails on first memory use instead
+of degrading silently; a `local` configuration without the installed extension reports
+`embedding_unavailable` naming `extensions/local-embeddings`. Turning embeddings on is
+evidence-gated: `bun run qualify:paraphrase` reports paraphrase hit@3 for legacy FTS (pre- and
+post-porter), vocabulary expansion, durable lexical and durable hybrid on a frozen corpus
+(`benchmarks/paraphrase/`). Migration 112 rebuilt the shared `notes_fts` index with the Porter
+stemmer, and OR-mode recall queries drop English stop words when a content token remains — both
+silos benefit because durable records and legacy notes share that index.
+
 ## Forgetting and portability boundaries
 
 Forgetting a source deletes its linked records, their complete revision history, dependent

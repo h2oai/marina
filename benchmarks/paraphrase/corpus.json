@@ -1,0 +1,1412 @@
+{
+  "schema": "marina.paraphrase.corpus.v1",
+  "description": "Frozen paraphrase-retrieval gate: 200 authored (fact, paraphrase-query, distractor-query) triples across ops, dev, personal-preference and scheduling. hit@3 = fact retrieved in the top 3 for its paraphrase. distractor@1 = fact ranked first for its distractor (lower is better).",
+  "domains": [
+    "ops",
+    "dev",
+    "personal-preference",
+    "scheduling"
+  ],
+  "triples": [
+    {
+      "id": "ops-001",
+      "domain": "ops",
+      "fact": "The deployment runbook for the billing service lives in ops/runbooks/billing-deploy.md.",
+      "paraphrase": "where are the deploy instructions for billing",
+      "distractor": "where is the rollback guide for the search service"
+    },
+    {
+      "id": "ops-002",
+      "domain": "ops",
+      "fact": "Production database backups run nightly at 02:00 UTC and are retained for 30 days.",
+      "paraphrase": "how long do we keep the nightly db backup",
+      "distractor": "when does the staging cache get flushed"
+    },
+    {
+      "id": "ops-003",
+      "domain": "ops",
+      "fact": "The on-call rotation for the payments team switches every Monday at 09:00 local time.",
+      "paraphrase": "when does payments on-call hand over",
+      "distractor": "who owns the weekend pager for the storage team"
+    },
+    {
+      "id": "ops-004",
+      "domain": "ops",
+      "fact": "Alerts from the ingest pipeline page the data-platform channel, not the core-infra channel.",
+      "paraphrase": "which channel gets paged by ingest alarms",
+      "distractor": "which channel receives the CDN latency warnings"
+    },
+    {
+      "id": "ops-005",
+      "domain": "ops",
+      "fact": "Rolling back the API gateway means redeploying the previous Helm release with helm rollback gateway.",
+      "paraphrase": "how do I revert the gateway to the last release",
+      "distractor": "how do I scale the gateway replicas up"
+    },
+    {
+      "id": "ops-006",
+      "domain": "ops",
+      "fact": "The Redis cluster for sessions has a 4 GB memory ceiling per node and evicts with allkeys-lru.",
+      "paraphrase": "what is the session cache memory limit",
+      "distractor": "what is the postgres connection pool size"
+    },
+    {
+      "id": "ops-007",
+      "domain": "ops",
+      "fact": "TLS certificates for the public edge auto-renew through cert-manager fourteen days before expiry.",
+      "paraphrase": "when do the edge certs get renewed",
+      "distractor": "when does the internal CA root expire"
+    },
+    {
+      "id": "ops-008",
+      "domain": "ops",
+      "fact": "Log retention in Loki is 14 days for application logs and 90 days for audit logs.",
+      "paraphrase": "how many days are audit logs kept",
+      "distractor": "how long are metrics retained in Prometheus"
+    },
+    {
+      "id": "ops-009",
+      "domain": "ops",
+      "fact": "The Kubernetes cluster autoscaler is capped at 40 nodes in the eu-west-1 production pool.",
+      "paraphrase": "maximum node count for the eu-west production autoscaler",
+      "distractor": "minimum node count for the us-east staging pool"
+    },
+    {
+      "id": "ops-010",
+      "domain": "ops",
+      "fact": "Secrets are injected from Vault via the agent sidecar; nothing is read from ConfigMaps.",
+      "paraphrase": "how do pods obtain their secrets",
+      "distractor": "how do pods obtain their feature flags"
+    },
+    {
+      "id": "ops-011",
+      "domain": "ops",
+      "fact": "The incident severity scale runs SEV1 (customer-facing outage) to SEV4 (cosmetic).",
+      "paraphrase": "what does a SEV1 incident mean",
+      "distractor": "what is the postmortem template for near misses"
+    },
+    {
+      "id": "ops-012",
+      "domain": "ops",
+      "fact": "Postmortems are due within five business days of an incident being closed.",
+      "paraphrase": "deadline for writing the incident review",
+      "distractor": "deadline for rotating the deploy keys"
+    },
+    {
+      "id": "ops-013",
+      "domain": "ops",
+      "fact": "Canary deployments send 5 percent of traffic to the new version for twenty minutes before promotion.",
+      "paraphrase": "how much traffic does the canary receive",
+      "distractor": "how much traffic does the blue-green switch move"
+    },
+    {
+      "id": "ops-014",
+      "domain": "ops",
+      "fact": "The status page is updated by the incident commander, never by the responding engineer.",
+      "paraphrase": "who is responsible for status page updates",
+      "distractor": "who approves the emergency change requests"
+    },
+    {
+      "id": "ops-015",
+      "domain": "ops",
+      "fact": "Prometheus scrapes application metrics every 15 seconds with a 10 second timeout.",
+      "paraphrase": "scrape interval for app metrics",
+      "distractor": "flush interval for the log shipper"
+    },
+    {
+      "id": "ops-016",
+      "domain": "ops",
+      "fact": "The staging environment is rebuilt from the main branch every night at 03:30 UTC.",
+      "paraphrase": "when is staging refreshed from main",
+      "distractor": "when is the production image rebuilt"
+    },
+    {
+      "id": "ops-017",
+      "domain": "ops",
+      "fact": "Database schema migrations must be backward compatible for one release before columns are dropped.",
+      "paraphrase": "rule for dropping a database column safely",
+      "distractor": "rule for adding a database index online"
+    },
+    {
+      "id": "ops-018",
+      "domain": "ops",
+      "fact": "Rate limiting at the edge allows 600 requests per minute per API key.",
+      "paraphrase": "per-key request limit at the edge",
+      "distractor": "per-tenant storage quota in the object store"
+    },
+    {
+      "id": "ops-019",
+      "domain": "ops",
+      "fact": "The disaster recovery region is us-west-2 with a recovery point objective of one hour.",
+      "paraphrase": "which region is our DR failover and what is the RPO",
+      "distractor": "which region hosts the analytics warehouse"
+    },
+    {
+      "id": "ops-020",
+      "domain": "ops",
+      "fact": "Feature flags are served by the flagd sidecar and refreshed every 30 seconds.",
+      "paraphrase": "how often do feature flag values refresh",
+      "distractor": "how often do TLS certificates rotate"
+    },
+    {
+      "id": "ops-021",
+      "domain": "ops",
+      "fact": "Access to production shells requires a Teleport session approved by a second engineer.",
+      "paraphrase": "how do I get an approved shell into prod",
+      "distractor": "how do I get read access to the metrics dashboards"
+    },
+    {
+      "id": "ops-022",
+      "domain": "ops",
+      "fact": "The message queue uses Kafka with a seven day retention on the events topic.",
+      "paraphrase": "how long are messages kept on the events topic",
+      "distractor": "how large is the dead letter queue"
+    },
+    {
+      "id": "ops-023",
+      "domain": "ops",
+      "fact": "Deploy freezes apply from December 20 to January 3 except for SEV1 fixes.",
+      "paraphrase": "when is the holiday change freeze",
+      "distractor": "when is the quarterly capacity review"
+    },
+    {
+      "id": "ops-024",
+      "domain": "ops",
+      "fact": "The load balancer health check hits /healthz every 10 seconds and fails after three misses.",
+      "paraphrase": "how does the LB decide a backend is unhealthy",
+      "distractor": "how does the LB pick a backend for sticky sessions"
+    },
+    {
+      "id": "ops-025",
+      "domain": "ops",
+      "fact": "All container images are scanned by Trivy in CI and blocked on critical CVEs.",
+      "paraphrase": "what blocks an image with a critical vulnerability",
+      "distractor": "what blocks a merge without code review"
+    },
+    {
+      "id": "ops-026",
+      "domain": "ops",
+      "fact": "The CDN cache TTL for static assets is one year with content-hashed filenames.",
+      "paraphrase": "how long are static files cached at the CDN",
+      "distractor": "how long are API responses cached at the gateway"
+    },
+    {
+      "id": "ops-027",
+      "domain": "ops",
+      "fact": "Object storage buckets are versioned and lifecycle rules move data to cold storage after 90 days.",
+      "paraphrase": "when does bucket data move to cold tier",
+      "distractor": "when does the Kafka topic compact"
+    },
+    {
+      "id": "ops-028",
+      "domain": "ops",
+      "fact": "Cron jobs run in the batch namespace with a 2 CPU and 4 GB default resource limit.",
+      "paraphrase": "default resources for scheduled batch jobs",
+      "distractor": "default resources for the web frontend pods"
+    },
+    {
+      "id": "ops-029",
+      "domain": "ops",
+      "fact": "The VPN endpoint for the office is vpn.example.internal using WireGuard on UDP 51820.",
+      "paraphrase": "how do I connect to the office VPN",
+      "distractor": "how do I reach the bastion host"
+    },
+    {
+      "id": "ops-030",
+      "domain": "ops",
+      "fact": "DNS for internal services is served by CoreDNS with a 60 second TTL.",
+      "paraphrase": "internal dns record ttl",
+      "distractor": "external dns provider for the marketing domain"
+    },
+    {
+      "id": "ops-031",
+      "domain": "ops",
+      "fact": "The backup restore drill is performed quarterly and the last one took 47 minutes.",
+      "paraphrase": "how long did the most recent restore test take",
+      "distractor": "how long did the last failover test take"
+    },
+    {
+      "id": "ops-032",
+      "domain": "ops",
+      "fact": "Node pools use spot instances for stateless workloads and on-demand for databases.",
+      "paraphrase": "which workloads run on spot capacity",
+      "distractor": "which workloads run on GPU nodes"
+    },
+    {
+      "id": "ops-033",
+      "domain": "ops",
+      "fact": "The audit log is shipped to an immutable S3 bucket with object lock for seven years.",
+      "paraphrase": "where do audit records go and how long are they locked",
+      "distractor": "where do crash dumps go and how long are they kept"
+    },
+    {
+      "id": "ops-034",
+      "domain": "ops",
+      "fact": "The pager escalation policy pages the secondary after 10 minutes without acknowledgement.",
+      "paraphrase": "how long before the backup on-call gets paged",
+      "distractor": "how long before an alert auto-resolves"
+    },
+    {
+      "id": "ops-035",
+      "domain": "ops",
+      "fact": "Config changes to production go through a pull request in the infra repository and Atlantis applies them.",
+      "paraphrase": "how are infra changes applied to prod",
+      "distractor": "how are application changes deployed to prod"
+    },
+    {
+      "id": "ops-036",
+      "domain": "ops",
+      "fact": "The search cluster runs OpenSearch 2.x with three master nodes and six data nodes.",
+      "paraphrase": "how many data nodes are in the search cluster",
+      "distractor": "how many replicas does the redis cluster have"
+    },
+    {
+      "id": "ops-037",
+      "domain": "ops",
+      "fact": "Memory limits for the API pods are 1.5 GB with a request of 1 GB.",
+      "paraphrase": "api pod memory limit and request",
+      "distractor": "api pod cpu limit and request"
+    },
+    {
+      "id": "ops-038",
+      "domain": "ops",
+      "fact": "The runbook for a full Kafka broker outage is titled Kafka broker loss and starts with reassigning partitions.",
+      "paraphrase": "runbooks for losing a kafka broker",
+      "distractor": "runbooks for losing a postgres replica"
+    },
+    {
+      "id": "ops-039",
+      "domain": "ops",
+      "fact": "Blue-green switches are performed by flipping the gateway upstream weight from 0 to 100 in one step.",
+      "paraphrase": "how is a blue green cutover executed",
+      "distractor": "how is a canary promoted to full traffic"
+    },
+    {
+      "id": "ops-040",
+      "domain": "ops",
+      "fact": "The maintenance window for the primary database is Sunday 04:00 to 06:00 UTC.",
+      "paraphrase": "when can the main database be taken down for maintenance",
+      "distractor": "when can the CDN configuration be changed"
+    },
+    {
+      "id": "ops-041",
+      "domain": "ops",
+      "fact": "Argo CD syncs the production cluster from the deploy repository every three minutes.",
+      "paraphrase": "sync frequency of argo for prod",
+      "distractor": "polling frequency of the image updater"
+    },
+    {
+      "id": "ops-042",
+      "domain": "ops",
+      "fact": "A SEV2 incident requires a status page update within 15 minutes of declaration.",
+      "paraphrase": "how fast must the status page reflect a SEV2",
+      "distractor": "how fast must a SEV4 be triaged"
+    },
+    {
+      "id": "ops-043",
+      "domain": "ops",
+      "fact": "The bastion host only accepts SSH keys registered in the identity provider and rotates host keys monthly.",
+      "paraphrase": "which ssh keys work on the bastion",
+      "distractor": "which ssh keys work on the CI runners"
+    },
+    {
+      "id": "ops-044",
+      "domain": "ops",
+      "fact": "Terraform state is stored in a locked S3 backend with DynamoDB for state locking.",
+      "paraphrase": "where is terraform state kept and how is it locked",
+      "distractor": "where are helm charts published"
+    },
+    {
+      "id": "ops-045",
+      "domain": "ops",
+      "fact": "The WAF blocks requests with SQL injection signatures and logs them to the security topic.",
+      "paraphrase": "what does the web application firewall do with sqli attempts",
+      "distractor": "what does the gateway do with oversized payloads"
+    },
+    {
+      "id": "ops-046",
+      "domain": "ops",
+      "fact": "Uptime SLO for the public API is 99.9 percent measured over a rolling 30 day window.",
+      "paraphrase": "what is the availability target for the api",
+      "distractor": "what is the latency target for the search endpoint"
+    },
+    {
+      "id": "ops-047",
+      "domain": "ops",
+      "fact": "The error budget policy freezes feature deploys when the SLO burn rate exceeds 2x for six hours.",
+      "paraphrase": "when does the error budget stop feature releases",
+      "distractor": "when does the capacity plan trigger new node orders"
+    },
+    {
+      "id": "ops-048",
+      "domain": "ops",
+      "fact": "Log lines must be structured JSON with a trace_id field to be indexed by the observability stack.",
+      "paraphrase": "required log format for indexing",
+      "distractor": "required metric naming convention"
+    },
+    {
+      "id": "ops-049",
+      "domain": "ops",
+      "fact": "The primary Postgres instance has two streaming replicas and failover is managed by Patroni.",
+      "paraphrase": "how is postgres failover handled",
+      "distractor": "how is redis failover handled"
+    },
+    {
+      "id": "ops-050",
+      "domain": "ops",
+      "fact": "Emergency changes may bypass review but must be documented in the change log within 24 hours.",
+      "paraphrase": "rules for an emergency change without review",
+      "distractor": "rules for a scheduled change with review"
+    },
+    {
+      "id": "dev-001",
+      "domain": "dev",
+      "fact": "The repository uses Biome for formatting with a line width of 100 and two-space indentation.",
+      "paraphrase": "which formatter do we use and what line length",
+      "distractor": "which test runner do we use and what timeout"
+    },
+    {
+      "id": "dev-002",
+      "domain": "dev",
+      "fact": "Run bun run typecheck before pushing; CI fails on any TypeScript strict error.",
+      "paraphrase": "how do I check types locally before a push",
+      "distractor": "how do I build the dashboard locally"
+    },
+    {
+      "id": "dev-003",
+      "domain": "dev",
+      "fact": "Database table names avoid SQL keywords, which is why groups is stored as groups_.",
+      "paraphrase": "why does the groups table have a trailing underscore",
+      "distractor": "why does the users table have a created_at column"
+    },
+    {
+      "id": "dev-004",
+      "domain": "dev",
+      "fact": "Migrations are appended to the migrations array in database.ts and existing ones are never edited.",
+      "paraphrase": "where do I add a new schema migration",
+      "distractor": "where do I add a new MCP tool"
+    },
+    {
+      "id": "dev-005",
+      "domain": "dev",
+      "fact": "Each built-in command lives in its own file under src/engine/commands and is registered in command-registry.ts.",
+      "paraphrase": "how are commands organized and registered",
+      "distractor": "how are room handlers organized and registered"
+    },
+    {
+      "id": "dev-006",
+      "domain": "dev",
+      "fact": "FTS5 tables require insert, update and delete triggers to stay in sync with the content table.",
+      "paraphrase": "what triggers does a full text search table need",
+      "distractor": "what indexes does a foreign key column need"
+    },
+    {
+      "id": "dev-007",
+      "domain": "dev",
+      "fact": "Non-critical database writes are wrapped in tryLog so a failure is logged and swallowed.",
+      "paraphrase": "how should I handle a failing non-essential db write",
+      "distractor": "how should I handle a failing critical db write"
+    },
+    {
+      "id": "dev-008",
+      "domain": "dev",
+      "fact": "Branded types like EntityId are cast in tests using the pattern \"e_1\" as EntityId.",
+      "paraphrase": "how do tests create an EntityId value",
+      "distractor": "how do tests create a mock connection"
+    },
+    {
+      "id": "dev-009",
+      "domain": "dev",
+      "fact": "The command queue processes entities round-robin so no single entity can starve the others.",
+      "paraphrase": "how is fairness enforced in the command queue",
+      "distractor": "how is priority enforced in the perception buffer"
+    },
+    {
+      "id": "dev-010",
+      "domain": "dev",
+      "fact": "Room onTick handlers share a 200 millisecond budget per tick.",
+      "paraphrase": "tick time budget for rooms",
+      "distractor": "tick time budget for agents"
+    },
+    {
+      "id": "dev-011",
+      "domain": "dev",
+      "fact": "Safety gates are checked by checkGateForExecution and recorded by recordGateExecution, never bare checkGate.",
+      "paraphrase": "correct functions for enforcing a safety gate",
+      "distractor": "correct functions for recording standing"
+    },
+    {
+      "id": "dev-012",
+      "domain": "dev",
+      "fact": "The minRank field on a command definition is the permission gate; handlers must not add their own rank checks.",
+      "paraphrase": "where does command permission checking belong",
+      "distractor": "where does command argument parsing belong"
+    },
+    {
+      "id": "dev-013",
+      "domain": "dev",
+      "fact": "Dashboard animations use the motion library with AnimatePresence for mount and exit transitions.",
+      "paraphrase": "which animation library does the frontend use",
+      "distractor": "which chart library does the frontend use"
+    },
+    {
+      "id": "dev-014",
+      "domain": "dev",
+      "fact": "Tests import shared helpers such as MockConnection, stripAnsi and cleanupDb from test/helpers.ts.",
+      "paraphrase": "where are the common test utilities",
+      "distractor": "where are the benchmark fixtures"
+    },
+    {
+      "id": "dev-015",
+      "domain": "dev",
+      "fact": "The MCP server exposes tools through createMcpServer and wraps command calls in the rate-limited runCmd helper.",
+      "paraphrase": "how are MCP tools rate limited",
+      "distractor": "how are websocket messages rate limited"
+    },
+    {
+      "id": "dev-016",
+      "domain": "dev",
+      "fact": "Imports are sorted alphabetically by path because Biome organizeImports is enabled.",
+      "paraphrase": "why are my imports reordered on format",
+      "distractor": "why are my trailing commas added on format"
+    },
+    {
+      "id": "dev-017",
+      "domain": "dev",
+      "fact": "The process memory tier is excluded from recall unless includeProcess is set to true.",
+      "paraphrase": "why do compaction notes not show up in recall",
+      "distractor": "why do pool notes not show up in debrief"
+    },
+    {
+      "id": "dev-018",
+      "domain": "dev",
+      "fact": "createNote deduplicates on exact entity, note type and content within fact-like tiers.",
+      "paraphrase": "when does creating a note get deduplicated",
+      "distractor": "when does creating a task get rejected"
+    },
+    {
+      "id": "dev-019",
+      "domain": "dev",
+      "fact": "The per-entity process tier cap is PROCESS_TIER_QUOTA, 500 notes, evicted on write.",
+      "paraphrase": "how many process notes can one entity hold",
+      "distractor": "how many pool notes can one project hold"
+    },
+    {
+      "id": "dev-020",
+      "domain": "dev",
+      "fact": "World definitions live in the worlds directory and MARINA_WORLD selects which one loads.",
+      "paraphrase": "how do I choose which world starts",
+      "distractor": "how do I choose which port the server binds"
+    },
+    {
+      "id": "dev-021",
+      "domain": "dev",
+      "fact": "A WorldDefinition seed function runs once on first boot and must be idempotent.",
+      "paraphrase": "constraints on the world seed hook",
+      "distractor": "constraints on the room onEnter hook"
+    },
+    {
+      "id": "dev-022",
+      "domain": "dev",
+      "fact": "Engine events are persisted in event_log and span trees are rebuilt by projectTraces.",
+      "paraphrase": "how are execution traces reconstructed",
+      "distractor": "how are chronicle entries reconstructed"
+    },
+    {
+      "id": "dev-023",
+      "domain": "dev",
+      "fact": "Model API requests mint a runId, traceId and spanId that flow into agent events.",
+      "paraphrase": "what identifiers propagate through a traced request",
+      "distractor": "what identifiers propagate through a gateway relay"
+    },
+    {
+      "id": "dev-024",
+      "domain": "dev",
+      "fact": "The dashboard is a Vite app under dashboard/ with vitest smoke tests run via bun run test.",
+      "paraphrase": "how do I run the frontend tests",
+      "distractor": "how do I run the load tests"
+    },
+    {
+      "id": "dev-025",
+      "domain": "dev",
+      "fact": "Environment variables are documented in .env.example, which is treated as the authoritative reference.",
+      "paraphrase": "where is the canonical list of env vars",
+      "distractor": "where is the canonical list of commands"
+    },
+    {
+      "id": "dev-026",
+      "domain": "dev",
+      "fact": "The SSRF guard in url-guard.ts blocks private IPs, link-local ranges and cloud metadata endpoints.",
+      "paraphrase": "what does the url guard reject",
+      "distractor": "what does the auth middleware reject"
+    },
+    {
+      "id": "dev-027",
+      "domain": "dev",
+      "fact": "Rate limits: websocket commands 5 per second, MCP tools 5 per second, model API 2 per second per IP.",
+      "paraphrase": "how many commands per second may a websocket client send",
+      "distractor": "how many tokens per request may a model call use"
+    },
+    {
+      "id": "dev-028",
+      "domain": "dev",
+      "fact": "Use getErrorMessage to extract a message from an unknown caught error.",
+      "paraphrase": "helper for turning a caught error into a string",
+      "distractor": "helper for turning a duration into a string"
+    },
+    {
+      "id": "dev-029",
+      "domain": "dev",
+      "fact": "The standing ledger decays exponentially with a 60 day half-life and floors at zero.",
+      "paraphrase": "how quickly does standing decay",
+      "distractor": "how quickly does rank promote"
+    },
+    {
+      "id": "dev-030",
+      "domain": "dev",
+      "fact": "Rank thresholds are 5, 15, 40 and 100 standing for ranks one through four.",
+      "paraphrase": "how much standing is needed for rank three",
+      "distractor": "how much standing is needed to witness a gate"
+    },
+    {
+      "id": "dev-031",
+      "domain": "dev",
+      "fact": "The code exec gate requires minimum standing 5 and an unsupervised competence row.",
+      "paraphrase": "requirements to run code on the host",
+      "distractor": "requirements to spawn an agent"
+    },
+    {
+      "id": "dev-032",
+      "domain": "dev",
+      "fact": "Host code execution is refused entirely over telnet because the transport is plaintext.",
+      "paraphrase": "why can I not run code from a telnet session",
+      "distractor": "why can I not log in from a telnet session"
+    },
+    {
+      "id": "dev-033",
+      "domain": "dev",
+      "fact": "Chronicle entries are append-only; corrections supersede a prior entry instead of editing it.",
+      "paraphrase": "how do I fix a wrong chronicle narrative",
+      "distractor": "how do I delete an old feed event"
+    },
+    {
+      "id": "dev-034",
+      "domain": "dev",
+      "fact": "The Chronicler role is the only writer of chronicle narratives and digests.",
+      "paraphrase": "who may record a chronicle digest",
+      "distractor": "who may approve a task"
+    },
+    {
+      "id": "dev-035",
+      "domain": "dev",
+      "fact": "The recap command is retrieval-only and makes no model call, unlike ask.",
+      "paraphrase": "difference between recap and ask",
+      "distractor": "difference between dig and probe"
+    },
+    {
+      "id": "dev-036",
+      "domain": "dev",
+      "fact": "Resolvers are pure: they read external state and return a Sample without mutating the engine.",
+      "paraphrase": "may a resolver emit events or write state",
+      "distractor": "may a room handler emit events or write state"
+    },
+    {
+      "id": "dev-037",
+      "domain": "dev",
+      "fact": "Sample statuses resolved and changed land in the fact tier; no-change and error land in the process tier.",
+      "paraphrase": "which tier do idle probe polls go to",
+      "distractor": "which tier do reflections go to"
+    },
+    {
+      "id": "dev-038",
+      "domain": "dev",
+      "fact": "The watch command stores specs as notes in the shared watches pool rather than a new table.",
+      "paraphrase": "where are watch specifications persisted",
+      "distractor": "where are position orders persisted"
+    },
+    {
+      "id": "dev-039",
+      "domain": "dev",
+      "fact": "Position sizing uses the Kelly criterion and refuses self-hedging on the same ticker.",
+      "paraphrase": "how are trade sizes computed",
+      "distractor": "how are market forecasts computed"
+    },
+    {
+      "id": "dev-040",
+      "domain": "dev",
+      "fact": "Crew responders skip idle ticks when no perceptions are pending to cut round-trip latency.",
+      "paraphrase": "why do crew specialists not tick when idle",
+      "distractor": "why do coordinators tick when idle"
+    },
+    {
+      "id": "dev-041",
+      "domain": "dev",
+      "fact": "tellAndAwait holds a tool call open until the target replies or the timeout fires.",
+      "paraphrase": "how does a coordinator wait synchronously for a reply",
+      "distractor": "how does a coordinator broadcast to a channel"
+    },
+    {
+      "id": "dev-042",
+      "domain": "dev",
+      "fact": "Tool profiles full, crew and minimal size the tool schema to the agent role.",
+      "paraphrase": "what are the three tool schema profiles",
+      "distractor": "what are the three autonomy postures"
+    },
+    {
+      "id": "dev-043",
+      "domain": "dev",
+      "fact": "The lean system prompt includes an explicit uncertainty disclosure rule and an anti-sycophancy clause.",
+      "paraphrase": "what does the system prompt say about disagreeing",
+      "distractor": "what does the continuation prompt say about pacing"
+    },
+    {
+      "id": "dev-044",
+      "domain": "dev",
+      "fact": "Orchestration patterns are pool-note conventions discovered via recall, not engine constraints.",
+      "paraphrase": "are orchestration patterns enforced by the engine",
+      "distractor": "are safety gates enforced by the engine"
+    },
+    {
+      "id": "dev-045",
+      "domain": "dev",
+      "fact": "Canvas intents move from pending to active on claim and time out back to pending after five minutes.",
+      "paraphrase": "what happens to a claimed intent nobody finishes",
+      "distractor": "what happens to a feed event after seven days"
+    },
+    {
+      "id": "dev-046",
+      "domain": "dev",
+      "fact": "Feed events are trimmed after seven days on startup.",
+      "paraphrase": "retention of the feed timeline",
+      "distractor": "retention of the chronicle"
+    },
+    {
+      "id": "dev-047",
+      "domain": "dev",
+      "fact": "Adaptive routing falls back to least-busy when trace evidence is insufficient.",
+      "paraphrase": "what does the adaptive load balancer do without enough data",
+      "distractor": "what does the round robin balancer do with a dead target"
+    },
+    {
+      "id": "dev-048",
+      "domain": "dev",
+      "fact": "The ACP server speaks JSON-RPC 2.0 over stdio and reserves stdout for protocol messages.",
+      "paraphrase": "where do ACP logs go if stdout is reserved",
+      "distractor": "where do MCP logs go"
+    },
+    {
+      "id": "dev-049",
+      "domain": "dev",
+      "fact": "Compat profiles register extra model-id aliases that resolve to the default model channel.",
+      "paraphrase": "how do I add another model alias for openai clients",
+      "distractor": "how do I add another provider key"
+    },
+    {
+      "id": "dev-050",
+      "domain": "dev",
+      "fact": "The gateway secret authenticates only the federation handshake, not bridged-channel participation.",
+      "paraphrase": "what exactly does GATEWAY_SECRET protect",
+      "distractor": "what exactly does MODEL_API_KEYS protect"
+    },
+    {
+      "id": "personal-preference-001",
+      "domain": "personal-preference",
+      "fact": "Jeff prefers concise summaries with the decision first and details afterward.",
+      "paraphrase": "how does jeff like summaries written",
+      "distractor": "how does maya like meeting notes formatted"
+    },
+    {
+      "id": "personal-preference-002",
+      "domain": "personal-preference",
+      "fact": "Maya drinks oat-milk lattes and dislikes anything with hazelnut syrup.",
+      "paraphrase": "what coffee order does maya want",
+      "distractor": "what tea does priya order"
+    },
+    {
+      "id": "personal-preference-003",
+      "domain": "personal-preference",
+      "fact": "Priya prefers async written updates over synchronous status meetings.",
+      "paraphrase": "does priya want a status meeting or a written update",
+      "distractor": "does daniel want a status meeting or a written update"
+    },
+    {
+      "id": "personal-preference-004",
+      "domain": "personal-preference",
+      "fact": "Daniel wants pull requests kept under 400 lines and split otherwise.",
+      "paraphrase": "how big may a PR be for daniel",
+      "distractor": "how many reviewers does sofia require"
+    },
+    {
+      "id": "personal-preference-005",
+      "domain": "personal-preference",
+      "fact": "Sofia likes to be addressed by her first name and finds titles stiff.",
+      "paraphrase": "should I call sofia by her surname",
+      "distractor": "should I call omar by a nickname"
+    },
+    {
+      "id": "personal-preference-006",
+      "domain": "personal-preference",
+      "fact": "Omar reads email only twice a day, at 09:00 and 16:00.",
+      "paraphrase": "when does omar check his inbox",
+      "distractor": "when does lena check the shared calendar"
+    },
+    {
+      "id": "personal-preference-007",
+      "domain": "personal-preference",
+      "fact": "Lena prefers dark mode in every tool and finds light themes tiring.",
+      "paraphrase": "which ui theme does lena want",
+      "distractor": "which keyboard layout does theo use"
+    },
+    {
+      "id": "personal-preference-008",
+      "domain": "personal-preference",
+      "fact": "Theo is vegetarian and avoids restaurants without a plant-based main course.",
+      "paraphrase": "dietary restriction for theo",
+      "distractor": "dietary restriction for hana"
+    },
+    {
+      "id": "personal-preference-009",
+      "domain": "personal-preference",
+      "fact": "Hana is allergic to shellfish and carries an epinephrine pen.",
+      "paraphrase": "what food allergy does hana have",
+      "distractor": "what food does kai dislike"
+    },
+    {
+      "id": "personal-preference-010",
+      "domain": "personal-preference",
+      "fact": "Kai dislikes cilantro and describes it as tasting like soap.",
+      "paraphrase": "which herb does kai refuse to eat",
+      "distractor": "which cuisine does ines favor"
+    },
+    {
+      "id": "personal-preference-011",
+      "domain": "personal-preference",
+      "fact": "Ines favors Ethiopian food and recommends the place on Fifth Street.",
+      "paraphrase": "what kind of restaurant would ines pick",
+      "distractor": "what kind of music would ravi pick"
+    },
+    {
+      "id": "personal-preference-012",
+      "domain": "personal-preference",
+      "fact": "Ravi listens to ambient music while coding and mutes notifications.",
+      "paraphrase": "what does ravi play while programming",
+      "distractor": "what does nadia read while commuting"
+    },
+    {
+      "id": "personal-preference-013",
+      "domain": "personal-preference",
+      "fact": "Nadia reads mystery novels on her commute and recommends Tana French.",
+      "paraphrase": "which genre does nadia read on the train",
+      "distractor": "which podcast does leo follow"
+    },
+    {
+      "id": "personal-preference-014",
+      "domain": "personal-preference",
+      "fact": "Leo follows the Hard Fork podcast and quotes it often.",
+      "paraphrase": "what podcast does leo keep mentioning",
+      "distractor": "what newsletter does mira keep forwarding"
+    },
+    {
+      "id": "personal-preference-015",
+      "domain": "personal-preference",
+      "fact": "Mira forwards the Benedict Evans newsletter to the team most Mondays.",
+      "paraphrase": "which newsletter does mira share",
+      "distractor": "which blog does jonas share"
+    },
+    {
+      "id": "personal-preference-016",
+      "domain": "personal-preference",
+      "fact": "Jonas prefers voice calls over video and turns his camera off by default.",
+      "paraphrase": "does jonas want video on for calls",
+      "distractor": "does aria want video on for calls"
+    },
+    {
+      "id": "personal-preference-017",
+      "domain": "personal-preference",
+      "fact": "Aria wants feedback delivered in writing first so she can think before replying.",
+      "paraphrase": "how does aria like to receive feedback",
+      "distractor": "how does felix like to give feedback"
+    },
+    {
+      "id": "personal-preference-018",
+      "domain": "personal-preference",
+      "fact": "Felix gives feedback bluntly and appreciates the same in return.",
+      "paraphrase": "communication style felix prefers for critique",
+      "distractor": "communication style zoe prefers for praise"
+    },
+    {
+      "id": "personal-preference-019",
+      "domain": "personal-preference",
+      "fact": "Zoe prefers public recognition in the team channel over private thanks.",
+      "paraphrase": "how should zoe be thanked for good work",
+      "distractor": "how should noah be reminded about deadlines"
+    },
+    {
+      "id": "personal-preference-020",
+      "domain": "personal-preference",
+      "fact": "Noah wants deadline reminders two days ahead, not on the day.",
+      "paraphrase": "when should I nudge noah about a due date",
+      "distractor": "when should I nudge ella about a review"
+    },
+    {
+      "id": "personal-preference-021",
+      "domain": "personal-preference",
+      "fact": "Ella prefers to review code in the morning before standup.",
+      "paraphrase": "best time of day to ask ella for a review",
+      "distractor": "best time of day to ask sam for a pairing session"
+    },
+    {
+      "id": "personal-preference-022",
+      "domain": "personal-preference",
+      "fact": "Sam is happiest pairing after lunch and blocks mornings for deep work.",
+      "paraphrase": "when does sam like to pair program",
+      "distractor": "when does ivy like to run retrospectives"
+    },
+    {
+      "id": "personal-preference-023",
+      "domain": "personal-preference",
+      "fact": "Ivy runs retrospectives on Friday afternoons and keeps them to thirty minutes.",
+      "paraphrase": "how long are ivy's retros and when",
+      "distractor": "how long are max's planning sessions and when"
+    },
+    {
+      "id": "personal-preference-024",
+      "domain": "personal-preference",
+      "fact": "Max plans sprints on Monday mornings and dislikes mid-sprint scope changes.",
+      "paraphrase": "how does max feel about changing scope during a sprint",
+      "distractor": "how does rosa feel about pairing on design"
+    },
+    {
+      "id": "personal-preference-025",
+      "domain": "personal-preference",
+      "fact": "Rosa wants design decisions written as short ADRs before implementation starts.",
+      "paraphrase": "what documentation does rosa expect before coding",
+      "distractor": "what documentation does yuki expect after shipping"
+    },
+    {
+      "id": "personal-preference-026",
+      "domain": "personal-preference",
+      "fact": "Yuki wants a changelog entry for every user-visible change.",
+      "paraphrase": "what does yuki require when behavior changes for users",
+      "distractor": "what does ben require when an API changes"
+    },
+    {
+      "id": "personal-preference-027",
+      "domain": "personal-preference",
+      "fact": "Ben insists on semantic versioning and a migration note for breaking API changes.",
+      "paraphrase": "ben's rule for breaking changes",
+      "distractor": "chloe's rule for naming branches"
+    },
+    {
+      "id": "personal-preference-028",
+      "domain": "personal-preference",
+      "fact": "Chloe names branches with the ticket id first, like MAR-123-short-description.",
+      "paraphrase": "branch naming convention chloe uses",
+      "distractor": "commit message convention diego uses"
+    },
+    {
+      "id": "personal-preference-029",
+      "domain": "personal-preference",
+      "fact": "Diego writes commit messages in the imperative mood and keeps the subject under 50 characters.",
+      "paraphrase": "how does diego format commit subjects",
+      "distractor": "how does emma format pull request titles"
+    },
+    {
+      "id": "personal-preference-030",
+      "domain": "personal-preference",
+      "fact": "Emma prefers pull request titles that state the user-facing outcome.",
+      "paraphrase": "what should a PR title say according to emma",
+      "distractor": "what should a ticket title say according to finn"
+    },
+    {
+      "id": "personal-preference-031",
+      "domain": "personal-preference",
+      "fact": "Finn wants tickets to include reproduction steps before they are triaged.",
+      "paraphrase": "what must a bug ticket contain for finn",
+      "distractor": "what must a design doc contain for grace"
+    },
+    {
+      "id": "personal-preference-032",
+      "domain": "personal-preference",
+      "fact": "Grace likes design docs with a non-goals section near the top.",
+      "paraphrase": "which section does grace look for first in a design doc",
+      "distractor": "which section does hugo look for first in a postmortem"
+    },
+    {
+      "id": "personal-preference-033",
+      "domain": "personal-preference",
+      "fact": "Hugo reads the timeline section of a postmortem first and skips the summary.",
+      "paraphrase": "what part of an incident review does hugo read first",
+      "distractor": "what part of a spec does iris read first"
+    },
+    {
+      "id": "personal-preference-034",
+      "domain": "personal-preference",
+      "fact": "Iris prefers Celsius and gets confused by Fahrenheit forecasts.",
+      "paraphrase": "temperature unit iris understands",
+      "distractor": "distance unit jack understands"
+    },
+    {
+      "id": "personal-preference-035",
+      "domain": "personal-preference",
+      "fact": "Jack thinks in kilometers and asks for distances in metric.",
+      "paraphrase": "which units should I use for distances with jack",
+      "distractor": "which currency should I use for budgets with kira"
+    },
+    {
+      "id": "personal-preference-036",
+      "domain": "personal-preference",
+      "fact": "Kira wants budgets shown in euros even for US vendors.",
+      "paraphrase": "currency kira wants in budget reports",
+      "distractor": "time zone liam wants in schedules"
+    },
+    {
+      "id": "personal-preference-037",
+      "domain": "personal-preference",
+      "fact": "Liam wants meeting times shown in Pacific time in every invite.",
+      "paraphrase": "what time zone does liam expect on invitations",
+      "distractor": "what language does mona expect in release notes"
+    },
+    {
+      "id": "personal-preference-038",
+      "domain": "personal-preference",
+      "fact": "Mona prefers release notes written in plain English without internal jargon.",
+      "paraphrase": "how should release notes be worded for mona",
+      "distractor": "how should error messages be worded for nils"
+    },
+    {
+      "id": "personal-preference-039",
+      "domain": "personal-preference",
+      "fact": "Nils wants error messages to say what to do next, not just what failed.",
+      "paraphrase": "nils' rule for error message text",
+      "distractor": "olga's rule for log message text"
+    },
+    {
+      "id": "personal-preference-040",
+      "domain": "personal-preference",
+      "fact": "Olga likes logs to start with the component name in square brackets.",
+      "paraphrase": "how does olga want log lines prefixed",
+      "distractor": "how does pablo want metric names prefixed"
+    },
+    {
+      "id": "personal-preference-041",
+      "domain": "personal-preference",
+      "fact": "Pablo takes his tea with lemon and no sugar.",
+      "paraphrase": "how does pablo drink tea",
+      "distractor": "how does quinn drink coffee"
+    },
+    {
+      "id": "personal-preference-042",
+      "domain": "personal-preference",
+      "fact": "Quinn drinks black coffee and finds flavored syrups too sweet.",
+      "paraphrase": "what does quinn think of sweetened coffee",
+      "distractor": "what does rita think of decaf"
+    },
+    {
+      "id": "personal-preference-043",
+      "domain": "personal-preference",
+      "fact": "Rita only drinks decaf after 14:00 because caffeine keeps her up.",
+      "paraphrase": "why does rita switch to decaf in the afternoon",
+      "distractor": "why does seth skip lunch on Wednesdays"
+    },
+    {
+      "id": "personal-preference-044",
+      "domain": "personal-preference",
+      "fact": "Seth skips lunch on Wednesdays for a long run and eats a late meal instead.",
+      "paraphrase": "what does seth do on wednesday lunchtimes",
+      "distractor": "what does tara do on thursday evenings"
+    },
+    {
+      "id": "personal-preference-045",
+      "domain": "personal-preference",
+      "fact": "Tara teaches a pottery class on Thursday evenings and is unreachable after 18:00.",
+      "paraphrase": "when is tara unavailable during the week",
+      "distractor": "when is uma unavailable during the week"
+    },
+    {
+      "id": "personal-preference-046",
+      "domain": "personal-preference",
+      "fact": "Uma observes Shabbat and does not respond to messages from Friday sunset to Saturday sunset.",
+      "paraphrase": "when does uma go offline for the weekend",
+      "distractor": "when does vic go offline for the weekend"
+    },
+    {
+      "id": "personal-preference-047",
+      "domain": "personal-preference",
+      "fact": "Vic prefers to be pinged in the channel rather than by direct message.",
+      "paraphrase": "should I DM vic or post in the channel",
+      "distractor": "should I email wren or call"
+    },
+    {
+      "id": "personal-preference-048",
+      "domain": "personal-preference",
+      "fact": "Wren answers email faster than chat and asks for anything important to be sent by email.",
+      "paraphrase": "fastest way to reach wren",
+      "distractor": "fastest way to reach xavi"
+    },
+    {
+      "id": "personal-preference-049",
+      "domain": "personal-preference",
+      "fact": "Xavi mutes chat after 19:00 and only responds to phone calls in an emergency.",
+      "paraphrase": "how do I reach xavi late at night if urgent",
+      "distractor": "how do I reach yara on a holiday"
+    },
+    {
+      "id": "personal-preference-050",
+      "domain": "personal-preference",
+      "fact": "Yara likes agendas sent 24 hours before a meeting and declines invites without one.",
+      "paraphrase": "what does yara need before accepting a meeting",
+      "distractor": "what does zane need before approving a purchase"
+    },
+    {
+      "id": "scheduling-001",
+      "domain": "scheduling",
+      "fact": "The weekly engineering sync is on Tuesdays at 10:00 Pacific in the Harbor room.",
+      "paraphrase": "when and where is the eng weekly meeting",
+      "distractor": "when and where is the design critique"
+    },
+    {
+      "id": "scheduling-002",
+      "domain": "scheduling",
+      "fact": "Design critique happens every other Thursday at 14:00 Eastern over video.",
+      "paraphrase": "how often is design review and what time",
+      "distractor": "how often is the release train and what time"
+    },
+    {
+      "id": "scheduling-003",
+      "domain": "scheduling",
+      "fact": "The release train departs every Wednesday at 17:00 UTC; anything merged later waits a week.",
+      "paraphrase": "cutoff for getting a change into this week's release",
+      "distractor": "cutoff for submitting expense reports this month"
+    },
+    {
+      "id": "scheduling-004",
+      "domain": "scheduling",
+      "fact": "Expense reports must be submitted by the 25th of each month to be reimbursed in that cycle.",
+      "paraphrase": "monthly deadline for filing expenses",
+      "distractor": "monthly deadline for updating the roadmap"
+    },
+    {
+      "id": "scheduling-005",
+      "domain": "scheduling",
+      "fact": "Quarterly planning is held in the second week of the last month of each quarter.",
+      "paraphrase": "when does quarterly planning take place",
+      "distractor": "when does the annual budget review take place"
+    },
+    {
+      "id": "scheduling-006",
+      "domain": "scheduling",
+      "fact": "The annual budget review is scheduled for the first week of November.",
+      "paraphrase": "when is the yearly budget reviewed",
+      "distractor": "when is the yearly security audit"
+    },
+    {
+      "id": "scheduling-007",
+      "domain": "scheduling",
+      "fact": "The external security audit runs every September and takes about three weeks.",
+      "paraphrase": "how long does the annual pen test take and when",
+      "distractor": "how long does the SOC 2 renewal take and when"
+    },
+    {
+      "id": "scheduling-008",
+      "domain": "scheduling",
+      "fact": "Sprint planning is every other Monday at 09:30 and lasts ninety minutes.",
+      "paraphrase": "how long is sprint planning and which day",
+      "distractor": "how long is the retrospective and which day"
+    },
+    {
+      "id": "scheduling-009",
+      "domain": "scheduling",
+      "fact": "Retrospectives follow sprint review on alternating Fridays at 15:00.",
+      "paraphrase": "when do we hold retros",
+      "distractor": "when do we hold demos"
+    },
+    {
+      "id": "scheduling-010",
+      "domain": "scheduling",
+      "fact": "Team demos are the last Friday of the month at 16:00 with recordings posted afterward.",
+      "paraphrase": "monthly demo day timing",
+      "distractor": "monthly all hands timing"
+    },
+    {
+      "id": "scheduling-011",
+      "domain": "scheduling",
+      "fact": "The company all-hands is the first Thursday of the month at 11:00 Pacific.",
+      "paraphrase": "when is all hands each month",
+      "distractor": "when is the board meeting each quarter"
+    },
+    {
+      "id": "scheduling-012",
+      "domain": "scheduling",
+      "fact": "The board meets quarterly, two weeks after the quarter closes.",
+      "paraphrase": "how soon after quarter end does the board convene",
+      "distractor": "how soon after quarter end are results published"
+    },
+    {
+      "id": "scheduling-013",
+      "domain": "scheduling",
+      "fact": "Payroll runs on the 15th and the last business day of each month.",
+      "paraphrase": "which days is payroll processed",
+      "distractor": "which days is the office cleaned"
+    },
+    {
+      "id": "scheduling-014",
+      "domain": "scheduling",
+      "fact": "The office is closed on US federal holidays and the Friday after Thanksgiving.",
+      "paraphrase": "is the office open the day after thanksgiving",
+      "distractor": "is the office open on boxing day"
+    },
+    {
+      "id": "scheduling-015",
+      "domain": "scheduling",
+      "fact": "Dentist appointment for Jeff is booked for March 14 at 08:30.",
+      "paraphrase": "when is jeff's dental checkup",
+      "distractor": "when is jeff's eye exam"
+    },
+    {
+      "id": "scheduling-016",
+      "domain": "scheduling",
+      "fact": "The flight to Berlin departs SFO on May 3 at 18:45 and arrives the next afternoon.",
+      "paraphrase": "departure time for the berlin trip",
+      "distractor": "departure time for the tokyo trip"
+    },
+    {
+      "id": "scheduling-017",
+      "domain": "scheduling",
+      "fact": "Hotel check-in in Berlin is from 15:00 and the reservation is under the company name.",
+      "paraphrase": "earliest check-in time at the berlin hotel",
+      "distractor": "latest check-out time at the london hotel"
+    },
+    {
+      "id": "scheduling-018",
+      "domain": "scheduling",
+      "fact": "The conference talk slot is Thursday June 12 at 13:30 in Hall B.",
+      "paraphrase": "when and where do I give my conference presentation",
+      "distractor": "when and where is the conference dinner"
+    },
+    {
+      "id": "scheduling-019",
+      "domain": "scheduling",
+      "fact": "Parent-teacher conferences are on October 8 between 16:00 and 19:00.",
+      "paraphrase": "what evening are the school conferences",
+      "distractor": "what evening is the school play"
+    },
+    {
+      "id": "scheduling-020",
+      "domain": "scheduling",
+      "fact": "The gym class Jeff attends is Mondays and Wednesdays at 06:30.",
+      "paraphrase": "which mornings does jeff work out",
+      "distractor": "which evenings does jeff have choir"
+    },
+    {
+      "id": "scheduling-021",
+      "domain": "scheduling",
+      "fact": "Car service is due at 60,000 miles or by August 1, whichever comes first.",
+      "paraphrase": "when does the car need its next service",
+      "distractor": "when does the car registration expire"
+    },
+    {
+      "id": "scheduling-022",
+      "domain": "scheduling",
+      "fact": "Passport renewal should be started by January because processing takes ten weeks.",
+      "paraphrase": "how early should I start renewing my passport",
+      "distractor": "how early should I book the visa appointment"
+    },
+    {
+      "id": "scheduling-023",
+      "domain": "scheduling",
+      "fact": "The lease renewal notice is due 60 days before the lease ends on September 30.",
+      "paraphrase": "deadline to give notice on the apartment lease",
+      "distractor": "deadline to cancel the storage unit"
+    },
+    {
+      "id": "scheduling-024",
+      "domain": "scheduling",
+      "fact": "Daylight saving time ends on the first Sunday of November in the US.",
+      "paraphrase": "when do US clocks fall back",
+      "distractor": "when do EU clocks fall back"
+    },
+    {
+      "id": "scheduling-025",
+      "domain": "scheduling",
+      "fact": "European clocks change on the last Sunday of October, a week before the US.",
+      "paraphrase": "when does europe end summer time",
+      "distractor": "when does australia start summer time"
+    },
+    {
+      "id": "scheduling-026",
+      "domain": "scheduling",
+      "fact": "The team offsite is planned for the week of April 21 in Lisbon.",
+      "paraphrase": "where and when is the offsite",
+      "distractor": "where and when is the hackathon"
+    },
+    {
+      "id": "scheduling-027",
+      "domain": "scheduling",
+      "fact": "The internal hackathon runs for 48 hours starting Thursday July 17 at 09:00.",
+      "paraphrase": "when does the hackathon kick off and how long",
+      "distractor": "when does the game jam kick off and how long"
+    },
+    {
+      "id": "scheduling-028",
+      "domain": "scheduling",
+      "fact": "Performance review self-assessments are due two weeks before the review cycle closes on June 30.",
+      "paraphrase": "when do I need to finish my self review",
+      "distractor": "when do I need to finish my goal setting"
+    },
+    {
+      "id": "scheduling-029",
+      "domain": "scheduling",
+      "fact": "Goal setting for the next half is due the second Friday of July.",
+      "paraphrase": "deadline for setting next half goals",
+      "distractor": "deadline for submitting conference proposals"
+    },
+    {
+      "id": "scheduling-030",
+      "domain": "scheduling",
+      "fact": "Conference talk proposals for the fall conference close on May 31 at midnight UTC.",
+      "paraphrase": "when is the CFP deadline for the autumn conference",
+      "distractor": "when is the early bird ticket deadline"
+    },
+    {
+      "id": "scheduling-031",
+      "domain": "scheduling",
+      "fact": "Early-bird tickets for the conference end on April 15.",
+      "paraphrase": "last day for discounted conference tickets",
+      "distractor": "last day for hotel block booking"
+    },
+    {
+      "id": "scheduling-032",
+      "domain": "scheduling",
+      "fact": "The hotel room block for the conference releases unbooked rooms on May 20.",
+      "paraphrase": "when does the conference hotel block expire",
+      "distractor": "when does the flight fare hold expire"
+    },
+    {
+      "id": "scheduling-033",
+      "domain": "scheduling",
+      "fact": "Weekly one-on-ones with Maya are Wednesdays at 13:00 for thirty minutes.",
+      "paraphrase": "when is my 1:1 with maya",
+      "distractor": "when is my 1:1 with daniel"
+    },
+    {
+      "id": "scheduling-034",
+      "domain": "scheduling",
+      "fact": "One-on-ones with Daniel moved to Thursdays at 11:00 starting in March.",
+      "paraphrase": "new time for daniel's one on one",
+      "distractor": "new time for the platform sync"
+    },
+    {
+      "id": "scheduling-035",
+      "domain": "scheduling",
+      "fact": "The platform sync was moved from Tuesday to Monday at 15:00 to avoid the eng weekly.",
+      "paraphrase": "which day is the platform sync now",
+      "distractor": "which day is the data sync now"
+    },
+    {
+      "id": "scheduling-036",
+      "domain": "scheduling",
+      "fact": "The data team sync is Fridays at 10:00 and is skipped on release weeks.",
+      "paraphrase": "when does the data team meet and when is it skipped",
+      "distractor": "when does the security team meet and when is it skipped"
+    },
+    {
+      "id": "scheduling-037",
+      "domain": "scheduling",
+      "fact": "Security review office hours are Tuesdays 14:00 to 15:00, no booking needed.",
+      "paraphrase": "when can I drop in for a security review",
+      "distractor": "when can I drop in for a design review"
+    },
+    {
+      "id": "scheduling-038",
+      "domain": "scheduling",
+      "fact": "The on-site interview loop for the backend role is scheduled for March 27 from 10:00 to 15:00.",
+      "paraphrase": "what day are the backend candidate interviews",
+      "distractor": "what day are the frontend candidate interviews"
+    },
+    {
+      "id": "scheduling-039",
+      "domain": "scheduling",
+      "fact": "New hire orientation runs the first Monday of each month starting at 09:00.",
+      "paraphrase": "when does onboarding start for new joiners",
+      "distractor": "when does offboarding start for leavers"
+    },
+    {
+      "id": "scheduling-040",
+      "domain": "scheduling",
+      "fact": "The vendor contract with the CDN provider renews automatically on December 1 unless cancelled by November 1.",
+      "paraphrase": "deadline to cancel the CDN contract before renewal",
+      "distractor": "deadline to cancel the office lease before renewal"
+    },
+    {
+      "id": "scheduling-041",
+      "domain": "scheduling",
+      "fact": "Domain registration for example.com expires on February 28 and auto-renews if the card is valid.",
+      "paraphrase": "when does the main domain expire",
+      "distractor": "when does the wildcard certificate expire"
+    },
+    {
+      "id": "scheduling-042",
+      "domain": "scheduling",
+      "fact": "Trash pickup is Tuesday mornings and recycling is every other Tuesday.",
+      "paraphrase": "which day do the bins go out",
+      "distractor": "which day does the cleaner come"
+    },
+    {
+      "id": "scheduling-043",
+      "domain": "scheduling",
+      "fact": "The library books are due back on April 9 and can be renewed once online.",
+      "paraphrase": "when are the borrowed books due",
+      "distractor": "when is the museum membership due"
+    },
+    {
+      "id": "scheduling-044",
+      "domain": "scheduling",
+      "fact": "The quarterly tax estimate payment is due June 15.",
+      "paraphrase": "when is the second quarter estimated tax due",
+      "distractor": "when is the property tax due"
+    },
+    {
+      "id": "scheduling-045",
+      "domain": "scheduling",
+      "fact": "Prescription refills are ready for pickup on the 3rd of each month.",
+      "paraphrase": "when can the monthly prescription be collected",
+      "distractor": "when can the monthly parking pass be collected"
+    },
+    {
+      "id": "scheduling-046",
+      "domain": "scheduling",
+      "fact": "The town hall for the product launch is scheduled for September 9 at 09:00 Pacific.",
+      "paraphrase": "when is the launch town hall",
+      "distractor": "when is the launch press embargo lifted"
+    },
+    {
+      "id": "scheduling-047",
+      "domain": "scheduling",
+      "fact": "The press embargo for the launch lifts on September 10 at 06:00 Eastern.",
+      "paraphrase": "when can the press publish launch coverage",
+      "distractor": "when can customers download the launch build"
+    },
+    {
+      "id": "scheduling-048",
+      "domain": "scheduling",
+      "fact": "Beta customers receive the launch build on September 2, a week before general availability.",
+      "paraphrase": "when do beta users get the new build",
+      "distractor": "when do enterprise users get the new build"
+    },
+    {
+      "id": "scheduling-049",
+      "domain": "scheduling",
+      "fact": "The standup is asynchronous: post an update in the team channel by 10:00 local time.",
+      "paraphrase": "how does the daily standup work and by when",
+      "distractor": "how does the weekly report work and by when"
+    },
+    {
+      "id": "scheduling-050",
+      "domain": "scheduling",
+      "fact": "The weekly status report goes out to stakeholders on Friday by 17:00.",
+      "paraphrase": "when is the stakeholder update sent",
+      "distractor": "when is the customer newsletter sent"
+    }
+  ]
+}

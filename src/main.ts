@@ -21,6 +21,7 @@ import {
   resolveTrustProfile,
   setTrustProfile,
 } from "./engine/trust-profile";
+import { parseEmbeddingEnv } from "./memory/embedding-config";
 import { AdapterManager } from "./net/adapter-manager";
 import { DashboardBroadcaster } from "./net/dashboard-ws";
 import { FeedPublisher } from "./net/feed-publisher";
@@ -103,6 +104,9 @@ assertTrustProfileSafe({
 });
 setTrustProfile(TRUST.profile);
 RateLimiter.bypass = TRUST.profile === "local";
+// Fail fast on a malformed MARINA_MEMORY_EMBEDDINGS config instead of on the
+// first memory operation (the world memory service loads providers lazily).
+parseEmbeddingEnv(process.env);
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 

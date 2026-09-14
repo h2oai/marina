@@ -1,0 +1,25 @@
+{
+  "policy": "paraphrase-example:v1",
+  "rules": [
+    { "term": "deploy", "alternatives": ["deployment", "rollout", "release"] },
+    { "term": "runbook", "alternatives": ["playbook", "instructions", "guide"] },
+    { "term": "instructions", "alternatives": ["runbook"] },
+    { "term": "on-call", "alternatives": ["on call", "pager", "rotation"] },
+    { "term": "pager", "alternatives": ["on-call", "alert"] },
+    { "term": "db", "alternatives": ["database"] },
+    { "term": "certs", "alternatives": ["certificates", "TLS"] },
+    { "term": "retention", "alternatives": ["kept", "retained"] },
+    { "term": "kept", "alternatives": ["retained", "retention"] },
+    { "term": "1:1", "alternatives": ["one-on-one"] },
+    { "term": "retros", "alternatives": ["retrospectives"] },
+    { "term": "eng", "alternatives": ["engineering"] },
+    { "term": "prod", "alternatives": ["production"] },
+    { "term": "PR", "alternatives": ["pull request"] },
+    { "term": "env vars", "alternatives": ["environment variables"] },
+    { "term": "LB", "alternatives": ["load balancer"] },
+    { "term": "CFP", "alternatives": ["talk proposals", "call for proposals"] },
+    { "term": "DR", "alternatives": ["disaster recovery"] },
+    { "term": "DM", "alternatives": ["direct message"] },
+    { "term": "work out", "alternatives": ["gym"] }
+  ]
+}

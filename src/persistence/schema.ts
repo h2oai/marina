@@ -3209,4 +3209,35 @@ UNION ALL
 SELECT 'assistance_action',json_array(a.job_id,a.principal_id,a.request_key),j.space_id,length(CAST(a.response AS BLOB))+length(CAST(a.request_key AS BLOB))+256 FROM memory_assistance_actions a JOIN memory_assistance_jobs j ON j.id=a.job_id;
 `,
   },
+  // Migration 112: rebuild notes_fts with the Porter stemmer so morphological
+  // variants (runbook/runbooks, deploy/deployment) match across both silos —
+  // legacy notes and durable memory records share this index. External-content
+  // table + the same ai/ad/au triggers as migration 11; 'rebuild' re-indexes
+  // every existing row under the new tokenizer.
+  {
+    version: 112,
+    sql: `
+DROP TRIGGER IF EXISTS notes_ai;
+DROP TRIGGER IF EXISTS notes_ad;
+DROP TRIGGER IF EXISTS notes_au;
+DROP TABLE IF EXISTS notes_fts;
+
+CREATE VIRTUAL TABLE notes_fts USING fts5(content, content=notes, content_rowid=id, tokenize='porter unicode61');
+
+CREATE TRIGGER notes_ai AFTER INSERT ON notes BEGIN
+  INSERT INTO notes_fts(rowid, content) VALUES (new.id, new.content);
+END;
+
+CREATE TRIGGER notes_ad AFTER DELETE ON notes BEGIN
+  INSERT INTO notes_fts(notes_fts, rowid, content) VALUES('delete', old.id, old.content);
+END;
+
+CREATE TRIGGER notes_au AFTER UPDATE ON notes BEGIN
+  INSERT INTO notes_fts(notes_fts, rowid, content) VALUES('delete', old.id, old.content);
+  INSERT INTO notes_fts(rowid, content) VALUES (new.id, new.content);
+END;
+
+INSERT INTO notes_fts(notes_fts) VALUES('rebuild');
+`,
+  },
 ];

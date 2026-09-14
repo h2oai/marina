@@ -17,10 +17,107 @@
  * which neutralizes ALL FTS5 syntax by construction. Quoted bare terms match
  * identically to unquoted ones, so ranking behavior is unchanged for normal
  * queries.
+ *
+ * Stop words (migration 112 companion): natural-language queries such as
+ * "what is the deployment runbook" used to spend most of their OR-mode weight
+ * on `what`/`is`/`the`, which every note contains. Function words are dropped
+ * when at least one content-bearing token remains; a query made only of stop
+ * words is passed through unchanged so `recall the` still behaves as before.
+ * Identifiers survive intact: `e_42` and `abc-1234` tokenize exactly as their
+ * stored content does, and quoting keeps each token a literal.
  */
-export function buildFtsQuery(raw: string, mode: "and" | "or"): string | null {
-  const terms = raw.match(/[\p{L}\p{N}_]+/gu);
-  if (!terms || terms.length === 0) return null;
+export const FTS_STOP_WORDS: ReadonlySet<string> = new Set([
+  "a",
+  "an",
+  "the",
+  "of",
+  "to",
+  "in",
+  "on",
+  "for",
+  "and",
+  "or",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "it",
+  "its",
+  "this",
+  "that",
+  "these",
+  "those",
+  "with",
+  "as",
+  "at",
+  "by",
+  "from",
+  "what",
+  "which",
+  "who",
+  "how",
+  "do",
+  "does",
+  "did",
+  "my",
+  "our",
+  "your",
+  "their",
+  "i",
+  "we",
+  "you",
+  "me",
+  "us",
+  "about",
+  "into",
+  "than",
+  "then",
+  "so",
+  "not",
+  "no",
+  "but",
+  "if",
+  "when",
+  "where",
+  "has",
+  "have",
+  "had",
+  "will",
+  "would",
+  "can",
+  "could",
+  "should",
+  "there",
+  "s",
+]);
+
+export interface FtsQueryOptions {
+  /** Drop English function words when ≥1 content token remains. Default true. */
+  stopWords?: boolean;
+}
+
+export function isFtsStopWord(term: string): boolean {
+  return FTS_STOP_WORDS.has(term.toLowerCase());
+}
+
+/** Word tokens of a query, before quoting. Exposed so query expansion and the
+ *  paraphrase benchmark can reason about the same token stream MATCH sees. */
+export function ftsTerms(raw: string, options: FtsQueryOptions = {}): string[] {
+  const terms = raw.match(/[\p{L}\p{N}_]+/gu) ?? [];
+  if (options.stopWords === false || terms.length === 0) return terms;
+  const content = terms.filter((term) => !isFtsStopWord(term));
+  return content.length > 0 ? content : terms;
+}
+
+export function buildFtsQuery(
+  raw: string,
+  mode: "and" | "or",
+  options: FtsQueryOptions = {},
+): string | null {
+  const terms = ftsTerms(raw, options);
+  if (terms.length === 0) return null;
   const quoted = terms.map((term) => `"${term}"`);
   return quoted.join(mode === "or" ? " OR " : " ");
 }

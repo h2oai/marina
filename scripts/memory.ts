@@ -5,8 +5,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { getErrorMessage } from "../src/engine/errors";
-import { ollamaEmbeddings } from "../src/memory/embeddings";
-import { localEmbeddings } from "../src/memory/local-embeddings";
+import { embeddingProviderFromConfig } from "../src/memory/embedding-config";
 import { serveMemory } from "../src/memory/server";
 import { MarinaDB } from "../src/persistence/database";
 import { rotateMemoryBackups } from "../src/persistence/db-memory-backups";
@@ -164,16 +163,22 @@ try {
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid --port");
     if (!["none", "local", "ollama"].includes(values.embeddings))
       throw new Error("--embeddings must be none, local or ollama");
-    const embeddings =
+    const embeddings = await embeddingProviderFromConfig(
       values.embeddings === "local"
-        ? await localEmbeddings(resolve(values["model-cache"]), values["local-only"])
+        ? {
+            kind: "local",
+            cacheDirectory: resolve(values["model-cache"]),
+            localOnly: values["local-only"],
+          }
         : values.embeddings === "ollama"
-          ? ollamaEmbeddings(
-              values["embedding-url"] ?? "http://127.0.0.1:11434",
-              values["embedding-model"] ?? "",
-              values["embedding-revision"] ?? "",
-            )
-          : undefined;
+          ? {
+              kind: "ollama",
+              url: values["embedding-url"] ?? "http://127.0.0.1:11434",
+              model: values["embedding-model"] ?? "",
+              revision: values["embedding-revision"] ?? "",
+            }
+          : { kind: "none" },
+    );
     const runtime = serveMemory({ dbPath, port, hostname: values.host, embeddings });
     console.log(
       JSON.stringify({
