@@ -15,6 +15,20 @@ export {
   createMemoryCitation,
   validateMemoryAnswer,
 } from "./memory-answer";
+export type {
+  MemoryAssistanceInput,
+  MemoryAssistanceJob,
+  MemoryAssistanceListInput,
+  MemoryAssistancePage,
+  MemoryHelperRole,
+} from "./memory-assistance";
+export {
+  MEMORY_ASSISTANCE_CONTRACT,
+  MEMORY_ASSISTANCE_READS,
+  MEMORY_HELPER_INSTRUCTIONS,
+  MEMORY_HELPER_ROLES,
+} from "./memory-assistance";
+export { MarinaMemoryAssistance } from "./memory-assistance-client";
 /** Portable public SDK: fetch and Web APIs only; no Bun, SQLite or model imports. */
 export { MarinaMemoryClient, MemoryClientError } from "./memory-client";
 export type {

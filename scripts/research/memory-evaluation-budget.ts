@@ -15,6 +15,7 @@ export function evaluationBudgetFetch(
     model: string;
     tokenParameter?: "max_tokens" | "max_completion_tokens";
     outputLimit?: number;
+    inputLimit?: number;
     inputPerMillion: number;
     outputPerMillion: number;
   },
@@ -23,11 +24,15 @@ export function evaluationBudgetFetch(
     async apply(target, _receiver, args: Parameters<typeof fetch>): Promise<Response> {
       const request = new Request(args[0], args[1]);
       const url = new URL(request.url);
-      if (url.hostname === "127.0.0.1" && url.protocol === "http:") return target(request);
+      if (["127.0.0.1", "localhost"].includes(url.hostname) && url.protocol === "http:")
+        return target(request);
       if (url.href !== "https://api.openai.com/v1/chat/completions" || request.method !== "POST")
         throw new Error("Evaluation refused an unapproved upstream endpoint");
       const text = await request.clone().text();
-      if (Buffer.byteLength(text) > 65536) throw new Error("Evaluation input budget exceeded");
+      const inputLimit = state.inputLimit ?? 65536;
+      if (!Number.isSafeInteger(inputLimit) || inputLimit < 1 || inputLimit > 1048576)
+        throw new Error("Invalid evaluation input limit");
+      if (Buffer.byteLength(text) > inputLimit) throw new Error("Evaluation input budget exceeded");
       const body = JSON.parse(text) as {
         model: string;
         max_tokens: number;
@@ -120,7 +125,19 @@ if (import.meta.main) {
   assert.equal(calls, 1);
   await guarded("http://127.0.0.1:1234/v1/memory");
   assert.equal(calls, 2);
+  await guarded("http://localhost:1234/v1/chat/completions");
+  assert.equal(calls, 3);
   assert.equal(state.attempts, 1);
+  const inputBounded = evaluationBudgetFetch(network, { ...state, inputLimit: 4 });
+  await assert.rejects(
+    () =>
+      inputBounded("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        body: JSON.stringify({ model: state.model }),
+      }),
+    /input budget exceeded/,
+  );
+  assert.equal(calls, 3);
   const failureState = { ...state, ceiling: 1, reserved: 0, attempts: 0 };
   const failure = evaluationBudgetFetch(
     Object.assign(

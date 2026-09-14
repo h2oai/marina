@@ -188,6 +188,9 @@ const SECRET_TABLES = new Set<string>([
  * every real table is either in EXPORT_TABLES or matches one of these.
  */
 export function isExcludedFromExport(table: string): boolean {
+  // These leases bind deployment-local credentials. Canonical request sources
+  // and proposal records are exported; authority must be delegated anew.
+  if (table === "memory_assistance_jobs" || table === "memory_assistance_actions") return true;
   if (table === "memory_storage_items" || table === "memory_storage_usage") return true;
   if (table === "memory_source_text") return true; // Rebuilt from canonical sources on import.
   return (
@@ -293,6 +296,11 @@ export function importState(
 
   try {
     db.transaction(() => {
+      // Foreign-key cascades are disabled during restore. Close existing work
+      // before replacing its premises, including when merging a snapshot.
+      if (tableExists(db, "memory_assistance_actions"))
+        db.run("DELETE FROM memory_assistance_actions");
+      if (tableExists(db, "memory_assistance_jobs")) db.run("DELETE FROM memory_assistance_jobs");
       // This projection is regenerated from canonical source rows. Foreign-key
       // cascades are disabled during restore, so clear it explicitly first.
       if (tableExists(db, "memory_source_text")) db.run("DELETE FROM memory_source_text");

@@ -130,6 +130,9 @@ function inferToolProfile(role: string | null | undefined): "full" | "crew" | "m
  * flag is derived at spawn from the saved role string.
  */
 const CREW_RESPONDER_ROLES = new Set<string>([
+  "memory-librarian",
+  "memory-reflector",
+  "memory-evaluator",
   "mathematician",
   "skeptic",
   "format-verifier",

@@ -21,6 +21,7 @@ import {
 } from "../memory/service-types";
 import type { MemorySourceSearch } from "../sdk/memory-types";
 import { requireMemoryWriter } from "./db-memory-admission";
+import { memoryAssistanceRepository } from "./db-memory-assistance";
 import { exportMemoryBundle, importMemoryBundle } from "./db-memory-bundles";
 import { deleteMemoryCache, getMemoryCache, putMemoryCache } from "./db-memory-cache";
 import { captureMemoryBatch } from "./db-memory-capture";
@@ -75,7 +76,7 @@ export function hash(value: unknown) {
   return createHash("sha256").update(canonical(value)).digest("hex");
 }
 
-function requireActor(db: Database, actor: MemoryActor, scope: MemoryScope) {
+export function requireActor(db: Database, actor: MemoryActor, scope: MemoryScope) {
   const row = db
     .query(`SELECT c.scopes FROM principal_credentials c JOIN principals p ON p.principal_id=c.principal_id
     WHERE c.credential_id=? AND c.principal_id=? AND c.audience='marina:memory' AND c.revoked_at IS NULL
@@ -127,6 +128,7 @@ export function event(
     operation !== "memory.reindex" &&
     operation !== "cache.saved" &&
     operation !== "cache.deleted" &&
+    !operation.startsWith("assistance.") &&
     !(operation.startsWith("transfer.") && operation !== "transfer.committed")
   )
     db.run("UPDATE memory_spaces SET retrieval_generation=retrieval_generation+1 WHERE id=?", [
@@ -1109,7 +1111,17 @@ export function forgetMemory(
       );
     const ids = new Set(input.record_ids ?? []);
     for (const id of ids) row(db, space, id);
-    for (const source of input.source_ids ?? []) {
+    // Assistance task text may quote evidence without machine-readable links.
+    // Like opaque checkpoints, retire these request sources conservatively on
+    // forgetting. Their derived results are removed by the ordinary cascade.
+    const sourceIds = new Set(input.source_ids ?? []);
+    for (const item of db
+      .query(
+        "SELECT id FROM memory_sources WHERE space_id=? AND json_extract(body,'$.format')='marina.memory.assistance.request.v1'",
+      )
+      .all(space) as { id: string }[])
+      sourceIds.add(item.id);
+    for (const source of sourceIds) {
       if (!db.query("SELECT 1 FROM memory_sources WHERE id=? AND space_id=?").get(source, space))
         throw new MemoryError(404, "source_not_found", "Source not found");
       for (const item of db
@@ -1149,7 +1161,7 @@ export function forgetMemory(
       ]);
       event(db, actor, space, "memory.forgotten", id);
     }
-    for (const source of input.source_ids ?? [])
+    for (const source of sourceIds)
       db.run("DELETE FROM memory_sources WHERE id=? AND space_id=?", [source, space]);
     // Opaque checkpoints may contain copied context. Invalidate all checkpoints
     // in the affected space rather than pretending to infer their dependencies.
@@ -1407,6 +1419,7 @@ export function graphMemory(
  * the standalone HTTP server and the full-world adapter consume. */
 export function memoryRepository(db: Database) {
   return {
+    assistance: memoryAssistanceRepository(db),
     healthy: () => memoryDatabaseHealth(db),
     knowledgeGraph: (actor: MemoryActor, space: string, input: unknown, key: string) =>
       memoryKnowledgeGraph(db, actor, space, input, key),
@@ -1474,8 +1487,12 @@ export function memoryRepository(db: Database) {
       value: unknown,
       key: string,
     ) => saveMemoryVocabulary(db, actor, space, expected, value, key),
-    sourceSearch: (actor: MemoryActor, space: string, input: MemorySourceSearch) =>
-      searchMemorySources(db, actor, space, input),
+    sourceSearch: (
+      actor: MemoryActor,
+      space: string,
+      input: MemorySourceSearch,
+      excludeAssistanceRequests = false,
+    ) => searchMemorySources(db, actor, space, input, excludeAssistanceRequests),
     sourceRange: (
       actor: MemoryActor,
       space: string,

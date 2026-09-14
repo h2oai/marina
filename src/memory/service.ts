@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { tryLogAsync } from "../engine/errors";
+import { tryLog, tryLogAsync } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
 import type { MemoryRepository } from "../persistence/db-memory-service";
@@ -18,6 +18,15 @@ import { MemoryError } from "./service-types";
 export type { MemorySearchInput, MemorySearchResult } from "../sdk/memory-types";
 
 export class MemoryService {
+  /** World adapters may wake participants. Notifications contain IDs only;
+   * durable jobs remain discoverable if delivery is missed. */
+  assistanceNotify?: (notice: {
+    id: string;
+    worker_id: string;
+    requester_id: string;
+    state: string;
+    remaining_operations: number;
+  }) => void;
   readonly repository: MemoryRepository;
   private worker: ReturnType<typeof setInterval> | undefined;
   private working = false;
@@ -33,9 +42,36 @@ export class MemoryService {
     this.repository = db.memoryRepository();
   }
 
+  notifyAssistance(actor: MemoryActor, id: string): void {
+    if (!this.assistanceNotify) return;
+    tryLog(
+      this.logger,
+      "memory",
+      "Assistance notification failed; job remains discoverable",
+      () => {
+        const job = this.repository.assistance.summary(actor, id);
+        this.assistanceNotify?.({
+          id,
+          worker_id: job.worker_id,
+          requester_id: job.requester_id,
+          state: job.state,
+          remaining_operations: job.remaining_operations,
+        });
+      },
+    );
+  }
+
   capabilities() {
     return {
       schema: "marina.memory.v1",
+      assistance: {
+        roles: ["librarian", "reflector", "evaluator"],
+        delegation: "owner-authorized:read-only:live-credential",
+        max_depth: 3,
+        max_workers: 8,
+        completion: "cited-proposal",
+        model_required_by_storage: false,
+      },
       storage: "sqlite",
       synchronous: this.db.durability,
       lexical: "fts5",

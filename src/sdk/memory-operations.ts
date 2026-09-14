@@ -4,6 +4,15 @@
 import { type MarinaMemoryClient, MemoryClientError } from "./memory-client";
 
 export const MEMORY_OPERATIONS = [
+  "assist_create",
+  "assist_jobs",
+  "assist_get",
+  "assist_claim",
+  "assist_heartbeat",
+  "assist_read",
+  "assist_finish",
+  "assist_cancel",
+  "assist_delegate",
   "capabilities",
   "usage",
   "federation_mounts",
@@ -91,6 +100,18 @@ export async function runMemoryOperation(
     return encodeURIComponent(value);
   };
   const operation = request.operation;
+  if (operation === "assist_jobs") {
+    const params = new URLSearchParams();
+    for (const key of ["open", "limit", "cursor"] as const)
+      if (request.input?.[key] !== undefined) params.set(key, String(request.input[key]));
+    return client.request(`/assistance?${params}`);
+  }
+  if (operation.startsWith("assist_") && operation !== "assist_create") {
+    const base = `/assistance/${field(request.id, "id")}`;
+    return operation === "assist_get"
+      ? client.request(base)
+      : client.request(`${base}/${operation.slice(7)}`, "POST", request.input ?? {}, request.key);
+  }
   if (operation === "usage") return client.usage();
   if (operation === "capabilities") return client.capabilities();
   if (operation === "me") return client.me();
@@ -101,6 +122,8 @@ export async function runMemoryOperation(
   const base = `/spaces/${space}`;
   const input = request.input;
   switch (operation) {
+    case "assist_create":
+      return client.request(`${base}/assistance`, "POST", input, request.key);
     case "save_rule":
       return client.request(`${base}/rules`, "POST", input, request.key);
     case "run_rule":

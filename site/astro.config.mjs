@@ -61,6 +61,8 @@ export default defineConfig({
           items: [
             { label: "Memory System", slug: "docs/guides/memory" },
             { label: "Memory API", slug: "docs/guides/memory-api" },
+            { label: "Standalone Memory Service", slug: "docs/guides/memory-service" },
+            { label: "Memory Assistance", slug: "docs/guides/memory-assistance" },
             { label: "Coordination", slug: "docs/guides/coordination" },
             { label: "Cognitive Provenance", slug: "docs/guides/cognitive-provenance" },
             {

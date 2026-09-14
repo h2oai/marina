@@ -3,12 +3,12 @@
 ## Build & Test
 ```bash
 bun run start          # Start server
-bun run test           # Run all backend tests (~144 files, ~2300 tests)
+bun run test           # Run all backend tests
 bun run typecheck      # TypeScript strict check
 bun run lint           # Biome lint
 bun run format         # Biome auto-format (run before committing)
 bun run clean          # Reset database and scratch files
-cd dashboard && bun run test  # Frontend smoke tests (vitest, ~24 tests)
+cd dashboard && bun run test  # Frontend tests (vitest)
 ```
 
 ## Code Style
@@ -26,7 +26,7 @@ cd dashboard && bun run test  # Frontend smoke tests (vitest, ~24 tests)
 
 ## Architecture Rules
 - Commands: one file per command in `src/engine/commands/`, register in `src/engine/command-registry.ts` → `registerBuiltinCommands()`
-- Migrations: append to `migrations` array in `src/persistence/database.ts`, never modify existing migrations
+- Migrations: append to `migrations` in `src/persistence/schema.ts` (re-exported as `MIGRATIONS` by `database.ts`), never modify existing migrations
 - DB modules: query logic split into `src/persistence/db-notes.ts`, `db-entities.ts`, `db-tasks.ts`, `db-channels.ts`, `db-agents.ts` — MarinaDB delegates to standalone functions
 - MCP tools: add in `src/net/mcp-server.ts` → `createMcpServer()`, use `runCmd()` helper (rate-limited wrapper around `cmdTool()`)
 - MCP tool categories: bootstrap (login/auth), cognition (think/memory/next/brief/quest), world, coordination, canvas (canvas), building, escape hatch (command/batch), session

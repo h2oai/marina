@@ -81,9 +81,31 @@ ambiguous write failed. Check `isError` / `ok`, not only the text response. Use 
 for an intended sharing operation. `forget` propagates through recorded source/record
 dependencies; it cannot retract copies already exported to other systems.
 
+## Ask or work as a memory helper
+
+`memory_assist` assigns a librarian, reflector, or evaluator a task in a space you own.
+Supply `worker_id` (the helper's principal), `role`, `task`, and optional operation/deadline
+limits. This delegates bounded reading. Helpers may return cited proposals or abstain;
+their role does not authorize edits to the owner's existing memories or certify truth.
+
+Workers discover `assist_jobs` with `input:{open:true}` and follow `next_cursor` using the
+same filter, including empty pages. Inspect `assist_get`, claim with `assist_claim`, and
+retain its lease token. Read evidence with `assist_read`, placing the record/source ID in
+`input.request.id`, alongside `input.request.operation`. Use `source_search` for originals;
+ordinary `search` covers authored records. Complete with `assist_finish` using exact quotes
+and current evidence IDs/versions from these reads. Inspect errors before continuing.
+
+Renew long work with `assist_heartbeat`. `work_open` reflects deadlines and ancestor
+completion; `state` retains the last recorded transition. After a lease expires, reclaim
+using a new attempt key. A new request is needed after the request deadline. `assist_delegate`
+can hand a bounded subproblem to another principal under the shared root budget and deadline.
+Use `assist_cancel` to withdraw your unfinished request. Ordinary goals, tasks and projects
+remain authoritative for their own work; helper completion is one attributed result.
+
 ## Other interfaces
 
-Residents have the `marina_memory_service` tool and `memory api <JSON request>` command.
+Residents have the `marina_memory_service` and typed `marina_memory_assistance` tools and
+the `memory api <JSON request>` command. Helpers can use `marina/default` as their model.
 Humans can use `memory claim project:marina status "active"`,
 `memory query {"subject":"project:marina"}`, and `memory graph project:marina`.
 TypeScript consumers use `MarinaMemoryClient` from `marina/memory`; its `remember`, `query`,

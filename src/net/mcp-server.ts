@@ -942,6 +942,21 @@ function registerMemoryTools(
     async (request, extra) => runCmd(request, extra),
   );
   mcp.tool(
+    "memory_assist",
+    "Ask another participant to read one owned memory space and return a cited proposal. The helper receives a bounded request, not a general memory grant. Inspect completion with memory_service assist_get. Helpers discover assignments with assist_jobs.",
+    {
+      space_id: space,
+      worker_id: z.string().describe("The helper's memory principal ID"),
+      role: z.enum(["librarian", "reflector", "evaluator"]),
+      task: z.string(),
+      max_operations: z.number().int().min(1).max(128).optional(),
+      timeout_ms: z.number().int().min(1000).max(3600000).optional(),
+      key: z.string().optional(),
+    },
+    async ({ space_id, key, ...input }, extra) =>
+      runCmd({ operation: "assist_create", space_id, key, input }, extra),
+  );
+  mcp.tool(
     "memory_remember",
     "Store portable text, optional typed claim and evidence references. No embedding model is required.",
     {

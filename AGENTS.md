@@ -31,7 +31,7 @@
 - Maintain coverage for new branches and command handlers; add regression tests when fixing bugs.
 
 ## Architecture Rules (must-follow)
-- **Migrations are append-only**: add to the `migrations` array in `src/persistence/database.ts`; never modify an existing migration.
+- **Migrations are append-only**: add to `migrations` in `src/persistence/schema.ts` (re-exported by `database.ts`); never modify an existing migration.
 - **Commands**: one file per command in `src/engine/commands/`, registered in `src/engine/command-registry.ts` → `registerBuiltinCommands()`.
 - **Permissions**: `minRank` (and optional `gate`) on `CommandDef` is the permission gate — don't add custom rank checks inside handlers.
 - **DB naming**: the groups table is `groups_` (trailing underscore — `groups` is an SQL keyword). New FTS5 tables need insert/update/delete triggers.

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { RateLimiter } from "../auth/rate-limiter";
+import { readAssistance } from "../memory/assistance";
 import { getFederatedMemoryCache, putFederatedMemoryCache } from "../memory/cache";
 import { createMemoryPlan, executeMemoryPlan } from "../memory/planning";
 import type { MemorySearchInput, MemoryService } from "../memory/service";
@@ -152,6 +153,57 @@ export async function handleMemoryServiceApi(
         "An Idempotency-Key of 1–128 characters is required",
       );
     const repo = service.repository;
+    const notifyAssistance = (id: string) => service.notifyAssistance(actor, id);
+    if (path === "/v1/memory/assistance" && req.method === "GET") {
+      const open = url.searchParams.get("open");
+      if (open !== null && !["true", "false"].includes(open))
+        throw new MemoryError(400, "invalid_input", "open must be true or false");
+      return json(
+        repo.assistance.list(actor, {
+          open: open === "true",
+          limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
+          cursor: url.searchParams.get("cursor") ?? undefined,
+        }),
+      );
+    }
+    const assistance = path.match(
+      /^\/v1\/memory\/assistance\/([^/]+)(?:\/(claim|heartbeat|read|finish|cancel|delegate))?$/,
+    );
+    if (assistance) {
+      const id = decodeURIComponent(assistance[1]!);
+      const operation = assistance[2];
+      if (!operation && req.method === "GET") return json(repo.assistance.get(actor, id));
+      if (req.method === "POST") {
+        const body = await readBody(req);
+        switch (operation) {
+          case "claim": {
+            const result = repo.assistance.claim(actor, id, key);
+            notifyAssistance(id);
+            return json(result);
+          }
+          case "heartbeat":
+            return json(repo.assistance.heartbeat(actor, id, body.lease_token, key));
+          case "read": {
+            const result = await readAssistance(service, actor, id, body, key, req.signal);
+            notifyAssistance(id);
+            return json(result);
+          }
+          case "cancel":
+            return json(repo.assistance.cancel(actor, id));
+          case "finish": {
+            const result = repo.assistance.finish(actor, id, body, key);
+            notifyAssistance(id);
+            return json(result);
+          }
+          case "delegate": {
+            const result = repo.assistance.delegate(actor, id, body, key);
+            notifyAssistance(result.id);
+            return json(result, 201);
+          }
+        }
+      }
+      throw new MemoryError(404, "route_not_found", "Assistance route not found");
+    }
     if (path === "/v1/memory/usage" && req.method === "GET") return json(repo.usage(actor));
     if (path === "/v1/memory" && req.method === "GET") return json(service.capabilities());
     if (path === "/v1/memory/me" && req.method === "GET")
@@ -171,6 +223,11 @@ export async function handleMemoryServiceApi(
     if (!match) throw new MemoryError(404, "route_not_found", "Memory route not found");
     const space = decodeURIComponent(match[1]!);
     const rest = match[2] ?? "";
+    if (rest === "assistance" && req.method === "POST") {
+      const result = repo.assistance.create(actor, space, await readBody(req), key);
+      notifyAssistance(result.id);
+      return json(result, 201);
+    }
     if (!rest && req.method === "GET") return json(repo.authorize(actor, space));
     if (rest === "knowledge_graph" && req.method === "POST")
       return json(repo.knowledgeGraph(actor, space, await readBody(req), key));

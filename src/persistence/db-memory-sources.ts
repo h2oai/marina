@@ -19,6 +19,7 @@ export function searchMemorySources(
   actor: MemoryActor,
   space: string,
   input: MemorySourceSearch,
+  excludeAssistanceRequests = false,
 ): MemorySourceSearchResult {
   return db.transaction(() => {
     const current = authorizeMemorySpace(db, actor, space);
@@ -31,12 +32,13 @@ export function searchMemorySources(
     const expansion = memoryQueryExpansion(input.query, input.expansion);
     if (expansion) {
       const lists = [input.query, ...expansion.queries].map((query) =>
-        searchMemorySources(db, actor, space, {
-          ...input,
-          query,
-          expansion: undefined,
-          limit: 100,
-        }),
+        searchMemorySources(
+          db,
+          actor,
+          space,
+          { ...input, query, expansion: undefined, limit: 100 },
+          excludeAssistanceRequests,
+        ),
       );
       const ranked = new Map<string, MemorySourceSearchResult["results"][number]>();
       for (const [index, list] of lists.entries()) {
@@ -77,12 +79,14 @@ export function searchMemorySources(
       snippet(memory_source_fts,0,'','',' … ',32) AS excerpt
       FROM memory_source_fts f CROSS JOIN memory_sources s ON s.seq=f.rowid
       WHERE memory_source_fts MATCH ? AND s.space_id=? AND (? IS NULL OR s.session_id=?)
+      AND (?=0 OR coalesce(json_extract(s.body,'$.format'),'')<>'marina.memory.assistance.request.v1')
       ORDER BY f.rank,s.seq LIMIT ?`)
       .all(
         fts,
         space,
         input.session_id ?? null,
         input.session_id ?? null,
+        excludeAssistanceRequests ? 1 : 0,
         limit + 1,
       ) as MemorySourceSearchResult["results"];
     return {

@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getInternalModelToken } from "../agent/agent-runtime";
+import { seedMemoryHelperRoles } from "../agent/memory-helper-roles";
 import {
   ASK_SYSTEM_PROMPT,
   CODE_MODE_SYSTEM_PROMPT,
   formatUntrustedContext,
 } from "../agent/prompts/support-prompts";
 import { parseExecUnrestricted } from "../coding/exec-approver";
+import { worldMemoryService } from "../memory/world-service";
 import { registerBuiltinResolvers } from "../resolvers";
 import type { EntityId, RoomId } from "../types";
 import { collectiveManager } from "../world/world-collective-manager";
@@ -117,6 +119,25 @@ import type { Engine } from "./engine";
 import { computeReadiness } from "./readiness";
 
 export function registerBuiltinCommands(engine: Engine): void {
+  if (engine.db) {
+    seedMemoryHelperRoles(engine.db);
+    worldMemoryService(engine.db).assistanceNotify = (notice) => {
+      const principal = ["pending", "running"].includes(notice.state)
+        ? notice.worker_id
+        : notice.requester_id;
+      const user = engine.db?.getUser(principal);
+      const entity = user && engine.entities.findAgentByName(user.name);
+      if (entity && entity.name === user.name) {
+        const message = `Memory assistance ${notice.id}: ${notice.state}; ${notice.remaining_operations} operations remain. Inspect with memory api ${JSON.stringify({ operation: "assist_get", id: notice.id })}`;
+        engine.sendToEntity(entity.id, message, "tell", {
+          from: "Marina memory",
+          to: entity.name,
+          message,
+          memory_assistance: notice,
+        });
+      }
+    };
+  }
   // Resolver registry is module-scoped; idempotent so multiple engine
   // instances in the same process (tests) don't double-register.
   registerBuiltinResolvers();

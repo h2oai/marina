@@ -26,6 +26,7 @@ import type { Perception } from "../../types";
 import type { AgentSupports } from "../agent-types";
 import type { GameStateManager } from "../game-state";
 import type { PlatformMemoryBackend } from "../memory-platform";
+import { createMemoryAssistanceTool } from "./memory-assistance";
 
 // ─── Shared Context ─────────────────────────────────────────────────────────
 
@@ -82,19 +83,15 @@ const commandSchema = Type.Object({
 
 /**
  * Compact natural-language roster of world commands. Surfaced inside the
- * `marina_command` tool description for the `crew` and `minimal`
- * profiles where the agent has few or no typed tool wrappers and would
- * otherwise be guessing at what verbs exist. Per arXiv:2510.14453
- * ("Natural Language Tools"), forcing JSON tool calls drops GSM8K
- * −27.3pp on some models; describing commands in prose alongside a
- * single universal escape hatch (`marina_command`) recovers the
- * structured-output tax. Kept compact (< 1KB) so the schema bump is
- * negligible.
+ * `marina_command` tool description in every profile, including agents
+ * with few typed wrappers. Keep discovery within the tested prompt budget;
+ * command help supplies the full syntax.
  */
-export const COMMAND_ROSTER = `Common world commands you can pass here:
+export const COMMAND_ROSTER = `Common world commands:
 World: look [target], goto <room>, examine <thing>, who, inventory.
 Talk: say <msg>, tell <name> <msg>, channel send <name> <msg>, channel list.
 Memory service: memory service, memory claim <subject> <predicate> <JSON scalar>, memory relate <subject> <predicate> <entity>, memory query <JSON filters>, memory graph <subject>, memory remember <text>, memory api <JSON request>.
+Memory assistance: memory assist <librarian|reflector|evaluator> <helper> <task>, memory jobs, memory assistance <ID>, memory assist-cancel <ID>.
 Legacy memory: note <text>, recall <query>, reflect [topic], pool <name> add <content>, pool <name> recall <query>, skill search <query>, skill store <name> | <desc> | <actions>.
 Self: brief, brief full, focus set <desc>, focus clear, task goal <title> | <desc>, task progress <id> +N, novelty stats, novelty suggest.
 Becoming: standing (your ledger + every gate's path), witness (earn gated capabilities through supervised demonstrations), desire <one sentence> (begin an evidence-linked journey), journey progress.
@@ -103,7 +100,7 @@ Code: code status, code files [path], code read <path>, code search <query>, cod
 Web: web search <query>, web fetch <url>.
 Probe / watch (resolvers): probe <kind> <args>, watch list, watch create <kind> <args>.
 Bettor / markets: market list, market info <id>, market forecast <id>, position open <leg>, position confirm <id>.
-This roster is a sample, not the world: \`help all\` lists every command, \`help <command>\` explains one, \`novelty suggest\` points at territory you haven't touched.
+Discover more: \`help all\` lists commands, \`help <command>\` explains one, \`novelty suggest\` suggests unexplored activity.
 Recall is intent-aware: "how to X" weights relevance, "when did X" weights recency.`;
 
 /** Extra roster lines surfaced when the operator has opened the ceiling —
@@ -1922,30 +1919,26 @@ export function createAllTools(
     createThinkTool() as unknown as AgentTool,
     createMemoryTool(platformMemory) as unknown as AgentTool,
     createMemoryServiceTool(ctx) as unknown as AgentTool,
+    createMemoryAssistanceTool(ctx) as unknown as AgentTool,
   ];
 }
 
 /**
  * Tool profile — choose how much tool schema to send to the LLM.
  *
- * The Anthropic tool schema (re-sent with every request) is ~12-15KB when
- * all 27 tools are included. Smaller models — Haiku and below — can spend
- * their whole turn just parsing it, which is exactly what we observed
- * during the 2026-04-23 Haiku experiment (124 prompt timeouts, 778 silent
- * turns). They don't need the full buffet: `marina_command` is an
- * escape hatch that can run ANY world command, so a minimal profile of
- * just `command + think + memory` is functionally complete.
+ * Smaller profiles reduce repeated schema input. `marina_command` retains
+ * access to world commands; typed assistance adds correlated job replies.
  *
  * Profiles:
- *  - `"full"`    : 27 tools, ~12-15KB schema. Rich typed interface.
+ *  - `"full"`    : All typed tools.
  *                  Good for Sonnet-tier and above; the typed tools
  *                  help auto-structure actions.
- *  - `"minimal"` : 3 tools (command, think, memory), ~1.5KB schema.
+ *  - `"minimal"` : command, think, memory, and typed memory assistance.
  *                  Functionally complete via `command`. Good for
  *                  Haiku-tier specialists that need one-shot focused
  *                  action, not rich coordination surface.
- *  - `"crew"`    : command + think + memory + tell + pool + brief +
- *                  channel, ~4KB. Mid-tier for dispatchers / agents
+ *  - `"crew"`    : minimal + code + tell + pool + brief + channel.
+ *                  Mid-tier for dispatchers / agents
  *                  that coordinate peers.
  *
  * An agent config's `toolProfile` field selects; defaults to `"full"` so
@@ -1960,6 +1953,7 @@ export type ToolProfile = "full" | "crew" | "minimal";
 export const TOOL_PROFILE_NAMES: Record<ToolProfile, string[]> = {
   full: [], // empty = all tools
   crew: [
+    "marina_memory_assistance",
     "marina_command",
     "marina_code",
     "marina_tell",
@@ -1969,7 +1963,7 @@ export const TOOL_PROFILE_NAMES: Record<ToolProfile, string[]> = {
     "think",
     "memory",
   ],
-  minimal: ["marina_command", "think", "memory"],
+  minimal: ["marina_command", "think", "memory", "marina_memory_assistance"],
 };
 
 /**
@@ -1980,7 +1974,7 @@ export const TOOL_PROFILE_NAMES: Record<ToolProfile, string[]> = {
  * command roster baked into `marina_command`'s description, so an
  * agent without the full typed surface still knows what verbs the world
  * exposes. The `full` profile keeps the terse description because the
- * 27 typed tools each carry their own description.
+ * typed tools each carry their own description.
  */
 export function createScopedTools(
   ctx: ToolContext,

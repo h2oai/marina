@@ -5,6 +5,10 @@ import { MemoryClientError } from "../sdk/memory-client";
 import type { MemoryOperationRequest, MemoryOperationResult } from "../sdk/memory-operations";
 
 export const MEMORY_SERVICE_HELP = `Portable memory service (private to your durable world account):
+  memory assist <role> <helper> <task>    delegate reading; roles: librarian, reflector, evaluator
+  memory jobs [JSON filters]             list assistance; open:true selects unfinished live work
+  memory assistance <ID>                 inspect a request and its cited proposal
+  memory assist-cancel <ID>              withdraw a request and its delegated access
   memory service                         show service capabilities
   memory usage                           show your storage usage and limits
   memory transfers [JSON filters]         discover your staged imports
@@ -50,6 +54,25 @@ export function parseMemoryServiceCommand(args: string): MemoryOperationRequest 
     }
   };
   switch (sub) {
+    case "assist": {
+      const fields = rest.match(/^(librarian|reflector|evaluator)\s+(\S+)\s+([\s\S]+)$/);
+      if (!fields)
+        throw new MemoryClientError(
+          400,
+          "invalid_input",
+          "Use: memory assist librarian|reflector|evaluator HELPER TASK",
+        );
+      return {
+        operation: "assist_create",
+        input: { role: fields[1], worker_name: fields[2], task: fields[3] },
+      };
+    }
+    case "jobs":
+      return { operation: "assist_jobs", input: json(rest || "{}") };
+    case "assistance":
+      return { operation: "assist_get", id: rest };
+    case "assist-cancel":
+      return { operation: "assist_cancel", id: rest };
     case "transfers":
       return { operation: "transfers", input: json(rest || "{}") };
     case "transfer":

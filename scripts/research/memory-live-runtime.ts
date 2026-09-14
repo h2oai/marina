@@ -41,7 +41,11 @@ export interface LiveResult extends MemoryTaskResult {
 
 /** Isolated real service/router, explicit upstream spending bound, sanitized
  * child environment. Artifacts belong outside the public repository. */
-export function createLiveMemoryRuntime(directory: string, budget: number) {
+export function createLiveMemoryRuntime(
+  directory: string,
+  budget: number,
+  options: { inputLimit?: number } = {},
+) {
   if (!Number.isFinite(budget) || budget <= 0 || budget > 20)
     throw new Error("Explicit budget must be >0 and <=20 USD");
   process.env.WS_HOST = "127.0.0.1";
@@ -70,6 +74,7 @@ export function createLiveMemoryRuntime(directory: string, budget: number) {
     model: "gpt-5.6-luna",
     tokenParameter: "max_completion_tokens" as const,
     outputLimit: 1500,
+    inputLimit: options.inputLimit ?? 65536,
     inputPerMillion: 0.25,
     outputPerMillion: 1.2,
   };
@@ -79,7 +84,7 @@ export function createLiveMemoryRuntime(directory: string, budget: number) {
   const gate = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    maxRequestBodySize: 65536,
+    maxRequestBodySize: spending.inputLimit,
     idleTimeout: 60,
     async fetch(request) {
       if (request.headers.get("Authorization") !== `Bearer ${gateToken}`)

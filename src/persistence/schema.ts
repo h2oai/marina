@@ -3126,4 +3126,87 @@ UPDATE witness_attestations
    AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = witness_attestations.entity_id);
 `,
   },
+  {
+    version: 110,
+    sql: `
+CREATE TABLE memory_assistance_jobs (
+ id TEXT PRIMARY KEY, space_id TEXT NOT NULL REFERENCES memory_spaces(id),
+ requester_id TEXT NOT NULL, credential_id TEXT NOT NULL, worker_id TEXT NOT NULL,
+ role TEXT NOT NULL, parent_id TEXT, root_id TEXT NOT NULL, depth INTEGER NOT NULL,
+ state TEXT NOT NULL DEFAULT 'pending', version INTEGER NOT NULL DEFAULT 1,
+ lease_token TEXT, lease_until INTEGER, deadline INTEGER NOT NULL,
+ remaining_operations INTEGER NOT NULL, input_source_id TEXT NOT NULL REFERENCES memory_sources(id) ON DELETE CASCADE,
+ result_record_id TEXT, evidence TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_memory_assistance_worker ON memory_assistance_jobs(worker_id,state,created_at);
+CREATE INDEX idx_memory_assistance_requester ON memory_assistance_jobs(requester_id,created_at);
+CREATE INDEX idx_memory_assistance_root ON memory_assistance_jobs(root_id);
+CREATE UNIQUE INDEX idx_memory_assistance_source ON memory_assistance_jobs(input_source_id);
+CREATE TABLE memory_assistance_actions (
+ job_id TEXT NOT NULL REFERENCES memory_assistance_jobs(id) ON DELETE CASCADE,
+ principal_id TEXT NOT NULL, request_key TEXT NOT NULL, fingerprint TEXT NOT NULL,
+ response TEXT NOT NULL, PRIMARY KEY(job_id,principal_id,request_key)
+);
+CREATE TRIGGER memory_assistance_forget AFTER INSERT ON memory_service_events
+WHEN new.operation IN ('memory.forgotten','forget.completed','space.forgotten') BEGIN
+ UPDATE memory_assistance_jobs SET evidence='[]',lease_token=NULL,lease_until=NULL,
+ state=CASE WHEN state IN ('pending','running') THEN 'cancelled' ELSE state END,
+ version=version+1 WHERE space_id=new.space_id;
+END;
+`,
+  },
+  {
+    version: 111,
+    sql: `
+CREATE TRIGGER memory_assistance_storage_insert AFTER INSERT ON memory_assistance_jobs BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes) VALUES ('assistance',new.id,new.space_id,length(CAST(new.evidence AS BLOB))+768);
+END;
+CREATE TRIGGER memory_assistance_storage_update AFTER UPDATE ON memory_assistance_jobs BEGIN
+ UPDATE memory_storage_items SET bytes=length(CAST(new.evidence AS BLOB))+768 WHERE kind='assistance' AND ref=new.id;
+END;
+CREATE TRIGGER memory_assistance_storage_delete AFTER DELETE ON memory_assistance_jobs BEGIN
+ DELETE FROM memory_storage_items WHERE kind='assistance' AND ref=old.id;
+END;
+CREATE TRIGGER memory_assistance_action_insert AFTER INSERT ON memory_assistance_actions BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes) VALUES
+ ('assistance_action',json_array(new.job_id,new.principal_id,new.request_key),(SELECT space_id FROM memory_assistance_jobs WHERE id=new.job_id),length(CAST(new.response AS BLOB))+length(CAST(new.request_key AS BLOB))+256);
+END;
+CREATE TRIGGER memory_assistance_action_delete AFTER DELETE ON memory_assistance_actions BEGIN
+ DELETE FROM memory_storage_items WHERE kind='assistance_action' AND ref=json_array(old.job_id,old.principal_id,old.request_key);
+END;
+INSERT INTO memory_storage_items SELECT 'assistance',id,space_id,length(CAST(evidence AS BLOB))+768 FROM memory_assistance_jobs;
+INSERT INTO memory_storage_items SELECT 'assistance_action',json_array(a.job_id,a.principal_id,a.request_key),j.space_id,length(CAST(a.response AS BLOB))+length(CAST(a.request_key AS BLOB))+256 FROM memory_assistance_actions a JOIN memory_assistance_jobs j ON j.id=a.job_id;
+DROP VIEW memory_storage_projection;
+CREATE VIEW memory_storage_projection AS
+SELECT 'space' AS kind,t.id AS ref,t.id AS space_id,length(CAST(t.name AS BLOB))+128 AS bytes FROM memory_spaces t
+UNION ALL
+SELECT 'source' AS kind,t.id AS ref,t.space_id AS space_id,length(CAST(t.body AS BLOB))+length(CAST(coalesce(t.session_id,'') AS BLOB))+128 AS bytes FROM memory_sources t
+UNION ALL
+SELECT 'revision' AS kind,json_array(t.record_id,t.version) AS ref,r.space_id AS space_id,length(CAST(n.content AS BLOB))+length(CAST(coalesce(t.attributes,'') AS BLOB))+128 AS bytes FROM memory_record_versions t JOIN memory_records r ON r.id=t.record_id JOIN notes n ON n.id=t.note_id
+UNION ALL
+SELECT 'checkpoint' AS kind,json_array(t.space_id,t.name) AS ref,t.space_id AS space_id,length(CAST(t.data AS BLOB))+length(CAST(t.name AS BLOB))+128 AS bytes FROM memory_checkpoints t
+UNION ALL
+SELECT 'vocabulary' AS kind,json_array(t.space_id,t.version) AS ref,t.space_id AS space_id,length(CAST(t.definition AS BLOB))+128 AS bytes FROM memory_vocabularies t
+UNION ALL
+SELECT 'receipt' AS kind,json_array(t.principal_id,t.space_id,t.request_key) AS ref,s.id AS space_id,length(CAST(t.response AS BLOB))+length(CAST(t.request_key AS BLOB))+192 AS bytes FROM memory_requests t JOIN memory_spaces s ON s.id=CASE WHEN t.space_id='' THEN json_extract(t.response,'$.id') ELSE t.space_id END
+UNION ALL
+SELECT 'event' AS kind,CAST(t.seq AS TEXT) AS ref,t.space_id AS space_id,length(CAST(t.operation AS BLOB))+length(CAST(coalesce(t.reference_id,'') AS BLOB))+128 AS bytes FROM memory_service_events t
+UNION ALL
+SELECT 'grant' AS kind,json_array(t.space_id,t.principal_id) AS ref,t.space_id AS space_id,128 AS bytes FROM memory_grants t
+UNION ALL
+SELECT 'job' AS kind,t.id AS ref,t.space_id AS space_id,length(CAST(t.model AS BLOB))+256 AS bytes FROM memory_index_jobs t
+UNION ALL
+SELECT 'vector' AS kind,json_array(t.note_id,t.model) AS ref,r.space_id AS space_id,length(CAST(t.vector AS BLOB))+length(CAST(t.model AS BLOB))+128 AS bytes FROM memory_vectors t JOIN memory_record_versions v ON v.note_id=t.note_id JOIN memory_records r ON r.id=v.record_id
+UNION ALL
+SELECT 'cache' AS kind,json_array(t.space_id,t.principal_id,t.name) AS ref,t.space_id AS space_id,length(CAST(t.data AS BLOB))+length(CAST(t.name AS BLOB))+192 AS bytes FROM memory_cached_results t
+UNION ALL
+SELECT 'transfer',id,space_id,length(CAST(header AS BLOB))+length(CAST(coalesce(cursor,'') AS BLOB))+256 FROM memory_transfers
+UNION ALL
+SELECT 'transfer_part',json_array(transfer_id,position),space_id,length(CAST(data AS BLOB))+length(CAST(item_id AS BLOB))+256 FROM memory_transfer_parts
+UNION ALL
+SELECT 'assistance',id,space_id,length(CAST(evidence AS BLOB))+768 FROM memory_assistance_jobs
+UNION ALL
+SELECT 'assistance_action',json_array(a.job_id,a.principal_id,a.request_key),j.space_id,length(CAST(a.response AS BLOB))+length(CAST(a.request_key AS BLOB))+256 FROM memory_assistance_actions a JOIN memory_assistance_jobs j ON j.id=a.job_id;
+`,
+  },
 ];

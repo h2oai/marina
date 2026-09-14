@@ -8,6 +8,9 @@ reproducible checks with disposable data.
 See [portable memory extensions](memory-extensions.md) for resumable larger history transfers,
 the reference MCP knowledge-graph profile, explicit query expansion and federated cache pins.
 
+See [memory assistance](memory-assistance.md) to ask resident or external librarians,
+reflectors and evaluators for cited proposals through the same service.
+
 ## Start a private service
 
 From the repository root, install dependencies with `bun install`, then provision an identity:

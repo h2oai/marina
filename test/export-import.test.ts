@@ -91,6 +91,47 @@ describe("Export/Import", () => {
     }
   });
 
+  it("exports assistance artifacts without leases and preserves instruction boundaries after restore", () => {
+    const principal = srcDb.ensurePrincipal({ type: "service", displayName: "requester" });
+    const worker = srcDb.ensurePrincipal({ type: "service", displayName: "librarian" });
+    const credential = srcDb.issueMemoryCredential(principal.principal_id);
+    const actor = srcDb.verifyMemoryCredential(credential.token)!;
+    const repo = srcDb.memoryRepository();
+    const space = repo.createSpace(actor, "assistance", "space").id;
+    const source = repo.capture(actor, space, "Quartz port is 7419", undefined, "source");
+    const job = repo.assistance.create(
+      actor,
+      space,
+      { role: "librarian", worker_id: worker.principal_id, task: "Find Quartz port" },
+      "job",
+    );
+    const input = repo.assistance.get(actor, job.id).input_source_id;
+    const snapshot = exportState(SRC_DB);
+    expect(snapshot.tables.memory_assistance_jobs).toBeUndefined();
+    expect(snapshot.tables.memory_assistance_actions).toBeUndefined();
+    const destination = new MarinaDB(DST_DB);
+    destination.close();
+    expect(importState(DST_DB, snapshot).errors).toEqual([]);
+    const restored = new MarinaDB(DST_DB);
+    try {
+      const token = restored.issueMemoryCredential(principal.principal_id).token;
+      const reader = restored.verifyMemoryCredential(token)!;
+      const imported = restored.memoryRepository();
+      expect(imported.assistance.list(reader).jobs).toEqual([]);
+      expect(imported.assistance.isInputSource(space, input)).toBe(true);
+      expect(
+        imported.sourceSearch(reader, space, { query: "Quartz", limit: 1 }, true).results,
+      ).toEqual([expect.objectContaining({ id: source.id })]);
+      imported.forget(reader, space, { source_ids: [source.id] }, "forget");
+      expect(() => imported.sourceRange(reader, space, input)).toThrow("Source not found");
+    } finally {
+      restored.close();
+    }
+    // Restoring into the originating deployment also closes existing leases.
+    expect(importState(SRC_DB, snapshot).errors).toEqual([]);
+    expect(srcDb.memoryRepository().assistance.list(actor).jobs).toEqual([]);
+  });
+
   // ─── Seed helpers ──────────────────────────────────────────────────
 
   function seedTestData(): void {

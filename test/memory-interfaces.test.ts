@@ -248,6 +248,7 @@ it("lets a fresh stdio MCP coding-agent process resume symbolic memory using onl
     client = await connect();
     expect((await client.listTools()).tools.map((t) => t.name)).toEqual([
       "memory_service",
+      "memory_assist",
       "memory_remember",
       "memory_query",
       "memory_graph",

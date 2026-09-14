@@ -28,6 +28,17 @@ export async function residentMemoryOperation(
       "world_identity_required",
       "An active durable world account is required",
     );
+  if (request.operation === "assist_create" && request.input?.worker_name !== undefined) {
+    const worker = db.getUserByName(String(request.input.worker_name));
+    if (!worker)
+      throw new MemoryClientError(
+        404,
+        "worker_not_found",
+        "The helper must first join Marina under its own identity",
+      );
+    const { worker_name: _name, ...input } = request.input;
+    request = { ...request, input: { ...input, worker_id: worker.id } };
+  }
   let cache = bindings.get(db);
   if (!cache) {
     cache = new Map();
@@ -45,7 +56,10 @@ export async function residentMemoryOperation(
     binding = { client, expiresAt: credential.expiresAt };
     cache.set(user.id, binding);
   }
-  if (["usage", "capabilities", "me", "spaces", "create_space"].includes(request.operation))
+  if (
+    ["usage", "capabilities", "me", "spaces", "create_space"].includes(request.operation) ||
+    (request.operation.startsWith("assist_") && request.operation !== "assist_create")
+  )
     return { ok: true as const, result: await runMemoryOperation(binding.client, request) };
   const space =
     request.space_id ??

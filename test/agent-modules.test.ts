@@ -1421,12 +1421,18 @@ describe("tool profiles", () => {
     ).rejects.toThrow();
   });
 
-  it("minimal profile has exactly the 3 essential tools", () => {
+  it("minimal profile includes correlated, typed memory assistance", () => {
     // The rationale of "minimal": marina_command is a universal escape
     // hatch that runs ANY world command, so command + think + memory is
-    // functionally complete. This test locks the set — adding tools
+    // functionally complete. Assistance also needs correlated, typed replies.
+    // This test locks the set — adding tools
     // silently inflates schema size for every Haiku-tier specialist.
-    expect(TOOL_PROFILE_NAMES.minimal).toEqual(["marina_command", "think", "memory"]);
+    expect(TOOL_PROFILE_NAMES.minimal).toEqual([
+      "marina_command",
+      "think",
+      "memory",
+      "marina_memory_assistance",
+    ]);
   });
 
   it("crew profile is a mid-size set for dispatchers", () => {
