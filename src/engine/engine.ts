@@ -83,6 +83,7 @@ import { RoomSandbox } from "./room-sandbox";
 import { checkGateForExecution, grantGatesForRank, recordGateExecution } from "./safety-gates";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
 import { ShellRuntime } from "./shell-runtime";
+import { isLocalProfile, isLocalUngated } from "./trust-profile";
 
 /** A verified external identity (from the better-auth bridge) passed to login(). */
 export interface LoginIdentity {
@@ -506,7 +507,7 @@ export class Engine {
   /** True when binding one more external login would exceed MARINA_MAX_LOGINS. */
   private atLoginCapacity(internal: boolean): boolean {
     const cap = this.config.maxLogins ?? 0;
-    if (internal || cap <= 0) return false;
+    if (internal || cap <= 0 || isLocalProfile()) return false;
     return this._connections.boundExternalCount() >= cap;
   }
 
@@ -924,7 +925,9 @@ export class Engine {
     if (def?.minRank && def.minRank > 0) {
       const rank = getRank(entity);
       const gateIsAuthority = Boolean(def.gate && this.db && getAutonomyPosture() !== "guarded");
-      if (rank < def.minRank && !gateIsAuthority) {
+      // LOCAL profile: rank floors are off for the operator's own instance
+      // (loopback logins are also promoted to sovereign at login).
+      if (rank < def.minRank && !gateIsAuthority && !isLocalUngated()) {
         this.sendToEntity(
           entityId,
           `You must be at least ${rankName(def.minRank)} (rank ${def.minRank}) to use "${def.name}".`,
@@ -1690,6 +1693,16 @@ export class Engine {
     // Under auth-required mode, name-based admin promotion is disabled entirely
     // (an unauthenticated name can no longer claim admin).
     if (this.config.authRequired) return;
+
+    // LOCAL trust profile: this instance is one operator's own machine and
+    // binds loopback only (main.ts refuses `local` on a public bind). Every
+    // loopback login — the human and the agents they run — is the operator,
+    // so it is sovereign without MARINA_ADMINS. Remote connections cannot
+    // exist here by construction; if one does, it gets nothing.
+    if (isLocalUngated()) {
+      if (isLoopbackConnection(this._connections.get(connId))) this.grantSovereign(entity);
+      return;
+    }
 
     const adminNames = new Set(
       (process.env.MARINA_ADMINS ?? "")

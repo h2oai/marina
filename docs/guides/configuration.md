@@ -25,6 +25,23 @@ development. Telnet is off by default because it is plaintext and unauthenticate
 
 ## Common Configurations
 
+### Trust profile: local (ungated) vs shared vs public
+
+Marina decides who it is for from how it is bound, and removes friction accordingly:
+
+| Profile | When (if `MARINA_PROFILE` is unset) | What it means |
+|---|---|---|
+| `local` | every listener binds loopback and `MARINA_AUTH` is off | **Ungated.** All safety gates auto-pass, the witness ladder is bypassed, every loopback login is sovereign, arbitrary host commands run without a prompt (`code exec-mode auto`), rate limits, login caps and memory budgets are off, database durability defaults to `normal`. Audit stays on. |
+| `shared` | `MARINA_AUTH=better-auth` is on | Gates, ranks and limits enforced; sign-in identifies people. |
+| `public` | any non-loopback bind without sign-in | Everything enforced; passwordless names carry no authority. |
+
+A fresh `bun run start` on your own machine is therefore `local` with nothing to configure. To keep
+the gates on a personal instance anyway, set `MARINA_AUTONOMY=guarded` or `MARINA_PROFILE=shared`.
+Forcing `MARINA_PROFILE=local` on a public bind is a fatal startup error unless you also enable
+sign-in or set `MARINA_ALLOW_INSECURE_PUBLIC=true`. The boot log prints the resolved profile and
+why; in `local` it also prints the one real risk: a poisoned shared-pool note can lead an agent to
+run a host command without a prompt, and the exec audit is how you find out.
+
 ### Set yourself as admin
 
 ```bash

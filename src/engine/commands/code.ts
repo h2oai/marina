@@ -57,6 +57,7 @@ import {
   recordDemonstration,
   recordGateExecution,
 } from "../safety-gates";
+import { isLocalUngated } from "../trust-profile";
 import { requiresPersistence } from "./command-messages";
 
 const ACTIVE_SESSION_KEY = "coding_session_id";
@@ -7759,7 +7760,10 @@ function selectExecApprover(
   const actingIsBoundAgent = !!session.agent && sameEntityName(session.agent, entity.name);
   if (!actingIsCreator && !actingIsBoundAgent) return undefined;
 
-  const mode = execModes.get(session.id);
+  // LOCAL trust profile: arbitrary host commands run without a prompt (mode
+  // `auto`) unless the launcher chose otherwise; the exec_decision audit row
+  // is still written for every attempt.
+  const mode = execModes.get(session.id) ?? (isLocalUngated() ? "auto" : undefined);
   if (mode && deps.notify && verifyInteractiveEligible(deps, session)) {
     const creator = resolveCreatorExact(deps, session);
     return new InteractiveApprover({

@@ -12,6 +12,8 @@
 import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, Message, Model, TextContent } from "@earendil-works/pi-ai";
 import { localOutputBudget, MARINA_DEFAULT_MODEL } from "../engine/constants";
+import { getErrorMessage } from "../engine/errors";
+import { isLocalProfile } from "../engine/trust-profile";
 import {
   isLocalProvider,
   localProviderBaseUrl,
@@ -770,12 +772,30 @@ export class LeanAgentAdapter implements AgentHandle {
       summary: string,
       signal?: AbortSignal,
     ): Promise<void> => {
-      await this.platformMemory.archiveContext(
-        messages,
-        summary,
-        this.config.compactionPool,
-        signal,
-      );
+      try {
+        await this.platformMemory.archiveContext(
+          messages,
+          summary,
+          this.config.compactionPool,
+          signal,
+        );
+      } catch (error) {
+        // Shared/public: a failed durable archive aborts compaction so no
+        // history is silently lost. LOCAL: keep the agent moving — fall back
+        // to the legacy summary note and log the miss.
+        if (!isLocalProfile() || signal?.aborted) throw error;
+        console.warn(
+          "[memory] LOCAL profile: durable archive failed, falling back to a summary note:",
+          getErrorMessage(error),
+        );
+        await this.platformMemory
+          .write("insight", `[compaction] ${summary.slice(0, 2000)}`, "low", [
+            "consolidation",
+            "archive-fallback",
+            `n:${messages.length}`,
+          ])
+          .catch(() => {});
+      }
     };
 
     // Context manager — transforms messages before each LLM call, prunes

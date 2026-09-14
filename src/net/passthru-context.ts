@@ -3,6 +3,7 @@
 
 import type { Engine } from "../engine/engine";
 import { sanitizeEntityName } from "../engine/entity-name";
+import { isLocalProfile } from "../engine/trust-profile";
 import type { Entity, EntityId } from "../types";
 import type { PassthruAuthResult } from "./model-api";
 
@@ -89,7 +90,9 @@ function identityFor(
   // `properties[passthruContext]`. Shared/anonymous never participates at all.
   const headerOptIn =
     headerOptInAllowed && headers.get("X-Marina-Context")?.trim().toLowerCase() === "on";
-  const contextOptIn = !shared && (headerOptIn || storedOptIn);
+  // LOCAL trust profile: identified loopback clients get memory injection
+  // without opting in — the operator's own tools should just remember.
+  const contextOptIn = !shared && (headerOptIn || storedOptIn || isLocalProfile());
   return { entityId: entity.id, name: entity.name, contextOptIn, shared };
 }
 

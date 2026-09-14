@@ -27,6 +27,7 @@
 import { getStanding } from "../agent/standing";
 import type { MarinaDB } from "../persistence/database";
 import { getAutonomyPosture, OPEN_POSTURE_CORE } from "./autonomy";
+import { isLocalUngated } from "./trust-profile";
 
 /**
  * Canonical gate registry. Each entry is the contract for a dangerous
@@ -221,7 +222,12 @@ export function checkUnattendedGate(
 
 /** How a gated execution was authorized — recorded so witness review and
  *  audit can distinguish the paths. */
-export type GateExecutionMode = "unattended" | "windowed" | "optimistic" | "posture-open";
+export type GateExecutionMode =
+  | "unattended"
+  | "windowed"
+  | "optimistic"
+  | "posture-open"
+  | "profile-local";
 
 export interface GateExecutionResult {
   ok: boolean;
@@ -265,6 +271,13 @@ export function checkGateForExecution(
 
   const competence = db.getCompetence(entityId, gateId);
   if (competence?.supervised_only === 0) return { ok: true, mode: "unattended" };
+
+  // LOCAL trust profile: the single operator's own machine, loopback-only.
+  // Every gate — including the OPEN_POSTURE_CORE four — auto-passes and the
+  // caller still records the execution (audit). An admin who wants the gates
+  // back on a personal instance sets MARINA_AUTONOMY=guarded explicitly, which
+  // makes isLocalUngated() false while local performance defaults stay on.
+  if (isLocalUngated()) return { ok: true, mode: "profile-local" };
 
   const posture = getAutonomyPosture();
   if (posture === "open" && !OPEN_POSTURE_CORE.has(gateId)) {

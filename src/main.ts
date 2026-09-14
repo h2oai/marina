@@ -15,6 +15,12 @@ import {
 import { Engine } from "./engine/engine";
 import { Logger } from "./engine/logger";
 import { projectTraces } from "./engine/trace-projection";
+import {
+  assertTrustProfileSafe,
+  describeTrustProfile,
+  resolveTrustProfile,
+  setTrustProfile,
+} from "./engine/trust-profile";
 import { AdapterManager } from "./net/adapter-manager";
 import { DashboardBroadcaster } from "./net/dashboard-ws";
 import { FeedPublisher } from "./net/feed-publisher";
@@ -81,6 +87,23 @@ const LOOPBACK_ONLY_BIND = isLoopbackHostname(RESOLVED_WS_HOST);
 // a FATAL startup error rather than a warning.
 const INSECURE_PUBLIC_ACK = process.env.MARINA_ALLOW_INSECURE_PUBLIC === "true";
 
+// Trust profile — derived by default from the bind + auth situation
+// (loopback-only and no sign-in ⇒ LOCAL, ungated). `MARINA_PROFILE` overrides.
+// A `local` profile on a public bind is fatal (see trust-profile.ts).
+const TRUST = resolveTrustProfile({
+  loopbackOnlyBind: LOOPBACK_ONLY_BIND,
+  authEnabled: AUTH_ENABLED,
+});
+assertTrustProfileSafe({
+  profile: TRUST.profile,
+  loopbackOnlyBind: LOOPBACK_ONLY_BIND,
+  authEnabled: AUTH_ENABLED,
+  insecurePublicAck: INSECURE_PUBLIC_ACK,
+  bindHost: RESOLVED_WS_HOST,
+});
+setTrustProfile(TRUST.profile);
+RateLimiter.bypass = TRUST.profile === "local";
+
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
 const logger = new Logger();
@@ -141,8 +164,23 @@ if (
 if (getAutonomyPosture() !== "guarded") {
   logger.info("autonomy", `Autonomy posture: ${describeAutonomyPosture()}`);
 }
+logger.info(
+  "trust",
+  `Trust profile: ${describeTrustProfile(TRUST.profile)} (${TRUST.derived ? "derived: " : ""}${TRUST.reason})`,
+);
+if (TRUST.profile === "local") {
+  logger.warn(
+    "trust",
+    "LOCAL profile: agents can run host commands and manage keys without a prompt. " +
+      "Every action is still audited. A poisoned shared-pool note is the realistic risk; " +
+      "set MARINA_AUTONOMY=guarded to bring the gates back.",
+  );
+}
 
-const durability = process.env.MARINA_DB_DURABILITY ?? "full";
+// Durability: full fsync per commit for shared/public; `normal` (WAL, crash-safe,
+// small power-loss window) is the local default. Explicit env always wins.
+const durability =
+  process.env.MARINA_DB_DURABILITY ?? (TRUST.profile === "local" ? "normal" : "full");
 if (durability !== "full" && durability !== "normal")
   throw new Error("MARINA_DB_DURABILITY must be full or normal");
 const db = new MarinaDB(DB_PATH, { durability });

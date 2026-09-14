@@ -22,6 +22,11 @@ const DEFAULT_CONFIG: RateLimiterConfig = {
 };
 
 export class RateLimiter {
+  /** Process-wide bypass for the LOCAL trust profile (loopback-only, one
+   *  operator): every peer is the operator, so throttling only costs latency.
+   *  Set by main.ts after the profile resolves; tests set it explicitly. */
+  static bypass = false;
+
   private config: RateLimiterConfig;
   private buckets = new Map<string, Bucket>();
 
@@ -31,6 +36,7 @@ export class RateLimiter {
 
   /** Try to consume tokens from a key's bucket. Returns false if rate-limited. */
   consume(key: string, cost = 1): boolean {
+    if (RateLimiter.bypass) return true;
     const now = (this.config.now ?? Date.now)();
     let bucket = this.buckets.get(key);
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Database } from "bun:sqlite";
+import { isLocalProfile } from "../engine/trust-profile";
 import { MemoryError } from "../memory/service-types";
 import type { MemoryStorageAmounts } from "../sdk/memory-types";
 
@@ -23,6 +24,12 @@ export function configureMemoryStorage(db: Database, input: Partial<MemoryStorag
 
 export function memoryLimitsFromEnv(env = process.env): Partial<MemoryStorageAmounts> {
   const limits: Partial<MemoryStorageAmounts> = {};
+  // LOCAL trust profile: admission budgets are off unless set explicitly —
+  // the operator's own disk is the only budget that matters.
+  if (isLocalProfile(env)) {
+    for (const key of ["logical_bytes", "sources", "revisions", "spaces"] as const)
+      limits[key] = Number.MAX_SAFE_INTEGER;
+  }
   for (const [key, name] of [
     ["logical_bytes", "MARINA_MEMORY_MAX_BYTES"],
     ["sources", "MARINA_MEMORY_MAX_SOURCES"],
