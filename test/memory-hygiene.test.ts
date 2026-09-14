@@ -222,6 +222,54 @@ describe("runMemoryHygiene", () => {
     expect(tells).toEqual([]);
   });
 
+  it("counts contradictions parked under await_confirmation (pending) toward the threshold", async () => {
+    setTrustProfile("local");
+    await seedReviewQueue(2); // 2 stale + 2 competing = 4 < threshold on their own
+    const [before] = await runMemoryHygiene(db, deps(), T0);
+    expect(before).toMatchObject({ stale: 2, competing: 2, pending: 0, dispatched: false });
+    expect(await ownerOpenJobs()).toEqual([]);
+
+    // Park the competing pair: it stays competing AND becomes pending → 6 ≥ 5.
+    const competing = (
+      (await op(OWNER, { operation: "review", input: { kind: "competing", limit: 10 } }))
+        .result as {
+        items: { record: { id: string } }[];
+      }
+    ).items.map((i) => i.record.id);
+    expect(competing).toHaveLength(2);
+    await op(OWNER, {
+      operation: "resolve",
+      id: competing[0]!,
+      input: {
+        policy: "await_confirmation",
+        competing: [competing[1]!],
+        rationale: "ask the deploy owner",
+        deadline_ms: 3_600_000,
+      },
+    });
+    const [after] = await runMemoryHygiene(db, deps(), T0 + 3_600_000);
+    expect(after).toMatchObject({ stale: 2, competing: 2, pending: 2, dispatched: true });
+    expect(after!.jobId).toBeDefined();
+    expect(await ownerOpenJobs()).toHaveLength(1);
+    expect(hygieneNotes()[0]!.content).toBe(
+      formatHygieneLine({
+        stale: 2,
+        competing: 2,
+        pending: 2,
+        duplicates: 0,
+        overlong: 0,
+        unsupported: 0,
+        jobId: after!.jobId,
+      }),
+    );
+    expect(hygieneNotes()[0]!.content).toContain("pending=2");
+    // The shared-profile notice names the parked count too.
+    setTrustProfile("shared");
+    await op(OWNER, { operation: "assist_cancel", id: after!.jobId! });
+    await runMemoryHygiene(db, deps(), T0 + 7_200_000);
+    expect(tells.at(-1)!.text).toContain("(2 pending confirmation)");
+  });
+
   it("on a SHARED profile never files the job — it tells the owner the exact command", async () => {
     // Process default is `shared`; make it explicit for the reader.
     setTrustProfile("shared");

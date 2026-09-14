@@ -11,7 +11,9 @@
  *      (duplicate groups, overlong notes, unsupported empirical claims),
  *  (c) write ONE process-tier `[hygiene] stale=N competing=M duplicates=D
  *      overlong=O unsupported=U` note (deduped against the last hygiene note),
- *  (d) when stale+competing reaches `HYGIENE_DISPATCH_THRESHOLD`: on a LOCAL
+ *  (d) when stale+competing+pending reaches `HYGIENE_DISPATCH_THRESHOLD`
+ *      (`pending` = contradictions parked under `resolve … await_confirmation`,
+ *      which only an adjudication can close): on a LOCAL
  *      profile file an evaluator job automatically (worker = the running
  *      `memory-evaluator` helper's durable principal) and record its id in the
  *      hygiene note; on SHARED/PUBLIC never file work on the owner's behalf —
@@ -22,20 +24,32 @@
  * Nothing here certifies a claim, edits a record, or prunes a note — the
  * evaluator's proposal is attributed opinion the owner adopts (or not) with
  * ordinary versioned operations. Pure observation plus one bounded dispatch.
+ *
+ * The job-filing machinery (find the running helper, one-open-marked-job
+ * guard, bounded `assist_create`) lives in `memory-dispatch.ts` and is shared
+ * with the accumulation and shared-write triggers.
  */
 
 import { residentMemoryOperation } from "../memory/resident-service";
 import type { MarinaDB, NoteRow } from "../persistence/database";
-import type { MemoryAssistanceJob, MemoryAssistancePage } from "../sdk/memory-assistance";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
 import type { MemoryReviewResult } from "../sdk/memory-types";
 import type { EntityId } from "../types";
 import { auditKnowledgeNotes } from "./commands/knowledge-hygiene";
 import { NOTE_IMPORTANCE_INTERVAL } from "./constants";
 import type { Engine } from "./engine";
+import {
+  fileHelperJob,
+  findOpenMarkedJob,
+  findRunningEngineHelper,
+  helperRoleName,
+  helperSpawnCommand,
+  type ResidentOp,
+  type RunningHelper,
+} from "./memory-dispatch";
 import { isLocalProfile } from "./trust-profile";
 
-/** stale + competing at or above this files (local) or recommends (shared) an evaluator review. */
+/** stale + competing + pending at or above this files (local) or recommends (shared) an evaluator review. */
 export const HYGIENE_DISPATCH_THRESHOLD = 5;
 
 /** Prefix of the process-tier note; `orient` reads the latest one. */
@@ -48,21 +62,16 @@ export const HYGIENE_TASK_MARKER = "[hygiene]";
 export const HYGIENE_TASK = `${HYGIENE_TASK_MARKER} Review the stale and competing assertions in this space; for each, say which the evidence supports and what is missing`;
 
 /** Helper role the hygiene pass dispatches to / recommends. */
-export const HYGIENE_HELPER_ROLE = "memory-evaluator";
+export const HYGIENE_HELPER_ROLE = helperRoleName("evaluator");
 
 /** Phase within the shared hourly interval (distinct from every other hourly job in engine.ts). */
 export const MEMORY_HYGIENE_PHASE = 2700;
 
 const REVIEW_PAGE = 100;
-const JOBS_PAGE = 100;
 const NOTE_SCAN = 500;
-const JOB_MAX_OPERATIONS = 32;
-const JOB_TIMEOUT_MS = 10 * 60 * 1000;
 
-export interface HygieneHelper {
-  name: string;
-  principalId: string;
-}
+/** @deprecated alias — the shared shape now lives in memory-dispatch.ts. */
+export type HygieneHelper = RunningHelper;
 
 export interface MemoryHygieneDeps {
   /** Entities currently connected that may own a durable world account. */
@@ -119,7 +128,7 @@ export function hygieneAssistCommand(helperName: string): string {
 }
 
 /** The exact command that brings an evaluator online (docs/guides/memory-assistance.md). */
-export const HYGIENE_SPAWN_COMMAND = `agent spawn Evaluator model marina/default role ${HYGIENE_HELPER_ROLE} budget 40`;
+export const HYGIENE_SPAWN_COMMAND = helperSpawnCommand("evaluator");
 
 export async function runMemoryHygiene(
   db: MarinaDB,
@@ -149,8 +158,7 @@ async function hygieneForEntity(
   principalId: string,
   now: number,
 ): Promise<MemoryHygieneReport> {
-  const op = (request: MemoryOperationRequest) =>
-    deps.residentMemoryOperation(entity.name, request);
+  const op: ResidentOp = (request) => deps.residentMemoryOperation(entity.name, request);
 
   // (a) durable review queue — one bounded page per kind. `+` overflow is
   // folded into the count as the page size; the threshold is what matters.
@@ -180,26 +188,21 @@ async function hygieneForEntity(
   let dispatched = false;
   let notified = false;
   let notice: string | undefined;
-  if (stale + competing >= HYGIENE_DISPATCH_THRESHOLD) {
-    jobId = await findOpenHygieneJob(op, principalId);
+  if (stale + competing + pending >= HYGIENE_DISPATCH_THRESHOLD) {
+    jobId = await findOpenMarkedJob(op, principalId, "evaluator", HYGIENE_TASK_MARKER);
     if (!jobId) {
       const helper = deps.findRunningHelper(HYGIENE_HELPER_ROLE);
-      const summary = `${stale} stale and ${competing} competing durable assertions need review`;
+      const parked = pending ? ` (${pending} pending confirmation)` : "";
+      const summary = `${stale} stale and ${competing} competing durable assertions need review${parked}`;
       if (!helper) {
         notice = `Memory hygiene: ${summary}. No ${HYGIENE_HELPER_ROLE} is running — start one with: ${HYGIENE_SPAWN_COMMAND}`;
       } else if (isLocalProfile()) {
-        const created = (await op({
-          operation: "assist_create",
+        jobId = await fileHelperJob(op, {
           key: `hygiene:${principalId}:${now}`,
-          input: {
-            role: "evaluator",
-            worker_id: helper.principalId,
-            task: HYGIENE_TASK,
-            max_operations: JOB_MAX_OPERATIONS,
-            timeout_ms: JOB_TIMEOUT_MS,
-          },
-        })) as { result: { id: string } };
-        jobId = created.result.id;
+          role: "evaluator",
+          helper,
+          task: HYGIENE_TASK,
+        });
         dispatched = true;
       } else {
         notice = `Memory hygiene: ${summary}. Ask the evaluator: ${hygieneAssistCommand(helper.name)}`;
@@ -233,7 +236,7 @@ function isHygieneNote(note: NoteRow): boolean {
 }
 
 async function reviewCount(
-  op: (request: MemoryOperationRequest) => Promise<{ result: unknown }>,
+  op: ResidentOp,
   kind: "stale" | "competing" | "pending",
   deps: MemoryHygieneDeps,
   name: string,
@@ -250,27 +253,6 @@ async function reviewCount(
     });
     return 0;
   }
-}
-
-/** Open assistance jobs omit `task` (it lives in the request source), so the
- *  marker check reads each open evaluator job the owner filed — bounded page. */
-async function findOpenHygieneJob(
-  op: (request: MemoryOperationRequest) => Promise<{ result: unknown }>,
-  principalId: string,
-): Promise<string | undefined> {
-  const page = (await op({ operation: "assist_jobs", input: { open: true, limit: JOBS_PAGE } }))
-    .result as MemoryAssistancePage;
-  for (const job of page.jobs) {
-    if (job.role !== "evaluator" || job.requester_id !== principalId || !job.work_open) continue;
-    try {
-      const full = (await op({ operation: "assist_get", id: job.id }))
-        .result as MemoryAssistanceJob;
-      if (full.task?.startsWith(HYGIENE_TASK_MARKER)) return job.id;
-    } catch {
-      // A forgotten request source or revoked access is not a hygiene job.
-    }
-  }
-  return undefined;
 }
 
 /** True on the tick the hourly hygiene job should run. */
@@ -295,15 +277,7 @@ export async function runEngineMemoryHygiene(engine: Engine): Promise<MemoryHygi
         message: text,
         memory_hygiene: true,
       }),
-    findRunningHelper: (role) => {
-      for (const agent of engine.agentRuntime.list()) {
-        if (agent.role !== role || !agent.entityId) continue;
-        if (!["connected", "autonomous", "idle"].includes(agent.state)) continue;
-        const user = db.getUserByName(agent.name);
-        if (user) return { name: agent.name, principalId: user.id };
-      }
-      return undefined;
-    },
+    findRunningHelper: (role) => findRunningEngineHelper(engine, db, role),
     warn: (message, detail) => engine.logger.warn("hygiene", message, detail),
   });
 }

@@ -77,6 +77,11 @@ import { EventLog } from "./event-log";
 import { GatewayRuntime } from "./gateway-runtime";
 import { Logger } from "./logger";
 import { MediaManager } from "./media/manager";
+import {
+  engineSharedWriteHook,
+  isMemoryAccumulationTick,
+  runEngineAccumulationDispatch,
+} from "./memory-dispatch";
 import { isMemoryHygieneTick, runEngineMemoryHygiene } from "./memory-hygiene";
 import { getRank, rankName, setRank } from "./permissions";
 import { computeReadiness } from "./readiness";
@@ -1373,6 +1378,16 @@ export class Engine {
       });
     }
 
+    // Hourly (own phase): accumulation → reflector. Per online resident, ≥ N
+    // fact-like notes on one topic inside the 24h window file ONE reflector
+    // job to consolidate them into a cited lesson (memory-dispatch.ts).
+    // Same fire-and-forget shape as hygiene — durable calls never block the tick.
+    if (isMemoryAccumulationTick(this.tickCount) && this.db) {
+      void tryLogAsync(this.logger, "tick", "Memory accumulation dispatch failed", async () => {
+        await runEngineAccumulationDispatch(this);
+      });
+    }
+
     // Hourly: trim the durable event log to the retention window. Without this
     // the table grows without bound for the life of the deployment (traces and
     // per-entity activity queries degrade linearly with its size).
@@ -2011,6 +2026,27 @@ export class Engine {
         if (poolName) {
           this.crewManager.onMemberPoolDeposit(event.authorName, poolName, event.content);
         }
+      }
+    }
+    // Low-standing shared write → evaluator review (memory-dispatch.ts).
+    // Fire-and-forget: the hook returns synchronously and never awaits here;
+    // skipped under the `local` profile, silent under shared/public.
+    if (event.type === "pool_note" && this.db) {
+      engineSharedWriteHook(this, event);
+    } else if (event.type === "note_created" && event.poolId && this.db) {
+      // Same trigger for the other pool write path (`note … pool:<x>`), which
+      // emits note_created with a poolId instead of pool_note.
+      const poolName = this.db.getMemoryPoolById(event.poolId)?.name;
+      if (poolName) {
+        engineSharedWriteHook(this, {
+          type: "pool_note",
+          entity: event.entity,
+          noteId: event.noteId,
+          poolName,
+          content: event.content,
+          importance: event.importance,
+          timestamp: event.timestamp,
+        });
       }
     }
     // Standing ledger absorbs civic-contribution events (pool notes today;
