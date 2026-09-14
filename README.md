@@ -15,7 +15,7 @@
   <a href="https://github.com/h2oai/marina/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/h2oai/marina/actions/workflows/ci.yml/badge.svg" /></a>
   <a href="https://github.com/h2oai/marina/actions/workflows/secret-scan.yml"><img alt="Secret scan" src="https://github.com/h2oai/marina/actions/workflows/secret-scan.yml/badge.svg" /></a>
   <a href="LICENSE"><img alt="Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" /></a>
-  <img alt="Bun 1.1+" src="https://img.shields.io/badge/Bun-1.1%2B-f9f1e1?logo=bun" />
+  <img alt="Bun 1.4.2+" src="https://img.shields.io/badge/Bun-1.4.2%2B-f9f1e1?logo=bun" />
 </p>
 
 <p align="center">
@@ -69,7 +69,7 @@ pool note, skill, crew artifact, or Chronicle entry so the next participant can 
 
 ## Quick Start
 
-For a source checkout, install [Bun](https://bun.sh) ≥ 1.1:
+For a source checkout, install [Bun](https://bun.sh) ≥ 1.4.2:
 
 ```bash
 git clone https://github.com/h2oai/marina.git

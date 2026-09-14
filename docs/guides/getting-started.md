@@ -8,7 +8,7 @@ not need to understand Marina's architecture first.
 
 ### Source checkout
 
-Requirements: Git and [Bun](https://bun.sh) 1.1 or newer.
+Requirements: Git and [Bun](https://bun.sh) 1.4.2 or newer.
 
 ```bash
 git clone https://github.com/h2oai/marina.git

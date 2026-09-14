@@ -6,10 +6,15 @@ in each directory. From `marina-desktop`, run `bun run typecheck` and
 The complete packaging pipeline is `bash marina-desktop/scripts/build.sh` from
 the repository root.
 
-Electrobun is pinned to 1.18.1 to retain Intel Mac builds. Its native SDK requires
-Bun type definitions 1.3.14; the desktop TypeScript configuration resolves those
-types locally so backend dependency updates do not merge incompatible FFI declarations.
-TypeScript and the dashboard build tooling can be updated independently.
+Use Bun 1.4.2 or newer for development. Desktop packages bundle the exact runtime
+in the repository's `.bun-version`, through Electrobun's `build.bunVersion` option.
+
+Electrobun is pinned to 1.18.1 to retain Intel Mac builds. Bun's persistent patch
+in `patches/` updates its native SDK's pointer return types, decodes callback
+strings and handles cancelled file dialogs with current Bun FFI. The patch is applied by `bun install` and
+allows current Bun type definitions. Run `bun run test` to check these SDK
+boundaries. These tests substitute the OS window library and invoke SDK callbacks
+through a C fixture compiled by Bun; they do not launch a native UI.
 
 Electrobun 2 uses a different toolchain and SDK layout and does not distribute an
 Intel Mac toolchain. Review platform support before changing this pin; see the

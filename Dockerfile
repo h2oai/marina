@@ -7,7 +7,7 @@
 # mode) under /app/data — mount a volume there. See docs/guides/deployment.md.
 
 # ── builder: install deps and build the dashboard SPA into dist/dashboard ───
-FROM oven/bun:1 AS builder
+FROM docker.io/oven/bun:1.4.2 AS builder
 WORKDIR /app
 
 # Root deps first (layer cached unless package.json / lockfile change).
@@ -25,7 +25,7 @@ COPY . .
 RUN bun run dashboard:build
 
 # ── runtime: lean image that runs the server from source ────────────────────
-FROM oven/bun:1 AS runtime
+FROM docker.io/oven/bun:1.4.2 AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 

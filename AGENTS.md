@@ -13,7 +13,7 @@
 - `docs/`, `examples/`, and `scripts/` capture reference material, sample flows, and operational tooling.
 
 ## Build, Test, and Development Commands
-- `bun install` installs workspace dependencies (Bun ≥ 1.1.0 required).
+- `bun install` installs workspace dependencies (Bun ≥ 1.4.2 required).
 - `bun run dev` starts the simulation server on `:3300`; use `bun run dashboard:dev` for the web UI on `:5173`.
 - `bun run build` produces a Bun-compatible bundle in `dist/`; `bun run dashboard:build` emits the production UI.
 - `bun run test` exercises backend tests; add `cd dashboard && bun run test` for UI smoke coverage.

@@ -41,7 +41,7 @@ Put a single durable volume at `/app/data` and your entire world persists across
 
 ## Prerequisites
 
-- **Bun ≥ 1.1** if running outside Docker. Install via the official installer (`curl -fsSL https://bun.sh/install | bash`) — some distro-packaged Bun 1.3.x builds have a broken `Date.now()`; `scripts/build.sh` checks for this.
+- **Bun ≥ 1.4.2** if running outside Docker. Install via the official installer (`curl -fsSL https://bun.sh/install | bash`) — some distro-packaged Bun 1.3.x builds have a broken `Date.now()`; `scripts/build.sh` checks for this.
 - **Docker** (with the Compose plugin) for the containerized path below.
 - At least one **LLM provider key** (e.g. `ANTHROPIC_API_KEY`) if you want agents to think. Without any key, rooms fall back to static entities and the world still runs.
 

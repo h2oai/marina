@@ -1367,7 +1367,7 @@ the boundary between the system and its inhabitants dissolves.
 
 | Component | Technology | Version |
 |-----------|-----------|---------|
-| Runtime | Bun | ≥ 1.1.0 |
+| Runtime | Bun | ≥ 1.4.2 |
 | Language | TypeScript | ≥ 5.7.0 |
 | Database | SQLite (WAL mode) | Built-in |
 | Full-text search | SQLite FTS5 | Built-in |

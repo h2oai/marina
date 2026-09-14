@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: oven-sh/setup-bun@v2.2.0
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Lint
@@ -45,10 +45,28 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: oven-sh/setup-bun@v2.2.0
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
       - name: Install dependencies
         run: bun install --frozen-lockfile
       - name: Test
         run: bun run test
       - name: Build
         run: bun run build
+
+  desktop:
+    name: Typecheck and test desktop SDK
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version-file: .bun-version
+      - name: Install dependencies
+        run: |
+          bun install --frozen-lockfile
+          cd marina-desktop && bun install --frozen-lockfile
+      - name: Typecheck
+        run: cd marina-desktop && bun run typecheck
+      - name: Test native SDK boundaries
+        run: cd marina-desktop && bun run test

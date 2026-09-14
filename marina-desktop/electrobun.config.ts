@@ -1,6 +1,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
+
+const bunVersion = readFileSync(new URL("../.bun-version", import.meta.url), "utf8").trim();
+
 export default {
   app: {
     name: "Marina",
@@ -9,6 +13,7 @@ export default {
   },
 
   build: {
+    bunVersion,
     bun: {
       entrypoint: "src/bun/index.ts",
     },

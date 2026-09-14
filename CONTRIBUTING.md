@@ -10,7 +10,13 @@ Thanks for thinking about contributing. This guide is the fastest path from "fre
 
 ## Development setup
 
-You need [Bun](https://bun.sh) ≥ 1.1.0 (`engines.bun` in `package.json`).
+You need [Bun](https://bun.sh) ≥ 1.4.2 (`engines.bun` in `package.json`).
+The tested release is recorded in `.bun-version` and `packageManager`; CI and
+desktop packaging read `.bun-version`. Both stages of `Dockerfile` use the same
+release. When upgrading Bun, update these values together, update `@types/bun`
+in the root and desktop packages, and run the verification below. Use
+`bun upgrade --stable` to update a direct Bun installation (use the corresponding
+package manager for a managed installation).
 
 ```bash
 bun install

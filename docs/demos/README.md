@@ -11,7 +11,7 @@ probe substrates.
 | [Canvas Content Pipeline](content-canvas.md) | Using canvas intents to turn raw assets into polished deliverables and recording the result in the chronicle + boards. |
 | [Deep Research Loop](deep-research.md) | Seeding context through the Memory API, running probes/watchers, and steering agents through long-running investigations. |
 
-Each playbook assumes Bun ≥ 1.1, a local Marina instance started with
+Each playbook assumes Bun ≥ 1.4.2, a local Marina instance started with
 `bun run start`, and the dashboard open at `http://localhost:3300/dashboard`.
 Toggle the web chat into **Rich view** (top-right switch) to follow the timelines
 with speaker badges and timestamps while you run the commands.

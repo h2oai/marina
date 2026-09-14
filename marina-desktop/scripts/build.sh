@@ -177,7 +177,7 @@ fi
 if [ "$SKIP_TESTS" = false ]; then
   info "Running test suite..."
   cd "$REPO_ROOT"
-  TEST_OUTPUT=$(bun test 2>&1)
+  TEST_OUTPUT=$(bun run test 2>&1)
   PASS_COUNT=$(echo "$TEST_OUTPUT" | grep -oE '[0-9]+ pass' | head -1 || echo "? pass")
   FAIL_COUNT=$(echo "$TEST_OUTPUT" | grep -oE '[0-9]+ fail' | head -1 || echo "0 fail")
 
@@ -187,6 +187,9 @@ if [ "$SKIP_TESTS" = false ]; then
     echo "$TEST_OUTPUT" | tail -20
     fail "Tests failed — aborting build"
   fi
+  info "Checking desktop SDK compatibility..."
+  cd "$DESKTOP_DIR"
+  bun run test
 else
   info "Tests — skipped"
 fi

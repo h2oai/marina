@@ -33,7 +33,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2.2.0
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
 
       - name: Install root dependencies
         run: bun install
@@ -45,7 +45,7 @@ jobs:
         run: cd marina-desktop && bun install
 
       - name: Run tests (verify no regressions)
-        run: bun test
+        run: bun run test
 
       - name: Build desktop app
         env:
@@ -70,7 +70,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2.2.0
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
 
       - name: Install dependencies
         run: |
@@ -94,7 +94,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2.2.0
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
 
       - name: Install system dependencies
         run: |

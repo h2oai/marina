@@ -1,0 +1,162 @@
+diff --git a/dist/api/bun/proc/native.ts b/dist/api/bun/proc/native.ts
+index f0f6c2532ba2eb467ec1d452a25c835b6db72661..704ab9befd40a99e6a60890c563bbc1d9839931b 100644
+--- a/dist/api/bun/proc/native.ts
++++ b/dist/api/bun/proc/native.ts
+@@ -79,6 +79,11 @@ function getWindowPtr(winId: number) {
+ 	);
+ }
+ 
++// Bun 1.4 decodes callback cstrings to JS strings; older runtimes pass pointers.
++function fromCString(value: string | number | bigint | null): string {
++	return typeof value === "string" ? value : new CString(value).toString();
++}
++
+ export const native = (() => {
+ 	try {
+ 		// Use absolute path to native wrapper DLL to avoid working directory issues
+@@ -857,7 +862,7 @@ const _ffiImpl = {
+ 				x: number;
+ 				y: number;
+ 			};
+-		}): FFIType.ptr => {
++		}): Pointer | bigint => {
+ 			const {
+ 				id,
+ 				url: _url,
+@@ -1237,7 +1242,7 @@ const _ffiImpl = {
+ 			sandbox: boolean;
+ 			startTransparent: boolean;
+ 			startPassthrough: boolean;
+-		}): FFIType.ptr => {
++		}): Pointer | bigint => {
+ 			const {
+ 				id,
+ 				windowId,
+@@ -1352,7 +1357,7 @@ window.__electrobunBunBridge = window.__electrobunBunBridge || window.webkit?.me
+ 			autoResize: boolean;
+ 			startTransparent: boolean;
+ 			startPassthrough: boolean;
+-		}): FFIType.ptr => {
++		}): Pointer | bigint => {
+ 			const {
+ 				id,
+ 				windowId,
+@@ -1460,7 +1465,7 @@ window.__electrobunBunBridge = window.__electrobunBunBridge || window.webkit?.me
+ 
+ 			native_.symbols.wgpuViewRemove(view.ptr);
+ 		},
+-		wgpuViewGetNativeHandle: (params: { id: number }): Pointer | null => {
++		wgpuViewGetNativeHandle: (params: { id: number }): Pointer | bigint | null => {
+ 			const view = WGPUView.getById(params.id);
+ 			if (!view?.ptr) {
+ 				console.error(
+@@ -1497,7 +1502,7 @@ window.__electrobunBunBridge = window.__electrobunBunBridge || window.webkit?.me
+ 			template: boolean;
+ 			width: number;
+ 			height: number;
+-		}): FFIType.ptr => {
++		}): Pointer | bigint => {
+ 			const { id, title, image, template, width, height } = params;
+ 
+ 			const trayPtr = native_.symbols.createTray(
+@@ -1646,7 +1651,7 @@ window.__electrobunBunBridge = window.__electrobunBunBridge || window.webkit?.me
+ 				allowsMultipleSelection ? 1 : 0,
+ 			);
+ 
+-			return filePath.toString();
++			return filePath?.toString() ?? "";
+ 		},
+ 		showMessageBox: (params: {
+ 			type?: string;
+@@ -2036,7 +2041,7 @@ const windowKeyCallback = new JSCallback(
+ 
+ const getMimeType = new JSCallback(
+ 	(filePath) => {
+-		const _filePath = new CString(filePath).toString();
++		const _filePath = fromCString(filePath);
+ 		const mimeType = Bun.file(_filePath).type; // || "application/octet-stream";
+ 
+ 		// For this usecase we generally don't want the charset included in the mimetype
+@@ -2074,7 +2079,7 @@ const globalShortcutHandlers = new Map<string, () => void>();
+ if (native) {
+ 	const urlOpenCallback = new JSCallback(
+ 		(urlPtr) => {
+-			const url = new CString(urlPtr).toString();
++			const url = fromCString(urlPtr);
+ 			const handler = electrobunEventEmitter.events.app.openUrl;
+ 			const event = handler({ url });
+ 			electrobunEventEmitter.emitEvent(event);
+@@ -2111,7 +2116,7 @@ if (native) {
+ 
+ 	const globalShortcutCallback = new JSCallback(
+ 		(acceleratorPtr) => {
+-			const accelerator = new CString(acceleratorPtr).toString();
++			const accelerator = fromCString(acceleratorPtr);
+ 			const handler = globalShortcutHandlers.get(accelerator);
+ 			if (handler) handler();
+ 		},
+@@ -2505,8 +2510,8 @@ const webviewEventJSCallback = new JSCallback(
+ 
+ 		try {
+ 			// Convert cstring pointers to actual strings
+-			eventName = new CString(_eventName).toString();
+-			detail = new CString(_detail).toString();
++			eventName = fromCString(_eventName);
++			detail = fromCString(_detail);
+ 		} catch (err) {
+ 			console.error("[webviewEventJSCallback] Error converting strings:", err);
+ 			console.error("[webviewEventJSCallback] Raw values:", {
+@@ -2528,7 +2533,7 @@ const webviewEventJSCallback = new JSCallback(
+ const bunBridgePostmessageHandler = new JSCallback(
+ 	(id, msg) => {
+ 		try {
+-			const msgStr = new CString(msg);
++			const msgStr = fromCString(msg);
+ 
+ 			if (!msgStr.length) {
+ 				return;
+@@ -2564,7 +2569,7 @@ const bunBridgePostmessageHandler = new JSCallback(
+ const eventBridgeHandler = new JSCallback(
+ 	(_id: number, msg: number) => {
+ 		try {
+-			const message = new CString(msg as unknown as Pointer);
++			const message = fromCString(msg as unknown as Pointer);
+ 			const rawMessage = message.toString().trim();
+ 			if (!rawMessage || (rawMessage[0] !== "{" && rawMessage[0] !== "[")) {
+ 				return;
+@@ -2593,7 +2598,7 @@ const eventBridgeHandler = new JSCallback(
+ const internalBridgeHandler = new JSCallback(
+ 	(_id: number, msg: number) => {
+ 		try {
+-			const batchMessage = new CString(msg as unknown as Pointer);
++			const batchMessage = fromCString(msg as unknown as Pointer);
+ 			const jsonBatch = JSON.parse(batchMessage.toString());
+ 
+ 			if (jsonBatch.id === "webviewEvent") {
+@@ -2664,7 +2669,7 @@ const trayItemHandler = new JSCallback(
+ 	(id, action) => {
+ 		// Note: Some invisible character that doesn't appear in .length
+ 		// is causing issues
+-		const actionString = (new CString(action).toString() || "").trim();
++		const actionString = (fromCString(action) || "").trim();
+ 
+ 		// Use shared deserialization method
+ 		const { action: actualAction, data } = deserializeMenuAction(actionString);
+@@ -2688,7 +2693,7 @@ const trayItemHandler = new JSCallback(
+ 
+ const applicationMenuHandler = new JSCallback(
+ 	(id, action) => {
+-		const actionString = new CString(action).toString();
++		const actionString = fromCString(action);
+ 
+ 		// Use shared deserialization method
+ 		const { action: actualAction, data } = deserializeMenuAction(actionString);
+@@ -2711,7 +2716,7 @@ const applicationMenuHandler = new JSCallback(
+ 
+ const contextMenuHandler = new JSCallback(
+ 	(_id, action) => {
+-		const actionString = new CString(action).toString();
++		const actionString = fromCString(action);
+ 
+ 		// Use shared deserialization method
+ 		const { action: actualAction, data } = deserializeMenuAction(actionString);

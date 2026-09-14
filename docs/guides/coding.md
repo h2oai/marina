@@ -107,7 +107,7 @@ rm -rf /tmp/marina-coding-agent-demo
 
 - **“No provider key” or model error:** export a supported provider key in the same shell, then
   relaunch `bun run code …`.
-- **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.1, and
+- **Server timeout:** run `bun install` in the Marina repository, confirm Bun is at least 1.4.2, and
   retry.
 - **Stale project database:** a per-folder DB written by an older Marina version can block boot.
   The failure hint prints the exact path (`~/.marina/projects/<slug>/marina.db`) — remove it, or

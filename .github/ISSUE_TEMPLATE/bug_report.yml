@@ -39,7 +39,7 @@ body:
       label: Environment
       description: Bun version, OS, world, upstream model provider if any.
       placeholder: |
-        Bun: 1.2.x
+        Bun: 1.4.2
         Marina: release tag or git SHA
         OS: Ubuntu 24.04
         MARINA_WORLD: default

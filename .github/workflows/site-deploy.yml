@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - "site/**"
+      - ".bun-version"
       - "docs/guides/**"
       - ".github/workflows/site-deploy.yml"
   workflow_dispatch:
@@ -28,7 +29,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - uses: oven-sh/setup-bun@v2.2.0
         with:
-          bun-version: latest
+          bun-version-file: .bun-version
       - name: Install site deps
         run: cd site && bun install --frozen-lockfile
       - name: Build site

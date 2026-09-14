@@ -51,14 +51,14 @@
     "extensions/langgraph-store/README.md"
   ],
   "engines": {
-    "bun": ">=1.1.0"
+    "bun": ">=1.4.2"
   },
   "scripts": {
     "start": "bun run src/main.ts",
     "code": "bun run scripts/code.ts",
     "dev": "bun run src/main.ts",
     "build": "bun build src/main.ts --outdir dist --target bun && bun build src/memory/import-process.ts --outfile dist/memory-import.js --target bun && bun run build:memory",
-    "test": "bun test --path-ignore-patterns '**/dashboard/**' --path-ignore-patterns '**/examples/coding-agent-demo/**'",
+    "test": "bun test --path-ignore-patterns '**/dashboard/**' --path-ignore-patterns '**/examples/coding-agent-demo/**' --path-ignore-patterns '**/marina-desktop/**'",
     "typecheck": "tsc --noEmit",
     "lint": "biome check src/ test/ dashboard/src/",
     "format": "biome format --write src/ test/ dashboard/src/",
@@ -146,5 +146,6 @@
       "default": "./dist/memory.js"
     },
     "./*": "./*"
-  }
+  },
+  "packageManager": "bun@1.4.2"
 }
