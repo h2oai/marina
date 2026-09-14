@@ -231,3 +231,37 @@ absolute scores are not comparable across sections — only the within-run
 bare/cold/warm deltas are the claim. Total run cost ≈ $1. Runner script
 preserved in the session scratchpad (`genbench/run-pass.sh`); a full N=50 ×
 13-benchmark × answerer-crew rerun remains the operator-approval item.
+
+---
+
+## 6. genbench harness — reporting standard established, no new numbers, 2026-09-13
+
+§5 called for a full rerun. Before spending on one, the instrument was rebuilt so that the
+next number can be cited. `benchmarks/memory/genbench.ts` (Phase 1.7) replaces the
+scratchpad `genbench/run-pass.sh` with a committed harness that enforces:
+
+- **Held-out items.** Seed/eval split by seed-stable hash; memory is seeded only from the seed
+  split and only eval items are scored. §5's "warm" reran the same ten questions into the DB
+  those questions had built — lookup, not memory. That protocol is no longer expressible here.
+- **Five arms under one harness.** `bare`, `cold`, `warm`, plus matched controls
+  `fullcontext` (whole seeded corpus inline) and `bm25` (top-k legacy FTS, verbatim). Warm,
+  bm25, and fullcontext receive identical corpora per seed; only the injection mechanism
+  differs.
+- **Resident-path injection.** Memory context is built with the same functions the agent
+  continuation prompt uses (`recallNotes` → `expandMemoryRecall` → `renderRelevantNoteTiers`,
+  recorded as `residentContextVersion` in every result), not SDK-side `agent.recall()` +
+  string concatenation as in §5.
+- **Statistics and accounting.** ≥5 seeds (default), Wilson 95% intervals on pooled accuracy,
+  seed-level mean ± CI, token-F1 next to judge accuracy, tokens injected (mean/p95), latency
+  (p50/p95), provider usage and cost when a real model runs, judge prompt copied into the file.
+- **Offline determinism.** `--model stub --judge stub` runs the whole pipeline with no network
+  (a fetch guard counts and refuses attempts); `test/memory-benchmark-harness.test.ts` runs it
+  on the committed `items/synthetic-v1.json` (50 fictional facts × 2 paraphrases).
+
+**No new benchmark numbers were produced in this section.** The stub-model stair-step
+(≈ bare 61 → cold 69 → bm25/fullcontext 68 → warm 77 on synthetic-v1, 3 seeds) is a plumbing
+check that the pipeline transfers knowledge across the held-out split; it says nothing about
+any real model. The §5 figures stand as a pilot with the caveats listed in
+`benchmarks/memory/README.md` ("Why §5 is a pilot"). The N≥200 × 5-seed × real-model rerun
+remains the operator-approval item; when it runs, its results belong in a §7 here, quoted from
+the JSON config and metrics blocks.

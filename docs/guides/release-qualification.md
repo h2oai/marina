@@ -26,3 +26,18 @@ Do not describe an unavailable or skipped live gate as passed. Preserve its outp
 IDs, artifacts, environment prerequisites (never secret values), source commit, and evidence
 checkpoint with the release record. World Collective comparisons should cite the exact baseline and
 candidate variant IDs and retain the promotion rationale and evidence references.
+
+## Memory-delta benchmark
+
+`bun run qualify:memory:benchmark` runs the memory-delta harness (`benchmarks/memory/genbench.ts`)
+offline with the deterministic stub model and exact-match judge. It is a plumbing gate: it proves
+the five arms (`bare`, `cold`, `warm`, `fullcontext`, `bm25`), the held-out seed/eval split, the
+resident-path memory injection, and the result schema all work without touching the network. It
+produces no evidence about any real model.
+
+A memory *claim* in a release record needs a real-model run under the same harness
+(`--model <id> --judge <id> --seeds 5` or more against a running instance), and must quote the
+per-arm Wilson 95% intervals, token-F1 next to judge accuracy, tokens injected, latency, cost,
+the judge prompt version, split salt, harness git sha, and `residentContextVersion` from the
+result JSON in `benchmarks/results/memory/`. Do not cite the `HISTORY.md` §5 pilot figures as a
+result; the reporting standard and its rationale are in `benchmarks/memory/README.md`.

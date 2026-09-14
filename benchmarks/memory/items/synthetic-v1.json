@@ -1,0 +1,1206 @@
+{
+  "version": "synthetic-v1",
+  "description": "100 fictional-fact questions: 50 facts x 2 paraphrases. Held-out transfer requires recalling a note written about the sibling paraphrase. No real model can know these facts.",
+  "items": [
+    {
+      "id": "syn-001",
+      "question": "What is the diameter of the Verlaine Observatory's primary mirror?",
+      "answer": "4.7 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-01",
+        "paraphrase": 1,
+        "subject": "Verlaine Observatory",
+        "statement": "The Verlaine Observatory's primary mirror is 4.7 meters across."
+      }
+    },
+    {
+      "id": "syn-002",
+      "question": "How wide is the main mirror at the Verlaine Observatory?",
+      "answer": "4.7 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-01",
+        "paraphrase": 2,
+        "subject": "Verlaine Observatory",
+        "statement": "The Verlaine Observatory's primary mirror is 4.7 meters across."
+      }
+    },
+    {
+      "id": "syn-003",
+      "question": "In which year was the Tessaly Canal opened to barge traffic?",
+      "answer": "1873",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-02",
+        "paraphrase": 1,
+        "subject": "Tessaly Canal",
+        "statement": "The Tessaly Canal opened to barge traffic in 1873."
+      }
+    },
+    {
+      "id": "syn-004",
+      "question": "When did barges first use the Tessaly Canal?",
+      "answer": "1873",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-02",
+        "paraphrase": 2,
+        "subject": "Tessaly Canal",
+        "statement": "The Tessaly Canal opened to barge traffic in 1873."
+      }
+    },
+    {
+      "id": "syn-005",
+      "question": "How tall is the Marrow Point lighthouse?",
+      "answer": "38 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-03",
+        "paraphrase": 1,
+        "subject": "Marrow Point lighthouse",
+        "statement": "The Marrow Point lighthouse stands 38 meters tall."
+      }
+    },
+    {
+      "id": "syn-006",
+      "question": "What is the height of the lighthouse at Marrow Point?",
+      "answer": "38 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-03",
+        "paraphrase": 2,
+        "subject": "Marrow Point lighthouse",
+        "statement": "The Marrow Point lighthouse stands 38 meters tall."
+      }
+    },
+    {
+      "id": "syn-007",
+      "question": "Which metal did the Oberlund Foundry specialize in casting?",
+      "answer": "phosphor bronze",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-04",
+        "paraphrase": 1,
+        "subject": "Oberlund Foundry",
+        "statement": "The Oberlund Foundry specialized in casting phosphor bronze."
+      }
+    },
+    {
+      "id": "syn-008",
+      "question": "What metal was the Oberlund Foundry known for?",
+      "answer": "phosphor bronze",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-04",
+        "paraphrase": 2,
+        "subject": "Oberlund Foundry",
+        "statement": "The Oberlund Foundry specialized in casting phosphor bronze."
+      }
+    },
+    {
+      "id": "syn-009",
+      "question": "How long is the Quillon River?",
+      "answer": "612 kilometers",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-05",
+        "paraphrase": 1,
+        "subject": "Quillon River",
+        "statement": "The Quillon River runs 612 kilometers."
+      }
+    },
+    {
+      "id": "syn-010",
+      "question": "What is the total length of the Quillon River?",
+      "answer": "612 kilometers",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-05",
+        "paraphrase": 2,
+        "subject": "Quillon River",
+        "statement": "The Quillon River runs 612 kilometers."
+      }
+    },
+    {
+      "id": "syn-011",
+      "question": "How many manuscripts does the Hallendale Archive hold?",
+      "answer": "41,200",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-06",
+        "paraphrase": 1,
+        "subject": "Hallendale Archive",
+        "statement": "The Hallendale Archive holds 41,200 manuscripts."
+      }
+    },
+    {
+      "id": "syn-012",
+      "question": "What is the manuscript count of the Hallendale Archive?",
+      "answer": "41,200",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-06",
+        "paraphrase": 2,
+        "subject": "Hallendale Archive",
+        "statement": "The Hallendale Archive holds 41,200 manuscripts."
+      }
+    },
+    {
+      "id": "syn-013",
+      "question": "Which line terminates at Brisket Station?",
+      "answer": "the Ember Line",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-07",
+        "paraphrase": 1,
+        "subject": "Brisket Station",
+        "statement": "The Ember Line terminates at Brisket Station."
+      }
+    },
+    {
+      "id": "syn-014",
+      "question": "What rail line ends at Brisket Station?",
+      "answer": "the Ember Line",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-07",
+        "paraphrase": 2,
+        "subject": "Brisket Station",
+        "statement": "The Ember Line terminates at Brisket Station."
+      }
+    },
+    {
+      "id": "syn-015",
+      "question": "How many arches does the Corvane Bridge have?",
+      "answer": "eleven",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-08",
+        "paraphrase": 1,
+        "subject": "Corvane Bridge",
+        "statement": "The Corvane Bridge has eleven arches."
+      }
+    },
+    {
+      "id": "syn-016",
+      "question": "What is the arch count of the Corvane Bridge?",
+      "answer": "eleven",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-08",
+        "paraphrase": 2,
+        "subject": "Corvane Bridge",
+        "statement": "The Corvane Bridge has eleven arches."
+      }
+    },
+    {
+      "id": "syn-017",
+      "question": "In which month is the Salt Merrow Festival held?",
+      "answer": "October",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-09",
+        "paraphrase": 1,
+        "subject": "Salt Merrow Festival",
+        "statement": "The Salt Merrow Festival is held every October."
+      }
+    },
+    {
+      "id": "syn-018",
+      "question": "When during the year does the Salt Merrow Festival take place?",
+      "answer": "October",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-09",
+        "paraphrase": 2,
+        "subject": "Salt Merrow Festival",
+        "statement": "The Salt Merrow Festival is held every October."
+      }
+    },
+    {
+      "id": "syn-019",
+      "question": "What denomination did the Ilsevar Mint strike first?",
+      "answer": "the half-crown",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-10",
+        "paraphrase": 1,
+        "subject": "Ilsevar Mint",
+        "statement": "The Ilsevar Mint struck the half-crown first."
+      }
+    },
+    {
+      "id": "syn-020",
+      "question": "Which coin was the first struck by the Ilsevar Mint?",
+      "answer": "the half-crown",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-10",
+        "paraphrase": 2,
+        "subject": "Ilsevar Mint",
+        "statement": "The Ilsevar Mint struck the half-crown first."
+      }
+    },
+    {
+      "id": "syn-021",
+      "question": "What coolant does the Dunmore Reactor use?",
+      "answer": "molten sodium",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-11",
+        "paraphrase": 1,
+        "subject": "Dunmore Reactor",
+        "statement": "The Dunmore Reactor is cooled by molten sodium."
+      }
+    },
+    {
+      "id": "syn-022",
+      "question": "Which coolant circulates through the Dunmore Reactor?",
+      "answer": "molten sodium",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-11",
+        "paraphrase": 2,
+        "subject": "Dunmore Reactor",
+        "statement": "The Dunmore Reactor is cooled by molten sodium."
+      }
+    },
+    {
+      "id": "syn-023",
+      "question": "Which apple variety is grown at the Pellagrin Orchard?",
+      "answer": "Greyfinch",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-12",
+        "paraphrase": 1,
+        "subject": "Pellagrin Orchard",
+        "statement": "The Pellagrin Orchard grows the Greyfinch apple."
+      }
+    },
+    {
+      "id": "syn-024",
+      "question": "What kind of apple does the Pellagrin Orchard produce?",
+      "answer": "Greyfinch",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-12",
+        "paraphrase": 2,
+        "subject": "Pellagrin Orchard",
+        "statement": "The Pellagrin Orchard grows the Greyfinch apple."
+      }
+    },
+    {
+      "id": "syn-025",
+      "question": "How many liters per second does the Wexley Aqueduct carry?",
+      "answer": "2,300 liters per second",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-13",
+        "paraphrase": 1,
+        "subject": "Wexley Aqueduct",
+        "statement": "The Wexley Aqueduct carries 2,300 liters per second."
+      }
+    },
+    {
+      "id": "syn-026",
+      "question": "What is the flow rate of the Wexley Aqueduct?",
+      "answer": "2,300 liters per second",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-13",
+        "paraphrase": 2,
+        "subject": "Wexley Aqueduct",
+        "statement": "The Wexley Aqueduct carries 2,300 liters per second."
+      }
+    },
+    {
+      "id": "syn-027",
+      "question": "How many singers make up the Ashgrove Choir?",
+      "answer": "54",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-14",
+        "paraphrase": 1,
+        "subject": "Ashgrove Choir",
+        "statement": "The Ashgrove Choir has 54 singers."
+      }
+    },
+    {
+      "id": "syn-028",
+      "question": "What is the membership size of the Ashgrove Choir?",
+      "answer": "54",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-14",
+        "paraphrase": 2,
+        "subject": "Ashgrove Choir",
+        "statement": "The Ashgrove Choir has 54 singers."
+      }
+    },
+    {
+      "id": "syn-029",
+      "question": "What wavelength band does the Farrow Telescope observe?",
+      "answer": "far infrared",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-15",
+        "paraphrase": 1,
+        "subject": "Farrow Telescope",
+        "statement": "The Farrow Telescope observes in the far infrared."
+      }
+    },
+    {
+      "id": "syn-030",
+      "question": "Which band is the Farrow Telescope built to observe?",
+      "answer": "far infrared",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-15",
+        "paraphrase": 2,
+        "subject": "Farrow Telescope",
+        "statement": "The Farrow Telescope observes in the far infrared."
+      }
+    },
+    {
+      "id": "syn-031",
+      "question": "Who designed the Kestrel Vault?",
+      "answer": "Imre Sallow",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-16",
+        "paraphrase": 1,
+        "subject": "Kestrel Vault",
+        "statement": "Imre Sallow designed the Kestrel Vault."
+      }
+    },
+    {
+      "id": "syn-032",
+      "question": "Which architect was responsible for the Kestrel Vault?",
+      "answer": "Imre Sallow",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-16",
+        "paraphrase": 2,
+        "subject": "Kestrel Vault",
+        "statement": "Imre Sallow designed the Kestrel Vault."
+      }
+    },
+    {
+      "id": "syn-033",
+      "question": "What is the crest height of the Brackwater Dam?",
+      "answer": "127 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-17",
+        "paraphrase": 1,
+        "subject": "Brackwater Dam",
+        "statement": "The Brackwater Dam has a crest height of 127 meters."
+      }
+    },
+    {
+      "id": "syn-034",
+      "question": "How high is the crest of the Brackwater Dam?",
+      "answer": "127 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-17",
+        "paraphrase": 2,
+        "subject": "Brackwater Dam",
+        "statement": "The Brackwater Dam has a crest height of 127 meters."
+      }
+    },
+    {
+      "id": "syn-035",
+      "question": "In which language is the Lindqvist Codex written?",
+      "answer": "Old Vessic",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-18",
+        "paraphrase": 1,
+        "subject": "Lindqvist Codex",
+        "statement": "The Lindqvist Codex is written in Old Vessic."
+      }
+    },
+    {
+      "id": "syn-036",
+      "question": "What language was used for the Lindqvist Codex?",
+      "answer": "Old Vessic",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-18",
+        "paraphrase": 2,
+        "subject": "Lindqvist Codex",
+        "statement": "The Lindqvist Codex is written in Old Vessic."
+      }
+    },
+    {
+      "id": "syn-037",
+      "question": "At what elevation is the summit of Orrin Pass?",
+      "answer": "2,940 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-19",
+        "paraphrase": 1,
+        "subject": "Orrin Pass",
+        "statement": "Orrin Pass reaches 2,940 meters at its summit."
+      }
+    },
+    {
+      "id": "syn-038",
+      "question": "How high is the top of Orrin Pass?",
+      "answer": "2,940 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-19",
+        "paraphrase": 2,
+        "subject": "Orrin Pass",
+        "statement": "Orrin Pass reaches 2,940 meters at its summit."
+      }
+    },
+    {
+      "id": "syn-039",
+      "question": "What grain does the Mavrell Distillery use?",
+      "answer": "black barley",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-20",
+        "paraphrase": 1,
+        "subject": "Mavrell Distillery",
+        "statement": "The Mavrell Distillery distills black barley."
+      }
+    },
+    {
+      "id": "syn-040",
+      "question": "Which grain is the Mavrell Distillery's spirit made from?",
+      "answer": "black barley",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-20",
+        "paraphrase": 2,
+        "subject": "Mavrell Distillery",
+        "statement": "The Mavrell Distillery distills black barley."
+      }
+    },
+    {
+      "id": "syn-041",
+      "question": "What was the first book printed by the Sablewick Press?",
+      "answer": "The Tidal Almanac",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-21",
+        "paraphrase": 1,
+        "subject": "Sablewick Press",
+        "statement": "The Sablewick Press first printed The Tidal Almanac."
+      }
+    },
+    {
+      "id": "syn-042",
+      "question": "Which title did the Sablewick Press publish first?",
+      "answer": "The Tidal Almanac",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-21",
+        "paraphrase": 2,
+        "subject": "Sablewick Press",
+        "statement": "The Sablewick Press first printed The Tidal Almanac."
+      }
+    },
+    {
+      "id": "syn-043",
+      "question": "How long is the Renfield Tunnel?",
+      "answer": "8.4 kilometers",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-22",
+        "paraphrase": 1,
+        "subject": "Renfield Tunnel",
+        "statement": "The Renfield Tunnel is 8.4 kilometers long."
+      }
+    },
+    {
+      "id": "syn-044",
+      "question": "What is the length of the Renfield Tunnel?",
+      "answer": "8.4 kilometers",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-22",
+        "paraphrase": 2,
+        "subject": "Renfield Tunnel",
+        "statement": "The Renfield Tunnel is 8.4 kilometers long."
+      }
+    },
+    {
+      "id": "syn-045",
+      "question": "How fast does the Vantor Glacier advance each year?",
+      "answer": "19 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-23",
+        "paraphrase": 1,
+        "subject": "Vantor Glacier",
+        "statement": "The Vantor Glacier advances 19 meters per year."
+      }
+    },
+    {
+      "id": "syn-046",
+      "question": "What is the annual advance of the Vantor Glacier?",
+      "answer": "19 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-23",
+        "paraphrase": 2,
+        "subject": "Vantor Glacier",
+        "statement": "The Vantor Glacier advances 19 meters per year."
+      }
+    },
+    {
+      "id": "syn-047",
+      "question": "On which weekday does the Hollin Square market open?",
+      "answer": "Thursday",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-24",
+        "paraphrase": 1,
+        "subject": "Hollin Square market",
+        "statement": "The Hollin Square market opens on Thursdays."
+      }
+    },
+    {
+      "id": "syn-048",
+      "question": "What day of the week is market day at Hollin Square?",
+      "answer": "Thursday",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-24",
+        "paraphrase": 2,
+        "subject": "Hollin Square market",
+        "statement": "The Hollin Square market opens on Thursdays."
+      }
+    },
+    {
+      "id": "syn-049",
+      "question": "What fish does the Greaves Cannery process?",
+      "answer": "silver pollock",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-25",
+        "paraphrase": 1,
+        "subject": "Greaves Cannery",
+        "statement": "The Greaves Cannery processes silver pollock."
+      }
+    },
+    {
+      "id": "syn-050",
+      "question": "Which species is packed at the Greaves Cannery?",
+      "answer": "silver pollock",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-25",
+        "paraphrase": 2,
+        "subject": "Greaves Cannery",
+        "statement": "The Greaves Cannery processes silver pollock."
+      }
+    },
+    {
+      "id": "syn-051",
+      "question": "How many bells hang in the Thornbury Clock tower?",
+      "answer": "seven",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-26",
+        "paraphrase": 1,
+        "subject": "Thornbury Clock",
+        "statement": "The Thornbury Clock tower holds seven bells."
+      }
+    },
+    {
+      "id": "syn-052",
+      "question": "What is the bell count of the Thornbury Clock?",
+      "answer": "seven",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-26",
+        "paraphrase": 2,
+        "subject": "Thornbury Clock",
+        "statement": "The Thornbury Clock tower holds seven bells."
+      }
+    },
+    {
+      "id": "syn-053",
+      "question": "What year did the Eldmark Library burn?",
+      "answer": "1911",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-27",
+        "paraphrase": 1,
+        "subject": "Eldmark Library",
+        "statement": "The Eldmark Library burned in 1911."
+      }
+    },
+    {
+      "id": "syn-054",
+      "question": "When was the fire at the Eldmark Library?",
+      "answer": "1911",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-27",
+        "paraphrase": 2,
+        "subject": "Eldmark Library",
+        "statement": "The Eldmark Library burned in 1911."
+      }
+    },
+    {
+      "id": "syn-055",
+      "question": "What ore was extracted from the Coppervale Mine?",
+      "answer": "malachite",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-28",
+        "paraphrase": 1,
+        "subject": "Coppervale Mine",
+        "statement": "The Coppervale Mine produced malachite."
+      }
+    },
+    {
+      "id": "syn-056",
+      "question": "Which mineral did the Coppervale Mine produce?",
+      "answer": "malachite",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-28",
+        "paraphrase": 2,
+        "subject": "Coppervale Mine",
+        "statement": "The Coppervale Mine produced malachite."
+      }
+    },
+    {
+      "id": "syn-057",
+      "question": "How many passengers can the Noorwind Ferry carry?",
+      "answer": "310",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-29",
+        "paraphrase": 1,
+        "subject": "Noorwind Ferry",
+        "statement": "The Noorwind Ferry carries 310 passengers."
+      }
+    },
+    {
+      "id": "syn-058",
+      "question": "What is the passenger capacity of the Noorwind Ferry?",
+      "answer": "310",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-29",
+        "paraphrase": 2,
+        "subject": "Noorwind Ferry",
+        "statement": "The Noorwind Ferry carries 310 passengers."
+      }
+    },
+    {
+      "id": "syn-059",
+      "question": "What flower is the Pallister Gardens famous for?",
+      "answer": "the moon iris",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-30",
+        "paraphrase": 1,
+        "subject": "Pallister Gardens",
+        "statement": "The Pallister Gardens are famous for the moon iris."
+      }
+    },
+    {
+      "id": "syn-060",
+      "question": "Which bloom draws visitors to the Pallister Gardens?",
+      "answer": "the moon iris",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-30",
+        "paraphrase": 2,
+        "subject": "Pallister Gardens",
+        "statement": "The Pallister Gardens are famous for the moon iris."
+      }
+    },
+    {
+      "id": "syn-061",
+      "question": "How many turbines stand at the Stanmoor Windfarm?",
+      "answer": "46",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-31",
+        "paraphrase": 1,
+        "subject": "Stanmoor Windfarm",
+        "statement": "The Stanmoor Windfarm has 46 turbines."
+      }
+    },
+    {
+      "id": "syn-062",
+      "question": "What is the turbine count at Stanmoor Windfarm?",
+      "answer": "46",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-31",
+        "paraphrase": 2,
+        "subject": "Stanmoor Windfarm",
+        "statement": "The Stanmoor Windfarm has 46 turbines."
+      }
+    },
+    {
+      "id": "syn-063",
+      "question": "Which order founded Gallowmere Abbey?",
+      "answer": "the Cistern Brothers",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-32",
+        "paraphrase": 1,
+        "subject": "Gallowmere Abbey",
+        "statement": "Gallowmere Abbey was founded by the Cistern Brothers."
+      }
+    },
+    {
+      "id": "syn-064",
+      "question": "What monastic order established Gallowmere Abbey?",
+      "answer": "the Cistern Brothers",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-32",
+        "paraphrase": 2,
+        "subject": "Gallowmere Abbey",
+        "statement": "Gallowmere Abbey was founded by the Cistern Brothers."
+      }
+    },
+    {
+      "id": "syn-065",
+      "question": "How tall is the Ulverston Spire?",
+      "answer": "91 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-33",
+        "paraphrase": 1,
+        "subject": "Ulverston Spire",
+        "statement": "The Ulverston Spire is 91 meters tall."
+      }
+    },
+    {
+      "id": "syn-066",
+      "question": "What height does the Ulverston Spire reach?",
+      "answer": "91 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-33",
+        "paraphrase": 2,
+        "subject": "Ulverston Spire",
+        "statement": "The Ulverston Spire is 91 meters tall."
+      }
+    },
+    {
+      "id": "syn-067",
+      "question": "What fabric did the Jarrow Loom Works weave?",
+      "answer": "sailcloth",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-34",
+        "paraphrase": 1,
+        "subject": "Jarrow Loom Works",
+        "statement": "The Jarrow Loom Works wove sailcloth."
+      }
+    },
+    {
+      "id": "syn-068",
+      "question": "Which textile came out of the Jarrow Loom Works?",
+      "answer": "sailcloth",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-34",
+        "paraphrase": 2,
+        "subject": "Jarrow Loom Works",
+        "statement": "The Jarrow Loom Works wove sailcloth."
+      }
+    },
+    {
+      "id": "syn-069",
+      "question": "What is the orbital period of the Merrivale Comet?",
+      "answer": "63 years",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-35",
+        "paraphrase": 1,
+        "subject": "Merrivale Comet",
+        "statement": "The Merrivale Comet has a 63-year orbital period."
+      }
+    },
+    {
+      "id": "syn-070",
+      "question": "How often does the Merrivale Comet return?",
+      "answer": "63 years",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-35",
+        "paraphrase": 2,
+        "subject": "Merrivale Comet",
+        "statement": "The Merrivale Comet has a 63-year orbital period."
+      }
+    },
+    {
+      "id": "syn-071",
+      "question": "How many berths does Osprey Quay have?",
+      "answer": "fourteen",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-36",
+        "paraphrase": 1,
+        "subject": "Osprey Quay",
+        "statement": "Osprey Quay has fourteen berths."
+      }
+    },
+    {
+      "id": "syn-072",
+      "question": "What is the berth count at Osprey Quay?",
+      "answer": "fourteen",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-36",
+        "paraphrase": 2,
+        "subject": "Osprey Quay",
+        "statement": "Osprey Quay has fourteen berths."
+      }
+    },
+    {
+      "id": "syn-073",
+      "question": "How many members does the Fennick Observatory Society have?",
+      "answer": "220",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-37",
+        "paraphrase": 1,
+        "subject": "Fennick Observatory Society",
+        "statement": "The Fennick Observatory Society has 220 members."
+      }
+    },
+    {
+      "id": "syn-074",
+      "question": "What is the size of the Fennick Observatory Society?",
+      "answer": "220",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-37",
+        "paraphrase": 2,
+        "subject": "Fennick Observatory Society",
+        "statement": "The Fennick Observatory Society has 220 members."
+      }
+    },
+    {
+      "id": "syn-075",
+      "question": "How many spans make up the Halloway Viaduct?",
+      "answer": "twenty-three",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-38",
+        "paraphrase": 1,
+        "subject": "Halloway Viaduct",
+        "statement": "The Halloway Viaduct has twenty-three spans."
+      }
+    },
+    {
+      "id": "syn-076",
+      "question": "What is the span count of the Halloway Viaduct?",
+      "answer": "twenty-three",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-38",
+        "paraphrase": 2,
+        "subject": "Halloway Viaduct",
+        "statement": "The Halloway Viaduct has twenty-three spans."
+      }
+    },
+    {
+      "id": "syn-077",
+      "question": "What did the Bexley Kiln fire?",
+      "answer": "salt-glazed stoneware",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-39",
+        "paraphrase": 1,
+        "subject": "Bexley Kiln",
+        "statement": "The Bexley Kiln fired salt-glazed stoneware."
+      }
+    },
+    {
+      "id": "syn-078",
+      "question": "Which product was made in the Bexley Kiln?",
+      "answer": "salt-glazed stoneware",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-39",
+        "paraphrase": 2,
+        "subject": "Bexley Kiln",
+        "statement": "The Bexley Kiln fired salt-glazed stoneware."
+      }
+    },
+    {
+      "id": "syn-079",
+      "question": "What is the maximum depth of Tarrow Lake?",
+      "answer": "84 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-40",
+        "paraphrase": 1,
+        "subject": "Tarrow Lake",
+        "statement": "Tarrow Lake is 84 meters deep at its deepest point."
+      }
+    },
+    {
+      "id": "syn-080",
+      "question": "How deep is Tarrow Lake at its deepest?",
+      "answer": "84 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-40",
+        "paraphrase": 2,
+        "subject": "Tarrow Lake",
+        "statement": "Tarrow Lake is 84 meters deep at its deepest point."
+      }
+    },
+    {
+      "id": "syn-081",
+      "question": "What gauge does the Ravensworth Rail run on?",
+      "answer": "narrow gauge, 762 millimeters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-41",
+        "paraphrase": 1,
+        "subject": "Ravensworth Rail",
+        "statement": "The Ravensworth Rail runs on 762-millimeter narrow gauge."
+      }
+    },
+    {
+      "id": "syn-082",
+      "question": "Which track gauge is used by the Ravensworth Rail?",
+      "answer": "narrow gauge, 762 millimeters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-41",
+        "paraphrase": 2,
+        "subject": "Ravensworth Rail",
+        "statement": "The Ravensworth Rail runs on 762-millimeter narrow gauge."
+      }
+    },
+    {
+      "id": "syn-083",
+      "question": "Who sculpted the Isolde Fountain?",
+      "answer": "Petra Vandenholm",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-42",
+        "paraphrase": 1,
+        "subject": "Isolde Fountain",
+        "statement": "Petra Vandenholm sculpted the Isolde Fountain."
+      }
+    },
+    {
+      "id": "syn-084",
+      "question": "Which sculptor made the Isolde Fountain?",
+      "answer": "Petra Vandenholm",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-42",
+        "paraphrase": 2,
+        "subject": "Isolde Fountain",
+        "statement": "Petra Vandenholm sculpted the Isolde Fountain."
+      }
+    },
+    {
+      "id": "syn-085",
+      "question": "How long is the Callow Ridge trail?",
+      "answer": "27 kilometers",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-43",
+        "paraphrase": 1,
+        "subject": "Callow Ridge trail",
+        "statement": "The Callow Ridge trail is 27 kilometers long."
+      }
+    },
+    {
+      "id": "syn-086",
+      "question": "What distance does the Callow Ridge trail cover?",
+      "answer": "27 kilometers",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-43",
+        "paraphrase": 2,
+        "subject": "Callow Ridge trail",
+        "statement": "The Callow Ridge trail is 27 kilometers long."
+      }
+    },
+    {
+      "id": "syn-087",
+      "question": "What field does the Deverell Institute research?",
+      "answer": "glaciology",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-44",
+        "paraphrase": 1,
+        "subject": "Deverell Institute",
+        "statement": "The Deverell Institute researches glaciology."
+      }
+    },
+    {
+      "id": "syn-088",
+      "question": "Which discipline is the Deverell Institute devoted to?",
+      "answer": "glaciology",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-44",
+        "paraphrase": 2,
+        "subject": "Deverell Institute",
+        "statement": "The Deverell Institute researches glaciology."
+      }
+    },
+    {
+      "id": "syn-089",
+      "question": "What wood does the Norrell Smokehouse burn?",
+      "answer": "alder",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-45",
+        "paraphrase": 1,
+        "subject": "Norrell Smokehouse",
+        "statement": "The Norrell Smokehouse burns alder."
+      }
+    },
+    {
+      "id": "syn-090",
+      "question": "Which wood is used for smoking at the Norrell Smokehouse?",
+      "answer": "alder",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-45",
+        "paraphrase": 2,
+        "subject": "Norrell Smokehouse",
+        "statement": "The Norrell Smokehouse burns alder."
+      }
+    },
+    {
+      "id": "syn-091",
+      "question": "In which year was the Wyvern Gate rebuilt?",
+      "answer": "1786",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-46",
+        "paraphrase": 1,
+        "subject": "Wyvern Gate",
+        "statement": "The Wyvern Gate was rebuilt in 1786."
+      }
+    },
+    {
+      "id": "syn-092",
+      "question": "When was the reconstruction of the Wyvern Gate completed?",
+      "answer": "1786",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-46",
+        "paraphrase": 2,
+        "subject": "Wyvern Gate",
+        "statement": "The Wyvern Gate was rebuilt in 1786."
+      }
+    },
+    {
+      "id": "syn-093",
+      "question": "How long is the main runway at Larkspur Airfield?",
+      "answer": "1,950 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-47",
+        "paraphrase": 1,
+        "subject": "Larkspur Airfield",
+        "statement": "Larkspur Airfield's main runway is 1,950 meters."
+      }
+    },
+    {
+      "id": "syn-094",
+      "question": "What is the runway length at Larkspur Airfield?",
+      "answer": "1,950 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-47",
+        "paraphrase": 2,
+        "subject": "Larkspur Airfield",
+        "statement": "Larkspur Airfield's main runway is 1,950 meters."
+      }
+    },
+    {
+      "id": "syn-095",
+      "question": "What bread is the Amberline Bakery known for?",
+      "answer": "rye and fennel loaf",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-48",
+        "paraphrase": 1,
+        "subject": "Amberline Bakery",
+        "statement": "The Amberline Bakery is known for its rye and fennel loaf."
+      }
+    },
+    {
+      "id": "syn-096",
+      "question": "Which loaf made the Amberline Bakery famous?",
+      "answer": "rye and fennel loaf",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-48",
+        "paraphrase": 2,
+        "subject": "Amberline Bakery",
+        "statement": "The Amberline Bakery is known for its rye and fennel loaf."
+      }
+    },
+    {
+      "id": "syn-097",
+      "question": "How many liters does the Kilbride Cistern hold?",
+      "answer": "5.6 million liters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-49",
+        "paraphrase": 1,
+        "subject": "Kilbride Cistern",
+        "statement": "The Kilbride Cistern holds 5.6 million liters."
+      }
+    },
+    {
+      "id": "syn-098",
+      "question": "What is the capacity of the Kilbride Cistern?",
+      "answer": "5.6 million liters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-49",
+        "paraphrase": 2,
+        "subject": "Kilbride Cistern",
+        "statement": "The Kilbride Cistern holds 5.6 million liters."
+      }
+    },
+    {
+      "id": "syn-099",
+      "question": "What is the elevation of Sorrel Peak?",
+      "answer": "3,410 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-50",
+        "paraphrase": 1,
+        "subject": "Sorrel Peak",
+        "statement": "Sorrel Peak rises to 3,410 meters."
+      }
+    },
+    {
+      "id": "syn-100",
+      "question": "How high is Sorrel Peak?",
+      "answer": "3,410 meters",
+      "category": "synthetic",
+      "metadata": {
+        "factId": "fact-50",
+        "paraphrase": 2,
+        "subject": "Sorrel Peak",
+        "statement": "Sorrel Peak rises to 3,410 meters."
+      }
+    }
+  ]
+}

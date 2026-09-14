@@ -78,7 +78,7 @@ function seededShuffle<T>(arr: T[], seed: number): T[] {
   for (let i = result.length - 1; i > 0; i--) {
     s = (s * 1664525 + 1013904223) & 0x7fffffff;
     const j = s % (i + 1);
-    [result[i], result[j]] = [result[j], result[i]];
+    [result[i], result[j]] = [result[j]!, result[i]!];
   }
   return result;
 }
@@ -279,7 +279,7 @@ export async function downloadMTBench(_dir: string, limit?: number): Promise<Dat
 
   const items: DatasetItem[] = raw.map((r, i) => ({
     id: r.prompt_id ?? `mt-bench-${i}`,
-    question: r.prompt[0],
+    question: r.prompt[0] ?? "",
     answer: r.reference?.[0] ?? "",
     category: r.category,
     metadata: {

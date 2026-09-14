@@ -56,6 +56,28 @@ bun run benchmarks/harness.ts --benchmark retention --mode memory --compare pass
 bun run benchmarks/harness.ts --benchmark mt-bench --limit 10
 ```
 
+## Phase C — Memory Delta under the Reporting Standard (genbench)
+
+Phase B measures memory with the retention task and judge scores; `benchmarks/memory/genbench.ts`
+is the harness for making a *citable* memory-delta claim. It runs five arms under one protocol —
+`bare`, `cold`, `warm`, and the matched controls `fullcontext` and `bm25` — on a held-out
+seed/eval split, injects memory through the resident agent path, and reports Wilson 95% CIs,
+seed-level CIs, token-F1 alongside judge accuracy, tokens injected, latency, and cost.
+
+```bash
+# Offline and deterministic (stub model + exact-match judge) — what CI runs
+bun run qualify:memory:benchmark
+
+# Real model through a running Marina instance, 5 seeds, held-out split
+bun --env-file=/dev/null run benchmarks/memory/genbench.ts \
+  --dataset gsm8k --limit 200 --seeds 5 --model marina/default --judge marina/default
+```
+
+Results go to `benchmarks/results/memory/` (gitignored), one JSON per arm plus a markdown summary,
+never overwritten. The reporting standard, arm definitions, how to reproduce `HISTORY.md` §5
+honestly, and an explicit "what this does NOT prove" list are in
+[`benchmarks/memory/README.md`](memory/README.md).
+
 ## CLI Options
 
 | Flag | Description | Default |
