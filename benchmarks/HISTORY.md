@@ -265,3 +265,115 @@ any real model. The §5 figures stand as a pilot with the caveats listed in
 `benchmarks/memory/README.md` ("Why §5 is a pilot"). The N≥200 × 5-seed × real-model rerun
 remains the operator-approval item; when it runs, its results belong in a §7 here, quoted from
 the JSON config and metrics blocks.
+
+---
+
+## 7. Held-out memory-delta run — N=200/100 × 5 seeds, Sonnet 5 + GPT-5.4 mini, 2026-09-14
+
+The §6 instrument, run for real. Two current models through a Marina instance each
+(`MARINA_DEFAULT_MODEL=anthropic/claude-sonnet-5` on one, `openai/gpt-5.4-mini` on the other;
+passthru id `marina`; empty world; no room agents; provider default temperature), five seeds, all
+five arms, the exact-match judge (sound for the numeric/short-fact items here), harness
+`932c8d7`, `residentContextVersion = resident-v2:buildUnifiedContext+renderUnifiedContext`. Every
+number below is quoted from the JSON in `benchmarks/results/memory/` (archived under
+`marina-internal/docs/research/memory-genbench-2026-09-14/`). Wilson 95 % intervals in brackets.
+
+### 7.1 Synthetic transfer — does memory carry a fact to its held-out paraphrase?
+
+`synthetic-v1`: 50 fictional facts × 2 paraphrases; **paraphrase split** (one paraphrase of every
+fact held out, its sibling seeded; ceiling 100 %); n = 250 per arm.
+
+| Seed source | Arm | Sonnet 5 | GPT-5.4 mini | Injected tok (mean) |
+|---|---|---|---|---|
+| — | bare | 0.4 % [0.1, 2.2] | 2.0 % [0.9, 4.6] | 0 |
+| model | cold | 0.0 % [0.0, 1.5] | 0.8 % [0.2, 2.9] | 135 / 41 |
+| model | warm | 0.4 % [0.1, 2.2] | 1.2 % [0.4, 3.5] | 336 / 127 |
+| model | fullcontext | 0.4 % [0.1, 2.2] | 1.2 % [0.4, 3.5] | 4217 / 969 |
+| model | bm25 | 0.4 % [0.1, 2.2] | 1.2 % [0.4, 3.5] | 264 / 50 |
+| **gold** | **warm** | **100.0 % [98.5, 100]** | **98.0 % [95.4, 99.1]** | 123 / 123 |
+| gold | bm25 | 100.0 % [98.5, 100] | 99.6 % [97.8, 99.9] | 46 / 46 |
+| gold | fullcontext | 100.0 % [98.5, 100] | 100.0 % [98.5, 100] | 870 / 870 |
+
+Readings:
+
+1. **Transfer works.** With correct notes about the sibling paraphrase, the resident path lifts a
+   real model from ≈ 0 to 98–100 % on held-out items. Hit rate 100 %. GPT-5.4 mini's five warm
+   misses are one item judged on wording ("762 millimeters" vs gold "narrow gauge, 762
+   millimeters"), not a retrieval failure.
+2. **Model-seeded memory is worthless when the model cannot know the fact** — by design. The
+   seed pass wrote what the model actually answered (seed-pass accuracy 0–2 %), so warm holds
+   confident wrong notes and stays at bare. Memory does not let a model teach itself things it
+   never observed; its value is capturing facts from sources, people and other agents (7.3).
+3. **The resident path does not beat plain bm25 here.** warm = bm25 = fullcontext within noise on
+   both models, while warm injects ~2.7× the tokens of bm25 (123 vs 46). With one-fact notes the
+   tiering, graph expansion and vocabulary expansion add nothing measurable. Per §6's rule: on this
+   corpus the resident path is not yet earning its complexity; the case for it must come from
+   provenance/tiering behaviour (trusted-vs-unverified labels, receipts), not retrieval accuracy.
+4. The **item** split (the harness default before this run) caps this benchmark at a 56.6 %
+   ceiling; the first run (gpt-4o-mini, secondary) landed on 56.2 / 56.6 / 56.6 — exactly the
+   ceiling — which is how the split artifact was found and fixed (`--split paraphrase`, "Ceiling"
+   column).
+
+### 7.2 gsm8k — does memory of *other* problems help?
+
+200 items (fixed shuffle), item split (ceiling n/a), n = 507 per arm, "answer with just the
+answer" prompt (no reasoning requested), numeric last-number judge.
+
+| Arm | Sonnet 5 | Δ vs bare (paired gained/lost) | GPT-5.4 mini | Δ vs bare (paired) | Injected tok |
+|---|---|---|---|---|---|
+| bare | 95.9 % [93.8, 97.3] | — | 54.4 % [50.1, 58.7] | — | 0 |
+| cold | 96.1 % [94.0, 97.4] | +5 / −4 | 55.4 % [51.1, 59.7] | +33 / −28 | ≈ 380 |
+| warm | 95.9 % [93.8, 97.3] | +4 / −4 | 53.1 % [48.7, 57.4] | +26 / −33 | ≈ 385 |
+| fullcontext | 96.1 % [94.0, 97.4] | +4 / −3 | 55.4 % [51.1, 59.7] | +32 / −27 | ≈ 5,650 |
+| bm25 | 95.5 % [93.3, 97.0] | +3 / −5 | 55.0 % [50.7, 59.3] | +32 / −29 | ≈ 305 |
+
+**Null result on both models, and no regression.** A Q/A note about one arithmetic problem does
+not help a different one; every arm flips about as many items right as wrong. The §5 "+10 pp
+stair-step" does not reproduce under the held-out protocol — §5 measured lookup (the same ten
+questions rerun into the DB they had built), as §6 predicted. The Gen-1 failure mode (recall
+pollution dragging accuracy down) does not appear either: warm's worst paired net is −7 of 507.
+GPT-5.4 mini's low bare is the prompt (no reasoning allowed), not the model; Sonnet 5 reasons in
+its hidden thinking block.
+
+### 7.3 Successor — cold start with an inherited pool, and transmission fidelity
+
+`benchmarks/memory/successor.ts`, real model answering AND re-summarising, paraphrase split,
+n = 250 per arm, first-k = 5, three re-summarisation generations under a shrinking byte budget.
+
+| Arm | Sonnet 5 | GPT-5.4 mini |
+|---|---|---|
+| fresh (no inheritance) | 0.0 % [0.0, 1.5] · first-5 0/5 · time-to-first-correct never | 1.2 % [0.4, 3.5] · first-5 0/5 · ttfc 27.3 |
+| inherit (predecessor's pool) | **100.0 % [98.5, 100]** · first-5 5/5 · ttfc 1.0 | **100.0 % [98.5, 100]** · first-5 5/5 · ttfc 1.0 |
+| inherited hit rate | 100 % | 100 % |
+| fidelity gen 0 → 1 → 2 → 3 | 100 → 98.4 → 64.0 → 43.2 % | 100 → 100 → 71.2 → 47.2 % |
+
+**The generational claim holds on the read path a real successor uses** (`gatherRetrievalContext`
+over personal notes + guide + shared pools): a fresh account that inherits its predecessor's
+lessons is productive from task 1 and answers every reachable task; without inheritance it answers
+none. **Re-summarisation is lossy fast**: after three model rewrites under a halving budget, 43–47 %
+of facts survive by exact match (paraphrased values that change units or wording count as lost, so
+this is a lower bound). This is the empirical case for the curator policy adopted in Phase 3 —
+append-and-link, cite, never rewrite — and against summary chains as a transmission medium.
+
+### 7.4 What the run cost and what it found in Marina
+
+Provider usage recorded by the harness (final runs only): Sonnet 5 ≈ 7.56 M prompt / 0.27 M
+completion tokens; GPT-5.4 mini ≈ 4.54 M prompt / 0.03 M completion tokens. The `fullcontext`
+control is the expensive arm (8.6 K / 6.1 K prompt tokens per gsm8k query vs ≈ 0.4 K for warm).
+
+Running the benchmark through Marina found two passthru bugs that were fixed in the same commit
+(`932c8d7`): Claude 5 models return a `thinking` block before their text and the proxy read only
+`content[0]` (Sonnet 5 scored 6 % on gsm8k with empty answers); and only the first `system`
+message was forwarded to Anthropic, so memory injected as a second system message was silently
+dropped (Sonnet 5's inherit arm read 0 % with a 100 % hit rate). Both are covered by
+`test/anthropic-text-content.test.ts`.
+
+### 7.5 Gates
+
+- Phase 1 gate "generational benchmark rerun on held-out items through §4 with CIs": **met**
+  (7.1, 7.3).
+- §6 rule "if warm does not beat bm25, say so": **said** (7.1 reading 3).
+- Phase 3 gate "successor cold-start lift measured": **met** — +98.8 to +100 pp, first-5 100 %.
+- Not measured here: gateway lift per injected token (needs a passthru client corpus), the
+  multi-writer unresolved-contradiction rate against an external floor, and an LLM judge on a
+  free-form dataset (exact match was sound for every dataset used).

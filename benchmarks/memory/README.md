@@ -172,6 +172,15 @@ a claim of that shape that would survive review:
 7. Never rerun the same items into a warmed DB and score them again. The harness does not let
    you, but a hand-rolled script can.
 
+### What the real run showed (HISTORY.md §7, 2026-09-14)
+
+Sonnet 5 and GPT-5.4 mini, 5 seeds, all arms, paraphrase split: gold-seeded warm 100 % / 98 % on
+held-out paraphrases from a ≈ 0 % bare; warm = bm25 = fullcontext within noise (the resident path
+injects ~2.7× bm25's tokens for no measurable gain on one-fact notes); model-seeded memory stays at
+bare because the model wrote wrong notes; gsm8k is a null result on both models (no lift, no
+regression); the successor's inherited pool takes a fresh account from 0 to 100 %; three model
+re-summarisations retain 43–47 % of facts. The §5 stair-step did not reproduce held-out.
+
 ### Why §5 is a pilot
 
 - **N=10 per cell.** The confidence intervals span most of the range.
