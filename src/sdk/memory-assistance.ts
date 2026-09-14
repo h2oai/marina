@@ -4,6 +4,14 @@
 import type { MemoryAnswer, MemoryAnswerContract } from "./memory-answer";
 import type { MemoryOperationRequest } from "./memory-operations";
 
+/** Adoption closes the loop: the requester (or a writer on a shared target)
+ * turns an `answered` proposal into a versioned record with the `adopt`
+ * operation (`POST /assistance/:id/adopt`, `/spaces/:space/adopt`, world
+ * `memory adopt <ID>`). Adopting into an institutional space is a ratification
+ * (standing-gated, `metadata.ratified_by`). Standing credit lands on the
+ * helper — see `MemoryAdoptInput` / `MemoryAdoptResult` in `memory-types`. */
+export type { MemoryAdoptInput, MemoryAdoptResult, MemoryRatifiedBy } from "./memory-types";
+
 export const MEMORY_HELPER_ROLES = ["librarian", "reflector", "evaluator"] as const;
 export type MemoryHelperRole = (typeof MEMORY_HELPER_ROLES)[number];
 

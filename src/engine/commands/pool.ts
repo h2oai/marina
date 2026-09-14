@@ -4,6 +4,13 @@
 import { creditRecalledReflections } from "../../agent/standing";
 import { memoryAccess } from "../../memory/access";
 import { memoryNoteResults, memoryResult } from "../../memory/command-result";
+import {
+  INSTITUTIONAL_PROPOSAL_IMPORTANCE_CAP,
+  institutionalCapsApply,
+  isInstitutionalPoolName,
+  ratifyPoolNote,
+} from "../../memory/institutional";
+import { findDurableTwin, recordDurableTwin } from "../../memory/legacy-bridge";
 import { depositPoolNote } from "../../memory/pool-deposit";
 import {
   bold,
@@ -105,7 +112,7 @@ export function poolCommand(deps: {
   return {
     name: "pool",
     aliases: [],
-    help: "Shared memory pools for collaborative knowledge.\nUsage: pool create <name> [group <groupName>] | pool <name> add|recall|list|status|audit | pool list\n\nExamples:\n  pool create findings\n  pool create crew-notes group project:Beta   (members-only pool; you must belong to the group)\n  pool findings add The decode room responds to binary input importance 7\n  pool findings recall binary\n  pool findings list\n  pool findings status\n  pool findings audit",
+    help: "Shared memory pools for collaborative knowledge.\nUsage: pool create <name> [group <groupName>] | pool <name> add|recall|list|status|audit|ratify | pool list\n\nExamples:\n  pool create findings\n  pool create crew-notes group project:Beta   (members-only pool; you must belong to the group)\n  pool findings add The decode room responds to binary input importance 7\n  pool findings recall binary\n  pool findings list\n  pool findings status\n  pool findings audit\n  pool guide ratify 42 importance 8 verified against the command registry\n\nInstitutional pools (guide, orchestration:*, tradition:*): on a shared instance `add` files a proposal (importance capped at 4, unverified) until someone with standing >= 15 (rank 2), a sovereign, or the local operator runs `pool <name> ratify <noteId> [importance N] [rationale]` — which lifts the cap, marks it verified, and mirrors it into the institutional durable space.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -318,6 +325,12 @@ export function poolCommand(deps: {
               }
             }
           }
+          // Institutional pools on a shared/public instance take PROPOSALS:
+          // the note is written (nothing breaks) but capped and unverified
+          // until `pool <name> ratify` — curation with standing at stake.
+          const proposal = isInstitutionalPoolName(poolName) && institutionalCapsApply();
+          const requested = importance;
+          if (proposal) importance = Math.min(importance, INSTITUTIONAL_PROPOSAL_IMPORTANCE_CAP);
           const { id: noteId, existing } = depositPoolNote(
             db,
             pool.id,
@@ -341,7 +354,65 @@ export function poolCommand(deps: {
             importance,
             timestamp: Date.now(),
           });
-          ctx.send(input.entity, `Added note #${noteId} to pool "${poolName}".`);
+          ctx.send(
+            input.entity,
+            proposal
+              ? `Added proposal #${noteId} to institutional pool "${poolName}" (importance ${importance}${requested > importance ? `, requested ${requested}` : ""}, unverified). ` +
+                  `It becomes canon when someone with standing ≥ 15 runs ${bold(`pool ${poolName} ratify ${noteId}`)}.`
+              : `Added note #${noteId} to pool "${poolName}".`,
+          );
+          return;
+        }
+
+        case "ratify": {
+          const noteId = Number.parseInt(tokens[2] ?? "", 10);
+          if (!Number.isInteger(noteId) || noteId <= 0) {
+            ctx.send(
+              input.entity,
+              `Usage: pool ${poolName} ratify <noteId> [importance N] [rationale]`,
+            );
+            return;
+          }
+          let rest = tokens.slice(3);
+          let importance: number | undefined;
+          if (rest[0]?.toLowerCase() === "importance" && rest[1]) {
+            const val = Number.parseInt(rest[1], 10);
+            if (val >= 1 && val <= 10) importance = val;
+            rest = rest.slice(2);
+          }
+          const rationale = rest.join(" ").trim() || undefined;
+          const result = ratifyPoolNote(
+            db,
+            poolName,
+            noteId,
+            { name: entity.name, rank: entity.properties.rank },
+            { importance, rationale },
+          );
+          if (!result.ok) {
+            ctx.send(input.entity, `Cannot ratify #${noteId} in "${poolName}": ${result.reason}`);
+            return;
+          }
+          // Legacy twin row so `note`/`recall` surfaces can follow the mirror.
+          if (!findDurableTwin(db, noteId))
+            recordDurableTwin(
+              db,
+              noteId,
+              {
+                recordId: result.record.id,
+                version: result.record.version ?? 1,
+                spaceId: result.space.id,
+              },
+              entity.name,
+            );
+          ctx.send(
+            input.entity,
+            [
+              header(`Ratified #${noteId} into "${poolName}"`),
+              separator(),
+              `  importance ${result.importance} · verified · by ${fmtEntity(result.ratified_by.name)} (${result.ratified_by.basis}, standing ${result.ratified_by.standing.toFixed(1)})`,
+              `  durable record ${bold(result.record.id)} in institutional space ${dim(result.space.id)}${result.existing ? dim(" (already mirrored)") : ""}`,
+            ].join("\n"),
+          );
           return;
         }
 
@@ -393,7 +464,7 @@ export function poolCommand(deps: {
         default:
           ctx.send(
             input.entity,
-            `Usage: pool ${poolName} add <text> | pool ${poolName} recall <query> | pool ${poolName} list | pool ${poolName} status | pool ${poolName} audit`,
+            `Usage: pool ${poolName} add <text> | pool ${poolName} recall <query> | pool ${poolName} list | pool ${poolName} status | pool ${poolName} audit | pool ${poolName} ratify <noteId>`,
           );
       }
     },

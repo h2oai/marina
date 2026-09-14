@@ -111,6 +111,22 @@ export function countStandingEvents(
   return row.n;
 }
 
+/** True when a ledger row already exists for `(entity_id, kind, ref)` — lets a
+ *  caller distinguish "credited now" from "already credited" around the
+ *  idempotent `appendStandingEvent`. */
+export function hasStandingEvent(
+  db: Database,
+  entityId: string,
+  kind: string,
+  ref: string,
+): boolean {
+  return Boolean(
+    db
+      .query("SELECT 1 FROM entity_standing WHERE entity_id = ? AND kind = ? AND ref = ?")
+      .get(entityId, kind, ref),
+  );
+}
+
 export function getStandingCache(db: Database, entityId: string): StandingCacheRow | undefined {
   return (
     (db

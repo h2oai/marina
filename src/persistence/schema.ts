@@ -3317,4 +3317,16 @@ UNION ALL
 SELECT 'resolution',id,space_id,length(CAST(input AS BLOB))+length(CAST(output AS BLOB))+length(CAST(rationale AS BLOB))+256 FROM memory_resolutions;
 `,
   },
+  // Migration 114: institutional memory spaces. `metadata` on memory_spaces
+  // carries `{"institutional":true,"read_public":true}` for the durable twins
+  // of the guide / tradition pools (owned by the `guide` system principal).
+  // `read_public` lets every active credential read the space without a grant;
+  // `institutional` turns `adopt` into a standing-gated ratification. Neither
+  // flag is settable over HTTP — only the seed / ratification code writes it.
+  {
+    version: 114,
+    sql: `
+ALTER TABLE memory_spaces ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}';
+`,
+  },
 ];

@@ -16,6 +16,8 @@ import type {
 } from "./memory-transfer";
 import type {
   ForgetMemoryInput,
+  MemoryAdoptInput,
+  MemoryAdoptResult,
   MemoryBundle,
   MemoryCacheInput,
   MemoryCacheResult,
@@ -163,6 +165,25 @@ export class MarinaMemoryClient {
     } = {},
   ) {
     return this.request<MemoryReviewResult>(this.path(space, "/review"), "POST", input);
+  }
+  /** Adopt an answered assistance proposal as a record. `space` is the target
+   * (pass `undefined` for the job's own space). Adopting into an institutional
+   * space is a standing-gated ratification. Same job + same space ⇒ same record. */
+  adopt(
+    space: string | undefined,
+    jobId: string,
+    input: Omit<MemoryAdoptInput, "job_id"> = {},
+    key?: string,
+  ) {
+    const body = { ...input, job_id: jobId };
+    return space === undefined
+      ? this.request<MemoryAdoptResult>(
+          `/assistance/${encodeURIComponent(jobId)}/adopt`,
+          "POST",
+          body,
+          key,
+        )
+      : this.request<MemoryAdoptResult>(this.path(space, "/adopt"), "POST", body, key);
   }
   /** Explicit contradiction resolution; `id` is the head record, `input.competing`
    * its rivals. Reuse `key` to replay the same decision idempotently. */

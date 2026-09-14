@@ -167,7 +167,7 @@ export async function handleMemoryServiceApi(
       );
     }
     const assistance = path.match(
-      /^\/v1\/memory\/assistance\/([^/]+)(?:\/(claim|heartbeat|read|finish|cancel|delegate))?$/,
+      /^\/v1\/memory\/assistance\/([^/]+)(?:\/(claim|heartbeat|read|finish|cancel|delegate|adopt))?$/,
     );
     if (assistance) {
       const id = decodeURIComponent(assistance[1]!);
@@ -199,6 +199,11 @@ export async function handleMemoryServiceApi(
             const result = repo.assistance.delegate(actor, id, body, key);
             notifyAssistance(result.id);
             return json(result, 201);
+          }
+          case "adopt": {
+            // Target defaults to the job's own space; body.target_space_id overrides.
+            const result = service.adopt(actor, undefined, { ...body, job_id: id }, key);
+            return json(result, result.existing ? 200 : 201);
           }
         }
       }
@@ -329,6 +334,10 @@ export async function handleMemoryServiceApi(
     if (rest === "resolve" && req.method === "POST") {
       const body = await readBody(req);
       return json(service.resolve(actor, space, textValue(body.id, "id", 128), body, key));
+    }
+    if (rest === "adopt" && req.method === "POST") {
+      const result = service.adopt(actor, space, await readBody(req), key);
+      return json(result, result.existing ? 200 : 201);
     }
     if (rest === "cache/delete" && req.method === "POST")
       return json(repo.cacheDelete(actor, space, await readBody(req), key));

@@ -4,10 +4,12 @@
 import { tryLog, tryLogAsync } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
+import { applyReputationRerank } from "../persistence/db-memory-ranking";
 import type { MemoryRepository } from "../persistence/db-memory-service";
 import type { MemoryActor } from "../persistence/db-principals";
 import { withMemoryAbort } from "../sdk/memory-abort";
 import type {
+  MemoryAdoptResult,
   MemoryResolveResult,
   MemorySearchInput,
   MemorySearchResult,
@@ -15,6 +17,7 @@ import type {
 import { type EmbeddingProvider, validEmbedding } from "./embeddings";
 import { configuredMemoryFederation, type MemoryFederation } from "./federation";
 import { runMemoryImport } from "./import-runner";
+import { ratificationPolicy } from "./institutional";
 import { configuredMemoryPlanner, type MemoryPlanner } from "./planning";
 import { memoryQueryExpansion } from "./query-expansion";
 import { MemoryError } from "./service-types";
@@ -177,7 +180,33 @@ export class MemoryService {
         idempotency: "per-key",
       },
       reusable_results: "exact-input-model-policy:revision-pinned:live-authorization",
+      adoption: {
+        input: "answered-job:requester-or-shared-writer",
+        provenance: "same-space-citations-pinned:cross-space-citations-in-metadata",
+        institutional: "standing-gated-ratification:ratified_by-stamped",
+        standing: "helper-credited:delegation-split-0.6-root-0.4-shared",
+        idempotency: "per-job-per-space",
+      },
     };
+  }
+
+  /** Adopt an answered assistance proposal as a versioned record. `space` is
+   * the target (HTTP `/spaces/:space/adopt`); when absent the job's own space
+   * is used (`/assistance/:id/adopt`). Institutional targets are ratifications
+   * — the policy (standing / sovereign / ungated local) decides and the owning
+   * system principal writes. Standing credit lands on the helper(s). */
+  adopt(
+    actor: MemoryActor,
+    space: string | undefined,
+    input: Record<string, unknown>,
+    key: string,
+  ): MemoryAdoptResult {
+    return this.repository.adopt.run(
+      actor,
+      { ...input, target_space_id: input.target_space_id ?? space },
+      key,
+      ratificationPolicy(this.db),
+    );
   }
 
   /** Explicit, audited contradiction resolution over the review queue. The
@@ -192,7 +221,7 @@ export class MemoryService {
   ): MemoryResolveResult {
     if (input.policy === undefined)
       throw new MemoryError(400, "invalid_policy", "policy is required to resolve");
-    return this.repository.resolve(
+    const result = this.repository.resolve(
       actor,
       space,
       id,
@@ -200,6 +229,10 @@ export class MemoryService {
       key,
       this.embeddings?.id,
     ) as MemoryResolveResult;
+    // Curation has standing at stake: an adopted record that loses a
+    // resolution debits the helpers who proposed it (idempotent per record).
+    for (const loser of result.superseded) this.repository.adopt.debitSuperseded(loser.id);
+    return result;
   }
 
   startWorker() {
@@ -398,7 +431,7 @@ export class MemoryService {
           )
           .map((record) => [record.id, record]),
       );
-      const results = selected.map(([id, rank]) => {
+      const fused = selected.map(([id, rank]) => {
         const record = records.get(id);
         if (!record)
           throw new MemoryError(
@@ -408,7 +441,17 @@ export class MemoryService {
           );
         return { ...record, ...rank };
       });
+      // Reputation-weighted re-rank (Phase 3.6) applies to SHARED spaces only —
+      // records the actor does not own get a bounded writer-standing term,
+      // inspectable via `ranking`. An owner's own space is never weighted by
+      // their own standing.
+      const reputation =
+        current.owner_id !== actor.principalId && fused.length > 0
+          ? applyReputationRerank(this.repository.raw, actor, fused)
+          : undefined;
+      const results = reputation?.results ?? fused;
       return {
+        ...(reputation ? { ranking: reputation.ranking } : {}),
         space_id: space,
         generation: current.generation,
         mode,

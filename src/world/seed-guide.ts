@@ -1,6 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { tryLog } from "../engine/errors";
+import { Logger } from "../engine/logger";
+import { ensureInstitutionalSpace } from "../memory/institutional";
 import type { MarinaDB } from "../persistence/database";
 import type { GuideNote } from "./world-definition";
 
@@ -120,6 +123,14 @@ export function seedGuidePool(db: MarinaDB, notes: GuideNote[]): void {
     pool = db.getMemoryPool(POOL_NAME);
   }
   if (!pool) return;
+
+  // The guide pool's durable twin: an institutional, world-readable memory
+  // space owned by the `guide` system principal. Ratified guide notes and
+  // adopted proposals land here (Phase 3.4). Idempotent by pool name; failure
+  // must never block the legacy seed the world depends on.
+  tryLog(new Logger(), "seed", "Institutional guide space unavailable", () => {
+    ensureInstitutionalSpace(db, POOL_NAME);
+  });
 
   // Idempotent per note, not per pool. Existing worlds should inherit new
   // platform guide notes without duplicating older seed content on every boot.

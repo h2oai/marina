@@ -11,11 +11,12 @@ import {
   recordDurableTwin,
 } from "../../memory/legacy-bridge";
 import { residentMemoryOperation } from "../../memory/resident-service";
+import { type InheritedAuthority, inheritedAuthority } from "../../memory/unified-context";
 import { bold, category, dim, id as fmtId, header, separator, status } from "../../net/ansi";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import type { MemoryAssistanceJob, MemoryAssistancePage } from "../../sdk/memory-assistance";
 import { memoryOperationError } from "../../sdk/memory-operations";
-import type { MemoryReceipt, MemoryRecord } from "../../sdk/memory-types";
+import type { MemoryAdoptResult, MemoryReceipt, MemoryRecord } from "../../sdk/memory-types";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { isLocalUngated } from "../trust-profile";
 import { requiresPersistence } from "./command-messages";
@@ -242,7 +243,7 @@ export function reflectCommand(deps: {
   return {
     name: "reflect",
     aliases: [],
-    help: "Reflect on your notes. Usage: reflect [topic] (files a cited job with a memory-reflector when one is available, else the deterministic template) | reflect via <helper> [topic] | reflect --template [topic] | reflect adopt <job> | reflect jobs | reflect failure <description>",
+    help: "Reflect on your notes. Usage: reflect [topic] (files a cited job with a memory-reflector when one is available, else the deterministic template) | reflect via <helper> [topic] | reflect --template [topic] | reflect adopt <job> | reflect jobs | reflect failure <description>. Add --share <pool> to also deposit the lesson into a shared pool as a reflection (authors earn standing when others recall it).",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -258,15 +259,41 @@ export function reflectCommand(deps: {
         note.verification_status !== "superseded" &&
         note.tier !== "process" &&
         note.tier !== "reflection";
-      const args = input.args?.trim() ?? "";
-      const tokens = args.split(/\s+/).filter(Boolean);
+      // `--share <pool>` may sit anywhere in the line; strip it before the
+      // subcommand is read so `reflect adopt <job> --share wisdom` and
+      // `reflect --template amber --share wisdom` both parse.
+      const rawTokens = (input.args?.trim() ?? "").split(/\s+/).filter(Boolean);
+      let sharePool: string | undefined;
+      const shareAt = rawTokens.findIndex((t) => t.toLowerCase() === "--share");
+      if (shareAt >= 0) {
+        sharePool = rawTokens[shareAt + 1];
+        if (!sharePool) {
+          ctx.send(input.entity, "Usage: reflect … --share <pool>");
+          return;
+        }
+        rawTokens.splice(shareAt, 2);
+      }
+      const tokens = rawTokens;
+      const args = tokens.join(" ");
       const sub = tokens[0]?.toLowerCase();
 
-      const createReflectionNote = (content: string, importance: number): number => {
+      // TMA-NM non-laundering rule (Phase 3.7): a reflection SUMMARISES its
+      // inputs, so it inherits the LOWEST authority among them —
+      // confidence = min(inputs) and `verified` only when every input is
+      // verified. Without this, "reflect" would launder N unverified notes
+      // into one note that looks like first-hand, default-confidence memory.
+      const createReflectionNote = (
+        content: string,
+        importance: number,
+        inputs: readonly NoteRow[],
+      ): { id: number; authority: InheritedAuthority } => {
+        const authority = inheritedAuthority(inputs);
         const reflectionId = db.createNote(entity.name, content, input.room, {
           importance,
           noteType: "episode",
           tier: "reflection",
+          ...(authority.confidence !== null ? { confidence: authority.confidence } : {}),
+          verificationStatus: authority.verification,
         });
         deps.logEvent?.({
           type: "note_created",
@@ -279,7 +306,43 @@ export function reflectCommand(deps: {
           roomId: input.room,
           timestamp: Date.now(),
         });
-        return reflectionId;
+        return { id: reflectionId, authority };
+      };
+      const authorityLine = (authority: InheritedAuthority): string =>
+        authority.confidence === null
+          ? dim("Authority: unverified (no citable inputs)")
+          : `Authority: confidence=${authority.confidence.toFixed(2)} ${authority.verification} ${dim(`(lowest of ${authority.inputs} input${authority.inputs === 1 ? "" : "s"})`)}`;
+      // Generational loop (Phase 3.7): deposit the lesson into a shared pool
+      // as a reflection-tier note so `creditRecalledReflections` pays the
+      // author when someone else recalls it. Refuses unknown pools and
+      // group pools the caller is not a member of — never creates a pool.
+      const shareReflection = (
+        content: string,
+        importance: number,
+        authority: InheritedAuthority,
+      ): string => {
+        if (!sharePool) return "";
+        const pool = db.getMemoryPool(sharePool);
+        if (!pool) return `Not shared: pool "${sharePool}" does not exist.`;
+        if (pool.group_id && !db.getGroupMember(pool.group_id, input.entity))
+          return `Not shared: you are not a member of pool "${sharePool}".`;
+        const noteId = db.addPoolNote(pool.id, entity.name, content, importance, "episode", {
+          tier: "reflection",
+          ...(authority.confidence !== null ? { confidence: authority.confidence } : {}),
+          verificationStatus: authority.verification,
+        });
+        deps.logEvent?.({
+          type: "note_created",
+          entity: input.entity,
+          noteId,
+          authorName: entity.name,
+          content,
+          importance,
+          noteType: "episode",
+          roomId: input.room,
+          timestamp: Date.now(),
+        });
+        return `Shared to pool "${pool.name}" as reflection ${fmtId(noteId)} ${dim("(you earn standing when others recall it)")}`;
       };
       const linkPartOf = (sourceId: number, reflectionId: number): boolean => {
         try {
@@ -337,7 +400,7 @@ export function reflectCommand(deps: {
           contextParts.length > 0 ? ` Related context: ${contextParts.join("; ")}` : "";
         const content = `[Failure Analysis] ${description}.${contextStr}`;
 
-        const reflectionId = createReflectionNote(content, 8);
+        const { id: reflectionId } = createReflectionNote(content, 8, []);
         for (const note of related) linkPartOf(note.id, reflectionId);
 
         const lines = [
@@ -428,8 +491,13 @@ export function reflectCommand(deps: {
         const maxImportance = Math.max(...sourceNotes.map((n) => n.importance));
         const reflectionImportance = Math.min(maxImportance + 1, 10);
 
-        const reflectionId = createReflectionNote(content, reflectionImportance);
+        const { id: reflectionId, authority } = createReflectionNote(
+          content,
+          reflectionImportance,
+          sourceNotes,
+        );
         for (const source of sourceNotes) linkPartOf(source.id, reflectionId);
+        const shared = shareReflection(content, reflectionImportance, authority);
 
         const sourceIds = sourceNotes.map((n) => fmtId(n.id)).join(", ");
         const lines = [
@@ -437,6 +505,8 @@ export function reflectCommand(deps: {
           separator(),
           `Note ${fmtId(reflectionId)} ${dim(`(episode, importance=${reflectionImportance})`)}`,
           `Sources: ${sourceIds}`,
+          authorityLine(authority),
+          shared,
           themes.length > 0 ? `Themes: ${themes.map((t) => category(t)).join(", ")}` : "",
           contradictions.length > 0
             ? `${status("contradiction", "fail")} Found: ${bold(String(contradictions.length))}`
@@ -530,7 +600,7 @@ export function reflectCommand(deps: {
               `Budget ${REFLECT_JOB_MAX_OPERATIONS} reads · ${Math.round(REFLECT_JOB_TIMEOUT_MS / 60000)} min deadline`,
             ),
             "",
-            `Check: ${bold("reflect jobs")} · adopt when answered: ${bold(`reflect adopt ${job.id}`)}`,
+            `Check: ${bold("reflect jobs")} · adopt when answered: ${bold(`reflect adopt ${job.id}${sharePool ? ` --share ${sharePool}` : ""}`)}`,
           ];
           ctx.send(input.entity, lines.join("\n"));
         } catch (error) {
@@ -637,66 +707,44 @@ export function reflectCommand(deps: {
           return;
         }
 
-        // Citations become provenance only where they are readable in the
-        // caller's own space: record citations pin dependencies, source
-        // citations attach as source_ids. Unreadable ones are dropped, not guessed.
-        const sourceIds: string[] = [];
+        // The durable `adopt` op pins citations as provenance itself. Here we
+        // only need the readable same-space RECORD citations to find their
+        // legacy twins for part_of links. Unreadable ones are dropped, not guessed.
         const dependsOn: string[] = [];
-        const dependencyVersions: Record<string, number> = {};
         for (const citation of job.result.citations) {
-          if (citation.space_id !== job.space_id) continue;
+          if (citation.space_id !== job.space_id || citation.kind !== "record") continue;
+          if (dependsOn.includes(citation.id)) continue;
           try {
-            if (citation.kind === "record") {
-              if (dependsOn.includes(citation.id)) continue;
-              const record = (
-                await residentMemoryOperation(db, entity.name, {
-                  operation: "get",
-                  id: citation.id,
-                  space_id: job.space_id,
-                })
-              ).result as MemoryRecord;
-              dependsOn.push(citation.id);
-              dependencyVersions[citation.id] = record.version;
-            } else {
-              if (sourceIds.includes(citation.id)) continue;
+            (
               await residentMemoryOperation(db, entity.name, {
-                operation: "source_range",
+                operation: "get",
                 id: citation.id,
                 space_id: job.space_id,
-                input: { start: citation.start, end: citation.end },
-              });
-              sourceIds.push(citation.id);
-            }
+              })
+            ).result as MemoryRecord;
+            dependsOn.push(citation.id);
           } catch {
-            // Not readable by the caller — omit from provenance.
+            // Not readable by the caller — omit from linking.
           }
         }
 
         let receipt: MemoryReceipt;
         let spaceId: string | undefined;
         try {
-          const remembered = await residentMemoryOperation(db, entity.name, {
-            operation: "remember",
+          // Durable side: the shared `adopt` operation (Phase 3.3) writes the
+          // proposal as a versioned record with pinned same-space citations,
+          // stamps ratification for institutional targets, and credits the
+          // helper's standing (`assistance_adopted`). Idempotent per
+          // (job, space): a re-run returns the existing record.
+          const adopted = await residentMemoryOperation(db, entity.name, {
+            operation: "adopt",
+            id: jobId,
             space_id: job.space_id,
-            input: {
-              content: answer,
-              type: "episode",
-              tier: "reflection",
-              importance: 8,
-              metadata: {
-                adopted_from_job: jobId,
-                helper_id: job.worker_id,
-                proposal_record_id: job.result_record_id,
-              },
-              ...(sourceIds.length > 0 ? { source_ids: sourceIds } : {}),
-              ...(dependsOn.length > 0
-                ? { depends_on: dependsOn, dependency_versions: dependencyVersions }
-                : {}),
-            },
             key: `reflect-adopt-${jobId}`,
           });
-          receipt = remembered.result as MemoryReceipt;
-          spaceId = remembered.space_id ?? job.space_id;
+          const result = adopted.result as MemoryAdoptResult;
+          receipt = result;
+          spaceId = result.space_id ?? adopted.space_id ?? job.space_id;
         } catch (error) {
           ctx.send(
             input.entity,
@@ -707,16 +755,18 @@ export function reflectCommand(deps: {
 
         // Legacy side: a reflection-tier episode, part_of-linked to the legacy
         // twins of cited records, twinned to the durable record just written,
-        // and stamped with the adoption marker for idempotency.
-        const reflectionId = createReflectionNote(answer, 8);
+        // and stamped with the adoption marker for idempotency. The cited
+        // twins are its INPUTS: the adopted note inherits their lowest
+        // confidence and is verified only if all of them are.
+        const citedNotes = dependsOn.flatMap((recordId) =>
+          findLegacyNotesForRecord(db, entity.name, recordId, { currentOnly: true }),
+        );
+        const { id: reflectionId, authority } = createReflectionNote(answer, 8, citedNotes);
         const linked: number[] = [];
-        for (const recordId of dependsOn) {
-          for (const note of findLegacyNotesForRecord(db, entity.name, recordId, {
-            currentOnly: true,
-          })) {
-            if (note.id !== reflectionId && linkPartOf(note.id, reflectionId)) linked.push(note.id);
-          }
+        for (const note of citedNotes) {
+          if (note.id !== reflectionId && linkPartOf(note.id, reflectionId)) linked.push(note.id);
         }
+        const shared = shareReflection(answer, 8, authority);
         recordDurableTwin(
           db,
           reflectionId,
@@ -750,8 +800,10 @@ export function reflectCommand(deps: {
           linked.length > 0
             ? `Linked legacy notes (part_of): ${linked.map((id) => fmtId(id)).join(", ")}`
             : dim("No cited record has a legacy twin to link."),
+          authorityLine(authority),
+          shared,
           `Lesson: ${dim(answer.slice(0, 150))}${answer.length > 150 ? dim("...") : ""}`,
-        ];
+        ].filter(Boolean);
         ctx.send(input.entity, lines.join("\n"));
       };
 

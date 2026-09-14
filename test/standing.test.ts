@@ -177,6 +177,20 @@ describe("Standing — civic-contribution ledger", () => {
     expect(ledger[0]!.ref).toMatch(/^pool_note:[0-9a-f]{16}$/);
   });
 
+  it("curation kinds are in the credit table: adoption pays the helper, abstention a quarter, supersession debits", () => {
+    expect(STANDING_AMOUNTS.assistance_adopted).toBe(1);
+    expect(STANDING_AMOUNTS.assistance_abstained_confirmed).toBe(0.25);
+    expect(STANDING_AMOUNTS.assistance_superseded).toBe(-0.5);
+    // A superseded adoption never nets negative on its own: 1 − 0.5 ≥ 0, and
+    // the rollup floors at 0 like every other penalty.
+    record(db, "e_helper", "Helper", "assistance_adopted", "assistance:j1");
+    record(db, "e_helper", "Helper", "assistance_superseded", "assistance:j1:superseded:r1");
+    record(db, "e_helper", "Helper", "assistance_superseded", "assistance:j1:superseded:r1"); // idempotent
+    expect(computeFromLedger(db, "e_helper")).toBeCloseTo(0.5, 3);
+    record(db, "e_helper", "Helper", "assistance_superseded", "assistance:j2:superseded:r2");
+    expect(computeFromLedger(db, "e_helper")).toBe(0);
+  });
+
   it("recordFromEvent skips events that don't map to standing kinds", () => {
     const event: EngineEvent = {
       type: "tick",

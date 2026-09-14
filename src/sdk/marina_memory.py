@@ -62,6 +62,17 @@ class MarinaMemory:
                 "rationale": rationale, **options}
         return self.request(self._path("/resolve"), "POST", body, key)
 
+    def adopt(self, job_id, target_space_id=None, rationale=None, key=None, **options):
+        """Adopt an answered assistance proposal as a record. With no target the job's own
+        space is used; naming an institutional space is a standing-gated ratification.
+        ``confirm_abstention=True`` credits an honest abstention instead of writing."""
+        body = {"job_id": job_id, **options}
+        if rationale is not None:
+            body["rationale"] = rationale
+        if target_space_id is None:
+            return self.request("/assistance/" + quote(job_id, safe="") + "/adopt", "POST", body, key)
+        return self.request("/spaces/" + quote(target_space_id, safe="") + "/adopt", "POST", body, key)
+
     def cache_delete(self, inputs, model, policy, key=None):
         return self.request(self._path("/cache/delete"), "POST",
                             {"inputs": inputs, "model": model, "policy": policy}, key)

@@ -59,7 +59,10 @@ export type StandingKind =
   | "helping_act"
   | "crew_member_stalled"
   | "experiment_complete"
-  | "chronicled";
+  | "chronicled"
+  | "assistance_adopted"
+  | "assistance_abstained_confirmed"
+  | "assistance_superseded";
 
 /**
  * Default amounts per kind. Callers can override via the `amount` arg to
@@ -91,6 +94,21 @@ export const STANDING_AMOUNTS: Record<StandingKind, number> = {
   // got contribution credit (task_complete, crew_*, pool_note) at the time
   // of the act. This is the second-order layer.
   chronicled: 0,
+  // Curation is a civic act (memory roadmap Phase 3). A requester ADOPTING a
+  // helper's cited proposal is the moment the proposal became knowledge, so
+  // the credit lands on the HELPER's durable account (`users.id` == the job's
+  // worker principal id), ref `assistance:<jobId>`. Delegated trees split the
+  // amount: root worker 0.6, every other distinct answered worker shares 0.4
+  // evenly (see `db-memory-adopt.ts:contributionShares`). Idempotent per
+  // (helper, kind, ref).
+  assistance_adopted: 1,
+  // An honest abstention the requester later confirms (`memory adopt <JOB>
+  // confirm-abstention`) is worth a quarter of an adoption: saying "I don't
+  // know" when that is true is a contribution, farming it is not.
+  assistance_abstained_confirmed: 0.25,
+  // An adopted record later superseded by `resolve` debits the same helpers
+  // by half a credit (same split; the rollup floors at 0 like every penalty).
+  assistance_superseded: -0.5,
 };
 
 /**

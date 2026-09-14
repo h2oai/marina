@@ -44,6 +44,50 @@ the support and limitations of a claim. You choose whether to adopt their propos
 using ordinary versioned memory operations. No automatic verification, ratification,
 standing credit, or destructive pruning occurs.
 
+## Curator duties (Phase 3.1)
+
+The three helpers also carry the curator duties — no fourth role:
+
+- **Evaluator = Steward.** When a job names competing, stale, or pending
+  assertions (a `[hygiene]` or `[shared-write-review]` task), it adjudicates each
+  with citations and *proposes* a `resolve` policy — `last_writer_wins`,
+  `evidence_weighted`, `await_confirmation`, or `keep_both` — as part of its
+  answer. It never applies one; the owner runs `memory resolve`, or does not.
+- **Librarian = Auditor.** Given a space to sweep, it finds unsupported claims,
+  duplicates (repetition is not corroboration), and suspicious low-provenance
+  clusters, proposes what to merge/retire/source, cites each finding, and never
+  deletes.
+- **Reflector = Janitor.** Given an accumulation of related notes (an
+  `[accumulation]` task lists ids and topic), it proposes ONE consolidated lesson
+  that cites every source it merges. Append-and-link: the owner adopts it as a new
+  record linked to its sources; the originals are never rewritten.
+
+**Re-seeding rule.** Roles are installed when absent. A stored role is upgraded
+on boot only if its description tail carries an older `[guidelines_version=N]`
+marker (missing = 0) than `MEMORY_HELPER_GUIDELINES_VERSION` *and* nobody but
+`system` has ever saved it (`created_by` and every `role history` row). An
+operator-edited role is preserved at any version; copy new duty lines in with
+`role edit` if you want them.
+
+## Automatic dispatch (Phase 3.2)
+
+Three triggers file assistance jobs without anyone typing `memory assist`. Every
+automatic job is an ordinary request: it appears in `memory jobs`, can be withdrawn
+with `memory assist-cancel ID`, and its result is a cited proposal, not a change.
+
+| Trigger | When | Files | Guard |
+| --- | --- | --- | --- |
+| Hygiene (`[hygiene]`) | hourly; `stale + competing + pending ≥ 5` | one evaluator job (local) / tells the owner the command (shared, public) | one open hygiene job per account |
+| Accumulation (`[accumulation]`) | hourly; ≥ 8 fact-like personal notes in 24 h sharing a topic | one reflector job "Consolidate these N notes about *topic*" with the note ids | one open job per account; a process-tier `[accumulation] … max_note=ID` receipt prevents re-filing for the same notes; no reflector running → one hint per day with the spawn command |
+| Shared-write review (`[shared-write-review]`) | a `pool_note` deposit by a writer with standing < 5 (below rank 1) | one evaluator job against the *writer's own* space, deposit text included as untrusted data | at most one per writer per hour; one open review per writer; silent (never notifies); skipped entirely under the `local` profile |
+
+Topic clustering is deterministic and lexical: distinct content terms (lower-cased,
+≥ 4 chars, stop-words dropped); the term with the highest document frequency names
+the cluster, ties break alphabetically. The task carries legacy note ids; the
+reflector reads the durable twins through `assist_read` by searching the topic terms.
+The debounce maps are in-process and reset on restart; the durable guards (open-job
+marker, receipt note) do not.
+
 ## TypeScript and MCP
 
 ```ts
@@ -144,6 +188,31 @@ task })` and `help.heartbeat(id, leaseToken)` for these operations.
   not depend on receiving a particular chat reply.
 
 Direct memory reads remain usable when no helper or model is available.
+
+## Adopt a proposal
+
+```text
+memory adopt REQUEST_ID                          # into the job's own space
+memory adopt REQUEST_ID space GUIDE_SPACE_ID {"rationale":"matches the docs"}
+memory adopt REQUEST_ID confirm-abstention       # credit an honest abstention
+pool guide ratify 42 importance 8 verified against the registry
+```
+
+`adopt` (HTTP `POST /v1/memory/assistance/:id/adopt` or `/spaces/:space/adopt`, TS
+`client.adopt(space, jobId, input, key)`, Python `adopt`, MCP `memory_service` op `adopt`)
+turns an `answered` job's proposal into a versioned record. Record citations you can read
+become `depends_on`/`dependency_versions`, source citations `source_ids`, and the proposal
+record is `metadata.derived_from`. Adopting the same job into the same space twice returns
+the same record. The helper earns `assistance_adopted` standing (1.0; delegated trees split
+0.6 root / 0.4 shared among answered contributors); a confirmed abstention earns 0.25; an
+adopted record later superseded by `memory resolve` debits 0.5.
+
+Institutional spaces (the durable twins of `guide`, `orchestration:*`, `tradition:*`; owned
+by the `guide` system principal, readable by everyone) accept only ratifications: standing
+≥ 15, a sovereign, or the ungated local operator. Every ratified record carries
+`metadata.ratified_by`, so a shared record always answers "why is this shared?". On a shared
+instance `pool guide add` files a proposal (importance capped at 4, unverified) until
+`pool guide ratify <noteId>` lifts it and mirrors it into the institutional space.
 
 ## Validate a deployment
 

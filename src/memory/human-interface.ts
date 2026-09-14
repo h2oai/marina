@@ -9,6 +9,11 @@ export const MEMORY_SERVICE_HELP = `Portable memory service (private to your dur
   memory jobs [JSON filters]             list assistance; open:true selects unfinished live work
   memory assistance <ID>                 inspect a request and its cited proposal
   memory assist-cancel <ID>              withdraw a request and its delegated access
+  memory adopt <ID> [space <SPACE_ID>] [JSON]
+                                         adopt an answered proposal as your own record
+                                         (into an institutional space = ratification;
+                                         JSON: {"rationale":"..."}); credits the helper
+  memory adopt <ID> confirm-abstention   credit an honest abstention (requester only)
   memory service                         show service capabilities
   memory usage                           show your storage usage and limits
   memory transfers [JSON filters]         discover your staged imports
@@ -77,6 +82,26 @@ export function parseMemoryServiceCommand(args: string): MemoryOperationRequest 
       return { operation: "assist_get", id: rest };
     case "assist-cancel":
       return { operation: "assist_cancel", id: rest };
+    case "adopt": {
+      const fields = rest.match(
+        /^(\S+)(?:\s+space\s+(\S+))?(?:\s+(confirm-abstention))?(?:\s+(\{[\s\S]*\}))?\s*$/,
+      );
+      if (!fields)
+        throw new MemoryClientError(
+          400,
+          "invalid_input",
+          "Use: memory adopt JOB [space SPACE_ID] [confirm-abstention] [JSON options]",
+        );
+      const options = fields[4] ? json(fields[4]) : {};
+      if (!options || typeof options !== "object" || Array.isArray(options))
+        throw new MemoryClientError(400, "invalid_input", "Adopt options must be a JSON object");
+      return {
+        operation: "adopt",
+        id: fields[1],
+        ...(fields[2] ? { space_id: fields[2] } : {}),
+        input: { ...options, ...(fields[3] ? { confirm_abstention: true } : {}) },
+      };
+    }
     case "transfers":
       return { operation: "transfers", input: json(rest || "{}") };
     case "transfer":

@@ -135,6 +135,10 @@ export interface MemorySpace {
   generation: number;
   status: "active" | "forgotten";
   created_at: number;
+  /** Operator-set flags (migration 114). `institutional: true` makes `adopt`
+   * a standing-gated ratification; `read_public: true` grants every active
+   * credential read access. Never settable over HTTP. */
+  metadata: Record<string, unknown>;
 }
 export interface MemorySource {
   id: string;
@@ -207,7 +211,19 @@ export interface MemorySearchInput extends MemoryFilter {
   mode?: "lexical" | "hybrid";
   allow_degraded?: boolean;
 }
+/** Reputation-weighted re-rank applied to SHARED-space search results (records the
+ *  actor does not own). Bounded, inspectable, deterministic — see db-memory-ranking.ts. */
+export interface MemoryReputationRanking {
+  weight: number;
+  standing_ceiling: number;
+  applied: number;
+  considered: number;
+  authors: Record<string, { author: string | null; standing: number; term: number }>;
+}
+
 export interface MemorySearchResult {
+  /** Present only when the actor is not the space owner and ≥1 record was considered. */
+  ranking?: MemoryReputationRanking;
   expansion?: MemoryExpansionCoverage;
   coverage?: {
     candidate_limit: number;
@@ -315,6 +331,43 @@ export interface MemoryResolveResult extends MemoryReceipt {
   pending: string[];
   evidence_counts: Record<string, number> | null;
   deadline: number | null;
+}
+/** Why a record lives in a shared (institutional) space. Stamped by `adopt`
+ * and `pool <name> ratify`; every institutional record answers "why is this
+ * shared?" from its own metadata. */
+export interface MemoryRatifiedBy {
+  principal_id: string;
+  name: string;
+  standing: number;
+  at: number;
+  rationale: string | null;
+  /** Which rule admitted the ratifier. */
+  basis: "standing" | "sovereign" | "local-ungated";
+}
+export interface MemoryAdoptInput {
+  job_id: string;
+  /** Defaults to the job's own space. */
+  target_space_id?: string;
+  rationale?: string;
+  valid_time?: MemoryValidity | null;
+  /** Explicit `assistance_abstained_confirmed` credit for an abstained job;
+   * writes no record. */
+  confirm_abstention?: boolean;
+}
+export interface MemoryStandingCredit {
+  principal_id: string;
+  kind: string;
+  ref: string;
+  amount: number;
+}
+export interface MemoryAdoptResult extends MemoryReceipt {
+  job_id: string;
+  space_id: string;
+  state: "adopted" | "abstention_confirmed";
+  /** True when this call returned an adoption that already existed. */
+  existing: boolean;
+  ratified_by: MemoryRatifiedBy | null;
+  credited: MemoryStandingCredit[];
 }
 export interface MemoryCacheInput {
   inputs: unknown;

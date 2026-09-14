@@ -21,6 +21,7 @@ import {
 } from "../memory/service-types";
 import type { MemorySourceSearch } from "../sdk/memory-types";
 import { requireMemoryWriter } from "./db-memory-admission";
+import { memoryAdoptRepository } from "./db-memory-adopt";
 import { memoryAssistanceRepository } from "./db-memory-assistance";
 import { exportMemoryBundle, importMemoryBundle } from "./db-memory-bundles";
 import { deleteMemoryCache, getMemoryCache, putMemoryCache } from "./db-memory-cache";
@@ -88,6 +89,23 @@ export function requireActor(db: Database, actor: MemoryActor, scope: MemoryScop
     throw new MemoryError(403, "scope_required", `Credential requires ${scope}`);
 }
 
+type SpaceRow = Omit<MemorySpace, "metadata"> & { metadata: string | null };
+
+/** `memory_spaces.metadata` (migration 114) is JSON text on the row; every
+ * reader hydrates it through here so a malformed value degrades to `{}`. */
+export function spaceMetadata(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const value = JSON.parse(raw);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+export function hydrateSpace(row: SpaceRow): MemorySpace {
+  return { ...row, metadata: spaceMetadata(row.metadata) };
+}
+
 export function authorizeMemorySpace(
   db: Database,
   actor: MemoryActor,
@@ -96,13 +114,19 @@ export function authorizeMemorySpace(
   allowForgotten = false,
 ): MemorySpace {
   requireActor(db, actor, scope);
-  const space = db.query("SELECT * FROM memory_spaces WHERE id=?").get(id) as MemorySpace | null;
+  const row = db.query("SELECT * FROM memory_spaces WHERE id=?").get(id) as SpaceRow | null;
+  const space = row ? hydrateSpace(row) : null;
   const grant = db
     .query("SELECT role FROM memory_grants WHERE space_id=? AND principal_id=?")
     .get(id, actor.principalId) as { role: string } | null;
+  // Institutional spaces are world-readable: `read_public` stands in for a
+  // reader grant on every active credential (read scope only — writes and
+  // shares still need ownership / an explicit grant).
+  const publicRead = scope === "memory:read" && space?.metadata.read_public === true;
   if (
     !space ||
     (space.owner_id !== actor.principalId &&
+      !publicRead &&
       (!grant || scope === "memory:share" || (scope === "memory:write" && grant.role !== "writer")))
   )
     throw new MemoryError(404, "space_not_found", "Memory space not found");
@@ -265,10 +289,15 @@ export function createMemorySpace(
 
 export function listMemorySpaces(db: Database, actor: MemoryActor): MemorySpace[] {
   requireActor(db, actor, "memory:read");
-  return db
-    .query(`SELECT s.* FROM memory_spaces s WHERE status='active' AND (owner_id=? OR EXISTS
-    (SELECT 1 FROM memory_grants g WHERE g.space_id=s.id AND g.principal_id=?)) ORDER BY created_at,id`)
-    .all(actor.principalId, actor.principalId) as MemorySpace[];
+  // `read_public` spaces are listed for everyone so an agent can discover the
+  // institutional guide space id without an out-of-band lookup.
+  return (
+    db
+      .query(`SELECT s.* FROM memory_spaces s WHERE status='active' AND (owner_id=? OR EXISTS
+    (SELECT 1 FROM memory_grants g WHERE g.space_id=s.id AND g.principal_id=?)
+    OR json_extract(s.metadata,'$.read_public')=1) ORDER BY created_at,id`)
+      .all(actor.principalId, actor.principalId) as SpaceRow[]
+  ).map(hydrateSpace);
 }
 
 export function grantMemorySpace(
@@ -1420,7 +1449,11 @@ export function graphMemory(
  * the standalone HTTP server and the full-world adapter consume. */
 export function memoryRepository(db: Database) {
   return {
+    /** Raw handle for read-only ranking helpers (db-memory-ranking.ts). */
+    raw: db,
     assistance: memoryAssistanceRepository(db),
+    /** Adoption + ratification of assistance proposals (Phase 3.3–3.5). */
+    adopt: memoryAdoptRepository(db),
     healthy: () => memoryDatabaseHealth(db),
     knowledgeGraph: (actor: MemoryActor, space: string, input: unknown, key: string) =>
       memoryKnowledgeGraph(db, actor, space, input, key),

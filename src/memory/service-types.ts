@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  MemoryAdoptInput,
   MemoryClaim,
   MemoryRecordInput,
   MemoryResolveInput,
@@ -136,6 +137,30 @@ export function resolveInput(value: unknown): MemoryResolveInput {
     rationale,
     ...(validTime === undefined ? {} : { valid_time: validTime }),
     ...(deadline === undefined ? {} : { deadline_ms: deadline }),
+  };
+}
+export function adoptInput(value: unknown): MemoryAdoptInput {
+  const input = object(value);
+  const jobId = textValue(input.job_id, "job_id", 128);
+  const target =
+    input.target_space_id === undefined || input.target_space_id === null
+      ? undefined
+      : textValue(input.target_space_id, "target_space_id", 128);
+  const rationale =
+    input.rationale === undefined || input.rationale === null
+      ? undefined
+      : textValue(input.rationale, "rationale", 4096);
+  if (input.confirm_abstention !== undefined && typeof input.confirm_abstention !== "boolean")
+    throw new MemoryError(400, "invalid_input", "confirm_abstention must be boolean");
+  const validTime = memoryValidity(input.valid_time);
+  return {
+    job_id: jobId,
+    ...(target === undefined ? {} : { target_space_id: target }),
+    ...(rationale === undefined ? {} : { rationale }),
+    ...(validTime === undefined ? {} : { valid_time: validTime }),
+    ...(input.confirm_abstention === undefined
+      ? {}
+      : { confirm_abstention: input.confirm_abstention }),
   };
 }
 export function memoryClaim(value: unknown): MemoryClaim {

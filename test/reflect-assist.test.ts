@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ledgerFor } from "../src/agent/standing";
 import {
   REFLECTOR_ROLE,
   type ReflectAgentView,
@@ -289,6 +290,90 @@ describe("reflect as a thin verb over the memory-reflector helper", () => {
     };
     expect(records.results.filter((r) => r.content === answer)).toHaveLength(1);
     expect(await run(alice, "reflect jobs")).toContain("adopted");
+  });
+
+  it("template reflections inherit the LOWEST authority of their inputs and `--share <pool>` deposits a reflection-tier pool note that pays the author when someone else recalls it", async () => {
+    db.createMemoryPool("pool_wisdom", "wisdom", "Alice");
+    const bob = new MockConnection("bob");
+    db.createUser({ id: crypto.randomUUID(), name: "Bob" });
+    engine.addConnection(bob);
+    engine.spawnEntity(bob.id, "Bob");
+
+    await run(alice, "note claim Amber deploys need port 7419 open confidence 0.3");
+    await run(alice, "note Amber deploys use manifest v2 !8");
+    const inputs = db.getNotesByEntity("Alice", 2);
+    expect(inputs.map((n) => n.confidence).sort()).toEqual([0.3, 0.5]);
+
+    // Unknown pool: reflection still created, share refused, nothing invented.
+    const refused = await run(alice, "reflect --template amber --share nowhere");
+    expect(refused).toContain("Reflection Created");
+    expect(refused).toContain('Not shared: pool "nowhere" does not exist.');
+    expect(db.getPoolNotes("pool_wisdom")).toHaveLength(0);
+
+    const reply = await run(alice, "reflect --template amber --share wisdom");
+    expect(reply).toContain("Reflection Created");
+    expect(reply).toContain("Authority: confidence=0.30 unverified");
+    expect(reply).toContain('Shared to pool "wisdom"');
+    const reflection = reflectionNotes("Alice").find((n) => !n.pool_id)!;
+    // TMA-NM: min(0.3, 0.5) and unverified because an input is unverified.
+    expect(reflection.confidence).toBeCloseTo(0.3, 9);
+    expect(reflection.verification_status).toBe("unverified");
+
+    const [shared] = db.getPoolNotes("pool_wisdom");
+    expect(shared).toMatchObject({
+      entity_name: "Alice",
+      tier: "reflection",
+      note_type: "episode",
+      verification_status: "unverified",
+    });
+    expect(shared!.confidence).toBeCloseTo(0.3, 9);
+    expect(shared!.content).toBe(reflection.content);
+
+    // Generational loop: Bob recalling the shared lesson credits Alice's durable key.
+    const aliceKey = db.getUserByName("Alice")!.id;
+    expect(ledgerFor(db, aliceKey).filter((r) => r.kind === "reflection_recalled")).toEqual([]);
+    const recalled = await run(bob, "pool wisdom recall amber synthesis");
+    expect(recalled).toContain("Synthesis");
+    expect(ledgerFor(db, aliceKey).filter((r) => r.kind === "reflection_recalled")).toEqual([
+      expect.objectContaining({ ref: `reflection:${shared!.id}`, amount: 0.5 }),
+    ]);
+    // Alice recalling herself earns nothing more.
+    await run(alice, "pool wisdom recall amber synthesis");
+    expect(ledgerFor(db, aliceKey).filter((r) => r.kind === "reflection_recalled")).toHaveLength(1);
+  });
+
+  it("`reflect adopt <job> --share <pool>` inherits the cited twins' lowest authority and shares the lesson", async () => {
+    db.createMemoryPool("pool_wisdom", "wisdom", "Alice");
+    await run(alice, "note claim Amber deploys on port 7419 confidence 0.4");
+    const [portNote] = db.getNotesByEntity("Alice", 1);
+    expect(portNote!.confidence).toBeCloseTo(0.4, 9);
+    const portTwin = findDurableTwin(db, portNote!.id)!;
+    expect(portTwin).toBeDefined();
+
+    const requested = await run(alice, "reflect via Reflector amber --share wisdom");
+    expect(requested).toContain("Reflection Requested");
+    const jobId = requested.match(/Job (\S+)/)![1]!;
+    // The share intent is carried forward in the adopt hint.
+    expect(requested).toContain(`reflect adopt ${jobId} --share wisdom`);
+
+    const answer = "Lesson: keep port 7419 pinned in the Amber manifest.";
+    await answerJob(jobId, portTwin.recordId, answer, "port 7419");
+    const adopted = await run(alice, `reflect adopt ${jobId} --share wisdom`);
+    expect(adopted).toContain("Reflection Adopted");
+    expect(adopted).toContain("Authority: confidence=0.40 unverified");
+    expect(adopted).toContain('Shared to pool "wisdom"');
+
+    const reflection = reflectionNotes("Alice").find((n) => !n.pool_id)!;
+    expect(reflection.content).toBe(answer);
+    expect(reflection.confidence).toBeCloseTo(0.4, 9);
+    expect(reflection.verification_status).toBe("unverified");
+    const [shared] = db.getPoolNotes("pool_wisdom");
+    expect(shared).toMatchObject({ entity_name: "Alice", tier: "reflection", content: answer });
+    expect(shared!.confidence).toBeCloseTo(0.4, 9);
+
+    // Idempotent adoption does not re-share.
+    await run(alice, `reflect adopt ${jobId} --share wisdom`);
+    expect(db.getPoolNotes("pool_wisdom")).toHaveLength(1);
   });
 
   it("discovers a live reflector from the runtime roster and from persisted agent configs", async () => {

@@ -13,6 +13,7 @@ export const MEMORY_OPERATIONS = [
   "assist_finish",
   "assist_cancel",
   "assist_delegate",
+  "adopt",
   "capabilities",
   "usage",
   "federation_mounts",
@@ -112,6 +113,22 @@ export async function runMemoryOperation(
     return operation === "assist_get"
       ? client.request(base)
       : client.request(`${base}/${operation.slice(7)}`, "POST", request.input ?? {}, request.key);
+  }
+  if (operation === "adopt") {
+    // Explicit space ⇒ target route; otherwise the job's own space decides.
+    const input: Record<string, unknown> = {
+      ...(request.input ?? {}),
+      ...(request.id ? { job_id: request.id } : {}),
+    };
+    const target = request.space_id ?? (input.target_space_id as string | undefined);
+    return target
+      ? client.request(`/spaces/${field(target, "space_id")}/adopt`, "POST", input, request.key)
+      : client.request(
+          `/assistance/${field(input.job_id, "job_id")}/adopt`,
+          "POST",
+          input,
+          request.key,
+        );
   }
   if (operation === "usage") return client.usage();
   if (operation === "capabilities") return client.capabilities();
