@@ -113,8 +113,10 @@ budget, memory contradiction, and stale-source signals. Use `ops ack <id>`, `ops
 
 The dashboard memory inspector shows typed sources, internal-note derivations, credibility, and the
 complete verification history. Idle autonomous agents also receive a deduplicated priority-work
-pulse, while focused agents prefer trusted memories and fall back to legacy recall when no trusted
-context exists.
+pulse, while focused agents see recalled notes in two labeled tiers: `[trusted]` (verified or
+high-confidence sourced notes — the strict `recall ... trusted` result, which never falls back) and
+`[unverified — own notes, verify before relying]` (ordinary recall hits not already in the trusted
+set, so an agent's own unverified notes stay visible without being mistaken for evidence).
 
 Terminal task outcomes drive two additional loops. Productivity sessions measure latency, success,
 tool-call effort, and direct messages involving the worker (reported as handoffs). The same terminal

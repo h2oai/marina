@@ -38,7 +38,7 @@ import {
 import { GameStateManager } from "./game-state";
 import { HookRegistry } from "./hook-registry";
 import { InterruptibleWaiter } from "./interruptible-waiter";
-import { PlatformMemoryBackend } from "./memory-platform";
+import { PlatformMemoryBackend, type PlatformNoteResult } from "./memory-platform";
 import { piModels } from "./pi-models";
 import {
   getLeanDiscoveryPrompt,
@@ -155,6 +155,47 @@ const RECALL_BLOCK_MAX_CHARS = 600;
 function clampText(text: string, maxChars = RECALL_BLOCK_MAX_CHARS): string {
   if (text.length <= maxChars) return text;
   return `${text.slice(0, maxChars)} […+${text.length - maxChars} chars]`;
+}
+
+/** Max recalled notes (both tiers combined) in the Relevant Notes section. */
+const RELEVANT_NOTES_MAX = 5;
+
+/** Tier labels for the Relevant Notes section — the agent reads these verbatim. */
+export const RELEVANT_NOTES_TRUSTED_LABEL = "[trusted]";
+export const RELEVANT_NOTES_UNVERIFIED_LABEL = "[unverified — own notes, verify before relying]";
+
+/**
+ * Render the two recall tiers of the Relevant Notes section. Trusted hits
+ * come first under `[trusted]`; ordinary hits not already in the trusted set
+ * follow under the unverified label. The combined cap is RELEVANT_NOTES_MAX,
+ * trusted first, so a wall of unverified notes can't crowd out the sourced
+ * ones. Each tier is omitted entirely when it has nothing to show.
+ */
+export function renderRelevantNoteTiers(
+  trusted: PlatformNoteResult[],
+  ordinary: PlatformNoteResult[],
+  max = RELEVANT_NOTES_MAX,
+): string[] {
+  const line = (r: PlatformNoteResult) =>
+    `- [#${r.id} imp=${r.importance}] ${clampText(r.content)}`;
+  const trustedTop = trusted.slice(0, max);
+  const seen = new Set(trustedTop.map((r) => String(r.id)));
+  const ordinaryTop: PlatformNoteResult[] = [];
+  for (const r of ordinary) {
+    if (ordinaryTop.length >= max - trustedTop.length) break;
+    const id = String(r.id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ordinaryTop.push(r);
+  }
+  const blocks: string[] = [];
+  if (trustedTop.length > 0) {
+    blocks.push([RELEVANT_NOTES_TRUSTED_LABEL, ...trustedTop.map(line)].join("\n"));
+  }
+  if (ordinaryTop.length > 0) {
+    blocks.push([RELEVANT_NOTES_UNVERIFIED_LABEL, ...ordinaryTop.map(line)].join("\n"));
+  }
+  return blocks;
 }
 
 /**
@@ -1862,20 +1903,26 @@ export class LeanAgentAdapter implements AgentHandle {
     }
 
     // ── 4. Relevant notes for current focus (cached, re-query on focus change or 60 cycles) ──
-    // Two parallel queries: `recall` (fact-tier notes) + `skill search`
-    // (skill-tier procedures). Skills surface as <example> blocks per
-    // the few-shot retrieval convention (DSPy BootstrapFewShotWithRandomSearch
-    // and Anthropic's prompt-engineering guide both note that worked
-    // examples beat bullet-formatted recalls when the model is solving
-    // a procedural task). Capped at 2 skills + 5 notes so the section
-    // stays under ~600 tokens.
+    // Three parallel queries: `recall <focus> trusted` (verified / sourced
+    // notes), plain `recall <focus>` (the agent's own, mostly unverified
+    // notes), and `skill search` (skill-tier procedures). Skills surface as
+    // <example> blocks per the few-shot retrieval convention (DSPy
+    // BootstrapFewShotWithRandomSearch and Anthropic's prompt-engineering
+    // guide both note that worked examples beat bullet-formatted recalls
+    // when the model is solving a procedural task). Recall hits render in
+    // two labeled tiers — `[trusted]` first, then `[unverified — own notes,
+    // verify before relying]` for ordinary hits not already in the trusted
+    // set — so the agent still sees its own notes (every plain `note` is
+    // written unverified) without the backend's strict `trusted` flag
+    // silently falling back. Capped at 2 skills + 5 notes overall (trusted
+    // first) so the section stays under ~600 tokens.
     if (this.focus) {
       try {
         const focusDesc = this.focus.description;
         this.notesCacheAge++;
         if (focusDesc !== this.lastNotesQuery || this.notesCacheAge > 60) {
-          const [recallResult, skillResult] = await Promise.all([
-            this.platformMemory.search(focusDesc, { trusted: true }),
+          const [tiers, skillResult] = await Promise.all([
+            this.platformMemory.searchTiered(focusDesc),
             this.platformMemory.searchSkills(focusDesc).catch(() => ({ results: [] })),
           ]);
           const blocks: string[] = [];
@@ -1888,12 +1935,7 @@ export class LeanAgentAdapter implements AgentHandle {
               );
             blocks.push(exampleBlocks.join("\n"));
           }
-          if (recallResult.results && recallResult.results.length > 0) {
-            const top = recallResult.results
-              .slice(0, 5)
-              .map((r) => `- [#${r.id} imp=${r.importance}] ${clampText(r.content)}`);
-            blocks.push(top.join("\n"));
-          }
+          blocks.push(...renderRelevantNoteTiers(tiers.trusted, tiers.ordinary));
           this.cachedNotes = blocks.join("\n\n");
           this.lastNotesQuery = focusDesc;
           this.notesCacheAge = 0;

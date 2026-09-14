@@ -123,6 +123,32 @@ export class PlatformMemoryBackend {
     };
   }
 
+  /**
+   * Two labeled recall tiers for the same query, fetched in parallel:
+   * `trusted` is the strict `recall <q> trusted` result (verified or
+   * high-confidence sourced notes only — empty when none qualify) and
+   * `ordinary` is the plain `recall <q>` result, which includes the agent's
+   * own unverified notes. Callers that want to *show* both tiers use this;
+   * `search({ trusted: true })` itself stays strict and never falls back, so
+   * the `trusted` flag means what it says. A failed tier degrades to an empty
+   * list rather than failing the whole call.
+   */
+  async searchTiered(
+    query: string,
+    opts?: { noteType?: string; mode?: "recent" | "important" },
+  ): Promise<{ trusted: PlatformNoteResult[]; ordinary: PlatformNoteResult[] }> {
+    const empty: PlatformNoteResult[] = [];
+    const [trusted, ordinary] = await Promise.all([
+      this.search(query, { ...opts, trusted: true })
+        .then((r) => r.results ?? empty)
+        .catch(() => empty),
+      this.search(query, opts)
+        .then((r) => r.results ?? empty)
+        .catch(() => empty),
+    ]);
+    return { trusted, ordinary };
+  }
+
   async update(noteId: string, newContent: string): Promise<PlatformMemoryResult> {
     const perceptions = await this.client.command(`note correct ${noteId} ${newContent}`);
     const text = extractText(perceptions);

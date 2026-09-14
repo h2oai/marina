@@ -1638,7 +1638,7 @@ const memorySchema = Type.Object({
   trusted: Type.Optional(
     Type.Boolean({
       description:
-        "Prefer verified/high-confidence memories; falls back when none exist (for search)",
+        "Strict (for search): returns only verified or high-confidence sourced notes; empty when none qualify. Omit trusted to include unverified notes.",
     }),
   ),
   category: Type.Optional(

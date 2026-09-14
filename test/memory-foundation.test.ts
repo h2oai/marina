@@ -130,6 +130,20 @@ describe("memory foundation contracts", () => {
     expect(commands).toEqual(["recall trustedneedle trusted"]);
   });
 
+  it("searchTiered keeps the trusted tier strict and surfaces unverified notes as ordinary", async () => {
+    const plain = db.createNote("Alice", "tierneedle plain observation");
+    const verified = db.createNote("Alice", "tierneedle verified fact", undefined, {
+      noteType: "fact",
+      verificationStatus: "verified",
+    });
+    const tiers = await memory.searchTiered("tierneedle");
+    expect(commands).toEqual(["recall tierneedle trusted", "recall tierneedle"]);
+    expect(tiers.trusted.map((n) => n.id)).toEqual([String(verified)]);
+    expect(tiers.ordinary.map((n) => n.id).sort()).toEqual(
+      [String(plain), String(verified)].sort(),
+    );
+  });
+
   it("applies type, trust, active status and tier to graph-discovered candidates", async () => {
     const seed = db.createNote("Alice", "filterneedle reliable seed", undefined, {
       noteType: "fact",
