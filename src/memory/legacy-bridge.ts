@@ -27,7 +27,7 @@ import { residentMemoryOperation } from "./resident-service";
 
 export const DURABLE_TWIN_URL_PREFIX = "marina-memory://record/";
 export const ASSISTANCE_ADOPTION_URL_PREFIX = "marina-memory://assistance/";
-const LEGACY_SOURCE_SESSION = "legacy-notes";
+export const LEGACY_SOURCE_SESSION = "legacy-notes";
 
 const logger = new Logger();
 /** Bursts of legacy writes can outrun the per-principal request budget; every

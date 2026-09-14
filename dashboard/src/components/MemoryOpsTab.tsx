@@ -12,7 +12,16 @@
  */
 
 import { useQuery } from "@tanstack/react-query";
-import { Coins, Landmark, ListChecks, Receipt, Scale, ShieldCheck, Sparkles } from "lucide-react";
+import {
+  Coins,
+  Gauge,
+  Landmark,
+  ListChecks,
+  Receipt,
+  Scale,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
 import { type ReactNode, useCallback } from "react";
 import { useInvalidateOnEvent } from "../hooks/use-realtime";
 import { describeApiError, fetchApi } from "../lib/api";
@@ -37,6 +46,7 @@ import {
   trustProfileLabel,
 } from "./memory-ops/format";
 import { JobsSection } from "./memory-ops/JobsSection";
+import { RatiosSection } from "./memory-ops/RatiosSection";
 import { TierBars } from "./memory-ops/TierBars";
 
 export const MEMORY_OVERVIEW_KEY = ["memory-overview"] as const;
@@ -97,6 +107,10 @@ export function MemoryOpsTab({
 
       <Section title="Posture" icon={<ShieldCheck size={12} />}>
         {data ? <PostureSection data={data} /> : <Placeholder />}
+      </Section>
+
+      <Section title="Continuous hygiene" icon={<Gauge size={12} />}>
+        {data ? <RatiosSection ratios={data.ratios} /> : <Placeholder />}
       </Section>
 
       <Section title="Jobs" icon={<ListChecks size={12} />}>

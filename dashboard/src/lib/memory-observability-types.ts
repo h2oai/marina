@@ -77,7 +77,41 @@ export type MemoryReceiptView = {
   at: number;
 };
 
+export type MemoryRatio = { value: number | null; numerator: number; denominator: number };
+export type MemoryStorageBudgetView = {
+  ownerName: string;
+  logicalBytes: number;
+  maxBytes: number | null;
+  sources: number;
+  maxSources: number | null;
+  revisions: number;
+  maxRevisions: number | null;
+  spaces: number;
+  maxSpaces: number | null;
+  utilization: number | null;
+  overLimit: string[];
+};
+/** Mirror of `MemoryHygieneRatios` in src/net/memory-observability-types.ts. */
+export type MemoryHygieneRatios = {
+  computedAt: number;
+  windowMs: number;
+  scope: "all" | "own";
+  redundancy: MemoryRatio;
+  contradictionRate: MemoryRatio;
+  unresolvedContradictionRate: MemoryRatio;
+  provenanceCoverage: MemoryRatio;
+  stalenessRatio: MemoryRatio;
+  unsafeServedRate: MemoryRatio;
+  reflectionRepetitionRate: MemoryRatio;
+  consolidationRoi: MemoryRatio;
+  repairSuccess: MemoryRatio;
+  leakage: { crossScopeAttempts: number; crossScopeCacheHits: number };
+  storage: MemoryStorageBudgetView[];
+  cost: { receipts: number; avgInjectedBytes: number | null; cacheHitRate: MemoryRatio };
+};
+
 export type MemoryOverview = {
+  ratios: MemoryHygieneRatios;
   trust: { profile: string; ungated: boolean; autonomy: string };
   hygiene: { entityName: string; line: string; at: number }[];
   jobs: {

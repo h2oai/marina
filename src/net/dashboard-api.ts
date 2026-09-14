@@ -53,6 +53,7 @@ import {
   cancelMemoryJob,
   getMemoryJob,
   listMemoryJobs,
+  memoryHygieneRatios,
   memoryObserverScope,
 } from "./memory-observability";
 import { memoryObserver } from "./memory-visibility";
@@ -718,6 +719,11 @@ export async function handleDashboardApi(
   // everything; a resident sees only its own jobs, spaces, notes and credits.
   if (url.pathname === "/api/memory/overview" && method === "GET" && db) {
     return json(buildMemoryOverview(engine, memoryObserverScope(engine, callerId)));
+  }
+  // The continuous-hygiene ratios alone (also embedded in the overview) —
+  // for scripts, benchmarks and readiness-style checks.
+  if (url.pathname === "/api/memory/hygiene" && method === "GET" && db) {
+    return json(memoryHygieneRatios(engine, memoryObserverScope(engine, callerId)));
   }
   if (url.pathname === "/api/memory/jobs" && method === "GET" && db) {
     const stateParam = url.searchParams.get("state");

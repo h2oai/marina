@@ -31,6 +31,12 @@ import type { Engine } from "../engine/engine";
 import { ACCUMULATION_TASK_MARKER, SHARED_WRITE_REVIEW_MARKER } from "../engine/memory-dispatch";
 import { HYGIENE_NOTE_PREFIX, HYGIENE_TASK_MARKER } from "../engine/memory-hygiene";
 import { computeTrustProfile } from "../engine/readiness";
+import {
+  computeHygieneRatios,
+  emptyHygieneRatios,
+  HYGIENE_RATIOS_TTL_MS,
+  type ServedReceipt,
+} from "../memory/hygiene-ratios";
 import { DURABLE_TWIN_URL_PREFIX, parseDurableTwinUrl } from "../memory/legacy-bridge";
 import { residentMemoryOperation } from "../memory/resident-service";
 import type { MarinaDB, NoteRow } from "../persistence/database";
@@ -41,6 +47,7 @@ import type {
   MemoryGraph,
   MemoryGraphEdge,
   MemoryGraphNode,
+  MemoryHygieneRatios,
   MemoryJobView,
   MemoryOverview,
   MemoryRatificationView,
@@ -400,8 +407,23 @@ export function getMemoryJob(
 ): MemoryJobView | undefined {
   const raw = rawDb(db);
   const job = jobRow(raw, id);
-  if (!job || !canSeeJob(scope, job)) return undefined;
+  if (!job) return undefined;
+  if (!canSeeJob(scope, job)) {
+    memoryLeakageCounters.crossScopeAttempts++;
+    return undefined;
+  }
   return jobView(new Lookup(raw), job, { content: true, now });
+}
+
+/**
+ * Leakage incidents for the hygiene ratios: cross-scope reads or cancels the
+ * observability layer refused (an existing job asked for by a principal who is
+ * neither its requester, its worker, nor an operator). In-memory since process
+ * start — a refusal is a prevented leak, counted so the trend is visible.
+ */
+export const memoryLeakageCounters = { crossScopeAttempts: 0 };
+export function resetMemoryLeakageCountersForTests(): void {
+  memoryLeakageCounters.crossScopeAttempts = 0;
 }
 
 export type MemoryJobCancelResult =
@@ -421,7 +443,11 @@ export async function cancelMemoryJob(
 ): Promise<MemoryJobCancelResult> {
   const raw = rawDb(db);
   const job = jobRow(raw, id);
-  if (!job || !canSeeJob(scope, job)) return { ok: false, status: 404, error: "Job not found" };
+  if (!job) return { ok: false, status: 404, error: "Job not found" };
+  if (!canSeeJob(scope, job)) {
+    memoryLeakageCounters.crossScopeAttempts++;
+    return { ok: false, status: 404, error: "Job not found" };
+  }
   if (!scope.privileged && scope.principalId !== job.requester_id)
     return { ok: false, status: 403, error: "Only the requester or an operator may cancel" };
   const requester = db.getUser(job.requester_id);
@@ -538,12 +564,22 @@ function ratificationView(row: RatifiedRow): MemoryRatificationView {
   };
 }
 
-function receiptViews(
+interface ServedReceiptEvent extends ServedReceipt {
+  requestId: string;
+  surface: string;
+}
+
+/**
+ * Every injected response on the in-memory event log the observer may see,
+ * newest first, one per request. Feeds both the recent-receipts list and the
+ * hygiene ratios (unsafe-served, cost).
+ */
+function servedReceipts(
   engine: Engine,
   scope: MemoryObserverScope,
-  limit: number,
-): MemoryReceiptView[] {
-  const byRequest = new Map<string, MemoryReceiptView>();
+  limit = Number.POSITIVE_INFINITY,
+): ServedReceiptEvent[] {
+  const byRequest = new Map<string, ServedReceiptEvent>();
   const events = engine.getEventLog();
   for (let i = events.length - 1; i >= 0 && byRequest.size < limit; i--) {
     const event = events[i]!;
@@ -553,9 +589,26 @@ function receiptViews(
     if (!receipt) continue;
     if (!scope.privileged && receipt.entity !== scope.entityName) continue;
     byRequest.set(event.requestId, {
+      receipt,
+      at: event.timestamp,
+      cacheHit: event.target === "response-cache",
+      requestId: event.requestId,
+      surface: event.routeKind ?? "passthru",
+    });
+  }
+  return [...byRequest.values()];
+}
+
+function receiptViews(
+  engine: Engine,
+  scope: MemoryObserverScope,
+  limit: number,
+): MemoryReceiptView[] {
+  return servedReceipts(engine, scope, limit).map(
+    ({ receipt, at, cacheHit, surface }): MemoryReceiptView => ({
       requestId: receipt.requestId,
       entity: receipt.entity,
-      surface: event.routeKind ?? "passthru",
+      surface,
       tiers: receipt.tiers.map((tier) => ({
         tier: tier.tier,
         count: tier.ids.length,
@@ -564,11 +617,42 @@ function receiptViews(
       usedBytes: receipt.usedBytes,
       budgetBytes: receipt.budgetBytes,
       truncated: receipt.truncated,
-      cacheHit: event.target === "response-cache",
-      at: event.timestamp,
-    });
-  }
-  return [...byRequest.values()];
+      cacheHit,
+      at,
+    }),
+  );
+}
+
+// ─── Hygiene ratios (memoized per scope) ────────────────────────────────────
+
+const ratiosMemo = new Map<string, { at: number; value: MemoryHygieneRatios }>();
+
+/**
+ * Continuous-hygiene ratios for the observer's scope, memoized for
+ * `HYGIENE_RATIOS_TTL_MS` per (privileged | principal, entity) key so dashboard
+ * polling never recomputes the aggregate scans more than twice a minute.
+ */
+export function memoryHygieneRatios(
+  engine: Engine,
+  scope: MemoryObserverScope,
+  now = Date.now(),
+): MemoryHygieneRatios {
+  const key = scope.privileged ? "*" : `${scope.principalId ?? ""}|${scope.entityName ?? ""}`;
+  const cached = ratiosMemo.get(key);
+  if (cached && cached.at <= now && now - cached.at < HYGIENE_RATIOS_TTL_MS) return cached.value;
+  const shared = { now, cache: responseCacheCounters, leakage: memoryLeakageCounters };
+  const db = engine.db;
+  if (!db) return emptyHygieneRatios(scope, shared);
+  const value = computeHygieneRatios(rawDb(db), scope, {
+    ...shared,
+    receipts: servedReceipts(engine, scope),
+  });
+  ratiosMemo.set(key, { at: now, value });
+  return value;
+}
+
+export function resetMemoryHygieneRatiosMemoForTests(): void {
+  ratiosMemo.clear();
 }
 
 export function buildMemoryOverview(
@@ -579,6 +663,7 @@ export function buildMemoryOverview(
   const db = engine.db;
   const trust = computeTrustProfile();
   const overview: MemoryOverview = {
+    ratios: memoryHygieneRatios(engine, scope, now),
     trust: { profile: trust.profile, ungated: trust.ungated, autonomy: trust.autonomy },
     hygiene: [],
     jobs: { open: 0, answered24h: 0, abstained24h: 0, cancelled24h: 0, byMarker: {} },

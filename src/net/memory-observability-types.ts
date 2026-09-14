@@ -84,7 +84,75 @@ export type MemoryReceiptView = {
   at: number;
 };
 
+/**
+ * One continuous-hygiene ratio. `value` is `numerator / denominator`, or
+ * `null` when the denominator is zero (the UI shows "n/a", never 0%). Most
+ * ratios are 0..1; `consolidationRoi` is an average (inputs per adopted
+ * lesson) and may exceed 1.
+ */
+export type MemoryRatio = { value: number | null; numerator: number; denominator: number };
+/** Storage usage against the admission budget for one durable owner. `null` limit = unlimited. */
+export type MemoryStorageBudgetView = {
+  ownerName: string;
+  logicalBytes: number;
+  maxBytes: number | null;
+  sources: number;
+  maxSources: number | null;
+  revisions: number;
+  maxRevisions: number | null;
+  spaces: number;
+  maxSpaces: number | null;
+  /** logicalBytes / maxBytes, or null when unlimited. */
+  utilization: number | null;
+  overLimit: string[];
+};
+/**
+ * The continuous-hygiene dashboard (design §7 "published beside any headline
+ * number"). Computed on demand from both silos for the observer's scope
+ * (`scope: "all"` for operators, `"own"` for a resident) over `windowMs`
+ * (24 h) where a window applies; structural ratios (redundancy, provenance,
+ * staleness, contradictions) are over the current live state. Every ratio
+ * carries its numerator/denominator so the number is inspectable.
+ */
+export type MemoryHygieneRatios = {
+  computedAt: number;
+  windowMs: number;
+  scope: "all" | "own";
+  /** Exact-content duplicates (case-folded, trimmed) across fact-like legacy notes and active records: (group size − 1) summed / notes+records. */
+  redundancy: MemoryRatio;
+  /** Records in a contradiction now or settled by a resolution in the window / active records that carry a claim. */
+  contradictionRate: MemoryRatio;
+  /** Competing now / (competing now + records settled by applied resolutions in the window). */
+  unresolvedContradictionRate: MemoryRatio;
+  /** Records with ≥ 1 non-twin source + legacy notes with ≥ 1 non-twin `note_sources` row / all of them. */
+  provenanceCoverage: MemoryRatio;
+  /** `stale = 1` records / active records. */
+  stalenessRatio: MemoryRatio;
+  /** Injected responses (window) that served a record already superseded, forgotten, past `valid_until`, or below its then-current version / injected responses citing ≥ 1 record. */
+  unsafeServedRate: MemoryRatio;
+  /** Reflection-tier notes written in the window that repeat an earlier reflection of the same entity (same case-folded content) / reflections in the window. */
+  reflectionRepetitionRate: MemoryRatio;
+  /** Inputs (dependencies + non-twin sources) per adopted reflector lesson in the window — an average, not a share. */
+  consolidationRoi: MemoryRatio;
+  /** Hygiene / shared-write-review evaluator jobs (window) that were answered AND followed by an adoption or a resolution in their space / such jobs that reached a final state. */
+  repairSuccess: MemoryRatio;
+  leakage: {
+    /** Cross-scope reads/cancels refused by the observability layer since process start (a non-owner asked for another principal's job). */
+    crossScopeAttempts: number;
+    /** Always 0 — the response-cache key hashes the post-injection request, so a hit cannot cross identities. Reported so the gate is visible. */
+    crossScopeCacheHits: number;
+  };
+  storage: MemoryStorageBudgetView[];
+  cost: {
+    /** Injected responses in the window. */
+    receipts: number;
+    avgInjectedBytes: number | null;
+    cacheHitRate: MemoryRatio;
+  };
+};
+
 export type MemoryOverview = {
+  ratios: MemoryHygieneRatios;
   trust: { profile: string; ungated: boolean; autonomy: string };
   hygiene: { entityName: string; line: string; at: number }[];
   jobs: {

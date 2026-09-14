@@ -37,6 +37,17 @@ const competing = `SELECT c2.record_id FROM memory_claims c JOIN memory_claims c
  AND NOT ${SUPERSEDED_MEMBER("c2.record_id")} AND NOT ${KEPT_PAIR("r.id", "c2.record_id")}`;
 const competes = `(NOT ${SUPERSEDED_MEMBER("r.id")} AND EXISTS(${competing}))`;
 const pending = PENDING_MEMBER("r.id");
+
+/**
+ * SQL predicate (over a `memory_records r` alias) that is true when the
+ * active record currently competes with another live claim on the same
+ * subject/predicate and no applied resolution has settled the pair. Exported
+ * so read models (hygiene ratios) count contradictions with exactly the
+ * definition `review kind:competing` uses.
+ */
+export const COMPETING_RECORD_PREDICATE = competes;
+/** SQL predicate: the record is a `pending` member of an open `await_confirmation` resolution. */
+export const PENDING_RECORD_PREDICATE = pending;
 export const REVIEW_KINDS = ["all", "stale", "competing", "pending"] as const;
 
 export function reviewMemory(

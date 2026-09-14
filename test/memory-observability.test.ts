@@ -30,15 +30,21 @@ import {
   getMemoryJob,
   listMemoryJobs,
   markerOf,
+  memoryHygieneRatios,
+  memoryLeakageCounters,
   memoryObservabilityPollTicks,
   memoryObserverScope,
   pollMemoryEvents,
+  resetMemoryHygieneRatiosMemoForTests,
+  resetMemoryLeakageCountersForTests,
 } from "../src/net/memory-observability";
 import type {
   MemoryGraph,
+  MemoryHygieneRatios,
   MemoryJobView,
   MemoryOverview,
 } from "../src/net/memory-observability-types";
+import { encodeMemoryReceiptHeader, finalizeMemoryReceipt } from "../src/net/memory-receipt";
 import { MarinaDB } from "../src/persistence/database";
 import type { MemoryAssistanceJob } from "../src/sdk/memory-assistance";
 import type { MemoryOperationRequest } from "../src/sdk/memory-operations";
@@ -256,6 +262,8 @@ beforeEach(() => {
   // scoping matrix below exercises real enforcement. (Under `local` every
   // loopback login is bootstrapped sovereign and would see everything.)
   resetTrustProfileForTests();
+  resetMemoryHygieneRatiosMemoForTests();
+  resetMemoryLeakageCountersForTests();
   directory = mkdtempSync(join(tmpdir(), "marina-observability-"));
   db = new MarinaDB(join(directory, "world.db"));
   engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
@@ -781,5 +789,148 @@ describe("overview without content leaks", () => {
     expect(serialized).not.toContain("lease_token");
     expect(serialized).not.toContain("credential");
     expect(serialized).not.toContain(tokens[OWNER]!);
+  });
+});
+
+// ─── Continuous-hygiene ratios ──────────────────────────────────────────────
+
+/** Put an injected-response receipt on the event log as the gateway would. */
+function serveReceipt(
+  entity: string,
+  refs: { id: string; version: number }[],
+  at: number,
+  usedBytes = 900,
+): void {
+  const receipt = finalizeMemoryReceipt(
+    {
+      schema: "marina.memory.receipt.v1",
+      entity,
+      tiers: [{ tier: "evidence", ids: refs, bytes: usedBytes }],
+      budgetBytes: 2048,
+      usedBytes,
+      truncated: false,
+      degraded: [],
+    },
+    `req-${crypto.randomUUID()}`,
+  );
+  (engine as unknown as { logEvent(event: EngineEvent): void }).logEvent({
+    type: "model_request_lifecycle",
+    phase: "completed",
+    requestId: receipt.requestId,
+    model: "marina/default",
+    routeKind: "passthru",
+    memoryReceipt: encodeMemoryReceiptHeader(receipt),
+    timestamp: at,
+  } as EngineEvent);
+}
+
+const inUnit = (r: { value: number | null }) => r.value === null || (r.value >= 0 && r.value <= 1);
+
+describe("continuous-hygiene ratios", () => {
+  it("publishes every ratio with its numerator/denominator, from both silos, for the operator", async () => {
+    const fx = await buildFixture();
+    // Reflection repetition: two identical reflections by Owner in the window.
+    db.createNote(OWNER, "Lesson: always cite the record id", "reflection", { tier: "reflection" });
+    db.createNote(OWNER, "Lesson: ALWAYS cite the record id ", "reflection", {
+      tier: "reflection",
+    });
+    // Legacy redundancy: same text under two note types (createNote dedups per type only).
+    db.createNote(OWNER, "The deploy target is eu-west-1", "fact");
+    db.createNote(OWNER, "the deploy target is eu-west-1", "observation");
+    const now = Date.now();
+    // Unsafe-served: one response cited the resolution LOSER after it was superseded,
+    // one cited the winner (safe), one cited nothing (not a citing receipt).
+    serveReceipt(OWNER, [{ id: fx.resolutionLoserId, version: 1 }], now - 1000);
+    serveReceipt(OWNER, [{ id: fx.resolutionWinnerId, version: 1 }], now - 900, 300);
+    serveReceipt(OWNER, [], now - 800, 0);
+
+    const res = await api("/api/memory/hygiene", { desktop: true });
+    expect(res.status).toBe(200);
+    const ratios = res.body as MemoryHygieneRatios;
+    expect(ratios.scope).toBe("all");
+    expect(ratios.windowMs).toBe(24 * 60 * 60 * 1000);
+    for (const key of [
+      "redundancy",
+      "contradictionRate",
+      "unresolvedContradictionRate",
+      "provenanceCoverage",
+      "stalenessRatio",
+      "unsafeServedRate",
+      "reflectionRepetitionRate",
+      "repairSuccess",
+    ] as const) {
+      const r = ratios[key];
+      expect(inUnit(r)).toBe(true);
+      expect(r.numerator).toBeLessThanOrEqual(Math.max(r.denominator, r.numerator));
+      if (r.denominator > 0) expect(r.value).toBeCloseTo(r.numerator / r.denominator, 10);
+      else expect(r.value).toBeNull();
+    }
+    // Contradictions: Berlin/Paris were competing and were settled by one applied
+    // resolution inside the window — nothing competes now.
+    expect(ratios.contradictionRate).toMatchObject({ numerator: 2, denominator: 2, value: 1 });
+    expect(ratios.unresolvedContradictionRate).toMatchObject({ numerator: 0, denominator: 2 });
+    expect(ratios.stalenessRatio.numerator).toBe(0);
+    // Provenance: the legacy twin capture is NOT evidence; the note itself has
+    // only the twin row → both sides exclude it. Nothing in the fixture has an
+    // independent source yet, so coverage is 0 over a non-empty denominator.
+    expect(ratios.provenanceCoverage.denominator).toBeGreaterThan(0);
+    expect(ratios.provenanceCoverage.numerator).toBe(0);
+    // Redundancy: two legacy duplicate groups of two (the fact under two note
+    // types AND the repeated reflection) → 2 over all fact-like notes + records;
+    // the durable twins of those notes are excluded so they never double-count.
+    expect(ratios.redundancy.numerator).toBe(2);
+    expect(ratios.redundancy.denominator).toBeGreaterThan(4);
+    expect(ratios.reflectionRepetitionRate).toMatchObject({ numerator: 1, denominator: 2 });
+    expect(ratios.unsafeServedRate).toMatchObject({ numerator: 1, denominator: 2, value: 0.5 });
+    expect(ratios.cost).toMatchObject({ receipts: 3, avgInjectedBytes: 400 });
+    // Consolidation ROI: the adopted reflector lesson cites the twin (one dependency).
+    expect(ratios.consolidationRoi.denominator).toBeGreaterThanOrEqual(1);
+    expect(ratios.consolidationRoi.numerator).toBeGreaterThanOrEqual(1);
+    // Storage: Owner's spaces with the admission budget (finite under `shared`).
+    const owner = ratios.storage.find((row) => row.ownerName === OWNER);
+    expect(owner).toBeTruthy();
+    expect(owner!.logicalBytes).toBeGreaterThan(0);
+    expect(owner!.maxBytes).toBeGreaterThan(owner!.logicalBytes);
+    expect(owner!.utilization).toBeGreaterThan(0);
+    expect(owner!.overLimit).toEqual([]);
+    expect(ratios.leakage).toEqual({ crossScopeAttempts: 0, crossScopeCacheHits: 0 });
+    // Embedded in the overview too.
+    const overview = (await api("/api/memory/overview", { desktop: true })).body as MemoryOverview;
+    expect(overview.ratios.unsafeServedRate).toEqual(ratios.unsafeServedRate);
+  });
+
+  it("scopes ratios to the resident, memoizes per scope, and counts cross-scope attempts", async () => {
+    const fx = await buildFixture();
+    serveReceipt(OWNER, [{ id: fx.resolutionLoserId, version: 1 }], Date.now() - 500);
+    const stranger = memoryHygieneRatios(engine, memoryObserverScope(engine, entityIds[STRANGER]));
+    expect(stranger.scope).toBe("own");
+    expect(stranger.stalenessRatio.denominator).toBe(0);
+    expect(stranger.unsafeServedRate).toEqual({ value: null, numerator: 0, denominator: 0 });
+    expect(stranger.cost.receipts).toBe(0);
+    expect(stranger.storage.map((row) => row.ownerName)).toEqual([STRANGER]);
+    const owner = memoryHygieneRatios(engine, memoryObserverScope(engine, entityIds[OWNER]));
+    expect(owner.scope).toBe("own");
+    expect(owner.unsafeServedRate).toMatchObject({ numerator: 1, denominator: 1 });
+    expect(owner.storage.map((row) => row.ownerName)).toEqual([OWNER]);
+    // Memoized: a second call inside the TTL returns the same object.
+    expect(memoryHygieneRatios(engine, memoryObserverScope(engine, entityIds[OWNER]))).toBe(owner);
+    // A stranger asking for Owner's job is a refused cross-scope attempt.
+    expect(
+      getMemoryJob(db, memoryObserverScope(engine, entityIds[STRANGER]), fx.jobId),
+    ).toBeUndefined();
+    expect(
+      (
+        await api(`/api/memory/jobs/${fx.jobId}/cancel`, {
+          method: "POST",
+          token: tokens[STRANGER],
+        })
+      ).status,
+    ).toBe(404);
+    expect(memoryLeakageCounters.crossScopeAttempts).toBe(2);
+    resetMemoryHygieneRatiosMemoForTests();
+    const fresh = memoryHygieneRatios(engine, memoryObserverScope(engine, entityIds[OWNER]));
+    expect(fresh.leakage.crossScopeAttempts).toBe(2);
+    // Anonymous is refused like every other observability route.
+    expect((await api("/api/memory/hygiene")).status).toBe(401);
   });
 });

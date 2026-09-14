@@ -165,7 +165,12 @@ operations, deadline countdown; expand a row for the task and cited answer when 
 see them; **Cancel** open jobs), recent **resolutions** and institutional **ratifications**,
 assistance **standing credits**, passthru **memory receipts** (tier bars by bytes, one click to the
 trace), the parsed **hygiene** line per entity, and institutional spaces. Empty states print the exact
-`memory assist …` / `agent spawn … role memory-evaluator` commands. In the Traces tab, a span that
+`memory assist …` / `agent spawn … role memory-evaluator` commands. The **Continuous hygiene**
+section publishes the ratios the memory design requires beside any headline number — redundancy,
+contradiction and unresolved-contradiction rate, provenance coverage, staleness, unsafe-served
+rate, reflection repetition, consolidation ROI, repair success — each with its numerator and
+denominator ("n/a" when nothing was measured), plus leakage counters, cost (injected bytes and
+cache hit rate) and every owner's storage against the admission budget. In the Traces tab, a span that
 carries a memory receipt shows a **Memory** block with the injected tiers, bytes used against the
 budget, truncation and cache-hit flags.
 
@@ -185,6 +190,7 @@ credits, passthru receipts, the hygiene line) is served by a small observer-scop
 | Route | Returns |
 | --- | --- |
 | `GET /api/memory/overview` | `MemoryOverview` — trust profile, latest `[hygiene]` line per entity, open/24h job counts by marker, recent resolutions, ratifications, standing credits, recent memory receipts + response-cache counters, dispatch counts, institutional spaces. |
+| `GET /api/memory/hygiene` | `MemoryHygieneRatios` — the continuous-hygiene ratios alone (also embedded as `overview.ratios`): redundancy, contradiction and unresolved-contradiction rate, provenance coverage, staleness, unsafe-served rate, reflection repetition, consolidation ROI, repair success, leakage counters, storage vs admission budget per owner, cost. Each ratio carries its numerator and denominator; an empty denominator is `null` ("n/a"). Windowed ratios cover 24 h; structural ones the live state. Memoized 30 s per scope. |
 | `GET /api/memory/jobs?state=open\|all&role=&entity=&limit=50&cursor=` | `{ jobs: MemoryJobView[], nextCursor }` — keyset-paged; never includes task/answer text. |
 | `GET /api/memory/jobs/:id` | One `MemoryJobView` **with** `task`/`answer` (≤ 2 KB) when the caller is the requester, the worker, or an operator. |
 | `POST /api/memory/jobs/:id/cancel` | Cancels as the requester (requester or operator only); runs the ordinary `assist_cancel` through the requester's resident binding so the assistance audit trail is unchanged. |

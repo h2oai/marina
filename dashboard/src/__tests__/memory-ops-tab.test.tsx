@@ -10,6 +10,7 @@ import {
   sortTiers,
 } from "../components/memory-ops/format";
 import { JOBS_EMPTY_COMMANDS } from "../components/memory-ops/JobsSection";
+import { formatRatio, RATIO_SPECS, ratioTone } from "../components/memory-ops/RatiosSection";
 import { useWorldState } from "../hooks/use-world-state";
 import type {
   MemoryJobsResponse,
@@ -55,7 +56,59 @@ const job = (overrides: Partial<MemoryJobView> = {}): MemoryJobView => ({
   ...overrides,
 });
 
+const share = (numerator: number, denominator: number) => ({
+  numerator,
+  denominator,
+  value: denominator > 0 ? numerator / denominator : null,
+});
+
+const ratios: MemoryOverview["ratios"] = {
+  computedAt: NOW,
+  windowMs: 86_400_000,
+  scope: "all",
+  redundancy: share(2, 40),
+  contradictionRate: share(2, 10),
+  unresolvedContradictionRate: share(0, 2),
+  provenanceCoverage: share(30, 40),
+  stalenessRatio: share(1, 20),
+  unsafeServedRate: share(1, 8),
+  reflectionRepetitionRate: share(0, 0),
+  consolidationRoi: { numerator: 9, denominator: 3, value: 3 },
+  repairSuccess: share(3, 4),
+  leakage: { crossScopeAttempts: 2, crossScopeCacheHits: 0 },
+  storage: [
+    {
+      ownerName: "Ada",
+      logicalBytes: 750 * 1024 * 1024,
+      maxBytes: 1024 * 1024 * 1024,
+      sources: 12,
+      maxSources: 100000,
+      revisions: 40,
+      maxRevisions: 100000,
+      spaces: 2,
+      maxSpaces: 256,
+      utilization: 0.73,
+      overLimit: [],
+    },
+    {
+      ownerName: "Grace",
+      logicalBytes: 2048,
+      maxBytes: null,
+      sources: 1,
+      maxSources: null,
+      revisions: 1,
+      maxRevisions: null,
+      spaces: 1,
+      maxSpaces: null,
+      utilization: null,
+      overLimit: ["sources"],
+    },
+  ],
+  cost: { receipts: 8, avgInjectedBytes: 1400, cacheHitRate: share(3, 8) },
+};
+
 const overview: MemoryOverview = {
+  ratios,
   trust: { profile: "local", ungated: true, autonomy: "guarded" },
   hygiene: [
     {
@@ -148,6 +201,13 @@ const emptyOverview: MemoryOverview = {
   credits: [],
   receipts: { recent: [], cache: { hits: 0, misses: 0, stores: 0 } },
   spaces: { institutional: [] },
+  ratios: {
+    ...ratios,
+    redundancy: share(0, 0),
+    unsafeServedRate: share(0, 0),
+    storage: [],
+    cost: { receipts: 0, avgInjectedBytes: null, cacheHitRate: share(0, 0) },
+  },
 };
 
 function routeFetch(view: MemoryOverview, jobs: MemoryJobView[], details?: MemoryJobView) {
@@ -435,5 +495,44 @@ describe("MemoryOpsTab deep link", () => {
     await waitFor(() => expect(screen.getByText("Adopt policy evidence_weighted.")).toBeTruthy());
     expect(fetchApi).toHaveBeenCalledWith("/api/memory/jobs/job-closed");
     expect(screen.getByRole("button", { name: /Collapse job job-closed/ })).toBeTruthy();
+  });
+});
+
+describe("continuous hygiene ratios", () => {
+  it("renders every ratio with value and numerator/denominator, n/a for empty denominators, and the storage budget", async () => {
+    fetchApi.mockImplementation(async (url: string) => {
+      if (url.startsWith("/api/memory/overview")) return overview;
+      if (url.startsWith("/api/memory/jobs")) return { jobs: [], nextCursor: null };
+      throw new Error(`unexpected ${url}`);
+    });
+    renderWithProviders(<MemoryOpsTab />);
+    const section = await screen.findByTestId("hygiene-ratios");
+    for (const spec of RATIO_SPECS) {
+      const card = within(section).getByTestId(`ratio-${spec.key}`);
+      const r = ratios[spec.key];
+      expect(card.textContent).toContain(formatRatio(r, spec.unit));
+      expect(card.textContent).toContain(`${r.numerator} / ${r.denominator}`);
+    }
+    // 0/0 renders n/a, never 0 %.
+    expect(within(section).getByTestId("ratio-reflectionRepetitionRate").textContent).toContain(
+      "n/a",
+    );
+    expect(within(section).getByTestId("ratio-unsafeServedRate").textContent).toContain("13%");
+    expect(within(section).getByTestId("ratio-consolidationRoi").textContent).toContain("3.0×");
+    expect(within(section).getByTestId("ratio-cost").textContent).toContain("8 injected");
+    expect(section.textContent).toContain("leakage: 2 refused");
+    const storage = within(section).getByTestId("storage-budget");
+    expect(within(storage).getByTestId("storage-Ada").textContent).toContain("750.0 MB");
+    expect(within(storage).getByTestId("storage-Grace").textContent).toContain("unlimited");
+    expect(within(storage).getByTestId("storage-Grace").textContent).toContain("over: sources");
+  });
+
+  it("tones ratios by direction: lower-is-better warns above the threshold, higher-is-better below it", () => {
+    expect(ratioTone(share(1, 8), { better: "lower", warnAt: 0.0001 })).toBe("warning");
+    expect(ratioTone(share(0, 8), { better: "lower", warnAt: 0.0001 })).toBe("success");
+    expect(ratioTone(share(3, 4), { better: "higher", warnAt: 0.5 })).toBe("success");
+    expect(ratioTone(share(1, 4), { better: "higher", warnAt: 0.5 })).toBe("warning");
+    expect(ratioTone(share(0, 0), { better: "higher", warnAt: 0.5 })).toBe("default");
+    expect(formatRatio(share(1, 400), "share")).toBe("<1%");
   });
 });
