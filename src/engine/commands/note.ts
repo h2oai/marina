@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { memoryAccess } from "../../memory/access";
+import { bridgeLegacyNoteQuietly, bridgeLegacyRevisionQuietly } from "../../memory/legacy-bridge";
 import {
   bold,
   category,
@@ -690,6 +691,10 @@ export function noteCommand(deps: {
             timestamp: Date.now(),
           });
           ctx.send(input.entity, `Note #${newId} created, superseding #${id}.`);
+          // Durable twin follows the supersession (revise, CAS on current version).
+          // Fire-and-forget: the reply (and quest progress) must land in this
+          // tick; sequencing callers use awaitPendingBridges().
+          void bridgeLegacyRevisionQuietly(db, entity.name, id, newId);
           return;
         }
 
@@ -822,6 +827,9 @@ export function noteCommand(deps: {
             input.entity,
             `Note #${newId} evolved from #${id} (importance=${newImportance}, ${linkedCount} linked notes incorporated).`,
           );
+          // Fire-and-forget: the reply (and quest progress) must land in this
+          // tick; sequencing callers use awaitPendingBridges().
+          void bridgeLegacyRevisionQuietly(db, entity.name, id, newId);
           return;
         }
 
@@ -957,6 +965,13 @@ export function noteCommand(deps: {
               ? ` Auto-linked to notes ${autoLinked.map((i) => `#${i}`).join(", ")} (related_to).`
               : "";
           ctx.send(input.entity, `Note #${id} saved${suffix}.${linkInfo}`);
+          // Legacy reply is already on the wire; the durable twin (capture +
+          // remember + note_sources row) lands asynchronously and never fails
+          // the legacy write. Returned so `await processCommand` sequences it.
+          // Fire-and-forget: the reply (and quest progress) must land in this
+          // tick; sequencing callers use awaitPendingBridges().
+          void bridgeLegacyNoteQuietly(db, entity.name, id);
+          return;
         }
       }
     },

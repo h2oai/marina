@@ -1,0 +1,306 @@
+// Copyright 2025-2026 H2O.ai, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { reflectCommand } from "../src/engine/commands/reflect";
+import { Engine } from "../src/engine/engine";
+import {
+  assistanceAdoptionUrl,
+  awaitPendingBridges,
+  findDurableTwin,
+  findLegacyNotesForRecord,
+} from "../src/memory/legacy-bridge";
+import { residentMemoryOperation } from "../src/memory/resident-service";
+import { MarinaDB } from "../src/persistence/database";
+import type { MemoryAssistanceJob, MemoryAssistancePage } from "../src/sdk/memory-assistance";
+import type { MemoryRecord } from "../src/sdk/memory-types";
+import { type EntityId, roomId } from "../src/types";
+import { MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+
+describe("reflect as a thin verb over the memory-reflector helper", () => {
+  let directory: string;
+  let db: MarinaDB;
+  let engine: Engine;
+  let alice: MockConnection;
+  let helper: MockConnection;
+
+  const durable = (name: string, request: Parameters<typeof residentMemoryOperation>[2]) =>
+    residentMemoryOperation(db, name, request);
+  const run = async (connection: MockConnection, text: string) => {
+    connection.clear();
+    await engine.processCommand(connection.entity as EntityId, text);
+    // `note` bridges its durable twin in the background; sequence on it.
+    await awaitPendingBridges();
+    return stripAnsi(connection.allTextJoined());
+  };
+  const reflectionNotes = (name: string) =>
+    db.getNotesByEntity(name, 100).filter((n) => n.tier === "reflection");
+  const ownJobs = async () =>
+    (
+      (await durable("Alice", { operation: "assist_jobs", input: {} }))
+        .result as MemoryAssistancePage
+    ).jobs;
+
+  /** The helper's side of the protocol, driven through the same resident binding it would use. */
+  async function answerJob(
+    jobId: string,
+    citedRecordId: string,
+    answer: string,
+    quote: string,
+  ): Promise<MemoryAssistanceJob> {
+    const job = (await durable("Reflector", { operation: "assist_get", id: jobId }))
+      .result as MemoryAssistanceJob;
+    const claim = (
+      await durable("Reflector", { operation: "assist_claim", id: jobId, key: `claim-${jobId}` })
+    ).result as { lease_token: string };
+    const read = (
+      await durable("Reflector", {
+        operation: "assist_read",
+        id: jobId,
+        key: `read-${jobId}`,
+        input: {
+          lease_token: claim.lease_token,
+          request: { operation: "get", id: citedRecordId },
+        },
+      })
+    ).result as MemoryRecord;
+    await durable("Reflector", {
+      operation: "assist_finish",
+      id: jobId,
+      key: `finish-${jobId}`,
+      input: {
+        lease_token: claim.lease_token,
+        completion: {
+          status: "answered",
+          answer,
+          citations: [
+            {
+              kind: "record",
+              space_id: job.space_id,
+              id: citedRecordId,
+              version: read.version,
+              quote,
+            },
+          ],
+        },
+      },
+    });
+    return (await durable("Alice", { operation: "assist_get", id: jobId }))
+      .result as MemoryAssistanceJob;
+  }
+
+  beforeEach(() => {
+    directory = mkdtempSync(join(tmpdir(), "marina-reflect-assist-"));
+    db = new MarinaDB(join(directory, "world.db"));
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+    alice = new MockConnection("alice");
+    helper = new MockConnection("reflector");
+    for (const [connection, name] of [
+      [alice, "Alice"],
+      [helper, "Reflector"],
+    ] as const) {
+      db.createUser({ id: crypto.randomUUID(), name });
+      engine.addConnection(connection);
+      engine.spawnEntity(connection.id, name);
+    }
+  });
+
+  afterEach(() => {
+    db.close();
+    rmSync(directory, { recursive: true });
+  });
+
+  it("falls back to the deterministic template with a spawn hint when no reflector exists", async () => {
+    for (let i = 0; i < 3; i++) await run(alice, `note Amber deploy observation ${i} !8`);
+    const reply = await run(alice, "reflect");
+    expect(reply).toContain("Reflection Created");
+    expect(reply).toContain("memory-reflector");
+    expect(reflectionNotes("Alice")).toHaveLength(1);
+    expect(await ownJobs()).toEqual([]);
+  });
+
+  it("`reflect --template` and `reflect template` are always the legacy synthesis, without the hint", async () => {
+    for (let i = 0; i < 3; i++) await run(alice, `note Copper wiring lesson ${i} !8`);
+    // Even with a helper available, template is explicit and deterministic.
+    db.saveAgentConfig({
+      name: "Reflector",
+      model: "marina/default",
+      role: "memory-reflector",
+      spawnedBy: "Alice",
+    });
+    const flagged = await run(alice, "reflect --template copper");
+    expect(flagged).toContain("Reflection Created");
+    expect(flagged).toContain('Synthesis on "copper"');
+    expect(flagged).not.toContain("memory-reflector");
+    const worded = await run(alice, "reflect template");
+    expect(worded).toContain("Reflection Created");
+    expect(worded).not.toContain("memory-reflector");
+    expect(await ownJobs()).toEqual([]);
+    expect(reflectionNotes("Alice")).toHaveLength(2);
+  });
+
+  it("keeps `reflect failure <description>` working", async () => {
+    await run(alice, "note The relay dropped packets under load !7");
+    const reply = await run(alice, "reflect failure relay timed out during load test");
+    expect(reply).toContain("Failure Reflection Created");
+    const [note] = reflectionNotes("Alice");
+    expect(note?.content).toContain("[Failure Analysis] relay timed out during load test");
+  });
+
+  it("files a reflector job against the caller's space, then adopts the cited answer into both silos idempotently", async () => {
+    await run(alice, "note Amber deploys on port 7419 importance 8 type fact");
+    await run(alice, "note Amber rollbacks need the previous manifest importance 7 type fact");
+    const [manifestNote, portNote] = db.getNotesByEntity("Alice", 2);
+    const portTwin = findDurableTwin(db, portNote!.id)!;
+    expect(portTwin).toBeDefined();
+
+    // Requester files the job explicitly by helper name.
+    const requested = await run(alice, "reflect via Reflector amber");
+    expect(requested).toContain("Reflection Requested");
+    expect(requested).toContain("Reflector");
+    const jobId = requested.match(/Job (\S+)/)![1]!;
+    expect(requested).toContain(`reflect adopt ${jobId}`);
+    const [job] = await ownJobs();
+    expect(job).toMatchObject({
+      id: jobId,
+      role: "reflector",
+      state: "pending",
+      worker_id: db.getUserByName("Reflector")!.id,
+      requester_id: db.getUserByName("Alice")!.id,
+      remaining_operations: 32,
+    });
+    expect(job!.deadline - job!.created_at).toBe(10 * 60 * 1000);
+    // The task text lives on the durable request source; the list view omits it.
+    const detail = (await durable("Alice", { operation: "assist_get", id: jobId }))
+      .result as MemoryAssistanceJob;
+    expect(detail.task).toContain("Reflect on amber: propose one reusable lesson with citations.");
+    expect(detail.task).toContain(`legacy note #${portNote!.id}`);
+    expect(detail.task).toContain(`durable record ${portTwin.recordId}`);
+    expect(detail.task).toContain("not authority");
+
+    // Adopting before an answer exists changes nothing.
+    const early = await run(alice, `reflect adopt ${jobId}`);
+    expect(early).toContain("pending");
+    expect(reflectionNotes("Alice")).toHaveLength(0);
+
+    // `reflect jobs` is the requester's queue.
+    const queued = await run(alice, "reflect jobs");
+    expect(queued).toContain(jobId);
+    expect(queued).toContain("pending");
+
+    // Helper reads the twin record and answers with a witnessed citation.
+    const answer = "Lesson: pin Amber to port 7419 in the manifest so rollbacks stay reachable.";
+    const answered = await answerJob(jobId, portTwin.recordId, answer, "port 7419");
+    expect(answered.state).toBe("answered");
+    const listed = await run(alice, "reflect jobs");
+    expect(listed).toContain("answered");
+    expect(listed).toContain(`reflect adopt ${jobId}`);
+
+    // Adoption writes the durable record and the legacy reflection, linked both ways.
+    const adopted = await run(alice, `reflect adopt ${jobId}`);
+    expect(adopted).toContain("Reflection Adopted");
+    const reflections = reflectionNotes("Alice");
+    expect(reflections).toHaveLength(1);
+    const reflection = reflections[0]!;
+    expect(reflection.content).toBe(answer);
+    expect(reflection.note_type).toBe("episode");
+    expect(reflection.importance).toBe(8);
+    expect(adopted).toContain(`#${reflection.id}`);
+
+    const partOf = db
+      .getNoteLinks(reflection.id)
+      .filter((l) => l.relationship === "part_of" && l.target_id === reflection.id)
+      .map((l) => l.source_id);
+    expect(partOf).toEqual([portNote!.id]);
+    expect(partOf).not.toContain(manifestNote!.id);
+
+    const twin = findDurableTwin(db, reflection.id)!;
+    expect(twin).toBeDefined();
+    expect(adopted).toContain(twin.recordId);
+    expect(db.getNoteSources(reflection.id).map((s) => s.url)).toContain(
+      assistanceAdoptionUrl(jobId),
+    );
+    expect(findLegacyNotesForRecord(db, "Alice", twin.recordId).map((n) => n.id)).toEqual([
+      reflection.id,
+    ]);
+
+    const durableRecord = (await durable("Alice", { operation: "get", id: twin.recordId }))
+      .result as MemoryRecord;
+    expect(durableRecord.content).toBe(answer);
+    expect(durableRecord.tier).toBe("reflection");
+    expect(durableRecord.type).toBe("episode");
+    expect(durableRecord.metadata).toMatchObject({
+      adopted_from_job: jobId,
+      helper_id: db.getUserByName("Reflector")!.id,
+      proposal_record_id: answered.result_record_id,
+    });
+    expect(durableRecord.depends_on).toEqual([portTwin.recordId]);
+    expect(durableRecord.dependency_versions).toEqual({ [portTwin.recordId]: 1 });
+    expect(durableRecord.freshness).toBe("current");
+    expect(durableRecord.id).not.toBe(answered.result_record_id);
+
+    // Idempotent: a second adoption returns the same ids and writes nothing new.
+    const again = await run(alice, `reflect adopt ${jobId}`);
+    expect(again).toContain("already adopted");
+    expect(again).toContain(`#${reflection.id}`);
+    expect(again).toContain(twin.recordId);
+    expect(reflectionNotes("Alice")).toHaveLength(1);
+    const records = (await durable("Alice", { operation: "query", input: {} })).result as {
+      results: MemoryRecord[];
+    };
+    expect(records.results.filter((r) => r.content === answer)).toHaveLength(1);
+    expect(await run(alice, "reflect jobs")).toContain("adopted");
+  });
+
+  it("discovers a live reflector from the runtime roster and from persisted agent configs", async () => {
+    await run(alice, "note Grid survey finding one !7");
+    await run(alice, "note Grid survey finding two !7");
+
+    // Persisted config fallback (no live roster wired).
+    db.saveAgentConfig({
+      name: "Reflector",
+      model: "marina/default",
+      role: "memory-reflector",
+      spawnedBy: "Alice",
+    });
+    const viaConfig = await run(alice, "reflect grid");
+    expect(viaConfig).toContain("Reflection Requested");
+    expect(viaConfig).not.toContain("Reflection Created");
+    expect(await ownJobs()).toHaveLength(1);
+    db.deleteAgentConfig("Reflector");
+
+    // Live roster wins when the registry wires `listAgents` (the seam the runtime fills).
+    engine.commands.registerBuiltin(
+      reflectCommand({
+        getEntity: (id) => engine.entities.get(id as EntityId),
+        db,
+        logEvent: (event) => engine.logEvent(event),
+        listAgents: () => [
+          { name: "Stopped", role: "memory-reflector", state: "stopped" },
+          { name: "Reflector", role: "memory-reflector", state: "autonomous" },
+        ],
+      }),
+    );
+    const viaRoster = await run(alice, "reflect grid");
+    expect(viaRoster).toContain("Reflection Requested");
+    expect(await ownJobs()).toHaveLength(2);
+    expect(reflectionNotes("Alice")).toHaveLength(0);
+  });
+
+  it("refuses helpers without a durable account and self-reflection, without touching legacy notes", async () => {
+    await run(alice, "note Solo observation !8");
+    const unknown = await run(alice, "reflect via Nobody solo");
+    expect(unknown).toContain("no durable world account");
+    const self = await run(alice, "reflect via Alice solo");
+    expect(self).toContain("cannot witness yourself");
+    expect(await ownJobs()).toEqual([]);
+    expect(reflectionNotes("Alice")).toHaveLength(0);
+    expect(await run(alice, "reflect adopt")).toContain("Usage: reflect adopt");
+    expect(await run(alice, "reflect adopt nope")).toContain("Could not read job nope");
+    expect(await run(alice, "reflect jobs")).toContain("No reflector jobs");
+  });
+});

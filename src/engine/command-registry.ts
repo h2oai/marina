@@ -482,6 +482,15 @@ export function registerBuiltinCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
       logEvent: (event) => engine.logEvent(event),
+      // Live runtime view so `reflect` files a job only with a RUNNING
+      // memory-reflector (a configured-but-stopped helper would otherwise
+      // receive a durable job nobody works).
+      listAgents: () =>
+        (engine.agentRuntime?.list() ?? []).map((a) => ({
+          name: a.name,
+          role: a.role,
+          state: a.state,
+        })),
     }),
   );
   engine.commands.registerBuiltin(

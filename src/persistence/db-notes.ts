@@ -675,9 +675,14 @@ const SCORE_EXPR = `(? * (n.importance / 10.0)) +
         (? * (-fts.rank)) + (0.10 * n.confidence) +
         CASE n.verification_status WHEN 'verified' THEN 0.10 WHEN 'disputed' THEN -0.10 ELSE 0 END +
         COALESCE((SELECT 0.05 / (1.0 + (? - COALESCE(MAX(ns.observed_at), MAX(ns.retrieved_at))) / 2592000000.0)
-          FROM note_sources ns WHERE ns.note_id=n.id), 0) +
-        COALESCE((SELECT 0.05 * AVG(ns.credibility) FROM note_sources ns WHERE ns.note_id=n.id),0)
+          FROM note_sources ns WHERE ns.note_id=n.id AND ns.url NOT LIKE 'marina-memory://%'), 0) +
+        COALESCE((SELECT 0.05 * AVG(ns.credibility) FROM note_sources ns
+          WHERE ns.note_id=n.id AND ns.url NOT LIKE 'marina-memory://%'),0)
         AS score`;
+// NOTE: `marina-memory://record/<id>` rows are durable TWINS of the note
+// (src/memory/legacy-bridge.ts) — a mirror of the note itself, never evidence
+// for it — so they are excluded from every source-derived ranking and
+// confidence term above and in calibrateMemoryConfidence.
 
 export function recallNotes(
   db: Database,
@@ -848,14 +853,16 @@ export function adjustNoteImportance(db: Database): { boosted: number; decayed: 
 export function calibrateMemoryConfidence(db: Database): number {
   const verified = db.run(
     `UPDATE notes SET confidence=MAX(confidence,0.75) WHERE verification_status='verified'
-     AND EXISTS (SELECT 1 FROM note_sources ns WHERE ns.note_id=notes.id)`,
+     AND EXISTS (SELECT 1 FROM note_sources ns WHERE ns.note_id=notes.id
+                 AND ns.url NOT LIKE 'marina-memory://%')`,
   ).changes;
   const disputed = db.run(
     "UPDATE notes SET confidence=MIN(confidence,0.25) WHERE verification_status='disputed'",
   ).changes;
   const corroborated = db.run(
     `UPDATE notes SET confidence=MAX(confidence,0.60) WHERE verification_status='unverified'
-     AND (SELECT COUNT(*) FROM note_sources ns WHERE ns.note_id=notes.id) >= 2`,
+     AND (SELECT COUNT(*) FROM note_sources ns WHERE ns.note_id=notes.id
+          AND ns.url NOT LIKE 'marina-memory://%') >= 2`,
   ).changes;
   return verified + disputed + corroborated;
 }
