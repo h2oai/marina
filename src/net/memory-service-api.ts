@@ -326,6 +326,10 @@ export async function handleMemoryServiceApi(
         ),
       );
     }
+    if (rest === "resolve" && req.method === "POST") {
+      const body = await readBody(req);
+      return json(service.resolve(actor, space, textValue(body.id, "id", 128), body, key));
+    }
     if (rest === "cache/delete" && req.method === "POST")
       return json(repo.cacheDelete(actor, space, await readBody(req), key));
     if (rest === "cache/get" && req.method === "POST")

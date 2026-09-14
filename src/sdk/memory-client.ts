@@ -35,6 +35,8 @@ import type {
   MemoryReceipt,
   MemoryRecord,
   MemoryRecordInput,
+  MemoryResolveInput,
+  MemoryResolveResult,
   MemoryReviewResult,
   MemorySearchInput,
   MemorySearchResult,
@@ -154,9 +156,23 @@ export class MarinaMemoryClient {
   }
   review(
     space: string,
-    input: { kind?: "all" | "stale" | "competing"; limit?: number; cursor?: string } = {},
+    input: {
+      kind?: "all" | "stale" | "competing" | "pending";
+      limit?: number;
+      cursor?: string;
+    } = {},
   ) {
     return this.request<MemoryReviewResult>(this.path(space, "/review"), "POST", input);
+  }
+  /** Explicit contradiction resolution; `id` is the head record, `input.competing`
+   * its rivals. Reuse `key` to replay the same decision idempotently. */
+  resolve(space: string, id: string, input: MemoryResolveInput, key?: string) {
+    return this.request<MemoryResolveResult>(
+      this.path(space, "/resolve"),
+      "POST",
+      { ...input, id },
+      key,
+    );
   }
   reaffirm(
     space: string,

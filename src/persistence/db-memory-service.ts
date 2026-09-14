@@ -38,6 +38,7 @@ import {
 import { memoryKnowledgeGraph } from "./db-memory-knowledge-graph";
 import { memoryDatabaseHealth } from "./db-memory-maintenance";
 import { rankMemoryVectors } from "./db-memory-ranking";
+import { resolveMemory } from "./db-memory-resolve";
 import { acknowledgeMemoryRequests } from "./db-memory-retention";
 import { reaffirmMemory, reviewMemory } from "./db-memory-review";
 import { readMemorySourceRange, searchMemorySources } from "./db-memory-sources";
@@ -1455,6 +1456,14 @@ export function memoryRepository(db: Database) {
       key: string,
       model?: string,
     ) => reaffirmMemory(db, actor, space, id, input, key, model),
+    resolve: (
+      actor: MemoryActor,
+      space: string,
+      id: string,
+      input: unknown,
+      key: string,
+      model?: string,
+    ) => resolveMemory(db, actor, space, id, input, key, model),
     cacheDelete: (actor: MemoryActor, space: string, raw: unknown, key: string) =>
       deleteMemoryCache(db, actor, space, raw, key),
     cacheGet: (actor: MemoryActor, space: string, input: unknown) =>

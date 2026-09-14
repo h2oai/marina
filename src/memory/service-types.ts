@@ -4,6 +4,8 @@
 import type {
   MemoryClaim,
   MemoryRecordInput,
+  MemoryResolveInput,
+  MemoryResolvePolicy,
   MemoryTerm,
   MemoryValidity,
 } from "../sdk/memory-types";
@@ -68,6 +70,74 @@ export function memoryTerm(value: unknown): MemoryTerm {
     return { kind: "literal", value: term.value as string | number | boolean | null };
   throw new MemoryError(400, "invalid_term", "Use an entity reference or a finite scalar literal");
 }
+/** Half-open `[from, until)` in UTC milliseconds; null bounds are unbounded.
+ * `undefined` means "not supplied" and `null` means "explicitly unbounded". */
+export function memoryValidity(value: unknown): MemoryValidity | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const interval = object(value);
+  const from =
+    interval.from === null || interval.from === undefined
+      ? null
+      : integer(interval.from, "valid_time.from", 0, Number.MAX_SAFE_INTEGER);
+  const until =
+    interval.until === null || interval.until === undefined
+      ? null
+      : integer(interval.until, "valid_time.until", 0, Number.MAX_SAFE_INTEGER);
+  if (from !== null && until !== null && from >= until)
+    throw new MemoryError(
+      400,
+      "invalid_interval",
+      "valid_time must be a nonempty half-open interval",
+    );
+  return { from, until };
+}
+export const MEMORY_RESOLVE_POLICIES = [
+  "last_writer_wins",
+  "evidence_weighted",
+  "await_confirmation",
+  "keep_both",
+] as const satisfies readonly MemoryResolvePolicy[];
+export function resolveInput(value: unknown): MemoryResolveInput {
+  const input = object(value);
+  if (
+    typeof input.policy !== "string" ||
+    !MEMORY_RESOLVE_POLICIES.includes(input.policy as MemoryResolvePolicy)
+  )
+    throw new MemoryError(
+      400,
+      "invalid_policy",
+      `policy must be one of ${MEMORY_RESOLVE_POLICIES.join(", ")}`,
+    );
+  const competing = input.competing;
+  if (
+    !Array.isArray(competing) ||
+    !competing.length ||
+    competing.length > 32 ||
+    competing.some((id) => typeof id !== "string" || !id || id.length > 128) ||
+    new Set(competing).size !== competing.length
+  )
+    throw new MemoryError(
+      400,
+      "invalid_input",
+      "competing must list 1–32 distinct record identifiers",
+    );
+  const rationale = textValue(input.rationale, "rationale", 4096);
+  const deadline =
+    input.deadline_ms === undefined
+      ? undefined
+      : integer(input.deadline_ms, "deadline_ms", 1000, 366 * 86_400_000);
+  if (deadline !== undefined && input.policy !== "await_confirmation")
+    throw new MemoryError(400, "invalid_input", "deadline_ms applies only to await_confirmation");
+  const validTime = memoryValidity(input.valid_time);
+  return {
+    policy: input.policy as MemoryResolvePolicy,
+    competing: competing as string[],
+    rationale,
+    ...(validTime === undefined ? {} : { valid_time: validTime }),
+    ...(deadline === undefined ? {} : { deadline_ms: deadline }),
+  };
+}
 export function memoryClaim(value: unknown): MemoryClaim {
   const claim = object(value);
   return {
@@ -81,26 +151,7 @@ export function recordInput(value: unknown): MemoryRecordInput {
   const types = ["fact", "observation", "decision", "inference", "skill", "episode"];
   const tiers = ["fact", "reflection", "skill"];
   const content = textValue(input.content, "content");
-  let validTime: MemoryValidity | null | undefined;
-  if (input.valid_time === null) validTime = null;
-  else if (input.valid_time !== undefined) {
-    const interval = object(input.valid_time);
-    const from =
-      interval.from === null
-        ? null
-        : integer(interval.from, "valid_time.from", 0, Number.MAX_SAFE_INTEGER);
-    const until =
-      interval.until === null
-        ? null
-        : integer(interval.until, "valid_time.until", 0, Number.MAX_SAFE_INTEGER);
-    if (from !== null && until !== null && from >= until)
-      throw new MemoryError(
-        400,
-        "invalid_interval",
-        "valid_time must be a nonempty half-open interval",
-      );
-    validTime = { from, until };
-  }
+  const validTime = memoryValidity(input.valid_time);
   const expectedVocabulary =
     input.expected_vocabulary_version === undefined
       ? undefined

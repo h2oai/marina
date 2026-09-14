@@ -130,6 +130,8 @@ memory sources incident Kestrel
 memory source SOURCE_ID
 memory plan Aster migration approval
 memory vocabulary
+memory review {"kind":"competing"}
+memory resolve RECORD_ID evidence_weighted {"competing":["OTHER_ID"],"rationale":"two independent sources"}
 memory api {"operation":"checkpoint","id":"work"}
 ```
 
@@ -146,6 +148,38 @@ replies separate. All service reads/writes retain the shared service's permissio
 Use explicit grants to share a space between an external service principal and a world account.
 Read the principal IDs through each interface's `me` operation. Existing `memory set/get`,
 `note`, `recall` and pools retain their legacy interfaces; there is no bulk migration.
+
+### Legacy verbs as adapters (durable twins)
+
+Every legacy write that creates a personal note — `note <text>`, `note claim`, template
+reflections (`reflect`, `reflect --template`) and `reflect failure` — also captures the text as a
+durable source and `remember`s a **twin** record in the author's resident space, keyed
+`legacy-note-<id>-v1` so retries are idempotent. The pairing is recorded on the legacy side as a
+`note_sources` row with url `marina-memory://record/<record-id>` and credibility 0: a twin is
+provenance, not evidence, and never promotes a note into the trusted tier. `note correct` and
+`note evolve` `revise` the same record (CAS on its current version) and point the successor note
+at the new version. Adopted reflector proposals (`reflect adopt`) are twinned explicitly.
+
+`note delete` **retires** the twin rather than forgetting it: a `revise` to the tombstone
+`[deleted legacy note #<id>]` with metadata `{deleted_legacy_note_id}` and validity closed at the
+deletion instant. The current version stops matching the deleted text, temporal reads
+(`valid_at`) exclude it, records that `depends_on` it go `stale` for `review`, and prior versions
+plus the captured source stay inspectable in lineage. The durable `forget {record_ids}` was
+deliberately not used: it is transitive (every dependent record goes too), deletes every
+version's note, and invalidates all checkpoints and cached results in the space — the resident
+space also holds the continuity journal, so a `note delete` must not carry that blast radius. A
+twin whose record is already owned by a successor note (the deleted note was superseded) is left
+alone. Erasure remains the explicit `forget` operation on the service.
+
+Bridging is fire-and-forget so the legacy reply lands in the same tick; tests and batch callers
+sequence on `awaitPendingBridges()`. Twin lookups in both directions are url-indexed
+(`getNotesBySourceUrl`) over `note_sources`, not a bounded scan of recent notes.
+
+`reflect` files a reflector job when a `memory-reflector` is running. Under the LOCAL ungated
+trust profile, when none runs and a runtime can serve one (provider keys present), `reflect`
+spawns `Reflector` (`marina/default`, role `memory-reflector`, budget 40) on the caller's behalf,
+waits for its world account, and files the job; without a serving runtime it prints the
+deterministic template with the spawn hint. Shared and public profiles never auto-spawn.
 
 Resident checkpoints and completed-message journals use the private durable service. The runtime
 awaits capture of each completed user, assistant and tool-result message before advancing.

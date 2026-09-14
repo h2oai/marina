@@ -146,6 +146,10 @@ export const EXPORT_TABLES = [
   "memory_vectors",
   "memory_claims",
   "memory_vocabularies",
+  // Contradiction resolutions (migration 113): append-only audit + review-index
+  // members; depend on memory_spaces / memory_records above.
+  "memory_resolutions",
+  "memory_resolution_members",
   "canvas_edges",
   "benchmark_runs",
   "adapters",

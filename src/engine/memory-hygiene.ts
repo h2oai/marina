@@ -102,12 +102,14 @@ export interface MemoryHygieneReport {
 export function formatHygieneLine(counts: {
   stale: number;
   competing: number;
+  pending?: number;
   duplicates: number;
   overlong: number;
   unsupported: number;
   jobId?: string;
 }): string {
-  const base = `${HYGIENE_NOTE_PREFIX} stale=${counts.stale} competing=${counts.competing} duplicates=${counts.duplicates} overlong=${counts.overlong} unsupported=${counts.unsupported}`;
+  const pending = counts.pending ? ` pending=${counts.pending}` : "";
+  const base = `${HYGIENE_NOTE_PREFIX} stale=${counts.stale} competing=${counts.competing}${pending} duplicates=${counts.duplicates} overlong=${counts.overlong} unsupported=${counts.unsupported}`;
   return counts.jobId ? `${base} job=${counts.jobId}` : base;
 }
 
@@ -154,6 +156,8 @@ async function hygieneForEntity(
   // folded into the count as the page size; the threshold is what matters.
   const stale = await reviewCount(op, "stale", deps, entity.name);
   const competing = await reviewCount(op, "competing", deps, entity.name);
+  // Contradictions parked under `resolve … await_confirmation` (Phase 2.5).
+  const pending = await reviewCount(op, "pending", deps, entity.name);
 
   // (b) legacy notes — skip process-tier (compaction/hygiene lines are noisy
   // by design) and superseded notes so the auditor sees live knowledge only.
@@ -165,6 +169,7 @@ async function hygieneForEntity(
   const counts = {
     stale,
     competing,
+    pending,
     duplicates: audit.duplicateGroups.length,
     overlong: audit.overlong.length,
     unsupported: audit.unsupportedClaims.length,
@@ -229,7 +234,7 @@ function isHygieneNote(note: NoteRow): boolean {
 
 async function reviewCount(
   op: (request: MemoryOperationRequest) => Promise<{ result: unknown }>,
-  kind: "stale" | "competing",
+  kind: "stale" | "competing" | "pending",
   deps: MemoryHygieneDeps,
   name: string,
 ): Promise<number> {

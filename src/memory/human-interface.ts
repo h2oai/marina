@@ -14,9 +14,13 @@ export const MEMORY_SERVICE_HELP = `Portable memory service (private to your dur
   memory transfers [JSON filters]         discover your staged imports
   memory transfer <ID>                    inspect an import
   memory transfer-abort <ID>              explicitly discard unpublished staging
-  memory review [JSON filters]            review stale/competing assertions
+  memory review [JSON filters]            review stale/competing/pending assertions
   memory reaffirm <ID> <version> <JSON pins>
                                          reaffirm after explicitly reviewing premises
+  memory resolve <ID> <policy> <JSON>     settle competing assertions; policies:
+                                         last_writer_wins, evidence_weighted,
+                                         await_confirmation, keep_both;
+                                         JSON: {"competing":[IDs],"rationale":"..."}
   memory remember <text>                 store a plain memory
   memory claim <subject> <predicate> <JSON scalar>
   memory relate <subject> <predicate> <entity ID>
@@ -98,6 +102,21 @@ export function parseMemoryServiceCommand(args: string): MemoryOperationRequest 
         id: fields[1],
         input: { expected_version: Number(fields[2]), dependency_versions: json(fields[3]!) },
       };
+    }
+    case "resolve": {
+      const fields = rest.match(
+        /^(\S+)\s+(last_writer_wins|evidence_weighted|await_confirmation|keep_both)\s+([\s\S]+)$/,
+      );
+      if (!fields)
+        throw new MemoryClientError(
+          400,
+          "invalid_input",
+          'Use: memory resolve ID last_writer_wins|evidence_weighted|await_confirmation|keep_both {"competing":[IDs],"rationale":"..."}',
+        );
+      const options = json(fields[3]!);
+      if (!options || typeof options !== "object" || Array.isArray(options))
+        throw new MemoryClientError(400, "invalid_input", "Resolve options must be a JSON object");
+      return { operation: "resolve", id: fields[1], input: { ...options, policy: fields[2] } };
     }
     case "usage":
       return { operation: "usage" };

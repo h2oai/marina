@@ -269,8 +269,52 @@ export interface MemoryReviewResult {
     }[];
     competing_records: MemoryRecord[];
     competing_truncated: boolean;
+    /** The record's live resolution membership, when one exists. */
+    resolution?: MemoryResolutionMembership;
   }[];
   next_cursor: string | null;
+}
+
+/** Typed write-time operators over the review queue. Every policy writes an
+ * append-only audit row; none deletes history. */
+export type MemoryResolvePolicy =
+  | "last_writer_wins"
+  | "evidence_weighted"
+  | "await_confirmation"
+  | "keep_both";
+export type MemoryResolutionStatus = "applied" | "pending" | "confirmed" | "superseded" | "retired";
+export type MemoryResolutionRole = "winner" | "superseded" | "peer" | "pending";
+export interface MemoryResolveInput {
+  policy: MemoryResolvePolicy;
+  /** Competing record IDs (1–32); the head record is the operation target. */
+  competing: string[];
+  rationale: string;
+  /** Explicit cutoff for closing losers; `from` overrides the winner's `valid_from`. */
+  valid_time?: MemoryValidity | null;
+  /** await_confirmation only: relative deadline in milliseconds. */
+  deadline_ms?: number;
+}
+export interface MemoryResolutionMembership {
+  id: string;
+  policy: MemoryResolvePolicy;
+  status: MemoryResolutionStatus;
+  role: MemoryResolutionRole;
+  rationale: string;
+  deadline: number | null;
+  created_at: number;
+}
+export interface MemoryResolveResult extends MemoryReceipt {
+  /** Resolution (audit row) ID. */
+  id: string;
+  record_id: string;
+  policy: MemoryResolvePolicy;
+  status: MemoryResolutionStatus;
+  winner: string | null;
+  superseded: { id: string; version: number; valid_time: MemoryValidity | null }[];
+  peers: string[];
+  pending: string[];
+  evidence_counts: Record<string, number> | null;
+  deadline: number | null;
 }
 export interface MemoryCacheInput {
   inputs: unknown;

@@ -55,6 +55,13 @@ class MarinaMemory:
             body["content"] = content
         return self.request(self._path("/reaffirm"), "POST", body, key)
 
+    def resolve(self, record_id, policy, competing, rationale, key=None, **options):
+        """Resolve competing assertions: policy is last_writer_wins, evidence_weighted,
+        await_confirmation or keep_both; options may carry valid_time / deadline_ms."""
+        body = {"id": record_id, "policy": policy, "competing": list(competing),
+                "rationale": rationale, **options}
+        return self.request(self._path("/resolve"), "POST", body, key)
+
     def cache_delete(self, inputs, model, policy, key=None):
         return self.request(self._path("/cache/delete"), "POST",
                             {"inputs": inputs, "model": model, "policy": policy}, key)

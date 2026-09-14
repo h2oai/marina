@@ -123,8 +123,9 @@ require `Idempotency-Key: KEY`. JSON bodies are limited to 2 MiB. Errors have
 | `POST /spaces/:space/forget` | `{record_ids}` or `{source_ids}`; whole-space deletion requires `{all:true, expected_generation}` from its owner |
 | `POST /spaces/:space/sources/batch` | Atomically capture 1–64 sources (1 MiB total), retaining individual retry keys |
 | `GET /spaces/:space/export` | Authorized `marina.memory.bundle.v1` snapshot of current records, raw sources and checkpoints |
-| `POST /spaces/:space/review` | `{kind?:"all"\|"stale"\|"competing", limit?, cursor?}`; premise versions and temporally overlapping competing assertions |
-| `POST /spaces/:space/reaffirm` | `{id, expected_version, dependency_versions, content?}`; explicit reviewed replacement revision |
+| `POST /spaces/:space/review` | `{kind?:"all"\|"stale"\|"competing"\|"pending", limit?, cursor?}`; premise versions, temporally overlapping competing assertions, and live resolution membership |
+| `POST /spaces/:space/reaffirm` | `{id, expected_version, dependency_versions, content?}`; explicit reviewed replacement revision; confirms any `await_confirmation` set the record belongs to |
+| `POST /spaces/:space/resolve` | `{id, policy, competing, rationale, valid_time?, deadline_ms?}`; audited contradiction resolution — `last_writer_wins`, `evidence_weighted`, `await_confirmation`, `keep_both` |
 | `POST /spaces/:space/cache/delete` | Exact cache identity; delete only this principal's reusable result, preserving authored memory |
 | `POST /spaces/:space/cache/get` | `{inputs, model, policy}`; live-authorized hit or an inspectable miss reason |
 | `POST /spaces/:space/cache/put` | Identity plus `{value, records?, sources?, federated?, expires_at}`; 1–32 explicit version/hash pins |
@@ -300,6 +301,19 @@ historical attributes. There is no global transaction-time/as-of query, rule eng
 ontology. For temporal questions, use `valid_at` rather than expecting an LLM to choose an
 interval from text-search results.
 
+**"What was true at T?"** is two different questions, and the service answers each with the
+existing contract rather than a second timeline:
+
+- *Valid time* — what the space currently asserts held at instant `T`: `query`/`graph` with
+  `valid_at: T`. Superseded assertions whose interval was closed by a
+  [resolution](#contradiction-resolution) still answer for the instants they covered; they are
+  never deleted, only bounded.
+- *Transaction time* — what a record said as of an earlier write: `get(id, version)`. Every
+  revision, including the ones `resolve` writes, is a new version; the previous version keeps its
+  own `valid_time`, `claim` and `metadata`. There is no space-wide `as_of` filter on `query`/
+  `search`: it would have to reconstruct every head at `T`, which the versioned store does not
+  index, so the version-based path is the supported one and a filter is deliberately not faked.
+
 ## Inspectable task retrieval
 
 ```typescript
@@ -349,6 +363,8 @@ supply all current `dependency_versions` when revising the conclusion. Revalidat
 premises first. Removing `depends_on` explicitly asserts independent support; historical
 lineage still controls forgetting. Older dependencies with no recorded revision bindings
 require review after migration. No model automatically corrects or reaffirms conclusions.
+Competing assertions are settled the same way — through explicit, audited
+[`resolve`](#contradiction-resolution) revisions — never by a background merge.
 
 ```ts
 const premise = await memory.get(space, premiseId);
@@ -536,6 +552,49 @@ Humans can use `memory review`, `memory show ID`, `memory source ID START END`, 
 `memory reaffirm ID VERSION JSON_PINS`. Full JSON retains provenance and continuation cursors.
 Python exposes `review` and `reaffirm`; generic MCP uses the same operation names through
 Marina's existing authenticated, rate-limited command path.
+
+### Contradiction resolution
+
+`review` reports competing assertions — same subject and predicate, different objects,
+overlapping half-open validity — and deliberately does not pick a winner. `resolve` is the
+explicit, audited decision. It targets one head record and names its rivals:
+
+```ts
+await memory.resolve(space, parisId, {
+  policy: "last_writer_wins",      // or evidence_weighted | await_confirmation | keep_both
+  competing: [berlinId],
+  rationale: "Facilities confirmed the move on the 3rd.",
+}, "office-move-1");
+```
+
+| Policy | Effect |
+|---|---|
+| `last_writer_wins` | The most recently revised member becomes the winner. Every other member gets an ordinary revision closing `valid_time.until` at the winner's `valid_from` (or now; `valid_time.from` in the input overrides the cutoff), never extending an interval or producing an empty one, and is marked *superseded* in the review index. |
+| `evidence_weighted` | The member with the most *independent* supporting sources wins — distinct `content_hash` values among its current `source_ids`, excluding legacy-note twins (`session_id: "legacy-notes"`), assistance request envelopes and anything citing a `marina-memory://` identity; ties fall back to recency. Losers are handled as above; the result and the winner's `metadata.resolution` carry `evidence_counts`. |
+| `await_confirmation` | Nothing changes. The set is listed under review kind `pending` (with the `resolution` membership and optional `deadline`, from `deadline_ms`) until a later `resolve` supersedes it or a `reaffirm` of any member confirms it. The pair stays under `competing` meanwhile, because it is still a contradiction. |
+| `keep_both` | The conflict is irreducible: every member stays current, each gets `metadata.qualified_by` naming the others and the rationale, and review stops flagging the pair. A new rival is still flagged against both. |
+
+Resolutions are revisions, not deletions: losers stay readable by id and by `valid_at` for the
+instants they still cover, `get(id, version)` shows the open interval they had before, and the
+winner's `metadata.resolution` records `{id, policy, status, competitors, evidence_counts?}`.
+Because each touched record is revised, conclusions that pinned it are marked stale exactly as
+after any correction — a contested premise deserves a second look; reaffirm them with the new
+version. Every call appends one row to `memory_resolutions` (actor, time, policy, inputs, outputs,
+rationale, request key) and is idempotent per `Idempotency-Key`: the same key with the same input
+replays the receipt, a different input returns `409 idempotency_conflict`. Records must be active
+members of one subject/predicate (`409 not_competing` otherwise).
+
+Authorization is the ordinary space-writer check (owner or `writer` grant; readers and strangers
+get `404`, read-only scopes `403`). An assistance helper cannot resolve: the lease admits only the
+read operations, so a `resolve` under `assistance read` returns `assistance_read_only` — helpers
+propose, owners decide. Forgetting a member of a *pending* set retires that set; an applied
+resolution is never undone by forgetting, so a superseded loser is not resurrected when its winner
+is forgotten.
+
+Humans use `memory resolve ID POLICY {"competing":[IDs],"rationale":"..."}` and
+`memory review {"kind":"pending"}`; Python exposes `resolve(record_id, policy, competing,
+rationale, key=None, **options)`; generic MCP uses operation `resolve` through `memory_service`.
+`GET /v1/memory` reports the policies under `contradiction_resolution`.
 
 Reusable results are explicit and scoped to the calling principal in a space. They are stored
 separately from authored memories and checkpoints, charged to the space owner's byte budget,

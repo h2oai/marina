@@ -31,6 +31,7 @@ export const MEMORY_OPERATIONS = [
   "acknowledge",
   "review",
   "reaffirm",
+  "resolve",
   "cache_delete",
   "cache_get",
   "cache_put",
@@ -183,6 +184,8 @@ export async function runMemoryOperation(
       return client.request(`${base}/review`, "POST", input ?? {});
     case "reaffirm":
       return client.request(`${base}/reaffirm`, "POST", { ...input, id: request.id }, request.key);
+    case "resolve":
+      return client.request(`${base}/resolve`, "POST", { ...input, id: request.id }, request.key);
     case "cache_delete":
       return client.request(`${base}/cache/delete`, "POST", input, request.key);
     case "cache_get":

@@ -7,7 +7,11 @@ import type { MarinaDB } from "../persistence/database";
 import type { MemoryRepository } from "../persistence/db-memory-service";
 import type { MemoryActor } from "../persistence/db-principals";
 import { withMemoryAbort } from "../sdk/memory-abort";
-import type { MemorySearchInput, MemorySearchResult } from "../sdk/memory-types";
+import type {
+  MemoryResolveResult,
+  MemorySearchInput,
+  MemorySearchResult,
+} from "../sdk/memory-types";
 import { type EmbeddingProvider, validEmbedding } from "./embeddings";
 import { configuredMemoryFederation, type MemoryFederation } from "./federation";
 import { runMemoryImport } from "./import-runner";
@@ -164,9 +168,38 @@ export class MemoryService {
         partial_results: "opt-in",
         cache_pins: "live-peer-identity-generation-and-content:fail-closed",
       },
-      review_queue: "stale-and-competing-assertions",
+      review_queue: "stale-competing-and-pending-assertions",
+      contradiction_resolution: {
+        policies: ["last_writer_wins", "evidence_weighted", "await_confirmation", "keep_both"],
+        history: "revision-preserving:losers-closed-not-deleted",
+        audit: "append-only:memory_resolutions",
+        authorization: "space-writer:helpers-propose-only",
+        idempotency: "per-key",
+      },
       reusable_results: "exact-input-model-policy:revision-pinned:live-authorization",
     };
+  }
+
+  /** Explicit, audited contradiction resolution over the review queue. The
+   * repository exposes both review-queue writers through one slot; this is the
+   * public seam. Authorization: ordinary space writer (helpers never reach it). */
+  resolve(
+    actor: MemoryActor,
+    space: string,
+    id: string,
+    input: Record<string, unknown>,
+    key: string,
+  ): MemoryResolveResult {
+    if (input.policy === undefined)
+      throw new MemoryError(400, "invalid_policy", "policy is required to resolve");
+    return this.repository.resolve(
+      actor,
+      space,
+      id,
+      input,
+      key,
+      this.embeddings?.id,
+    ) as MemoryResolveResult;
   }
 
   startWorker() {

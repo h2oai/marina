@@ -4,6 +4,7 @@
 import type { Database } from "bun:sqlite";
 import { integer, MemoryError, object, textValue } from "../memory/service-types";
 import type { MemoryReviewResult } from "../sdk/memory-types";
+import { confirmPendingResolutions, resolutionMembership } from "./db-memory-resolve";
 import {
   authorizeMemorySpace,
   readCurrentMemoryRecords,
@@ -12,12 +13,31 @@ import {
 } from "./db-memory-service";
 import type { MemoryActor } from "./db-principals";
 
+// Review-index predicates (migration 113). `alias` names a record id column.
+const SUPERSEDED_MEMBER = (alias: string) =>
+  `EXISTS(SELECT 1 FROM memory_resolution_members m JOIN memory_resolutions x ON x.id=m.resolution_id
+ WHERE m.record_id=${alias} AND m.role='superseded' AND m.retired_at IS NULL AND x.status='applied')`;
+const KEPT_PAIR = (a: string, b: string) =>
+  `EXISTS(SELECT 1 FROM memory_resolution_members m1 JOIN memory_resolution_members m2
+ ON m2.resolution_id=m1.resolution_id JOIN memory_resolutions x ON x.id=m1.resolution_id
+ WHERE m1.record_id=${a} AND m2.record_id=${b} AND m1.role='peer' AND m2.role='peer'
+ AND m1.retired_at IS NULL AND m2.retired_at IS NULL AND x.status='applied')`;
+const PENDING_MEMBER = (alias: string) =>
+  `EXISTS(SELECT 1 FROM memory_resolution_members m JOIN memory_resolutions x ON x.id=m.resolution_id
+ WHERE m.record_id=${alias} AND m.role='pending' AND m.retired_at IS NULL AND x.status='pending')`;
+// Peers that an applied resolution already settled stop steering the queue:
+// superseded losers never compete again, and a keep_both pair is by decision
+// not a contradiction. Pending sets stay competing until confirmed/resolved.
 const competing = `SELECT c2.record_id FROM memory_claims c JOIN memory_claims c2
  ON c2.space_id=c.space_id AND c2.subject=c.subject AND c2.predicate=c.predicate
  JOIN memory_records other ON other.id=c2.record_id
  WHERE c.record_id=r.id AND c2.record_id!=r.id AND c2.object_json!=c.object_json
  AND other.status='active' AND (r.valid_until IS NULL OR other.valid_from IS NULL OR other.valid_from<r.valid_until)
- AND (other.valid_until IS NULL OR r.valid_from IS NULL OR r.valid_from<other.valid_until)`;
+ AND (other.valid_until IS NULL OR r.valid_from IS NULL OR r.valid_from<other.valid_until)
+ AND NOT ${SUPERSEDED_MEMBER("c2.record_id")} AND NOT ${KEPT_PAIR("r.id", "c2.record_id")}`;
+const competes = `(NOT ${SUPERSEDED_MEMBER("r.id")} AND EXISTS(${competing}))`;
+const pending = PENDING_MEMBER("r.id");
+export const REVIEW_KINDS = ["all", "stale", "competing", "pending"] as const;
 
 export function reviewMemory(
   db: Database,
@@ -28,8 +48,12 @@ export function reviewMemory(
   const input = object(raw),
     limit = integer(input.limit ?? 20, "limit", 1, 100);
   const kind = input.kind ?? "all";
-  if (!["all", "stale", "competing"].includes(String(kind)))
-    throw new MemoryError(400, "invalid_input", "Review kind must be all, stale or competing");
+  if (!REVIEW_KINDS.includes(kind as (typeof REVIEW_KINDS)[number]))
+    throw new MemoryError(
+      400,
+      "invalid_input",
+      "Review kind must be all, stale, competing or pending",
+    );
   return db.transaction(() => {
     const current = authorizeMemorySpace(db, actor, space);
     let after = "";
@@ -52,8 +76,10 @@ export function reviewMemory(
       kind === "stale"
         ? "r.stale=1"
         : kind === "competing"
-          ? `EXISTS(${competing})`
-          : `(r.stale=1 OR EXISTS(${competing}))`;
+          ? competes
+          : kind === "pending"
+            ? pending
+            : `(r.stale=1 OR ${competes} OR ${pending})`;
     const rows = db
       .query(
         `SELECT r.id FROM memory_records r WHERE r.space_id=? AND r.status='active' AND r.id>? AND ${condition} ORDER BY r.id LIMIT ?`,
@@ -97,6 +123,7 @@ export function reviewMemory(
           state,
         };
       });
+      const membership = resolutionMembership(db, id);
       return {
         record,
         premises,
@@ -107,6 +134,7 @@ export function reviewMemory(
           peers.slice(0, 20).map((peer) => peer.record_id),
         ),
         competing_truncated: peers.length > 20,
+        ...(membership ? { resolution: membership } : {}),
       };
     });
     return {
@@ -128,6 +156,8 @@ export function reviewMemory(
   })();
 }
 
+/** Reaffirm is one of two review-queue write operators; `resolve` (typed
+ * contradiction policies) has its own repository slot — see db-memory-resolve.ts. */
 export function reaffirmMemory(
   db: Database,
   actor: MemoryActor,
@@ -137,8 +167,14 @@ export function reaffirmMemory(
   key: string,
   model?: string,
 ) {
-  const input = object(raw),
-    expected = integer(input.expected_version, "expected_version", 1, Number.MAX_SAFE_INTEGER);
+  const input = object(raw);
+  if (input.policy !== undefined)
+    throw new MemoryError(
+      400,
+      "invalid_reaffirm",
+      "reaffirm does not take a policy; use the resolve operation for contradiction policies",
+    );
+  const expected = integer(input.expected_version, "expected_version", 1, Number.MAX_SAFE_INTEGER);
   if (input.dependency_versions === undefined)
     throw new MemoryError(
       400,
@@ -146,17 +182,23 @@ export function reaffirmMemory(
       "Explicit dependency_versions are required, including {} for independent assertions",
     );
   const record = readMemoryRecord(db, actor, space, id);
-  return reviseRecord(
-    db,
-    actor,
-    space,
-    id,
-    expected,
-    {
-      content: input.content === undefined ? record.content : textValue(input.content, "content"),
-      dependency_versions: object(input.dependency_versions) as Record<string, number>,
-    },
-    key,
-    model,
-  );
+  // A reviewed reaffirmation also settles any await_confirmation set the record
+  // belongs to; the revision and the confirmation commit together.
+  return db.transaction(() => {
+    const receipt = reviseRecord(
+      db,
+      actor,
+      space,
+      id,
+      expected,
+      {
+        content: input.content === undefined ? record.content : textValue(input.content, "content"),
+        dependency_versions: object(input.dependency_versions) as Record<string, number>,
+      },
+      key,
+      model,
+    );
+    confirmPendingResolutions(db, space, id);
+    return receipt;
+  })();
 }

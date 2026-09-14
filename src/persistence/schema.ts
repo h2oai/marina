@@ -3240,4 +3240,81 @@ END;
 INSERT INTO notes_fts(notes_fts) VALUES('rebuild');
 `,
   },
+  // Migration 113: contradiction resolution as typed write-time operators over
+  // the review queue. `memory_resolutions` is an append-only audit ledger (who,
+  // when, policy, inputs, outputs, rationale); `memory_resolution_members` is
+  // the review index (winner / superseded / peer / pending). Losers are never
+  // deleted: their validity is closed by an ordinary revision and they are
+  // marked superseded here. Forgetting retires only *pending* sets — an applied
+  // resolution never resurrects a superseded record.
+  {
+    version: 113,
+    sql: `
+CREATE TABLE memory_resolutions (
+ id TEXT PRIMARY KEY, space_id TEXT NOT NULL REFERENCES memory_spaces(id),
+ record_id TEXT NOT NULL, policy TEXT NOT NULL
+  CHECK(policy IN ('last_writer_wins','evidence_weighted','await_confirmation','keep_both')),
+ status TEXT NOT NULL CHECK(status IN ('applied','pending','confirmed','superseded','retired')),
+ actor_id TEXT NOT NULL, request_key TEXT NOT NULL, rationale TEXT NOT NULL,
+ input TEXT NOT NULL, output TEXT NOT NULL, deadline INTEGER,
+ created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_memory_resolutions_space ON memory_resolutions(space_id,status,created_at);
+CREATE INDEX idx_memory_resolutions_record ON memory_resolutions(record_id,created_at);
+CREATE TABLE memory_resolution_members (
+ resolution_id TEXT NOT NULL REFERENCES memory_resolutions(id) ON DELETE CASCADE,
+ record_id TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('winner','superseded','peer','pending')),
+ retired_at INTEGER, PRIMARY KEY(resolution_id,record_id)
+);
+CREATE INDEX idx_memory_resolution_members_record ON memory_resolution_members(record_id,role,retired_at);
+CREATE TRIGGER memory_resolutions_forget AFTER INSERT ON memory_service_events
+WHEN new.operation IN ('memory.forgotten','space.forgotten') BEGIN
+ UPDATE memory_resolutions SET status='retired',updated_at=new.created_at
+ WHERE status='pending' AND space_id=new.space_id AND (new.operation='space.forgotten' OR id IN
+  (SELECT resolution_id FROM memory_resolution_members WHERE record_id=new.reference_id));
+END;
+CREATE TRIGGER memory_resolutions_storage_insert AFTER INSERT ON memory_resolutions BEGIN
+ INSERT INTO memory_storage_items(kind,ref,space_id,bytes) VALUES ('resolution',new.id,new.space_id,length(CAST(new.input AS BLOB))+length(CAST(new.output AS BLOB))+length(CAST(new.rationale AS BLOB))+256);
+END;
+CREATE TRIGGER memory_resolutions_storage_update AFTER UPDATE ON memory_resolutions BEGIN
+ UPDATE memory_storage_items SET bytes=length(CAST(new.input AS BLOB))+length(CAST(new.output AS BLOB))+length(CAST(new.rationale AS BLOB))+256 WHERE kind='resolution' AND ref=new.id;
+END;
+CREATE TRIGGER memory_resolutions_storage_delete AFTER DELETE ON memory_resolutions BEGIN
+ DELETE FROM memory_storage_items WHERE kind='resolution' AND ref=old.id;
+END;
+DROP VIEW memory_storage_projection;
+CREATE VIEW memory_storage_projection AS
+SELECT 'space' AS kind,t.id AS ref,t.id AS space_id,length(CAST(t.name AS BLOB))+128 AS bytes FROM memory_spaces t
+UNION ALL
+SELECT 'source' AS kind,t.id AS ref,t.space_id AS space_id,length(CAST(t.body AS BLOB))+length(CAST(coalesce(t.session_id,'') AS BLOB))+128 AS bytes FROM memory_sources t
+UNION ALL
+SELECT 'revision' AS kind,json_array(t.record_id,t.version) AS ref,r.space_id AS space_id,length(CAST(n.content AS BLOB))+length(CAST(coalesce(t.attributes,'') AS BLOB))+128 AS bytes FROM memory_record_versions t JOIN memory_records r ON r.id=t.record_id JOIN notes n ON n.id=t.note_id
+UNION ALL
+SELECT 'checkpoint' AS kind,json_array(t.space_id,t.name) AS ref,t.space_id AS space_id,length(CAST(t.data AS BLOB))+length(CAST(t.name AS BLOB))+128 AS bytes FROM memory_checkpoints t
+UNION ALL
+SELECT 'vocabulary' AS kind,json_array(t.space_id,t.version) AS ref,t.space_id AS space_id,length(CAST(t.definition AS BLOB))+128 AS bytes FROM memory_vocabularies t
+UNION ALL
+SELECT 'receipt' AS kind,json_array(t.principal_id,t.space_id,t.request_key) AS ref,s.id AS space_id,length(CAST(t.response AS BLOB))+length(CAST(t.request_key AS BLOB))+192 AS bytes FROM memory_requests t JOIN memory_spaces s ON s.id=CASE WHEN t.space_id='' THEN json_extract(t.response,'$.id') ELSE t.space_id END
+UNION ALL
+SELECT 'event' AS kind,CAST(t.seq AS TEXT) AS ref,t.space_id AS space_id,length(CAST(t.operation AS BLOB))+length(CAST(coalesce(t.reference_id,'') AS BLOB))+128 AS bytes FROM memory_service_events t
+UNION ALL
+SELECT 'grant' AS kind,json_array(t.space_id,t.principal_id) AS ref,t.space_id AS space_id,128 AS bytes FROM memory_grants t
+UNION ALL
+SELECT 'job' AS kind,t.id AS ref,t.space_id AS space_id,length(CAST(t.model AS BLOB))+256 AS bytes FROM memory_index_jobs t
+UNION ALL
+SELECT 'vector' AS kind,json_array(t.note_id,t.model) AS ref,r.space_id AS space_id,length(CAST(t.vector AS BLOB))+length(CAST(t.model AS BLOB))+128 AS bytes FROM memory_vectors t JOIN memory_record_versions v ON v.note_id=t.note_id JOIN memory_records r ON r.id=v.record_id
+UNION ALL
+SELECT 'cache' AS kind,json_array(t.space_id,t.principal_id,t.name) AS ref,t.space_id AS space_id,length(CAST(t.data AS BLOB))+length(CAST(t.name AS BLOB))+192 AS bytes FROM memory_cached_results t
+UNION ALL
+SELECT 'transfer',id,space_id,length(CAST(header AS BLOB))+length(CAST(coalesce(cursor,'') AS BLOB))+256 FROM memory_transfers
+UNION ALL
+SELECT 'transfer_part',json_array(transfer_id,position),space_id,length(CAST(data AS BLOB))+length(CAST(item_id AS BLOB))+256 FROM memory_transfer_parts
+UNION ALL
+SELECT 'assistance',id,space_id,length(CAST(evidence AS BLOB))+768 FROM memory_assistance_jobs
+UNION ALL
+SELECT 'assistance_action',json_array(a.job_id,a.principal_id,a.request_key),j.space_id,length(CAST(a.response AS BLOB))+length(CAST(a.request_key AS BLOB))+256 FROM memory_assistance_actions a JOIN memory_assistance_jobs j ON j.id=a.job_id
+UNION ALL
+SELECT 'resolution',id,space_id,length(CAST(input AS BLOB))+length(CAST(output AS BLOB))+length(CAST(rationale AS BLOB))+256 FROM memory_resolutions;
+`,
+  },
 ];
