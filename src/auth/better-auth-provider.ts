@@ -78,6 +78,41 @@ function upgradeAuthSchema(db: Database): void {
   );
 }
 
+/** Better Auth 1.7.3 restores provider/account keys and no longer writes issuer. */
+function upgradeAccountKeys(db: Database): void {
+  const duplicate = db
+    .query(`SELECT 1 FROM "account" GROUP BY "providerId", "accountId" HAVING count(*) > 1 LIMIT 1`)
+    .get();
+  if (duplicate) {
+    throw new Error(
+      "Auth upgrade requires unique (providerId, accountId) pairs. Resolve duplicate account keys before restarting; no accounts were merged or removed.",
+    );
+  }
+  db.exec(`DROP INDEX IF EXISTS "account_issuer_accountId_idx"`);
+  db.exec(`ALTER TABLE "account" DROP COLUMN "issuer"`);
+  db.exec(
+    `CREATE UNIQUE INDEX "account_providerId_accountId_idx" ON "account" ("providerId", "accountId")`,
+  );
+}
+
+// Dedicated auth DB migrations are append-only, just like the world DB's.
+// Keep the original bootstrap and 1.6 upgrade intact for existing installations.
+const AUTH_MIGRATIONS = [upgradeAuthSchema, upgradeAccountKeys];
+
+function migrateAuthDatabase(db: Database): void {
+  db.transaction(() => {
+    db.exec(SCHEMA_SQL);
+    db.exec(`CREATE TABLE IF NOT EXISTS "marina_auth_schema" ("version" integer primary key)`);
+    const applied = db.query(`SELECT 1 FROM "marina_auth_schema" WHERE "version" = ?`);
+    const record = db.query(`INSERT INTO "marina_auth_schema" ("version") VALUES (?)`);
+    for (const [index, migrate] of AUTH_MIGRATIONS.entries()) {
+      if (applied.get(index + 1)) continue;
+      migrate(db);
+      record.run(index + 1);
+    }
+  }).immediate();
+}
+
 interface ProviderConfig {
   secret: string;
   baseURL: string;
@@ -119,9 +154,12 @@ function readConfig(): ProviderConfig {
 export function createBetterAuthProvider(): MarinaAuthProvider {
   const cfg = readConfig();
   const db = new Database(cfg.dbPath);
-  // Idempotent schema bootstrap (no CLI).
-  db.exec(SCHEMA_SQL);
-  upgradeAuthSchema(db);
+  try {
+    migrateAuthDatabase(db);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 
   const socialProviders = cfg.social;
   const auth = betterAuth({

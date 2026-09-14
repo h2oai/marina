@@ -7,8 +7,8 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Agent } from "@mariozechner/pi-agent-core";
-import { type AssistantMessage, createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+import type { Agent } from "@earendil-works/pi-agent-core";
+import { type AssistantMessage, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { DurableResidentMemory } from "../src/agent/durable-memory";
 import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
 import { PlatformMemoryBackend } from "../src/agent/memory-platform";
@@ -409,7 +409,7 @@ it("awaits the actual resident adapter's completed-message journal before the ne
   const agent = internals.agent;
   agent.transformContext = undefined;
   agent.getApiKey = () => undefined;
-  agent.streamFn = async (model) => {
+  agent.streamFunction = async (model) => {
     calls++;
     const checkpoint = await new DurableResidentMemory(residentClient).checkpoint();
     expect(checkpoint?.version).toBe(1); // User message is committed before model invocation.

@@ -6,8 +6,8 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { Model } from "@mariozechner/pi-ai";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Model } from "@earendil-works/pi-ai";
 import { ContextPersistenceError, createContextManager } from "../src/agent/context-manager";
 import { DurableResidentMemory } from "../src/agent/durable-memory";
 import { createMemoryPlan, executeMemoryPlan } from "../src/memory/planning";
@@ -252,7 +252,7 @@ it("uploads only new resident segments and stops local re-archival after forgett
     memoryService: async (request) => {
       if (request.operation === "capture") captures++;
       if (request.operation === "capture_batch")
-        captures += (request.input?.items as unknown[]).length;
+        captures += (request.input!.items as unknown[]).length;
       return residentMemoryOperation(db, "Resident", request);
     },
   });

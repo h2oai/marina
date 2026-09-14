@@ -105,7 +105,7 @@ describe("generateStabilityImage", () => {
     });
 
     expect(cap.url()).toBe("https://api.stability.ai/v2beta/stable-image/generate/sd3");
-    const form = cap.init()?.body as FormData;
+    const form = cap.init()!.body as FormData;
     expect(form.get("prompt")).toBe("a koi pond");
     expect(form.get("output_format")).toBe("png");
     expect(form.get("aspect_ratio")).toBe("16:9");
@@ -124,7 +124,7 @@ describe("generateStabilityImage", () => {
       style: "not-a-real-preset",
     });
     expect(cap.url()).toBe("https://api.stability.ai/v2beta/stable-image/generate/core");
-    expect((cap.init()?.body as FormData).get("style_preset")).toBeNull();
+    expect((cap.init()!.body as FormData).get("style_preset")).toBeNull();
 
     await generateStabilityImage({
       apiKey: "k",
@@ -132,7 +132,7 @@ describe("generateStabilityImage", () => {
       prompt: "p",
       style: "anime",
     });
-    expect((cap.init()?.body as FormData).get("style_preset")).toBe("anime");
+    expect((cap.init()!.body as FormData).get("style_preset")).toBe("anime");
   });
 
   it("surfaces a provider error", async () => {
@@ -239,7 +239,7 @@ describe("generateOpenAICompatibleImage (generic endpoint)", () => {
       prompt: "a tree",
     });
     expect(cap.url()).toBe("https://api.together.xyz/v1/images/generations");
-    expect((cap.init()?.headers as Record<string, string>).Authorization).toBe("Bearer tok");
+    expect((cap.init()!.headers as Record<string, string>).Authorization).toBe("Bearer tok");
     const body = JSON.parse(String(cap.init()?.body)) as { model: string };
     expect(body.model).toBe("black-forest-labs/FLUX.1-schnell");
     expect(res.status).toBe("succeeded");
@@ -264,7 +264,7 @@ describe("generateFluxImage (Black Forest Labs)", () => {
         return Response.json({ status: "Ready", result: { sample: "https://bfl.cdn/img.jpg" } });
       }
       if (url.endsWith("/v1/flux-pro-1.1")) {
-        expect((init?.headers as Record<string, string>)["x-key"]).toBe("bfl-key");
+        expect((init!.headers as Record<string, string>)["x-key"]).toBe("bfl-key");
         return Response.json({ id: "task-1" });
       }
       // sample download

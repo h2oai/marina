@@ -4,6 +4,7 @@
     "rootDir": "..",
     "outDir": "dist",
     "noEmit": true,
+    "typeRoots": ["./node_modules/@types", "./node_modules"],
     "declaration": false,
     "declarationMap": false
   },

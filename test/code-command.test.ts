@@ -400,7 +400,7 @@ describe("code command", () => {
       // Fire an arbitrary command; it blocks awaiting the creator's approval.
       const running = command.handler(ctx, inputFor(entity, "code run echo interactive-ok"));
       await new Promise((resolve) => setTimeout(resolve, 15));
-      const token = (notes.at(-1)?.metadata?.execApproval as { token: string }).token;
+      const token = (notes.at(-1)!.metadata!.execApproval as { token: string }).token;
       expect(token).toBeTruthy();
       await command.handler(ctx, inputFor(entity, `code exec-approve ${token}`));
       await running;
@@ -742,7 +742,7 @@ describe("code command", () => {
       // First arbitrary command → genuine human approve (session scope) → 1 demo.
       const running = command.handler(ctx, inputFor(entity, "code run echo replay-me"));
       await new Promise((resolve) => setTimeout(resolve, 15));
-      const token = (notes.at(-1)?.metadata?.execApproval as { token: string }).token;
+      const token = (notes.at(-1)!.metadata!.execApproval as { token: string }).token;
       await command.handler(ctx, inputFor(entity, `code exec-approve ${token}`));
       await running;
       expect(db.getCompetence(entity.id, "code.exec.unrestricted")?.demonstrations).toBe(1);
@@ -882,7 +882,7 @@ describe("code command", () => {
       sent.length = 0;
       const running = command.handler(ctx, inputFor(boundAgent, "code run echo bound-ok"));
       await new Promise((resolve) => setTimeout(resolve, 15));
-      const token = (notes.at(-1)?.metadata?.execApproval as { token: string }).token;
+      const token = (notes.at(-1)!.metadata!.execApproval as { token: string }).token;
       expect(token).toBeTruthy();
       await command.handler(ctx, inputFor(sovereign, `code exec-approve ${token}`));
       await running;

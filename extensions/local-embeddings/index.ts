@@ -88,7 +88,7 @@ export async function localEmbeddings(
     interOpNumThreads: 1,
   });
   return {
-    id: `${LOCAL_EMBEDDING_MODEL}@${LOCAL_EMBEDDING_REVISION}:onnx1.21-tokenizers0.2-q8-mean-chunks500-v2`,
+    id: `${LOCAL_EMBEDDING_MODEL}@${LOCAL_EMBEDDING_REVISION}:onnx1.27-tokenizers0.2-q8-mean-chunks500-v2`,
     async embed(text) {
       if (Buffer.byteLength(text) > 65536)
         throw new MemoryError(413, "embedding_capacity", "Local embedding input exceeds 64 KiB");

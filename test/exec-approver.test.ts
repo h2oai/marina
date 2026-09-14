@@ -168,7 +168,7 @@ describe("InteractiveApprover", () => {
     await Promise.resolve();
     const prompt = notifications.at(-1);
     expect(prompt?.entityId).toBe("e_creator");
-    const token = (prompt?.metadata?.execApproval as { token: string }).token;
+    const token = (prompt!.metadata!.execApproval as { token: string }).token;
     expect(getPendingExecApproval(token)?.creatorName).toBe("Creator");
     expect(settleExecApproval(token, { approved: true, scope: "session" })).toBe(true);
     const decision = await pending;
@@ -181,7 +181,7 @@ describe("InteractiveApprover", () => {
     const approver = make("prompt", "s2");
     const first = approver.requestApproval(req(["ruff", "check"]));
     await Promise.resolve();
-    const token = (notifications.at(-1)?.metadata?.execApproval as { token: string }).token;
+    const token = (notifications.at(-1)!.metadata!.execApproval as { token: string }).token;
     settleExecApproval(token, { approved: true, scope: "session" });
     await first;
     const before = notifications.length;
@@ -193,7 +193,7 @@ describe("InteractiveApprover", () => {
     const third = approver.requestApproval(req(["ruff", "format"]));
     await Promise.resolve();
     expect(notifications.length).toBe(before + 1);
-    const t3 = (notifications.at(-1)?.metadata?.execApproval as { token: string }).token;
+    const t3 = (notifications.at(-1)!.metadata!.execApproval as { token: string }).token;
     settleExecApproval(t3, { approved: false, reason: "no" });
     expect((await third).approved).toBe(false);
   });
@@ -202,7 +202,7 @@ describe("InteractiveApprover", () => {
     const approver = make("prompt", "s3");
     const pending = approver.requestApproval(req(["rm", "-rf", "x"]));
     await Promise.resolve();
-    const token = (notifications.at(-1)?.metadata?.execApproval as { token: string }).token;
+    const token = (notifications.at(-1)!.metadata!.execApproval as { token: string }).token;
     settleExecApproval(token, { approved: false, reason: "nope" });
     const decision = await pending;
     expect(decision.approved).toBe(false);
@@ -268,7 +268,7 @@ describe("InteractiveApprover demonstration provenance (humanApproved)", () => {
     const approver = make("prompt", "hp-prompt");
     const first = approver.requestApproval(req(["ruff", "check"]));
     await Promise.resolve();
-    const token = (notifications.at(-1)?.metadata?.execApproval as { token: string }).token;
+    const token = (notifications.at(-1)!.metadata!.execApproval as { token: string }).token;
     // Genuine human approval carries the operator-approved provenance stamp.
     settleExecApproval(token, {
       approved: true,
@@ -289,7 +289,7 @@ describe("InteractiveApprover demonstration provenance (humanApproved)", () => {
     const approver = make("prompt", "hp-nostamp");
     const pending = approver.requestApproval(req(["make", "x"]));
     await Promise.resolve();
-    const token = (notifications.at(-1)?.metadata?.execApproval as { token: string }).token;
+    const token = (notifications.at(-1)!.metadata!.execApproval as { token: string }).token;
     // Approved, but missing the provenance stamp → must not mint a demonstration.
     settleExecApproval(token, { approved: true, scope: "once" });
     await pending;
@@ -300,7 +300,7 @@ describe("InteractiveApprover demonstration provenance (humanApproved)", () => {
     const approver = make("prompt", "hp-deny");
     const pending = approver.requestApproval(req(["rm", "-rf", "x"]));
     await Promise.resolve();
-    const token = (notifications.at(-1)?.metadata?.execApproval as { token: string }).token;
+    const token = (notifications.at(-1)!.metadata!.execApproval as { token: string }).token;
     settleExecApproval(token, { approved: false, reason: "no" });
     await pending;
     expect(metas.at(-1)?.humanApproved).toBe(false);

@@ -5,8 +5,8 @@ import { expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Agent } from "@mariozechner/pi-agent-core";
-import { type AssistantMessage, createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+import type { Agent } from "@earendil-works/pi-agent-core";
+import { type AssistantMessage, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { DurableResidentMemory } from "../src/agent/durable-memory";
 import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
@@ -59,7 +59,7 @@ for (const failResult of [false, true])
           },
         },
       ];
-      agent.streamFn = async (model) => {
+      agent.streamFunction = async (model) => {
         calls++;
         const checkpoint = (await durable.checkpoint())!;
         expect(checkpoint.version).toBe(calls === 1 ? 1 : 3);

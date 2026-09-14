@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "electrobun": "^1.18.1"
+    "electrobun": "1.18.1"
   },
   "overrides": {
     "ip-address": "^10.5.0"
@@ -20,10 +20,10 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "@types/bun": "1.3.14",
-    "@types/three": "^0.184.1",
-    "@vitejs/plugin-react": "^6.0.5",
+    "@types/three": "^0.186.0",
+    "@vitejs/plugin-react": "^6.1.1",
     "tailwindcss": "^4.3.3",
-    "typescript": "6.0.3",
-    "vite": "^8.2.1"
+    "typescript": "7.0.2",
+    "vite": "^8.3.0"
   }
 }

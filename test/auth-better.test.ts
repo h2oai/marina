@@ -179,7 +179,7 @@ describe("better-auth schema upgrades", () => {
     else process.env.BETTER_AUTH_DB_PATH = previousDbPath;
   });
 
-  it("backfills issuers when opening an auth database created by better-auth 1.6", () => {
+  it("preserves provider keys when opening an auth database created by better-auth 1.6", () => {
     const legacy = new Database(dbPath);
     legacy.exec(`
       create table "account" (
@@ -187,10 +187,13 @@ describe("better-auth schema upgrades", () => {
         "accountId" text not null,
         "providerId" text not null,
         "userId" text not null,
+        "accessToken" text, "refreshToken" text, "idToken" text,
+        "accessTokenExpiresAt" date, "refreshTokenExpiresAt" date,
+        "scope" text, "password" text,
         "createdAt" date not null,
         "updatedAt" date not null
       );
-      insert into "account" values
+      insert into "account" ("id", "accountId", "providerId", "userId", "createdAt", "updatedAt") values
         ('credential-row', 'user-1', 'credential', 'user-1', 0, 0),
         ('oauth-row', 'oauth-1', 'github', 'user-1', 0, 0);
     `);
@@ -201,16 +204,109 @@ describe("better-auth schema upgrades", () => {
     createBetterAuthProvider();
 
     const upgraded = new Database(dbPath, { readonly: true });
-    const rows = upgraded.query(`SELECT "id", "issuer" FROM "account" ORDER BY "id"`).all() as {
+    const rows = upgraded.query(`SELECT "id", "providerId" FROM "account" ORDER BY "id"`).all() as {
       id: string;
-      issuer: string;
+      providerId: string;
     }[];
     upgraded.close();
 
     expect(rows).toEqual([
-      { id: "credential-row", issuer: "local:credential" },
-      { id: "oauth-row", issuer: "local:oauth:github" },
+      { id: "credential-row", providerId: "credential" },
+      { id: "oauth-row", providerId: "github" },
     ]);
+  });
+});
+
+describe("better-auth 1.7 account migration", () => {
+  const dbPath = `/tmp/marina-ba-173-${Date.now()}.db`;
+  const previousSecret = process.env.BETTER_AUTH_SECRET;
+  const previousDbPath = process.env.BETTER_AUTH_DB_PATH;
+  beforeEach(() => {
+    process.env.BETTER_AUTH_SECRET = "migration-test-secret".repeat(3);
+    process.env.BETTER_AUTH_DB_PATH = dbPath;
+  });
+  afterEach(() => {
+    cleanupDb(dbPath);
+    if (previousSecret === undefined) delete process.env.BETTER_AUTH_SECRET;
+    else process.env.BETTER_AUTH_SECRET = previousSecret;
+    if (previousDbPath === undefined) delete process.env.BETTER_AUTH_DB_PATH;
+    else process.env.BETTER_AUTH_DB_PATH = previousDbPath;
+  });
+  const emailRequest = (action: string, email = "existing@example.com") =>
+    new Request(`http://localhost:3300/api/auth/${action}/email`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password: "preserved-password", name: "Existing" }),
+    });
+
+  function restoreOldAccountSchema(db: Database): void {
+    // Recreate Marina's 1.7.0-1.7.2 layout around real password/session records.
+    db.exec(`
+      DROP TABLE marina_auth_schema;
+      DROP INDEX account_providerId_accountId_idx;
+      ALTER TABLE account ADD COLUMN issuer text NOT NULL DEFAULT 'local:credential';
+      CREATE UNIQUE INDEX account_issuer_accountId_idx ON account (issuer, accountId);
+    `);
+  }
+
+  it("preserves credentials and sessions, permits new sign-ups, and is idempotent", async () => {
+    const original = createBetterAuthProvider();
+    const signup = await original.handler(emailRequest("sign-up"));
+    expect(signup.status).toBe(200);
+    const cookie = signup.headers.get("set-cookie")!.split(";")[0]!;
+    const headers = new Headers({ cookie });
+    const identity = await original.getIdentity(headers);
+    expect(identity?.subject).toBeTruthy();
+    const raw = new Database(dbPath);
+    try {
+      const before = raw.query(`SELECT id, userId, password FROM account`).get();
+      restoreOldAccountSchema(raw);
+      const upgraded = createBetterAuthProvider();
+      expect(await upgraded.getIdentity(headers)).toEqual(identity);
+      expect(raw.query(`SELECT id, userId, password FROM account`).get()).toEqual(before);
+      expect((await upgraded.handler(emailRequest("sign-in"))).status).toBe(200);
+      expect((await upgraded.handler(emailRequest("sign-up", "new@example.com"))).status).toBe(200);
+      const reopened = createBetterAuthProvider();
+      expect(await reopened.getIdentity(headers)).toEqual(identity);
+      expect(raw.query(`SELECT version FROM marina_auth_schema ORDER BY version`).all()).toEqual([
+        { version: 1 },
+        { version: 2 },
+      ]);
+      expect(
+        (raw.query(`PRAGMA table_info(account)`).all() as { name: string }[]).some(
+          (column) => column.name === "issuer",
+        ),
+      ).toBe(false);
+    } finally {
+      raw.close();
+    }
+  });
+
+  it("refuses ambiguous account keys atomically without merging identities", async () => {
+    const original = createBetterAuthProvider();
+    expect((await original.handler(emailRequest("sign-up"))).status).toBe(200);
+    const raw = new Database(dbPath);
+    try {
+      restoreOldAccountSchema(raw);
+      raw.exec(`
+        INSERT INTO account (id, issuer, accountId, providerId, userId, createdAt, updatedAt)
+        SELECT 'ambiguous', 'different-issuer', accountId, providerId, userId, createdAt, updatedAt
+        FROM account LIMIT 1;
+      `);
+      const before = raw.query(`SELECT * FROM account ORDER BY id`).all();
+      expect(() => createBetterAuthProvider()).toThrow("Resolve duplicate account keys");
+      expect(raw.query(`SELECT * FROM account ORDER BY id`).all()).toEqual(before);
+      expect(
+        raw.query(`SELECT name FROM sqlite_master WHERE name = 'marina_auth_schema'`).get(),
+      ).toBeNull();
+      expect(
+        raw
+          .query(`SELECT name FROM sqlite_master WHERE name = 'account_issuer_accountId_idx'`)
+          .get(),
+      ).toBeTruthy();
+    } finally {
+      raw.close();
+    }
   });
 });
 

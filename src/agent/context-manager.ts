@@ -7,14 +7,14 @@
  * Prunes, summarizes, and truncates messages to stay within budget.
  */
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type {
   AssistantMessage,
   Message,
   Model,
   ToolResultMessage,
   UserMessage,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 
 import { withMemoryAbort } from "../sdk/memory-abort";
 

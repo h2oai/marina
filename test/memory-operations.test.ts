@@ -6,13 +6,12 @@ import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Agent } from "@mariozechner/pi-agent-core";
-import { getModel } from "@mariozechner/pi-ai";
+import type { Agent } from "@earendil-works/pi-agent-core";
 import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createContextManager } from "../src/agent/context-manager";
 import { DurableResidentMemory } from "../src/agent/durable-memory";
-import { LeanAgentAdapter } from "../src/agent/lean-agent-adapter";
+import { LeanAgentAdapter, resolveModel } from "../src/agent/lean-agent-adapter";
 import { PlatformMemoryBackend } from "../src/agent/memory-platform";
 import { parseMemoryServiceCommand } from "../src/memory/human-interface";
 import { residentMemoryOperation } from "../src/memory/resident-service";
@@ -330,7 +329,7 @@ it("aborts a hanging journal through the actual resident agent without calling t
   agent.transformContext = undefined;
   agent.getApiKey = () => undefined;
   let models = 0;
-  agent.streamFn = async () => {
+  agent.streamFunction = async () => {
     models++;
     throw new Error("model must not run");
   };
@@ -359,7 +358,7 @@ it("archives the system-prompt emergency compaction path and retains originals w
   const original = JSON.stringify(messages);
   const compact = createContextManager({
     getModel: () => ({
-      ...getModel("anthropic", "claude-sonnet-4-20250514"),
+      ...resolveModel("anthropic/claude-sonnet-4-20250514"),
       compat: undefined,
       contextWindow: 1024,
     }),
@@ -480,50 +479,49 @@ it("allows reads, explicit forgetting and revocation after an operator lowers th
   projectionMatches();
 });
 
-it.each([
-  "busy",
-  "full",
-  "readonly",
-] as const)("rolls back actual SQLite %s failures, then recovers the same request exactly once", async (fault) => {
-  const before = await client.space(space),
-    usage = await client.usage();
-  const lock = new Database(path);
-  const pageCount = (raw.query("PRAGMA page_count").get() as { page_count: number }).page_count;
-  const content = "must survive recovery α🙂 ".repeat(20000);
-  raw.exec("PRAGMA busy_timeout=0");
-  const request = () =>
-    new Request(`http://memory.test/v1/memory/spaces/${space}/sources`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Idempotency-Key": "fault" },
-      body: JSON.stringify({ content }),
-    });
-  try {
-    if (fault === "busy") lock.exec("BEGIN IMMEDIATE");
-    if (fault === "full") raw.exec(`PRAGMA max_page_count=${pageCount}`);
-    if (fault === "readonly") raw.exec("PRAGMA query_only=ON");
-    const response = await handleMemoryServiceApi(request(), service);
-    expect(response.status).toBe(fault === "busy" ? 503 : fault === "full" ? 507 : 500);
-    expect(await response.json()).toMatchObject({
-      error: { code: `storage_${fault === "readonly" ? "read_only" : fault}` },
-    });
-    if (fault === "busy") expect(response.headers.get("Retry-After")).toBe("1");
-  } finally {
-    if (lock.inTransaction) lock.exec("ROLLBACK");
-    lock.close();
-    raw.exec("PRAGMA query_only=OFF");
-    raw.exec("PRAGMA max_page_count=4294967294");
-  }
-  expect(await client.space(space)).toEqual(before);
-  expect(await client.usage()).toEqual(usage);
-  expect(raw.query("SELECT 1 FROM memory_requests WHERE request_key='fault'").all()).toEqual([]);
-  const receipt = await client.capture(space, content, undefined, "fault");
-  expect(await client.capture(space, content, undefined, "fault")).toEqual(receipt);
-  expect((await client.sources(space)).sources).toHaveLength(1);
-  expect(
-    (await client.sourceRange(space, receipt.id, { start: 0, end: 100 })).text.length,
-  ).toBeGreaterThan(0);
-  projectionMatches();
-});
+it.each(["busy", "full", "readonly"] as const)(
+  "rolls back actual SQLite %s failures, then recovers the same request exactly once",
+  async (fault) => {
+    const before = await client.space(space),
+      usage = await client.usage();
+    const lock = new Database(path);
+    const pageCount = (raw.query("PRAGMA page_count").get() as { page_count: number }).page_count;
+    const content = "must survive recovery α🙂 ".repeat(20000);
+    raw.exec("PRAGMA busy_timeout=0");
+    const request = () =>
+      new Request(`http://memory.test/v1/memory/spaces/${space}/sources`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Idempotency-Key": "fault" },
+        body: JSON.stringify({ content }),
+      });
+    try {
+      if (fault === "busy") lock.exec("BEGIN IMMEDIATE");
+      if (fault === "full") raw.exec(`PRAGMA max_page_count=${pageCount}`);
+      if (fault === "readonly") raw.exec("PRAGMA query_only=ON");
+      const response = await handleMemoryServiceApi(request(), service);
+      expect(response.status).toBe(fault === "busy" ? 503 : fault === "full" ? 507 : 500);
+      expect(await response.json()).toMatchObject({
+        error: { code: `storage_${fault === "readonly" ? "read_only" : fault}` },
+      });
+      if (fault === "busy") expect(response.headers.get("Retry-After")).toBe("1");
+    } finally {
+      if (lock.inTransaction) lock.exec("ROLLBACK");
+      lock.close();
+      raw.exec("PRAGMA query_only=OFF");
+      raw.exec("PRAGMA max_page_count=4294967294");
+    }
+    expect(await client.space(space)).toEqual(before);
+    expect(await client.usage()).toEqual(usage);
+    expect(raw.query("SELECT 1 FROM memory_requests WHERE request_key='fault'").all()).toEqual([]);
+    const receipt = await client.capture(space, content, undefined, "fault");
+    expect(await client.capture(space, content, undefined, "fault")).toEqual(receipt);
+    expect((await client.sources(space)).sources).toHaveLength(1);
+    expect(
+      (await client.sourceRange(space, receipt.id, { start: 0, end: 100 })).text.length,
+    ).toBeGreaterThan(0);
+    projectionMatches();
+  },
+);
 
 it("keeps optional index work pending if its vector would exceed the owner's budget", async () => {
   service = new MemoryService(db, {
@@ -691,7 +689,7 @@ it("archives before emergency pruning removes an orphaned tool result", async ()
   let captured = "";
   const compact = createContextManager({
     getModel: () => ({
-      ...getModel("anthropic", "claude-sonnet-4-20250514"),
+      ...resolveModel("anthropic/claude-sonnet-4-20250514"),
       compat: undefined,
       contextWindow: 1024,
     }),

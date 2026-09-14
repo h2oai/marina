@@ -9,17 +9,8 @@
  * All state lives server-side via platform commands.
  */
 
-import { Agent, type AgentMessage, type AgentTool } from "@mariozechner/pi-agent-core";
-import {
-  type Api,
-  completeSimple,
-  type Message,
-  type Model,
-  getModel as piGetModel,
-  getModels as piGetModels,
-  streamSimple,
-  type TextContent,
-} from "@mariozechner/pi-ai";
+import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
+import type { Api, Message, Model, TextContent } from "@earendil-works/pi-ai";
 import { localOutputBudget, MARINA_DEFAULT_MODEL } from "../engine/constants";
 import {
   isLocalProvider,
@@ -48,6 +39,7 @@ import { GameStateManager } from "./game-state";
 import { HookRegistry } from "./hook-registry";
 import { InterruptibleWaiter } from "./interruptible-waiter";
 import { PlatformMemoryBackend } from "./memory-platform";
+import { piModels } from "./pi-models";
 import {
   getLeanDiscoveryPrompt,
   getLeanSystemPrompt,
@@ -210,7 +202,7 @@ function normalizeSupports(supports: AgentSupports | undefined): AgentSupports {
  */
 function tryGetModel(provider: string, modelId: string): Model<Api> | undefined {
   try {
-    return (piGetModel as (p: string, id: string) => Model<Api> | undefined)(provider, modelId);
+    return piModels.getModel(provider, modelId);
   } catch {
     return undefined;
   }
@@ -228,9 +220,7 @@ function tryGetModel(provider: string, modelId: string): Model<Api> | undefined 
  * silently switching the agent onto a different provider's default model.
  */
 function synthesizeModel(provider: string, modelId: string): Model<Api> | undefined {
-  // Cast to allow arbitrary provider strings (pi-ai types the param as a
-  // closed `KnownProvider` union; we route on dynamic config values).
-  const sibling = (piGetModels as (p: string) => Model<Api>[] | undefined)(provider)?.[0];
+  const sibling = piModels.getModels(provider)[0];
   if (!sibling) return undefined;
   return {
     ...sibling,
@@ -277,8 +267,7 @@ export function classifyModelResolution(modelStr: string): "exact" | "synthesize
   // by the bundled registry — any model id is valid (the local server decides).
   if (isLocalProvider(provider)) return "exact";
   if (tryGetModel(provider, modelId)) return "exact";
-  if (((piGetModels as (p: string) => Model<Api>[] | undefined)(provider)?.length ?? 0) > 0)
-    return "synthesized";
+  if (piModels.getModels(provider).length > 0) return "synthesized";
   return "fallback";
 }
 
@@ -308,6 +297,7 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
         : `Marina ${modelId || "default"}`,
       api: "openai-completions" as Api,
       provider: "openai",
+      compat: { maxTokensField: "max_tokens" },
       baseUrl,
       reasoning: false,
       input: ["text"] as ("text" | "image")[],
@@ -337,6 +327,7 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
       name: `${provider}/${id}`,
       api: "openai-completions" as Api,
       provider: "openai",
+      compat: { maxTokensField: "max_tokens" },
       baseUrl,
       reasoning: false,
       input: ["text"] as ("text" | "image")[],
@@ -713,7 +704,7 @@ export class LeanAgentAdapter implements AgentHandle {
             },
           ] as Message[],
         };
-        const result = await completeSimple(this.model, llmContext, {
+        const result = await piModels.completeSimple(this.model, llmContext, {
           apiKey: keyNow,
           temperature: 0.3,
           maxTokens: 500,
@@ -778,7 +769,7 @@ export class LeanAgentAdapter implements AgentHandle {
       // (often unbounded) default. Reads the field live so a model change
       // (reconnect) takes effect without rebuilding the Agent.
       streamFn: (model, context, options) =>
-        streamSimple(
+        piModels.streamSimple(
           model,
           context,
           this.outputMaxTokens ? { ...options, maxTokens: this.outputMaxTokens } : options,
@@ -2153,11 +2144,23 @@ The goal is a smaller, sharper memory — not more notes.`;
   // ─── Action Tracking ──────────────────────────────────────────────────
 
   private setupActionTracking(): void {
+    let journalFailed = false;
     this.agent.subscribe(async (event, signal) => {
+      if (event.type === "agent_start") journalFailed = false;
       // pi-agent-core awaits message_end listeners before progressing to tools,
       // another model call, or idle. Partial streaming deltas are not receipts.
       if (event.type === "message_end")
-        await this.platformMemory.journalMessage(event.message, signal);
+        if (!journalFailed) {
+          // Pi emits a synthetic error message after a listener throws. Do not
+          // advance the durable checkpoint past the original, uncommitted message
+          // or retry storage with an already-aborted signal during error cleanup.
+          try {
+            await this.platformMemory.journalMessage(event.message, signal);
+          } catch (error) {
+            journalFailed = true;
+            throw error;
+          }
+        }
       // Reset in-run recovery counter on each new prompt() call so we
       // can attempt followUp-based recovery fresh every cycle.
       if (event.type === "agent_start") {

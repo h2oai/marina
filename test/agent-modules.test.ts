@@ -9,8 +9,8 @@
 
 import { describe, expect, it } from "bun:test";
 
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { Api, Message, Model } from "@mariozechner/pi-ai";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Api, Message, Model } from "@earendil-works/pi-ai";
 import { type ActionEntry, ActionHistory } from "../src/agent/action-history";
 import { inferCrewResponder } from "../src/agent/agent-runtime";
 import {
@@ -1784,10 +1784,10 @@ describe("sendAttention instant pickup", () => {
 
 describe("model resolution", () => {
   it("resolves an exact registry hit to that provider + id", () => {
-    const m = resolveModel("anthropic/claude-3-5-haiku-20241022");
+    const m = resolveModel("anthropic/claude-haiku-4-5");
     expect(m.provider).toBe("anthropic");
-    expect(m.id).toBe("claude-3-5-haiku-20241022");
-    expect(classifyModelResolution("anthropic/claude-3-5-haiku-20241022")).toBe("exact");
+    expect(m.id).toBe("claude-haiku-4-5");
+    expect(classifyModelResolution("anthropic/claude-haiku-4-5")).toBe("exact");
   });
 
   it("synthesizes a routable model for a known provider with an unlisted id", () => {

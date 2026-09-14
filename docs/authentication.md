@@ -119,6 +119,14 @@ human session token is issued, then point the agent at it. Only *human passwordl
 
 ## Troubleshooting
 
+Auth databases upgrade automatically when the provider starts. Before upgrading an
+existing installation, back up the separate `BETTER_AUTH_DB_PATH` database. The
+Better Auth 1.7.3+ migration removes the obsolete, derived `account.issuer` column
+and enforces unique `(providerId, accountId)` keys. Passwords, user IDs and sessions
+are preserved. If duplicate keys exist, startup stops and the migration rolls back;
+resolve the conflicting provider accounts before restarting. Restore the auth DB
+backup when rolling back to a release that required `issuer`.
+
 - **"This instance requires sign-in" on connect** — expected when auth is on and no valid token is
   presented. Sign in via the dashboard (humans) or present a session token (agents).
 - **OAuth redirect error / `redirect_uri_mismatch`** — the callback URL in the provider console must

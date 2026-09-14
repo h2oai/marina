@@ -10,7 +10,7 @@
  * (better for LLM tool selection) without duplicating logic.
  */
 
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
 import {
   type ParsedAssignee,

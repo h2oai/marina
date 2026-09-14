@@ -185,7 +185,7 @@ content is identified; the original remains available by record ID. Retrieved te
 as evidence and JSON-quoted, but prompt-injection resistance still requires agent-side policy.
 
 Local embeddings use Apache-2.0 [Tokenizers.js](https://github.com/huggingface/tokenizers.js)
-`0.2.0`, MIT [ONNX Runtime](https://github.com/microsoft/onnxruntime/tree/v1.21.0) `1.21.0`,
+`0.2.0`, MIT [ONNX Runtime](https://github.com/microsoft/onnxruntime/tree/v1.27.0) `1.27.0`,
 and the Apache-2.0 [all-MiniLM-L6-v2 model](https://huggingface.co/Xenova/all-MiniLM-L6-v2/tree/751bff37182d3f1213fa05d7196b954e230abad9),
 pinned at `751bff37182d3f1213fa05d7196b954e230abad9`. Tokenizer-checked chunks cover long input
 before normalized mean pooling; this avoids silently embedding only a prefix. It is a compact

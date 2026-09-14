@@ -591,44 +591,43 @@ describe("Model API", () => {
     expect(dataLines[3]).toBe("data: [DONE]");
   });
 
-  it.each([
-    "chunks",
-    "single",
-    "dispatch-error",
-  ] as const)("streaming: synchronous %s settles without leaving pending request timers", async (mode) => {
-    engine.processCommand(conn1.entity!, "channel join model");
-    if (mode === "chunks") setupStreamingAgent(cm, conn1.entity!, "Agent1", ["done"]);
-    else setupPhase1Agent(cm, conn1.entity!, "Agent1", "done");
-    const dispatch =
-      mode === "dispatch-error"
-        ? spyOn(cm, "send").mockImplementation(() => {
-            throw new Error("Dispatch unavailable");
-          })
-        : undefined;
-    const scheduled = spyOn(globalThis, "setTimeout");
-    const cancelled = spyOn(globalThis, "clearTimeout");
-    try {
-      const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
-        model: "marina",
-        messages: [{ role: "user", content: "finish immediately" }],
-        stream: true,
-      });
-      const response = await handleModelApi(url, method, req, engine);
-      if (mode === "dispatch-error") expect(response!.status).toBe(500);
-      else expect(await collectStream(response!)).toContain("done");
-      expect(pendingRequests.get(conn1.entity!)).toBeUndefined();
-      const handles = scheduled.mock.results.map((result) => result.value);
-      expect(handles.length).toBeGreaterThan(0);
-      for (const handle of handles) expect(cancelled).toHaveBeenCalledWith(handle);
-    } finally {
-      // Keep a failing regression from leaking its long-lived timers too.
-      for (const result of scheduled.mock.results)
-        if (result.type === "return") clearTimeout(result.value as ReturnType<typeof setTimeout>);
-      scheduled.mockRestore();
-      cancelled.mockRestore();
-      dispatch?.mockRestore();
-    }
-  });
+  it.each(["chunks", "single", "dispatch-error"] as const)(
+    "streaming: synchronous %s settles without leaving pending request timers",
+    async (mode) => {
+      engine.processCommand(conn1.entity!, "channel join model");
+      if (mode === "chunks") setupStreamingAgent(cm, conn1.entity!, "Agent1", ["done"]);
+      else setupPhase1Agent(cm, conn1.entity!, "Agent1", "done");
+      const dispatch =
+        mode === "dispatch-error"
+          ? spyOn(cm, "send").mockImplementation(() => {
+              throw new Error("Dispatch unavailable");
+            })
+          : undefined;
+      const scheduled = spyOn(globalThis, "setTimeout");
+      const cancelled = spyOn(globalThis, "clearTimeout");
+      try {
+        const [url, method, req] = makeRequest("/v1/chat/completions", "POST", {
+          model: "marina",
+          messages: [{ role: "user", content: "finish immediately" }],
+          stream: true,
+        });
+        const response = await handleModelApi(url, method, req, engine);
+        if (mode === "dispatch-error") expect(response!.status).toBe(500);
+        else expect(await collectStream(response!)).toContain("done");
+        expect(pendingRequests.get(conn1.entity!)).toBeUndefined();
+        const handles = scheduled.mock.results.map((result) => result.value);
+        expect(handles.length).toBeGreaterThan(0);
+        for (const handle of handles) expect(cancelled).toHaveBeenCalledWith(handle);
+      } finally {
+        // Keep a failing regression from leaking its long-lived timers too.
+        for (const result of scheduled.mock.results)
+          if (result.type === "return") clearTimeout(result.value as ReturnType<typeof setTimeout>);
+        scheduled.mockRestore();
+        cancelled.mockRestore();
+        dispatch?.mockRestore();
+      }
+    },
+  );
 
   it("streaming: cancellation closes the trace exactly once", async () => {
     engine.processCommand(conn1.entity!, "channel join model");
