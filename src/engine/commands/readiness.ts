@@ -2,9 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CommandDef } from "../../types";
-import type { ReadinessReport, ReadinessStatus } from "../readiness";
+import type { ReadinessReport, ReadinessStatus, ReadinessTrustProfile } from "../readiness";
 
 const ICON: Record<ReadinessStatus, string> = { ok: "✓", degraded: "⚠", off: "✗" };
+
+/** One line: `Trust profile: LOCAL — ungated · autonomy: guarded`. */
+export function renderTrustProfileLine(trust: ReadinessTrustProfile): string {
+  const state = trust.ungated ? "ungated" : "gates enforced";
+  const why = trust.reason ? ` (${trust.reason})` : "";
+  return `Trust profile: ${trust.profile.toUpperCase()} — ${state}${why} · autonomy: ${trust.autonomy}`;
+}
 
 /**
  * `readiness` (aliases `doctor`, `health`) — operator-facing capability health.
@@ -24,6 +31,7 @@ export function readinessCommand(deps: { readiness: () => ReadinessReport }): Co
 
       const lines: string[] = [];
       lines.push(`Marina readiness — ${report.instanceName} · world: ${report.world}`);
+      lines.push(renderTrustProfileLine(report.trustProfile));
       lines.push(`${counts.ok} ok · ${counts.degraded} degraded · ${counts.off} off`);
       lines.push("");
       for (const c of report.checks) {

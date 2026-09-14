@@ -88,7 +88,7 @@ import { readinessCommand } from "./commands/readiness";
 import { recallCommand } from "./commands/recall";
 import { recapCommand } from "./commands/recap";
 import { recruitCommand } from "./commands/recruit";
-import { reflectCommand } from "./commands/reflect";
+import { helperAgentName, REFLECTOR_SPAWN_BUDGET, reflectCommand } from "./commands/reflect";
 import { reproduceCommand } from "./commands/reproduce";
 import { roleCommand } from "./commands/role";
 import { runCommand } from "./commands/run";
@@ -491,6 +491,32 @@ export function registerBuiltinCommands(engine: Engine): void {
           role: a.role,
           state: a.state,
         })),
+      // LOCAL ungated only (checked inside `reflect`): spawn the helper the
+      // way `agent spawn <name> model marina/default role memory-reflector
+      // budget 40` would, then wait (bounded) for its world account — the
+      // runtime logs the agent in, which creates the `users` row the durable
+      // job needs as worker_id.
+      helpersAvailable: () => engine.agentRuntime?.isAvailable() ?? false,
+      spawnHelper: async (role, requestedBy) => {
+        const name = helperAgentName(role);
+        const existing = engine.agentRuntime.get(name);
+        if (!existing) {
+          await engine.agentRuntime.spawn({
+            name,
+            model: "marina/default",
+            role,
+            budgetCalls: REFLECTOR_SPAWN_BUDGET,
+            spawnedBy: requestedBy,
+          });
+        }
+        const deadline = Date.now() + 5_000;
+        for (;;) {
+          const user = engine.db?.getUserByName(name);
+          if (user) return { name, principalId: user.id };
+          if (Date.now() >= deadline) return undefined;
+          await Bun.sleep(100);
+        }
+      },
     }),
   );
   engine.commands.registerBuiltin(

@@ -109,21 +109,17 @@ export function findLegacyNotesForRecord(
   recordId: string,
   opts?: { limit?: number; currentOnly?: boolean },
 ): NoteRow[] {
-  const url = durableTwinUrl(recordId);
-  const matches: NoteRow[] = [];
-  for (const note of db.getNotesByEntity(entityName, opts?.limit ?? 500)) {
-    if (opts?.currentOnly && note.verification_status === "superseded") continue;
-    if (db.getNoteSources(note.id).some((source) => source.url === url)) matches.push(note);
-  }
-  return matches;
+  // Url-indexed lookup over `note_sources` — no bounded scan of the owner's
+  // notes, so twins older than the most recent N are found too.
+  const notes = db.getNotesBySourceUrl(durableTwinUrl(recordId), entityName, opts?.limit ?? 50);
+  return opts?.currentOnly
+    ? notes.filter((note) => note.verification_status !== "superseded")
+    : notes;
 }
 
 /** Legacy notes owned by `entityName` that adopted assistance job `jobId`. */
 export function findAdoptionNotes(db: MarinaDB, entityName: string, jobId: string): NoteRow[] {
-  const url = assistanceAdoptionUrl(jobId);
-  return db
-    .getNotesByEntity(entityName, 500)
-    .filter((note) => db.getNoteSources(note.id).some((source) => source.url === url));
+  return db.getNotesBySourceUrl(assistanceAdoptionUrl(jobId), entityName);
 }
 
 /** Write (or refresh) the twin row on a legacy note. */
@@ -290,6 +286,68 @@ export async function bridgeLegacyRevision(
   return { recordId: receipt.id, version, sourceId, spaceId };
 }
 
+export const DELETED_TWIN_CONTENT_PREFIX = "[deleted legacy note #";
+
+/**
+ * Propagate a legacy `note delete` to the durable twin by RETIRING it: a
+ * `revise` to the tombstone `[deleted legacy note #<id>]` with metadata
+ * `{deleted_legacy_note_id}` and validity closed at the deletion instant.
+ *
+ * Why not `forget`? The durable `forget {record_ids}` is record-targeted but
+ * transitive by design: it also forgets every record that `depends_on` the
+ * twin (e.g. an adopted reflection citing it), deletes every version's note,
+ * and invalidates ALL checkpoints and cached results in the space — and the
+ * resident space is the same one that holds the continuity journal. A legacy
+ * `note delete` must not have that blast radius, so the twin is retired in
+ * place: the current version stops matching the deleted text, temporal reads
+ * (`valid_at`) exclude it, dependents go `stale` for review via the ordinary
+ * revision path, and history stays inspectable. This is retirement, not
+ * erasure — the captured source text and prior versions remain in lineage;
+ * erasure is the explicit `forget` operation on the service.
+ *
+ * Must be called with the twin resolved BEFORE the legacy row is deleted
+ * (`note_sources` cascades on note delete). Skipped when the record's current
+ * version belongs to a different legacy note (the deleted note was already
+ * superseded — its successor still owns the record). Idempotent per note.
+ */
+export async function retireDurableTwin(
+  db: MarinaDB,
+  entityName: string,
+  noteId: number,
+  twin: DurableTwin,
+): Promise<BridgeResult | undefined> {
+  const current = (await durable(db, entityName, { operation: "get", id: twin.recordId }))
+    .result as MemoryRecord;
+  const meta = current.metadata ?? {};
+  if (meta.deleted_legacy_note_id !== undefined) {
+    return { recordId: current.id, version: current.version, spaceId: current.space_id };
+  }
+  if (meta.legacy_note_id !== undefined && meta.legacy_note_id !== noteId) return undefined;
+  const now = Date.now();
+  const revised = await durable(db, entityName, {
+    operation: "revise",
+    id: twin.recordId,
+    input: {
+      expected_version: current.version,
+      content: `${DELETED_TWIN_CONTENT_PREFIX}${noteId}]`,
+      importance: 1,
+      metadata: {
+        deleted_legacy_note_id: noteId,
+        deleted_at: now,
+        superseded_content_version: current.version,
+      },
+      valid_time: { from: current.valid_time?.from ?? null, until: now },
+    },
+    key: `legacy-note-${noteId}-deleted`,
+  });
+  const receipt = revised.result as MemoryReceipt;
+  return {
+    recordId: receipt.id,
+    version: receipt.version ?? current.version + 1,
+    spaceId: revised.space_id,
+  };
+}
+
 /** Swallow bridge failures: identity-less entities are skipped silently, the
  * rest is logged. The legacy write has already succeeded by the time this runs. */
 async function quietly<T>(what: string, fn: () => Promise<T>): Promise<T | undefined> {
@@ -341,6 +399,21 @@ export function bridgeLegacyRevisionQuietly(
   return track(
     quietly(`twin revision #${predecessorId} → #${successorId}`, () =>
       bridgeLegacyRevision(db, entityName, predecessorId, successorId),
+    ),
+  );
+}
+
+/** Fire-and-forget twin retirement for a deleted legacy note; `twin` must
+ * have been resolved before the legacy row was deleted. */
+export function retireDurableTwinQuietly(
+  db: MarinaDB,
+  entityName: string,
+  noteId: number,
+  twin: DurableTwin,
+): Promise<BridgeResult | undefined> {
+  return track(
+    quietly(`twin retirement for deleted note #${noteId}`, () =>
+      retireDurableTwin(db, entityName, noteId, twin),
     ),
   );
 }

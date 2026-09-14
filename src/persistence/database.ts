@@ -1800,6 +1800,9 @@ export class MarinaDB {
   getNoteSources(noteId: number): notesDb.NoteSourceRow[] {
     return notesDb.getNoteSources(this.db, noteId);
   }
+  getNotesBySourceUrl(url: string, entityName?: string, limit?: number): NoteRow[] {
+    return notesDb.getNotesBySourceUrl(this.db, url, entityName, limit);
+  }
   recordNoteVerification(
     noteId: number,
     verifier: string,

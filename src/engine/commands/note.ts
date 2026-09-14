@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { memoryAccess } from "../../memory/access";
-import { bridgeLegacyNoteQuietly, bridgeLegacyRevisionQuietly } from "../../memory/legacy-bridge";
+import {
+  bridgeLegacyNoteQuietly,
+  bridgeLegacyRevisionQuietly,
+  findDurableTwin,
+  retireDurableTwinQuietly,
+} from "../../memory/legacy-bridge";
 import {
   bold,
   category,
@@ -226,6 +231,9 @@ export function noteCommand(deps: {
             input.entity,
             `Claim #${id} saved (confidence=${confidence.toFixed(2)}, ${modifiers.source ? "sourced, unverified" : "unverified"}).`,
           );
+          // Same twin scheme as a plain `note`: fire-and-forget so the reply
+          // lands in-tick; sequencing callers use awaitPendingBridges().
+          void bridgeLegacyNoteQuietly(db, entity.name, id);
           return;
         }
 
@@ -560,7 +568,10 @@ export function noteCommand(deps: {
             ctx.send(input.entity, "Usage: note delete <id>");
             return;
           }
-          const deleted = access.write(db.getNote(id)) && db.deleteNote(id, entity.name);
+          const target = db.getNote(id);
+          // Resolve the twin BEFORE the row goes: note_sources cascades on delete.
+          const twin = access.write(target) ? findDurableTwin(db, id) : undefined;
+          const deleted = access.write(target) && db.deleteNote(id, entity.name);
           if (deleted) {
             deps.logEvent?.({
               type: "note_deleted",
@@ -569,6 +580,9 @@ export function noteCommand(deps: {
               timestamp: Date.now(),
             });
             ctx.send(input.entity, `Note #${id} deleted.`);
+            // Retire the durable twin (tombstone revise, never a cascading
+            // forget). Fire-and-forget like every other bridge.
+            if (twin) void retireDurableTwinQuietly(db, entity.name, id, twin);
           } else {
             ctx.send(input.entity, `Note #${id} not found or not yours.`);
           }

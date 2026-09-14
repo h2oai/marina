@@ -2,9 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { readinessCommand, renderTrustProfileLine } from "../src/engine/commands/readiness";
 import { Engine } from "../src/engine/engine";
-import { computeReadiness } from "../src/engine/readiness";
+import { computeReadiness, computeTrustProfile } from "../src/engine/readiness";
+import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import { MarinaDB } from "../src/persistence/database";
+import type { CommandInput, EntityId, RoomContext } from "../src/types";
 import { roomId } from "../src/types";
 import { cleanupDb } from "./helpers";
 
@@ -29,6 +32,8 @@ const OTHER_VARS = [
   "TABH2O_API_KEY",
   "MODEL_API_KEYS",
   "MARINA_OPEN_API",
+  "MARINA_PROFILE",
+  "MARINA_AUTONOMY",
 ];
 
 describe("computeReadiness", () => {
@@ -47,6 +52,7 @@ describe("computeReadiness", () => {
   });
 
   afterEach(() => {
+    resetTrustProfileForTests();
     db.close();
     cleanupDb(TEST_DB);
     for (const [k, v] of Object.entries(saved)) {
@@ -54,6 +60,24 @@ describe("computeReadiness", () => {
       else process.env[k] = v;
     }
   });
+
+  /** Run the `readiness` command against a report and capture its text. */
+  const renderCommand = () => {
+    const sent: string[] = [];
+    const ctx = {
+      send: (_to: EntityId, text: string) => sent.push(text),
+    } as unknown as RoomContext;
+    const input: CommandInput = {
+      entity: "e_1" as EntityId,
+      room: roomId("test/start"),
+      verb: "readiness",
+      args: "",
+      tokens: [],
+      raw: "readiness",
+    };
+    void readinessCommand({ readiness: () => computeReadiness(engine) }).handler(ctx, input);
+    return sent.join("\n");
+  };
 
   const find = (id: string) => computeReadiness(engine).checks.find((c) => c.id === id)!;
 
@@ -102,6 +126,47 @@ describe("computeReadiness", () => {
   it("room agents off when MARINA_ROOM_AGENTS=false", () => {
     process.env.MARINA_ROOM_AGENTS = "false";
     expect(find("room-agents").status).toBe("off");
+  });
+
+  it("reports the trust profile: shared by default in-process, gates enforced", () => {
+    const trust = computeReadiness(engine).trustProfile;
+    expect(trust).toMatchObject({ profile: "shared", ungated: false, autonomy: "guarded" });
+    expect(trust.reason).toContain("shared");
+    const line = renderCommand()
+      .split("\n")
+      .find((l) => l.startsWith("Trust profile:"));
+    expect(line).toBe(renderTrustProfileLine(trust));
+    expect(line).toContain("SHARED — gates enforced");
+    expect(line).toContain("autonomy: guarded");
+    // Rendered right under the header, before the counts.
+    const lines = renderCommand().split("\n");
+    expect(lines[0]).toStartWith("Marina readiness");
+    expect(lines[1]).toStartWith("Trust profile:");
+  });
+
+  it("LOCAL is ungated unless MARINA_AUTONOMY=guarded re-enforces gates", () => {
+    setTrustProfile("local");
+    const local = computeReadiness(engine).trustProfile;
+    expect(local).toEqual({ profile: "local", ungated: true, autonomy: "guarded" });
+    expect(renderCommand()).toContain("Trust profile: LOCAL — ungated");
+
+    process.env.MARINA_AUTONOMY = "guarded";
+    const reGated = computeTrustProfile();
+    expect(reGated).toMatchObject({ profile: "local", ungated: false });
+    expect(reGated.reason).toContain("MARINA_AUTONOMY=guarded");
+    expect(renderCommand()).toContain("Trust profile: LOCAL — gates enforced (MARINA_AUTONOMY");
+
+    process.env.MARINA_AUTONOMY = "open";
+    expect(computeTrustProfile()).toMatchObject({
+      profile: "local",
+      ungated: true,
+      autonomy: "open",
+    });
+
+    setTrustProfile("public");
+    const publicProfile = computeTrustProfile();
+    expect(publicProfile).toMatchObject({ profile: "public", ungated: false });
+    expect(publicProfile.reason).toContain("public");
   });
 
   it("requires recent meaningful communication from multiple agents as participation proof", () => {

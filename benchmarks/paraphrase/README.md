@@ -34,6 +34,55 @@ the same commit so numbers stay comparable. `test/retrieval-quality.test.ts` ass
 | `durable-lexical` | the durable memory service, `mode:"lexical"` |
 | `durable-hybrid` | the durable memory service, `mode:"hybrid"` — only with `--embeddings local\|ollama` and a reachable provider; otherwise `skipped` |
 
+## Measured 2026-09-14
+
+Corpus `571c3795…d44a9`, 200 triples, `--vocab benchmarks/paraphrase/vocab.example.json`.
+Embedding provider for the hybrid row: the local-embeddings extension, pinned
+`Xenova/all-MiniLM-L6-v2@751bff37182d3f1213fa05d7196b954e230abad9:onnx1.27-tokenizers0.2-q8-mean-chunks500-v2`,
+downloaded once (~90 MB) with SHA-256 verification into a scratch `--model-cache`. No paid model.
+
+| path | hit@3 | hit@1 | distr@1 | n |
+| --- | ---: | ---: | ---: | ---: |
+| `legacy-fts-plain` | 79.5% | 62.0% | 11.5% | 200 |
+| `legacy-fts-porter` (BM25/porter baseline) | 89.0% | 77.5% | 11.5% | 200 |
+| `legacy-recall` | 89.0% | 77.0% | 11.5% | 200 |
+| `legacy-recall+expansion` | 91.0% | 78.5% | 11.5% | 200 |
+| `durable-lexical` | 88.5% | 77.5% | 11.5% | 200 |
+| `durable-hybrid` (MiniLM-L6-v2 + FTS5, RRF) | **97.0%** | 86.5–87.0% | 14.5–15.0% | 200 |
+
+Per domain, hit@3 (`durable-lexical` → `durable-hybrid`): ops 88% → 98%, dev 92% → 98%,
+personal-preference 98% → 100%, scheduling 78% → 92%.
+
+**Gate verdict: not cleared as written.** The gate asks for hybrid hit@3 ≥ BM25/porter + 20pp with
+no exact-identifier regression. Hybrid gains **+8.0pp** over `legacy-fts-porter` (89.0% → 97.0%),
+and +8.5pp over `durable-lexical`; a +20pp bar from an 89% baseline would require 109% and is
+unreachable on this corpus — the baseline is already near the ceiling. On the second half of the
+gate the result is clean: **0 triples** that lexical found in the top three are lost under hybrid
+(no exact-identifier regression — every port, hostname, ticket and date paraphrase that BM25 hit,
+hybrid hits too); 16 triples are newly found (mostly paraphrases sharing no content token with the
+fact, e.g. "how long before the backup on-call gets paged" → "pager escalation … secondary after
+10 minutes"). The cost is precision on near-miss questions: `distr@1` rises 11.5% → 15.0%
+(11 distractor queries now rank the neighbouring fact first, e.g. "when is jeff's eye exam" →
+the dentist appointment). Two runs of the hybrid path differed by one triple on hit@1/distr@1
+(86.5/14.5 vs 87.0/15.0); hit@3 was 97.0% both times.
+
+No default changes based on this measurement: hybrid stays opt-in (`MARINA_MEMORY_EMBEDDINGS`,
+explicit `mode:"hybrid"`). Re-frame the gate before re-running (an absolute bar, e.g. hit@3 ≥ 95%
+with distr@1 ≤ baseline + 2pp, or a recall-at-fixed-precision target) — as written it cannot be
+met by any retriever on this corpus.
+
+**How the hybrid row was produced.** `bun run scripts/qualify-paraphrase.ts --embeddings local …`
+currently aborts with `retrieval_incomplete: index_incomplete` before printing: the runner calls
+`service.stopWorker()` (which sets the service's `stopping` flag) and then drains the index queue
+with `service.runIndexJobs(64)`, whose loop breaks on that same flag — so zero jobs are embedded and
+the first hybrid search fails. The row above comes from a scratch driver that replicates the
+runner's durable path verbatim (one world account, one record per fact, importance 5, `limit 3`,
+same `score` arithmetic) on a `MemoryService` whose worker was never started, so the drain
+actually runs (200 records indexed in ~0.6 s). The `durable-lexical` row from that driver was
+89.0% vs 88.5% from the committed script (one triple; the two paths build the service with and
+without a provider). Fixing the runner — drain before `stopWorker()`, or reset the flag — is a
+one-line change in `benchmarks/paraphrase/runner.ts`, deliberately left out of this slice.
+
 ## Running
 
 ```bash

@@ -1,7 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
+import { getTrustProfile, isLocalUngated, type TrustProfile } from "./trust-profile";
 
 /**
  * Operator-facing capability readiness.
@@ -32,10 +34,38 @@ export interface ReadinessCheck {
   remediation?: string;
 }
 
+/** WHO this instance is for, and whether permissions are enforced. */
+export interface ReadinessTrustProfile {
+  profile: TrustProfile;
+  /** True only under `local` without `MARINA_AUTONOMY=guarded` — gates, rank
+   *  floors, witnesses and exec prompts are off; audit stays on. */
+  ungated: boolean;
+  /** Why gates are enforced (absent when ungated). */
+  reason?: string;
+  autonomy: AutonomyPosture;
+}
+
+export function computeTrustProfile(env: NodeJS.ProcessEnv = process.env): ReadinessTrustProfile {
+  const profile = getTrustProfile(env);
+  const ungated = isLocalUngated(env);
+  const autonomy = getAutonomyPosture(env);
+  let reason: string | undefined;
+  if (!ungated) {
+    reason =
+      profile === "local"
+        ? "MARINA_AUTONOMY=guarded re-enforces every permission check on this local instance"
+        : profile === "shared"
+          ? "shared instance — gates, ranks and limits enforced; sign-in identifies people"
+          : "public instance — everything enforced; passwordless names carry no authority";
+  }
+  return { profile, ungated, autonomy, ...(reason ? { reason } : {}) };
+}
+
 export interface ReadinessReport {
   instanceName: string;
   world: string;
   generatedAt: number;
+  trustProfile: ReadinessTrustProfile;
   checks: ReadinessCheck[];
   demo: {
     score: number;
@@ -394,6 +424,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
     instanceName: engine.instanceName,
     world: engine.world?.name ?? "unknown",
     generatedAt: Date.now(),
+    trustProfile: computeTrustProfile(env),
     checks,
     demo,
   };

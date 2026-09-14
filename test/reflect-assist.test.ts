@@ -5,8 +5,14 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { reflectCommand } from "../src/engine/commands/reflect";
+import {
+  REFLECTOR_ROLE,
+  type ReflectAgentView,
+  reflectCommand,
+  type SpawnedHelper,
+} from "../src/engine/commands/reflect";
 import { Engine } from "../src/engine/engine";
+import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import {
   assistanceAdoptionUrl,
   awaitPendingBridges,
@@ -110,9 +116,38 @@ describe("reflect as a thin verb over the memory-reflector helper", () => {
   });
 
   afterEach(() => {
+    resetTrustProfileForTests();
+    delete process.env.MARINA_AUTONOMY;
     db.close();
     rmSync(directory, { recursive: true });
   });
+
+  /** Re-register `reflect` with a fake runtime seam (no real LLM, no real spawn). */
+  function wireReflect(deps: {
+    listAgents?: () => ReflectAgentView[];
+    helpersAvailable?: () => boolean;
+    spawnHelper?: (role: string, requestedBy: string) => Promise<SpawnedHelper | undefined>;
+  }) {
+    engine.commands.registerBuiltin(
+      reflectCommand({
+        getEntity: (id) => engine.entities.get(id as EntityId),
+        db,
+        logEvent: (event) => engine.logEvent(event),
+        ...deps,
+      }),
+    );
+  }
+  /** A fake spawn: the helper "joins" by getting a world account, as the runtime's login would. */
+  function fakeSpawner(name = "AutoReflector") {
+    const calls: { role: string; requestedBy: string }[] = [];
+    const spawnHelper = async (role: string, requestedBy: string): Promise<SpawnedHelper> => {
+      calls.push({ role, requestedBy });
+      const principalId = crypto.randomUUID();
+      if (!db.getUserByName(name)) db.createUser({ id: principalId, name });
+      return { name, principalId: db.getUserByName(name)!.id };
+    };
+    return { calls, spawnHelper };
+  }
 
   it("falls back to the deterministic template with a spawn hint when no reflector exists", async () => {
     for (let i = 0; i < 3; i++) await run(alice, `note Amber deploy observation ${i} !8`);
@@ -302,5 +337,107 @@ describe("reflect as a thin verb over the memory-reflector helper", () => {
     expect(await run(alice, "reflect adopt")).toContain("Usage: reflect adopt");
     expect(await run(alice, "reflect adopt nope")).toContain("Could not read job nope");
     expect(await run(alice, "reflect jobs")).toContain("No reflector jobs");
+  });
+
+  it("template reflections (fallback and --template) get durable twins like `note`", async () => {
+    for (let i = 0; i < 3; i++) await run(alice, `note Lantern maintenance observation ${i} !8`);
+    await run(alice, "reflect");
+    await run(alice, "reflect --template lantern");
+    const reflections = reflectionNotes("Alice");
+    expect(reflections).toHaveLength(2);
+    for (const reflection of reflections) {
+      const twin = findDurableTwin(db, reflection.id);
+      expect(twin).toBeDefined();
+      expect(twin!.version).toBe(1);
+      const source = db.getNoteSources(reflection.id).find((s) => s.url === twin!.url)!;
+      expect(source.credibility).toBe(0);
+      const durableRecord = (await durable("Alice", { operation: "get", id: twin!.recordId }))
+        .result as MemoryRecord;
+      expect(durableRecord.content).toBe(reflection.content);
+      expect(durableRecord.tier).toBe("reflection");
+      expect(durableRecord.type).toBe("episode");
+      expect(durableRecord.metadata).toMatchObject({ legacy_note_id: reflection.id });
+    }
+    // Same-key idempotency: bridging again does not create a second record.
+    const records = (await durable("Alice", { operation: "query", input: { tier: "reflection" } }))
+      .result as { results: MemoryRecord[] };
+    expect(records.results).toHaveLength(2);
+  });
+
+  it("`reflect failure` gets a durable twin", async () => {
+    await run(alice, "note The relay dropped packets under load !7");
+    await run(alice, "reflect failure relay timed out during load test");
+    const [note] = reflectionNotes("Alice");
+    const twin = findDurableTwin(db, note!.id);
+    expect(twin).toBeDefined();
+    const durableRecord = (await durable("Alice", { operation: "get", id: twin!.recordId }))
+      .result as MemoryRecord;
+    expect(durableRecord.content).toContain("[Failure Analysis] relay timed out during load test");
+    expect(durableRecord.tier).toBe("reflection");
+  });
+
+  it("LOCAL ungated: auto-spawns a memory-reflector when none runs and files the job against it", async () => {
+    setTrustProfile("local");
+    for (let i = 0; i < 2; i++) await run(alice, `note Signal tower reading ${i} !8`);
+    const { calls, spawnHelper } = fakeSpawner();
+    wireReflect({ listAgents: () => [], helpersAvailable: () => true, spawnHelper });
+
+    const reply = await run(alice, "reflect signal");
+    expect(calls).toEqual([{ role: REFLECTOR_ROLE, requestedBy: "Alice" }]);
+    expect(reply).toContain("Spawned AutoReflector");
+    expect(reply).toContain("Reflection Requested");
+    expect(reply).not.toContain("Reflection Created");
+    expect(reflectionNotes("Alice")).toHaveLength(0);
+    const [job] = await ownJobs();
+    expect(job).toMatchObject({
+      role: "reflector",
+      state: "pending",
+      worker_id: db.getUserByName("AutoReflector")!.id,
+    });
+  });
+
+  it("LOCAL ungated without a serving runtime (no keys) keeps the synchronous template + hint", async () => {
+    setTrustProfile("local");
+    for (let i = 0; i < 2; i++) await run(alice, `note Signal tower reading ${i} !8`);
+    const { calls, spawnHelper } = fakeSpawner();
+    wireReflect({ listAgents: () => [], helpersAvailable: () => false, spawnHelper });
+    const reply = await run(alice, "reflect signal");
+    expect(calls).toEqual([]);
+    expect(reply).toContain("Reflection Created");
+    expect(reply).toContain("agent spawn Reflector");
+    expect(await ownJobs()).toEqual([]);
+  });
+
+  it("LOCAL with MARINA_AUTONOMY=guarded, and shared/public, never auto-spawn", async () => {
+    for (let i = 0; i < 2; i++) await run(alice, `note Signal tower reading ${i} !8`);
+    const { calls, spawnHelper } = fakeSpawner();
+    wireReflect({ listAgents: () => [], helpersAvailable: () => true, spawnHelper });
+
+    // Process default in tests is `shared`.
+    const shared = await run(alice, "reflect signal");
+    expect(shared).toContain("Reflection Created");
+    expect(shared).toContain("memory-reflector");
+
+    setTrustProfile("local");
+    process.env.MARINA_AUTONOMY = "guarded";
+    const guarded = await run(alice, "reflect signal");
+    expect(guarded).toContain("Reflection Created");
+    expect(calls).toEqual([]);
+    expect(await ownJobs()).toEqual([]);
+  });
+
+  it("LOCAL ungated: a failed auto-spawn degrades to the template with the hint", async () => {
+    setTrustProfile("local");
+    for (let i = 0; i < 2; i++) await run(alice, `note Signal tower reading ${i} !8`);
+    wireReflect({
+      listAgents: () => [],
+      helpersAvailable: () => true,
+      spawnHelper: async () => undefined,
+    });
+    const reply = await run(alice, "reflect signal");
+    expect(reply).toContain("Could not auto-spawn");
+    expect(reply).toContain("Reflection Created");
+    expect(reply).toContain("agent spawn Reflector");
+    expect(await ownJobs()).toEqual([]);
   });
 });

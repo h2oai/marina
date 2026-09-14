@@ -270,7 +270,10 @@ export async function runParaphraseBenchmark(options: ParaphraseRunOptions): Pro
           });
         else {
           // Drain the index queue so every record has a vector before searching.
-          service.stopWorker();
+          // Do NOT stop the worker first: stopWorker() sets the flag that makes
+          // runIndexJobs() return immediately, which turned this drain into a
+          // no-op and failed the hybrid path with `index_incomplete` (2026-09-14).
+          // The worker keeps idling alongside; `finally` stops it after scoring.
           for (let guard = 0; guard < 10_000; guard++) {
             if ((await service.runIndexJobs(64)) === 0) break;
           }

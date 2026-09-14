@@ -4,6 +4,7 @@
 import { memoryAccess } from "../../memory/access";
 import {
   assistanceAdoptionUrl,
+  bridgeLegacyNoteQuietly,
   findAdoptionNotes,
   findDurableTwin,
   findLegacyNotesForRecord,
@@ -16,17 +17,35 @@ import type { MemoryAssistanceJob, MemoryAssistancePage } from "../../sdk/memory
 import { memoryOperationError } from "../../sdk/memory-operations";
 import type { MemoryReceipt, MemoryRecord } from "../../sdk/memory-types";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { isLocalUngated } from "../trust-profile";
 import { requiresPersistence } from "./command-messages";
 
 /** Role name of the resident helper `reflect` delegates to. */
 export const REFLECTOR_ROLE = "memory-reflector";
+/** Agent name used when `reflect` auto-spawns the helper (matches the hint). */
+export const REFLECTOR_AGENT_NAME = "Reflector";
+/** Spawn budget (model calls) for an auto-spawned helper — a bounded errand. */
+export const REFLECTOR_SPAWN_BUDGET = 40;
 const REFLECT_JOB_MAX_OPERATIONS = 32;
 const REFLECT_JOB_TIMEOUT_MS = 10 * 60 * 1000;
 const ASSISTANCE_TASK_LIMIT = 8192;
 const REFLECTOR_HINT =
   "No memory-reflector helper is available, so this is the deterministic template. " +
-  "Spawn one — `agent spawn Reflector model marina/default role memory-reflector budget 40` — " +
+  `Spawn one — \`agent spawn ${REFLECTOR_AGENT_NAME} model marina/default role ${REFLECTOR_ROLE} budget ${REFLECTOR_SPAWN_BUDGET}\` — ` +
   "and `reflect <topic>` will file a cited reflection job instead.";
+
+/** Default agent name for an auto-spawned memory helper of `role`. */
+export function helperAgentName(role: string): string {
+  if (role === REFLECTOR_ROLE) return REFLECTOR_AGENT_NAME;
+  const tail = role.split("-").pop() ?? role;
+  return tail.charAt(0).toUpperCase() + tail.slice(1);
+}
+
+/** What `spawnHelper` hands back once the helper has a durable world account. */
+export interface SpawnedHelper {
+  name: string;
+  principalId: string;
+}
 
 /** Extract common themes from a set of notes via word frequency analysis */
 function extractThemes(notes: NoteRow[]): string[] {
@@ -206,6 +225,19 @@ export function reflectCommand(deps: {
    * and `reflect via <helper>` always works for an explicitly named resident.
    */
   listAgents?: () => ReflectAgentView[];
+  /**
+   * Synchronous "could a helper be spawned right now?" probe (the runtime's
+   * `isAvailable()` — provider keys present). Checked BEFORE `spawnHelper` so
+   * the template fallback stays synchronous when no runtime can serve.
+   */
+  helpersAvailable?: () => boolean;
+  /**
+   * Spawn a memory helper bound to `role` and resolve once it has a durable
+   * world account (`db.getUserByName(name)`), or `undefined` when it could
+   * not be spawned. Only ever invoked under the LOCAL ungated trust profile;
+   * shared/public keep the spawn hint and never auto-spawn.
+   */
+  spawnHelper?: (role: string, requestedBy: string) => Promise<SpawnedHelper | undefined>;
 }): CommandDef {
   return {
     name: "reflect",
@@ -219,6 +251,7 @@ export function reflectCommand(deps: {
         return;
       }
       const db = deps.db;
+      const requester = entity.name;
       const access = memoryAccess(db, entity);
       const eligibleSource = (note: NoteRow) =>
         access.read(note) &&
@@ -317,6 +350,8 @@ export function reflectCommand(deps: {
             : dim("No related notes found."),
         ];
         ctx.send(input.entity, lines.join("\n"));
+        // Twin like a plain `note`: fire-and-forget, sequenced by awaitPendingBridges().
+        void bridgeLegacyNoteQuietly(db, entity.name, reflectionId);
         return;
       }
 
@@ -409,6 +444,9 @@ export function reflectCommand(deps: {
           `Insight: ${dim(content.slice(0, 150))}${content.length > 150 ? dim("...") : ""}`,
         ].filter(Boolean);
         ctx.send(input.entity, lines.join("\n") + tail);
+        // Template reflections get a durable twin too (same idempotency key
+        // scheme, credibility 0). Fire-and-forget keeps this path synchronous.
+        void bridgeLegacyNoteQuietly(db, entity.name, reflectionId);
       };
 
       if (sub === "template" || sub === "--template") {
@@ -734,8 +772,40 @@ export function reflectCommand(deps: {
           const topic = args || undefined;
           const helper = discoverHelper();
           if (helper) return requestReflection(helper, topic);
+          // LOCAL ungated: the operator's own machine — spawn the helper for
+          // them instead of hinting, but only when a runtime can actually
+          // serve it (keys present). Shared/public keep the hint: spawning
+          // agents on someone else's behalf is a gated act there.
+          if (isLocalUngated() && deps.spawnHelper && deps.helpersAvailable?.()) {
+            return spawnAndRequest(topic);
+          }
           runTemplate(topic, true);
         }
+      }
+
+      // ── auto-spawn (local ungated only) ─────────────────────────────────
+      async function spawnAndRequest(topic: string | undefined): Promise<void> {
+        let spawned: SpawnedHelper | undefined;
+        try {
+          spawned = await deps.spawnHelper?.(REFLECTOR_ROLE, requester);
+        } catch {
+          spawned = undefined;
+        }
+        if (!spawned || !usable(spawned.name)) {
+          ctx.send(
+            input.entity,
+            dim("Could not auto-spawn a memory-reflector; using the template instead."),
+          );
+          runTemplate(topic, true);
+          return;
+        }
+        ctx.send(
+          input.entity,
+          dim(
+            `Spawned ${spawned.name} (${REFLECTOR_ROLE}, budget ${REFLECTOR_SPAWN_BUDGET}) to reflect for you.`,
+          ),
+        );
+        await requestReflection(spawned.name, topic);
       }
     },
   };

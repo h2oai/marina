@@ -423,6 +423,38 @@ export function getNoteSources(db: Database, noteId: number): NoteSourceRow[] {
     .all(noteId) as NoteSourceRow[];
 }
 
+/**
+ * Notes that carry a `note_sources` row with exactly this url, newest first —
+ * the inverse lookup for url-keyed provenance such as durable twins
+ * (`marina-memory://record/<id>`) and assistance adoptions. Scoped to one owner
+ * when `entityName` is given. No url-leading index exists and index creation
+ * lives only in migrations, so this relies on the existing ones: the planner
+ * seeks `idx_notes_entity` (or scans notes newest-first) and probes the
+ * `UNIQUE(note_id, url)` index per note — one index seek per candidate note
+ * instead of the previous 500-note application-side scan.
+ */
+export function getNotesBySourceUrl(
+  db: Database,
+  url: string,
+  entityName?: string,
+  limit = 50,
+): NoteRow[] {
+  if (entityName !== undefined) {
+    return db
+      .query(
+        `SELECT n.* FROM notes n JOIN note_sources ns ON ns.note_id = n.id
+         WHERE ns.url = ? AND n.entity_name = ? ORDER BY n.id DESC LIMIT ?`,
+      )
+      .all(url, entityName, limit) as NoteRow[];
+  }
+  return db
+    .query(
+      `SELECT n.* FROM notes n JOIN note_sources ns ON ns.note_id = n.id
+       WHERE ns.url = ? ORDER BY n.id DESC LIMIT ?`,
+    )
+    .all(url, limit) as NoteRow[];
+}
+
 export function updateNoteQuality(
   db: Database,
   id: number,
