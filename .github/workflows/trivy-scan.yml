@@ -28,15 +28,15 @@ jobs:
     env:
       IMAGE: marina:${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4.3.0
 
       # Build to the local docker daemon (load:true) so Trivy can scan it by
       # tag without pushing to a registry. Layer cache via GitHub Actions cache.
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           load: true
@@ -130,7 +130,7 @@ jobs:
       # SARIF/Security-tab upload — no code-scanning feature required).
       - name: Upload scan report artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: trivy-report
           path: trivy-results.json

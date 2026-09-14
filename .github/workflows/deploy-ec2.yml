@@ -41,10 +41,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7.0.1
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@v6.2.4
         with:
           role-to-assume: ${{ secrets.GH_OIDC_ROLE_H2O_MARINA }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -82,18 +82,18 @@ jobs:
 
       - name: Log in to Amazon ECR (cross-account registry)
         id: ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        uses: aws-actions/amazon-ecr-login@v2.1.7
         with:
           registries: ${{ env.ECR_ACCOUNT_ID }}
 
       - name: Set up Docker Buildx
         if: steps.target.outputs.rollback != 'true'
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v4.3.0
 
       - name: Docker image metadata (tags + labels)
         id: meta
         if: steps.target.outputs.rollback != 'true'
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@v6.2.0
         with:
           images: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
           tags: |
@@ -103,7 +103,7 @@ jobs:
       - name: Build and push image to ECR
         id: build
         if: steps.target.outputs.rollback != 'true'
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           push: true
