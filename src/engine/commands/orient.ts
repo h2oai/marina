@@ -17,6 +17,7 @@ import {
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { DAY_MS, HOUR_MS } from "../constants";
+import { HYGIENE_NOTE_PREFIX } from "../memory-hygiene";
 import { requiresPersistence } from "./command-messages";
 
 function relativeTime(ts: number, now: number): string {
@@ -127,6 +128,15 @@ export function orientCommand(deps: {
       const linkCount = db.countNoteLinks(entity.name);
       if (linkCount > 0) {
         lines.push(`    Graph links: ${linkCount}`);
+      }
+
+      // Latest scheduled hygiene line (process-tier `[hygiene] ...` note
+      // written hourly by runMemoryHygiene) — stale/competing durable
+      // assertions plus legacy duplicate/overlong/unsupported counts.
+      const hygiene = allNotes.find((n) => n.content.startsWith(HYGIENE_NOTE_PREFIX));
+      if (hygiene) {
+        const summary = hygiene.content.slice(HYGIENE_NOTE_PREFIX.length).trim();
+        lines.push(`    Hygiene: ${summary} ${dim(relativeTime(hygiene.created_at, now))}`);
       }
       lines.push("");
 

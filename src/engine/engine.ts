@@ -77,6 +77,7 @@ import { EventLog } from "./event-log";
 import { GatewayRuntime } from "./gateway-runtime";
 import { Logger } from "./logger";
 import { MediaManager } from "./media/manager";
+import { isMemoryHygieneTick, runEngineMemoryHygiene } from "./memory-hygiene";
 import { getRank, rankName, setRank } from "./permissions";
 import { computeReadiness } from "./readiness";
 import { RoomSandbox } from "./room-sandbox";
@@ -1358,6 +1359,18 @@ export class Engine {
     if (this.tickCount % NOTE_IMPORTANCE_INTERVAL === 2400 && this.db) {
       const db = this.db;
       tryLog(this.logger, "tick", "Standing recompute failed", () => recomputeStanding(db));
+    }
+
+    // Hourly: memory hygiene — count the durable review queue (stale /
+    // competing) + legacy note findings per online resident, write one
+    // process-tier `[hygiene]` line, and (local profile) file an evaluator
+    // review when the queue is deep enough. Async: the review/assist calls go
+    // through the resident memory client, so this is fire-and-forget under
+    // tryLogAsync rather than blocking the tick budget.
+    if (isMemoryHygieneTick(this.tickCount) && this.db) {
+      void tryLogAsync(this.logger, "tick", "Memory hygiene failed", async () => {
+        await runEngineMemoryHygiene(this);
+      });
     }
 
     // Hourly: trim the durable event log to the retention window. Without this

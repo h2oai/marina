@@ -90,9 +90,7 @@ const commandSchema = Type.Object({
 export const COMMAND_ROSTER = `Common world commands:
 World: look [target], goto <room>, examine <thing>, who, inventory.
 Talk: say <msg>, tell <name> <msg>, channel send <name> <msg>, channel list.
-Memory service: memory service, memory claim <subject> <predicate> <JSON scalar>, memory relate <subject> <predicate> <entity>, memory query <JSON filters>, memory graph <subject>, memory remember <text>, memory api <JSON request>.
-Memory assistance: memory assist <librarian|reflector|evaluator> <helper> <task>, memory jobs, memory assistance <ID>, memory assist-cancel <ID>.
-Legacy memory: note <text>, recall <query>, reflect [topic], pool <name> add <content>, pool <name> recall <query>, skill search <query>, skill store <name> | <desc> | <actions>.
+Memory: note <text>, recall <query> [evidence|all], reflect [topic], reflect adopt <job>, memory remember|query|search <…> (durable service; memory api <JSON> for the rest), memory assist <librarian|reflector|evaluator> <helper> <task>, memory jobs, pool <name> add|recall <…>, skill store|search <…>, note correct <id> <text> (supersede, don't delete), orient (memory health).
 Self: brief, brief full, focus set <desc>, focus clear, task goal <title> | <desc>, task progress <id> +N, novelty stats, novelty suggest.
 Becoming: standing (your ledger + every gate's path), witness (earn gated capabilities through supervised demonstrations), desire <one sentence> (begin an evidence-linked journey), journey progress.
 Coordination: project list, canvas intent list, canvas intent claim <id>, canvas intent complete <id> <result>, feed list [--kind X --since 30m].

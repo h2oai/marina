@@ -18,9 +18,14 @@ export const COMMAND_CATEGORIES: Record<string, string[]> = {
   Objects: ["get", "drop", "give", "inventory"],
   Information: ["who", "score", "help", "brief", "next", "web", "guide"],
   "Identity & Access": ["ignore", "rank", "quest", "link", "role", "trait", "system-prompt"],
-  Knowledge: ["note", "feed", "chronicle", "search", "bookmark", "export"],
-  Cognition: ["memory", "recall", "reflect", "novelty", "orient", "ask", "recap", "debrief", "dig"],
-  Growth: ["evolve", "skill", "benchmark"],
+  // One Memory category — the same six verbs the system prompt's MEMORY
+  // contract and the COMMAND_ROSTER teach (note/recall/reflect/memory/pool/
+  // skill) plus the health and session-close views. Keep the three surfaces
+  // in step (test/memory-contract.test.ts).
+  Memory: ["note", "recall", "reflect", "memory", "pool", "skill", "orient", "debrief", "recap"],
+  Knowledge: ["feed", "chronicle", "search", "bookmark", "export"],
+  Cognition: ["novelty", "ask", "dig"],
+  Growth: ["evolve", "benchmark"],
   Lineage: [
     "genome",
     "intellect",
@@ -40,7 +45,6 @@ export const COMMAND_CATEGORIES: Record<string, string[]> = {
     "task",
     "macro",
     "project",
-    "pool",
     "crew",
     "recruit",
     "conduct",

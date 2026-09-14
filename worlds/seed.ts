@@ -49,7 +49,12 @@ export const FIRST_STEPS_QUEST: QuestDef = {
     {
       id: "recall",
       description: "Retrieve it back out of memory",
-      hint: 'Type "recall <a word from your note>".',
+      // Teach paraphrase early: recall is lexical, so the retrieval lesson is
+      // "match by meaning takes a synonym or the wider `all` sweep", not
+      // "repeat your own words".
+      hint:
+        'Type "recall <a different word than you wrote>" — recall matches words; ' +
+        'try a synonym or use "recall <query> all".',
       check: (e: Entity) => !!e.properties.quest_recall,
     },
     {
@@ -2021,7 +2026,7 @@ export function seedOrchestrationCrews(
         "RESPONSE PROTOCOL (mandatory): the request arrives as " +
         "`{type:'model_request', id:'req-XXX', content:'<question>', target:'<your-entity-id>'}` on " +
         "model-council. Your reply MUST be one message on the SAME channel with the exact envelope " +
-        "`channel send model-council {\"type\":\"model_response\",\"id\":\"<requestId>\",\"content\":\"<answer>\"}` — " +
+        '`channel send model-council {"type":"model_response","id":"<requestId>","content":"<answer>"}` — ' +
         "bare text without this envelope is never delivered to the caller and the request times out. " +
         "Send the model_response before any optional notes; if voting stalls, answer with your own " +
         "best result rather than staying silent.",
@@ -2049,7 +2054,7 @@ export function seedOrchestrationCrews(
         "RESPONSE PROTOCOL (mandatory): the request arrives as " +
         "`{type:'model_request', id:'req-XXX', content:'<question>', target:'<your-entity-id>'}` on " +
         "model-debate. Your reply MUST be one message on the SAME channel with the exact envelope " +
-        "`channel send model-debate {\"type\":\"model_response\",\"id\":\"<requestId>\",\"content\":\"<answer>\"}` — " +
+        '`channel send model-debate {"type":"model_response","id":"<requestId>","content":"<answer>"}` — ' +
         "bare text without this envelope is never delivered to the caller and the request times out. " +
         "Send the model_response before any optional notes; if the debate stalls, answer with your " +
         "own best result rather than staying silent.",
@@ -2077,7 +2082,7 @@ export function seedOrchestrationCrews(
         "RESPONSE PROTOCOL (mandatory): the request arrives as " +
         "`{type:'model_request', id:'req-XXX', content:'<question>', target:'<your-entity-id>'}` on " +
         "model-decompose. Your reply MUST be one message on the SAME channel with the exact envelope " +
-        "`channel send model-decompose {\"type\":\"model_response\",\"id\":\"<requestId>\",\"content\":\"<answer>\"}` — " +
+        '`channel send model-decompose {"type":"model_response","id":"<requestId>","content":"<answer>"}` — ' +
         "bare text without this envelope is never delivered to the caller and the request times out " +
         "(measured 2026-09: bare 'C'/'D'/'A' posts scored 0/10 despite correct work). Send the " +
         "model_response before any optional notes; if decomposition stalls, answer with your own " +

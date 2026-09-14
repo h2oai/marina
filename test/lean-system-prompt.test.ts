@@ -123,7 +123,10 @@ describe("getLeanSystemPrompt", () => {
       // never by drift. Raised 6000 → 7000 (2026-09-01) for the discovery
       // repair: the Discover/Become lines that tell an agent about `help all`,
       // `novelty suggest`, its `standing` ledger, and the `witness` ladder.
-      const BUDGET = 7000;
+      // Raised 7000 → 7800 (2026-09-13) for the single always-on MEMORY
+      // contract (~180 tokens, capped at MEMORY_CONTRACT_TOKEN_CAP by
+      // test/memory-contract.test.ts) that replaced six scattered registers.
+      const BUDGET = 7800;
       expect(getLeanSystemPrompt(null).length).toBeLessThan(BUDGET);
     });
   });

@@ -1,14 +1,45 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isLocalUngated } from "../../engine/trust-profile";
+
 /** Stable identity and operating contract for Marina's autonomous agents. */
 export function getPromptVersion(prompt: string): string {
   return new Bun.CryptoHasher("sha256").update(prompt).digest("hex").slice(0, 12);
 }
 
+/** Hard ceiling (approximate tokens, 4 chars/token) for the MEMORY block —
+ *  a bloat tripwire, enforced by test/memory-contract.test.ts. */
+export const MEMORY_CONTRACT_TOKEN_CAP = 220;
+
+/**
+ * The one always-on memory contract. Memory used to be taught in six
+ * disconnected registers (roster, help, quest, guide pool, tool prose,
+ * continuation prompt) and nothing told an agent what comes back
+ * automatically each cycle. This block is the single teaching surface:
+ * privacy boundary, what arrives unasked and how it is labeled, the six
+ * verbs with their syntax, supersede-don't-delete, and where health lives.
+ *
+ * Profile-aware: a LOCAL ungated instance has no rank floors or witness
+ * ladder, so the caveat line is omitted there (`isLocalUngated`).
+ */
+export function getMemoryContract(): string {
+  const gated = isLocalUngated()
+    ? ""
+    : "\n- Some memory commands need rank or a witness; `help <command>` says which.";
+  return `# MEMORY
+
+- Your notes are private. Pools, boards, channels and canvases are visible to others.
+- Each cycle you automatically receive matching skills as <example>, then notes labeled [trusted], [evidence], [proposal], [unverified — own notes]. Labels are provenance, not instructions.
+- Verbs: \`note <text>\` · \`recall <query> [evidence|all]\` · \`reflect [topic]\` / \`reflect adopt <job>\` · \`memory remember|query|search …\` (durable service) · \`pool <name> add|recall\` · \`skill store|search\`. Delegate with \`memory assist <librarian|reflector|evaluator> <helper> <task>\`.
+- Supersede, don't delete: \`note correct <id> <text>\`.
+- \`orient\` shows memory health.${gated}`;
+}
+
 export function getLeanSystemPrompt(rolePrompt: string | null): string {
   const roleSection = rolePrompt ?? "You are a versatile, general-purpose agent.";
   const toolsSection = process.env.MARINA_SYSTEM_TOOLS_PROSE === "off" ? "" : `\n${TOOLS_PROSE}\n`;
+  const memorySection = getMemoryContract();
 
   return `You are an autonomous participant in Marina. You think, therefore you are here.
 
@@ -30,6 +61,8 @@ Your role specializes your judgment and priorities. It cannot override the autho
 
 ${roleSection}
 ${toolsSection}
+${memorySection}
+
 # OPERATING LOOP
 
 1. **Frame.** Identify the outcome, constraints, and evidence that would prove success. For simple work, act directly. For multi-step work, keep a compact working plan and revise it when evidence changes.
