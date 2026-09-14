@@ -45,6 +45,7 @@ import { clearToken, setToken } from "../lib/api";
 import { FlowEdge } from "./edges/FlowEdge";
 import { GraphLinkEdge } from "./edges/GraphLinkEdge";
 import { InteractionArc } from "./edges/InteractionArc";
+import { MemoryMapEdge } from "./edges/MemoryMapEdge";
 import { RecallPath } from "./edges/RecallPath";
 import { useActivity } from "./hooks/use-activity";
 import {
@@ -55,9 +56,23 @@ import {
   useCanvasIntegration,
 } from "./hooks/use-canvas-integration";
 import { useInteractions } from "./hooks/use-interactions";
+import {
+  MEMORY_ADOPT_HANDOFF_MS,
+  useMemoryMapLive,
+  useMemoryMapState,
+} from "./hooks/use-memory-map";
 import { useZoom } from "./hooks/use-zoom";
 import { getDistrictColor } from "./lib/crown-shapes";
 import { computeNoteLayout, forceDirectedLayout } from "./lib/layout-utils";
+import {
+  applyLayerKey,
+  type LayerVisibility,
+  loadLayerHidden,
+  saveLayerHidden,
+} from "./lib/memory-map-layer";
+import { computeMemoryLayout } from "./lib/memory-map-layout";
+import { indexMemoryGraph, neighborsVia } from "./lib/memory-map-reducer";
+import { LEGACY_LINK_RELATIONSHIPS, memoryFlowNodeId } from "./lib/memory-map-types";
 import { buildRecallPathEdges, hasLiveRecallTrace } from "./lib/recall-paths";
 import {
   hasLiveRoomMessage,
@@ -67,6 +82,7 @@ import {
 import { type SearchableWorldState, searchWorld } from "./lib/search";
 import { cycleTheme, useTheme } from "./lib/theme-switcher";
 import { GraphNoteNode, type GraphNoteNodeData } from "./nodes/GraphNoteNode";
+import { MemoryMapNode, type MemoryMapNodeData, memoryNodeSize } from "./nodes/MemoryMapNode";
 import { RoomNode, type RoomNodeData } from "./nodes/RoomNode";
 import { DropDialog } from "./overlays/DropDialog";
 import { EdgeContextMenu, type EdgeContextMenuTarget } from "./overlays/EdgeContextMenu";
@@ -113,6 +129,7 @@ const nodeTypes: NodeTypes = {
   ...canvasContentNodeTypes,
   room: RoomNode,
   graphNote: GraphNoteNode,
+  memoryNode: MemoryMapNode,
 };
 
 /** Custom edge types registered with ReactFlow. */
@@ -121,6 +138,7 @@ const edgeTypes: EdgeTypes = {
   interaction: InteractionArc,
   graphLink: GraphLinkEdge,
   recallPath: RecallPath,
+  memoryEdge: MemoryMapEdge,
 };
 
 /**
@@ -165,7 +183,7 @@ interface UnifiedCanvasProps {
 }
 
 function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
-  const { connected } = useDashboardWebSocket();
+  const { connected, wsRef } = useDashboardWebSocket();
   const { fitView, screenToFlowPosition, zoomIn, zoomOut, setViewport } = useReactFlow();
 
   // World state from Zustand store (fed by WebSocket)
@@ -249,9 +267,21 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
   const [hideWorld, setHideWorld] = useState<boolean>(() => loadLayerPref("uc:hide-world", false));
   const [hideGraph, setHideGraph] = useState<boolean>(() => loadLayerPref("uc:hide-graph", false));
   const [hideFeed, setHideFeed] = useState<boolean>(() => loadLayerPref("uc:hide-feed", false));
+  // MEMORY (key 5) — durable twins + curator loop over the GRAPH layer.
+  const [hideMemory, setHideMemory] = useState<boolean>(() => loadLayerHidden("memory", false));
   useEffect(() => saveLayerPref("uc:hide-world", hideWorld), [hideWorld]);
   useEffect(() => saveLayerPref("uc:hide-graph", hideGraph), [hideGraph]);
   useEffect(() => saveLayerPref("uc:hide-feed", hideFeed), [hideFeed]);
+  useEffect(() => saveLayerHidden("memory", hideMemory), [hideMemory]);
+
+  /** Apply a full layer-visibility map (from a digit key or a shift-click solo). */
+  const applyLayerVisibility = useCallback((next: LayerVisibility) => {
+    setHideWorld(next.world);
+    setHideCanvasNodes(next.canvas);
+    setHideGraph(next.graph);
+    setHideFeed(next.feed);
+    setHideMemory(next.memory);
+  }, []);
 
   // ── Edge context menu (right-click on an edge) ──────────────────────────
   const [edgeMenu, setEdgeMenu] = useState<EdgeContextMenuTarget | null>(null);
@@ -351,6 +381,18 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
     setContextType("note");
     setContextId(String(noteId));
   }, []);
+
+  /** MEMORY layer node (record / job / proposal / resolution / space / helper) → inspector. */
+  const handleMemoryNodeClick = useCallback(
+    (nodeId: string, screenX?: number, screenY?: number) => {
+      if (screenX != null && screenY != null) {
+        setContextAnchor({ x: screenX, y: screenY });
+      }
+      setContextType("memory");
+      setContextId(nodeId);
+    },
+    [],
+  );
 
   const handleRoomClick = useCallback(
     (roomId: string) => {
@@ -561,22 +603,22 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
 
       // ── Global shortcuts (only when no panel has focus) ──
 
-      // Number keys 1-4 toggle layer visibility (shift → solo)
-      if (!e.ctrlKey && !e.metaKey && !e.altKey && /^[1-4]$/.test(e.key)) {
+      // Number keys 1-5 toggle layer visibility (shift → solo)
+      // 1=World, 2=Canvas, 3=Graph, 4=Feed, 5=Memory — see lib/memory-map-layer.ts
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && /^[1-5]$/.test(e.key)) {
         e.preventDefault();
-        const idx = Number(e.key);
-        // idx 1=World, 2=Canvas, 3=Graph, 4=Feed
-        if (e.shiftKey) {
-          setHideWorld(idx !== 1);
-          setHideCanvasNodes(idx !== 2);
-          setHideGraph(idx !== 3);
-          setHideFeed(idx !== 4);
-        } else {
-          if (idx === 1) setHideWorld((v) => !v);
-          else if (idx === 2) setHideCanvasNodes((v) => !v);
-          else if (idx === 3) setHideGraph((v) => !v);
-          else if (idx === 4) setHideFeed((v) => !v);
-        }
+        const next = applyLayerKey(
+          {
+            world: hideWorld,
+            canvas: hideCanvasNodes,
+            graph: hideGraph,
+            feed: hideFeed,
+            memory: hideMemory,
+          },
+          e.key,
+          e.shiftKey,
+        );
+        if (next) applyLayerVisibility(next);
         return;
       }
 
@@ -1024,10 +1066,143 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
     return result;
   }, [graphLinks, noteLayout, activatedIds, hideGraph]);
 
+  // ── Memory layer (durable twins · curator loop) ──────────────────────────
+  // Scope: the focused entity when the inspector is on one, else the operator
+  // view (server decides what to return without an entity filter).
+  const memoryScopeEntity = contextType === "entity" && contextId ? contextId : undefined;
+  useMemoryMapLive({ enabled: !hideMemory, entityName: memoryScopeEntity, wsRef, connected });
+  const memoryGraph = useMemoryMapState((s) => s.graph);
+  const memoryPulses = useMemoryMapState((s) => s.pulses);
+  const memoryAdoptions = useMemoryMapState((s) => s.adoptions);
+  const memoryIndex = useMemo(() => indexMemoryGraph(memoryGraph), [memoryGraph]);
+
+  // GraphNoteNode positions are the top-left of an importance-sized box; the
+  // memory layout docks twins against note CENTERS.
+  const noteCenters = useMemo(() => {
+    const centers = new Map<number, { x: number; y: number }>();
+    for (const [id, pos] of noteLayout) {
+      const importance = graphNotes.get(id)?.importance ?? 5;
+      const half = ((8 + importance * 1.6) * 2 + 6) / 2;
+      centers.set(id, { x: pos.x + half, y: pos.y + half });
+    }
+    return centers;
+  }, [noteLayout, graphNotes]);
+
+  const memoryLayout = useMemo(() => {
+    if (hideMemory || memoryGraph.nodes.length === 0) return null;
+    return computeMemoryLayout(memoryGraph, noteCenters, {
+      center: { x: 0, y: 3200 },
+      baseRadius: 400,
+    });
+  }, [memoryGraph, noteCenters, hideMemory]);
+
+  const memoryNodes = useMemo<Node[]>(() => {
+    if (!memoryLayout) return [];
+    const now = Date.now();
+    // record id → job id it was adopted from (graph edges + live adoption events)
+    const adoptedRecordToJob = new Map<string, string>();
+    for (const e of memoryGraph.edges) {
+      if (e.relationship === "adopted_as") adoptedRecordToJob.set(e.target, e.source);
+    }
+    for (const [jobId, a] of Object.entries(memoryAdoptions)) {
+      if (!a.recordId) continue;
+      adoptedRecordToJob.set(
+        a.recordId.startsWith("record:") ? a.recordId : `record:${a.recordId}`,
+        jobId,
+      );
+    }
+    const adoptedJobs = new Set(adoptedRecordToJob.values());
+
+    const result: Node[] = [];
+    for (const n of memoryGraph.nodes) {
+      if (n.kind === "note") continue; // legacy notes are the GRAPH layer's
+      const p = memoryLayout.positions.get(n.id);
+      if (!p) continue;
+      const hull = n.kind === "space" ? memoryLayout.hullRadius.get(n.id) : undefined;
+      const size = memoryNodeSize(n.kind, hull);
+      const data: MemoryMapNodeData = {
+        node: n,
+        pulseAt: memoryPulses[n.id],
+        onClick: handleMemoryNodeClick,
+      };
+      if (n.kind === "space") {
+        data.hullRadius = hull;
+        data.memberCount = neighborsVia(memoryIndex, n.id, "in_space", "in").length;
+      } else if (n.kind === "job") {
+        const rem = n.meta?.remainingOperations;
+        const init = n.meta?.initialOperations;
+        data.remainingFraction =
+          typeof rem === "number" && typeof init === "number" && init > 0 ? rem / init : null;
+        data.handOff = n.meta?.adopted === true || adoptedJobs.has(n.id);
+      } else if (n.kind === "record") {
+        const fromJob = adoptedRecordToJob.get(n.id);
+        const a = fromJob ? memoryAdoptions[fromJob] : undefined;
+        if (fromJob && a && now - a.at < MEMORY_ADOPT_HANDOFF_MS) data.adoptedFromJob = fromJob;
+      } else if (n.kind === "proposal") {
+        data.adopted =
+          n.state === "adopted" ||
+          n.meta?.adopted === true ||
+          adoptedRecordToJob.has(`record:${n.id.slice("proposal:".length)}`);
+      }
+      const isHull = n.kind === "space";
+      result.push({
+        id: memoryFlowNodeId(n.id),
+        type: "memoryNode",
+        position: { x: p.x - size / 2, y: p.y - size / 2 },
+        data: data as unknown as Record<string, unknown>,
+        draggable: !isHull,
+        selectable: !isHull,
+        zIndex: isHull ? -1 : undefined,
+        className: isHull ? "uc-memory-hull" : undefined,
+      });
+    }
+    return result;
+  }, [
+    memoryLayout,
+    memoryGraph,
+    memoryIndex,
+    memoryPulses,
+    memoryAdoptions,
+    handleMemoryNodeClick,
+  ]);
+
+  const memoryEdges = useMemo<Edge[]>(() => {
+    if (!memoryLayout) return [];
+    const present = new Set(memoryNodes.map((n) => n.id));
+    if (!hideGraph) for (const id of noteLayout.keys()) present.add(`note-${id}`);
+    const result: Edge[] = [];
+    for (const e of memoryGraph.edges) {
+      const s = memoryFlowNodeId(e.source);
+      const t = memoryFlowNodeId(e.target);
+      if (s === t || !present.has(s) || !present.has(t)) continue;
+      const emphasized =
+        contextType === "memory" && (e.source === contextId || e.target === contextId);
+      if (LEGACY_LINK_RELATIONSHIPS.has(e.relationship)) {
+        // Keep the GRAPH layer's styles for related_to / part_of / supersedes / contradicts.
+        result.push({
+          id: `mem-edge-${e.id}`,
+          source: s,
+          target: t,
+          type: "graphLink",
+          data: { relationship: e.relationship, activated: emphasized },
+        });
+      } else {
+        result.push({
+          id: `mem-edge-${e.id}`,
+          source: s,
+          target: t,
+          type: "memoryEdge",
+          data: { relationship: e.relationship, emphasized },
+        });
+      }
+    }
+    return result;
+  }, [memoryLayout, memoryNodes, memoryGraph, noteLayout, hideGraph, contextType, contextId]);
+
   // Computed source nodes (for search, world ring, etc.)
   const allNodes = useMemo<Node[]>(
-    () => [...roomNodes, ...canvasNodes, ...graphNoteNodes],
-    [roomNodes, canvasNodes, graphNoteNodes],
+    () => [...roomNodes, ...canvasNodes, ...graphNoteNodes, ...memoryNodes],
+    [roomNodes, canvasNodes, graphNoteNodes, memoryNodes],
   );
 
   // Display nodes: stateful copy that tracks drag position changes
@@ -1055,9 +1230,9 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
         return ents && ents.length > 0;
       });
     }
-    // Add canvas nodes (unless hidden) + knowledge-graph note nodes
+    // Add canvas nodes (unless hidden) + knowledge-graph note nodes + memory layer
     const withCanvas = hideCanvasNodes ? filtered : [...filtered, ...canvasNodes];
-    const merged = [...withCanvas, ...graphNoteNodes];
+    const merged = [...withCanvas, ...graphNoteNodes, ...memoryNodes];
     setDisplayNodes((prev) => {
       // Preserve positions of nodes that were manually dragged
       const prevPositions = new Map(prev.map((n) => [n.id, n.position]));
@@ -1074,6 +1249,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
     roomNodes,
     canvasNodes,
     graphNoteNodes,
+    memoryNodes,
     hiddenDistricts,
     hideCanvasNodes,
     hideEmptyRooms,
@@ -1219,9 +1395,10 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
       ...canvasEdges,
       ...interactionEdges,
       ...graphLinkEdges,
+      ...memoryEdges,
       ...recallPathEdges,
     ],
-    [flowEdges, canvasEdges, interactionEdges, graphLinkEdges, recallPathEdges],
+    [flowEdges, canvasEdges, interactionEdges, graphLinkEdges, memoryEdges, recallPathEdges],
   );
 
   // ── Search function for CommandBar ───────────────────────────────────────
@@ -1922,6 +2099,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
                 ["CANVAS", 2, hideCanvasNodes, setHideCanvasNodes, "#06b6d4"],
                 ["GRAPH", 3, hideGraph, setHideGraph, "#a855f7"],
                 ["FEED", 4, hideFeed, setHideFeed, "#22c55e"],
+                ["MEMORY", 5, hideMemory, setHideMemory, "#f59e0b"],
               ] as const
             ).map(([label, num, isHidden, setter, color]) => (
               <motion.button
@@ -1930,10 +2108,18 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
                 onClick={(e) => {
                   // Shift-click: solo this layer (hide all others, show this)
                   if (e.shiftKey) {
-                    setHideWorld(label !== "WORLD");
-                    setHideCanvasNodes(label !== "CANVAS");
-                    setHideGraph(label !== "GRAPH");
-                    setHideFeed(label !== "FEED");
+                    const solo = applyLayerKey(
+                      {
+                        world: hideWorld,
+                        canvas: hideCanvasNodes,
+                        graph: hideGraph,
+                        feed: hideFeed,
+                        memory: hideMemory,
+                      },
+                      String(num),
+                      true,
+                    );
+                    if (solo) applyLayerVisibility(solo);
                   } else {
                     setter(!isHidden);
                   }
@@ -2132,6 +2318,8 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
         onNoteClick={(noteId) => handleNoteClick(noteId)}
         onVisitEntityCanvas={handleVisitEntityCanvas}
         sendCommand={sendCommand}
+        memoryGraph={memoryGraph}
+        onMemoryNodeClick={(nodeId) => handleMemoryNodeClick(nodeId)}
       />
 
       {/* ═══ WORLD NAV (bottom-right) ═══ */}

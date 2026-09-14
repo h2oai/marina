@@ -8,6 +8,14 @@
  */
 
 import { memo, useState } from "react";
+import {
+  JOB_STATE_COLORS,
+  MEMORY_EDGE_STYLES,
+  MEMORY_GLYPHS,
+  type MemoryGraphNodeKind,
+  UNIFIED_TIER_COLORS,
+  UNIFIED_TIERS,
+} from "../lib/memory-map-types";
 
 const NOTE_TYPE_COLORS: Record<string, string> = {
   episode: "#a855f7",
@@ -49,7 +57,111 @@ const FEED_KIND_COLORS: Record<string, string> = {
 const SIZE_EXPLAINER =
   "Graph note size = importance (1-10). Opacity fades with age since last recall.";
 
-type Section = "notes" | "edges" | "feed";
+type Section = "notes" | "edges" | "feed" | "memory";
+
+/** Miniature of each MEMORY-layer glyph so the legend teaches the shapes, not just colors. */
+function MemoryGlyphSwatch({ kind }: { kind: MemoryGraphNodeKind }) {
+  const s = 14;
+  const c = s / 2;
+  let shape: React.ReactNode;
+  switch (kind) {
+    case "record": {
+      const pts = Array.from({ length: 6 }, (_, i) => {
+        const a = (Math.PI / 3) * i - Math.PI / 6;
+        return `${(c + Math.cos(a) * 5.5).toFixed(1)},${(c + Math.sin(a) * 5.5).toFixed(1)}`;
+      }).join(" ");
+      shape = (
+        <polygon
+          points={pts}
+          fill={UNIFIED_TIER_COLORS.evidence}
+          fillOpacity={0.3}
+          stroke={UNIFIED_TIER_COLORS.evidence}
+          strokeWidth={1.2}
+        />
+      );
+      break;
+    }
+    case "job":
+      shape = (
+        <>
+          <circle
+            cx={c}
+            cy={c}
+            r={5}
+            fill="none"
+            stroke={JOB_STATE_COLORS.running}
+            strokeWidth={1.6}
+          />
+          <circle
+            cx={c + 4.5}
+            cy={c - 4.5}
+            r={2.6}
+            fill="#08080e"
+            stroke={JOB_STATE_COLORS.running}
+            strokeWidth={0.8}
+          />
+        </>
+      );
+      break;
+    case "proposal":
+      shape = (
+        <rect
+          x={1.5}
+          y={4}
+          width={11}
+          height={6}
+          rx={1.5}
+          fill="none"
+          stroke={UNIFIED_TIER_COLORS.proposal}
+          strokeWidth={1.2}
+          strokeDasharray="2 1.5"
+        />
+      );
+      break;
+    case "resolution":
+      shape = (
+        <polygon
+          points={`${c},1 ${s - 1},${c} ${c},${s - 1} 1,${c}`}
+          fill="none"
+          stroke="#f59e0b"
+          strokeWidth={1.2}
+        />
+      );
+      break;
+    case "space":
+      shape = (
+        <circle
+          cx={c}
+          cy={c}
+          r={6}
+          fill="#FFDD00"
+          fillOpacity={0.08}
+          stroke="#FFDD00"
+          strokeWidth={0.8}
+          strokeDasharray="1.5 2.5"
+        />
+      );
+      break;
+    default:
+      shape = (
+        <circle
+          cx={c}
+          cy={c}
+          r={5}
+          fill="#FFDD00"
+          fillOpacity={0.2}
+          stroke="#FFDD00"
+          strokeWidth={1.2}
+        />
+      );
+  }
+  return (
+    <svg width={s} height={s} style={{ marginRight: 6, flexShrink: 0 }} aria-hidden="true">
+      <title>{kind} glyph</title>
+      {shape}
+    </svg>
+  );
+}
 
 function Swatch({ color }: { color: string }) {
   return (
@@ -101,7 +213,7 @@ export const LegendContent = memo(function LegendContent({ onReplayTour }: Legen
     >
       {/* Section tabs */}
       <div style={{ display: "flex", gap: 4, marginBottom: 6 }}>
-        {(["notes", "edges", "feed"] as Section[]).map((s) => (
+        {(["notes", "edges", "feed", "memory"] as Section[]).map((s) => (
           <button
             key={s}
             type="button"
@@ -205,6 +317,67 @@ export const LegendContent = memo(function LegendContent({ onReplayTour }: Legen
             }}
           >
             Timeline shows last 30 minutes. Click a chip above the strip to filter.
+          </div>
+        </div>
+      )}
+
+      {section === "memory" && (
+        <div data-testid="legend-memory">
+          <div style={{ color: "#888", fontSize: 11, marginBottom: 4 }}>
+            Memory map glyphs (layer 5):
+          </div>
+          {MEMORY_GLYPHS.map((g) => (
+            <div
+              key={g.kind}
+              style={{ display: "flex", alignItems: "center", padding: "1px 0" }}
+              title={g.description}
+            >
+              <MemoryGlyphSwatch kind={g.kind} />
+              <span>{g.label}</span>
+              <span style={{ color: "#666", fontSize: 11, marginLeft: 6 }}>— {g.description}</span>
+            </div>
+          ))}
+
+          <div style={{ color: "#888", fontSize: 11, margin: "8px 0 4px" }}>
+            Unified tiers (the labels agents see in recall):
+          </div>
+          {UNIFIED_TIERS.map((tier) => (
+            <div key={tier} style={{ display: "flex", alignItems: "center", padding: "1px 0" }}>
+              <Swatch color={UNIFIED_TIER_COLORS[tier]} />
+              <span>[{tier}]</span>
+            </div>
+          ))}
+
+          <div style={{ color: "#888", fontSize: 11, margin: "8px 0 4px" }}>Job states:</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 10px" }}>
+            {Object.entries(JOB_STATE_COLORS).map(([state, color]) => (
+              <span key={state} style={{ display: "inline-flex", alignItems: "center" }}>
+                <Swatch color={color} />
+                <span>{state}</span>
+              </span>
+            ))}
+          </div>
+
+          <div style={{ color: "#888", fontSize: 11, margin: "8px 0 4px" }}>Memory edges:</div>
+          {Object.entries(MEMORY_EDGE_STYLES).map(([rel, style]) => (
+            <div key={rel} style={{ display: "flex", alignItems: "center", padding: "1px 0" }}>
+              <EdgeSwatch color={style.color} dashed={!!style.dash} />
+              <span>{rel}</span>
+            </div>
+          ))}
+          <div
+            style={{
+              marginTop: 8,
+              padding: "6px 0 0 0",
+              borderTop: "1px solid #222",
+              color: "#777",
+              fontSize: 11,
+              lineHeight: 1.35,
+            }}
+          >
+            Twins dock beside their note. Jobs cluster around their requester. Spaces are gravity
+            wells at the rim; helpers orbit the space they serve. Marker badges: H hygiene · A
+            accumulation · S shared-write-review.
           </div>
         </div>
       )}

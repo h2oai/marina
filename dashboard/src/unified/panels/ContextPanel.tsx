@@ -37,6 +37,8 @@ import type {
   RoomDetail,
 } from "../../lib/types";
 import { getDistrictColor } from "../lib/crown-shapes";
+import type { MemoryGraph } from "../lib/memory-map-types";
+import { MemoryContext } from "./MemoryContext";
 
 const API_BASE = window.location.origin;
 
@@ -73,8 +75,8 @@ const NOTE_GRAPH_MUTATION_TYPES = new Set([
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
-/** Context target type. */
-export type ContextType = "room" | "entity" | "canvas" | "note";
+/** Context target type. `memory` = a MEMORY-layer node (prefixed id, e.g. `job:12`). */
+export type ContextType = "room" | "entity" | "canvas" | "note" | "memory";
 
 /** Props for the ContextPanel component. */
 export interface ContextPanelProps {
@@ -96,6 +98,10 @@ export interface ContextPanelProps {
   onVisitEntityCanvas?: (entityName: string) => void;
   /** Send a command to the server (for stop/remove actions). */
   sendCommand?: (command: string) => void;
+  /** MEMORY layer graph — the `memory` inspector is a pure view over it. */
+  memoryGraph?: MemoryGraph | null;
+  /** Called when a memory node is clicked inside the panel (memory graph navigation). */
+  onMemoryNodeClick?: (nodeId: string) => void;
 }
 
 /** Imperative API for opening/closing the context panel. */
@@ -1365,6 +1371,8 @@ export const ContextPanel = memo(function ContextPanel({
   onNoteClick,
   onVisitEntityCanvas,
   sendCommand,
+  memoryGraph,
+  onMemoryNodeClick,
 }: ContextPanelProps) {
   const handleClose = useCallback(() => onClose(), [onClose]);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -1408,7 +1416,9 @@ export const ContextPanel = memo(function ContextPanel({
         ? "Entity Inspector"
         : type === "note"
           ? "Note Inspector"
-          : "Canvas Node";
+          : type === "memory"
+            ? "Memory Inspector"
+            : "Canvas Node";
 
   // Position panel within usable viewport, near the click but never cut off
   const panelW = 360;
@@ -1506,6 +1516,15 @@ export const ContextPanel = memo(function ContextPanel({
             noteId={Number(id)}
             onEntityClick={onEntityClick}
             onNoteClick={onNoteClick}
+          />
+        )}
+        {type === "memory" && (
+          <MemoryContext
+            graph={memoryGraph}
+            nodeId={id}
+            onEntityClick={onEntityClick}
+            onNoteClick={onNoteClick}
+            onMemoryNodeClick={onMemoryNodeClick}
           />
         )}
       </div>
