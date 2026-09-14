@@ -6,6 +6,8 @@ import { auditKnowledgeNotes } from "../src/engine/commands/knowledge-hygiene";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB, type NoteRow } from "../src/persistence/database";
 import { roomId } from "../src/types";
+import { seedGuidePool } from "../src/world/seed-guide";
+import defaultWorld from "../worlds/default";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
 
 const TEST_DB = "test_knowledge_hygiene.db";
@@ -69,6 +71,49 @@ describe("auditKnowledgeNotes — claim + staleness detection", () => {
   });
 });
 
+describe("auditKnowledgeNotes — command-reference detection", () => {
+  const known = ["task", "goto", "evolve", "benchmark", "project", "pool", "build"];
+
+  it("does not flag room ids, env assignments, pool names, identifiers or bare names", () => {
+    const report = auditKnowledgeNotes(
+      [
+        note("Rooms: `workbench/start`, `workbench/library`. Use `goto <room>` or `rooms`."),
+        note("Start it with `MARINA_WORLD=showcase bun run start` for the `showcase` world."),
+        note(
+          "Mistakes land in `benchmark:<name>` pools; your code receives `input` and `input.entity`.",
+        ),
+        note("Set `MARINA_AUTONOMY` to `guarded`."),
+      ],
+      { knownCommands: known },
+    );
+    expect(report.staleCommands).toEqual([]);
+  });
+
+  it("still flags a genuinely unknown multi-token command reference", () => {
+    const report = auditKnowledgeNotes([note("Try `teleport workbench/start` to jump.")], {
+      knownCommands: known,
+    });
+    expect(report.staleCommands).toHaveLength(1);
+    expect(report.staleCommands[0]?.detail).toContain('unknown command "teleport"');
+  });
+
+  it("accepts real subcommands and multi-word project names", () => {
+    const report = auditKnowledgeNotes(
+      [
+        note("Leases: use `task heartbeat <id>` while active; `task recover <id>` reopens."),
+        note("Debut path: `project Debut Tour join` then `project Debut Tour status`."),
+      ],
+      { knownCommands: known },
+    );
+    expect(report.staleCommands).toEqual([]);
+    const bad = auditKnowledgeNotes([note("Then `project Debut Tour frobnicate`.")], {
+      knownCommands: known,
+    });
+    expect(bad.staleCommands).toHaveLength(1);
+    expect(bad.staleCommands[0]?.detail).toContain("unknown project action");
+  });
+});
+
 describe("knowledge hygiene audit commands", () => {
   let db: MarinaDB;
   let engine: Engine;
@@ -93,8 +138,10 @@ describe("knowledge hygiene audit commands", () => {
     engine.processCommand(conn.entity!, "pool create guide");
     const pool = db.getMemoryPool("guide");
     expect(pool).toBeDefined();
+    // Two authors, same content: addPoolNote dedups same-author repeats, so a
+    // content-duplicate group needs a second depositor.
     db.addPoolNote(pool!.id, "Guide", "Repeat this lesson", 5, "fact");
-    db.addPoolNote(pool!.id, "Guide", "Repeat this lesson", 5, "fact");
+    db.addPoolNote(pool!.id, "Mentor", "Repeat this lesson", 5, "fact");
     db.addPoolNote(pool!.id, "Guide", "Use `pool guide read` to inspect it.", 5, "fact");
     db.addPoolNote(pool!.id, "Guide", "x".repeat(725), 5, "fact");
     const before = db.getPoolNotes(pool!.id, 500).length;
@@ -146,6 +193,19 @@ describe("knowledge hygiene audit commands", () => {
     expect(text).toContain("Stale command refs: 2");
     expect(text).toContain('unknown command "fooble"');
     expect(text).toContain('unknown pool action "read"');
+  });
+
+  it("the shipped guide (platform + default world) audits clean of stale command refs", () => {
+    seedGuidePool(db, defaultWorld.guideNotes);
+    const pool = db.getMemoryPool("guide");
+    expect(pool).toBeDefined();
+    expect(db.getPoolNotes(pool!.id, 500).length).toBeGreaterThan(10);
+
+    conn.clear();
+    engine.processCommand(conn.entity!, "guide audit");
+    const text = stripAnsi(conn.lastText());
+    expect(text).toContain("Guide pool hygiene audit");
+    expect(text).toContain("Stale command refs: 0");
   });
 
   it("does not flag current build command forms as stale", () => {

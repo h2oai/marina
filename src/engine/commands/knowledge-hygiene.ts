@@ -88,9 +88,11 @@ const KNOWN_SUBCOMMANDS: Record<string, Set<string>> = {
     "claim",
     "create",
     "goal",
+    "heartbeat",
     "info",
     "list",
     "progress",
+    "recover",
     "reject",
     "standing",
     "submit",
@@ -279,13 +281,26 @@ function findStaleCommandRefs(content: string, knownCommands: Set<string>): stri
     const command = tokens[0]?.toLowerCase();
     if (!command || command.startsWith("<")) continue;
     if (!knownCommands.has(command)) {
-      findings.add(`unknown command "${command}" in "${preview(ref)}"`);
+      // Only a multi-token ref that *looks* like a command invocation counts
+      // as a stale reference. Bare single words in backticks are names and
+      // values (a world, a room, a role, a key), and env assignments / room
+      // ids / pool names / code identifiers are not commands at all.
+      if (tokens.length >= 2 && looksLikeCommandWord(command)) {
+        findings.add(`unknown command "${command}" in "${preview(ref)}"`);
+      }
       continue;
     }
     const staleSubcommand = findStaleSubcommand(command, tokens);
     if (staleSubcommand) findings.add(staleSubcommand);
   }
   return [...findings];
+}
+
+/** A Marina command name is lowercase letters, digits and hyphens. Anything
+ *  carrying `/` (room id), `=` (env assignment), `:` (pool/channel name),
+ *  `.` (code identifier) or uppercase (env var) is a literal, not a command. */
+function looksLikeCommandWord(word: string): boolean {
+  return /^[a-z][a-z0-9-]*$/.test(word);
 }
 
 function extractCommandRefs(content: string): string[] {
@@ -323,7 +338,11 @@ function findStaleSubcommand(command: string, tokens: string[]): string | undefi
     const third = tokens[2]?.toLowerCase();
     if (!second || second.startsWith("<")) return undefined;
     if (known.has(second)) return undefined;
-    if (third && !third.startsWith("<") && !known.has(third)) {
+    // Project names may be multi-word (`project Debut Tour join`): the action
+    // is the last token once a name is in play, so accept if either the token
+    // right after the name or the final token is a known action.
+    const last = tokens[tokens.length - 1]?.toLowerCase();
+    if (third && !third.startsWith("<") && !known.has(third) && !(last && known.has(last))) {
       return `unknown project action "${third}" in "${preview(tokens.join(" "))}"`;
     }
     return undefined;

@@ -74,8 +74,9 @@ export function inheritanceCommand(deps: {
         ctx.send(input.entity, `Exportable inheritance pool "${name}" not found.`);
         return;
       }
-      const artifacts = db
-        .getPoolNotes(pool.id, 50)
+      const candidates = db.getPoolNotes(pool.id, 50);
+      const skipped = candidates.filter((note) => note.content.length > 1_000).length;
+      const artifacts = candidates
         .filter((note) => note.content.length <= 1_000)
         .slice(0, 12)
         .map((note) => ({
@@ -86,8 +87,12 @@ export function inheritanceCommand(deps: {
           importance: note.importance,
           createdAt: note.created_at,
         }));
+      const skippedLine = skipped > 0 ? ` ${skipped} notes skipped (over 1,000 chars).` : "";
       if (artifacts.length === 0) {
-        ctx.send(input.entity, `Inheritance pool "${name}" has no bounded exportable notes.`);
+        ctx.send(
+          input.entity,
+          `Inheritance pool "${name}" has no bounded exportable notes.${skippedLine}`,
+        );
         return;
       }
       const bundle: InheritanceBundle = {
@@ -100,7 +105,7 @@ export function inheritanceCommand(deps: {
         const token = encodeInheritanceBundle(bundle);
         ctx.send(
           input.entity,
-          `Inheritance bundle ${bundle.schema} (${artifacts.length} artifacts). Claimed source is unverified until independently authenticated.\ninherit ${token}`,
+          `Inheritance bundle ${bundle.schema} (${artifacts.length} artifacts).${skippedLine} Claimed source is unverified until independently authenticated.\ninherit ${token}`,
         );
       } catch (cause) {
         ctx.send(

@@ -76,8 +76,12 @@ const API_DESCRIPTION = {
         },
       },
       "GET /mem/notes": {
-        description: "List your notes (newest first)",
-        params: { limit: "number (default 50, max 200)" },
+        description:
+          "List your active personal notes (newest first; superseded, process-tier and pool notes hidden)",
+        params: {
+          limit: "number (default 50, max 200)",
+          all: "1 — include superseded, process-tier and pool notes (raw list)",
+        },
       },
       "GET /mem/notes/:id": { description: "Get a note and its knowledge graph links" },
       "DELETE /mem/notes/:id": { description: "Delete a note" },
@@ -89,9 +93,9 @@ const API_DESCRIPTION = {
           "and knowledge graph spreading activation. Auto-detects query intent.",
         params: {
           q: "string (required) — search query",
-          wi: "number — importance weight override (0-1)",
-          wr: "number — recency weight override (0-1)",
-          wrel: "number — relevance weight override (0-1)",
+          wi: "number — importance weight override (0-1); alias weightImportance",
+          wr: "number — recency weight override (0-1); alias weightRecency",
+          wrel: "number — relevance weight override (0-1); alias weightRelevance",
         },
         intent_detection: {
           episodic: "when did, recently, yesterday → recency-heavy",
@@ -347,7 +351,20 @@ export async function handleMemApi(
   // GET /mem/notes — list notes
   if (path === "/mem/notes" && method === "GET") {
     const limit = Math.min(Number(url.searchParams.get("limit")) || 50, 200);
-    const notes = db.getNotesByEntity(agent, limit).filter(access.read);
+    const all = url.searchParams.get("all") === "1";
+    // Default view = active fact-like personal notes: no superseded rows, no
+    // process-tier bookkeeping, no pool deposits. `?all=1` returns the raw list.
+    const notes = db
+      .getNotesByEntity(agent, all ? limit : Math.min(limit * 4, 800))
+      .filter(access.read)
+      .filter(
+        (note) =>
+          all ||
+          (note.verification_status !== "superseded" &&
+            note.tier !== "process" &&
+            note.pool_id === null),
+      )
+      .slice(0, limit);
     return json({ notes, count: notes.length });
   }
 
@@ -357,9 +374,10 @@ export async function handleMemApi(
     if (!q) return error(400, "q parameter required");
 
     // Weight overrides or auto-detect
-    const wi = url.searchParams.get("wi");
-    const wr = url.searchParams.get("wr");
-    const wrel = url.searchParams.get("wrel");
+    // Short names are canonical; the long names are accepted as aliases.
+    const wi = url.searchParams.get("wi") ?? url.searchParams.get("weightImportance");
+    const wr = url.searchParams.get("wr") ?? url.searchParams.get("weightRecency");
+    const wrel = url.searchParams.get("wrel") ?? url.searchParams.get("weightRelevance");
     let weights: {
       weightImportance: number;
       weightRecency: number;

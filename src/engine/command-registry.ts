@@ -468,7 +468,8 @@ export function registerBuiltinCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
       logEvent: (event) => engine.logEvent(event),
-      getCommandNames: () => engine.commands.allBuiltins().map((cmd) => cmd.name),
+      getCommandNames: () =>
+        engine.commands.allBuiltins().flatMap((cmd) => [cmd.name, ...(cmd.aliases ?? [])]),
       resolveEntityIdByName: (name) =>
         engine.entities.findAgentByName(name)?.id ??
         engine.entities.all().find((e) => e.name === name)?.id,
@@ -478,7 +479,8 @@ export function registerBuiltinCommands(engine: Engine): void {
     guideCommand({
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
-      getCommandNames: () => engine.commands.allBuiltins().map((cmd) => cmd.name),
+      getCommandNames: () =>
+        engine.commands.allBuiltins().flatMap((cmd) => [cmd.name, ...(cmd.aliases ?? [])]),
     }),
   );
   engine.commands.registerBuiltin(
@@ -623,7 +625,8 @@ export function registerBuiltinCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
       logEvent: (event) => engine.logEvent(event),
-      getCommandNames: () => engine.commands.allBuiltins().map((cmd) => cmd.name),
+      getCommandNames: () =>
+        engine.commands.allBuiltins().flatMap((cmd) => [cmd.name, ...(cmd.aliases ?? [])]),
     }),
   );
   engine.commands.registerBuiltin(

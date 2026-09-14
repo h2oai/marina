@@ -125,6 +125,53 @@ describe("Memory API", () => {
     expect((body.notes as unknown[]).length).toBeGreaterThanOrEqual(1);
   });
 
+  it("GET /mem/notes hides superseded, process-tier and pool notes unless ?all=1", async () => {
+    // Fresh agent so counts are exact.
+    const H = { ...HEADERS, "X-Agent-Name": "list-filter-agent" };
+    const name = "list-filter-agent";
+    const keep = db.createNote(name, "active personal fact about lighthouses");
+    const old = db.createNote(name, "old fact about tides v1");
+    db.reviseNote(name, old, "old fact about tides v2");
+    db.createNote(name, "[compaction] cycle 12 summary");
+    db.createMemoryPool("pool_memapi_filter", "memapi-filter", name);
+    db.addPoolNote("pool_memapi_filter", name, "a pool deposit", 5);
+
+    const res = await fetch(`${BASE}/notes`, { headers: H });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { notes: Array<{ id: number; content: string }> };
+    const contents = body.notes.map((n) => n.content);
+    expect(contents).toContain("active personal fact about lighthouses");
+    expect(contents).toContain("old fact about tides v2");
+    expect(contents).not.toContain("old fact about tides v1");
+    expect(contents.some((c) => c.startsWith("[compaction]"))).toBe(false);
+    expect(contents).not.toContain("a pool deposit");
+    expect(body.notes.some((n) => n.id === keep)).toBe(true);
+
+    const raw = await fetch(`${BASE}/notes?all=1`, { headers: H });
+    const rawBody = (await raw.json()) as { notes: Array<{ content: string }> };
+    const rawContents = rawBody.notes.map((n) => n.content);
+    expect(rawContents).toContain("old fact about tides v1");
+    expect(rawContents.some((c) => c.startsWith("[compaction]"))).toBe(true);
+    expect(rawContents).toContain("a pool deposit");
+  });
+
+  it("GET /mem/recall accepts long weight names as aliases for wi/wr/wrel", async () => {
+    const res = await fetch(
+      `${BASE}/recall?q=test&weightImportance=0.5&weightRecency=0.2&weightRelevance=0.3`,
+      { headers: HEADERS },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { weights: Record<string, number> };
+    expect(body.weights).toEqual({
+      weightImportance: 0.5,
+      weightRecency: 0.2,
+      weightRelevance: 0.3,
+    });
+
+    const bad = await fetch(`${BASE}/recall?q=test&weightImportance=7`, { headers: HEADERS });
+    expect(bad.status).toBe(400);
+  });
+
   it("GET /mem/notes/:id returns note with links", async () => {
     const createRes = await fetch(`${BASE}/notes`, {
       method: "POST",

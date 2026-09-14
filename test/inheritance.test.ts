@@ -92,6 +92,27 @@ describe("Marina inheritance bundles", () => {
     expect(stripAnsi(conn.lastText())).toContain("as unverified evidence");
   });
 
+  it("reports notes skipped by the 1,000-char export bound", async () => {
+    db.createMemoryPool("pool_tradition_long", "tradition:long", "system");
+    db.addPoolNote("pool_tradition_long", "Elder", "short lesson that fits", 6, "fact");
+    db.addPoolNote("pool_tradition_long", "Elder", "x".repeat(1_200), 6, "fact");
+    db.addPoolNote("pool_tradition_long", "Elder", "y".repeat(1_001), 6, "fact");
+    conn.clear();
+    await engine.processCommand(entityId, "inheritance export tradition:long");
+    const text = stripAnsi(conn.lastText());
+    expect(text).toContain("(1 artifacts)");
+    expect(text).toContain("2 notes skipped (over 1,000 chars)");
+
+    // All-oversized pool: the empty result still says why.
+    db.createMemoryPool("pool_tradition_huge", "tradition:huge", "system");
+    db.addPoolNote("pool_tradition_huge", "Elder", "z".repeat(1_500), 6, "fact");
+    conn.clear();
+    await engine.processCommand(entityId, "inheritance export tradition:huge");
+    const empty = stripAnsi(conn.lastText());
+    expect(empty).toContain("no bounded exportable notes");
+    expect(empty).toContain("1 notes skipped (over 1,000 chars)");
+  });
+
   it("does not export ordinary shared or private pools", async () => {
     db.createMemoryPool("pool_project", "project-private", "Curator", "group-1");
     db.addPoolNote("pool_project", "Curator", "private plan", 5, "note");
