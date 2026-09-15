@@ -1953,7 +1953,11 @@ export class LeanAgentAdapter implements AgentHandle {
             .unifiedContext(focusDesc, RELEVANT_MEMORY_BUDGET_BYTES)
             .catch(() => ({ success: false, text: "", context: null }));
           if (unified.context) {
-            this.cachedNotes = renderUnifiedContext(unified.context);
+            // Model-facing: keep the agent informed that a tier is missing in
+            // ONE compact line; the full [degraded] block (one line per tier
+            // and code) measured ~25 % of the injected bytes on a one-fact
+            // corpus (HISTORY §7) and is still available via `recall … all`.
+            this.cachedNotes = renderUnifiedContext(unified.context, { degraded: "compact" });
           } else {
             const [tiers, skillResult] = await Promise.all([
               this.platformMemory.searchTiered(focusDesc),

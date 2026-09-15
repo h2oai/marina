@@ -19,6 +19,24 @@ use `agent attention-mode <name> focused|balanced|open` to tune perception press
 `agent failover <name> <provider/model>` performs the same recovery while moving the agent to a healthy
 configured provider.
 
+### Live provider conformance: `readiness providers`
+
+`readiness` reads configuration only and never spends tokens. `readiness providers [name]` is
+the live check: it sends one tiny request per configured LLM provider through the same proxy path
+external clients use (two system messages, a check word in the second) and reports, per provider,
+whether non-empty text came back and whether the second system message was honored — the two ways
+an upstream can break passthru silently (a new model generation that returns a `thinking` block
+first; a provider that only reads the first system message, which drops injected memory). Run it
+after adding a provider key, changing `MARINA_DEFAULT_MODEL`, or upgrading to a new model
+generation. It also reports which provider actually answered: Marina's proxy falls back to the next configured
+provider when the requested one fails, so a provider with a dead key can look healthy from the
+outside. The probe marks such a result `served by fallback <provider/model>` and fails it. On a
+gated instance it needs rank 4 or higher; a local ungated instance allows anyone. From the shell:
+
+```bash
+bun run scripts/connect.ts operator -c "readiness providers" --wait 60
+```
+
 ## The three tiers
 
 Marina's abilities fall into three tiers. **Only the third needs operator action.**

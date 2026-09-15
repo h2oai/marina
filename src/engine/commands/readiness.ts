@@ -1,8 +1,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CommandDef } from "../../types";
+import type { ProviderProbeResult } from "../../net/model-api";
+import type { CommandContext, CommandDef } from "../../types";
 import type { ReadinessReport, ReadinessStatus, ReadinessTrustProfile } from "../readiness";
+import { isLocalUngated } from "../trust-profile";
 
 const ICON: Record<ReadinessStatus, string> = { ok: "✓", degraded: "⚠", off: "✗" };
 
@@ -19,12 +21,69 @@ export function renderTrustProfileLine(trust: ReadinessTrustProfile): string {
  * (`status` is taken by `orient` for an agent's own cognitive status.)
  * Reads config presence only (never secret values), so it's safe at rank 0.
  */
-export function readinessCommand(deps: { readiness: () => ReadinessReport }): CommandDef {
+/** Minimum rank to spend provider tokens on a live probe when the instance is gated. */
+export const PROVIDER_PROBE_MIN_RANK = 4;
+
+export function renderProviderProbe(results: ProviderProbeResult[]): string[] {
+  if (results.length === 0)
+    return ["No upstream LLM provider is configured (no provider key, no local runtime)."];
+  const lines = [
+    "Upstream provider conformance — one tiny request each, through the passthru proxy:",
+  ];
+  for (const r of results) {
+    const checks = [
+      r.status === null ? "no response" : `HTTP ${r.status}`,
+      r.textOk ? "text ok" : "EMPTY TEXT",
+      r.systemHonored ? "second system message honored" : "SECOND SYSTEM MESSAGE IGNORED",
+      `${r.latencyMs} ms`,
+    ];
+    lines.push(`  ${r.ok ? "✓" : "✗"} ${r.provider}/${r.model} — ${checks.join(" · ")}`);
+    if (!r.ok) {
+      if (r.error) lines.push(`      error: ${r.error}`);
+      if (r.servedBy && !r.error?.includes("served by fallback"))
+        lines.push(`      served by: ${r.servedBy}`);
+      if (!r.textOk && r.status !== null && !r.error)
+        lines.push(
+          "      → the provider answered but Marina saw no text: check the response-shape conversion for this provider",
+        );
+      if (r.textOk && !r.systemHonored)
+        lines.push(
+          "      → memory injected as a second system message would be dropped for this provider",
+        );
+    }
+  }
+  return lines;
+}
+
+export function readinessCommand(deps: {
+  readiness: () => ReadinessReport;
+  probeProviders?: (providers?: string[]) => Promise<ProviderProbeResult[]>;
+}): CommandDef {
   return {
     name: "readiness",
     aliases: ["doctor", "health"],
-    help: "Show which Marina capabilities are active, degraded, or off — with fixes.",
-    handler: (ctx, input) => {
+    help: "Show which Marina capabilities are active, degraded, or off — with fixes. `readiness providers [name]` sends one tiny request per configured LLM provider and checks the reply shape.",
+    handler: async (ctx, input) => {
+      const sub = input.tokens[0]?.toLowerCase();
+      if (sub === "providers" || sub === "probe") {
+        // Built-in commands receive a CommandContext (caller = { id, name, rank }).
+        const rank = (ctx as Partial<CommandContext>).caller?.rank ?? 0;
+        if (!deps.probeProviders) {
+          ctx.send(input.entity, "Provider probing is not available on this instance.");
+          return;
+        }
+        if (!isLocalUngated() && rank < PROVIDER_PROBE_MIN_RANK) {
+          ctx.send(
+            input.entity,
+            `readiness providers spends provider tokens; it needs rank ${PROVIDER_PROBE_MIN_RANK}+ on a gated instance (yours: ${rank}).`,
+          );
+          return;
+        }
+        const only = input.tokens.slice(1).map((a) => a.toLowerCase());
+        const results = await deps.probeProviders(only.length > 0 ? only : undefined);
+        ctx.send(input.entity, renderProviderProbe(results).join("\n"));
+        return;
+      }
       const report = deps.readiness();
       const counts = { ok: 0, degraded: 0, off: 0 };
       for (const c of report.checks) counts[c.status]++;

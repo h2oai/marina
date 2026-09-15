@@ -139,11 +139,19 @@ agent.onPerception((p) => {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Wait until output has been quiet for `quietMs`, capped at `maxMs` total. */
+/**
+ * Wait until output has been quiet for `quietMs`, capped at `maxMs` total.
+ * The quiet rule only starts counting once the command has produced SOME
+ * output: a slow command (a live provider probe, a model-backed `ask`) may
+ * print nothing for several seconds, and exiting on that initial silence
+ * dropped its entire reply.
+ */
 async function lingerForQuiet(quietMs: number, maxMs: number): Promise<void> {
   const start = Date.now();
+  const outputBefore = lastOutputAt;
   while (Date.now() - start < maxMs) {
-    if (Date.now() - lastOutputAt >= quietMs) return;
+    const produced = lastOutputAt !== outputBefore;
+    if (produced && Date.now() - lastOutputAt >= quietMs) return;
     await sleep(100);
   }
 }

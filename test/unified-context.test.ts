@@ -153,6 +153,12 @@ describe("unified memory context", () => {
     expect(text).toContain("evidence: world_identity_required");
     // Degraded lines are suppressible for surfaces that report it structurally.
     expect(renderUnifiedContext(result, { degraded: false })).not.toContain("[degraded]");
+    // Compact (model-facing): one line, tiers grouped by code, no messages.
+    const compact = renderUnifiedContext(result, { degraded: "compact" });
+    const compactLines = compact.split("\n").filter((line) => line.includes("[degraded]"));
+    expect(compactLines).toHaveLength(1);
+    expect(compactLines[0]).toMatch(/^\[degraded\] .*evidence.*: /);
+    expect(compact.length).toBeLessThan(renderUnifiedContext(result).length);
   });
 
   it("returns an empty, non-degraded result for an empty query", async () => {

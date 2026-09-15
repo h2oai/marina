@@ -579,7 +579,9 @@ export async function buildResidentMemoryContext(
   const result = await buildUnifiedContext(db, owner, topicFrom(question));
   const hits = result.tiers.reduce((n, tier) => n + tier.items.length, 0);
   if (hits === 0) return { text: "", hits: 0 };
-  return { text: renderUnifiedContext(result), hits };
+  // Same rendering the continuation prompt uses: one compact [degraded] line
+  // rather than the full block (the structured result keeps every entry).
+  return { text: renderUnifiedContext(result, { degraded: "compact" }), hits };
 }
 
 /** Control: legacy FTS recall, relevance-only weights, top-k verbatim, no tiering. */

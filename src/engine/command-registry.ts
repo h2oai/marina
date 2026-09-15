@@ -10,6 +10,7 @@ import {
 } from "../agent/prompts/support-prompts";
 import { parseExecUnrestricted } from "../coding/exec-approver";
 import { worldMemoryService } from "../memory/world-service";
+import { probeConfiguredProviders } from "../net/model-api";
 import { registerBuiltinResolvers } from "../resolvers";
 import type { EntityId, RoomId } from "../types";
 import { collectiveManager } from "../world/world-collective-manager";
@@ -1035,7 +1036,12 @@ export function registerBuiltinCommands(engine: Engine): void {
   );
 
   // Readiness command (aliases doctor/health) — operator-facing capability health.
-  engine.commands.registerBuiltin(readinessCommand({ readiness: () => computeReadiness(engine) }));
+  engine.commands.registerBuiltin(
+    readinessCommand({
+      readiness: () => computeReadiness(engine),
+      probeProviders: (providers) => probeConfiguredProviders(engine, { providers }),
+    }),
+  );
   if (engine.db && engine.taskManager) {
     engine.commands.registerBuiltin(productivityCommand(engine.db));
     engine.commands.registerBuiltin(

@@ -686,9 +686,19 @@ export function isDurableTier(tier: UnifiedTier): boolean {
  * are omitted, but a tier whose matches were all dropped for budget keeps its
  * header with an explicit `(+N omitted for budget)` line — never silent.
  */
+/**
+ * Render the tiers as prompt text. `degraded` controls the diagnostics for
+ * tiers that could not be fetched: `true` (default) appends a full `[degraded]`
+ * block, one line per tier and code — for surfaces a person or an agent reads
+ * deliberately (`recall … all`, REST, MCP); `"compact"` appends ONE line
+ * grouping tiers by code — for model-facing paths (continuation prompt §4, the
+ * benchmark harness) where the agent still needs to know a tier is missing but
+ * the full block was ~25 % of the injected bytes on a one-fact corpus
+ * (HISTORY §7); `false` omits it.
+ */
 export function renderUnifiedContext(
   result: UnifiedContextResult,
-  opts: { header?: boolean; degraded?: boolean } = {},
+  opts: { header?: boolean; degraded?: boolean | "compact" } = {},
 ): string {
   const blocks: string[] = [];
   for (const tier of nonEmptyTiers(result)) {
@@ -705,7 +715,19 @@ export function renderUnifiedContext(
     if (tier.omitted > 0) lines.push(`  (+${tier.omitted} more omitted for budget)`);
     blocks.push(lines.join("\n"));
   }
-  if (opts.degraded !== false && result.degraded.length > 0) {
+  if (opts.degraded === "compact" && result.degraded.length > 0) {
+    const byCode = new Map<string, Set<string>>();
+    for (const d of result.degraded) {
+      const tiers = byCode.get(d.code) ?? new Set<string>();
+      tiers.add(d.tier);
+      byCode.set(d.code, tiers);
+    }
+    blocks.push(
+      `[degraded] ${[...byCode.entries()]
+        .map(([code, tiers]) => `${[...tiers].join(", ")}: ${code}`)
+        .join(" · ")}`,
+    );
+  } else if (opts.degraded !== false && result.degraded.length > 0) {
     const seen = new Set<string>();
     const lines = ["[degraded]"];
     for (const d of result.degraded) {

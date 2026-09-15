@@ -12,6 +12,7 @@ import { secretsEqual } from "../auth/secret-compare";
 import type { ChannelManager } from "../coordination/channel-manager";
 import { localOutputBudget } from "../engine/constants";
 import type { Engine } from "../engine/engine";
+import { getErrorMessage } from "../engine/errors";
 import { compareTraceCohorts } from "../engine/trace-dataset";
 import { projectTraces } from "../engine/trace-projection";
 import { adviseTraceRouting, selectAdaptiveCandidate } from "../engine/trace-routing-advice";
@@ -2648,6 +2649,183 @@ export function describeDefaultUpstream(engine: Engine): string | undefined {
     return `${provider}/${getDefaultUpstreamModel(cfg.envKeys[0]!)}`;
   }
   return undefined;
+}
+
+// ─── Provider conformance probe ─────────────────────────────────────────────
+
+export interface ProviderProbeResult {
+  provider: string;
+  model: string;
+  ok: boolean;
+  /** HTTP status Marina's proxy produced (null on a transport failure/timeout). */
+  status: number | null;
+  latencyMs: number;
+  /** Non-empty assistant text came back (catches dropped content blocks). */
+  textOk: boolean;
+  /** The SECOND system message was honored (catches dropped system messages). */
+  systemHonored: boolean;
+  text: string;
+  /** `provider/model` that actually answered, from the routed lifecycle event. */
+  servedBy?: string;
+  error?: string;
+  checkedAt: number;
+}
+
+export const PROVIDER_PROBE_MAX_TOKENS = 32;
+
+/** The `provider/model` the proxy routed `requestId` to, from the newest routed lifecycle event. */
+function routedTargetFor(engine: Engine, requestId: string): string | undefined {
+  const events = engine.getEventLog();
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]!;
+    if (
+      event.type === "model_request_lifecycle" &&
+      event.requestId === requestId &&
+      event.phase === "routed" &&
+      event.target
+    )
+      return event.target;
+  }
+  return undefined;
+}
+
+/**
+ * The probe request: two system messages and a one-word answer. A provider
+ * passes only if the reply is non-empty AND contains the check word that lives
+ * in the SECOND system message — exactly the two ways Claude 5 passthru failed
+ * silently in 2026-09 (thinking block read as the answer; only the first
+ * system message forwarded). Memory injection rides a second system message,
+ * so this is the contract every upstream must meet.
+ */
+export function buildProviderProbeBody(nonce: string): Record<string, unknown> {
+  return {
+    model: "marina",
+    max_tokens: PROVIDER_PROBE_MAX_TOKENS,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a conformance probe for an API gateway. Follow the second system message exactly.",
+      },
+      { role: "system", content: `The check word is "${nonce}". Reply with the check word only.` },
+      { role: "user", content: "What is the check word?" },
+    ],
+  };
+}
+
+export function evaluateProviderProbe(
+  text: string,
+  nonce: string,
+): { textOk: boolean; systemHonored: boolean } {
+  const trimmed = text.trim();
+  return { textOk: trimmed.length > 0, systemHonored: trimmed.includes(nonce) };
+}
+
+/** Providers that would be used right now: a key (or a configured local runtime) is present. */
+export function configuredUpstreamProviders(engine: Engine): { provider: string; model: string }[] {
+  const out: { provider: string; model: string }[] = [];
+  const dm = engine.db?.getDefaultModel();
+  const dmSlash = dm ? dm.indexOf("/") : -1;
+  const dmProvider = dm && !isMarinaModel(dm) && dmSlash >= 0 ? dm.slice(0, dmSlash) : undefined;
+  for (const provider of FALLBACK_PRIORITY) {
+    const cfg = PROVIDER_UPSTREAM[provider];
+    if (!cfg) continue;
+    const localReady = isLocalProvider(provider) && localProviderConfigured(provider);
+    if (!resolveProviderKey(engine, provider) && !localReady) continue;
+    // Probe the model marina/default would actually hit for this provider.
+    const model =
+      dmProvider === provider ? dm!.slice(dmSlash + 1) : getDefaultUpstreamModel(cfg.envKeys[0]!);
+    out.push({ provider, model });
+  }
+  return out;
+}
+
+let lastProviderProbe: ProviderProbeResult[] | null = null;
+export function getLastProviderProbe(): ProviderProbeResult[] | null {
+  return lastProviderProbe;
+}
+
+/**
+ * Send one tiny request per configured provider through the SAME proxy path
+ * passthru clients use and check the reply shape. Costs a few tokens per
+ * provider; run it on demand (`readiness providers`), never on a hot path.
+ */
+export async function probeConfiguredProviders(
+  engine: Engine,
+  opts: { providers?: string[]; timeoutMs?: number } = {},
+): Promise<ProviderProbeResult[]> {
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  const targets = configuredUpstreamProviders(engine).filter(
+    (t) => !opts.providers || opts.providers.includes(t.provider),
+  );
+  const results: ProviderProbeResult[] = [];
+  for (const target of targets) {
+    const nonce = `probe-${crypto.randomUUID().slice(0, 8)}`;
+    const started = Date.now();
+    let result: ProviderProbeResult = {
+      ...target,
+      ok: false,
+      status: null,
+      latencyMs: 0,
+      textOk: false,
+      systemHonored: false,
+      text: "",
+      checkedAt: started,
+    };
+    try {
+      // Trace the request so the ROUTED target is observable: proxyToUpstream
+      // falls back to the next configured provider when the forced one fails
+      // (e.g. an expired key), and a fallback-served reply must not pass the
+      // probe for the provider that actually failed.
+      const requestId = `probe-${nonce}`;
+      const response = await Promise.race([
+        proxyToUpstream(
+          engine,
+          buildProviderProbeBody(nonce),
+          `${target.provider}/${target.model}`,
+          { routeKind: "passthru", requestId },
+        ),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`timeout after ${timeoutMs} ms`)), timeoutMs),
+        ),
+      ]);
+      const servedBy = routedTargetFor(engine, requestId);
+      const raw = await response.text();
+      let text = "";
+      let error: string | undefined;
+      try {
+        const data = JSON.parse(raw) as {
+          choices?: { message?: { content?: unknown } }[];
+          error?: { message?: string };
+        };
+        const content = data.choices?.[0]?.message?.content;
+        text = typeof content === "string" ? content : "";
+        if (!response.ok) error = data.error?.message ?? raw.slice(0, 200);
+      } catch {
+        error = raw.slice(0, 200);
+      }
+      const verdict = evaluateProviderProbe(text, nonce);
+      const expected = `${target.provider}/${target.model}`;
+      const misrouted = servedBy !== undefined && servedBy !== expected;
+      if (misrouted && !error)
+        error = `served by fallback ${servedBy} — ${target.provider} itself failed (see server log)`;
+      result = {
+        ...result,
+        status: response.status,
+        latencyMs: Date.now() - started,
+        text: text.slice(0, 200),
+        ...verdict,
+        ...(servedBy ? { servedBy } : {}),
+        ok: response.ok && verdict.textOk && verdict.systemHonored && !misrouted,
+        ...(error ? { error } : {}),
+      };
+    } catch (e) {
+      result = { ...result, latencyMs: Date.now() - started, error: getErrorMessage(e) };
+    }
+    results.push(result);
+  }
+  lastProviderProbe = results;
+  return results;
 }
 
 const SSE_HEADERS = {
