@@ -199,9 +199,43 @@ export function independentEvidenceCount(db: Database, record: MemoryRecord): nu
   return independentEvidence(db, record).count;
 }
 
-/** Most recently revised first; deterministic on ties. */
-export function byRecency(a: MemoryRecord, b: MemoryRecord): number {
-  return b.created_at - a.created_at || b.version - a.version || a.id.localeCompare(b.id);
+/**
+ * Most recently revised first. `created_at` is the CURRENT version's note
+ * timestamp (millisecond resolution), so two writes in the same millisecond
+ * tie; the tie is broken by write order — the current version's `notes.id`
+ * (autoincrement, one row per remember/revise) — via `writeOrder`. Comparing
+ * `version` on a tie was wrong (a twice-revised older record beat a fresh
+ * newer one) and falling through to the UUID was random: both surfaced as
+ * intermittent `last_writer_wins` failures under CI load.
+ */
+export function byRecency(
+  a: MemoryRecord,
+  b: MemoryRecord,
+  writeOrder?: ReadonlyMap<string, number>,
+): number {
+  if (b.created_at !== a.created_at) return b.created_at - a.created_at;
+  const seqA = writeOrder?.get(a.id);
+  const seqB = writeOrder?.get(b.id);
+  if (seqA !== undefined && seqB !== undefined && seqA !== seqB) return seqB - seqA;
+  return a.id.localeCompare(b.id);
+}
+
+/** `record id → current version's notes.id` — the strict write order for a set of records. */
+export function currentWriteOrder(
+  db: Database,
+  space: string,
+  ids: readonly string[],
+): Map<string, number> {
+  if (ids.length === 0) return new Map();
+  const rows = db
+    .query(
+      `SELECT id,current_note_id FROM memory_records
+       WHERE space_id=? AND id IN (SELECT value FROM json_each(?))`,
+    )
+    .all(space, JSON.stringify(ids)) as { id: string; current_note_id: number | null }[];
+  return new Map(
+    rows.filter((r) => r.current_note_id !== null).map((r) => [r.id, r.current_note_id!]),
+  );
 }
 
 /** Close a loser's interval at `cutoff` without ever extending it or producing
@@ -341,7 +375,12 @@ export function resolveMemory(
           members.push({ record: record.id, role: "peer" });
         }
       } else {
-        let ordered = [...set].sort(byRecency);
+        const writeOrder = currentWriteOrder(
+          db,
+          space,
+          set.map((record) => record.id),
+        );
+        let ordered = [...set].sort((a, b) => byRecency(a, b, writeOrder));
         let evidence: Record<string, IndependentEvidence> | undefined;
         if (input.policy === "evidence_weighted") {
           evidence = Object.fromEntries(
@@ -357,7 +396,7 @@ export function resolveMemory(
             (a, b) =>
               found[b.id]!.weight - found[a.id]!.weight ||
               found[b.id]!.count - found[a.id]!.count ||
-              byRecency(a, b),
+              byRecency(a, b, writeOrder),
           );
         }
         const winner = ordered[0]!;

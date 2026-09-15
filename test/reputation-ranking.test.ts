@@ -96,10 +96,14 @@ describe("reputation-weighted shared retrieval", () => {
     db.createNote("Bob", "Amber deploys on port 7419 behind the blue relay", "r_1", {
       importance: 6,
     });
-    const before = db.recallNotes("Bob", "amber deploy port relay")[0]!.score;
+    // Recency is time-dependent (the two calls are microseconds to
+    // milliseconds apart under load); zero it so the comparison isolates the
+    // standing term, which must be absent from personal recall.
+    const opts = { weightRecency: 0 };
+    const before = db.recallNotes("Bob", "amber deploy port relay", opts)[0]!.score;
     db.setStandingCache("u_bob", 100, Date.now());
-    const after = db.recallNotes("Bob", "amber deploy port relay")[0]!.score;
-    expect(after).toBeCloseTo(before, 9);
+    const after = db.recallNotes("Bob", "amber deploy port relay", opts)[0]!.score;
+    expect(after).toBe(before);
   });
 
   it("durable shared search re-sorts records by OTHER principals' standing and reports the ranking", async () => {

@@ -17,6 +17,7 @@ import { MemoryService } from "../src/memory/service";
 import { handleMemoryServiceApi } from "../src/net/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
 import {
+  byRecency,
   closedValidity,
   independentEvidence,
   RELIABILITY_FLOOR,
@@ -715,4 +716,34 @@ it("is reachable from every interface: HTTP route, operation vocabulary, world c
     "keep_both",
   ]);
   expect(service.capabilities().review_queue).toBe("stale-competing-and-pending-assertions");
+});
+
+it("last-writer ordering breaks same-millisecond ties by write order, never by version or UUID", () => {
+  const base = {
+    space_id: "s",
+    content: "",
+    type: "fact",
+    tier: "fact",
+    importance: 5,
+    subject: null,
+    metadata: {},
+    source_ids: [],
+    depends_on: [],
+  };
+  // An older record revised twice (version 2, written as note #10) versus a
+  // fresh record (version 1, written LATER as note #11) in the same millisecond:
+  // the fresh one is the last writer.
+  const older = { ...base, id: "zzzz-older", version: 2, created_at: 1000 };
+  const newer = { ...base, id: "aaaa-newer", version: 1, created_at: 1000 };
+  const writeOrder = new Map([
+    ["zzzz-older", 10],
+    ["aaaa-newer", 11],
+  ]);
+  expect([older, newer].sort((a, b) => byRecency(a, b, writeOrder))[0]!.id).toBe("aaaa-newer");
+  expect([newer, older].sort((a, b) => byRecency(a, b, writeOrder))[0]!.id).toBe("aaaa-newer");
+  // A later millisecond always wins regardless of write order.
+  const later = { ...base, id: "later", version: 1, created_at: 1001 };
+  expect([older, newer, later].sort((a, b) => byRecency(a, b, writeOrder))[0]!.id).toBe("later");
+  // Without a write order the tie is still deterministic (id), as before.
+  expect(byRecency(older, newer)).toBeGreaterThan(0);
 });
