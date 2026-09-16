@@ -1,25 +1,13 @@
 name: Deploy to EC2
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths:
-      - "src/**"
-      - "dashboard/**"
-      - "worlds/**"
-      - "rooms/**"
-      - "seeds/**"
-      - "skills/**"
-      - "package.json"
-      - "bun.lock"
-      - "Dockerfile"
-      - ".dockerignore"
-      - "docker-compose.yml"
-      - "scripts/deploy.sh"
-      - ".github/workflows/deploy-ec2.yml"
   workflow_dispatch:
     inputs:
       rollback_sha:
-        description: "Rollback: full commit SHA of an already-built image to redeploy (skips build/push, deploys sha-<this>). Leave empty for a normal build + deploy."
+        description: "Rollback: full SHA of an already-built image whose main-branch CI passed. Leave empty to deploy the current, CI-qualified main commit."
         required: false
         type: string
         default: ""
@@ -30,18 +18,83 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write
+  actions: read
 
 env:
   ECR_ACCOUNT_ID: ${{ vars.ECR_ACCOUNT_ID }}
   ECR_REPOSITORY: "h2oai-marina"
 
 jobs:
-  deploy:
+  qualify:
+    # workflow_run also fires for failed/cancelled CI and for PR runs. Neither
+    # may reach checkout, AWS credentials, or production.
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.target.outputs.sha }}
+      rollback: ${{ steps.target.outputs.rollback }}
+    steps:
+      - name: Resolve a CI-qualified revision
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          CI_SHA: ${{ github.event.workflow_run.head_sha }}
+          ROLLBACK_SHA: ${{ inputs.rollback_sha }}
+        run: |
+          set -euo pipefail
+          rollback=false
+          case "$EVENT_NAME" in
+            workflow_run) sha="$CI_SHA" ;;
+            workflow_dispatch)
+              [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::Manual deployments must run from main"; exit 1; }
+              sha="${ROLLBACK_SHA:-$GITHUB_SHA}"
+              if [ -n "${ROLLBACK_SHA:-}" ]; then rollback=true; fi
+              ;;
+            *) echo "::error::Unsupported deployment event"; exit 1 ;;
+          esac
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Expected a full commit SHA"; exit 1; }
+
+          # Check the most recent CI run for THIS revision, including manual
+          # deploys and rollbacks. An older success cannot mask a failed rerun.
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$sha&branch=main&event=push&per_page=100" \
+            --jq '.workflow_runs | sort_by(.run_number, .run_attempt) | last')
+          jq -e --arg sha "$sha" --arg repo "$GITHUB_REPOSITORY" '
+            .head_sha == $sha and .head_branch == "main" and .event == "push" and
+            .head_repository.full_name == $repo and .path == ".github/workflows/ci.yml" and
+            .status == "completed" and .conclusion == "success"
+          ' <<< "$run" >/dev/null || { echo "::error::Target revision has no current successful main-branch CI run"; exit 1; }
+
+          if [ "$rollback" = false ]; then
+            latest=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+            if [ "$sha" != "$latest" ]; then
+              echo "Skipping superseded revision $sha; main is now $latest"
+              exit 0
+            fi
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "rollback=$rollback" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: qualify
+    if: needs.qualify.outputs.sha != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
 
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.qualify.outputs.sha }}
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6.2.4
@@ -52,21 +105,22 @@ jobs:
       - name: Resolve deploy target (build vs rollback)
         id: target
         env:
-          ROLLBACK_SHA: ${{ inputs.rollback_sha }}
+          TARGET_SHA: ${{ needs.qualify.outputs.sha }}
+          ROLLBACK: ${{ needs.qualify.outputs.rollback }}
           REGION: ${{ vars.AWS_REGION }}
         run: |
           set -euo pipefail
-          if [ -n "${ROLLBACK_SHA:-}" ]; then
-            echo "Rollback requested → redeploying sha-${ROLLBACK_SHA} (build/push skipped)"
+          if [ "$ROLLBACK" = true ]; then
+            echo "Rollback requested → redeploying sha-${TARGET_SHA} (build/push skipped)"
             # Fail fast if that image isn't already in ECR.
             aws ecr describe-images --region "$REGION" \
               --registry-id "$ECR_ACCOUNT_ID" --repository-name "$ECR_REPOSITORY" \
-              --image-ids imageTag="sha-${ROLLBACK_SHA}" >/dev/null \
-              || { echo "::error::No image tagged sha-${ROLLBACK_SHA} in ${ECR_REPOSITORY}"; exit 1; }
-            echo "sha=${ROLLBACK_SHA}" >> "$GITHUB_OUTPUT"
+              --image-ids imageTag="sha-${TARGET_SHA}" >/dev/null \
+              || { echo "::error::No image tagged sha-${TARGET_SHA} in ${ECR_REPOSITORY}"; exit 1; }
+            echo "sha=${TARGET_SHA}" >> "$GITHUB_OUTPUT"
             echo "rollback=true" >> "$GITHUB_OUTPUT"
           else
-            echo "sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+            echo "sha=${TARGET_SHA}" >> "$GITHUB_OUTPUT"
             echo "rollback=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -74,11 +128,12 @@ jobs:
         env:
           INSTANCE_ID: ${{ vars.MARINA_INSTANCE_ID }}
           APP_DIR: ${{ vars.MARINA_APP_DIR }}
+          TARGET_SHA: ${{ needs.qualify.outputs.sha }}
         run: |
           set -euo pipefail
           : "${INSTANCE_ID:?Set repo variable MARINA_INSTANCE_ID}"
           : "${APP_DIR:?Set repo variable MARINA_APP_DIR}"
-          echo "Deploying commit ${GITHUB_SHA} to ${INSTANCE_ID}:${APP_DIR}"
+          echo "Deploying commit ${TARGET_SHA} to ${INSTANCE_ID}:${APP_DIR}"
 
       - name: Log in to Amazon ECR (cross-account registry)
         id: ecr
@@ -97,8 +152,10 @@ jobs:
         with:
           images: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
           tags: |
-            type=sha,format=long
+            type=raw,value=sha-${{ needs.qualify.outputs.sha }}
             type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.qualify.outputs.sha }}
 
       - name: Build and push image to ECR
         id: build
@@ -112,7 +169,25 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Recheck main before changing production
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ needs.qualify.outputs.sha }}
+          ROLLBACK: ${{ needs.qualify.outputs.rollback }}
+        run: |
+          set -euo pipefail
+          if [ "$ROLLBACK" != true ]; then
+            latest=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+            if [ "$TARGET_SHA" != "$latest" ]; then
+              echo "Skipping superseded build $TARGET_SHA; main is now $latest"
+              exit 0
+            fi
+          fi
+          echo "deploy=true" >> "$GITHUB_OUTPUT"
+
       - name: Trigger deploy via SSM Run Command
+        if: steps.current.outputs.deploy == 'true'
         id: send
         env:
           INSTANCE_ID: ${{ vars.MARINA_INSTANCE_ID }}
@@ -120,7 +195,7 @@ jobs:
           REGION: ${{ vars.AWS_REGION }}
           IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:sha-${{ steps.target.outputs.sha }}
           GIT_REF: ${{ steps.target.outputs.sha }}
-          REF_NAME: ${{ github.ref_name }}
+          REF_NAME: main
         run: |
           set -euo pipefail
           # Build the command list safely (no shell-injection of dir/ref/image).
@@ -133,12 +208,12 @@ jobs:
             commands: [
               "set -euo pipefail",
               "export HOME=/root",
-              "export AWS_REGION=\($region)",
-              "export MARINA_IMAGE=\($img)",
-              "cd \($dir)",
-              "git config --global --add safe.directory \($dir)",
-              "git fetch origin \($refname) --prune",
-              "git reset --hard \($ref)",
+              "export AWS_REGION=\($region|@sh)",
+              "export MARINA_IMAGE=\($img|@sh)",
+              "cd \($dir|@sh)",
+              "git config --global --add safe.directory \($dir|@sh)",
+              "git fetch origin \($refname|@sh) --prune",
+              "git reset --hard \($ref|@sh)",
               "bash scripts/deploy.sh"
             ]
           }' > /tmp/ssm-params.json
@@ -153,6 +228,7 @@ jobs:
           echo "cmd_id=$CMD_ID" >> "$GITHUB_OUTPUT"
 
       - name: Wait for deploy to finish
+        if: steps.current.outputs.deploy == 'true'
         env:
           INSTANCE_ID: ${{ vars.MARINA_INSTANCE_ID }}
           CMD_ID: ${{ steps.send.outputs.cmd_id }}

@@ -2772,6 +2772,7 @@ export async function probeConfiguredProviders(
       text: "",
       checkedAt: started,
     };
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       // Trace the request so the ROUTED target is observable: proxyToUpstream
       // falls back to the next configured provider when the forced one fails
@@ -2785,9 +2786,9 @@ export async function probeConfiguredProviders(
           `${target.provider}/${target.model}`,
           { routeKind: "passthru", requestId },
         ),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`timeout after ${timeoutMs} ms`)), timeoutMs),
-        ),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error(`timeout after ${timeoutMs} ms`)), timeoutMs);
+        }),
       ]);
       const servedBy = routedTargetFor(engine, requestId);
       const raw = await response.text();
@@ -2821,6 +2822,8 @@ export async function probeConfiguredProviders(
       };
     } catch (e) {
       result = { ...result, latencyMs: Date.now() - started, error: getErrorMessage(e) };
+    } finally {
+      clearTimeout(timeout);
     }
     results.push(result);
   }

@@ -12,6 +12,20 @@ Everything below follows from this: pick a single durable volume, put the databa
 
 ## What you're deploying
 
+The repository's EC2 workflow starts after successful main-branch CI. It verifies
+the exact revision before checkout and uses that same SHA for the image tag and
+server checkout. Failed, cancelled, fork, and pull-request runs cannot deploy.
+Superseded revisions are skipped before building and again before production
+changes. Manual deployments and rollbacks also require successful main-branch CI
+for their target; rollbacks additionally require the existing image in ECR.
+
+Deployment waits for container health, then checks the running HTTP service and
+configured providers with `scripts/smoke-production.ts`. A failing smoke check
+makes the deployment workflow fail; it does not automatically roll back the
+database or image. The full report stays at `/tmp/marina-production-smoke.json`
+inside the container. See [Operating a Marina](../operations.md) for the probe's
+scope and authentication settings.
+
 A single Bun process serves everything on **`WS_PORT`** (default `3300`):
 
 | Surface | Path / Protocol | Notes |

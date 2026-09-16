@@ -37,6 +37,24 @@ gated instance it needs rank 4 or higher; a local ungated instance allows anyone
 bun run scripts/connect.ts operator -c "readiness providers" --wait 60
 ```
 
+For deployment smoke checks, run `bun run scripts/smoke-production.ts --providers
+--output /tmp/marina-production-smoke.json` in the running container. It checks
+the live `/health`, dashboard, model-list and model-health endpoints, and makes a
+small model request when caller authentication is available. Per-provider probes
+use the same proxy implementation with production routing settings and keys copied
+through a read-only connection into a private temporary database, removed after
+the check. They do not start agents or
+migrate the production database. A fallback cannot pass a failed provider's check.
+
+`MARINA_SMOKE_URL` overrides the local HTTP address; `MARINA_SMOKE_TOKEN` overrides
+the caller token otherwise selected from `MODEL_API_KEYS`. `--providers-only`
+checks configured providers without requiring a running local HTTP server. Each
+provider and its fallbacks share a 30-second deadline, with at most 24 upstream
+attempts across those probes and a 32-token output cap. The live model endpoint
+receives one separate request with the same requested output cap. Reports belong in a private
+directory. These checks do not exercise an external load balancer or qualify
+long-running agent work.
+
 ## The three tiers
 
 Marina's abilities fall into three tiers. **Only the third needs operator action.**

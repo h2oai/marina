@@ -32,7 +32,10 @@ echo "[deploy] pulling image"
 $DC pull
 
 echo "[deploy] (re)starting stack"
-$DC up -d --remove-orphans
+$DC up -d --wait --wait-timeout 180 --remove-orphans
+
+echo "[deploy] checking running HTTP endpoints and configured providers"
+$DC exec -T marina bun run scripts/smoke-production.ts --providers --output /tmp/marina-production-smoke.json
 
 echo "[deploy] pruning dangling images"
 docker image prune -f

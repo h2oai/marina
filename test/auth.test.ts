@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { SessionManager } from "../src/auth/session-manager";
@@ -523,12 +523,17 @@ describe("Login attempt rate limiting", () => {
 describe("SessionManager", () => {
   const dbPath = `/tmp/marina-sessionmgr-test-${Date.now()}.db`;
   let db: MarinaDB;
+  let now: number;
+  let clock: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     db = new MarinaDB(dbPath);
+    now = 1_800_000_000_000;
+    clock = spyOn(Date, "now").mockImplementation(() => now);
   });
 
   afterEach(() => {
+    clock.mockRestore();
     db.close();
     cleanupDb(dbPath);
   });
@@ -561,14 +566,10 @@ describe("SessionManager", () => {
     mgr.create("e_test_2" as EntityId, "Alice");
     mgr.create("e_test_3" as EntityId, "Bob");
 
-    // Wait past the 1ms TTL without blocking the event loop forever.
-    const start = Date.now();
-    while (Date.now() - start < 10) {
-      /* tight spin — cheaper than awaiting setTimeout in a sync test */
-    }
+    now += 2;
 
     const removed = mgr.cleanup();
-    expect(removed).toBeGreaterThanOrEqual(2);
+    expect(removed).toBe(2);
   });
 
   it("stores only a hash of the token at rest — never the raw token", () => {
@@ -608,13 +609,12 @@ describe("SessionManager", () => {
 
     // Fresh: valid, and refresh (recent activity) still works within the cap.
     expect(mgr.validate(session.token)).toBeDefined();
+    now += 4;
+    expect(mgr.refresh(session.token)).toBe(true);
+    expect(mgr.validate(session.token)?.expiresAt).toBe(session.createdAt + 5);
+    now += 1;
 
-    const start = Date.now();
-    while (Date.now() - start < 15) {
-      /* spin past the 5ms absolute cap */
-    }
-
-    // Recent use (refresh) must NOT renew past the absolute cap.
+    // The exact absolute boundary expires even a just-refreshed session.
     expect(mgr.refresh(session.token)).toBe(false);
     expect(mgr.validate(session.token)).toBeUndefined();
   });
@@ -627,15 +627,14 @@ describe("SessionManager", () => {
     const session = mgr.create("e_maxage_2" as EntityId, "Alice");
 
     // Let the short sliding TTL nearly lapse, then refresh to extend it.
-    const start = Date.now();
-    while (Date.now() - start < 10) {
-      /* spin */
-    }
+    now += 10;
     expect(mgr.refresh(session.token)).toBe(true);
 
-    // After refresh the session is live again well within the absolute cap.
+    // It remains live beyond the ORIGINAL idle expiry after a refresh.
+    now += 11;
     const validated = mgr.validate(session.token);
     expect(validated).toBeDefined();
+    expect(validated!.expiresAt).toBe(session.createdAt + 30);
     expect(validated!.expiresAt).toBeLessThanOrEqual(validated!.createdAt + 60_000);
   });
 
@@ -645,10 +644,9 @@ describe("SessionManager", () => {
     try {
       const mgr = new SessionManager(db, { sessionTtlMs: 60_000 });
       const session = mgr.create("e_maxage_env" as EntityId, "Alice");
-      const start = Date.now();
-      while (Date.now() - start < 15) {
-        /* spin past the env-configured cap */
-      }
+      now += 4;
+      expect(mgr.validate(session.token)).toBeDefined();
+      now += 1;
       expect(mgr.validate(session.token)).toBeUndefined();
     } finally {
       if (prev === undefined) delete process.env.MARINA_SESSION_MAX_AGE_MS;
