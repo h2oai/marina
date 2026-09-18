@@ -55,7 +55,10 @@ export function memoryCommand(deps: {
       if (!sub || sub === "list") {
         const entries = db.listCoreMemory(entity.name);
         if (entries.length === 0) {
-          ctx.send(input.entity, "Core memory is empty.");
+          ctx.send(
+            input.entity,
+            "Core memory is empty. Try memory retrieve <question> or memory guide for task workflows.",
+          );
           return;
         }
         const lines = [

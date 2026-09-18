@@ -144,3 +144,37 @@ export function readMemorySourceRange(
     text: bytes.subarray(start, stop).toString("utf8"),
   };
 }
+
+/** Read around an actual search excerpt, not merely the beginning of a document.
+ * The excerpt only locates text; the returned bytes are read and hashed from the
+ * authorized original. A missing/ambiguous excerpt never fabricates evidence. */
+export function readMemorySourceWindow(
+  db: Database,
+  actor: MemoryActor,
+  space: string,
+  id: string,
+  excerpt: string,
+  maxBytes: number,
+): MemorySourceRange {
+  return db.transaction(() => {
+    authorizeMemorySpace(db, actor, space);
+    integer(maxBytes, "source_bytes", 1, 65536);
+    const row = db
+      .query(`SELECT t.text FROM memory_sources s JOIN memory_source_text t ON t.seq=s.seq
+        WHERE s.space_id=? AND s.id=?`)
+      .get(space, id) as { text: string } | null;
+    if (!row) throw new MemoryError(404, "source_not_found", "Source not found");
+    const fragments = excerpt
+      .split(" … ")
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
+    const position = fragments.map((part) => row.text.indexOf(part)).find((index) => index >= 0);
+    const anchor = position === undefined ? 0 : Buffer.byteLength(row.text.slice(0, position));
+    const bytes = Buffer.from(row.text);
+    let start = Math.max(0, anchor - Math.floor(maxBytes / 4));
+    while (start > 0 && (bytes[start]! & 0xc0) === 0x80) start--;
+    let end = Math.min(bytes.length, start + maxBytes);
+    while (end > start && end < bytes.length && (bytes[end]! & 0xc0) === 0x80) end--;
+    return readMemorySourceRange(db, actor, space, id, start, end);
+  })();
+}

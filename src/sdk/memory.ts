@@ -49,6 +49,8 @@ export { MEMORY_GRAPH_ACTIONS } from "./memory-knowledge-graph";
 export type { MemoryOperationRequest, MemoryOperationResult } from "./memory-operations";
 export { MEMORY_OPERATIONS, runMemoryOperation } from "./memory-operations";
 export { canonicalPortableMemory, memoryPortableDigest } from "./memory-portable";
+export type { MemoryRecipe, MemoryRetrievalObservation, MemorySelection } from "./memory-recipes";
+export { compareMemoryRecipes, selectMemoryEvidence } from "./memory-recipes";
 export { retryMemoryOperation } from "./memory-retry";
 export type * from "./memory-symbolic";
 export type { MemoryTaskMessage, MemoryTaskOptions, MemoryTaskResult } from "./memory-task";
@@ -64,3 +66,5 @@ export type {
 } from "./memory-transfer";
 export { resumeMemoryTransfer } from "./memory-transfer-client";
 export type * from "./memory-types";
+export type * from "./memory-workflows";
+export { MarinaMemoryWorkflows, MEMORY_WORKFLOW_ACTIONS } from "./memory-workflows";

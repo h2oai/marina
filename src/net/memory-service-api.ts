@@ -5,6 +5,7 @@ import { RateLimiter } from "../auth/rate-limiter";
 import { readAssistance } from "../memory/assistance";
 import { getFederatedMemoryCache, putFederatedMemoryCache } from "../memory/cache";
 import { createMemoryPlan, executeMemoryPlan } from "../memory/planning";
+import { retrieveMemoryCached } from "../memory/retrieval-cache";
 import type { MemorySearchInput, MemoryService } from "../memory/service";
 import {
   integer,
@@ -14,6 +15,8 @@ import {
   recordInput,
   textValue,
 } from "../memory/service-types";
+import { retrieveMemory } from "../memory/task-retrieval";
+import { memoryWorkflow } from "../memory/workflows";
 import { memoryStorageFailure } from "../persistence/db-memory-failures";
 import type { MemoryActor } from "../persistence/db-principals";
 import { withMemoryAbort } from "../sdk/memory-abort";
@@ -140,6 +143,10 @@ export async function handleMemoryServiceApi(
       !path.endsWith("/source_search") &&
       !path.endsWith("/plan") &&
       !path.endsWith("/execute_plan") &&
+      !path.endsWith("/retrieve") &&
+      !path.endsWith("/workflow") &&
+      !path.endsWith("/federated_retrieve") &&
+      !path.endsWith("/retrieve_cached") &&
       !path.endsWith("/review") &&
       !path.endsWith("/cache/get") &&
       !path.endsWith("/federated_search") &&
@@ -353,6 +360,25 @@ export async function handleMemoryServiceApi(
       return json(await createMemoryPlan(service, actor, space, await readBody(req), req.signal));
     if (rest === "execute_plan" && req.method === "POST")
       return json(await executeMemoryPlan(service, actor, space, await readBody(req), req.signal));
+    if (rest === "workflow" && req.method === "POST")
+      return json(
+        await memoryWorkflow(service, actor, space, await readBody(req), key, req.signal),
+      );
+    if (rest === "federated_retrieve" && req.method === "POST")
+      return json(
+        await service.federation.retrieve(
+          actor.principalId,
+          await readBody(req),
+          () => repo.authorize(actor, space),
+          req.signal,
+        ),
+      );
+    if (rest === "retrieve_cached" && req.method === "POST")
+      return json(
+        await retrieveMemoryCached(service, actor, space, await readBody(req), key, req.signal),
+      );
+    if (rest === "retrieve" && req.method === "POST")
+      return json(await retrieveMemory(service, actor, space, await readBody(req), req.signal));
     if (rest === "vocabulary") {
       if (req.method === "GET")
         return json(

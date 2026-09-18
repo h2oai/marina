@@ -292,12 +292,19 @@ export async function createMemoryPlan(
   };
 }
 
+export interface MemoryReadHooks {
+  check(): void;
+  before(operation: string, input: Record<string, unknown>): void;
+  excludeAssistanceRequests?: boolean;
+}
+
 export async function executeMemoryPlan(
   service: MemoryService,
   actor: MemoryActor,
   space: string,
   raw: unknown,
   signal?: AbortSignal,
+  hooks?: MemoryReadHooks,
 ): Promise<MemoryPlanResult> {
   const plan = object(raw),
     budget = object(plan.budget);
@@ -316,6 +323,7 @@ export async function executeMemoryPlan(
   );
   const check = () => {
     signal?.throwIfAborted();
+    hooks?.check();
     const current = service.repository.authorize(actor, space);
     if (
       (retrievalGeneration === undefined
@@ -339,6 +347,7 @@ export async function executeMemoryPlan(
       truncated = true;
       break;
     }
+    hooks?.before(step.operation, step.input);
     let evidence: unknown[],
       incomplete = false;
     if (step.operation === "join") {
@@ -362,6 +371,7 @@ export async function executeMemoryPlan(
         actor,
         space,
         step.input as unknown as MemorySourceSearch,
+        hooks?.excludeAssistanceRequests,
       );
       evidence = result.results;
       incomplete = result.truncated;

@@ -8,7 +8,10 @@ import type {
   MemoryFederatedEntry,
   MemoryFederatedPin,
   MemoryFederatedResult,
+  MemoryFederatedRetrievalResult,
   MemoryRecord,
+  MemoryRetrievalInput,
+  MemoryRetrievedEvidence,
   MemorySearchInput,
   MemorySourceRange,
 } from "../sdk/memory-types";
@@ -155,6 +158,102 @@ export class MemoryFederation {
     this.check(owner, mounts, authorize, signal);
     const byPin = new Map(sealed.flat().map((seal) => [hash(seal.pin), seal]));
     return pins.map((pin) => byPin.get(hash(pin))!);
+  }
+  async retrieve(
+    owner: string,
+    raw: unknown,
+    authorize: () => unknown,
+    signal?: AbortSignal,
+  ): Promise<MemoryFederatedRetrievalResult> {
+    const body = object(raw),
+      mounts = this.select(owner, body.mounts);
+    const input = object(body.retrieval) as unknown as MemoryRetrievalInput;
+    const maxResults = integer(input.max_results ?? 6, "max_results", 1, 20);
+    const maxBytes = integer(input.max_bytes ?? 8192, "max_bytes", 256, 65536);
+    if (input.use_model || input.observe)
+      throw new MemoryError(
+        400,
+        "invalid_input",
+        "Federated retrieval uses bounded deterministic reads without observation pools",
+      );
+    if (body.allow_partial !== undefined && typeof body.allow_partial !== "boolean")
+      throw new MemoryError(400, "invalid_input", "allow_partial must be boolean");
+    this.check(owner, mounts, authorize, signal);
+    const evidence: (MemoryRetrievedEvidence & { mount: string })[] = [];
+    const peers: MemoryFederatedRetrievalResult["peers"] = [];
+    // Sequential allocation makes this one total evidence budget, not N peer budgets.
+    for (const mount of mounts) {
+      this.check(owner, mounts, authorize, signal);
+      const remainingBytes = maxBytes - Buffer.byteLength(JSON.stringify(evidence)) - 128;
+      const remainingResults = maxResults - evidence.length;
+      if (remainingResults < 1 || remainingBytes < 256) {
+        peers.push({ mount: mount.alias, status: "budget_exhausted" });
+        continue;
+      }
+      try {
+        const client = signal ? mount.client.withSignal(signal) : mount.client;
+        const before = await client.space(mount.space);
+        const result = await client.retrieve(mount.space, {
+          ...input,
+          max_results: remainingResults,
+          max_bytes: remainingBytes,
+        });
+        const after = await client.space(mount.space);
+        if (
+          before.id !== mount.space ||
+          result.space_id !== mount.space ||
+          before.retrieval_generation !== result.retrieval_generation ||
+          after.retrieval_generation !== result.retrieval_generation
+        )
+          throw new MemoryError(409, "peer_changed", "Peer changed during retrieval");
+        let limited = false;
+        for (const item of result.evidence) {
+          const entry = { ...item, mount: mount.alias };
+          if (
+            evidence.length >= maxResults ||
+            Buffer.byteLength(JSON.stringify([...evidence, entry])) > maxBytes
+          ) {
+            limited = true;
+            continue;
+          }
+          evidence.push(entry);
+        }
+        peers.push({
+          mount: mount.alias,
+          space_id: mount.space,
+          status: limited || result.truncated ? "truncated" : "ok",
+          retrieval_generation: result.retrieval_generation,
+          vocabulary_version: result.vocabulary_version,
+          valid_at: result.valid_at,
+        });
+      } catch (error) {
+        this.check(owner, mounts, authorize, signal);
+        if (body.allow_partial !== true)
+          throw new MemoryError(
+            503,
+            "peer_unavailable",
+            `Selected peer ${mount.alias} could not complete retrieval`,
+          );
+        peers.push({
+          mount: mount.alias,
+          status: "unavailable",
+          code:
+            error instanceof MemoryClientError || error instanceof MemoryError
+              ? error.code
+              : "peer_unavailable",
+        });
+      }
+    }
+    this.check(owner, mounts, authorize, signal);
+    return {
+      schema: "marina.memory.federated-retrieval.v1",
+      evidence,
+      peers,
+      bytes: Buffer.byteLength(JSON.stringify(evidence)),
+      consistency: "per-peer",
+      answer_sufficiency: "not_assessed",
+      truncated: peers.some((peer) => peer.status !== "ok"),
+    };
   }
   async search(
     owner: string,

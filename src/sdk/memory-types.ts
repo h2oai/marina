@@ -127,6 +127,71 @@ export interface MemoryPlanResult {
   truncated: boolean;
   answer_sufficiency: "not_assessed";
 }
+
+/** One bounded retrieval, including witnessed original-source reads. */
+export interface MemoryRetrievalInput {
+  task: string;
+  selection?: import("./memory-recipes").MemorySelection;
+  expansion?: MemoryQueryExpansion;
+  requirements?: (
+    | { kind: "claim"; subject: string; predicate: string }
+    | { kind: "source"; id: string; start?: number; end?: number }
+  )[];
+  /** Include a bounded candidate pool for explicit episode capture and offline comparison. */
+  observe?: boolean;
+  steps?: MemoryPlanStep[];
+  use_model?: boolean;
+  broaden?: boolean;
+  valid_at?: number;
+  max_results?: number;
+  /** Serialized evidence-array budget; plan and diagnostic metadata are separate. */
+  max_bytes?: number;
+  /** Maximum UTF-8 text bytes read per original source. */
+  source_bytes?: number;
+}
+export type MemoryRetrievedEvidence =
+  | (MemoryRecord & { kind: "record" })
+  | (MemorySourceRange & { kind: "source"; space_id: string });
+export interface MemoryRetrievalResult {
+  schema: "marina.memory.retrieval.v1";
+  space_id: string;
+  generation: number;
+  retrieval_generation: number;
+  vocabulary_version: number;
+  valid_at: number;
+  status: "evidence" | "empty" | "budget_exhausted";
+  plan: MemoryPlan;
+  evidence: MemoryRetrievedEvidence[];
+  trace: {
+    operation: MemoryPlanStep["operation"] | "source_range";
+    input: Record<string, unknown>;
+    returned: number;
+    truncated: boolean;
+    reason: "planned" | "empty_source_search" | "sparse_source_search" | "read_original";
+  }[];
+  budget: { max_results: number; max_bytes: number; source_bytes: number };
+  bytes: number;
+  truncated: boolean;
+  answer_sufficiency: "not_assessed";
+  selection?: import("./memory-recipes").MemorySelection;
+  selection_contract?: "marina-evidence-selection-v1";
+  selected_recipe?: { space_id: string; id: string; version: number };
+  observed_candidates?: MemoryRetrievedEvidence[];
+  coverage?: {
+    requirement: NonNullable<MemoryRetrievalInput["requirements"]>[number];
+    covered: boolean;
+  }[];
+  known_conflicts?: { subject: string; predicate: string; records: string[] }[];
+  diagnostics: {
+    broadened: boolean;
+    discovery_truncated: boolean;
+    budget_limited: boolean;
+    filtered_records: number;
+    partial_sources: number;
+    next_actions: string[];
+  };
+  limitations: string[];
+}
 export interface MemorySpace {
   retrieval_generation: number;
   id: string;
@@ -456,4 +521,33 @@ export interface MemoryFederatedRead {
   version?: number;
   start?: number;
   end?: number;
+}
+
+export interface MemoryFederatedRetrievalResult {
+  schema: "marina.memory.federated-retrieval.v1";
+  evidence: (MemoryRetrievedEvidence & { mount: string })[];
+  peers: {
+    mount: string;
+    space_id?: string;
+    status: "ok" | "truncated" | "unavailable" | "budget_exhausted";
+    retrieval_generation?: number;
+    vocabulary_version?: number;
+    valid_at?: number;
+    code?: string;
+  }[];
+  bytes: number;
+  consistency: "per-peer";
+  answer_sufficiency: "not_assessed";
+  truncated: boolean;
+}
+export interface MemoryCachedRetrievalInput {
+  retrieval: MemoryRetrievalInput & { valid_at: number };
+  mounts?: string[];
+  allow_partial?: boolean;
+  cache?: "read" | "read_write" | "refresh";
+  ttl_ms?: number;
+}
+export interface MemoryCachedRetrievalResult {
+  retrieval: MemoryRetrievalResult | MemoryFederatedRetrievalResult;
+  cache: { hit: boolean; reason: string; stored?: boolean };
 }

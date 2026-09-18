@@ -42,7 +42,11 @@ import { rankMemoryVectors } from "./db-memory-ranking";
 import { resolveMemory } from "./db-memory-resolve";
 import { acknowledgeMemoryRequests } from "./db-memory-retention";
 import { reaffirmMemory, reviewMemory } from "./db-memory-review";
-import { readMemorySourceRange, searchMemorySources } from "./db-memory-sources";
+import {
+  readMemorySourceRange,
+  readMemorySourceWindow,
+  searchMemorySources,
+} from "./db-memory-sources";
 import { enforceMemoryStorage, memoryStorageUsage } from "./db-memory-storage";
 import { memoryJsonStore } from "./db-memory-store";
 import {
@@ -1543,6 +1547,13 @@ export function memoryRepository(db: Database) {
       end?: number,
       hash?: string,
     ) => readMemorySourceRange(db, actor, space, id, start, end, hash),
+    sourceWindow: (
+      actor: MemoryActor,
+      space: string,
+      id: string,
+      excerpt: string,
+      maxBytes: number,
+    ) => readMemorySourceWindow(db, actor, space, id, excerpt, maxBytes),
     // Synchronous reads only: keep heads, ranks and hydration on one WAL snapshot.
     readSnapshot: <T>(read: () => T): T => db.transaction(read)(),
     authorize: (actor: MemoryActor, space: string, scope?: MemoryScope) =>

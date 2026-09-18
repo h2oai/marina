@@ -5,6 +5,22 @@ import { MemoryClientError } from "../sdk/memory-client";
 import type { MemoryOperationRequest, MemoryOperationResult } from "../sdk/memory-operations";
 
 export const MEMORY_SERVICE_HELP = `Portable memory service (private to your durable world account):
+  memory guide                         practical quickstart and interface examples
+  memory start <goal>                   preserve a task before doing work
+  memory tasks [CURSOR]                 find saved tasks by goal; follow pagination
+  memory run <TASK_ID> <VERSION>         retrieve and capture an inspectable episode
+  memory resume <TASK_ID>                next action, changed premises and checkpoint
+  memory finish <TASK_ID> <VERSION> <completed|interrupted|failed> <next action>
+  memory feedback <TASK_ID> <helpful|unhelpful|pass|fail|unknown> <explanation>
+  memory recipes                        list explicitly selectable retrieval procedures
+  memory recipe <ID> <VERSION> <task>    use one recipe for one retrieval
+  memory recipe-save <JSON recipe>      store a portable procedure; never auto-activate
+  memory watch <NAME> [RECORD_ID ...]    watch selected premises (omit IDs for all changes)
+  memory changes [CURSOR]               poll the authorized durable change feed
+  memory poll <NAME>                    read changes; repeat safely before acknowledging
+  memory ack <NAME> <VERSION> <CURSOR> [OBSERVED_AT]   acknowledge processed notifications
+  memory unwatch <NAME> <VERSION>       cancel a watch
+  memory retrieve <task>                find and read citable evidence within a byte budget
   memory assist <role> <helper> <task>    delegate reading; roles: librarian, reflector, evaluator
   memory jobs [JSON filters]             list assistance; open:true selects unfinished live work
   memory assistance <ID>                 inspect a request and its cited proposal
@@ -63,6 +79,108 @@ export function parseMemoryServiceCommand(args: string): MemoryOperationRequest 
     }
   };
   switch (sub) {
+    case "guide":
+      return { operation: "workflow", input: { action: "help" } };
+    case "start":
+      return { operation: "workflow", input: { action: "start", goal: rest } };
+    case "tasks":
+    case "recipes":
+      return { operation: "workflow", input: { action: sub, ...(rest ? { cursor: rest } : {}) } };
+    case "resume":
+      return { operation: "workflow", input: { action: "resume", task_id: rest } };
+    case "run": {
+      const fields = rest.match(/^(\S+)\s+(\d+)$/);
+      if (!fields)
+        throw new MemoryClientError(
+          400,
+          "invalid_input",
+          "Use memory run TASK_ID VERSION (both returned by start or resume)",
+        );
+      return {
+        operation: "workflow",
+        input: { action: "run", task_id: fields[1], expected_version: Number(fields[2]) },
+      };
+    }
+    case "finish": {
+      const fields = rest.match(/^(\S+)\s+(\d+)\s+(completed|interrupted|failed)\s+([\s\S]+)$/);
+      if (!fields)
+        throw new MemoryClientError(
+          400,
+          "invalid_input",
+          "Use memory finish TASK_ID VERSION completed|interrupted|failed NEXT_ACTION",
+        );
+      return {
+        operation: "workflow",
+        input: {
+          action: "finish",
+          task_id: fields[1],
+          expected_version: Number(fields[2]),
+          status: fields[3],
+          next_action: fields[4],
+        },
+      };
+    }
+    case "feedback": {
+      const fields = rest.match(/^(\S+)\s+(helpful|unhelpful|pass|fail|unknown)\s+([\s\S]+)$/);
+      if (!fields)
+        throw new MemoryClientError(
+          400,
+          "invalid_input",
+          "Use memory feedback TASK_ID helpful|unhelpful|pass|fail|unknown EXPLANATION",
+        );
+      return {
+        operation: "workflow",
+        input: {
+          action: "feedback",
+          task_id: fields[1],
+          result: fields[2],
+          explanation: fields[3],
+          rubric: "Participant-reported task outcome",
+        },
+      };
+    }
+    case "recipe-save":
+      return { operation: "workflow", input: { action: "save_recipe", recipe: json(rest) } };
+    case "recipe": {
+      const fields = rest.match(/^(\S+)\s+(\d+)\s+([\s\S]+)$/);
+      if (!fields)
+        throw new MemoryClientError(400, "invalid_input", "Use memory recipe ID VERSION TASK");
+      return {
+        operation: "workflow",
+        input: { action: "use_recipe", id: fields[1], version: Number(fields[2]), task: fields[3] },
+      };
+    }
+    case "watch": {
+      const [name, ...ids] = rest.split(/\s+/);
+      return { operation: "workflow", input: { action: "watch", name, ids } };
+    }
+    case "poll":
+      return { operation: "workflow", input: { action: "poll", name: rest } };
+    case "changes":
+      return {
+        operation: "workflow",
+        input: { action: "changes", cursor: rest ? Number(rest) : 0 },
+      };
+    case "ack":
+    case "unwatch": {
+      const fields = rest.match(/^(\S+)\s+(\d+)(?:\s+(\d+))?(?:\s+(\d+))?$/);
+      if (!fields || (sub === "ack" && !fields[3]))
+        throw new MemoryClientError(
+          400,
+          "invalid_input",
+          `Use memory ${sub} NAME VERSION${sub === "ack" ? " CURSOR" : ""}`,
+        );
+      return {
+        operation: "workflow",
+        input: {
+          action: sub,
+          name: fields[1],
+          expected_version: Number(fields[2]),
+          ...(fields[3] ? { cursor: Number(fields[3]) } : {}),
+          ...(fields[4] ? { observed_at: Number(fields[4]) } : {}),
+        },
+      };
+    }
     case "assist": {
       const fields = rest.match(/^(librarian|reflector|evaluator)\s+(\S+)\s+([\s\S]+)$/);
       if (!fields)
@@ -178,6 +296,8 @@ export function parseMemoryServiceCommand(args: string): MemoryOperationRequest 
     }
     case "plan":
       return { operation: "plan", input: { task: rest } };
+    case "retrieve":
+      return { operation: "retrieve", input: { task: rest } };
     case "vocabulary":
       return { operation: "vocabulary" };
     case "graph":
@@ -215,6 +335,68 @@ export function parseMemoryServiceCommand(args: string): MemoryOperationRequest 
 
 export function formatMemoryOperation(result: MemoryOperationResult): string {
   if (!result.ok) return `Memory error (${result.error.code}): ${result.error.message}`;
-  // Lossless JSON is readable by humans and safely consumable by tool callers.
+  const value = result.result as Record<string, unknown> | null;
+  if (value?.schema === "marina.memory.workflow-guide.v1") return MEMORY_SERVICE_HELP;
+  const lines: string[] = [];
+  if (value && Array.isArray(value.tasks)) {
+    const tasks = value.tasks as {
+      task_id: string;
+      version: number;
+      status: string;
+      goal: string;
+    }[];
+    if (!tasks.length)
+      lines.push("No saved tasks on this page. Start one with memory start <goal>.");
+    for (const task of tasks)
+      lines.push(`${task.task_id} — ${task.status}, v${task.version}: ${task.goal.slice(0, 240)}`);
+    if (value.next_cursor) lines.push(`Next page: memory tasks ${value.next_cursor}`);
+    if (tasks.length) lines.push("Continue with memory resume <TASK_ID>.");
+  }
+  if (value && typeof value.task_id === "string") {
+    lines.push(`Task ${value.task_id} — ${value.status}, version ${value.version}`);
+    if (typeof value.goal === "string") lines.push(value.goal);
+    if (Array.isArray(value.next_actions)) lines.push(...value.next_actions.map(String));
+    if (["open", "failed", "interrupted"].includes(String(value.status)))
+      lines.push(`Next: memory run ${value.task_id} ${value.version}`);
+    if (value.status === "ready")
+      lines.push(
+        `After working: memory finish ${value.task_id} ${value.version} completed <result or next action>`,
+      );
+    if (Array.isArray(value.premises))
+      for (const pin of value.premises as { reference: { id: string }; state: string }[])
+        lines.push(`Premise ${pin.reference.id}: ${pin.state}`);
+  }
+  const retrieval =
+    value?.schema === "marina.memory.retrieval.v1"
+      ? value
+      : (value?.retrieval as Record<string, unknown> | undefined);
+  if (retrieval && Array.isArray(retrieval.evidence)) {
+    lines.push(
+      `Evidence: ${retrieval.evidence.length} items. Sufficiency remains for you to assess.`,
+    );
+    for (const item of retrieval.evidence as Record<string, unknown>[])
+      lines.push(
+        item.kind === "source"
+          ? `[source ${item.id} bytes ${item.start}–${item.end}] ${item.text}`
+          : `[record ${item.id} v${item.version}] ${item.content}`,
+      );
+    const diagnostic = retrieval.diagnostics as { next_actions?: string[] } | undefined;
+    lines.push(...(diagnostic?.next_actions ?? []));
+  }
+  if (value && typeof value.name === "string" && value.acknowledgement) {
+    const ack = value.acknowledgement as {
+      expected_version: number;
+      cursor: number;
+      observed_at: number;
+    };
+    lines.push(
+      `Watch ${value.name}: ${JSON.stringify(value.changes)}`,
+      `After processing: memory ack ${value.name} ${ack.expected_version} ${ack.cursor} ${ack.observed_at}`,
+    );
+    if (value.temporal_due)
+      lines.push("A watched validity boundary has passed; re-read the premise.");
+  }
+  if (lines.length) return lines.join("\n");
+  // Structured perception data remains lossless even when human output is compact.
   return `Memory service${result.space_id ? ` — space ${result.space_id}` : ""}\n${JSON.stringify(result.result, null, 2)}`;
 }

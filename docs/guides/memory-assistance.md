@@ -1,5 +1,7 @@
 # Memory assistance
 
+Start with [memory workflows](memory-workflows.md) for a runnable example, task resumption, recipes, scoped helpers and change notifications.
+
 Marina participants can ask a librarian, reflector, or evaluator to investigate a
 memory task. Helpers use the same commands and durable memory API as humans and
 external agents. Results are attributed, cited proposals; they do not certify

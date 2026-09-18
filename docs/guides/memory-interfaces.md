@@ -1,5 +1,7 @@
 # Symbolic memory for TypeScript, MCP, residents and humans
 
+Start with [memory workflows](memory-workflows.md) for a runnable example, task resumption, recipes, scoped helpers and change notifications.
+
 Marina's durable memory is text, evidence, typed claims and versioned state. Embeddings are
 optional indexes. Exact symbolic queries and graph traversal work with `--embeddings none`,
 without model downloads or inference. See the [service guide](memory-service.md) for provisioning,
@@ -43,6 +45,44 @@ do not invalidate new cursors. Graph paths contain
 record IDs, and each edge contains the full current record. `truncated` means at least one reachable assertion was omitted by the edge or depth budget.
 The boundary is checked, so a terminal node or fully visited cycle does not produce a false flag.
 
+For a question or task, use one bounded retrieval call:
+
+```typescript
+const result = await memory.retrieve(spaceId, {
+  task: "deployment rollback procedure",
+  max_results: 6, max_bytes: 8192, source_bytes: 2048,
+});
+for (const item of result.evidence) {
+  if (item.kind === "source") {
+    console.log(item.id, item.text_hash, item.start, item.end, item.text);
+  } else {
+    console.log(item.id, item.version, item.content);
+  }
+}
+console.log(result.diagnostics);
+```
+
+`retrieve` combines inspectable planning, lexical/symbolic discovery and original source reads.
+It needs no embedding or model call by default. It searches captured originals even when no
+summary or authored record exists, then returns UTF-8 windows near the search matches. Source
+IDs, hashes and byte ranges can be verified with `sourceRange` and quoted by `runMemoryTask`.
+Pass `steps` for a custom read program; `use_model:true` instead requests the configured planner.
+
+The default budgets are 6 evidence items, 8192 serialized evidence bytes and 2048 text bytes
+per source. Limits are 20 items, 65536 evidence bytes and 8192 bytes per source. Metadata,
+plans and diagnostics are outside `max_bytes`. `status` distinguishes `evidence`, `empty`
+and `budget_exhausted`; `truncated` and `diagnostics.next_actions` explain omissions.
+One sparse all-term source search may be supplemented by matching any term; set `broaden:false`
+to disable this and inspect `diagnostics.broadened` before using matches. This helps when a
+recent journaled question matches more query words than the older answer. Phrase and symbolic constraints
+are never broadened. This does not provide automatic semantic paraphrase recall.
+
+Records must be current and valid at `valid_at` (UTC milliseconds, default request time).
+Pass time at the top level; it applies to every symbolic step. Original documents remain
+readable historical evidence and may contain conflicting or obsolete assertions. Retrieval
+does not certify relevance, truth, completeness or answer sufficiency. A `409 plan_changed`
+requires a fresh call; evidence is not returned from a partially invalidated plan.
+
 ## MCP for external coding agents
 
 Provision and start the memory service; no world login is needed:
@@ -58,11 +98,13 @@ The stdio bridge uses only the HTTP URL and a scoped memory credential:
 bun run scripts/memory-mcp.ts --url http://127.0.0.1:3301 --credentials /absolute/path/to/data/coding-agent.json
 ```
 
-It exposes `memory_service`, `memory_remember`, `memory_query` and `memory_graph`. The generic
+It exposes `memory_workflow`, `memory_retrieve`, `memory_service`, `memory_assist`, `memory_remember`, `memory_query` and `memory_graph`. Start
+with `memory_retrieve` arguments `{task:"deployment rollback procedure"}` for citable evidence.
+The generic
 service tool accepts `{operation, space_id?, id?, input?, key?}`. Its operations match the HTTP
 client: `capabilities`, `usage`, `me`, `spaces`, `create_space`, `space`, `remember`, `get`, `revise`,
 `query`, `graph`, `search`, `context`, `capture`, `capture_batch`, `sources`, `source_search`, `source_range`,
-`plan`, `execute_plan`, `vocabulary`, `save_vocabulary`, `checkpoint`, `save_checkpoint`,
+`retrieve`, `plan`, `execute_plan`, `vocabulary`, `save_vocabulary`, `checkpoint`, `save_checkpoint`,
 `grant`, `forget`, `export`, `job`, `reindex`, `review`, `reaffirm`, `cache_get`, `cache_put`,
 `cache_delete`, `export_bundle`, `import_bundle`, `federation_mounts`, `federated_search`,
 `federated_read`, `acknowledge`. `id` is the record, checkpoint name or job ID
@@ -107,6 +149,10 @@ a skill does not provide credentials or create storage by itself. No global conf
 changed by this implementation.
 
 ## Residents and human use
+
+Residents and humans can run `memory retrieve <task>`. Resident agents also use
+`marina_memory_service` with `{operation:"retrieve",input:{task:"..."}}`; both return the same
+evidence and diagnostics as HTTP and MCP, subject to the caller's space permissions.
 
 The full world exposes `/v1/memory` on its HTTP/WebSocket port (normally **3300**). World MCP
 is a different listener (normally **3301**, `/mcp`), with login/auth and the same four service

@@ -6,6 +6,7 @@ import { MEMORY_ASSISTANCE_READS } from "../sdk/memory-assistance";
 import type { MemoryGraphQuery, MemoryQuery, MemorySourceSearch } from "../sdk/memory-types";
 import type { MemoryService } from "./service";
 import { integer, MemoryError, object, textValue } from "./service-types";
+import { retrieveMemory } from "./task-retrieval";
 
 /** A helper's authority is one live request, not a reusable owner credential.
  * Both sides of an asynchronous read recheck the lease and delegation. */
@@ -49,6 +50,33 @@ export async function readAssistance(
   const limit = integer(input.limit ?? 10, "limit", 1, 20);
   let result: unknown;
   switch (request.operation) {
+    case "retrieve":
+      if (input.use_model)
+        throw new MemoryError(
+          400,
+          "assistance_read_only",
+          "Delegated retrieval does not run model planning",
+        );
+      result = await retrieveMemory(service, principal, space, input, signal, {
+        check: () => repo.assistance.checkRead(actor, id, body.lease_token),
+        before: (operation, args) => {
+          if (operation === "graph" && Number(args.max_depth ?? 2) > 3)
+            throw new MemoryError(
+              400,
+              "assistance_read_only",
+              "Delegated graph depth is at most 3",
+            );
+          if (operation === "source_range" && repo.assistance.isInputSource(space, String(args.id)))
+            throw new MemoryError(
+              400,
+              "request_is_not_evidence",
+              "Assistance instructions are not evidence",
+            );
+          repo.assistance.chargeRead(actor, id, body.lease_token);
+        },
+        excludeAssistanceRequests: true,
+      });
+      break;
     case "search":
       result = await service.search(
         principal,

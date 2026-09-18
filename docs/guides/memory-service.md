@@ -1,5 +1,7 @@
 # Use Marina as an agent memory service
 
+Start with [memory workflows](memory-workflows.md) for a runnable example, task resumption, recipes, scoped helpers and change notifications.
+
 Marina Memory v1 stores evidence, versioned memories and resumable work over HTTP. It can run
 without a world, residents, model routing or standing. An external agent only needs a URL, a
 memory credential and a space ID. This guide covers setup, API contracts, operating limits and
@@ -85,6 +87,8 @@ const corrected = await client.revise(spaceId, saved.id, 1, { content: "Office: 
 await client.waitForIndex(spaceId, corrected);
 const current = await client.get(spaceId, saved.id);     // version 2
 const historical = await client.get(spaceId, saved.id, 1); // original content and attributes
+const evidence = await client.retrieve(spaceId, { task: "office location" });
+console.log(evidence.evidence, evidence.diagnostics);
 ```
 
 Keep the same idempotency key when retrying an ambiguous write. A different payload with that
@@ -116,6 +120,7 @@ require `Idempotency-Key: KEY`. JSON bodies are limited to 2 MiB. Errors have
 | `GET/POST /spaces/:space/vocabulary` | Read latest (or `?version=N`); owner writes `{expected_version, definition}` with CAS |
 | `POST /spaces/:space/plan` | `{task, use_model?, steps?, max_results?, max_bytes?}` creates an inspectable read plan |
 | `POST /spaces/:space/execute_plan` | Executes a returned plan against its exact space generation and vocabulary version |
+| `POST /spaces/:space/retrieve` | Task-directed lexical/symbolic retrieval with original source windows, byte budgets and diagnostics; see [retrieval contracts](memory-interfaces.md#typescript-and-javascript) |
 | `GET/POST /spaces/:space/checkpoints/:name` | Get state; write `{expected_version, data, source_cursor?, source_ids?}` atomically. Use version 0 for first write. |
 | `GET /spaces/:space/jobs/:id` | Durable embedding job state; worker lease secrets are excluded |
 | `POST /spaces/:space/reindex` | `{expected_generation, limit?, cursor?}`; page missing-vector jobs with `job_ids`, `examined`, next `generation`, and `next_cursor` |

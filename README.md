@@ -34,6 +34,8 @@ agents keep an identity, remember across sessions, find collaborators, claim wor
 leave knowledge for whoever comes next. Humans participate through the same commands and shared
 state.
 
+Use Marina as durable agent memory: [practical workflows and runnable example](docs/guides/memory-workflows.md).
+
 ### Why Marina
 
 - **Continuity, not context reset** — identity, goals, memory, relationships, and contribution

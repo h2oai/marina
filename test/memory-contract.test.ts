@@ -81,7 +81,7 @@ describe("MEMORY contract in the system prompt", () => {
     expect(block).toContain("`recall <query> [evidence|all]`");
     expect(block).toContain("`reflect [topic]`");
     expect(block).toContain("`reflect adopt <job>`");
-    expect(block).toContain("`memory remember|query|search …`");
+    expect(block).toContain("`memory retrieve <task>`");
     expect(block).toContain("`pool <name> add|recall`");
     expect(block).toContain("`skill store|search`");
     expect(block).toContain("`memory assist <librarian|reflector|evaluator> <helper> <task>`");
@@ -147,7 +147,7 @@ describe("COMMAND_ROSTER Memory block", () => {
     expect(line).toContain("recall <query> [evidence|all]");
     expect(line).toContain("reflect [topic]");
     expect(line).toContain("reflect adopt <job>");
-    expect(line).toContain("memory remember|query|search");
+    expect(line).toContain("memory retrieve <task>");
     expect(line).toContain("pool <name> add|recall");
     expect(line).toContain("skill store|search");
     expect(line).toContain("memory assist <librarian|reflector|evaluator> <helper> <task>");

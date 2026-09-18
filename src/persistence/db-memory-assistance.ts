@@ -387,6 +387,12 @@ export function memoryAssistanceRepository(db: Database) {
         return { actor: delegator(job), space: job.space_id };
       })();
     },
+    checkRead(actor: MemoryActor, id: string, token: unknown) {
+      leased(actor, id, token);
+    },
+    chargeRead(actor: MemoryActor, id: string, token: unknown) {
+      return db.transaction(() => charge(leased(actor, id, token)))();
+    },
     witness(actor: MemoryActor, id: string, token: unknown, response: unknown) {
       return db.transaction(() => {
         const job = leased(actor, id, token);

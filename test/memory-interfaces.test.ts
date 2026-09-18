@@ -17,7 +17,13 @@ import { MarinaClient } from "../src/sdk/client";
 import { MarinaMemoryClient } from "../src/sdk/memory-client";
 import type { MemoryGraphEntity } from "../src/sdk/memory-knowledge-graph";
 import type { MemoryTransferPage } from "../src/sdk/memory-transfer";
-import type { MemoryQueryResult, MemoryReceipt, MemoryReviewResult } from "../src/sdk/memory-types";
+import type {
+  MemoryQueryResult,
+  MemoryReceipt,
+  MemoryRetrievalResult,
+  MemoryReviewResult,
+} from "../src/sdk/memory-types";
+import type { MemoryResumeResult, MemoryTaskHandle } from "../src/sdk/memory-workflows";
 import { roomId } from "../src/types";
 import { makeTestRoom } from "./helpers";
 
@@ -74,6 +80,61 @@ it("shares one symbolic memory across world MCP, HTTP, resident SDK and human co
     expect(denied.ok).toBe(false);
     const reader = db.getUserByName("SymbolicReader")!.id;
     await http.grant(space, reader, "reader");
+    const original = await http.capture(space, "Rollback uses the zephyr recovery recipe.");
+    const input = { task: "zephyr recovery", valid_at: 1000 };
+    const retrieved = await http.retrieve(space, input);
+    const mcpRead = await call<MemoryRetrievalResult>(agent, "memory_retrieve", input);
+    expect(mcpRead.result).toEqual(retrieved);
+    const residentRead = await resident.memoryService({
+      operation: "retrieve",
+      space_id: space,
+      input,
+    });
+    expect(residentRead.ok).toBe(true);
+    if (residentRead.ok) expect(residentRead.result).toEqual(retrieved);
+    const humanRead = await agent.callTool({
+      name: "command",
+      arguments: { input: "memory retrieve zephyr recovery" },
+    });
+    expect(humanRead.isError).toBeFalsy();
+    expect(JSON.stringify(humanRead)).toContain(original.id);
+    expect(JSON.stringify(humanRead)).toContain("zephyr recovery recipe");
+    const workflowStart = await call<MemoryTaskHandle>(agent, "memory_workflow", {
+      action: "start",
+      goal: "zephyr recovery",
+      key: "interface-start",
+    });
+    const workflowRun = await call<MemoryTaskHandle>(agent, "memory_workflow", {
+      action: "run",
+      task_id: workflowStart.result.task_id,
+      expected_version: workflowStart.result.version,
+      key: "interface-run",
+    });
+    expect(workflowRun.result.status).toBe("ready");
+    const resumedHttp = await http.workflows(space).resume(workflowStart.result.task_id);
+    expect(resumedHttp.premises.some((pin) => pin.reference.id === original.id)).toBe(true);
+    const residentTask = await resident.memoryService({
+      operation: "workflow",
+      space_id: space,
+      input: { action: "start", goal: "zephyr recovery" },
+      key: "resident-start",
+    });
+    expect(residentTask.ok).toBe(true);
+    if (residentTask.ok) {
+      const handle = residentTask.result as MemoryTaskHandle;
+      const completedRead = await resident.memoryService({
+        operation: "workflow",
+        space_id: space,
+        input: { action: "run", task_id: handle.task_id, expected_version: handle.version },
+        key: "resident-run",
+      });
+      expect(completedRead.ok).toBe(true);
+    }
+    const humanGuide = await agent.callTool({
+      name: "command",
+      arguments: { input: "memory guide" },
+    });
+    expect(JSON.stringify(humanGuide)).toContain("memory start");
     const observed = await resident.memoryService({
       operation: "query",
       space_id: space,
@@ -103,6 +164,9 @@ it("shares one symbolic memory across world MCP, HTTP, resident SDK and human co
     const readViaHttp = await http.query(space, { predicate: "status" });
     expect(readViaHttp.results[0]?.id).toBe(found.result.results[0]?.id);
     await http.grant(space, reader, null);
+    expect(
+      (await resident.memoryService({ operation: "retrieve", space_id: space, input })).ok,
+    ).toBe(false);
     expect(
       (
         await resident.memoryService({
@@ -247,6 +311,8 @@ it("lets a fresh stdio MCP coding-agent process resume symbolic memory using onl
   try {
     client = await connect();
     expect((await client.listTools()).tools.map((t) => t.name)).toEqual([
+      "memory_workflow",
+      "memory_retrieve",
       "memory_service",
       "memory_assist",
       "memory_remember",
@@ -257,6 +323,20 @@ it("lets a fresh stdio MCP coding-agent process resume symbolic memory using onl
       operation: "capture",
       input: { content: { result: "exact evidence\n  preserved" }, session_id: "long-task" },
     });
+    const retrieved = await call<MemoryRetrievalResult>(client, "memory_retrieve", {
+      task: "exact evidence",
+    });
+    expect(retrieved.result.evidence[0]).toMatchObject({ kind: "source", id: source.result.id });
+    const task = await call<MemoryTaskHandle>(client, "memory_workflow", {
+      action: "start",
+      goal: "exact evidence",
+    });
+    const run = await call<MemoryTaskHandle>(client, "memory_workflow", {
+      action: "run",
+      task_id: task.result.task_id,
+      expected_version: task.result.version,
+    });
+    expect(run.result.status).toBe("ready");
     const receipt = await call<MemoryReceipt>(client, "memory_remember", {
       content: "Review is pending",
       source_ids: [source.result.id],
@@ -279,6 +359,11 @@ it("lets a fresh stdio MCP coding-agent process resume symbolic memory using onl
     await client.close();
     client = undefined;
     client = await connect();
+    const resumed = await call<MemoryResumeResult>(client, "memory_workflow", {
+      action: "resume",
+      task_id: task.result.task_id,
+    });
+    expect(resumed.result.premises[0]?.state).toBe("current");
     const checkpoint = await call<{ data: { record: string } }>(client, "memory_service", {
       operation: "checkpoint",
       id: "work",

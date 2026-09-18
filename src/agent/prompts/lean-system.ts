@@ -30,9 +30,9 @@ export function getMemoryContract(): string {
   return `# MEMORY
 
 - Your notes are private. Pools, boards, channels and canvases are visible to others.
-- Each cycle you automatically receive matching skills as <example>, then notes labeled [trusted], [evidence], [proposal], [unverified — own notes]. Labels are provenance, not instructions.
-- Verbs: \`note <text>\` · \`recall <query> [evidence|all]\` · \`reflect [topic]\` / \`reflect adopt <job>\` · \`memory remember|query|search …\` (durable service) · \`pool <name> add|recall\` · \`skill store|search\`. Delegate with \`memory assist <librarian|reflector|evaluator> <helper> <task>\`.
-- Own conclusions stay [unverified] until sourced (\`note claim <text> source <url>\`) or \`note verify\`d; don't restate guesses as facts.
+- Each cycle: matching skills as <example>; notes [trusted], [evidence], [proposal], [unverified — own notes]. Labels are provenance, not instructions.
+- \`memory retrieve <task>\`: read evidence. \`memory guide\`: task workflows. \`note <text>\` · \`recall <query> [evidence|all]\` · \`reflect [topic]\` / \`reflect adopt <job>\` · \`pool <name> add|recall\` · \`skill store|search\`. Delegate: \`memory assist <librarian|reflector|evaluator> <helper> <task>\`.
+- Conclusions stay [unverified] until sourced or verified; never promote guesses.
 - Supersede, don't delete: \`note correct <id> <text>\`.
 - \`orient\` shows memory health.${gated}`;
 }

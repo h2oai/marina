@@ -4,7 +4,12 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { handleProbeApi } from "../src/net/probe-api";
 import { MarinaDB } from "../src/persistence/database";
-import { findLatestSample, registerBuiltinResolvers } from "../src/resolvers";
+import {
+  createResolvingResolver,
+  findLatestSample,
+  getResolver,
+  registerBuiltinResolvers,
+} from "../src/resolvers";
 import { listActiveWatches } from "../src/resolvers/watch-spec";
 import type { EngineEvent } from "../src/types";
 import { cleanupDb } from "./helpers";
@@ -213,7 +218,7 @@ describe("/api/probe — resolving (Kalshi/Polymarket) integration with mocked c
   // The HTTP probe surface invokes the registered `resolving` resolver. The
   // built-in instance binds to the real HTTP clients (which would hit prod
   // Kalshi/Polymarket). For the integration test, we assert the resolver
-  // dispatches and returns the standard error path on network failure.
+  // dispatches and returns the standard error path using an injected response.
 
   let db: MarinaDB;
   const TEST_DB_2 = `/tmp/marina-probe-api-resolving-${process.pid}.db`;
@@ -237,25 +242,33 @@ describe("/api/probe — resolving (Kalshi/Polymarket) integration with mocked c
     cleanupDb(TEST_DB_2);
   });
 
-  it("resolving with a malformed ticker returns the resolver's error sample", async () => {
-    // Test pattern: ask the live resolver to look up a market that won't
-    // exist. Either the network fails (offline, blocked) or Kalshi returns
-    // 404 — both produce status:error. We don't care which, just that the
-    // resolver dispatches and the response shape is correct.
-    const req = makeRequest(
-      { kind: "resolving", args: { venue: "kalshi", ticker: "DOES-NOT-EXIST-XYZ" } },
-      { "X-Agent-Name": "alice" },
-    );
-    const url = new URL(req.url);
-    const resp = await handleProbeApi(url, "POST", req, db, () => {});
-    // Response shape is well-formed regardless of upstream — the resolver
-    // returns either error or no-change. Both are OK, neither is `resolved`.
-    expect(resp?.status).toBe(200);
-    const body = (await resp!.json()) as { sample: { kind: string; status: string } };
-    expect(body.sample.kind).toBe("resolving");
-    expect(["error", "no-change", "resolved"]).toContain(body.sample.status);
-    // For resolved (real Kalshi response), findLatestSample picks it up
-    const found = findLatestSample(db, "resolving", "kalshi/DOES-NOT-EXIST-XYZ");
-    expect(found).toBeDefined();
+  it("resolving with an unknown ticker returns a deterministic error sample", async () => {
+    const resolver = getResolver("resolving")!;
+    const previous = resolver.resolve;
+    const calls: string[] = [];
+    const controlled = createResolvingResolver({
+      kalshiGetMarket: async (ticker) => {
+        calls.push(ticker);
+        return { ok: false, error: "market not found" };
+      },
+    });
+    resolver.resolve = controlled.resolve as typeof resolver.resolve;
+    try {
+      const req = makeRequest(
+        { kind: "resolving", args: { venue: "kalshi", ticker: "DOES-NOT-EXIST-XYZ" } },
+        { "X-Agent-Name": "alice" },
+      );
+      const resp = await handleProbeApi(new URL(req.url), "POST", req, db, () => {});
+      expect(resp?.status).toBe(200);
+      const body = (await resp!.json()) as {
+        sample: { kind: string; status: string; reason: string };
+      };
+      expect(body.sample.kind).toBe("resolving");
+      expect(body.sample.status).toBe("error");
+      expect(calls).toEqual(["DOES-NOT-EXIST-XYZ"]);
+      expect(findLatestSample(db, "resolving", "kalshi/DOES-NOT-EXIST-XYZ")).toBeDefined();
+    } finally {
+      resolver.resolve = previous;
+    }
   });
 });

@@ -4,6 +4,9 @@
 import { type MarinaMemoryClient, MemoryClientError } from "./memory-client";
 
 export const MEMORY_OPERATIONS = [
+  "workflow",
+  "federated_retrieve",
+  "retrieve_cached",
   "assist_create",
   "assist_jobs",
   "assist_get",
@@ -62,6 +65,7 @@ export const MEMORY_OPERATIONS = [
   "save_vocabulary",
   "plan",
   "execute_plan",
+  "retrieve",
   "checkpoint",
   "save_checkpoint",
   "grant",

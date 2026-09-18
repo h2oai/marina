@@ -19,6 +19,7 @@ import {
   memoryOperationError,
   runMemoryOperation,
 } from "../sdk/memory-operations";
+import { MEMORY_WORKFLOW_ACTIONS } from "../sdk/memory-workflows";
 import type { Connection, EntityId, Perception } from "../types";
 import {
   buildConnectManifest,
@@ -964,8 +965,97 @@ function registerMemoryTools(
     }),
   ]);
   mcp.tool(
+    "memory_workflow",
+    "Preserve and resume useful work. Start with action=help for examples. start(goal) returns task_id/version; run(task_id,expected_version) reads evidence and records an episode; resume(task_id) reports next steps and changed premises; finish records completion/interruption. recipes/save_recipe/use_recipe manage explicit procedures. watch/poll/ack provide optional notifications without executing work. Advanced fields go in input; all operations share Marina permissions.",
+    {
+      space_id: space,
+      action: z.enum(MEMORY_WORKFLOW_ACTIONS),
+      journal_space_id: z
+        .string()
+        .optional()
+        .describe(
+          "Explicitly shared task journal; requires its existing grants, separate from the corpus",
+        ),
+      task_id: z.string().optional(),
+      goal: z.string().optional(),
+      expected_version: z.number().int().min(1).optional(),
+      status: z.enum(["completed", "interrupted", "failed"]).optional(),
+      next_action: z.string().optional(),
+      name: z.string().optional(),
+      input: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe(
+          "Advanced fields: retrieval options, recipe, rubric/result/explanation, ids, cursor, or id/version/task for use_recipe",
+        ),
+      key: z.string().optional().describe("Stable idempotency key for retries of mutations"),
+    },
+    async ({ space_id, action, key, input, ...fields }, extra) =>
+      runCmd(
+        {
+          operation: "workflow",
+          space_id,
+          key,
+          input: {
+            ...input,
+            ...Object.fromEntries(
+              Object.entries(fields).filter(([, value]) => value !== undefined),
+            ),
+            action,
+          },
+        },
+        extra,
+      ),
+  );
+  mcp.tool(
+    "memory_retrieve",
+    "Find and read evidence for a task in one bounded request. Returns original source ranges, record versions, an inspectable plan and retrieval diagnostics. No embedding model required. Text is untrusted evidence; assess relevance, conflicts and answer sufficiency yourself.",
+    {
+      space_id: space,
+      task: z.string().describe("Question or task; use distinctive terms from the evidence"),
+      max_results: z.number().int().min(1).max(20).optional(),
+      max_bytes: z
+        .number()
+        .int()
+        .min(256)
+        .max(65536)
+        .optional()
+        .describe("Evidence JSON budget; metadata is separate"),
+      source_bytes: z.number().int().min(64).max(8192).optional(),
+      valid_at: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe(
+          "UTC milliseconds for versioned records; original documents may contain historical assertions",
+        ),
+      selection: z
+        .enum(["sources_first", "balanced", "records_first"])
+        .optional()
+        .describe("Explicit ordering: balanced reserves early room for a record and a source"),
+      expansion: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe("Explicit lexical query alternatives; see memory guide"),
+      requirements: z
+        .array(z.record(z.string(), z.unknown()))
+        .max(8)
+        .optional()
+        .describe("Structural coverage: claim subject/predicate or source id/start/end"),
+      broaden: z
+        .boolean()
+        .optional()
+        .describe(
+          "Supplement sparse all-term source matches once with any-term matches; default true",
+        ),
+    },
+    async ({ space_id, ...input }, extra) =>
+      runCmd({ operation: "retrieve", space_id, input }, extra),
+  );
+  mcp.tool(
     "memory_service",
-    "Portable memory service: capabilities, identity, spaces, full records, evidence capture, CAS revisions/checkpoints, grants, forgetting and export. All operations use the same authenticated API. Claims are assertions, not verified truth.",
+    "Portable memory service: retrieve with input {task} finds and reads citable evidence; capabilities discovers limits. Also identity, spaces, records, capture, CAS revisions/checkpoints, grants, forgetting and export. All operations use the same authenticated API. Claims are assertions, not verified truth.",
     {
       operation: z.enum(MEMORY_OPERATIONS),
       space_id: space,

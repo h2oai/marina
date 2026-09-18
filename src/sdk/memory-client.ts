@@ -19,12 +19,15 @@ import type {
   MemoryAdoptInput,
   MemoryAdoptResult,
   MemoryBundle,
+  MemoryCachedRetrievalInput,
+  MemoryCachedRetrievalResult,
   MemoryCacheInput,
   MemoryCacheResult,
   MemoryCacheWrite,
   MemoryCheckpoint,
   MemoryFederatedRead,
   MemoryFederatedResult,
+  MemoryFederatedRetrievalResult,
   MemoryFederatedSearch,
   MemoryGraphQuery,
   MemoryGraphResult,
@@ -39,6 +42,8 @@ import type {
   MemoryRecordInput,
   MemoryResolveInput,
   MemoryResolveResult,
+  MemoryRetrievalInput,
+  MemoryRetrievalResult,
   MemoryReviewResult,
   MemorySearchInput,
   MemorySearchResult,
@@ -51,6 +56,7 @@ import type {
   MemoryVocabulary,
   MemoryVocabularyDefinition,
 } from "./memory-types";
+import { MarinaMemoryWorkflows } from "./memory-workflows";
 
 export class MemoryClientError extends Error {
   constructor(
@@ -65,6 +71,29 @@ export class MemoryClientError extends Error {
 
 /** Fetch-only client. It never opens a DB, joins a world, or invokes a model. */
 export class MarinaMemoryClient {
+  federatedRetrieve(
+    space: string,
+    mounts: string[],
+    retrieval: MemoryRetrievalInput,
+    allow_partial = false,
+  ) {
+    return this.request<MemoryFederatedRetrievalResult>(
+      this.path(space, "/federated_retrieve"),
+      "POST",
+      { mounts, retrieval, allow_partial },
+    );
+  }
+  retrieveCached(space: string, input: MemoryCachedRetrievalInput, key?: string) {
+    return this.request<MemoryCachedRetrievalResult>(
+      this.path(space, "/retrieve_cached"),
+      "POST",
+      input,
+      key,
+    );
+  }
+  workflows(space: string, journalSpace?: string) {
+    return MarinaMemoryWorkflows.http(this, space, journalSpace);
+  }
   constructor(
     readonly url: string,
     private token: string,
@@ -485,6 +514,10 @@ export class MarinaMemoryClient {
   }
   executePlan(space: string, plan: MemoryPlan) {
     return this.request<MemoryPlanResult>(this.path(space, "/execute_plan"), "POST", plan);
+  }
+  /** Find and read citable evidence in one bounded request; never generates an answer. */
+  retrieve(space: string, input: MemoryRetrievalInput) {
+    return this.request<MemoryRetrievalResult>(this.path(space, "/retrieve"), "POST", input);
   }
   saveVocabulary(
     space: string,

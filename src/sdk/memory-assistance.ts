@@ -56,6 +56,7 @@ export interface MemoryAssistancePage {
   next_cursor: string | null;
 }
 export const MEMORY_ASSISTANCE_READS = [
+  "retrieve",
   "search",
   "query",
   "graph",
@@ -77,7 +78,7 @@ export const MEMORY_ASSISTANCE_CONTRACT: MemoryAnswerContract = {
 
 export const MEMORY_HELPER_INSTRUCTIONS: Record<MemoryHelperRole, string> = {
   librarian:
-    "Find evidence relevant to the requested task. Try alternative vocabulary and explicit relationships when lexical search misses. Read original source ranges. Return an evidence packet with what is known, conflicts, applicability, and remaining uncertainty. Do not invent a fact or treat a search miss as proof of absence.",
+    'Find evidence relevant to the requested task. Start with retrieve input {task,selection:"balanced"} for citable evidence; its underlying reads consume the shared budget. Try alternative vocabulary and explicit relationships when lexical search misses. Read original source ranges. Return an evidence packet with what is known, conflicts, applicability, and remaining uncertainty. Do not invent a fact or treat a search miss as proof of absence.',
   reflector:
     "Compare the attempted work with observed outcomes. Propose one small reusable lesson with prerequisites, exceptions, and a way to test it. Preserve distinctions between observations and inference. Read the original evidence; repeated assertions are not independent corroboration. If no observed outcome supports a lesson, abstain. Your result is a proposal, not permission to rewrite or delete memories.",
   evaluator:

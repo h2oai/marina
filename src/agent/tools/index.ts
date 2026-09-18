@@ -90,7 +90,7 @@ const commandSchema = Type.Object({
 export const COMMAND_ROSTER = `Common world commands:
 World: look [target], goto <room>, examine <thing>, who, inventory.
 Talk: say <msg>, tell <name> <msg>, channel send <name> <msg>, channel list.
-Memory: note <text>, recall <query> [evidence|all], reflect [topic], reflect adopt <job>, memory remember|query|search <…> (durable service; memory api <JSON> for the rest), memory assist <librarian|reflector|evaluator> <helper> <task>, memory jobs, pool <name> add|recall <…>, skill store|search <…>, note correct <id> <text> (supersede, don't delete), orient (memory health).
+Memory: memory guide (workflow examples), memory start <goal>, memory resume <task ID>, memory retrieve <task> (citable evidence; check diagnostics), note <text>, recall <query> [evidence|all], reflect [topic], reflect adopt <job>, memory api <JSON>, memory assist <librarian|reflector|evaluator> <helper> <task>, memory jobs, pool <name> add|recall <…>, skill store|search <…>, note correct <id> <text> (supersede, don't delete), orient (memory health).
 Self: brief, brief full, focus set <desc>, focus clear, task goal <title> | <desc>, task progress <id> +N, novelty stats, novelty suggest.
 Becoming: standing (your ledger + every gate's path), witness (earn gated capabilities through supervised demonstrations), desire <one sentence> (begin an evidence-linked journey), journey progress.
 Coordination: project list, canvas intent list, canvas intent claim <id>, canvas intent complete <id> <result>, feed list [--kind X --since 30m].
@@ -1893,7 +1893,7 @@ export function createMemoryServiceTool(ctx: ToolContext): AgentTool<typeof memo
     name: "marina_memory_service",
     label: "Portable Memory Service",
     description:
-      'Durable private/shared memory, evidence and checkpoints. Start with capabilities or query (input: {}). Exact symbolic query accepts subject, predicate and typed object. remember accepts content and optional claim: {subject,predicate,object:{kind:"entity",id} or {kind:"literal",value}}. graph follows asserted relations with record citations. No embeddings required. Omit space_id for your private space. Use save_checkpoint with id, expected_version, source_cursor and data to resume long tasks. Prefer this service for portable memory; claims are assertions, not verified truth.',
+      'Durable private/shared memory, evidence and checkpoints. workflow input {action:"help"} teaches start/run/finish/resume, recipes and watches. Start with retrieve (input: {task:"your question"}) to find and read citable evidence in one bounded request; inspect diagnostics and relevance before answering. capabilities discovers limits; query (input: {}) lists records. Exact symbolic query accepts subject, predicate and typed object. remember accepts content and optional claim: {subject,predicate,object:{kind:"entity",id} or {kind:"literal",value}}. graph follows asserted relations with record citations. No embeddings required. Omit space_id for your private space. Use save_checkpoint with id, expected_version, source_cursor and data to resume long tasks. Claims are assertions, not verified truth.',
     parameters: memoryServiceSchema,
     execute: async (_id, request) => {
       const result = await ctx.client.memoryService(request);

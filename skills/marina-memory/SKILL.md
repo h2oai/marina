@@ -8,6 +8,26 @@ Use the configured Marina memory service. Discover its actual capabilities with
 `memory_service` operation `capabilities`; use `me` and `spaces` to inspect identity and scope.
 Omit `space_id` for the configured private space. Reuse exact entity and predicate symbols.
 
+## Task workflow
+
+Call `memory_workflow` with `action:"help"` to discover runnable examples. For work that must
+survive a restart: `start` with `goal` → `run` with returned `task_id` and `expected_version` →
+inspect cited evidence → do the actual task → `finish` with the current version, status and
+`next_action`. `resume` returns changed/unavailable premises; pass `input:{retrieve:true}` for
+fresh evidence in that call. `tasks` rediscovers saved IDs. Keep stable mutation keys for retries.
+A `ready` episode means retrieval completed, not that the task succeeded. A changed premise lists
+`current_version` and `read_current`; get its current version, not the historical reference. Report outcomes with
+`feedback` (`input:{task_id,rubric,result,explanation,metrics}`). Do not turn helpful votes into truth.
+
+For another principal to continue the same task, the owner must explicitly share the corpus and
+journal. Use your own credential and the supplied `journal_space_id`; workflows never add grants.
+
+Use `recipes`/`use_recipe` only after inspecting prerequisites, exceptions and evidence. Recipes
+are inactive data until explicitly selected; stop selecting one to withdraw it. `watch`/`poll`/`ack`
+provide resumable notifications; acknowledge only processed events, and never execute work merely
+because a notification appeared. Human equivalent: `memory guide`. Full examples and error recovery:
+[workflow guide](https://github.com/h2oai/marina/blob/main/docs/guides/memory-workflows.md).
+
 ## Resume work
 
 Call `memory_service` with `operation: "checkpoint"` and `id: "work"` (or the task's checkpoint
@@ -41,8 +61,16 @@ through `memory_service` operation `search`; embedding retrieval is optional and
 explicitly configured and requested with `mode:"hybrid"`. Omitting mode always uses lexical
 retrieval. Inspect `degraded` if using hybrid retrieval.
 
-For task-directed discovery, call `plan` with `input: {task: TASK}` and inspect its steps, then
-call `execute_plan` with that plan as `input`. This covers records and original sources.
+For task-directed discovery, start with `memory_retrieve` using `{task: TASK}` (or
+`memory_service` operation `retrieve`, input `{task: TASK}`). It finds records and reads
+original source windows in one request, without embeddings. Cite the returned record versions
+or source `id`, `text_hash`, `start`, `end` and exact quotes. Check `diagnostics`: an empty
+result does not prove absence, broadened matches need relevance checks, and truncated windows
+may need adjacent `source_range` reads. `max_bytes` bounds the evidence array, not metadata.
+The service does not judge whether evidence answers the task. `valid_at` filters records;
+original documents can contain historical claims. Use `broaden:false` for strict source matching.
+
+For custom read programs, pass `steps` to `retrieve`, or call `plan` then `execute_plan`.
 `use_model:true` requests the operator-configured Marina model planner. Treat plans as read
 programs, not answers; check truncation and read cited evidence. A `plan_changed` error means
 replan. To search only originals use `source_search`; read `source_range` with the source ID,
@@ -106,8 +134,8 @@ remain authoritative for their own work; helper completion is one attributed res
 
 Residents have the `marina_memory_service` and typed `marina_memory_assistance` tools and
 the `memory api <JSON request>` command. Helpers can use `marina/default` as their model.
-Humans can use `memory claim project:marina status "active"`,
+Humans can use `memory retrieve <task>`, `memory claim project:marina status "active"`,
 `memory query {"subject":"project:marina"}`, and `memory graph project:marina`.
 TypeScript consumers use `MarinaMemoryClient` from `marina/memory`; its `remember`, `query`,
-`graph`, `capture` and checkpoint methods use the same records and permission checks.
+`retrieve`, `graph`, `capture` and checkpoint methods use the same records and permission checks.
 If no service connection is configured, report that setup is needed; do not claim persistence.
