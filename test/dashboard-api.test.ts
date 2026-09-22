@@ -49,11 +49,22 @@ describe("dashboard-api HTTP authorization hardening", () => {
   function jsonReq(
     path: string,
     method: string,
-    opts?: { token?: string; desktopToken?: string; body?: unknown },
+    opts?: {
+      token?: string;
+      desktopToken?: string;
+      body?: unknown;
+      contentType?: string | null;
+      origin?: string;
+      host?: string;
+    },
   ): [Request, URL, string] {
     const url = new URL(`http://localhost:3300${path}`);
     const headers: Record<string, string> = {};
-    if (opts?.body !== undefined) headers["Content-Type"] = "application/json";
+    if (opts?.body !== undefined && opts.contentType !== null) {
+      headers["Content-Type"] = opts?.contentType ?? "application/json";
+    }
+    if (opts?.origin) headers.Origin = opts.origin;
+    if (opts?.host) headers.Host = opts.host;
     if (opts?.token) headers.Authorization = `Bearer ${opts.token}`;
     if (opts?.desktopToken) headers["X-Marina-Desktop-Token"] = opts.desktopToken;
     const req = new Request(url.toString(), {
@@ -85,6 +96,66 @@ describe("dashboard-api HTTP authorization hardening", () => {
     expect(resp?.status).toBe(200);
     const body = (await resp!.json()) as Record<string, unknown>;
     expect(body.token).toBeUndefined();
+  });
+
+  // ─── CSRF fences on the pre-auth POST ingress ───────────────────────────────
+
+  it("refuses /api/command and /api/ask without an application/json Content-Type (415)", async () => {
+    for (const [path, body] of [
+      ["/api/command", { name: "Csrf", command: "look" }],
+      ["/api/ask", { name: "Csrf", query: "hello" }],
+    ] as const) {
+      const [noType, url1, m1] = jsonReq(path, "POST", { body, contentType: null });
+      const r1 = await handleDashboardApi(noType, url1, m1, engine, db);
+      expect(r1?.status).toBe(415);
+      expect(((await r1!.json()) as { error: string }).error).toContain("application/json");
+
+      // A cross-site HTML form can only send text/plain — refused.
+      const [plain, url2, m2] = jsonReq(path, "POST", { body, contentType: "text/plain" });
+      expect((await handleDashboardApi(plain, url2, m2, engine, db))?.status).toBe(415);
+    }
+    // Charset suffix still counts as JSON.
+    const [ok, url3, m3] = jsonReq("/api/command", "POST", {
+      body: { name: "CsrfOk", command: "look" },
+      contentType: "application/json; charset=utf-8",
+    });
+    expect((await handleDashboardApi(ok, url3, m3, engine, db))?.status).toBe(200);
+  });
+
+  it("refuses a pre-auth POST from a foreign browser Origin (403), allows same-origin", async () => {
+    const [evil, url1, m1] = jsonReq("/api/command", "POST", {
+      body: { name: "CsrfEvil", command: "look" },
+      origin: "https://evil.example",
+      host: "localhost:3300",
+    });
+    const r1 = await handleDashboardApi(evil, url1, m1, engine, db);
+    expect(r1?.status).toBe(403);
+    expect(((await r1!.json()) as { error: string }).error).toContain("origin");
+    // No entity was minted for the refused request.
+    expect(engine.entities.all().some((e) => e.name === "CsrfEvil")).toBe(false);
+
+    const [same, url2, m2] = jsonReq("/api/ask", "POST", {
+      body: { name: "CsrfSame", query: "hello" },
+      origin: "http://localhost:3300",
+      host: "localhost:3300",
+    });
+    expect((await handleDashboardApi(same, url2, m2, engine, db))?.status).toBe(200);
+  });
+
+  it("trusts a loopback dev-server Origin only when the listener binds loopback", async () => {
+    const mk = () =>
+      jsonReq("/api/command", "POST", {
+        body: { name: "CsrfDev", command: "look" },
+        origin: "http://localhost:5173",
+        host: "localhost:3300",
+      });
+    const [a, urlA, mA] = mk();
+    expect((await handleDashboardApi(a, urlA, mA, engine, db))?.status).toBe(403);
+    const [b, urlB, mB] = mk();
+    expect(
+      (await handleDashboardApi(b, urlB, mB, engine, db, undefined, { loopbackBind: true }))
+        ?.status,
+    ).toBe(200);
   });
 
   // ─── Finding 4: name-scoped memory reads are owner-only ────────────────────

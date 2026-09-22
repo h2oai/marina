@@ -30,7 +30,7 @@ import {
   negotiateConnectCapabilities,
   registerConnectEndpoint,
 } from "./connect-api";
-import { corsHeaders } from "./cors";
+import { corsHeaders, isTrustedBrowserOrigin } from "./cors";
 import { handleDashboardApi } from "./dashboard-api";
 import type { DashboardBroadcaster, DashboardWSData } from "./dashboard-ws";
 import { handleEntityApi } from "./entity-api";
@@ -256,6 +256,9 @@ export class WebSocketServer {
     const self = this;
 
     const bindHostname = resolveWsBindHostname();
+    // Loopback-only listener ⇒ loopback browser origins on any port are trusted
+    // (dashboard dev server); shared with the pre-auth POST ingress below.
+    const loopbackBind = isLoopbackHostname(bindHostname);
 
     this.server = Bun.serve<WSData>({
       port: this.port,
@@ -284,6 +287,16 @@ export class WebSocketServer {
           url.pathname === "/canvas-ws";
 
         if (isWsUpgrade) {
+          // Browser Origin gate (all three upgrade paths). A page on another site
+          // must not be able to open ws://127.0.0.1:<port>/ws and log in as a
+          // loopback principal (sovereign under the `local` profile). Non-browser
+          // clients send no Origin and pass; see `isTrustedBrowserOrigin`.
+          const origin = req.headers.get("Origin");
+          if (!isTrustedBrowserOrigin(origin, req.headers.get("Host"), { loopbackBind })) {
+            console.warn(`[ws] Rejected ${url.pathname} upgrade from untrusted origin ${origin}`);
+            return new Response("Forbidden origin", { status: 403 });
+          }
+
           // Real, unspoofable TCP peer address — the ONLY value usable as an exec/loopback
           // trust anchor. Never mix header values into this.
           const peerIp = server.requestIP(req)?.address;
@@ -475,7 +488,9 @@ export class WebSocketServer {
           // the zero-config desktop reader on per-entity canvas routes (never
           // header-derived). Mirrors the canvas API above.
           const dashPeerIp = server.requestIP(req)?.address;
-          return handleDashboardApi(req, url, req.method, engine, self.db, dashPeerIp);
+          return handleDashboardApi(req, url, req.method, engine, self.db, dashPeerIp, {
+            loopbackBind,
+          });
         }
 
         // Health check

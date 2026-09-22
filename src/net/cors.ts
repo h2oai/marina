@@ -7,8 +7,8 @@
 // Access-Control-Allow-Origin header.  When unset, NO ACAO header is emitted —
 // same-origin requests work fine, cross-origin requests are blocked.
 
-function getAllowedOrigins(): Set<string> | null {
-  const raw = process.env.ALLOWED_ORIGINS;
+export function getAllowedOrigins(env: NodeJS.ProcessEnv = process.env): Set<string> | null {
+  const raw = env.ALLOWED_ORIGINS;
   if (!raw) return null;
   const origins = raw
     .split(",")
@@ -43,4 +43,74 @@ export function corsHeaders(
   }
 
   return result;
+}
+
+// ─── Browser-origin trust (WebSocket upgrades + pre-auth POSTs) ─────────────
+//
+// A browser attaches `Origin` to every WebSocket handshake and cross-site POST,
+// and it cannot be forged by page script. Non-browser clients (SDKs, curl, the
+// CLI) usually send none. The rule below is shared by the `/ws`, `/dashboard-ws`
+// and `/canvas-ws` upgrade paths and by the pre-auth `/api/command` / `/api/ask`
+// ingress so a web page cannot drive a loopback (sovereign under the `local`
+// profile) principal from another site.
+
+const LOOPBACK_ORIGIN_HOSTS: ReadonlySet<string> = new Set(["localhost", "::1", "[::1]"]);
+
+/** True for a loopback HOSTNAME as `URL.hostname` reports it (`[::1]` keeps its brackets). */
+export function isLoopbackOriginHost(hostname: string): boolean {
+  const h = hostname.trim().toLowerCase();
+  return LOOPBACK_ORIGIN_HOSTS.has(h) || h.startsWith("127.");
+}
+
+export interface BrowserOriginOptions {
+  /**
+   * True when the server listens on loopback only. A loopback origin on ANY port
+   * (the dashboard dev server on 5173, a local tool) is then trusted — only the
+   * operator's own machine can reach the listener anyway.
+   */
+  loopbackBind?: boolean;
+  /** Override the `ALLOWED_ORIGINS` set (tests); `undefined` reads the env. */
+  allowedOrigins?: Set<string> | null;
+}
+
+/**
+ * Decide whether a browser-supplied `Origin` may drive a credentialed or
+ * state-changing request (a WebSocket upgrade, a pre-auth POST).
+ *
+ *   - no `Origin` header → allowed (non-browser client; the request carries no
+ *     ambient browser credentials to abuse)
+ *   - `Origin` host equals the request `Host` header → same-origin, allowed
+ *   - `Origin` listed in `ALLOWED_ORIGINS` → allowed
+ *   - `Origin` is loopback (`http(s)://localhost|127.x|[::1][:port]`) AND
+ *     `loopbackBind` → allowed
+ *   - anything else (including the opaque `null` origin) → refused
+ */
+export function isTrustedBrowserOrigin(
+  origin: string | null | undefined,
+  hostHeader: string | null | undefined,
+  opts: BrowserOriginOptions = {},
+): boolean {
+  if (origin === null || origin === undefined) return true;
+  const trimmed = origin.trim();
+  if (!trimmed || trimmed === "null") return false;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+
+  // Same-origin: compare host[:port] (URL.host omits a default port, as does a
+  // browser's Host header for default ports).
+  const host = (hostHeader ?? "").trim().toLowerCase();
+  if (host && parsed.host.toLowerCase() === host) return true;
+
+  const allowed = opts.allowedOrigins === undefined ? getAllowedOrigins() : opts.allowedOrigins;
+  if (allowed?.has(parsed.origin) || allowed?.has(trimmed)) return true;
+
+  if (opts.loopbackBind && isLoopbackOriginHost(parsed.hostname)) return true;
+
+  return false;
 }

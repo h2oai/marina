@@ -40,7 +40,7 @@ import {
 } from "./auth-middleware";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "./canvas-principal";
 import { authorizeCanvasSubscription } from "./canvas-ws";
-import { corsHeaders } from "./cors";
+import { corsHeaders, isTrustedBrowserOrigin } from "./cors";
 import {
   federationSigningAvailable,
   signFederationDocument,
@@ -129,10 +129,42 @@ interface CommandApiBody {
   render?: unknown;
 }
 
-async function readCommandBody(req: Request): Promise<CommandApiBody | { error: Response }> {
+/** Options threaded from the listener that owns the socket (see `handleDashboardApi`). */
+export interface DashboardApiOptions {
+  /** True when the server binds loopback only — loopback browser origins are then trusted. */
+  loopbackBind?: boolean;
+}
+
+/**
+ * Body reader for the PRE-AUTH command ingress (`/api/command`, `/api/ask`).
+ * Two CSRF fences before any JSON is parsed:
+ *   1. `Content-Type` must be `application/json` — a cross-site HTML form can
+ *      only send `text/plain` / urlencoded / multipart, never JSON, without a
+ *      CORS preflight (which the missing ACAO header then denies).
+ *   2. A present `Origin` must pass the same trust rule as the WebSocket
+ *      upgrade (same-origin, `ALLOWED_ORIGINS`, or loopback on a loopback bind).
+ */
+async function readCommandBody(
+  req: Request,
+  opts: DashboardApiOptions = {},
+): Promise<CommandApiBody | { error: Response }> {
   const origin = req.headers.get("Origin");
   try {
     const body = (await req.json()) as CommandApiBody;
+  const contentType = (req.headers.get("Content-Type") ?? "").trim().toLowerCase();
+  if (!contentType.startsWith("application/json")) {
+    return {
+      error: json({ error: "Content-Type must be application/json" }, 415, origin),
+    };
+  }
+  if (
+    !isTrustedBrowserOrigin(origin, req.headers.get("Host"), { loopbackBind: opts.loopbackBind })
+  ) {
+    console.warn(
+      `[dashboard-api] Rejected ${new URL(req.url).pathname} from untrusted origin ${origin}`,
+    );
+    return { error: json({ error: "Forbidden origin" }, 403, origin) };
+  }
     if (!body || typeof body !== "object") {
       return { error: json({ error: "Expected JSON object body" }, 400, origin) };
     }
@@ -324,6 +356,7 @@ export async function handleDashboardApi(
   peerIp?: string,
 ): Promise<Response | undefined> {
   // Pre-auth endpoints (no session required — used by dashboard before login)
+  opts: DashboardApiOptions = {},
   if (url.pathname === "/api/setup-status" && method === "GET") {
     const ip = extractIp(req);
     if (!setupStatusAllowed(ip)) {
@@ -350,7 +383,7 @@ export async function handleDashboardApi(
   // or reconnects as a normal entity, executes the raw world command, captures
   // perceptions, and returns the latest session token.
   if (url.pathname === "/api/command" && method === "POST") {
-    const body = await readCommandBody(req);
+    const body = await readCommandBody(req, opts);
     if ("error" in body) return body.error;
     if (typeof body.command !== "string") {
       return json({ error: "Field 'command' must be a string" }, 400, req.headers.get("Origin"));
@@ -361,7 +394,7 @@ export async function handleDashboardApi(
   // Convenience wrapper for product-shaped ask surfaces. Behavior still lives
   // in the world-native `ask` word, not in this HTTP route.
   if (url.pathname === "/api/ask" && method === "POST") {
-    const body = await readCommandBody(req);
+    const body = await readCommandBody(req, opts);
     if ("error" in body) return body.error;
     if (typeof body.query !== "string") {
       return json({ error: "Field 'query' must be a string" }, 400, req.headers.get("Origin"));
