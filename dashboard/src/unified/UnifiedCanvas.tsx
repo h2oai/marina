@@ -35,10 +35,11 @@ import "./unified-canvas.css";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nodeTypes as canvasContentNodeTypes } from "../canvas/nodes";
+import { FetchErrorNotice } from "../components/FetchErrorNotice";
 import { useSetupStatus, useSystem } from "../hooks/use-api";
 import { ensureChatWs, getChatWs, useChatState } from "../hooks/use-chat-state";
 import { parseMessage, useEntityActivity } from "../hooks/use-entity-activity";
-import { useGraphState } from "../hooks/use-graph-state";
+import { loadGraphSnapshot, useGraphState } from "../hooks/use-graph-state";
 import { useDashboardWebSocket } from "../hooks/use-websocket";
 import { useWorldState } from "../hooks/use-world-state";
 import { clearToken, setToken } from "../lib/api";
@@ -994,6 +995,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
   const graphNotes = useGraphState((s) => s.notes);
   const graphLinks = useGraphState((s) => s.links);
   const recentTraces = useGraphState((s) => s.recentTraces);
+  const graphError = useGraphState((s) => s.error);
 
   // Stable layout: reuse prior positions, compute new ones via force-lite
   const notePositionsRef = useRef<Map<number, { x: number; y: number }>>(new Map());
@@ -2151,6 +2153,18 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
                 <span>{label}</span>
               </motion.button>
             ))}
+          </div>
+        )}
+
+        {/* GRAPH-layer fetch failure — an unreachable backend must not look like
+            "no notes yet". Sits under the layer chips; retry refetches the snapshot. */}
+        {!clearView && !hideGraph && graphError && (
+          <div style={{ position: "absolute", top: 84, left: 12, zIndex: 35, maxWidth: 420 }}>
+            <FetchErrorNotice
+              what="graph"
+              error={graphError}
+              onRetry={() => void loadGraphSnapshot()}
+            />
           </div>
         )}
 

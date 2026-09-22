@@ -65,13 +65,11 @@ export function useDashboardWebSocket() {
         if (mounted) {
           setConnected(true);
           // Prime graph + feed stores so the first frame isn't empty; WS
-          // events then mutate from this baseline.
-          loadGraphSnapshot().catch(() => {
-            // Snapshot fetch is best-effort — WS events will eventually fill state
-          });
-          loadFeedSnapshot().catch(() => {
-            // Same — timeline will fill in as events arrive
-          });
+          // events then mutate from this baseline. Both loaders record any
+          // failure in their store's `error` field (rendered by the panels)
+          // and never reject, so nothing is silently swallowed here.
+          void loadGraphSnapshot();
+          void loadFeedSnapshot();
         }
       };
 

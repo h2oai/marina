@@ -3,11 +3,13 @@
 
 import { Pause, Play, SkipBack, SkipForward, Timeline } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useFeedState } from "../hooks/use-feed-state";
+import { loadFeedSnapshot, useFeedState } from "../hooks/use-feed-state";
+import { FetchErrorNotice } from "./FetchErrorNotice";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 
 export function NarrativePlayback({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
   const events = useFeedState((s) => s.events);
+  const feedError = useFeedState((s) => s.error);
   const ordered = useMemo(() => [...events].reverse(), [events]);
   const [cursor, setCursor] = useState(ordered.length > 0 ? ordered.length - 1 : 0);
   const [playing, setPlaying] = useState(false);
@@ -99,7 +101,13 @@ export function NarrativePlayback({ isFocused, onToggleFocus }: PanelFocusProps 
 
         {/* Event detail — scrolls when the summary/payload exceeds panel height. */}
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {current ? (
+          {feedError && ordered.length === 0 ? (
+            <FetchErrorNotice
+              what="feed"
+              error={feedError}
+              onRetry={() => void loadFeedSnapshot()}
+            />
+          ) : current ? (
             <div className="rounded border border-border bg-bg/50 px-2 py-2">
               <div className="flex items-center justify-between text-[10px] uppercase text-text-dim">
                 <span>{current.kind}</span>

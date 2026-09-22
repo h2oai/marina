@@ -1,0 +1,93 @@
+# Copyright 2025-2026 H2O.ai, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+# Nightly qualification on main. Deliberately NOT triggered by pull_request so
+# it never becomes a required PR check: the browser suite needs a real Chromium
+# and a disposable Marina server, and the release qualifier runs the whole
+# repo (backend + dashboard + site + audit) — both too slow for the PR loop.
+name: Nightly
+
+on:
+  schedule:
+    # 04:17 UTC daily — off the hour to avoid the GitHub cron rush.
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    name: Dashboard browser tests (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: main
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version-file: .bun-version
+      - name: Install dependencies
+        run: |
+          bun install --frozen-lockfile
+          cd dashboard && bun install --frozen-lockfile
+      - name: Install Chromium for Playwright
+        working-directory: dashboard
+        run: bunx playwright install --with-deps chromium
+      - name: Point playwright.config at the installed Chromium
+        # playwright.config.ts defaults to /usr/bin/chromium (a distro install);
+        # on the runner the browser lives in Playwright's cache instead.
+        run: |
+          CHROME="$(find "$HOME/.cache/ms-playwright" -type f -name chrome -path '*chrome-linux*' | head -n 1)"
+          test -n "$CHROME" || { echo "chromium not found under ~/.cache/ms-playwright"; exit 1; }
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$CHROME" >> "$GITHUB_ENV"
+      - name: Build dashboard bundle
+        # The e2e server boots src/main.ts, which serves dist/dashboard.
+        run: bun run dashboard:build
+      - name: Browser tests
+        working-directory: dashboard
+        env:
+          MARINA_BROWSER_ARTIFACTS: ${{ github.workspace }}/browser-results
+        run: bun run test:browser
+      - name: Upload browser artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-browser-results
+          path: browser-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+  release-qualifier:
+    name: Release qualifier (qualify:release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: main
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version-file: .bun-version
+      - name: Install dependencies
+        run: |
+          bun install --frozen-lockfile
+          cd dashboard && bun install --frozen-lockfile
+          cd ../site && bun install --frozen-lockfile
+      - name: Install Chromium for Playwright
+        # qualify:release includes `dashboard test:browser`.
+        working-directory: dashboard
+        run: bunx playwright install --with-deps chromium
+      - name: Point playwright.config at the installed Chromium
+        run: |
+          CHROME="$(find "$HOME/.cache/ms-playwright" -type f -name chrome -path '*chrome-linux*' | head -n 1)"
+          test -n "$CHROME" || { echo "chromium not found under ~/.cache/ms-playwright"; exit 1; }
+          echo "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=$CHROME" >> "$GITHUB_ENV"
+      - name: Qualify release
+        continue-on-error: false
+        run: bun run qualify:release
