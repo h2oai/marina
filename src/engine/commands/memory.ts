@@ -23,6 +23,10 @@ export function memoryCommand(deps: {
     aliases: [],
     help:
       MEMORY_SERVICE_HELP +
+      "\n\nSame-named legacy note verbs (see also): `memory claim` asserts a typed durable claim ↔ `note claim <text>` records a free-text legacy claim (mirrored to a durable twin); " +
+      "`memory resolve <ID> <policy>` settles competing durable records ↔ `note resolve <case> left|right|both|neither` adjudicates a legacy contradiction case; " +
+      "`memory source <ID> [start end]` reads a durable original source ↔ `note source <id> <url>` attaches a reference to a legacy note (mirrored onto the twin's sources); " +
+      "`memory graph <subject>` follows durable relationships ↔ `note graph` summarises your legacy notes and links." +
       "\n\nCore memory — mutable key-value store for beliefs and goals.\nUsage: memory list | memory set <key> <value> | memory get <key> | memory delete <key> | memory history <key>\n\nExamples:\n  memory set goal Explore the grid and document findings\n  memory set ally Alice is working on the relay\n  memory get goal\n  memory history goal",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
@@ -173,7 +177,8 @@ export function memoryCommand(deps: {
         default:
           ctx.send(
             input.entity,
-            "Usage: memory | memory set <key> <value> | memory get <key> | memory delete <key> | memory list | memory history <key>",
+            "Usage: memory | memory set <key> <value> | memory get <key> | memory delete <key> | memory list | memory history <key>\n" +
+              "(see also: `help memory` lists the durable service verbs — memory claim/resolve/source/graph act on durable records; the same-named `note claim/resolve/source/graph` act on legacy notes and mirror to their twins.)",
           );
       }
     },

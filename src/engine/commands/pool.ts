@@ -10,7 +10,11 @@ import {
   isInstitutionalPoolName,
   ratifyPoolNote,
 } from "../../memory/institutional";
-import { findDurableTwin, recordDurableTwin } from "../../memory/legacy-bridge";
+import {
+  bridgeLegacyPoolNoteQuietly,
+  durableTwinRecordIds,
+  recordDurableTwin,
+} from "../../memory/legacy-bridge";
 import { depositPoolNote } from "../../memory/pool-deposit";
 import {
   bold,
@@ -361,6 +365,10 @@ export function poolCommand(deps: {
                   `It becomes canon when someone with standing ≥ 15 runs ${bold(`pool ${poolName} ratify ${noteId}`)}.`
               : `Added note #${noteId} to pool "${poolName}".`,
           );
+          // Durable twin in the AUTHOR's resident space, tagged with the pool
+          // (institutional canon is the separate `ratify` mirror). Fire-and-
+          // forget so the reply lands in-tick; sequenced by awaitPendingBridges().
+          void bridgeLegacyPoolNoteQuietly(db, entity.name, noteId, poolName);
           return;
         }
 
@@ -393,7 +401,10 @@ export function poolCommand(deps: {
             return;
           }
           // Legacy twin row so `note`/`recall` surfaces can follow the mirror.
-          if (!findDurableTwin(db, noteId))
+          // Recorded beside the author's resident twin (from `pool add`), not
+          // instead of it: `findDurableTwin` keeps preferring the resident twin
+          // and returns this mirror only when it is the sole twin.
+          if (!durableTwinRecordIds(db, noteId).includes(result.record.id))
             recordDurableTwin(
               db,
               noteId,
@@ -403,6 +414,7 @@ export function poolCommand(deps: {
                 spaceId: result.space.id,
               },
               entity.name,
+              { mirror: "institutional", pool: poolName },
             );
           ctx.send(
             input.entity,
