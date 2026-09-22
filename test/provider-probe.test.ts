@@ -22,7 +22,9 @@ import {
   buildProviderProbeBody,
   configuredUpstreamProviders,
   evaluateProviderProbe,
+  evaluateProviderToolProbe,
   getLastProviderProbe,
+  PROVIDER_TOOL_PROBE_NAME,
   type ProviderProbeResult,
   probeConfiguredProviders,
 } from "../src/net/model-api";
@@ -73,24 +75,73 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** Extract the nonce the probe put in its second system message. */
-function nonceOf(init: RequestInit | undefined): string {
+/** Everything the probe wrote into system/user slots (Anthropic `system` is an
+ *  array of text blocks; OpenAI keeps system-role messages). */
+function promptTextOf(init: RequestInit | undefined): string {
   const body = JSON.parse(String(init?.body ?? "{}")) as {
-    system?: string;
-    messages?: { role: string; content: string }[];
+    system?: string | { text?: string }[];
+    messages?: { role: string; content: unknown }[];
   };
-  const haystack = `${body.system ?? ""}\n${(body.messages ?? []).map((m) => m.content).join("\n")}`;
-  return haystack.match(/probe-[0-9a-f]{8}/)?.[0] ?? "";
+  const system = Array.isArray(body.system)
+    ? body.system.map((b) => b.text ?? "").join("\n")
+    : (body.system ?? "");
+  const messages = (body.messages ?? [])
+    .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content)))
+    .join("\n");
+  return `${system}\n${messages}`;
 }
 
-const anthropicReply = (blocks: unknown[]) =>
-  new Response(JSON.stringify({ id: "msg_1", content: blocks, stop_reason: "end_turn" }), {
+/** Extract the nonce the probe put in its second system message. */
+function nonceOf(init: RequestInit | undefined): string {
+  return promptTextOf(init).match(/probe-[0-9a-f]{8}/)?.[0] ?? "";
+}
+
+/** The tool-probe nonce, when this request is the tool-call probe. */
+function toolNonceOf(init: RequestInit | undefined): string | undefined {
+  return promptTextOf(init).match(/tool-[0-9a-f]{8}/)?.[0];
+}
+
+const anthropicReply = (blocks: unknown[], stopReason = "end_turn") =>
+  new Response(JSON.stringify({ id: "msg_1", content: blocks, stop_reason: stopReason }), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
 const openaiReply = (content: string) =>
   new Response(
     JSON.stringify({ id: "c1", choices: [{ index: 0, message: { role: "assistant", content } }] }),
+    { status: 200, headers: { "Content-Type": "application/json" } },
+  );
+/** A well-formed tool-call reply from either provider for the tool probe. */
+const anthropicToolReply = (nonce: string) =>
+  anthropicReply(
+    [{ type: "tool_use", id: "toolu_p", name: PROVIDER_TOOL_PROBE_NAME, input: { word: nonce } }],
+    "tool_use",
+  );
+const openaiToolReply = (nonce: string) =>
+  new Response(
+    JSON.stringify({
+      id: "c2",
+      choices: [
+        {
+          index: 0,
+          finish_reason: "tool_calls",
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "call_p",
+                type: "function",
+                function: {
+                  name: PROVIDER_TOOL_PROBE_NAME,
+                  arguments: JSON.stringify({ word: nonce }),
+                },
+              },
+            ],
+          },
+        },
+      ],
+    }),
     { status: 200, headers: { "Content-Type": "application/json" } },
   );
 
@@ -126,11 +177,18 @@ describe("provider probe primitives", () => {
 });
 
 describe("probeConfiguredProviders", () => {
-  it("passes a provider whose thinking-first reply and second system message both come through", async () => {
+  it("passes a provider whose thinking-first reply, second system message and tool call all come through", async () => {
     process.env.ANTHROPIC_API_KEY = "k";
     process.env.OPENAI_API_KEY = "k";
+    const toolBodies: Record<string, unknown>[] = [];
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const toolNonce = toolNonceOf(init);
+      if (toolNonce) {
+        toolBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        if (url.includes("anthropic.com")) return anthropicToolReply(toolNonce);
+        if (url.includes("openai.com")) return openaiToolReply(toolNonce);
+      }
       const nonce = nonceOf(init);
       if (url.includes("anthropic.com"))
         return anthropicReply([
@@ -141,11 +199,92 @@ describe("probeConfiguredProviders", () => {
       throw new Error(`unexpected ${url}`);
     }) as typeof fetch;
     const results = await probeConfiguredProviders(engine, { timeoutMs: 5_000 });
-    expect(results.map((r) => [r.provider, r.ok, r.textOk, r.systemHonored])).toEqual([
-      ["anthropic", true, true, true],
-      ["openai", true, true, true],
-    ]);
+    expect(results.map((r) => [r.provider, r.ok, r.textOk, r.systemHonored, r.toolCallOk])).toEqual(
+      [
+        ["anthropic", true, true, true, true],
+        ["openai", true, true, true, true],
+      ],
+    );
+    // The tool schema actually reached both upstreams, in each one's dialect.
+    expect(toolBodies).toHaveLength(2);
+    const anthropicTools = toolBodies[0]!.tools as { name: string; input_schema: unknown }[];
+    expect(anthropicTools[0]!.name).toBe(PROVIDER_TOOL_PROBE_NAME);
+    expect(anthropicTools[0]!.input_schema).toBeDefined();
+    const openaiTools = toolBodies[1]!.tools as { function: { name: string } }[];
+    expect(openaiTools[0]!.function.name).toBe(PROVIDER_TOOL_PROBE_NAME);
     expect(getLastProviderProbe()).toBe(results);
+  });
+
+  it("fails a provider that answers the tool probe in text (the tools-dropped class of bug)", async () => {
+    process.env.ANTHROPIC_API_KEY = "k";
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (!url.includes("anthropic.com")) throw new Error(`unexpected ${url}`);
+      const toolNonce = toolNonceOf(init);
+      // Text reply to the tool probe — what the pre-fix proxy produced.
+      if (toolNonce) return anthropicReply([{ type: "text", text: `The word is ${toolNonce}` }]);
+      return anthropicReply([{ type: "text", text: nonceOf(init) }]);
+    }) as typeof fetch;
+    const [anthropic] = await probeConfiguredProviders(engine, { timeoutMs: 5_000 });
+    expect(anthropic).toMatchObject({
+      provider: "anthropic",
+      ok: false,
+      textOk: true,
+      systemHonored: true,
+      toolCallOk: false,
+    });
+    expect(anthropic!.error).toContain("tool call dropped");
+    expect(renderProviderProbe([anthropic!]).join("\n")).toContain("tool call dropped");
+  });
+
+  it("judges the tool probe reply shape", () => {
+    const good = {
+      choices: [
+        {
+          finish_reason: "tool_calls",
+          message: {
+            tool_calls: [
+              {
+                function: { name: PROVIDER_TOOL_PROBE_NAME, arguments: '{"word":"tool-abcdef01"}' },
+              },
+            ],
+          },
+        },
+      ],
+    };
+    expect(evaluateProviderToolProbe(good, "tool-abcdef01")).toEqual({ ok: true });
+    expect(
+      evaluateProviderToolProbe(
+        { choices: [{ message: { content: "tool-abcdef01" } }] },
+        "tool-abcdef01",
+      ).ok,
+    ).toBe(false);
+    expect(
+      evaluateProviderToolProbe(
+        {
+          choices: [
+            { message: { tool_calls: [{ function: { name: "other", arguments: "{}" } }] } },
+          ],
+        },
+        "tool-abcdef01",
+      ).error,
+    ).toContain("did not name");
+    expect(
+      evaluateProviderToolProbe(
+        {
+          choices: [
+            {
+              message: {
+                tool_calls: [
+                  { function: { name: PROVIDER_TOOL_PROBE_NAME, arguments: '{"word":"x"}' } },
+                ],
+              },
+            },
+          ],
+        },
+        "tool-abcdef01",
+      ).error,
+    ).toContain("check word");
   });
 
   it("fails a provider that returns no text, and one that ignores the second system message", async () => {

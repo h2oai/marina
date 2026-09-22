@@ -329,15 +329,108 @@ curl http://localhost:3300/v1/chat/completions \
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/v1/models` | List available models |
-| `POST` | `/v1/chat/completions` | Chat completion (streaming and non-streaming) |
+| `POST` | `/v1/chat/completions` | Chat completion (streaming and non-streaming, tool calling) |
+| `POST` | `/v1/responses` | Responses API with server-side conversation state (`stream: true` supported) |
+| `GET` / `DELETE` | `/v1/responses/:id` | Read / delete a stored response |
+| `POST` | `/v1/messages` | Anthropic Messages (Claude Code, Anthropic SDKs) |
+| `GET` | `/v1/health` | Liveness |
+| `POST` | `/v1/embeddings`, `/v1/completions` | **Not served** — explicit 404 `{ error: { code: "not_found" } }` |
 
 ### Ollama-compatible
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/tags` | List models |
+| `GET` | `/api/tags` | List models (`name`, `model`, `digest`, `size`, `details`) |
+| `GET` | `/api/version` | `{ "version": "<marina version>" }` |
+| `GET` | `/api/ps` | Running models — the configured default route |
+| `POST` | `/api/show` | Model details (`modelfile` / `parameters` / `template` are empty strings — Marina models are routes, not weights) |
 | `POST` | `/api/chat` | Chat completion |
 | `POST` | `/api/generate` | Text generation |
+| `POST` | `/api/embed`, `/api/embeddings` | **Not served** — explicit 404 |
+
+The `digest` in `/api/tags` is a stable SHA-256 of the model id, so Ollama clients that key their
+cache on it see the same model across restarts.
+
+---
+
+## Compatibility contract
+
+### Error envelope
+
+Every error is the OpenAI nested shape with a **string `code`** SDKs can branch on
+(`src/net/openai-errors.ts`):
+
+| `code` | When |
+|--------|------|
+| `invalid_api_key` | 401/403 — missing, wrong or upstream-rejected credential |
+| `model_not_found` | 404 for an unknown model id (`/v1/chat/completions`, `/api/show`) |
+| `not_found` | 404 for anything else (unserved paths, unknown response id) |
+| `context_length_exceeded` | 400 whose reason names the context window / prompt length |
+| `rate_limit_exceeded` | 429 (Marina's per-IP limiter or the upstream) |
+| `unsupported_parameter` | 400 for a parameter the route cannot honor — `param` names it |
+| `invalid_request_error` | any other 400 |
+| `upstream_error` | 502/503/504 from the provider chain |
+| `server_error` | 500 |
+
+`unsupported_parameter` replaces silent dropping. **Agents / open / panel modes** refuse
+`tools`, `functions`, `n > 1` and a non-text `response_format` (in-world agents answer in text over
+a channel). **Anthropic-backed passthru** refuses `n > 1`, `response_format: { type: "json_object" }`
+(use `json_schema` — it is translated to Anthropic `output_config`), non-`function` tool types and
+audio/file content parts.
+
+### Tool calling on Anthropic-backed passthru
+
+When the passthru upstream is Anthropic (`anthropic/<model>`), the OpenAI body is translated
+faithfully (`src/net/anthropic-tools.ts`):
+
+| OpenAI request | Anthropic Messages |
+|----------------|--------------------|
+| `tools[{type:"function", function:{name, description, parameters}}]`, legacy `functions[]` | `tools[{name, description, input_schema}]` |
+| `tool_choice` `"auto"` / `"none"` / `"required"` / `{function:{name}}` | `{type:"auto"}` / `{type:"none"}` / `{type:"any"}` / `{type:"tool", name}` |
+| `parallel_tool_calls: false` | `tool_choice.disable_parallel_tool_use: true` |
+| `stop` (string or array) | `stop_sequences` |
+| `max_tokens` / `max_completion_tokens` | `max_tokens` (default 4096) |
+| `user` | `metadata.user_id` |
+| `response_format: {type:"json_schema", json_schema:{schema}}` | `output_config.format: {type:"json_schema", schema}` |
+| system / developer messages | `system[]` text blocks, in order (memory injection is the first block) |
+| user `text` / `image_url` parts | `text` / `image` blocks (data URLs → base64 source) |
+| assistant `tool_calls` | `tool_use` blocks |
+| `role: "tool"` results | `tool_result` blocks; consecutive results grouped into ONE user message |
+
+| Anthropic response | OpenAI |
+|--------------------|--------|
+| every `text` block (thinking skipped) | `message.content` |
+| `tool_use` blocks | `message.tool_calls`, `finish_reason: "tool_calls"` |
+| `end_turn` / `stop_sequence` / `max_tokens` / `refusal` | `stop` / `stop` / `length` / `content_filter` |
+| streaming `content_block_start`/`input_json_delta` | `delta.tool_calls[{index, id, function:{name, arguments}}]` fragments |
+| `usage.input_tokens + cache_read_input_tokens + cache_creation_input_tokens` | `usage.prompt_tokens`; cached share in `prompt_tokens_details.cached_tokens`; raw `cache_read_input_tokens` / `cache_creation_input_tokens` kept |
+
+`readiness providers` sends a **tool-call probe** to Anthropic and OpenAI providers in addition to
+the text probe: one tiny tool, and the reply must contain a structured `tool_calls` entry naming it
+with the nonce in its arguments. A provider that answers in text fails with `tool call dropped`.
+
+### Prompt caching
+
+- **`/v1/messages` clients** (Claude Code, Anthropic SDKs): when the upstream is Anthropic the
+  client's native body is forwarded **verbatim** — `cache_control` on system, tool and message
+  blocks, `thinking`, `tool_choice`, `metadata`. Memory injection lands as a leading system block.
+- **OpenAI-completions clients** (pi-ai with `cacheControlFormat: "anthropic"`, or any client that
+  puts `cache_control` on system content parts or on a tool): the markers are carried onto the
+  translated Anthropic `system` blocks and tools.
+- **Auto-cache** — `MARINA_ANTHROPIC_AUTO_CACHE` (default `true` under the `local` trust profile,
+  `false` otherwise) adds `cache_control: { type: "ephemeral" }` to the **last** system block when
+  the client set no marker of its own. A client marker is never second-guessed.
+- **OpenAI upstreams**: Marina forwards its traced `x-request-id` as a request header and leaves
+  `prompt_cache_key` in the body untouched.
+- Cache counters (`cache_read_input_tokens`, `cache_creation_input_tokens`,
+  `prompt_tokens_details.cached_tokens`) land on the `model_request_lifecycle` completed event as
+  `cacheReadTokens` / `cacheWriteTokens`, so `trace show <id>` shows cache hits per request.
+
+### Usage
+
+`usage` is reported only when known: from the upstream in passthru mode, or summed from the
+answering agent's traced `agent_turn_end` spans in agents mode. It is **omitted** (never zero-filled)
+when no turn reported tokens.
 
 ---
 
