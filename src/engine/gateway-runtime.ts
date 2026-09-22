@@ -2,9 +2,55 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { stripAnsi } from "../net/ansi";
+import { isLoopbackOriginHost } from "../net/cors";
+import { validateFetchUrl, validateOperatorLanUrl } from "../net/url-guard";
 import type { MarinaDB } from "../persistence/database";
 import { MarinaClient, type Perception } from "../sdk/client";
 import { getErrorMessage } from "./errors";
+import { isLocalProfile } from "./trust-profile";
+
+// ─── Peer URL validation ─────────────────────────────────────────────────────
+
+/** `ws(s)://…` → `http(s)://…` for the SSRF guard; `null` for any other scheme. */
+export function gatewayUrlForValidation(url: string): string | null {
+  const trimmed = url.trim();
+  if (trimmed.startsWith("wss://")) return `https://${trimmed.slice("wss://".length)}`;
+  if (trimmed.startsWith("ws://")) return `http://${trimmed.slice("ws://".length)}`;
+  return null;
+}
+
+/**
+ * Validate a peer gateway URL before it is stored, before a socket is opened and
+ * before `GATEWAY_SECRET` is sent to it. Returns an error string, or `null` when
+ * the URL is safe to connect to.
+ *
+ *   - scheme must be `ws://` or `wss://`
+ *   - a loopback peer (`localhost`, `127.x`, `[::1]`) is allowed for development
+ *     ONLY under the `local` trust profile — on a shared/public instance it is a
+ *     way to make the server hand its secret to something on its own host
+ *   - every other host goes through `validateFetchUrl`: private/link-local/
+ *     metadata ranges and hosts that RESOLVE to them are refused
+ */
+export async function validateGatewayUrl(url: string): Promise<string | null> {
+  const httpUrl = gatewayUrlForValidation(url);
+  if (!httpUrl) return "URL must start with ws:// or wss://";
+  let parsed: URL;
+  try {
+    parsed = new URL(httpUrl);
+  } catch {
+    return `Invalid WebSocket URL: ${url}`;
+  }
+  if (!parsed.hostname) return `Invalid WebSocket URL: ${url}`;
+  // `local` = one operator on their own machine/LAN: peers on loopback or a
+  // private range are legitimate dev federation targets, so only the URL shape
+  // is checked. Shared/public instances go through the SSRF guard so the server
+  // can never be told to hand GATEWAY_SECRET to something on its own host or LAN.
+  if (isLocalProfile()) return validateOperatorLanUrl(httpUrl);
+  if (isLoopbackOriginHost(parsed.hostname)) {
+    return `Blocked host ${parsed.hostname} — loopback gateway peers are only allowed under the local trust profile`;
+  }
+  return validateFetchUrl(httpUrl);
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -231,6 +277,15 @@ export class GatewayRuntime {
   async addGateway(name: string, url: string): Promise<void> {
     if (this.connections.has(name)) {
       throw new Error(`Gateway "${name}" is already connected.`);
+    }
+
+    // Validate BEFORE any socket opens: `onOpen` below sends GATEWAY_SECRET to
+    // whatever answers, so a stored URL pointing at a private/metadata host
+    // (or a loopback peer on a shared instance) must never be dialed.
+    const urlError = await validateGatewayUrl(url);
+    if (urlError) {
+      console.warn(`[gateway] Refusing to connect "${name}" to ${url}: ${urlError}`);
+      throw new Error(`Refused gateway URL for "${name}": ${urlError}`);
     }
 
     const wsUrl = url.replace(/\/$/, "");

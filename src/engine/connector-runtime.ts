@@ -59,6 +59,15 @@ export class ConnectorRuntime {
     return this.available;
   }
 
+  /**
+   * Test-only seam: install a fake mcporter runtime so `loadFromDB` and the
+   * registration paths can be exercised without the optional dependency.
+   */
+  __setRuntimeForTest(runtime: unknown): void {
+    this.runtime = runtime;
+    this.available = runtime !== null && runtime !== undefined;
+  }
+
   /** Load connectors from database and register them with the runtime. */
   async loadFromDB(): Promise<number> {
     if (!this.db || !this.available) return 0;
@@ -67,6 +76,16 @@ export class ConnectorRuntime {
     for (const conn of connectors) {
       try {
         if (conn.transport === "http" && conn.url) {
+          // A stored URL is untrusted input on reload too (rows can predate the
+          // guard, or be edited out-of-band): re-run the SSRF check before the
+          // runtime dials it. Skip + warn; the row keeps its status.
+          const urlError = await validateFetchUrl(conn.url);
+          if (urlError) {
+            console.warn(
+              `[connectors] Skipping connector "${conn.name}" (${conn.url}): ${urlError}`,
+            );
+            continue;
+          }
           await this.runtime.registerDefinition({
             name: conn.name,
             command: {

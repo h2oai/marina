@@ -12,7 +12,8 @@ import { cleanupDb, makeTestRoom } from "./helpers";
 
 const TEST_DB = "test_mem_api.db";
 let BASE = "";
-const AGENT = "test-agent";
+// Open-mode namespaces are normalized like login names (letters, digits, `_` only).
+const AGENT = "test_agent";
 const HEADERS: Record<string, string> = {
   "X-Agent-Name": AGENT,
   "Content-Type": "application/json",
@@ -129,8 +130,8 @@ describe("Memory API", () => {
 
   it("GET /mem/notes hides superseded, process-tier and pool notes unless ?all=1", async () => {
     // Fresh agent so counts are exact.
-    const H = { ...HEADERS, "X-Agent-Name": "list-filter-agent" };
-    const name = "list-filter-agent";
+    const H = { ...HEADERS, "X-Agent-Name": "list_filter_agent" };
+    const name = "list_filter_agent";
     const keep = db.createNote(name, "active personal fact about lighthouses");
     const old = db.createNote(name, "old fact about tides v1");
     db.reviseNote(name, old, "old fact about tides v2");
@@ -198,7 +199,7 @@ describe("Memory API", () => {
     const { id } = (await createRes.json()) as { id: number };
 
     const res = await fetch(`${BASE}/notes/${id}`, {
-      headers: { "X-Agent-Name": "other-agent" },
+      headers: { "X-Agent-Name": "other_agent" },
     });
     expect(res.status).toBe(404);
   });
@@ -536,7 +537,7 @@ describe("Memory API", () => {
 
   it("agents cannot see each other's notes", async () => {
     const res = await fetch(`${BASE}/notes`, {
-      headers: { "X-Agent-Name": "isolated-agent-xyz" },
+      headers: { "X-Agent-Name": "isolated_agent_xyz" },
     });
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.count).toBe(0);
@@ -544,9 +545,73 @@ describe("Memory API", () => {
 
   it("agents cannot see each other's core memory", async () => {
     const res = await fetch(`${BASE}/core/goal`, {
-      headers: { "X-Agent-Name": "isolated-agent-xyz" },
+      headers: { "X-Agent-Name": "isolated_agent_xyz" },
     });
     expect(res.status).toBe(404);
+  });
+
+  it("normalizes the open-mode X-Agent-Name like a login name (reserved namespaces unreachable)", async () => {
+    // `memory:<principal>` is the durable service silo's entity_name prefix; a
+    // header must not be able to name it. The sanitized namespace is what the
+    // caller gets — consistently across writes and reads.
+    const create = await fetch(`${BASE}/notes`, {
+      method: "POST",
+      headers: { "X-Agent-Name": "memory:spoof-ns", "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "Spoofed namespace scratch note" }),
+    });
+    expect(create.status).toBe(201);
+    const { note } = (await create.json()) as { note: { entity_name: string } };
+    expect(note.entity_name).toBe("memoryspoofns");
+
+    const list = await fetch(`${BASE}/notes`, { headers: { "X-Agent-Name": "memoryspoofns" } });
+    expect(((await list.json()) as { count: number }).count).toBe(1);
+
+    // A header with nothing left after normalization is a 400, not a namespace.
+    const empty = await fetch(`${BASE}/notes`, { headers: { "X-Agent-Name": "::/.." } });
+    expect(empty.status).toBe(400);
+  });
+
+  it("GET /mem/recall and /mem/context never serve another principal's durable records", async () => {
+    const fx = await seedUnifiedFixture(engine, db, {
+      owner: "RecallOwnerA",
+      worker: "RecallWkrB",
+    });
+    // Find the durable record's backing legacy note (entity_name = memory:<principal>).
+    const raw = (db as unknown as { db: import("bun:sqlite").Database }).db;
+    const row = raw
+      .query(
+        "SELECT n.id AS id, n.entity_name AS entity_name FROM notes n JOIN memory_record_versions v ON v.note_id = n.id WHERE v.record_id = ?",
+      )
+      .get(fx.recordId) as { id: number; entity_name: string };
+    expect(row.entity_name.startsWith("memory:")).toBe(true);
+
+    for (const spoof of [row.entity_name, `${row.entity_name}!`]) {
+      const recall = await fetch(`${BASE}/recall?q=${encodeURIComponent(FIXTURE_QUERY)}`, {
+        headers: { "X-Agent-Name": spoof },
+      });
+      expect(recall.status).toBe(200);
+      const body = (await recall.json()) as { results: Array<{ id: number }> };
+      expect(body.results.some((r) => r.id === row.id)).toBe(false);
+
+      const ctx = await fetch(`${BASE}/context?q=${encodeURIComponent(FIXTURE_QUERY)}`, {
+        headers: { "X-Agent-Name": spoof },
+      });
+      expect(ctx.status).toBe(200);
+      const context = (await ctx.json()) as UnifiedContextResult;
+      const legacyIds = context.tiers
+        .filter((t) => t.tier !== "evidence" && t.tier !== "proposal")
+        .flatMap((t) => t.items.map((i) => i.id));
+      expect(legacyIds).not.toContain(String(row.id));
+      // No world account of that (sanitized) name → durable tiers degrade, not leak.
+      expect(context.tiers.find((t) => t.tier === "evidence")?.items ?? []).toHaveLength(0);
+    }
+
+    // The owner still recalls its own legacy notes through the same route.
+    const own = await fetch(`${BASE}/context?q=${encodeURIComponent(FIXTURE_QUERY)}`, {
+      headers: { "X-Agent-Name": fx.owner },
+    });
+    const ownCtx = (await own.json()) as UnifiedContextResult;
+    expect(ownCtx.tiers.some((t) => t.items.length > 0)).toBe(true);
   });
 
   // ── Unified context ────────────────────────────────────────────────────
@@ -590,11 +655,11 @@ describe("Memory API", () => {
     it("degrades durable tiers for a namespace without a world account (legacy still served)", async () => {
       await fetch(`${BASE}/notes`, {
         method: "POST",
-        headers: { "X-Agent-Name": "ghost-namespace", "Content-Type": "application/json" },
+        headers: { "X-Agent-Name": "ghost_namespace", "Content-Type": "application/json" },
         body: JSON.stringify({ content: "Amber deployment port scratch note" }),
       });
       const res = await fetch(`${BASE}/context?q=${encodeURIComponent(FIXTURE_QUERY)}`, {
-        headers: { "X-Agent-Name": "ghost-namespace" },
+        headers: { "X-Agent-Name": "ghost_namespace" },
       });
       expect(res.status).toBe(200);
       const body = (await res.json()) as UnifiedContextResult;

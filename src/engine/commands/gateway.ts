@@ -5,7 +5,7 @@ import { bold, dim, status as fmtStatus, header, separator } from "../../net/ans
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { getErrorMessage } from "../errors";
-import type { GatewayRuntime } from "../gateway-runtime";
+import { type GatewayRuntime, validateGatewayUrl } from "../gateway-runtime";
 import { getRank } from "../permissions";
 import { requiresPersistence } from "./command-messages";
 
@@ -67,17 +67,11 @@ export function gatewayCommand(deps: {
             return;
           }
 
-          try {
-            const parsed = new URL(url.replace(/^ws/, "http"));
-            if (
-              !parsed.hostname ||
-              parsed.hostname === "localhost" ||
-              parsed.hostname === "127.0.0.1"
-            ) {
-              // Allow localhost — common for development
-            }
-          } catch {
-            ctx.send(input.entity, `Invalid WebSocket URL: ${url}`);
+          // SSRF guard (shared with the runtime): private/metadata targets are
+          // refused; loopback peers only under the `local` trust profile.
+          const urlError = await validateGatewayUrl(url);
+          if (urlError) {
+            ctx.send(input.entity, `Refused gateway URL: ${urlError}`);
             return;
           }
 

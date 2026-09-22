@@ -14,9 +14,9 @@ const realFetch = globalThis.fetch;
 // DNS. Stub the resolver so unit tests never touch real DNS (throwing makes
 // guardedFetch fail-open to a plain fetch, intercepted by the fetch mock).
 beforeEach(() => {
-  __setDnsResolverForTest(async () => {
-    throw new Error("DNS disabled in unit tests");
-  });
+  // The URL guard fails CLOSED on DNS errors, so unit tests resolve every
+  // mocked provider host to a public address instead of disabling DNS.
+  __setDnsResolverForTest(async () => ["93.184.216.34"]);
 });
 afterEach(() => {
   globalThis.fetch = realFetch;

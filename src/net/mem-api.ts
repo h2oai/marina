@@ -14,6 +14,7 @@
  */
 
 import type { RateLimiter } from "../auth/rate-limiter";
+import { sanitizeEntityName } from "../engine/entity-name";
 import { memoryAccess } from "../memory/access";
 import { expandMemoryRecall } from "../memory/retrieval";
 import { buildUnifiedContext, type UnifiedScope } from "../memory/unified-context";
@@ -262,9 +263,11 @@ function authenticate(req: Request, db: MarinaDB): { agent: string } | { error: 
     };
   }
 
-  // Open mode: get agent name from header
-  const agentName = req.headers.get("X-Agent-Name");
-  if (!agentName) {
+  // Open mode: get agent name from header. Normalized with the same rule as a
+  // world login so a header like `memory:<principal>` cannot name the durable
+  // service silo (`isServiceMemoryNote`) or any other reserved namespace.
+  const rawAgentName = req.headers.get("X-Agent-Name");
+  if (!rawAgentName) {
     return {
       error: error(400, "X-Agent-Name header required (or set MEM_API_KEYS and use Bearer auth)"),
     };
@@ -274,6 +277,10 @@ function authenticate(req: Request, db: MarinaDB): { agent: string } | { error: 
 
 // ─── Intent Detection (mirrors recall.ts) ────────────────────────────────────
 
+  const agentName = sanitizeEntityName(rawAgentName);
+  if (!agentName) {
+    return { error: error(400, "X-Agent-Name must contain letters, digits or underscores") };
+  }
 function detectIntent(query: string): {
   weightImportance: number;
   weightRecency: number;
@@ -427,8 +434,11 @@ export async function handleMemApi(
       };
     }
 
-    let results = db.recallNotes(agent, q, weights);
-    results = expandMemoryRecall(db, results, agent);
+    // Same owner/pool predicate as GET /mem/notes — never serve a note the
+    // caller could not list (another namespace, a members-only pool, a durable
+    // `memory:<id>` twin).
+    let results = db.recallNotes(agent, q, weights).filter(access.read);
+    results = expandMemoryRecall(db, results, agent).filter(access.read);
 
     // Touch recalled notes
     for (const note of results) {
@@ -468,6 +478,15 @@ export async function handleMemApi(
 
   // Note by ID routes: /mem/notes/:id
   const noteIdMatch = path.match(/^\/mem\/notes\/(\d+)$/);
+    // Legacy-note tiers carry note ids — apply the GET /mem/notes read predicate
+    // so the unified surface cannot leak what the list surface hides.
+    for (const tier of context.tiers) {
+      if (tier.tier === "evidence" || tier.tier === "proposal") continue;
+      tier.items = tier.items.filter((item) => {
+        const id = Number(item.id);
+        return Number.isInteger(id) && access.read(db.getNote(id));
+      });
+    }
   if (noteIdMatch) {
     const noteId = Number(noteIdMatch[1]);
 

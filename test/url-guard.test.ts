@@ -389,3 +389,60 @@ describe("guardedFetch (redirect-aware SSRF guard)", () => {
     expect(called).toBe(false);
   });
 });
+
+describe("DNS resolution failure (fail closed by default)", () => {
+  const prev = process.env.MARINA_URL_GUARD_DNS_FAIL_OPEN;
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    __setDnsResolverForTest(null);
+    globalThis.fetch = realFetch;
+    if (prev === undefined) delete process.env.MARINA_URL_GUARD_DNS_FAIL_OPEN;
+    else process.env.MARINA_URL_GUARD_DNS_FAIL_OPEN = prev;
+  });
+
+  it("blocks a host whose resolution throws", async () => {
+    delete process.env.MARINA_URL_GUARD_DNS_FAIL_OPEN;
+    __setDnsResolverForTest(async () => {
+      throw new Error("ENOTFOUND");
+    });
+    const result = await validateFetchUrl("https://unresolvable.example.com/x");
+    expect(result).toContain("Blocked host unresolvable.example.com");
+    expect(result).toContain("DNS resolution failed");
+  });
+
+  it("guardedFetch never connects when resolution fails", async () => {
+    delete process.env.MARINA_URL_GUARD_DNS_FAIL_OPEN;
+    __setDnsResolverForTest(async () => {
+      throw new Error("EAI_AGAIN");
+    });
+    let called = false;
+    globalThis.fetch = (async () => {
+      called = true;
+      return new Response("");
+    }) as unknown as typeof fetch;
+    await expect(guardedFetch("https://unresolvable.example.com/x")).rejects.toThrow(
+      /SSRF blocked/,
+    );
+    expect(called).toBe(false);
+  });
+
+  it("MARINA_URL_GUARD_DNS_FAIL_OPEN=true restores the permissive behavior", async () => {
+    process.env.MARINA_URL_GUARD_DNS_FAIL_OPEN = "true";
+    __setDnsResolverForTest(async () => {
+      throw new Error("ENOTFOUND");
+    });
+    expect(await validateFetchUrl("https://unresolvable.example.com/x")).toBeNull();
+    // Any other value keeps the default.
+    process.env.MARINA_URL_GUARD_DNS_FAIL_OPEN = "yes";
+    expect(await validateFetchUrl("https://unresolvable.example.com/x")).not.toBeNull();
+  });
+
+  it("does not affect IP-literal hosts (no DNS involved)", async () => {
+    delete process.env.MARINA_URL_GUARD_DNS_FAIL_OPEN;
+    __setDnsResolverForTest(async () => {
+      throw new Error("must not be called");
+    });
+    expect(await validateFetchUrl("http://93.184.216.34/")).toBeNull();
+    expect(await validateFetchUrl("http://10.0.0.1/")).not.toBeNull();
+  });
+});
