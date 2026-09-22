@@ -678,6 +678,22 @@ fire-and-forget so the legacy reply lands in-tick; callers that need sequencing 
 Same-named verbs are different tools: `memory claim/resolve/source/graph` act on durable records;
 `note claim/resolve/source/graph` act on legacy notes and mirror to their twins as above.
 
+### Which verb?
+
+Three stores answer to similar words. `memory kv …` is the per-entity key-value belief store
+(`memory kv set pace fast` is the agent tick rate); the bare `memory set/get/delete/list/history`
+spellings still work and `memory list` prints a one-line hint pointing at the durable side.
+
+| You want to… | Verb | Store / cost |
+|---|---|---|
+| find your own notes by keyword | `recall <q>` | legacy notes, FTS-ranked, no model call |
+| filter durable records exactly | `memory query <JSON>` (`{}` lists) | durable service, symbolic |
+| pull everything on a topic, no synthesis | `recap <topic>` | notes + pools + chronicle, no model call |
+| get a synthesised answer | `ask <question>` | model call over notes + guide + pools + world search |
+| add web evidence to what you know | `dig <topic>` | notes + web, optional synthesis |
+| deposit into a shared pool | `share <pool> <text>` ≡ `pool <pool> add <text>` | legacy pool note + durable twin |
+| mark something checked | `note verify <id> …` (legacy note) · `memory reaffirm <ID> …` (durable record, re-pins premises) · `skill verify <name>` (skill package) | three different objects |
+
 ## Portable history and compatibility imports
 
 ```ts

@@ -26,7 +26,12 @@ import {
 } from "../../net/ansi";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
-import { extractModifiers, int as parseIntSafe } from "../parse-input";
+import {
+  canonicalSub,
+  extractModifiers,
+  int as parseIntSafe,
+  parseModifiers,
+} from "../parse-input";
 import { requiresPersistence } from "./command-messages";
 
 const STOP_WORDS = new Set([
@@ -126,6 +131,30 @@ const VALID_RELATIONSHIPS = new Set([
   "derived_from",
 ]);
 
+/** Subcommands the switch below handles; anything else is free text to save. */
+const NOTE_SUBS = [
+  "claim",
+  "source",
+  "derive",
+  "verify",
+  "explain",
+  "contradictions",
+  "conflicts",
+  "resolve",
+  "consolidate",
+  "list",
+  "room",
+  "search",
+  "delete",
+  "link",
+  "unlink",
+  "correct",
+  "trace",
+  "types",
+  "evolve",
+  "graph",
+];
+
 function parseNoteText(input: string): {
   content: string;
   importance?: number;
@@ -178,7 +207,7 @@ export function noteCommand(deps: {
   return {
     name: "note",
     aliases: [],
-    help: "Evidence-aware memory. Usage: note <text> | note claim <text> [confidence 0..1] [source URL] | note explain|verify|source|contradictions|consolidate ...",
+    help: "Evidence-aware memory. Usage: note <text> | note claim <text> [confidence:0..1] [source:URL] (also trailing `confidence 0.9 source URL`) | note explain|verify|source|contradictions|consolidate ... | note list (ls) | note delete <id> (rm/remove)",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -189,7 +218,12 @@ export function noteCommand(deps: {
       const db = deps.db;
       const access = memoryAccess(db, entity);
       const tokens = input.tokens;
-      const sub = tokens[0]?.toLowerCase();
+      // Alternate verb spellings (`ls`, `rm`, `remove`) normalize onto the
+      // handled ones; anything else stays as typed and falls through to the
+      // free-text save below.
+      // `note <free text>` is the primary form: a note that begins with "remove"
+      // or "rm" must be saved, not routed to `delete`. `ls` → `list` is safe.
+      const sub = canonicalSub(tokens[0], NOTE_SUBS, { noAlias: ["rm", "remove"] });
 
       if (!sub) {
         ctx.send(
@@ -202,15 +236,31 @@ export function noteCommand(deps: {
 
       switch (sub) {
         case "claim": {
-          const { text, modifiers } = extractModifiers(tokens.slice(1).join(" "), [
+          // note claim <text> [confidence:0..1] [source:URL] [observed:YYYY-MM-DD]
+          // — the trailing `confidence 0.9 source URL` keyword form is still accepted.
+          const claimMods = parseModifiers(tokens.slice(1), {
+            confidence: { type: "number" },
+            source: { type: "string" },
+            observed: { type: "string" },
+          });
+          if (claimMods.errors.length > 0) {
+            ctx.send(input.entity, `note claim: ${claimMods.errors.join("; ")}`);
+            return;
+          }
+          const legacy = extractModifiers(claimMods.rest.join(" "), [
             "confidence",
             "source",
             "observed",
           ]);
+          const text = legacy.text;
+          const modifiers: Record<string, string> = { ...legacy.modifiers };
+          for (const key of ["confidence", "source", "observed"] as const) {
+            if (claimMods.raw[key] !== undefined) modifiers[key] = claimMods.raw[key]!;
+          }
           if (!text) {
             ctx.send(
               input.entity,
-              "Usage: note claim <text> [confidence 0..1] [source URL] [observed YYYY-MM-DD]\n" +
+              "Usage: note claim <text> [confidence:0..1] [source:URL] [observed:YYYY-MM-DD]   (also trailing `confidence 0.9 source URL`)\n" +
                 "(see also: `memory claim <subject> <predicate> <JSON scalar>` asserts a typed durable claim; `note claim` records a free-text legacy claim and mirrors it to a durable twin.)",
             );
             return;

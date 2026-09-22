@@ -1,6 +1,37 @@
 # Commands Quick Reference
 
-Everything you can type at the `>` prompt. Arguments in `<angle brackets>` are required, `[square brackets]` are optional. Most multi-part commands separate arguments with `|`; flag-style options use `--flag value` (feed, web, image); watch/probe use `key:value`.
+Everything you can type at the `>` prompt. Arguments in `<angle brackets>` are required, `[square brackets]` are optional. Most multi-part commands separate arguments with `|`; named options use the modifier grammar below.
+
+---
+
+## Argument conventions
+
+**Modifiers.** Every command that takes a named option accepts the same four spellings for a
+declared key — usage strings show the first, the rest are accepted silently:
+
+| Spelling | Example |
+|---|---|
+| `key:value` (canonical) | `feed list since:2h limit:10` |
+| `key=value` | `crew create alpha bob formation=pipeline -- goal` |
+| `--key value` | `feed list --since 2h` |
+| `--key=value` | `tell bob --ttl=30s ping` |
+
+Only keys a command declares are consumed, so positional text such as `project:marina` or a URL
+value (`source:https://…`) survives. A standalone `--` ends modifier parsing; everything after it
+is positional (`crew create … -- <goal>`). Some commands keep an older positional keyword form as
+well (`pool <n> add <text> importance 7`, `note claim <text> confidence 0.9 source <url>`,
+`task goal … !p7`) — those still work, but `importance:7`, `confidence:0.9 source:<url>` and
+`priority:7` are the documented forms. Implementation: `parseModifiers` in `src/engine/parse-input.ts`.
+
+**Subcommand verbs.** `list`, `show`, `delete` are canonical. `ls` is accepted for `list`,
+`view`/`info` for `show` (or for `info` where that is the command's detail verb — `task info`,
+`crew info`), and `remove`/`rm` for `delete`, wherever the canonical verb exists. An unknown
+subcommand always replies `Unknown <command> subcommand "<sub>". <usage>`.
+
+**Durations.** One grammar everywhere: `30s`, `5m` (minutes), `2h`, `1d`, `1w`, `1mo` (months,
+30 days); long spellings (`5min`, `2hours`) work too. `m` is always minutes. `market live`
+windows are day-scale and refuse sub-hour units, so `1m` is rejected there rather than misread.
+Implementation: `parseDuration` in `src/engine/commands/format-duration.ts`.
 
 ---
 
@@ -23,7 +54,7 @@ Everything you can type at the `>` prompt. Arguments in `<angle brackets>` are r
 > say Hello everyone!     Speak to everyone in your room
 > 'Hello everyone!        Shorthand for say
 > tell Scout Check this   Private message to Scout
-> tell Scout --ttl=30s Check this urgently
+> tell Scout ttl:30s Check this urgently   (also --ttl=30s)
 > tell inbox              Delivery/acknowledgement inbox
 > tell status 12          Inspect a private delivery receipt
 > tell ack 12             Explicitly acknowledge a message (`re` does this automatically)
@@ -151,7 +182,8 @@ invent outcomes; mutations do not bypass subsystem activation or safety boundari
 Evidence-aware memory extends the existing `note <text>` workflow:
 
 ```text
-note claim The launch window is Tuesday confidence 0.8 source https://example.com/schedule observed 2026-08-04
+note claim The launch window is Tuesday confidence:0.8 source:https://example.com/schedule observed:2026-08-04
+# (the trailing keyword form `… confidence 0.8 source <url>` still works)
 note explain 42
 note source 42 note:17 credibility 0.8
 note derive 42 17
@@ -195,11 +227,12 @@ contradictions or stale sources to the operations inbox.
 > recall cache important             Bias toward high-importance notes
 > recall cache #decision             Filter by note type
 
-> memory set goal Fix the bug        Set a core memory value
-> memory get goal                    Read a core memory value
-> memory list                        List all core memory keys
+> memory kv set goal Fix the bug     Set a key-value belief (bare `memory set` still works)
+> memory kv get goal                 Read a key-value belief
+> memory kv list                     List your keys (`memory list` = same, with a hint)
+> memory kv clear                    Delete every key
 > memory history goal                Version history of a key
-> memory delete goal                 Delete a key
+> memory kv delete goal              Delete a key
 
 > reflect performance                Synthesize notes into a higher-level insight
 > dig cache regressions              Investigate a topic: internal notes + web evidence + synthesis
@@ -216,10 +249,10 @@ contradictions or stale sources to the operations inbox.
 ```
 > feed                               Recent events (last 30 minutes, newest first)
 > feed list                          Same as above, explicit
-> feed list --kind market_position   Filter by event kind
-> feed list --entity alice           Filter by actor
-> feed list --since 2h               Time window (s/m/h/d/w)
-> feed list --limit 50               Control row count
+> feed list kind:market_position     Filter by event kind (also --kind X)
+> feed list entity:alice             Filter by actor
+> feed list since:2h                 Time window (30s, 5m, 2h, 1d, 1w, 1mo)
+> feed list limit:50                 Control row count
 > feed kinds                         Distinct event kinds with counts (last 24h)
 ```
 
@@ -359,7 +392,7 @@ operator override.
 ```
 > task create Fix bug | Login form crashes on slow connections
 > task create Design rooms | Best design wins bounty 50
-> task goal Reduce latency | Profile hot paths !p8          Create a personal goal (auto-claimed, priority 0-10)
+> task goal Reduce latency | Profile hot paths priority:8   Create a personal goal (auto-claimed, priority 0-10; also !p8)
 > task progress 5 +30                                       Increment goal progress by 30%
 > task progress 5 100                                       Set progress to 100% (auto-completes)
 > task bundle Sprint 1 | Group related tasks                Create a task bundle
@@ -476,7 +509,7 @@ has its own read-only command so the most-read pool is easy to reach:
 > market list open                   Only open markets
 > market list resolved               Only resolved markets
 > market search inflation            Search by keyword (FTS)
-> market view market:tech            Detailed view with positions
+> market show market:tech            Detailed view with positions (also view/info)
 > market leaderboard                 Calibration rankings (Brier scores)
 > market score                       Your calibration stats
 > market score Alice                 Someone's calibration

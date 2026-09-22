@@ -4,21 +4,23 @@
 import { bold, category, dim, id as fmtId, header, separator, status } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
-import { extractModifiers } from "../parse-input";
+import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
-import { formatAge, parseSince } from "./format-duration";
+import { formatAge } from "./format-duration";
 
 const HELP = `Activity feed — queryable timeline of world events.
 Usage:
   feed                                  — recent events (last 30 minutes)
-  feed list [--kind X] [--entity Y] [--since 30m|1h|2d] [--limit 20]
+  feed list [kind:X] [entity:Y] [since:30m|1h|2d] [limit:20]   (also --kind X)
   feed kinds                            — show distinct event kinds in the store
 
 Examples:
   feed                                      — last 30m, newest first
-  feed list --kind market_position --limit 10
-  feed list --entity alice --since 2h
+  feed list kind:market_position limit:10
+  feed list entity:alice since:2h
   feed list --since 1h                      — all events in the last hour`;
+
+const FEED_SUBS = ["list", "kinds"];
 
 export function feedCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
@@ -37,16 +39,35 @@ export function feedCommand(deps: {
       }
       const db = deps.db;
       const tokens = input.tokens;
-      const sub = tokens[0]?.toLowerCase();
+      const sub = canonicalSub(tokens[0], FEED_SUBS);
 
-      // `feed` with no arg = `feed list` with defaults
-      if (!sub || sub === "list") {
-        const rawArgs = sub === "list" ? tokens.slice(1).join(" ") : input.args;
-        const { modifiers } = extractModifiers(rawArgs ?? "", ["kind", "entity", "since", "limit"]);
+      // `feed` with no arg = `feed list` with defaults. A leading modifier
+      // (`feed since:1h`) is also a list.
+      if (
+        !sub ||
+        sub === "list" ||
+        /^(?:--(?:kind|entity|since|limit)(?:=|$)|(?:kind|entity|since|limit)[:=])/.test(sub)
+      ) {
+        const argTokens = sub === "list" ? tokens.slice(1) : tokens;
+        const { values, raw, errors } = parseModifiers(argTokens, {
+          kind: { type: "string" },
+          entity: { type: "string" },
+          since: { type: "duration" },
+          limit: { type: "int" },
+        });
+        if (errors.length > 0) {
+          ctx.send(input.entity, `feed: ${errors.join("; ")}`);
+          return;
+        }
+        const modifiers = {
+          kind: values.kind as string | undefined,
+          entity: values.entity as string | undefined,
+          since: raw.since,
+        };
 
-        const sinceMs = parseSince(modifiers.since) ?? 30 * 60_000;
-        const limitArg = Number.parseInt(modifiers.limit ?? "", 10);
-        const limit = Number.isFinite(limitArg) && limitArg > 0 ? Math.min(limitArg, 200) : 20;
+        const sinceMs = (values.since as number | undefined) ?? 30 * 60_000;
+        const limitArg = values.limit as number | undefined;
+        const limit = limitArg !== undefined && limitArg > 0 ? Math.min(limitArg, 200) : 20;
 
         const events = db.queryFeedEvents({
           since: Date.now() - sinceMs,
@@ -102,13 +123,13 @@ export function feedCommand(deps: {
           separator(),
           ...sorted.map(([kind, count]) => `  ${category(kind.padEnd(24))} ${fmtId(count)}`),
           "",
-          dim("Filter with: feed list --kind <name>"),
+          dim("Filter with: feed list kind:<name>"),
         ];
         ctx.send(input.entity, lines.join("\n"));
         return;
       }
 
-      ctx.send(input.entity, HELP);
+      ctx.send(input.entity, unknownSubcommand("feed", tokens[0], HELP));
     },
   };
 }
