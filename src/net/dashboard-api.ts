@@ -47,6 +47,7 @@ import {
   verifyFederationDocument,
 } from "./federation-crypto";
 import { formatPerception } from "./formatter";
+import { clientIp, consumeHttpRate, rateLimitedResponse } from "./http-utils";
 import {
   buildMemoryGraph,
   buildMemoryOverview,
@@ -98,9 +99,14 @@ const SETUP_STATUS_WINDOW_MS = 60_000;
 const SETUP_STATUS_LIMIT = 20;
 const setupStatusHits = new Map<string, { count: number; windowStart: number }>();
 
-function extractIp(req: Request): string {
-  const fwd = req.headers.get("x-forwarded-for");
-  return (fwd ? fwd.split(",")[0]!.trim() : null) ?? req.headers.get("x-real-ip") ?? "unknown";
+/**
+ * Rate-limit key for a request: the real socket peer (`peerIp` from
+ * `server.requestIP`) unless `MARINA_TRUST_PROXY=true` explicitly trusts the
+ * forwarding headers — see `clientIp` in http-utils.ts. Header-derived values
+ * were spoofable, letting a direct caller pick a fresh bucket per request.
+ */
+function extractIp(req: Request, peerIp?: string): string {
+  return clientIp(req, peerIp);
 }
 
 function setupStatusAllowed(ip: string): boolean {
@@ -206,11 +212,12 @@ async function handleCommandIngress(
   engine: Engine,
   command: string,
   body: CommandApiBody,
+  peerIp?: string,
 ): Promise<Response> {
   const origin = req.headers.get("Origin");
   if (!command.trim()) return json({ error: "Command is required" }, 400, origin);
 
-  const ip = extractIp(req);
+  const ip = extractIp(req, peerIp);
   if (engine.rateLimiter && !engine.rateLimiter.consume(`api:${ip}`)) {
     return json({ error: "Rate limited. Please slow down." }, 429, origin);
   }
@@ -360,7 +367,7 @@ export async function handleDashboardApi(
 ): Promise<Response | undefined> {
   // Pre-auth endpoints (no session required — used by dashboard before login)
   if (url.pathname === "/api/setup-status" && method === "GET") {
-    const ip = extractIp(req);
+    const ip = extractIp(req, peerIp);
     if (!setupStatusAllowed(ip)) {
       return json({ error: "Too many requests" }, 429);
     }
@@ -390,7 +397,7 @@ export async function handleDashboardApi(
     if (typeof body.command !== "string") {
       return json({ error: "Field 'command' must be a string" }, 400, req.headers.get("Origin"));
     }
-    return handleCommandIngress(req, engine, body.command, body);
+    return handleCommandIngress(req, engine, body.command, body, peerIp);
   }
 
   // Convenience wrapper for product-shaped ask surfaces. Behavior still lives
@@ -401,7 +408,7 @@ export async function handleDashboardApi(
     if (typeof body.query !== "string") {
       return json({ error: "Field 'query' must be a string" }, 400, req.headers.get("Origin"));
     }
-    return handleCommandIngress(req, engine, `ask ${body.query}`, body);
+    return handleCommandIngress(req, engine, `ask ${body.query}`, body, peerIp);
   }
 
   // Public, non-secret world discovery document. Registration by another
@@ -449,6 +456,15 @@ export async function handleDashboardApi(
   const auth = authenticateRequest(req, engine);
   if ("error" in auth) return auth.error;
   const callerId = auth.entityId;
+  // Per-principal budget for the authenticated REST surface (DASHBOARD_API
+  // limit in http-utils.ts). Sentinels share one id, so they are keyed by
+  // client IP instead of letting every dev-open caller pool into one bucket.
+  const rateKey = isSentinelPrincipal(callerId)
+    ? `${callerId}@${extractIp(req, peerIp)}`
+    : callerId;
+  if (!consumeHttpRate("dashboard", rateKey)) {
+    return rateLimitedResponse(req.headers.get("Origin"));
+  }
   const memory = memoryObserver(engine, callerId);
   if (
     (url.pathname === "/api/traces" ||
@@ -3055,7 +3071,9 @@ function safeParse(raw: string | null): unknown {
   }
 }
 
+/** Last four characters only — a leading prefix identifies the provider/format
+ *  and, combined with the tail, narrows a brute-force search. */
 function maskKey(value: string): string {
   if (value.length <= 8) return "****";
-  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+  return `****${value.slice(-4)}`;
 }

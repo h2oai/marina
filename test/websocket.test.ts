@@ -2,17 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { rmSync } from "node:fs";
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { isLoopbackConnection } from "../src/engine/commands/code";
 import { WS_MAX_CONNECTIONS_PER_IP, WS_MAX_TOTAL_CONNECTIONS } from "../src/engine/constants";
 import { Engine } from "../src/engine/engine";
 import { DESKTOP_OPERATOR_ENTITY_ID, OPEN_API_ENTITY_ID } from "../src/net/auth-middleware";
+import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import {
   isLoopbackHostname,
   resolveWsBindHostname,
   WebSocketServer,
 } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
+import { LocalStorageProvider } from "../src/storage/local-provider";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 
@@ -871,5 +874,114 @@ describe("WebSocket Rate Limiting", () => {
     expect(allText).toContain("Rate limited");
 
     await close();
+  });
+});
+
+describe("HTTP surface hardening (headers, body cap, public-read throttle)", () => {
+  let engine: Engine;
+  let wsServer: WebSocketServer;
+  let db: MarinaDB;
+  let dbPath: string;
+  const HARDEN_PORT = 15303;
+  const ASSET_DIR = `/tmp/marina-ws-hardening-assets-${process.pid}`;
+  const prevBody = process.env.MARINA_MAX_REQUEST_BODY_BYTES;
+  const prevUpload = process.env.MARINA_MAX_UPLOAD_BYTES;
+
+  beforeEach(async () => {
+    process.env.MARINA_MAX_REQUEST_BODY_BYTES = "1024";
+    process.env.MARINA_MAX_UPLOAD_BYTES = "1024";
+    resetHttpRateLimitersForTests();
+    dbPath = tmpDbPath();
+    db = new MarinaDB(dbPath);
+    engine = new Engine({ startRoom: roomId("test/lobby"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/lobby"), makeTestRoom({ short: "Lobby", long: "Lobby." }));
+    const storage = new LocalStorageProvider(ASSET_DIR);
+    await storage.init();
+    wsServer = new WebSocketServer(engine, HARDEN_PORT);
+    wsServer.setDb(db);
+    wsServer.setStorage(storage);
+    wsServer.start();
+    engine.start();
+  });
+
+  afterEach(async () => {
+    engine.stop();
+    wsServer.stop();
+    db.close();
+    cleanupDb(dbPath);
+    rmSync(ASSET_DIR, { recursive: true, force: true });
+    if (prevBody === undefined) delete process.env.MARINA_MAX_REQUEST_BODY_BYTES;
+    else process.env.MARINA_MAX_REQUEST_BODY_BYTES = prevBody;
+    if (prevUpload === undefined) delete process.env.MARINA_MAX_UPLOAD_BYTES;
+    else process.env.MARINA_MAX_UPLOAD_BYTES = prevUpload;
+    resetHttpRateLimitersForTests();
+    await Bun.sleep(100);
+  });
+
+  it("serves HTML documents with nosniff, SAMEORIGIN framing and the document CSP", async () => {
+    for (const path of ["/chat", "/ask", "/dashboard", "/who/Someone"]) {
+      const resp = await fetch(`http://localhost:${HARDEN_PORT}${path}`);
+      expect(resp.headers.get("Content-Type")).toContain("text/html");
+      expect(resp.headers.get("X-Content-Type-Options")).toBe("nosniff");
+      expect(resp.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
+      expect(resp.headers.get("Content-Security-Policy")).toBe(
+        "frame-ancestors 'self'; object-src 'none'; base-uri 'self'",
+      );
+      expect(resp.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
+    }
+  });
+
+  it("serves stored assets non-executable: normalized type, nosniff, sandbox CSP, attachment", async () => {
+    // Bypass the upload API and plant an HTML file directly in storage — even a
+    // pre-allowlist row (or a compromised store) must not come back as text/html.
+    const storage = new LocalStorageProvider(ASSET_DIR);
+    await storage.put("planted.html", new TextEncoder().encode("<script>1</script>"), "text/html");
+    const resp = await fetch(`http://localhost:${HARDEN_PORT}/assets/planted.html`);
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("Content-Type")).toBe("application/octet-stream");
+    expect(resp.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(resp.headers.get("Content-Security-Policy")).toBe("default-src 'none'; sandbox");
+    expect(resp.headers.get("Content-Disposition")).toStartWith("attachment;");
+  });
+
+  it("caps request bodies at MARINA_MAX_REQUEST_BODY_BYTES instead of Bun's 128 MiB default", async () => {
+    const huge = JSON.stringify({ name: "Big", command: "x".repeat(4096) });
+    const resp = await fetch(`http://localhost:${HARDEN_PORT}/api/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: huge,
+    }).catch(() => null);
+    // Bun answers 413 (or drops the connection) — either way the handler never
+    // buffers the payload. A small body on the same route still works.
+    if (resp) expect(resp.status).toBe(413);
+    const small = await fetch(`http://localhost:${HARDEN_PORT}/api/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Small", command: "look" }),
+    });
+    expect(small.status).toBe(200);
+  });
+
+  it("answers malformed JSON on a bare-json route with a JSON error, never a stack page", async () => {
+    const resp = await fetch(`http://localhost:${HARDEN_PORT}/api/connect/negotiate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{ nope",
+    });
+    expect(resp.status).toBe(400);
+    expect(((await resp.json()) as { error: string }).error).toBe("Invalid JSON");
+  });
+
+  it("rate-limits the public /api/entity/* reads per client IP (30 / 10 s)", async () => {
+    let limited: Response | undefined;
+    for (let i = 0; i < 31; i++) {
+      const resp = await fetch(`http://localhost:${HARDEN_PORT}/api/entity/nobody-${i}/profile`);
+      if (resp.status === 429) {
+        limited = resp;
+        break;
+      }
+      expect(resp.status).toBe(404);
+    }
+    expect(limited?.status).toBe(429);
   });
 });

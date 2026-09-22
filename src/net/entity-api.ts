@@ -5,8 +5,9 @@
  * Entity profile API — the public per-entity view of a Marina's history.
  *
  * Projects existing per-event data (chronicle, standing ledger, entity_activity,
- * entity_competence) onto a per-actor axis. Read-only, no auth, generous rate
- * limit. This is the chronicle's public face — the "wiki" of each entity.
+ * entity_competence) onto a per-actor axis. Read-only, no auth, rate-limited
+ * per client IP (`publicRead` in http-utils.ts, 30 requests / 10 s). This is
+ * the chronicle's public face — the "wiki" of each entity.
  *
  *   GET /api/entity/:name/profile
  *
@@ -24,6 +25,7 @@ import type { Engine } from "../engine/engine";
 import type { MarinaDB } from "../persistence/database";
 import type { ChronicleEntry, ChronicleKind } from "../persistence/db-chronicle";
 import type { Entity, EntityId } from "../types";
+import { consumeHttpRate, rateLimitedResponse, UNKNOWN_CLIENT_IP } from "./http-utils";
 
 /** Standing thresholds the rank ladder uses (mirrors src/agent/rank-progression.ts). */
 const RANK_THRESHOLDS = [5, 15, 40, 100];
@@ -87,6 +89,8 @@ export async function handleEntityApi(
   method: string,
   db: MarinaDB,
   engine: Engine,
+  /** Rate-limit key — the caller's client IP (`clientIp` in http-utils.ts). */
+  clientKey: string = UNKNOWN_CLIENT_IP,
 ): Promise<Response | null> {
   // Only GET is supported for this read-only public surface
   if (method !== "GET") return null;
@@ -94,6 +98,8 @@ export async function handleEntityApi(
   // /api/entity/<name>/profile
   const match = url.pathname.match(/^\/api\/entity\/([^/]+)\/profile\/?$/);
   if (match) {
+    // Public + unauthenticated ⇒ the only handle we have is the client IP.
+    if (!consumeHttpRate("publicRead", clientKey)) return rateLimitedResponse(null);
     const name = decodeURIComponent(match[1]!);
     const profile = buildEntityProfile(name, db, engine);
     if (!profile) {

@@ -4,9 +4,19 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { Engine } from "../src/engine/engine";
+import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import type { FlywheelToolBackend } from "../src/integrations/flywheel-manager";
 import { buildUnifiedContext, type UnifiedContextResult } from "../src/memory/unified-context";
-import { McpServerAdapter } from "../src/net/mcp-server";
+import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
+import {
+  authenticateMcpTransport,
+  McpArgError,
+  McpServerAdapter,
+  mcpAllowedHosts,
+  mcpTransportAuthRequired,
+  quoteArg,
+  textArg,
+} from "../src/net/mcp-server";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture, tierIds } from "./fixtures/unified-memory-fixture";
@@ -168,35 +178,13 @@ describe("MCP Server", () => {
   let port: number;
   let url: string;
   let flywheelCalls: string[];
+  let flywheel: FlywheelToolBackend;
 
   beforeEach(() => {
     dbPath = nextDbPath();
     db = new MarinaDB(dbPath);
-    engine = new Engine({
-      startRoom: roomId("test/start"),
-      tickInterval: 60_000,
-      db,
-    });
-
-    engine.registerRoom(
-      roomId("test/start"),
-      makeTestRoom({
-        short: "Starting Room",
-        long: "You are in the starting room.",
-        exits: { north: roomId("test/north") },
-      }),
-    );
-    engine.registerRoom(
-      roomId("test/north"),
-      makeTestRoom({
-        short: "Northern Room",
-        long: "A room to the north.",
-        exits: { south: roomId("test/start") },
-      }),
-    );
-
     flywheelCalls = [];
-    const flywheel: FlywheelToolBackend = {
+    flywheel = {
       async create(entity) {
         flywheelCalls.push(`create:${entity}`);
         return {
@@ -221,6 +209,30 @@ describe("MCP Server", () => {
         return undefined;
       },
     };
+    engine = new Engine({
+      startRoom: roomId("test/start"),
+      tickInterval: 60_000,
+      db,
+      flywheel,
+    });
+
+    engine.registerRoom(
+      roomId("test/start"),
+      makeTestRoom({
+        short: "Starting Room",
+        long: "You are in the starting room.",
+        exits: { north: roomId("test/north") },
+      }),
+    );
+    engine.registerRoom(
+      roomId("test/north"),
+      makeTestRoom({
+        short: "Northern Room",
+        long: "A room to the north.",
+        exits: { south: roomId("test/start") },
+      }),
+    );
+
     adapter = new McpServerAdapter(engine, 0, undefined, flywheel);
     adapter.start();
     port = adapter.getPort();
@@ -758,24 +770,43 @@ describe("MCP Server", () => {
   // ── Escape Hatch Tools ──────────────────────────────────────────────────
 
   describe("Flywheel tool", () => {
-    it("requires login and binds calls to the logged-in entity", async () => {
+    afterEach(() => resetTrustProfileForTests());
+
+    it("requires login and is gated like any other client (code.exec), never a side channel", async () => {
       const sid = await initSession(url);
       expect(await toolCall(url, sid, "flywheel", { action: "create" })).toContain("Not logged in");
 
+      // Default (shared) posture: a fresh rank-0 entity has no `code.exec`
+      // competence, so the sandbox mutation is refused by the gate and the
+      // backend is never reached — the old direct path bypassed this entirely.
       await toolCall(url, sid, "login", { name: "FlyBot" });
+      const refused = await toolCall(url, sid, "flywheel", { action: "create" });
+      expect(refused).toContain("standing 5");
+      expect(flywheelCalls).toHaveLength(0);
+    });
+
+    it("routes create through `code sandbox start` and binds it to the logged-in entity", async () => {
+      // Ungated local posture: the command runs and reaches the engine backend.
+      setTrustProfile("local");
+      const sid = await initSession(url);
+      await toolCall(url, sid, "login", { name: "FlyLocal" });
       const created = await toolCall(url, sid, "flywheel", { action: "create" });
-      expect(created).toContain('"sandboxId":"sandbox-1"');
+      expect(created).toContain("Flywheel sandbox ready: sandbox-1");
       expect(flywheelCalls).toHaveLength(1);
       expect(flywheelCalls[0]).toStartWith("create:");
+    });
 
-      const output = await toolCall(url, sid, "flywheel", {
-        action: "exec",
-        command: "echo",
-        args: ["hello"],
+    it("rejects a spaced image token instead of splicing it into the command", async () => {
+      setTrustProfile("local");
+      const sid = await initSession(url);
+      await toolCall(url, sid, "login", { name: "FlyArgs" });
+      const raw = await toolCallRaw(url, sid, "flywheel", {
+        action: "create",
+        image: "img:1 stop confirm",
       });
-      expect(output).toBe("sandbox output");
-      expect(flywheelCalls[1]).toStartWith("exec:");
-      expect(flywheelCalls[1]).toEndWith(":echo");
+      expect(raw.isError).toBe(true);
+      expect(raw.text).toContain("single token");
+      expect(flywheelCalls).toHaveLength(0);
     });
   });
 
@@ -958,6 +989,176 @@ describe("MCP Server with rate limiting", () => {
     }
     // If we exhausted iterations without hitting the limit, that is unexpected
     // but not worth failing the test over timing vagaries
+  });
+});
+
+// ─── Argument hygiene ─────────────────────────────────────────────────────────
+
+describe("MCP argument hygiene (quoteArg / textArg)", () => {
+  it("passes plain single tokens through unchanged", () => {
+    expect(quoteArg("goal")).toBe("goal");
+    expect(quoteArg("kalshi:ABC-123")).toBe("kalshi:ABC-123");
+  });
+
+  it("rejects whitespace, line breaks, control characters and empty values", () => {
+    expect(() => quoteArg("pace fast")).toThrow(McpArgError);
+    expect(() => quoteArg("a\nquit")).toThrow(McpArgError);
+    expect(() => quoteArg("a\u0000b")).toThrow(McpArgError);
+    expect(() => quoteArg("")).toThrow(McpArgError);
+  });
+
+  it("textArg keeps spaces but rejects line breaks", () => {
+    expect(textArg("hello there")).toBe("hello there");
+    expect(() => textArg("hello\nsay pwned")).toThrow(McpArgError);
+  });
+});
+
+// ─── Transport hardening ──────────────────────────────────────────────────────
+
+describe("MCP transport hardening", () => {
+  let db: MarinaDB;
+  let engine: Engine;
+  let adapter: McpServerAdapter;
+  let dbPath: string;
+  let base: string;
+  const saved: Record<string, string | undefined> = {};
+  const ENV = [
+    "MODEL_API_KEYS",
+    "MARINA_AUTH",
+    "MARINA_MCP_SESSIONS_PER_MIN",
+    "MARINA_MCP_ALLOWED_HOSTS",
+  ];
+
+  beforeEach(() => {
+    for (const k of ENV) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    resetHttpRateLimitersForTests();
+    dbPath = nextDbPath();
+    db = new MarinaDB(dbPath);
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+    adapter = new McpServerAdapter(engine, 0);
+    adapter.start();
+    base = `http://localhost:${adapter.getPort()}`;
+    engine.start();
+  });
+
+  afterEach(() => {
+    adapter.stop();
+    engine.stop();
+    db.close();
+    cleanupDb(dbPath);
+    for (const k of ENV) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    resetHttpRateLimitersForTests();
+  });
+
+  const initBody = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-03-26",
+      capabilities: {},
+      clientInfo: { name: "t", version: "1" },
+    },
+  });
+  const postInit = (headers: Record<string, string> = {}) =>
+    fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        ...headers,
+      },
+      body: initBody,
+    });
+
+  it("stays unauthenticated in the local posture (loopback, no keys, no auth)", async () => {
+    expect(mcpTransportAuthRequired(true)).toBe(false);
+    const resp = await postInit();
+    expect(resp.status).toBe(200);
+    expect(resp.headers.get("mcp-session-id")).toBeTruthy();
+  });
+
+  it("requires a bearer once MODEL_API_KEYS is configured, accepting a key secret", async () => {
+    process.env.MODEL_API_KEYS = "sk-test-secret:tester,sk-other";
+    expect(mcpTransportAuthRequired(true)).toBe(true);
+
+    const anon = await postInit();
+    expect(anon.status).toBe(401);
+    expect(anon.headers.get("WWW-Authenticate")).toContain("Bearer");
+
+    const wrong = await postInit({ Authorization: "Bearer nope" });
+    expect(wrong.status).toBe(401);
+
+    const ok = await postInit({ Authorization: "Bearer sk-test-secret" });
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("mcp-session-id")).toBeTruthy();
+  });
+
+  it("accepts a Marina session token as the bearer", async () => {
+    // Mint a session token first (auth off), then turn the requirement on.
+    const sid = await initSession(base);
+    const loginText = await toolCall(base, sid, "login", { name: "BearerBot" });
+    const token = loginText.match(/Session token: `([^`]+)`/)?.[1];
+    expect(token).toBeTruthy();
+
+    process.env.MARINA_AUTH = "better-auth";
+    const denied = await postInit();
+    expect(denied.status).toBe(401);
+    const req = new Request(`${base}/mcp`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(authenticateMcpTransport(req, engine, true)).toBeNull();
+  });
+
+  it("rejects a foreign Host header (DNS-rebinding protection) on a loopback bind", async () => {
+    const resp = await postInit({ Host: "evil.example:1234" });
+    expect(resp.status).toBeGreaterThanOrEqual(400);
+    expect(resp.headers.get("mcp-session-id")).toBeNull();
+  });
+
+  it("derives allowed hosts from the bind, the live port and MARINA_MCP_ALLOWED_HOSTS", () => {
+    const hosts = mcpAllowedHosts("127.0.0.1", 3301, true, {
+      MARINA_MCP_ALLOWED_HOSTS: "mcp.example.com, other.example:9000",
+    });
+    expect(hosts).toContain("localhost:3301");
+    expect(hosts).toContain("127.0.0.1:3301");
+    expect(hosts).toContain("[::1]:3301");
+    expect(hosts).toContain("mcp.example.com");
+    expect(hosts).toContain("mcp.example.com:3301");
+    expect(hosts).toContain("other.example:9000");
+    // Public bind without a declared list ⇒ validation off (bearer is mandatory there).
+    expect(mcpAllowedHosts("0.0.0.0", 3301, false, {})).toBeUndefined();
+    expect(
+      mcpAllowedHosts("0.0.0.0", 3301, false, { MARINA_MCP_ALLOWED_HOSTS: "m.example" }),
+    ).toEqual(["m.example", "m.example:3301"]);
+  });
+
+  it("refuses a foreign browser Origin", async () => {
+    const resp = await postInit({ Origin: "https://evil.example" });
+    expect(resp.status).toBe(403);
+  });
+
+  it("throttles session creation per client IP (MARINA_MCP_SESSIONS_PER_MIN)", async () => {
+    process.env.MARINA_MCP_SESSIONS_PER_MIN = "2";
+    resetHttpRateLimitersForTests();
+    expect((await postInit()).status).toBe(200);
+    expect((await postInit()).status).toBe(200);
+    const third = await postInit();
+    expect(third.status).toBe(429);
+    expect(third.headers.get("Retry-After")).toBe("60");
+  });
+
+  it("throttles the login tool with the same per-IP budget", async () => {
+    process.env.MARINA_MCP_SESSIONS_PER_MIN = "1";
+    resetHttpRateLimitersForTests();
+    const sid = await initSession(base); // consumes the single token
+    const text = await toolCall(base, sid, "login", { name: "Throttled" });
+    expect(text).toBe("Rate limited. Please slow down.");
   });
 });
 

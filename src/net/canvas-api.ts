@@ -5,10 +5,11 @@ import type { Engine } from "../engine/engine";
 import type { MarinaDB } from "../persistence/database";
 import type { StorageProvider } from "../storage/provider";
 import type { EntityId } from "../types";
-import { authenticateRequest } from "./auth-middleware";
+import { authenticateRequest, refuseOpenApiWrite } from "./auth-middleware";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "./canvas-principal";
 import { authorizeCanvasSubscription, type CanvasBroadcaster } from "./canvas-ws";
 import { corsHeaders } from "./cors";
+import { consumeHttpRate, rateLimitedResponse, readJsonBody } from "./http-utils";
 
 const CANVAS_NODE_TYPES = new Set([
   "image",
@@ -145,6 +146,13 @@ export async function handleCanvasApi(
   if (engine && method !== "GET") {
     const auth = authenticateRequest(req, engine);
     if ("error" in auth) return auth.error;
+    // The dev-open sentinel (MARINA_OPEN_API=true) is read-only: a mutation
+    // from it would both bypass identity and be attributed to nobody.
+    const origin = req.headers.get("Origin");
+    const refused = refuseOpenApiWrite(auth.entityId, origin);
+    if (refused) return refused;
+    // Per-principal mutation budget (shared with the asset API).
+    if (!consumeHttpRate("mutation", auth.entityId)) return rateLimitedResponse(origin);
     authenticatedEntityId = auth.entityId;
   }
 
@@ -374,7 +382,9 @@ export async function handleCanvasApi(
       if (!existingNode || existingNode.canvas_id !== canvasId) {
         return json({ error: "Node not found" }, 404);
       }
-      const body = (await req.json()) as Record<string, unknown>;
+      const jsonBody = await readJsonBody(req);
+      if (!jsonBody.ok) return jsonBody.response;
+      const body = jsonBody.body;
       const updated = db.updateNode(nodeId, {
         x: body.x as number | undefined,
         y: body.y as number | undefined,
@@ -430,7 +440,9 @@ export async function handleCanvasApi(
     // A non-owner may not create nodes on a private per-entity canvas.
     if (!canAccessCanvas(canvasId)) return json({ error: "Canvas not found" }, 404);
 
-    const body = (await req.json()) as Record<string, unknown>;
+    const jsonBody = await readJsonBody(req);
+    if (!jsonBody.ok) return jsonBody.response;
+    const body = jsonBody.body;
     const requestedType = typeof body.type === "string" ? body.type : "text";
     if (!CANVAS_NODE_TYPES.has(requestedType)) {
       return json({ error: `Unsupported canvas node type: ${requestedType}` }, 400);
@@ -526,7 +538,9 @@ export async function handleCanvasApi(
 
   // POST /api/canvases — create canvas
   if (url.pathname === "/api/canvases" && method === "POST") {
-    const body = (await req.json()) as Record<string, unknown>;
+    const jsonBody = await readJsonBody(req);
+    if (!jsonBody.ok) return jsonBody.response;
+    const body = jsonBody.body;
     const name = body.name as string;
     if (!name) return json({ error: "Name is required" }, 400);
 

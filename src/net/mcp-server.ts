@@ -5,7 +5,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import { version as MARINA_VERSION } from "../../package.json";
+import { getInternalModelToken } from "../agent/agent-runtime";
 import { RateLimiter } from "../auth/rate-limiter";
+import { secretsEqual } from "../auth/secret-compare";
 import { WS_IDLE_TIMEOUT_SECONDS } from "../engine/constants";
 import type { Engine } from "../engine/engine";
 import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
@@ -27,14 +29,20 @@ import {
   negotiateConnectCapabilities,
   registerConnectEndpoint,
 } from "./connect-api";
+import { isTrustedBrowserOrigin } from "./cors";
+import { consumeHttpRate, rateLimitedResponse, securityHeaders } from "./http-utils";
 import { registerMemoryResources } from "./memory-mcp-resources";
-import { resolveWsBindHostname } from "./websocket-server";
+import { isLoopbackHostname, resolveWsBindHostname } from "./websocket-server";
 
 // ─── Session State ────────────────────────────────────────────────────────────
 
 interface McpSession {
   connId: string;
   entityId: EntityId | null;
+  /** Real socket peer (never header-derived) — informational. */
+  peerIp?: string;
+  /** `<listen port>|<peer ip>` — the per-peer login/session throttle bucket. */
+  throttleKey: string;
   perceptionBuffer: Perception[];
   commandTail: Promise<unknown>;
   transport: WebStandardStreamableHTTPServerTransport;
@@ -55,6 +63,170 @@ type McpResult = {
 
 function text(msg: string): McpResult {
   return { content: [{ type: "text" as const, text: msg }] };
+}
+
+function errorText(msg: string): McpResult {
+  return { ...text(msg), isError: true };
+}
+
+// ─── Argument hygiene ─────────────────────────────────────────────────────────
+//
+// Tool parameters are interpolated into engine command lines, and the engine
+// tokenizer splits on whitespace with NO quote grammar — so a `key` or `target`
+// containing a space would inject extra tokens (`memory set goal x importance 9`
+// from key="goal x importance"). Values destined for a single-token position
+// must therefore be single tokens; quoting could not make them one.
+
+/** Raised by {@link quoteArg}; tool handlers surface it as an `isError` result. */
+export class McpArgError extends Error {}
+
+/**
+ * Validate a value that will occupy ONE token of an engine command. Rejects
+ * line breaks / control characters outright and any internal whitespace (the
+ * tokenizer cannot preserve a spaced value as a single argument). Returns the
+ * value unchanged when it is safe to interpolate.
+ */
+export function quoteArg(value: string, label = "argument"): string {
+  if (hasControlCharacters(value, false)) {
+    throw new McpArgError(`${label} must not contain line breaks or control characters`);
+  }
+  if (value.length === 0) throw new McpArgError(`${label} must not be empty`);
+  if (/\s/.test(value)) {
+    throw new McpArgError(
+      `${label} must be a single token (no spaces) — got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
+}
+
+/** Free-text parameters (messages, values) may contain spaces but never line breaks. */
+export function textArg(value: string, label = "text"): string {
+  if (hasControlCharacters(value, true)) {
+    throw new McpArgError(`${label} must not contain line breaks or control characters`);
+  }
+  return value;
+}
+
+/** C0 controls + DEL; `allowTab` keeps horizontal tabs (free text) legal. */
+function hasControlCharacters(value: string, allowTab: boolean): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code === 0x09 && allowTab) continue;
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/** Run a tool body, translating {@link McpArgError} into an error result. */
+async function guarded(run: () => Promise<McpResult> | McpResult): Promise<McpResult> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof McpArgError) return errorText(`Error: ${error.message}`);
+    throw error;
+  }
+}
+
+// ─── Transport hardening ──────────────────────────────────────────────────────
+
+/** Secrets accepted from `MODEL_API_KEYS` (`secret` or `secret:entity` entries). */
+function modelApiKeySecrets(): string[] {
+  const raw = process.env.MODEL_API_KEYS;
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((k) => k.trim())
+    .filter(Boolean)
+    .map((k) => {
+      const colon = k.indexOf(":");
+      return colon > 0 ? k.slice(0, colon) : k;
+    });
+}
+
+/**
+ * Whether `/mcp` requires a bearer at the transport layer. The `local` posture
+ * (loopback-only bind, no keys, no external auth) stays unauthenticated so a
+ * plain `{"url": "http://localhost:3301/mcp"}` client config keeps working;
+ * anything stronger — API keys configured, sign-in enabled, or a non-loopback
+ * bind — turns the requirement on.
+ */
+export function mcpTransportAuthRequired(loopbackBind: boolean): boolean {
+  return (
+    modelApiKeySecrets().length > 0 || process.env.MARINA_AUTH === "better-auth" || !loopbackBind
+  );
+}
+
+/**
+ * Transport-layer bearer check for `/mcp`. Accepts (constant-time, every
+ * candidate compared): the process-internal token, any `MODEL_API_KEYS` secret,
+ * or a valid Marina session token. Returns `null` when the request may proceed.
+ */
+export function authenticateMcpTransport(
+  req: Request,
+  engine: Engine,
+  loopbackBind: boolean,
+): Response | null {
+  if (!mcpTransportAuthRequired(loopbackBind)) return null;
+  const auth = req.headers.get("Authorization");
+  const token = auth?.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+  let ok = false;
+  if (token) {
+    const internal = getInternalModelToken();
+    if (secretsEqual(token, internal)) ok = true;
+    for (const secret of modelApiKeySecrets()) if (secretsEqual(token, secret)) ok = true;
+    if (!ok && engine.authenticate(token)) ok = true;
+  }
+  if (ok) return null;
+  return Response.json(
+    {
+      jsonrpc: "2.0",
+      error: {
+        code: -32001,
+        message:
+          "MCP transport requires authentication: send Authorization: Bearer <MODEL_API_KEYS " +
+          "secret | Marina session token>.",
+      },
+      id: null,
+    },
+    {
+      status: 401,
+      headers: { "WWW-Authenticate": 'Bearer realm="marina-mcp"', ...securityHeaders("api") },
+    },
+  );
+}
+
+/**
+ * `Host` header values the streamable-HTTP transport accepts (DNS-rebinding
+ * protection). On a loopback bind: every loopback spelling on the live port plus
+ * `MARINA_MCP_ALLOWED_HOSTS`. On a non-loopback bind: only the env list (bearer
+ * auth is mandatory there) — `undefined` disables host validation when the
+ * operator has not declared the public hostnames.
+ */
+export function mcpAllowedHosts(
+  bindHost: string,
+  port: number,
+  loopbackBind: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] | undefined {
+  const extra = (env.MARINA_MCP_ALLOWED_HOSTS ?? "")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+  const hosts = new Set<string>();
+  const add = (host: string) => {
+    hosts.add(host);
+    // A bare hostname also matches on the live port; the SDK compares exactly.
+    if (!/:\d+$/.test(host) && !/^\[.*\]$/.test(host)) hosts.add(`${host}:${port}`);
+    if (/^\[.*\]$/.test(host)) hosts.add(`${host}:${port}`);
+  };
+  if (loopbackBind) {
+    for (const h of ["localhost", "127.0.0.1", "[::1]"]) add(h);
+    add(bindHost.toLowerCase());
+  } else if (extra.length === 0) {
+    return undefined;
+  }
+  for (const h of extra) add(h);
+  return [...hosts];
 }
 
 function drainPerceptions(session: McpSession): string {
@@ -127,7 +299,13 @@ export class McpServerAdapter {
     private engine: Engine,
     private port: number,
     private rateLimiter: RateLimiter = new RateLimiter(),
-    private flywheel: FlywheelToolBackend | undefined = engine.flywheel,
+    /**
+     * Kept for signature compatibility only. The `flywheel` tool now routes
+     * through the engine's `code sandbox` / `code run` / `code service`
+     * commands (so `minRank`, LAYER 0 and the `code.exec` gate apply) and
+     * therefore uses `engine.flywheel`, never a side channel.
+     */
+    _flywheel: FlywheelToolBackend | undefined = engine.flywheel,
   ) {}
 
   start(): void {
@@ -135,13 +313,25 @@ export class McpServerAdapter {
     const sessions = this.sessions;
     const self = this;
 
+    const bindHostname = resolveWsBindHostname();
+    const loopbackBind = isLoopbackHostname(bindHostname);
+    let warnedNoAllowedHosts = false;
+
     const serverOptions = {
       port: this.port,
       // Secure-by-default: bind loopback-only unless WS_HOST/MARINA_HOST is set
       // or MARINA_PUBLIC=true. Mirrors the WebSocket server so the MCP surface is
       // never silently exposed on all interfaces on a fresh desktop node.
-      hostname: resolveWsBindHostname(),
+      hostname: bindHostname,
       idleTimeout: WS_IDLE_TIMEOUT_SECONDS,
+      maxRequestBodySize: 8 * 1024 * 1024,
+      error(error: unknown) {
+        console.error("[mcp] unhandled request error:", error);
+        return Response.json(
+          { error: "Internal server error" },
+          { status: 500, headers: securityHeaders("api") },
+        );
+      },
 
       async fetch(req, server) {
         const url = new URL(req.url);
@@ -170,6 +360,20 @@ export class McpServerAdapter {
         }
 
         if (url.pathname === "/mcp") {
+          // Browser-origin gate: a page on another site must not drive a
+          // loopback MCP endpoint (non-browser clients send no Origin and pass).
+          const origin = req.headers.get("Origin");
+          if (!isTrustedBrowserOrigin(origin, req.headers.get("Host"), { loopbackBind })) {
+            return new Response("Forbidden origin", {
+              status: 403,
+              headers: securityHeaders("api"),
+            });
+          }
+
+          // Transport-layer bearer (keys configured / sign-in on / public bind).
+          const unauthorized = authenticateMcpTransport(req, engine, loopbackBind);
+          if (unauthorized) return unauthorized;
+
           const sessionId = req.headers.get("mcp-session-id");
           const session = sessionId ? sessions.get(sessionId) : undefined;
 
@@ -184,14 +388,43 @@ export class McpServerAdapter {
           // limited). Sharing one bucket per peer IP closes that bypass.
           const peerIp = server.requestIP(req)?.address ?? undefined;
 
+          // Session creation is itself throttled per peer (MCP_SESSION limit,
+          // `MARINA_MCP_SESSIONS_PER_MIN`): every new transport allocates an
+          // engine connection, so an unauthenticated flood must be bounded. The
+          // bucket is scoped to this listener's port so two adapters in one
+          // process (tests, multi-instance hosts) never share a budget.
+          const throttleKey = `${server.port ?? self.port}|${peerIp ?? "unknown"}`;
+          if (!consumeHttpRate("mcpSession", throttleKey)) {
+            return rateLimitedResponse(origin, 60);
+          }
+
+          // DNS-rebinding protection: validate the Host header against the
+          // bind + `MARINA_MCP_ALLOWED_HOSTS`.
+          const allowedHosts = mcpAllowedHosts(
+            bindHostname,
+            server.port ?? self.port,
+            loopbackBind,
+          );
+          if (!allowedHosts && !warnedNoAllowedHosts) {
+            warnedNoAllowedHosts = true;
+            console.warn(
+              "[mcp] Non-loopback bind without MARINA_MCP_ALLOWED_HOSTS — Host validation is off; " +
+                "set MARINA_MCP_ALLOWED_HOSTS=mcp.example.com[:port] to enable it.",
+            );
+          }
+
           // New session
           const transport = new WebStandardStreamableHTTPServerTransport({
             sessionIdGenerator: () => crypto.randomUUID(),
+            enableDnsRebindingProtection: allowedHosts !== undefined,
+            allowedHosts,
             onsessioninitialized(newSessionId: string) {
               const connId = `mcp_${++mcpIdCounter}`;
               const newSession: McpSession = {
                 connId,
                 entityId: null,
+                peerIp,
+                throttleKey,
                 perceptionBuffer: [],
                 commandTail: Promise.resolve(),
                 transport,
@@ -306,7 +539,6 @@ export class McpServerAdapter {
     const engine = this.engine;
     const sessions = this.sessions;
     const rateLimiter = this.rateLimiter;
-    const flywheel = this.flywheel;
 
     const mcp = new McpServer(
       { name: "marina", version: MARINA_VERSION },
@@ -340,6 +572,9 @@ export class McpServerAdapter {
         const session = getSession(extra);
         if (!session) return text("Error: no active MCP session.");
         if (session.entityId) return text(`Already logged in. Entity: ${session.entityId}`);
+        if (!consumeHttpRate("mcpSession", session.throttleKey)) {
+          return errorText("Rate limited. Please slow down.");
+        }
         const result = engine.login(session.connId, name);
         if ("error" in result) return text(result.error);
         session.entityId = result.entityId;
@@ -372,6 +607,9 @@ export class McpServerAdapter {
         const session = getSession(extra);
         if (!session) return text("Error: no active MCP session.");
         if (session.entityId) return text(`Already logged in. Entity: ${session.entityId}`);
+        if (!consumeHttpRate("mcpSession", session.throttleKey)) {
+          return errorText("Rate limited. Please slow down.");
+        }
         const result = engine.reconnect(session.connId, token);
         if ("error" in result) return text(result.error);
         session.entityId = result.entityId;
@@ -466,28 +704,29 @@ export class McpServerAdapter {
         key: z.string().optional().describe("Memory key (e.g. 'goal', 'ally', 'plan')"),
         value: z.string().optional().describe("Value to store (required for 'set')"),
       },
-      async ({ action, key, value }, extra) => {
-        switch (action) {
-          case "set": {
-            if (!key || !value) return text("Both key and value required for memory set.");
-            return runCmd(extra, `memory set ${key} ${value}`);
+      async ({ action, key, value }, extra) =>
+        guarded(() => {
+          switch (action) {
+            case "set": {
+              if (!key || !value) return text("Both key and value required for memory set.");
+              return runCmd(extra, `memory set ${quoteArg(key, "key")} ${textArg(value, "value")}`);
+            }
+            case "get": {
+              if (!key) return text("Key required for memory get.");
+              return runCmd(extra, `memory get ${quoteArg(key, "key")}`);
+            }
+            case "list":
+              return runCmd(extra, "memory list");
+            case "delete": {
+              if (!key) return text("Key required for memory delete.");
+              return runCmd(extra, `memory delete ${quoteArg(key, "key")}`);
+            }
+            case "history": {
+              if (!key) return text("Key required for memory history.");
+              return runCmd(extra, `memory history ${quoteArg(key, "key")}`);
+            }
           }
-          case "get": {
-            if (!key) return text("Key required for memory get.");
-            return runCmd(extra, `memory get ${key}`);
-          }
-          case "list":
-            return runCmd(extra, "memory list");
-          case "delete": {
-            if (!key) return text("Key required for memory delete.");
-            return runCmd(extra, `memory delete ${key}`);
-          }
-          case "history": {
-            if (!key) return text("Key required for memory history.");
-            return runCmd(extra, `memory history ${key}`);
-          }
-        }
-      },
+        }),
     );
 
     mcp.tool(
@@ -565,7 +804,10 @@ export class McpServerAdapter {
         target: z.string().describe("Name of the entity to message"),
         message: z.string().describe("Private message to send"),
       },
-      async ({ target, message }, extra) => runCmd(extra, `tell ${target} ${message}`),
+      async ({ target, message }, extra) =>
+        guarded(() =>
+          runCmd(extra, `tell ${quoteArg(target, "target")} ${textArg(message, "message")}`),
+        ),
     );
 
     mcp.tool("who", "List all currently online entities.", {}, async (_args, extra) =>
@@ -576,7 +818,8 @@ export class McpServerAdapter {
       "examine",
       "Examine an entity or item in detail.",
       { target: z.string().describe("Name of the entity or item to examine") },
-      async ({ target }, extra) => runCmd(extra, `examine ${target}`),
+      async ({ target }, extra) =>
+        guarded(() => runCmd(extra, `examine ${quoteArg(target, "target")}`)),
     );
 
     // ── Coordination ──────────────────────────────────────────────────────
@@ -730,56 +973,49 @@ export class McpServerAdapter {
 
     mcp.tool(
       "flywheel",
-      "Run and host work in an identity-scoped Flywheel sandbox. Marina keeps the operator " +
-        "credential private and delegates a short-lived, session-bound capability. Actions: " +
-        "create, exec, publish, status, hibernate, resume, stop.",
+      "Run and host work in an identity-scoped Flywheel sandbox. Every action is an engine " +
+        "command (`code sandbox …`, `code run …`, `code service publish …`), so the same " +
+        "rank, transport and `code.exec` competence gates apply as for any other client. " +
+        "Actions: create, exec, publish, status, hibernate, resume, stop.",
       {
         action: z.enum(["create", "exec", "publish", "status", "hibernate", "resume", "stop"]),
         image: z.string().optional().describe("Sandbox image override for create"),
-        keep_alive: z.boolean().optional().describe("Persistent sandbox; defaults true"),
-        command: z.string().optional().describe("Command for exec"),
+        command: z.string().optional().describe("Command for exec (runs `code run <command>`)"),
         args: z.array(z.string()).optional().describe("Arguments for exec"),
-        cwd: z.string().optional().describe("Working directory for exec"),
-        port: z.number().int().min(1).max(65535).optional().describe("Sandbox port for publish"),
+        service: z
+          .string()
+          .optional()
+          .describe("Declared `code service` name to publish (for action=publish)"),
       },
       { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-      async ({ action, image, keep_alive, command, args, cwd, port }, extra) => {
-        const resolved = withSession(sessions, extra);
-        if ("error" in resolved) return { ...resolved.error, isError: true };
-        if (!flywheel) return text("Flywheel is not configured. Set FLYWHEEL_TOKEN on Marina.");
-        if (rateLimiter && !rateLimiter.consume(`mcp:${resolved.entityId}`)) {
-          return { ...text("Rate limited. Please slow down."), isError: true };
-        }
-        try {
+      async ({ action, image, command, args, service }, extra) =>
+        guarded(() => {
           switch (action) {
             case "create":
-              return text(
-                JSON.stringify(await flywheel.create(resolved.entityId, image, keep_alive)),
+              return runCmd(
+                extra,
+                image ? `code sandbox start ${quoteArg(image, "image")}` : "code sandbox start",
               );
-            case "exec":
-              if (!command) return text("command is required for action=exec.");
-              return text(await flywheel.exec(resolved.entityId, command, args, cwd));
+            case "exec": {
+              if (!command) return errorText("command is required for action=exec.");
+              const argv = [command, ...(args ?? [])].map((a, i) =>
+                quoteArg(a, i === 0 ? "command" : `args[${i - 1}]`),
+              );
+              return runCmd(extra, `code run ${argv.join(" ")}`);
+            }
             case "publish":
-              if (!port) return text("port is required for action=publish.");
-              return text(await flywheel.publish(resolved.entityId, port));
+              if (!service) return errorText("service is required for action=publish.");
+              return runCmd(extra, `code service publish ${quoteArg(service, "service")}`);
             case "status":
-              return text(
-                JSON.stringify(flywheel.status(resolved.entityId) ?? { state: "absent" }),
-              );
+              return runCmd(extra, "code sandbox status");
             case "hibernate":
-              await flywheel.hibernate(resolved.entityId);
-              return text("Flywheel sandbox hibernated; writable disk preserved.");
+              return runCmd(extra, "code sandbox hibernate");
             case "resume":
-              await flywheel.resume(resolved.entityId);
-              return text("Flywheel sandbox resumed by cold boot.");
+              return runCmd(extra, "code sandbox resume");
             case "stop":
-              await flywheel.stop(resolved.entityId);
-              return text("Flywheel sandbox stopped and entity binding removed.");
+              return runCmd(extra, "code sandbox stop confirm");
           }
-        } catch (error) {
-          return text(`Flywheel error: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      },
+        }),
     );
 
     // ── Escape hatch ──────────────────────────────────────────────────────
@@ -827,15 +1063,16 @@ export class McpServerAdapter {
           .optional()
           .describe("Watch spec note id to link this sample to (for cadenced probes)"),
       },
-      async ({ kind, args, watch }, extra) => {
-        const argTokens = args
-          ? Object.entries(args)
-              .map(([k, v]) => `${k}:${v}`)
-              .join(" ")
-          : "";
-        const watchTok = watch !== undefined ? ` watch:${watch}` : "";
-        return runCmd(extra, `probe ${kind} ${argTokens}${watchTok}`.trim());
-      },
+      async ({ kind, args, watch }, extra) =>
+        guarded(() => {
+          const argTokens = args
+            ? Object.entries(args)
+                .map(([k, v]) => `${quoteArg(k, "args key")}:${quoteArg(String(v), `args.${k}`)}`)
+                .join(" ")
+            : "";
+          const watchTok = watch !== undefined ? ` watch:${Math.trunc(watch)}` : "";
+          return runCmd(extra, `probe ${quoteArg(kind, "kind")} ${argTokens}${watchTok}`.trim());
+        }),
     );
 
     mcp.tool(
@@ -863,19 +1100,23 @@ export class McpServerAdapter {
           .optional()
           .describe("Entity or channel to notify on closure (tell or post)"),
       },
-      async ({ kind, args, cadence, retirement, notify }, extra) => {
-        const argTokens = Object.entries(args)
-          .map(([k, v]) => `${k}:${v}`)
-          .join(" ");
-        const meta = [
-          cadence ? `cadence:${cadence}` : "",
-          retirement ? `retirement:${retirement}` : "",
-          notify ? `notify:${notify}` : "",
-        ]
-          .filter(Boolean)
-          .join(" ");
-        return runCmd(extra, `watch create ${kind} ${argTokens} ${meta}`.trim());
-      },
+      async ({ kind, args, cadence, retirement, notify }, extra) =>
+        guarded(() => {
+          const argTokens = Object.entries(args)
+            .map(([k, v]) => `${quoteArg(k, "args key")}:${quoteArg(v, `args.${k}`)}`)
+            .join(" ");
+          const meta = [
+            cadence ? `cadence:${quoteArg(cadence, "cadence")}` : "",
+            retirement ? `retirement:${quoteArg(retirement, "retirement")}` : "",
+            notify ? `notify:${quoteArg(notify, "notify")}` : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
+          return runCmd(
+            extra,
+            `watch create ${quoteArg(kind, "kind")} ${argTokens} ${meta}`.trim(),
+          );
+        }),
     );
 
     mcp.tool(
@@ -905,10 +1146,13 @@ export class McpServerAdapter {
         id: z.number().describe("Watch spec note id (from watch_list)"),
         reason: z.string().optional().describe("Why retiring — recorded in audit trail"),
       },
-      async ({ id, reason }, extra) => {
-        const cmd = reason ? `watch retire ${id} reason:${reason}` : `watch retire ${id}`;
-        return runCmd(extra, cmd);
-      },
+      async ({ id, reason }, extra) =>
+        guarded(() => {
+          const cmd = reason
+            ? `watch retire ${Math.trunc(id)} reason:${quoteArg(reason, "reason")}`
+            : `watch retire ${Math.trunc(id)}`;
+          return runCmd(extra, cmd);
+        }),
     );
 
     // ── Session ───────────────────────────────────────────────────────────
@@ -927,6 +1171,9 @@ export class McpServerAdapter {
       const session = getSession(extra);
       if (!session) return text("Error: no active MCP session.");
       if (!session.entityId) return text("Not logged in.");
+      if (rateLimiter && !rateLimiter.consume(`mcp:${session.entityId}`)) {
+        return errorText("Rate limited. Please slow down.");
+      }
       const entityId = session.entityId;
       session.entityId = null;
       engine.removeConnection(session.connId);

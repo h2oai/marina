@@ -45,6 +45,28 @@ export function isSentinelPrincipal(entityId: EntityId): boolean {
   return entityId === OPEN_API_ENTITY_ID || entityId === DESKTOP_OPERATOR_ENTITY_ID;
 }
 
+/**
+ * Refuse a state-changing request from the dev-open sentinel.
+ *
+ * `MARINA_OPEN_API=true` opens *reads*; it must never let an anonymous caller
+ * create, modify or delete world state (assets, canvases, …) while also
+ * discarding the identity the write would be attributed to. Returns a 403 for
+ * {@link OPEN_API_ENTITY_ID}, `null` for every other principal — including the
+ * deliberately-provisioned desktop operator sentinel, which the dashboard
+ * already treats as a trusted local operator.
+ */
+export function refuseOpenApiWrite(entityId: EntityId, origin: string | null): Response | null {
+  if (entityId !== OPEN_API_ENTITY_ID) return null;
+  return Response.json(
+    {
+      error:
+        "MARINA_OPEN_API grants read-only access; writes require a valid session token " +
+        "(Authorization: Bearer <token>).",
+    },
+    { status: 403, headers: corsHeaders(origin) },
+  );
+}
+
 /** Whether unauthenticated API access is allowed (development mode). */
 function openApiEnabled(): boolean {
   return process.env.MARINA_OPEN_API === "true";

@@ -246,7 +246,7 @@ Providers: anthropic, openai, google, groq, openrouter, cerebras, xai, mistral, 
 
 function maskKey(value: string): string {
   if (value.length <= 8) return "****";
-  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+  return `****${value.slice(-4)}`;
 }
 
 function detectEnvKeys(): Array<{ provider: string; envVar: string }> {

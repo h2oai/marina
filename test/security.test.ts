@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { getInternalModelToken } from "../src/agent/agent-runtime";
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { Engine } from "../src/engine/engine";
 import { validateRoomSource } from "../src/engine/sandbox";
@@ -212,5 +213,12 @@ describe("Security: Ban enforcement", () => {
     expect(db.isBanned("baduser")).toBe(true);
     expect(db.isBanned("BADUSER")).toBe(true);
     expect(db.isBanned("BadUser")).toBe(true);
+  });
+});
+
+describe("Security: internal model token entropy", () => {
+  it("carries 32 random bytes (base64url) after the fixed prefix", () => {
+    const token = getInternalModelToken();
+    expect(token).toMatch(/^marina-internal-[A-Za-z0-9_-]{43}$/);
   });
 });

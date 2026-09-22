@@ -260,12 +260,37 @@ See [Memory API guide](guides/memory-api.md) for the full reference.
 
 The MCP server reads these environment variables at startup:
 
-| Variable     | Default        | Description                   |
-|--------------|----------------|-------------------------------|
-| `MCP_PORT`   | `3301`         | Port for the MCP HTTP server  |
-| `DB_PATH`    | `marina.db`  | Path to the SQLite database   |
-| `START_ROOM` | `hub/nexus`    | Room where new players spawn  |
-| `TICK_MS`    | `1000`         | Engine tick interval (ms)     |
+| Variable                     | Default        | Description                                                        |
+|------------------------------|----------------|--------------------------------------------------------------------|
+| `MCP_PORT`                   | `3301`         | Port for the MCP HTTP server                                       |
+| `DB_PATH`                    | `marina.db`    | Path to the SQLite database                                        |
+| `START_ROOM`                 | `hub/nexus`    | Room where new players spawn                                       |
+| `TICK_MS`                    | `1000`         | Engine tick interval (ms)                                          |
+| `MARINA_MCP_SESSIONS_PER_MIN`| `10`           | New sessions + `login`/`auth` calls per client IP per minute (0 = off) |
+| `MARINA_MCP_ALLOWED_HOSTS`   | *(unset)*      | Extra `Host` values accepted by the transport (DNS-rebinding guard) |
+
+### Transport security
+
+- **Bearer requirement.** `/mcp` is unauthenticated only in the `local` posture
+  (loopback bind, no `MODEL_API_KEYS`, no `MARINA_AUTH`). As soon as any of those
+  is configured — or the server binds a non-loopback address — every request must
+  carry `Authorization: Bearer <token>` where the token is a `MODEL_API_KEYS`
+  secret or a Marina session token (the value the `login` tool returns). Missing
+  or wrong bearers get a `401` with `WWW-Authenticate: Bearer`.
+- **DNS-rebinding protection.** The transport validates the `Host` header. On a
+  loopback bind, `localhost`, `127.0.0.1` and `[::1]` on the live port are
+  accepted automatically; on a public bind list your hostname(s) in
+  `MARINA_MCP_ALLOWED_HOSTS` (validation stays off — with a boot warning — until
+  you do). Browser `Origin` headers are checked with the same rule as the
+  WebSocket upgrades (same-origin, `ALLOWED_ORIGINS`, or loopback on a loopback bind).
+- **Argument hygiene.** Tool parameters that occupy a single command token
+  (`key`, `target`, `kind`, probe/watch `args` keys and values, `reason`, …) must
+  be single tokens without spaces or control characters; the tool returns an
+  `isError` result otherwise instead of splicing extra tokens into the command.
+- **`flywheel` is an ordinary command client.** Its actions run
+  `code sandbox start|status|hibernate|resume|stop confirm`, `code run …` and
+  `code service publish <service>` through the engine, so the `code.exec` gate,
+  rank rules and the telnet exclusion apply exactly as for any other client.
 
 ## Claude Desktop Configuration
 

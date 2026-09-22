@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { handleCanvasApi } from "../src/net/canvas-api";
+import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
@@ -665,5 +666,82 @@ describe("canvas API auth contract", () => {
       }
       expect(db.getCanvasEdges("edge-a")).toHaveLength(0);
     });
+  });
+});
+
+describe("canvas API — sentinel writes, malformed bodies, mutation throttle", () => {
+  let db: MarinaDB;
+  let engine: Engine;
+  const prevOpenApi = process.env.MARINA_OPEN_API;
+  let connCounter = 0;
+
+  beforeEach(() => {
+    delete process.env.MARINA_OPEN_API;
+    resetHttpRateLimitersForTests();
+    db = new MarinaDB(`${TEST_DB}.hardening`);
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom());
+  });
+
+  afterEach(() => {
+    if (prevOpenApi === undefined) delete process.env.MARINA_OPEN_API;
+    else process.env.MARINA_OPEN_API = prevOpenApi;
+    db.close();
+    cleanupDb(`${TEST_DB}.hardening`);
+    resetHttpRateLimitersForTests();
+  });
+
+  function loginToken(name: string): string {
+    const conn = new MockConnection(`canvas-h-${connCounter++}`);
+    engine.addConnection(conn);
+    const login = engine.login(conn.id, name);
+    if ("error" in login) throw new Error(login.error);
+    return login.token;
+  }
+
+  it("refuses canvas mutations from the MARINA_OPEN_API sentinel with 403", async () => {
+    process.env.MARINA_OPEN_API = "true";
+    const [url, method, r] = req("/api/canvases", "POST", undefined, { name: "sentinel-made" });
+    const resp = await handleCanvasApi(url, method, r, db, undefined, undefined, engine);
+    expect(resp.status).toBe(403);
+    const body = (await resp.json()) as { error: string };
+    expect(body.error).toContain("MARINA_OPEN_API");
+    expect(db.getCanvasByName("sentinel-made")).toBeUndefined();
+
+    // A real token on the same dev-open server still writes.
+    const token = loginToken("RealWriter");
+    const [u2, m2, r2] = req("/api/canvases", "POST", token, { name: "token-made" });
+    expect((await handleCanvasApi(u2, m2, r2, db, undefined, undefined, engine)).status).toBe(201);
+  });
+
+  it("answers malformed JSON with 400 instead of throwing into the server", async () => {
+    const token = loginToken("Malformed");
+    const url = new URL("http://localhost:3300/api/canvases");
+    const r = new Request(url.toString(), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: "{ not json",
+    });
+    const resp = await handleCanvasApi(url, "POST", r, db, undefined, undefined, engine);
+    expect(resp.status).toBe(400);
+    expect(((await resp.json()) as { error: string }).error).toContain("Invalid JSON");
+
+    // An array body is not an object body either.
+    const [u2, m2, r2] = req("/api/canvases", "POST", token, [1, 2]);
+    expect((await handleCanvasApi(u2, m2, r2, db, undefined, undefined, engine)).status).toBe(400);
+  });
+
+  it("rate-limits mutations per principal (30 / 10 s)", async () => {
+    const token = loginToken("CanvasFlood");
+    let limited = false;
+    for (let i = 0; i < 31; i++) {
+      const [u, m, r] = req(`/api/canvases/nope-${i}`, "DELETE", token);
+      const resp = await handleCanvasApi(u, m, r, db, undefined, undefined, engine);
+      if (resp.status === 429) {
+        limited = true;
+        break;
+      }
+    }
+    expect(limited).toBe(true);
   });
 });
