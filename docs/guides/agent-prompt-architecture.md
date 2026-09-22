@@ -27,6 +27,32 @@ focus, retrieved notes, skills, social context, and memory health remain in the 
 context. This keeps the stable prefix cacheable and prevents transient world content from acquiring
 system authority.
 
+## Prompt budget
+
+Every request an internal agent makes carries a fixed prefix — the system prompt (with the
+`# COMMANDS` roster, one copy) and the serialized tool schemas — plus the dynamic continuation
+prompt. The budget is enforced in code, not by convention:
+
+- The system prompt stays under `LEAN_SYSTEM_PROMPT_BYTE_CAP` (6.5 KB) including the roster.
+- The `full` tool profile is *resident core + deferred rest*: the crew core set (~9 tools) ships on
+  every request together with one `marina_tool_search` whose description catalogs the remaining
+  tools as `name — one line`; loading a tool by name makes it callable for the rest of the session.
+  `MARINA_DEFERRED_TOOLS=off` restores the all-resident profile. `marina_command` is always resident.
+- `marina_memory_service` is the one resident memory-service tool (≤ 2 KB, `assist_*` operations
+  included); the typed `marina_memory_assistance` variant is deferred.
+- The compactor (`src/agent/context-manager.ts`) counts tool schemas in the fixed prefix, anchors
+  on provider-reported usage when the transcript carries it, and reserves the model's output budget
+  (`MARINA_DEFAULT_MAX_TOKENS` for the self-proxy; `MARINA_LOCAL_OUTPUT_FRACTION`, default 0.25, for
+  local models) before budgeting the prompt.
+- The continuation prompt clamps each World Events line (400 chars; `model_request` payloads get
+  `MARINA_PERCEPTION_MODEL_REQUEST_MAX_CHARS`), clamps the Active Coding Task, and fits sections to
+  `MARINA_CONTINUATION_BUDGET_BYTES` (6000) by priority — World Events, the response mandate, and the
+  action directive are never deferred; cadenced sections are deferred first, with a
+  `[+N sections deferred]` note. Events that do not fit return to the buffer for the next cycle.
+- Prompt caching: the synthesized `marina/*` model emits Anthropic-style `cache_control` markers
+  and a per-agent `sessionId` (`MARINA_AGENT_PROMPT_CACHE=off` disables the markers); the proxy is
+  responsible for forwarding or stripping them per upstream.
+
 ## Trust boundary
 
 Room text, peer messages, notes, pools, web pages, files, model-request content, and tool results can

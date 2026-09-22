@@ -158,15 +158,28 @@ export const MARINA_LOGIN_ATTEMPTS_PER_MIN = Number.parseInt(
 export const MARINA_DEFAULT_MODEL = process.env.MARINA_DEFAULT_MODEL ?? "marina/default";
 
 /** Fraction of a local model's context window reserved for the completion.
- *  Default 1/2 — the compactor (`context-manager.ts`) already reserves at most
- *  half the window for output and gives the rest to input, so half is the
- *  natural ceiling: advertising more (e.g. 2/3) over-promises beyond what the
- *  compactor reserves, so input + output would exceed the window and the server
- *  clamps it anyway. Clamped to (0, 0.5]. Override with
+ *  Default 1/4 (was 1/2 until 2026-09-22): the compactor (`context-manager.ts`)
+ *  reserves `model.maxTokens` out of the window before budgeting the prompt, so
+ *  at 1/2 a 16k local model kept only 8k for input — not enough for the fixed
+ *  prefix (system prompt + tool schemas) plus any history. A quarter still
+ *  leaves a reasoning model (Qwen3) 4k tokens of `<think>` + tool call on a
+ *  16k window and grows with the configured window. Clamped to (0, 0.5] — the
+ *  compactor never reserves more than half. Override with
  *  MARINA_LOCAL_OUTPUT_FRACTION. */
 export const LOCAL_OUTPUT_BUDGET_FRACTION = (() => {
   const raw = Number.parseFloat(process.env.MARINA_LOCAL_OUTPUT_FRACTION ?? "");
-  return Number.isFinite(raw) && raw > 0 && raw <= 0.5 ? raw : 0.5;
+  return Number.isFinite(raw) && raw > 0 && raw <= 0.5 ? raw : 0.25;
+})();
+
+/** Completion cap for the `marina/default` self-proxy model (and any other
+ *  cloud-routed model without a registry entry). The proxy enforces the real
+ *  local-upstream budget in `prepareLlamaBody`, so the agent-side value only
+ *  needs to be an honest output reservation for the compactor — NOT a fraction
+ *  of a 128k window (that reserved 64k of a cloud window for output and left
+ *  agents an effective 64k prompt). Override with MARINA_DEFAULT_MAX_TOKENS. */
+export const DEFAULT_CLOUD_MAX_TOKENS = (() => {
+  const raw = Number.parseInt(process.env.MARINA_DEFAULT_MAX_TOKENS ?? "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 4096;
 })();
 
 /** Optional hard cap (tokens) on the local-model completion budget. Unset by
@@ -291,3 +304,48 @@ export function upstreamErrorPauseMsFromEnv(env: NodeJS.ProcessEnv = process.env
   return positiveNumberFromEnv("MARINA_UPSTREAM_ERROR_PAUSE_MS", env) ?? 10 * 60 * 1000;
 }
 export const UPSTREAM_ERROR_PAUSE_MS = upstreamErrorPauseMsFromEnv();
+
+// ─── Agent Prompt Budget ─────────────────────────────────────────────────────
+
+/** Byte ceiling for the assembled continuation prompt (the per-cycle dynamic
+ *  context). Sections are added in priority order and the lowest-priority
+ *  ones that would overflow are deferred with a `[+N sections deferred]` note.
+ *  Override: MARINA_CONTINUATION_BUDGET_BYTES. */
+export const CONTINUATION_PROMPT_BUDGET_BYTES = (() => {
+  const n = positiveNumberFromEnv("MARINA_CONTINUATION_BUDGET_BYTES");
+  return n === undefined ? 6000 : Math.max(1000, Math.floor(n));
+})();
+
+/** Max characters of one World Events perception line in the continuation
+ *  prompt (room chatter, movement, channel posts). */
+export const PERCEPTION_LINE_MAX_CHARS = 400;
+
+/** Max characters of a `model_request` perception line. Larger than the
+ *  general clamp because the payload's `content` IS the caller's question — a
+ *  400-char cut would make endpoint answers unanswerable. Override:
+ *  MARINA_PERCEPTION_MODEL_REQUEST_MAX_CHARS. */
+export const PERCEPTION_MODEL_REQUEST_MAX_CHARS = (() => {
+  const n = positiveNumberFromEnv("MARINA_PERCEPTION_MODEL_REQUEST_MAX_CHARS");
+  return n === undefined ? 2000 : Math.max(PERCEPTION_LINE_MAX_CHARS, Math.floor(n));
+})();
+
+/** Max characters of the restated [Active Coding Task] section. */
+export const ACTIVE_CODING_TASK_MAX_CHARS = 800;
+
+/** Turns (model calls) one `agent.prompt()` may take before the loop yields
+ *  to the next cycle; complements the tool-call run cap. Override:
+ *  MARINA_MAX_TURNS_PER_PROMPT. */
+export const MAX_TURNS_PER_PROMPT = (() => {
+  const n = positiveNumberFromEnv("MARINA_MAX_TURNS_PER_PROMPT");
+  return n === undefined ? 24 : Math.max(1, Math.floor(n));
+})();
+
+/** Provider-level retries pi-ai performs inside one request (transient 5xx /
+ *  429 with a short retry-after) before Marina's loop-level backoff sees the
+ *  error. Override: MARINA_PROVIDER_MAX_RETRIES (0 disables). */
+export const PROVIDER_MAX_RETRIES = (() => {
+  const raw = process.env.MARINA_PROVIDER_MAX_RETRIES;
+  if (raw === undefined || raw.trim() === "") return 2;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 2;
+})();

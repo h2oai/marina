@@ -46,6 +46,7 @@ import {
   COMMAND_ROSTER,
   createCommandTool,
   createEvolutionTool,
+  createProfileToolset,
   createScopedTools,
   TOOL_PROFILE_NAMES,
 } from "../src/agent/tools";
@@ -1421,17 +1422,18 @@ describe("tool profiles", () => {
     ).rejects.toThrow();
   });
 
-  it("minimal profile includes correlated, typed memory assistance", () => {
+  it("minimal profile is command + think + memory + the merged memory service", () => {
     // The rationale of "minimal": marina_command is a universal escape
     // hatch that runs ANY world command, so command + think + memory is
-    // functionally complete. Assistance also needs correlated, typed replies.
-    // This test locks the set — adding tools
-    // silently inflates schema size for every Haiku-tier specialist.
+    // functionally complete. The memory-service tool (≤ 2 KB, assist_* ops
+    // included) replaced the 4 KB typed assistance tool (2026-09-22). This
+    // test locks the set — adding tools silently inflates schema size for
+    // every Haiku-tier specialist.
     expect(TOOL_PROFILE_NAMES.minimal).toEqual([
       "marina_command",
       "think",
       "memory",
-      "marina_memory_assistance",
+      "marina_memory_service",
     ]);
   });
 
@@ -1477,22 +1479,17 @@ describe("tool profiles", () => {
     expect(COMMAND_ROSTER.length).toBeLessThan(2100);
   });
 
-  it("createCommandTool description carries the roster for verbose mode too (full profile)", () => {
-    // DELIBERATE inversion fix (2026-09-01): the roster used to ship compact-
-    // only, which gave the most capable (full-profile) agents the LEAST
-    // enumeration of their own world. All profiles now get the map; the
-    // ~2KB schema cost is the price of discovery.
-    const tool = createCommandTool({} as never, "verbose");
-    expect(tool.description).toContain("Common world commands");
-    expect(tool.description).toContain("help all");
-    expect(tool.description.length).toBeLessThan(3000);
-  });
-
-  it("createCommandTool description embeds the roster for compact mode (crew/minimal)", () => {
-    const tool = createCommandTool({} as never, "compact");
-    expect(tool.description).toContain("Common world commands");
-    expect(tool.description).toContain("recall");
-    expect(tool.description).toContain("intent-aware");
+  it("createCommandTool description is one sentence pointing at # COMMANDS (both modes)", () => {
+    // 2026-09-22: the roster moved to the system prompt (`# COMMANDS`, one
+    // copy in the stable prefix) so it is no longer re-sent inside the tool
+    // schema on every request. Every profile still gets the map — through
+    // the system prompt — and the escape hatch stays resident everywhere.
+    for (const mode of ["verbose", "compact"] as const) {
+      const tool = createCommandTool({} as never, mode);
+      expect(tool.description).not.toContain("Common world commands");
+      expect(tool.description).toContain("# COMMANDS");
+      expect(tool.description.length).toBeLessThan(300);
+    }
   });
 
   it("code tool is available to full and crew agents", () => {
@@ -1573,7 +1570,10 @@ describe("tool profiles", () => {
       },
     } as never;
     const memory = {} as never;
-    const tools = createScopedTools(ctx, memory, "full");
+    // Typed code tools are DEFERRED in the full profile (loadable through
+    // marina_tool_search) — search resident + deferred.
+    const toolset = createProfileToolset(ctx, memory, "full");
+    const tools = [...toolset.resident, ...toolset.deferred];
     const status = tools.find((tool) => tool.name === "marina_code_session_status");
     const read = tools.find((tool) => tool.name === "marina_code_read_file");
     const run = tools.find((tool) => tool.name === "marina_code_run");
