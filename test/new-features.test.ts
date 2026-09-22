@@ -503,7 +503,8 @@ describe("Help Command (categorized)", () => {
   it("should work with ? alias", () => {
     engine.processCommand(conn.entity!, "?");
     const text = conn.lastText();
-    expect(text).toContain("Available Commands");
+    expect(text).toContain("Marina Commands");
+    expect(text).toContain("Categories");
   });
 });
 

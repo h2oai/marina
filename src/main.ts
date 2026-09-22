@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { getInternalModelToken } from "./agent/agent-runtime";
 import { RateLimiter } from "./auth/rate-limiter";
@@ -66,8 +67,40 @@ const DB_PATH = process.env.DB_PATH || "marina.db";
 // ─── Load World Definition ───────────────────────────────────────────────────
 
 const WORLD_NAME = process.env.MARINA_WORLD ?? "default";
-const worldModule = await import(`../worlds/${WORLD_NAME}`);
-const world: WorldDefinition = worldModule.default;
+
+/** Loadable world slugs (`worlds/*.ts` minus the shared helper modules). */
+function listAvailableWorlds(): string[] {
+  const helpers = new Set(["seed.ts", "focused-example.ts", "index.ts", "helpers.ts"]);
+  try {
+    return readdirSync(resolve(import.meta.dir, "../worlds"))
+      .filter((f) => f.endsWith(".ts") && !helpers.has(f))
+      .map((f) => f.slice(0, -3))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+// A typo in MARINA_WORLD used to surface as a raw module-resolution stack trace.
+// Name the problem and list what IS loadable instead.
+let world: WorldDefinition;
+try {
+  const worldModule = await import(`../worlds/${WORLD_NAME}`);
+  world = worldModule.default;
+  if (!world || typeof world !== "object" || !("rooms" in world) || !("startRoom" in world)) {
+    throw new Error(`worlds/${WORLD_NAME}.ts has no default WorldDefinition export`);
+  }
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  const isMissing = /Cannot find module|Could not resolve|ENOENT|not found/i.test(message);
+  console.error(
+    isMissing
+      ? `World "${WORLD_NAME}" not found. Available worlds: ${listAvailableWorlds().join(", ")}`
+      : `World "${WORLD_NAME}" failed to load: ${message}\nAvailable worlds: ${listAvailableWorlds().join(", ")}`,
+  );
+  console.error("Set MARINA_WORLD to one of them (or unset it for `default`).");
+  process.exit(1);
+}
 const INSTANCE_NAME = process.env.MARINA_NAME ?? world.name;
 
 // Optional external-identity layer (off by default). When enabled, the provider
@@ -492,9 +525,29 @@ const adapterCtx = { engine, rateLimiter, db, formatPerception };
 const adapterManager = new AdapterManager(adapterCtx, db);
 engine.adapterManager = adapterManager;
 
-wsServer.start();
-telnetServer?.start();
-mcpServer?.start();
+/**
+ * `Bun.serve` throws synchronously when the port is taken; without this the
+ * operator sees a raw EADDRINUSE stack. Name the port, the env var that moves
+ * it, and how to find the squatter.
+ */
+function startListener(label: string, envVar: string, port: number, start: () => void): void {
+  try {
+    start();
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    const inUse =
+      e?.code === "EADDRINUSE" || /EADDRINUSE|address already in use/i.test(e?.message ?? "");
+    if (!inUse) throw err;
+    console.error(
+      `Port ${port} is in use (${label}). Try ${envVar}=${port + 1} bun run start, or lsof -i :${port}`,
+    );
+    process.exit(1);
+  }
+}
+
+startListener("WebSocket/HTTP", "WS_PORT", WS_PORT, () => wsServer.start());
+if (telnetServer) startListener("telnet", "TELNET_PORT", TELNET_PORT, () => telnetServer.start());
+if (mcpServer) startListener("MCP", "MCP_PORT", MCP_PORT, () => mcpServer.start());
 // Real bound port — differs from WS_PORT when WS_PORT=0 (ephemeral).
 const boundWsPort = wsServer.getPort();
 

@@ -8,7 +8,8 @@ Common problems and how to fix them.
 
 ### "Port already in use"
 
-Something else is using port 3300 (or whichever port). Either stop it or use a different port:
+Marina prints `Port 3300 is in use. Try WS_PORT=3301 bun run start, or lsof -i :3300` (the same
+shape for `MCP_PORT` / `TELNET_PORT`). Either stop the other process or use a different port:
 
 ```bash
 # Find what's using the port
@@ -26,13 +27,16 @@ Dependencies aren't installed:
 bun install
 ```
 
-### "World not found"
+### `World "<name>" not found. Available worlds: ...`
 
-The `MARINA_WORLD` value doesn't match a file in `worlds/`. Check what's available:
+The `MARINA_WORLD` value doesn't match a file in `worlds/`. The boot message lists what is
+loadable; you can also check yourself:
 
 ```bash
-ls worlds/
-# default.ts  commons.ts  research.ts  personal.ts  craft.ts  evolve.ts  markets.ts  demos.ts  empty.ts
+ls worlds/*.ts
+# commons  craft  data-investigation  deep-research  default  demos  due-diligence  empty
+# evolve  markets  personal  prediction-lab  red-team  research  showcase
+# (seed.ts and focused-example.ts are shared helpers, not worlds)
 ```
 
 Use the filename without `.ts`:

@@ -174,13 +174,21 @@ Best for: external agents, any language, lightweight memory integration. See [Me
 After `bun link`, the `marina` command is available system-wide:
 
 ```bash
-marina myname                          # interactive REPL
-marina myname -c "look"                # one-shot command
-marina myname -c "agent list"          # check agents
-echo "goto research/lab" | marina bot  # pipe mode
+marina connect myname                          # interactive REPL
+marina connect myname -c "look"                # one-shot command
+marina connect myname -c "agent list"          # check agents
+echo "goto research/lab" | marina connect bot  # pipe mode
+marina connect myname -c "ask why" --wait 60   # linger up to 60 s for a slow reply
+marina status                                  # is a Marina running? health + readiness
 ```
 
+`marina <word>` without `connect` is the coding flow and only accepts a directory (`.`, `/abs`,
+`./rel`, or an existing folder) — a bare name is rejected with a pointer to `marina connect <name>`.
+
 Requires `~/.bun/bin` on PATH. Connects to `ws://localhost:3300` by default (override with `MARINA_URL`).
+If nothing is listening you get `Failed to connect to ws://localhost:3300. Is Marina running?` — start it
+with `bun run start`. Login names are normalized (letters, digits and underscores, 20 characters max);
+when yours changes the CLI says so once: `Logged in as "JeffSmith" (requested "Jeff Smith")`.
 
 You can also run it directly without linking:
 

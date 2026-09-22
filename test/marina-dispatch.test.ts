@@ -9,7 +9,14 @@ import {
   resolveExecMode,
   terminalCodeLifecycle,
 } from "../scripts/code";
-import { parseDispatch, USAGE } from "../scripts/marina";
+import {
+  formatStatus,
+  httpBaseFromUrl,
+  looksLikeDirectory,
+  parseDispatch,
+  readPackageVersion,
+  USAGE,
+} from "../scripts/marina";
 import type { Perception } from "../src/sdk/client";
 
 describe("marina dispatcher routing", () => {
@@ -20,6 +27,43 @@ describe("marina dispatcher routing", () => {
   it("routes a path argument to the coding flow", () => {
     expect(parseDispatch(["/some/project"])).toEqual({ kind: "code", dir: "/some/project" });
     expect(parseDispatch(["."])).toEqual({ kind: "code", dir: "." });
+    expect(parseDispatch([".."])).toEqual({ kind: "code", dir: ".." });
+    expect(parseDispatch(["./rel"])).toEqual({ kind: "code", dir: "./rel" });
+    expect(parseDispatch(["../up"])).toEqual({ kind: "code", dir: "../up" });
+  });
+
+  it("routes a bare word to the coding flow only when it is an existing directory", () => {
+    const isDir = (p: string) => p === "existing";
+    expect(parseDispatch(["existing"], isDir)).toEqual({ kind: "code", dir: "existing" });
+    expect(parseDispatch(["myname"], isDir)).toEqual({ kind: "unknown-target", arg: "myname" });
+    // A mistyped subcommand must not open Code Mode in a folder of that name.
+    expect(parseDispatch(["innit"], isDir)).toEqual({ kind: "unknown-target", arg: "innit" });
+    // Flags after a bare word do not rescue it.
+    expect(parseDispatch(["myname", "--fresh"], isDir)).toEqual({
+      kind: "unknown-target",
+      arg: "myname",
+    });
+  });
+
+  it("looksLikeDirectory accepts path shapes without touching the disk", () => {
+    const never = () => false;
+    for (const p of [".", "..", "/x", "./x", "../x"])
+      expect(looksLikeDirectory(p, never)).toBe(true);
+    expect(looksLikeDirectory("word", never)).toBe(false);
+    expect(looksLikeDirectory("word", () => true)).toBe(true);
+  });
+
+  it("routes the explicit subcommands", () => {
+    expect(parseDispatch(["init"])).toEqual({ kind: "init" });
+    expect(parseDispatch(["status"])).toEqual({ kind: "status" });
+    expect(parseDispatch(["version"])).toEqual({ kind: "version" });
+    expect(parseDispatch(["--version"])).toEqual({ kind: "version" });
+    expect(parseDispatch(["-v"])).toEqual({ kind: "version" });
+  });
+
+  it("reads the package version from package.json", () => {
+    expect(readPackageVersion()).toMatch(/^\d+\.\d+\.\d+/);
+    expect(readPackageVersion("/nonexistent/root")).toBe("unknown");
   });
 
   it("routes connect with its remaining arguments", () => {
@@ -130,6 +174,10 @@ describe("marina dispatcher routing", () => {
     for (const word of [
       "connect",
       "start",
+      "status",
+      "init",
+      "version",
+      "marina connect <name>",
       "--help",
       "[dir]",
       "-p",
@@ -143,6 +191,54 @@ describe("marina dispatcher routing", () => {
     expect(USAGE).toContain("MARINA_CODE_TASK_TIMEOUT_MS");
     expect(USAGE).toContain("~/.marina/projects/<slug>/marina.db");
     expect(USAGE).toContain("allowlist-only");
+  });
+});
+
+describe("marina status helpers", () => {
+  it("maps the MARINA_URL ws scheme onto http", () => {
+    expect(httpBaseFromUrl("ws://localhost:3300")).toBe("http://localhost:3300");
+    expect(httpBaseFromUrl("wss://marina.example/")).toBe("https://marina.example");
+    expect(httpBaseFromUrl("http://localhost:3300")).toBe("http://localhost:3300");
+  });
+
+  it("renders a compact table with readiness checks and remediation", () => {
+    const text = formatStatus(
+      "ws://localhost:3300",
+      { status: "ok", uptime: 125_000, connections: 2, rooms: 4, entities: 3, agents: 1 },
+      {
+        instanceName: "Marina",
+        world: "Workbench",
+        trustProfile: { profile: "local", autonomy: "guarded" },
+        checks: [
+          {
+            id: "llm",
+            label: "LLM provider",
+            status: "off",
+            detail: "no key",
+            remediation: "set ANTHROPIC_API_KEY",
+          },
+          { id: "ws", label: "WebSocket", status: "ok", detail: "listening" },
+        ],
+      },
+    );
+    expect(text).toContain("Marina at ws://localhost:3300: ok");
+    expect(text).toContain("Marina (Workbench)");
+    expect(text).toContain("2m 5s");
+    expect(text).toContain("2 connections");
+    expect(text).toContain("trust      local · autonomy guarded");
+    expect(text).toMatch(/off\s+LLM provider\s+no key/);
+    expect(text).toContain("→ set ANTHROPIC_API_KEY");
+    expect(text).toMatch(/ok\s+WebSocket\s+listening/);
+  });
+
+  it("reports a readiness error inline instead of failing the whole status", () => {
+    const text = formatStatus(
+      "ws://localhost:3300",
+      { status: "ok" },
+      { error: "needs a session" },
+    );
+    expect(text).toContain("readiness  needs a session");
+    expect(text).not.toContain("capability");
   });
 });
 
