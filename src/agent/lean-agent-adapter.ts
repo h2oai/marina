@@ -11,12 +11,21 @@
 
 import { Agent, type AgentMessage, type AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, Message, Model, TextContent } from "@earendil-works/pi-ai";
-import { localOutputBudget, MARINA_DEFAULT_MODEL } from "../engine/constants";
+import {
+  localOutputBudget,
+  MARINA_DEFAULT_MODEL,
+  MAX_CONSECUTIVE_UPSTREAM_ERRORS,
+  SPEND_CAP_POLL_MS,
+  SPEND_WINDOW_MS,
+  UPSTREAM_ERROR_PAUSE_MS,
+  upstreamErrorBackoffMs,
+} from "../engine/constants";
 import { getErrorMessage } from "../engine/errors";
 import { isLocalProfile } from "../engine/trust-profile";
 import {
   renderUnifiedContext,
   truncateToBytes,
+  UNIFIED_CONTEXT_HEADER,
   UNIFIED_TIER_LABELS,
 } from "../memory/unified-context";
 import {
@@ -46,6 +55,7 @@ import { GameStateManager } from "./game-state";
 import { HookRegistry } from "./hook-registry";
 import { InterruptibleWaiter } from "./interruptible-waiter";
 import { PlatformMemoryBackend, type PlatformNoteResult } from "./memory-platform";
+import { assertMarinaRemoteTargetAllowed, normalizeMarinaBaseUrl } from "./model-probe";
 import { piModels } from "./pi-models";
 import {
   getLeanDiscoveryPrompt,
@@ -109,6 +119,97 @@ export function extractTurnUsage(message: unknown): TurnUsageMetrics {
     ...(finite(row.cacheWrite) === undefined ? {} : { cacheWriteTokens: finite(row.cacheWrite) }),
     ...(costUsd === undefined ? {} : { costUsd }),
   };
+}
+
+// ─── Spend Ceiling ───────────────────────────────────────────────────────────
+
+/** Compact USD formatter for operator surfaces ($1.23 / $0.0042). */
+export function formatUsd(usd: number): string {
+  return `$${usd.toFixed(usd >= 1 ? 2 : 4)}`;
+}
+
+/**
+ * Rolling-window ledger of completed model-call costs. Kept deliberately
+ * cheap: one `{t, usd}` per paid call, pruned past the window on every append
+ * and read, so the per-cycle cap check is O(calls in the last hour).
+ */
+export class SpendWindow {
+  private samples: Array<{ t: number; usd: number }> = [];
+
+  constructor(private readonly windowMs: number = SPEND_WINDOW_MS) {}
+
+  /** Record one completed call's cost. Zero / non-finite costs are not stored. */
+  record(usd: number, now: number = Date.now()): void {
+    if (!Number.isFinite(usd) || usd <= 0) return;
+    this.prune(now);
+    this.samples.push({ t: now, usd });
+  }
+
+  /** USD spent inside the window ending at `now`. */
+  total(now: number = Date.now()): number {
+    this.prune(now);
+    let sum = 0;
+    for (const sample of this.samples) sum += sample.usd;
+    return sum;
+  }
+
+  /** Number of paid calls currently inside the window. */
+  get size(): number {
+    return this.samples.length;
+  }
+
+  private prune(now: number): void {
+    const cutoff = now - this.windowMs;
+    let drop = 0;
+    while (drop < this.samples.length && (this.samples[drop]?.t ?? now) <= cutoff) drop++;
+    if (drop > 0) this.samples.splice(0, drop);
+  }
+}
+
+/**
+ * Spend limits handed to an adapter by the runtime. `globalCostLastHour` sums
+ * every running agent's window (this one included); when absent the global cap
+ * is not enforced by this adapter.
+ */
+export interface SpendGuard {
+  perAgentUsdPerHour?: number;
+  globalUsdPerHour?: number;
+  globalCostLastHour?: () => number;
+}
+
+/** Why an autonomous loop is currently not calling the model. */
+export interface AgentPauseState {
+  kind: "budget" | "spend-cap" | "upstream-errors";
+  reason: string;
+  since: number;
+  /** Wall-clock when the pause lifts on its own; undefined = until the cause clears. */
+  until?: number;
+}
+
+/**
+ * Operator-facing accounting beside `AgentStatus`: tokens, spend (lifetime and
+ * rolling hour), the most recent error regardless of health state, any active
+ * pause and when the loop next wakes. Read via `getOperatorStatus()` on the
+ * adapter or {@link operatorStatusOf} on an `AgentHandle`.
+ */
+export interface AgentOperatorStatus {
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCostUsd: number;
+  costLastHourUsd: number;
+  spendCaps: { perAgentUsdPerHour?: number; globalUsdPerHour?: number };
+  /** Most recent error text + timestamp; never gated behind the health state. */
+  lastError: { text: string; at: number } | null;
+  consecutiveErrors: number;
+  paused: AgentPauseState | null;
+  /** Milliseconds until the loop's next wake; null when the loop is not running. */
+  nextTickInMs: number | null;
+}
+
+/** Duck-typed accessor so command surfaces need not import the adapter class. */
+export function operatorStatusOf(handle: AgentHandle): AgentOperatorStatus | undefined {
+  const fn = (handle as { getOperatorStatus?: () => AgentOperatorStatus }).getOperatorStatus;
+  return typeof fn === "function" ? fn.call(handle) : undefined;
 }
 
 export function deriveAgentHealth(input: {
@@ -288,19 +389,9 @@ function synthesizeModel(provider: string, modelId: string): Model<Api> | undefi
   };
 }
 
-/**
- * Normalize a user-supplied remote-Marina target into an OpenAI-style base URL.
- * Accepts "host:port", "http(s)://host", or a full ".../v1" URL and always
- * returns "<scheme>://<host>[:port]/v1". Defaults to http:// when no scheme is
- * given (operators terminate TLS at a proxy or run on a trusted network).
- */
-export function normalizeMarinaBaseUrl(raw: string): string {
-  let u = raw.trim();
-  if (!/^https?:\/\//i.test(u)) u = `http://${u}`;
-  u = u.replace(/\/+$/, "");
-  if (!/\/v\d+$/i.test(u)) u = `${u}/v1`;
-  return u;
-}
+// `normalizeMarinaBaseUrl` lives in model-probe.ts (beside the remote-target
+// SSRF check) and is re-exported here for existing callers.
+export { normalizeMarinaBaseUrl };
 
 /**
  * Classify how `resolveModel` will handle `modelStr`, with no side effects —
@@ -578,6 +669,15 @@ export class LeanAgentAdapter implements AgentHandle {
   private firstTurnOutputAt = 0;
   private consecutiveLoopErrors = 0;
   private lastErrorReason: string | null = null;
+  /** Most recent error, kept after recovery so operators can see what last went wrong. */
+  private lastError: { text: string; at: number } | null = null;
+  /** Rolling one-hour ledger of provider-reported call costs (spend ceiling). */
+  private readonly spend = new SpendWindow();
+  private readonly spendGuard: SpendGuard;
+  /** Set while the autonomous loop is deliberately not calling the model. */
+  private pause: AgentPauseState | null = null;
+  /** Wall-clock the loop's current sleep ends; 0 before the first cycle. */
+  private nextCycleAt = 0;
   private checkpointInterval: ReturnType<typeof setInterval> | null = null;
   private readonly checkpointSaveInterval = 5 * 60 * 1000;
 
@@ -665,6 +765,9 @@ export class LeanAgentAdapter implements AgentHandle {
    *   resolver form for rotating credentials (DB-backed, OAuth, etc.)
    *   so key rotations during long-running agents are picked up without
    *   restart.
+   * @param spendGuard
+   *   Rolling-hour cost caps (per agent / runtime-wide) from
+   *   `spendLimitsFromEnv()`; omitted = unlimited.
    */
   constructor(
     config: AgentConfig,
@@ -672,10 +775,12 @@ export class LeanAgentAdapter implements AgentHandle {
     rolePrompt: string | null,
     apiKey?: string | (() => string | undefined | Promise<string | undefined>),
     internalToken?: string,
+    spendGuard?: SpendGuard,
   ) {
     config.supports = normalizeSupports(config.supports);
     this.name = config.name;
     this.config = config;
+    this.spendGuard = spendGuard ?? {};
     this.rolePrompt = rolePrompt;
     this.loopCycleDelay = config.loopCycleDelay ?? 2000;
     this.focusTimeoutMs = config.focusTimeout ?? 5 * 60 * 1000;
@@ -1046,6 +1151,10 @@ export class LeanAgentAdapter implements AgentHandle {
   // ─── Connection & Lifecycle ───────────────────────────────────────────
 
   async start(goal?: string): Promise<void> {
+    // A `marina@<host>` target is operator/agent-supplied: SSRF-check it before
+    // anything connects (throws with a clear reason; nothing is opened).
+    await assertMarinaRemoteTargetAllowed(this.config.model ?? MARINA_DEFAULT_MODEL);
+
     // Connect via WebSocket (self-connect to the same server). This part is
     // awaited — it's fast (localhost) and establishes the entity session, so
     // callers know the agent exists and is connected when start() resolves.
@@ -1220,7 +1329,7 @@ export class LeanAgentAdapter implements AgentHandle {
 
     while (this.autonomousLoopRunning && this.autonomousMode) {
       try {
-        await this.cycleWaiter.sleep(this.computeDynamicDelay());
+        await this.pauseSleep(this.computeDynamicDelay());
         if (!this.autonomousLoopRunning || !this.autonomousMode) break;
 
         // Lifetime model-call budget: when spent, pause instead of prompting.
@@ -1233,6 +1342,10 @@ export class LeanAgentAdapter implements AgentHandle {
         ) {
           if (!this.budgetExhausted) {
             this.budgetExhausted = true;
+            this.enterPause(
+              "budget",
+              `model-call budget exhausted (${this.config.budgetCalls} calls)`,
+            );
             console.warn(
               `[lean-agent] "${this.name}" spent its model-call budget (${this.config.budgetCalls}) — pausing. Inspect with \`agent status ${this.name}\`, stop with \`agent stop ${this.name}\`, or respawn with a larger budget.`,
             );
@@ -1241,16 +1354,34 @@ export class LeanAgentAdapter implements AgentHandle {
               error: `Model-call budget exhausted (${this.config.budgetCalls} calls)`,
               context: "budget",
             });
-            if (this.config.spawnedBy && this.config.spawnedBy !== "system") {
-              this.client
-                .command(
-                  `tell ${this.config.spawnedBy} I've spent my model-call budget (${this.config.budgetCalls} calls) and paused. Review my work, then \`agent stop ${this.name}\` or respawn me with a larger budget.`,
-                )
-                .catch(() => {});
-            }
+            this.notifySpawner(
+              `I've spent my model-call budget (${this.config.budgetCalls} calls) and paused. Review my work, then \`agent stop ${this.name}\` or respawn me with a larger budget.`,
+            );
           }
-          await this.sleep(5000);
+          await this.pauseSleep(5000);
           continue;
+        }
+
+        // Rolling-hour spend ceiling (per agent and runtime-wide). Same shape as
+        // the budget pause — connected, inspectable, no model call — but it
+        // lifts on its own once the window drains below the cap.
+        const spendBreach = this.checkSpendCaps();
+        if (spendBreach) {
+          if (this.pause?.kind !== "spend-cap") {
+            this.enterPause("spend-cap", spendBreach);
+            console.warn(
+              `[lean-agent] "${this.name}" ${spendBreach} — pausing until the rolling hour drops below the cap. Inspect with \`agent status ${this.name}\`.`,
+            );
+            this.emitEvent({ type: "error", error: spendBreach, context: "spend-cap" });
+            this.notifySpawner(
+              `I've hit a ${spendBreach} and paused. I'll resume on my own once the last hour's spend drops below the cap; \`agent stop ${this.name}\` ends me sooner.`,
+            );
+          }
+          await this.pauseSleep(SPEND_CAP_POLL_MS);
+          continue;
+        }
+        if (this.pause?.kind === "spend-cap") {
+          this.clearPause("rolling-hour spend back under cap — resuming");
         }
 
         // Wait if LLM is still streaming
@@ -1333,20 +1464,19 @@ export class LeanAgentAdapter implements AgentHandle {
             if (this.overflowStallCount >= 3) {
               consecutiveErrors++;
               this.consecutiveLoopErrors = consecutiveErrors;
-              this.lastErrorReason = `context overflow unrecoverable [${model}] — server window below floor (${MIN_EFFECTIVE_CONTEXT}); check the model's real context size`;
-              const backoff = Math.min(30000, 5000 * 2 ** (consecutiveErrors - 1));
+              const reason = `context overflow unrecoverable [${model}] — server window below floor (${MIN_EFFECTIVE_CONTEXT}); check the model's real context size`;
+              this.noteError(reason);
+              const backoff = upstreamErrorBackoffMs(consecutiveErrors);
               console.warn(
                 `[lean-agent] "${this.name}" context overflow unrecoverable [${model}] — backing off ${backoff}ms`,
               );
-              this.emitEvent({
-                type: "error",
-                error: this.lastErrorReason,
-                context: "autonomous_loop",
-              });
-              await this.sleep(backoff);
+              this.emitEvent({ type: "error", error: reason, context: "autonomous_loop" });
+              consecutiveErrors = await this.afterUpstreamError(consecutiveErrors, backoff);
               continue;
             }
-            this.lastErrorReason = `context overflow [${model}] — trimmed, window→${this.effectiveContextWindow}`;
+            this.noteError(
+              `context overflow [${model}] — trimmed, window→${this.effectiveContextWindow}`,
+            );
             console.warn(
               `[lean-agent] "${this.name}" context overflow [${model}]: ${errorMessage}. ` +
                 `Hard-trimmed history, effective window → ${this.effectiveContextWindow}.`,
@@ -1365,8 +1495,8 @@ export class LeanAgentAdapter implements AgentHandle {
           // Include the model so the dashboard error line names the failing
           // model — upstream 4xx (e.g. OpenRouter "404 No allowed providers")
           // are model-specific, and "which model?" is the first question.
-          this.lastErrorReason = `LLM error [${model}]: ${errorMessage}`;
-          const backoff = Math.min(30000, 5000 * 2 ** (consecutiveErrors - 1));
+          this.noteError(`LLM error [${model}]: ${errorMessage}`);
+          const backoff = upstreamErrorBackoffMs(consecutiveErrors);
           console.warn(
             `[lean-agent] "${this.name}" LLM error (attempt ${consecutiveErrors}, backoff ${backoff}ms) [${model}]: ${errorMessage}`,
           );
@@ -1375,7 +1505,7 @@ export class LeanAgentAdapter implements AgentHandle {
             error: `LLM error (attempt ${consecutiveErrors}) [${model}]: ${errorMessage}`,
             context: "autonomous_loop",
           });
-          await this.sleep(backoff);
+          consecutiveErrors = await this.afterUpstreamError(consecutiveErrors, backoff);
           continue;
         }
 
@@ -1411,15 +1541,19 @@ export class LeanAgentAdapter implements AgentHandle {
           if (this.overflowStallCount >= 3) {
             consecutiveErrors++;
             this.consecutiveLoopErrors = consecutiveErrors;
-            this.lastErrorReason = `context overflow unrecoverable (thrown) — server window below floor (${MIN_EFFECTIVE_CONTEXT})`;
-            const backoff = Math.min(30000, 5000 * 2 ** (consecutiveErrors - 1));
+            this.noteError(
+              `context overflow unrecoverable (thrown) — server window below floor (${MIN_EFFECTIVE_CONTEXT})`,
+            );
+            const backoff = upstreamErrorBackoffMs(consecutiveErrors);
             console.warn(
               `[lean-agent] "${this.name}" context overflow unrecoverable (thrown) — backing off ${backoff}ms`,
             );
-            await this.sleep(backoff);
+            consecutiveErrors = await this.afterUpstreamError(consecutiveErrors, backoff);
             continue;
           }
-          this.lastErrorReason = `context overflow (thrown) — trimmed, window→${this.effectiveContextWindow}`;
+          this.noteError(
+            `context overflow (thrown) — trimmed, window→${this.effectiveContextWindow}`,
+          );
           console.warn(
             `[lean-agent] "${this.name}" context overflow (thrown): ${msg}. ` +
               `Hard-trimmed history, effective window → ${this.effectiveContextWindow}.`,
@@ -1429,8 +1563,8 @@ export class LeanAgentAdapter implements AgentHandle {
         }
         consecutiveErrors++;
         this.consecutiveLoopErrors = consecutiveErrors;
-        const backoff = Math.min(30000, 5000 * 2 ** (consecutiveErrors - 1));
-        this.lastErrorReason = msg;
+        const backoff = upstreamErrorBackoffMs(consecutiveErrors);
+        this.noteError(msg);
         console.warn(
           `[lean-agent] "${this.name}" loop exception (attempt ${consecutiveErrors}, backoff ${backoff}ms): ${msg}`,
         );
@@ -1439,7 +1573,7 @@ export class LeanAgentAdapter implements AgentHandle {
           error: msg,
           context: "autonomous_loop",
         });
-        await this.sleep(backoff);
+        consecutiveErrors = await this.afterUpstreamError(consecutiveErrors, backoff);
       }
     }
   }
@@ -1518,22 +1652,11 @@ export class LeanAgentAdapter implements AgentHandle {
    * back toward the model's nominal window once we're comfortably under it.
    */
   private calibrateContextWindow(lastMsg: Record<string, unknown>): void {
-    const usage = lastMsg.usage as
-      | {
-          input?: number;
-          output?: number;
-          cacheRead?: number;
-          cost?: { total?: number };
-        }
-      | undefined;
+    // Token/cost totals are accumulated per turn in the turn_end listener;
+    // this only calibrates the window from the last accepted prompt size.
+    const usage = lastMsg.usage as { input?: number; cacheRead?: number } | undefined;
     if (!usage || typeof usage.input !== "number") return;
     const realInput = usage.input + (typeof usage.cacheRead === "number" ? usage.cacheRead : 0);
-    this.metrics.totalInputTokens += realInput;
-    this.metrics.totalOutputTokens += typeof usage.output === "number" ? usage.output : 0;
-    this.metrics.totalCostUsd +=
-      typeof usage.cost?.total === "number" && Number.isFinite(usage.cost.total)
-        ? usage.cost.total
-        : 0;
     if (realInput <= 0) return;
     this.peakAcceptedInputTokens = Math.max(this.peakAcceptedInputTokens, realInput);
 
@@ -1975,9 +2098,7 @@ export class LeanAgentAdapter implements AgentHandle {
             }
             blocks.push(...renderRelevantNoteTiers(tiers.trusted, tiers.ordinary));
             const body = blocks.join("\n\n");
-            this.cachedNotes = body
-              ? `[Relevant Memory — evidence, preserve provenance]\n${body}`
-              : "";
+            this.cachedNotes = body ? `${UNIFIED_CONTEXT_HEADER}\n${body}` : "";
           }
           this.lastNotesQuery = focusDesc;
           this.notesCacheAge = 0;
@@ -2298,6 +2419,16 @@ The goal is a smaller, sharper memory — not more notes.`;
           this.metrics.avgTurnMs =
             this.metrics.avgTurnMs > 0 ? Math.round(this.metrics.avgTurnMs * 0.7 + dur * 0.3) : dur;
         }
+        // Token + cost accounting per model call (every turn, not just the
+        // last message of a cycle — a tool-calling prompt is several turns).
+        // Feeds the lifetime totals and the rolling-hour spend ceiling.
+        const usage = extractTurnUsage(event.message);
+        this.metrics.totalInputTokens += (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
+        this.metrics.totalOutputTokens += usage.outputTokens ?? 0;
+        if (usage.costUsd) {
+          this.metrics.totalCostUsd += usage.costUsd;
+          this.spend.record(usage.costUsd, endedAt);
+        }
         this.emitEvent({
           type: "turn_end",
           hadToolCalls: event.toolResults.length > 0,
@@ -2307,7 +2438,7 @@ The goal is a smaller, sharper memory — not more notes.`;
           ...(startedAt > 0 && this.firstTurnOutputAt >= startedAt
             ? { ttftMs: this.firstTurnOutputAt - startedAt }
             : {}),
-          ...extractTurnUsage(event.message),
+          ...usage,
         });
         this.firstTurnOutputAt = 0;
         if (event.toolResults.length === 0) {
@@ -2324,16 +2455,13 @@ The goal is a smaller, sharper memory — not more notes.`;
           // went dormant rather than just "stuck". computeDynamicDelay() then
           // backs the loop off so it stops burning tokens on a doomed retry.
           if (this.silentTurns === LeanAgentAdapter.SILENT_TURN_BACKOFF_THRESHOLD) {
-            this.lastErrorReason =
+            const reason =
               `${this.silentTurns}+ silent turns (model returning prose, no tool calls) — backing off. ` +
               `Most likely the output-token budget: a reasoning model (e.g. Qwen via llama.cpp) can spend its ` +
               `whole completion on <think> before reaching a tool call. Check the model's context window / output budget.`;
-            console.warn(`[lean-agent] "${this.name}" ${this.lastErrorReason}`);
-            this.emitEvent({
-              type: "error",
-              error: this.lastErrorReason,
-              context: "autonomous_loop",
-            });
+            this.noteError(reason);
+            console.warn(`[lean-agent] "${this.name}" ${reason}`);
+            this.emitEvent({ type: "error", error: reason, context: "autonomous_loop" });
           }
 
           // In-run recovery: the agent would otherwise stop here. Queue a
@@ -2677,6 +2805,33 @@ The goal is a smaller, sharper memory — not more notes.`;
     };
   }
 
+  /** Tokens, spend, last error, pause and next wake — see {@link AgentOperatorStatus}. */
+  getOperatorStatus(): AgentOperatorStatus {
+    const now = Date.now();
+    return {
+      totalInputTokens: this.metrics.totalInputTokens,
+      totalOutputTokens: this.metrics.totalOutputTokens,
+      totalCostUsd: this.metrics.totalCostUsd,
+      costLastHourUsd: this.spend.total(now),
+      spendCaps: {
+        perAgentUsdPerHour: this.spendGuard.perAgentUsdPerHour,
+        globalUsdPerHour: this.spendGuard.globalUsdPerHour,
+      },
+      lastError: this.lastError,
+      consecutiveErrors: this.consecutiveLoopErrors,
+      paused: this.pause,
+      nextTickInMs:
+        this.autonomousLoopRunning && this.nextCycleAt > 0
+          ? Math.max(0, this.nextCycleAt - now)
+          : null,
+    };
+  }
+
+  /** USD this agent spent in the rolling window — summed by the runtime for the global cap. */
+  costLastHour(now: number = Date.now()): number {
+    return this.spend.total(now);
+  }
+
   setAttentionMode(mode: "focused" | "balanced" | "open"): void {
     this.attentionMode = mode;
     if (mode === "focused") {
@@ -2747,6 +2902,10 @@ The goal is a smaller, sharper memory — not more notes.`;
     supports?: AgentSupports;
     apiKey?: string | (() => string | undefined | Promise<string | undefined>);
   }): Promise<void> {
+    // Refuse a blocked `marina@<host>` target up front so a bad reconfigure
+    // leaves the running agent untouched.
+    if (opts.model) await assertMarinaRemoteTargetAllowed(opts.model);
+
     // Stop the current loop — abort in-flight prompt immediately.
     const wasAutonomous = this.autonomousMode;
     this.autonomousLoopRunning = false;
@@ -2807,6 +2966,91 @@ The goal is a smaller, sharper memory — not more notes.`;
   }
 
   // ─── Internal ─────────────────────────────────────────────────────────
+
+  /** Record an error for health (`errorReason`) and for operators (`lastError`, never cleared). */
+  private noteError(text: string): void {
+    this.lastErrorReason = text;
+    this.lastError = { text, at: Date.now() };
+  }
+
+  /** Direct message to the entity that spawned this agent (no-op for system/world spawns). */
+  private notifySpawner(message: string): void {
+    const spawner = this.config.spawnedBy;
+    if (!spawner || spawner === "system") return;
+    this.client.command(`tell ${spawner} ${message}`).catch(() => {});
+  }
+
+  private enterPause(kind: AgentPauseState["kind"], reason: string, until?: number): void {
+    this.pause = { kind, reason, since: Date.now(), ...(until === undefined ? {} : { until }) };
+    this.noteError(reason);
+  }
+
+  private clearPause(note: string): void {
+    if (!this.pause) return;
+    console.log(`[lean-agent] "${this.name}" ${note}`);
+    this.pause = null;
+  }
+
+  /**
+   * Wakeable loop sleep that records when the next cycle is due (surfaced as
+   * `nextTickInMs`). stop() and fresh perceptions cut it short via cycleWaiter.
+   */
+  private async pauseSleep(ms: number): Promise<void> {
+    this.nextCycleAt = Date.now() + ms;
+    await this.cycleWaiter.sleep(ms);
+  }
+
+  /** Per-agent then runtime-wide rolling-hour cap check; the breach text or null. */
+  private checkSpendCaps(): string | null {
+    const perAgent = this.spendGuard.perAgentUsdPerHour;
+    if (perAgent && perAgent > 0) {
+      const own = this.spend.total();
+      if (own >= perAgent) {
+        return `spend cap reached (${formatUsd(own)} in last hour ≥ ${formatUsd(perAgent)} per agent)`;
+      }
+    }
+    const global = this.spendGuard.globalUsdPerHour;
+    if (global && global > 0 && this.spendGuard.globalCostLastHour) {
+      const all = this.spendGuard.globalCostLastHour();
+      if (all >= global) {
+        return `spend cap reached (${formatUsd(all)} across all agents in last hour ≥ ${formatUsd(global)} runtime-wide)`;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * After an upstream/loop error: sleep the exponential backoff, or — once the
+   * consecutive count reaches MAX_CONSECUTIVE_UPSTREAM_ERRORS — trip the breaker:
+   * pause for UPSTREAM_ERROR_PAUSE_MS, tell the spawner once, then resume with the
+   * counter reset. Returns the new consecutive-error count for the loop.
+   */
+  private async afterUpstreamError(consecutiveErrors: number, backoffMs: number): Promise<number> {
+    if (consecutiveErrors < MAX_CONSECUTIVE_UPSTREAM_ERRORS) {
+      // Rate-limit backoffs deliberately stay on the non-wakeable sleep.
+      await this.sleep(backoffMs);
+      return consecutiveErrors;
+    }
+    const until = Date.now() + UPSTREAM_ERROR_PAUSE_MS;
+    const minutes = Math.max(1, Math.round(UPSTREAM_ERROR_PAUSE_MS / 60_000));
+    const last = this.lastError?.text ?? "unknown error";
+    const reason = `${consecutiveErrors} consecutive upstream errors — paused ${minutes} min (last: ${last})`;
+    this.enterPause("upstream-errors", reason, until);
+    console.warn(`[lean-agent] "${this.name}" ${reason}`);
+    this.emitEvent({ type: "error", error: reason, context: "upstream-errors" });
+    this.notifySpawner(
+      `I've hit ${consecutiveErrors} consecutive upstream errors (${last}) and paused for ${minutes} min. I'll retry after that; \`agent status ${this.name}\` has details, \`agent stop ${this.name}\` ends me sooner.`,
+    );
+    // Wakeable so stop() isn't held for the whole pause.
+    while (this.autonomousLoopRunning && this.autonomousMode) {
+      const remaining = until - Date.now();
+      if (remaining <= 0) break;
+      await this.pauseSleep(Math.min(SPEND_CAP_POLL_MS, remaining));
+    }
+    this.clearPause("upstream-error pause over — resuming with the error counter reset");
+    this.consecutiveLoopErrors = 0;
+    return 0;
+  }
 
   private emitEvent(event: AgentEvent): void {
     for (const handler of this.eventSubscribers) {
