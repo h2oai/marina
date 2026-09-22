@@ -60,6 +60,88 @@ export type ClientEventMap = {
 
 type ClientEventName = keyof ClientEventMap;
 
+// ─── tellAndAwait correlation + notice filtering ─────────────────────────────
+
+/**
+ * Prefix for `tell`s that are lifecycle notices rather than conversational
+ * replies ("I paused", "budget spent"). `tellAndAwait` never treats a tell
+ * starting with this prefix as the answer to a question. Emitters (the
+ * lean-agent adapter's `notifySpawner`) should adopt it; until they do,
+ * `TELL_NOTICE_PATTERNS` matches the notices they emit today by stable prefix.
+ */
+export const TELL_NOTICE_PREFIX = "[notice]";
+
+/**
+ * Stable prefixes of the spawner notices `LeanAgentAdapter.notifySpawner`
+ * emits today (model-call budget exhausted, spend cap reached, upstream-error
+ * pause). Kept deliberately narrow — a false positive here would swallow a
+ * real reply, which is worse than letting a notice through.
+ */
+export const TELL_NOTICE_PATTERNS: readonly RegExp[] = [
+  /^\[notice\]/i,
+  /^I've spent my model-call budget\b/,
+  /^I've hit a .+ and paused\b/,
+  /^I've hit \d+ consecutive upstream errors\b/,
+];
+
+/** True when `text` is a known system notice rather than a reply. */
+export function isTellNotice(text: string): boolean {
+  const trimmed = text.trimStart();
+  return TELL_NOTICE_PATTERNS.some((re) => re.test(trimmed));
+}
+
+/** Default grace after the first untagged candidate during which a tagged reply still wins. */
+export const TELL_AWAIT_GRACE_MS = 1500;
+
+const CORRELATION_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
+
+/** Six-char base-36 id for a `[re:<id>]` correlation tag. */
+export function newCorrelationId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  let out = "";
+  for (const b of bytes) out += CORRELATION_ID_ALPHABET[b % CORRELATION_ID_ALPHABET.length];
+  return out;
+}
+
+/** The tag appended to an outgoing correlated tell: ` [re:<id>]`. */
+export function correlationTag(id: string): string {
+  return ` [re:${id}]`;
+}
+
+function correlationTagPattern(id: string): RegExp {
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\s*\\[?re:${escaped}\\]?`, "g");
+}
+
+/** True when `text` carries `re:<id>` (bracketed or bare). */
+export function hasCorrelationTag(text: string, id: string): boolean {
+  const re = correlationTagPattern(id);
+  return re.test(text);
+}
+
+/** Remove every `[re:<id>]` / `re:<id>` occurrence and trim. */
+export function stripCorrelationTag(text: string, id: string): string {
+  return text.replace(correlationTagPattern(id), "").trim();
+}
+
+export interface TellAndAwaitOptions {
+  /**
+   * Append a ` [re:<6-char id>]` tag to the outgoing message and prefer a reply
+   * that echoes it. Default true. Responders that do not echo the tag still
+   * work: the first fresh, non-notice tell from the target is accepted after
+   * `graceMs`.
+   */
+  correlate?: boolean;
+  /**
+   * How long to hold an untagged candidate reply open for a tagged one to
+   * arrive before accepting the candidate (default `TELL_AWAIT_GRACE_MS`).
+   * Only meaningful when `correlate` is true.
+   */
+  graceMs?: number;
+  /** Ignore replies that match `isTellNotice` (default true). */
+  ignoreNotices?: boolean;
+}
+
 // ─── MarinaClient ──────────────────────────────────────────────────────────
 
 export class MarinaClient {
@@ -489,9 +571,9 @@ export class MarinaClient {
   }
 
   /**
-   * Send a `tell` to `target` and synchronously wait for the first tell
-   * back from that same target — eliminates the multi-tick handoff that
-   * normally separates a coordinator's ask from a specialist's reply.
+   * Send a `tell` to `target` and synchronously wait for its reply —
+   * eliminates the multi-tick handoff that normally separates a
+   * coordinator's ask from a specialist's answer.
    *
    * Crew-fast-dispatch primitive (see the crew fast-dispatch design (private archive: marina-internal design/crew-fast-dispatch-design.md)):
    * by registering the perception listener BEFORE firing the command we
@@ -499,17 +581,55 @@ export class MarinaClient {
    * The caller's LLM turn is held open inside this single tool call so
    * the round-trip pays one continuation-prompt cost instead of two.
    *
-   * Resolves with the raw reply message text (the recipient's
-   * `tell <coordinator> <text>`'s `text`). Rejects with an explanatory
-   * Error on timeout. Failure modes the caller may want to handle:
+   * Which tell counts as THE reply (all three guards are needed — without
+   * them a late answer to a previous question or a lifecycle notice was
+   * returned as the answer):
+   *   1. Freshness. The engine emits our own `You tell …` echo in the same
+   *      synchronous block that delivers the message to `target`, and one
+   *      WebSocket connection delivers perceptions in order, so any tell
+   *      from the target that arrives BEFORE that echo predates our
+   *      question (a queued stale frame) and is ignored — independent of
+   *      clock skew. Until the echo is seen, a tell is also rejected when
+   *      its server timestamp is older than our local send time.
+   *   2. Notice filter. Tells matching `isTellNotice` (budget exhausted,
+   *      spend cap, upstream-error pause, or anything prefixed with
+   *      `TELL_NOTICE_PREFIX`) are never an answer.
+   *   3. Correlation. With `correlate` (default) the outgoing message gets
+   *      a ` [re:<id>]` tag; a reply echoing `re:<id>` wins immediately.
+   *      An untagged fresh reply is held for `graceMs` in case a tagged one
+   *      follows, then accepted — so responders that don't echo the tag
+   *      still work. The tag is stripped from the returned text.
+   *
+   * Resolves with the reply message text. Rejects with an explanatory
+   * Error on timeout (a buffered untagged candidate is returned instead of
+   * rejecting). Failure modes the caller may want to handle:
    *   - target offline: no perception will match; caller times out
    *   - target ignored you: same as offline
-   *   - target replies with multiple tells: only the first is consumed
+   *   - target replies with multiple tells: only the first accepted is consumed
    */
-  async tellAndAwait(target: string, message: string, timeoutMs = 30_000): Promise<string> {
+  async tellAndAwait(
+    target: string,
+    message: string,
+    timeoutMs = 30_000,
+    opts: TellAndAwaitOptions = {},
+  ): Promise<string> {
     if (!this.session) throw new Error("Not connected. Call connect() first.");
 
+    const correlate = opts.correlate ?? true;
+    const graceMs = Math.max(0, opts.graceMs ?? TELL_AWAIT_GRACE_MS);
+    const ignoreNotices = opts.ignoreNotices ?? true;
+    const correlationId = correlate ? newCorrelationId() : null;
+    const outgoing = correlationId ? `${message}${correlationTag(correlationId)}` : message;
+    const targetKey = target.toLowerCase();
+    const sentAt = Date.now();
+    const deadline = sentAt + timeoutMs;
+
     let settled = false;
+    /** Our own `You tell …` echo has been seen: everything after it is fresh. */
+    let armed = false;
+    /** First fresh untagged reply, held while waiting for a tagged one. */
+    let candidate: string | null = null;
+    let graceTimer: ReturnType<typeof setTimeout> | null = null;
     let resolveReply: (text: string) => void = () => {};
     let rejectReply: (err: Error) => void = () => {};
     const replyPromise = new Promise<string>((res, rej) => {
@@ -517,26 +637,65 @@ export class MarinaClient {
       rejectReply = rej;
     });
 
+    const cleanup = (): void => {
+      settled = true;
+      clearTimeout(timer);
+      if (graceTimer) clearTimeout(graceTimer);
+      this.offPerception(handler);
+    };
+    const finish = (text: string): void => {
+      if (settled) return;
+      cleanup();
+      resolveReply(correlationId ? stripCorrelationTag(text, correlationId) : text);
+    };
+
     const handler = (p: Perception): void => {
       if (settled) return;
       if (p.kind !== "message") return;
       if (p.tag !== "tell") return;
       const data = p.data as Record<string, unknown> | undefined;
-      if (data?.senderName !== target) return;
       const text =
         (typeof data?.message === "string" && data.message) ||
         (typeof data?.text === "string" && data.text) ||
         "";
-      settled = true;
-      clearTimeout(timer);
-      this.offPerception(handler);
-      resolveReply(typeof text === "string" ? text : String(text));
+      if (typeof data?.senderName !== "string") {
+        // Outbound echo (`You tell <target>: <outgoing> [delivered #n]`).
+        // Once we see ours, any later tell from the target is fresh.
+        if (!armed && text.includes(outgoing)) armed = true;
+        return;
+      }
+      if (data.senderName.toLowerCase() !== targetKey) return;
+      // Freshness: a queued frame that predates our question arrives before
+      // the echo; before the echo, also reject server timestamps older than
+      // our send. Both guards are needed only until `armed` flips.
+      if (!armed && !(typeof p.timestamp === "number" && p.timestamp >= sentAt)) return;
+      if (ignoreNotices && isTellNotice(text)) return;
+      if (!correlationId) {
+        finish(text);
+        return;
+      }
+      if (hasCorrelationTag(text, correlationId)) {
+        finish(text);
+        return;
+      }
+      if (candidate !== null) return;
+      candidate = text;
+      const remaining = Math.max(0, deadline - Date.now());
+      graceTimer = setTimeout(
+        () => {
+          if (!settled && candidate !== null) finish(candidate);
+        },
+        Math.min(graceMs, remaining),
+      );
     };
 
     const timer = setTimeout(() => {
       if (settled) return;
-      settled = true;
-      this.offPerception(handler);
+      if (candidate !== null) {
+        finish(candidate);
+        return;
+      }
+      cleanup();
       rejectReply(new Error(`tellAndAwait: no reply from "${target}" within ${timeoutMs}ms`));
     }, timeoutMs);
 
@@ -548,7 +707,7 @@ export class MarinaClient {
     // explanatory message above. Don't fail-fast on the ack here because
     // an `Online (...)` notification from elsewhere can race the actual
     // tell error and we'd false-negative.
-    await this.command(`tell ${target} ${message}`);
+    await this.command(`tell ${target} ${outgoing}`);
 
     return replyPromise;
   }
