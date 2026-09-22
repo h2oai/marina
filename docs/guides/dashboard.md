@@ -185,12 +185,17 @@ Select any of them for details in the inspector; its action link opens Admin →
 The memory surface (assistance jobs, contradiction resolutions, institutional ratifications, standing
 credits, passthru receipts, the hygiene line) is served by a small observer-scoped API under
 `/api/memory/*` (`src/net/memory-observability.ts`; JSON contract in
-`src/net/memory-observability-types.ts`). Every route sits behind the dashboard auth gate.
+`src/net/memory-observability-types.ts`, which the dashboard imports type-only rather than mirrors —
+`dashboard/src/lib/memory-observability-types.ts` and `dashboard/src/unified/lib/memory-map-types.ts`
+re-export it, and `dashboard/src/__tests__/memory-observability-contract.test.ts` pins their derived
+aliases and visual vocabulary to it). Every route sits behind the dashboard auth gate.
 
 | Route | Returns |
 | --- | --- |
-| `GET /api/memory/overview` | `MemoryOverview` — trust profile, latest `[hygiene]` line per entity, open/24h job counts by marker, recent resolutions, ratifications, standing credits, recent memory receipts + response-cache counters, dispatch counts, institutional spaces. |
+| `GET /api/memory/overview` | `MemoryOverview` — trust profile, latest `[hygiene]` line per entity, open/24h job counts by marker, recent resolutions, ratifications, standing credits, recent memory receipts (each tagged with its protocol `surface`: `openai` / `anthropic` / `ollama-generate` / `responses` / `unknown`) + response-cache counters, dispatch counts, `spaces.institutional` and `spaces.shared` (`MemorySpaceHealth[]` — every institutional space plus any space with ≥ 2 distinct writers or ≥ 1 grant: records, ratified, writers, fresh writers below the Sybil standing floor, competing records, resolutions in 24 h, unresolved-contradiction rate, last write; residents see only spaces they own or are granted; max 50, ordered by competing then records). |
 | `GET /api/memory/hygiene` | `MemoryHygieneRatios` — the continuous-hygiene ratios alone (also embedded as `overview.ratios`): redundancy, contradiction and unresolved-contradiction rate, provenance coverage, staleness, unsafe-served rate, reflection repetition, consolidation ROI, repair success, leakage counters, storage vs admission budget per owner, cost. Each ratio carries its numerator and denominator; an empty denominator is `null` ("n/a"). Windowed ratios cover 24 h; structural ones the live state. Memoized 30 s per scope. |
+| `GET /api/memory/hygiene/history?hours=168` | `MemoryHygieneHistory` — `{ scope: "all", hours, samples: [{ at, ratios }] }`, oldest → newest. One operator-scope sample per hour from the hygiene tick (30-day retention), default window 168 h, max 720 h. **Privileged only** (403 for a resident). |
+| `POST /api/memory/hygiene/snapshot` | Writes one `scope: "all"` sample now and returns it (`MemoryHygieneSample`). Privileged only; the `MARINA_OPEN_API` dev sentinel is refused (a snapshot is a write). |
 | `GET /api/memory/jobs?state=open\|all&role=&entity=&limit=50&cursor=` | `{ jobs: MemoryJobView[], nextCursor }` — keyset-paged; never includes task/answer text. |
 | `GET /api/memory/jobs/:id` | One `MemoryJobView` **with** `task`/`answer` (≤ 2 KB) when the caller is the requester, the worker, or an operator. |
 | `POST /api/memory/jobs/:id/cancel` | Cancels as the requester (requester or operator only); runs the ordinary `assist_cancel` through the requester's resident binding so the assistance audit trail is unchanged. |

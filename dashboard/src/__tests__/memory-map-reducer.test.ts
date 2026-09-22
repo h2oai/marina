@@ -194,7 +194,10 @@ describe("applyMemoryJobEvent", () => {
     const g = fixture();
     const first = applyMemoryJobEvent(
       g,
-      jobEvent({ id: "7", state: "answered", adopted: true, adoptedRecordId: "10" }, 2000),
+      jobEvent(
+        { id: "7", state: "answered", adopted: { recordId: "10", spaceId: "space:a", at: 2000 } },
+        2000,
+      ),
     );
     expect(first.adopted).toEqual({ jobId: "job:7", recordId: "10" });
     expect(first.graph.edges).toContainEqual(
@@ -202,7 +205,10 @@ describe("applyMemoryJobEvent", () => {
     );
     const second = applyMemoryJobEvent(
       first.graph,
-      jobEvent({ id: "7", state: "answered", adopted: true, adoptedRecordId: "10" }, 3000),
+      jobEvent(
+        { id: "7", state: "answered", adopted: { recordId: "10", spaceId: "space:a", at: 2000 } },
+        3000,
+      ),
     );
     expect(second.adopted).toBeUndefined();
     expect(second.graph.edges.filter((e) => e.relationship === "adopted_as")).toHaveLength(1);
@@ -225,7 +231,10 @@ describe("useMemoryMapState store", () => {
     useMemoryMapState
       .getState()
       .applyJob(
-        jobEvent({ id: "7", state: "answered", adopted: true, adoptedRecordId: "10" }, 2000),
+        jobEvent(
+          { id: "7", state: "answered", adopted: { recordId: "10", spaceId: "space:a", at: 2000 } },
+          2000,
+        ),
       );
     s = useMemoryMapState.getState();
     expect(s.pulses["job:7"]).toBe(2000);

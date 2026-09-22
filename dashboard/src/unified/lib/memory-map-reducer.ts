@@ -127,7 +127,9 @@ export function applyMemoryJobEvent(graph: MemoryGraph, event: MemoryJobEvent): 
     initialOperations,
     deadline: job.deadline ?? (prevMeta.deadline as number | undefined) ?? null,
     marker: job.marker ?? (prevMeta.marker as string | undefined) ?? null,
-    adopted: job.adopted ?? (prevMeta.adopted as boolean | undefined) ?? false,
+    adopted: !!job.adopted || prevMeta.adopted === true,
+    adoptedRecordId:
+      job.adopted?.recordId ?? (prevMeta.adoptedRecordId as string | undefined) ?? null,
     updatedAt: event.timestamp,
   };
 
@@ -170,10 +172,11 @@ export function applyMemoryJobEvent(graph: MemoryGraph, event: MemoryJobEvent): 
 
   let adopted: ApplyJobResult["adopted"];
   const wasAdopted = prevMeta.adopted === true;
+  const adoptedRecordId = job.adopted?.recordId;
   if (job.adopted && !wasAdopted) {
-    adopted = { jobId: id, recordId: job.adoptedRecordId };
-    if (job.adoptedRecordId) {
-      const r = recordNodeId(job.adoptedRecordId);
+    adopted = { jobId: id, recordId: adoptedRecordId };
+    if (adoptedRecordId) {
+      const r = recordNodeId(adoptedRecordId);
       if (known.has(r) && !hasEdge(graph, "adopted_as", id, r)) {
         edges.push({
           id: edgeId("adopted_as", id, r),
