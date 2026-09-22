@@ -53,8 +53,10 @@ import {
   cancelMemoryJob,
   getMemoryJob,
   listMemoryJobs,
+  memoryHygieneHistory,
   memoryHygieneRatios,
   memoryObserverScope,
+  snapshotMemoryHygiene,
 } from "./memory-observability";
 import { memoryObserver } from "./memory-visibility";
 import { discoverModels } from "./model-discovery";
@@ -149,8 +151,6 @@ async function readCommandBody(
   opts: DashboardApiOptions = {},
 ): Promise<CommandApiBody | { error: Response }> {
   const origin = req.headers.get("Origin");
-  try {
-    const body = (await req.json()) as CommandApiBody;
   const contentType = (req.headers.get("Content-Type") ?? "").trim().toLowerCase();
   if (!contentType.startsWith("application/json")) {
     return {
@@ -165,6 +165,8 @@ async function readCommandBody(
     );
     return { error: json({ error: "Forbidden origin" }, 403, origin) };
   }
+  try {
+    const body = (await req.json()) as CommandApiBody;
     if (!body || typeof body !== "object") {
       return { error: json({ error: "Expected JSON object body" }, 400, origin) };
     }
@@ -354,9 +356,9 @@ export async function handleDashboardApi(
   engine: Engine,
   db?: MarinaDB,
   peerIp?: string,
+  opts: DashboardApiOptions = {},
 ): Promise<Response | undefined> {
   // Pre-auth endpoints (no session required — used by dashboard before login)
-  opts: DashboardApiOptions = {},
   if (url.pathname === "/api/setup-status" && method === "GET") {
     const ip = extractIp(req);
     if (!setupStatusAllowed(ip)) {
@@ -757,6 +759,23 @@ export async function handleDashboardApi(
   // for scripts, benchmarks and readiness-style checks.
   if (url.pathname === "/api/memory/hygiene" && method === "GET" && db) {
     return json(memoryHygieneRatios(engine, memoryObserverScope(engine, callerId)));
+  }
+  // Ratio history (hourly snapshots, 30-day retention). The series is the
+  // operator-scope aggregate, so it is privileged-only — a resident's own
+  // ratios are always available live at /api/memory/hygiene.
+  if (url.pathname === "/api/memory/hygiene/history" && method === "GET" && db) {
+    if (!memory.privilegedRead) return json({ error: "Operator read capability required" }, 403);
+    const hoursParam = Number.parseInt(url.searchParams.get("hours") ?? "", 10);
+    return json(memoryHygieneHistory(engine, Number.isFinite(hoursParam) ? hoursParam : undefined));
+  }
+  // On-demand snapshot (tests, dashboards): writes one `scope="all"` sample now.
+  if (url.pathname === "/api/memory/hygiene/snapshot" && method === "POST" && db) {
+    if (!memory.privilegedRead) return json({ error: "Operator read capability required" }, 403);
+    // The dev-open sentinel authorizes reads only; a snapshot is a write.
+    if (callerId === OPEN_API_ENTITY_ID)
+      return json({ error: "Operator credential required" }, 403);
+    const sample = snapshotMemoryHygiene(engine);
+    return sample ? json(sample) : json({ error: "No database" }, 503);
   }
   if (url.pathname === "/api/memory/jobs" && method === "GET" && db) {
     const stateParam = url.searchParams.get("state");

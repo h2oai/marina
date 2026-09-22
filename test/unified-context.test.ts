@@ -13,11 +13,17 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
+import { residentMemoryOperation } from "../src/memory/resident-service";
 import {
   buildUnifiedContext,
   byteLength,
+  distinctiveTerms,
   isUnifiedContextResult,
+  minOverlap,
+  queryTerms,
+  relevantToQuery,
   renderUnifiedContext,
+  servableRecord,
   truncateToBytes,
   UNIFIED_CONTEXT_HEADER,
   UNIFIED_TIER_LABELS,
@@ -351,5 +357,122 @@ describe("unified memory context", () => {
         expect(text).toContain("[degraded]");
       }
     });
+  });
+});
+
+describe("relevance gate and validity filter (HISTORY §8: recall pollution)", () => {
+  let db: MarinaDB;
+  let engine: Engine;
+  beforeEach(() => {
+    cleanupDb(TEST_DB);
+    db = new MarinaDB(TEST_DB);
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+  });
+  afterEach(() => {
+    db.close();
+    cleanupDb(TEST_DB);
+  });
+
+  it("requires more than one shared common word before a note counts as relevant", () => {
+    expect(minOverlap(1)).toBe(1);
+    expect(minOverlap(2)).toBe(1);
+    expect(minOverlap(3)).toBe(2);
+    expect(minOverlap(8)).toBe(2);
+    expect(minOverlap(12)).toBe(3);
+    const question = "In what year was the first Honda Battle of the Bands HBCU camp held?";
+    // One shared word ("first") is exactly the pollution case measured on simple-qa.
+    expect(
+      relevantToQuery("The first release of the Verlaine catalog shipped in 1984", question),
+    ).toBe(false);
+    expect(
+      relevantToQuery(
+        "Honda Battle of the Bands: Alabama State University hosted the first HBCU camp",
+        question,
+      ),
+    ).toBe(true);
+    // Porter-style forms still match on word prefixes.
+    expect(
+      relevantToQuery("Amber deploys behind the blue relay on port 7419", "amber deployment port"),
+    ).toBe(true);
+    // Short queries keep single-term matches (no gate to trip).
+    expect(relevantToQuery("Amber deployment uses port 7419", "amber")).toBe(true);
+    expect(relevantToQuery("anything at all", "")).toBe(true);
+  });
+
+  it("requires a shared DISTINCTIVE term when the entity's notes make the common ones worthless", () => {
+    const question = "In what year did the first university in the region open?";
+    const terms = queryTerms(question);
+    // Every term distinctive (small/unknown corpus): overlap alone decides.
+    expect(relevantToQuery("The first university opened in 1884", terms, new Set(terms))).toBe(
+      true,
+    );
+    // Only common words shared, and they are not distinctive here → excluded.
+    expect(relevantToQuery("The first university opened in 1884", terms, new Set(["region"]))).toBe(
+      false,
+    );
+    expect(
+      relevantToQuery("The region's first university opened in 1884", terms, new Set(["region"])),
+    ).toBe(true);
+  });
+
+  it("drops one-word-overlap notes from the legacy tiers but keeps genuinely related ones", async () => {
+    const fx = await seedUnifiedFixture(engine, db);
+    db.createNote(fx.owner, "The first release of the Verlaine catalog shipped in 1984", "fact");
+    db.createNote(fx.owner, "Amber deployment port moved to 8520 after the first outage", "fact");
+    const result = await buildUnifiedContext(
+      db,
+      fx.owner,
+      "In what year was the first Amber deployment port change?",
+    );
+    const contents = result.tiers.flatMap((t) => t.items.map((i) => i.content));
+    expect(contents.some((c) => c.includes("Verlaine catalog"))).toBe(false);
+    expect(contents.some((c) => c.includes("moved to 8520"))).toBe(true);
+    // Distinctiveness over the entity's corpus: "amber" appears in most of this
+    // entity's notes, so it stops counting as evidence of relevance on its own.
+    const distinctive = distinctiveTerms(db, fx.owner, queryTerms("amber deployment port change"));
+    expect(distinctive.has("change")).toBe(true);
+  });
+
+  it("never serves a superseded loser or a historical version as evidence", async () => {
+    const fx = await seedUnifiedFixture(engine, db);
+    const claim = (value: string) => ({
+      subject: "amber:relay",
+      predicate: "colour",
+      object: { kind: "literal" as const, value },
+    });
+    const loser = (
+      await residentMemoryOperation(db, fx.owner, {
+        operation: "remember",
+        key: "rel-a",
+        input: { content: "Amber deployment relay colour is blue", claim: claim("blue") },
+      })
+    ).result as { id: string };
+    const winner = (
+      await residentMemoryOperation(db, fx.owner, {
+        operation: "remember",
+        key: "rel-b",
+        input: { content: "Amber deployment relay colour is green", claim: claim("green") },
+      })
+    ).result as { id: string };
+    await residentMemoryOperation(db, fx.owner, {
+      operation: "resolve",
+      id: winner.id,
+      key: "lww-relay",
+      input: { policy: "last_writer_wins", competing: [loser.id], rationale: "repainted" },
+    });
+    const result = await buildUnifiedContext(db, fx.owner, "Amber deployment relay colour");
+    const evidence = result.tiers.find((t) => t.tier === "evidence")!.items.map((i) => i.id);
+    expect(evidence).toContain(winner.id);
+    expect(evidence).not.toContain(loser.id);
+    expect(servableRecord({ freshness: "historical" })).toBe(false);
+    expect(servableRecord({ valid_time: { from: 0, until: Date.now() - 1 } })).toBe(false);
+    expect(servableRecord({ valid_time: { from: 0, until: null } })).toBe(true);
+    expect(servableRecord({})).toBe(true);
+  });
+
+  it("the header tells the model how to use the block instead of asserting relevance", () => {
+    expect(UNIFIED_CONTEXT_HEADER).toContain("use only items that answer the question");
+    expect(UNIFIED_CONTEXT_HEADER).not.toContain("Relevant Memory");
   });
 });

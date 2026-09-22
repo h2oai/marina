@@ -202,11 +202,16 @@ interface MemApiKeySet {
   keys: Map<string, string>; // secret → agent_name
 }
 
+// Parsed once per distinct env value: the raw string is the cache key, so a
+// process that changes MEM_API_KEYS (tests booting several servers in one
+// process; an operator reloading config) is never served a stale key set.
 let cachedEnvKeys: MemApiKeySet | null | undefined;
+let cachedEnvRaw: string | undefined;
 
 function getEnvKeys(): MemApiKeySet | null {
-  if (cachedEnvKeys !== undefined) return cachedEnvKeys;
   const raw = process.env.MEM_API_KEYS;
+  if (cachedEnvKeys !== undefined && cachedEnvRaw === raw) return cachedEnvKeys;
+  cachedEnvRaw = raw;
   if (!raw) {
     cachedEnvKeys = null;
     return null;
@@ -272,15 +277,15 @@ function authenticate(req: Request, db: MarinaDB): { agent: string } | { error: 
       error: error(400, "X-Agent-Name header required (or set MEM_API_KEYS and use Bearer auth)"),
     };
   }
+  const agentName = sanitizeEntityName(rawAgentName);
+  if (!agentName) {
+    return { error: error(400, "X-Agent-Name must contain letters, digits or underscores") };
+  }
   return { agent: agentName };
 }
 
 // ─── Intent Detection (mirrors recall.ts) ────────────────────────────────────
 
-  const agentName = sanitizeEntityName(rawAgentName);
-  if (!agentName) {
-    return { error: error(400, "X-Agent-Name must contain letters, digits or underscores") };
-  }
 function detectIntent(query: string): {
   weightImportance: number;
   weightRecency: number;
@@ -473,11 +478,6 @@ export async function handleMemApi(
       budgetBytes,
       scope: scopeRaw as UnifiedScope,
     });
-    return json(context);
-  }
-
-  // Note by ID routes: /mem/notes/:id
-  const noteIdMatch = path.match(/^\/mem\/notes\/(\d+)$/);
     // Legacy-note tiers carry note ids — apply the GET /mem/notes read predicate
     // so the unified surface cannot leak what the list surface hides.
     for (const tier of context.tiers) {
@@ -487,6 +487,11 @@ export async function handleMemApi(
         return Number.isInteger(id) && access.read(db.getNote(id));
       });
     }
+    return json(context);
+  }
+
+  // Note by ID routes: /mem/notes/:id
+  const noteIdMatch = path.match(/^\/mem\/notes\/(\d+)$/);
   if (noteIdMatch) {
     const noteId = Number(noteIdMatch[1]);
 

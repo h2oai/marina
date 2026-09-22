@@ -150,6 +150,7 @@ export const EXPORT_TABLES = [
   // members; depend on memory_spaces / memory_records above.
   "memory_resolutions",
   "memory_resolution_members",
+  "memory_hygiene_snapshots",
   "canvas_edges",
   "benchmark_runs",
   "adapters",
