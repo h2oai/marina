@@ -293,11 +293,15 @@ export function deleteNote(db: Database, id: number, entityName: string): boolea
     .query("SELECT id FROM notes WHERE id = ? AND entity_name = ?")
     .get(id, entityName);
   if (!note) return false;
-  // Clear FK references before deleting
-  db.run("DELETE FROM note_links WHERE source_id = ? OR target_id = ?", [id, id]);
-  db.run("UPDATE notes SET supersedes_id = NULL WHERE supersedes_id = ?", [id]);
-  const result = db.run("DELETE FROM notes WHERE id = ? AND entity_name = ?", [id, entityName]);
-  return result.changes > 0;
+  // Atomic (same contract as the bulk `deleteNotes` above): link cleanup,
+  // supersedes nulling and the delete commit together, so a failure on the
+  // last statement can't leave a note with its links already gone.
+  return db.transaction(() => {
+    db.run("DELETE FROM note_links WHERE source_id = ? OR target_id = ?", [id, id]);
+    db.run("UPDATE notes SET supersedes_id = NULL WHERE supersedes_id = ?", [id]);
+    const result = db.run("DELETE FROM notes WHERE id = ? AND entity_name = ?", [id, entityName]);
+    return result.changes > 0;
+  })();
 }
 
 export function getNote(db: Database, id: number): NoteRow | undefined {

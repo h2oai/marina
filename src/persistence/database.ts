@@ -376,7 +376,14 @@ export class MarinaDB {
   // ─── Entity Persistence (delegated to db-entities.ts) ────────────────────
 
   saveEntity(entity: Entity): void {
+    // First persist of a freshly minted id ⇒ this name just (re-)entered the
+    // world. Task claims carry `entity_name`, so re-key any live claim to the
+    // new id here — the token `reconnect()` path did this, but a plain
+    // name-login after eviction minted a new id and left the claim pointing at
+    // the dead one. Idempotent; a no-op when the name has no live claims.
+    const isNew = this.db.query("SELECT 1 FROM entities WHERE id = ?").get(entity.id) === null;
     entitiesDb.saveEntity(this.db, entity);
+    if (isNew) entitiesDb.migrateTaskClaimsByName(this.db, entity.name, entity.id);
   }
 
   loadEntity(id: EntityId): Entity | undefined {
@@ -498,8 +505,8 @@ export class MarinaDB {
     return logsDb.pruneLogs(this.db, keepLast);
   }
 
-  pruneEvents(keepLast: number): void {
-    entitiesDb.pruneEvents(this.db, keepLast);
+  pruneEvents(keepLast: number): number {
+    return entitiesDb.pruneEvents(this.db, keepLast);
   }
 
   // ─── Journeys (delegated to db-journeys.ts) ──────────────────────────
@@ -890,20 +897,29 @@ export class MarinaDB {
   deleteChannel(id: string): void {
     channelsDb.deleteChannel(this.db, id);
   }
+  // Membership rows are keyed by the durable account id (migration 117);
+  // callers keep passing entity ids and `getChannelMembers` projects the live
+  // id back (`liveEntityIdSql`).
   addChannelMember(channelId: string, entityId: string, canRead = true, canWrite = true): void {
-    channelsDb.addChannelMember(this.db, channelId, entityId, canRead, canWrite);
+    channelsDb.addChannelMember(
+      this.db,
+      channelId,
+      this.durableEntityKey(entityId),
+      canRead,
+      canWrite,
+    );
   }
   removeChannelMember(channelId: string, entityId: string): void {
-    channelsDb.removeChannelMember(this.db, channelId, entityId);
+    channelsDb.removeChannelMember(this.db, channelId, this.durableEntityKey(entityId));
   }
   getChannelMembers(channelId: string): ChannelMemberRow[] {
     return channelsDb.getChannelMembers(this.db, channelId);
   }
   getEntityChannels(entityId: string): ChannelRow[] {
-    return channelsDb.getEntityChannels(this.db, entityId);
+    return channelsDb.getEntityChannels(this.db, this.durableEntityKey(entityId));
   }
   isChannelMember(channelId: string, entityId: string): boolean {
-    return channelsDb.isChannelMember(this.db, channelId, entityId);
+    return channelsDb.isChannelMember(this.db, channelId, this.durableEntityKey(entityId));
   }
   addChannelMessage(
     channelId: string,
@@ -994,7 +1010,7 @@ export class MarinaDB {
     channelsDb.archiveBoardPost(this.db, postId);
   }
   voteBoardPost(postId: number, entityId: string, value: number, score = 0): void {
-    channelsDb.voteBoardPost(this.db, postId, entityId, value, score);
+    channelsDb.voteBoardPost(this.db, postId, this.durableEntityKey(entityId), value, score);
   }
   getBoardPostVoteCount(postId: number): number {
     return channelsDb.getBoardPostVoteCount(this.db, postId);
@@ -1036,23 +1052,24 @@ export class MarinaDB {
   updateGroupChannelAndBoard(groupId: string, channelId: string, boardId: string): void {
     channelsDb.updateGroupChannelAndBoard(this.db, groupId, channelId, boardId);
   }
+  // Durable-keyed (migration 117) — see the channel-member delegates above.
   addGroupMember(groupId: string, entityId: string, rank = 0): void {
-    channelsDb.addGroupMember(this.db, groupId, entityId, rank);
+    channelsDb.addGroupMember(this.db, groupId, this.durableEntityKey(entityId), rank);
   }
   removeGroupMember(groupId: string, entityId: string): void {
-    channelsDb.removeGroupMember(this.db, groupId, entityId);
+    channelsDb.removeGroupMember(this.db, groupId, this.durableEntityKey(entityId));
   }
   getGroupMembers(groupId: string): GroupMemberRow[] {
     return channelsDb.getGroupMembers(this.db, groupId);
   }
   getGroupMember(groupId: string, entityId: string): GroupMemberRow | undefined {
-    return channelsDb.getGroupMember(this.db, groupId, entityId);
+    return channelsDb.getGroupMember(this.db, groupId, this.durableEntityKey(entityId));
   }
   getEntityGroups(entityId: string): GroupRow[] {
-    return channelsDb.getEntityGroups(this.db, entityId);
+    return channelsDb.getEntityGroups(this.db, this.durableEntityKey(entityId));
   }
   updateGroupMemberRank(groupId: string, entityId: string, rank: number): void {
-    channelsDb.updateGroupMemberRank(this.db, groupId, entityId, rank);
+    channelsDb.updateGroupMemberRank(this.db, groupId, this.durableEntityKey(entityId), rank);
   }
 
   // ─── Crew Persistence (delegated to db-crews.ts) ────────────────────────
@@ -1126,6 +1143,53 @@ export class MarinaDB {
   /** Durable key for a world account by name, or undefined when no account exists. */
   durableKeyForName(name: string): string | undefined {
     return this.getUserByName(name)?.id;
+  }
+
+  // ─── Transactions ───────────────────────────────────────────────────────
+
+  /**
+   * Run `fn` inside one SQLite transaction (nested calls become savepoints).
+   * Managers that compose several delegate writes into one logical change
+   * (`TaskManager.approveSubmission`, …) wrap them here so a failure on the
+   * last write rolls the earlier ones back.
+   */
+  transaction<T>(fn: () => T): T {
+    return this.db.transaction(fn)();
+  }
+
+  // ─── Retention primitives (used by src/engine/retention.ts) ─────────────
+
+  tableExists(table: string): boolean {
+    return (
+      this.reader
+        .query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(table) !== null
+    );
+  }
+
+  tableColumns(table: string): string[] {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) return [];
+    return (this.reader.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+      (row) => row.name,
+    );
+  }
+
+  /**
+   * Delete at most `limit` rows of `table` matching `whereSql`, selected by
+   * rowid so the statement stays bounded regardless of table size. Returns the
+   * number of rows deleted. `table` and `whereSql` are trusted (policy code),
+   * never user input.
+   */
+  deleteBatch(table: string, whereSql: string, params: (string | number)[], limit: number): number {
+    // RETURNING rather than `.changes`: bun:sqlite reports trigger-side
+    // writes in `changes` too (the memory storage-ledger triggers, for one),
+    // which would overstate the count and could mis-terminate a batch loop.
+    return this.db
+      .query(
+        `DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${whereSql} LIMIT ?)
+         RETURNING rowid`,
+      )
+      .all(...params, Math.max(1, Math.trunc(limit))).length;
   }
 
   // ─── Competence Persistence (delegated to db-competence.ts) ─────────────
@@ -1631,7 +1695,19 @@ export class MarinaDB {
   }
 
   deleteUser(id: string): void {
-    this.db.run("DELETE FROM users WHERE id = ?", [id]);
+    // The reputation ledgers are keyed by this durable id (migration 109) and
+    // would otherwise survive as orphans nothing can resolve. Standing is
+    // derivable and the account is gone, so cascade in the same transaction.
+    this.db.transaction(() => {
+      this.db.run("DELETE FROM entity_standing WHERE entity_id = ?", [id]);
+      this.db.run("DELETE FROM entity_standing_cache WHERE entity_id = ?", [id]);
+      this.db.run("DELETE FROM entity_competence WHERE entity_id = ?", [id]);
+      this.db.run("DELETE FROM witness_attestations WHERE entity_id = ?", [id]);
+      this.db.run("DELETE FROM users WHERE id = ?", [id]);
+    })();
+    this.durableKeyCache.forEach((value, key) => {
+      if (value === id) this.durableKeyCache.delete(key);
+    });
   }
 
   // ─── Ban Persistence ──────────────────────────────────────────────────
@@ -3094,7 +3170,7 @@ export class MarinaDB {
          last_error = NULL,
          updated_at = excluded.updated_at`,
       [
-        opts.entityId,
+        this.durableEntityKey(opts.entityId),
         opts.sessionId,
         opts.sandboxId,
         opts.image,
@@ -3108,10 +3184,28 @@ export class MarinaDB {
     );
   }
 
+  // flywheel_bindings / coding_projects / coding_services are keyed by the
+  // durable account id (migration 117). Reads project the live entity id back
+  // so `row.entity_id === entity.id` comparisons in callers keep working.
   listFlywheelBindings(): FlywheelBindingRow[] {
     return this.reader
-      .query("SELECT * FROM flywheel_bindings ORDER BY created_at")
+      .query(
+        `SELECT fb.*, ${entitiesDb.liveEntityIdSql("fb")} AS entity_id
+         FROM flywheel_bindings fb ORDER BY fb.created_at`,
+      )
       .all() as FlywheelBindingRow[];
+  }
+
+  /** The binding owned by this entity's account (indexed PK lookup, not a scan). */
+  getFlywheelBinding(entityId: EntityId): FlywheelBindingRow | undefined {
+    return (
+      (this.reader
+        .query(
+          `SELECT fb.*, ${entitiesDb.liveEntityIdSql("fb")} AS entity_id
+           FROM flywheel_bindings fb WHERE fb.entity_id = ?`,
+        )
+        .get(this.durableEntityKey(entityId)) as FlywheelBindingRow | null) ?? undefined
+    );
   }
 
   updateFlywheelBinding(
@@ -3176,7 +3270,7 @@ export class MarinaDB {
       assignments.push("hibernated_reason = ?");
       values.push(fields.hibernatedReason);
     }
-    values.push(entityId);
+    values.push(this.durableEntityKey(entityId));
     this.db.run(
       `UPDATE flywheel_bindings SET ${assignments.join(", ")} WHERE entity_id = ?`,
       values,
@@ -3184,7 +3278,9 @@ export class MarinaDB {
   }
 
   deleteFlywheelBinding(entityId: EntityId): void {
-    this.db.run("DELETE FROM flywheel_bindings WHERE entity_id = ?", [entityId]);
+    this.db.run("DELETE FROM flywheel_bindings WHERE entity_id = ?", [
+      this.durableEntityKey(entityId),
+    ]);
   }
 
   createCodingProject(project: {
@@ -3206,7 +3302,7 @@ export class MarinaDB {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         project.id,
-        project.entityId,
+        this.durableEntityKey(project.entityId),
         project.sandboxId,
         project.name,
         project.sourceType,
@@ -3223,32 +3319,41 @@ export class MarinaDB {
 
   getCodingProject(id: string): CodingProjectRow | null {
     return this.reader
-      .query("SELECT * FROM coding_projects WHERE id = ?")
+      .query(
+        `SELECT cp.*, ${entitiesDb.liveEntityIdSql("cp")} AS entity_id
+         FROM coding_projects cp WHERE cp.id = ?`,
+      )
       .get(id) as CodingProjectRow | null;
   }
 
   getCodingProjectForEntity(entityId: EntityId, selector: string): CodingProjectRow | null {
     return this.reader
-      .query("SELECT * FROM coding_projects WHERE entity_id = ? AND (id = ? OR name = ?)")
-      .get(entityId, selector, selector) as CodingProjectRow | null;
+      .query(
+        `SELECT cp.*, ${entitiesDb.liveEntityIdSql("cp")} AS entity_id
+         FROM coding_projects cp WHERE cp.entity_id = ? AND (cp.id = ? OR cp.name = ?)`,
+      )
+      .get(this.durableEntityKey(entityId), selector, selector) as CodingProjectRow | null;
   }
 
   listCodingProjects(entityId: EntityId): CodingProjectRow[] {
     return this.reader
-      .query("SELECT * FROM coding_projects WHERE entity_id = ? ORDER BY updated_at DESC")
-      .all(entityId) as CodingProjectRow[];
+      .query(
+        `SELECT cp.*, ${entitiesDb.liveEntityIdSql("cp")} AS entity_id
+         FROM coding_projects cp WHERE cp.entity_id = ? ORDER BY cp.updated_at DESC`,
+      )
+      .all(this.durableEntityKey(entityId)) as CodingProjectRow[];
   }
 
   deleteCodingProjectsForSandbox(entityId: EntityId, sandboxId: string): void {
     this.db.run("DELETE FROM coding_projects WHERE entity_id = ? AND sandbox_id = ?", [
-      entityId,
+      this.durableEntityKey(entityId),
       sandboxId,
     ]);
   }
 
   deleteCodingProject(entityId: EntityId, projectId: string, sandboxId: string): void {
     this.db.run("DELETE FROM coding_projects WHERE entity_id = ? AND id = ? AND sandbox_id = ?", [
-      entityId,
+      this.durableEntityKey(entityId),
       projectId,
       sandboxId,
     ]);
@@ -3310,7 +3415,7 @@ export class MarinaDB {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
       [
         service.id,
-        service.entityId,
+        this.durableEntityKey(service.entityId),
         service.sandboxId,
         service.projectId ?? null,
         service.sessionId,
@@ -3331,30 +3436,39 @@ export class MarinaDB {
 
   getCodingService(id: string): CodingServiceRow | null {
     return this.reader
-      .query("SELECT * FROM coding_services WHERE id = ?")
+      .query(
+        `SELECT cs.*, ${entitiesDb.liveEntityIdSql("cs")} AS entity_id
+         FROM coding_services cs WHERE cs.id = ?`,
+      )
       .get(id) as CodingServiceRow | null;
   }
 
   getCodingServiceForEntity(entityId: EntityId, selector: string): CodingServiceRow | null {
     return this.reader
-      .query("SELECT * FROM coding_services WHERE entity_id = ? AND (id = ? OR name = ?)")
-      .get(entityId, selector, selector) as CodingServiceRow | null;
+      .query(
+        `SELECT cs.*, ${entitiesDb.liveEntityIdSql("cs")} AS entity_id
+         FROM coding_services cs WHERE cs.entity_id = ? AND (cs.id = ? OR cs.name = ?)`,
+      )
+      .get(this.durableEntityKey(entityId), selector, selector) as CodingServiceRow | null;
   }
 
   listCodingServices(entityId: EntityId): CodingServiceRow[] {
     return this.reader
-      .query("SELECT * FROM coding_services WHERE entity_id = ? ORDER BY updated_at DESC")
-      .all(entityId) as CodingServiceRow[];
+      .query(
+        `SELECT cs.*, ${entitiesDb.liveEntityIdSql("cs")} AS entity_id
+         FROM coding_services cs WHERE cs.entity_id = ? ORDER BY cs.updated_at DESC`,
+      )
+      .all(this.durableEntityKey(entityId)) as CodingServiceRow[];
   }
 
   listExpiredCodingServicePublications(now = Date.now()): CodingServiceRow[] {
     return this.reader
       .query(
-        `SELECT * FROM coding_services
-         WHERE published_subdomain IS NOT NULL
-           AND publication_expires_at IS NOT NULL
-           AND publication_expires_at <= ?
-         ORDER BY publication_expires_at`,
+        `SELECT cs.*, ${entitiesDb.liveEntityIdSql("cs")} AS entity_id FROM coding_services cs
+         WHERE cs.published_subdomain IS NOT NULL
+           AND cs.publication_expires_at IS NOT NULL
+           AND cs.publication_expires_at <= ?
+         ORDER BY cs.publication_expires_at`,
       )
       .all(now) as CodingServiceRow[];
   }
@@ -3365,7 +3479,7 @@ export class MarinaDB {
         .query(
           "SELECT 1 present FROM coding_services WHERE entity_id = ? AND sandbox_id = ? AND status IN ('running', 'unknown') LIMIT 1",
         )
-        .get(entityId, sandboxId) !== null
+        .get(this.durableEntityKey(entityId), sandboxId) !== null
     );
   }
 
@@ -3453,7 +3567,7 @@ export class MarinaDB {
       `UPDATE coding_services
        SET status = 'stopped', pid = NULL, process_identity = NULL, last_error = ?, stopped_at = ?, updated_at = ?
        WHERE entity_id = ? AND sandbox_id = ? AND status = 'running'`,
-      [reason, now, now, entityId, sandboxId],
+      [reason, now, now, this.durableEntityKey(entityId), sandboxId],
     );
   }
 
@@ -3462,7 +3576,7 @@ export class MarinaDB {
       `UPDATE coding_services
        SET status = 'unknown', last_error = ?, updated_at = ?
        WHERE entity_id = ? AND sandbox_id = ? AND status = 'running'`,
-      [reason, Date.now(), entityId, sandboxId],
+      [reason, Date.now(), this.durableEntityKey(entityId), sandboxId],
     );
   }
 

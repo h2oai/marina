@@ -201,16 +201,21 @@ export class TaskManager {
     const claim = this.getClaim(taskId, claimantId);
     if (claim?.status !== "submitted") return false;
 
-    this.db.updateTaskClaimStatus(taskId, claimantId, "approved");
-    this.db.updateTaskStatus(taskId, "completed");
+    // Atomic: approval, completion, the bounty rejections and the standing
+    // credit are one logical change — a failure on the last write must not
+    // leave the task completed with the claim still `submitted`.
+    this.db.transaction(() => {
+      this.db.updateTaskClaimStatus(taskId, claimantId, "approved");
+      this.db.updateTaskStatus(taskId, "completed");
 
-    // Bounty mode: reject all other claims and record standing
-    if (task.validationMode === "bounty") {
-      this.db.rejectAllOtherClaims(taskId, claimantId);
-      if (task.standing > 0) {
-        this.db.recordStandingEarned(claimantId, claim.entityName, taskId, task.standing);
+      // Bounty mode: reject all other claims and record standing
+      if (task.validationMode === "bounty") {
+        this.db.rejectAllOtherClaims(taskId, claimantId);
+        if (task.standing > 0) {
+          this.db.recordStandingEarned(claimantId, claim.entityName, taskId, task.standing);
+        }
       }
-    }
+    });
 
     return true;
   }

@@ -66,7 +66,6 @@ import {
   BOARD_ARCHIVE_INTERVAL,
   CHANNEL_PRUNE_INTERVAL,
   CONVERSATION_CLEANUP_INTERVAL,
-  EVENT_LOG_DB_RETENTION,
   MAX_COMMAND_QUEUE_SIZE,
   MAX_COMMANDS_PER_TICK,
   NOTE_IMPORTANCE_INTERVAL,
@@ -87,6 +86,7 @@ import {
 import { isMemoryHygieneTick, runEngineMemoryHygiene } from "./memory-hygiene";
 import { getRank, rankName, setRank } from "./permissions";
 import { computeReadiness } from "./readiness";
+import { formatRetentionSummary, isRetentionTick, runRetentionPass } from "./retention";
 import { RoomSandbox } from "./room-sandbox";
 import { checkGateForExecution, grantGatesForRank, recordGateExecution } from "./safety-gates";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
@@ -1437,14 +1437,29 @@ export class Engine {
       tryLog(this.logger, "tick", "Memory observability poll failed", () => pollMemoryEvents(this));
     }
 
-    // Hourly: trim the durable event log to the retention window. Without this
-    // the table grows without bound for the life of the deployment (traces and
-    // per-entity activity queries degrade linearly with its size).
-    if (this.tickCount % NOTE_IMPORTANCE_INTERVAL === 3300 && this.db) {
+    // Hourly (own phase): declarative row retention — event_log (row-bounded,
+    // MARINA_EVENT_RETENTION), telemetry / ledger / audit tables by age, in
+    // ≤ 5k-row batches (src/engine/retention.ts, MARINA_RETENTION_OVERRIDES).
+    // Without this the append-only tables grow for the life of the deployment
+    // and every scan over them (traces, activity, expiry) degrades linearly.
+    if (this.db && isRetentionTick(this.tickCount, NOTE_IMPORTANCE_INTERVAL)) {
       const db = this.db;
-      tryLog(this.logger, "tick", "Event log prune failed", () =>
-        db.pruneEvents(EVENT_LOG_DB_RETENTION),
-      );
+      void tryLogAsync(this.logger, "tick", "Retention pass failed", async () => {
+        const result = runRetentionPass(db);
+        if (result.skipped.length) {
+          this.logger.debug("retention", "Skipped tables missing from this schema", {
+            tables: result.skipped,
+          });
+        }
+        if (result.rejectedOverrides.length) {
+          this.logger.warn("retention", "Ignored MARINA_RETENTION_OVERRIDES entries", {
+            entries: result.rejectedOverrides,
+          });
+        }
+        if (Object.keys(result.deleted).length > 0) {
+          this.logger.info("retention", `Pruned ${formatRetentionSummary(result)}`);
+        }
+      });
     }
 
     // Periodic: clean up orphaned agents (entities without active connections)

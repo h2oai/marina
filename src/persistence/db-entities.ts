@@ -322,11 +322,17 @@ export function getEventCount(db: Database): number {
   return row.count;
 }
 
-export function pruneEvents(db: Database, keepLast: number): void {
-  db.run(
-    "DELETE FROM event_log WHERE id NOT IN (SELECT id FROM event_log ORDER BY id DESC LIMIT ?)",
-    [keepLast],
-  );
+export function pruneEvents(db: Database, keepLast: number): number {
+  // OFFSET-cutoff form (same shape as `pruneLogs`): one indexed probe for the
+  // boundary id, then a range delete. The previous `id NOT IN (SELECT … LIMIT ?)`
+  // materialized `keepLast` (≥100k) ids into a temp b-tree every hour.
+  const keep = Math.max(0, Math.trunc(keepLast));
+  if (keep === 0) return db.run("DELETE FROM event_log").changes;
+  return db.run(
+    `DELETE FROM event_log
+     WHERE id < COALESCE((SELECT id FROM event_log ORDER BY id DESC LIMIT 1 OFFSET ?), 0)`,
+    [keep - 1],
+  ).changes;
 }
 
 // ─── Session Persistence ─────────────────────────────────────────────────
@@ -587,6 +593,30 @@ export function getActiveEntities(
         lastActivity: r.last_activity,
       };
     });
+}
+
+// ─── Durable ↔ live entity keys ─────────────────────────────────────────
+//
+// Membership / ownership rows (group_members, channel_members, board_votes,
+// flywheel_bindings, coding_projects, coding_services) are stored under the
+// durable world-account key (`users.id`, migration 117) because entity ids are
+// re-minted on every name-login. Readers still want the LIVE entity id (to
+// deliver perceptions, compare against `input.entity`, …), so SELECTs project
+// the stored key back through `users → entities` by name. Keys with no live
+// entity (offline account) or no account at all (tests, service principals)
+// pass through unchanged, which mirrors `MarinaDB.durableEntityKey`.
+
+/**
+ * SQL expression yielding the live entity id for the durable key in
+ * `<alias>.<column>`, or the stored value itself when nothing is live. Use it
+ * as `SELECT t.*, ${liveEntityIdSql("t")} AS entity_id` — a later duplicate
+ * column name wins in the row object, so the projected value replaces the
+ * stored key without enumerating the table's columns.
+ */
+export function liveEntityIdSql(alias: string, column = "entity_id"): string {
+  return `COALESCE((SELECT live.id FROM users u JOIN entities live ON live.name = u.name
+             WHERE u.id = ${alias}.${column} ORDER BY live.created_at DESC LIMIT 1),
+           ${alias}.${column})`;
 }
 
 // ─── Entity Migration ───────────────────────────────────────────────────

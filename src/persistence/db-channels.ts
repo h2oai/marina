@@ -3,6 +3,7 @@
 
 import type { Database } from "bun:sqlite";
 import { DAY_MS } from "../engine/constants";
+import { liveEntityIdSql } from "./db-entities";
 import { buildFtsQuery } from "./fts";
 
 // ─── Channel Persistence ──────────────────────────────────────────────────
@@ -75,8 +76,13 @@ export function removeChannelMember(db: Database, channelId: string, entityId: s
 }
 
 export function getChannelMembers(db: Database, channelId: string): ChannelMemberRow[] {
+  // Rows are keyed by the durable account id (migration 117); project the live
+  // entity id so delivery and sender comparisons keep working across re-logins.
   return db
-    .query("SELECT * FROM channel_members WHERE channel_id = ?")
+    .query(
+      `SELECT cm.*, ${liveEntityIdSql("cm")} AS entity_id
+       FROM channel_members cm WHERE cm.channel_id = ?`,
+    )
     .all(channelId) as ChannelMemberRow[];
 }
 
@@ -340,14 +346,17 @@ export function autoArchiveBoardPosts(db: Database, daysOld: number, minVotes: n
 
 export function getBoardPostScores(db: Database, postId: number): BoardVoteRow[] {
   return db
-    .query("SELECT entity_id, value, score FROM board_votes WHERE post_id = ?")
+    .query(
+      `SELECT ${liveEntityIdSql("bv")} AS entity_id, bv.value, bv.score
+       FROM board_votes bv WHERE bv.post_id = ?`,
+    )
     .all(postId) as BoardVoteRow[];
 }
 
 export function getScoreMatrix(db: Database, boardId: string): BoardVoteRow[] {
   return db
     .query(
-      `SELECT bv.post_id, bv.entity_id, bv.score FROM board_votes bv
+      `SELECT bv.post_id, ${liveEntityIdSql("bv")} AS entity_id, bv.score FROM board_votes bv
        JOIN board_posts bp ON bv.post_id = bp.id
        WHERE bp.board_id = ? AND bv.score > 0`,
     )
@@ -426,8 +435,12 @@ export function removeGroupMember(db: Database, groupId: string, entityId: strin
 }
 
 export function getGroupMembers(db: Database, groupId: string): GroupMemberRow[] {
+  // Durable-keyed rows (migration 117) projected back to the live entity id.
   return db
-    .query("SELECT * FROM group_members WHERE group_id = ?")
+    .query(
+      `SELECT gm.*, ${liveEntityIdSql("gm")} AS entity_id
+       FROM group_members gm WHERE gm.group_id = ?`,
+    )
     .all(groupId) as GroupMemberRow[];
 }
 
