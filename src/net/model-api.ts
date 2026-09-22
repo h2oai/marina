@@ -39,6 +39,7 @@ import {
   applyInjection,
   buildInjectedContext,
   capturePassthruTranscript,
+  type InjectionFormat,
   messageText,
   type OpenAIMessage,
   type PassthruIdentity,
@@ -1616,7 +1617,7 @@ async function runResponsesPassthru(
         }))
       : [];
   const turns: OpenAIMessage[] = [...history, { role: "user", content: input.userInput }];
-  const prep = await preparePassthru(engine, req, auth, turns);
+  const prep = await preparePassthru(engine, req, auth, turns, "responses");
   const native: Record<string, unknown> = { instructions: input.body.instructions };
   applyInjection(native, prep.addendum, "responses");
   const instructions = typeof native.instructions === "string" ? native.instructions : "";
@@ -1634,12 +1635,12 @@ async function runResponsesPassthru(
   const cached = await passthruCacheLookup(engine, prep, body, ec.passthruModel);
   const resp =
     cached ??
-    (await proxyToUpstream(engine, body, ec.passthruModel || undefined, {
-      routeKind: "passthru",
-      entityId: prep.identity?.entityId,
-      requestId: prep.requestId,
-      memoryReceipt: prep.receipt,
-    }));
+    (await proxyToUpstream(
+      engine,
+      body,
+      ec.passthruModel || undefined,
+      passthruTraceOptions(prep),
+    ));
   if (!resp.ok) {
     let message = resp.statusText || "Upstream request failed";
     try {
@@ -1812,7 +1813,10 @@ export async function handleModelApi(
     let internalHeaders: Headers | undefined;
     const anthropic = await handleAnthropicMessages(req, {
       runInternal: async (openaiBody, opts) => {
-        const internal = await runOpenaiChat(engine, req, openaiBody, authResult, opts);
+        const internal = await runOpenaiChat(engine, req, openaiBody, authResult, {
+          ...opts,
+          surface: "anthropic",
+        });
         internalHeaders = internal.headers;
         return internal;
       },
@@ -1953,6 +1957,9 @@ interface PassthruPrep {
   addendum: string | null;
   receipt?: MemoryReceipt;
   requestId: string;
+  /** Protocol surface the request arrived on; rides every lifecycle event so
+   *  receipts and trace spans can be grouped per surface. */
+  surface: InjectionFormat;
 }
 
 async function preparePassthru(
@@ -1960,16 +1967,29 @@ async function preparePassthru(
   req: Request,
   authResult: PassthruAuthResult | undefined,
   messages: OpenAIMessage[],
+  surface: InjectionFormat,
 ): Promise<PassthruPrep> {
   const requestId = newRequestId();
   const identity = maybePassthruIdentity(engine, req, authResult);
-  if (!identity?.contextOptIn) return { identity, addendum: null, requestId };
+  if (!identity?.contextOptIn) return { identity, addendum: null, requestId, surface };
   const built = await buildInjectedContext(engine, identity.entityId, messages);
   return {
     identity,
     addendum: built.systemAddendum,
     receipt: built.receipt ? finalizeMemoryReceipt(built.receipt, requestId) : undefined,
     requestId,
+    surface,
+  };
+}
+
+/** The trace options every passthru surface hands `proxyToUpstream`. */
+function passthruTraceOptions(prep: PassthruPrep) {
+  return {
+    routeKind: "passthru" as const,
+    entityId: prep.identity?.entityId,
+    requestId: prep.requestId,
+    memoryReceipt: prep.receipt,
+    surface: prep.surface,
   };
 }
 
@@ -2012,6 +2032,7 @@ async function passthruCacheLookup(
     routeKind: "passthru",
     entityId: prep.identity.entityId,
     memoryReceipt: receipt,
+    surface: prep.surface,
     timestamp: now,
   });
   engine.logEvent({
@@ -2024,6 +2045,7 @@ async function passthruCacheLookup(
     routeKind: "passthru",
     entityId: prep.identity.entityId,
     memoryReceipt: receipt,
+    surface: prep.surface,
     durationMs: Date.now() - now,
     timestamp: Date.now(),
   });
@@ -2130,7 +2152,11 @@ async function runOpenaiChat(
   req: Request,
   requestBody: Record<string, unknown>,
   authResult?: PassthruAuthResult,
-  runOpts?: { stream?: boolean },
+  runOpts?: {
+    stream?: boolean;
+    /** Protocol surface for passthru lifecycle events; `openai` unless a bridge says otherwise. */
+    surface?: InjectionFormat;
+  },
 ): Promise<Response> {
   try {
     const body: Record<string, unknown> =
@@ -2168,16 +2194,25 @@ async function runOpenaiChat(
       // Also the `/v1/messages` path: the Anthropic bridge translates its body
       // to this shape first, so the addendum lands in the OpenAI system message
       // here and `proxyToAnthropic` moves it into the native `system` field.
-      const prep = await preparePassthru(engine, req, authResult, messages);
+      // The body is OpenAI-shaped on both, so the injection format is `openai`;
+      // the SURFACE recorded on the lifecycle events is the protocol the client
+      // actually spoke (`anthropic` when the bridge called in).
+      const prep = await preparePassthru(
+        engine,
+        req,
+        authResult,
+        messages,
+        runOpts?.surface ?? "openai",
+      );
       if (prep.addendum) applyInjection(body, prep.addendum, "openai");
       const cached = await passthruCacheLookup(engine, prep, body, ec.passthruModel);
       if (cached) return cached;
-      const resp = await proxyToUpstream(engine, body, ec.passthruModel || undefined, {
-        routeKind: "passthru",
-        entityId: prep.identity?.entityId,
-        requestId: prep.requestId,
-        memoryReceipt: prep.receipt,
-      });
+      const resp = await proxyToUpstream(
+        engine,
+        body,
+        ec.passthruModel || undefined,
+        passthruTraceOptions(prep),
+      );
       if (prep.identity?.contextOptIn) {
         void capturePassthruResponse(engine, prep.identity.entityId, messages, resp);
         passthruCacheStore(engine, prep, body, ec.passthruModel, resp);
@@ -2319,7 +2354,13 @@ async function runOllamaPassthru(
   const inbound: OpenAIMessage[] = isChat
     ? (input.messages ?? [])
     : [{ role: "user", content: input.prompt ?? "" }];
-  const prep = await preparePassthru(engine, req, authResult, inbound);
+  const prep = await preparePassthru(
+    engine,
+    req,
+    authResult,
+    inbound,
+    isChat ? "openai" : "ollama-generate",
+  );
 
   let messages: OpenAIMessage[];
   if (isChat) {
@@ -2352,12 +2393,12 @@ async function runOllamaPassthru(
   const cached = await passthruCacheLookup(engine, prep, body, ec.passthruModel);
   const resp =
     cached ??
-    (await proxyToUpstream(engine, body, ec.passthruModel || undefined, {
-      routeKind: "passthru",
-      entityId: prep.identity?.entityId,
-      requestId: prep.requestId,
-      memoryReceipt: prep.receipt,
-    }));
+    (await proxyToUpstream(
+      engine,
+      body,
+      ec.passthruModel || undefined,
+      passthruTraceOptions(prep),
+    ));
   if (!resp.ok) return resp;
   if (!cached && prep.identity?.contextOptIn) {
     void capturePassthruResponse(engine, prep.identity.entityId, inbound, resp);
@@ -3128,6 +3169,8 @@ async function proxyToUpstream(
     /** Memory receipt for the injected context — emitted on the received and
      *  terminal lifecycle events and returned as `x-marina-memory-receipt`. */
     memoryReceipt?: MemoryReceipt;
+    /** Protocol surface (passthru only) — stamped on every lifecycle event. */
+    surface?: InjectionFormat;
   },
 ): Promise<Response> {
   const wantStream = body.stream === true;
@@ -3136,6 +3179,7 @@ async function proxyToUpstream(
   let lastErrorKind: ProxyTraceMetrics["errorKind"];
   const requestedModel = typeof body.model === "string" ? body.model : "marina";
   const entityId = traceOptions?.entityId;
+  const surface = traceOptions?.surface;
   const memoryReceipt = traceOptions?.memoryReceipt
     ? encodeMemoryReceiptAttribute(traceOptions.memoryReceipt)
     : undefined;
@@ -3151,6 +3195,7 @@ async function proxyToUpstream(
       routeKind: traceOptions!.routeKind,
       ...(entityId ? { entityId } : {}),
       ...(memoryReceipt ? { memoryReceipt } : {}),
+      ...(surface ? { surface } : {}),
       timestamp: startedAt,
     });
   }
@@ -3171,6 +3216,7 @@ async function proxyToUpstream(
         target,
         routeKind: traceOptions!.routeKind,
         ...(entityId ? { entityId } : {}),
+        ...(surface ? { surface } : {}),
         timestamp: Date.now(),
       });
     }
@@ -3181,6 +3227,7 @@ async function proxyToUpstream(
       routeKind: traceOptions!.routeKind,
       entityId,
       memoryReceipt: traceOptions!.memoryReceipt,
+      surface,
       startedAt,
       errorKind,
     });
@@ -3285,6 +3332,7 @@ async function traceProxyResponse(
     routeKind: "passthru" | "fallback" | "synthesis";
     entityId?: EntityId;
     memoryReceipt?: MemoryReceipt;
+    surface?: InjectionFormat;
     startedAt: number;
     errorKind?: ProxyTraceMetrics["errorKind"];
   },
@@ -3317,6 +3365,7 @@ async function traceProxyResponse(
       routeKind: trace.routeKind,
       ...(trace.entityId ? { entityId: trace.entityId } : {}),
       ...(memoryReceipt ? { memoryReceipt } : {}),
+      ...(trace.surface ? { surface: trace.surface } : {}),
       durationMs: Date.now() - trace.startedAt,
       ...metrics,
       ...(detail ? { detail } : {}),

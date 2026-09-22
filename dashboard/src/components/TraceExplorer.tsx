@@ -16,7 +16,7 @@ import type {
   TracesResponse,
   TraceView,
 } from "../lib/types";
-import { parseReceiptAttribute } from "./memory-ops/format";
+import { parseCacheHitAttribute, parseReceiptAttribute } from "./memory-ops/format";
 import { MemoryReceiptBlock } from "./memory-ops/MemoryReceiptBlock";
 
 const STATUS_CLASS: Record<TraceStatus, string> = {
@@ -500,13 +500,19 @@ function metricDetails(span: TraceSpanView): string | undefined {
 
 /**
  * A span that carried a `marina.memory.receipt.v1` receipt renders a Memory
- * block. `cacheHit` is a separate optional attribute the response cache stamps.
+ * block. Span attributes are stringly typed: `memoryCacheHit` is "true" |
+ * "false" (the response cache stamps it) and `memorySurface` names the
+ * passthru protocol.
  */
 function memoryReceiptDetails(span: TraceSpanView) {
   const receipt = parseReceiptAttribute(span.attributes.memoryReceipt);
   if (!receipt) return undefined;
-  const cacheHit = span.attributes.memoryCacheHit;
-  return { receipt, cacheHit: typeof cacheHit === "boolean" ? cacheHit : undefined };
+  const surface = span.attributes.memorySurface;
+  return {
+    receipt,
+    cacheHit: parseCacheHitAttribute(span.attributes.memoryCacheHit),
+    surface: typeof surface === "string" ? surface : undefined,
+  };
 }
 
 function TraceRow({
@@ -589,7 +595,13 @@ function SpanTree({ trace }: { trace: TraceView }) {
                 {metrics}
               </div>
             )}
-            {memory && <MemoryReceiptBlock receipt={memory.receipt} cacheHit={memory.cacheHit} />}
+            {memory && (
+              <MemoryReceiptBlock
+                receipt={memory.receipt}
+                cacheHit={memory.cacheHit}
+                surface={memory.surface}
+              />
+            )}
           </div>
         );
       })}

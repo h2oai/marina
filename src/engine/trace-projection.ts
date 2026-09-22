@@ -66,6 +66,22 @@ export function projectTraces(events: readonly EngineEvent[]): TraceView[] {
     if (event.type === "model_request_lifecycle") {
       const isStart = event.phase === "received";
       const isEnd = event.phase === "completed" || event.phase === "failed";
+      // Memory attributes on PASSTHRU spans (the dashboard's TraceExplorer
+      // reads exactly these names): `memoryCacheHit` is "true" once any
+      // lifecycle event of the request was served by the response cache and
+      // never downgrades; `memorySurface` is the protocol surface the request
+      // arrived on ("unknown" when the producer predates the field).
+      const prior = trace.spans.get(event.spanId)?.attributes;
+      const passthru = event.routeKind === "passthru" || prior?.routeKind === "passthru";
+      const memoryAttributes: TraceSpanView["attributes"] = passthru
+        ? {
+            memoryCacheHit: String(
+              prior?.memoryCacheHit === "true" || event.target === "response-cache",
+            ),
+            memorySurface:
+              event.surface ?? (prior?.memorySurface as string | undefined) ?? "unknown",
+          }
+        : {};
       upsertSpan(trace, {
         spanId: event.spanId,
         kind: "model_request",
@@ -99,6 +115,7 @@ export function projectTraces(events: readonly EngineEvent[]): TraceView[] {
           // Compact JSON receipt (marina.memory.receipt.v1) of the memory
           // injected into a proxied request; `trace show` renders it.
           ...(event.memoryReceipt ? { memoryReceipt: event.memoryReceipt } : {}),
+          ...memoryAttributes,
         },
       });
     } else if (event.type === "agent_turn_start" || event.type === "agent_turn_end") {
