@@ -1145,6 +1145,13 @@ export function createMemoryPool(
   );
 }
 
+/** Attach (or detach, with `null`) the group that scopes a pool's reads.
+ *  Additive helper for crew pools: `crew:<name>` pools created before the
+ *  group object existed are backfilled on boot without a migration. */
+export function setMemoryPoolGroup(db: Database, poolId: string, groupId: string | null): void {
+  db.run("UPDATE memory_pools SET group_id = ? WHERE id = ?", [groupId, poolId]);
+}
+
 export function getMemoryPool(db: Database, name: string): MemoryPoolRow | undefined {
   return (
     (db.query("SELECT * FROM memory_pools WHERE name = ?").get(name) as MemoryPoolRow | null) ??

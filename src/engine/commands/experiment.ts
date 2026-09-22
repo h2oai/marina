@@ -383,16 +383,28 @@ Examples:
               tier: "reflection",
               importance: 6,
             });
-            recordStanding(
-              db,
-              entity.id,
-              entity.name,
-              "experiment_complete",
-              `experiment:${exp.id}`,
-            );
+            // Standing requires a real comparison: samples on >= 2 arms,
+            // recorded by >= 2 distinct entities. A creator recording both
+            // arms alone can complete, but earns nothing (anti-farming).
+            const armed = results.filter((r) => r.arm);
+            const armsSampled = new Set(armed.map((r) => r.arm)).size;
+            const recorders = new Set(armed.map((r) => r.entity_name.toLowerCase())).size;
+            const credited = armsSampled >= 2 && recorders >= 2;
+            if (credited) {
+              recordStanding(
+                db,
+                entity.id,
+                entity.name,
+                "experiment_complete",
+                `experiment:${exp.id}`,
+              );
+            }
+            const standingHint = credited
+              ? ""
+              : ` No standing credited: needs samples on at least 2 arms from at least 2 distinct recorders (arms=${armsSampled}, recorders=${recorders}).`;
             ctx.send(
               input.entity,
-              `Experiment "${name}" completed — ${tie ? "tie" : `winner: ${bold(top.arm)}`} on ${primary}. Outcome recorded.`,
+              `Experiment "${name}" completed — ${tie ? "tie" : `winner: ${bold(top.arm)}`} on ${primary}. Outcome recorded.${standingHint}`,
             );
             return;
           }

@@ -565,6 +565,16 @@ Formations carry empirical validation status (`validated` / `partial` / `unvalid
 benchmark sweeps — `project <name> recommend` shows the tags, and `unvalidated` means "no passing
 evidence yet," not proven bad.
 
+**Crew pools are members-only.** A persisted crew (`crew create … persist` or `crew persist <name>`)
+gets a `crew:<name>` memory pool, scoped by a group object of the same id whose roster mirrors the
+crew: the owner plus every current member. Joining adds you, leaving removes you, and the roster is
+re-synced on dispatch, on pool deposits and on boot (so a crew persisted before this scope existed
+is grouped automatically). Outsiders see `Pool "crew:<name>" not found or inaccessible` from
+`pool crew:<name> recall`, and `recap`, `ask`, `dig` and passthru context skip the pool for them.
+Dissolving the crew keeps the pool and its notes — that is the generational memory — but the group
+keeps its final roster, so the notes stay readable only by the people who were in the crew. A new
+crew that reuses the name inherits the pool and the group is re-synced to the new roster.
+
 ---
 
 ## Putting It All Together
