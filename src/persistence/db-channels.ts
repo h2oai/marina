@@ -137,11 +137,20 @@ export function countBoardPosts(db: Database, boardId: string, archived = false)
   return row?.n ?? 0;
 }
 
+/**
+ * Delete messages older than their channel's `retention_hours` window.
+ * Channels with NULL retention keep everything. The cutoff is computed per
+ * channel (`now - retention_hours * 3600000`) so a 24h Responses-API
+ * conversation channel keeps its last day of history across prunes.
+ */
 export function pruneExpiredMessages(db: Database, now: number): number {
   const result = db.run(
-    `DELETE FROM channel_messages WHERE channel_id IN (
-      SELECT id FROM channels WHERE retention_hours IS NOT NULL
-    ) AND created_at < ?`,
+    `DELETE FROM channel_messages WHERE id IN (
+      SELECT m.id FROM channel_messages m
+      JOIN channels c ON c.id = m.channel_id
+      WHERE c.retention_hours IS NOT NULL
+        AND m.created_at < ? - c.retention_hours * 3600000
+    )`,
     [now],
   );
   return result.changes;
