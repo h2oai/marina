@@ -71,6 +71,31 @@ describe("thinking level — parsing and defaults", () => {
   });
 });
 
+describe("thinking level — persisted column (migration 120)", () => {
+  it("a NULL thinking_level stays unset and resolves like no explicit level", () => {
+    delete process.env.MARINA_AGENT_THINKING;
+    // What the respawn path does with an `agent_configs` row: parse the
+    // column (NULL → undefined), then resolve at spawn.
+    const fromRow = (thinking_level: string | null) =>
+      parseAgentThinkingLevel(thinking_level ?? undefined);
+    expect(fromRow(null)).toBeUndefined();
+    expect(resolveAgentThinkingLevel({ thinkingLevel: fromRow(null) })).toBe("off");
+    process.env.MARINA_AGENT_THINKING = "medium";
+    expect(resolveAgentThinkingLevel({ thinkingLevel: fromRow(null) })).toBe("medium");
+    expect(resolveAgentThinkingLevel({ thinkingLevel: fromRow(null), crewResponder: true })).toBe(
+      "off",
+    );
+    // A stored level wins over both the env default and the crew exception.
+    expect(fromRow("high")).toBe("high");
+    expect(resolveAgentThinkingLevel({ thinkingLevel: fromRow("high"), crewResponder: true })).toBe(
+      "high",
+    );
+    // An explicit `off` is a real choice, distinct from unset.
+    expect(fromRow("off")).toBe("off");
+    expect(resolveAgentThinkingLevel({ thinkingLevel: fromRow("off") })).toBe("off");
+  });
+});
+
 describe("agent spawn / config option parsing", () => {
   it("accepts thinking:high, --thinking high and the legacy `thinking high` word pair", () => {
     expect(

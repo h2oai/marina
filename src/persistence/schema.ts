@@ -3445,4 +3445,41 @@ UPDATE OR IGNORE tasks
    AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = tasks.creator_id);
 `,
   },
+  // Migration 119: the last two transient author columns — `board_posts.author_id`
+  // and `macros.author_id`. Both are authorship keys (`macro update/delete`
+  // compare the caller against the author; board posts carry the author for
+  // attribution and crew result / paper-order lookups), so a re-login after
+  // eviction orphaned a user's macros and detached their posts. Rewrite onto
+  // users.id where an account exists (same EXISTS guard as 109/117/118).
+  // `macros` has UNIQUE(name, author_id): `UPDATE OR IGNORE` leaves a transient
+  // row in place when the account already owns a durable macro of that name —
+  // a macro is content, not a mirror row, so nothing is deleted. Delegates
+  // resolve `durableEntityKey()` on write (and on `author_id = ?` lookups) and
+  // project `liveEntityIdSql` on read. `room_sources` / `room_templates` keep
+  // their `author_id`: it is display-only (never compared or looked up).
+  {
+    version: 119,
+    sql: `
+UPDATE OR IGNORE board_posts
+   SET author_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = board_posts.author_id)
+ WHERE author_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = board_posts.author_id);
+UPDATE OR IGNORE macros
+   SET author_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = macros.author_id)
+ WHERE author_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = macros.author_id);
+`,
+  },
+  // Migration 120: persist the agent's reasoning depth. `agent spawn …
+  // thinking:<level>` and `agent config <name> thinking <level>` used to set
+  // `AgentConfig.thinkingLevel` in memory only, so the boot-time respawn
+  // (`AgentRuntime.init`) silently dropped it. NULL = never set — resolved at
+  // spawn by `resolveAgentThinkingLevel` (crew responders off, else
+  // `MARINA_AGENT_THINKING`), so an unset level must NOT be stored as 'off'.
+  {
+    version: 120,
+    sql: `
+ALTER TABLE agent_configs ADD COLUMN thinking_level TEXT;
+`,
+  },
 ];

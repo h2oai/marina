@@ -3,7 +3,7 @@
 
 import { Database } from "bun:sqlite";
 import { statSync } from "node:fs";
-import type { AgentSupports } from "../agent/agent-types";
+import type { AgentSupports, AgentThinkingLevel } from "../agent/agent-types";
 import type { Session } from "../auth/session-manager";
 import type { NoteTier } from "../engine/constants";
 import type { MemoryStorageAmounts } from "../sdk/memory-types";
@@ -39,6 +39,9 @@ import * as tasksDb from "./db-tasks";
 import * as witnessDb from "./db-witness";
 import * as worldVariantsDb from "./db-world-variants";
 import { escapeLike } from "./fts";
+
+// `macros.author_id` is durable-keyed (migration 119); project the live id back on read.
+const MACRO_COLUMNS = `m.*, ${entitiesDb.liveEntityIdSql("m", "author_id")} AS author_id`;
 
 export type {
   AdapterRow,
@@ -983,7 +986,11 @@ export class MarinaDB {
     body: string;
     tags?: string[];
   }): number {
-    return channelsDb.createBoardPost(this.db, post);
+    // `author_id` is durable-keyed (migration 119); reads project the live id back.
+    return channelsDb.createBoardPost(this.db, {
+      ...post,
+      authorId: this.durableEntityKey(post.authorId),
+    });
   }
   getBoardPost(id: number): BoardPostRow | undefined {
     return channelsDb.getBoardPost(this.db, id);
@@ -1486,37 +1493,44 @@ export class MarinaDB {
   }
 
   // ─── Macro Persistence ────────────────────────────────────────────────────
+  // `author_id` is durable-keyed (migration 119): writes and `author_id = ?`
+  // lookups resolve `durableEntityKey()`, every read projects the live entity
+  // id back so `MacroManager` keeps comparing against the caller's entity id.
 
   createMacro(name: string, authorId: string, command: string): number {
     const now = Date.now();
     const result = this.db.run(
       "INSERT INTO macros (name, author_id, command, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-      [name, authorId, command, now, now],
+      [name, this.durableEntityKey(authorId), command, now, now],
     );
     return Number(result.lastInsertRowid);
   }
 
   getMacro(id: number): MacroRow | undefined {
     return (
-      (this.db.query("SELECT * FROM macros WHERE id = ?").get(id) as MacroRow | null) ?? undefined
+      (this.db
+        .query(`SELECT ${MACRO_COLUMNS} FROM macros m WHERE m.id = ?`)
+        .get(id) as MacroRow | null) ?? undefined
     );
   }
 
   getMacroByName(name: string, authorId: string): MacroRow | undefined {
     return (
       (this.db
-        .query("SELECT * FROM macros WHERE name = ? AND author_id = ?")
-        .get(name, authorId) as MacroRow | null) ?? undefined
+        .query(`SELECT ${MACRO_COLUMNS} FROM macros m WHERE m.name = ? AND m.author_id = ?`)
+        .get(name, this.durableEntityKey(authorId)) as MacroRow | null) ?? undefined
     );
   }
 
   listMacros(authorId?: string): MacroRow[] {
     if (authorId) {
       return this.db
-        .query("SELECT * FROM macros WHERE author_id = ? ORDER BY name")
-        .all(authorId) as MacroRow[];
+        .query(`SELECT ${MACRO_COLUMNS} FROM macros m WHERE m.author_id = ? ORDER BY m.name`)
+        .all(this.durableEntityKey(authorId)) as MacroRow[];
     }
-    return this.db.query("SELECT * FROM macros ORDER BY name").all() as MacroRow[];
+    return this.db
+      .query(`SELECT ${MACRO_COLUMNS} FROM macros m ORDER BY m.name`)
+      .all() as MacroRow[];
   }
 
   updateMacro(id: number, command: string): void {
@@ -5247,6 +5261,8 @@ export class MarinaDB {
     room?: string;
     spawnedBy: string;
     supports?: AgentSupports;
+    /** Reasoning depth (migration 120). `undefined` keeps the stored value. */
+    thinkingLevel?: AgentThinkingLevel;
   }): void {
     agentsDb.saveAgentConfig(this.db, opts);
     const parent =

@@ -3,6 +3,7 @@
 
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { MacroManager } from "../src/coordination/macro-manager";
 import { TaskManager } from "../src/coordination/task-manager";
 import { FlywheelManager } from "../src/integrations/flywheel-manager";
 import { MarinaDB } from "../src/persistence/database";
@@ -147,6 +148,76 @@ describe("durable keys survive re-login", () => {
     ).toBe("e_9");
     expect(db.getGroupMember("g2", "e_9")).toBeDefined();
     expect(db.getGroupMembers("g2").map((m) => m.entity_id)).toEqual(["e_9"]);
+    db.createBoard({ id: "b9", name: "guests" });
+    const post = db.createBoardPost({
+      boardId: "b9",
+      authorId: "e_9",
+      authorName: "Nine",
+      body: "x",
+    });
+    expect(db.getBoardPost(post)?.author_id).toBe("e_9");
+    const macro = db.createMacro("hi", "e_9", "say hi");
+    expect(db.getMacroByName("hi", "e_9")?.id).toBe(macro);
+    expect(db.listMacros("e_9").map((m) => m.author_id)).toEqual(["e_9"]);
+  });
+
+  it("keys board post and macro authors by the account (migration 119)", () => {
+    db.createBoard({ id: "b2", name: "results" });
+    const post = db.createBoardPost({
+      boardId: "b2",
+      authorId: "e_1",
+      authorName: "Alice",
+      title: "crew result",
+      body: "shipped the durable keys",
+    });
+    const macros = new MacroManager(db, () => {});
+    const macro = macros.create("ship", "e_1", "board post results done");
+
+    // Stored under the durable key …
+    expect(
+      (
+        raw.query("SELECT author_id FROM board_posts WHERE id = ?").get(post) as {
+          author_id: string;
+        }
+      ).author_id,
+    ).toBe("u_alice");
+    expect(
+      (
+        raw.query("SELECT author_id FROM macros WHERE id = ?").get(macro.id) as {
+          author_id: string;
+        }
+      ).author_id,
+    ).toBe("u_alice");
+    // … and read back as the live entity id on every read path.
+    expect(db.getBoardPost(post)?.author_id).toBe("e_1");
+    expect(db.listBoardPosts("b2").map((p) => p.author_id)).toEqual(["e_1"]);
+    expect(db.searchBoardPosts("b2", "durable").map((p) => p.author_id)).toEqual(["e_1"]);
+    expect(macro.authorId).toBe("e_1");
+    expect(db.getMacro(macro.id)?.author_id).toBe("e_1");
+    expect(macros.getByName("ship", "e_1")?.id).toBe(macro.id);
+    expect(macros.list("e_1").map((m) => m.id)).toEqual([macro.id]);
+
+    const e2 = relogin();
+    expect(db.getBoardPost(post)?.author_id).toBe(e2);
+    expect(db.listBoardPosts("b2").map((p) => p.author_id)).toEqual([e2]);
+    expect(db.searchBoardPosts("b2", "durable").map((p) => p.author_id)).toEqual([e2]);
+    expect(db.getMacro(macro.id)?.author_id).toBe(e2);
+    // `macro list` / `macro run <name>`-style lookups still find the account's macros …
+    expect(macros.getByName("ship", e2)?.id).toBe(macro.id);
+    expect(macros.list(e2).map((m) => m.id)).toEqual([macro.id]);
+    expect(macros.list().map((m) => m.authorId)).toEqual([e2]);
+    // … and the ownership checks that compare against the caller's entity id pass.
+    expect(macros.update(macro.id, e2, "board post results shipped")).toBe(true);
+    expect(macros.get(macro.id)?.command).toBe("board post results shipped");
+    // The UNIQUE(name, author_id) constraint sees one owner, not two ids.
+    expect(() => macros.create("ship", e2, "dup")).toThrow();
+    expect(macros.delete(macro.id, e2)).toBe(true);
+    expect(macros.list(e2)).toHaveLength(0);
+
+    // Offline account: no live entity, the durable key itself is returned.
+    db.deleteEntity(e2);
+    expect(db.getBoardPost(post)?.author_id).toBe("u_alice");
+    expect(db.listBoardPosts("b2").map((p) => p.author_id)).toEqual(["u_alice"]);
   });
 
   it("keeps board votes attributable across re-login", () => {

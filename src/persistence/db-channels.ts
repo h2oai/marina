@@ -259,9 +259,15 @@ export function createBoardPost(
   return Number(result.lastInsertRowid);
 }
 
+// `author_id` is durable-keyed (migration 119); every read projects the live
+// entity id back so callers keep comparing against entity ids.
+const BOARD_POST_COLUMNS = `bp.*, ${liveEntityIdSql("bp", "author_id")} AS author_id`;
+
 export function getBoardPost(db: Database, id: number): BoardPostRow | undefined {
   return (
-    (db.query("SELECT * FROM board_posts WHERE id = ?").get(id) as BoardPostRow | null) ?? undefined
+    (db
+      .query(`SELECT ${BOARD_POST_COLUMNS} FROM board_posts bp WHERE bp.id = ?`)
+      .get(id) as BoardPostRow | null) ?? undefined
   );
 }
 
@@ -275,8 +281,8 @@ export function listBoardPosts(
   const archived = opts?.archived ?? false;
   return db
     .query(
-      `SELECT * FROM board_posts WHERE board_id = ? AND archived = ?
-       ORDER BY pinned DESC, id DESC LIMIT ? OFFSET ?`,
+      `SELECT ${BOARD_POST_COLUMNS} FROM board_posts bp WHERE bp.board_id = ? AND bp.archived = ?
+       ORDER BY bp.pinned DESC, bp.id DESC LIMIT ? OFFSET ?`,
     )
     .all(boardId, archived ? 1 : 0, limit, offset) as BoardPostRow[];
 }
@@ -286,7 +292,7 @@ export function searchBoardPosts(db: Database, boardId: string, query: string): 
   if (!ftsQuery) return [];
   return db
     .query(
-      `SELECT bp.* FROM board_posts bp
+      `SELECT ${BOARD_POST_COLUMNS} FROM board_posts bp
        JOIN board_posts_fts fts ON bp.id = fts.rowid
        WHERE bp.board_id = ? AND board_posts_fts MATCH ?
        ORDER BY fts.rank

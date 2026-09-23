@@ -66,6 +66,15 @@ import {
   storeResponseCache,
 } from "./response-cache";
 import {
+  type ChatToolFields,
+  chatToolCallsToResponses,
+  type ResponsesFunctionCall,
+  ResponsesRequestError,
+  responsesInputToMessages,
+  restorePriorToolCalls,
+  translateResponsesTools,
+} from "./responses-tools";
+import {
   normalizeTextualToolCalls,
   type StreamEvent,
   ToolCallStreamParser,
@@ -1495,19 +1504,6 @@ class HttpError extends Error {
 // previous_response_id threads continuations onto the same channel.
 // Memory-only index (restart wipes the id map; messages remain in channels).
 
-/**
- * A function call the upstream returned (chat-completions `tool_calls`), kept
- * on the record so the streaming and non-streaming Responses bodies render the
- * same `function_call` output items. `/v1/responses` passthru does not forward
- * Responses tool schemas; these appear only when an upstream (or the textual
- * tool-call repair) emits a structured call anyway.
- */
-interface ResponsesFunctionCall {
-  callId: string;
-  name: string;
-  arguments: string;
-}
-
 interface ResponseRecord {
   id: string;
   conversationId: string;
@@ -1576,37 +1572,6 @@ function trimResponseIndex(): void {
 
 function newResponseId(): string {
   return `resp_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
-}
-
-function extractInputText(input: unknown): string {
-  if (typeof input === "string") return input;
-  if (!Array.isArray(input)) return "";
-  // OpenAI Responses API accepts an array of {role, content} entries.
-  const parts: string[] = [];
-  for (const item of input) {
-    if (!item || typeof item !== "object") continue;
-    const role = (item as { role?: string }).role;
-    const content = (item as { content?: unknown }).content;
-    const text =
-      typeof content === "string"
-        ? content
-        : Array.isArray(content)
-          ? content
-              .map((c) => {
-                if (typeof c === "string") return c;
-                if (c && typeof c === "object") {
-                  const cc = c as { text?: string; type?: string };
-                  if (typeof cc.text === "string") return cc.text;
-                }
-                return "";
-              })
-              .filter(Boolean)
-              .join("\n")
-          : "";
-    if (role && role !== "user") parts.push(`${role}: ${text}`);
-    else parts.push(text);
-  }
-  return parts.filter(Boolean).join("\n");
 }
 
 function responsesUsage(usage: CompletionUsage | undefined): Record<string, unknown> {
@@ -2092,11 +2057,27 @@ async function handleResponsesCreate(
       conversation_id?: string;
       store?: boolean;
       stream?: boolean;
+      tools?: unknown;
+      tool_choice?: unknown;
+      parallel_tool_calls?: unknown;
     };
 
     const model = body.model ?? "marina";
-    const userInput = extractInputText(body.input);
-    if (!userInput) return errorJson(400, "`input` is required", { param: "input" });
+    // Typed input items (message / function_call / function_call_output) →
+    // chat messages for passthru, plus a text rendering for the conversation
+    // channel and the agent route (`responses-tools.ts`).
+    let turn: ReturnType<typeof responsesInputToMessages>;
+    try {
+      turn = responsesInputToMessages(body.input);
+    } catch (e) {
+      if (e instanceof UnsupportedParameterError) return json(e.toBody(), 400);
+      if (e instanceof ResponsesRequestError) return errorJson(400, e.message, { param: e.param });
+      throw e;
+    }
+    const userInput = turn.text;
+    if (!userInput || turn.messages.length === 0) {
+      return errorJson(400, "`input` is required", { param: "input" });
+    }
     // Streaming: the answer is produced whole on this surface, then emitted as
     // the standard Responses SSE sequence (see `responsesSseStream`).
     const wantStream = body.stream === true;
@@ -2128,10 +2109,27 @@ async function handleResponsesCreate(
 
     const ec = getEndpointConfig(engine.db);
     if (ec.mode === "passthru") {
+      // Responses tools → chat tools before any upstream call; a hosted tool
+      // type (web_search, file_search, …) is a 400 the client must see, never
+      // a silent drop.
+      let chatTools: ChatToolFields;
+      try {
+        chatTools = translateResponsesTools(body as Record<string, unknown>);
+      } catch (e) {
+        if (e instanceof UnsupportedParameterError) return json(e.toBody(), 400);
+        if (e instanceof ResponsesRequestError)
+          return errorJson(400, e.message, { param: e.param });
+        throw e;
+      }
       return await runResponsesPassthru(engine, req, auth, {
         model,
         body,
         userInput,
+        turn: turn.messages,
+        chatTools,
+        priorToolCalls: previousResponseId
+          ? responseIndex.get(previousResponseId)?.toolCalls
+          : undefined,
         conversationId,
         previousResponseId,
         owner,
@@ -2224,7 +2222,12 @@ async function handleResponsesCreate(
  * conversation channel supplies prior turns (same server-side state contract
  * as agent routing), and the completion is stored as a response record so
  * `previous_response_id` threading keeps working against an upstream model.
- * Text-only by design — Responses tool schemas are not translated here.
+ * Tools travel both ways (`responses-tools.ts`): `chatTools` are the
+ * already-translated chat-completions fields, `turn` the chat messages for
+ * the new input (text, replayed `function_call`s, `function_call_output`
+ * results), and `priorToolCalls` the stored calls of the threaded prior
+ * response so a `function_call_output`-only continuation reaches the upstream
+ * with its `tool_calls` restored.
  */
 async function runResponsesPassthru(
   engine: Engine,
@@ -2240,6 +2243,9 @@ async function runResponsesPassthru(
       store?: boolean;
     };
     userInput: string;
+    turn: OpenAIMessage[];
+    chatTools?: ChatToolFields;
+    priorToolCalls?: ResponsesFunctionCall[];
     conversationId: string;
     previousResponseId?: string;
     owner: string;
@@ -2256,7 +2262,10 @@ async function runResponsesPassthru(
           content: entry.content,
         }))
       : [];
-  const turns: OpenAIMessage[] = [...history, { role: "user", content: input.userInput }];
+  const turns: OpenAIMessage[] = [
+    ...restorePriorToolCalls(history, input.priorToolCalls, input.turn),
+    ...input.turn,
+  ];
   const prep = await preparePassthru(engine, req, auth, turns, "responses");
   const native: Record<string, unknown> = { instructions: input.body.instructions };
   applyInjection(native, prep.addendum, "responses");
@@ -2275,6 +2284,7 @@ async function runResponsesPassthru(
     ...(typeof input.body.max_output_tokens === "number"
       ? { max_tokens: input.body.max_output_tokens }
       : {}),
+    ...(input.chatTools ?? {}),
   };
 
   const cached = await passthruCacheLookup(engine, prep, body, ec.passthruModel);
@@ -2887,27 +2897,8 @@ async function extractResponseTextAndUsage(
     };
     const choice = data?.choices?.[0];
     const content = choice?.message?.content ?? choice?.text;
-    const rawCalls = choice?.message?.tool_calls;
-    const toolCalls: ResponsesFunctionCall[] | undefined = Array.isArray(rawCalls)
-      ? rawCalls
-          .filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
-          .map((c) => {
-            const fn = (c.function ?? {}) as { name?: unknown; arguments?: unknown };
-            return {
-              callId:
-                typeof c.id === "string" && c.id
-                  ? c.id
-                  : `call_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`,
-              name: typeof fn.name === "string" ? fn.name : "",
-              arguments:
-                typeof fn.arguments === "string"
-                  ? fn.arguments
-                  : fn.arguments === undefined
-                    ? ""
-                    : JSON.stringify(fn.arguments),
-            };
-          })
-      : undefined;
+    // `call_id` on the Responses item is the upstream `tool_calls[].id` verbatim.
+    const toolCalls = chatToolCallsToResponses(choice?.message?.tool_calls);
     const u = data?.usage;
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
     const prompt = num(u?.prompt_tokens);
