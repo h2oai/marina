@@ -138,6 +138,44 @@ The `response` payload of `response.completed` is byte-identical to the non-stre
 (`error.code: "timeout"`). A stream request answered whole (a cache hit, a provider that ignored
 `stream`) still yields the standard sequence with a single delta.
 
+### Responses API tools
+
+`POST /v1/responses` in passthru mode forwards tools both ways (`src/net/responses-tools.ts`). The
+Responses surface speaks flat function tools and typed input items; every upstream speaks
+chat-completions, and the Anthropic proxy translates chat tools onward, so a Responses client with
+tools works end-to-end against OpenAI-compatible **and** Anthropic upstreams.
+
+| Responses request | Chat-completions request sent upstream |
+|-------------------|----------------------------------------|
+| `tools[{ type: "function", name, description, parameters, strict? }]` (flat) | `tools[{ type: "function", function: { name, description, parameters, strict } }]` |
+| `tool_choice: "auto" \| "none" \| "required"` | same string |
+| `tool_choice: { type: "function", name }` | `{ type: "function", function: { name } }` |
+| `parallel_tool_calls` | `parallel_tool_calls` (Anthropic: `disable_parallel_tool_use` when `false`) |
+| `input` string / `{ role, content }` / `{ type: "message", … }` (`input_text` / `output_text` / `text` parts) | `{ role, content: text }` |
+| `input[{ type: "function_call", call_id, name, arguments }]` | `assistant.tool_calls[{ id: call_id, type: "function", function: { name, arguments } }]` (consecutive calls share one assistant message) |
+| `input[{ type: "function_call_output", call_id, output }]` | `{ role: "tool", tool_call_id: call_id, content: output }` |
+
+| Chat-completions reply | Responses output |
+|------------------------|------------------|
+| `message.tool_calls[{ id, function: { name, arguments } }]` | `{ type: "function_call", id: "fc_…", call_id: id, name, arguments, status: "completed" }` — `call_id` is the upstream id verbatim |
+| `delta.tool_calls` fragments (stream) | `response.output_item.added` (`function_call`) → `response.function_call_arguments.delta` … `response.function_call_arguments.done` → `response.output_item.done` |
+
+Tool-loop continuation works in both client styles. A client that manages its own state resends the
+whole `input` list (message, `function_call`, `function_call_output`). A client that threads with
+`previous_response_id` sends only the `function_call_output` items: the stored prior response
+carries the calls, and they are re-attached as `assistant.tool_calls` ahead of the `role: "tool"`
+results so the upstream sees every result paired with its call.
+
+**Refused, never dropped.** Hosted Responses tool types have no chat-completions equivalent —
+`web_search`, `web_search_preview`, `file_search`, `computer_use_preview`, `code_interpreter`,
+`image_generation`, `mcp`, … — and are refused before any upstream call with
+`400 { error: { code: "unsupported_parameter", param: "tools[i].type" } }`. A `tool_choice` type
+outside `auto` / `none` / `required` / `function` is `param: "tool_choice.type"`; an input item type
+outside `message` / `function_call` / `function_call_output` is `param: "input[i].type"`. A function
+tool without a `name` (or a `function_call_output` without a `call_id`) is an ordinary 400 with the
+offending `param`. Agents mode still refuses `tools` altogether (`param: "tools"`) — in-world agents
+answer in text.
+
 ---
 
 ## Multi-Turn Conversations
@@ -234,8 +272,9 @@ protocol carries system context in its own place:
 The Ollama routes and `/v1/responses` proxy upstream in passthru mode (previously they only routed
 to world agents). Ollama passthru always asks the upstream for a completed answer; a client that
 requested Ollama's default streaming receives it as a buffered ndjson stream. `/v1/responses`
-passthru does not forward Responses tool schemas (structured `tool_calls` an upstream returns
-anyway are surfaced as `function_call` output items), streams incrementally when asked (see
+passthru translates Responses `tools`/`tool_choice` and `function_call`/`function_call_output` items
+to chat tools upstream and renders upstream `tool_calls` as `function_call` output items (see
+[Responses API tools](#responses-api-tools)), streams incrementally when asked (see
 [Responses API streaming](#responses-api-streaming)), and keeps `previous_response_id` threading
 through the conversation channel.
 
@@ -362,7 +401,7 @@ curl http://localhost:3300/v1/chat/completions \
 |--------|------|-------------|
 | `GET` | `/v1/models` | List available models |
 | `POST` | `/v1/chat/completions` | Chat completion (streaming and non-streaming, tool calling) |
-| `POST` | `/v1/responses` | Responses API with server-side conversation state (`stream: true` supported) |
+| `POST` | `/v1/responses` | Responses API with server-side conversation state (`stream: true`, function tools) |
 | `GET` / `DELETE` | `/v1/responses/:id` | Read / delete a stored response |
 | `POST` | `/v1/messages` | Anthropic Messages (Claude Code, Anthropic SDKs) |
 | `GET` | `/v1/health` | Liveness |
