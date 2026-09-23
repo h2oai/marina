@@ -2992,21 +2992,29 @@ describe("code worktree (per-session isolation)", () => {
   const WT_DB = "test_code_worktree.db";
   let db: MarinaDB;
   let savedHome: string | undefined;
+  /** Every temp dir this describe creates (fake HOME, repos, plain roots) — removed in afterEach. */
+  const wtTempDirs: string[] = [];
+  function wtTempDir(prefix: string): string {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+    wtTempDirs.push(dir);
+    return dir;
+  }
 
   beforeEach(() => {
     db = new MarinaDB(WT_DB);
     savedHome = process.env.HOME;
-    process.env.HOME = realpathSync(mkdtempSync(join(tmpdir(), "marina-wt-cmd-home-")));
+    process.env.HOME = wtTempDir("marina-wt-cmd-home-");
   });
   afterEach(() => {
     db.close();
     cleanupDb(WT_DB);
     if (savedHome === undefined) delete process.env.HOME;
     else process.env.HOME = savedHome;
+    for (const dir of wtTempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
   function makeRepoWithCommit(): string {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "marina-wt-cmd-repo-")));
+    const root = wtTempDir("marina-wt-cmd-repo-");
     writeFileSync(join(root, "example.txt"), "hello\n");
     const env = {
       ...process.env,
@@ -3132,7 +3140,7 @@ describe("code worktree (per-session isolation)", () => {
   });
 
   it("`code worktree on` degrades on a non-git root (no worktree, shared root)", async () => {
-    const plain = realpathSync(mkdtempSync(join(tmpdir(), "marina-wt-cmd-plain-")));
+    const plain = wtTempDir("marina-wt-cmd-plain-");
     try {
       writeFileSync(join(plain, "example.txt"), "hello\n");
       const entity = makeAgentEntity("u_wt_nogit", "WtNoGit");

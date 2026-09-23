@@ -1,8 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "bun:test";
-import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { afterEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,6 +14,12 @@ import {
 } from "../scripts/init";
 
 const WORLDS_DIR = join(import.meta.dir, "../worlds");
+
+/** Temp dirs created by this file, removed after each test. */
+const tempDirs: string[] = [];
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 describe("init world menu", () => {
   it("lists every loadable world in worlds/, default first, helpers excluded", () => {
@@ -47,6 +53,7 @@ describe("init world menu", () => {
 
   it("falls back to the world name for a slug without a blurb", () => {
     const dir = mkdtempSync(join(tmpdir(), "marina-worlds-"));
+    tempDirs.push(dir);
     writeFileSync(
       join(dir, "custom.ts"),
       'const w: WorldDefinition = {\n  name: "My Custom World",\n  startRoom: "x",\n};\nexport default w;\n',
