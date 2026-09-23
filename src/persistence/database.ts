@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Database } from "bun:sqlite";
-import { statSync } from "node:fs";
 import type { AgentSupports, AgentThinkingLevel } from "../agent/agent-types";
 import type { Session } from "../auth/session-manager";
 import type { NoteTier } from "../engine/constants";
@@ -10,38 +9,55 @@ import type { MemoryStorageAmounts } from "../sdk/memory-types";
 import type { EngineEvent, Entity, EntityId, RoomId } from "../types";
 import type { TraitCapabilities } from "./db-agents";
 import * as agentsDb from "./db-agents";
+import * as alertsDb from "./db-alerts";
+import * as assetsDb from "./db-assets";
 import * as associationsDb from "./db-associations";
+import * as benchmarksDb from "./db-benchmarks";
+import * as canvasDb from "./db-canvas";
 import * as channelsDb from "./db-channels";
 import * as chronicleDb from "./db-chronicle";
+import * as codingDb from "./db-coding";
 import * as cognitiveEventsDb from "./db-cognitive-events";
+import * as commandsDb from "./db-commands";
 import * as competenceDb from "./db-competence";
+import * as connectorsDb from "./db-connectors";
 import * as crewsDb from "./db-crews";
+import * as directMessagesDb from "./db-direct-messages";
 import * as economicsDb from "./db-economics";
 import * as entitiesDb from "./db-entities";
 import * as evidenceDb from "./db-evidence";
+import * as evolutionDb from "./db-evolution";
+import * as experimentsDb from "./db-experiments";
 import * as federationDb from "./db-federation";
 import * as feedDb from "./db-feed";
+import * as flywheelDb from "./db-flywheel";
+import * as gatewaysDb from "./db-gateways";
 import * as intellectsDb from "./db-intellects";
 import * as journeysDb from "./db-journeys";
 import * as logsDb from "./db-logs";
+import * as macrosDb from "./db-macros";
+import * as maintenanceDb from "./db-maintenance";
+import * as marketsDb from "./db-markets";
 import * as mediaDb from "./db-media";
 import { admitMemoryImport } from "./db-memory-admission";
 import { compactMemoryReceipts } from "./db-memory-retention";
 import { configureMemoryStorage, memoryLimitsFromEnv } from "./db-memory-storage";
 import * as meshesDb from "./db-meshes";
+import * as metaDb from "./db-meta";
 import * as mutationsDb from "./db-mutations";
 import * as notesDb from "./db-notes";
 import * as principalsDb from "./db-principals";
 import * as reproductionDb from "./db-reproduction";
+import * as roomsDb from "./db-rooms";
+import * as shellDb from "./db-shell";
 import * as simulationsDb from "./db-simulations";
 import * as standingDb from "./db-standing";
 import * as tasksDb from "./db-tasks";
+import * as telemetryDb from "./db-telemetry";
+import * as usersDb from "./db-users";
 import * as witnessDb from "./db-witness";
 import * as worldVariantsDb from "./db-world-variants";
-import { escapeLike } from "./fts";
-
-// `macros.author_id` is durable-keyed (migration 119); project the live id back on read.
-const MACRO_COLUMNS = `m.*, ${entitiesDb.liveEntityIdSql("m", "author_id")} AS author_id`;
+import type { MarinaStores } from "./interfaces";
 
 export type {
   AdapterRow,
@@ -187,113 +203,116 @@ import type {
 import * as memoryServiceDb from "./db-memory-service";
 import { BASE_SCHEMA, MIGRATIONS } from "./schema";
 
+// Row types for the domains lifted out of this file live in their modules and
+// are re-exported here so importers keep a single path.
+export type { OperationalAlertRow } from "./db-alerts";
+export type { AssetRow } from "./db-assets";
+export type { BenchmarkRunRow } from "./db-benchmarks";
+export type {
+  CanvasEdgeRow,
+  CanvasIntentClaimResult,
+  CanvasIntentCompleteResult,
+  CanvasIntentData,
+  CanvasIntentFailResult,
+  CanvasIntentStatus,
+  CanvasIntentSummary,
+  CanvasNodeRow,
+  CanvasRow,
+} from "./db-canvas";
+export { parseCanvasIntent } from "./db-canvas";
+export type { CodingArtifactRow, CodingEventRow, CodingSessionRow } from "./db-coding";
+export type { CommandHistoryRow, CommandSourceRow } from "./db-commands";
+export type { ConnectorRow } from "./db-connectors";
+export type { DirectMessageRow } from "./db-direct-messages";
+export type {
+  EvolutionActivitySummary,
+  EvolutionRunRow,
+  EvolutionSessionRow,
+  EvolutionSessionStatus,
+} from "./db-evolution";
+export type {
+  ExperimentParticipantRow,
+  ExperimentResultRow,
+  ExperimentRow,
+} from "./db-experiments";
+export type {
+  CodingProjectRow,
+  CodingServiceProbeRow,
+  CodingServiceRow,
+  FlywheelBindingRow,
+  FlywheelBindingState,
+  FlywheelCredentialBindingRow,
+  FlywheelOperationSummary,
+} from "./db-flywheel";
+export type { GatewayRow } from "./db-gateways";
+export type { MacroRow } from "./db-macros";
+export type { CompactionOpts, CompactionStats } from "./db-maintenance";
+export type { MarketPositionRow, MarketRow } from "./db-markets";
+export type { RoomSourceRow, RoomTemplateRow } from "./db-rooms";
+export type { ShellLogRow } from "./db-shell";
+export type {
+  PrimitiveUsageSummary,
+  ProductivitySummary,
+  ProductivityTrendPoint,
+  PromptOutcomeSummary,
+} from "./db-telemetry";
+export type { AdapterLinkRow, AdapterUserMappingRow, BanRow, UserRow } from "./db-users";
 export { MIGRATIONS } from "./schema";
 
-export interface OperationalAlertRow {
-  id: number;
-  alert_key: string;
-  severity: "critical" | "warning" | "info";
-  category: string;
-  title: string;
-  detail: string;
-  remedy: string;
-  status: "open" | "acknowledged" | "resolved";
-  occurrences: number;
-  first_seen_at: number;
-  last_seen_at: number;
-  acknowledged_at: number | null;
-  resolved_at: number | null;
-  attention_kind: string;
-  source_entity: string | null;
-  target_entity: string | null;
-  assigned_to: string | null;
-  action_label: string | null;
-  action_ref: string | null;
-  metadata: string | null;
-  seen_at: number | null;
-  snoozed_until: number | null;
-  deadline_at: number | null;
-}
-
-export interface ProductivitySummary {
-  entityName: string | null;
-  outcomes: number;
-  successes: number;
-  failures: number;
-  successRate: number;
-  averageDurationMs: number;
-  medianDurationMs: number;
-  averageToolCalls: number;
-  averageHandoffs: number;
-  outcomesLast7d: number;
-}
-export interface ProductivityTrendPoint {
-  date: string;
-  outcomes: number;
-  successes: number;
-  averageDurationMs: number;
-  averageToolCalls: number;
-  averageHandoffs: number;
-}
-
-export interface PrimitiveUsageSummary {
-  entityName: string | null;
-  commands: number;
-  meaningfulActions: number;
-  meaningfulRate: number;
-  worldActions: number;
-  communications: number;
-  primitiveDiversity: number;
-  activeParticipants: number;
-  activeAgents: number;
-  toolCalls: number;
-  marinaToolCalls: number;
-  reasoningOnlyCalls: number;
-  consequentialToolCalls: number;
-  untrustedToolCalls: number;
-  lastActionAt: number | null;
-  outcomeSessions: number;
-  approvedMeaningfulAverage: number;
-  failedMeaningfulAverage: number;
-  topPrimitives: Array<{ primitive: string; count: number }>;
-  promptVersions: string[];
-}
-
-export interface PromptOutcomeSummary {
-  promptVersion: string;
-  agents: number;
-  outcomes: number;
-  successes: number;
-  failures: number;
-  successRate: number;
-  averageDurationMs: number;
-  averageToolCalls: number;
-  averageInputTokens: number;
-  averageOutputTokens: number;
-  averageCostUsd: number;
-  meaningfulActions: number;
-}
-
-export interface DirectMessageRow {
-  id: number;
-  correlation_id: string;
-  dedupe_key: string;
-  sender_id: string;
-  sender_name: string;
-  target_id: string;
-  target_name: string;
-  content: string;
-  status: "delivered" | "acknowledged" | "expired";
-  created_at: number;
-  delivered_at: number | null;
-  deadline_at: number | null;
-  acknowledged_at: number | null;
-  reply_message_id: number | null;
-}
+import type { OperationalAlertRow } from "./db-alerts";
+import type { AssetRow } from "./db-assets";
+import type { BenchmarkRunRow } from "./db-benchmarks";
+import type {
+  CanvasEdgeRow,
+  CanvasIntentClaimResult,
+  CanvasIntentCompleteResult,
+  CanvasIntentFailResult,
+  CanvasIntentStatus,
+  CanvasIntentSummary,
+  CanvasNodeRow,
+  CanvasRow,
+} from "./db-canvas";
+import type { CodingArtifactRow, CodingEventRow, CodingSessionRow } from "./db-coding";
+import type { CommandHistoryRow, CommandSourceRow } from "./db-commands";
+import type { ConnectorRow } from "./db-connectors";
+import type { DirectMessageRow } from "./db-direct-messages";
+import type {
+  EvolutionActivitySummary,
+  EvolutionRunRow,
+  EvolutionSessionRow,
+  EvolutionSessionStatus,
+} from "./db-evolution";
+import type {
+  ExperimentParticipantRow,
+  ExperimentResultRow,
+  ExperimentRow,
+} from "./db-experiments";
+import type {
+  CodingProjectRow,
+  CodingServiceProbeRow,
+  CodingServiceRow,
+  FlywheelBindingRow,
+  FlywheelBindingState,
+  FlywheelCredentialBindingRow,
+  FlywheelOperationSummary,
+} from "./db-flywheel";
+import type { GatewayRow } from "./db-gateways";
+import type { MacroRow } from "./db-macros";
+import type { CompactionOpts, CompactionStats } from "./db-maintenance";
+import type { MarketPositionRow, MarketRow } from "./db-markets";
+import type { RoomSourceRow, RoomTemplateRow } from "./db-rooms";
+import type { ShellLogRow } from "./db-shell";
+import type {
+  PrimitiveUsageSummary,
+  ProductivitySummary,
+  ProductivityTrendPoint,
+  PromptOutcomeSummary,
+} from "./db-telemetry";
+import type { AdapterLinkRow, AdapterUserMappingRow, BanRow, UserRow } from "./db-users";
 
 // ─── Database Class ──────────────────────────────────────────────────────────
 
-export class MarinaDB {
+export class MarinaDB implements MarinaStores {
   compactMemoryReceipts(options: Parameters<typeof compactMemoryReceipts>[1]) {
     return compactMemoryReceipts(this.db, options);
   }
@@ -384,7 +403,7 @@ export class MarinaDB {
     // new id here — the token `reconnect()` path did this, but a plain
     // name-login after eviction minted a new id and left the claim pointing at
     // the dead one. Idempotent; a no-op when the name has no live claims.
-    const isNew = this.db.query("SELECT 1 FROM entities WHERE id = ?").get(entity.id) === null;
+    const isNew = !entitiesDb.entityExists(this.db, entity.id);
     entitiesDb.saveEntity(this.db, entity);
     if (isNew) entitiesDb.migrateTaskClaimsByName(this.db, entity.name, entity.id);
   }
@@ -1168,18 +1187,11 @@ export class MarinaDB {
   // ─── Retention primitives (used by src/engine/retention.ts) ─────────────
 
   tableExists(table: string): boolean {
-    return (
-      this.reader
-        .query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
-        .get(table) !== null
-    );
+    return maintenanceDb.tableExists(this.reader, table);
   }
 
   tableColumns(table: string): string[] {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) return [];
-    return (this.reader.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
-      (row) => row.name,
-    );
+    return maintenanceDb.tableColumns(this.reader, table);
   }
 
   /**
@@ -1189,15 +1201,7 @@ export class MarinaDB {
    * never user input.
    */
   deleteBatch(table: string, whereSql: string, params: (string | number)[], limit: number): number {
-    // RETURNING rather than `.changes`: bun:sqlite reports trigger-side
-    // writes in `changes` too (the memory storage-ledger triggers, for one),
-    // which would overstate the count and could mis-terminate a batch loop.
-    return this.db
-      .query(
-        `DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${whereSql} LIMIT ?)
-         RETURNING rowid`,
-      )
-      .all(...params, Math.max(1, Math.trunc(limit))).length;
+    return maintenanceDb.deleteBatch(this.db, table, whereSql, params, limit);
   }
 
   // ─── Competence Persistence (delegated to db-competence.ts) ─────────────
@@ -1391,74 +1395,23 @@ export class MarinaDB {
     content: string;
     deadlineAt?: number;
   }): DirectMessageRow {
-    const now = Date.now();
-    this.expireDirectMessages(now);
-    const duplicate = this.db
-      .query(
-        `SELECT * FROM direct_messages WHERE sender_id = ? AND target_id = ? AND dedupe_key = ?
-         AND created_at >= ? AND status IN ('delivered', 'acknowledged') ORDER BY id DESC LIMIT 1`,
-      )
-      .get(
-        message.senderId,
-        message.targetId,
-        message.dedupeKey,
-        now - 30_000,
-      ) as DirectMessageRow | null;
-    if (duplicate) return duplicate;
-    const result = this.db.run(
-      `INSERT INTO direct_messages
-       (correlation_id, dedupe_key, sender_id, sender_name, target_id, target_name, content,
-        status, created_at, delivered_at, deadline_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'delivered', ?, ?, ?)`,
-      [
-        message.correlationId,
-        message.dedupeKey,
-        message.senderId,
-        message.senderName,
-        message.targetId,
-        message.targetName,
-        message.content,
-        now,
-        now,
-        message.deadlineAt ?? now + 5 * 60_000,
-      ],
-    );
-    return this.getDirectMessage(Number(result.lastInsertRowid))!;
+    return directMessagesDb.createDirectMessage(this.db, message);
   }
 
   getDirectMessage(id: number): DirectMessageRow | undefined {
-    this.expireDirectMessages();
-    return (
-      (this.db
-        .query("SELECT * FROM direct_messages WHERE id = ?")
-        .get(id) as DirectMessageRow | null) ?? undefined
-    );
+    return directMessagesDb.getDirectMessage(this.db, id);
   }
 
   listDirectMessageInbox(targetId: string, limit = 20): DirectMessageRow[] {
-    this.expireDirectMessages();
-    return this.db
-      .query("SELECT * FROM direct_messages WHERE target_id = ? ORDER BY id DESC LIMIT ?")
-      .all(targetId, limit) as DirectMessageRow[];
+    return directMessagesDb.listDirectMessageInbox(this.db, targetId, limit);
   }
 
   acknowledgeDirectMessage(id: number, targetId: string, replyMessageId?: number): boolean {
-    const result = this.db.run(
-      `UPDATE direct_messages SET status = 'acknowledged', acknowledged_at = ?,
-       reply_message_id = COALESCE(?, reply_message_id)
-       WHERE id = ? AND target_id = ? AND status = 'delivered'`,
-      [Date.now(), replyMessageId ?? null, id, targetId],
-    );
-    return result.changes > 0;
+    return directMessagesDb.acknowledgeDirectMessage(this.db, id, targetId, replyMessageId);
   }
 
   expireDirectMessages(now = Date.now()): number {
-    const result = this.db.run(
-      `UPDATE direct_messages SET status = 'expired'
-       WHERE status = 'delivered' AND deadline_at IS NOT NULL AND deadline_at <= ?`,
-      [now],
-    );
-    return result.changes;
+    return directMessagesDb.expireDirectMessages(this.db, now);
   }
 
   getChildTaskCount(parentId: number): { total: number; completed: number } {
@@ -1498,51 +1451,27 @@ export class MarinaDB {
   // id back so `MacroManager` keeps comparing against the caller's entity id.
 
   createMacro(name: string, authorId: string, command: string): number {
-    const now = Date.now();
-    const result = this.db.run(
-      "INSERT INTO macros (name, author_id, command, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-      [name, this.durableEntityKey(authorId), command, now, now],
-    );
-    return Number(result.lastInsertRowid);
+    return macrosDb.createMacro(this.db, this.durableEntityKey(authorId), name, command);
   }
 
   getMacro(id: number): MacroRow | undefined {
-    return (
-      (this.db
-        .query(`SELECT ${MACRO_COLUMNS} FROM macros m WHERE m.id = ?`)
-        .get(id) as MacroRow | null) ?? undefined
-    );
+    return macrosDb.getMacro(this.db, id);
   }
 
   getMacroByName(name: string, authorId: string): MacroRow | undefined {
-    return (
-      (this.db
-        .query(`SELECT ${MACRO_COLUMNS} FROM macros m WHERE m.name = ? AND m.author_id = ?`)
-        .get(name, this.durableEntityKey(authorId)) as MacroRow | null) ?? undefined
-    );
+    return macrosDb.getMacroByName(this.db, this.durableEntityKey(authorId), name);
   }
 
   listMacros(authorId?: string): MacroRow[] {
-    if (authorId) {
-      return this.db
-        .query(`SELECT ${MACRO_COLUMNS} FROM macros m WHERE m.author_id = ? ORDER BY m.name`)
-        .all(this.durableEntityKey(authorId)) as MacroRow[];
-    }
-    return this.db
-      .query(`SELECT ${MACRO_COLUMNS} FROM macros m ORDER BY m.name`)
-      .all() as MacroRow[];
+    return macrosDb.listMacros(this.db, authorId ? this.durableEntityKey(authorId) : undefined);
   }
 
   updateMacro(id: number, command: string): void {
-    this.db.run("UPDATE macros SET command = ?, updated_at = ? WHERE id = ?", [
-      command,
-      Date.now(),
-      id,
-    ]);
+    macrosDb.updateMacro(this.db, id, command);
   }
 
   deleteMacro(id: number): void {
-    this.db.run("DELETE FROM macros WHERE id = ?", [id]);
+    macrosDb.deleteMacro(this.db, id);
   }
 
   // ─── Room Source Persistence ─────────────────────────────────────────────
@@ -1554,69 +1483,31 @@ export class MarinaDB {
     authorName: string;
     valid?: boolean;
   }): number {
-    const version = this.getLatestRoomSourceVersion(opts.roomId) + 1;
-    this.db.run(
-      `INSERT INTO room_sources (room_id, version, source, author_id, author_name, valid, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        opts.roomId,
-        version,
-        opts.source,
-        opts.authorId,
-        opts.authorName,
-        opts.valid ? 1 : 0,
-        Date.now(),
-      ],
-    );
-    return version;
+    return roomsDb.saveRoomSource(this.db, opts);
   }
 
   getRoomSource(roomId: string, version?: number): RoomSourceRow | undefined {
-    if (version !== undefined) {
-      return (
-        (this.db
-          .query("SELECT * FROM room_sources WHERE room_id = ? AND version = ?")
-          .get(roomId, version) as RoomSourceRow | null) ?? undefined
-      );
-    }
-    // Latest version
-    return (
-      (this.db
-        .query("SELECT * FROM room_sources WHERE room_id = ? ORDER BY version DESC LIMIT 1")
-        .get(roomId) as RoomSourceRow | null) ?? undefined
-    );
+    return roomsDb.getRoomSource(this.db, roomId, version);
   }
 
   getRoomSourceHistory(roomId: string, limit = 20): RoomSourceRow[] {
-    return this.db
-      .query("SELECT * FROM room_sources WHERE room_id = ? ORDER BY version DESC LIMIT ?")
-      .all(roomId, limit) as RoomSourceRow[];
+    return roomsDb.getRoomSourceHistory(this.db, roomId, limit);
   }
 
   getLatestRoomSourceVersion(roomId: string): number {
-    const row = this.db
-      .query("SELECT MAX(version) as max_version FROM room_sources WHERE room_id = ?")
-      .get(roomId) as { max_version: number | null } | null;
-    return row?.max_version ?? 0;
+    return roomsDb.getLatestRoomSourceVersion(this.db, roomId);
   }
 
   getAllRoomSourceIds(): string[] {
-    return (
-      this.db.query("SELECT DISTINCT room_id FROM room_sources ORDER BY room_id").all() as {
-        room_id: string;
-      }[]
-    ).map((r) => r.room_id);
+    return roomsDb.getAllRoomSourceIds(this.db);
   }
 
   markRoomSourceValid(roomId: string, version: number): void {
-    this.db.run("UPDATE room_sources SET valid = 1 WHERE room_id = ? AND version = ?", [
-      roomId,
-      version,
-    ]);
+    roomsDb.markRoomSourceValid(this.db, roomId, version);
   }
 
   deleteRoomSources(roomId: string): void {
-    this.db.run("DELETE FROM room_sources WHERE room_id = ?", [roomId]);
+    roomsDb.deleteRoomSources(this.db, roomId);
   }
 
   // ─── Room Template Persistence ──────────────────────────────────────────
@@ -1628,102 +1519,64 @@ export class MarinaDB {
     authorName: string;
     description?: string;
   }): void {
-    this.db.run(
-      `INSERT OR REPLACE INTO room_templates (name, source, author_id, author_name, description, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [opts.name, opts.source, opts.authorId, opts.authorName, opts.description ?? "", Date.now()],
-    );
+    roomsDb.saveRoomTemplate(this.db, opts);
   }
 
   getRoomTemplate(name: string): RoomTemplateRow | undefined {
-    return (
-      (this.db
-        .query("SELECT * FROM room_templates WHERE name = ?")
-        .get(name) as RoomTemplateRow | null) ?? undefined
-    );
+    return roomsDb.getRoomTemplate(this.db, name);
   }
 
   getAllRoomTemplates(): RoomTemplateRow[] {
-    return this.db.query("SELECT * FROM room_templates ORDER BY name").all() as RoomTemplateRow[];
+    return roomsDb.getAllRoomTemplates(this.db);
   }
 
   deleteRoomTemplate(name: string): void {
-    this.db.run("DELETE FROM room_templates WHERE name = ?", [name]);
+    roomsDb.deleteRoomTemplate(this.db, name);
   }
 
   // ─── User Persistence ───────────────────────────────────────────────────
 
   createUser(user: { id: string; name: string; rank?: number }): void {
-    const now = Date.now();
-    this.db.run(
-      "INSERT INTO users (id, name, created_at, last_login, rank) VALUES (?, ?, ?, ?, ?)",
-      [user.id, user.name, now, now, user.rank ?? 0],
-    );
-    principalsDb.ensurePrincipal(this.db, {
-      type: "human",
-      displayName: user.name,
-      principalId: user.id,
-    });
+    usersDb.createUser(this.db, user);
   }
 
   getUser(id: string): UserRow | undefined {
-    return (
-      (this.db.query("SELECT * FROM users WHERE id = ?").get(id) as UserRow | null) ?? undefined
-    );
+    return usersDb.getUser(this.db, id);
   }
 
   getUserByName(name: string): UserRow | undefined {
-    return (
-      (this.db.query("SELECT * FROM users WHERE name = ?").get(name) as UserRow | null) ?? undefined
-    );
+    return usersDb.getUserByName(this.db, name);
   }
 
   /** All user rows, name-ordered. For maintenance/admin tooling. */
   listUsers(): UserRow[] {
-    return this.db.query("SELECT * FROM users ORDER BY name").all() as UserRow[];
+    return usersDb.listUsers(this.db);
   }
 
   updateUserLastLogin(id: string): void {
-    this.db.run("UPDATE users SET last_login = ? WHERE id = ?", [Date.now(), id]);
+    usersDb.updateUserLastLogin(this.db, id);
   }
 
   updateUserRank(id: string, rank: number): void {
-    this.db.run("UPDATE users SET rank = ? WHERE id = ?", [rank, id]);
+    usersDb.updateUserRank(this.db, id, rank);
   }
 
   /** Look up the named user bound to a verified external-identity subject. */
   getUserByAuthSubject(subject: string): UserRow | undefined {
-    return (
-      (this.db
-        .query("SELECT * FROM users WHERE auth_subject = ?")
-        .get(subject) as UserRow | null) ?? undefined
-    );
+    return usersDb.getUserByAuthSubject(this.db, subject);
   }
 
   /** Bind a verified identity (subject + email) to an existing named user. */
   bindAuthSubject(id: string, subject: string, email: string): void {
-    this.db.run("UPDATE users SET auth_subject = ?, auth_email = ? WHERE id = ?", [
-      subject,
-      email,
-      id,
-    ]);
+    usersDb.bindAuthSubject(this.db, id, subject, email);
   }
 
   updateUserProperties(id: string, properties: Record<string, unknown>): void {
-    this.db.run("UPDATE users SET properties = ? WHERE id = ?", [JSON.stringify(properties), id]);
+    usersDb.updateUserProperties(this.db, id, properties);
   }
 
   deleteUser(id: string): void {
-    // The reputation ledgers are keyed by this durable id (migration 109) and
-    // would otherwise survive as orphans nothing can resolve. Standing is
-    // derivable and the account is gone, so cascade in the same transaction.
-    this.db.transaction(() => {
-      this.db.run("DELETE FROM entity_standing WHERE entity_id = ?", [id]);
-      this.db.run("DELETE FROM entity_standing_cache WHERE entity_id = ?", [id]);
-      this.db.run("DELETE FROM entity_competence WHERE entity_id = ?", [id]);
-      this.db.run("DELETE FROM witness_attestations WHERE entity_id = ?", [id]);
-      this.db.run("DELETE FROM users WHERE id = ?", [id]);
-    })();
+    usersDb.deleteUser(this.db, id);
     this.durableKeyCache.forEach((value, key) => {
       if (value === id) this.durableKeyCache.delete(key);
     });
@@ -1732,98 +1585,62 @@ export class MarinaDB {
   // ─── Ban Persistence ──────────────────────────────────────────────────
 
   addBan(name: string, bannedBy: string, reason = ""): void {
-    this.db.run(
-      "INSERT OR REPLACE INTO bans (name, reason, banned_by, created_at) VALUES (?, ?, ?, ?)",
-      [name.toLowerCase(), reason, bannedBy, Date.now()],
-    );
+    usersDb.addBan(this.db, name, bannedBy, reason);
   }
 
   removeBan(name: string): boolean {
-    const result = this.db.run("DELETE FROM bans WHERE name = ?", [name.toLowerCase()]);
-    return result.changes > 0;
+    return usersDb.removeBan(this.db, name);
   }
 
   isBanned(name: string): boolean {
-    const row = this.db.query("SELECT 1 FROM bans WHERE name = ?").get(name.toLowerCase());
-    return row !== null;
+    return usersDb.isBanned(this.db, name);
   }
 
   getBan(name: string): BanRow | undefined {
-    return (
-      (this.db
-        .query("SELECT * FROM bans WHERE name = ?")
-        .get(name.toLowerCase()) as BanRow | null) ?? undefined
-    );
+    return usersDb.getBan(this.db, name);
   }
 
   listBans(): BanRow[] {
-    return this.db.query("SELECT * FROM bans ORDER BY created_at DESC").all() as BanRow[];
+    return usersDb.listBans(this.db);
   }
 
   // ─── Adapter Link Persistence ──────────────────────────────────────────
 
   linkAdapter(adapter: string, externalId: string, userId: string): void {
-    this.db.run(
-      "INSERT OR REPLACE INTO adapter_links (adapter, external_id, user_id, created_at) VALUES (?, ?, ?, ?)",
-      [adapter, externalId, userId, Date.now()],
-    );
+    usersDb.linkAdapter(this.db, adapter, externalId, userId);
   }
 
   getLinkedUser(adapter: string, externalId: string): AdapterLinkRow | undefined {
-    return (
-      (this.db
-        .query("SELECT * FROM adapter_links WHERE adapter = ? AND external_id = ?")
-        .get(adapter, externalId) as AdapterLinkRow | null) ?? undefined
-    );
+    return usersDb.getLinkedUser(this.db, adapter, externalId);
   }
 
   getUserLinks(userId: string): AdapterLinkRow[] {
-    return this.db
-      .query("SELECT * FROM adapter_links WHERE user_id = ?")
-      .all(userId) as AdapterLinkRow[];
+    return usersDb.getUserLinks(this.db, userId);
   }
 
   unlinkAdapter(adapter: string, externalId: string): boolean {
-    const result = this.db.run("DELETE FROM adapter_links WHERE adapter = ? AND external_id = ?", [
-      adapter,
-      externalId,
-    ]);
-    return result.changes > 0;
+    return usersDb.unlinkAdapter(this.db, adapter, externalId);
   }
 
   // ─── Adapter User Mappings ────────────────────────────────────────────────
 
   saveAdapterUserMapping(platform: string, platformUserId: string, entityName: string): void {
-    this.db.run(
-      `INSERT OR REPLACE INTO adapter_user_mappings (platform, platform_user_id, entity_name, created_at)
-       VALUES (?, ?, ?, ?)`,
-      [platform, platformUserId, entityName, Date.now()],
-    );
+    usersDb.saveAdapterUserMapping(this.db, platform, platformUserId, entityName);
   }
 
   getAdapterUserMapping(
     platform: string,
     platformUserId: string,
   ): AdapterUserMappingRow | undefined {
-    return (
-      (this.db
-        .query("SELECT * FROM adapter_user_mappings WHERE platform = ? AND platform_user_id = ?")
-        .get(platform, platformUserId) as AdapterUserMappingRow | null) ?? undefined
-    );
+    return usersDb.getAdapterUserMapping(this.db, platform, platformUserId);
   }
 
   getAdapterUserMappings(platform: string): AdapterUserMappingRow[] {
-    return this.db
-      .query("SELECT * FROM adapter_user_mappings WHERE platform = ?")
-      .all(platform) as AdapterUserMappingRow[];
+    return usersDb.getAdapterUserMappings(this.db, platform);
   }
 
   deleteAdapterUserMapping(platform: string, platformUserId: string): boolean {
-    const result = this.db.run(
-      "DELETE FROM adapter_user_mappings WHERE platform = ? AND platform_user_id = ?",
-      [platform, platformUserId],
-    );
-    return result.changes > 0;
+    return usersDb.deleteAdapterUserMapping(this.db, platform, platformUserId);
   }
 
   // ─── Notes Persistence (delegated to db-notes.ts) ───────────────────────
@@ -1961,42 +1778,7 @@ export class MarinaDB {
     staleSources: number;
     contradictions: number;
   } {
-    const where = entityName ? "WHERE entity_name = ?" : "";
-    const args = entityName ? [entityName] : [];
-    const row = this.db
-      .query(
-        `SELECT COUNT(*) total,
-       SUM(CASE WHEN verification_status='unverified' THEN 1 ELSE 0 END) unverified,
-       SUM(CASE WHEN verification_status='disputed' THEN 1 ELSE 0 END) disputed,
-       SUM(CASE WHEN verification_status='superseded' THEN 1 ELSE 0 END) superseded
-       FROM notes ${where}`,
-      )
-      .get(...args) as { total: number; unverified: number; disputed: number; superseded: number };
-    const sourceWhere = entityName ? "AND n.entity_name = ?" : "";
-    const staleSources = (
-      this.db
-        .query(
-          `SELECT COUNT(DISTINCT ns.note_id) c FROM note_sources ns JOIN notes n ON n.id=ns.note_id
-       WHERE COALESCE(ns.observed_at, ns.retrieved_at) < ? ${sourceWhere}`,
-        )
-        .get(Date.now() - 90 * 86_400_000, ...args) as { c: number }
-    ).c;
-    const entities = entityName
-      ? [entityName]
-      : (
-          this.db.query("SELECT DISTINCT entity_name FROM notes").all() as { entity_name: string }[]
-        ).map((r) => r.entity_name);
-    const contradictions = entityName
-      ? entities.reduce((sum, name) => sum + this.findMemoryContradictions(name).length, 0)
-      : this.listContradictionCases("open", 10_000).length;
-    return {
-      total: row.total,
-      unverified: row.unverified ?? 0,
-      disputed: row.disputed ?? 0,
-      superseded: row.superseded ?? 0,
-      staleSources,
-      contradictions,
-    };
+    return notesDb.getMemoryQualitySummary(this.db, entityName);
   }
 
   upsertOperationalAlert(alert: {
@@ -2015,91 +1797,22 @@ export class MarinaDB {
     metadata?: Record<string, unknown>;
     deadlineAt?: number;
   }): OperationalAlertRow {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO operational_alerts
-       (alert_key,severity,category,title,detail,remedy,status,first_seen_at,last_seen_at,
-        attention_kind,source_entity,target_entity,assigned_to,action_label,action_ref,metadata,deadline_at)
-       VALUES (?,?,?,?,?,?,'open',?,?,?,?,?,?,?,?,?,?)
-       ON CONFLICT(alert_key) DO UPDATE SET severity=excluded.severity, title=excluded.title,
-       detail=excluded.detail, remedy=excluded.remedy, last_seen_at=excluded.last_seen_at,
-       attention_kind=excluded.attention_kind, source_entity=excluded.source_entity,
-       target_entity=excluded.target_entity, assigned_to=excluded.assigned_to,
-       action_label=excluded.action_label, action_ref=excluded.action_ref,
-       metadata=excluded.metadata, deadline_at=excluded.deadline_at,
-       occurrences=operational_alerts.occurrences+1,
-       status=CASE WHEN operational_alerts.status='resolved' THEN 'open' ELSE operational_alerts.status END,
-       resolved_at=NULL, snoozed_until=NULL`,
-      [
-        alert.key,
-        alert.severity,
-        alert.category,
-        alert.title,
-        alert.detail,
-        alert.remedy,
-        now,
-        now,
-        alert.kind ?? "operational",
-        alert.sourceEntity ?? null,
-        alert.targetEntity ?? null,
-        alert.assignedTo ?? null,
-        alert.actionLabel ?? null,
-        alert.actionRef ?? null,
-        alert.metadata ? JSON.stringify(alert.metadata) : null,
-        alert.deadlineAt ?? null,
-      ],
-    );
-    return this.db
-      .query("SELECT * FROM operational_alerts WHERE alert_key=?")
-      .get(alert.key) as OperationalAlertRow;
+    return alertsDb.upsertOperationalAlert(this.db, alert);
   }
   listOperationalAlerts(
     status?: "open" | "acknowledged" | "resolved",
     limit = 100,
   ): OperationalAlertRow[] {
-    if (status)
-      return this.db
-        .query(
-          "SELECT * FROM operational_alerts WHERE status=? ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,last_seen_at DESC LIMIT ?",
-        )
-        .all(status, limit) as OperationalAlertRow[];
-    return this.db
-      .query(
-        "SELECT * FROM operational_alerts ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END,last_seen_at DESC LIMIT ?",
-      )
-      .all(limit) as OperationalAlertRow[];
+    return alertsDb.listOperationalAlerts(this.db, status, limit);
   }
   setOperationalAlertStatus(id: number, status: "acknowledged" | "resolved"): boolean {
-    const now = Date.now();
-    const column = status === "acknowledged" ? "acknowledged_at" : "resolved_at";
-    return (
-      this.db.run(`UPDATE operational_alerts SET status=?, ${column}=? WHERE id=?`, [
-        status,
-        now,
-        id,
-      ]).changes > 0
-    );
+    return alertsDb.setOperationalAlertStatus(this.db, id, status);
   }
   snoozeOperationalAlert(id: number, until: number): boolean {
-    return (
-      this.db.run(
-        "UPDATE operational_alerts SET snoozed_until=?, status='open' WHERE id=? AND status!='resolved'",
-        [until, id],
-      ).changes > 0
-    );
+    return alertsDb.snoozeOperationalAlert(this.db, id, until);
   }
   resolveOperationalAlertsExcept(category: string, activeKeys: string[]): number {
-    const now = Date.now();
-    if (activeKeys.length === 0)
-      return this.db.run(
-        "UPDATE operational_alerts SET status='resolved',resolved_at=? WHERE category=? AND status!='resolved'",
-        [now, category],
-      ).changes;
-    const placeholders = activeKeys.map(() => "?").join(",");
-    return this.db.run(
-      `UPDATE operational_alerts SET status='resolved',resolved_at=? WHERE category=? AND status!='resolved' AND alert_key NOT IN (${placeholders})`,
-      [now, category, ...activeKeys],
-    ).changes;
+    return alertsDb.resolveOperationalAlertsExcept(this.db, category, activeKeys);
   }
 
   startProductivitySession(
@@ -2113,21 +1826,17 @@ export class MarinaDB {
     outputTokens = 0,
     costUsd = 0,
   ): void {
-    this.db.run(
-      `INSERT OR IGNORE INTO productivity_sessions
-       (entity_id,entity_name,task_id,started_at,start_tool_calls,prompt_version,
-        start_input_tokens,start_output_tokens,start_cost_usd) VALUES (?,?,?,?,?,?,?,?,?)`,
-      [
-        entityId,
-        entityName,
-        taskId,
-        startedAt,
-        toolCalls,
-        promptVersion ?? null,
-        inputTokens,
-        outputTokens,
-        costUsd,
-      ],
+    telemetryDb.startProductivitySession(
+      this.db,
+      entityId,
+      entityName,
+      taskId,
+      startedAt,
+      toolCalls,
+      promptVersion,
+      inputTokens,
+      outputTokens,
+      costUsd,
     );
   }
   finishProductivitySession(
@@ -2141,152 +1850,27 @@ export class MarinaDB {
     endOutputTokens = 0,
     endCostUsd = 0,
   ): boolean {
-    let session = this.db
-      .query(
-        "SELECT * FROM productivity_sessions WHERE entity_id=? AND task_id=? AND completed_at IS NULL ORDER BY started_at DESC LIMIT 1",
-      )
-      .get(entityId, taskId) as { id: number; started_at: number; start_tool_calls: number } | null;
-    if (!session) {
-      const claim = this.getTaskClaim(taskId, entityId);
-      this.startProductivitySession(
-        entityId,
-        entityName,
-        taskId,
-        claim?.claimed_at ?? completedAt,
-        0,
-      );
-      session = this.db
-        .query(
-          "SELECT * FROM productivity_sessions WHERE entity_id=? AND task_id=? AND completed_at IS NULL ORDER BY started_at DESC LIMIT 1",
-        )
-        .get(entityId, taskId) as typeof session;
-    }
-    if (!session) return false;
-    const handoffs = (
-      this.db
-        .query(
-          `SELECT COUNT(*) c FROM direct_messages WHERE created_at BETWEEN ? AND ?
-       AND (sender_name=? OR target_name=?)`,
-        )
-        .get(session.started_at, completedAt, entityName, entityName) as { c: number }
-    ).c;
-    return (
-      this.db.run(
-        `UPDATE productivity_sessions SET completed_at=?,outcome=?,quality=?,end_tool_calls=?,handoffs=?,
-         end_input_tokens=?,end_output_tokens=?,end_cost_usd=? WHERE id=?`,
-        [
-          completedAt,
-          outcome,
-          outcome === "approved" ? 1 : 0,
-          endToolCalls,
-          handoffs,
-          endInputTokens,
-          endOutputTokens,
-          endCostUsd,
-          session.id,
-        ],
-      ).changes > 0
+    return telemetryDb.finishProductivitySession(
+      this.db,
+      entityId,
+      entityName,
+      taskId,
+      outcome,
+      completedAt,
+      endToolCalls,
+      endInputTokens,
+      endOutputTokens,
+      endCostUsd,
     );
   }
   getProductivitySummary(entityName?: string): ProductivitySummary {
-    const rows = (
-      entityName
-        ? this.db
-            .query(
-              "SELECT * FROM productivity_sessions WHERE completed_at IS NOT NULL AND entity_name=? ORDER BY completed_at",
-            )
-            .all(entityName)
-        : this.db
-            .query(
-              "SELECT * FROM productivity_sessions WHERE completed_at IS NOT NULL ORDER BY completed_at",
-            )
-            .all()
-    ) as Array<{
-      outcome: string;
-      quality: number;
-      started_at: number;
-      completed_at: number;
-      start_tool_calls: number;
-      end_tool_calls: number | null;
-      handoffs: number;
-    }>;
-    const durations = rows
-      .map((r) => Math.max(0, r.completed_at - r.started_at))
-      .sort((a, b) => a - b);
-    const successes = rows.filter((r) => r.outcome === "approved").length;
-    const average = (values: number[]) =>
-      values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
-    return {
-      entityName: entityName ?? null,
-      outcomes: rows.length,
-      successes,
-      failures: rows.length - successes,
-      successRate: rows.length ? successes / rows.length : 0,
-      averageDurationMs: average(durations),
-      medianDurationMs: durations.length
-        ? durations.length % 2
-          ? durations[Math.floor(durations.length / 2)]!
-          : (durations[durations.length / 2 - 1]! + durations[durations.length / 2]!) / 2
-        : 0,
-      averageToolCalls: average(
-        rows.map((r) => Math.max(0, (r.end_tool_calls ?? r.start_tool_calls) - r.start_tool_calls)),
-      ),
-      averageHandoffs: average(rows.map((r) => r.handoffs)),
-      outcomesLast7d: rows.filter((r) => r.completed_at >= Date.now() - 7 * 86_400_000).length,
-    };
+    return telemetryDb.getProductivitySummary(this.db, entityName);
   }
   getProductivityLeaderboard(limit = 20): ProductivitySummary[] {
-    const names = this.db
-      .query(
-        "SELECT DISTINCT entity_name FROM productivity_sessions WHERE completed_at IS NOT NULL",
-      )
-      .all() as { entity_name: string }[];
-    return names
-      .map((row) => this.getProductivitySummary(row.entity_name))
-      .sort((a, b) => b.successes - a.successes || a.averageDurationMs - b.averageDurationMs)
-      .slice(0, limit);
+    return telemetryDb.getProductivityLeaderboard(this.db, limit);
   }
   getProductivityTrend(entityName?: string, days = 14): ProductivityTrendPoint[] {
-    const since = Date.now() - Math.max(1, days) * 86_400_000;
-    const rows = (
-      entityName
-        ? this.db
-            .query(
-              "SELECT * FROM productivity_sessions WHERE completed_at>=? AND entity_name=? ORDER BY completed_at",
-            )
-            .all(since, entityName)
-        : this.db
-            .query(
-              "SELECT * FROM productivity_sessions WHERE completed_at>=? ORDER BY completed_at",
-            )
-            .all(since)
-    ) as Array<{
-      outcome: string;
-      started_at: number;
-      completed_at: number;
-      start_tool_calls: number;
-      end_tool_calls: number | null;
-      handoffs: number;
-    }>;
-    const groups = new Map<string, typeof rows>();
-    for (const row of rows) {
-      const date = new Date(row.completed_at).toISOString().slice(0, 10);
-      groups.set(date, [...(groups.get(date) ?? []), row]);
-    }
-    const average = (values: number[]) =>
-      values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
-    return [...groups.entries()].map(([date, entries]) => ({
-      date,
-      outcomes: entries.length,
-      successes: entries.filter((row) => row.outcome === "approved").length,
-      averageDurationMs: average(entries.map((row) => row.completed_at - row.started_at)),
-      averageToolCalls: average(
-        entries.map((row) =>
-          Math.max(0, (row.end_tool_calls ?? row.start_tool_calls) - row.start_tool_calls),
-        ),
-      ),
-      averageHandoffs: average(entries.map((row) => row.handoffs)),
-    }));
+    return telemetryDb.getProductivityTrend(this.db, entityName, days);
   }
 
   recordPrimitiveUsage(input: {
@@ -2308,32 +1892,7 @@ export class MarinaDB {
     trustSources?: string[];
     createdAt?: number;
   }): number {
-    const result = this.db.run(
-      `INSERT INTO primitive_usage
-       (actor_id,actor_name,actor_kind,source,primitive,action,safe_label,tool_name,success,
-        meaningful,world_action,communication,latency_ms,created_at,prompt_version,risk_class,trust_sources)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [
-        input.actorId ?? null,
-        input.actorName,
-        input.actorKind,
-        input.source,
-        input.primitive,
-        input.action,
-        input.safeLabel,
-        input.toolName ?? null,
-        input.success === undefined ? null : input.success ? 1 : 0,
-        input.meaningful ? 1 : 0,
-        input.worldAction ? 1 : 0,
-        input.communication ? 1 : 0,
-        input.latencyMs ?? null,
-        input.createdAt ?? Date.now(),
-        input.promptVersion ?? null,
-        input.riskClass ?? null,
-        input.trustSources?.length ? JSON.stringify([...new Set(input.trustSources)].sort()) : null,
-      ],
-    );
-    return Number(result.lastInsertRowid);
+    return telemetryDb.recordPrimitiveUsage(this.db, input);
   }
 
   finishAgentToolUsage(
@@ -2342,182 +1901,19 @@ export class MarinaDB {
     success: boolean,
     at = Date.now(),
   ): void {
-    const row = this.db
-      .query(
-        `SELECT id,created_at FROM primitive_usage
-         WHERE actor_name=? AND source='agent_tool' AND tool_name=? AND success IS NULL
-         ORDER BY id DESC LIMIT 1`,
-      )
-      .get(actorName, toolName) as { id: number; created_at: number } | null;
-    if (!row) return;
-    this.db.run("UPDATE primitive_usage SET success=?,latency_ms=? WHERE id=?", [
-      success ? 1 : 0,
-      Math.max(0, at - row.created_at),
-      row.id,
-    ]);
+    telemetryDb.finishAgentToolUsage(this.db, actorName, toolName, success, at);
   }
 
   getPrimitiveUsageSummary(entityName?: string, days = 7): PrimitiveUsageSummary {
-    const since = Date.now() - Math.max(1 / 1440, days) * 86_400_000;
-    const where = entityName ? "AND actor_name=?" : "";
-    const args = entityName ? [since, entityName] : [since];
-    const row = this.db
-      .query(
-        `SELECT
-          SUM(CASE WHEN source='command' THEN 1 ELSE 0 END) commands,
-          SUM(CASE WHEN source='command' AND meaningful=1 THEN 1 ELSE 0 END) meaningful_actions,
-          SUM(CASE WHEN source='command' AND world_action=1 THEN 1 ELSE 0 END) world_actions,
-          SUM(CASE WHEN source='command' AND communication=1 THEN 1 ELSE 0 END) communications,
-          COUNT(DISTINCT CASE WHEN source='command' AND meaningful=1 THEN primitive END) diversity,
-          COUNT(DISTINCT CASE WHEN source='command' AND meaningful=1 THEN actor_name END) participants,
-          COUNT(DISTINCT CASE WHEN source='command' AND meaningful=1 AND actor_kind='agent' THEN actor_name END) agents,
-          SUM(CASE WHEN source='agent_tool' THEN 1 ELSE 0 END) tool_calls,
-          SUM(CASE WHEN source='agent_tool' AND tool_name LIKE 'marina_%' THEN 1 ELSE 0 END) marina_tools,
-          SUM(CASE WHEN source='agent_tool' AND tool_name='think' THEN 1 ELSE 0 END) reasoning_only,
-          SUM(CASE WHEN source='agent_tool' AND risk_class='consequential' THEN 1 ELSE 0 END) consequential_tools,
-          SUM(CASE WHEN source='agent_tool' AND trust_sources IS NOT NULL THEN 1 ELSE 0 END) untrusted_tools,
-          MAX(CASE WHEN source='command' AND meaningful=1 THEN created_at END) last_action
-         FROM primitive_usage WHERE created_at>=? ${where}`,
-      )
-      .get(...args) as {
-      commands: number | null;
-      meaningful_actions: number | null;
-      world_actions: number | null;
-      communications: number | null;
-      diversity: number | null;
-      participants: number | null;
-      agents: number | null;
-      tool_calls: number | null;
-      marina_tools: number | null;
-      reasoning_only: number | null;
-      consequential_tools: number | null;
-      untrusted_tools: number | null;
-      last_action: number | null;
-    };
-    const commands = row.commands ?? 0;
-    const meaningfulActions = row.meaningful_actions ?? 0;
-    const topPrimitives = this.db
-      .query(
-        `SELECT primitive,COUNT(*) count FROM primitive_usage
-         WHERE created_at>=? AND source='command' AND meaningful=1 ${where}
-         GROUP BY primitive ORDER BY count DESC,primitive LIMIT 8`,
-      )
-      .all(...args) as Array<{ primitive: string; count: number }>;
-    const promptVersions = this.db
-      .query(
-        `SELECT DISTINCT prompt_version FROM primitive_usage
-         WHERE created_at>=? AND prompt_version IS NOT NULL ${where} ORDER BY prompt_version`,
-      )
-      .all(...args) as Array<{ prompt_version: string }>;
-    const sessions = this.db
-      .query(
-        `SELECT ps.outcome,COUNT(pu.id) meaningful
-         FROM productivity_sessions ps LEFT JOIN primitive_usage pu
-           ON pu.actor_name=ps.entity_name AND pu.source='command' AND pu.meaningful=1
-           AND pu.created_at BETWEEN ps.started_at AND ps.completed_at
-         WHERE ps.completed_at IS NOT NULL AND ps.completed_at>=? ${
-           entityName ? "AND ps.entity_name=?" : ""
-}
-         GROUP BY ps.id`,
-      )
-      .all(...args) as Array<{ outcome: string; meaningful: number }>;
-    const average = (values: number[]) =>
-      values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
-    return {
-      entityName: entityName ?? null,
-      commands,
-      meaningfulActions,
-      meaningfulRate: commands ? meaningfulActions / commands : 0,
-      worldActions: row.world_actions ?? 0,
-      communications: row.communications ?? 0,
-      primitiveDiversity: row.diversity ?? 0,
-      activeParticipants: row.participants ?? 0,
-      activeAgents: row.agents ?? 0,
-      toolCalls: row.tool_calls ?? 0,
-      marinaToolCalls: row.marina_tools ?? 0,
-      reasoningOnlyCalls: row.reasoning_only ?? 0,
-      consequentialToolCalls: row.consequential_tools ?? 0,
-      untrustedToolCalls: row.untrusted_tools ?? 0,
-      lastActionAt: row.last_action,
-      outcomeSessions: sessions.length,
-      approvedMeaningfulAverage: average(
-        sessions
-          .filter((session) => session.outcome === "approved")
-          .map((session) => session.meaningful),
-      ),
-      failedMeaningfulAverage: average(
-        sessions
-          .filter((session) => session.outcome !== "approved")
-          .map((session) => session.meaningful),
-      ),
-      topPrimitives,
-      promptVersions: promptVersions.map((entry) => entry.prompt_version),
-    };
+    return telemetryDb.getPrimitiveUsageSummary(this.db, entityName, days);
   }
 
   getPromptOutcomeSummaries(days = 30): PromptOutcomeSummary[] {
-    const since = Date.now() - Math.max(1, days) * 86_400_000;
-    const outcomes = this.db
-      .query(
-        `SELECT prompt_version,COUNT(DISTINCT entity_name) agents,COUNT(*) outcomes,
-          SUM(CASE WHEN outcome='approved' THEN 1 ELSE 0 END) successes,
-          AVG(completed_at-started_at) average_duration,
-          AVG(MAX(0,COALESCE(end_tool_calls,start_tool_calls)-start_tool_calls)) average_tools,
-          AVG(MAX(0,COALESCE(end_input_tokens,start_input_tokens)-start_input_tokens)) average_input,
-          AVG(MAX(0,COALESCE(end_output_tokens,start_output_tokens)-start_output_tokens)) average_output,
-          AVG(MAX(0,COALESCE(end_cost_usd,start_cost_usd)-start_cost_usd)) average_cost
-         FROM productivity_sessions
-         WHERE completed_at>=? AND prompt_version IS NOT NULL
-         GROUP BY prompt_version ORDER BY outcomes DESC`,
-      )
-      .all(since) as Array<{
-      prompt_version: string;
-      agents: number;
-      outcomes: number;
-      successes: number;
-      average_duration: number;
-      average_tools: number;
-      average_input: number;
-      average_output: number;
-      average_cost: number;
-    }>;
-    const actions = this.db
-      .query(
-        `SELECT prompt_version,COUNT(*) meaningful FROM primitive_usage
-         WHERE created_at>=? AND source='command' AND meaningful=1 AND prompt_version IS NOT NULL
-         GROUP BY prompt_version`,
-      )
-      .all(since) as Array<{ prompt_version: string; meaningful: number }>;
-    const actionMap = new Map(actions.map((row) => [row.prompt_version, row.meaningful]));
-    return outcomes.map((row) => ({
-      promptVersion: row.prompt_version,
-      agents: row.agents,
-      outcomes: row.outcomes,
-      successes: row.successes,
-      failures: row.outcomes - row.successes,
-      successRate: row.outcomes ? row.successes / row.outcomes : 0,
-      averageDurationMs: row.average_duration ?? 0,
-      averageToolCalls: row.average_tools ?? 0,
-      averageInputTokens: row.average_input ?? 0,
-      averageOutputTokens: row.average_output ?? 0,
-      averageCostUsd: row.average_cost ?? 0,
-      meaningfulActions: actionMap.get(row.prompt_version) ?? 0,
-    }));
+    return telemetryDb.getPromptOutcomeSummaries(this.db, days);
   }
 
   getPrimitiveUsageLeaderboard(limit = 20): PrimitiveUsageSummary[] {
-    const names = this.db
-      .query("SELECT DISTINCT actor_name FROM primitive_usage WHERE actor_kind='agent'")
-      .all() as Array<{ actor_name: string }>;
-    return names
-      .map((row) => this.getPrimitiveUsageSummary(row.actor_name))
-      .sort(
-        (a, b) =>
-          b.meaningfulActions - a.meaningfulActions ||
-          b.primitiveDiversity - a.primitiveDiversity ||
-          b.meaningfulRate - a.meaningfulRate,
-      )
-      .slice(0, limit);
+    return telemetryDb.getPrimitiveUsageLeaderboard(this.db, limit);
   }
 
   touchNote(id: number): void {
@@ -2694,18 +2090,7 @@ export class MarinaDB {
     agent_id?: string;
     started_at: number;
   }): void {
-    this.db.run(
-      "INSERT INTO benchmark_runs (id, benchmark, config_hash, config_json, status, agent_id, started_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [
-        row.id,
-        row.benchmark,
-        row.config_hash,
-        row.config_json,
-        row.status,
-        row.agent_id ?? null,
-        row.started_at,
-      ],
-    );
+    benchmarksDb.insertBenchmarkRun(this.db, row);
   }
 
   completeBenchmarkRun(
@@ -2720,25 +2105,11 @@ export class MarinaDB {
       duration_ms: number;
     },
   ): void {
-    this.db.run(
-      "UPDATE benchmark_runs SET score = ?, breakdown_json = ?, answered = ?, total = ?, status = ?, completed_at = ?, duration_ms = ? WHERE id = ?",
-      [
-        data.score,
-        data.breakdown_json,
-        data.answered,
-        data.total,
-        data.status,
-        data.completed_at,
-        data.duration_ms,
-        id,
-      ],
-    );
+    benchmarksDb.completeBenchmarkRun(this.db, id, data);
   }
 
   getBenchmarkRun(id: string): BenchmarkRunRow | undefined {
-    return this.reader.query("SELECT * FROM benchmark_runs WHERE id = ?").get(id) as
-      | BenchmarkRunRow
-      | undefined;
+    return benchmarksDb.getBenchmarkRun(this.reader, id);
   }
 
   queryBenchmarkRuns(q: {
@@ -2747,34 +2118,11 @@ export class MarinaDB {
     agentId?: string;
     limit?: number;
   }): BenchmarkRunRow[] {
-    const clauses: string[] = [];
-    const params: (string | number)[] = [];
-    if (q.benchmark) {
-      clauses.push("benchmark = ?");
-      params.push(q.benchmark);
-    }
-    if (q.status) {
-      clauses.push("status = ?");
-      params.push(q.status);
-    }
-    if (q.agentId) {
-      clauses.push("agent_id = ?");
-      params.push(q.agentId);
-    }
-    const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
-    const limit = Math.min(q.limit ?? 50, 500);
-    params.push(limit);
-    return this.reader
-      .query(`SELECT * FROM benchmark_runs${where} ORDER BY started_at DESC LIMIT ?`)
-      .all(...params) as BenchmarkRunRow[];
+    return benchmarksDb.queryBenchmarkRuns(this.reader, q);
   }
 
   leaderboardBenchmark(benchmark: string, limit = 20): BenchmarkRunRow[] {
-    return this.reader
-      .query(
-        "SELECT * FROM benchmark_runs WHERE benchmark = ? AND status = 'completed' AND score IS NOT NULL ORDER BY score DESC, started_at DESC LIMIT ?",
-      )
-      .all(benchmark, Math.min(limit, 100)) as BenchmarkRunRow[];
+    return benchmarksDb.leaderboardBenchmark(this.reader, benchmark, limit);
   }
 
   traceNoteGraph(
@@ -2908,10 +2256,7 @@ export class MarinaDB {
   }
 
   countApprovedTaskClaims(entityId: string): number {
-    const row = this.db
-      .query("SELECT COUNT(*) AS n FROM task_claims WHERE entity_id = ? AND status = 'approved'")
-      .get(entityId) as { n: number } | null;
-    return row?.n ?? 0;
+    return tasksDb.countApprovedTaskClaims(this.db, entityId);
   }
 
   // ─── Project Persistence (delegated to db-tasks.ts) ────────────────────
@@ -2972,73 +2317,35 @@ export class MarinaDB {
   // ─── Dynamic Command Persistence ─────────────────────────────────────
 
   saveCommandSource(opts: { id: string; name: string; source: string; createdBy: string }): void {
-    const existing = this.getCommandByName(opts.name);
-    if (existing) {
-      // Save history before updating
-      this.db.run(
-        "INSERT INTO dynamic_command_history (command_id, source, version, edited_by, edited_at) VALUES (?, ?, ?, ?, ?)",
-        [existing.id, existing.source, existing.version, opts.createdBy, Date.now()],
-      );
-      this.db.run(
-        "UPDATE dynamic_commands SET source = ?, version = version + 1, valid = 0 WHERE id = ?",
-        [opts.source, existing.id],
-      );
-    } else {
-      this.db.run(
-        "INSERT INTO dynamic_commands (id, name, source, version, valid, created_by, created_at) VALUES (?, ?, ?, 1, 0, ?, ?)",
-        [opts.id, opts.name, opts.source, opts.createdBy, Date.now()],
-      );
-    }
+    commandsDb.saveCommandSource(this.db, opts);
   }
 
   getCommand(id: string): CommandSourceRow | undefined {
-    return (
-      (this.db
-        .query("SELECT * FROM dynamic_commands WHERE id = ?")
-        .get(id) as CommandSourceRow | null) ?? undefined
-    );
+    return commandsDb.getCommand(this.db, id);
   }
 
   getCommandByName(name: string): CommandSourceRow | undefined {
-    return (
-      (this.db
-        .query("SELECT * FROM dynamic_commands WHERE name = ?")
-        .get(name) as CommandSourceRow | null) ?? undefined
-    );
+    return commandsDb.getCommandByName(this.db, name);
   }
 
   listCommands(): CommandSourceRow[] {
-    return this.db
-      .query("SELECT * FROM dynamic_commands ORDER BY name")
-      .all() as CommandSourceRow[];
+    return commandsDb.listCommands(this.db);
   }
 
   markCommandValid(name: string): void {
-    this.db.run("UPDATE dynamic_commands SET valid = 1 WHERE name = ?", [name]);
+    commandsDb.markCommandValid(this.db, name);
   }
 
   deleteCommand(name: string): void {
-    const cmd = this.getCommandByName(name);
-    if (cmd) {
-      this.db.run("DELETE FROM dynamic_command_history WHERE command_id = ?", [cmd.id]);
-      this.db.run("DELETE FROM dynamic_commands WHERE id = ?", [cmd.id]);
-    }
+    commandsDb.deleteCommand(this.db, name);
   }
 
   getCommandHistory(name: string, limit = 20): CommandHistoryRow[] {
-    const cmd = this.getCommandByName(name);
-    if (!cmd) return [];
-    return this.db
-      .query(
-        "SELECT * FROM dynamic_command_history WHERE command_id = ? ORDER BY version DESC LIMIT ?",
-      )
-      .all(cmd.id, limit) as CommandHistoryRow[];
+    return commandsDb.getCommandHistory(this.db, name, limit);
   }
 
   getAllValidCommandNames(): string[] {
-    return (
-      this.db.query("SELECT name FROM dynamic_commands WHERE valid = 1").all() as { name: string }[]
-    ).map((r) => r.name);
+    return commandsDb.getAllValidCommandNames(this.db);
   }
 
   // ─── Connector Persistence ──────────────────────────────────────────────
@@ -3052,113 +2359,65 @@ export class MarinaDB {
     args?: string;
     createdBy: string;
   }): void {
-    this.db.run(
-      "INSERT INTO connectors (id, name, transport, url, command, args, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [
-        conn.id,
-        conn.name,
-        conn.transport,
-        conn.url ?? null,
-        conn.command ?? null,
-        conn.args ?? null,
-        conn.createdBy,
-        Date.now(),
-      ],
-    );
+    connectorsDb.createConnector(this.db, conn);
   }
 
   getConnector(id: string): ConnectorRow | undefined {
-    return (
-      (this.db.query("SELECT * FROM connectors WHERE id = ?").get(id) as ConnectorRow | null) ??
-      undefined
-    );
+    return connectorsDb.getConnector(this.db, id);
   }
 
   getConnectorByName(name: string): ConnectorRow | undefined {
-    return (
-      (this.db.query("SELECT * FROM connectors WHERE name = ?").get(name) as ConnectorRow | null) ??
-      undefined
-    );
+    return connectorsDb.getConnectorByName(this.db, name);
   }
 
   listConnectors(status?: string): ConnectorRow[] {
-    if (status) {
-      return this.db
-        .query("SELECT * FROM connectors WHERE status = ? ORDER BY name")
-        .all(status) as ConnectorRow[];
-    }
-    return this.db.query("SELECT * FROM connectors ORDER BY name").all() as ConnectorRow[];
+    return connectorsDb.listConnectors(this.db, status);
   }
 
   updateConnectorStatus(id: string, status: string): void {
-    this.db.run("UPDATE connectors SET status = ? WHERE id = ?", [status, id]);
+    connectorsDb.updateConnectorStatus(this.db, id, status);
   }
 
   updateConnectorAuth(id: string, authType: string, authData: string): void {
-    this.db.run("UPDATE connectors SET auth_type = ?, auth_data = ? WHERE id = ?", [
-      authType,
-      authData,
-      id,
-    ]);
+    connectorsDb.updateConnectorAuth(this.db, id, authType, authData);
   }
 
   deleteConnector(id: string): void {
-    this.db.run("DELETE FROM connectors WHERE id = ?", [id]);
+    connectorsDb.deleteConnector(this.db, id);
   }
 
   // ─── Gateway Persistence ──────────────────────────────────────────────
 
   createGateway(opts: { id: string; name: string; url: string; createdBy: string }): void {
-    this.db.run(
-      "INSERT INTO gateways (id, name, url, created_by, created_at) VALUES (?, ?, ?, ?, ?)",
-      [opts.id, opts.name, opts.url, opts.createdBy, Date.now()],
-    );
+    gatewaysDb.createGateway(this.db, opts);
   }
 
   getGatewayByName(name: string): GatewayRow | undefined {
-    return (
-      (this.db.query("SELECT * FROM gateways WHERE name = ?").get(name) as GatewayRow | null) ??
-      undefined
-    );
+    return gatewaysDb.getGatewayByName(this.db, name);
   }
 
   listGateways(status?: string): GatewayRow[] {
-    if (status) {
-      return this.db
-        .query("SELECT * FROM gateways WHERE status = ? ORDER BY name")
-        .all(status) as GatewayRow[];
-    }
-    return this.db.query("SELECT * FROM gateways ORDER BY name").all() as GatewayRow[];
+    return gatewaysDb.listGateways(this.db, status);
   }
 
   updateGatewayStatus(id: string, status: string): void {
-    this.db.run("UPDATE gateways SET status = ? WHERE id = ?", [status, id]);
+    gatewaysDb.updateGatewayStatus(this.db, id, status);
   }
 
   deleteGateway(id: string): void {
-    this.db.run("DELETE FROM gateways WHERE id = ?", [id]);
+    gatewaysDb.deleteGateway(this.db, id);
   }
 
   addGatewayBridge(gatewayId: string, channel: string): void {
-    this.db.run("INSERT OR IGNORE INTO gateway_bridges (gateway_id, channel) VALUES (?, ?)", [
-      gatewayId,
-      channel,
-    ]);
+    gatewaysDb.addGatewayBridge(this.db, gatewayId, channel);
   }
 
   removeGatewayBridge(gatewayId: string, channel: string): void {
-    this.db.run("DELETE FROM gateway_bridges WHERE gateway_id = ? AND channel = ?", [
-      gatewayId,
-      channel,
-    ]);
+    gatewaysDb.removeGatewayBridge(this.db, gatewayId, channel);
   }
 
   listGatewayBridges(gatewayId: string): string[] {
-    return (
-      this.db.query("SELECT channel FROM gateway_bridges WHERE gateway_id = ?").all(gatewayId) as {
-        channel: string;
-      }[]
-    ).map((r) => r.channel);
+    return gatewaysDb.listGatewayBridges(this.db, gatewayId);
   }
 
   // ─── Optional Flywheel Workspace Bindings ──────────────────────────────
@@ -3172,59 +2431,19 @@ export class MarinaDB {
     state: FlywheelBindingState;
     lifecycleExpiresAt?: number;
   }): void {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO flywheel_bindings
-        (entity_id, session_id, sandbox_id, image, keep_alive, state, created_at, updated_at,
-         last_activity_at, lifecycle_expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(entity_id) DO UPDATE SET
-         session_id = excluded.session_id,
-         sandbox_id = excluded.sandbox_id,
-         image = excluded.image,
-         keep_alive = excluded.keep_alive,
-         state = excluded.state,
-         last_activity_at = excluded.last_activity_at,
-         lifecycle_expires_at = excluded.lifecycle_expires_at,
-         last_error = NULL,
-         updated_at = excluded.updated_at`,
-      [
-        this.durableEntityKey(opts.entityId),
-        opts.sessionId,
-        opts.sandboxId,
-        opts.image,
-        opts.keepAlive ? 1 : 0,
-        opts.state,
-        now,
-        now,
-        now,
-        opts.lifecycleExpiresAt ?? null,
-      ],
-    );
+    flywheelDb.saveFlywheelBinding(this.db, this.durableEntityKey(opts.entityId), opts);
   }
 
   // flywheel_bindings / coding_projects / coding_services are keyed by the
   // durable account id (migration 117). Reads project the live entity id back
   // so `row.entity_id === entity.id` comparisons in callers keep working.
   listFlywheelBindings(): FlywheelBindingRow[] {
-    return this.reader
-      .query(
-        `SELECT fb.*, ${entitiesDb.liveEntityIdSql("fb")} AS entity_id
-         FROM flywheel_bindings fb ORDER BY fb.created_at`,
-      )
-      .all() as FlywheelBindingRow[];
+    return flywheelDb.listFlywheelBindings(this.reader);
   }
 
   /** The binding owned by this entity's account (indexed PK lookup, not a scan). */
   getFlywheelBinding(entityId: EntityId): FlywheelBindingRow | undefined {
-    return (
-      (this.reader
-        .query(
-          `SELECT fb.*, ${entitiesDb.liveEntityIdSql("fb")} AS entity_id
-           FROM flywheel_bindings fb WHERE fb.entity_id = ?`,
-        )
-        .get(this.durableEntityKey(entityId)) as FlywheelBindingRow | null) ?? undefined
-    );
+    return flywheelDb.getFlywheelBinding(this.reader, this.durableEntityKey(entityId));
   }
 
   updateFlywheelBinding(
@@ -3243,63 +2462,11 @@ export class MarinaDB {
       hibernatedReason?: string | null;
     },
   ): void {
-    const assignments = ["updated_at = ?"];
-    const values: Array<string | number | null> = [Date.now()];
-    if (fields.state !== undefined) {
-      assignments.push("state = ?");
-      values.push(fields.state);
-    }
-    if (fields.publishedUrl !== undefined) {
-      assignments.push("published_url = ?");
-      values.push(fields.publishedUrl);
-    }
-    if (fields.lastError !== undefined) {
-      assignments.push("last_error = ?");
-      values.push(fields.lastError);
-    }
-    if (fields.reconciledAt !== undefined) {
-      assignments.push("reconciled_at = ?");
-      values.push(fields.reconciledAt);
-    }
-    if (fields.activeProjectId !== undefined) {
-      assignments.push("active_project_id = ?");
-      values.push(fields.activeProjectId);
-    }
-    if (fields.guestCwd !== undefined) {
-      assignments.push("guest_cwd = ?");
-      values.push(fields.guestCwd);
-    }
-    if (fields.networkProfile !== undefined) {
-      assignments.push("network_profile = ?");
-      values.push(fields.networkProfile);
-    }
-    if (fields.networkProfileEnforced !== undefined) {
-      assignments.push("network_profile_enforced = ?");
-      values.push(fields.networkProfileEnforced ? 1 : 0);
-    }
-    if (fields.lastActivityAt !== undefined) {
-      assignments.push("last_activity_at = ?");
-      values.push(fields.lastActivityAt);
-    }
-    if (fields.lifecycleExpiresAt !== undefined) {
-      assignments.push("lifecycle_expires_at = ?");
-      values.push(fields.lifecycleExpiresAt);
-    }
-    if (fields.hibernatedReason !== undefined) {
-      assignments.push("hibernated_reason = ?");
-      values.push(fields.hibernatedReason);
-    }
-    values.push(this.durableEntityKey(entityId));
-    this.db.run(
-      `UPDATE flywheel_bindings SET ${assignments.join(", ")} WHERE entity_id = ?`,
-      values,
-    );
+    flywheelDb.updateFlywheelBinding(this.db, this.durableEntityKey(entityId), fields);
   }
 
   deleteFlywheelBinding(entityId: EntityId): void {
-    this.db.run("DELETE FROM flywheel_bindings WHERE entity_id = ?", [
-      this.durableEntityKey(entityId),
-    ]);
+    flywheelDb.deleteFlywheelBinding(this.db, this.durableEntityKey(entityId));
   }
 
   createCodingProject(project: {
@@ -3313,69 +2480,36 @@ export class MarinaDB {
     activeBranch?: string;
     baseRevision?: string;
   }): CodingProjectRow {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO coding_projects
-        (id, entity_id, sandbox_id, name, source_type, source_locator, guest_path,
-         active_branch, base_revision, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        project.id,
-        this.durableEntityKey(project.entityId),
-        project.sandboxId,
-        project.name,
-        project.sourceType,
-        project.sourceLocator ?? null,
-        project.guestPath,
-        project.activeBranch ?? null,
-        project.baseRevision ?? null,
-        now,
-        now,
-      ],
+    return flywheelDb.createCodingProject(
+      this.db,
+      this.reader,
+      this.durableEntityKey(project.entityId),
+      project,
     );
-    return this.getCodingProject(project.id) as CodingProjectRow;
   }
 
   getCodingProject(id: string): CodingProjectRow | null {
-    return this.reader
-      .query(
-        `SELECT cp.*, ${entitiesDb.liveEntityIdSql("cp")} AS entity_id
-         FROM coding_projects cp WHERE cp.id = ?`,
-      )
-      .get(id) as CodingProjectRow | null;
+    return flywheelDb.getCodingProject(this.reader, id);
   }
 
   getCodingProjectForEntity(entityId: EntityId, selector: string): CodingProjectRow | null {
-    return this.reader
-      .query(
-        `SELECT cp.*, ${entitiesDb.liveEntityIdSql("cp")} AS entity_id
-         FROM coding_projects cp WHERE cp.entity_id = ? AND (cp.id = ? OR cp.name = ?)`,
-      )
-      .get(this.durableEntityKey(entityId), selector, selector) as CodingProjectRow | null;
+    return flywheelDb.getCodingProjectForEntity(
+      this.reader,
+      this.durableEntityKey(entityId),
+      selector,
+    );
   }
 
   listCodingProjects(entityId: EntityId): CodingProjectRow[] {
-    return this.reader
-      .query(
-        `SELECT cp.*, ${entitiesDb.liveEntityIdSql("cp")} AS entity_id
-         FROM coding_projects cp WHERE cp.entity_id = ? ORDER BY cp.updated_at DESC`,
-      )
-      .all(this.durableEntityKey(entityId)) as CodingProjectRow[];
+    return flywheelDb.listCodingProjects(this.reader, this.durableEntityKey(entityId));
   }
 
   deleteCodingProjectsForSandbox(entityId: EntityId, sandboxId: string): void {
-    this.db.run("DELETE FROM coding_projects WHERE entity_id = ? AND sandbox_id = ?", [
-      this.durableEntityKey(entityId),
-      sandboxId,
-    ]);
+    flywheelDb.deleteCodingProjectsForSandbox(this.db, this.durableEntityKey(entityId), sandboxId);
   }
 
   deleteCodingProject(entityId: EntityId, projectId: string, sandboxId: string): void {
-    this.db.run("DELETE FROM coding_projects WHERE entity_id = ? AND id = ? AND sandbox_id = ?", [
-      this.durableEntityKey(entityId),
-      projectId,
-      sandboxId,
-    ]);
+    flywheelDb.deleteCodingProject(this.db, this.durableEntityKey(entityId), projectId, sandboxId);
   }
 
   updateCodingProject(
@@ -3390,26 +2524,7 @@ export class MarinaDB {
       lastExportedAt: number | null;
     }>,
   ): void {
-    const assignments = ["updated_at = ?"];
-    const values: Array<string | number | null> = [Date.now()];
-    const mapping: Array<
-      [keyof typeof fields, string, (value: unknown) => string | number | null]
-    > = [
-      ["activeBranch", "active_branch", (value) => value as string | null],
-      ["baseRevision", "base_revision", (value) => value as string | null],
-      ["dirty", "dirty", (value) => (value ? 1 : 0)],
-      ["hasUnexportedChanges", "has_unexported_changes", (value) => (value ? 1 : 0)],
-      ["exportedFingerprint", "exported_fingerprint", (value) => value as string | null],
-      ["lastStatusAt", "last_status_at", (value) => value as number | null],
-      ["lastExportedAt", "last_exported_at", (value) => value as number | null],
-    ];
-    for (const [key, column, normalize] of mapping) {
-      if (fields[key] === undefined) continue;
-      assignments.push(`${column} = ?`);
-      values.push(normalize(fields[key]));
-    }
-    values.push(id);
-    this.db.run(`UPDATE coding_projects SET ${assignments.join(", ")} WHERE id = ?`, values);
+    flywheelDb.updateCodingProject(this.db, id, fields);
   }
 
   createCodingService(service: {
@@ -3426,79 +2541,39 @@ export class MarinaDB {
     processIdentity: string;
     port?: number;
   }): CodingServiceRow {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO coding_services
-        (id, entity_id, sandbox_id, project_id, session_id, name, command_json,
-         guest_cwd, log_path, pid, process_identity, port, status, started_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
-      [
-        service.id,
-        this.durableEntityKey(service.entityId),
-        service.sandboxId,
-        service.projectId ?? null,
-        service.sessionId,
-        service.name,
-        JSON.stringify(service.command),
-        service.guestCwd,
-        service.logPath,
-        service.pid,
-        service.processIdentity,
-        service.port ?? null,
-        now,
-        now,
-        now,
-      ],
+    return flywheelDb.createCodingService(
+      this.db,
+      this.reader,
+      this.durableEntityKey(service.entityId),
+      service,
     );
-    return this.getCodingService(service.id) as CodingServiceRow;
   }
 
   getCodingService(id: string): CodingServiceRow | null {
-    return this.reader
-      .query(
-        `SELECT cs.*, ${entitiesDb.liveEntityIdSql("cs")} AS entity_id
-         FROM coding_services cs WHERE cs.id = ?`,
-      )
-      .get(id) as CodingServiceRow | null;
+    return flywheelDb.getCodingService(this.reader, id);
   }
 
   getCodingServiceForEntity(entityId: EntityId, selector: string): CodingServiceRow | null {
-    return this.reader
-      .query(
-        `SELECT cs.*, ${entitiesDb.liveEntityIdSql("cs")} AS entity_id
-         FROM coding_services cs WHERE cs.entity_id = ? AND (cs.id = ? OR cs.name = ?)`,
-      )
-      .get(this.durableEntityKey(entityId), selector, selector) as CodingServiceRow | null;
+    return flywheelDb.getCodingServiceForEntity(
+      this.reader,
+      this.durableEntityKey(entityId),
+      selector,
+    );
   }
 
   listCodingServices(entityId: EntityId): CodingServiceRow[] {
-    return this.reader
-      .query(
-        `SELECT cs.*, ${entitiesDb.liveEntityIdSql("cs")} AS entity_id
-         FROM coding_services cs WHERE cs.entity_id = ? ORDER BY cs.updated_at DESC`,
-      )
-      .all(this.durableEntityKey(entityId)) as CodingServiceRow[];
+    return flywheelDb.listCodingServices(this.reader, this.durableEntityKey(entityId));
   }
 
   listExpiredCodingServicePublications(now = Date.now()): CodingServiceRow[] {
-    return this.reader
-      .query(
-        `SELECT cs.*, ${entitiesDb.liveEntityIdSql("cs")} AS entity_id FROM coding_services cs
-         WHERE cs.published_subdomain IS NOT NULL
-           AND cs.publication_expires_at IS NOT NULL
-           AND cs.publication_expires_at <= ?
-         ORDER BY cs.publication_expires_at`,
-      )
-      .all(now) as CodingServiceRow[];
+    return flywheelDb.listExpiredCodingServicePublications(this.reader, now);
   }
 
   hasRunningCodingServices(entityId: EntityId, sandboxId: string): boolean {
-    return (
-      this.reader
-        .query(
-          "SELECT 1 present FROM coding_services WHERE entity_id = ? AND sandbox_id = ? AND status IN ('running', 'unknown') LIMIT 1",
-        )
-        .get(this.durableEntityKey(entityId), sandboxId) !== null
+    return flywheelDb.hasRunningCodingServices(
+      this.reader,
+      this.durableEntityKey(entityId),
+      sandboxId,
     );
   }
 
@@ -3510,38 +2585,17 @@ export class MarinaDB {
     byteCount?: number;
     detail?: string;
   }): void {
-    this.db.run(
-      `INSERT INTO flywheel_operations
-       (entity_id, operation, outcome, duration_ms, byte_count, detail, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        operation.entityId ?? null,
-        operation.operation,
-        operation.outcome,
-        Math.max(0, Math.trunc(operation.durationMs)),
-        operation.byteCount ?? null,
-        operation.detail?.slice(0, 500) ?? null,
-        Date.now(),
-      ],
-    );
+    flywheelDb.recordFlywheelOperation(this.db, operation);
   }
 
   pruneFlywheelOperations(before: number): number {
-    return this.db.run("DELETE FROM flywheel_operations WHERE created_at < ?", [before]).changes;
+    return flywheelDb.pruneFlywheelOperations(this.db, before);
   }
 
   getFlywheelOperationSummary(
     since = Date.now() - 24 * 60 * 60 * 1000,
   ): FlywheelOperationSummary[] {
-    return this.reader
-      .query(
-        `SELECT operation, outcome, COUNT(*) count,
-                CAST(AVG(duration_ms) AS INTEGER) avg_duration_ms,
-                COALESCE(SUM(byte_count), 0) byte_count
-         FROM flywheel_operations WHERE created_at >= ?
-         GROUP BY operation, outcome ORDER BY operation, outcome`,
-      )
-      .all(since) as FlywheelOperationSummary[];
+    return flywheelDb.getFlywheelOperationSummary(this.reader, since);
   }
 
   updateCodingService(
@@ -3558,44 +2612,24 @@ export class MarinaDB {
       stoppedAt: number | null;
     }>,
   ): void {
-    const assignments = ["updated_at = ?"];
-    const values: Array<string | number | null> = [Date.now()];
-    const mapping: Array<[keyof typeof fields, string]> = [
-      ["pid", "pid"],
-      ["processIdentity", "process_identity"],
-      ["status", "status"],
-      ["publishedUrl", "published_url"],
-      ["publishedSubdomain", "published_subdomain"],
-      ["publicationExpiresAt", "publication_expires_at"],
-      ["lastError", "last_error"],
-      ["startedAt", "started_at"],
-      ["stoppedAt", "stopped_at"],
-    ];
-    for (const [key, column] of mapping) {
-      if (fields[key] === undefined) continue;
-      assignments.push(`${column} = ?`);
-      values.push(fields[key] as string | number | null);
-    }
-    values.push(id);
-    this.db.run(`UPDATE coding_services SET ${assignments.join(", ")} WHERE id = ?`, values);
+    flywheelDb.updateCodingService(this.db, id, fields);
   }
 
   stopCodingServicesForSandbox(entityId: EntityId, sandboxId: string, reason: string): void {
-    const now = Date.now();
-    this.db.run(
-      `UPDATE coding_services
-       SET status = 'stopped', pid = NULL, process_identity = NULL, last_error = ?, stopped_at = ?, updated_at = ?
-       WHERE entity_id = ? AND sandbox_id = ? AND status = 'running'`,
-      [reason, now, now, this.durableEntityKey(entityId), sandboxId],
+    flywheelDb.stopCodingServicesForSandbox(
+      this.db,
+      this.durableEntityKey(entityId),
+      sandboxId,
+      reason,
     );
   }
 
   markCodingServicesUnknownForSandbox(entityId: EntityId, sandboxId: string, reason: string): void {
-    this.db.run(
-      `UPDATE coding_services
-       SET status = 'unknown', last_error = ?, updated_at = ?
-       WHERE entity_id = ? AND sandbox_id = ? AND status = 'running'`,
-      [reason, Date.now(), this.durableEntityKey(entityId), sandboxId],
+    flywheelDb.markCodingServicesUnknownForSandbox(
+      this.db,
+      this.durableEntityKey(entityId),
+      sandboxId,
+      reason,
     );
   }
 
@@ -3609,44 +2643,11 @@ export class MarinaDB {
     success: boolean;
     error?: string;
   }): CodingServiceProbeRow {
-    const row: CodingServiceProbeRow = {
-      id: `probe_${crypto.randomUUID().slice(0, 12)}`,
-      service_id: probe.serviceId,
-      entity_id: probe.entityId,
-      sandbox_id: probe.sandboxId,
-      path: probe.path,
-      http_status: probe.httpStatus ?? null,
-      duration_ms: probe.durationMs,
-      success: probe.success ? 1 : 0,
-      error: probe.error ?? null,
-      created_at: Date.now(),
-    };
-    this.db.run(
-      `INSERT INTO coding_service_probes
-       (id, service_id, entity_id, sandbox_id, path, http_status, duration_ms, success, error, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        row.id,
-        row.service_id,
-        row.entity_id,
-        row.sandbox_id,
-        row.path,
-        row.http_status,
-        row.duration_ms,
-        row.success,
-        row.error,
-        row.created_at,
-      ],
-    );
-    return row;
+    return flywheelDb.createCodingServiceProbe(this.db, probe);
   }
 
   listCodingServiceProbes(serviceId: string, limit = 20): CodingServiceProbeRow[] {
-    return this.reader
-      .query(
-        "SELECT * FROM coding_service_probes WHERE service_id = ? ORDER BY created_at DESC LIMIT ?",
-      )
-      .all(serviceId, Math.max(1, Math.min(100, limit))) as CodingServiceProbeRow[];
+    return flywheelDb.listCodingServiceProbes(this.reader, serviceId, limit);
   }
 
   saveFlywheelCredentialBinding(binding: {
@@ -3659,35 +2660,11 @@ export class MarinaDB {
     expiresAt?: number;
     lastError?: string;
   }): void {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO flywheel_credential_bindings
-       (id, entity_id, sandbox_id, profile_name, purpose, state, expires_at, last_error, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(entity_id, sandbox_id, profile_name, purpose) DO UPDATE SET
-         state = excluded.state, expires_at = excluded.expires_at,
-         last_error = excluded.last_error, updated_at = excluded.updated_at`,
-      [
-        binding.id,
-        binding.entityId,
-        binding.sandboxId,
-        binding.profileName,
-        binding.purpose,
-        binding.state,
-        binding.expiresAt ?? null,
-        binding.lastError ?? null,
-        now,
-        now,
-      ],
-    );
+    flywheelDb.saveFlywheelCredentialBinding(this.db, binding);
   }
 
   listFlywheelCredentialBindings(entityId: EntityId): FlywheelCredentialBindingRow[] {
-    return this.reader
-      .query(
-        "SELECT * FROM flywheel_credential_bindings WHERE entity_id = ? ORDER BY updated_at DESC",
-      )
-      .all(entityId) as FlywheelCredentialBindingRow[];
+    return flywheelDb.listFlywheelCredentialBindings(this.reader, entityId);
   }
 
   // ─── Experiment Persistence ────────────────────────────────────────────
@@ -3700,82 +2677,43 @@ export class MarinaDB {
     requiredAgents?: number;
     timeLimit?: number;
   }): number {
-    const result = this.db.run(
-      `INSERT INTO experiments (name, description, config, creator_name, required_agents, time_limit, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        opts.name,
-        opts.description ?? "",
-        JSON.stringify(opts.config ?? {}),
-        opts.creatorName,
-        opts.requiredAgents ?? 2,
-        opts.timeLimit ?? null,
-        Date.now(),
-      ],
-    );
-    return Number(result.lastInsertRowid);
+    return experimentsDb.createExperiment(this.db, opts);
   }
 
   getExperiment(id: number): ExperimentRow | undefined {
-    return (
-      (this.db.query("SELECT * FROM experiments WHERE id = ?").get(id) as ExperimentRow | null) ??
-      undefined
-    );
+    return experimentsDb.getExperiment(this.db, id);
   }
 
   getExperimentByName(name: string): ExperimentRow | undefined {
-    return (
-      (this.db
-        .query("SELECT * FROM experiments WHERE name = ?")
-        .get(name) as ExperimentRow | null) ?? undefined
-    );
+    return experimentsDb.getExperimentByName(this.db, name);
   }
 
   listExperiments(status?: string): ExperimentRow[] {
-    if (status) {
-      return this.db
-        .query("SELECT * FROM experiments WHERE status = ? ORDER BY id DESC")
-        .all(status) as ExperimentRow[];
-    }
-    return this.db.query("SELECT * FROM experiments ORDER BY id DESC").all() as ExperimentRow[];
+    return experimentsDb.listExperiments(this.db, status);
   }
 
   updateExperimentStatus(id: number, status: string): void {
-    this.db.run("UPDATE experiments SET status = ? WHERE id = ?", [status, id]);
+    experimentsDb.updateExperimentStatus(this.db, id, status);
   }
 
   startExperiment(id: number): void {
-    this.db.run("UPDATE experiments SET status = 'active', started_at = ? WHERE id = ?", [
-      Date.now(),
-      id,
-    ]);
+    experimentsDb.startExperiment(this.db, id);
   }
 
   completeExperiment(id: number): void {
-    this.db.run("UPDATE experiments SET status = 'completed', completed_at = ? WHERE id = ?", [
-      Date.now(),
-      id,
-    ]);
+    experimentsDb.completeExperiment(this.db, id);
   }
 
   addParticipant(experimentId: number, entityName: string): void {
-    this.db.run(
-      "INSERT OR IGNORE INTO experiment_participants (experiment_id, entity_name, joined_at) VALUES (?, ?, ?)",
-      [experimentId, entityName, Date.now()],
-    );
+    experimentsDb.addParticipant(this.db, experimentId, entityName);
   }
 
   getParticipants(experimentId: number): ExperimentParticipantRow[] {
-    return this.db
-      .query("SELECT * FROM experiment_participants WHERE experiment_id = ?")
-      .all(experimentId) as ExperimentParticipantRow[];
+    return experimentsDb.getParticipants(this.db, experimentId);
   }
 
   isParticipant(experimentId: number, entityName: string): boolean {
-    const row = this.db
-      .query("SELECT 1 FROM experiment_participants WHERE experiment_id = ? AND entity_name = ?")
-      .get(experimentId, entityName);
-    return row !== null;
+    return experimentsDb.isParticipant(this.db, experimentId, entityName);
   }
 
   recordResult(
@@ -3785,17 +2723,11 @@ export class MarinaDB {
     metricValue: number,
     arm = "",
   ): void {
-    this.db.run(
-      `INSERT INTO experiment_results (experiment_id, entity_name, metric_name, metric_value, arm, recorded_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [experimentId, entityName, metricName, metricValue, arm, Date.now()],
-    );
+    experimentsDb.recordResult(this.db, experimentId, entityName, metricName, metricValue, arm);
   }
 
   getResults(experimentId: number): ExperimentResultRow[] {
-    return this.db
-      .query("SELECT * FROM experiment_results WHERE experiment_id = ? ORDER BY id")
-      .all(experimentId) as ExperimentResultRow[];
+    return experimentsDb.getResults(this.db, experimentId);
   }
 
   // ─── Native Evolution Protocols ───────────────────────────────────────
@@ -3806,57 +2738,23 @@ export class MarinaDB {
     protocol?: object;
     createdBy: string;
   }): number {
-    const result = this.db.run(
-      `INSERT INTO evolution_sessions
-       (experiment_id, objective, protocol, status, created_by, created_at)
-       VALUES (?, ?, ?, 'draft', ?, ?)`,
-      [
-        opts.experimentId,
-        opts.objective,
-        JSON.stringify(opts.protocol ?? {}),
-        opts.createdBy,
-        Date.now(),
-      ],
-    );
-    return Number(result.lastInsertRowid);
+    return evolutionDb.createEvolutionSession(this.db, opts);
   }
 
   getEvolutionSession(id: number): EvolutionSessionRow | undefined {
-    return (
-      (this.db
-        .query("SELECT * FROM evolution_sessions WHERE id = ?")
-        .get(id) as EvolutionSessionRow | null) ?? undefined
-    );
+    return evolutionDb.getEvolutionSession(this.db, id);
   }
 
   getEvolutionSessionByExperiment(experimentId: number): EvolutionSessionRow | undefined {
-    return (
-      (this.db
-        .query("SELECT * FROM evolution_sessions WHERE experiment_id = ?")
-        .get(experimentId) as EvolutionSessionRow | null) ?? undefined
-    );
+    return evolutionDb.getEvolutionSessionByExperiment(this.db, experimentId);
   }
 
   listEvolutionSessions(status?: EvolutionSessionStatus): EvolutionSessionRow[] {
-    if (status) {
-      return this.db
-        .query("SELECT * FROM evolution_sessions WHERE status = ? ORDER BY id DESC")
-        .all(status) as EvolutionSessionRow[];
-    }
-    return this.db
-      .query("SELECT * FROM evolution_sessions ORDER BY id DESC")
-      .all() as EvolutionSessionRow[];
+    return evolutionDb.listEvolutionSessions(this.db, status);
   }
 
   listActiveEvolutionSessionsForParticipant(entityName: string): EvolutionSessionRow[] {
-    return this.db
-      .query(
-        `SELECT es.* FROM evolution_sessions es
-         JOIN experiment_participants ep ON ep.experiment_id = es.experiment_id
-         WHERE es.status = 'active' AND lower(ep.entity_name) = lower(?)
-         ORDER BY es.id`,
-      )
-      .all(entityName) as EvolutionSessionRow[];
+    return evolutionDb.listActiveEvolutionSessionsForParticipant(this.db, entityName);
   }
 
   getEvolutionActivity(
@@ -3864,71 +2762,11 @@ export class MarinaDB {
     startedAt: number,
     endedAt = Date.now(),
   ): EvolutionActivitySummary {
-    const participants = this.getParticipants(experimentId).map((row) => row.entity_name);
-    if (participants.length === 0) return emptyEvolutionActivity();
-    const placeholders = participants.map(() => "?").join(",");
-    const row = this.db
-      .query(
-        `SELECT
-           SUM(CASE WHEN source='command' AND meaningful=1 THEN 1 ELSE 0 END) meaningful_actions,
-           SUM(CASE WHEN source='command' AND communication=1 THEN 1 ELSE 0 END) communications,
-           SUM(CASE WHEN source='agent_tool' THEN 1 ELSE 0 END) tool_calls,
-           SUM(CASE WHEN source='agent_tool' AND tool_name LIKE 'marina_%' THEN 1 ELSE 0 END) marina_tool_calls,
-           AVG(CASE WHEN source='agent_tool' AND latency_ms IS NOT NULL THEN latency_ms END) average_tool_latency_ms,
-           MAX(CASE WHEN source='agent_tool' THEN latency_ms END) maximum_tool_latency_ms,
-           COUNT(DISTINCT CASE WHEN meaningful=1 THEN actor_name END) active_participants
-         FROM primitive_usage
-         WHERE created_at BETWEEN ? AND ? AND actor_name IN (${placeholders})`,
-      )
-      .get(startedAt, endedAt, ...participants) as {
-      meaningful_actions: number | null;
-      communications: number | null;
-      tool_calls: number | null;
-      marina_tool_calls: number | null;
-      average_tool_latency_ms: number | null;
-      maximum_tool_latency_ms: number | null;
-      active_participants: number | null;
-    };
-    return {
-      participants,
-      activeParticipants: row.active_participants ?? 0,
-      meaningfulActions: row.meaningful_actions ?? 0,
-      communications: row.communications ?? 0,
-      toolCalls: row.tool_calls ?? 0,
-      marinaToolCalls: row.marina_tool_calls ?? 0,
-      averageToolLatencyMs: row.average_tool_latency_ms,
-      maximumToolLatencyMs: row.maximum_tool_latency_ms,
-      inputTokens: null,
-      outputTokens: null,
-      costUsd: null,
-    };
+    return evolutionDb.getEvolutionActivity(this.db, experimentId, startedAt, endedAt);
   }
 
   updateEvolutionSessionStatus(id: number, status: EvolutionSessionStatus): void {
-    const timestampColumn =
-      status === "active"
-        ? "started_at"
-        : status === "paused"
-          ? "paused_at"
-          : status === "completed"
-            ? "completed_at"
-            : undefined;
-    if (timestampColumn) {
-      if (status === "active") {
-        this.db.run(
-          "UPDATE evolution_sessions SET status = ?, started_at = COALESCE(started_at, ?) WHERE id = ?",
-          [status, Date.now(), id],
-        );
-        return;
-      }
-      this.db.run(`UPDATE evolution_sessions SET status = ?, ${timestampColumn} = ? WHERE id = ?`, [
-        status,
-        Date.now(),
-        id,
-      ]);
-      return;
-    }
-    this.db.run("UPDATE evolution_sessions SET status = ? WHERE id = ?", [status, id]);
+    evolutionDb.updateEvolutionSessionStatus(this.db, id, status);
   }
 
   createEvolutionRun(opts: {
@@ -3938,49 +2776,19 @@ export class MarinaDB {
     proposedBy: string;
     parentRunId?: number;
   }): number {
-    const next = this.db
-      .query(
-        "SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM evolution_runs WHERE session_id = ?",
-      )
-      .get(opts.sessionId) as { sequence: number };
-    const result = this.db.run(
-      `INSERT INTO evolution_runs
-       (session_id, sequence, parent_run_id, hypothesis, candidate_ref, proposed_by, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [
-        opts.sessionId,
-        next.sequence,
-        opts.parentRunId ?? null,
-        opts.hypothesis,
-        opts.candidateRef,
-        opts.proposedBy,
-        Date.now(),
-      ],
-    );
-    return Number(result.lastInsertRowid);
+    return evolutionDb.createEvolutionRun(this.db, opts);
   }
 
   getEvolutionRun(id: number): EvolutionRunRow | undefined {
-    return (
-      (this.db
-        .query("SELECT * FROM evolution_runs WHERE id = ?")
-        .get(id) as EvolutionRunRow | null) ?? undefined
-    );
+    return evolutionDb.getEvolutionRun(this.db, id);
   }
 
   listEvolutionRuns(sessionId: number): EvolutionRunRow[] {
-    return this.db
-      .query("SELECT * FROM evolution_runs WHERE session_id = ? ORDER BY sequence")
-      .all(sessionId) as EvolutionRunRow[];
+    return evolutionDb.listEvolutionRuns(this.db, sessionId);
   }
 
   evaluateEvolutionRun(id: number, evaluatorName: string, evidence: string): void {
-    this.db.run(
-      `UPDATE evolution_runs
-       SET status = 'evaluated', evaluator_name = ?, evidence = ?, evaluated_at = ?
-       WHERE id = ?`,
-      [evaluatorName, evidence, Date.now(), id],
-    );
+    evolutionDb.evaluateEvolutionRun(this.db, id, evaluatorName, evidence);
   }
 
   decideEvolutionRun(
@@ -3988,14 +2796,7 @@ export class MarinaDB {
     reviewerName: string,
     decision: "accept" | "reject" | "inconclusive",
   ): void {
-    const status =
-      decision === "accept" ? "accepted" : decision === "reject" ? "rejected" : "evaluated";
-    this.db.run(
-      `UPDATE evolution_runs
-       SET status = ?, reviewer_name = ?, decision = ?, decided_at = ?
-       WHERE id = ?`,
-      [status, reviewerName, decision, Date.now(), id],
-    );
+    evolutionDb.decideEvolutionRun(this.db, id, reviewerName, decision);
   }
 
   // ─── Event Queries (delegated to db-entities.ts) ────────────────────────
@@ -4040,48 +2841,23 @@ export class MarinaDB {
     storageKey: string;
     metadata?: Record<string, unknown>;
   }): void {
-    this.db.run(
-      `INSERT INTO assets (id, entity_name, filename, mime_type, size, storage_key, metadata, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        asset.id,
-        asset.entityName,
-        asset.filename,
-        asset.mimeType,
-        asset.size,
-        asset.storageKey,
-        JSON.stringify(asset.metadata ?? {}),
-        Date.now(),
-      ],
-    );
+    assetsDb.createAsset(this.db, asset);
   }
 
   getAsset(id: string): AssetRow | undefined {
-    return (
-      (this.db.query("SELECT * FROM assets WHERE id = ?").get(id) as AssetRow | null) ?? undefined
-    );
+    return assetsDb.getAsset(this.db, id);
   }
 
   getAssetsByEntity(entityName: string, limit = 50): AssetRow[] {
-    return this.db
-      .query("SELECT * FROM assets WHERE entity_name = ? ORDER BY created_at DESC LIMIT ?")
-      .all(entityName, limit) as AssetRow[];
+    return assetsDb.getAssetsByEntity(this.db, entityName, limit);
   }
 
   listAssets(opts?: { limit?: number; mime?: string }): AssetRow[] {
-    if (opts?.mime) {
-      return this.db
-        .query("SELECT * FROM assets WHERE mime_type LIKE ? ORDER BY created_at DESC LIMIT ?")
-        .all(`${opts.mime}%`, opts?.limit ?? 50) as AssetRow[];
-    }
-    return this.db
-      .query("SELECT * FROM assets ORDER BY created_at DESC LIMIT ?")
-      .all(opts?.limit ?? 50) as AssetRow[];
+    return assetsDb.listAssets(this.db, opts);
   }
 
   deleteAsset(id: string): boolean {
-    const result = this.db.run("DELETE FROM assets WHERE id = ?", [id]);
-    return result.changes > 0;
+    return assetsDb.deleteAsset(this.db, id);
   }
 
   // ─── Media Jobs ──────────────────────────────────────────────────────────
@@ -4144,55 +2920,24 @@ export class MarinaDB {
     scopeId?: string;
     creatorName: string;
   }): void {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO canvases (id, name, description, scope, scope_id, creator_name, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        canvas.id,
-        canvas.name,
-        canvas.description ?? "",
-        canvas.scope ?? "global",
-        canvas.scopeId ?? null,
-        canvas.creatorName,
-        now,
-        now,
-      ],
-    );
+    canvasDb.createCanvas(this.db, canvas);
   }
 
   getCanvas(id: string): CanvasRow | undefined {
-    return (
-      (this.db.query("SELECT * FROM canvases WHERE id = ?").get(id) as CanvasRow | null) ??
-      undefined
-    );
+    return canvasDb.getCanvas(this.db, id);
   }
 
   getCanvasByName(name: string): CanvasRow | undefined {
-    return (
-      (this.db.query("SELECT * FROM canvases WHERE name = ?").get(name) as CanvasRow | null) ??
-      undefined
-    );
+    return canvasDb.getCanvasByName(this.db, name);
   }
 
   listCanvases(opts?: { scope?: string; limit?: number }): CanvasRow[] {
-    if (opts?.scope) {
-      return this.db
-        .query("SELECT * FROM canvases WHERE scope = ? ORDER BY updated_at DESC LIMIT ?")
-        .all(opts.scope, opts?.limit ?? 50) as CanvasRow[];
-    }
-    return this.db
-      .query("SELECT * FROM canvases ORDER BY updated_at DESC LIMIT ?")
-      .all(opts?.limit ?? 50) as CanvasRow[];
+    return canvasDb.listCanvases(this.db, opts);
   }
 
   /** Look up the per-entity workspace canvas, if one exists. */
   getEntityCanvas(entityId: string): CanvasRow | undefined {
-    return (
-      (this.db
-        .query("SELECT * FROM canvases WHERE scope = 'entity' AND scope_id = ? LIMIT 1")
-        .get(entityId) as CanvasRow | null) ?? undefined
-    );
+    return canvasDb.getEntityCanvas(this.db, entityId);
   }
 
   /**
@@ -4203,38 +2948,11 @@ export class MarinaDB {
    * mostly a human-readable label shown in the breadcrumb.
    */
   ensureEntityCanvas(entityId: string, entityName: string, creatorName: string): CanvasRow {
-    const existing = this.getEntityCanvas(entityId);
-    if (existing) return existing;
-    const shortId = entityId.slice(-6);
-    const candidates = [
-      `${entityName}'s canvas`,
-      `${entityName}'s canvas (${shortId})`,
-      `canvas-${entityId}`,
-    ];
-    for (const name of candidates) {
-      if (this.getCanvasByName(name)) continue;
-      const id = crypto.randomUUID();
-      try {
-        this.createCanvas({
-          id,
-          name,
-          description: `${entityName}'s workspace`,
-          scope: "entity",
-          scopeId: entityId,
-          creatorName,
-        });
-        const row = this.getCanvas(id);
-        if (row) return row;
-      } catch {
-        // Name collided with a row the pre-check missed (race). Try the next.
-      }
-    }
-    throw new Error(`Failed to create entity canvas for ${entityName}`);
+    return canvasDb.ensureEntityCanvas(this.db, entityId, entityName, creatorName);
   }
 
   deleteCanvas(id: string): boolean {
-    const result = this.db.run("DELETE FROM canvases WHERE id = ?", [id]);
-    return result.changes > 0;
+    return canvasDb.deleteCanvas(this.db, id);
   }
 
   // ─── Canvas Nodes ─────────────────────────────────────────────────────
@@ -4252,41 +2970,15 @@ export class MarinaDB {
     creatorName: string;
     parentNodeId?: string;
   }): void {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO canvas_nodes (id, canvas_id, type, x, y, width, height, asset_id, data, creator_name, parent_node_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        node.id,
-        node.canvasId,
-        node.type,
-        node.x ?? 0,
-        node.y ?? 0,
-        node.width ?? 300,
-        node.height ?? 200,
-        node.assetId ?? null,
-        JSON.stringify(node.data ?? {}),
-        node.creatorName,
-        node.parentNodeId ?? null,
-        now,
-        now,
-      ],
-    );
-    // Touch canvas updated_at
-    this.db.run("UPDATE canvases SET updated_at = ? WHERE id = ?", [now, node.canvasId]);
+    canvasDb.createNode(this.db, node);
   }
 
   getNode(id: string): CanvasNodeRow | undefined {
-    return (
-      (this.db.query("SELECT * FROM canvas_nodes WHERE id = ?").get(id) as CanvasNodeRow | null) ??
-      undefined
-    );
+    return canvasDb.getNode(this.db, id);
   }
 
   getNodesByCanvas(canvasId: string): CanvasNodeRow[] {
-    return this.db
-      .query("SELECT * FROM canvas_nodes WHERE canvas_id = ? ORDER BY created_at ASC")
-      .all(canvasId) as CanvasNodeRow[];
+    return canvasDb.getNodesByCanvas(this.db, canvasId);
   }
 
   /**
@@ -4296,57 +2988,19 @@ export class MarinaDB {
    * day, enough to hang the dashboard when it loads the canvas).
    */
   trimCanvasNodes(canvasId: string, max: number): number {
-    const result = this.db.run(
-      `DELETE FROM canvas_nodes
-       WHERE canvas_id = ?
-         AND id NOT IN (
-           SELECT id FROM canvas_nodes
-           WHERE canvas_id = ?
-           ORDER BY created_at DESC
-           LIMIT ?
-         )`,
-      [canvasId, canvasId, max],
-    );
-    return result.changes ?? 0;
+    return canvasDb.trimCanvasNodes(this.db, canvasId, max);
   }
 
   /** Trim old canvas nodes and return their ids so live clients can converge. */
   trimCanvasNodesWithIds(canvasId: string, max: number): string[] {
-    const rows = this.db
-      .query(
-        `SELECT id FROM canvas_nodes
-         WHERE canvas_id = ?
-         ORDER BY created_at DESC
-         LIMIT -1 OFFSET ?`,
-      )
-      .all(canvasId, max) as Array<{ id: string }>;
-    if (rows.length === 0) return [];
-    this.trimCanvasNodes(canvasId, max);
-    return rows.map((row) => row.id);
+    return canvasDb.trimCanvasNodesWithIds(this.db, canvasId, max);
   }
 
   updateNode(
     id: string,
     updates: { x?: number; y?: number; width?: number; height?: number; data?: string },
   ): boolean {
-    const node = this.getNode(id);
-    if (!node) return false;
-    const now = Date.now();
-    this.db.run(
-      `UPDATE canvas_nodes SET x = ?, y = ?, width = ?, height = ?, data = ?, updated_at = ?
-       WHERE id = ?`,
-      [
-        updates.x ?? node.x,
-        updates.y ?? node.y,
-        updates.width ?? node.width,
-        updates.height ?? node.height,
-        updates.data ?? node.data,
-        now,
-        id,
-      ],
-    );
-    this.db.run("UPDATE canvases SET updated_at = ? WHERE id = ?", [now, node.canvas_id]);
-    return true;
+    return canvasDb.updateNode(this.db, id, updates);
   }
 
   listCanvasIntents(options?: {
@@ -4356,79 +3010,11 @@ export class MarinaDB {
     expireActiveMs?: number;
     now?: number;
   }): CanvasIntentSummary[] {
-    const now = options?.now ?? Date.now();
-    if (options?.expireActiveMs) {
-      this.expireCanvasIntentClaims(options.expireActiveMs, now);
-    }
-
-    const statuses = new Set(options?.statuses ?? ["pending", "active"]);
-    const limit = options?.limit ?? 100;
-    const rows = options?.canvasName
-      ? this.db
-          .query(
-            `SELECT n.*, c.name AS canvas_name
-             FROM canvas_nodes n
-             JOIN canvases c ON c.id = n.canvas_id
-             WHERE c.name = ?
-             ORDER BY n.created_at ASC`,
-          )
-          .all(options.canvasName)
-      : this.db
-          .query(
-            `SELECT n.*, c.name AS canvas_name
-             FROM canvas_nodes n
-             JOIN canvases c ON c.id = n.canvas_id
-             ORDER BY n.created_at ASC`,
-          )
-          .all();
-
-    const intents: CanvasIntentSummary[] = [];
-    for (const row of rows as (CanvasNodeRow & { canvas_name: string })[]) {
-      const intent = parseCanvasIntent(row.data);
-      if (!intent || !statuses.has(intent.status)) continue;
-      intents.push({
-        nodeId: row.id,
-        canvasId: row.canvas_id,
-        canvasName: row.canvas_name,
-        type: row.type,
-        creatorName: row.creator_name,
-        assetId: row.asset_id,
-        parentNodeId: row.parent_node_id,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-        intent,
-      });
-      if (intents.length >= limit) break;
-    }
-    return intents;
+    return canvasDb.listCanvasIntents(this.db, options);
   }
 
   expireCanvasIntentClaims(timeoutMs: number, now = Date.now()): number {
-    const rows = this.db
-      .query("SELECT * FROM canvas_nodes ORDER BY updated_at ASC")
-      .all() as CanvasNodeRow[];
-    let expired = 0;
-    for (const row of rows) {
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(row.data);
-      } catch {
-        continue;
-      }
-      const intent = readCanvasIntent(parsed);
-      if (intent?.status !== "active") continue;
-      const claimedAt = intent.claimedAt ?? row.updated_at;
-      if (now - claimedAt <= timeoutMs) continue;
-
-      parsed.intent = {
-        ...intent,
-        status: "pending",
-        claimedBy: undefined,
-        claimedAt: undefined,
-      };
-      if (this.updateNodeDataIfUnchanged(row, JSON.stringify(parsed), now)) expired++;
-    }
-    return expired;
+    return canvasDb.expireCanvasIntentClaims(this.db, timeoutMs, now);
   }
 
   claimCanvasIntent(
@@ -4436,42 +3022,7 @@ export class MarinaDB {
     claimantName: string,
     now = Date.now(),
   ): CanvasIntentClaimResult {
-    const node = this.resolveCanvasNode(idOrPrefix);
-    if (!node) return { ok: false, reason: "not_found" };
-
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(node.data);
-    } catch {
-      return { ok: false, reason: "no_intent" };
-    }
-
-    const intent = readCanvasIntent(parsed);
-    if (!intent) return { ok: false, reason: "no_intent" };
-    if (intent.status !== "pending") {
-      return { ok: false, reason: "not_pending", status: intent.status };
-    }
-
-    const claimed: CanvasIntentData = {
-      ...intent,
-      status: "active",
-      claimedBy: claimantName,
-      claimedAt: now,
-    };
-    parsed.intent = claimed;
-
-    if (!this.updateNodeDataIfUnchanged(node, JSON.stringify(parsed), now)) {
-      const latest = this.getNode(node.id);
-      const latestIntent = latest ? parseCanvasIntent(latest.data) : undefined;
-      return {
-        ok: false,
-        reason: latestIntent ? "not_pending" : "no_intent",
-        status: latestIntent?.status,
-      };
-    }
-
-    const updated = this.getNode(node.id) ?? node;
-    return { ok: true, node: updated, intent: claimed };
+    return canvasDb.claimCanvasIntent(this.db, idOrPrefix, claimantName, now);
   }
 
   completeCanvasIntent(
@@ -4484,148 +3035,27 @@ export class MarinaDB {
       now?: number;
     },
   ): CanvasIntentCompleteResult {
-    const now = params.now ?? Date.now();
-    const node = this.resolveCanvasNode(idOrPrefix);
-    if (!node) return { ok: false, reason: "not_found" };
-
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(node.data);
-    } catch {
-      return { ok: false, reason: "no_intent" };
-    }
-
-    const intent = readCanvasIntent(parsed);
-    if (!intent) return { ok: false, reason: "no_intent" };
-    if (intent.status !== "active") {
-      return { ok: false, reason: "not_active", status: intent.status };
-    }
-
-    const resultNodeId = crypto.randomUUID();
-    const resultType = params.resultType ?? "text";
-    let ok = false;
-    try {
-      this.db.transaction(() => {
-        const baseResultData = params.resultData ?? { body: params.result };
-        const resultData = {
-          ...baseResultData,
-          author: params.completerName,
-          feedType: "intent_result",
-          sourceNodeId: node.id,
-          sourcePrompt: intent.prompt,
-        };
-        this.createNode({
-          id: resultNodeId,
-          canvasId: node.canvas_id,
-          type: resultType,
-          data: resultData,
-          creatorName: params.completerName,
-          parentNodeId: node.id,
-        });
-
-        parsed.intent = { ...intent, status: "done", result: params.result, resultNodeId };
-        ok = this.updateNodeDataIfUnchanged(node, JSON.stringify(parsed), now);
-        if (!ok) {
-          throw new Error("canvas_intent_conflict");
-        }
-      })();
-    } catch (error) {
-      if (!(error instanceof Error) || error.message !== "canvas_intent_conflict") {
-        throw error;
-      }
-    }
-
-    if (!ok) {
-      const latest = this.getNode(node.id);
-      const latestIntent = latest ? parseCanvasIntent(latest.data) : undefined;
-      return {
-        ok: false,
-        reason: latestIntent ? "not_active" : "no_intent",
-        status: latestIntent?.status,
-      };
-    }
-
-    return {
-      ok: true,
-      node: this.getNode(node.id) ?? node,
-      intent: { ...intent, status: "done", result: params.result, resultNodeId },
-      resultNode: this.getNode(resultNodeId)!,
-    };
+    return canvasDb.completeCanvasIntent(this.db, idOrPrefix, params);
   }
 
   failCanvasIntent(idOrPrefix: string, reason: string, now = Date.now()): CanvasIntentFailResult {
-    const node = this.resolveCanvasNode(idOrPrefix);
-    if (!node) return { ok: false, reason: "not_found" };
-
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(node.data);
-    } catch {
-      return { ok: false, reason: "no_intent" };
-    }
-
-    const intent = readCanvasIntent(parsed);
-    if (!intent) return { ok: false, reason: "no_intent" };
-    if (intent.status !== "active") {
-      return { ok: false, reason: "not_active", status: intent.status };
-    }
-
-    const failed: CanvasIntentData = { ...intent, status: "failed", failReason: reason };
-    parsed.intent = failed;
-    if (!this.updateNodeDataIfUnchanged(node, JSON.stringify(parsed), now)) {
-      const latest = this.getNode(node.id);
-      const latestIntent = latest ? parseCanvasIntent(latest.data) : undefined;
-      return {
-        ok: false,
-        reason: latestIntent ? "not_active" : "no_intent",
-        status: latestIntent?.status,
-      };
-    }
-
-    return { ok: true, node: this.getNode(node.id) ?? node, intent: failed };
+    return canvasDb.failCanvasIntent(this.db, idOrPrefix, reason, now);
   }
 
   resolveCanvasNode(idOrPrefix: string): CanvasNodeRow | undefined {
-    const node = this.getNode(idOrPrefix);
-    if (node) return node;
-    if (idOrPrefix.length < 4) return undefined;
-    const escapedPrefix = escapeLike(idOrPrefix);
-    return (
-      (this.db
-        .query(
-          "SELECT * FROM canvas_nodes WHERE id LIKE ? ESCAPE '\\' ORDER BY created_at ASC LIMIT 1",
-        )
-        .get(`${escapedPrefix}%`) as CanvasNodeRow | null) ?? undefined
-    );
-  }
-
-  private updateNodeDataIfUnchanged(node: CanvasNodeRow, data: string, now: number): boolean {
-    const result = this.db.run(
-      "UPDATE canvas_nodes SET data = ?, updated_at = ? WHERE id = ? AND data = ?",
-      [data, now, node.id, node.data],
-    );
-    if ((result.changes ?? 0) === 0) return false;
-    this.db.run("UPDATE canvases SET updated_at = ? WHERE id = ?", [now, node.canvas_id]);
-    return true;
+    return canvasDb.resolveCanvasNode(this.db, idOrPrefix);
   }
 
   getChildNodes(parentNodeId: string): CanvasNodeRow[] {
-    return this.db
-      .query("SELECT * FROM canvas_nodes WHERE parent_node_id = ? ORDER BY created_at ASC")
-      .all(parentNodeId) as CanvasNodeRow[];
+    return canvasDb.getChildNodes(this.db, parentNodeId);
   }
 
   getRootNodes(canvasId: string): CanvasNodeRow[] {
-    return this.db
-      .query(
-        "SELECT * FROM canvas_nodes WHERE canvas_id = ? AND parent_node_id IS NULL ORDER BY created_at DESC",
-      )
-      .all(canvasId) as CanvasNodeRow[];
+    return canvasDb.getRootNodes(this.db, canvasId);
   }
 
   deleteNode(id: string): boolean {
-    const result = this.db.run("DELETE FROM canvas_nodes WHERE id = ?", [id]);
-    return result.changes > 0;
+    return canvasDb.deleteNode(this.db, id);
   }
 
   // ─── Canvas Edges ─────────────────────────────────────────────────────
@@ -4639,91 +3069,55 @@ export class MarinaDB {
     data?: Record<string, unknown>;
     creatorName: string;
   }): void {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO canvas_edges (id, canvas_id, source_id, target_id, relationship, data, creator_name, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        edge.id,
-        edge.canvasId,
-        edge.sourceId,
-        edge.targetId,
-        edge.relationship,
-        edge.data ? JSON.stringify(edge.data) : null,
-        edge.creatorName,
-        now,
-      ],
-    );
-    this.db.run("UPDATE canvases SET updated_at = ? WHERE id = ?", [now, edge.canvasId]);
+    canvasDb.createCanvasEdge(this.db, edge);
   }
 
   getCanvasEdges(canvasId: string): CanvasEdgeRow[] {
-    return this.db
-      .query("SELECT * FROM canvas_edges WHERE canvas_id = ? ORDER BY created_at ASC")
-      .all(canvasId) as CanvasEdgeRow[];
+    return canvasDb.getCanvasEdges(this.db, canvasId);
   }
 
   getCanvasEdge(id: string): CanvasEdgeRow | undefined {
-    return (
-      (this.db.query("SELECT * FROM canvas_edges WHERE id = ?").get(id) as CanvasEdgeRow | null) ??
-      undefined
-    );
+    return canvasDb.getCanvasEdge(this.db, id);
   }
 
   deleteCanvasEdge(id: string): boolean {
-    const edge = this.getCanvasEdge(id);
-    if (!edge) return false;
-    this.db.run("DELETE FROM canvas_edges WHERE id = ?", [id]);
-    this.db.run("UPDATE canvases SET updated_at = ? WHERE id = ?", [Date.now(), edge.canvas_id]);
-    return true;
+    return canvasDb.deleteCanvasEdge(this.db, id);
   }
 
   // ─── Meta Key-Value ────────────────────────────────────────────────────
 
   getMetaValue(key: string): string | undefined {
-    const row = this.db.query("SELECT value FROM meta WHERE key = ?").get(key) as {
-      value: string;
-    } | null;
-    return row?.value ?? undefined;
+    return metaDb.getMetaValue(this.db, key);
   }
 
   setMetaValue(key: string, value: string): void {
-    this.db.run("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", [key, value]);
+    metaDb.setMetaValue(this.db, key, value);
   }
 
   clearDynamicRooms(): void {
-    this.db.run("DELETE FROM room_sources");
+    roomsDb.clearDynamicRooms(this.db);
   }
 
   clearDynamicCommands(): void {
-    this.db.run("DELETE FROM dynamic_command_history");
-    this.db.run("DELETE FROM dynamic_commands");
+    commandsDb.clearDynamicCommands(this.db);
   }
 
   // ─── Shell ─────────────────────────────────────────────────────────────
 
   getShellAllowlist(): string[] {
-    const rows = this.db.query("SELECT binary FROM shell_allowlist ORDER BY binary").all() as {
-      binary: string;
-    }[];
-    return rows.map((r) => r.binary);
+    return shellDb.getShellAllowlist(this.db);
   }
 
   isShellAllowed(binary: string): boolean {
-    const row = this.db.query("SELECT 1 FROM shell_allowlist WHERE binary = ?").get(binary);
-    return row !== null;
+    return shellDb.isShellAllowed(this.db, binary);
   }
 
   addToShellAllowlist(binary: string, addedBy: string): void {
-    this.db.run(
-      "INSERT OR IGNORE INTO shell_allowlist (binary, added_by, added_at) VALUES (?, ?, ?)",
-      [binary, addedBy, Date.now()],
-    );
+    shellDb.addToShellAllowlist(this.db, binary, addedBy);
   }
 
   removeFromShellAllowlist(binary: string): boolean {
-    const result = this.db.run("DELETE FROM shell_allowlist WHERE binary = ?", [binary]);
-    return result.changes > 0;
+    return shellDb.removeFromShellAllowlist(this.db, binary);
   }
 
   logShellExec(
@@ -4733,36 +3127,22 @@ export class MarinaDB {
     exitCode: number | null,
     outputLength: number,
   ): void {
-    this.db.run(
-      "INSERT INTO shell_log (entity_id, binary, args, exit_code, output_length, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-      [entityId, binary, args, exitCode, outputLength, Date.now()],
-    );
+    shellDb.logShellExec(this.db, entityId, binary, args, exitCode, outputLength);
   }
 
   getShellHistory(entityId: string, limit = 10): ShellLogRow[] {
-    return this.db
-      .query("SELECT * FROM shell_log WHERE entity_id = ? ORDER BY created_at DESC LIMIT ?")
-      .all(entityId, limit) as ShellLogRow[];
+    return shellDb.getShellHistory(this.db, entityId, limit);
   }
 
   getShellLog(entityId: string | null, limit = 10): ShellLogRow[] {
-    if (entityId) {
-      return this.db
-        .query("SELECT * FROM shell_log WHERE entity_id = ? ORDER BY created_at DESC LIMIT ?")
-        .all(entityId, limit) as ShellLogRow[];
-    }
-    return this.db
-      .query("SELECT * FROM shell_log ORDER BY created_at DESC LIMIT ?")
-      .all(limit) as ShellLogRow[];
+    return shellDb.getShellLog(this.db, entityId, limit);
   }
 
   /** Drop shell_log rows older than `keepMs`. Returns rows removed. Mirrors
    *  trimFeedEvents — bounds the gated-exec audit trail so it can't grow
    *  unbounded for the life of the DB. (idx_shell_log_created makes this cheap.) */
   trimShellLog(keepMs: number): number {
-    const cutoff = Date.now() - keepMs;
-    const res = this.db.run("DELETE FROM shell_log WHERE created_at < ?", [cutoff]);
-    return res.changes;
+    return shellDb.trimShellLog(this.db, keepMs);
   }
 
   // ─── Coding Sessions ───────────────────────────────────────────────────
@@ -4775,58 +3155,15 @@ export class MarinaDB {
     mode?: string;
     createdBy: string;
   }): CodingSessionRow {
-    const now = Date.now();
-    const row: CodingSessionRow = {
-      id: session.id,
-      title: session.title,
-      workspace_root: session.workspaceRoot,
-      status: session.status ?? "active",
-      mode: session.mode ?? "ask",
-      created_by: session.createdBy,
-      created_at: now,
-      updated_at: now,
-      writer: null,
-      agent: null,
-      driver: null,
-      execution_target: "local",
-      worktree_path: null,
-      worktree_branch: null,
-    };
-    this.db.run(
-      `INSERT INTO coding_sessions
-        (id, title, workspace_root, status, mode, created_by, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        row.id,
-        row.title,
-        row.workspace_root,
-        row.status,
-        row.mode,
-        row.created_by,
-        row.created_at,
-        row.updated_at,
-      ],
-    );
-    return row;
+    return codingDb.createCodingSession(this.db, session);
   }
 
   getCodingSession(id: string): CodingSessionRow | null {
-    return this.db
-      .query("SELECT * FROM coding_sessions WHERE id = ?")
-      .get(id) as CodingSessionRow | null;
+    return codingDb.getCodingSession(this.db, id);
   }
 
   listCodingSessions(createdBy?: string, limit = 10): CodingSessionRow[] {
-    if (createdBy) {
-      return this.db
-        .query(
-          "SELECT * FROM coding_sessions WHERE created_by = ? ORDER BY updated_at DESC LIMIT ?",
-        )
-        .all(createdBy, limit) as CodingSessionRow[];
-    }
-    return this.db
-      .query("SELECT * FROM coding_sessions ORDER BY updated_at DESC LIMIT ?")
-      .all(limit) as CodingSessionRow[];
+    return codingDb.listCodingSessions(this.db, createdBy, limit);
   }
 
   updateCodingSession(
@@ -4843,48 +3180,7 @@ export class MarinaDB {
       worktreeBranch: string | null;
     }>,
   ): void {
-    const sets: string[] = [];
-    const values: Array<string | number | null> = [];
-    if (patch.status !== undefined) {
-      sets.push("status = ?");
-      values.push(patch.status);
-    }
-    if (patch.agent !== undefined) {
-      sets.push("agent = ?");
-      values.push(patch.agent);
-    }
-    if (patch.driver !== undefined) {
-      sets.push("driver = ?");
-      values.push(patch.driver);
-    }
-    if (patch.executionTarget !== undefined) {
-      sets.push("execution_target = ?");
-      values.push(patch.executionTarget);
-    }
-    if (patch.mode !== undefined) {
-      sets.push("mode = ?");
-      values.push(patch.mode);
-    }
-    if (patch.title !== undefined) {
-      sets.push("title = ?");
-      values.push(patch.title);
-    }
-    if (patch.writer !== undefined) {
-      sets.push("writer = ?");
-      values.push(patch.writer);
-    }
-    if (patch.worktreePath !== undefined) {
-      sets.push("worktree_path = ?");
-      values.push(patch.worktreePath);
-    }
-    if (patch.worktreeBranch !== undefined) {
-      sets.push("worktree_branch = ?");
-      values.push(patch.worktreeBranch);
-    }
-    if (sets.length === 0) return;
-    sets.push("updated_at = ?");
-    values.push(Date.now(), id);
-    this.db.run(`UPDATE coding_sessions SET ${sets.join(", ")} WHERE id = ?`, values);
+    codingDb.updateCodingSession(this.db, id, patch);
   }
 
   createCodingEvent(event: {
@@ -4894,39 +3190,11 @@ export class MarinaDB {
     kind: string;
     payload: unknown;
   }): CodingEventRow {
-    const row: CodingEventRow = {
-      id: event.id ?? crypto.randomUUID(),
-      session_id: event.sessionId,
-      actor: event.actor,
-      kind: event.kind,
-      payload_json: JSON.stringify(event.payload ?? {}),
-      created_at: Date.now(),
-    };
-    this.db.run(
-      `INSERT INTO coding_events
-        (id, session_id, actor, kind, payload_json, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [row.id, row.session_id, row.actor, row.kind, row.payload_json, row.created_at],
-    );
-    this.db.run("UPDATE coding_sessions SET updated_at = ? WHERE id = ?", [
-      row.created_at,
-      row.session_id,
-    ]);
-    return row;
+    return codingDb.createCodingEvent(this.db, event);
   }
 
   listCodingEvents(sessionId: string, limit = 50): CodingEventRow[] {
-    return this.db
-      .query(
-        `SELECT * FROM (
-         SELECT * FROM coding_events
-         WHERE session_id = ?
-           ORDER BY created_at DESC
-           LIMIT ?
-         )
-         ORDER BY created_at ASC`,
-      )
-      .all(sessionId, limit) as CodingEventRow[];
+    return codingDb.listCodingEvents(this.db, sessionId, limit);
   }
 
   createCodingArtifact(artifact: {
@@ -4939,57 +3207,15 @@ export class MarinaDB {
     metadata?: unknown;
     createdBy: string;
   }): CodingArtifactRow {
-    const now = Date.now();
-    const idPrefix =
-      artifact.kind === "patch" ? "patch" : artifact.kind.replace(/[^a-z0-9]+/gi, "_");
-    const row: CodingArtifactRow = {
-      id: artifact.id ?? `${idPrefix}_${crypto.randomUUID().slice(0, 12)}`,
-      session_id: artifact.sessionId,
-      kind: artifact.kind,
-      title: artifact.title,
-      status: artifact.status ?? "pending",
-      content_text: artifact.contentText,
-      metadata_json: JSON.stringify(artifact.metadata ?? {}),
-      created_by: artifact.createdBy,
-      applied_by: null,
-      created_at: now,
-      updated_at: now,
-      applied_at: null,
-    };
-    this.db.run(
-      `INSERT INTO coding_artifacts
-        (id, session_id, kind, title, status, content_text, metadata_json, created_by,
-         applied_by, created_at, updated_at, applied_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        row.id,
-        row.session_id,
-        row.kind,
-        row.title,
-        row.status,
-        row.content_text,
-        row.metadata_json,
-        row.created_by,
-        row.applied_by,
-        row.created_at,
-        row.updated_at,
-        row.applied_at,
-      ],
-    );
-    this.db.run("UPDATE coding_sessions SET updated_at = ? WHERE id = ?", [now, row.session_id]);
-    return row;
+    return codingDb.createCodingArtifact(this.db, artifact);
   }
 
   getCodingArtifact(id: string): CodingArtifactRow | null {
-    return this.db
-      .query("SELECT * FROM coding_artifacts WHERE id = ?")
-      .get(id) as CodingArtifactRow | null;
+    return codingDb.getCodingArtifact(this.db, id);
   }
 
   listCodingArtifacts(sessionId: string, limit = 20): CodingArtifactRow[] {
-    return this.db
-      .query("SELECT * FROM coding_artifacts WHERE session_id = ? ORDER BY created_at DESC LIMIT ?")
-      .all(sessionId, limit) as CodingArtifactRow[];
+    return codingDb.listCodingArtifacts(this.db, sessionId, limit);
   }
 
   updateCodingArtifact(
@@ -5001,28 +3227,7 @@ export class MarinaDB {
       status: string;
     }>,
   ): void {
-    const sets: string[] = [];
-    const values: Array<string | number | null> = [];
-    if (patch.status !== undefined) {
-      sets.push("status = ?");
-      values.push(patch.status);
-    }
-    if (patch.appliedBy !== undefined) {
-      sets.push("applied_by = ?");
-      values.push(patch.appliedBy);
-    }
-    if (patch.appliedAt !== undefined) {
-      sets.push("applied_at = ?");
-      values.push(patch.appliedAt);
-    }
-    if (patch.metadata !== undefined) {
-      sets.push("metadata_json = ?");
-      values.push(JSON.stringify(patch.metadata));
-    }
-    if (sets.length === 0) return;
-    sets.push("updated_at = ?");
-    values.push(Date.now(), id);
-    this.db.run(`UPDATE coding_artifacts SET ${sets.join(", ")} WHERE id = ?`, values);
+    codingDb.updateCodingArtifact(this.db, id, patch);
   }
 
   // ─── Entity Migration (delegated to db-entities.ts) ─────────────────────
@@ -5058,51 +3263,23 @@ export class MarinaDB {
   // ─── Markets ───────────────────────────────────────────────────────────
 
   createMarket(market: { id: string; roomId: string; question: string; category?: string }): void {
-    this.db.run(
-      "INSERT OR IGNORE INTO markets (id, room_id, question, category, created_at) VALUES (?, ?, ?, ?, ?)",
-      [market.id, market.roomId, market.question, market.category ?? "", Date.now()],
-    );
+    marketsDb.createMarket(this.db, market);
   }
 
   getMarket(id: string): MarketRow | undefined {
-    return (
-      (this.db.query("SELECT * FROM markets WHERE id = ?").get(id) as MarketRow | null) ?? undefined
-    );
+    return marketsDb.getMarket(this.db, id);
   }
 
   getMarketByRoom(roomId: string): MarketRow | undefined {
-    return (
-      (this.db.query("SELECT * FROM markets WHERE room_id = ?").get(roomId) as MarketRow | null) ??
-      undefined
-    );
+    return marketsDb.getMarketByRoom(this.db, roomId);
   }
 
   listMarkets(opts?: { status?: string; category?: string; limit?: number }): MarketRow[] {
-    const limit = opts?.limit ?? 50;
-    if (opts?.status) {
-      return this.db
-        .query("SELECT * FROM markets WHERE status = ? ORDER BY created_at DESC LIMIT ?")
-        .all(opts.status, limit) as MarketRow[];
-    }
-    if (opts?.category) {
-      return this.db
-        .query("SELECT * FROM markets WHERE category = ? ORDER BY created_at DESC LIMIT ?")
-        .all(opts.category, limit) as MarketRow[];
-    }
-    return this.db
-      .query("SELECT * FROM markets ORDER BY created_at DESC LIMIT ?")
-      .all(limit) as MarketRow[];
+    return marketsDb.listMarkets(this.db, opts);
   }
 
   searchMarkets(query: string): MarketRow[] {
-    return this.db
-      .query(
-        `SELECT m.* FROM markets m
-         JOIN markets_fts f ON m.rowid = f.rowid
-         WHERE markets_fts MATCH ?
-         ORDER BY rank LIMIT 20`,
-      )
-      .all(query) as MarketRow[];
+    return marketsDb.searchMarkets(this.db, query);
   }
 
   upsertPosition(
@@ -5112,28 +3289,15 @@ export class MarinaDB {
     confidence: number,
     reasoning: string,
   ): void {
-    const now = Date.now();
-    this.db.run(
-      `INSERT INTO market_positions (market_id, entity_name, direction, confidence, reasoning, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(market_id, entity_name)
-       DO UPDATE SET direction = excluded.direction, confidence = excluded.confidence,
-                     reasoning = excluded.reasoning, updated_at = excluded.updated_at`,
-      [marketId, entityName, direction, confidence, reasoning, now, now],
-    );
+    marketsDb.upsertPosition(this.db, marketId, entityName, direction, confidence, reasoning);
   }
 
   getMarketPositions(marketId: string): MarketPositionRow[] {
-    return this.db
-      .query("SELECT * FROM market_positions WHERE market_id = ? ORDER BY updated_at DESC")
-      .all(marketId) as MarketPositionRow[];
+    return marketsDb.getMarketPositions(this.db, marketId);
   }
 
   resolveMarket(marketId: string, outcome: string, resolvedBy: string): void {
-    this.db.run(
-      "UPDATE markets SET status = 'resolved', outcome = ?, resolved_at = ?, resolved_by = ? WHERE id = ?",
-      [outcome, Date.now(), resolvedBy, marketId],
-    );
+    marketsDb.resolveMarket(this.db, marketId, outcome, resolvedBy);
   }
 
   recordMarketScore(
@@ -5142,56 +3306,19 @@ export class MarinaDB {
     brierScore: number,
     correct: boolean,
   ): void {
-    this.db.run(
-      "INSERT INTO market_scores (market_id, entity_name, brier_score, correct, scored_at) VALUES (?, ?, ?, ?, ?)",
-      [marketId, entityName, brierScore, correct ? 1 : 0, Date.now()],
-    );
+    marketsDb.recordMarketScore(this.db, marketId, entityName, brierScore, correct);
   }
 
-  getCalibrationLeaderboard(limit = 20): {
-    entity_name: string;
-    avg_brier: number;
-    markets_scored: number;
-    correct_count: number;
-  }[] {
-    return this.db
-      .query(
-        `SELECT entity_name, AVG(brier_score) as avg_brier,
-                COUNT(*) as markets_scored, SUM(correct) as correct_count
-         FROM market_scores
-         GROUP BY entity_name
-         HAVING markets_scored >= 1
-         ORDER BY avg_brier ASC
-         LIMIT ?`,
-      )
-      .all(limit) as {
-      entity_name: string;
-      avg_brier: number;
-      markets_scored: number;
-      correct_count: number;
-    }[];
+  getCalibrationLeaderboard(
+    limit = 20,
+  ): { entity_name: string; avg_brier: number; markets_scored: number; correct_count: number }[] {
+    return marketsDb.getCalibrationLeaderboard(this.db, limit);
   }
 
-  getEntityMarketScore(entityName: string):
-    | {
-        avg_brier: number;
-        markets_scored: number;
-        correct_count: number;
-      }
-    | undefined {
-    return (
-      (this.db
-        .query(
-          `SELECT AVG(brier_score) as avg_brier, COUNT(*) as markets_scored,
-                  SUM(correct) as correct_count
-           FROM market_scores WHERE entity_name = ?`,
-        )
-        .get(entityName) as {
-        avg_brier: number;
-        markets_scored: number;
-        correct_count: number;
-      } | null) ?? undefined
-    );
+  getEntityMarketScore(
+    entityName: string,
+  ): { avg_brier: number; markets_scored: number; correct_count: number } | undefined {
+    return marketsDb.getEntityMarketScore(this.db, entityName);
   }
 
   // ─── Traits (delegated to db-agents.ts) ──────────────────────────────────
@@ -5505,29 +3632,7 @@ export class MarinaDB {
     entities: number;
     bytes: number;
   } {
-    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    const escaped = targetPath.replace(/'/g, "''");
-    this.db.exec(`VACUUM INTO '${escaped}'`);
-
-    const count = (sql: string): number => {
-      try {
-        const row = this.reader.query(sql).get() as { n: number } | null;
-        return row?.n ?? 0;
-      } catch {
-        return 0;
-      }
-    };
-    const notes = count("SELECT COUNT(*) as n FROM notes");
-    const pools = count("SELECT COUNT(DISTINCT pool_id) as n FROM notes WHERE pool_id IS NOT NULL");
-    const benchmarkRuns = count("SELECT COUNT(*) as n FROM benchmark_runs");
-    const entities = count("SELECT COUNT(*) as n FROM entities");
-    let bytes = 0;
-    try {
-      bytes = statSync(targetPath).size;
-    } catch {
-      /* stat failure is non-fatal */
-    }
-    return { notes, pools, benchmarkRuns, entities, bytes };
+    return maintenanceDb.snapshot(this.db, this.reader, targetPath);
   }
 
   /**
@@ -5568,126 +3673,7 @@ export class MarinaDB {
    * disk-size delta.
    */
   snapshotCompacted(targetPath: string, opts?: CompactionOpts): CompactionStats {
-    const {
-      dropCompactionSummaries = true,
-      compactionOlderThanDays = 0, // 0 = drop all; >0 = only older than N days
-      activityOlderThanDays = 30,
-      dropOrphanedLinks = true,
-    } = opts ?? {};
-
-    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    const escaped = targetPath.replace(/'/g, "''");
-    this.db.exec(`VACUUM INTO '${escaped}'`);
-
-    // Open the target as a separate connection for pruning. Never pollute
-    // the live DB.
-    const target = new Database(targetPath);
-    target.exec("PRAGMA foreign_keys=OFF"); // allow cascades we do manually
-
-    const before = {
-      notes: target.query("SELECT COUNT(*) AS n FROM notes").get() as { n: number },
-      links: target.query("SELECT COUNT(*) AS n FROM note_links").get() as { n: number },
-      activity: target.query("SELECT COUNT(*) AS n FROM entity_activity").get() as { n: number },
-      entities: target.query("SELECT COUNT(*) AS n FROM entities").get() as { n: number },
-    };
-    const beforeBytes = statSync(targetPath).size;
-
-    const dropped = {
-      compactionSummaries: 0,
-      orphanedLinks: 0,
-      staleActivity: 0,
-    };
-
-    // Count rows matching a predicate — used for accurate deletion reporting
-    // since bun:sqlite's `res.changes` counts trigger-fired side effects too.
-    const countRows = (sql: string, params: unknown[] = []): number => {
-      const row = target.query(sql).get(...(params as [])) as { n: number } | null;
-      return row?.n ?? 0;
-    };
-
-    // 1. Drop compaction-summary notes. Skills, reflections, high-importance
-    //    notes, and pool-deposited notes are explicitly preserved even if
-    //    they (somehow) start with [compaction] — paranoid belt-and-suspenders.
-    if (dropCompactionSummaries) {
-      const ageCutoff =
-        compactionOlderThanDays > 0
-          ? Date.now() - compactionOlderThanDays * 86_400_000
-          : Date.now() + 1; // future → matches everything
-      dropped.compactionSummaries = countRows(
-        `SELECT COUNT(*) AS n FROM notes
-           WHERE content LIKE '[compaction]%'
-             AND created_at < ?
-             AND note_type NOT IN ('skill', 'reflection')
-             AND importance < 7
-             AND pool_id IS NULL`,
-        [ageCutoff],
-      );
-      target.run(
-        `DELETE FROM notes
-           WHERE content LIKE '[compaction]%'
-             AND created_at < ?
-             AND note_type NOT IN ('skill', 'reflection')
-             AND importance < 7
-             AND pool_id IS NULL`,
-        [ageCutoff],
-      );
-    }
-
-    // 2. Drop orphaned note_links (source or target vanished — common
-    //    after compaction-summary pruning above).
-    if (dropOrphanedLinks) {
-      dropped.orphanedLinks = countRows(
-        `SELECT COUNT(*) AS n FROM note_links
-           WHERE source_id NOT IN (SELECT id FROM notes)
-              OR target_id NOT IN (SELECT id FROM notes)`,
-      );
-      target.run(
-        `DELETE FROM note_links
-           WHERE source_id NOT IN (SELECT id FROM notes)
-              OR target_id NOT IN (SELECT id FROM notes)`,
-      );
-    }
-
-    // 3. Drop stale entity_activity rows.
-    if (activityOlderThanDays > 0) {
-      const activityCutoff = Date.now() - activityOlderThanDays * 86_400_000;
-      dropped.staleActivity = countRows(
-        "SELECT COUNT(*) AS n FROM entity_activity WHERE last_seen < ?",
-        [activityCutoff],
-      );
-      target.run("DELETE FROM entity_activity WHERE last_seen < ?", [activityCutoff]);
-    }
-
-    // 4. Reclaim space. The FTS5 triggers fire on note DELETE and keep the
-    //    virtual index in sync automatically.
-    target.exec("VACUUM");
-
-    const after = {
-      notes: target.query("SELECT COUNT(*) AS n FROM notes").get() as { n: number },
-      links: target.query("SELECT COUNT(*) AS n FROM note_links").get() as { n: number },
-      activity: target.query("SELECT COUNT(*) AS n FROM entity_activity").get() as { n: number },
-      entities: target.query("SELECT COUNT(*) AS n FROM entities").get() as { n: number },
-    };
-    target.close();
-    const afterBytes = statSync(targetPath).size;
-
-    return {
-      before: {
-        notes: before.notes.n,
-        links: before.links.n,
-        activity: before.activity.n,
-        entities: before.entities.n,
-        bytes: beforeBytes,
-      },
-      after: {
-        notes: after.notes.n,
-        links: after.links.n,
-        activity: after.activity.n,
-        entities: after.entities.n,
-        bytes: afterBytes,
-      },
-      dropped,
-    };
+    return maintenanceDb.snapshotCompacted(this.db, targetPath, opts);
   }
 
   close(): void {
@@ -5703,547 +3689,4 @@ export class MarinaDB {
       /* already closed */
     }
   }
-}
-
-// ─── Row Types (remaining — channel/board/group/task/note/agent types moved to modules) ──
-
-export interface CompactionOpts {
-  /** Drop `[compaction]`-prefixed transient summary notes. Default true. */
-  dropCompactionSummaries?: boolean;
-  /** Only drop compaction notes older than this many days. 0 = drop all. Default 0. */
-  compactionOlderThanDays?: number;
-  /** Drop entity_activity rows older than this many days. Default 30. */
-  activityOlderThanDays?: number;
-  /** Drop note_links whose source or target no longer exists. Default true. */
-  dropOrphanedLinks?: boolean;
-}
-
-export interface CompactionStats {
-  before: { notes: number; links: number; activity: number; entities: number; bytes: number };
-  after: { notes: number; links: number; activity: number; entities: number; bytes: number };
-  dropped: { compactionSummaries: number; orphanedLinks: number; staleActivity: number };
-}
-
-export interface MacroRow {
-  id: number;
-  name: string;
-  author_id: string;
-  command: string;
-  created_at: number;
-  updated_at: number;
-}
-
-interface RoomSourceRow {
-  room_id: string;
-  version: number;
-  source: string;
-  author_id: string;
-  author_name: string;
-  valid: number;
-  created_at: number;
-}
-
-interface RoomTemplateRow {
-  name: string;
-  source: string;
-  author_id: string;
-  author_name: string;
-  description: string;
-  created_at: number;
-}
-
-interface UserRow {
-  id: string;
-  name: string;
-  created_at: number;
-  last_login: number;
-  rank: number;
-  properties: string;
-  /** better-auth subject bound to this named user (null unless MARINA_AUTH on). */
-  auth_subject?: string | null;
-  /** Verified email from the bound identity (used for admin-by-email). */
-  auth_email?: string | null;
-}
-
-interface BanRow {
-  name: string;
-  reason: string;
-  banned_by: string;
-  created_at: number;
-}
-
-interface AdapterLinkRow {
-  adapter: string;
-  external_id: string;
-  user_id: string;
-  created_at: number;
-}
-
-export interface AdapterUserMappingRow {
-  platform: string;
-  platform_user_id: string;
-  entity_name: string;
-  created_at: number;
-}
-
-export type FlywheelBindingState =
-  | "creating"
-  | "running"
-  | "hibernated"
-  | "unavailable"
-  | "stopping";
-
-export interface FlywheelBindingRow {
-  entity_id: string;
-  session_id: string;
-  sandbox_id: string;
-  image: string;
-  keep_alive: number;
-  state: FlywheelBindingState;
-  published_url: string | null;
-  active_project_id: string | null;
-  guest_cwd: string | null;
-  last_error: string | null;
-  created_at: number;
-  updated_at: number;
-  reconciled_at: number | null;
-  network_profile: string;
-  network_profile_enforced: number;
-  last_activity_at: number | null;
-  lifecycle_expires_at: number | null;
-  hibernated_reason: string | null;
-}
-
-export interface FlywheelOperationSummary {
-  operation: string;
-  outcome: string;
-  count: number;
-  avg_duration_ms: number;
-  byte_count: number;
-}
-
-export interface FlywheelCredentialBindingRow {
-  id: string;
-  entity_id: string;
-  sandbox_id: string;
-  profile_name: string;
-  purpose: string;
-  state: string;
-  expires_at: number | null;
-  last_error: string | null;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface ExperimentRow {
-  id: number;
-  name: string;
-  description: string;
-  config: string;
-  status: string;
-  creator_name: string;
-  required_agents: number;
-  time_limit: number | null;
-  created_at: number;
-  started_at: number | null;
-  completed_at: number | null;
-}
-
-export type EvolutionSessionStatus = "draft" | "active" | "paused" | "completed";
-
-export interface EvolutionSessionRow {
-  id: number;
-  experiment_id: number;
-  objective: string;
-  protocol: string;
-  status: EvolutionSessionStatus;
-  created_by: string;
-  created_at: number;
-  started_at: number | null;
-  paused_at: number | null;
-  completed_at: number | null;
-}
-
-export interface EvolutionRunRow {
-  id: number;
-  session_id: number;
-  sequence: number;
-  parent_run_id: number | null;
-  hypothesis: string;
-  candidate_ref: string;
-  proposed_by: string;
-  status: "proposed" | "evaluated" | "accepted" | "rejected";
-  evaluator_name: string | null;
-  reviewer_name: string | null;
-  evidence: string;
-  decision: "accept" | "reject" | "inconclusive" | null;
-  created_at: number;
-  evaluated_at: number | null;
-  decided_at: number | null;
-}
-
-export interface EvolutionActivitySummary {
-  participants: string[];
-  activeParticipants: number;
-  meaningfulActions: number;
-  communications: number;
-  toolCalls: number;
-  marinaToolCalls: number;
-  averageToolLatencyMs: number | null;
-  maximumToolLatencyMs: number | null;
-  /** Reserved until provider-neutral per-session token attribution is durable. */
-  inputTokens: number | null;
-  outputTokens: number | null;
-  costUsd: number | null;
-}
-
-function emptyEvolutionActivity(): EvolutionActivitySummary {
-  return {
-    participants: [],
-    activeParticipants: 0,
-    meaningfulActions: 0,
-    communications: 0,
-    toolCalls: 0,
-    marinaToolCalls: 0,
-    averageToolLatencyMs: null,
-    maximumToolLatencyMs: null,
-    inputTokens: null,
-    outputTokens: null,
-    costUsd: null,
-  };
-}
-
-interface ExperimentParticipantRow {
-  experiment_id: number;
-  entity_name: string;
-  joined_at: number;
-}
-
-interface ExperimentResultRow {
-  id: number;
-  experiment_id: number;
-  entity_name: string;
-  metric_name: string;
-  metric_value: number;
-  arm: string;
-  recorded_at: number;
-}
-
-interface CommandSourceRow {
-  id: string;
-  name: string;
-  source: string;
-  version: number;
-  valid: number;
-  created_by: string;
-  created_at: number;
-}
-
-interface CommandHistoryRow {
-  id: number;
-  command_id: string;
-  source: string;
-  version: number;
-  edited_by: string;
-  edited_at: number;
-}
-
-interface ConnectorRow {
-  id: string;
-  name: string;
-  transport: string;
-  url: string | null;
-  command: string | null;
-  args: string | null;
-  auth_type: string | null;
-  auth_data: string | null;
-  lifecycle: string;
-  created_by: string;
-  created_at: number;
-  status: string;
-}
-
-interface AssetRow {
-  id: string;
-  entity_name: string;
-  filename: string;
-  mime_type: string;
-  size: number;
-  storage_key: string;
-  metadata: string;
-  created_at: number;
-}
-
-interface CanvasRow {
-  id: string;
-  name: string;
-  description: string;
-  scope: string;
-  scope_id: string | null;
-  creator_name: string;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface CanvasNodeRow {
-  id: string;
-  canvas_id: string;
-  type: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  asset_id: string | null;
-  data: string;
-  creator_name: string;
-  parent_node_id: string | null;
-  created_at: number;
-  updated_at: number;
-}
-
-export type CanvasIntentStatus = "pending" | "active" | "done" | "failed";
-
-export interface CanvasIntentData {
-  prompt: string;
-  status: CanvasIntentStatus;
-  claimedBy?: string;
-  claimedAt?: number;
-  result?: string;
-  resultNodeId?: string;
-  failReason?: string;
-}
-
-export interface CanvasIntentSummary {
-  nodeId: string;
-  canvasId: string;
-  canvasName: string;
-  type: string;
-  creatorName: string;
-  assetId: string | null;
-  parentNodeId: string | null;
-  createdAt: number;
-  updatedAt: number;
-  intent: CanvasIntentData;
-}
-
-export type CanvasIntentClaimResult =
-  | { ok: true; node: CanvasNodeRow; intent: CanvasIntentData }
-  | {
-      ok: false;
-      reason: "not_found" | "no_intent" | "not_pending";
-      status?: CanvasIntentStatus;
-    };
-
-export type CanvasIntentCompleteResult =
-  | {
-      ok: true;
-      node: CanvasNodeRow;
-      resultNode: CanvasNodeRow;
-      intent: CanvasIntentData;
-    }
-  | {
-      ok: false;
-      reason: "not_found" | "no_intent" | "not_active";
-      status?: CanvasIntentStatus;
-    };
-
-export type CanvasIntentFailResult =
-  | { ok: true; node: CanvasNodeRow; intent: CanvasIntentData }
-  | {
-      ok: false;
-      reason: "not_found" | "no_intent" | "not_active";
-      status?: CanvasIntentStatus;
-    };
-
-export function parseCanvasIntent(data: string): CanvasIntentData | undefined {
-  try {
-    return readCanvasIntent(JSON.parse(data));
-  } catch {
-    return undefined;
-  }
-}
-
-function readCanvasIntent(value: unknown): CanvasIntentData | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const intent = (value as { intent?: unknown }).intent;
-  if (!intent || typeof intent !== "object") return undefined;
-  const raw = intent as Record<string, unknown>;
-  if (typeof raw.prompt !== "string" || !raw.prompt.trim()) return undefined;
-  if (!["pending", "active", "done", "failed"].includes(String(raw.status))) return undefined;
-  return raw as unknown as CanvasIntentData;
-}
-
-export interface CanvasEdgeRow {
-  id: string;
-  canvas_id: string;
-  source_id: string;
-  target_id: string;
-  relationship: string;
-  data: string | null;
-  creator_name: string;
-  created_at: number;
-}
-
-export interface BenchmarkRunRow {
-  id: string;
-  benchmark: string;
-  config_hash: string;
-  config_json: string;
-  score: number | null;
-  breakdown_json: string | null;
-  answered: number;
-  total: number;
-  status: string;
-  agent_id: string | null;
-  started_at: number;
-  completed_at: number | null;
-  duration_ms: number | null;
-}
-
-interface ShellLogRow {
-  id: number;
-  entity_id: string;
-  binary: string;
-  args: string;
-  exit_code: number | null;
-  output_length: number;
-  created_at: number;
-}
-
-export interface CodingSessionRow {
-  id: string;
-  title: string;
-  workspace_root: string;
-  status: string;
-  mode: string;
-  created_by: string;
-  created_at: number;
-  updated_at: number;
-  writer: string | null;
-  /** The autonomous coding agent bound to this session (single-agent driver). */
-  agent: string | null;
-  /** Dispatch strategy: "single" (default) | "crew" | future multi-agent. */
-  driver: string | null;
-  /** Explicit execution provider. Existing sessions default to trusted local mode. */
-  execution_target: "local" | "flywheel";
-  /**
-   * Marina-managed git worktree bound to this session (opt-in). NULL means the
-   * session works directly in workspace_root (default, byte-identical to legacy).
-   */
-  worktree_path: string | null;
-  /** The marina/session-<id> branch backing worktree_path, or NULL when off. */
-  worktree_branch: string | null;
-}
-
-export interface CodingProjectRow {
-  id: string;
-  entity_id: string;
-  sandbox_id: string;
-  name: string;
-  source_type: "empty" | "git" | "archive";
-  source_locator: string | null;
-  guest_path: string;
-  active_branch: string | null;
-  base_revision: string | null;
-  dirty: number;
-  has_unexported_changes: number;
-  exported_fingerprint: string | null;
-  last_status_at: number | null;
-  last_exported_at: number | null;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface CodingServiceRow {
-  id: string;
-  entity_id: string;
-  sandbox_id: string;
-  project_id: string | null;
-  session_id: string;
-  name: string;
-  command_json: string;
-  guest_cwd: string;
-  log_path: string;
-  pid: number | null;
-  process_identity: string | null;
-  port: number | null;
-  status: string;
-  restart_policy: string;
-  published_url: string | null;
-  published_subdomain: string | null;
-  publication_expires_at: number | null;
-  last_error: string | null;
-  started_at: number | null;
-  stopped_at: number | null;
-  created_at: number;
-  updated_at: number;
-}
-
-export interface CodingServiceProbeRow {
-  id: string;
-  service_id: string;
-  entity_id: string;
-  sandbox_id: string;
-  path: string;
-  http_status: number | null;
-  duration_ms: number;
-  success: number;
-  error: string | null;
-  created_at: number;
-}
-
-export interface CodingEventRow {
-  id: string;
-  session_id: string;
-  actor: string;
-  kind: string;
-  payload_json: string;
-  created_at: number;
-}
-
-export interface CodingArtifactRow {
-  id: string;
-  session_id: string;
-  kind: string;
-  title: string;
-  status: string;
-  content_text: string;
-  metadata_json: string;
-  created_by: string;
-  applied_by: string | null;
-  created_at: number;
-  updated_at: number;
-  applied_at: number | null;
-}
-
-interface GatewayRow {
-  id: string;
-  name: string;
-  url: string;
-  created_by: string;
-  created_at: number;
-  status: string;
-}
-
-export interface MarketRow {
-  id: string;
-  room_id: string;
-  question: string;
-  category: string;
-  status: string;
-  outcome: string | null;
-  resolved_at: number | null;
-  resolved_by: string | null;
-  created_at: number;
-}
-
-export interface MarketPositionRow {
-  id: number;
-  market_id: string;
-  entity_name: string;
-  direction: string;
-  confidence: number;
-  reasoning: string;
-  created_at: number;
-  updated_at: number;
 }

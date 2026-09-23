@@ -3,11 +3,15 @@
 
 import type { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
+import { tryLog } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import {
   signRecordJson as signRecord,
   verifyRecordJson as verifyRecord,
 } from "../net/federation-crypto";
 import { escapeLike } from "./fts";
+
+const logger = new Logger();
 
 export const ASSOCIATION_EVENT_KINDS = [
   "created",
@@ -357,10 +361,10 @@ export function projectAssociation(
       continue;
     let role: string | null = null;
     if (event.kind === "joined") {
-      try {
+      tryLog(logger, "associations", `Unparseable join payload on event ${event.id}`, () => {
         const data = JSON.parse(event.data_json) as { role?: unknown };
         if (typeof data.role === "string" && data.role.trim()) role = data.role;
-      } catch {}
+      });
     }
     const key = `${event.subject_kind}\u0000${event.subject_ref}`;
     participants.set(key, {

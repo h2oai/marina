@@ -7,6 +7,11 @@ import type { EngineEvent, Entity, EntityId, RoomId } from "../types";
 
 // ─── Entity Persistence ─────────────────────────────────────────────────
 
+/** True when an entity row with this (transient) id is currently persisted. */
+export function entityExists(db: Database, id: string): boolean {
+  return db.query("SELECT 1 FROM entities WHERE id = ?").get(id) !== null;
+}
+
 export function saveEntity(db: Database, entity: Entity): void {
   db.run(
     `INSERT OR REPLACE INTO entities (id, kind, name, short, long, room, properties, inventory, created_at)

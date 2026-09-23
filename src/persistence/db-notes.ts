@@ -1411,6 +1411,57 @@ export function countNotes(db: Database, entityName: string, noteType?: string):
   ).c;
 }
 
+// ─── Memory quality summary ──────────────────────────────────────────────
+
+export function getMemoryQualitySummary(
+  db: Database,
+  entityName?: string,
+): {
+  total: number;
+  unverified: number;
+  disputed: number;
+  superseded: number;
+  staleSources: number;
+  contradictions: number;
+} {
+  const where = entityName ? "WHERE entity_name = ?" : "";
+  const args = entityName ? [entityName] : [];
+  const row = db
+    .query(
+      `SELECT COUNT(*) total,
+       SUM(CASE WHEN verification_status='unverified' THEN 1 ELSE 0 END) unverified,
+       SUM(CASE WHEN verification_status='disputed' THEN 1 ELSE 0 END) disputed,
+       SUM(CASE WHEN verification_status='superseded' THEN 1 ELSE 0 END) superseded
+       FROM notes ${where}`,
+    )
+    .get(...args) as { total: number; unverified: number; disputed: number; superseded: number };
+  const sourceWhere = entityName ? "AND n.entity_name = ?" : "";
+  const staleSources = (
+    db
+      .query(
+        `SELECT COUNT(DISTINCT ns.note_id) c FROM note_sources ns JOIN notes n ON n.id=ns.note_id
+       WHERE COALESCE(ns.observed_at, ns.retrieved_at) < ? ${sourceWhere}`,
+      )
+      .get(Date.now() - 90 * 86_400_000, ...args) as { c: number }
+  ).c;
+  const entities = entityName
+    ? [entityName]
+    : (db.query("SELECT DISTINCT entity_name FROM notes").all() as { entity_name: string }[]).map(
+        (r) => r.entity_name,
+      );
+  const contradictions = entityName
+    ? entities.reduce((sum, name) => sum + findMemoryContradictions(db, name).length, 0)
+    : listContradictionCases(db, "open", 10_000).length;
+  return {
+    total: row.total,
+    unverified: row.unverified ?? 0,
+    disputed: row.disputed ?? 0,
+    superseded: row.superseded ?? 0,
+    staleSources,
+    contradictions,
+  };
+}
+
 // ─── Row Types ──────────────────────────────────────────────────────────
 
 export interface NoteRow {

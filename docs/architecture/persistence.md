@@ -14,6 +14,51 @@
 
 See also: `docs/architecture/memory.md` (memory tables, twin lifecycle), `docs/guides/identity.md`.
 
+## Facade and store interfaces
+
+`src/persistence/database.ts` is a thin facade: `MarinaDB` owns the two connections (writer `db`, read-only `reader`), `open`/migrate/`close`, `transaction()`, the durable-key cache (`durableEntityKey()`), and one-line delegates. Every query lives in a standalone `fn(db: Database, …)` in a `db-*.ts` module. The facade is where entity ids resolve to durable keys — a module never calls `durableEntityKey()`; it receives an already-resolved `entityKey` (or `authorKey`) parameter and the facade passes `this.durableEntityKey(id)` at the call site. Modules that only read take `reader`; the few that write and then read back (`createCodingProject`, `snapshot`) take both.
+
+Each module has a matching interface in `src/persistence/interfaces/` — explicit method signatures, not `Pick<MarinaDB, …>`, so a test can implement one with a plain object. `MarinaDB implements MarinaStores` (the aggregate that extends every store); consumers can start typing a dependency as `NotesStore` instead of `MarinaDB` without any runtime change. Each store file also exports a runtime tuple of its method names (`NOTES_STORE_METHODS` …) plus an `ExactKeys` compile-time proof that the tuple covers the interface; `STORE_METHOD_MANIFEST` in `interfaces/index.ts` aggregates them and `test/persistence-interfaces.test.ts` asserts that every public method on `MarinaDB.prototype` is claimed by exactly one interface (no unclaimed, no phantom, no duplicates), so the interfaces cannot drift from the facade silently.
+
+| Interface | Module(s) | Scope |
+| --- | --- | --- |
+| `CoreStore` | `database.ts` | `durableEntityKey`, `durableKeyForName`, `transaction`, `checkpoint`, `close` |
+| `MaintenanceStore` | `db-maintenance.ts` | `tableExists`, `tableColumns`, `deleteBatch` (retention), `snapshot`, `snapshotCompacted` |
+| `EntitiesStore` | `db-entities.ts` | entities, room KV, sessions, event log, trace judgments, activity, entity migration |
+| `EvidenceStore` | `db-evidence.ts` | evidence receipt chain |
+| `LogsStore` | `db-logs.ts` | structured logs |
+| `UsersStore` | `db-users.ts` | world accounts, bans, adapter links, adapter user mappings |
+| `PrincipalsStore` | `db-principals.ts` | principals, workload credentials |
+| `NotesStore` | `db-notes.ts` | legacy notes, core memory, note links, pools, memory API keys, quality summary |
+| `MemoryServiceStore` | `db-memory-service.ts`, `db-memory-admission.ts`, `db-memory-retention.ts`, `db-principals.ts` | repository handle, admission, credentials, receipt compaction |
+| `TasksStore` | `db-tasks.ts` | tasks, claims, projects, legacy task-standing reads |
+| `StandingStore` / `CompetenceStore` / `WitnessStore` | `db-standing.ts` / `db-competence.ts` / `db-witness.ts` | durable-keyed reputation ledgers |
+| `ChannelsStore` | `db-channels.ts` | channels, boards, groups, global search |
+| `CrewsStore` | `db-crews.ts` | crews |
+| `DirectMessagesStore` | `db-direct-messages.ts` | durable direct-message receipts |
+| `MacrosStore` | `db-macros.ts` | macros (`MACRO_COLUMNS` projection) |
+| `RoomsStore` | `db-rooms.ts` | room sources, room templates, `clearDynamicRooms` |
+| `CommandsStore` | `db-commands.ts` | dynamic commands + history, `clearDynamicCommands` |
+| `ConnectorsStore` / `GatewaysStore` | `db-connectors.ts` / `db-gateways.ts` | connectors; gateways + bridges |
+| `AgentsStore` | `db-agents.ts` | traits, roles, agent configs, API keys, adapters |
+| `SettingsStore` | `db-agents.ts`, `db-meta.ts` | settings table, default model, `meta` key-value |
+| `FederationStore` | `db-federation.ts` | peers, trust, world id |
+| `WorldVariantsStore` | `db-world-variants.ts` | world variants (promotion writes an evidence receipt in one transaction) |
+| `FeedStore` / `ChronicleStore` | `db-feed.ts` / `db-chronicle.ts` | feed events; chronicle |
+| `BenchmarksStore` | `db-benchmarks.ts` | benchmark runs |
+| `AlertsStore` | `db-alerts.ts` | operational alerts |
+| `TelemetryStore` | `db-telemetry.ts` | productivity sessions, primitive usage, prompt outcomes |
+| `FlywheelStore` | `db-flywheel.ts` | flywheel bindings, sandbox projects/services, probes, operations, credential bindings |
+| `CodingStore` | `db-coding.ts` | coding sessions, events, artifacts |
+| `ExperimentsStore` / `EvolutionStore` | `db-experiments.ts` / `db-evolution.ts` | experiments; evolution sessions and runs |
+| `AssetsStore` / `MediaStore` | `db-assets.ts` / `db-media.ts` | assets; media jobs |
+| `CanvasStore` | `db-canvas.ts` | canvases, nodes, edges, intents (`parseCanvasIntent`) |
+| `ShellStore` | `db-shell.ts` | shell allowlist, shell log |
+| `MarketsStore` | `db-markets.ts` | markets, positions, calibration scores |
+| `JourneysStore`, `CognitiveEventsStore`, `IntellectsStore`, `AssociationsStore`, `ReproductionStore`, `MeshesStore`, `EconomicsStore`, `SimulationsStore`, `MutationsStore` | the same-named `db-*.ts` | one interface per module |
+
+Adding a delegate: put the query in the module, add the one-line delegate to `MarinaDB`, add the method to the matching interface and its `*_STORE_METHODS` tuple — the `ExactKeys` check and the drift test fail until all three agree. Row types are declared in their module and re-exported from `database.ts` so importers keep one path.
+
 ## Command phase: per-entity chains and a wall-clock budget (2026-09-22)
 
 `processCommand` is async; the round-robin used to fire it un-awaited, so one entity's queued commands could interleave past their first `await`. `Engine.dispatchQueued` now keeps a per-entity promise tail (`commandChains`): an idle entity's command starts synchronously, a busy entity's is chained after its previous one, so a single entity runs strictly FIFO while different entities still interleave. A rejection that escapes `processCommand` before the handler's own try (modal routing, parse, context build) is routed to the tick error path (`recordTickError`) instead of becoming an unhandled rejection. The command phase stops dispatching after `COMMAND_PHASE_BUDGET_MS` (150 ms, `MARINA_COMMAND_PHASE_BUDGET_MS`) and carries the per-entity remainder to the next tick in order; `MAX_COMMANDS_PER_TICK` still bounds the count. `drainCommands()` / `queuedCommandCount` are test seams. The macro fan-out stays un-awaited (its tests expect synchronous completion).
