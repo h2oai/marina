@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { EngineEvent } from "../types";
 import type { TraceSpanView, TraceStatus, TraceView } from "./trace-projection";
 
 export interface TraceLatencySummary {
@@ -31,6 +32,40 @@ export interface TraceAggregate {
   cost: { samples: number; totalUsd: number; averageUsd?: number };
 }
 
+/** One continuation-prompt section of one agent turn (`agent_turn_start.promptSections[i]`). */
+export interface PromptSectionSample {
+  name: string;
+  bytes: number;
+  /** The section did not fit the budget this turn and was re-queued (not dropped). */
+  deferred: boolean;
+}
+
+/** The prompt-budget metrics one `agent_turn_start` event carried. */
+export interface PromptTurnSample {
+  /** Total continuation-prompt bytes actually sent; absent on older producers. */
+  promptBytes?: number;
+  sections: readonly PromptSectionSample[];
+}
+
+/**
+ * Per-section prompt mechanics over a window of turns. Byte statistics
+ * (`meanBytes`, `p95Bytes`, `share`) cover the appearances that REACHED the
+ * prompt (non-deferred) — a deferred section's reported size is what it would
+ * have cost, not what was sent — while `deferralRate` counts every appearance.
+ */
+export interface PromptSectionAggregate {
+  name: string;
+  /** Turns in which the section appeared (deferred or not). */
+  turns: number;
+  meanBytes: number;
+  /** Nearest-rank p95 of the non-deferred byte sizes. */
+  p95Bytes: number;
+  /** deferred appearances / `turns`, 0..1. */
+  deferralRate: number;
+  /** Non-deferred bytes of this section / total prompt bytes of the window, 0..1. */
+  share: number;
+}
+
 export interface TraceAnalytics {
   schema: "marina.trace.analytics.v1";
   tracesObserved: number;
@@ -39,6 +74,10 @@ export interface TraceAnalytics {
   agentModels: TraceAggregate[];
   routes: TraceAggregate[];
   tools: TraceAggregate[];
+  /** Agent turns (spans) that carried `promptSections`. */
+  promptTurnsSampled: number;
+  /** Per-section prompt-budget mechanics over those turns, largest share first. */
+  promptSections: PromptSectionAggregate[];
 }
 
 /**
@@ -46,6 +85,13 @@ export interface TraceAnalytics {
  * Partial spans remain visible in `observed` but are excluded from rates and latency.
  */
 export function analyzeTraces(traces: readonly TraceView[]): TraceAnalytics {
+  const promptTurns = traces.flatMap((trace) =>
+    trace.spans
+      .filter((span) => span.kind === "agent_turn")
+      .map(promptTurnSampleFromSpan)
+      .filter((sample): sample is PromptTurnSample => sample !== undefined),
+  );
+  const prompt = aggregatePromptSections(promptTurns);
   return {
     schema: "marina.trace.analytics.v1",
     tracesObserved: traces.length,
@@ -70,7 +116,100 @@ export function analyzeTraces(traces: readonly TraceView[]): TraceAnalytics {
       ),
     ),
     tools: aggregate(traces.flatMap((trace) => trace.spans.filter((span) => span.kind === "tool"))),
+    promptTurnsSampled: prompt.turnsSampled,
+    promptSections: prompt.sections,
   };
+}
+
+// ─── Prompt sections ────────────────────────────────────────────────────────
+
+function isPromptSectionSample(value: unknown): value is PromptSectionSample {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.name === "string" &&
+    v.name.length > 0 &&
+    typeof v.bytes === "number" &&
+    Number.isFinite(v.bytes) &&
+    v.bytes >= 0 &&
+    typeof v.deferred === "boolean"
+  );
+}
+
+function promptTurnSample(promptBytes: unknown, sections: unknown): PromptTurnSample | undefined {
+  if (!Array.isArray(sections)) return undefined;
+  const valid = sections.filter(isPromptSectionSample);
+  if (valid.length === 0) return undefined;
+  const total =
+    typeof promptBytes === "number" && Number.isFinite(promptBytes) && promptBytes >= 0
+      ? promptBytes
+      : undefined;
+  return { ...(total === undefined ? {} : { promptBytes: total }), sections: valid };
+}
+
+/** Read the prompt metrics an `agent_turn` span carries (`promptSections` is JSON on the span). */
+export function promptTurnSampleFromSpan(span: TraceSpanView): PromptTurnSample | undefined {
+  if (span.kind !== "agent_turn") return undefined;
+  const raw = span.attributes.promptSections;
+  if (typeof raw !== "string") return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  return promptTurnSample(span.attributes.promptBytes, parsed);
+}
+
+/** Read the prompt metrics straight off an `agent_turn_start` event (no projection needed). */
+export function promptTurnSampleFromEvent(event: EngineEvent): PromptTurnSample | undefined {
+  if (event.type !== "agent_turn_start") return undefined;
+  return promptTurnSample(event.promptBytes, event.promptSections);
+}
+
+/**
+ * Aggregate per-section prompt mechanics over a window of turns. The share
+ * denominator is the window's total prompt bytes — `promptBytes` per turn when
+ * the producer reported it, else that turn's non-deferred section bytes — so
+ * shares of one window sum to ≤ 1 (framing bytes account for the rest).
+ * Sections are ordered by share, then by name; deterministic for equal input.
+ */
+export function aggregatePromptSections(turns: readonly PromptTurnSample[]): {
+  turnsSampled: number;
+  totalPromptBytes: number;
+  sections: PromptSectionAggregate[];
+} {
+  const grouped = new Map<string, { turns: number; deferred: number; sent: number[] }>();
+  let totalPromptBytes = 0;
+  for (const turn of turns) {
+    let sentBytes = 0;
+    for (const section of turn.sections) {
+      const entry = grouped.get(section.name) ?? { turns: 0, deferred: 0, sent: [] };
+      entry.turns++;
+      if (section.deferred) entry.deferred++;
+      else {
+        entry.sent.push(section.bytes);
+        sentBytes += section.bytes;
+      }
+      grouped.set(section.name, entry);
+    }
+    totalPromptBytes += turn.promptBytes ?? sentBytes;
+  }
+  const sections = [...grouped.entries()]
+    .map(([name, entry]): PromptSectionAggregate => {
+      const sorted = [...entry.sent].sort((a, b) => a - b);
+      const sentTotal = sum(sorted);
+      return {
+        name,
+        turns: entry.turns,
+        meanBytes: sorted.length > 0 ? sentTotal / sorted.length : 0,
+        p95Bytes: sorted.length > 0 ? percentile(sorted, 0.95) : 0,
+        deferralRate: entry.turns > 0 ? entry.deferred / entry.turns : 0,
+        share: totalPromptBytes > 0 ? sentTotal / totalPromptBytes : 0,
+      };
+    })
+    .sort((a, b) => b.share - a.share || a.name.localeCompare(b.name));
+  return { turnsSampled: turns.length, totalPromptBytes, sections };
 }
 
 function aggregate(spans: readonly TraceSpanView[]): TraceAggregate[] {

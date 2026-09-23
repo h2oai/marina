@@ -18,6 +18,7 @@ import type {
 } from "../lib/types";
 import { parseCacheHitAttribute, parseReceiptAttribute } from "./memory-ops/format";
 import { MemoryReceiptBlock } from "./memory-ops/MemoryReceiptBlock";
+import { formatBytes } from "./ops/format";
 
 const STATUS_CLASS: Record<TraceStatus, string> = {
   running: "text-cyan-300",
@@ -515,6 +516,106 @@ function memoryReceiptDetails(span: TraceSpanView) {
   };
 }
 
+export interface PromptSectionView {
+  name: string;
+  bytes: number;
+  deferred: boolean;
+}
+
+/**
+ * The prompt-budget metrics an agent turn carried (`agent_turn_start`):
+ * `promptSections` is compact JSON on the span, the byte totals are numbers.
+ * Malformed or absent → undefined (no block). Sizes only, never prompt text.
+ */
+export function parsePromptSectionsAttribute(
+  span: TraceSpanView,
+): { promptBytes?: number; sections: PromptSectionView[] } | undefined {
+  if (span.kind !== "agent_turn") return undefined;
+  const raw = span.attributes.promptSections;
+  if (typeof raw !== "string") return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed)) return undefined;
+  const sections = parsed.filter(
+    (item): item is PromptSectionView =>
+      typeof item === "object" &&
+      item !== null &&
+      typeof (item as PromptSectionView).name === "string" &&
+      typeof (item as PromptSectionView).bytes === "number" &&
+      typeof (item as PromptSectionView).deferred === "boolean",
+  );
+  if (sections.length === 0) return undefined;
+  const promptBytes = span.attributes.promptBytes;
+  return {
+    ...(typeof promptBytes === "number" ? { promptBytes } : {}),
+    sections,
+  };
+}
+
+function PromptSectionsBlock({
+  span,
+  promptBytes,
+  sections,
+}: {
+  span: TraceSpanView;
+  promptBytes?: number;
+  sections: PromptSectionView[];
+}) {
+  const deferred = sections.filter((section) => section.deferred).length;
+  const fixed = [
+    typeof span.attributes.systemPromptBytes === "number"
+      ? `system ${formatBytes(span.attributes.systemPromptBytes)}`
+      : undefined,
+    typeof span.attributes.residentSchemaBytes === "number"
+      ? `schemas ${formatBytes(span.attributes.residentSchemaBytes)}`
+      : undefined,
+  ].filter(Boolean);
+  return (
+    <section
+      className="mt-1 border-t border-border/60 pt-1 text-[9px]"
+      aria-label="Prompt sections"
+      data-testid={`prompt-sections-${span.spanId}`}
+    >
+      <div className="flex flex-wrap items-center gap-x-2 text-text-dim">
+        <span className="uppercase tracking-wider">prompt</span>
+        <span className="text-text">
+          {promptBytes === undefined ? "—" : formatBytes(promptBytes)}
+        </span>
+        <span>
+          {sections.length} section{sections.length === 1 ? "" : "s"}
+          {deferred > 0 && <span className="text-amber-300"> · {deferred} deferred</span>}
+        </span>
+        {fixed.length > 0 && <span>· {fixed.join(" · ")}</span>}
+      </div>
+      <ul className="mt-0.5 flex flex-wrap gap-1">
+        {sections.map((section) => (
+          <li
+            key={section.name}
+            data-deferred={section.deferred ? "true" : "false"}
+            className={`rounded border px-1 py-px leading-tight ${
+              section.deferred
+                ? "border-amber-300/50 text-amber-300"
+                : "border-border text-text-dim"
+            }`}
+            title={
+              section.deferred
+                ? `${section.name}: deferred past the budget (${formatBytes(section.bytes)} re-queued)`
+                : `${section.name}: ${formatBytes(section.bytes)}`
+            }
+          >
+            {section.name} <span className="tabular-nums">{formatBytes(section.bytes)}</span>
+            {section.deferred && " · deferred"}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function TraceRow({
   trace,
   selected,
@@ -568,6 +669,7 @@ function SpanTree({ trace }: { trace: TraceView }) {
         const routing = routeDetails(span);
         const metrics = metricDetails(span);
         const memory = memoryReceiptDetails(span);
+        const prompt = parsePromptSectionsAttribute(span);
         return (
           <div
             key={span.spanId}
@@ -600,6 +702,13 @@ function SpanTree({ trace }: { trace: TraceView }) {
                 receipt={memory.receipt}
                 cacheHit={memory.cacheHit}
                 surface={memory.surface}
+              />
+            )}
+            {prompt && (
+              <PromptSectionsBlock
+                span={span}
+                promptBytes={prompt.promptBytes}
+                sections={prompt.sections}
               />
             )}
           </div>

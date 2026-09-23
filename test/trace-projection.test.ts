@@ -24,6 +24,13 @@ describe("projectTraces", () => {
         name: "Ada",
         origin: "request",
         model: "openai/gpt-4o",
+        promptBytes: 4300,
+        promptSections: [
+          { name: "world-events", bytes: 2100, deferred: false },
+          { name: "reflection", bytes: 900, deferred: true },
+        ],
+        systemPromptBytes: 6100,
+        residentSchemaBytes: 9800,
         ...base,
         spanId: "turn",
         parentSpanId: "request",
@@ -102,8 +109,33 @@ describe("projectTraces", () => {
         inputTokens: 20,
         outputTokens: 5,
         costUsd: 0.001,
+        // Prompt-budget metrics from the start event survive the end-event merge;
+        // the section list rides as compact JSON (attributes are scalar).
+        promptBytes: 4300,
+        systemPromptBytes: 6100,
+        residentSchemaBytes: 9800,
+        promptSections: JSON.stringify([
+          { name: "world-events", bytes: 2100, deferred: false },
+          { name: "reflection", bytes: 900, deferred: true },
+        ]),
       },
     });
+  });
+
+  it("omits prompt attributes for turn starts from producers that predate them", () => {
+    const [trace] = projectTraces([
+      {
+        type: "agent_turn_start",
+        name: "Ada",
+        runId: "run",
+        traceId: "trace",
+        spanId: "turn",
+        timestamp: 100,
+      },
+    ]);
+    const attributes = trace?.spans[0]?.attributes ?? {};
+    expect("promptBytes" in attributes).toBe(false);
+    expect("promptSections" in attributes).toBe(false);
   });
 
   it("marks an end observed without its retained start as partial", () => {

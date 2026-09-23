@@ -20,6 +20,7 @@ import {
   totalDeleted,
 } from "../components/ops/format";
 import { OPS_REFRESH_EVENTS, OpsTab } from "../components/ops/OpsTab";
+import { PROMPT_SECTIONS_EMPTY_TEXT } from "../components/ops/PromptBudgetSection";
 import { PROVIDERS_EMPTY_HINT, PROVIDERS_SCOPED_TEXT } from "../components/ops/ProvidersSection";
 import { RETENTION_NO_PASS_TEXT } from "../components/ops/RetentionSection";
 import type {
@@ -128,6 +129,26 @@ const overview = (overrides: Partial<OpsOverview> = {}): OpsOverview => ({
     deferredToolCount: 51,
     continuationBudgetBytes: 6000,
     computedAt: NOW - 5_000,
+    sections: [
+      {
+        name: "world-events",
+        turns: 40,
+        meanBytes: 2200,
+        p95Bytes: 3900,
+        deferralRate: 0,
+        share: 0.42,
+      },
+      {
+        name: "relevant-notes",
+        turns: 40,
+        meanBytes: 1300,
+        p95Bytes: 2100,
+        deferralRate: 0.25,
+        share: 0.25,
+      },
+      { name: "reflection", turns: 8, meanBytes: 0, p95Bytes: 0, deferralRate: 1, share: 0 },
+    ],
+    turnsSampled: 40,
   },
   providers: [
     probe(),
@@ -268,6 +289,24 @@ describe("OpsTab", () => {
     expect(screen.getByTestId("ops-profile-minimal")).toHaveTextContent("5.0 KB");
     expect(screen.getByText("51")).toBeInTheDocument();
 
+    // Prompt sections: one bar per section (share of prompt), deferral rate as a chip.
+    const sections = screen.getByLabelText("Prompt sections");
+    expect(sections).toHaveTextContent("40 turns sampled");
+    const events = within(sections).getByTestId("ops-prompt-section-world-events");
+    expect(events).toHaveTextContent("2.1 KB");
+    expect(events).toHaveTextContent("p95 3.8 KB");
+    expect(events).toHaveTextContent("42%");
+    expect(within(events).getByText("deferred 0%")).toBeInTheDocument();
+    // Largest share fills the track; the 25 % section is scaled against it.
+    expect(events.querySelector("[aria-hidden] > div")).toHaveStyle({ width: "100%" });
+    const notes = within(sections).getByTestId("ops-prompt-section-relevant-notes");
+    expect(notes.querySelector("[aria-hidden] > div")).toHaveStyle({
+      width: `${(0.25 / 0.42) * 100}%`,
+    });
+    expect(within(notes).getByText("deferred 25%").className).toContain("text-warning");
+    const reflection = within(sections).getByTestId("ops-prompt-section-reflection");
+    expect(within(reflection).getByText("deferred 100%").className).toContain("text-danger");
+
     // Providers: tool-call failure is visible.
     const openai = screen.getByTestId("ops-provider-openai");
     expect(within(openai).getByText("tools")).toBeInTheDocument();
@@ -312,6 +351,18 @@ describe("OpsTab", () => {
     expect(screen.queryByLabelText("Stop Lead")).toBeNull();
     expect(screen.getByText("your agents only")).toBeInTheDocument();
     expect(screen.getByText(PROVIDERS_SCOPED_TEXT)).toBeInTheDocument();
+  });
+
+  it("shows the prompt-sections empty state before any producer reports metrics", async () => {
+    fetchApi.mockResolvedValue(
+      overview({ prompt: { ...overview().prompt, sections: [], turnsSampled: 0 } }),
+    );
+    renderWithProviders(<OpsTab />);
+    await waitFor(() => expect(screen.getByTestId("ops-agent-Lead")).toBeInTheDocument());
+    const sections = screen.getByLabelText("Prompt sections");
+    expect(sections).toHaveTextContent("0 turns sampled");
+    expect(within(sections).getByText(PROMPT_SECTIONS_EMPTY_TEXT)).toBeInTheDocument();
+    expect(screen.queryByTestId("ops-prompt-section-world-events")).toBeNull();
   });
 
   it("shows empty states with the exact commands, and a retention pass that never ran", async () => {

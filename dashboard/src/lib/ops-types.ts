@@ -23,6 +23,7 @@ export type {
   OpsLimiter,
   OpsOverview,
   OpsPrompt,
+  OpsPromptSection,
   OpsRetention,
   OpsRetentionPolicy,
   OpsRetentionReport,

@@ -2,8 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "bun:test";
-import { analyzeTraces } from "../src/engine/trace-analytics";
+import {
+  aggregatePromptSections,
+  analyzeTraces,
+  promptTurnSampleFromEvent,
+  promptTurnSampleFromSpan,
+} from "../src/engine/trace-analytics";
 import type { TraceSpanView, TraceView } from "../src/engine/trace-projection";
+import type { EngineEvent } from "../src/types";
 
 function span(overrides: Partial<TraceSpanView> = {}): TraceSpanView {
   return {
@@ -131,5 +137,179 @@ describe("analyzeTraces", () => {
 
     expect(analytics.routes).toHaveLength(1);
     expect(analytics.routes[0]).toMatchObject({ name: "Ada", observed: 1, completed: 1 });
+  });
+
+  test("reports no prompt sections when no turn carried metrics", () => {
+    const analytics = analyzeTraces([trace("a", [span()])]);
+    expect(analytics.promptTurnsSampled).toBe(0);
+    expect(analytics.promptSections).toEqual([]);
+  });
+});
+
+describe("prompt sections", () => {
+  const turnSpan = (
+    spanId: string,
+    promptBytes: number | undefined,
+    sections: readonly { name: string; bytes: number; deferred: boolean }[],
+  ): TraceSpanView =>
+    span({
+      spanId,
+      kind: "agent_turn",
+      name: "Ada",
+      attributes: {
+        ...(promptBytes === undefined ? {} : { promptBytes }),
+        promptSections: JSON.stringify(sections),
+      },
+    });
+
+  test("aggregates mean, p95, deferral rate and share per section; deferred bytes never reach the share", () => {
+    const turns = [
+      // Turn 1: 4000 B prompt; events 2000, notes 1000, reflection deferred (would-be 900).
+      {
+        promptBytes: 4000,
+        sections: [
+          { name: "events", bytes: 2000, deferred: false },
+          { name: "notes", bytes: 1000, deferred: false },
+          { name: "reflection", bytes: 900, deferred: true },
+        ],
+      },
+      // Turn 2: 6000 B prompt; events 3000, notes deferred, reflection 500.
+      {
+        promptBytes: 6000,
+        sections: [
+          { name: "events", bytes: 3000, deferred: false },
+          { name: "notes", bytes: 1200, deferred: true },
+          { name: "reflection", bytes: 500, deferred: false },
+        ],
+      },
+      // Turn 3: producer without promptBytes → its sent bytes join the denominator.
+      {
+        sections: [
+          { name: "events", bytes: 1000, deferred: false },
+          { name: "notes", bytes: 500, deferred: false },
+        ],
+      },
+    ];
+    const result = aggregatePromptSections(turns);
+    expect(result.turnsSampled).toBe(3);
+    expect(result.totalPromptBytes).toBe(4000 + 6000 + 1500);
+    expect(result.sections.map((row) => row.name)).toEqual(["events", "notes", "reflection"]);
+    expect(result.sections[0]).toEqual({
+      name: "events",
+      turns: 3,
+      meanBytes: 2000,
+      p95Bytes: 3000,
+      deferralRate: 0,
+      share: 6000 / 11500,
+    });
+    expect(result.sections[1]).toEqual({
+      name: "notes",
+      turns: 3,
+      // Only the two sent appearances count toward bytes: (1000 + 500) / 2.
+      meanBytes: 750,
+      p95Bytes: 1000,
+      deferralRate: 1 / 3,
+      share: 1500 / 11500,
+    });
+    expect(result.sections[2]).toEqual({
+      name: "reflection",
+      turns: 2,
+      meanBytes: 500,
+      p95Bytes: 500,
+      deferralRate: 0.5,
+      share: 500 / 11500,
+    });
+    // Shares of one window never exceed 1 (framing bytes are the remainder).
+    expect(result.sections.reduce((n, row) => n + row.share, 0)).toBeLessThanOrEqual(1);
+  });
+
+  test("a section that was always deferred has zero byte statistics and a 100 % deferral rate", () => {
+    const result = aggregatePromptSections([
+      { promptBytes: 100, sections: [{ name: "stuck", bytes: 5000, deferred: true }] },
+      { promptBytes: 100, sections: [{ name: "stuck", bytes: 5000, deferred: true }] },
+    ]);
+    expect(result.sections).toEqual([
+      { name: "stuck", turns: 2, meanBytes: 0, p95Bytes: 0, deferralRate: 1, share: 0 },
+    ]);
+    expect(aggregatePromptSections([])).toEqual({
+      turnsSampled: 0,
+      totalPromptBytes: 0,
+      sections: [],
+    });
+  });
+
+  test("analyzeTraces reads the JSON attribute off agent_turn spans only and skips malformed ones", () => {
+    const analytics = analyzeTraces([
+      trace("a", [
+        span({ spanId: "req" }),
+        turnSpan("t1", 3000, [
+          { name: "events", bytes: 2000, deferred: false },
+          { name: "notes", bytes: 800, deferred: false },
+        ]),
+        turnSpan("t2", 3000, [
+          { name: "events", bytes: 1000, deferred: false },
+          { name: "notes", bytes: 900, deferred: true },
+        ]),
+        span({ spanId: "bad", kind: "agent_turn", attributes: { promptSections: "{nope" } }),
+        span({ spanId: "old", kind: "agent_turn", attributes: { model: "x" } }),
+        // A model_request span never contributes, even with the attribute present.
+        span({
+          spanId: "req2",
+          attributes: {
+            promptSections: JSON.stringify([{ name: "events", bytes: 1, deferred: false }]),
+          },
+        }),
+      ]),
+    ]);
+    expect(analytics.promptTurnsSampled).toBe(2);
+    expect(analytics.promptSections).toEqual([
+      { name: "events", turns: 2, meanBytes: 1500, p95Bytes: 2000, deferralRate: 0, share: 0.5 },
+      {
+        name: "notes",
+        turns: 2,
+        meanBytes: 800,
+        p95Bytes: 800,
+        deferralRate: 0.5,
+        share: 800 / 6000,
+      },
+    ]);
+  });
+
+  test("promptTurnSampleFromSpan / FromEvent validate shape and drop invalid entries", () => {
+    expect(promptTurnSampleFromSpan(span({ kind: "tool" }))).toBeUndefined();
+    expect(
+      promptTurnSampleFromSpan(
+        turnSpan("t", -5, [
+          { name: "ok", bytes: 10, deferred: false },
+          { name: "", bytes: 10, deferred: false },
+          { name: "neg", bytes: -1, deferred: false },
+        ]),
+      ),
+    ).toEqual({ sections: [{ name: "ok", bytes: 10, deferred: false }] });
+    const event: EngineEvent = {
+      type: "agent_turn_start",
+      name: "Ada",
+      traceId: "t",
+      spanId: "s",
+      promptBytes: 42,
+      promptSections: [{ name: "events", bytes: 40, deferred: false }],
+      timestamp: 1,
+    };
+    expect(promptTurnSampleFromEvent(event)).toEqual({
+      promptBytes: 42,
+      sections: [{ name: "events", bytes: 40, deferred: false }],
+    });
+    expect(
+      promptTurnSampleFromEvent({ type: "agent_turn_start", name: "Ada", timestamp: 1 }),
+    ).toBeUndefined();
+    expect(
+      promptTurnSampleFromEvent({
+        type: "agent_turn_end",
+        name: "Ada",
+        hadToolCalls: false,
+        toolCount: 0,
+        timestamp: 1,
+      }),
+    ).toBeUndefined();
   });
 });

@@ -33,8 +33,13 @@ import { CONTINUATION_PROMPT_BUDGET_BYTES } from "../engine/constants";
 import type { Engine } from "../engine/engine";
 import { getErrorMessage } from "../engine/errors";
 import { describeRetentionPolicies, getLastRetentionReport } from "../engine/retention";
+import {
+  aggregatePromptSections,
+  type PromptTurnSample,
+  promptTurnSampleFromEvent,
+} from "../engine/trace-analytics";
 import { getTrustProfile, isLocalUngated } from "../engine/trust-profile";
-import type { EntityId } from "../types";
+import type { EngineEvent, EntityId } from "../types";
 import { HTTP_RATE_LIMITS } from "./http-utils";
 import { memoryObserver } from "./memory-visibility";
 import { getLastProviderProbe } from "./model-api";
@@ -44,6 +49,7 @@ import type {
   OpsLimiter,
   OpsOverview,
   OpsPrompt,
+  OpsPromptSection,
   OpsRetention,
   OpsSecurity,
   OpsSpend,
@@ -222,7 +228,7 @@ function retentionOf(): OpsRetention {
 // ─── Prompt budget (memoized per minute) ────────────────────────────────────
 
 const PROMPT_MEMO_MS = 60_000;
-let promptMemo: OpsPrompt | null = null;
+let promptMemo: OpsPromptBudget | null = null;
 
 const serializedToolBytes = (
   tools: readonly { name: string; description: string; parameters: unknown }[],
@@ -273,7 +279,10 @@ function measureToolSchemas(): Pick<
   return { residentSchemaBytesByProfile: resident, deferredSchemaBytes, deferredToolCount };
 }
 
-export function promptBudget(now = Date.now()): OpsPrompt {
+/** The static, per-process measurements of `OpsPrompt` (memoized); the event-derived sections are added per request. */
+export type OpsPromptBudget = Omit<OpsPrompt, "sections" | "turnsSampled">;
+
+export function promptBudget(now = Date.now()): OpsPromptBudget {
   if (promptMemo && now - promptMemo.computedAt < PROMPT_MEMO_MS) return promptMemo;
   let systemPromptBytes = 0;
   try {
@@ -295,6 +304,92 @@ export function promptBudget(now = Date.now()): OpsPrompt {
 /** @internal test seam */
 export function resetPromptBudgetMemoForTests(): void {
   promptMemo = null;
+  promptSectionsMemo.clear();
+}
+
+// ─── Prompt sections (event log, last 24 h) ─────────────────────────────────
+
+export const PROMPT_SECTIONS_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Bound on trace events read per aggregate (the event log's own trace window). */
+const PROMPT_SECTIONS_EVENT_LIMIT = 5000;
+/** Re-aggregate at most this often per scope while no new event has landed. */
+const PROMPT_SECTIONS_MEMO_MS = 30_000;
+
+type PromptSectionsView = Pick<OpsPrompt, "sections" | "turnsSampled">;
+const promptSectionsMemo = new Map<
+  string,
+  { maxEventId: number; computedAt: number; view: PromptSectionsView }
+>();
+
+/**
+ * `agent_turn_start` events of the last 24 h, in scope: every agent for a
+ * privileged principal; for a resident only the turns of agents it can see in
+ * the overview (`visibleAgents` — its lineage plus itself). Reads the durable
+ * `event_log` (the same rows `trace` projects) and falls back to the in-memory
+ * log when the engine runs without a database.
+ */
+function promptTurnSamplesInScope(
+  engine: Engine,
+  scope: OpsObserverScope,
+  visibleAgents: readonly string[],
+  now: number,
+): PromptTurnSample[] {
+  const events: EngineEvent[] = engine.db
+    ? engine.db.getRecentTraceEvents(PROMPT_SECTIONS_EVENT_LIMIT).events
+    : engine.getEventLog();
+  const since = now - PROMPT_SECTIONS_WINDOW_MS;
+  const allowed = new Set(visibleAgents);
+  if (scope.entityName) allowed.add(scope.entityName);
+  const samples: PromptTurnSample[] = [];
+  for (const event of events) {
+    if (event.type !== "agent_turn_start" || event.timestamp < since) continue;
+    if (!scope.privileged && !allowed.has(event.name)) continue;
+    const sample = promptTurnSampleFromEvent(event);
+    if (sample) samples.push(sample);
+  }
+  return samples;
+}
+
+export function promptSectionsOverview(
+  engine: Engine,
+  scope: OpsObserverScope,
+  visibleAgents: readonly string[],
+  now = Date.now(),
+): PromptSectionsView {
+  const key = scope.privileged
+    ? "*"
+    : `r:${scope.entityName ?? ""}:${[...visibleAgents].sort().join(",")}`;
+  const maxEventId = engine.db?.getMaxEventId() ?? -1;
+  const cached = promptSectionsMemo.get(key);
+  if (
+    cached &&
+    cached.maxEventId === maxEventId &&
+    now - cached.computedAt < PROMPT_SECTIONS_MEMO_MS
+  ) {
+    return cached.view;
+  }
+  const aggregate = aggregatePromptSections(
+    promptTurnSamplesInScope(engine, scope, visibleAgents, now),
+  );
+  const view: PromptSectionsView = {
+    sections: aggregate.sections.map(
+      (row): OpsPromptSection => ({
+        name: row.name,
+        turns: row.turns,
+        meanBytes: row.meanBytes,
+        p95Bytes: row.p95Bytes,
+        deferralRate: row.deferralRate,
+        share: row.share,
+      }),
+    ),
+    turnsSampled: aggregate.turnsSampled,
+  };
+  promptSectionsMemo.set(key, { maxEventId, computedAt: now, view });
+  if (promptSectionsMemo.size > 200) {
+    const oldest = promptSectionsMemo.keys().next().value;
+    if (oldest !== undefined) promptSectionsMemo.delete(oldest);
+  }
+  return view;
 }
 
 // ─── Providers ──────────────────────────────────────────────────────────────
@@ -389,7 +484,14 @@ export function buildOpsOverview(engine: Engine, scope: OpsObserverScope): OpsOv
     agents,
     spend: spendOf(engine, agents),
     retention: retentionOf(),
-    prompt: promptBudget(),
+    prompt: {
+      ...promptBudget(),
+      ...promptSectionsOverview(
+        engine,
+        scope,
+        agents.map((row) => row.name),
+      ),
+    },
     providers: scope.privileged ? providerProbeSummary() : null,
     security: securityPosture(engine),
   };

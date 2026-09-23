@@ -313,6 +313,110 @@ describe("GET /api/ops/overview", () => {
     expect(body.security.openApi).toBe(true);
   });
 
+  it("prompt.sections aggregates the last 24 h of agent_turn_start metrics, scoped by lineage", async () => {
+    const now = Date.now();
+    const turn = (
+      name: string,
+      timestamp: number,
+      promptBytes: number,
+      sections: { name: string; bytes: number; deferred: boolean }[],
+    ): EngineEvent => ({
+      type: "agent_turn_start",
+      name,
+      runId: `run-${name}-${timestamp}`,
+      traceId: `trace-${name}-${timestamp}`,
+      spanId: `turn-${name}-${timestamp}`,
+      origin: "autonomous",
+      promptBytes,
+      promptSections: sections,
+      timestamp,
+    });
+    // Owner's lineage (Lead, Worker) and the unrelated Solo, plus one stale turn.
+    engine.logEvent(
+      turn("Lead", now - 60_000, 4000, [
+        { name: "world-events", bytes: 2000, deferred: false },
+        { name: "relevant-notes", bytes: 1000, deferred: false },
+        { name: "reflection", bytes: 900, deferred: true },
+      ]),
+    );
+    engine.logEvent(
+      turn("Worker", now - 30_000, 2000, [
+        { name: "world-events", bytes: 1000, deferred: false },
+        { name: "relevant-notes", bytes: 500, deferred: true },
+      ]),
+    );
+    engine.logEvent(
+      turn("Solo", now - 10_000, 10_000, [{ name: "world-events", bytes: 9000, deferred: false }]),
+    );
+    engine.logEvent(
+      turn("Lead", now - 25 * 60 * 60 * 1000, 99_999, [
+        { name: "ancient", bytes: 99_999, deferred: false },
+      ]),
+    );
+    // A turn without metrics (older producer) is not a sample.
+    engine.logEvent({
+      type: "agent_turn_start",
+      name: "Lead",
+      runId: "run-plain",
+      traceId: "trace-plain",
+      spanId: "turn-plain",
+      timestamp: now - 5_000,
+    });
+
+    const operator = (await api("/api/ops/overview", { desktop: true })).body as OpsOverview;
+    expect(operator.prompt.turnsSampled).toBe(3);
+    expect(operator.prompt.sections.map((s) => s.name)).toEqual([
+      "world-events",
+      "relevant-notes",
+      "reflection",
+    ]);
+    expect(operator.prompt.sections[0]).toEqual({
+      name: "world-events",
+      turns: 3,
+      meanBytes: 4000,
+      p95Bytes: 9000,
+      deferralRate: 0,
+      share: 12_000 / 16_000,
+    });
+    expect(operator.prompt.sections[1]).toEqual({
+      name: "relevant-notes",
+      turns: 2,
+      meanBytes: 1000,
+      p95Bytes: 1000,
+      deferralRate: 0.5,
+      share: 1000 / 16_000,
+    });
+    // Always deferred: no bytes reached the prompt.
+    expect(operator.prompt.sections[2]).toMatchObject({
+      name: "reflection",
+      turns: 1,
+      meanBytes: 0,
+      deferralRate: 1,
+      share: 0,
+    });
+    expect(operator.prompt.sections.find((s) => s.name === "ancient")).toBeUndefined();
+
+    // Owner: only Lead + Worker turns — Solo's 9 KB never enters its share denominator.
+    const owner = (await api("/api/ops/overview", { token: tokens[OWNER] })).body as OpsOverview;
+    expect(owner.scope).toBe("resident");
+    expect(owner.prompt.turnsSampled).toBe(2);
+    expect(owner.prompt.sections[0]).toEqual({
+      name: "world-events",
+      turns: 2,
+      meanBytes: 1500,
+      p95Bytes: 2000,
+      deferralRate: 0,
+      share: 3000 / 6000,
+    });
+
+    // Stranger: no agents, no turns.
+    const stranger = (await api("/api/ops/overview", { token: tokens[STRANGER] }))
+      .body as OpsOverview;
+    expect(stranger.prompt).toMatchObject({ turnsSampled: 0, sections: [] });
+    // The static budget is untouched by the aggregate.
+    expect(stranger.prompt.systemPromptCapBytes).toBe(LEAN_SYSTEM_PROMPT_BYTE_CAP);
+  });
+
   it("buildOpsOverview matches the route for the same scope", () => {
     const direct = buildOpsOverview(engine, opsObserverScope(engine, entityIds[OWNER]));
     expect(direct.scope).toBe("resident");

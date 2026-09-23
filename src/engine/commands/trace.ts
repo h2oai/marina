@@ -6,7 +6,12 @@ import { parseMemoryReceipt, renderMemoryReceiptLines } from "../../net/memory-r
 import type { MarinaDB } from "../../persistence/database";
 import type { OtlpExporterStatus } from "../../telemetry/otlp-exporter";
 import type { CommandDef, EngineEvent, RoomContext } from "../../types";
-import { analyzeTraces, type TraceAggregate } from "../trace-analytics";
+import {
+  analyzeTraces,
+  type PromptSectionAggregate,
+  promptTurnSampleFromSpan,
+  type TraceAggregate,
+} from "../trace-analytics";
 import {
   buildTraceDataset,
   compareTraceCohorts,
@@ -452,9 +457,33 @@ function sendStats(
   appendAggregates(lines, "Autonomous models", analytics.agentModels);
   appendAggregates(lines, "Routes", analytics.routes);
   appendAggregates(lines, "Tools", analytics.tools);
+  appendPromptSections(lines, analytics.promptSections, analytics.promptTurnsSampled);
   if (truncated) lines.push("  [retained event window truncated]");
   lines.push("  Rates exclude partial spans; these are execution mechanics, not quality scores.");
   ctx.send(entityId, lines.join("\n"));
+}
+
+/**
+ * Per-section continuation-prompt mechanics over the selected traces: mean and
+ * p95 bytes of the appearances that reached the prompt, how often the section
+ * was deferred past the budget, and its share of the window's prompt bytes.
+ */
+function appendPromptSections(
+  lines: string[],
+  rows: PromptSectionAggregate[],
+  turnsSampled: number,
+): void {
+  lines.push(`  Prompt sections (${turnsSampled} turns sampled):`);
+  if (rows.length === 0) {
+    lines.push("    none observed");
+    return;
+  }
+  for (const row of rows.slice(0, 12)) {
+    lines.push(
+      `    ${row.name}: n=${row.turns} mean=${Math.round(row.meanBytes)}B p95=${Math.round(row.p95Bytes)}B deferred=${Math.round(row.deferralRate * 100)}% share=${Math.round(row.share * 100)}%`,
+    );
+  }
+  if (rows.length > 12) lines.push(`    … ${rows.length - 12} more sections`);
 }
 
 function appendAggregates(lines: string[], label: string, rows: TraceAggregate[]): void {
@@ -606,6 +635,31 @@ function sendTrace(
       for (const line of renderMemoryReceiptLines(receipt)) {
         lines.push(`  ${"  ".repeat(depth + 1)}${line}`);
       }
+    }
+    // Prompt sections of an agent turn (sizes only — never prompt text).
+    const prompt = promptTurnSampleFromSpan(span);
+    if (prompt) {
+      const fixed = [
+        typeof span.attributes.systemPromptBytes === "number"
+          ? `system=${span.attributes.systemPromptBytes}B`
+          : undefined,
+        typeof span.attributes.residentSchemaBytes === "number"
+          ? `schemas=${span.attributes.residentSchemaBytes}B`
+          : undefined,
+      ].filter(Boolean);
+      const deferred = prompt.sections.filter((section) => section.deferred).length;
+      lines.push(
+        `  ${"  ".repeat(depth + 1)}prompt: ${prompt.promptBytes === undefined ? "?" : `${prompt.promptBytes}B`} across ${prompt.sections.length} sections` +
+          `${deferred > 0 ? ` (${deferred} deferred)` : ""}${fixed.length > 0 ? ` · ${fixed.join(" · ")}` : ""}`,
+      );
+      lines.push(
+        `  ${"  ".repeat(depth + 2)}${prompt.sections
+          .map(
+            (section) =>
+              `${section.name}=${section.bytes}B${section.deferred ? " [deferred]" : ""}`,
+          )
+          .join(" · ")}`,
+      );
     }
   }
   if (trace.spans.length > visible.length)
