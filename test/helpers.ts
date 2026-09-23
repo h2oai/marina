@@ -20,6 +20,31 @@ export function makeTestRoom(overrides?: Partial<RoomModule>): RoomModule {
   };
 }
 
+/**
+ * Poll `predicate` every `intervalMs` until it returns true, or throw after
+ * `timeoutMs`. Use this instead of a fixed `Bun.sleep(N)` whenever a test is
+ * WAITING FOR A CONDITION (a message to arrive, a socket to close, a row to
+ * appear): it resolves as soon as the condition holds, so the suite never pays
+ * the worst-case wait on the happy path. A real sleep is still right when the
+ * test asserts that something does NOT happen within a window.
+ *
+ * Rule of thumb (test/README.md): no real sleeps >= 500 ms — poll a condition.
+ */
+export async function until(
+  predicate: () => boolean | Promise<boolean>,
+  opts: { timeoutMs?: number; intervalMs?: number; message?: string } = {},
+): Promise<void> {
+  const { timeoutMs = 5000, intervalMs = 20, message } = opts;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await predicate()) return;
+    if (Date.now() >= deadline) {
+      throw new Error(message ?? `until(): condition not met within ${timeoutMs} ms`);
+    }
+    await Bun.sleep(intervalMs);
+  }
+}
+
 /** Remove a SQLite database and its WAL/SHM sidecar files. */
 export function cleanupDb(path: string): void {
   try {

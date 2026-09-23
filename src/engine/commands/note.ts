@@ -26,6 +26,8 @@ import {
 } from "../../net/ansi";
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { tryLog } from "../errors";
+import { Logger } from "../logger";
 import {
   canonicalSub,
   extractModifiers,
@@ -33,6 +35,8 @@ import {
   parseModifiers,
 } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
+
+const logger = new Logger();
 
 const STOP_WORDS = new Set([
   "the",
@@ -389,9 +393,11 @@ export function noteCommand(deps: {
             excerpt: source.content.slice(0, 240),
             credibility: source.confidence ?? 0.5,
           });
-          try {
+          // Non-critical: the note_sources row above is the record of derivation;
+          // the graph link is a convenience, so a duplicate/FK failure only warns.
+          tryLog(logger, "note", `derived_from link #${id} -> #${sourceId} failed`, () => {
             db.createNoteLink(id, sourceId, "derived_from");
-          } catch {}
+          });
           ctx.send(input.entity, `Note #${id} now records derivation from #${sourceId}.`);
           // Durable side: the source note's twin becomes a (self-derived)
           // source of this note's twin, and a `derived_from` relation is asserted.

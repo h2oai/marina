@@ -250,6 +250,80 @@ Keep `auto_stop_machines = false` and `min_machines_running = 1` — and **do no
 - **Upgrades**: `git pull` (or pull a new image tag), then `docker compose up -d --build`. Back up first; migrations in `src/persistence/database.ts` run automatically on boot and are append-only.
 - **Stuck?** See [Troubleshooting](troubleshooting.md).
 
+## Workspace tooling
+
+The repository is a single [Bun workspace](https://bun.sh/docs/install/workspaces). One `bun install`
+at the root resolves every member from the one `bun.lock`; the members have no lockfiles of their own.
+
+| Member | Path | What it is |
+|--------|------|------------|
+| `marina` | `/` | the server, CLI, SDK build, tests |
+| `marina-dashboard` | `dashboard/` | the React dashboard SPA (built into `dist/dashboard`) |
+| `marina-site` | `site/` | the Astro + Starlight documentation site |
+| `marina-desktop` | `marina-desktop/` | the Electrobun desktop shell |
+| `marina-usecase-ui` | `examples/usecase-ui/` | example React front end |
+| `marina-coding-agent-demo` | `examples/coding-agent-demo/` | Code Mode demo fixture (its failing test is deliberate) |
+| `@marina/agent-sdk` | `src/sdk/` | the TypeScript SDK manifest |
+
+Two packages are deliberately **not** workspace members and keep their own `bun.lock`:
+`extensions/local-embeddings` (onnxruntime-node + MiniLM — a large native dependency that must not
+enter the standard install) and `extensions/langgraph-store` (pulls LangGraph). Both are published
+with their lockfiles via the root `files` list and installed on demand with
+`bun install --cwd extensions/<name> --frozen-lockfile`.
+
+Bun uses the *isolated* linker for workspaces: each member's `node_modules/` holds symlinks into the
+shared `node_modules/.bun/` store, and only packages a member **declares** are resolvable from it. A
+bare import of a transitive dependency ("phantom dependency") that used to work under a hoisted
+`node_modules/` now fails at build or run time — declare it in that member's `package.json` instead.
+Two root-only tables apply to the whole graph regardless of which member pulls the package in:
+`overrides` and `patchedDependencies` (Bun ignores both in member manifests; `check:overrides`
+lists any it finds there as IGNORED).
+
+Build outputs are unchanged: `bun run dashboard:build` still emits `dist/dashboard`, `bun run
+build:memory` still emits `dist/memory.js`, and `prepack` runs both so the npm tarball keeps them.
+
+### `bun run check:versions`
+
+Every versioned `package.json` in the repository (workspace member or not, `node_modules` excluded)
+must carry the root version. The script prints one row per manifest and exits 1 on a mismatch; CI
+runs it in the backend job before the tests, and `qualify:release` runs it first. Bump every manifest
+together when cutting a release.
+
+### `bun run check:overrides`
+
+Audits the root `overrides` table against the dependency graph. For each override it reads every
+dependent's declared range from `bun.lock`, asks the registry (`bun info <pkg> versions`) which
+version each range would pick today **without** the override, and reports:
+
+- `still needed` — some dependent would land below the floor (or, for an exact-version *pin*, the
+  dependents would otherwise split across several versions);
+- `no longer needed` — every dependent already lands at or above the floor on its own;
+- `unknown` — registry unreachable and the lockfile alone cannot decide (`--offline` forces this
+  mode).
+
+The `note` lines flag the harmful case: a floor whose range excludes a version a dependent
+explicitly declares (a `^6` floor forcing a `^8` dependent down to 6.x). The **documented** column
+cross-references the rationale table below (plus `SECURITY.md`, `README.md`, and the rest of
+`docs/`) — an override with no written reason shows `NO`. `--strict` exits 1 on any
+`no longer needed`; `--json` emits the full report. The nightly workflow prints the table
+non-blocking; run `bun run check:overrides --strict` before removing or adding an override.
+
+Why each override exists (keep this table in sync with `package.json`):
+
+| Override | Kind | Reason |
+|----------|------|--------|
+| `@hono/node-server` `^1.19.15`, `hono` `^4.13.5` | floor | security advisory floors for the MCP SDK's HTTP transport (initial audit, commit 8c1aab9). |
+| `@protobufjs/utf8` `^1.1.1`, `protobufjs` `^7.6.3` | floor | security advisory floors below the Google GenAI / gRPC transitive chain (8c1aab9). |
+| `basic-ftp` `^5.3.1` | floor | security advisory floor for a transitive of the upstream provider SDKs (8c1aab9). |
+| `body-parser` `^2.3.0`, `qs` `^6.16.0`, `path-to-regexp` `^8.4.0` | floor | Express 5 transitive security advisories (body-parser floor from 90321d5 "update vulnerable dependencies"). |
+| `express-rate-limit` `^8.2.2`, `ip-address` `^10.5.0` | floor | security advisory floors for the MCP SDK's rate limiter; the `ip-address` floor was lifted from `marina-desktop` (socks proxy chain under electrobun) when the workspace was unified. |
+| `fast-uri` `^3.1.6` | floor | security advisory floor for ajv's URI parser (8c1aab9). |
+| `fast-xml-builder` `^1.1.7`, `fast-xml-parser` `^5.7.0` | floor | security advisory floors for the AWS SDK XML layer (8c1aab9); nothing in the current graph depends on them — remove once `check:overrides --strict` agrees. |
+| `lodash` `^4.18.0` | floor | prototype-pollution security advisories in older 4.17.x (8c1aab9). |
+| `undici` `^6.28.0` | floor | security advisory floor for discord.js's fetch client (8c1aab9). Caution: as a root-wide override it also forces `jsdom` (`^8`) and astro's `unifont` (`^8`) down to 6.x — the audit flags this; the floor is met naturally today. |
+| `ws` `^8.20.1` | floor | security advisory floor (DoS with many headers) for the WebSocket client shared by discord.js and the MCP SDK (8c1aab9). |
+| `zod` `4.6.4` | pin | dedup pin, not a security floor: the MCP SDK's zod types and better-auth's zod v4 must share one copy (commit 4bf8dbd). |
+
 ## Continuous deployment (CI/CD)
 
 On push to `main`, [`Deploy to EC2`](../../.github/workflows/deploy-ec2.yml) builds the image, pushes it to ECR, and — because the host is in a private subnet — uses **AWS SSM Run Command** (not SSH) to pull the pinned `:<commit-sha>` image and `docker compose up -d` via [`scripts/deploy.sh`](../../scripts/deploy.sh). Auth is via **GitHub OIDC** (no static keys). Setup lives in repo **secret** `GH_OIDC_ROLE_H2O_MARINA` and **variables** `AWS_REGION` / `MARINA_INSTANCE_ID` / `MARINA_APP_DIR`; the AWS side (OIDC role + ECR repo) is managed in Terraform.

@@ -8,7 +8,6 @@ on:
 #      - "package.json"
 #      - "bun.lock"
 #      - "dashboard/package.json"
-#      - "dashboard/bun.lock"
 #      - "src/**"
 #      - "worlds/**"
 #      - ".github/workflows/trivy-scan.yml"

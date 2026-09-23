@@ -488,6 +488,13 @@ export function resetProjectTasks(db: Database, bundleId: number, now = Date.now
   return children.length;
 }
 
+export function countApprovedTaskClaims(db: Database, entityId: string): number {
+  const row = db
+    .query("SELECT COUNT(*) AS n FROM task_claims WHERE entity_id = ? AND status = 'approved'")
+    .get(entityId) as { n: number } | null;
+  return row?.n ?? 0;
+}
+
 // ─── Row Types ──────────────────────────────────────────────────────────
 
 export interface TaskRow {

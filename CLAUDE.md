@@ -9,9 +9,15 @@ bun run test           # Run all backend tests
 bun run typecheck      # TypeScript strict check
 bun run lint           # Biome lint
 bun run format         # Biome auto-format (run before committing)
+bun run test:fast      # pre-commit loop: 139 engine-free files, ~45 s (scripts/test-fast.ts --check reports drift)
+bun run test:shard I N # time-balanced shard I of N from test/timing.json (CI runs 3); regenerate timings per docs/guides/testing.md
+bun run check:versions # every package.json must match the root version
+bun run check:overrides # audit root `overrides` (--strict to gate, --offline without registry)
 bun run clean          # Reset database and scratch files
 cd dashboard && bun run test  # Frontend tests (vitest)
 ```
+Single Bun workspace: one root `bun install` covers `dashboard`, `site`, `marina-desktop`, `examples/*`, `src/sdk` (extensions/* are excluded on purpose — native deps, own lockfiles). Isolated linker: declare every import in the member's `package.json`; transitive deps are not resolvable. Tests: no real sleeps ≥ 500 ms — poll with `until()` from `test/helpers.ts`; a new empty `catch {}` fails `test/lint-no-empty-catch.test.ts` (opt out with `// allow-empty-catch: <reason>`); `lean-agent-adapter.ts` logs through `Logger`, never `console`.
+
 
 ## Code Style
 - **Documentation placement**: all research, plans, strategy, competitive analysis, internal audits and qualification reports belong in the private `marina-internal` repository. Public documentation should contain user guides and reference material. Reusable source code, tests and qualification tools can remain public; save their internal reports outside this repository. Archive existing research before replacing its public copy with a documentation pointer; do not rewrite Git history as part of routine documentation cleanup.
@@ -36,6 +42,7 @@ cd dashboard && bun run test  # Frontend tests (vitest)
 - **Command phase**: commands run through a per-entity promise chain (one entity strictly FIFO, entities interleave) under `COMMAND_PHASE_BUDGET_MS` (150 ms); a throw before a handler's own try lands on the tick error path, never as an unhandled rejection. Room command wrappers RETURN the handler's promise. → docs/architecture/persistence.md
 - **Migration 118** rekeys `groups_.leader_id` / `tasks.creator_id`; **migration 119** rekeys `board_posts.author_id` / `macros.author_id` (`BOARD_POST_COLUMNS` / `MACRO_COLUMNS` project the live id back; `macro` lookups resolve the durable key) — none left transient. **Migration 120** adds `agent_configs.thinking_level` (NULL = unset) so `agent spawn … thinking:<level>` / `agent config <name> thinking <level>` survive the boot-time respawn. `note conflicts` never pairs a note with its own durable twin; retired records' source excerpts are not served in `[evidence]` (`servableSourceIds`). → docs/architecture/persistence.md
 - DB modules: query logic split into `src/persistence/db-notes.ts`, `db-entities.ts`, `db-tasks.ts`, `db-channels.ts`, `db-agents.ts` — MarinaDB delegates to standalone functions
+- **Store interfaces**: `src/persistence/interfaces/` has one explicit interface per `db-*.ts` domain (`NotesStore`, `TasksStore`, … 48 in all); `MarinaDB implements MarinaStores` and is a thin facade (constructor, migrations, `durableEntityKey()`, one-line delegates — no inline SQL). Adding a delegate means: query in the module, one-line delegate on the facade, method added to the interface AND its `*_STORE_METHODS` tuple — `ExactKeys` and `test/persistence-interfaces.test.ts` (prototype-reflection drift check) fail until all agree. Consumers may type dependencies as a store slice instead of `MarinaDB`. → docs/architecture/persistence.md
 - MCP tools: add in `src/net/mcp-server.ts` → `createMcpServer()`, use `runCmd()` helper (rate-limited wrapper around `cmdTool()`)
 - MCP tool categories: bootstrap (login/auth), cognition (think/memory/next/brief/quest), world, coordination, canvas (canvas), building, escape hatch (command/batch), session
 - Engine decomposed: `ConnectionManager`, `EventLog`, `BriefManager` extracted from Engine class
@@ -109,7 +116,7 @@ Compat profiles (`src/net/compat-profiles.ts`) are self-contained — they only 
 - `src/persistence/db-channels.ts` — channel management, boards, groups, global search
 - `src/persistence/db-agents.ts` — traits, roles, agent configs, API keys, adapters
 - `src/net/mcp-server.ts` — MCP server with 30 tools, rate-limited via `runCmd()` wrapper
-- `src/net/model-api.ts` — OpenAI-compatible endpoint with per-IP rate limiting
+- `src/net/model-api.ts` — model-API entry: auth, rate limit, path dispatch + stable re-exports; surfaces live in `src/net/model-api/` behind a strict import DAG rooted at `shared.ts` (`upstream`, `anthropic-bridge`, `routing`, `passthru`, `responses-sse`, `chat-completions`, `responses`, `ollama`, `models`) — see docs/architecture/passthru.md → "Source layout"
 - `src/net/mem-api.ts` — Memory API REST endpoint with per-agent rate limiting
 - `src/net/url-guard.ts` — SSRF protection (private IP, IPv6, cloud metadata blocking)
 - `src/agent/agent-runtime.ts` — agent spawning, lifecycle, LLM dispatch

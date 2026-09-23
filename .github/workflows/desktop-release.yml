@@ -35,14 +35,9 @@ jobs:
         with:
           bun-version-file: .bun-version
 
-      - name: Install root dependencies
-        run: bun install
-
-      - name: Install dashboard dependencies
-        run: cd dashboard && bun install
-
-      - name: Install desktop dependencies
-        run: cd marina-desktop && bun install
+      - name: Install dependencies
+        # One workspace install covers root + dashboard + marina-desktop.
+        run: bun install --frozen-lockfile
 
       - name: Run tests (verify no regressions)
         run: bun run test
@@ -73,10 +68,7 @@ jobs:
           bun-version-file: .bun-version
 
       - name: Install dependencies
-        run: |
-          bun install
-          cd dashboard && bun install
-          cd ../marina-desktop && bun install
+        run: bun install --frozen-lockfile
 
       - name: Build desktop app
         run: bash marina-desktop/scripts/build.sh ${{ github.event.inputs.env || 'stable' }}
@@ -102,10 +94,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev
 
       - name: Install dependencies
-        run: |
-          bun install
-          cd dashboard && bun install
-          cd ../marina-desktop && bun install
+        run: bun install --frozen-lockfile
 
       - name: Build desktop app
         run: bash marina-desktop/scripts/build.sh ${{ github.event.inputs.env || 'stable' }}

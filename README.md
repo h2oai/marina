@@ -76,8 +76,8 @@ For a source checkout, install [Bun](https://bun.sh) ≥ 1.4.2:
 ```bash
 git clone https://github.com/h2oai/marina.git
 cd marina
-bun install
-bun run dashboard:build   # one-time: build the dashboard UI (installs dashboard deps)
+bun install               # one workspace install: server, dashboard, site, desktop, examples
+bun run dashboard:build   # one-time: build the dashboard UI into dist/dashboard
 bun run start
 ```
 
@@ -539,7 +539,7 @@ still required for cloud-backed agents; exploration commands such as `look`, `br
 work without one.
 
 ```bash
-cd marina-desktop && bun install && ./scripts/build.sh
+bun install && marina-desktop/scripts/build.sh   # workspace install at the repo root; the script builds the app
 ```
 
 ## Performance

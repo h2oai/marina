@@ -3,11 +3,15 @@
 
 import type { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
+import { tryLog } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import {
   canonicalFederationJson,
   signDocumentJson as sign,
   verifyFederationDocument,
 } from "../net/federation-crypto";
+
+const logger = new Logger();
 
 export type ComponentDisposition = "inherited" | "mutated" | "introduced" | "excluded";
 
@@ -151,10 +155,10 @@ export function verifyMarinaGenome(row: MarinaGenomeRow): StoredSignatureVerific
   hashValid: boolean;
 } {
   let hashValid = false;
-  try {
+  tryLog(logger, "reproduction", `Could not hash genome manifest ${row.hash}`, () => {
     const expected = `sha256:${createHash("sha256").update(row.manifest_json).digest("hex")}`;
     hashValid = expected === row.hash;
-  } catch {}
+  });
   if (!row.signature_json) return { valid: null, keyId: null, hashValid };
   try {
     const manifest = JSON.parse(row.manifest_json) as Record<string, unknown>;

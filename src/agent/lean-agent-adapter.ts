@@ -46,6 +46,7 @@ import {
   upstreamErrorBackoffMs,
 } from "../engine/constants";
 import { getErrorMessage } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import { isLocalProfile } from "../engine/trust-profile";
 import {
   renderUnifiedContext,
@@ -102,6 +103,12 @@ import {
   createProfileToolset,
   TOOL_SEARCH_NAME,
 } from "./tools";
+
+/** Category under which every adapter log line is emitted (`[lean-agent]`). */
+export const LEAN_AGENT_LOG_CATEGORY = "lean-agent";
+
+/** Module-level fallback when no Logger is injected via the constructor. */
+const moduleLogger = new Logger();
 
 export function shouldKeepPerception(
   mode: "focused" | "balanced" | "open",
@@ -837,8 +844,10 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
   // id rather than silently switching providers. Lets the upstream validate it.
   const synthesized = synthesizeModel(provider, modelId);
   if (synthesized) {
-    console.warn(
-      `[lean-agent] Model id "${modelId}" isn't in the bundled registry for provider "${provider}" — routing to ${provider} with default params. If it 4xxes, verify the id is valid for that provider.`,
+    moduleLogger.warn(
+      LEAN_AGENT_LOG_CATEGORY,
+      `Model id "${modelId}" isn't in the bundled registry for provider "${provider}" — routing to ${provider} with default params. If it 4xxes, verify the id is valid for that provider.`,
+      { modelId, provider },
     );
     return synthesized;
   }
@@ -848,8 +857,10 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
   const dslash = MARINA_DEFAULT_MODEL.indexOf("/");
   const dp = dslash >= 0 ? MARINA_DEFAULT_MODEL.slice(0, dslash) : MARINA_DEFAULT_MODEL;
   const dId = dslash >= 0 ? MARINA_DEFAULT_MODEL.slice(dslash + 1) : MARINA_DEFAULT_MODEL;
-  console.warn(
-    `[lean-agent] Provider "${provider}" (from model "${modelStr}") is not recognized by the model registry — falling back to MARINA_DEFAULT_MODEL "${MARINA_DEFAULT_MODEL}". Ensure you have a key for its provider, or pick a supported model.`,
+  moduleLogger.warn(
+    LEAN_AGENT_LOG_CATEGORY,
+    `Provider "${provider}" (from model "${modelStr}") is not recognized by the model registry — falling back to MARINA_DEFAULT_MODEL "${MARINA_DEFAULT_MODEL}". Ensure you have a key for its provider, or pick a supported model.`,
+    { provider, model: modelStr },
   );
   // The default may itself be a marina loopback model ("marina/default"),
   // which the registry doesn't know — resolve it through the marina branch.
@@ -938,6 +949,8 @@ interface Focus {
 
 export class LeanAgentAdapter implements AgentHandle {
   readonly name: string;
+  /** Structured logger; injected via the constructor or the module default. */
+  private readonly log: Logger;
 
   private agent: Agent;
   private baseTools: AgentTool[] = [];
@@ -1175,6 +1188,9 @@ export class LeanAgentAdapter implements AgentHandle {
    * @param spendGuard
    *   Rolling-hour cost caps (per agent / runtime-wide) from
    *   `spendLimitsFromEnv()`; omitted = unlimited.
+   * @param logger
+   *   Structured logger for the adapter's own diagnostics (category
+   *   `lean-agent`, every line tagged `{ agent }`); omitted = module default.
    */
   constructor(
     config: AgentConfig,
@@ -1184,9 +1200,11 @@ export class LeanAgentAdapter implements AgentHandle {
     internalToken?: string,
     spendGuard?: SpendGuard,
     providerFetch?: typeof fetch,
+    logger?: Logger,
   ) {
     config.supports = normalizeSupports(config.supports);
     this.name = config.name;
+    this.log = logger ?? moduleLogger;
     this.config = config;
     this.providerFetch = providerFetch;
     this.perceiveSelfEcho = perceiveSelfEcho();
@@ -1315,9 +1333,10 @@ export class LeanAgentAdapter implements AgentHandle {
         // history is silently lost. LOCAL: keep the agent moving — fall back
         // to the legacy summary note and log the miss.
         if (!isLocalProfile() || signal?.aborted) throw error;
-        console.warn(
-          "[memory] LOCAL profile: durable archive failed, falling back to a summary note:",
-          getErrorMessage(error),
+        this.log.warn(
+          "memory",
+          "LOCAL profile: durable archive failed, falling back to a summary note",
+          { agent: this.name, error: getErrorMessage(error) },
         );
         await this.platformMemory
           .write("insight", `[compaction] ${summary.slice(0, 2000)}`, "low", [
@@ -1547,8 +1566,10 @@ export class LeanAgentAdapter implements AgentHandle {
               this.droppedPerceptions += Math.max(0, dropped);
               this.pendingPerceptions = merged;
               if (dropped > 0) {
-                console.warn(
-                  `[lean-agent] "${this.name}" perception buffer burst: dropped ${dropped} low-priority event(s) (kept ${highPrio.length} high-priority + ${merged.length - highPrio.length} recent)`,
+                this.log.warn(
+                  LEAN_AGENT_LOG_CATEGORY,
+                  `perception buffer burst: dropped ${dropped} low-priority event(s) (kept ${highPrio.length} high-priority + ${merged.length - highPrio.length} recent)`,
+                  { agent: this.name },
                 );
               }
             }
@@ -1631,8 +1652,10 @@ export class LeanAgentAdapter implements AgentHandle {
     this.baseTools = [...this.baseTools, ...fresh];
     this.loadedToolNames.push(...fresh.map((t) => t.name));
     this.syncEvolutionTool();
-    console.log(
-      `[lean-agent] "${this.name}" loaded ${fresh.length} deferred tool(s): ${fresh.map((t) => t.name).join(", ")}`,
+    this.log.info(
+      LEAN_AGENT_LOG_CATEGORY,
+      `loaded ${fresh.length} deferred tool(s): ${fresh.map((t) => t.name).join(", ")}`,
+      { agent: this.name },
     );
   }
 
@@ -1652,8 +1675,10 @@ export class LeanAgentAdapter implements AgentHandle {
 
   private shouldStopAfterTurn(): boolean {
     if (this.currentPromptTurns < MAX_TURNS_PER_PROMPT) return false;
-    console.warn(
-      `[lean-agent] "${this.name}" reached the ${MAX_TURNS_PER_PROMPT}-turn per-prompt cap; yielding until the next cycle`,
+    this.log.warn(
+      LEAN_AGENT_LOG_CATEGORY,
+      `reached the ${MAX_TURNS_PER_PROMPT}-turn per-prompt cap; yielding until the next cycle`,
+      { agent: this.name },
     );
     return true;
   }
@@ -1763,13 +1788,17 @@ export class LeanAgentAdapter implements AgentHandle {
       ? `\nYour current focus: ${this.focus.description}`
       : "\nExplore the world, discover its systems, and find interesting things to do.";
 
-    console.log(
-      `[lean-agent] "${this.name}" starting discovery prompt (model: ${this.model.id}, provider: ${this.model.provider})`,
+    this.log.info(
+      LEAN_AGENT_LOG_CATEGORY,
+      `starting discovery prompt (model: ${this.model.id}, provider: ${this.model.provider})`,
+      { agent: this.name },
     );
     await this.agent.prompt(
       `${discoveryPrompt}${wisdomPart}${checkpointPart}${ownContextPart}${focusPart}\n\nBegin.`,
     );
-    console.log(`[lean-agent] "${this.name}" discovery prompt completed, starting autonomous loop`);
+    this.log.info(LEAN_AGENT_LOG_CATEGORY, `discovery prompt completed, starting autonomous loop`, {
+      agent: this.name,
+    });
 
     // stop() may have been called while discovery was still running — don't
     // start the loop or claim "autonomous" in that case.
@@ -1821,10 +1850,10 @@ export class LeanAgentAdapter implements AgentHandle {
     // Save checkpoint and reflect before disconnect
     if (this.metrics.startedAt > 0) {
       await this.saveCurrentCheckpoint().catch((err) => {
-        console.warn(
-          `[lean-agent] "${this.name}" checkpoint save failed during stop():`,
-          err instanceof Error ? err.message : err,
-        );
+        this.log.warn(LEAN_AGENT_LOG_CATEGORY, "checkpoint save failed during stop()", {
+          agent: this.name,
+          error: getErrorMessage(err),
+        });
       });
       const uptime = Math.round((Date.now() - this.metrics.startedAt) / 60000);
       // Never `auto`: under LOCAL ungated the bare `reflect` would spawn a
@@ -1868,8 +1897,10 @@ export class LeanAgentAdapter implements AgentHandle {
               "budget",
               `model-call budget exhausted (${this.config.budgetCalls} calls)`,
             );
-            console.warn(
-              `[lean-agent] "${this.name}" spent its model-call budget (${this.config.budgetCalls}) — pausing. Inspect with \`agent status ${this.name}\`, stop with \`agent stop ${this.name}\`, or respawn with a larger budget.`,
+            this.log.warn(
+              LEAN_AGENT_LOG_CATEGORY,
+              `spent its model-call budget (${this.config.budgetCalls}) — pausing. Inspect with \`agent status ${this.name}\`, stop with \`agent stop ${this.name}\`, or respawn with a larger budget.`,
+              { agent: this.name },
             );
             this.emitEvent({
               type: "error",
@@ -1891,8 +1922,10 @@ export class LeanAgentAdapter implements AgentHandle {
         if (spendBreach) {
           if (this.pause?.kind !== "spend-cap") {
             this.enterPause("spend-cap", spendBreach);
-            console.warn(
-              `[lean-agent] "${this.name}" ${spendBreach} — pausing until the rolling hour drops below the cap. Inspect with \`agent status ${this.name}\`.`,
+            this.log.warn(
+              LEAN_AGENT_LOG_CATEGORY,
+              `${spendBreach} — pausing until the rolling hour drops below the cap. Inspect with \`agent status ${this.name}\`.`,
+              { agent: this.name },
             );
             this.emitEvent({ type: "error", error: spendBreach, context: "spend-cap" });
             this.notifySpawner(
@@ -1950,8 +1983,10 @@ export class LeanAgentAdapter implements AgentHandle {
           clearTimeout(timeoutHandle);
         }
         if (timedOut) {
-          console.warn(
-            `[lean-agent] "${this.name}" prompt exceeded ${this.promptTimeoutMs}ms — aborted, continuing next cycle.`,
+          this.log.warn(
+            LEAN_AGENT_LOG_CATEGORY,
+            `prompt exceeded ${this.promptTimeoutMs}ms — aborted, continuing next cycle.`,
+            { agent: this.name },
           );
           this.emitEvent({
             type: "error",
@@ -1992,8 +2027,10 @@ export class LeanAgentAdapter implements AgentHandle {
               const reason = `context overflow unrecoverable [${model}] — server window below floor (${MIN_EFFECTIVE_CONTEXT}); check the model's real context size`;
               this.noteError(reason);
               const backoff = upstreamErrorBackoffMs(consecutiveErrors);
-              console.warn(
-                `[lean-agent] "${this.name}" context overflow unrecoverable [${model}] — backing off ${backoff}ms`,
+              this.log.warn(
+                LEAN_AGENT_LOG_CATEGORY,
+                `context overflow unrecoverable [${model}] — backing off ${backoff}ms`,
+                { agent: this.name },
               );
               this.emitEvent({ type: "error", error: reason, context: "autonomous_loop" });
               consecutiveErrors = await this.afterUpstreamError(consecutiveErrors, backoff);
@@ -2002,9 +2039,11 @@ export class LeanAgentAdapter implements AgentHandle {
             this.noteError(
               `context overflow [${model}] — trimmed, window→${this.effectiveContextWindow}`,
             );
-            console.warn(
-              `[lean-agent] "${this.name}" context overflow [${model}]: ${errorMessage}. ` +
+            this.log.warn(
+              LEAN_AGENT_LOG_CATEGORY,
+              `context overflow [${model}]: ${errorMessage}. ` +
                 `Hard-trimmed history, effective window → ${this.effectiveContextWindow}.`,
+              { agent: this.name },
             );
             this.emitEvent({
               type: "error",
@@ -2022,8 +2061,10 @@ export class LeanAgentAdapter implements AgentHandle {
           // are model-specific, and "which model?" is the first question.
           this.noteError(`LLM error [${model}]: ${errorMessage}`);
           const backoff = upstreamErrorBackoffMs(consecutiveErrors);
-          console.warn(
-            `[lean-agent] "${this.name}" LLM error (attempt ${consecutiveErrors}, backoff ${backoff}ms) [${model}]: ${errorMessage}`,
+          this.log.warn(
+            LEAN_AGENT_LOG_CATEGORY,
+            `LLM error (attempt ${consecutiveErrors}, backoff ${backoff}ms) [${model}]: ${errorMessage}`,
+            { agent: this.name },
           );
           this.emitEvent({
             type: "error",
@@ -2070,8 +2111,10 @@ export class LeanAgentAdapter implements AgentHandle {
               `context overflow unrecoverable (thrown) — server window below floor (${MIN_EFFECTIVE_CONTEXT})`,
             );
             const backoff = upstreamErrorBackoffMs(consecutiveErrors);
-            console.warn(
-              `[lean-agent] "${this.name}" context overflow unrecoverable (thrown) — backing off ${backoff}ms`,
+            this.log.warn(
+              LEAN_AGENT_LOG_CATEGORY,
+              `context overflow unrecoverable (thrown) — backing off ${backoff}ms`,
+              { agent: this.name },
             );
             consecutiveErrors = await this.afterUpstreamError(consecutiveErrors, backoff);
             continue;
@@ -2079,9 +2122,11 @@ export class LeanAgentAdapter implements AgentHandle {
           this.noteError(
             `context overflow (thrown) — trimmed, window→${this.effectiveContextWindow}`,
           );
-          console.warn(
-            `[lean-agent] "${this.name}" context overflow (thrown): ${msg}. ` +
+          this.log.warn(
+            LEAN_AGENT_LOG_CATEGORY,
+            `context overflow (thrown): ${msg}. ` +
               `Hard-trimmed history, effective window → ${this.effectiveContextWindow}.`,
+            { agent: this.name },
           );
           await this.sleep(1000);
           continue;
@@ -2090,8 +2135,10 @@ export class LeanAgentAdapter implements AgentHandle {
         this.consecutiveLoopErrors = consecutiveErrors;
         const backoff = upstreamErrorBackoffMs(consecutiveErrors);
         this.noteError(msg);
-        console.warn(
-          `[lean-agent] "${this.name}" loop exception (attempt ${consecutiveErrors}, backoff ${backoff}ms): ${msg}`,
+        this.log.warn(
+          LEAN_AGENT_LOG_CATEGORY,
+          `loop exception (attempt ${consecutiveErrors}, backoff ${backoff}ms): ${msg}`,
+          { agent: this.name },
         );
         this.emitEvent({
           type: "error",
@@ -2957,16 +3004,20 @@ The goal is a smaller, sharper memory — not more notes.`;
         compacted.length !== messages.length || compacted.some((m, i) => m !== messages[i]);
       if (!changed) return undefined;
       this.metrics.midRunCompactions += 1;
-      console.log(
-        `[lean-agent] "${this.name}" mid-run compaction: ${messages.length} → ${compacted.length} messages (usage ${(gauge.usageRatio * 100).toFixed(0)}%)`,
+      this.log.info(
+        LEAN_AGENT_LOG_CATEGORY,
+        `mid-run compaction: ${messages.length} → ${compacted.length} messages (usage ${(gauge.usageRatio * 100).toFixed(0)}%)`,
+        { agent: this.name },
       );
       return { context: { ...context.context, messages: compacted } };
     } catch (error) {
       // Archival failure (ContextPersistenceError) or an estimate hiccup must
       // not break the run: the per-request transform still guards the call.
       if (signal?.aborted) return undefined;
-      console.warn(
-        `[lean-agent] "${this.name}" mid-run compaction skipped: ${getErrorMessage(error)}`,
+      this.log.warn(
+        LEAN_AGENT_LOG_CATEGORY,
+        `mid-run compaction skipped: ${getErrorMessage(error)}`,
+        { agent: this.name },
       );
       return undefined;
     }
@@ -3134,9 +3185,11 @@ The goal is a smaller, sharper memory — not more notes.`;
           this.silentTurns++;
           this.metrics.silentTurns = this.silentTurns;
           this.metrics.totalSilentTurns++;
-          console.warn(
-            `[lean-agent] "${this.name}" silent turn #${this.silentTurns} ` +
+          this.log.warn(
+            LEAN_AGENT_LOG_CATEGORY,
+            `silent turn #${this.silentTurns} ` +
               `(LLM returned 0 tool calls; model=${this.model.id})`,
+            { agent: this.name },
           );
 
           // Crossing the circuit-breaker threshold: surface the likely cause
@@ -3149,7 +3202,7 @@ The goal is a smaller, sharper memory — not more notes.`;
               `Most likely the output-token budget: a reasoning model (e.g. Qwen via llama.cpp) can spend its ` +
               `whole completion on <think> before reaching a tool call. Check the model's context window / output budget.`;
             this.noteError(reason);
-            console.warn(`[lean-agent] "${this.name}" ${reason}`);
+            this.log.warn(LEAN_AGENT_LOG_CATEGORY, reason, { agent: this.name });
             this.emitEvent({ type: "error", error: reason, context: "autonomous_loop" });
           }
 
@@ -3227,8 +3280,10 @@ The goal is a smaller, sharper memory — not more notes.`;
               ? 8
               : 16;
         if (this.currentRunToolCalls >= runCap) {
-          console.warn(
-            `[lean-agent] "${this.name}" reached the ${runCap}-tool per-run safety budget; yielding until the next perception/cycle`,
+          this.log.warn(
+            LEAN_AGENT_LOG_CATEGORY,
+            `reached the ${runCap}-tool per-run safety budget; yielding until the next perception/cycle`,
+            { agent: this.name },
           );
           this.agent.abort();
         }
@@ -3419,10 +3474,10 @@ The goal is a smaller, sharper memory — not more notes.`;
           // Log the failure so operators notice repeated checkpoint
           // misses; previously swallowed, leading to silent progress
           // loss on restart.
-          console.warn(
-            `[lean-agent] "${this.name}" checkpoint save failed:`,
-            err instanceof Error ? err.message : err,
-          );
+          this.log.warn(LEAN_AGENT_LOG_CATEGORY, "checkpoint save failed", {
+            agent: this.name,
+            error: getErrorMessage(err),
+          });
         });
       }
     }, this.checkpointSaveInterval);
@@ -3715,8 +3770,10 @@ The goal is a smaller, sharper memory — not more notes.`;
       // Update rolePrompt and regenerate system prompt
       this.rolePrompt = opts.rolePrompt ?? null;
       this.agent.state.systemPrompt = getLeanSystemPrompt(this.rolePrompt);
-      console.log(
-        `[lean-agent] "${this.name}" role reconfigured to "${opts.role}", system prompt regenerated`,
+      this.log.info(
+        LEAN_AGENT_LOG_CATEGORY,
+        `role reconfigured to "${opts.role}", system prompt regenerated`,
+        { agent: this.name },
       );
     }
     if (opts.keyName !== undefined) {
@@ -3771,7 +3828,7 @@ The goal is a smaller, sharper memory — not more notes.`;
 
   private clearPause(note: string): void {
     if (!this.pause) return;
-    console.log(`[lean-agent] "${this.name}" ${note}`);
+    this.log.info(LEAN_AGENT_LOG_CATEGORY, note, { agent: this.name });
     this.pause = null;
   }
 
@@ -3820,7 +3877,7 @@ The goal is a smaller, sharper memory — not more notes.`;
     const last = this.lastError?.text ?? "unknown error";
     const reason = `${consecutiveErrors} consecutive upstream errors — paused ${minutes} min (last: ${last})`;
     this.enterPause("upstream-errors", reason, until);
-    console.warn(`[lean-agent] "${this.name}" ${reason}`);
+    this.log.warn(LEAN_AGENT_LOG_CATEGORY, reason, { agent: this.name });
     this.emitEvent({ type: "error", error: reason, context: "upstream-errors" });
     this.notifySpawner(
       `I've hit ${consecutiveErrors} consecutive upstream errors (${last}) and paused for ${minutes} min. I'll retry after that; \`agent status ${this.name}\` has details, \`agent stop ${this.name}\` ends me sooner.`,

@@ -339,7 +339,10 @@ function parseTerms(value: string | undefined): Record<string, unknown> {
     const parsed: unknown = JSON.parse(value);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
       return parsed as Record<string, unknown>;
-  } catch {}
+  } catch {
+    // Not JSON: plain prose is a valid terms value, so silence is correct here.
+    return { text: value };
+  }
   return { text: value };
 }
 
