@@ -62,6 +62,7 @@ import {
 import { memoryObserver } from "./memory-visibility";
 import { discoverModels } from "./model-discovery";
 import { type EndpointConfig, getEndpointConfig, setEndpointConfig } from "./model-endpoint";
+import { buildOpsOverview, opsObserverScope, stopAgentCascade } from "./ops-api";
 
 const ROOMS_DIR = join(import.meta.dir, "../../rooms");
 const PROJECT_ROOT = resolve(import.meta.dir, "../..");
@@ -764,6 +765,26 @@ export async function handleDashboardApi(
     }
     const ok = db.snoozeOperationalAlert(Number(opsAlertSnoozeMatch[1]), Date.now() + durationMs);
     return ok ? json({ ok: true }) : json({ error: "Alert not found" }, 404);
+  }
+  // ─── Ops (src/net/ops-api.ts) ────────────────────────────────────────────
+  // Observer-scoped like the memory routes: privileged principals see every
+  // agent, the spend ledger, retention, prompt budget, provider probe and
+  // security posture; a resident sees only its own agents and no provider
+  // probe. Read-only except the cascade stop, which is privileged.
+  if (url.pathname === "/api/ops/overview" && method === "GET") {
+    return json(buildOpsOverview(engine, opsObserverScope(engine, callerId)));
+  }
+  const opsAgentStopMatch = url.pathname.match(/^\/api\/ops\/agents\/([^/]+)\/stop$/);
+  if (opsAgentStopMatch && method === "POST") {
+    const denied = authorizePrivileged(engine, db, callerId, "agent.spawn");
+    if (denied) return denied;
+    const name = decodeURIComponent(opsAgentStopMatch[1]!);
+    try {
+      const result = await stopAgentCascade(engine, name);
+      return result ? json(result) : json({ error: `Agent "${name}" is not running.` }, 404);
+    } catch (error) {
+      return json({ error: getErrorMessage(error) }, 500);
+    }
   }
   // ─── Memory observability (src/net/memory-observability.ts) ──────────────
   // Observer-scoped: operators / sovereigns / desktop token / dev-open see

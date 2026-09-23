@@ -4,16 +4,20 @@
 import { Bot, Play, Send, Square } from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { useAgents, useKeys, useModels, useRoles } from "../hooks/use-api";
+import { useAgents, useKeys, useModels, useOpsOverview, useRoles } from "../hooks/use-api";
 import { postApi } from "../lib/api";
 import { DEFAULT_FALLBACK_MODEL, mergeGroups, pickDefaultModel } from "../lib/model-catalog";
+import type { AgentOperatorRow } from "../lib/ops-types";
 import type { AgentStatusFull } from "../lib/types";
 import { cn } from "../lib/utils";
 import { GlassPanel } from "./GlassPanel";
 import { ModelSelect } from "./ModelSelect";
+import { AgentOpsBadges, opsRowsByName } from "./ops/AgentOpsBadges";
 
 export function AgentLaunchPanel({ backContent }: { backContent?: ReactNode }) {
   const { data: agents } = useAgents();
+  const { data: ops } = useOpsOverview();
+  const opsRows = opsRowsByName(ops?.agents);
   const running = agents?.filter((a) => a.state !== "stopped") ?? [];
 
   return (
@@ -26,7 +30,7 @@ export function AgentLaunchPanel({ backContent }: { backContent?: ReactNode }) {
               Running ({running.length})
             </div>
             {running.map((a) => (
-              <RunningAgent key={a.name} agent={a} />
+              <RunningAgent key={a.name} agent={a} ops={opsRows[a.name]} />
             ))}
           </div>
         )}
@@ -66,7 +70,10 @@ function SpawnForm() {
     if (modelsLoading) return;
     if (hasLive) {
       const valid = new Set(liveGroups.flatMap((g) => g.models.map((m) => m.value)));
-      const fallback = pickDefaultModel(liveGroups) ?? liveGroups[0]!.models[0]!.value;
+      // `hasLive` guarantees a group with ≥ 1 model, but read defensively so a
+      // catalog shape change degrades to the custom field instead of throwing.
+      const fallback =
+        pickDefaultModel(liveGroups) ?? liveGroups[0]?.models[0]?.value ?? "__custom";
       setModel((cur) => (cur === "__custom" || valid.has(cur) ? cur : fallback));
     } else {
       setModel("__custom");
@@ -186,7 +193,7 @@ function SpawnForm() {
 
 // ─── Running Agent Row ─────────────────────────────────────────────────────
 
-function RunningAgent({ agent }: { agent: AgentStatusFull }) {
+function RunningAgent({ agent, ops }: { agent: AgentStatusFull; ops?: AgentOperatorRow }) {
   const [attention, setAttention] = useState("");
   const [sending, setSending] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -239,6 +246,7 @@ function RunningAgent({ agent }: { agent: AgentStatusFull }) {
         )}
         <span className="text-text-dim">{modelShort}</span>
         {agent.role && <span className="text-accent">{agent.role}</span>}
+        <AgentOpsBadges row={ops} />
         <span className="flex-1" />
         <span className={cn("text-[9px]", stateColor[agent.state] ?? "text-text-dim")}>
           {agent.state}

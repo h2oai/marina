@@ -149,11 +149,16 @@ The Admin panel has these tabs:
 - **Collective** — create and start isolated child Marinas from a source checkout, open each child
   dashboard, retain A/B hypotheses, and record evidence-backed promotion decisions. The same tab
   registers federation manifests as unverified before any explicit trust decision.
-- **Ops** — inspect graphical readiness, outcome trends and leaderboard, latency and effort metrics,
-  live multi-agent primitive evidence, communication, world actions, primitive diversity, memory
-  health, alert history and filters, and open contradictions. Tool calls are provenance and never
-  count as meaningful actions by themselves. Alerts can be acknowledged or resolved; contradictions
-  can be adjudicated with rationale in place.
+- **Health** — inspect graphical readiness, outcome trends and leaderboard, latency and effort
+  metrics, live multi-agent primitive evidence, communication, world actions, primitive diversity,
+  memory health, alert history and filters, and open contradictions. Tool calls are provenance and
+  never count as meaningful actions by themselves. Alerts can be acknowledged or resolved;
+  contradictions can be adjudicated with rationale in place. (This tab was called **Ops** before the
+  runtime Ops tab below existed; `marina:open-admin` with `tab: "readiness"` or `"operations"` still
+  lands here.)
+- **Ops** — the runtime as an operator sees it: every agent's operator accounting, spend against the
+  caps, row retention, the prompt budget, the last provider probe and the security posture. See
+  [Admin → Ops tab](#admin--ops-tab).
 - **Security** — live posture overview: dashboard auth (`MARINA_AUTH`), API-key encryption at rest, the `MARINA_OPEN_API` dev flag, and key/agent counts. It reads the real server state — if auth is off it points you to [authentication.md](../authentication.md).
 
 ### Admin → Memory tab
@@ -179,6 +184,77 @@ graph: durable twin records beside their notes, jobs as state-colored rings arou
 notes, proposals that turn solid when adopted, resolutions as policy diamonds between winner and
 losers, institutional spaces as peripheral hulls, and helper agents orbiting the space they serve.
 Select any of them for details in the inspector; its action link opens Admin → Memory on that job.
+
+### Admin → Ops tab
+
+**Admin → Ops** (`dashboard/src/components/ops/`) is the operator's runtime view, fed by
+`GET /api/ops/overview` every 10 s and on `agent_spawn` / `agent_stop` / `agent_error` /
+`agent_state_change` events (streaming deltas never trigger a refetch). Six sections:
+
+- **Agents** — one row per running agent: name (health, who spawned it, uptime), role and model,
+  inferred tool profile (`full` / `crew` / `minimal`), tokens in / out, cost lifetime / rolling hour
+  (colored against the per-agent cap), consecutive errors, last error with its age, the active pause
+  (`budget spent`, `spend cap`, `upstream errors`) with "resumes in …" or the condition that lifts it,
+  and the next autonomous tick. Operators get a **stop** action per row; the confirmation names every
+  agent the stop will cascade to (the spawn lineage, children first) and the result line lists what
+  was stopped. Residents see only their own agents and no stop buttons.
+- **Spend** — rolling-hour and lifetime USD across the visible agents, the global and per-agent caps
+  (`MARINA_MAX_COST_USD_PER_HOUR`, `MARINA_MAX_AGENT_COST_USD_PER_HOUR`, "unlimited" when unset), a
+  runtime-vs-cap bar, and the top spenders with a bar each (against the per-agent cap when there is
+  one). The empty state names the two env vars.
+- **Retention** — when the last hourly pass ran, how long it took, rows deleted per table and the
+  tables skipped (missing in this database); the full policy table (table, kind — telemetry / ledger /
+  audit / append-only — keep window, whether `MARINA_RETENTION_OVERRIDES` changed it, note); and the
+  "never pruned" list (append-only tables plus anything the last pass left untouched).
+- **Prompt budget** — system prompt bytes against `LEAN_SYSTEM_PROMPT_BYTE_CAP` (bar turns amber past
+  90 %, red past 100 %), the continuation-prompt budget, whether deferred tools are on
+  (`MARINA_DEFERRED_TOOLS`), how many tools are loadable on demand and their bytes, and resident
+  tool-schema bytes per profile. Sizes are measured server-side once a minute.
+- **Providers** — the last `readiness providers` probe: provider and model, a one-word verdict
+  (`ok`, `fallback` when another provider answered, `tools` when text passed but the tool call did
+  not, `text`, `error`), the three checks (text, second system message, tool call — `toolCallOk`),
+  who served it, latency and the failure detail. Operators only; the empty state names the command.
+- **Security posture** — trust profile (with `ungated`), autonomy posture, loopback vs public bind,
+  sign-in requirement, MCP transport auth, the `MARINA_OPEN_API` dev flag, `MARINA_TRUST_PROXY`,
+  whether the in-world command limiter is bypassed (local profile), and every named HTTP limiter with
+  its budget and key (per principal / per IP).
+
+Section headers deliberately do not use the GlassPanel `title` prop (that header is the grid drag
+handle). Load failures render the shared `FetchErrorNotice` with a retry.
+
+The **header** carries two related widgets. The **health badge** shows `ok / degraded / off`
+capability counts from `/api/readiness` (amber when anything is degraded, red when nothing is ok);
+hovering or focusing it lists every non-ok capability with its remediation, and clicking it opens
+Admin → Health (the `marina:open-admin` event with `tab: "readiness"`). The **spend chip** shows
+rolling-hour USD and turns red when the runtime is at ≥ 80 % of the global cap or any agent is at
+≥ 80 % of the per-agent cap; it is hidden until there is spend or a cap, and clicking it opens
+Admin → Ops. The Entity Roster and the Agent Launch Panel show the same rolling-hour cost and a
+`paused · <kind>` badge beside each agent row, from the same rows.
+
+### Ops API
+
+The runtime surface is served by `src/net/ops-api.ts` under `/api/ops/*`, registered from
+`handleDashboardApi`; the JSON contract lives in `src/net/ops-types.ts`, which
+`dashboard/src/lib/ops-types.ts` re-exports type-only (never mirrors) and
+`dashboard/src/__tests__/ops-contract.test.tsx` pins. Every route sits behind the dashboard auth gate
+and the per-principal `dashboard` HTTP limiter (60 / 10 s).
+
+| Route | Returns |
+| --- | --- |
+| `GET /api/ops/overview` | `OpsOverview` — `generatedAt`, `scope` (`privileged` \| `resident`), `agents: AgentOperatorRow[]` (name, entityId, state, health, role, model, toolProfile, spawnedBy, uptimeMs, toolCalls, modelCalls, `tokens {input, output}`, `cost {totalUsd, lastHourUsd}`, consecutiveErrors, `lastError {text, at}`, `paused {kind, reason, since, until}`, nextTickInMs, `operatorStatus` — false when the handle has no operator accounting), `spend {lastHourUsd, totalUsd, caps {perAgentUsd, globalUsd}}` (null cap = unlimited; sums cover the visible rows only), `retention {lastReport {at, deleted, skipped, durationMs} \| null, policies [{table, kind, keep, overridden, note?}]}`, `prompt {deferredTools, systemPromptBytes, systemPromptCapBytes, residentSchemaBytesByProfile {full, crew, minimal}, deferredSchemaBytes, deferredToolCount, continuationBudgetBytes, computedAt}` (memoized per minute), `providers: ProviderProbeSummary[] \| null` (the last `readiness providers` run: provider, model, ok, status, latencyMs, textOk, systemHonored, `toolCallOk` (null when not tool-probed), toolCallError, servedBy, error, checkedAt — null when never run or for a resident), `security {trustProfile, ungated, autonomy, mcpAuthRequired, openApi, trustProxy, authRequired, loopbackBind, commandLimiterBypassed, limiters [{name, maxTokens, refillIntervalMs, keyedBy}]}`. |
+| `POST /api/ops/agents/:name/stop` | **Privileged** (`authorizePrivileged` with the `agent.spawn` gate — desktop token, sovereign, or gate holder; the `MARINA_OPEN_API` sentinel is refused). Stops the agent and every agent it spawned, children first, exactly like the in-world `agent stop`, emitting one `agent_stop` lifecycle event per agent. Returns `{ stopped, stoppedChildren }`; 404 when no such agent is running. |
+
+**Scoping.** Operators, sovereigns (rank ≥ 9), unattended `admin.destructive` holders, the desktop
+capability token and the `MARINA_OPEN_API` dev sentinel see every agent and the provider probe. An
+ordinary signed-in resident sees only the agents it spawned — transitively, so a lead's crew counts —
+plus its own handle when it is itself a running agent; its spend sums cover those rows and
+`providers` is null. Retention, prompt budget and security posture are configuration, not secrets,
+and are visible to every authenticated principal. Credentials, tokens, IPs, prompts and raw input
+never appear; an agent's last error text does (it is the same diagnostic `agent status` prints).
+
+There is no resume route: spend-cap and upstream-error pauses lift on their own when the cause
+clears, and a spent lifetime budget ends with `agent stop` or a respawn — the adapter exposes no
+manual resume.
 
 ### Memory Observability API
 

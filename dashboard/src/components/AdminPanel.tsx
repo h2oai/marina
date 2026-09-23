@@ -40,6 +40,7 @@ import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { LogExplorer } from "./LogExplorer";
 import { MemoryOpsTab } from "./MemoryOpsTab";
 import { ModelSelect } from "./ModelSelect";
+import { OpsTab } from "./ops/OpsTab";
 import { TraceExplorer } from "./TraceExplorer";
 
 const SUPPORTED_PROVIDERS = [
@@ -66,6 +67,7 @@ type Tab =
   | "security"
   | "identity"
   | "collective"
+  | "health"
   | "ops"
   | "memory"
   | "traces"
@@ -81,11 +83,28 @@ const ADMIN_TABS: Tab[] = [
   "security",
   "identity",
   "collective",
+  "health",
   "ops",
   "memory",
   "traces",
   "logs",
 ];
+
+/**
+ * Names other surfaces may use in `marina:open-admin` for a tab that renders
+ * under a different id: readiness lives in the Health tab (with alerts and
+ * productivity); `operations` is the legacy name of that same tab.
+ */
+export const ADMIN_TAB_ALIASES: Record<string, Tab> = {
+  readiness: "health",
+  operations: "health",
+};
+
+export function resolveAdminTab(requested: string | undefined): Tab | undefined {
+  if (!requested) return undefined;
+  if (ADMIN_TABS.includes(requested as Tab)) return requested as Tab;
+  return ADMIN_TAB_ALIASES[requested];
+}
 
 export function AdminPanel({
   backContent,
@@ -98,16 +117,18 @@ export function AdminPanel({
   const [requestedJobId, setRequestedJobId] = useState<string | undefined>();
 
   useEffect(() => {
-    const openOperations = () => setTab("ops");
+    const openOperations = () => setTab("health");
     // Hand-off from the unified canvas MEMORY layer (see
-    // unified/lib/memory-map-admin-link.ts): `preventDefault()` tells the
+    // unified/lib/memory-map-admin-link.ts) and the header health badge /
+    // spend chip (components/ops/admin-link.ts): `preventDefault()` tells the
     // dispatcher an admin surface claimed the event.
     const openAdmin = (event: Event) => {
       const detail = (event as CustomEvent<{ tab?: string; jobId?: string }>).detail;
-      if (!detail?.tab || !ADMIN_TABS.includes(detail.tab as Tab)) return;
+      const tab = resolveAdminTab(detail?.tab);
+      if (!tab) return;
       event.preventDefault();
-      if (detail.tab === "memory") setRequestedJobId(detail.jobId);
-      setTab(detail.tab as Tab);
+      if (tab === "memory") setRequestedJobId(detail?.jobId);
+      setTab(tab);
     };
     const openKeys = () => setTab("keys");
     const openTraces = (event: Event) => {
@@ -159,7 +180,8 @@ export function AdminPanel({
         {tab === "security" && <SecurityTab />}
         {tab === "identity" && <IdentityTab />}
         {tab === "collective" && <CollectiveTab />}
-        {tab === "ops" && <OperationsTab />}
+        {tab === "health" && <OperationsTab />}
+        {tab === "ops" && <OpsTab />}
         {tab === "memory" && (
           <MemoryOpsTab
             focusJobId={requestedJobId}

@@ -3,6 +3,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { fetchApi } from "../lib/api";
+import type { OpsOverview } from "../lib/ops-types";
 import type {
   AdapterStatus,
   AgentStatusFull,
@@ -203,6 +204,25 @@ export function useReadiness() {
     queryKey: ["operations", "readiness"],
     queryFn: () => fetchApi<ReadinessReport>("/api/readiness"),
     refetchInterval: 30_000,
+  });
+}
+
+/** Query key of the ops overview — share it to invalidate from other panels. */
+export const OPS_OVERVIEW_KEY = ["operations", "ops-overview"] as const;
+
+/**
+ * `GET /api/ops/overview` — running agents with operator accounting (tokens,
+ * spend, pauses, errors), spend caps, retention, prompt budget, provider probe
+ * and security posture. Server-scoped: residents see only their own agents.
+ * 10 s heartbeat; consumers invalidate on `agent_*` events via
+ * `useInvalidateOnEvent(OPS_OVERVIEW_KEY, …)`.
+ */
+export function useOpsOverview(enabled = true) {
+  return useQuery({
+    queryKey: [...OPS_OVERVIEW_KEY],
+    queryFn: () => fetchApi<OpsOverview>("/api/ops/overview"),
+    refetchInterval: enabled ? 10_000 : false,
+    enabled,
   });
 }
 
