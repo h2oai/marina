@@ -266,7 +266,10 @@ function object(text: string): Record<string, unknown> {
   try {
     const value = JSON.parse(text);
     if (value && typeof value === "object" && !Array.isArray(value)) return value;
-  } catch {}
+  } catch {
+    // Not JSON: plain prose is a valid value, so silence is correct here.
+    return { text };
+  }
   return { text };
 }
 function resolve(db: MarinaDB, selector: string) {

@@ -45,7 +45,11 @@ export function reproduceCommand(deps: {
         }> = [];
         try {
           components = JSON.parse(componentsText);
-        } catch {}
+        } catch {
+          // Missing or malformed JSON is user input: the empty list fails the
+          // validation below and prints HELP, so no log line is needed.
+          components = [];
+        }
         const parents = parentsText
           .split(",")
           .map((x) => x.trim())

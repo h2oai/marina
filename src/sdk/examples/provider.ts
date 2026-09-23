@@ -172,18 +172,25 @@ async function streamProviderResponse(
         return;
       }
 
+      let chunk: { choices?: Array<{ delta?: { content?: string } }> };
       try {
-        const chunk = JSON.parse(payload) as {
-          choices?: Array<{ delta?: { content?: string } }>;
-        };
-        const content = chunk.choices?.[0]?.delta?.content;
-        if (content) {
-          await agent.channel(
-            channel,
-            JSON.stringify({ type: "model_response_chunk", id: requestId, content }),
-          );
-        }
-      } catch {}
+        chunk = JSON.parse(payload);
+      } catch {
+        // Not a JSON frame (SSE comment/keepalive or a line split mid-frame):
+        // skipping it is the correct streaming behaviour, nothing to report.
+        continue;
+      }
+      const content = chunk.choices?.[0]?.delta?.content;
+      if (!content) continue;
+      try {
+        await agent.channel(
+          channel,
+          JSON.stringify({ type: "model_response_chunk", id: requestId, content }),
+        );
+      } catch (err) {
+        // Keep streaming the remaining chunks; the end marker below still fires.
+        console.warn(`[provider] chunk relay failed for ${requestId}: ${err}`);
+      }
     }
   }
 

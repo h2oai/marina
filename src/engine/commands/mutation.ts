@@ -168,7 +168,10 @@ function parseObject(text: string): Record<string, unknown> | undefined {
   try {
     const v = JSON.parse(text);
     if (v && typeof v === "object" && !Array.isArray(v)) return v;
-  } catch {}
+  } catch {
+    // Malformed JSON is user input, not a fault: undefined makes the caller print HELP.
+    return undefined;
+  }
   return undefined;
 }
 function isDisposition(v: string): v is MutationDisposition {
