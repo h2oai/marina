@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -19,20 +26,28 @@ import {
 // (~/.marina/worktrees) lands in a throwaway location, never the real home.
 let savedHome: string | undefined;
 let fakeHome: string;
+/** Every temp dir this file creates; removed in afterEach so /tmp does not fill up. */
+const tempDirs: string[] = [];
+function tempDir(prefix: string): string {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  tempDirs.push(dir);
+  return dir;
+}
 
 beforeEach(() => {
   savedHome = process.env.HOME;
-  fakeHome = realpathSync(mkdtempSync(join(tmpdir(), "marina-wt-home-")));
+  fakeHome = tempDir("marina-wt-home-");
   process.env.HOME = fakeHome;
 });
 
 afterEach(() => {
   if (savedHome === undefined) delete process.env.HOME;
   else process.env.HOME = savedHome;
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 function makeGitRepoWithCommit(): string {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "marina-wt-repo-")));
+  const root = tempDir("marina-wt-repo-");
   writeFileSync(join(root, "example.txt"), "hello\n");
   const env = {
     ...process.env,
@@ -59,7 +74,7 @@ function makeGitRepoWithCommit(): string {
 }
 
 function makeNonGitDir(): string {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "marina-wt-plain-")));
+  const root = tempDir("marina-wt-plain-");
   writeFileSync(join(root, "example.txt"), "hello\n");
   return root;
 }
