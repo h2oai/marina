@@ -23,8 +23,13 @@
 
 import type { Engine } from "../engine/engine";
 import type { MarinaDB } from "../persistence/database";
-import type { ChronicleEntry, ChronicleKind } from "../persistence/db-chronicle";
 import type { Entity, EntityId } from "../types";
+import type {
+  Achievement,
+  ChronicleEntry,
+  ChronicleKind,
+  EntityProfile,
+} from "./entity-profile-types";
 import { consumeHttpRate, rateLimitedResponse, UNKNOWN_CLIENT_IP } from "./http-utils";
 
 /** Standing thresholds the rank ladder uses (mirrors src/agent/rank-progression.ts). */
@@ -36,49 +41,10 @@ const DAYS_ACTIVE_MILESTONES = [1, 7, 30, 100];
 /** Total chronicle-citation count milestones. */
 const CITATION_MILESTONES = [1, 5, 25, 100];
 
-export interface EntityProfile {
-  identity: {
-    local_id: string;
-    id_stability: "durable" | "runtime" | "name_record";
-    name: string;
-    kind: string;
-    role: string | null;
-    rank: number;
-    standing: number;
-    first_seen: number | null;
-    last_active: number | null;
-    online: boolean;
-    spawned_by: string | null;
-    identity_assurance: "verified_human" | "internal_agent" | "session_only" | "record_only";
-  };
-  bio: {
-    goal: string | null;
-    model: string | null;
-    traits: string[];
-    operator_bio: string | null;
-  };
-  narratives: ChronicleEntry[];
-  achievements: Achievement[];
-  stats: {
-    chronicle_citations: Record<ChronicleKind, number>;
-    chronicle_citations_total: number;
-    rooms_visited: number;
-    unique_commands: number;
-    entities_interacted: number;
-    total_actions: number;
-    competence_gates_passed: number;
-    days_active: number;
-  };
-  connections: { name: string; co_chronicles: number }[];
-}
-
-export interface Achievement {
-  id: string;
-  title: string;
-  description: string;
-  achieved_at: number;
-  evidence_ref?: string;
-}
+// The response shape lives in the dependency-free `entity-profile-types.ts`
+// (shared type-only with the dashboard); re-exported here so existing imports
+// of `EntityProfile` / `Achievement` from this module keep working.
+export type { Achievement, ChronicleEntry, ChronicleKind, EntityProfile };
 
 /**
  * Dispatcher for /api/entity/* routes. Returns null if no route matches so

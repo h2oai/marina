@@ -118,7 +118,21 @@ Marina's HTTP API requires authentication **by default** — but it's easy to we
 - [ ] **Terminate TLS at a reverse proxy** (next section). Marina speaks plain HTTP/WS; never expose `3300` directly to the internet.
 - [ ] Rate limits are built in (WS 5/s, MCP 5/s, Model API 2/s per IP, Memory API 10/s per agent, dashboard REST 60/10 s per principal, canvas + asset writes 30/10 s per principal, public `/api/entity/*` 30/10 s per IP, MCP sessions 10/min per IP) but a proxy-level limit is still wise. Per-IP limits key on the TCP peer; set `MARINA_TRUST_PROXY=true` behind your reverse proxy so they key on `X-Forwarded-For` instead.
 - [ ] **MCP behind a public hostname**: set `MARINA_MCP_ALLOWED_HOSTS=mcp.example.com` (DNS-rebinding guard) — the transport already requires a `MODEL_API_KEYS` bearer on any non-loopback bind. See [mcp.md](../mcp.md#transport-security).
-- [ ] **Request bodies** are capped at 8 MiB (`MARINA_MAX_REQUEST_BODY_BYTES`); asset uploads at 50 MiB (`MARINA_MAX_UPLOAD_BYTES`). Uploaded assets are MIME-allowlisted and served with `nosniff` + a no-script CSP; the dashboard HTML gets `X-Frame-Options: SAMEORIGIN` and a `frame-ancestors`/`object-src`/`base-uri` CSP.
+- [ ] **Request bodies** are capped at 8 MiB (`MARINA_MAX_REQUEST_BODY_BYTES`); asset uploads at 50 MiB (`MARINA_MAX_UPLOAD_BYTES`). Uploaded assets are MIME-allowlisted and served with `nosniff` + a no-script CSP; every HTML page gets `X-Frame-Options: SAMEORIGIN` and the dashboard Content-Security-Policy below.
+
+### Dashboard Content-Security-Policy
+
+Every HTML route (`/dashboard`, `/canvas`, `/who/*`, `/chat`, `/ask`, the "dashboard not built" placeholder) is served with this header (`HTML_CSP` in `src/net/http-utils.ts`):
+
+```
+default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com/ajax/libs/pdf.js/; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' blob: data:; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' ws: wss:; worker-src 'self' blob:; frame-src 'self' https:; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'
+```
+
+The built dashboard loads one same-origin module script and no inline scripts, so `script-src 'self'` is enforced — an injected `<script>` or `javascript:` URL does not run. The grants beyond `'self'` are the ones the bundle genuinely uses: inline `style=` attributes (motion, react-flow, react-grid-layout), Google Fonts (the display/mono faces), the pdf.js worker from cdnjs (path-scoped to the pdf.js directory), `blob:`/`data:` object URLs for previews, WebSockets, and `https:` iframes for the `embed` canvas node / asset kind (sandboxed). `/chat` and `/ask` carry inline scripts and receive the same policy with their scripts' `'sha256-…'` digests appended — never `'unsafe-inline'`.
+
+- **`MARINA_DASHBOARD_CSP=off`** removes the header (framing protection via `X-Frame-Options` stays). Use only while diagnosing a blocked resource.
+- **`MARINA_DASHBOARD_CSP="<policy>"`** replaces it verbatim on every HTML route — e.g. to add the origin of an external asset store to `img-src`/`media-src`, or to drop the Google Fonts / cdnjs grants once you self-host them. A custom policy gets no inline-script hashes appended: include them (or `'unsafe-inline'` for `script-src`) yourself if `/chat` and `/ask` stay reachable, or keep only the SPA routes behind it.
+- Blocked loads show up in the browser console as `Refused to load … because it violates the following Content Security Policy directive`. Report the resource and directive rather than switching the header off in production.
 
 ## Reverse proxy + TLS
 

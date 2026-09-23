@@ -9,6 +9,7 @@
 // limiters. Keeping them here means the asset, canvas, dashboard, entity and
 // MCP handlers apply ONE rule each instead of five slightly different ones.
 
+import { createHash } from "node:crypto";
 import { RateLimiter, type RateLimiterConfig } from "../auth/rate-limiter";
 import { corsHeaders } from "./cors";
 
@@ -110,14 +111,102 @@ export function serverMaxRequestBodyBytes(): number {
 // ─── Security headers ────────────────────────────────────────────────────────
 
 /**
- * CSP for HTML documents (dashboard SPA, web chat, ask page). Deliberately
- * limited to directives that cannot break the built bundle: the dashboard uses
- * inline style attributes (motion / react-flow), blob: and data: URLs, and
- * same-origin WebSockets, so a script-src/style-src/connect-src policy would
- * need `'unsafe-inline'` grants that buy little. Clickjacking, plugin embedding
- * and <base> hijacking are closed here; nosniff closes MIME confusion.
+ * CSP for HTML documents (dashboard SPA, /who pages, web chat, ask page, the
+ * "not built" placeholder). The built dashboard (`dist/dashboard/index.html`)
+ * loads exactly one external module script and no inline scripts, so
+ * `script-src 'self'` is enforceable. Every source outside `'self'` below is a
+ * grant the dashboard code genuinely needs:
+ *
+ * - `style-src 'unsafe-inline'`      — inline `style=` attributes from motion /
+ *   react-flow / react-grid-layout and the `<style>` block in the placeholder,
+ *   webchat and ask pages. (Style hashes cannot cover attributes.)
+ * - `https://fonts.googleapis.com`   — `dashboard/index.html` `<link rel=stylesheet>`
+ *   (Orbitron, Share Tech Mono) and `dashboard/src/unified/unified-canvas.css`
+ *   `@import` (VT323, Orbitron, Press Start 2P); the fonts themselves come from
+ *   `https://fonts.gstatic.com` (`font-src`).
+ * - `script-src https://cdnjs.cloudflare.com/ajax/libs/pdf.js/` — path-scoped:
+ *   `dashboard/src/canvas/nodes/PdfNode.tsx` points `GlobalWorkerOptions.workerSrc`
+ *   at the pdf.js CDN; pdf.js wraps a cross-origin worker in a `blob:` worker
+ *   that `import()`s that URL (hence `worker-src blob:`), and its main-thread
+ *   "fake worker" fallback `import()`s it too. Self-hosting the worker would
+ *   remove this grant.
+ * - `frame-src https:`               — the `embed` canvas node / asset kind
+ *   (`CanvasNodeEmbed.tsx`, `AssetLightbox.tsx`) embeds an operator-supplied
+ *   URL in a sandboxed iframe; `'self'` covers the in-app PDF viewer iframes.
+ * - `img-src` / `media-src` `blob: data:` — object URLs for previews and the
+ *   inline SVG data URI in `index.css`; stored assets are same-origin
+ *   (`/assets/*`). A storage provider that serves assets from another origin
+ *   must extend `img-src`/`media-src` via `MARINA_DASHBOARD_CSP`.
+ * - `connect-src ws: wss:`           — the `/ws`, `/dashboard-ws` and
+ *   `/canvas-ws` sockets (spelled out for engines that don't treat `'self'`
+ *   as covering WebSocket schemes).
+ *
+ * `/chat` and `/ask` carry inline scripts; those routes append their
+ * `'sha256-…'` hashes to `script-src` (see `inlineScriptHashes`) instead of
+ * loosening the policy for every page.
+ *
+ * Override / disable with `MARINA_DASHBOARD_CSP`: `off` drops the header,
+ * any other non-empty value is sent verbatim on every HTML route (inline-script
+ * hashes are NOT appended to a custom policy — include them, or
+ * `'unsafe-inline'`, yourself if you keep `/chat` and `/ask` reachable).
  */
-export const HTML_CSP = "frame-ancestors 'self'; object-src 'none'; base-uri 'self'";
+export const HTML_CSP = [
+  "default-src 'self'",
+  "script-src 'self' https://cdnjs.cloudflare.com/ajax/libs/pdf.js/",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob: data:",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "connect-src 'self' ws: wss:",
+  "worker-src 'self' blob:",
+  "frame-src 'self' https:",
+  "frame-ancestors 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join("; ");
+
+/** `MARINA_DASHBOARD_CSP` — `off` disables the HTML CSP; any other value replaces it. */
+export const DASHBOARD_CSP_ENV = "MARINA_DASHBOARD_CSP";
+
+/**
+ * The effective HTML CSP, or `null` when disabled. `inlineScriptHashes` are
+ * appended to the default policy's `script-src` (for the two static pages that
+ * carry inline scripts); a custom operator policy is returned verbatim.
+ */
+export function htmlCsp(opts: { inlineScriptHashes?: readonly string[] } = {}): string | null {
+  const override = process.env[DASHBOARD_CSP_ENV]?.trim();
+  if (override) {
+    if (override.toLowerCase() === "off") return null;
+    return override;
+  }
+  const hashes = opts.inlineScriptHashes ?? [];
+  if (hashes.length === 0) return HTML_CSP;
+  const sources = hashes.map((h) => `'sha256-${h}'`).join(" ");
+  return HTML_CSP.replace(/(^|; )script-src ([^;]*)/, (_m, lead, rest) => {
+    return `${lead}script-src ${rest} ${sources}`;
+  });
+}
+
+const INLINE_SCRIPT_RE = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
+
+/**
+ * Base64 SHA-256 digests of every inline `<script>` body in `html`, in
+ * document order, for `'sha256-…'` CSP source expressions. Scripts with a `src`
+ * attribute are external and skipped. The digest covers the exact bytes between
+ * the tags (whitespace included) — that is what the browser hashes too.
+ */
+export function inlineScriptHashes(html: string): string[] {
+  const hashes: string[] = [];
+  for (const m of html.matchAll(INLINE_SCRIPT_RE)) {
+    const attrs = m[1] ?? "";
+    const body = m[2] ?? "";
+    if (/\bsrc\s*=/i.test(attrs)) continue;
+    if (body.length === 0) continue;
+    hashes.push(createHash("sha256").update(body, "utf8").digest("base64"));
+  }
+  return hashes;
+}
 
 /** CSP for user-uploaded assets: no script, no loads, opaque origin when navigated to. */
 export const ASSET_CSP = "default-src 'none'; sandbox";
@@ -131,17 +220,31 @@ export const PDF_CSP = "default-src 'none'";
 
 export type SecurityHeaderKind = "html" | "static" | "asset" | "api";
 
-/** Standard hardening headers per response kind. Merge into your own headers. */
-export function securityHeaders(kind: SecurityHeaderKind): Record<string, string> {
+export interface SecurityHeaderOptions {
+  /** `html` only: `'sha256-…'` grants for inline scripts on this document. */
+  inlineScriptHashes?: readonly string[];
+}
+
+/**
+ * Standard hardening headers per response kind. Merge into your own headers.
+ * The `html` CSP honors `MARINA_DASHBOARD_CSP` (`off` omits the header).
+ */
+export function securityHeaders(
+  kind: SecurityHeaderKind,
+  opts: SecurityHeaderOptions = {},
+): Record<string, string> {
   const base: Record<string, string> = { "X-Content-Type-Options": "nosniff" };
   switch (kind) {
-    case "html":
-      return {
+    case "html": {
+      const headers: Record<string, string> = {
         ...base,
         "Referrer-Policy": "strict-origin-when-cross-origin",
         "X-Frame-Options": "SAMEORIGIN",
-        "Content-Security-Policy": HTML_CSP,
       };
+      const csp = htmlCsp({ inlineScriptHashes: opts.inlineScriptHashes });
+      if (csp) headers["Content-Security-Policy"] = csp;
+      return headers;
+    }
     case "static":
       return { ...base, "Referrer-Policy": "strict-origin-when-cross-origin" };
     case "asset":
@@ -156,8 +259,12 @@ export function securityHeaders(kind: SecurityHeaderKind): Record<string, string
 }
 
 /** Set the hardening headers for `kind` on an existing (mutable) response. */
-export function withSecurityHeaders(resp: Response, kind: SecurityHeaderKind): Response {
-  for (const [k, v] of Object.entries(securityHeaders(kind))) resp.headers.set(k, v);
+export function withSecurityHeaders(
+  resp: Response,
+  kind: SecurityHeaderKind,
+  opts: SecurityHeaderOptions = {},
+): Response {
+  for (const [k, v] of Object.entries(securityHeaders(kind, opts))) resp.headers.set(k, v);
   return resp;
 }
 

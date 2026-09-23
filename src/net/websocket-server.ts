@@ -20,7 +20,12 @@ import type { StorageProvider } from "../storage/provider";
 import type { Connection, Perception } from "../types";
 import { handleAssetApi, handleAssetServing } from "./asset-api";
 import { handleAuthApi } from "./auth-api";
-import { DESKTOP_OPERATOR_ENTITY_ID, OPEN_API_ENTITY_ID } from "./auth-middleware";
+import {
+  authenticateRequest,
+  DESKTOP_OPERATOR_ENTITY_ID,
+  isSentinelPrincipal,
+  OPEN_API_ENTITY_ID,
+} from "./auth-middleware";
 import { type CanvasNodeCreatedEvent, handleCanvasApi } from "./canvas-api";
 import { buildCanvasPrincipal, isLoopbackPeer, LOOPBACK_PRINCIPAL } from "./canvas-principal";
 import { CanvasBroadcaster, type CanvasSubscriptionPrincipal } from "./canvas-ws";
@@ -36,6 +41,10 @@ import type { DashboardBroadcaster, DashboardWSData } from "./dashboard-ws";
 import { handleEntityApi } from "./entity-api";
 import {
   clientIp,
+  consumeHttpRate,
+  inlineScriptHashes,
+  rateLimitedResponse,
+  type SecurityHeaderOptions,
   securityHeaders,
   serverMaxRequestBodyBytes,
   withSecurityHeaders,
@@ -43,6 +52,7 @@ import {
 import { handleMemApi } from "./mem-api";
 import { handleMemoryServiceApi } from "./memory-service-api";
 import { handleModelApi, isModelApiPath } from "./model-api";
+import { handleOrchestrationApi } from "./orchestration-api";
 import { handleProbeApi } from "./probe-api";
 
 const WEBCHAT_PATH = join(import.meta.dir, "webchat.html");
@@ -60,15 +70,45 @@ const DASHBOARD_NOT_BUILT_HTML = `<!doctype html>
 <p>Meanwhile, the <a href="/chat">web chat</a> works right away.</p>
 </main></body></html>`;
 
-/** Response headers for every HTML document we serve (nosniff, framing, CSP). */
-const HTML_HEADERS = { "Content-Type": "text/html; charset=utf-8", ...securityHeaders("html") };
+/**
+ * Response headers for every HTML document we serve (nosniff, framing, CSP).
+ * Computed per response so `MARINA_DASHBOARD_CSP` is read live, and so the two
+ * static pages with inline scripts can pass their `'sha256-…'` grants.
+ */
+function htmlHeaders(opts: SecurityHeaderOptions = {}): Record<string, string> {
+  return { "Content-Type": "text/html; charset=utf-8", ...securityHeaders("html", opts) };
+}
 
 async function serveDashboardIndex(): Promise<Response> {
   const index = Bun.file(DASHBOARD_INDEX);
   if (await index.exists()) {
-    return new Response(index, { headers: HTML_HEADERS });
+    return new Response(index, { headers: htmlHeaders() });
   }
-  return new Response(DASHBOARD_NOT_BUILT_HTML, { status: 503, headers: HTML_HEADERS });
+  return new Response(DASHBOARD_NOT_BUILT_HTML, { status: 503, headers: htmlHeaders() });
+}
+
+/**
+ * `/chat` and `/ask` are static files with inline `<script>` blocks. Instead of
+ * granting `'unsafe-inline'` to every HTML route, their script bodies are
+ * hashed once (the files don't change while the process runs) and allowed by
+ * digest — the page is still served if the read fails, just without the grants.
+ */
+const staticPageHashes = new Map<string, Promise<readonly string[]>>();
+function inlineScriptHashesFor(path: string): Promise<readonly string[]> {
+  let pending = staticPageHashes.get(path);
+  if (!pending) {
+    pending = Bun.file(path)
+      .text()
+      .then((html) => inlineScriptHashes(html))
+      .catch(() => []);
+    staticPageHashes.set(path, pending);
+  }
+  return pending;
+}
+
+async function serveStaticPage(path: string): Promise<Response> {
+  const hashes = await inlineScriptHashesFor(path);
+  return new Response(Bun.file(path), { headers: htmlHeaders({ inlineScriptHashes: hashes }) });
 }
 
 interface WSData {
@@ -505,6 +545,27 @@ export class WebSocketServer {
           if (authResp) return authResp;
         }
 
+        // Orchestration pattern catalogue — authenticated like the dashboard
+        // REST surface (same session-token gate, same per-principal budget).
+        if (url.pathname.startsWith("/api/orchestration/")) {
+          const origin = req.headers.get("Origin");
+          if (req.method === "OPTIONS") {
+            return new Response(null, { status: 204, headers: corsHeaders(origin) });
+          }
+          const auth = authenticateRequest(req, engine);
+          if ("error" in auth) return auth.error;
+          const rateKey = isSentinelPrincipal(auth.entityId)
+            ? `${auth.entityId}@${clientIp(req, server)}`
+            : auth.entityId;
+          if (!consumeHttpRate("dashboard", rateKey)) return rateLimitedResponse(origin);
+          const orchestrationResp = handleOrchestrationApi(req, url);
+          if (orchestrationResp) return orchestrationResp;
+          return Response.json(
+            { error: "not_found" },
+            { status: 404, headers: { ...corsHeaders(origin), ...securityHeaders("api") } },
+          );
+        }
+
         // API routes
         if (url.pathname.startsWith("/api/")) {
           // Real, unspoofable TCP peer address — the loopback trust anchor for
@@ -571,11 +632,11 @@ export class WebSocketServer {
         }
 
         if (url.pathname === "/chat") {
-          return new Response(Bun.file(WEBCHAT_PATH), { headers: HTML_HEADERS });
+          return serveStaticPage(WEBCHAT_PATH);
         }
 
         if (url.pathname === "/ask") {
-          return new Response(Bun.file(ASK_PATH), { headers: HTML_HEADERS });
+          return serveStaticPage(ASK_PATH);
         }
 
         return new Response("Marina — connect via WebSocket at /ws", {

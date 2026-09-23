@@ -8,7 +8,13 @@ import { isLoopbackConnection } from "../src/engine/commands/code";
 import { WS_MAX_CONNECTIONS_PER_IP, WS_MAX_TOTAL_CONNECTIONS } from "../src/engine/constants";
 import { Engine } from "../src/engine/engine";
 import { DESKTOP_OPERATOR_ENTITY_ID, OPEN_API_ENTITY_ID } from "../src/net/auth-middleware";
-import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
+import {
+  DASHBOARD_CSP_ENV,
+  HTML_CSP,
+  htmlCsp,
+  inlineScriptHashes,
+  resetHttpRateLimitersForTests,
+} from "../src/net/http-utils";
 import {
   isLoopbackHostname,
   resolveWsBindHostname,
@@ -919,16 +925,89 @@ describe("HTTP surface hardening (headers, body cap, public-read throttle)", () 
   });
 
   it("serves HTML documents with nosniff, SAMEORIGIN framing and the document CSP", async () => {
-    for (const path of ["/chat", "/ask", "/dashboard", "/who/Someone"]) {
+    for (const path of ["/chat", "/ask", "/dashboard", "/canvas", "/who/Someone", "/who"]) {
       const resp = await fetch(`http://localhost:${HARDEN_PORT}${path}`);
       expect(resp.headers.get("Content-Type")).toContain("text/html");
       expect(resp.headers.get("X-Content-Type-Options")).toBe("nosniff");
       expect(resp.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
-      expect(resp.headers.get("Content-Security-Policy")).toBe(
-        "frame-ancestors 'self'; object-src 'none'; base-uri 'self'",
-      );
+      const csp = resp.headers.get("Content-Security-Policy") ?? "";
+      expect(csp).toContain("default-src 'self'");
+      expect(csp).toContain("script-src 'self'");
+      expect(csp).toContain("frame-ancestors 'self'");
+      expect(csp).toContain("object-src 'none'");
+      expect(csp).toContain("base-uri 'self'");
+      expect(csp).toContain("form-action 'self'");
+      expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");
       expect(resp.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
     }
+  });
+
+  it("sends the exact HTML_CSP on the SPA routes (built or placeholder) and hash-grants only /chat and /ask", async () => {
+    for (const path of ["/dashboard", "/canvas", "/who/Someone"]) {
+      const resp = await fetch(`http://localhost:${HARDEN_PORT}${path}`);
+      expect(resp.headers.get("Content-Security-Policy")).toBe(HTML_CSP);
+      expect(HTML_CSP).not.toContain("sha256-");
+    }
+    // The two static pages carry inline <script> blocks: their CSP is the same
+    // policy with the scripts' digests appended to script-src — never
+    // 'unsafe-inline', and the digest must match the served bytes.
+    for (const path of ["/chat", "/ask"]) {
+      const resp = await fetch(`http://localhost:${HARDEN_PORT}${path}`);
+      const csp = resp.headers.get("Content-Security-Policy") ?? "";
+      const hashes = inlineScriptHashes(await resp.text());
+      expect(hashes.length).toBeGreaterThan(0);
+      for (const h of hashes) expect(csp).toContain(`'sha256-${h}'`);
+      expect(csp).toBe(htmlCsp({ inlineScriptHashes: hashes }) ?? "");
+      // script-src stays hash-only — no 'unsafe-inline' anywhere in the policy.
+      expect(csp).not.toContain("'unsafe-inline' 'sha256-");
+      expect(csp.match(/script-src [^;]*/)?.[0] ?? "").not.toContain("'unsafe-inline'");
+    }
+  });
+
+  it("honors MARINA_DASHBOARD_CSP: `off` drops the header, a custom policy is sent verbatim", async () => {
+    const prev = process.env[DASHBOARD_CSP_ENV];
+    try {
+      process.env[DASHBOARD_CSP_ENV] = "off";
+      let resp = await fetch(`http://localhost:${HARDEN_PORT}/dashboard`);
+      expect(resp.headers.get("Content-Security-Policy")).toBeNull();
+      expect(resp.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
+      resp = await fetch(`http://localhost:${HARDEN_PORT}/chat`);
+      expect(resp.headers.get("Content-Security-Policy")).toBeNull();
+
+      process.env[DASHBOARD_CSP_ENV] = "default-src 'self' https://cdn.example.test";
+      resp = await fetch(`http://localhost:${HARDEN_PORT}/who/Someone`);
+      expect(resp.headers.get("Content-Security-Policy")).toBe(
+        "default-src 'self' https://cdn.example.test",
+      );
+      // Verbatim: no hashes are appended to an operator policy.
+      resp = await fetch(`http://localhost:${HARDEN_PORT}/ask`);
+      expect(resp.headers.get("Content-Security-Policy")).toBe(
+        "default-src 'self' https://cdn.example.test",
+      );
+    } finally {
+      if (prev === undefined) delete process.env[DASHBOARD_CSP_ENV];
+      else process.env[DASHBOARD_CSP_ENV] = prev;
+    }
+  });
+
+  it("gates /api/orchestration/* behind the dashboard session auth and answers JSON", async () => {
+    const anon = await fetch(`http://localhost:${HARDEN_PORT}/api/orchestration/patterns`);
+    expect(anon.status).toBe(401);
+
+    const conn = new MockConnection("orch-conn");
+    engine.addConnection(conn);
+    const login = engine.login(conn.id, "Orchestrator");
+    if ("error" in login) throw new Error("login failed");
+    const resp = await fetch(`http://localhost:${HARDEN_PORT}/api/orchestration/patterns`, {
+      headers: { Authorization: `Bearer ${login.token}` },
+    });
+    // 200 once src/net/orchestration-api.ts is present; a clean 404 (never a
+    // 500 / stack page) while it is not.
+    expect([200, 404]).toContain(resp.status);
+    expect(resp.headers.get("Content-Type")).toContain("application/json");
+    const body = (await resp.json()) as Record<string, unknown>;
+    if (resp.status === 404) expect(body.error).toBe("not_found");
+    else expect(body).toBeTruthy();
   });
 
   it("serves stored assets non-executable: normalized type, nosniff, sandbox CSP, attachment", async () => {

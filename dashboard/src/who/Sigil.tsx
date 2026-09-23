@@ -20,6 +20,8 @@ function hash(str: string): number {
 }
 
 export function Sigil({ name, size = 88 }: { name: string; size?: number }) {
+  // Deterministic identity mark. Announced as an image named after the entity
+  // (it is the only visual identity on the page), and never wider than its box.
   const h = hash(name.toLowerCase());
   const hue1 = h % 360;
   const hue2 = (h >>> 8) % 360;
@@ -39,8 +41,10 @@ export function Sigil({ name, size = 88 }: { name: string; size?: number }) {
       width={size}
       height={size}
       viewBox={`0 0 ${size} ${size}`}
-      aria-hidden="true"
       role="img"
+      aria-label={`Sigil of ${name}`}
+      data-testid="who-sigil"
+      className="h-auto max-w-full shrink-0"
       style={{
         background: `linear-gradient(135deg, hsl(${hue1} 50% 14%), hsl(${hue2} 50% 8%))`,
         borderRadius: 6,

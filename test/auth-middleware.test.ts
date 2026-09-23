@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
+import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import {
   authenticateRequest,
   DESKTOP_OPERATOR_ENTITY_ID,
@@ -124,6 +125,19 @@ describe("refuseOpenApiWrite — dev-open sentinel is read-only", () => {
     // A provisioned desktop operator and a real entity are not refused.
     expect(refuseOpenApiWrite(DESKTOP_OPERATOR_ENTITY_ID, null)).toBeNull();
     expect(refuseOpenApiWrite("e_42" as EntityId, null)).toBeNull();
+  });
+
+  it("allows sentinel writes under the local trust profile (the sentinel IS the operator)", () => {
+    // MARINA_OPEN_API=true on a loopback bind with no auth is the single-operator
+    // dev posture; the Canvas UI writes without a session token there. shared/
+    // public keep the sentinel read-only (the default in-process profile).
+    setTrustProfile("local");
+    try {
+      expect(refuseOpenApiWrite(OPEN_API_ENTITY_ID, null)).toBeNull();
+    } finally {
+      resetTrustProfileForTests();
+    }
+    expect(refuseOpenApiWrite(OPEN_API_ENTITY_ID, null)?.status).toBe(403);
   });
 });
 
