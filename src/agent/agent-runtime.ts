@@ -18,13 +18,14 @@ import {
 } from "../net/model-discovery";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent } from "../types";
-import type {
-  AgentConfig,
-  AgentEvent,
-  AgentHandle,
-  AgentStatus,
-  AgentSupports,
-  AgentThinkingLevel,
+import {
+  type AgentConfig,
+  type AgentEvent,
+  type AgentHandle,
+  type AgentStatus,
+  type AgentSupports,
+  type AgentThinkingLevel,
+  parseAgentThinkingLevel,
 } from "./agent-types";
 import { AgentExecutionTracer } from "./execution-trace";
 import {
@@ -395,6 +396,9 @@ export class AgentRuntime {
           supports: parseSupports(config.supports),
           toolProfile: inferToolProfile(config.role),
           crewResponder: inferCrewResponder(config.role),
+          // Persisted reasoning depth (migration 120); NULL stays undefined so
+          // `resolveAgentThinkingLevel` applies the crew/env default at spawn.
+          thinkingLevel: parseAgentThinkingLevel(config.thinking_level ?? undefined),
         });
         if (config.room) {
           // Give the agent a moment to connect, then direct it to its room
@@ -652,6 +656,7 @@ export class AgentRuntime {
           room: config.room,
           spawnedBy: config.spawnedBy ?? "system",
           supports: effectiveConfig.supports ?? supports,
+          thinkingLevel: effectiveConfig.thinkingLevel,
         });
       }
 
@@ -798,7 +803,7 @@ export class AgentRuntime {
       role?: string;
       keyName?: string;
       supports?: AgentSupports;
-      /** Reasoning depth (`agent config <name> thinking <level>`); runtime-only. */
+      /** Reasoning depth (`agent config <name> thinking <level>`); persisted (migration 120). */
       thinkingLevel?: AgentThinkingLevel;
     },
   ): Promise<void> {
@@ -855,6 +860,8 @@ export class AgentRuntime {
         keyName: opts.keyName,
         spawnedBy: "system",
         supports,
+        // undefined keeps the stored level; only `thinking <level>` rewrites it.
+        thinkingLevel: opts.thinkingLevel,
       });
     }
   }
@@ -912,6 +919,7 @@ export class AgentRuntime {
       keyName: saved?.key_name || undefined,
       room: saved?.room || undefined,
       spawnedBy: saved?.spawned_by || "system",
+      thinkingLevel: parseAgentThinkingLevel(saved?.thinking_level ?? undefined),
     });
     if (status.focus) restarted.setFocus(status.focus);
     return restarted;

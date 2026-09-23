@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Database } from "bun:sqlite";
-import type { AgentSupports } from "../agent/agent-types";
+import type { AgentSupports, AgentThinkingLevel } from "../agent/agent-types";
 import { MARINA_DEFAULT_MODEL } from "../engine/constants";
 import {
   decryptSecret,
@@ -238,6 +238,12 @@ export function saveAgentConfig(
     room?: string;
     spawnedBy: string;
     supports?: AgentSupports;
+    /**
+     * Reasoning depth (migration 120). `undefined` keeps whatever is stored
+     * (NULL = never set, resolved at spawn by `resolveAgentThinkingLevel`), so
+     * a `model`/`role` reconfigure never clears an earlier `thinking` choice.
+     */
+    thinkingLevel?: AgentThinkingLevel;
   },
 ): void {
   const supports = opts.supports ?? { text: true };
@@ -247,10 +253,11 @@ export function saveAgentConfig(
     ...(supports.video ? { video: true } : {}),
   });
   db.run(
-    `INSERT INTO agent_configs (name, model, role, goal, key_name, room, supports, spawned_by, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO agent_configs (name, model, role, goal, key_name, room, supports, spawned_by, thinking_level, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(name) DO UPDATE SET model=excluded.model, role=excluded.role, goal=excluded.goal,
-       key_name=excluded.key_name, room=excluded.room, supports=excluded.supports, spawned_by=excluded.spawned_by`,
+       key_name=excluded.key_name, room=excluded.room, supports=excluded.supports, spawned_by=excluded.spawned_by,
+       thinking_level=COALESCE(excluded.thinking_level, agent_configs.thinking_level)`,
     [
       opts.name,
       opts.model,
@@ -260,6 +267,7 @@ export function saveAgentConfig(
       opts.room ?? "",
       supportsJson,
       opts.spawnedBy,
+      opts.thinkingLevel ?? null,
       Date.now(),
     ],
   );
@@ -529,6 +537,8 @@ export interface AgentConfigRow {
   room: string;
   supports: string;
   spawned_by: string;
+  /** Persisted reasoning depth (migration 120); NULL = never set. */
+  thinking_level: string | null;
   created_at: number;
   attention_mode: "focused" | "balanced" | "open";
   attention_threshold: number;
