@@ -298,7 +298,7 @@ describe("buildAnthropicRequest", () => {
     expect(() => buildAnthropicRequest({ ...base, n: 1 }, "m", false)).not.toThrow();
   });
 
-  test("autoCache marks the LAST system block only when no marker exists", () => {
+  test("autoCache marks the LAST system block; with a client marker elsewhere only the last stable block is added", () => {
     const req = buildAnthropicRequest(
       {
         model: "marina",
@@ -316,12 +316,24 @@ describe("buildAnthropicRequest", () => {
       { type: "text", text: "a" },
       { type: "text", text: "b", cache_control: { type: "ephemeral" } },
     ]);
-    // A client marker wins: nothing is added.
+    // Client markers are preserved; the last STABLE block (b — no injected
+    // tail) gets the one breakpoint the proxy still adds when absent.
     const explicit = [
       { type: "text", text: "a", cache_control: { type: "ephemeral" } },
       { type: "text", text: "b" },
     ];
-    expect(applyAutoCache(explicit)).toEqual(explicit);
+    expect(applyAutoCache(explicit)).toEqual([
+      explicit[0],
+      { type: "text", text: "b", cache_control: { type: "ephemeral" } },
+    ]);
+    // Input is not mutated.
+    expect(explicit[1]).toEqual({ type: "text", text: "b" });
+    // A client marker already on the last stable block → untouched.
+    const onLast = [
+      { type: "text", text: "a" },
+      { type: "text", text: "b", cache_control: { type: "ephemeral" } },
+    ];
+    expect(applyAutoCache(onLast)).toEqual(onLast);
     expect(applyAutoCache([])).toEqual([]);
   });
 
@@ -415,7 +427,11 @@ describe("anthropicMessageToOpenai", () => {
       prompt_tokens: 960,
       completion_tokens: 4,
       total_tokens: 964,
-      prompt_tokens_details: { cached_tokens: 900 },
+      prompt_tokens_details: {
+        cached_tokens: 900,
+        cache_creation_tokens: 50,
+        cache_write_tokens: 50,
+      },
       cache_read_input_tokens: 900,
       cache_creation_input_tokens: 50,
     });
@@ -423,7 +439,7 @@ describe("anthropicMessageToOpenai", () => {
       prompt_tokens: 3,
       completion_tokens: 1,
       total_tokens: 4,
-      prompt_tokens_details: { cached_tokens: 0 },
+      prompt_tokens_details: { cached_tokens: 0, cache_creation_tokens: 0, cache_write_tokens: 0 },
     });
   });
 });
@@ -496,7 +512,11 @@ describe("AnthropicSseTranslator", () => {
       prompt_tokens: 107,
       completion_tokens: 12,
       total_tokens: 119,
-      prompt_tokens_details: { cached_tokens: 100 },
+      prompt_tokens_details: {
+        cached_tokens: 100,
+        cache_creation_tokens: 0,
+        cache_write_tokens: 0,
+      },
       cache_read_input_tokens: 100,
     });
     expect(t.done).toBe(true);

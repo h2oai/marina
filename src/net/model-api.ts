@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { calculateCost, type Usage as PiUsage } from "@earendil-works/pi-ai";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { version as MARINA_VERSION } from "../../package.json";
 import { getInternalModelToken } from "../agent/agent-runtime";
 import {
@@ -24,6 +26,7 @@ import {
   anthropicMessageToOpenai,
   anthropicTextContent,
   buildAnthropicRequest,
+  type OpenAIUsage,
   translateAnthropicStream,
 } from "./anthropic-tools";
 import { buildAliasMap, getEnabledProfiles } from "./compat-profiles";
@@ -80,16 +83,48 @@ import {
   ToolCallStreamParser,
 } from "./tool-call-normalize";
 
+/**
+ * Cost and cache response headers on every proxied (passthru / internal /
+ * fallback) reply. `x-marina-upstream-model` is `provider/model` — the target
+ * the request was actually served by — and is present on streamed replies too;
+ * the three token/cost headers need the completed usage, so they are set on
+ * NON-streaming replies only (a stream's tokens land on the lifecycle
+ * `completed` event and in the final SSE usage chunk instead). Marina's own
+ * agents read `x-marina-upstream-model` / `x-marina-cost-usd` to price turns
+ * on the synthesized `marina/default` model.
+ */
+export const UPSTREAM_MODEL_HEADER = "x-marina-upstream-model";
+export const COST_USD_HEADER = "x-marina-cost-usd";
+export const CACHE_READ_TOKENS_HEADER = "x-marina-cache-read-tokens";
+export const CACHE_WRITE_TOKENS_HEADER = "x-marina-cache-write-tokens";
+
 const MODEL_CORS = corsHeaders(null, {
   methods: "GET, POST, OPTIONS",
   headers:
     "Content-Type, Authorization, X-Conversation-Id, X-Load-Balance, X-Marina-Agent, X-Marina-Context",
-  expose: `X-Conversation-Id, x-request-id, ${MEMORY_RECEIPT_HEADER}, ${RESPONSE_CACHE_HEADER}`,
+  expose: [
+    "X-Conversation-Id",
+    "x-request-id",
+    MEMORY_RECEIPT_HEADER,
+    RESPONSE_CACHE_HEADER,
+    UPSTREAM_MODEL_HEADER,
+    COST_USD_HEADER,
+    CACHE_READ_TOKENS_HEADER,
+    CACHE_WRITE_TOKENS_HEADER,
+  ].join(", "),
 });
 
 /** Response headers a passthru surface forwards from the proxied upstream reply
  *  when it re-encodes the body into its own protocol (Anthropic, Ollama, Responses). */
-const PASSTHRU_FORWARDED_HEADERS = ["x-request-id", MEMORY_RECEIPT_HEADER, RESPONSE_CACHE_HEADER];
+const PASSTHRU_FORWARDED_HEADERS = [
+  "x-request-id",
+  MEMORY_RECEIPT_HEADER,
+  RESPONSE_CACHE_HEADER,
+  UPSTREAM_MODEL_HEADER,
+  COST_USD_HEADER,
+  CACHE_READ_TOKENS_HEADER,
+  CACHE_WRITE_TOKENS_HEADER,
+];
 
 function forwardPassthruHeaders(
   from: Headers,
@@ -440,7 +475,23 @@ interface CompletionUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
-  prompt_tokens_details?: { cached_tokens: number };
+  prompt_tokens_details?: { cached_tokens: number; cache_creation_tokens?: number };
+}
+
+/** `prompt_tokens_details` from an OpenAI-shaped usage block — cache reads plus
+ *  Marina's cache-write extension (`cache_creation_tokens`), when present. */
+function promptTokensDetails(u: unknown): CompletionUsage["prompt_tokens_details"] | undefined {
+  const details = (u as { prompt_tokens_details?: unknown } | undefined)?.prompt_tokens_details;
+  if (!details || typeof details !== "object") return undefined;
+  const d = details as { cached_tokens?: unknown; cache_creation_tokens?: unknown };
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const cached = num(d.cached_tokens);
+  const created = num(d.cache_creation_tokens);
+  if (cached === undefined && created === undefined) return undefined;
+  return {
+    cached_tokens: cached ?? 0,
+    ...(created === undefined ? {} : { cache_creation_tokens: created }),
+  };
 }
 
 function openaiCompletion(model: string, content: string, usage?: CompletionUsage): unknown {
@@ -1581,7 +1632,12 @@ function responsesUsage(usage: CompletionUsage | undefined): Record<string, unkn
       input_tokens: usage.prompt_tokens,
       output_tokens: usage.completion_tokens,
       total_tokens: usage.total_tokens,
-      input_tokens_details: { cached_tokens: usage.prompt_tokens_details?.cached_tokens ?? 0 },
+      input_tokens_details: {
+        cached_tokens: usage.prompt_tokens_details?.cached_tokens ?? 0,
+        ...(usage.prompt_tokens_details?.cache_creation_tokens === undefined
+          ? {}
+          : { cache_creation_tokens: usage.prompt_tokens_details.cache_creation_tokens }),
+      },
     },
   };
 }
@@ -1964,12 +2020,12 @@ function usageFromChunk(chunk: Record<string, unknown>): CompletionUsage | undef
   const prompt = num(u.prompt_tokens);
   const completion = num(u.completion_tokens);
   if (prompt === undefined && completion === undefined) return undefined;
-  const cached = num(u.prompt_tokens_details?.cached_tokens);
+  const details = promptTokensDetails(u);
   return {
     prompt_tokens: prompt ?? 0,
     completion_tokens: completion ?? 0,
     total_tokens: num(u.total_tokens) ?? (prompt ?? 0) + (completion ?? 0),
-    ...(cached !== undefined ? { prompt_tokens_details: { cached_tokens: cached } } : {}),
+    ...(details ? { prompt_tokens_details: details } : {}),
   };
 }
 
@@ -2108,7 +2164,8 @@ async function handleResponsesCreate(
     }
 
     const ec = getEndpointConfig(engine.db);
-    if (ec.mode === "passthru") {
+    // Marina's own agents always proxy upstream (see `isInternalCaller`).
+    if (ec.mode === "passthru" || isInternalCaller(auth)) {
       // Responses tools → chat tools before any upstream call; a hosted tool
       // type (web_search, file_search, …) is a 400 the client must see, never
       // a silent drop.
@@ -2267,13 +2324,15 @@ async function runResponsesPassthru(
     ...input.turn,
   ];
   const prep = await preparePassthru(engine, req, auth, turns, "responses");
-  const native: Record<string, unknown> = { instructions: input.body.instructions };
-  applyInjection(native, prep.addendum, "responses");
-  const instructions = typeof native.instructions === "string" ? native.instructions : "";
+  const instructions = typeof input.body.instructions === "string" ? input.body.instructions : "";
   // Streaming asks the upstream for chat-completions SSE and re-encodes it
   // incrementally as Responses SSE (see `responsesPassthruStream`); the
   // response cache is bypassed for streams by construction.
   const wantStream = input.wantStream === true;
+  // `instructions` is the caller's stable system prompt; the memory addendum
+  // is injected on the chat body as its own system message right after it
+  // (`applyInjection` openai shape) so the Anthropic translation yields
+  // separate stable / memory system blocks for the cache breakpoints.
   const body: Record<string, unknown> = {
     model: input.model,
     messages: [...(instructions ? [{ role: "system", content: instructions }] : []), ...turns],
@@ -2286,6 +2345,7 @@ async function runResponsesPassthru(
       : {}),
     ...(input.chatTools ?? {}),
   };
+  applyInjection(body, prep.addendum, "openai");
 
   const cached = await passthruCacheLookup(engine, prep, body, ec.passthruModel);
   const resp =
@@ -2295,6 +2355,7 @@ async function runResponsesPassthru(
       body,
       ec.passthruModel || undefined,
       passthruTraceOptions(prep),
+      passthruUpstreamHints(prep),
     ));
   if (!resp.ok) {
     let message = resp.statusText || "Upstream request failed";
@@ -2748,6 +2809,24 @@ interface PassthruPrep {
   /** Protocol surface the request arrived on; rides every lifecycle event so
    *  receipts and trace spans can be grouped per surface. */
   surface: InjectionFormat;
+  /** The caller is one of Marina's own runtime agents (internal model token).
+   *  Such requests are ALWAYS proxied upstream regardless of the endpoint mode
+   *  and carry `routeReason: "internal"` on their lifecycle events. */
+  internal: boolean;
+}
+
+/**
+ * Whether a request must be proxied to the configured upstream like passthru
+ * mode regardless of the operator's endpoint mode: Marina's own runtime agents
+ * (room / crew / coding agents on `marina/default`, authenticated with the
+ * internal model token) are CONSUMERS of the upstream, never participants of
+ * the agents/open/panel routes — routing them onto the `model` channel would
+ * hand their turn to another agent, and `rejectUnsupportedForAgents` would
+ * refuse their `tools`. Found on a fresh install (default mode `agents`): the
+ * first turn of every spawned agent failed with `400 unsupported_parameter`.
+ */
+function isInternalCaller(auth: PassthruAuthResult | undefined): boolean {
+  return auth?.internal === true;
 }
 
 async function preparePassthru(
@@ -2758,8 +2837,9 @@ async function preparePassthru(
   surface: InjectionFormat,
 ): Promise<PassthruPrep> {
   const requestId = newRequestId();
+  const internal = isInternalCaller(authResult);
   const identity = maybePassthruIdentity(engine, req, authResult);
-  if (!identity?.contextOptIn) return { identity, addendum: null, requestId, surface };
+  if (!identity?.contextOptIn) return { identity, addendum: null, requestId, surface, internal };
   const built = await buildInjectedContext(engine, identity.entityId, messages);
   return {
     identity,
@@ -2767,6 +2847,7 @@ async function preparePassthru(
     receipt: built.receipt ? finalizeMemoryReceipt(built.receipt, requestId) : undefined,
     requestId,
     surface,
+    internal,
   };
 }
 
@@ -2774,11 +2855,21 @@ async function preparePassthru(
 function passthruTraceOptions(prep: PassthruPrep) {
   return {
     routeKind: "passthru" as const,
+    ...(prep.internal ? { routeReason: "internal" } : {}),
     entityId: prep.identity?.entityId,
     requestId: prep.requestId,
     memoryReceipt: prep.receipt,
     surface: prep.surface,
   };
+}
+
+/** Upstream hints every passthru surface hands `proxyToUpstream`: the memory
+ *  addendum, when injected, is the LAST system block (`applyInjection`). */
+function passthruUpstreamHints(
+  prep: PassthruPrep,
+  extra: { anthropicNative?: Record<string, unknown> } = {},
+) {
+  return { ...extra, injectedSystemTail: !!prep.addendum };
 }
 
 /** The identity string the response cache keys on — the pinned passthru model
@@ -2818,6 +2909,7 @@ async function passthruCacheLookup(
     ...requestTrace(prep.requestId),
     model: requestedModel,
     routeKind: "passthru",
+    ...(prep.internal ? { routeReason: "internal" } : {}),
     entityId: prep.identity.entityId,
     memoryReceipt: receipt,
     surface: prep.surface,
@@ -2831,6 +2923,7 @@ async function passthruCacheLookup(
     model: requestedModel,
     target: "response-cache",
     routeKind: "passthru",
+    ...(prep.internal ? { routeReason: "internal" } : {}),
     entityId: prep.identity.entityId,
     memoryReceipt: receipt,
     surface: prep.surface,
@@ -2903,19 +2996,14 @@ async function extractResponseTextAndUsage(
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
     const prompt = num(u?.prompt_tokens);
     const completion = num(u?.completion_tokens);
+    const details = promptTokensDetails(u);
     const usage: CompletionUsage | undefined =
       prompt !== undefined || completion !== undefined
         ? {
             prompt_tokens: prompt ?? 0,
             completion_tokens: completion ?? 0,
             total_tokens: num(u?.total_tokens) ?? (prompt ?? 0) + (completion ?? 0),
-            ...(num(u?.prompt_tokens_details?.cached_tokens) !== undefined
-              ? {
-                  prompt_tokens_details: {
-                    cached_tokens: num(u?.prompt_tokens_details?.cached_tokens)!,
-                  },
-                }
-              : {}),
+            ...(details ? { prompt_tokens_details: details } : {}),
           }
         : undefined;
     return {
@@ -3021,7 +3109,11 @@ async function runOpenaiChat(
     // record the exchange. Strict NO-OP otherwise: no identity resolve-or-create,
     // no injected bytes, no memory writes — byte-identical to the un-instrumented
     // path (see `maybePassthruIdentity`).
-    if (ec.mode === "passthru") {
+    //
+    // Marina's OWN agents (internal model token) take this branch in EVERY
+    // endpoint mode — see `isInternalCaller`. Their lifecycle events keep
+    // `routeKind: "passthru"` and add `routeReason: "internal"`.
+    if (ec.mode === "passthru" || isInternalCaller(authResult)) {
       // Also the `/v1/messages` path: the Anthropic bridge translates its body
       // to this shape first, so the addendum lands in the OpenAI system message
       // here and `proxyToAnthropic` moves it into the native `system` field.
@@ -3050,7 +3142,7 @@ async function runOpenaiChat(
         body,
         ec.passthruModel || undefined,
         passthruTraceOptions(prep),
-        anthropicNative ? { anthropicNative } : undefined,
+        passthruUpstreamHints(prep, anthropicNative ? { anthropicNative } : {}),
       );
       if (prep.identity?.contextOptIn) {
         void capturePassthruResponse(engine, prep.identity.entityId, messages, resp);
@@ -3247,6 +3339,8 @@ async function runOllamaPassthru(
       body,
       ec.passthruModel || undefined,
       passthruTraceOptions(prep),
+      // `/api/generate` folds the addendum into ONE system string — no separate tail.
+      isChat ? passthruUpstreamHints(prep) : undefined,
     ));
   if (!resp.ok) return resp;
   if (!cached && prep.identity?.contextOptIn) {
@@ -3292,7 +3386,7 @@ async function handleOllamaChat(
     const userMsg = [...messages].reverse().find((m: { role: string }) => m.role === "user");
     if (!userMsg) return errorJson(400, "No user message found");
 
-    if (getEndpointConfig(engine.db).mode === "passthru") {
+    if (getEndpointConfig(engine.db).mode === "passthru" || isInternalCaller(authResult)) {
       return await runOllamaPassthru(engine, req, authResult, {
         kind: "chat",
         model,
@@ -3354,7 +3448,7 @@ async function handleOllamaGenerate(
     const prompt = body.prompt;
     if (!prompt) return errorJson(400, "No prompt provided");
 
-    if (getEndpointConfig(engine.db).mode === "passthru") {
+    if (getEndpointConfig(engine.db).mode === "passthru" || isInternalCaller(authResult)) {
       return await runOllamaPassthru(engine, req, authResult, {
         kind: "generate",
         model,
@@ -4231,6 +4325,9 @@ async function proxyToUpstream(
   forceModel?: string,
   traceOptions?: {
     routeKind: "passthru" | "fallback" | "synthesis";
+    /** Why this route was taken when the mode alone does not say — `"internal"`
+     *  for Marina's own agents proxied regardless of the endpoint mode. */
+    routeReason?: string;
     /** Resolved passthru identity, tagged onto every lifecycle span. */
     entityId?: EntityId;
     /** Pre-minted request id (passthru surfaces mint it before injection so the
@@ -4245,6 +4342,9 @@ async function proxyToUpstream(
   hints?: {
     /** Native Anthropic body to forward verbatim when the upstream is Anthropic. */
     anthropicNative?: Record<string, unknown>;
+    /** The LAST system block is the proxy's injected memory addendum (see
+     *  `placeCacheBreakpoints` — the stable-block breakpoint lands before it). */
+    injectedSystemTail?: boolean;
   },
 ): Promise<Response> {
   const wantStream = body.stream === true;
@@ -4254,6 +4354,7 @@ async function proxyToUpstream(
   const requestedModel = typeof body.model === "string" ? body.model : "marina";
   const entityId = traceOptions?.entityId;
   const surface = traceOptions?.surface;
+  const routeReason = traceOptions?.routeReason;
   const memoryReceipt = traceOptions?.memoryReceipt
     ? encodeMemoryReceiptAttribute(traceOptions.memoryReceipt)
     : undefined;
@@ -4264,7 +4365,9 @@ async function proxyToUpstream(
   const upstreamHeaders: Record<string, string> = requestId ? { "x-request-id": requestId } : {};
   const anthropic = async (key: string, model: string): Promise<Response> => {
     try {
-      return await proxyToAnthropic(body, key, model, wantStream, hints?.anthropicNative);
+      return await proxyToAnthropic(body, key, model, wantStream, hints?.anthropicNative, {
+        injectedSystemTail: hints?.injectedSystemTail,
+      });
     } catch (e) {
       // A parameter Anthropic cannot honor is a 400 the CLIENT must see, not
       // a reason to try the next provider (which would honor it differently).
@@ -4280,6 +4383,7 @@ async function proxyToUpstream(
       ...requestTrace(requestId),
       model: requestedModel,
       routeKind: traceOptions!.routeKind,
+      ...(routeReason ? { routeReason } : {}),
       ...(entityId ? { entityId } : {}),
       ...(memoryReceipt ? { memoryReceipt } : {}),
       ...(surface ? { surface } : {}),
@@ -4302,6 +4406,7 @@ async function proxyToUpstream(
         model: requestedModel,
         target,
         routeKind: traceOptions!.routeKind,
+        ...(routeReason ? { routeReason } : {}),
         ...(entityId ? { entityId } : {}),
         ...(surface ? { surface } : {}),
         timestamp: Date.now(),
@@ -4312,6 +4417,7 @@ async function proxyToUpstream(
       model: requestedModel,
       target,
       routeKind: traceOptions!.routeKind,
+      routeReason,
       entityId,
       memoryReceipt: traceOptions!.memoryReceipt,
       surface,
@@ -4411,6 +4517,74 @@ interface ProxyTraceMetrics {
   errorKind?: Extract<EngineEvent, { type: "model_request_lifecycle" }>["errorKind"];
 }
 
+/**
+ * Cost of a proxied call from pi-ai's built-in model catalog when the upstream
+ * did not price it itself (OpenRouter does, via `usage.cost`). `target` is the
+ * served `provider/model`; Marina's provider ids (`anthropic`, `openai`,
+ * `google`, `groq`, `openrouter`) are pi-ai's. OpenAI-shaped `prompt_tokens`
+ * INCLUDES the cached share, pi-ai's `input` excludes it, so reads/writes are
+ * subtracted before pricing. Undefined for unknown models (local runtimes,
+ * unlisted ids) or when no token count is known — never a fabricated $0.
+ */
+let costCatalog: ReturnType<typeof builtinModels> | undefined;
+export function upstreamCostUsd(
+  target: string | undefined,
+  metrics: Pick<
+    ProxyTraceMetrics,
+    "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens"
+  >,
+): number | undefined {
+  if (!target) return undefined;
+  const slash = target.indexOf("/");
+  if (slash <= 0) return undefined;
+  if (metrics.inputTokens === undefined && metrics.outputTokens === undefined) return undefined;
+  try {
+    costCatalog ??= builtinModels();
+    const model = costCatalog.getModel(target.slice(0, slash), target.slice(slash + 1));
+    if (!model) return undefined;
+    const cacheRead = metrics.cacheReadTokens ?? 0;
+    const cacheWrite = metrics.cacheWriteTokens ?? 0;
+    const input = Math.max(0, (metrics.inputTokens ?? 0) - cacheRead - cacheWrite);
+    const output = metrics.outputTokens ?? 0;
+    const usage: PiUsage = {
+      input,
+      output,
+      cacheRead,
+      cacheWrite,
+      totalTokens: input + output + cacheRead + cacheWrite,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    };
+    const total = calculateCost(model, usage).total;
+    return Number.isFinite(total) && total >= 0 ? total : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Fill `costUsd` from the catalog when the upstream did not report a cost. */
+function priceProxyMetrics(metrics: ProxyTraceMetrics, target?: string): ProxyTraceMetrics {
+  if (metrics.costUsd !== undefined) return metrics;
+  const costUsd = upstreamCostUsd(target, metrics);
+  return costUsd === undefined ? metrics : { ...metrics, costUsd };
+}
+
+/** Cost / cache headers for a completed (non-streaming) proxied reply. */
+function setProxyMetricHeaders(headers: Headers, metrics: ProxyTraceMetrics): void {
+  if (metrics.cacheReadTokens !== undefined)
+    headers.set(CACHE_READ_TOKENS_HEADER, String(metrics.cacheReadTokens));
+  if (metrics.cacheWriteTokens !== undefined)
+    headers.set(CACHE_WRITE_TOKENS_HEADER, String(metrics.cacheWriteTokens));
+  if (metrics.costUsd !== undefined) headers.set(COST_USD_HEADER, metrics.costUsd.toFixed(8));
+}
+
+/**
+ * Final usage of a streamed Anthropic reply whose client did NOT ask for
+ * `stream_options.include_usage` — the translator never emits it, so
+ * `proxyToAnthropic` parks it here for `traceProxyResponse` to read at stream
+ * end (keyed by the very Response object it returns).
+ */
+const streamUsageSidecar = new WeakMap<Response, () => OpenAIUsage | undefined>();
+
 async function traceProxyResponse(
   engine: Engine,
   response: Response,
@@ -4419,6 +4593,7 @@ async function traceProxyResponse(
     model: string;
     target?: string;
     routeKind: "passthru" | "fallback" | "synthesis";
+    routeReason?: string;
     entityId?: EntityId;
     memoryReceipt?: MemoryReceipt;
     surface?: InjectionFormat;
@@ -4428,6 +4603,9 @@ async function traceProxyResponse(
 ): Promise<Response> {
   const headers = new Headers(response.headers);
   headers.set("x-request-id", trace.requestId);
+  // The served upstream `provider/model` — known before the body, so it rides
+  // streamed replies too (a client prices its own stream from it).
+  if (trace.target && response.ok) headers.set(UPSTREAM_MODEL_HEADER, trace.target);
   // The receipt rides every injected response — including failures, so a
   // client can see what was injected into a request that the upstream refused.
   if (trace.memoryReceipt) {
@@ -4452,6 +4630,7 @@ async function traceProxyResponse(
       model: trace.model,
       target: trace.target,
       routeKind: trace.routeKind,
+      ...(trace.routeReason ? { routeReason: trace.routeReason } : {}),
       ...(trace.entityId ? { entityId: trace.entityId } : {}),
       ...(memoryReceipt ? { memoryReceipt } : {}),
       ...(trace.surface ? { surface: trace.surface } : {}),
@@ -4473,7 +4652,9 @@ async function traceProxyResponse(
     });
   }
   if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
-    finish("completed", undefined, await extractProxyUsage(response));
+    const metrics = priceProxyMetrics(await extractProxyUsage(response), trace.target);
+    setProxyMetricHeaders(headers, metrics);
+    finish("completed", undefined, metrics);
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
@@ -4481,19 +4662,58 @@ async function traceProxyResponse(
     });
   }
 
+  // Streamed reply: tap the OpenAI-shaped SSE frames for the trailing `usage`
+  // chunk (OpenAI `stream_options.include_usage`; the Anthropic translator's
+  // `message_delta.usage`) so the `completed` event carries tokens and cost —
+  // Marina's own agents stream every turn, and without this their lifecycle
+  // spans had no token fields at all.
   const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let sseTail = "";
+  let streamedUsage: Record<string, unknown> | undefined;
+  const scanSse = (text: string): void => {
+    sseTail += text;
+    const lines = sseTail.split("\n");
+    sseTail = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.includes('"usage"')) continue;
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      try {
+        const parsed = JSON.parse(trimmed.slice(5).trim()) as { usage?: unknown };
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          parsed.usage &&
+          typeof parsed.usage === "object"
+        )
+          streamedUsage = parsed.usage as Record<string, unknown>;
+      } catch {
+        // Not a JSON frame (or split mid-line) — usage lands on a later frame if at all.
+      }
+    }
+  };
+  const streamMetrics = (): ProxyTraceMetrics => {
+    const usage: Record<string, unknown> | undefined =
+      streamedUsage ??
+      (streamUsageSidecar.get(response)?.() as Record<string, unknown> | undefined);
+    return priceProxyMetrics(usage ? metricsFromUsage(usage) : {}, trace.target);
+  };
   let firstChunkAt = 0;
   const stream = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
         const { done, value } = await reader.read();
         if (done) {
+          scanSse(decoder.decode());
           finish("completed", undefined, {
             ...(firstChunkAt > 0 ? { ttftMs: firstChunkAt - trace.startedAt } : {}),
+            ...streamMetrics(),
           });
           controller.close();
         } else {
           if (firstChunkAt === 0) firstChunkAt = Date.now();
+          scanSse(decoder.decode(value, { stream: true }));
           controller.enqueue(value);
         }
       } catch (cause) {
@@ -4523,7 +4743,16 @@ async function extractProxyUsage(response: Response): Promise<ProxyTraceMetrics>
   try {
     const data = (await response.clone().json()) as { usage?: Record<string, unknown> };
     const usage = data.usage;
-    if (!usage) return {};
+    if (!usage || typeof usage !== "object") return {};
+    return metricsFromUsage(usage);
+  } catch {
+    return {};
+  }
+}
+
+/** Token / cost metrics from a usage block in any dialect the proxy sees. */
+function metricsFromUsage(usage: Record<string, unknown>): ProxyTraceMetrics {
+  {
     const finite = (value: unknown): number | undefined =>
       typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
     const cost = usage.cost;
@@ -4550,7 +4779,11 @@ async function extractProxyUsage(response: Response): Promise<ProxyTraceMetrics>
         usage.cacheRead,
     );
     const cacheWriteTokens = finite(
-      usage.cache_creation_input_tokens ?? usage.cache_write_tokens ?? usage.cacheWrite,
+      usage.cache_creation_input_tokens ??
+        promptDetails?.cache_creation_tokens ??
+        promptDetails?.cache_write_tokens ??
+        usage.cache_write_tokens ??
+        usage.cacheWrite,
     );
     return {
       ...(inputTokens === undefined ? {} : { inputTokens }),
@@ -4559,8 +4792,6 @@ async function extractProxyUsage(response: Response): Promise<ProxyTraceMetrics>
       ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
       ...(costUsd === undefined ? {} : { costUsd }),
     };
-  } catch {
-    return {};
   }
 }
 
@@ -4650,11 +4881,13 @@ async function proxyToAnthropic(
   defaultModel: string,
   wantStream = false,
   native?: Record<string, unknown>,
+  opts: { injectedSystemTail?: boolean } = {},
 ): Promise<Response> {
   const requestModel = isMarinaModel(body.model as string) ? defaultModel : (body.model as string);
   const upstreamBody = buildAnthropicRequest(body, requestModel, wantStream, {
     autoCache: anthropicAutoCacheEnabled(),
     native,
+    injectedSystemTail: opts.injectedSystemTail,
   });
   const includeUsage =
     !!body.stream_options &&
@@ -4680,14 +4913,22 @@ async function proxyToAnthropic(
     // `tool_use` blocks as `delta.tool_calls` fragments.
     if (wantStream) {
       if (!resp.body) return errorJson(502, "Anthropic proxy error: empty streaming body");
-      return new Response(translateAnthropicStream(resp.body, requestModel, includeUsage), {
-        headers: {
-          ...MODEL_CORS,
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
+      let finalUsage: OpenAIUsage | undefined;
+      const out = new Response(
+        translateAnthropicStream(resp.body, requestModel, includeUsage, (usage) => {
+          finalUsage = usage;
+        }),
+        {
+          headers: {
+            ...MODEL_CORS,
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+          },
         },
-      });
+      );
+      streamUsageSidecar.set(out, () => finalUsage);
+      return out;
     }
 
     // Non-streaming: full message → chat.completion (text joined across every

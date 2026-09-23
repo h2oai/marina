@@ -352,7 +352,7 @@ describe("passthru-context", () => {
       expect(JSON.stringify(out)).toBe(snapshot);
     });
 
-    it("prepends to an existing openai system message", () => {
+    it("adds a SEPARATE system message right after the caller's own (stable-first, openai)", () => {
       const body = {
         messages: [
           { role: "system", content: "You are helpful." },
@@ -360,11 +360,32 @@ describe("passthru-context", () => {
         ],
       };
       applyInjection(body, "ADDENDUM_TEXT", "openai");
-      const sys = body.messages[0]!;
-      expect(sys.role).toBe("system");
-      expect(sys.content).toContain("ADDENDUM_TEXT");
-      expect(sys.content).toContain("You are helpful.");
-      expect(body.messages).toHaveLength(2); // additive to the system message, not a new one
+      // The caller's stable prompt is byte-identical and still first; the
+      // volatile memory block is its own message after it, before the turns.
+      expect(body.messages).toEqual([
+        { role: "system", content: "You are helpful." },
+        { role: "system", content: "ADDENDUM_TEXT" },
+        { role: "user", content: "hi" },
+      ]);
+    });
+
+    it("inserts after the whole leading run of system/developer messages (openai)", () => {
+      const body = {
+        messages: [
+          { role: "system", content: "A" },
+          { role: "developer", content: "B" },
+          { role: "user", content: "hi" },
+          { role: "system", content: "late system stays where it was" },
+        ],
+      };
+      applyInjection(body, "MEM", "openai");
+      expect(body.messages.map((m) => m.content)).toEqual([
+        "A",
+        "B",
+        "MEM",
+        "hi",
+        "late system stays where it was",
+      ]);
     });
 
     it("unshifts a system message when none exists (openai)", () => {
@@ -375,19 +396,27 @@ describe("passthru-context", () => {
       expect(body.messages[1]!.role).toBe("user");
     });
 
-    it("extends an anthropic string system field", () => {
-      const body = { system: "base system", messages: [] };
+    it("turns an anthropic string system into [stable, memory] blocks", () => {
+      const body: { system: unknown; messages: unknown[] } = {
+        system: "base system",
+        messages: [],
+      };
       applyInjection(body, `${INJECTION_MARKER} ctx`, "anthropic");
-      expect(body.system).toContain(INJECTION_MARKER);
-      expect(body.system).toContain("base system");
+      expect(body.system).toEqual([
+        { type: "text", text: "base system" },
+        { type: "text", text: `${INJECTION_MARKER} ctx` },
+      ]);
     });
 
-    it("extends an anthropic block-array system field", () => {
-      const body = { system: [{ type: "text", text: "base" }] as unknown[] };
+    it("appends the memory block LAST to an anthropic block-array system field", () => {
+      const body = {
+        system: [{ type: "text", text: "base", cache_control: { type: "ephemeral" } }] as unknown[],
+      };
       applyInjection(body, `${INJECTION_MARKER} ctx`, "anthropic");
-      expect(Array.isArray(body.system)).toBe(true);
-      expect((body.system[0] as { text: string }).text).toContain(INJECTION_MARKER);
-      expect((body.system[1] as { text: string }).text).toBe("base");
+      expect(body.system).toEqual([
+        { type: "text", text: "base", cache_control: { type: "ephemeral" } },
+        { type: "text", text: `${INJECTION_MARKER} ctx` },
+      ]);
     });
 
     it("sets anthropic system when absent", () => {
@@ -401,25 +430,28 @@ describe("passthru-context", () => {
       // now the explicit `X-Marina-Context: off` header (bound keys only).
       const oa = { messages: [{ role: "system", content: `${INJECTION_MARKER} echoed` }] };
       applyInjection(oa, "FRESH", "openai");
-      expect(oa.messages[0]!.content.startsWith("FRESH")).toBe(true);
-      const an = { system: `${INJECTION_MARKER} echoed` };
+      expect(oa.messages.map((m) => m.content)).toEqual([`${INJECTION_MARKER} echoed`, "FRESH"]);
+      const an: { system: unknown } = { system: `${INJECTION_MARKER} echoed` };
       applyInjection(an, "FRESH", "anthropic");
-      expect((an.system as string).startsWith("FRESH")).toBe(true);
+      expect((an.system as { text: string }[]).map((b) => b.text)).toEqual([
+        `${INJECTION_MARKER} echoed`,
+        "FRESH",
+      ]);
     });
 
-    it("prepends to the Ollama /api/generate `system` string", () => {
+    it("appends to the Ollama /api/generate `system` string (stable text first)", () => {
       const withBase: Record<string, unknown> = { prompt: "hi", system: "base" };
       applyInjection(withBase, "ADD", "ollama-generate");
-      expect(withBase.system).toBe("ADD\n\nbase");
+      expect(withBase.system).toBe("base\n\nADD");
       const bare: Record<string, unknown> = { prompt: "hi" };
       applyInjection(bare, "ADD", "ollama-generate");
       expect(bare.system).toBe("ADD");
     });
 
-    it("prepends to the Responses API `instructions` string", () => {
+    it("appends to the Responses API `instructions` string (stable text first)", () => {
       const withBase: Record<string, unknown> = { input: "hi", instructions: "base" };
       applyInjection(withBase, "ADD", "responses");
-      expect(withBase.instructions).toBe("ADD\n\nbase");
+      expect(withBase.instructions).toBe("base\n\nADD");
       const bare: Record<string, unknown> = { input: "hi" };
       applyInjection(bare, "ADD", "responses");
       expect(bare.instructions).toBe("ADD");
