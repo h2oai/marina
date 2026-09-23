@@ -16,10 +16,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  checks:
+    name: Lint, typecheck, versions (backend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version-file: .bun-version
+      - name: Install dependencies
+        # One root install covers every Bun workspace member (dashboard, site,
+        # marina-desktop, examples/*, src/sdk) from the single bun.lock.
+        run: bun install --frozen-lockfile
+      - name: Lint
+        run: bun run lint
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Check workspace versions
+        run: bun run check:versions
+
   backend:
-    name: Lint, typecheck, test (backend)
+    name: Test (backend, shard ${{ matrix.shard }} of 3)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: oven-sh/setup-bun@v2.2.0
@@ -27,12 +51,12 @@ jobs:
           bun-version-file: .bun-version
       - name: Install dependencies
         run: bun install --frozen-lockfile
-      - name: Lint
-        run: bun run lint
-      - name: Typecheck
-        run: bun run typecheck
+      - name: Check shard coverage
+        # Every test file lands in exactly one shard (time-balanced from
+        # test/timing.json, name-hash fallback for files without a timing).
+        run: bun run test:shard --list ${{ matrix.shard }} 3
       - name: Test
-        run: bun run test
+        run: bun run test:shard ${{ matrix.shard }} 3
 
   dashboard:
     name: Test and build (dashboard)
@@ -47,6 +71,8 @@ jobs:
         with:
           bun-version-file: .bun-version
       - name: Install dependencies
+        # Workspace install from the repo root; the dashboard has no lockfile.
+        working-directory: .
         run: bun install --frozen-lockfile
       - name: Test
         run: bun run test
@@ -67,9 +93,7 @@ jobs:
         with:
           bun-version-file: .bun-version
       - name: Install dependencies
-        run: |
-          bun install --frozen-lockfile
-          cd marina-desktop && bun install --frozen-lockfile
+        run: bun install --frozen-lockfile
       - name: Typecheck
         run: cd marina-desktop && bun run typecheck
       - name: Test native SDK boundaries

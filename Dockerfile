@@ -10,13 +10,22 @@
 FROM docker.io/oven/bun:1.4.2 AS builder
 WORKDIR /app
 
-# Root deps first (layer cached unless package.json / lockfile change).
+# One Bun workspace: the root lockfile covers dashboard, site, marina-desktop,
+# the examples and src/sdk, so every member manifest must be present before the
+# single install (layer cached unless a manifest or the lockfile changes).
+# extensions/* are deliberately outside the workspace (own lockfiles, native deps).
 COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
-
-# Dashboard has its own dependency tree.
-COPY dashboard/package.json dashboard/bun.lock ./dashboard/
-RUN cd dashboard && bun install --frozen-lockfile
+COPY dashboard/package.json ./dashboard/
+COPY site/package.json ./site/
+COPY marina-desktop/package.json ./marina-desktop/
+COPY examples/usecase-ui/package.json ./examples/usecase-ui/
+COPY examples/coding-agent-demo/package.json ./examples/coding-agent-demo/
+COPY src/sdk/package.json ./src/sdk/
+COPY marina-desktop/patches ./marina-desktop/patches
+# Only the server and the dashboard are built in this image; --filter keeps the
+# site/desktop/example dependency trees out of the layer (frozen against the
+# same root lockfile).
+RUN bun install --frozen-lockfile --filter "marina" --filter "marina-dashboard"
 
 # Copy the rest of the source and build the dashboard. vite is configured to
 # emit to /app/dist/dashboard — exactly where the server serves it from

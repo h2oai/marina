@@ -132,7 +132,7 @@ collect() {
 
 # Step bodies (each is a single command/subshell so it can run as a job) ───────
 install_server()      { bun install --frozen-lockfile; }
-install_dashboard()   { (cd dashboard && bun install --frozen-lockfile); }
+install_dashboard()   { :; } # dashboard is a workspace member: the root install covers it
 lint_all()            { bun run lint; }
 typecheck_server()    { bun run typecheck; }
 # bunx resolves the dashboard's local tsc without re-hitting the npm resolver

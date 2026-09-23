@@ -33,9 +33,7 @@ jobs:
         with:
           bun-version-file: .bun-version
       - name: Install dependencies
-        run: |
-          bun install --frozen-lockfile
-          cd dashboard && bun install --frozen-lockfile
+        run: bun install --frozen-lockfile
       - name: Install Chromium for Playwright
         working-directory: dashboard
         run: bunx playwright install --with-deps chromium
@@ -75,10 +73,16 @@ jobs:
         with:
           bun-version-file: .bun-version
       - name: Install dependencies
-        run: |
-          bun install --frozen-lockfile
-          cd dashboard && bun install --frozen-lockfile
-          cd ../site && bun install --frozen-lockfile
+        # One workspace install covers dashboard + site for qualify:release.
+        run: bun install --frozen-lockfile
+      - name: Check workspace versions
+        run: bun run check:versions
+      - name: Audit dependency overrides
+        # Report-only: prints the table (still needed / no longer needed /
+        # unknown, plus documented security note) without blocking the run.
+        # Run `bun run check:overrides --strict` locally to gate on it.
+        continue-on-error: true
+        run: bun run check:overrides
       - name: Install Chromium for Playwright
         # qualify:release includes `dashboard test:browser`.
         working-directory: dashboard

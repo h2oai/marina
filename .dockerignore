@@ -24,9 +24,15 @@ backups
 test
 *.test.ts
 
-# Unrelated subprojects (not part of the server runtime)
+# Unrelated subprojects (not part of the server runtime). Their package.json
+# files ARE needed: they are Bun workspace members, and a workspace install
+# from the single root bun.lock requires every member manifest to be present.
 marina-desktop
+!marina-desktop/package.json
+!marina-desktop/patches
 examples
+!examples/usecase-ui/package.json
+!examples/coding-agent-demo/package.json
 
 # These files are provided by the build, not the context
 .dockerignore

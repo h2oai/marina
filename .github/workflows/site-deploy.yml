@@ -8,6 +8,8 @@ on:
     branches: [main]
     paths:
       - "site/**"
+      - "bun.lock"
+      - "package.json"
       - ".bun-version"
       - "docs/guides/**"
       - ".github/workflows/site-deploy.yml"
@@ -30,8 +32,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version-file: .bun-version
-      - name: Install site deps
-        run: cd site && bun install --frozen-lockfile
+      - name: Install dependencies
+        # The site is a Bun workspace member; its deps live in the root bun.lock.
+        run: bun install --frozen-lockfile
       - name: Build site
         run: cd site && bun run build
         env:

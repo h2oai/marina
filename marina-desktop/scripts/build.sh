@@ -120,20 +120,10 @@ fi
 
 step "Step 2/8: Installing dependencies"
 
-info "Root dependencies..."
+info "Workspace dependencies (root install covers dashboard and desktop)..."
 cd "$REPO_ROOT"
 bun install --frozen-lockfile 2>/dev/null || bun install
-ok "Root deps installed"
-
-info "Dashboard dependencies..."
-cd "$DASHBOARD_DIR"
-bun install --frozen-lockfile 2>/dev/null || bun install
-ok "Dashboard deps installed"
-
-info "Desktop dependencies..."
-cd "$DESKTOP_DIR"
-bun install --frozen-lockfile 2>/dev/null || bun install
-ok "Desktop deps installed"
+ok "Workspace deps installed"
 
 # ─── Step 3: Quality Gates ──────────────────────────────────────────────────
 
