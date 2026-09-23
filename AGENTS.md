@@ -2,8 +2,9 @@
 
 > **Full conventions live in [CLAUDE.md](CLAUDE.md)** — despite the name, it applies to every
 > coding agent (Codex, Cursor, Zed, Gemini CLI, …), not just Claude. It carries the complete
-> architecture rules, memory-tier semantics, and a key-file map. This file is the quick reference;
-> when the two disagree, CLAUDE.md wins.
+> architecture rules, memory-tier semantics, and a key-file map. Long-form design, history, and
+> per-feature walkthroughs live in [docs/architecture/](docs/architecture/README.md). This file is
+> the quick reference; when the two disagree, CLAUDE.md wins.
 
 ## Project Structure & Module Organization
 - `src/` contains the Bun TypeScript backend; note submodules for `agent/`, `engine/`, `world/`, and network adapters under `net/`.
