@@ -3733,6 +3733,10 @@ let lastProviderProbe: ProviderProbeResult[] | null = null;
 export function getLastProviderProbe(): ProviderProbeResult[] | null {
   return lastProviderProbe;
 }
+/** Test seam: the last probe is module state and would otherwise leak between test files. */
+export function resetLastProviderProbeForTests(): void {
+  lastProviderProbe = null;
+}
 
 /**
  * Send one tiny request per configured provider through the SAME proxy path

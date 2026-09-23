@@ -23,6 +23,7 @@ import { resetRetentionReportForTests } from "../src/engine/retention";
 import { resetTrustProfileForTests } from "../src/engine/trust-profile";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
+import { resetLastProviderProbeForTests } from "../src/net/model-api";
 import {
   buildOpsOverview,
   descendantAgents,
@@ -167,6 +168,9 @@ beforeEach(() => {
   // must not leak into this file's `lastReport: null` assertion.
 
   resetRetentionReportForTests();
+  // Same for the last provider probe (model-api module state): CI runs
+  // provider-probe.test.ts earlier in the same process.
+  resetLastProviderProbeForTests();
   for (const key of ENV_KEYS) {
     prevEnv[key] = process.env[key];
     delete process.env[key];
