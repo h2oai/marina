@@ -349,3 +349,10 @@ export const PROVIDER_MAX_RETRIES = (() => {
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 2;
 })();
+
+/** Context usage ratio (of the effective prompt window) at which the context
+ *  manager compacts. Shared by the per-request transform and the mid-run
+ *  `prepareNextTurn` gauge so both fire on the same threshold. */
+export const CONTEXT_PRUNE_THRESHOLD = 0.8;
+/** Usage ratio compaction targets once it fires. */
+export const CONTEXT_PRUNE_TARGET = 0.6;

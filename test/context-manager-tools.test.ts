@@ -142,3 +142,31 @@ describe("truncation cut consistency", () => {
     expect(estimateMessageTokens(out!)).toBeLessThanOrEqual(100 + 40);
   });
 });
+
+describe("short history compaction", () => {
+  it("never emits the first message twice when the history is shorter than keepRecent", async () => {
+    // A tiny effective window forces compaction on a 3-message history: the
+    // first message is pinned AND used to fall inside the recent window, so it
+    // appeared twice. Same shape with a 1-message history must not blow up.
+    const tiny = { contextWindow: 600, maxTokens: 0 } as never;
+    const manager = createContextManager({
+      getModel: () => tiny,
+      getSystemPrompt: () => "sys",
+      getTools: () => fakeTools(1_200, 3),
+    });
+    const three: AgentMessage[] = [
+      user(`bootstrap ${"b".repeat(300)}`),
+      user(`q ${"y".repeat(300)}`),
+      assistant(`a ${"z".repeat(300)}`),
+    ];
+    const out = await manager(three);
+    const firsts = out.filter(
+      (m) =>
+        m.role === "user" && typeof m.content === "string" && m.content.startsWith("bootstrap"),
+    );
+    expect(firsts.length).toBe(1);
+    expect(out.length).toBeLessThanOrEqual(three.length + 1); // + at most one summary
+    const one = await manager([user(`only ${"o".repeat(400)}`)]);
+    expect(one.length).toBe(1);
+  });
+});

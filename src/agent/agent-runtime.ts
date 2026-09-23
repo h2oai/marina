@@ -242,7 +242,7 @@ export function createAgentEventRelay(
         onEvent({
           type: "agent_turn_start",
           name,
-          ...executionTrace.trace("turn_start", undefined, event.traceParent),
+          ...executionTrace.trace("turn_start", undefined, event.traceParent, event.prompt),
           model: event.model,
           timestamp: now,
         });

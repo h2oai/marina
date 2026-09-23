@@ -2130,6 +2130,92 @@ export function applyToolExecutionModes<T extends AgentTool>(
   );
 }
 
+/**
+ * Opt closed, all-required object schemas into provider-side constrained
+ * sampling (`strict: true` on OpenAI-style function tools). pi-ai's
+ * openai-completions path already sends `strict: false` on every function
+ * tool, so the field itself is tolerated by every upstream; `strict: true`
+ * only changes behaviour where the provider implements it (OpenAI, vLLM) and
+ * is ignored by llama.cpp / Ollama. The proxy's Anthropic translation keeps
+ * only `parameters`, so nothing reaches Anthropic.
+ *
+ * Only schemas whose shape is unchanged by strict mode qualify: pi-ai's
+ * `makeStrictJsonSchema` turns every OPTIONAL property into
+ * `anyOf: [T, null]` + required, which would hand handlers `null` where they
+ * expect `undefined`. `strict: "prefer"` lets pi-ai fall back silently when a
+ * provider (or an unsupported keyword) rejects it. `MARINA_STRICT_TOOLS=off`
+ * disables the stamp.
+ */
+export function applyStrictToolSchemas<T extends AgentTool>(
+  tools: T[],
+  env: NodeJS.ProcessEnv = process.env,
+): T[] {
+  if ((env.MARINA_STRICT_TOOLS ?? "").trim().toLowerCase() === "off") return tools;
+  return tools.map((tool) =>
+    tool.constrainedSampling === undefined && isStrictSafeSchema(tool.parameters)
+      ? {
+          ...tool,
+          constrainedSampling: { type: "json_schema" as const, strict: "prefer" as const },
+        }
+      : tool,
+  );
+}
+
+/** Keywords OpenAI strict mode rejects (mirrors pi-ai's `UNSUPPORTED_STRICT_SCHEMA_KEYS`). */
+const STRICT_UNSUPPORTED_KEYS = [
+  "$ref",
+  "$defs",
+  "definitions",
+  "allOf",
+  "oneOf",
+  "patternProperties",
+  "dependentSchemas",
+  "dependencies",
+  "unevaluatedProperties",
+  "propertyNames",
+  "contains",
+  "prefixItems",
+  "not",
+  "if",
+  "then",
+  "else",
+];
+
+/**
+ * A closed object schema (`type: "object"`, `additionalProperties` absent or
+ * `false`) whose EVERY property is required, recursively, with no keyword
+ * strict mode rejects — i.e. one that strict sampling leaves semantically
+ * unchanged. Exported for tests.
+ */
+export function isStrictSafeSchema(schema: unknown): boolean {
+  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) return false;
+  const node = schema as Record<string, unknown>;
+  if (STRICT_UNSUPPORTED_KEYS.some((key) => node[key] !== undefined)) return false;
+  if (Array.isArray(node.anyOf)) {
+    return node.anyOf.every(
+      (variant) =>
+        typeof variant === "object" &&
+        variant !== null &&
+        (variant as Record<string, unknown>).type !== "object" &&
+        (variant as Record<string, unknown>).type !== "array" &&
+        (variant as Record<string, unknown>).properties === undefined &&
+        (variant as Record<string, unknown>).items === undefined,
+    );
+  }
+  if (node.type === "array")
+    return node.items === undefined ? false : isStrictSafeSchema(node.items);
+  if (node.type !== "object") return node.properties === undefined;
+  if (node.additionalProperties !== undefined && node.additionalProperties !== false) return false;
+  const properties =
+    typeof node.properties === "object" && node.properties !== null
+      ? (node.properties as Record<string, unknown>)
+      : {};
+  const names = Object.keys(properties);
+  const required = new Set(Array.isArray(node.required) ? (node.required as unknown[]) : []);
+  if (!names.every((name) => required.has(name))) return false;
+  return names.every((name) => isStrictSafeSchema(properties[name]));
+}
+
 /** The Agent-level `toolExecution` option for the policy (undefined = library default). */
 export function agentToolExecutionMode(
   env: NodeJS.ProcessEnv = process.env,
@@ -2145,12 +2231,14 @@ export function createProfileToolset(
   supports: AgentSupports = { text: true },
   options?: { onLoadTools?: (tools: AgentTool[]) => void },
 ): ProfileToolset {
-  const all = applyToolExecutionModes(
-    createAllTools(ctx, platformMemory).filter((tool) => {
-      if (!supports.image && tool.name === "marina_generate_image") return false;
-      if (!supports.video && tool.name === "marina_generate_video") return false;
-      return true;
-    }),
+  const all = applyStrictToolSchemas(
+    applyToolExecutionModes(
+      createAllTools(ctx, platformMemory).filter((tool) => {
+        if (!supports.image && tool.name === "marina_generate_image") return false;
+        if (!supports.video && tool.name === "marina_generate_video") return false;
+        return true;
+      }),
+    ),
   );
   if (profile !== "full") {
     const want = new Set(TOOL_PROFILE_NAMES[profile]);

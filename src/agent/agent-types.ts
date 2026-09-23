@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { EntityId } from "../types";
-import type { TraceParent } from "./execution-trace";
+import type { PromptMetrics, TraceParent } from "./execution-trace";
 
 export interface AgentSupports {
   text: boolean;
@@ -284,7 +284,13 @@ export type AgentEvent =
   | { type: "error"; error: string; context: string }
   // Turn boundaries — fire once per LLM turn. Observers use these to
   // know when an agent is mid-thought vs. idle.
-  | { type: "turn_start"; traceParent?: TraceParent; model: string }
+  | {
+      type: "turn_start";
+      traceParent?: TraceParent;
+      model: string;
+      /** Continuation-prompt byte attribution; present on the FIRST turn of a prompt only. */
+      prompt?: PromptMetrics;
+    }
   | {
       type: "turn_end";
       hadToolCalls: boolean;

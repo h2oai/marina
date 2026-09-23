@@ -11,7 +11,18 @@
  *  - prompt-cache markers and the tellAndAwait correlation echo are wired.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
+import {
+  type AssistantMessage,
+  createAssistantMessageEventStream,
+  type Model,
+} from "@earendil-works/pi-ai";
+import {
+  makeStrictJsonSchema,
+  resolveJsonSchemaStrictSampling,
+} from "@earendil-works/pi-ai/api/constrained-sampling";
+import { Type } from "typebox";
 import { effectivePromptWindow } from "../src/agent/context-manager";
 import {
   assembleContinuationPrompt,
@@ -23,14 +34,22 @@ import {
   MANDATORY_SECTION_PRIORITY,
   marinaProxyCompat,
   resolveModel,
+  withPromptCacheKey,
 } from "../src/agent/lean-agent-adapter";
+import { piModels } from "../src/agent/pi-models";
 import {
   COMMAND_ROSTER,
   getLeanSystemPrompt,
   LEAN_SYSTEM_PROMPT_BYTE_CAP,
 } from "../src/agent/prompts/lean-system";
-import { createCommandTool } from "../src/agent/tools";
 import {
+  applyStrictToolSchemas,
+  createCommandTool,
+  createProfileToolset,
+  isStrictSafeSchema,
+} from "../src/agent/tools";
+import {
+  CONTEXT_PRUNE_THRESHOLD,
   CONTINUATION_PROMPT_BUDGET_BYTES,
   DEFAULT_CLOUD_MAX_TOKENS,
   localOutputBudget,
@@ -80,7 +99,7 @@ describe("system prompt byte budget", () => {
   it("stays under the cap with the command roster included", () => {
     const p = getLeanSystemPrompt(null);
     expect(bytes(p)).toBeLessThanOrEqual(LEAN_SYSTEM_PROMPT_BYTE_CAP);
-    expect(LEAN_SYSTEM_PROMPT_BYTE_CAP).toBeLessThanOrEqual(6500);
+    expect(LEAN_SYSTEM_PROMPT_BYTE_CAP).toBeLessThanOrEqual(6300);
     // ONE copy of the roster, in the stable prefix.
     expect(p.split("Common world commands").length - 1).toBe(1);
     expect(p).toContain("# COMMANDS");
@@ -106,8 +125,9 @@ describe("system prompt byte budget", () => {
     const auth = p.slice(p.indexOf("# AUTHORITY AND TRUST"), p.indexOf("# ROLE CONTRACT"));
     const loop = p.slice(after("# OPERATING LOOP"), after("# HOW TO BE"));
     expect(bytes(tools)).toBeLessThanOrEqual(700);
-    // Target 1.2 KB combined; the mandatory rule phrasings alone are ~300 B.
-    expect(bytes(auth) + bytes(loop)).toBeLessThanOrEqual(1550);
+    // 1.2 KB combined (was 1.49 KB): explanatory clauses moved out, every
+    // asserted rule phrasing kept. The mandatory phrasings alone are ~300 B.
+    expect(bytes(auth) + bytes(loop)).toBeLessThanOrEqual(1200);
   });
 
   it("moved the roster out of the marina_command description", () => {
@@ -279,5 +299,235 @@ describe("library primitives", () => {
     const adapter = new LeanAgentAdapter({ name: "session-id-agent" }, "ws://127.0.0.1:3300", null);
     const agent = (adapter as unknown as { agent: { sessionId?: string } }).agent;
     expect(agent.sessionId).toBe("marina-agent:session-id-agent");
+  });
+});
+
+// ─── Mid-run compaction (prepareNextTurn) ────────────────────────────────────
+
+type CompactionInternals = {
+  agent: {
+    state: { systemPrompt: string; tools: AgentTool[]; messages: AgentMessage[] };
+    streamFunction: (
+      model: Model<"openai-completions">,
+      context: { messages: unknown[] },
+    ) => Promise<unknown>;
+    getApiKey?: unknown;
+    prompt(text: string): Promise<void>;
+    waitForIdle(): Promise<void>;
+  };
+  platformMemory: { archiveContext: (...args: unknown[]) => Promise<void> };
+  metrics: { midRunCompactions: number };
+  effectiveContextWindow: number;
+};
+
+describe("mid-run compaction (prepareNextTurn)", () => {
+  it("compacts exactly once, before the turn that follows the threshold crossing", async () => {
+    // Window 20 000 tokens → effective prompt window 15 648 (4096 output + 2 % margin).
+    // Each tool turn adds ~1 813 estimated tokens (5 400-char result at 3 chars/token),
+    // so the 0.8 threshold is crossed after the 7th tool turn; 8 tool turns then
+    // a final text turn = 9 model calls.
+    const adapter = new LeanAgentAdapter(
+      { name: "compactor", model: "marina/default", toolProfile: "minimal", contextWindow: 20_000 },
+      "ws://127.0.0.1:3300",
+      null,
+    );
+    const i = adapter as unknown as CompactionInternals;
+    expect(i.effectiveContextWindow).toBe(20_000);
+    let archives = 0;
+    i.platformMemory.archiveContext = async () => {
+      archives++;
+    };
+    const summarize = spyOn(piModels, "completeSimple").mockImplementation(
+      async () =>
+        ({
+          role: "assistant",
+          content: [{ type: "text", text: "summary of the middle turns" }],
+          api: "openai-completions",
+          provider: "openai",
+          model: "default",
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+          stopReason: "stop",
+          timestamp: Date.now(),
+        }) as never,
+    );
+    try {
+      const agent = i.agent;
+      agent.state.systemPrompt = "sys";
+      agent.state.tools = [
+        {
+          name: "probe",
+          label: "probe",
+          description: "Deterministic test tool",
+          parameters: Type.Object({}),
+          execute: async () => ({
+            content: [{ type: "text", text: "r".repeat(5400) }],
+            details: {},
+          }),
+        } as unknown as AgentTool,
+      ];
+      agent.getApiKey = () => undefined;
+      const TOOL_TURNS = 8;
+      let calls = 0;
+      const messageCounts: number[] = [];
+      agent.streamFunction = async (model, context) => {
+        calls++;
+        messageCounts.push(context.messages.length);
+        const toolTurn = calls <= TOOL_TURNS;
+        const message: AssistantMessage = {
+          role: "assistant",
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          timestamp: Date.now(),
+          content: toolTurn
+            ? [{ type: "toolCall", id: `probe-${calls}`, name: "probe", arguments: {} }]
+            : [{ type: "text", text: "done" }],
+          stopReason: toolTurn ? "toolUse" : "stop",
+          // Zero usage: keep the gauge on the character estimate, not a usage anchor.
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          },
+        };
+        const stream = createAssistantMessageEventStream();
+        stream.push({ type: "done", reason: toolTurn ? "toolUse" : "stop", message });
+        return stream;
+      };
+
+      await agent.prompt("run the probe until told otherwise");
+      await agent.waitForIdle();
+
+      expect(calls).toBe(TOOL_TURNS + 1);
+      // ONE compaction (one durable archive, one summarizer call) …
+      expect(archives).toBe(1);
+      expect(i.metrics.midRunCompactions).toBe(1);
+      expect(summarize).toHaveBeenCalledTimes(1);
+      // … and it replaced the loop's working context: the uncompacted history at
+      // the final call would be 1 + 2×8 = 17 messages; the compacted one is
+      // [first, summary, 10 recent] + turn-8 assistant + result = 14.
+      expect(messageCounts[TOOL_TURNS]).toBeLessThan(1 + 2 * TOOL_TURNS);
+      expect(messageCounts[TOOL_TURNS]).toBe(14);
+      // Before the crossing, the working context grew untouched.
+      expect(messageCounts.slice(0, 7)).toEqual([1, 3, 5, 7, 9, 11, 13]);
+      // The threshold is the shared constant the transform uses.
+      expect(CONTEXT_PRUNE_THRESHOLD).toBe(0.8);
+    } finally {
+      summarize.mockRestore();
+    }
+  });
+});
+
+// ─── Library surface: strict tools + prompt_cache_key ────────────────────────
+
+describe("strict (constrained-sampling) resident tools", () => {
+  it("stamps only closed, all-required object schemas; pi-ai resolves them strict unchanged", () => {
+    const ts = createProfileToolset({} as never, {} as never, "full", { text: true });
+    const byName = new Map(ts.resident.map((t) => [t.name, t]));
+    const command = byName.get("marina_command")!;
+    expect(command.constrainedSampling).toEqual({ type: "json_schema", strict: "prefer" });
+    // pi-ai's openai-completions path honours it: strict resolves true and the
+    // strict schema equals the original plus `additionalProperties: false`.
+    expect(resolveJsonSchemaStrictSampling(command as never, true)).toBe(true);
+    // (`structuredClone` drops TypeBox's symbol keys — compare the JSON shape.)
+    expect(makeStrictJsonSchema(command.parameters as never)).toEqual(
+      JSON.parse(
+        JSON.stringify({ ...(command.parameters as object), additionalProperties: false }),
+      ),
+    );
+    // Optional properties would become nullable under strict — never stamped.
+    for (const name of ["marina_tell", "marina_channel", "memory", "marina_brief"]) {
+      expect(byName.get(name)?.constrainedSampling).toBeUndefined();
+    }
+    // Opt-out.
+    const off = applyStrictToolSchemas([createCommandTool({} as never) as unknown as AgentTool], {
+      MARINA_STRICT_TOOLS: "off",
+    } as NodeJS.ProcessEnv);
+    expect(off[0]!.constrainedSampling).toBeUndefined();
+  });
+
+  it("isStrictSafeSchema mirrors strict-mode invariants", () => {
+    expect(isStrictSafeSchema(Type.Object({ command: Type.String() }))).toBe(true);
+    expect(
+      isStrictSafeSchema(Type.Object({ a: Type.String(), b: Type.Optional(Type.Number()) })),
+    ).toBe(false);
+    expect(isStrictSafeSchema(Type.Object({}, { additionalProperties: true }))).toBe(false);
+    expect(
+      isStrictSafeSchema(Type.Object({ mode: Type.Union([Type.Literal("a"), Type.Literal("b")]) })),
+    ).toBe(true);
+    expect(isStrictSafeSchema(Type.Object({ items: Type.Array(Type.String()) }))).toBe(true);
+    expect(isStrictSafeSchema(Type.Object({ ref: Type.Ref("Other") }))).toBe(false);
+  });
+});
+
+describe("prompt_cache_key on the proxy model", () => {
+  const proxy = resolveModel("marina/default");
+
+  it("fills prompt_cache_key from the stable sessionId only for the proxy model", () => {
+    const out = withPromptCacheKey(
+      { model: "default", messages: [] },
+      proxy,
+      "marina-agent:bob",
+      {},
+    );
+    expect(out).toEqual({ model: "default", messages: [], prompt_cache_key: "marina-agent:bob" });
+    // Never overrides one already present; clamps to OpenAI's 64-char limit.
+    expect(
+      withPromptCacheKey({ prompt_cache_key: "x" }, proxy, "marina-agent:bob", {}),
+    ).toBeUndefined();
+    expect(
+      (
+        withPromptCacheKey({}, proxy, `marina-agent:${"n".repeat(80)}`, {}) as Record<
+          string,
+          string
+        >
+      ).prompt_cache_key,
+    ).toHaveLength(64);
+    // Registry models keep pi-ai's own behaviour; opt-out follows the prompt-cache switch.
+    const registry = resolveModel("anthropic/claude-haiku-4-5");
+    expect(withPromptCacheKey({}, registry, "marina-agent:bob", {})).toBeUndefined();
+    expect(
+      withPromptCacheKey({}, proxy, "marina-agent:bob", {
+        MARINA_AGENT_PROMPT_CACHE: "off",
+      } as NodeJS.ProcessEnv),
+    ).toBeUndefined();
+  });
+
+  it("the request body pi-ai sends through the Agent's onPayload carries it", async () => {
+    const adapter = new LeanAgentAdapter({ name: "cache-key-agent" }, "ws://127.0.0.1:3300", null);
+    const agent = (
+      adapter as unknown as {
+        agent: {
+          onPayload?: (payload: unknown, model: Model<"openai-completions">) => unknown;
+          sessionId?: string;
+        };
+      }
+    ).agent;
+    expect(agent.onPayload).toBeDefined();
+    let body: Record<string, unknown> | undefined;
+    const fakeFetch = (async (_url: unknown, init?: { body?: unknown }) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify({ error: { message: "captured" } }), { status: 500 });
+    }) as unknown as typeof fetch;
+    const stream = piModels.streamSimple(
+      proxy,
+      { messages: [{ role: "user", content: "hi", timestamp: Date.now() }] },
+      {
+        apiKey: "test",
+        fetch: fakeFetch,
+        maxRetries: 0,
+        sessionId: agent.sessionId,
+        onPayload: agent.onPayload as never,
+      } as never,
+    );
+    const result = await stream.result();
+    expect(result.stopReason).toBe("error");
+    expect(body).toBeDefined();
+    expect(body!.prompt_cache_key).toBe("marina-agent:cache-key-agent");
+    // The proxy forwards the field untouched (model-api.ts), so an OpenAI
+    // upstream behind it gets cache affinity from the same per-agent key.
   });
 });
