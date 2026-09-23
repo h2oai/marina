@@ -12,6 +12,51 @@ export interface AgentSupports {
 
 // ─── Agent Configuration ────────────────────────────────────────────────────
 
+/** Reasoning depth an agent asks its model for. pi-ai's `ThinkingLevel` plus "off". */
+export type AgentThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+export const AGENT_THINKING_LEVELS: readonly AgentThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+];
+
+/** Parse a thinking level; undefined for anything that is not one. */
+export function parseAgentThinkingLevel(raw: string | undefined): AgentThinkingLevel | undefined {
+  const lower = raw?.trim().toLowerCase();
+  if (lower === "none") return "off";
+  return (AGENT_THINKING_LEVELS as readonly string[]).includes(lower ?? "")
+    ? (lower as AgentThinkingLevel)
+    : undefined;
+}
+
+/**
+ * Instance-wide default thinking level: `MARINA_AGENT_THINKING` (off | minimal |
+ * low | medium | high | xhigh). Unset or invalid → "off".
+ */
+export function defaultAgentThinkingLevel(
+  env: NodeJS.ProcessEnv = process.env,
+): AgentThinkingLevel {
+  return parseAgentThinkingLevel(env.MARINA_AGENT_THINKING) ?? "off";
+}
+
+/**
+ * The thinking level an agent actually runs with: an explicit config value
+ * wins; otherwise crew responders stay "off" (their value is latency) and
+ * everyone else takes the `MARINA_AGENT_THINKING` default.
+ */
+export function resolveAgentThinkingLevel(
+  config: Pick<AgentConfig, "thinkingLevel" | "crewResponder">,
+  env: NodeJS.ProcessEnv = process.env,
+): AgentThinkingLevel {
+  if (config.thinkingLevel) return config.thinkingLevel;
+  if (config.crewResponder) return "off";
+  return defaultAgentThinkingLevel(env);
+}
+
 export interface AgentConfig {
   name: string;
   model?: string;
@@ -44,9 +89,12 @@ export interface AgentConfig {
   /**
    * Reasoning effort hint for models that support it (Claude thinking,
    * GPT-5 reasoning tiers, etc.). Non-reasoning models ignore this.
-   * Defaults to "off" — agents inherit the model's non-reasoning behavior.
+   * Unset → `MARINA_AGENT_THINKING` (default "off"); crew responders stay
+   * "off" unless set explicitly (latency). Set in-world with
+   * `agent spawn <name> thinking:high` / `agent config <name> thinking high`.
+   * Runtime-only: not persisted to agent_configs.
    */
-  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  thinkingLevel?: AgentThinkingLevel;
   /**
    * Per-level token budgets for token-based reasoning providers (e.g.
    * Claude thinking, some local models). Unset levels use provider
@@ -213,6 +261,8 @@ export interface AgentHandle {
     rolePrompt?: string | null;
     keyName?: string;
     supports?: AgentSupports;
+    /** New reasoning depth; re-resolves the model so the request carries (or drops) it. */
+    thinkingLevel?: AgentThinkingLevel;
     /** Static key or dynamic resolver called on each LLM call. */
     apiKey?: string | (() => string | undefined | Promise<string | undefined>);
   }): Promise<void>;

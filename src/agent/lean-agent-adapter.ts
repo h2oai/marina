@@ -52,12 +52,14 @@ import { MarinaClient, TELL_NOTICE_PREFIX } from "../sdk/client";
 import type { Perception } from "../types";
 import { suggestPatterns } from "../world/templates/orchestration";
 import { ActionHistory } from "./action-history";
-import type {
-  AgentConfig,
-  AgentEvent,
-  AgentHandle,
-  AgentStatus,
-  AgentSupports,
+import {
+  type AgentConfig,
+  type AgentEvent,
+  type AgentHandle,
+  type AgentStatus,
+  type AgentSupports,
+  type AgentThinkingLevel,
+  resolveAgentThinkingLevel,
 } from "./agent-types";
 
 import { createContextManager } from "./context-manager";
@@ -80,7 +82,13 @@ import {
 import { COMPACTION_SYSTEM_PROMPT, formatUntrustedContext } from "./prompts/support-prompts";
 import { SocialAwareness } from "./social";
 import { mediateToolCall } from "./tool-policy";
-import { createEvolutionTool, createProfileToolset, TOOL_SEARCH_NAME } from "./tools";
+import {
+  agentToolExecutionMode,
+  applyToolExecutionModes,
+  createEvolutionTool,
+  createProfileToolset,
+  TOOL_SEARCH_NAME,
+} from "./tools";
 
 export function shouldKeepPerception(
   mode: "focused" | "balanced" | "open",
@@ -662,6 +670,31 @@ export function resolveModel(modelStr: string, localPort?: number): Model<Api> {
 }
 
 /**
+ * Shape the resolved model for the agent's thinking level.
+ *
+ *  - `off` → `neutralizeUnusedReasoning` (no reasoning directives at all).
+ *  - any other level on the synthesized `marina/*` proxy model → mark the model
+ *    `reasoning: true` with `supportsReasoningEffort`, so pi-ai's
+ *    openai-completions path emits `reasoning_effort: "<level>"`; the proxy
+ *    translates that per upstream (Anthropic: `thinking: {type:"enabled",
+ *    budget_tokens}` with `temperature` omitted — see
+ *    `anthropicThinking` in src/net/anthropic-tools.ts; OpenAI-compatible
+ *    upstreams receive `reasoning_effort` verbatim).
+ *  - any other level on a registry model → untouched: pi-ai already knows how
+ *    that provider takes `thinkingLevel` / `thinkingBudgets`.
+ */
+export function applyThinkingLevel(model: Model<Api>, level: AgentThinkingLevel): Model<Api> {
+  if (level === "off") return neutralizeUnusedReasoning(model, level);
+  const isMarinaProxy = model.name.startsWith("Marina ") && model.baseUrl !== undefined;
+  if (!isMarinaProxy || model.reasoning) return model;
+  return {
+    ...model,
+    reasoning: true,
+    compat: { ...((model.compat as object | undefined) ?? {}), supportsReasoningEffort: true },
+  };
+}
+
+/**
  * Call a reasoning model as a plain chat model when the agent isn't using
  * extended thinking (Marina's default — `thinkingLevel: "off"`). Marina never
  * consumes reasoning output in that mode, and forcing `reasoning: false` is what
@@ -781,6 +814,8 @@ export class LeanAgentAdapter implements AgentHandle {
   private currentRunToolCalls = 0;
   /** Allow one public update per model run; targeted tells remain unrestricted. */
   private currentRunChannelSends = 0;
+  /** Effective reasoning depth (explicit config → crew-responder off → MARINA_AGENT_THINKING). */
+  private thinkingLevel: AgentThinkingLevel;
   private static readonly MAX_IN_RUN_RECOVERIES = 1;
   /** Consecutive silent turns past which the loop stops re-prompting at full
    *  cadence and backs off (circuit-breaker). A persistently-silent model
@@ -958,10 +993,8 @@ export class LeanAgentAdapter implements AgentHandle {
     // Resolve model (pass WS port for marina/ provider routing)
     const modelStr = config.model ?? MARINA_DEFAULT_MODEL;
     this.wsPort = Number(new URL(wsUrl).port) || 3300;
-    this.model = neutralizeUnusedReasoning(
-      resolveModel(modelStr, this.wsPort),
-      config.thinkingLevel ?? "off",
-    );
+    this.thinkingLevel = resolveAgentThinkingLevel(config);
+    this.model = applyThinkingLevel(resolveModel(modelStr, this.wsPort), this.thinkingLevel);
     this.applyModelLimits(modelStr);
 
     // Create tools — profile controls how much schema goes to the LLM.
@@ -982,7 +1015,9 @@ export class LeanAgentAdapter implements AgentHandle {
     );
     const tools = toolset.resident;
     this.baseTools = tools;
-    this.evolutionTool = createEvolutionTool(toolContext);
+    this.evolutionTool = applyToolExecutionModes([
+      createEvolutionTool(toolContext) as unknown as AgentTool,
+    ])[0] as unknown as typeof this.evolutionTool;
 
     // Keep the resolver around so the context manager can re-query it
     // each compaction (rotating-credential safe).
@@ -1089,10 +1124,18 @@ export class LeanAgentAdapter implements AgentHandle {
         systemPrompt: getLeanSystemPrompt(rolePrompt),
         model: this.model,
         tools,
-        thinkingLevel: config.thinkingLevel ?? "off",
+        thinkingLevel: this.thinkingLevel,
       },
       maxRetryDelayMs: config.maxRetryDelayMs,
       thinkingBudgets: config.thinkingBudgets,
+      // Tool ordering: world-mutating tools carry `executionMode: "sequential"`
+      // (see `applyToolExecutionModes`), so any batch containing one runs in
+      // order while read-only batches fan out. `MARINA_TOOL_EXECUTION` sets
+      // the Agent-level mode instead (`sequential` | `parallel`); unset keeps
+      // the library default (parallel) and relies on the per-tool stamps.
+      // The one-channel-send-per-run hook below is a RATE cap, not an
+      // ordering rule — it stays regardless of execution mode.
+      toolExecution: agentToolExecutionMode(),
       // Stable per-agent session id: pi-ai forwards it as session-affinity
       // headers (`x-session-affinity` / `session_id` / `x-client-request-id`)
       // and, where a provider supports it, `prompt_cache_key`, so the proxy and
@@ -3169,6 +3212,7 @@ The goal is a smaller, sharper memory — not more notes.`;
     rolePrompt?: string | null;
     keyName?: string;
     supports?: AgentSupports;
+    thinkingLevel?: AgentThinkingLevel;
     apiKey?: string | (() => string | undefined | Promise<string | undefined>);
   }): Promise<void> {
     // Refuse a blocked `marina@<host>` target up front so a bad reconfigure
@@ -3184,17 +3228,25 @@ The goal is a smaller, sharper memory — not more notes.`;
     this.stopCheckpointTimer();
 
     // Apply new config
+    if (opts.thinkingLevel !== undefined) {
+      this.config.thinkingLevel = opts.thinkingLevel;
+      this.thinkingLevel = resolveAgentThinkingLevel(this.config);
+      this.agent.state.thinkingLevel = this.thinkingLevel;
+    }
     if (opts.model) {
       this.config.model = opts.model;
-      this.model = neutralizeUnusedReasoning(
-        resolveModel(opts.model, this.wsPort),
-        this.config.thinkingLevel ?? "off",
-      );
+      this.model = applyThinkingLevel(resolveModel(opts.model, this.wsPort), this.thinkingLevel);
       // New model → drop the prior model's autodetected window override so the
       // freshly resolved (registry/env/default) window applies, then reapply the
       // output cap and reset the adaptive window.
       this.config.contextWindow = undefined;
       this.applyModelLimits(opts.model);
+      this.agent.state.model = this.model;
+    } else if (opts.thinkingLevel !== undefined) {
+      // Same model, new depth: re-shape the model in place (keeps the window
+      // and output-cap overrides applyModelLimits already applied) so the next
+      // request carries — or drops — the reasoning directive.
+      this.model = applyThinkingLevel(this.model, this.thinkingLevel);
       this.agent.state.model = this.model;
     }
     if (opts.role !== undefined) {

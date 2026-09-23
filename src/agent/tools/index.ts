@@ -2062,6 +2062,82 @@ export interface ProfileToolset {
  * on = core set + `marina_tool_search`; the rest are deferred. `onLoadTools`
  * is how loaded schemas reach the agent's live tool list.
  */
+// ─── Tool execution ordering ────────────────────────────────────────────────
+//
+// pi-agent-core runs a multi-tool assistant turn in parallel by default. World
+// mutations are order-sensitive (a `say` after a `move` must land in the new
+// room; a `note` may cite a `pool` deposit from the same turn), so every tool
+// that can change world state is stamped `executionMode: "sequential"`: the
+// loop serialises any batch that contains one, while a batch made only of
+// reads (look, who, examine, brief, feed, web, code read/search/diff …) still
+// fans out. `MARINA_TOOL_EXECUTION=parallel` drops the stamps (library
+// default everywhere); `sequential` also flips the Agent-level mode so even
+// pure-read batches serialise.
+
+export type ToolExecutionPolicy = "auto" | "sequential" | "parallel";
+
+/** `MARINA_TOOL_EXECUTION` → policy; unset/invalid = `auto` (stamp mutators). */
+export function toolExecutionPolicy(env: NodeJS.ProcessEnv = process.env): ToolExecutionPolicy {
+  const raw = (env.MARINA_TOOL_EXECUTION ?? "").trim().toLowerCase();
+  return raw === "sequential" || raw === "parallel" ? raw : "auto";
+}
+
+/** Tools that only observe (world, memory or workspace) — safe to run concurrently. */
+export const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "marina_look",
+  "marina_examine",
+  "marina_inventory",
+  "marina_who",
+  "marina_help",
+  "marina_brief",
+  "marina_feed",
+  "marina_novelty",
+  "marina_web",
+  "think",
+  "marina_code_read_file",
+  "marina_code_list_files",
+  "marina_code_search",
+  "marina_code_diff",
+  "marina_code_history",
+  "marina_code_summary",
+  "marina_code_session_status",
+  "marina_code_observe",
+  "marina_code_artifacts",
+  "marina_code_doctor",
+  "marina_code_thread",
+]);
+
+/** Whether a tool by this name may change world state (anything not read-only). */
+export function isMutatingToolName(name: string): boolean {
+  return !READ_ONLY_TOOL_NAMES.has(name);
+}
+
+/**
+ * Stamp per-tool `executionMode` according to the policy. `auto` marks every
+ * mutating tool `sequential` and leaves reads unmarked (parallel by default);
+ * `parallel` and `sequential` leave the tools untouched — the Agent-level
+ * `toolExecution` option carries those (see `agentToolExecutionMode`).
+ */
+export function applyToolExecutionModes<T extends AgentTool>(
+  tools: T[],
+  env: NodeJS.ProcessEnv = process.env,
+): T[] {
+  if (toolExecutionPolicy(env) !== "auto") return tools;
+  return tools.map((tool) =>
+    isMutatingToolName(tool.name) && tool.executionMode === undefined
+      ? { ...tool, executionMode: "sequential" as const }
+      : tool,
+  );
+}
+
+/** The Agent-level `toolExecution` option for the policy (undefined = library default). */
+export function agentToolExecutionMode(
+  env: NodeJS.ProcessEnv = process.env,
+): "sequential" | "parallel" | undefined {
+  const policy = toolExecutionPolicy(env);
+  return policy === "auto" ? undefined : policy;
+}
+
 export function createProfileToolset(
   ctx: ToolContext,
   platformMemory: PlatformMemoryBackend,
@@ -2069,11 +2145,13 @@ export function createProfileToolset(
   supports: AgentSupports = { text: true },
   options?: { onLoadTools?: (tools: AgentTool[]) => void },
 ): ProfileToolset {
-  const all = createAllTools(ctx, platformMemory).filter((tool) => {
-    if (!supports.image && tool.name === "marina_generate_image") return false;
-    if (!supports.video && tool.name === "marina_generate_video") return false;
-    return true;
-  });
+  const all = applyToolExecutionModes(
+    createAllTools(ctx, platformMemory).filter((tool) => {
+      if (!supports.image && tool.name === "marina_generate_image") return false;
+      if (!supports.video && tool.name === "marina_generate_video") return false;
+      return true;
+    }),
+  );
   if (profile !== "full") {
     const want = new Set(TOOL_PROFILE_NAMES[profile]);
     return { resident: all.filter((t) => want.has(t.name)), deferred: [] };
@@ -2082,7 +2160,11 @@ export function createProfileToolset(
   const residentNames = new Set(FULL_RESIDENT_TOOL_NAMES);
   const resident = all.filter((t) => residentNames.has(t.name));
   const deferred = all.filter((t) => !residentNames.has(t.name));
-  resident.push(createToolSearchTool(deferred, options?.onLoadTools) as unknown as AgentTool);
+  resident.push(
+    ...applyToolExecutionModes([
+      createToolSearchTool(deferred, options?.onLoadTools) as unknown as AgentTool,
+    ]),
+  );
   return { resident, deferred };
 }
 

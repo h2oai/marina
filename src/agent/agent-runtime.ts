@@ -24,6 +24,7 @@ import type {
   AgentHandle,
   AgentStatus,
   AgentSupports,
+  AgentThinkingLevel,
 } from "./agent-types";
 import { AgentExecutionTracer } from "./execution-trace";
 import {
@@ -792,7 +793,14 @@ export class AgentRuntime {
    */
   async reconfigure(
     name: string,
-    opts: { model?: string; role?: string; keyName?: string; supports?: AgentSupports },
+    opts: {
+      model?: string;
+      role?: string;
+      keyName?: string;
+      supports?: AgentSupports;
+      /** Reasoning depth (`agent config <name> thinking <level>`); runtime-only. */
+      thinkingLevel?: AgentThinkingLevel;
+    },
   ): Promise<void> {
     const key = this.resolveKey(name);
     const agent = key ? this.agents.get(key) : undefined;
@@ -832,6 +840,7 @@ export class AgentRuntime {
       rolePrompt,
       keyName: opts.keyName,
       supports,
+      thinkingLevel: opts.thinkingLevel,
       apiKey: apiKeyResolver,
     });
 

@@ -52,6 +52,24 @@ prompt. The budget is enforced in code, not by convention:
 - Prompt caching: the synthesized `marina/*` model emits Anthropic-style `cache_control` markers
   and a per-agent `sessionId` (`MARINA_AGENT_PROMPT_CACHE=off` disables the markers); the proxy is
   responsible for forwarding or stripping them per upstream.
+- Thinking budgets are configuration (`AgentConfig.thinkingLevel`: off | minimal | low | medium |
+  high | xhigh). Resolution order: explicit config (`agent spawn <name> thinking:high`,
+  `agent config <name> thinking high`) → crew responders `off` (their value is latency) →
+  `MARINA_AGENT_THINKING` (default `off`). `off` neutralizes the model's reasoning flags so no
+  reasoning directive is sent at all. Any other level on the `marina/*` proxy marks the model
+  reasoning-capable so pi-ai emits `reasoning_effort: "<level>"`; the proxy translates that per
+  upstream — Anthropic gets `thinking: {type:"enabled", budget_tokens}` (1024 / 2048 / 8192 / 16384,
+  xhigh clamps to high) with `temperature`/`top_p` omitted, OpenAI-compatible upstreams receive
+  `reasoning_effort` verbatim. Registry models (`anthropic/...`, `openai/...`) take pi-ai's native
+  `thinkingLevel` / `thinkingBudgets` handling untouched. Runtime-only: not persisted to
+  `agent_configs`.
+- Tool ordering: pi-agent-core executes a multi-tool turn in parallel by default. Every
+  world-mutating tool (anything not in `READ_ONLY_TOOL_NAMES` — look, examine, who, brief, feed,
+  web, think, code read/search/diff/history/…) is stamped `executionMode: "sequential"`, so a batch
+  containing one runs in assistant order while pure-read batches still fan out.
+  `MARINA_TOOL_EXECUTION=parallel` drops the stamps; `sequential` serialises every batch at the
+  Agent level. The one-channel-send-per-run `beforeToolCall` hook is a rate cap, not an ordering
+  rule, and stays in force in every mode.
 
 ## Trust boundary
 
