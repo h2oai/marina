@@ -137,8 +137,9 @@ export const WelcomeTour = memo(function WelcomeTour({
                 borderRadius: 2,
               }}
               title="Dismiss orientation"
+              aria-label="Dismiss orientation"
             >
-              ×
+              <span aria-hidden="true">×</span>
             </button>
           </div>
 

@@ -210,8 +210,9 @@ const OnlineTab = memo(function OnlineTab({
             }}
             onClick={() => onEntityClick?.(entity.name)}
           >
-            {/* Kind dot */}
+            {/* Kind dot — decorative; kind is spelled out for assistive tech */}
             <span
+              aria-hidden="true"
               style={{
                 width: "8px",
                 height: "8px",
@@ -220,6 +221,7 @@ const OnlineTab = memo(function OnlineTab({
                 flexShrink: 0,
               }}
             />
+            <span className="visually-hidden">{entity.kind}</span>
             {/* Name */}
             <span
               style={{
@@ -367,6 +369,7 @@ const AgentRow = memo(function AgentRow({
         }}
       >
         <span
+          aria-hidden="true"
           style={{
             width: "8px",
             height: "8px",
@@ -376,6 +379,7 @@ const AgentRow = memo(function AgentRow({
             boxShadow: agent.state === "error" ? `0 0 4px ${stateColor}` : undefined,
           }}
         />
+        <span className="visually-hidden">{agent.state}</span>
         {/* biome-ignore lint/a11y/useKeyWithClickEvents: nested inside a parent button; outer button handles keyboard */}
         {/* biome-ignore lint/a11y/noStaticElementInteractions: nested inside a parent <button> — cannot be a button itself; outer button handles keyboard */}
         <span
@@ -973,8 +977,9 @@ export const EntityPanel = memo(function EntityPanel({
               fontSize: "14px",
               padding: "0 4px",
             }}
+            aria-label="Collapse entity panel"
           >
-            _
+            <span aria-hidden="true">_</span>
           </button>
         )}
         <button
@@ -992,8 +997,9 @@ export const EntityPanel = memo(function EntityPanel({
             fontSize: "14px",
             padding: "0 4px",
           }}
+          aria-label="Close entity panel"
         >
-          x
+          <span aria-hidden="true">x</span>
         </button>
       </div>
 

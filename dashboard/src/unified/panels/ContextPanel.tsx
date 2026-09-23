@@ -1468,11 +1468,16 @@ export const ContextPanel = memo(function ContextPanel({
       {/* Header — draggable */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: drag handle — onMouseDown initiates pointer drag, not a click action */}
       <div className="uc-panel-header" style={{ cursor: "grab" }} onMouseDown={onDragStart}>
-        <div className="uc-blink-dot" />
+        <div className="uc-blink-dot" aria-hidden="true" />
         <span>{title}</span>
         <span className="uc-spacer" />
-        <button type="button" className="uc-panel-btn" onClick={handleClose}>
-          x
+        <button
+          type="button"
+          className="uc-panel-btn"
+          onClick={handleClose}
+          aria-label="Close context panel"
+        >
+          <span aria-hidden="true">x</span>
         </button>
       </div>
 

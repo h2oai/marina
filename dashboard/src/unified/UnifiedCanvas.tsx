@@ -32,13 +32,13 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import "./unified-canvas.css";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nodeTypes as canvasContentNodeTypes } from "../canvas/nodes";
 import { FetchErrorNotice } from "../components/FetchErrorNotice";
 import { useSetupStatus, useSystem } from "../hooks/use-api";
 import { ensureChatWs, getChatWs, useChatState } from "../hooks/use-chat-state";
-import { parseMessage, useEntityActivity } from "../hooks/use-entity-activity";
+import { useEntityActivity } from "../hooks/use-entity-activity";
 import { loadGraphSnapshot, useGraphState } from "../hooks/use-graph-state";
 import { useDashboardWebSocket } from "../hooks/use-websocket";
 import { useWorldState } from "../hooks/use-world-state";
@@ -56,6 +56,7 @@ import {
   failIntent,
   useCanvasIntegration,
 } from "./hooks/use-canvas-integration";
+import { useEventFeedActivity, useLatestRoomMessages } from "./hooks/use-event-feed-bridge";
 import { useInteractions } from "./hooks/use-interactions";
 import {
   MEMORY_ADOPT_HANDOFF_MS,
@@ -75,19 +76,20 @@ import { computeMemoryLayout } from "./lib/memory-map-layout";
 import { indexMemoryGraph, neighborsVia } from "./lib/memory-map-reducer";
 import { LEGACY_LINK_RELATIONSHIPS, memoryFlowNodeId } from "./lib/memory-map-types";
 import { buildRecallPathEdges, hasLiveRecallTrace } from "./lib/recall-paths";
-import {
-  hasLiveRoomMessage,
-  latestRoomMessages,
-  ROOM_MESSAGE_LIFETIME_MS,
-} from "./lib/room-messages";
+import { ROOM_MESSAGE_LIFETIME_MS } from "./lib/room-messages";
 import { type SearchableWorldState, searchWorld } from "./lib/search";
 import { cycleTheme, useTheme } from "./lib/theme-switcher";
 import { GraphNoteNode, type GraphNoteNodeData } from "./nodes/GraphNoteNode";
 import { MemoryMapNode, type MemoryMapNodeData, memoryNodeSize } from "./nodes/MemoryMapNode";
 import { RoomNode, type RoomNodeData } from "./nodes/RoomNode";
+import { CanvasBreadcrumb } from "./overlays/CanvasBreadcrumb";
+import { ConnectingOverlay } from "./overlays/ConnectingOverlay";
 import { DropDialog } from "./overlays/DropDialog";
 import { EdgeContextMenu, type EdgeContextMenuTarget } from "./overlays/EdgeContextMenu";
+import { LayerChips } from "./overlays/LayerChips";
+import { ShortcutHelp } from "./overlays/ShortcutHelp";
 import { TimelineStrip } from "./overlays/TimelineStrip";
+import { TopbarNotices } from "./overlays/TopbarNotices";
 import { Viewer, type ViewerContentType } from "./overlays/Viewer";
 import { clearSeenTour, WelcomeTour } from "./overlays/WelcomeTour";
 import { WorldRing } from "./overlays/WorldRing";
@@ -194,7 +196,6 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
   const activityStreaming = useEntityActivity((s) => s.streaming);
   const instanceName = useWorldState((s) => s.instanceName);
   const worldName = useWorldState((s) => s.worldName);
-  const eventFeed = useWorldState((s) => s.eventFeed);
   const wsConnections = useWorldState((s) => s.connections);
   const gridPositions = useWorldState((s) => s.gridPositions);
 
@@ -282,6 +283,24 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
     setHideGraph(next.graph);
     setHideFeed(next.feed);
     setHideMemory(next.memory);
+  }, []);
+  /** Current hidden-map, memoized so the chip bar only re-renders on a change. */
+  const layerHidden = useMemo<LayerVisibility>(
+    () => ({
+      world: hideWorld,
+      canvas: hideCanvasNodes,
+      graph: hideGraph,
+      feed: hideFeed,
+      memory: hideMemory,
+    }),
+    [hideWorld, hideCanvasNodes, hideGraph, hideFeed, hideMemory],
+  );
+  const toggleLayer = useCallback((layer: keyof LayerVisibility, hide: boolean) => {
+    if (layer === "world") setHideWorld(hide);
+    else if (layer === "canvas") setHideCanvasNodes(hide);
+    else if (layer === "graph") setHideGraph(hide);
+    else if (layer === "feed") setHideFeed(hide);
+    else setHideMemory(hide);
   }, []);
 
   // ── Edge context menu (right-click on an edge) ──────────────────────────
@@ -726,90 +745,10 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
     fitView,
   ]);
 
-  // Feed events into activity store and detect interaction arcs
-  const lastProcessedRef = useRef(0);
-  useEffect(() => {
-    if (eventFeed.length === 0) return;
-    const newEvents = eventFeed.filter((e) => e.timestamp > lastProcessedRef.current);
-    for (const event of newEvents) {
-      if (event.entity && event.room) {
-        logActivity(event.entity, event.room, event.type);
-      }
-
-      // Dashboard events drive visual activity (arcs, metrics) but NOT the
-      // command shell — the shell only shows the user's own commands and
-      // server responses via the game WebSocket perception handler.
-
-      // ── Create visual interaction arcs for all event types ────────
-      if (event.entity && event.room) {
-        if (event.type === "say") {
-          // Say reaches everyone in the same room. The arc carries the
-          // actual utterance so the map shows what was said, not just
-          // that something was said.
-          const { body } = parseMessage("say", event.input);
-          const roomEntities = entities.filter(
-            (e) => e.room === event.room && e.name !== event.entity,
-          );
-          for (const target of roomEntities.slice(0, 3)) {
-            addInteraction(event.entity, target.name, "say", undefined, undefined, { body });
-          }
-        } else if (event.type === "tell" && event.input) {
-          const { body, recipient } = parseMessage("tell", event.input);
-          if (recipient) {
-            addInteraction(event.entity, recipient, "tell", undefined, undefined, {
-              body,
-              recipient,
-            });
-          }
-        } else if (event.type === "shout") {
-          const { body } = parseMessage("shout", event.input);
-          const nearbyEntities = entities.filter(
-            (e) => e.name !== event.entity && e.room !== event.room,
-          );
-          for (const target of nearbyEntities.slice(0, 4)) {
-            addInteraction(event.entity, target.name, "shout", undefined, undefined, { body });
-          }
-        } else if (event.type === "emote") {
-          const { body } = parseMessage("emote", event.input);
-          const roomEntities = entities.filter(
-            (e) => e.room === event.room && e.name !== event.entity,
-          );
-          for (const target of roomEntities.slice(0, 2)) {
-            addInteraction(event.entity, target.name, "emote", undefined, undefined, { body });
-          }
-        } else if (event.type === "broadcast") {
-          const { body } = parseMessage("broadcast", event.input);
-          const others = entities.filter((e) => e.name !== event.entity);
-          for (const target of others.slice(0, 5)) {
-            addInteraction(event.entity, target.name, "broadcast", undefined, undefined, { body });
-          }
-        } else if (event.type === "connect" && event.entity) {
-          // Connect: show arc from entity to their room. Transport-level
-          // connects carry no entity (and are dropped server-side); only
-          // render an interaction when one is actually present.
-          addInteraction(event.entity, event.entity, "connect", undefined, event.room);
-        } else if (event.type === "disconnect" && event.entity) {
-          addInteraction(event.entity, event.entity, "disconnect", event.room, undefined);
-        } else if (
-          event.type === "command" &&
-          event.input &&
-          !event.input.startsWith("look") &&
-          !event.input.startsWith("brief")
-        ) {
-          // Non-trivial commands — show the entity doing something
-          const roomEntities = entities.filter(
-            (e) => e.room === event.room && e.name !== event.entity,
-          );
-          if (roomEntities.length > 0) {
-            addInteraction(event.entity, roomEntities[0]!.name, "command");
-          }
-        }
-      }
-    }
-    if (newEvents.length > 0) {
-      lastProcessedRef.current = newEvents[0]!.timestamp;
-    }
-  }, [eventFeed, logActivity, addInteraction, entities]);
+  // Feed events into activity store and detect interaction arcs.
+  // Non-reactive: reads the feed via getState()/subscribe (see
+  // hooks/use-event-feed-bridge.ts) so per-event churn never re-renders here.
+  useEventFeedActivity(logActivity, addInteraction, entities);
 
   // Periodic activity and interaction trimming
   useEffect(() => {
@@ -938,25 +877,13 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
   // Content-over-motion on the map: the pedestal gets a small glass pill
   // above it showing what was just said inside the room, not just that
   // something happened. Freshness ticks so bubbles fade naturally.
-  const [roomMsgTick, setRoomMsgTick] = useState(0);
   const resolveEntityName = useCallback(
     (id: string) => entities.find((e) => e.id === id)?.name ?? id,
     [entities],
   );
-  // biome-ignore lint/correctness/useExhaustiveDependencies: roomMsgTick drives fade
-  const latestRoomMsgs = useMemo(
-    () => latestRoomMessages(eventFeed, resolveEntityName, Date.now()),
-    [eventFeed, resolveEntityName, roomMsgTick],
-  );
-  const anyLiveRoomMsg = useMemo(
-    () => hasLiveRoomMessage(latestRoomMsgs, Date.now()),
-    [latestRoomMsgs],
-  );
-  useEffect(() => {
-    if (!anyLiveRoomMsg) return;
-    const interval = setInterval(() => setRoomMsgTick((n) => n + 1), 300);
-    return () => clearInterval(interval);
-  }, [anyLiveRoomMsg]);
+  // Derived without a reactive eventFeed selector — only changes when a pill
+  // actually appears/expires, so unrelated events do not re-render the canvas.
+  const latestRoomMsgs = useLatestRoomMessages(resolveEntityName);
 
   // Convert world rooms to ReactFlow nodes
   const roomNodes = useMemo(() => {
@@ -1745,52 +1672,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
     >
       {/* ═══ TOP BAR ═══ */}
       {/* Loading overlay — shown before world data arrives */}
-      {!connected && rooms.length === 0 && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            zIndex: 150,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "var(--color-bg)",
-            gap: "16px",
-          }}
-        >
-          <div
-            style={{
-              fontFamily: "'Orbitron', sans-serif",
-              fontSize: "clamp(20px, 2vw, 36px)",
-              fontWeight: 700,
-              color: "var(--color-primary)",
-              letterSpacing: "4px",
-            }}
-          >
-            MARINA
-          </div>
-          <div
-            style={{
-              fontFamily: "'VT323', monospace",
-              fontSize: "clamp(16px, 1.2vw, 24px)",
-              color: "#888",
-            }}
-          >
-            Connecting to world...
-          </div>
-          <div
-            style={{
-              width: "60px",
-              height: "60px",
-              border: "3px solid #222",
-              borderTop: "3px solid var(--color-primary)",
-              borderRadius: "50%",
-              animation: "uc-spin 1s linear infinite",
-            }}
-          />
-        </div>
-      )}
+      {!connected && rooms.length === 0 && <ConnectingOverlay />}
 
       <div className="uc-topbar" style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
         <span className="uc-logo">MARINA</span>
@@ -1806,6 +1688,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
           }}
         >
           <span
+            aria-hidden="true"
             style={{
               width: "6px",
               height: "6px",
@@ -1814,6 +1697,9 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
               flexShrink: 0,
             }}
           />
+          <span className="visually-hidden">
+            {setupStatus?.hasLlmKey ? "LLM configured" : "no LLM key"}
+          </span>
           <span style={{ color: "#888", fontFamily: "'VT323', monospace" }}>
             {instanceName || setupStatus?.instanceName || worldName || "Marina"}
           </span>
@@ -1863,65 +1749,12 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
         {/* Spacer */}
         <div style={{ flex: 1 }} />
 
-        {/* Canvas WS connection badge — only visible when reconnecting, so the
-            user notices when the realtime feed went silent. */}
-        {canvasWsStatus === "reconnecting" && (
-          <span
-            title="The canvas WebSocket dropped; new nodes won't appear until it reconnects."
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "3px 8px",
-              marginRight: "12px",
-              fontFamily: "'Press Start 2P', monospace",
-              fontSize: "clamp(6px, 0.52vw, 8px)",
-              color: "#fbbf24",
-              border: "1px solid rgba(251, 191, 36, 0.5)",
-              background: "rgba(251, 191, 36, 0.08)",
-              borderRadius: "2px",
-            }}
-          >
-            <span
-              style={{
-                display: "inline-block",
-                width: "6px",
-                height: "6px",
-                borderRadius: "50%",
-                background: "#fbbf24",
-                animation: "pulse 1.4s ease-in-out infinite",
-              }}
-            />
-            RECONNECTING
-          </span>
-        )}
-        {canvasLoading && (
-          <span
-            title="Loading the selected canvas snapshot"
-            style={{ color: "#8b5cf6", fontSize: 10, marginRight: 12 }}
-          >
-            CANVAS LOADING…
-          </span>
-        )}
-        {canvasError && (
-          <button
-            type="button"
-            onClick={retryCanvas}
-            title={`${canvasError}. Click to retry.`}
-            style={{
-              color: "#f87171",
-              border: "1px solid rgba(248,113,113,0.5)",
-              background: "rgba(248,113,113,0.08)",
-              fontFamily: "'Press Start 2P', monospace",
-              fontSize: "clamp(6px, 0.52vw, 8px)",
-              padding: "4px 8px",
-              marginRight: 12,
-              cursor: "pointer",
-            }}
-          >
-            CANVAS UNAVAILABLE · RETRY
-          </button>
-        )}
+        <TopbarNotices
+          canvasWsStatus={canvasWsStatus}
+          canvasLoading={canvasLoading}
+          canvasError={canvasError}
+          onRetryCanvas={retryCanvas}
+        />
 
         {/* Panel toggle buttons */}
         <div
@@ -1948,6 +1781,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
             cursor: "pointer",
           }}
           title="Cycle theme"
+          aria-label={`Cycle theme (current: ${themeName})`}
         >
           {themeName}
         </button>
@@ -1984,6 +1818,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
             cursor: "pointer",
           }}
           title="Clear view (Space)"
+          aria-pressed={clearView}
         >
           Clear
         </button>
@@ -2002,6 +1837,8 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
             cursor: "pointer",
           }}
           title="Command bar ( / )"
+          aria-label="Toggle command bar (key /)"
+          aria-pressed={showCommandBar}
         >
           /
         </button>
@@ -2076,84 +1913,9 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
           {/* MiniMap replaced by custom SVG in WorldNav panel */}
         </ReactFlow>
 
-        {/* Layer toggle chips (World · Canvas · Graph · Feed) */}
+        {/* Layer toggle chips (World · Canvas · Graph · Feed · Memory) */}
         {!clearView && (
-          <div
-            style={{
-              position: "absolute",
-              top: 12,
-              left: 12,
-              display: "flex",
-              gap: 4,
-              padding: "4px 6px",
-              background: "rgba(8, 8, 12, 0.82)",
-              border: "1px solid rgba(255,221,0,0.25)",
-              borderRadius: 4,
-              fontFamily: "'Press Start 2P', monospace",
-              fontSize: 9,
-              letterSpacing: 1,
-              zIndex: 40,
-            }}
-          >
-            {(
-              [
-                ["WORLD", 1, hideWorld, setHideWorld, "#FFDD00"],
-                ["CANVAS", 2, hideCanvasNodes, setHideCanvasNodes, "#06b6d4"],
-                ["GRAPH", 3, hideGraph, setHideGraph, "#a855f7"],
-                ["FEED", 4, hideFeed, setHideFeed, "#22c55e"],
-                ["MEMORY", 5, hideMemory, setHideMemory, "#f59e0b"],
-              ] as const
-            ).map(([label, num, isHidden, setter, color]) => (
-              <motion.button
-                key={label}
-                type="button"
-                onClick={(e) => {
-                  // Shift-click: solo this layer (hide all others, show this)
-                  if (e.shiftKey) {
-                    const solo = applyLayerKey(
-                      {
-                        world: hideWorld,
-                        canvas: hideCanvasNodes,
-                        graph: hideGraph,
-                        feed: hideFeed,
-                        memory: hideMemory,
-                      },
-                      String(num),
-                      true,
-                    );
-                    if (solo) applyLayerVisibility(solo);
-                  } else {
-                    setter(!isHidden);
-                  }
-                }}
-                whileHover={{ scale: 1.06 }}
-                whileTap={{ scale: 0.94 }}
-                animate={{
-                  background: isHidden ? "transparent" : `${color}22`,
-                  borderColor: isHidden ? "#333" : color,
-                  color: isHidden ? "#666" : color,
-                }}
-                transition={{ duration: 0.18, ease: "easeOut" }}
-                style={{
-                  padding: "4px 8px",
-                  borderStyle: "solid",
-                  borderWidth: 1,
-                  cursor: "pointer",
-                  fontFamily: "inherit",
-                  fontSize: "inherit",
-                  letterSpacing: "inherit",
-                  borderRadius: 2,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 5,
-                }}
-                title={`${label} layer — click to toggle (key ${num}), shift-click to solo`}
-              >
-                <span style={{ opacity: 0.5, fontSize: "0.75em" }}>{num}</span>
-                <span>{label}</span>
-              </motion.button>
-            ))}
-          </div>
+          <LayerChips hidden={layerHidden} onToggle={toggleLayer} onApply={applyLayerVisibility} />
         )}
 
         {/* GRAPH-layer fetch failure — an unreachable backend must not look like
@@ -2168,60 +1930,14 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
           </div>
         )}
 
-        {/* Active-canvas breadcrumb — visible when the user has navigated into
-            a non-default canvas (an entity's workspace, a project canvas, etc).
-            Distinguishes "viewing global" from "viewing alice's workspace" so
-            users don't lose orientation. */}
-        {!clearView &&
-          activeCanvasId &&
-          (() => {
-            const active = canvasList.find((c) => c.id === activeCanvasId);
-            if (!active) return null;
-            if (active.name === "global") return null;
-            return (
-              <div
-                style={{
-                  position: "absolute",
-                  top: 48,
-                  left: 12,
-                  padding: "4px 8px",
-                  background: "rgba(8, 8, 12, 0.82)",
-                  border: "1px solid rgba(168,85,247,0.4)",
-                  borderRadius: 3,
-                  color: "#ccc",
-                  fontFamily: "'VT323', monospace",
-                  fontSize: 12,
-                  zIndex: 35,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                <span style={{ color: "#a855f7", fontSize: 11 }}>viewing</span>
-                <span style={{ color: "#FFDD00" }}>{active.name}</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const global = canvasList.find((c) => c.name === "global");
-                    setSelectedCanvasId(global?.id ?? null);
-                  }}
-                  style={{
-                    background: "transparent",
-                    border: "1px solid #444",
-                    color: "#888",
-                    cursor: "pointer",
-                    fontFamily: "inherit",
-                    fontSize: 11,
-                    padding: "1px 5px",
-                    borderRadius: 2,
-                  }}
-                  title="Return to global canvas"
-                >
-                  ×
-                </button>
-              </div>
-            );
-          })()}
+        {/* Active-canvas breadcrumb — "viewing <canvas>" when off the global canvas */}
+        {!clearView && (
+          <CanvasBreadcrumb
+            canvasList={canvasList}
+            activeCanvasId={activeCanvasId}
+            onSelectCanvas={setSelectedCanvasId}
+          />
+        )}
 
         {/* Live activity timeline — toggleable via Feed layer chip */}
         <TimelineStrip
@@ -2381,8 +2097,11 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
 
       {/* ═══ RIGHT-CLICK CONTEXT MENU ═══ */}
       {contextMenu && (
+        // biome-ignore lint/a11y/useSemanticElements: a floating right-click menu of plain <button>s; <fieldset> would add layout and legend semantics that don't fit a popover
         <div
           className="uc-node-context-menu"
+          role="group"
+          aria-label="Node actions"
           style={{
             position: "fixed",
             left: contextMenu.x,
@@ -2850,81 +2569,7 @@ function UnifiedCanvasInner({ embedded }: UnifiedCanvasProps) {
       />
 
       {/* Keyboard shortcut help overlay */}
-      {showHelp && (
-        // biome-ignore lint/a11y/useSemanticElements: backdrop overlay wraps a nested interactive role="dialog" — nesting it in a <button> is invalid HTML
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 200,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "rgba(0,0,0,0.7)",
-            backdropFilter: "blur(4px)",
-          }}
-          onClick={() => setShowHelp(false)}
-          onKeyDown={(e) => e.key === "Escape" && setShowHelp(false)}
-          role="button"
-          tabIndex={0}
-        >
-          <div
-            style={{
-              background: "rgba(8,8,14,0.97)",
-              border: "2px solid var(--color-border)",
-              borderRadius: "6px",
-              padding: "24px 32px",
-              fontFamily: "'VT323', monospace",
-              color: "#ccc",
-              fontSize: "18px",
-              lineHeight: 2,
-              minWidth: "320px",
-            }}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={() => {}}
-            role="dialog"
-            tabIndex={-1}
-          >
-            <div
-              style={{
-                fontFamily: "'Press Start 2P'",
-                fontSize: "10px",
-                color: "var(--color-primary)",
-                marginBottom: "16px",
-                letterSpacing: "2px",
-              }}
-            >
-              KEYBOARD SHORTCUTS
-            </div>
-            <div>
-              <span style={{ color: "var(--color-primary)" }}>/</span> — Toggle command bar
-            </div>
-            <div>
-              <span style={{ color: "var(--color-primary)" }}>Space</span> — Clear view (hide
-              panels)
-            </div>
-            <div>
-              <span style={{ color: "var(--color-primary)" }}>Escape</span> — Close overlay / panel
-            </div>
-            <div>
-              <span style={{ color: "var(--color-primary)" }}>Arrows</span> — Navigate to nearest
-              room
-            </div>
-            <div>
-              <span style={{ color: "var(--color-primary)" }}>?</span> — This help
-            </div>
-            <div>
-              <span style={{ color: "var(--color-primary)" }}>Tab</span> — Cycle panels
-            </div>
-            <div>
-              <span style={{ color: "var(--color-primary)" }}>Dbl-click</span> — Home / view detail
-            </div>
-            <div style={{ marginTop: "12px", color: "#666", fontSize: "14px" }}>
-              Click anywhere to close
-            </div>
-          </div>
-        </div>
-      )}
+      {showHelp && <ShortcutHelp onClose={() => setShowHelp(false)} />}
     </div>
   );
 }

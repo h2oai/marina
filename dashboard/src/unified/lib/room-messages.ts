@@ -76,3 +76,25 @@ export function hasLiveRoomMessage(
   }
   return false;
 }
+
+/**
+ * Structural equality for two room-message maps — same rooms, each with the
+ * same message timestamp/kind/sender/body. Lets a derived-state hook keep the
+ * previous object (and skip a re-render) when a feed update carried nothing
+ * new for the pills.
+ */
+export function sameRoomMessages(
+  a: Record<string, RoomMessage>,
+  b: Record<string, RoomMessage>,
+): boolean {
+  const aKeys = Object.keys(a);
+  if (aKeys.length !== Object.keys(b).length) return false;
+  for (const key of aKeys) {
+    const x = a[key];
+    const y = b[key];
+    if (!y || !x) return false;
+    if (x.timestamp !== y.timestamp || x.kind !== y.kind) return false;
+    if (x.sender !== y.sender || x.body !== y.body) return false;
+  }
+  return true;
+}

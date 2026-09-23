@@ -288,8 +288,9 @@ export const WorldNav = memo(function WorldNav({
                 padding: "0 3px",
               }}
               title="Zoom out"
+              aria-label="Zoom out"
             >
-              -
+              <span aria-hidden="true">-</span>
             </button>
             <button
               type="button"
@@ -306,8 +307,9 @@ export const WorldNav = memo(function WorldNav({
                 padding: "0 3px",
               }}
               title="Home"
+              aria-label="Home view"
             >
-              &#8962;
+              <span aria-hidden="true">&#8962;</span>
             </button>
             <button
               type="button"
@@ -324,8 +326,9 @@ export const WorldNav = memo(function WorldNav({
                 padding: "0 3px",
               }}
               title="Zoom in"
+              aria-label="Zoom in"
             >
-              +
+              <span aria-hidden="true">+</span>
             </button>
           </>
         )}

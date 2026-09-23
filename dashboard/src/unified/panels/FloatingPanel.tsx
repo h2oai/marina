@@ -224,9 +224,10 @@ export const FloatingPanel = memo(function FloatingPanel({
             onClose();
           }}
           title="Close"
+          aria-label="Close panel"
           onMouseDown={(e) => e.stopPropagation()}
         >
-          x
+          <span aria-hidden="true">x</span>
         </button>
       </div>
 
