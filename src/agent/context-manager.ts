@@ -7,28 +7,37 @@
  * Prunes, summarizes, and truncates messages to stay within budget.
  */
 
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, AgentTool } from "@earendil-works/pi-agent-core";
 import type {
   AssistantMessage,
   Message,
   Model,
+  Tool,
   ToolResultMessage,
   UserMessage,
 } from "@earendil-works/pi-ai";
+import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 
 import { withMemoryAbort } from "../sdk/memory-abort";
 
 // ─── Token Estimation ───────────────────────────────────────────────────────
 
-// Characters per token. ~4 holds for English prose, but agent transcripts are
-// dominated by code, JSON tool arguments, and structured reasoning, which BPE
-// tokenizers split far more finely (~3 chars/token or less). The old chars/4 +
-// 10% (~3.64 chars/token) under-counted real tokens by 20-30% on production
-// traffic, so the compactor under-budgeted and the local server SILENTLY
-// rejected the oversized prompt — a zero-token "wedged" turn. Estimate
+// Characters per token for the CHARACTER heuristic. ~4 holds for English prose
+// (and is what pi-ai's own `estimateTextTokens` assumes), but agent transcripts
+// are dominated by code, JSON tool arguments, and structured reasoning, which
+// BPE tokenizers split far more finely (~3 chars/token or less). The old
+// chars/4 + 10% (~3.64 chars/token) under-counted real tokens by 20-30% on
+// production traffic, so the compactor under-budgeted and the local server
+// SILENTLY rejected the oversized prompt — a zero-token "wedged" turn. Estimate
 // conservatively: over-counting only compacts slightly early; under-counting
 // overflows the context window. Operators with real tokenizer data can tune
 // this via MARINA_TOKEN_CHARS_PER_TOKEN.
+//
+// The heuristic is the FALLBACK. Whenever the transcript carries a real usage
+// block from the most recent applicable assistant turn, `estimateContextTokens`
+// (pi-ai) anchors the total on the provider-reported token count — which already
+// includes the system prompt and tool schemas — and only the messages after that
+// anchor are estimated by characters.
 const CHARS_PER_TOKEN = (() => {
   const raw = Number.parseFloat(process.env.MARINA_TOKEN_CHARS_PER_TOKEN ?? "");
   return Number.isFinite(raw) && raw > 0 ? raw : 3;
@@ -39,11 +48,134 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
+/** Characters the heuristic allows for `tokens` — the inverse of `estimateTokens`,
+ *  so a truncation cut lands where the estimate says the budget ends. */
+function charsForTokens(tokens: number): number {
+  return Math.max(0, Math.floor(tokens * CHARS_PER_TOKEN));
+}
+
+/**
+ * Tokens the serialized tool schemas cost on every request. Providers send
+ * `{name, description, parameters}` per tool as JSON, so that is what we
+ * measure. Cached per tool object (WeakMap) — schemas are immutable once built.
+ */
+const toolTokenCache = new WeakMap<object, number>();
+export function estimateToolSchemaTokens(tools: readonly (Tool | AgentTool)[] | undefined): number {
+  if (!tools || tools.length === 0) return 0;
+  let total = 0;
+  for (const tool of tools) {
+    let tokens = toolTokenCache.get(tool);
+    if (tokens === undefined) {
+      let serialized = "";
+      try {
+        serialized = JSON.stringify({
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+        });
+      } catch {
+        serialized = `${tool.name}${tool.description}`;
+      }
+      // +8: per-tool framing (type/function wrapper) the wire format adds.
+      tokens = estimateTokens(serialized) + 8;
+      toolTokenCache.set(tool, tokens);
+    }
+    total += tokens;
+  }
+  return total;
+}
+
+/**
+ * The prompt window the compactor actually budgets against: the model's
+ * context window minus the output reservation (`reservedTokens`), the latter
+ * capped at half the window so a large output budget can't starve the prompt
+ * on a small server. Exported so tests and the adapter's diagnostics agree
+ * with the transform on what "fits".
+ */
+export function effectivePromptWindow(model: Model<string>): number {
+  const rawWindow = model.contextWindow;
+  if (!rawWindow || rawWindow <= 0 || !Number.isFinite(rawWindow)) return 0;
+  const reserved = Math.min(Math.floor(rawWindow / 2), reservedTokens(model, rawWindow));
+  return Math.max(1, rawWindow - reserved);
+}
+
+export interface ContextBudget {
+  /** Effective prompt window (context window minus the output reservation). */
+  contextWindow: number;
+  systemTokens: number;
+  toolTokens: number;
+  /** system + tools — the per-request fixed prefix. */
+  fixedTokens: number;
+  messageTokens: number;
+  /** fixed + messages; usage-anchored when the transcript carries real usage. */
+  totalTokens: number;
+  usageRatio: number;
+  /** True when `totalTokens` came from a provider-reported usage block. */
+  usageAnchored: boolean;
+  /** Tokens left for messages at `targetRatio` after the fixed prefix. */
+  budgetForMessages: number;
+}
+
+/**
+ * One place that decides how full the context is. Fixed prefix = system prompt
+ * + tool schemas (the schemas were never counted before, so a 36 KB `full`
+ * tool set silently ate a third of a 32k window). Total = provider usage anchor
+ * + character estimate of the trailing messages when available, else the
+ * character estimate of everything.
+ */
+export function computeContextBudget(input: {
+  model: Model<string>;
+  systemPrompt: string;
+  tools?: readonly (Tool | AgentTool)[];
+  messages: readonly AgentMessage[];
+  targetRatio: number;
+}): ContextBudget {
+  const contextWindow = effectivePromptWindow(input.model);
+  const systemTokens = estimateTokens(input.systemPrompt || "");
+  const toolTokens = estimateToolSchemaTokens(input.tools);
+  const fixedTokens = systemTokens + toolTokens;
+  const messageTokens = input.messages.reduce((sum, msg) => sum + estimateMessageTokens(msg), 0);
+
+  let totalTokens = fixedTokens + messageTokens;
+  let usageAnchored = false;
+  try {
+    const anchored = estimateContextTokens(input.messages as Message[]);
+    if (anchored.lastUsageIndex !== null && anchored.usageTokens > 0) {
+      // The usage block already counts system prompt + tools + every message up
+      // to and including that assistant turn; add our (conservative) estimate
+      // of what came after it instead of pi-ai's 4-chars/token trailing guess.
+      const trailing = input.messages
+        .slice(anchored.lastUsageIndex + 1)
+        .reduce((sum, msg) => sum + estimateMessageTokens(msg), 0);
+      totalTokens = anchored.usageTokens + trailing;
+      usageAnchored = true;
+    }
+  } catch {
+    // Non-standard message shapes — keep the character estimate.
+  }
+
+  const window = Math.max(1, contextWindow);
+  return {
+    contextWindow,
+    systemTokens,
+    toolTokens,
+    fixedTokens,
+    messageTokens,
+    totalTokens,
+    usageRatio: totalTokens / window,
+    usageAnchored,
+    budgetForMessages: window * input.targetRatio - fixedTokens,
+  };
+}
+
 // ─── Options ────────────────────────────────────────────────────────────────
 
 export interface ContextManagerOptions {
   getModel: () => Model<string>;
   getSystemPrompt: () => string;
+  /** Tools whose schemas ride on every request — counted in the fixed prefix.
+   *  Read live so a deferred-tool load is reflected on the next transform. */
+  getTools?: () => readonly (Tool | AgentTool)[];
   pruneThreshold?: number;
   pruneTarget?: number;
   maxToolResultTokens?: number;
@@ -81,6 +213,7 @@ export function createContextManager(options: ContextManagerOptions) {
   const {
     getModel,
     getSystemPrompt,
+    getTools,
     pruneThreshold = 0.8,
     pruneTarget = 0.6,
     maxToolResultTokens = 2000,
@@ -120,24 +253,25 @@ export function createContextManager(options: ContextManagerOptions) {
 
       const model = getModel();
       const systemPrompt = getSystemPrompt();
-      const rawWindow = model.contextWindow;
-
-      if (!rawWindow || rawWindow <= 0 || !Number.isFinite(rawWindow)) {
-        return messages;
-      }
+      const tools = getTools?.();
 
       // Budget the PROMPT against the window minus what the completion + framing
-      // will consume. All ratio/budget math below works against this effective
-      // window so prompt + output stays under the real ceiling. The reservation
-      // is capped at half the window so a large output budget can't starve the
-      // prompt entirely on a small server.
-      const reserved = Math.min(Math.floor(rawWindow / 2), reservedTokens(model, rawWindow));
-      const contextWindow = Math.max(1, rawWindow - reserved);
+      // will consume (`effectivePromptWindow`). The fixed prefix is the system
+      // prompt PLUS the serialized tool schemas — both ride on every request.
+      const contextWindow = effectivePromptWindow(model);
+      if (contextWindow <= 0) return messages;
 
-      const systemTokens = estimateTokens(systemPrompt || "");
-      const messageTokens = messages.reduce((sum, msg) => sum + estimateMessageTokens(msg), 0);
-      const totalTokens = systemTokens + messageTokens;
-      const usageRatio = totalTokens / contextWindow;
+      // Tier selection needs the ratio first; the message budget is recomputed
+      // below once the tier's target ratio is known.
+      const gauge = computeContextBudget({
+        model,
+        systemPrompt,
+        tools,
+        messages,
+        targetRatio: pruneTarget,
+      });
+      const systemTokens = gauge.fixedTokens;
+      const usageRatio = gauge.usageRatio;
 
       if (usageRatio < pruneThreshold) {
         return await finish(truncateOversizedToolResults(messages, maxToolResultTokens));
@@ -458,7 +592,10 @@ export function truncateOversizedToolResults(
         const blockTokens = estimateTokens(block.text);
         if (blockTokens <= maxTokens) return block;
 
-        const maxChars = Math.floor((maxTokens * 4) / 1.1);
+        // Cut where the estimate says the budget ends — the old `*4/1.1` cut
+        // assumed ~3.6 chars/token while the estimate counted 3, so a
+        // "truncated" block still measured over budget on the next pass.
+        const maxChars = charsForTokens(maxTokens);
         return {
           ...block,
           text: `${block.text.slice(0, maxChars)}\n\n[...truncated, ${blockTokens} tokens total]`,
@@ -475,6 +612,6 @@ export function truncateOversizedToolResults(
 function truncateText(text: string, maxTokens: number): string {
   const tokens = estimateTokens(text);
   if (tokens <= maxTokens) return text;
-  const maxChars = Math.floor((maxTokens * 4) / 1.1);
+  const maxChars = charsForTokens(maxTokens);
   return `${text.slice(0, maxChars)}\n[...summary truncated]`;
 }

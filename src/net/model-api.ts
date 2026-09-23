@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { version as MARINA_VERSION } from "../../package.json";
 import { getInternalModelToken } from "../agent/agent-runtime";
 import {
   formatUntrustedContext,
@@ -16,9 +17,16 @@ import { getErrorMessage } from "../engine/errors";
 import { compareTraceCohorts } from "../engine/trace-dataset";
 import { projectTraces } from "../engine/trace-projection";
 import { adviseTraceRouting, selectAdaptiveCandidate } from "../engine/trace-routing-advice";
+import { isLocalProfile } from "../engine/trust-profile";
 import type { EngineEvent, EntityId } from "../types";
 import { handleAnthropicMessages } from "./anthropic-inbound";
-import { buildAliasMap } from "./compat-profiles";
+import {
+  anthropicMessageToOpenai,
+  anthropicTextContent,
+  buildAnthropicRequest,
+  translateAnthropicStream,
+} from "./anthropic-tools";
+import { buildAliasMap, getEnabledProfiles } from "./compat-profiles";
 import { corsHeaders } from "./cors";
 import { handleMediaApi } from "./media-api";
 import {
@@ -35,6 +43,12 @@ import {
   localProviderContextWindow,
 } from "./model-discovery";
 import { getEndpointConfig } from "./model-endpoint";
+import {
+  type OpenAIErrorOptions,
+  openaiErrorBody,
+  UnsupportedParameterError,
+  unsupportedParameterBody,
+} from "./openai-errors";
 import {
   applyInjection,
   buildInjectedContext,
@@ -231,20 +245,17 @@ function json(data: unknown, status = 200, extra?: Record<string, string>): Resp
   });
 }
 
-/** OpenAI-compatible nested error format */
-function errorJson(status: number, message: string): Response {
-  const typeMap: Record<number, string> = {
-    400: "invalid_request_error",
-    401: "authentication_error",
-    404: "not_found_error",
-    429: "rate_limit_error",
-    503: "server_error",
-    504: "server_error",
-  };
-  return json(
-    { error: { message, type: typeMap[status] ?? "server_error", param: null, code: null } },
-    status,
-  );
+/** OpenAI-compatible nested error format. `code` is a string every OpenAI SDK
+ *  can branch on (`invalid_api_key`, `model_not_found`, `context_length_exceeded`,
+ *  `rate_limit_exceeded`, `unsupported_parameter`, …) — see `openai-errors.ts`;
+ *  it is inferred from status + message unless given explicitly. */
+function errorJson(status: number, message: string, opts?: OpenAIErrorOptions): Response {
+  return json(openaiErrorBody(status, message, opts), status);
+}
+
+/** 400 for a request parameter this route cannot honor (never silently dropped). */
+function unsupportedParam(param: string, detail?: string): Response {
+  return json(unsupportedParameterBody(param, detail), 400);
 }
 
 const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.MODEL_REQUEST_TIMEOUT_MS ?? "600000", 10);
@@ -415,7 +426,15 @@ function openaiModelList(models: ModelInfo[]): unknown {
   };
 }
 
-function openaiCompletion(model: string, content: string): unknown {
+/** Token usage as OpenAI reports it. Omitted (never zero-filled) when unknown. */
+interface CompletionUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  prompt_tokens_details?: { cached_tokens: number };
+}
+
+function openaiCompletion(model: string, content: string, usage?: CompletionUsage): unknown {
   return {
     id: `chatcmpl-${crypto.randomUUID().slice(0, 8)}`,
     object: "chat.completion",
@@ -428,7 +447,36 @@ function openaiCompletion(model: string, content: string): unknown {
         finish_reason: "stop",
       },
     ],
-    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    ...(usage ? { usage } : {}),
+  };
+}
+
+/**
+ * Usage for an agent-routed request, from the traced lifecycle: the agent's
+ * own model turns are `agent_turn_end` spans under the request's trace
+ * (`traceId === requestId`, see `requestTrace`). Summed across turns; undefined
+ * when no turn reported tokens — the caller then OMITS `usage` rather than
+ * inventing zeros an SDK would bill against.
+ */
+function usageFromTrace(engine: Engine, requestId: string): CompletionUsage | undefined {
+  let prompt = 0;
+  let completion = 0;
+  let cached = 0;
+  let seen = false;
+  for (const event of engine.getEventLog()) {
+    if (event.type !== "agent_turn_end" || event.traceId !== requestId) continue;
+    if (event.inputTokens === undefined && event.outputTokens === undefined) continue;
+    seen = true;
+    prompt += event.inputTokens ?? 0;
+    completion += event.outputTokens ?? 0;
+    cached += event.cacheReadTokens ?? 0;
+  }
+  if (!seen) return undefined;
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+    ...(cached > 0 ? { prompt_tokens_details: { cached_tokens: cached } } : {}),
   };
 }
 
@@ -470,14 +518,85 @@ function openaiStreamEnd(id: string, model: string): string {
 
 // --- Ollama format helpers ---
 
-function ollamaTagList(models: ModelInfo[]): unknown {
+/** Stable per-alias digest: Ollama clients key their model cache on it, so it
+ *  must not change between requests or restarts. Content-addressed on the id. */
+function ollamaDigest(modelId: string): string {
+  return `sha256:${createHash("sha256").update(`marina-model:${modelId}`).digest("hex")}`;
+}
+
+/** The `details` object Ollama attaches to every model record. Marina models
+ *  are routes, not weights, so the weight-shaped fields are honest blanks. */
+function ollamaModelDetails(modelId: string): Record<string, unknown> {
+  const profile = getEnabledProfiles().find((p) => p.modelAliases?.includes(modelId));
   return {
-    models: models.map((m) => ({
-      name: m.id,
-      modified_at: new Date().toISOString(),
-      size: 0,
-    })),
+    parent_model: COMPAT_ALIASES.has(modelId) ? "marina" : "",
+    format: "marina",
+    family: profile ? `marina-compat-${profile.name}` : "marina",
+    families: ["marina"],
+    parameter_size: "",
+    quantization_level: "",
   };
+}
+
+function ollamaModelRecord(m: ModelInfo): Record<string, unknown> {
+  return {
+    name: m.id,
+    model: m.id,
+    modified_at: new Date().toISOString(),
+    size: 0,
+    digest: ollamaDigest(m.id),
+    details: ollamaModelDetails(m.id),
+  };
+}
+
+function ollamaTagList(models: ModelInfo[]): unknown {
+  return { models: models.map(ollamaModelRecord) };
+}
+
+/** `POST /api/show` body for a model: the Modelfile/parameters/template are
+ *  empty strings (there is no local weight file), `details` and `model_info`
+ *  describe the route, `capabilities` advertise what the passthru honors. */
+function ollamaShowResponse(m: ModelInfo, engine: Engine): unknown {
+  const upstream = describeDefaultUpstream(engine);
+  return {
+    modelfile: "",
+    parameters: "",
+    template: "",
+    license: "",
+    details: ollamaModelDetails(m.id),
+    model_info: {
+      "general.architecture": "marina",
+      "general.name": m.id,
+      "marina.channel": m.channelId,
+      "marina.online_members": m.onlineMembers,
+      ...(upstream ? { "marina.default_upstream": upstream } : {}),
+      "marina.version": MARINA_VERSION,
+    },
+    capabilities: ["completion", "tools"],
+    modified_at: new Date().toISOString(),
+  };
+}
+
+/** `GET /api/ps`: the "running" model is the configured default route. */
+function ollamaPsResponse(models: ModelInfo[]): unknown {
+  const running = models.find((m) => m.id === "marina");
+  if (!running) return { models: [] };
+  return {
+    models: [
+      {
+        ...ollamaModelRecord(running),
+        expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        size_vram: 0,
+      },
+    ],
+  };
+}
+
+/** Resolve an Ollama model reference (`name`, `name:latest`) to a listed model. */
+function findOllamaModel(models: ModelInfo[], ref: unknown): ModelInfo | undefined {
+  if (typeof ref !== "string" || !ref) return undefined;
+  const bare = ref.endsWith(":latest") ? ref.slice(0, -":latest".length) : ref;
+  return models.find((m) => m.id === ref || m.id === bare);
 }
 
 function ollamaChatResponse(model: string, content: string): unknown {
@@ -1109,7 +1228,14 @@ function bufferedOpenaiStream(
 
 // --- Streaming routing ---
 
-type StreamFormat = "openai" | "ollama-chat" | "ollama-generate";
+type StreamFormat = "openai" | "ollama-chat" | "ollama-generate" | "responses";
+
+/** Responses-API stream target: the emitter writes the events, `onComplete`
+ *  receives the finished record (the caller stores it). Required for `"responses"`. */
+interface ResponsesStreamSink {
+  emitter: ResponsesSseEmitter;
+  onComplete: (rec: ResponseRecord) => void;
+}
 
 function routeToChannelStreaming(
   engine: Engine,
@@ -1117,7 +1243,11 @@ function routeToChannelStreaming(
   userContent: string,
   format: StreamFormat,
   opts?: RouteOptions,
+  responses?: ResponsesStreamSink,
 ): { stream: ReadableStream<Uint8Array>; conversationId?: string; requestId: string } {
+  if (format === "responses" && !responses) {
+    throw new HttpError(500, "Responses stream requested without a sink");
+  }
   const cm = engine.channelManager;
   if (!cm) throw new HttpError(503, "Channel system unavailable");
 
@@ -1228,10 +1358,17 @@ function routeToChannelStreaming(
       if (format === "openai") {
         controller.enqueue(encoder.encode(openaiStreamRoleChunk(streamId, model)));
       }
+      if (format === "responses" && responses) {
+        responses.emitter.bind((frame) => controller.enqueue(frame));
+        responses.emitter.start();
+      }
 
       timer = setTimeout(() => {
         cleanup();
         finishTrace("failed", "Response timeout");
+        if (format === "responses" && responses) {
+          responses.emitter.fail("Response timeout — no agent answered in time", "timeout");
+        }
         safeClose(controller);
       }, REQUEST_TIMEOUT_MS);
 
@@ -1254,6 +1391,10 @@ function routeToChannelStreaming(
         // Streaming chunk
         if (parsed.type === "model_response_chunk" && parsed.id === reqId) {
           collectedContent.push(text);
+          if (format === "responses") {
+            responses!.emitter.textDelta(text);
+            return;
+          }
           let chunk: string;
           if (format === "openai") {
             chunk = openaiStreamChunk(streamId, model, text);
@@ -1268,13 +1409,19 @@ function routeToChannelStreaming(
         if (parsed.type === "model_response_end" && parsed.id === reqId) {
           cleanup();
           finishTrace("completed");
-          let endChunk: string;
-          if (format === "openai") {
-            endChunk = openaiStreamEnd(streamId, model);
+          if (format === "responses") {
+            // The agent's turn span is logged before it answers, so the
+            // trace-derived usage is available here.
+            responses!.onComplete(responses!.emitter.finish(usageFromTrace(engine, reqId)));
           } else {
-            endChunk = ollamaStreamEnd(model, format === "ollama-chat");
+            let endChunk: string;
+            if (format === "openai") {
+              endChunk = openaiStreamEnd(streamId, model);
+            } else {
+              endChunk = ollamaStreamEnd(model, format === "ollama-chat");
+            }
+            controller.enqueue(encoder.encode(endChunk));
           }
-          controller.enqueue(encoder.encode(endChunk));
           // Persist to conversation channel
           if (convChannel) {
             cm.send(convChannel.id, "__model_conv__", "user", userContent);
@@ -1289,7 +1436,10 @@ function routeToChannelStreaming(
           cleanup();
           finishTrace("completed");
           collectedContent.push(text);
-          if (format === "openai") {
+          if (format === "responses") {
+            responses!.emitter.textDelta(text);
+            responses!.onComplete(responses!.emitter.finish(usageFromTrace(engine, reqId)));
+          } else if (format === "openai") {
             controller.enqueue(encoder.encode(openaiStreamChunk(streamId, model, text)));
             controller.enqueue(encoder.encode(openaiStreamEnd(streamId, model)));
           } else {
@@ -1345,6 +1495,19 @@ class HttpError extends Error {
 // previous_response_id threads continuations onto the same channel.
 // Memory-only index (restart wipes the id map; messages remain in channels).
 
+/**
+ * A function call the upstream returned (chat-completions `tool_calls`), kept
+ * on the record so the streaming and non-streaming Responses bodies render the
+ * same `function_call` output items. `/v1/responses` passthru does not forward
+ * Responses tool schemas; these appear only when an upstream (or the textual
+ * tool-call repair) emits a structured call anyway.
+ */
+interface ResponsesFunctionCall {
+  callId: string;
+  name: string;
+  arguments: string;
+}
+
 interface ResponseRecord {
   id: string;
   conversationId: string;
@@ -1353,6 +1516,16 @@ interface ResponseRecord {
   createdAt: number;
   previousResponseId?: string;
   status: "completed" | "failed";
+  /** Upstream-reported usage (passthru) or trace-derived usage (agents); omitted when unknown. */
+  usage?: CompletionUsage;
+  /** Structured function calls, in arrival order (see `ResponsesFunctionCall`). */
+  toolCalls?: ResponsesFunctionCall[];
+  /**
+   * How many function calls precede the assistant message item in `output`.
+   * A stream decides this by arrival order (text before or after the first
+   * call); a non-streaming body puts the message first. Undefined = 0.
+   */
+  messageAfter?: number;
   /**
    * Owner key binding this record to the credential that created it. A
    * different caller (different API key) can never GET/DELETE it, nor thread a
@@ -1436,25 +1609,454 @@ function extractInputText(input: unknown): string {
   return parts.filter(Boolean).join("\n");
 }
 
-function formatResponseRecord(rec: ResponseRecord): unknown {
+function responsesUsage(usage: CompletionUsage | undefined): Record<string, unknown> {
+  if (!usage) return {};
+  return {
+    usage: {
+      input_tokens: usage.prompt_tokens,
+      output_tokens: usage.completion_tokens,
+      total_tokens: usage.total_tokens,
+      input_tokens_details: { cached_tokens: usage.prompt_tokens_details?.cached_tokens ?? 0 },
+    },
+  };
+}
+
+/** Item ids are derived from the response id so a stream's incremental items
+ *  and the stored record's `output` name the same objects. */
+function responsesMessageItemId(rec: Pick<ResponseRecord, "id">): string {
+  return `msg_${rec.id.slice(5)}`;
+}
+function responsesFunctionCallItemId(rec: Pick<ResponseRecord, "id">, position: number): string {
+  return `fc_${rec.id.slice(5)}_${position}`;
+}
+
+function responsesMessageItem(
+  rec: Pick<ResponseRecord, "id">,
+  text: string,
+  status: "completed" | "in_progress" = "completed",
+): Record<string, unknown> {
+  return {
+    type: "message",
+    id: responsesMessageItemId(rec),
+    role: "assistant",
+    status,
+    content:
+      status === "completed" ? [{ type: "output_text", text, annotations: [] }] : ([] as unknown[]),
+  };
+}
+
+function responsesFunctionCallItem(
+  rec: Pick<ResponseRecord, "id">,
+  call: ResponsesFunctionCall,
+  position: number,
+  status: "completed" | "in_progress" = "completed",
+): Record<string, unknown> {
+  return {
+    type: "function_call",
+    id: responsesFunctionCallItemId(rec, position),
+    call_id: call.callId,
+    name: call.name,
+    arguments: status === "completed" ? call.arguments : "",
+    status,
+  };
+}
+
+/** The message item is present when there is text, or when nothing else is. */
+function responsesHasMessageItem(rec: Pick<ResponseRecord, "content" | "toolCalls">): boolean {
+  return rec.content !== "" || !rec.toolCalls?.length;
+}
+
+/** `output` items in their final order: function calls before the message
+ *  (`messageAfter` of them), the message, the remaining function calls. */
+function responsesOutputItems(rec: ResponseRecord): Record<string, unknown>[] {
+  const calls = rec.toolCalls ?? [];
+  const items = calls.map((call, i) => responsesFunctionCallItem(rec, call, i));
+  if (!responsesHasMessageItem(rec)) return items;
+  const at = Math.min(rec.messageAfter ?? 0, items.length);
+  items.splice(at, 0, responsesMessageItem(rec, rec.content));
+  return items;
+}
+
+function formatResponseRecord(rec: ResponseRecord): Record<string, unknown> {
   return {
     id: rec.id,
     object: "response",
     created_at: Math.floor(rec.createdAt / 1000),
     model: rec.model,
     status: rec.status,
-    output: [
-      {
-        type: "message",
-        id: `msg_${rec.id.slice(5)}`,
-        role: "assistant",
-        content: [{ type: "output_text", text: rec.content, annotations: [] }],
-      },
-    ],
+    output: responsesOutputItems(rec),
     output_text: rec.content,
     previous_response_id: rec.previousResponseId ?? null,
-    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+    ...responsesUsage(rec.usage),
   };
+}
+
+/** One chat-completions `delta.tool_calls[]` fragment (OpenAI streaming shape). */
+interface ToolCallDeltaFragment {
+  index?: number;
+  id?: string;
+  function?: { name?: string; arguments?: string };
+}
+
+/**
+ * Incremental Responses-API SSE writer. Feed it text deltas and tool-call
+ * fragments as they arrive; it emits the standard event sequence with a
+ * running `sequence_number`:
+ *
+ *   response.created → response.in_progress
+ *   → (first text) response.output_item.added [message] → response.content_part.added
+ *     → response.output_text.delta …
+ *   → (each function call) response.output_item.added [function_call]
+ *     → response.function_call_arguments.delta …
+ *   → finish: response.output_text.done → response.content_part.done → response.output_item.done
+ *     and response.function_call_arguments.done → response.output_item.done per call
+ *     (in output order) → response.completed
+ *
+ * `finish` returns the `ResponseRecord` the caller stores; the `response`
+ * payload of `response.completed` is exactly `formatResponseRecord(record)`,
+ * so a streaming client and a non-streaming client see the same final body.
+ */
+class ResponsesSseEmitter {
+  private seq = 0;
+  private readonly enc = new TextEncoder();
+  private sink: (frame: Uint8Array) => void = () => {};
+  private text = "";
+  private messageOpen = false;
+  private messageIndex = -1;
+  private readonly calls: (ResponsesFunctionCall & { outputIndex: number })[] = [];
+  private readonly callPositions = new Map<number, number>();
+  private nextOutputIndex = 0;
+  private done = false;
+
+  constructor(
+    private readonly base: Pick<
+      ResponseRecord,
+      "id" | "conversationId" | "model" | "createdAt" | "previousResponseId" | "owner"
+    >,
+  ) {}
+
+  /** Where frames go — the stream controller, once it exists. */
+  bind(sink: (frame: Uint8Array) => void): void {
+    this.sink = sink;
+  }
+
+  get responseId(): string {
+    return this.base.id;
+  }
+
+  private emit(type: string, data: Record<string, unknown>): void {
+    const payload = { type, sequence_number: this.seq++, ...data };
+    this.sink(this.enc.encode(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`));
+  }
+
+  private skeleton(): ResponseRecord {
+    return { ...this.base, content: "", status: "completed" };
+  }
+
+  start(): void {
+    const inProgress = {
+      ...formatResponseRecord(this.skeleton()),
+      status: "in_progress",
+      output: [],
+      output_text: "",
+    };
+    this.emit("response.created", { response: inProgress });
+    this.emit("response.in_progress", { response: inProgress });
+  }
+
+  private openMessage(): void {
+    if (this.messageOpen) return;
+    this.messageOpen = true;
+    this.messageIndex = this.nextOutputIndex++;
+    const itemId = responsesMessageItemId(this.base);
+    this.emit("response.output_item.added", {
+      output_index: this.messageIndex,
+      item: responsesMessageItem(this.base, "", "in_progress"),
+    });
+    this.emit("response.content_part.added", {
+      output_index: this.messageIndex,
+      item_id: itemId,
+      content_index: 0,
+      part: { type: "output_text", text: "", annotations: [] },
+    });
+  }
+
+  textDelta(delta: string): void {
+    if (this.done || !delta) return;
+    this.openMessage();
+    this.text += delta;
+    this.emit("response.output_text.delta", {
+      output_index: this.messageIndex,
+      item_id: responsesMessageItemId(this.base),
+      content_index: 0,
+      delta,
+    });
+  }
+
+  toolCallDelta(fragment: ToolCallDeltaFragment): void {
+    if (this.done) return;
+    const upstreamIndex = fragment.index ?? this.calls.length;
+    let position = this.callPositions.get(upstreamIndex);
+    if (position === undefined) {
+      position = this.calls.length;
+      this.callPositions.set(upstreamIndex, position);
+      const call = {
+        callId: fragment.id ?? `call_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`,
+        name: fragment.function?.name ?? "",
+        arguments: "",
+        outputIndex: this.nextOutputIndex++,
+      };
+      this.calls.push(call);
+      this.emit("response.output_item.added", {
+        output_index: call.outputIndex,
+        item: responsesFunctionCallItem(this.base, call, position, "in_progress"),
+      });
+    }
+    const call = this.calls[position]!;
+    if (!call.name && fragment.function?.name) call.name = fragment.function.name;
+    const args = fragment.function?.arguments;
+    if (typeof args === "string" && args.length > 0) {
+      call.arguments += args;
+      this.emit("response.function_call_arguments.delta", {
+        output_index: call.outputIndex,
+        item_id: responsesFunctionCallItemId(this.base, position),
+        delta: args,
+      });
+    }
+  }
+
+  /** Close every open item (in output order) and emit `response.completed`. */
+  finish(usage?: CompletionUsage): ResponseRecord {
+    if (this.done) return this.skeleton();
+    this.done = true;
+    // An empty answer still renders one (empty) message item, like the
+    // non-streaming body does.
+    if (!this.messageOpen && this.calls.length === 0) this.openMessage();
+    const rec: ResponseRecord = {
+      ...this.base,
+      content: this.text,
+      createdAt: this.base.createdAt,
+      status: "completed",
+      ...(usage ? { usage } : {}),
+      ...(this.calls.length > 0
+        ? {
+            toolCalls: this.calls.map(({ callId, name, arguments: args }) => ({
+              callId,
+              name,
+              arguments: args,
+            })),
+            messageAfter: this.messageOpen
+              ? this.calls.filter((c) => c.outputIndex < this.messageIndex).length
+              : undefined,
+          }
+        : {}),
+    };
+    const closers: { outputIndex: number; run: () => void }[] = [];
+    if (this.messageOpen) {
+      const itemId = responsesMessageItemId(rec);
+      closers.push({
+        outputIndex: this.messageIndex,
+        run: () => {
+          this.emit("response.output_text.done", {
+            output_index: this.messageIndex,
+            item_id: itemId,
+            content_index: 0,
+            text: this.text,
+          });
+          this.emit("response.content_part.done", {
+            output_index: this.messageIndex,
+            item_id: itemId,
+            content_index: 0,
+            part: { type: "output_text", text: this.text, annotations: [] },
+          });
+          this.emit("response.output_item.done", {
+            output_index: this.messageIndex,
+            item: responsesMessageItem(rec, this.text),
+          });
+        },
+      });
+    }
+    this.calls.forEach((call, position) => {
+      closers.push({
+        outputIndex: call.outputIndex,
+        run: () => {
+          this.emit("response.function_call_arguments.done", {
+            output_index: call.outputIndex,
+            item_id: responsesFunctionCallItemId(rec, position),
+            arguments: call.arguments,
+          });
+          this.emit("response.output_item.done", {
+            output_index: call.outputIndex,
+            item: responsesFunctionCallItem(rec, call, position),
+          });
+        },
+      });
+    });
+    closers.sort((a, b) => a.outputIndex - b.outputIndex);
+    for (const closer of closers) closer.run();
+    this.emit("response.completed", { response: formatResponseRecord(rec) });
+    return rec;
+  }
+
+  /** Terminal failure mid-stream: `response.failed` with the partial output. */
+  fail(message: string, code = "upstream_error"): void {
+    if (this.done) return;
+    this.done = true;
+    const rec: ResponseRecord = { ...this.base, content: this.text, status: "failed" };
+    this.emit("response.failed", {
+      response: { ...formatResponseRecord(rec), error: { code, message } },
+    });
+  }
+}
+
+/**
+ * Responses-API SSE for a record that already exists in full (the answer was
+ * produced in one piece): the same event sequence as the incremental path,
+ * with one text delta. Clients that only understand streaming Responses get a
+ * well-formed stream instead of a 400.
+ */
+function responsesSseStream(rec: ResponseRecord, extraHeaders: Record<string, string>): Response {
+  const emitter = new ResponsesSseEmitter(rec);
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      emitter.bind((frame) => controller.enqueue(frame));
+      emitter.start();
+      let position = 0;
+      const before = Math.min(rec.messageAfter ?? 0, rec.toolCalls?.length ?? 0);
+      const calls = rec.toolCalls ?? [];
+      const feedCall = (call: ResponsesFunctionCall, index: number) =>
+        emitter.toolCallDelta({
+          index,
+          id: call.callId,
+          function: { name: call.name, arguments: call.arguments },
+        });
+      for (; position < before; position++) feedCall(calls[position]!, position);
+      if (responsesHasMessageItem(rec)) emitter.textDelta(rec.content);
+      for (; position < calls.length; position++) feedCall(calls[position]!, position);
+      emitter.finish(rec.usage);
+      safeClose(controller);
+    },
+  });
+  return new Response(stream, { headers: { ...SSE_HEADERS, ...extraHeaders } });
+}
+
+/**
+ * Walk an OpenAI chat-completions SSE body, calling `onData` with every parsed
+ * `data:` JSON object (the `[DONE]` sentinel ends the walk). Resolves when the
+ * upstream closes. Comment/heartbeat lines and malformed frames are skipped.
+ */
+async function forEachSseData(
+  body: ReadableStream<Uint8Array>,
+  onData: (chunk: Record<string, unknown>) => void,
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  const handle = (line: string): boolean => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) return false;
+    const payload = trimmed.slice(5).trim();
+    if (payload === "[DONE]") return true;
+    try {
+      const parsed = JSON.parse(payload);
+      if (parsed && typeof parsed === "object") onData(parsed as Record<string, unknown>);
+    } catch {
+      // Malformed frame — skip it.
+    }
+    return false;
+  };
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (handle(line)) return;
+      }
+    }
+    buf += decoder.decode();
+    if (buf.trim()) handle(buf);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/** Usage block of a streamed chat-completions chunk (providers send it last). */
+function usageFromChunk(chunk: Record<string, unknown>): CompletionUsage | undefined {
+  const u = chunk.usage as
+    | {
+        prompt_tokens?: unknown;
+        completion_tokens?: unknown;
+        total_tokens?: unknown;
+        prompt_tokens_details?: { cached_tokens?: unknown };
+      }
+    | null
+    | undefined;
+  if (!u || typeof u !== "object") return undefined;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const prompt = num(u.prompt_tokens);
+  const completion = num(u.completion_tokens);
+  if (prompt === undefined && completion === undefined) return undefined;
+  const cached = num(u.prompt_tokens_details?.cached_tokens);
+  return {
+    prompt_tokens: prompt ?? 0,
+    completion_tokens: completion ?? 0,
+    total_tokens: num(u.total_tokens) ?? (prompt ?? 0) + (completion ?? 0),
+    ...(cached !== undefined ? { prompt_tokens_details: { cached_tokens: cached } } : {}),
+  };
+}
+
+/**
+ * Stream an upstream chat-completions SSE reply as incremental Responses SSE.
+ * `delta.content` → `response.output_text.delta`; `delta.tool_calls` →
+ * `function_call` items with `response.function_call_arguments.delta`; the
+ * trailing `usage` chunk lands on the record. `onComplete` receives the stored
+ * record once `response.completed` has been written; an upstream transport
+ * error mid-stream ends with `response.failed` and no record.
+ */
+function responsesPassthruStream(
+  upstream: ReadableStream<Uint8Array>,
+  emitter: ResponsesSseEmitter,
+  onComplete: (rec: ResponseRecord) => void,
+): ReadableStream<Uint8Array> {
+  let cancelled = false;
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      emitter.bind((frame) => {
+        if (!cancelled) controller.enqueue(frame);
+      });
+      emitter.start();
+      let usage: CompletionUsage | undefined;
+      try {
+        await forEachSseData(upstream, (chunk) => {
+          usage = usageFromChunk(chunk) ?? usage;
+          const choice = (chunk.choices as { delta?: Record<string, unknown> }[] | undefined)?.[0];
+          const delta = choice?.delta ?? {};
+          if (typeof delta.content === "string") emitter.textDelta(delta.content);
+          const calls = delta.tool_calls;
+          if (Array.isArray(calls)) {
+            for (const fragment of calls) {
+              if (fragment && typeof fragment === "object")
+                emitter.toolCallDelta(fragment as ToolCallDeltaFragment);
+            }
+          }
+        });
+      } catch (e) {
+        if (!cancelled) emitter.fail(`Upstream stream failed: ${getErrorMessage(e)}`);
+        safeClose(controller);
+        return;
+      }
+      if (cancelled) return;
+      onComplete(emitter.finish(usage));
+      safeClose(controller);
+    },
+    cancel(reason) {
+      cancelled = true;
+      upstream.cancel(reason).catch(() => {});
+    },
+  });
 }
 
 /** True when `owner` may thread onto `conversationId`: either a stored response
@@ -1494,13 +2096,10 @@ async function handleResponsesCreate(
 
     const model = body.model ?? "marina";
     const userInput = extractInputText(body.input);
-    if (!userInput) return errorJson(400, "`input` is required");
-    // Streaming isn't implemented on this surface yet. Fail fast with a clear
-    // error rather than silently returning a JSON body to an SSE-expecting
-    // client (which would stall its parser). See docs/compat for status.
-    if (body.stream === true) {
-      return errorJson(400, "streaming is not supported on /v1/responses; use stream:false");
-    }
+    if (!userInput) return errorJson(400, "`input` is required", { param: "input" });
+    // Streaming: the answer is produced whole on this surface, then emitted as
+    // the standard Responses SSE sequence (see `responsesSseStream`).
+    const wantStream = body.stream === true;
 
     // Resolve conversation: previous_response_id > explicit conversation_id > new
     let conversationId: string;
@@ -1536,8 +2135,14 @@ async function handleResponsesCreate(
         conversationId,
         previousResponseId,
         owner,
+        wantStream,
       });
     }
+
+    // In-world agents answer with text: a Responses tool schema or output
+    // format cannot be honored on this route, so say so instead of dropping it.
+    const rejected = rejectUnsupportedForAgents(body as Record<string, unknown>);
+    if (rejected) return rejected;
 
     const opts: RouteOptions = {
       context: body.instructions ? `system: ${body.instructions}` : undefined,
@@ -1547,6 +2152,38 @@ async function handleResponsesCreate(
     };
 
     try {
+      if (wantStream) {
+        // Agents stream natively (`model_response_chunk` deltas from the
+        // routed agent) — each delta becomes one `response.output_text.delta`.
+        const emitter = new ResponsesSseEmitter({
+          id: newResponseId(),
+          conversationId,
+          model,
+          createdAt: Date.now(),
+          previousResponseId,
+          owner,
+        });
+        const { stream, requestId } = routeToChannelStreaming(
+          engine,
+          model,
+          userInput,
+          "responses",
+          opts,
+          {
+            emitter,
+            onComplete: (rec) => {
+              if (body.store !== false) responseIndex.set(rec.id, rec);
+            },
+          },
+        );
+        return new Response(stream, {
+          headers: {
+            ...SSE_HEADERS,
+            "X-Conversation-Id": conversationId,
+            "x-request-id": requestId,
+          },
+        });
+      }
       const result = await routeToChannel(engine, model, userInput, opts);
       const id = newResponseId();
       const rec: ResponseRecord = {
@@ -1557,15 +2194,17 @@ async function handleResponsesCreate(
         createdAt: Date.now(),
         previousResponseId,
         status: "completed",
+        usage: usageFromTrace(engine, result.requestId),
         owner,
       };
       if (body.store !== false) {
         responseIndex.set(id, rec);
       }
-      return json(formatResponseRecord(rec), 200, {
+      const headers = {
         "X-Conversation-Id": conversationId,
         "x-request-id": result.requestId,
-      });
+      };
+      return json(formatResponseRecord(rec), 200, headers);
     } catch (routeError) {
       if (routeError instanceof HttpError && routeError.status === 503) {
         // No agents online — do NOT fall back silently for Responses API;
@@ -1604,6 +2243,7 @@ async function runResponsesPassthru(
     conversationId: string;
     previousResponseId?: string;
     owner: string;
+    wantStream?: boolean;
   },
 ): Promise<Response> {
   const ec = getEndpointConfig(engine.db);
@@ -1621,10 +2261,15 @@ async function runResponsesPassthru(
   const native: Record<string, unknown> = { instructions: input.body.instructions };
   applyInjection(native, prep.addendum, "responses");
   const instructions = typeof native.instructions === "string" ? native.instructions : "";
+  // Streaming asks the upstream for chat-completions SSE and re-encodes it
+  // incrementally as Responses SSE (see `responsesPassthruStream`); the
+  // response cache is bypassed for streams by construction.
+  const wantStream = input.wantStream === true;
   const body: Record<string, unknown> = {
     model: input.model,
     messages: [...(instructions ? [{ role: "system", content: instructions }] : []), ...turns],
-    stream: false,
+    stream: wantStream,
+    ...(wantStream ? { stream_options: { include_usage: true } } : {}),
     ...(typeof input.body.temperature === "number" ? { temperature: input.body.temperature } : {}),
     ...(typeof input.body.top_p === "number" ? { top_p: input.body.top_p } : {}),
     ...(typeof input.body.max_output_tokens === "number"
@@ -1651,36 +2296,93 @@ async function runResponsesPassthru(
     }
     return errorJson(resp.status, message);
   }
+  const headers = forwardPassthruHeaders(resp.headers, {
+    "X-Conversation-Id": input.conversationId,
+    "x-request-id": prep.requestId,
+  });
+  // Runs once the answer is known — after the stream's `response.completed`
+  // for a streamed reply, immediately for a buffered one.
+  const finalize = (rec: ResponseRecord): void => {
+    if (cm && convChannel) {
+      // Same sender convention as agent routing: `__model_conv__` marks the user
+      // turn; any other non-agent sender reads back as the assistant.
+      cm.send(convChannel.id, "__model_conv__", "user", input.userInput);
+      cm.send(convChannel.id, "__model_passthru__", "assistant", rec.content);
+    }
+    if (input.body.store !== false) responseIndex.set(rec.id, rec);
+  };
+  const base = {
+    id: newResponseId(),
+    conversationId: input.conversationId,
+    model: input.model,
+    createdAt: Date.now(),
+    previousResponseId: input.previousResponseId,
+    owner: input.owner,
+  };
+
+  const streamedUpstream =
+    wantStream && !cached && (resp.headers.get("content-type") ?? "").includes("text/event-stream");
+  if (streamedUpstream) {
+    if (!resp.body) return errorJson(502, "Upstream returned an empty streaming body");
+    const identity = prep.identity?.contextOptIn ? prep.identity.entityId : undefined;
+    const stream = responsesPassthruStream(resp.body, new ResponsesSseEmitter(base), (rec) => {
+      finalize(rec);
+      if (identity && rec.content) capturePassthruTranscript(engine, identity, turns, rec.content);
+    });
+    return new Response(stream, { headers: { ...SSE_HEADERS, ...headers } });
+  }
+
   if (!cached && prep.identity?.contextOptIn) {
     void capturePassthruResponse(engine, prep.identity.entityId, turns, resp);
     passthruCacheStore(engine, prep, body, ec.passthruModel, resp);
   }
-  const content = await extractResponseText(resp.clone());
-  if (cm && convChannel) {
-    // Same sender convention as agent routing: `__model_conv__` marks the user
-    // turn; any other non-agent sender reads back as the assistant.
-    cm.send(convChannel.id, "__model_conv__", "user", input.userInput);
-    cm.send(convChannel.id, "__model_passthru__", "assistant", content);
-  }
+  const { content, usage, toolCalls } = await extractResponseTextAndUsage(resp.clone());
   const rec: ResponseRecord = {
-    id: newResponseId(),
-    conversationId: input.conversationId,
-    model: input.model,
+    ...base,
     content,
-    createdAt: Date.now(),
-    previousResponseId: input.previousResponseId,
     status: "completed",
-    owner: input.owner,
+    usage,
+    ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
   };
-  if (input.body.store !== false) responseIndex.set(rec.id, rec);
-  return json(
-    formatResponseRecord(rec),
-    200,
-    forwardPassthruHeaders(resp.headers, {
-      "X-Conversation-Id": input.conversationId,
-      "x-request-id": prep.requestId,
-    }),
-  );
+  finalize(rec);
+  // A stream was requested but the upstream answered whole (a cache hit, or a
+  // provider that ignored `stream`): emit the same sequence with one delta.
+  if (wantStream) return responsesSseStream(rec, headers);
+  return json(formatResponseRecord(rec), 200, headers);
+}
+
+/**
+ * Parameters an in-world agent route cannot honor. Agents answer in text over
+ * a channel: a tool schema, multiple choices or a structured output format
+ * would be silently ignored, so the request is refused with a structured
+ * `unsupported_parameter` error the SDK can act on (drop tools, retry).
+ */
+function rejectUnsupportedForAgents(body: Record<string, unknown>): Response | undefined {
+  if (Array.isArray(body.tools) && body.tools.length > 0) {
+    return unsupportedParam(
+      "tools",
+      "In-world agent routing answers in text and cannot execute tool schemas; use the passthru endpoint mode for tool calling.",
+    );
+  }
+  if (Array.isArray(body.functions) && body.functions.length > 0) {
+    return unsupportedParam("functions", "In-world agent routing cannot execute function schemas.");
+  }
+  if (typeof body.n === "number" && body.n > 1) {
+    return unsupportedParam("n", "In-world agent routing returns one completion per request.");
+  }
+  const format = body.response_format ?? body.text;
+  if (format && typeof format === "object") {
+    const type = (format as { type?: unknown; format?: { type?: unknown } }).type;
+    const nested = (format as { format?: { type?: unknown } }).format?.type;
+    const effective = type ?? nested;
+    if (effective !== undefined && effective !== "text") {
+      return unsupportedParam(
+        body.response_format ? "response_format" : "text.format",
+        "In-world agent routing cannot constrain the output format.",
+      );
+    }
+  }
+  return undefined;
 }
 
 function handleResponsesGet(id: string, auth: PassthruAuthResult | undefined): Response {
@@ -1811,11 +2513,23 @@ export async function handleModelApi(
     // internal response headers; carry the traced request id, memory receipt
     // and cache marker across so this surface is inspectable like the others.
     let internalHeaders: Headers | undefined;
+    // Keep the NATIVE Anthropic body too: when the upstream is Anthropic, the
+    // proxy forwards it verbatim (system/tool/message `cache_control` markers,
+    // thinking, metadata) instead of round-tripping through the OpenAI shape.
+    let anthropicNative: Record<string, unknown> | undefined;
+    try {
+      const raw: unknown = await req.clone().json();
+      if (raw && typeof raw === "object" && !Array.isArray(raw))
+        anthropicNative = raw as Record<string, unknown>;
+    } catch {
+      // handleAnthropicMessages reports the malformed body itself.
+    }
     const anthropic = await handleAnthropicMessages(req, {
       runInternal: async (openaiBody, opts) => {
         const internal = await runOpenaiChat(engine, req, openaiBody, authResult, {
           ...opts,
           surface: "anthropic",
+          anthropicNative,
         });
         internalHeaders = internal.headers;
         return internal;
@@ -1852,9 +2566,48 @@ export async function handleModelApi(
     return json({ status: "ok", engine: "marina" });
   }
 
+  // Endpoints Marina does not serve. An explicit OpenAI-shaped 404 (code
+  // `not_found`) instead of falling through to the dashboard/static handler,
+  // so an SDK that probes for embeddings or legacy completions gets a parseable
+  // answer rather than HTML.
+  if (UNSERVED_MODEL_PATHS.has(url.pathname)) {
+    return errorJson(404, `${url.pathname} is not served by Marina's model API.`, {
+      code: "not_found",
+    });
+  }
+
   // Ollama: GET /api/tags
   if (url.pathname === "/api/tags" && method === "GET") {
     return json(ollamaTagList(listModels(engine)));
+  }
+
+  // Ollama: GET /api/version
+  if (url.pathname === "/api/version" && method === "GET") {
+    return json({ version: MARINA_VERSION });
+  }
+
+  // Ollama: GET /api/ps — "running" models = the configured default route.
+  if (url.pathname === "/api/ps" && method === "GET") {
+    return json(ollamaPsResponse(listModels(engine)));
+  }
+
+  // Ollama: POST /api/show {model|name}
+  if (url.pathname === "/api/show" && method === "POST") {
+    let body: { model?: unknown; name?: unknown };
+    try {
+      body = (await req.json()) as { model?: unknown; name?: unknown };
+    } catch {
+      return errorJson(400, "Invalid JSON body");
+    }
+    const ref = body.model ?? body.name;
+    const found = findOllamaModel(listModels(engine), ref);
+    if (!found) {
+      return errorJson(404, `model '${typeof ref === "string" ? ref : ""}' not found`, {
+        code: "model_not_found",
+        param: "model",
+      });
+    }
+    return json(ollamaShowResponse(found, engine));
   }
 
   // Ollama: POST /api/chat
@@ -1868,6 +2621,31 @@ export async function handleModelApi(
   }
 
   return undefined;
+}
+
+/** Paths a compat client may probe that Marina answers with an explicit 404. */
+const UNSERVED_MODEL_PATHS = new Set([
+  "/v1/embeddings",
+  "/v1/completions",
+  "/api/embed",
+  "/api/embeddings",
+]);
+
+/** Ollama-surface paths `handleModelApi` serves (the `/v1/*` prefix is implicit). */
+export const OLLAMA_API_PATHS: readonly string[] = [
+  "/api/tags",
+  "/api/chat",
+  "/api/generate",
+  "/api/version",
+  "/api/show",
+  "/api/ps",
+  "/api/embed",
+  "/api/embeddings",
+];
+
+/** True when `pathname` belongs to the model API (for the HTTP dispatcher). */
+export function isModelApiPath(pathname: string): boolean {
+  return pathname.startsWith("/v1/") || OLLAMA_API_PATHS.includes(pathname);
 }
 
 /** Resolve only an explicit, single binary arithmetic expression. This is
@@ -2087,21 +2865,80 @@ function passthruCacheStore(
   });
 }
 
-/** Best-effort text extraction from a completed (non-streaming) proxy response. */
-async function extractResponseText(resp: Response): Promise<string> {
+/** Best-effort text + usage extraction from a completed (non-streaming) proxy response. */
+async function extractResponseTextAndUsage(
+  resp: Response,
+): Promise<{ content: string; usage?: CompletionUsage; toolCalls?: ResponsesFunctionCall[] }> {
   const ct = resp.headers.get("content-type") ?? "";
   // Streaming capture is intentionally skipped in v1 — keep the memory write cheap.
-  if (ct.includes("text/event-stream")) return "";
+  if (ct.includes("text/event-stream")) return { content: "" };
   try {
     const data = (await resp.json()) as {
-      choices?: { message?: { content?: unknown }; text?: unknown }[];
+      choices?: {
+        message?: { content?: unknown; tool_calls?: unknown };
+        text?: unknown;
+      }[];
+      usage?: {
+        prompt_tokens?: unknown;
+        completion_tokens?: unknown;
+        total_tokens?: unknown;
+        prompt_tokens_details?: { cached_tokens?: unknown };
+      };
     };
     const choice = data?.choices?.[0];
     const content = choice?.message?.content ?? choice?.text;
-    return typeof content === "string" ? content : "";
+    const rawCalls = choice?.message?.tool_calls;
+    const toolCalls: ResponsesFunctionCall[] | undefined = Array.isArray(rawCalls)
+      ? rawCalls
+          .filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
+          .map((c) => {
+            const fn = (c.function ?? {}) as { name?: unknown; arguments?: unknown };
+            return {
+              callId:
+                typeof c.id === "string" && c.id
+                  ? c.id
+                  : `call_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`,
+              name: typeof fn.name === "string" ? fn.name : "",
+              arguments:
+                typeof fn.arguments === "string"
+                  ? fn.arguments
+                  : fn.arguments === undefined
+                    ? ""
+                    : JSON.stringify(fn.arguments),
+            };
+          })
+      : undefined;
+    const u = data?.usage;
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+    const prompt = num(u?.prompt_tokens);
+    const completion = num(u?.completion_tokens);
+    const usage: CompletionUsage | undefined =
+      prompt !== undefined || completion !== undefined
+        ? {
+            prompt_tokens: prompt ?? 0,
+            completion_tokens: completion ?? 0,
+            total_tokens: num(u?.total_tokens) ?? (prompt ?? 0) + (completion ?? 0),
+            ...(num(u?.prompt_tokens_details?.cached_tokens) !== undefined
+              ? {
+                  prompt_tokens_details: {
+                    cached_tokens: num(u?.prompt_tokens_details?.cached_tokens)!,
+                  },
+                }
+              : {}),
+          }
+        : undefined;
+    return {
+      content: typeof content === "string" ? content : "",
+      usage,
+      ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
+    };
   } catch {
-    return "";
+    return { content: "" };
   }
+}
+
+async function extractResponseText(resp: Response): Promise<string> {
+  return (await extractResponseTextAndUsage(resp)).content;
 }
 
 /**
@@ -2156,6 +2993,9 @@ async function runOpenaiChat(
     stream?: boolean;
     /** Protocol surface for passthru lifecycle events; `openai` unless a bridge says otherwise. */
     surface?: InjectionFormat;
+    /** The client's ORIGINAL Anthropic Messages body (`/v1/messages` bridge);
+     *  forwarded verbatim when the upstream is Anthropic. */
+    anthropicNative?: Record<string, unknown>;
   },
 ): Promise<Response> {
   try {
@@ -2205,6 +3045,13 @@ async function runOpenaiChat(
         runOpts?.surface ?? "openai",
       );
       if (prep.addendum) applyInjection(body, prep.addendum, "openai");
+      // The native Anthropic body gets the same addendum in ITS native slot (a
+      // leading system text block) so a `/v1/messages` client's own
+      // cache_control markers survive when the upstream is Anthropic.
+      let anthropicNative = runOpts?.anthropicNative;
+      if (anthropicNative && prep.addendum) {
+        anthropicNative = applyInjection({ ...anthropicNative }, prep.addendum, "anthropic");
+      }
       const cached = await passthruCacheLookup(engine, prep, body, ec.passthruModel);
       if (cached) return cached;
       const resp = await proxyToUpstream(
@@ -2212,6 +3059,7 @@ async function runOpenaiChat(
         body,
         ec.passthruModel || undefined,
         passthruTraceOptions(prep),
+        anthropicNative ? { anthropicNative } : undefined,
       );
       if (prep.identity?.contextOptIn) {
         void capturePassthruResponse(engine, prep.identity.entityId, messages, resp);
@@ -2223,6 +3071,12 @@ async function runOpenaiChat(
     // Non-passthru routing modes synthesize an answer from the user's text, so it
     // must be present. (Passthru already returned above without this requirement.)
     if (!userText) return errorJson(400, "User message has no textual content");
+
+    // Agents answer in text over a channel: tools / n / response_format cannot
+    // be honored here. Refuse explicitly (code `unsupported_parameter`) rather
+    // than return a plain answer the client will misread as "no tool call".
+    const rejected = rejectUnsupportedForAgents(body);
+    if (rejected) return rejected;
 
     const opts: RouteOptions = {
       context,
@@ -2310,7 +3164,11 @@ async function runOpenaiChat(
 
       const extra: Record<string, string> = { "x-request-id": result.requestId };
       if (result.conversationId) extra["X-Conversation-Id"] = result.conversationId;
-      return json(openaiCompletion(model, result.content), 200, extra);
+      return json(
+        openaiCompletion(model, result.content, usageFromTrace(engine, result.requestId)),
+        200,
+        extra,
+      );
     } catch (routeError) {
       // No agent answered (503): fall back to direct upstream proxy when enabled.
       // 404 (unknown model variant) remains an error — caller asked for a specific model.
@@ -2708,11 +3566,101 @@ export interface ProviderProbeResult {
   text: string;
   /** `provider/model` that actually answered, from the routed lifecycle event. */
   servedBy?: string;
+  /**
+   * Tool-call probe (Anthropic / OpenAI providers): a one-tool request came
+   * back as a structured `tool_calls` entry naming the tool with the nonce in
+   * its arguments. `undefined` when the provider was not tool-probed. Catches
+   * the silent-drop class of bug (tools stripped in translation).
+   */
+  toolCallOk?: boolean;
+  /** Tool-probe failure detail (HTTP status / shape), when `toolCallOk` is false. */
+  toolCallError?: string;
   error?: string;
   checkedAt: number;
 }
 
 export const PROVIDER_PROBE_MAX_TOKENS = 32;
+export const PROVIDER_TOOL_PROBE_MAX_TOKENS = 128;
+export const PROVIDER_TOOL_PROBE_NAME = "report_check_word";
+/** Providers whose passthru path translates tool schemas and is therefore tool-probed. */
+export const TOOL_PROBED_PROVIDERS: readonly string[] = ["anthropic", "openai"];
+
+/**
+ * The tool-call probe: one tiny tool and an instruction to call it with the
+ * nonce. `tool_choice` stays `auto` on purpose — the Claude Fable 5.1 family
+ * rejects forced tool choice with a 400 — so the model must decide to call;
+ * the system prompt makes that unambiguous. Passes only if a structured
+ * `tool_calls` entry names the tool and its JSON arguments carry the nonce.
+ */
+export function buildProviderToolProbeBody(nonce: string): Record<string, unknown> {
+  return {
+    model: "marina",
+    max_tokens: PROVIDER_TOOL_PROBE_MAX_TOKENS,
+    messages: [
+      {
+        role: "system",
+        content: `You are a conformance probe for an API gateway. You MUST call the ${PROVIDER_TOOL_PROBE_NAME} tool exactly once with word="${nonce}". Do not answer in text.`,
+      },
+      { role: "user", content: `Report the check word "${nonce}" using the tool.` },
+    ],
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: PROVIDER_TOOL_PROBE_NAME,
+          description: "Report the check word to the gateway.",
+          parameters: {
+            type: "object",
+            properties: { word: { type: "string", description: "The check word." } },
+            required: ["word"],
+            additionalProperties: false,
+          },
+        },
+      },
+    ],
+    tool_choice: "auto",
+  };
+}
+
+export function evaluateProviderToolProbe(
+  data: unknown,
+  nonce: string,
+): { ok: boolean; error?: string } {
+  const choice = (
+    data as {
+      choices?: {
+        finish_reason?: unknown;
+        message?: { tool_calls?: { function?: { name?: unknown; arguments?: unknown } }[] };
+      }[];
+    }
+  )?.choices?.[0];
+  const calls = choice?.message?.tool_calls;
+  if (!Array.isArray(calls) || calls.length === 0) {
+    return { ok: false, error: "no structured tool_calls in the reply (tools dropped?)" };
+  }
+  const call = calls.find((c) => c.function?.name === PROVIDER_TOOL_PROBE_NAME);
+  if (!call) return { ok: false, error: `tool_calls did not name ${PROVIDER_TOOL_PROBE_NAME}` };
+  const rawArgs = call.function?.arguments;
+  let word: unknown;
+  try {
+    word =
+      typeof rawArgs === "string"
+        ? (JSON.parse(rawArgs) as { word?: unknown }).word
+        : (rawArgs as { word?: unknown } | undefined)?.word;
+  } catch {
+    return { ok: false, error: "tool_calls arguments were not JSON" };
+  }
+  if (typeof word !== "string" || !word.includes(nonce)) {
+    return { ok: false, error: "tool_calls arguments did not carry the check word" };
+  }
+  if (choice?.finish_reason !== undefined && choice.finish_reason !== "tool_calls") {
+    return {
+      ok: false,
+      error: `finish_reason was ${String(choice.finish_reason)}, not tool_calls`,
+    };
+  }
+  return { ok: true };
+}
 
 /** The `provider/model` the proxy routed `requestId` to, from the newest routed lifecycle event. */
 function routedTargetFor(engine: Engine, requestId: string): string | undefined {
@@ -2784,6 +3732,10 @@ export function configuredUpstreamProviders(engine: Engine): { provider: string;
 let lastProviderProbe: ProviderProbeResult[] | null = null;
 export function getLastProviderProbe(): ProviderProbeResult[] | null {
   return lastProviderProbe;
+}
+/** Test seam: the last probe is module state and would otherwise leak between test files. */
+export function resetLastProviderProbeForTests(): void {
+  lastProviderProbe = null;
 }
 
 /**
@@ -2861,6 +3813,74 @@ export async function probeConfiguredProviders(
         ok: response.ok && verdict.textOk && verdict.systemHonored && !misrouted,
         ...(error ? { error } : {}),
       };
+      // Tool-call probe — only where the proxy translates tool schemas, and
+      // only once the text probe passed (a dead key would fail both for the
+      // same reason and the first error is the useful one).
+      if (result.ok && TOOL_PROBED_PROVIDERS.includes(target.provider)) {
+        const toolNonce = `tool-${crypto.randomUUID().slice(0, 8)}`;
+        const toolRequestId = `probe-${toolNonce}`;
+        let toolTimeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          const toolResponse = await Promise.race([
+            proxyToUpstream(
+              engine,
+              buildProviderToolProbeBody(toolNonce),
+              `${target.provider}/${target.model}`,
+              { routeKind: "passthru", requestId: toolRequestId },
+            ),
+            new Promise<never>((_, reject) => {
+              toolTimeout = setTimeout(
+                () => reject(new Error(`timeout after ${timeoutMs} ms`)),
+                timeoutMs,
+              );
+            }),
+          ]);
+          const toolRaw = await toolResponse.text();
+          let toolVerdict: { ok: boolean; error?: string };
+          if (!toolResponse.ok) {
+            let reason = toolRaw.slice(0, 200);
+            try {
+              reason =
+                (JSON.parse(toolRaw) as { error?: { message?: string } }).error?.message ?? reason;
+            } catch {
+              // keep the raw slice
+            }
+            toolVerdict = { ok: false, error: `HTTP ${toolResponse.status}: ${reason}` };
+          } else {
+            try {
+              toolVerdict = evaluateProviderToolProbe(JSON.parse(toolRaw), toolNonce);
+            } catch {
+              toolVerdict = { ok: false, error: "tool probe reply was not JSON" };
+            }
+          }
+          const toolServedBy = routedTargetFor(engine, toolRequestId);
+          if (
+            toolVerdict.ok &&
+            toolServedBy &&
+            toolServedBy !== `${target.provider}/${target.model}`
+          )
+            toolVerdict = { ok: false, error: `tool probe served by fallback ${toolServedBy}` };
+          result = {
+            ...result,
+            latencyMs: Date.now() - started,
+            toolCallOk: toolVerdict.ok,
+            ...(toolVerdict.error ? { toolCallError: toolVerdict.error } : {}),
+            ok: result.ok && toolVerdict.ok,
+            ...(toolVerdict.ok ? {} : { error: `tool call dropped — ${toolVerdict.error}` }),
+          };
+        } catch (e) {
+          result = {
+            ...result,
+            latencyMs: Date.now() - started,
+            toolCallOk: false,
+            toolCallError: getErrorMessage(e),
+            ok: false,
+            error: `tool probe failed — ${getErrorMessage(e)}`,
+          };
+        } finally {
+          clearTimeout(toolTimeout);
+        }
+      }
     } catch (e) {
       result = { ...result, latencyMs: Date.now() - started, error: getErrorMessage(e) };
     } finally {
@@ -2895,11 +3915,12 @@ async function dispatchOpenAICompatible(
   apiKey: string,
   body: Record<string, unknown>,
   wantStream: boolean,
+  extraHeaders: Record<string, string> = {},
 ): Promise<{ response: Response | null; errorStatus?: number; networkError?: boolean }> {
   try {
     // Omit the Authorization header entirely when keyless (local servers) — an
     // empty `Bearer ` confuses some OpenAI-compatible implementations.
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const headers: Record<string, string> = { "Content-Type": "application/json", ...extraHeaders };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
     const resp = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
     if (!resp.ok) {
@@ -3127,12 +4148,70 @@ export function prepareLlamaBody(
 /** Keep a caller's provider-specific completion budget from poisoning a
  * fallback request. For example, Gemini-oriented agents may request 32k output
  * while gpt-4o accepts at most 16,384 and otherwise rejects the whole turn. */
+/**
+ * Remove Anthropic-only `cache_control` markers before an OpenAI-compatible
+ * upstream sees the body. Marina's own agents send them (pi-ai with
+ * `cacheControlFormat: "anthropic"` puts one on the system text part, the last
+ * tool and the last message part); the Anthropic path maps them onto blocks,
+ * but strict OpenAI-style servers (OpenAI, llama.cpp, vLLM, Ollama) reject
+ * unknown fields. A system `content` array that is pure text collapses back to
+ * a string for the widest compatibility. Never mutates the caller's body.
+ */
+export function stripCacheControl(body: Record<string, unknown>): Record<string, unknown> {
+  let touched = false;
+  const stripPart = (part: unknown): unknown => {
+    if (!part || typeof part !== "object" || !("cache_control" in (part as object))) return part;
+    touched = true;
+    const { cache_control: _cc, ...rest } = part as Record<string, unknown>;
+    return rest;
+  };
+  const messages = Array.isArray(body.messages)
+    ? body.messages.map((m) => {
+        if (!m || typeof m !== "object") return m;
+        const msg = m as Record<string, unknown>;
+        let next = msg;
+        if ("cache_control" in msg) {
+          touched = true;
+          const { cache_control: _cc, ...rest } = msg;
+          next = rest;
+        }
+        if (Array.isArray(next.content)) {
+          const parts = next.content.map(stripPart);
+          const allText = parts.every(
+            (p) => p && typeof p === "object" && (p as { type?: unknown }).type === "text",
+          );
+          const collapsible =
+            next.role === "system" && allText && parts.length > 0 && parts !== next.content;
+          next = {
+            ...next,
+            content: collapsible
+              ? parts.map((p) => String((p as { text?: unknown }).text ?? "")).join("\n")
+              : parts,
+          };
+        }
+        return next;
+      })
+    : body.messages;
+  const tools = Array.isArray(body.tools) ? body.tools.map(stripPart) : body.tools;
+  if (!touched) return body;
+  return {
+    ...body,
+    ...(messages !== undefined ? { messages } : {}),
+    ...(tools !== undefined ? { tools } : {}),
+  };
+}
+
 export function prepareUpstreamBody(
   body: Record<string, unknown>,
   provider: string,
   defaultRoute = false,
 ): Record<string, unknown> {
-  let prepared = prepareLlamaBody(body, provider);
+  // Anthropic upstreams take the markers through proxyToAnthropic; every
+  // OpenAI-compatible provider must not see them.
+  let prepared = prepareLlamaBody(
+    provider === "anthropic" ? body : stripCacheControl(body),
+    provider,
+  );
   const luna =
     (provider === "openai" && body.model === "gpt-5.6-luna") ||
     (provider === "openrouter" && body.model === "openai/gpt-5.6-luna");
@@ -3172,6 +4251,10 @@ async function proxyToUpstream(
     /** Protocol surface (passthru only) — stamped on every lifecycle event. */
     surface?: InjectionFormat;
   },
+  hints?: {
+    /** Native Anthropic body to forward verbatim when the upstream is Anthropic. */
+    anthropicNative?: Record<string, unknown>;
+  },
 ): Promise<Response> {
   const wantStream = body.stream === true;
   let attemptedUpstream = false;
@@ -3185,6 +4268,19 @@ async function proxyToUpstream(
     : undefined;
   const startedAt = Date.now();
   const requestId = traceOptions ? (traceOptions.requestId ?? newRequestId()) : undefined;
+  // Correlate the upstream call with Marina's traced request id (OpenAI echoes
+  // `x-request-id`; `prompt_cache_key` in the body passes through untouched).
+  const upstreamHeaders: Record<string, string> = requestId ? { "x-request-id": requestId } : {};
+  const anthropic = async (key: string, model: string): Promise<Response> => {
+    try {
+      return await proxyToAnthropic(body, key, model, wantStream, hints?.anthropicNative);
+    } catch (e) {
+      // A parameter Anthropic cannot honor is a 400 the CLIENT must see, not
+      // a reason to try the next provider (which would honor it differently).
+      if (e instanceof UnsupportedParameterError) return json(e.toBody(), 400);
+      throw e;
+    }
+  };
   if (requestId) {
     engine.logEvent({
       type: "model_request_lifecycle",
@@ -3255,13 +4351,14 @@ async function proxyToUpstream(
       attemptedUpstream = true;
       lastTarget = `${provider}/${upstreamModel}`;
       if (cfg.anthropic) {
-        return finish(await proxyToAnthropic(body, key!, upstreamModel, wantStream), lastTarget);
+        return finish(await anthropic(key!, upstreamModel), lastTarget);
       }
       const r = await dispatchOpenAICompatible(
         cfg.url,
         key ?? "",
         prepareUpstreamBody({ ...body, model: upstreamModel }, provider, isDefault),
         wantStream,
+        upstreamHeaders,
       );
       if (r.response) return finish(r.response, lastTarget);
       lastErrorKind = r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0);
@@ -3281,13 +4378,14 @@ async function proxyToUpstream(
     const requestModel = isDefault ? getDefaultUpstreamModel(envKey) : (body.model as string);
     lastTarget = `${provider}/${requestModel}`;
     if (cfg.anthropic) {
-      return finish(await proxyToAnthropic(body, key!, requestModel, wantStream), lastTarget);
+      return finish(await anthropic(key!, requestModel), lastTarget);
     }
     const r = await dispatchOpenAICompatible(
       cfg.url,
       key ?? "",
       prepareUpstreamBody({ ...body, model: requestModel }, provider, isDefault),
       wantStream,
+      upstreamHeaders,
     );
     if (r.response) return finish(r.response, lastTarget);
     lastErrorKind = r.networkError ? "network" : classifyProxyError(r.errorStatus ?? 0);
@@ -3446,8 +4544,23 @@ async function extractProxyUsage(response: Response): Promise<ProxyTraceMetrics>
           : undefined;
     const inputTokens = finite(usage.prompt_tokens ?? usage.input_tokens ?? usage.input);
     const outputTokens = finite(usage.completion_tokens ?? usage.output_tokens ?? usage.output);
-    const cacheReadTokens = finite(usage.cache_read_tokens ?? usage.cacheRead);
-    const cacheWriteTokens = finite(usage.cache_write_tokens ?? usage.cacheWrite);
+    // Cache counters in every dialect the proxy sees: Anthropic
+    // (`cache_read_input_tokens` / `cache_creation_input_tokens`, also carried
+    // on the translated OpenAI usage), OpenAI (`prompt_tokens_details.cached_tokens`),
+    // and the OpenRouter-style `cache_read_tokens` / `cacheRead`.
+    const promptDetails =
+      usage.prompt_tokens_details && typeof usage.prompt_tokens_details === "object"
+        ? (usage.prompt_tokens_details as Record<string, unknown>)
+        : undefined;
+    const cacheReadTokens = finite(
+      usage.cache_read_input_tokens ??
+        promptDetails?.cached_tokens ??
+        usage.cache_read_tokens ??
+        usage.cacheRead,
+    );
+    const cacheWriteTokens = finite(
+      usage.cache_creation_input_tokens ?? usage.cache_write_tokens ?? usage.cacheWrite,
+    );
     return {
       ...(inputTokens === undefined ? {} : { inputTokens }),
       ...(outputTokens === undefined ? {} : { outputTokens }),
@@ -3514,130 +4627,69 @@ export function anthropicSystemPrompt(
   return parts.join("\n\n");
 }
 
-export function anthropicTextContent(
-  blocks: ReadonlyArray<{ type?: string; text?: string }> | undefined,
-): string {
-  if (!blocks) return "";
-  return blocks
-    .filter((block) => (block.type === undefined || block.type === "text") && block.text)
-    .map((block) => block.text as string)
-    .join("");
+/**
+ * Whether the proxy adds a `cache_control: ephemeral` breakpoint to the LAST
+ * system block of every Anthropic request that has none. Default: on under
+ * the `local` trust profile (one operator, repeated prompts, their own bill),
+ * off otherwise. `MARINA_ANTHROPIC_AUTO_CACHE=true|false` overrides. A client
+ * that places its own markers (pi-ai with `cacheControlFormat: "anthropic"`,
+ * an Anthropic SDK on `/v1/messages`) is never second-guessed.
+ */
+export function anthropicAutoCacheEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.MARINA_ANTHROPIC_AUTO_CACHE?.trim().toLowerCase();
+  if (raw === "true" || raw === "1" || raw === "on") return true;
+  if (raw === "false" || raw === "0" || raw === "off") return false;
+  return isLocalProfile(env);
 }
 
+const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
+
+/**
+ * Proxy an OpenAI chat-completions body to Anthropic Messages and translate
+ * the reply back. The request translation (tools, tool_choice, stop, images,
+ * tool results, response_format, cache_control) lives in `anthropic-tools.ts`
+ * — see its header for the full table. `native`, when given, is the client's
+ * original Anthropic body (a `/v1/messages` caller) and is forwarded verbatim.
+ * Throws `UnsupportedParameterError` for parameters Anthropic cannot honor;
+ * `proxyToUpstream` turns that into a 400 for the client.
+ */
 async function proxyToAnthropic(
   body: Record<string, unknown>,
   apiKey: string,
   defaultModel: string,
   wantStream = false,
+  native?: Record<string, unknown>,
 ): Promise<Response> {
-  const messages = (body.messages as Array<{ role: string; content: string }>) ?? [];
-  // Every system message, in order — OpenAI-style clients (and Marina's own
-  // memory injection) send the memory context as a SECOND system message;
-  // forwarding only the first silently dropped it for Anthropic upstreams.
-  const systemText = anthropicSystemPrompt(messages);
-  const nonSystemMsgs = messages.filter((m) => m.role !== "system");
-
   const requestModel = isMarinaModel(body.model as string) ? defaultModel : (body.model as string);
+  const upstreamBody = buildAnthropicRequest(body, requestModel, wantStream, {
+    autoCache: anthropicAutoCacheEnabled(),
+    native,
+  });
+  const includeUsage =
+    !!body.stream_options &&
+    typeof body.stream_options === "object" &&
+    (body.stream_options as { include_usage?: unknown }).include_usage === true;
 
   try {
-    // Native streaming: call Anthropic with stream: true and convert SSE on-the-fly
+    const resp = await fetch(ANTHROPIC_MESSAGES_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(upstreamBody),
+    });
+
+    if (!resp.ok) {
+      return errorJson(resp.status, await anthropicErrorMessage(resp));
+    }
+
+    // Native streaming: Anthropic SSE → OpenAI chunk SSE on the fly, including
+    // `tool_use` blocks as `delta.tool_calls` fragments.
     if (wantStream) {
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: requestModel,
-          max_tokens: (body.max_tokens as number) ?? 4096,
-          stream: true,
-          ...(typeof body.temperature === "number" ? { temperature: body.temperature } : {}),
-          ...(systemText ? { system: systemText } : {}),
-          messages: nonSystemMsgs.map((m) => ({ role: m.role, content: m.content })),
-        }),
-      });
-
-      if (!resp.ok) {
-        return errorJson(resp.status, await anthropicErrorMessage(resp));
-      }
-
-      const completionId = `chatcmpl-${crypto.randomUUID().slice(0, 8)}`;
-      const encoder = new TextEncoder();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      const transformStream = new TransformStream<Uint8Array, Uint8Array>({
-        transform(chunk, controller) {
-          buffer += decoder.decode(chunk, { stream: true });
-          const lines = buffer.split("\n");
-          // Keep the last potentially incomplete line in the buffer
-          buffer = lines.pop() ?? "";
-
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const data = line.slice(6).trim();
-            if (!data || data === "[DONE]") continue;
-            try {
-              const parsed = JSON.parse(data) as {
-                type?: string;
-                delta?: { type?: string; text?: string };
-              };
-              if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-                const oaiChunk = {
-                  id: completionId,
-                  object: "chat.completion.chunk",
-                  created: Math.floor(Date.now() / 1000),
-                  model: requestModel,
-                  choices: [
-                    { index: 0, delta: { content: parsed.delta.text }, finish_reason: null },
-                  ],
-                };
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify(oaiChunk)}\n\n`));
-              } else if (parsed.type === "message_stop") {
-                const stopChunk = {
-                  id: completionId,
-                  object: "chat.completion.chunk",
-                  created: Math.floor(Date.now() / 1000),
-                  model: requestModel,
-                  choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-                };
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify(stopChunk)}\n\n`));
-                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-              }
-            } catch {
-              /* skip malformed chunks */
-            }
-          }
-        },
-        flush(controller) {
-          // Process any remaining buffered data
-          if (buffer.startsWith("data: ")) {
-            const data = buffer.slice(6).trim();
-            if (data && data !== "[DONE]") {
-              try {
-                const parsed = JSON.parse(data) as { type?: string };
-                if (parsed.type === "message_stop") {
-                  const stopChunk = {
-                    id: completionId,
-                    object: "chat.completion.chunk",
-                    created: Math.floor(Date.now() / 1000),
-                    model: requestModel,
-                    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-                  };
-                  controller.enqueue(encoder.encode(`data: ${JSON.stringify(stopChunk)}\n\n`));
-                  controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-                }
-              } catch {
-                /* ignore */
-              }
-            }
-          }
-        },
-      });
-
-      return new Response(resp.body!.pipeThrough(transformStream), {
+      if (!resp.body) return errorJson(502, "Anthropic proxy error: empty streaming body");
+      return new Response(translateAnthropicStream(resp.body, requestModel, includeUsage), {
         headers: {
           ...MODEL_CORS,
           "Content-Type": "text/event-stream",
@@ -3647,64 +4699,16 @@ async function proxyToAnthropic(
       });
     }
 
-    // Non-streaming: collect full response and convert to OpenAI format
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: requestModel,
-        max_tokens: (body.max_tokens as number) ?? 4096,
-        ...(typeof body.temperature === "number" ? { temperature: body.temperature } : {}),
-        ...(systemText ? { system: systemText } : {}),
-        messages: nonSystemMsgs.map((m) => ({ role: m.role, content: m.content })),
-      }),
+    // Non-streaming: full message → chat.completion (text joined across every
+    // text block, tool_use → tool_calls, cache counters surfaced in usage).
+    const data = (await resp.json()) as Parameters<typeof anthropicMessageToOpenai>[0];
+    return new Response(JSON.stringify(anthropicMessageToOpenai(data, requestModel)), {
+      headers: { ...MODEL_CORS, "Content-Type": "application/json" },
     });
-
-    if (resp.ok) {
-      const data = (await resp.json()) as {
-        id?: string;
-        content?: Array<{ type?: string; text?: string }>;
-        stop_reason?: string;
-        usage?: { input_tokens?: number; output_tokens?: number };
-      };
-      // Claude 5 models return a `thinking` block BEFORE the `text` block (and
-      // may return several text blocks); reading `content[0]` alone yields an
-      // empty answer with non-zero completion tokens. Join every text block.
-      const content = anthropicTextContent(data.content);
-      const completionId = data.id ?? `chatcmpl-${crypto.randomUUID().slice(0, 8)}`;
-
-      const openaiResponse = {
-        id: completionId,
-        object: "chat.completion",
-        created: Math.floor(Date.now() / 1000),
-        model: requestModel,
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content },
-            finish_reason: data.stop_reason === "end_turn" ? "stop" : (data.stop_reason ?? "stop"),
-          },
-        ],
-        usage: {
-          prompt_tokens: data.usage?.input_tokens ?? 0,
-          completion_tokens: data.usage?.output_tokens ?? 0,
-          total_tokens: (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0),
-        },
-      };
-
-      return new Response(JSON.stringify(openaiResponse), {
-        headers: { ...MODEL_CORS, "Content-Type": "application/json" },
-      });
-    }
-    return errorJson(resp.status, await anthropicErrorMessage(resp));
   } catch (e) {
     return errorJson(502, `Anthropic proxy error: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
 // Exported for testing
-export { pendingRequests, roundRobinCounters, selectAgent };
+export { anthropicTextContent, pendingRequests, roundRobinCounters, selectAgent };

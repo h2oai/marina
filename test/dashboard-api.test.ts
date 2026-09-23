@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { handleDashboardApi, projectEnvValueForRead } from "../src/net/dashboard-api";
+import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
@@ -624,5 +625,120 @@ describe("dashboard-api HTTP authorization hardening", () => {
       const resp = await handleDashboardApi(req, url, method, engine, db);
       expect(resp?.status).toBe(400);
     });
+  });
+});
+
+describe("dashboard-api HTTP surface hardening", () => {
+  let db: MarinaDB;
+  let engine: Engine;
+  const prevOpenApi = process.env.MARINA_OPEN_API;
+  const prevDesktopToken = process.env.MARINA_DESKTOP_API_TOKEN;
+  const prevTrustProxy = process.env.MARINA_TRUST_PROXY;
+  const DESKTOP = "desktop-token-desktop-token-desktop-token-1234";
+  let connCounter = 0;
+
+  beforeEach(() => {
+    delete process.env.MARINA_OPEN_API;
+    delete process.env.MARINA_TRUST_PROXY;
+    process.env.MARINA_DESKTOP_API_TOKEN = DESKTOP;
+    resetHttpRateLimitersForTests();
+    db = new MarinaDB(`${TEST_DB}.hardening`);
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+  });
+
+  afterEach(() => {
+    const restore = (k: string, v: string | undefined) => {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    };
+    restore("MARINA_OPEN_API", prevOpenApi);
+    restore("MARINA_DESKTOP_API_TOKEN", prevDesktopToken);
+    restore("MARINA_TRUST_PROXY", prevTrustProxy);
+    db.close();
+    cleanupDb(`${TEST_DB}.hardening`);
+    resetHttpRateLimitersForTests();
+  });
+
+  function loginToken(name: string): string {
+    const conn = new MockConnection(`dash-h-${connCounter++}`);
+    engine.addConnection(conn);
+    const login = engine.login(conn.id, name);
+    if ("error" in login) throw new Error(login.error);
+    return login.token;
+  }
+
+  const get = (path: string, headers: Record<string, string>, peerIp?: string) => {
+    const url = new URL(`http://localhost:3300${path}`);
+    return handleDashboardApi(
+      new Request(url.toString(), { headers }),
+      url,
+      "GET",
+      engine,
+      db,
+      peerIp,
+    );
+  };
+
+  it("rate-limits authenticated REST per principal (60 / 10 s) with a 429 + Retry-After", async () => {
+    const token = loginToken("DashFlood");
+    let limited: Response | undefined;
+    for (let i = 0; i < 61; i++) {
+      const resp = await get("/api/world", { Authorization: `Bearer ${token}` });
+      if (resp?.status === 429) {
+        limited = resp;
+        break;
+      }
+      expect(resp?.status).toBe(200);
+    }
+    expect(limited?.status).toBe(429);
+    expect(limited?.headers.get("Retry-After")).toBe("10");
+
+    // Another principal has its own bucket.
+    const other = loginToken("DashOther");
+    expect((await get("/api/world", { Authorization: `Bearer ${other}` }))?.status).toBe(200);
+  });
+
+  it("ignores spoofed X-Forwarded-For for pre-auth per-IP limits unless MARINA_TRUST_PROXY=true", async () => {
+    // /api/setup-status: 20 / min per IP, keyed by the socket peer. Rotating
+    // the forwarded header must NOT buy fresh buckets.
+    let limited = false;
+    for (let i = 0; i < 25; i++) {
+      const resp = await get(
+        "/api/setup-status",
+        { "X-Forwarded-For": `10.0.0.${i}` },
+        "203.0.113.7",
+      );
+      if (resp?.status === 429) {
+        limited = true;
+        break;
+      }
+    }
+    expect(limited).toBe(true);
+
+    // Behind a declared proxy the forwarded address is the key, so distinct
+    // forwarded clients are distinct buckets.
+    process.env.MARINA_TRUST_PROXY = "true";
+    const fresh = await get(
+      "/api/setup-status",
+      { "X-Forwarded-For": "198.51.100.9" },
+      "203.0.113.7",
+    );
+    expect(fresh?.status).toBe(200);
+  });
+
+  it("masks stored provider keys to the last four characters only", async () => {
+    db.saveApiKey({
+      name: "primary",
+      provider: "openai",
+      encryptedValue: "sk-live-ABCDEFGHIJKLMNOP-9876",
+      setBy: "test",
+    });
+    const resp = await get("/api/keys", { "X-Marina-Desktop-Token": DESKTOP });
+    expect(resp?.status).toBe(200);
+    const keys = (await resp!.json()) as { name: string; masked: string }[];
+    const primary = keys.find((k) => k.name === "primary");
+    expect(primary?.masked).toBe("****9876");
+    expect(primary?.masked).not.toContain("sk-l");
   });
 });

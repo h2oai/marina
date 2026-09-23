@@ -18,7 +18,6 @@ import {
   parseScore,
   type Score,
 } from "../../coordination/score";
-import { getAutonomyPosture } from "../../engine/autonomy";
 import type { MarinaClient } from "../../sdk/client";
 import { runScore } from "../../sdk/conduct";
 import { MEMORY_OPERATIONS } from "../../sdk/memory-operations";
@@ -26,6 +25,7 @@ import type { Perception } from "../../types";
 import type { AgentSupports } from "../agent-types";
 import type { GameStateManager } from "../game-state";
 import type { PlatformMemoryBackend } from "../memory-platform";
+import { COMMAND_ROSTER, ECOLOGY_ROSTER } from "../prompts/lean-system";
 import { createMemoryAssistanceTool } from "./memory-assistance";
 
 // ─── Shared Context ─────────────────────────────────────────────────────────
@@ -82,48 +82,27 @@ const commandSchema = Type.Object({
 });
 
 /**
- * Compact natural-language roster of world commands. Surfaced inside the
- * `marina_command` tool description in every profile, including agents
- * with few typed wrappers. Keep discovery within the tested prompt budget;
- * command help supplies the full syntax.
+ * The command roster lives in the system prompt (`# COMMANDS`, one copy in the
+ * stable prefix — see prompts/lean-system.ts). Re-exported here so existing
+ * importers and tests keep one import path.
  */
-export const COMMAND_ROSTER = `Common world commands:
-World: look [target], goto <room>, examine <thing>, who, inventory.
-Talk: say <msg>, tell <name> <msg>, channel send <name> <msg>, channel list.
-Memory: memory guide (workflow examples), memory start <goal>, memory resume <task ID>, memory retrieve <task> (citable evidence; check diagnostics), note <text>, recall <query> [evidence|all], reflect [topic], reflect adopt <job>, memory api <JSON>, memory assist <librarian|reflector|evaluator> <helper> <task>, memory jobs, pool <name> add|recall <…>, skill store|search <…>, note correct <id> <text> (supersede, don't delete), orient (memory health).
-Self: brief, brief full, focus set <desc>, focus clear, task goal <title> | <desc>, task progress <id> +N, novelty stats, novelty suggest.
-Becoming: standing (your ledger + every gate's path), witness (earn gated capabilities through supervised demonstrations), desire <one sentence> (begin an evidence-linked journey), journey progress.
-Coordination: project list, canvas intent list, canvas intent claim <id>, canvas intent complete <id> <result>, feed list [--kind X --since 30m].
-Code: code status, code files [path], code read <path>, code search <query>, code diff, code verify, code recipe list/run/save, code checkpoint, code revert <id>, code approvals, code approval request <kind> <desc>, code model set <target>, code skill list/add/use, code crew <goal>, code external link <system> <id>, code observe <note>, code patch <title>, code artifacts, code pin <id>, code unpin <id>, code archive <id>.
-Web: web search <query>, web fetch <url>.
-Probe / watch (resolvers): probe <kind> <args>, watch list, watch create <kind> <args>.
-Bettor / markets: market list, market info <id>, market forecast <id>, position open <leg>, position confirm <id>.
-Discover more: \`help all\` lists commands, \`help <command>\` explains one, \`novelty suggest\` suggests unexplored activity.
-Recall is intent-aware: "how to X" weights relevance, "when did X" weights recency.`;
+export { COMMAND_ROSTER, ECOLOGY_ROSTER };
 
-/** Extra roster lines surfaced when the operator has opened the ceiling —
- *  under `earned`/`open` postures agents are TOLD about the open-ended layer
- *  so emergence gets the chance the ledgers were built for. */
-export const ECOLOGY_ROSTER = `Open-ended (this world's autonomy posture invites you to use these):
-association create/join/relate (open relationships across anything), mesh list/join/publish (transparent cross-Marina federation), intellect declare (portable identity), lab manifest/run (declared experiments), economy contract (asset-neutral claims), reproduce intellect (attributable descendants).`;
-
+/**
+ * `marina_command` — the universal escape hatch, resident in EVERY profile.
+ * Its description is one sentence: the roster used to ride here (~2 KB on
+ * every request); it now rides once in the system prompt. `rosterMode` is
+ * accepted for call-site compatibility and ignored.
+ */
 export function createCommandTool(
   ctx: ToolContext,
-  rosterMode: "compact" | "verbose" = "verbose",
+  _rosterMode: "compact" | "verbose" = "verbose",
 ): AgentTool<typeof commandSchema> {
-  // The roster ships to EVERY profile. It was previously compact-only, which
-  // inverted discovery: the most capable (full-profile) agents got the least
-  // enumeration of their own world.
-  const posture = getAutonomyPosture();
-  const roster = posture === "guarded" ? COMMAND_ROSTER : `${COMMAND_ROSTER}\n${ECOLOGY_ROSTER}`;
-  const description =
-    rosterMode === "compact"
-      ? `Execute any raw command in the Marina world. This is your universal escape hatch — anything you can do in a typed tool, you can also do here as a string command.\n\n${roster}`
-      : `Execute any raw command in the Marina world. Prefer dedicated tools when available.\n\n${roster}`;
   return {
     name: "marina_command",
     label: "Execute Command",
-    description,
+    description:
+      "Run any raw Marina world command (see # COMMANDS in your instructions; `help <command>` explains one) — the universal escape hatch when no typed tool fits.",
     parameters: commandSchema,
     execute: async (_id, { command }: Static<typeof commandSchema>, signal) =>
       execCommand(ctx, command, signal),
@@ -1880,23 +1859,50 @@ function createMediaTools(ctx: ToolContext): AgentTool[] {
 }
 
 const memoryServiceSchema = Type.Object({
-  operation: Type.Union(MEMORY_OPERATIONS.map((op) => Type.Literal(op))),
-  space_id: Type.Optional(Type.String()),
-  id: Type.Optional(Type.String()),
-  input: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  // A plain `enum` (not a 60-literal anyOf) keeps this schema ~700 B smaller;
+  // pi-ai validates it the same way.
+  operation: Type.String({
+    enum: [...MEMORY_OPERATIONS],
+    description:
+      'Operation. `capabilities` lists them; `workflow` with input {action:"help"} explains task workflows.',
+  }),
+  space_id: Type.Optional(Type.String({ description: "Omit for your private space" })),
+  id: Type.Optional(
+    Type.String({
+      description: "Record / source / job id when the operation targets one",
+    }),
+  ),
+  input: Type.Optional(
+    Type.Record(Type.String(), Type.Unknown(), {
+      description:
+        "Payload: retrieve {task}; search {query}; remember {content, claim?}; assist_create {role, task, worker_id}; assist_read/finish {lease_token, request?, completion?}",
+    }),
+  ),
   key: Type.Optional(
-    Type.String({ description: "Reuse the same key and payload when retrying a mutation" }),
+    Type.String({ description: "Idempotency key; reuse it when retrying a mutation" }),
   ),
 });
+
+/**
+ * ONE memory-service tool: durable records, evidence, checkpoints AND the
+ * assistance (helper job) operations, which used to be a second 4 KB typed
+ * tool (`marina_memory_assistance`). That typed variant still exists as a
+ * DEFERRED tool for agents that want per-field schemas; this resident surface
+ * stays ≤ 2 KB (enforced by test/tools-deferred.test.ts).
+ */
 export function createMemoryServiceTool(ctx: ToolContext): AgentTool<typeof memoryServiceSchema> {
   return {
     name: "marina_memory_service",
-    label: "Portable Memory Service",
+    label: "Memory Service",
     description:
-      'Durable private/shared memory, evidence and checkpoints. workflow input {action:"help"} teaches start/run/finish/resume, recipes and watches. Start with retrieve (input: {task:"your question"}) to find and read citable evidence in one bounded request; inspect diagnostics and relevance before answering. capabilities discovers limits; query (input: {}) lists records. Exact symbolic query accepts subject, predicate and typed object. remember accepts content and optional claim: {subject,predicate,object:{kind:"entity",id} or {kind:"literal",value}}. graph follows asserted relations with record citations. No embeddings required. Omit space_id for your private space. Use save_checkpoint with id, expected_version, source_cursor and data to resume long tasks. Claims are assertions, not verified truth.',
+      "Durable private/shared memory, evidence, checkpoints and helper assistance (assist_* ops: helpers hold a lease_token, read only the delegated scope, finish with citations or an explicit abstention). Start with retrieve {task} for citable evidence and check its diagnostics. Claims and proposals are assertions, not verified truth.",
     parameters: memoryServiceSchema,
-    execute: async (_id, request) => {
-      const result = await ctx.client.memoryService(request);
+    execute: async (_id, request, signal) => {
+      const result = await ctx.client.memoryService(
+        request as Parameters<MarinaClient["memoryService"]>[0],
+        35000,
+        signal,
+      );
       return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
     },
   };
@@ -1907,11 +1913,11 @@ export function createMemoryServiceTool(ctx: ToolContext): AgentTool<typeof memo
 export function createAllTools(
   ctx: ToolContext,
   platformMemory: PlatformMemoryBackend,
-  rosterMode: "compact" | "verbose" = "verbose",
+  _rosterMode: "compact" | "verbose" = "verbose",
 ): AgentTool[] {
   // AgentTool generic variance requires cast when combining different schema types
   return [
-    createCommandTool(ctx, rosterMode) as unknown as AgentTool,
+    createCommandTool(ctx) as unknown as AgentTool,
     ...createWorldTools(ctx),
     ...createMediaTools(ctx),
     createThinkTool() as unknown as AgentTool,
@@ -1925,22 +1931,19 @@ export function createAllTools(
  * Tool profile — choose how much tool schema to send to the LLM.
  *
  * Smaller profiles reduce repeated schema input. `marina_command` retains
- * access to world commands; typed assistance adds correlated job replies.
+ * access to world commands in every profile.
  *
  * Profiles:
- *  - `"full"`    : All typed tools.
- *                  Good for Sonnet-tier and above; the typed tools
- *                  help auto-structure actions.
- *  - `"minimal"` : command, think, memory, and typed memory assistance.
- *                  Functionally complete via `command`. Good for
- *                  Haiku-tier specialists that need one-shot focused
- *                  action, not rich coordination surface.
- *  - `"crew"`    : minimal + code + tell + pool + brief + channel.
- *                  Mid-tier for dispatchers / agents
- *                  that coordinate peers.
+ *  - `"full"`    : Every typed tool. By default the CORE set below is resident
+ *                  and the rest are DEFERRED — listed one line each inside
+ *                  `marina_tool_search`, loaded by name for the rest of the
+ *                  session (`MARINA_DEFERRED_TOOLS=off` restores all-resident).
+ *  - `"crew"`    : the core set — command, code, tell, pool, brief, channel,
+ *                  think, memory, memory service. Mid-tier for dispatchers.
+ *  - `"minimal"` : command, think, memory, memory service. Functionally
+ *                  complete via `command`; for Haiku-tier one-shot specialists.
  *
- * An agent config's `toolProfile` field selects; defaults to `"full"` so
- * nothing breaks unless a specialist explicitly opts in to leaner.
+ * An agent config's `toolProfile` field selects; defaults to `"full"`.
  */
 export type ToolProfile = "full" | "crew" | "minimal";
 
@@ -1949,9 +1952,8 @@ export type ToolProfile = "full" | "crew" | "minimal";
  * future roles can reference by name instead of guessing.
  */
 export const TOOL_PROFILE_NAMES: Record<ToolProfile, string[]> = {
-  full: [], // empty = all tools
+  full: [], // empty = all tools (resident core + deferred rest)
   crew: [
-    "marina_memory_assistance",
     "marina_command",
     "marina_code",
     "marina_tell",
@@ -1960,35 +1962,224 @@ export const TOOL_PROFILE_NAMES: Record<ToolProfile, string[]> = {
     "marina_channel",
     "think",
     "memory",
+    "marina_memory_service",
   ],
-  minimal: ["marina_command", "think", "memory", "marina_memory_assistance"],
+  minimal: ["marina_command", "think", "memory", "marina_memory_service"],
 };
 
+/** Resident (always-sent) tools of the `full` profile when deferral is on —
+ *  the crew core set. Everything else loads on demand. */
+export const FULL_RESIDENT_TOOL_NAMES: readonly string[] = [...TOOL_PROFILE_NAMES.crew];
+
+export const TOOL_SEARCH_NAME = "marina_tool_search";
+
+/** `MARINA_DEFERRED_TOOLS=off` restores the pre-2026-09 all-schemas `full` profile. */
+export function deferredToolsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.MARINA_DEFERRED_TOOLS ?? "").trim().toLowerCase() !== "off";
+}
+
+/** First sentence of a tool description, flattened and clamped — the catalog line. */
+function toolCatalogLine(description: string, max = 64): string {
+  const first = description.split(/(?<=[.!?])\s|\n/)[0] ?? description;
+  const flat = first.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+const toolSearchSchema = Type.Object({
+  names: Type.Optional(Type.Array(Type.String(), { description: "Exact tool names to load" })),
+  query: Type.Optional(
+    Type.String({
+      description: "Keyword matched against names/descriptions when unsure of the name",
+    }),
+  ),
+});
+
 /**
- * Build the tool set for a given profile. Unknown names are silently
- * dropped — log is the caller's responsibility.
- *
- * The `crew` and `minimal` profiles ship with a compact natural-language
- * command roster baked into `marina_command`'s description, so an
- * agent without the full typed surface still knows what verbs the world
- * exposes. The `full` profile keeps the terse description because the
- * typed tools each carry their own description.
+ * Load-on-demand tool loader (client-side deferred tools). pi-ai's native
+ * deferred mode is Kimi-specific wire format, unusable through the generic
+ * OpenAI-completions self-proxy, so Marina loads schemas itself: the
+ * description carries the catalog (`name — one line`), a call resolves the
+ * requested tools, hands them to `onLoad` (the adapter registers them for the
+ * rest of the session), and the result names them via `addedToolNames`.
+ */
+export function createToolSearchTool(
+  deferred: readonly AgentTool[],
+  onLoad?: (tools: AgentTool[]) => void,
+): AgentTool<typeof toolSearchSchema> {
+  const catalog = deferred.map((t) => `${t.name} — ${toolCatalogLine(t.description)}`).join("\n");
+  return {
+    name: TOOL_SEARCH_NAME,
+    label: "Load Tools",
+    description: `Load typed tools not yet in your tool list; once loaded they stay callable for this session. Pass exact names (or a keyword query). Every world command also works through marina_command without loading anything.\nAvailable:\n${catalog}`,
+    parameters: toolSearchSchema,
+    execute: async (_id, params: Static<typeof toolSearchSchema>) => {
+      const wanted = new Set((params.names ?? []).map((n) => n.trim()).filter(Boolean));
+      const q = params.query?.trim().toLowerCase() ?? "";
+      const byName = deferred.filter((t) => wanted.has(t.name));
+      const byQuery =
+        q.length > 0
+          ? deferred
+              .filter(
+                (t) =>
+                  !wanted.has(t.name) &&
+                  (t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q)),
+              )
+              .slice(0, 5)
+          : [];
+      const matches = [...byName, ...byQuery];
+      const unknown = [...wanted].filter((n) => !deferred.some((t) => t.name === n));
+      if (matches.length === 0) {
+        throw new Error(
+          `No deferred tool matched${unknown.length > 0 ? ` (unknown: ${unknown.join(", ")})` : ""}. Available:\n${catalog}`,
+        );
+      }
+      onLoad?.(matches);
+      const lines = matches.map((t) => `${t.name}: ${t.description}`);
+      const tail = unknown.length > 0 ? `\nUnknown: ${unknown.join(", ")}` : "";
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Loaded ${matches.length} tool(s) — call them directly now:\n${lines.join("\n")}${tail}`,
+          },
+        ],
+        details: { loaded: matches.map((t) => t.name), unknown },
+        addedToolNames: matches.map((t) => t.name),
+      };
+    },
+  };
+}
+
+export interface ProfileToolset {
+  /** Schemas sent on every request. */
+  resident: AgentTool[];
+  /** Loadable through `marina_tool_search`; empty when deferral is off or the profile is not `full`. */
+  deferred: AgentTool[];
+}
+
+/**
+ * Build the resident + deferred tool sets for a profile. `full` with deferral
+ * on = core set + `marina_tool_search`; the rest are deferred. `onLoadTools`
+ * is how loaded schemas reach the agent's live tool list.
+ */
+// ─── Tool execution ordering ────────────────────────────────────────────────
+//
+// pi-agent-core runs a multi-tool assistant turn in parallel by default. World
+// mutations are order-sensitive (a `say` after a `move` must land in the new
+// room; a `note` may cite a `pool` deposit from the same turn), so every tool
+// that can change world state is stamped `executionMode: "sequential"`: the
+// loop serialises any batch that contains one, while a batch made only of
+// reads (look, who, examine, brief, feed, web, code read/search/diff …) still
+// fans out. `MARINA_TOOL_EXECUTION=parallel` drops the stamps (library
+// default everywhere); `sequential` also flips the Agent-level mode so even
+// pure-read batches serialise.
+
+export type ToolExecutionPolicy = "auto" | "sequential" | "parallel";
+
+/** `MARINA_TOOL_EXECUTION` → policy; unset/invalid = `auto` (stamp mutators). */
+export function toolExecutionPolicy(env: NodeJS.ProcessEnv = process.env): ToolExecutionPolicy {
+  const raw = (env.MARINA_TOOL_EXECUTION ?? "").trim().toLowerCase();
+  return raw === "sequential" || raw === "parallel" ? raw : "auto";
+}
+
+/** Tools that only observe (world, memory or workspace) — safe to run concurrently. */
+export const READ_ONLY_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "marina_look",
+  "marina_examine",
+  "marina_inventory",
+  "marina_who",
+  "marina_help",
+  "marina_brief",
+  "marina_feed",
+  "marina_novelty",
+  "marina_web",
+  "think",
+  "marina_code_read_file",
+  "marina_code_list_files",
+  "marina_code_search",
+  "marina_code_diff",
+  "marina_code_history",
+  "marina_code_summary",
+  "marina_code_session_status",
+  "marina_code_observe",
+  "marina_code_artifacts",
+  "marina_code_doctor",
+  "marina_code_thread",
+]);
+
+/** Whether a tool by this name may change world state (anything not read-only). */
+export function isMutatingToolName(name: string): boolean {
+  return !READ_ONLY_TOOL_NAMES.has(name);
+}
+
+/**
+ * Stamp per-tool `executionMode` according to the policy. `auto` marks every
+ * mutating tool `sequential` and leaves reads unmarked (parallel by default);
+ * `parallel` and `sequential` leave the tools untouched — the Agent-level
+ * `toolExecution` option carries those (see `agentToolExecutionMode`).
+ */
+export function applyToolExecutionModes<T extends AgentTool>(
+  tools: T[],
+  env: NodeJS.ProcessEnv = process.env,
+): T[] {
+  if (toolExecutionPolicy(env) !== "auto") return tools;
+  return tools.map((tool) =>
+    isMutatingToolName(tool.name) && tool.executionMode === undefined
+      ? { ...tool, executionMode: "sequential" as const }
+      : tool,
+  );
+}
+
+/** The Agent-level `toolExecution` option for the policy (undefined = library default). */
+export function agentToolExecutionMode(
+  env: NodeJS.ProcessEnv = process.env,
+): "sequential" | "parallel" | undefined {
+  const policy = toolExecutionPolicy(env);
+  return policy === "auto" ? undefined : policy;
+}
+
+export function createProfileToolset(
+  ctx: ToolContext,
+  platformMemory: PlatformMemoryBackend,
+  profile: ToolProfile,
+  supports: AgentSupports = { text: true },
+  options?: { onLoadTools?: (tools: AgentTool[]) => void },
+): ProfileToolset {
+  const all = applyToolExecutionModes(
+    createAllTools(ctx, platformMemory).filter((tool) => {
+      if (!supports.image && tool.name === "marina_generate_image") return false;
+      if (!supports.video && tool.name === "marina_generate_video") return false;
+      return true;
+    }),
+  );
+  if (profile !== "full") {
+    const want = new Set(TOOL_PROFILE_NAMES[profile]);
+    return { resident: all.filter((t) => want.has(t.name)), deferred: [] };
+  }
+  if (!deferredToolsEnabled()) return { resident: all, deferred: [] };
+  const residentNames = new Set(FULL_RESIDENT_TOOL_NAMES);
+  const resident = all.filter((t) => residentNames.has(t.name));
+  const deferred = all.filter((t) => !residentNames.has(t.name));
+  resident.push(
+    ...applyToolExecutionModes([
+      createToolSearchTool(deferred, options?.onLoadTools) as unknown as AgentTool,
+    ]),
+  );
+  return { resident, deferred };
+}
+
+/**
+ * Resident tools for a profile (see `createProfileToolset`). Unknown names in
+ * a profile list are silently dropped — log is the caller's responsibility.
  */
 export function createScopedTools(
   ctx: ToolContext,
   platformMemory: PlatformMemoryBackend,
   profile: ToolProfile,
   supports: AgentSupports = { text: true },
+  options?: { onLoadTools?: (tools: AgentTool[]) => void },
 ): AgentTool[] {
-  const rosterMode: "compact" | "verbose" = profile === "full" ? "verbose" : "compact";
-  const all = createAllTools(ctx, platformMemory, rosterMode).filter((tool) => {
-    if (!supports.image && tool.name === "marina_generate_image") return false;
-    if (!supports.video && tool.name === "marina_generate_video") return false;
-    return true;
-  });
-  if (profile === "full") return all;
-  const want = new Set(TOOL_PROFILE_NAMES[profile]);
-  return all.filter((t) => want.has(t.name));
+  return createProfileToolset(ctx, platformMemory, profile, supports, options).resident;
 }
 
 const evolutionToolSchema = Type.Object({

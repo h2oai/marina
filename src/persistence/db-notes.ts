@@ -293,11 +293,15 @@ export function deleteNote(db: Database, id: number, entityName: string): boolea
     .query("SELECT id FROM notes WHERE id = ? AND entity_name = ?")
     .get(id, entityName);
   if (!note) return false;
-  // Clear FK references before deleting
-  db.run("DELETE FROM note_links WHERE source_id = ? OR target_id = ?", [id, id]);
-  db.run("UPDATE notes SET supersedes_id = NULL WHERE supersedes_id = ?", [id]);
-  const result = db.run("DELETE FROM notes WHERE id = ? AND entity_name = ?", [id, entityName]);
-  return result.changes > 0;
+  // Atomic (same contract as the bulk `deleteNotes` above): link cleanup,
+  // supersedes nulling and the delete commit together, so a failure on the
+  // last statement can't leave a note with its links already gone.
+  return db.transaction(() => {
+    db.run("DELETE FROM note_links WHERE source_id = ? OR target_id = ?", [id, id]);
+    db.run("UPDATE notes SET supersedes_id = NULL WHERE supersedes_id = ?", [id]);
+    const result = db.run("DELETE FROM notes WHERE id = ? AND entity_name = ?", [id, entityName]);
+    return result.changes > 0;
+  })();
 }
 
 export function getNote(db: Database, id: number): NoteRow | undefined {
@@ -526,16 +530,72 @@ export interface ContradictionCaseRow {
   resolved_at: number | null;
 }
 
+const DURABLE_TWIN_URL_PREFIX = "marina-memory://record/";
+
+/**
+ * Pair claim-keyed notes whose polarity differs into open contradiction cases.
+ *
+ * Durable-silo rows are excluded: a record's version notes live in `notes`
+ * under `entity_name = memory:<principalId>` (`isServiceMemoryNote`) and share
+ * `claim_key` with their legacy twin, so without the guard `note conflicts`
+ * listed a note against its own mirror. Belt and braces, a pair where one
+ * side is the other's twin (`note_sources.url = marina-memory://record/<id>`
+ * pointing at the record the other side is a version of), or where both
+ * sides mirror the same record, is skipped too.
+ */
 export function refreshContradictionCases(db: Database): number {
   const notes = db
     .query(
       `SELECT * FROM notes WHERE verification_status!='superseded' AND claim_key IS NOT NULL
+     AND id NOT IN (SELECT note_id FROM memory_record_versions)
      ORDER BY id DESC LIMIT 2000`,
     )
     .all() as NoteRow[];
   const groups = new Map<string, NoteRow[]>();
   for (const note of notes)
     groups.set(note.claim_key!, [...(groups.get(note.claim_key!) ?? []), note]);
+
+  // Twin lineage for the notes that can actually pair (groups of ≥ 2).
+  const candidateIds = [...groups.values()]
+    .filter((g) => g.length > 1)
+    .flat()
+    .map((n) => n.id);
+  const twinRecords = new Map<number, Set<string>>();
+  const recordOfNote = new Map<number, string>();
+  if (candidateIds.length > 0) {
+    const ids = JSON.stringify(candidateIds);
+    const twinRows = db
+      .query(
+        `SELECT note_id, url FROM note_sources
+         WHERE note_id IN (SELECT value FROM json_each(?)) AND url LIKE ?`,
+      )
+      .all(ids, `${DURABLE_TWIN_URL_PREFIX}%`) as { note_id: number; url: string }[];
+    for (const row of twinRows) {
+      const recordId = row.url.slice(DURABLE_TWIN_URL_PREFIX.length);
+      if (!recordId) continue;
+      let set = twinRecords.get(row.note_id);
+      if (!set) twinRecords.set(row.note_id, (set = new Set()));
+      set.add(recordId);
+    }
+    const versionRows = db
+      .query(
+        `SELECT note_id, record_id FROM memory_record_versions
+         WHERE note_id IN (SELECT value FROM json_each(?))`,
+      )
+      .all(ids) as { note_id: number; record_id: string }[];
+    for (const row of versionRows) recordOfNote.set(row.note_id, row.record_id);
+  }
+  const twinOfEachOther = (left: NoteRow, right: NoteRow): boolean => {
+    const leftTwins = twinRecords.get(left.id);
+    const rightTwins = twinRecords.get(right.id);
+    const rightRecord = recordOfNote.get(right.id);
+    const leftRecord = recordOfNote.get(left.id);
+    if (rightRecord && leftTwins?.has(rightRecord)) return true;
+    if (leftRecord && rightTwins?.has(leftRecord)) return true;
+    if (leftTwins && rightTwins) for (const id of leftTwins) if (rightTwins.has(id)) return true;
+    return false;
+  };
+
   let created = 0;
   const now = Date.now();
   for (const group of groups.values()) {
@@ -544,6 +604,7 @@ export function refreshContradictionCases(db: Database): number {
         const left = group[i]!;
         const right = group[j]!;
         if (left.entity_name === right.entity_name && !left.pool_id && !right.pool_id) continue;
+        if (twinOfEachOther(left, right)) continue;
         const leftNeg = /\b(no|not|never|cannot|isn't|doesn't)\b/i.test(left.content);
         const rightNeg = /\b(no|not|never|cannot|isn't|doesn't)\b/i.test(right.content);
         if (leftNeg === rightNeg) continue;

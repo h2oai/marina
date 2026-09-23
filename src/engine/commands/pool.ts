@@ -28,7 +28,10 @@ import {
 import type { MarinaDB, NoteRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { DAY_MS } from "../constants";
+import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
 import { auditKnowledgeNotes, renderKnowledgeHygieneReport } from "./knowledge-hygiene";
+
+const POOL_ACTIONS = ["list", "status", "audit", "add", "ratify", "recall"];
 
 const STOP_WORDS = new Set([
   "the",
@@ -116,7 +119,7 @@ export function poolCommand(deps: {
   return {
     name: "pool",
     aliases: [],
-    help: "Shared memory pools for collaborative knowledge.\nUsage: pool create <name> [group <groupName>] | pool <name> add|recall|list|status|audit|ratify | pool list\n\nExamples:\n  pool create findings\n  pool create crew-notes group project:Beta   (members-only pool; you must belong to the group)\n  pool findings add The decode room responds to binary input importance 7\n  pool findings recall binary\n  pool findings list\n  pool findings status\n  pool findings audit\n  pool guide ratify 42 importance 8 verified against the command registry\n\nInstitutional pools (guide, orchestration:*, tradition:*): on a shared instance `add` files a proposal (importance capped at 4, unverified) until someone with standing >= 15 (rank 2), a sovereign, or the local operator runs `pool <name> ratify <noteId> [importance N] [rationale]` — which lifts the cap, marks it verified, and mirrors it into the institutional durable space.",
+    help: "Shared memory pools for collaborative knowledge.\nUsage: pool create <name> [group <groupName>] | pool <name> add <text> [importance:N] | pool <name> recall|list|status|audit|ratify | pool list\n  (importance also as trailing `importance N` or `!N`; `ls` = list)\n\nExamples:\n  pool create findings\n  pool create crew-notes group project:Beta   (members-only pool; you must belong to the group)\n  pool findings add The decode room responds to binary input importance:7\n  pool findings recall binary\n  pool findings list\n  pool findings status\n  pool findings audit\n  pool guide ratify 42 importance 8 verified against the command registry\n\nInstitutional pools (guide, orchestration:*, tradition:*): on a shared instance `add` files a proposal (importance capped at 4, unverified) until someone with standing >= 15 (rank 2), a sovereign, or the local operator runs `pool <name> ratify <noteId> [importance N] [rationale]` — which lifts the cap, marks it verified, and mirrors it into the institutional durable space.",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -127,7 +130,7 @@ export function poolCommand(deps: {
       const db = deps.db;
       const access = memoryAccess(db, entity);
       const tokens = input.tokens;
-      const sub = tokens[0]?.toLowerCase();
+      const sub = canonicalSub(tokens[0], ["list", "create"]);
 
       if (!sub) {
         ctx.send(
@@ -203,8 +206,8 @@ export function poolCommand(deps: {
       }
 
       // Pool operations: pool <name> <action> [args]
-      const poolName = sub;
-      const action = tokens[1]?.toLowerCase();
+      const poolName = tokens[0]!;
+      const action = canonicalSub(tokens[1], POOL_ACTIONS);
       const pool = db.getMemoryPool(poolName);
 
       if (!pool || !access.pool(pool)) {
@@ -303,16 +306,25 @@ export function poolCommand(deps: {
         }
 
         case "add": {
-          const text = tokens.slice(2).join(" ");
-          if (!text) {
-            ctx.send(input.entity, `Usage: pool ${poolName} add <text> [importance N]`);
+          // pool <name> add <text> [importance:N]   (also trailing `importance N` / `!N`)
+          const addMods = parseModifiers(tokens.slice(2), { importance: { type: "int" } });
+          if (addMods.errors.length > 0) {
+            ctx.send(input.entity, `pool add: ${addMods.errors.join("; ")}`);
             return;
           }
-          // Parse importance — new: trailing "importance N"
+          const text = addMods.rest.join(" ");
+          if (!text) {
+            ctx.send(input.entity, `Usage: pool ${poolName} add <text> [importance:N]`);
+            return;
+          }
           let importance = 5;
           let content = text;
+          const modImportance = addMods.values.importance as number | undefined;
           const impWordMatch = content.match(/\s+importance\s+(\d{1,2})\s*$/);
-          if (impWordMatch) {
+          if (modImportance !== undefined && modImportance >= 1 && modImportance <= 10) {
+            importance = modImportance;
+          } else if (impWordMatch) {
+            // Legacy: trailing "importance N"
             const val = Number.parseInt(impWordMatch[1]!, 10);
             if (val >= 1 && val <= 10) {
               importance = val;
@@ -377,13 +389,16 @@ export function poolCommand(deps: {
           if (!Number.isInteger(noteId) || noteId <= 0) {
             ctx.send(
               input.entity,
-              `Usage: pool ${poolName} ratify <noteId> [importance N] [rationale]`,
+              `Usage: pool ${poolName} ratify <noteId> [importance:N] [rationale]`,
             );
             return;
           }
-          let rest = tokens.slice(3);
-          let importance: number | undefined;
-          if (rest[0]?.toLowerCase() === "importance" && rest[1]) {
+          const ratifyMods = parseModifiers(tokens.slice(3), { importance: { type: "int" } });
+          let rest = ratifyMods.rest;
+          let importance = ratifyMods.values.importance as number | undefined;
+          if (importance !== undefined && (importance < 1 || importance > 10))
+            importance = undefined;
+          if (importance === undefined && rest[0]?.toLowerCase() === "importance" && rest[1]) {
             const val = Number.parseInt(rest[1], 10);
             if (val >= 1 && val <= 10) importance = val;
             rest = rest.slice(2);
@@ -476,7 +491,11 @@ export function poolCommand(deps: {
         default:
           ctx.send(
             input.entity,
-            `Usage: pool ${poolName} add <text> | pool ${poolName} recall <query> | pool ${poolName} list | pool ${poolName} status | pool ${poolName} audit | pool ${poolName} ratify <noteId>`,
+            unknownSubcommand(
+              "pool",
+              tokens[1],
+              `Usage: pool ${poolName} add <text> | pool ${poolName} recall <query> | pool ${poolName} list | pool ${poolName} status | pool ${poolName} audit | pool ${poolName} ratify <noteId>`,
+            ),
           );
       }
     },

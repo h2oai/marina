@@ -7,30 +7,25 @@ import * as polymarket from "../../net/polymarket-client";
 import { isTabH2OConfigured, type TabH2ORow, tabh2oPredict } from "../../net/tabh2o-client";
 import type { MarinaDB, MarketRow } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { canonicalSub, unknownSubcommand } from "../parse-input";
+import { parseDuration } from "./format-duration";
 
 const HELP =
-  "Prediction market discovery and leaderboards.\nUsage: market list [open|resolved] | market search <query> | market view <id> | market live <venue> [duration] [limit] | market leaderboard | market score [entity] | market forecast <id>\n\nExamples:\n  market list\n  market list resolved\n  market search inflation\n  market view market:tech\n  market live kalshi 7d 25\n  market live polymarket 1w\n  market leaderboard\n  market score Alice\n  market forecast market:tech";
+  "Prediction market discovery and leaderboards.\nUsage: market list [open|resolved] | market search <query> | market show <id> (also view/info) | market live <venue> [duration] [limit] | market leaderboard | market score [entity] | market forecast <id>\n\nExamples:\n  market list\n  market list resolved\n  market search inflation\n  market show market:tech\n  market live kalshi 7d 25\n  market live polymarket 1mo\n  market leaderboard\n  market score Alice\n  market forecast market:tech";
+
+const MARKET_SUBS = ["list", "search", "live", "show", "leaderboard", "lb", "score", "forecast"];
 
 /**
- * Parse a duration string into milliseconds. Voice-friendly: "7d", "24h",
- * "1w", "1mo", "30d". Returns 0 if unparseable.
+ * Parse a market-window duration into milliseconds. Voice-friendly: "7d",
+ * "24h", "1w", "1mo", "30d". Returns 0 if unparseable.
+ *
+ * Shares the platform duration grammar (`parseDuration`: `m` = minutes,
+ * `mo` = months) but a live-market window is day-scale, so sub-hour units are
+ * rejected — `1m` is refused rather than silently read as one minute, which
+ * is the behaviour this command has always documented.
  */
 export function parseDurationMs(s: string): number {
-  // NOTE: the `m`-prefix here means MONTHS (mo/month/months) — deliberately
-  // distinct from feed/chronicle's parseSince where `m` = minutes. The regex
-  // rejects a bare "m"/"1m", so the two grammars don't collide; don't promote
-  // this as a general duration parser alongside the minute-based ones.
-  const m = s.match(
-    /^(\d+)\s*(h|hr|hrs|hour|hours|d|day|days|w|wk|wks|week|weeks|mo|month|months)$/i,
-  );
-  if (!m) return 0;
-  const n = Number(m[1]);
-  const unit = m[2]!.toLowerCase();
-  if (unit.startsWith("h")) return n * 3_600_000;
-  if (unit.startsWith("d")) return n * 86_400_000;
-  if (unit.startsWith("w")) return n * 7 * 86_400_000;
-  if (unit.startsWith("m")) return n * 30 * 86_400_000;
-  return 0;
+  return parseDuration(s, { minUnit: "h" }) ?? 0;
 }
 
 const DEFAULT_LIVE_LIMIT = 25;
@@ -51,7 +46,7 @@ export function marketCommand(deps: {
       if (!entity) return;
 
       const tokens = input.tokens;
-      const sub = tokens[0]?.toLowerCase() ?? "list";
+      const sub = canonicalSub(tokens[0], MARKET_SUBS) ?? "list";
 
       switch (sub) {
         case "list": {
@@ -143,11 +138,11 @@ export function marketCommand(deps: {
           return;
         }
 
-        case "view":
-        case "info": {
+        case "show": {
+          // `market view <id>` and `market info <id>` normalize here.
           const marketId = tokens[1];
           if (!marketId) {
-            ctx.send(input.entity, "Usage: market view <id>");
+            ctx.send(input.entity, "Usage: market show <id>   (also view/info)");
             return;
           }
           const market = db.getMarket(marketId);
@@ -345,7 +340,7 @@ export function marketCommand(deps: {
         }
 
         default:
-          ctx.send(input.entity, HELP);
+          ctx.send(input.entity, unknownSubcommand("market", tokens[0], HELP));
       }
     },
   };

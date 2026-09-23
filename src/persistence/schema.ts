@@ -3346,4 +3346,103 @@ CREATE TABLE memory_hygiene_snapshots (
 CREATE INDEX idx_memory_hygiene_snapshots_scope_at ON memory_hygiene_snapshots(scope, at);
 `,
   },
+  // Migration 116: indexes for hot paths that previously full-scanned.
+  // - `expireDirectMessages` runs EVERY tick with
+  //   `WHERE status='delivered' AND deadline_at <= ?`; the partial index keeps
+  //   it O(due rows) as the table grows.
+  // - `notes.supersedes_id` is probed on every note delete / process-tier
+  //   eviction (`UPDATE notes SET supersedes_id = NULL WHERE supersedes_id IN …`).
+  // - `note_sources.url` backs twin lookups (`getNotesBySourceUrl`) and the
+  //   evidence-weighting exclusions.
+  {
+    version: 116,
+    sql: `
+CREATE INDEX IF NOT EXISTS idx_direct_messages_delivered_deadline
+  ON direct_messages(deadline_at) WHERE status = 'delivered';
+CREATE INDEX IF NOT EXISTS idx_notes_supersedes ON notes(supersedes_id);
+CREATE INDEX IF NOT EXISTS idx_note_sources_url ON note_sources(url);
+`,
+  },
+  // Migration 117: durable keys for long-lived membership / ownership rows.
+  // Entity ids are transient (re-minted on every name-login once the reconnect
+  // grace lapses), so rows keyed by `e_N` silently detach from their owner.
+  // Like migration 109 did for the reputation ledgers, rewrite every row whose
+  // entity id still resolves (a live `entities` row with a world account) to
+  // the durable `users.id`. `MarinaDB` now resolves ids at the delegate
+  // boundary for these tables (`durableEntityKey`) and maps them back to the
+  // live entity id on read (`LIVE_ENTITY_ID_SQL`), so callers keep passing
+  // entity ids. Rows whose entity is already gone cannot be recovered here —
+  // they were unreachable before this migration too.
+  //
+  // Mirror tables (memberships, votes) drop the rows that lost an
+  // `OR IGNORE` conflict — the durable row already exists. Sandbox tables
+  // (flywheel_bindings, coding_projects, coding_services) are only rewritten,
+  // never deleted: a conflict there would mean two live sandboxes for one
+  // account and dropping either would orphan guest state.
+  {
+    version: 117,
+    sql: `
+UPDATE OR IGNORE group_members
+   SET entity_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = group_members.entity_id)
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = group_members.entity_id);
+DELETE FROM group_members
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = group_members.entity_id);
+UPDATE OR IGNORE channel_members
+   SET entity_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = channel_members.entity_id)
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = channel_members.entity_id);
+DELETE FROM channel_members
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = channel_members.entity_id);
+UPDATE OR IGNORE board_votes
+   SET entity_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = board_votes.entity_id)
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = board_votes.entity_id);
+DELETE FROM board_votes
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = board_votes.entity_id);
+UPDATE OR IGNORE task_votes
+   SET entity_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = task_votes.entity_id)
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = task_votes.entity_id);
+UPDATE OR IGNORE task_votes
+   SET claimant_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = task_votes.claimant_id)
+ WHERE claimant_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = task_votes.claimant_id);
+UPDATE OR IGNORE flywheel_bindings
+   SET entity_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = flywheel_bindings.entity_id)
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = flywheel_bindings.entity_id);
+UPDATE OR IGNORE coding_projects
+   SET entity_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = coding_projects.entity_id)
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = coding_projects.entity_id);
+UPDATE OR IGNORE coding_services
+   SET entity_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = coding_services.entity_id)
+ WHERE entity_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = coding_services.entity_id);
+`,
+  },
+  // Migration 118: the last two transient keys — `groups_.leader_id` and
+  // `tasks.creator_id`. Both are ownership columns (who may edit / cancel /
+  // approve), so a re-login after eviction silently lost the leader's and the
+  // creator's authority over their own group / task. Rewrite onto users.id
+  // where an account exists (same EXISTS guard as 109/117); neither column is
+  // unique, so nothing can collide and nothing is deleted. Delegates resolve
+  // `durableEntityKey()` on write and project `liveEntityIdSql` on read.
+  {
+    version: 118,
+    sql: `
+UPDATE OR IGNORE groups_
+   SET leader_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = groups_.leader_id)
+ WHERE leader_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = groups_.leader_id);
+UPDATE OR IGNORE tasks
+   SET creator_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = tasks.creator_id)
+ WHERE creator_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = tasks.creator_id);
+`,
+  },
 ];

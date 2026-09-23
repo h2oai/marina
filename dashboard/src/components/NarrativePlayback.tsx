@@ -59,8 +59,9 @@ export function NarrativePlayback({ isFocused, onToggleFocus }: PanelFocusProps 
               className="rounded border border-border bg-bg px-1 py-0.5 text-text hover:text-primary transition-colors disabled:opacity-40 disabled:hover:text-text"
               disabled={ordered.length === 0}
               title="Previous event"
+              aria-label="Previous event"
             >
-              <SkipBack size={11} />
+              <SkipBack size={11} aria-hidden="true" />
             </button>
             <button
               type="button"
@@ -68,8 +69,14 @@ export function NarrativePlayback({ isFocused, onToggleFocus }: PanelFocusProps 
               className="rounded border border-border bg-bg px-1 py-0.5 text-text hover:text-primary transition-colors disabled:opacity-40 disabled:hover:text-text"
               disabled={ordered.length === 0}
               title={playing ? "Pause playback" : "Play timeline"}
+              aria-label={playing ? "Pause playback" : "Play timeline"}
+              aria-pressed={playing}
             >
-              {playing ? <Pause size={11} /> : <Play size={11} />}
+              {playing ? (
+                <Pause size={11} aria-hidden="true" />
+              ) : (
+                <Play size={11} aria-hidden="true" />
+              )}
             </button>
             <button
               type="button"
@@ -77,8 +84,9 @@ export function NarrativePlayback({ isFocused, onToggleFocus }: PanelFocusProps 
               className="rounded border border-border bg-bg px-1 py-0.5 text-text hover:text-primary transition-colors disabled:opacity-40 disabled:hover:text-text"
               disabled={ordered.length === 0}
               title="Next event"
+              aria-label="Next event"
             >
-              <SkipForward size={11} />
+              <SkipForward size={11} aria-hidden="true" />
             </button>
             <span className="ml-2 text-text-dim">
               {ordered.length === 0

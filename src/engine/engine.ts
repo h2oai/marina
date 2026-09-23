@@ -66,10 +66,10 @@ import {
   BOARD_ARCHIVE_INTERVAL,
   CHANNEL_PRUNE_INTERVAL,
   CONVERSATION_CLEANUP_INTERVAL,
-  EVENT_LOG_DB_RETENTION,
   MAX_COMMAND_QUEUE_SIZE,
   MAX_COMMANDS_PER_TICK,
   NOTE_IMPORTANCE_INTERVAL,
+  positiveNumberFromEnv,
   ROOM_FETCH_RATE_MS,
   ROOM_FETCH_TIMEOUT_MS,
 } from "./constants";
@@ -87,6 +87,7 @@ import {
 import { isMemoryHygieneTick, runEngineMemoryHygiene } from "./memory-hygiene";
 import { getRank, rankName, setRank } from "./permissions";
 import { computeReadiness } from "./readiness";
+import { formatRetentionSummary, isRetentionTick, runRetentionPass } from "./retention";
 import { RoomSandbox } from "./room-sandbox";
 import { checkGateForExecution, grantGatesForRank, recordGateExecution } from "./safety-gates";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
@@ -121,6 +122,17 @@ export interface EngineConfig {
 }
 
 const DEFAULT_TICK_INTERVAL = 1000;
+
+/**
+ * Wall-clock budget for the per-tick command phase: dispatch plus each
+ * command's synchronous prefix (parse, gate checks, the handler up to its
+ * first `await`). Sibling of the 200 ms room-tick budget; queued commands the
+ * budget stops are kept for the next tick in the same per-entity FIFO order.
+ * `MAX_COMMANDS_PER_TICK` still bounds the count. Override:
+ * `MARINA_COMMAND_PHASE_BUDGET_MS`.
+ */
+export const COMMAND_PHASE_BUDGET_MS =
+  positiveNumberFromEnv("MARINA_COMMAND_PHASE_BUDGET_MS") ?? 150;
 
 export class Engine {
   readonly entities: EntityManager;
@@ -166,6 +178,15 @@ export class Engine {
     return this.config.instanceName ?? this.world?.name ?? "Marina";
   }
   private commandQueue: { entity: EntityId; raw: string }[] = [];
+  /**
+   * Per-entity tail of the in-flight queued commands. `processCommand` is
+   * async, so without this an entity's commands would interleave past their
+   * first `await`; chaining keeps one entity strictly in order while
+   * different entities still interleave (fair share).
+   */
+  private commandChains = new Map<EntityId, Promise<void>>();
+  /** @internal — test seam for the command-phase budget. */
+  commandPhaseBudgetMs = COMMAND_PHASE_BUDGET_MS;
   /** @internal */ readonly _eventLog: EventLog;
   /** @internal — backward-compatible accessor for the raw event array */
   get eventLog(): EngineEvent[] {
@@ -864,6 +885,39 @@ export class Engine {
     this.commandQueue.push({ entity, raw });
   }
 
+  /**
+   * Run one queued command after the entity's previous queued command has
+   * settled. An idle entity's command starts synchronously (its prefix counts
+   * against the phase budget); a busy entity's command is chained. A rejection
+   * that escapes `processCommand` before the handler's own try/catch (modal
+   * routing, parse, context build) is counted through the tick error path
+   * instead of surfacing as an unhandled rejection.
+   */
+  private dispatchQueued(entity: EntityId, raw: string): void {
+    const previous = this.commandChains.get(entity);
+    const run = (
+      previous
+        ? previous.then(() => this.processCommand(entity, raw))
+        : this.processCommand(entity, raw)
+    ).catch((err) => this.recordTickError(err));
+    this.commandChains.set(entity, run);
+    void run.then(() => {
+      if (this.commandChains.get(entity) === run) this.commandChains.delete(entity);
+    });
+  }
+
+  /** @internal — settle every in-flight queued command (tests, shutdown). */
+  async drainCommands(): Promise<void> {
+    while (this.commandChains.size > 0) {
+      await Promise.all([...this.commandChains.values()]);
+    }
+  }
+
+  /** @internal — commands still waiting for a tick. */
+  get queuedCommandCount(): number {
+    return this.commandQueue.length;
+  }
+
   /** Process a single command immediately */
   async processCommand(
     entityId: EntityId,
@@ -1243,7 +1297,10 @@ export class Engine {
 
     // 1. Process queued commands — per-entity round-robin for fairness
     //    No single entity can monopolize a tick; each gets one command per round.
+    //    Bounded twice: by count (MAX_COMMANDS_PER_TICK) and by wall clock
+    //    (commandPhaseBudgetMs — at least one command always dispatches).
     if (this.commandQueue.length > 0) {
+      const phaseStart = performance.now();
       // Group by entity, preserving per-entity FIFO order
       const byEntity = new Map<EntityId, { entity: EntityId; raw: string }[]>();
       for (const cmd of this.commandQueue) {
@@ -1260,14 +1317,19 @@ export class Engine {
       const cursors: number[] = entityQueues.map(() => 0);
       let processed = 0;
       let anyLeft = true;
-      while (processed < MAX_COMMANDS_PER_TICK && anyLeft) {
+      let overBudget = false;
+      while (processed < MAX_COMMANDS_PER_TICK && anyLeft && !overBudget) {
         anyLeft = false;
         for (let i = 0; i < entityQueues.length; i++) {
           const eq = entityQueues[i]!;
           const ci = cursors[i]!;
           if (ci < eq.length) {
+            if (processed > 0 && performance.now() - phaseStart >= this.commandPhaseBudgetMs) {
+              overBudget = true;
+              break;
+            }
             const cmd = eq[ci]!;
-            this.processCommand(cmd.entity, cmd.raw);
+            this.dispatchQueued(cmd.entity, cmd.raw);
             cursors[i] = ci + 1;
             processed++;
             anyLeft = true;
@@ -1437,14 +1499,29 @@ export class Engine {
       tryLog(this.logger, "tick", "Memory observability poll failed", () => pollMemoryEvents(this));
     }
 
-    // Hourly: trim the durable event log to the retention window. Without this
-    // the table grows without bound for the life of the deployment (traces and
-    // per-entity activity queries degrade linearly with its size).
-    if (this.tickCount % NOTE_IMPORTANCE_INTERVAL === 3300 && this.db) {
+    // Hourly (own phase): declarative row retention — event_log (row-bounded,
+    // MARINA_EVENT_RETENTION), telemetry / ledger / audit tables by age, in
+    // ≤ 5k-row batches (src/engine/retention.ts, MARINA_RETENTION_OVERRIDES).
+    // Without this the append-only tables grow for the life of the deployment
+    // and every scan over them (traces, activity, expiry) degrades linearly.
+    if (this.db && isRetentionTick(this.tickCount, NOTE_IMPORTANCE_INTERVAL)) {
       const db = this.db;
-      tryLog(this.logger, "tick", "Event log prune failed", () =>
-        db.pruneEvents(EVENT_LOG_DB_RETENTION),
-      );
+      void tryLogAsync(this.logger, "tick", "Retention pass failed", async () => {
+        const result = runRetentionPass(db);
+        if (result.skipped.length) {
+          this.logger.debug("retention", "Skipped tables missing from this schema", {
+            tables: result.skipped,
+          });
+        }
+        if (result.rejectedOverrides.length) {
+          this.logger.warn("retention", "Ignored MARINA_RETENTION_OVERRIDES entries", {
+            entries: result.rejectedOverrides,
+          });
+        }
+        if (Object.keys(result.deleted).length > 0) {
+          this.logger.info("retention", `Pruned ${formatRetentionSummary(result)}`);
+        }
+      });
     }
 
     // Periodic: clean up orphaned agents (entities without active connections)

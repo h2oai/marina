@@ -204,3 +204,40 @@ The check logic lives in `src/engine/readiness.ts` (`computeReadiness(engine)`) 
 live `GET /api/readiness` dashboard endpoint. See also [`.env.example`](../.env.example)
 for the full env reference and
 [`docs/marina-as-llm.md`](marina-as-llm.md) for the `/v1` endpoint.
+
+## Row retention
+
+Marina writes a row per command, per agent tool call, per memory operation and per
+direct message, so several tables grow for the life of a deployment unless something
+ages them out. An hourly engine pass (`src/engine/retention.ts`, `runRetentionPass`)
+does that declaratively: every hot table is listed with a class and a keep window, rows
+past the window are deleted in batches of at most 5,000 (twenty batches per table per
+pass — a backlog drains over a few hours rather than stalling one tick), and one
+`retention` log line summarises what was pruned.
+
+| Table | Class | Keep |
+|---|---|---|
+| `primitive_usage` | telemetry | 14 d |
+| `feed_events` | telemetry | 7 d |
+| `memory_service_events`, `coding_events` | telemetry | 30 d |
+| `event_log` | telemetry | newest `MARINA_EVENT_RETENTION` rows (default 100k) |
+| `direct_messages` (acknowledged / expired / deadline-less) | ledger | 90 d |
+| `cognitive_events`, `productivity_sessions`, `core_memory_history`, `media_jobs`, `memory_assistance_actions` | ledger | 90 d |
+| `witness_attestations`, `trace_judgments`, `note_verifications`, `evidence_receipts`, `association_events`, `benchmark_runs` | audit | 365 d |
+| `shell_log` | audit | 90 d |
+| `chronicle`, `entity_standing`, `memory_resolutions`, `economic_events` | append-only | never |
+
+Override any window with a single env var — `MARINA_RETENTION_OVERRIDES` — as a
+comma-separated list of `table=value`: a duration (`30d`, `12h`, `2w`), a bare integer for
+row-bounded tables (`event_log=250000`), or `0` to never prune that table:
+
+```bash
+MARINA_RETENTION_OVERRIDES="primitive_usage=30d,feed_events=0,evidence_receipts=0"
+```
+
+Unknown tables or malformed values are ignored with a warning. Tables a world never created
+are skipped, not failed. The hash-chained tables (`cognitive_events`, `evidence_receipts`)
+are pruned oldest-first so the surviving chain stays contiguous and the bounded
+`verifyEvidenceChain` window keeps verifying; set them to `0` if you need the chain back to
+genesis. Live `direct_messages` with a pending deadline are left for `expireDirectMessages`
+(which now uses a partial index, migration 116) and are only aged out once settled.

@@ -5,6 +5,10 @@ import { useState } from "react";
 import { logQueryString, useLogs } from "../hooks/use-api";
 import { describeApiError, downloadApi } from "../lib/api";
 import type { StructuredLogEntry } from "../lib/types";
+import { VirtualList } from "./VirtualList";
+
+/** Estimated collapsed row height (px) for the windowed log list. */
+const LOG_ROW_HEIGHT = 28;
 
 const LEVEL_CLASS = {
   debug: "text-text-dim",
@@ -118,11 +122,14 @@ export function LogExplorer() {
         </div>
       )}
       {data && data.logs.length > 0 && (
-        <div className="min-h-0 flex-1 overflow-auto rounded border border-border bg-bg/50">
-          {data.logs.map((entry) => (
-            <LogRow key={entry.id} entry={entry} />
-          ))}
-        </div>
+        <VirtualList
+          items={data.logs}
+          rowHeight={LOG_ROW_HEIGHT}
+          itemKey={(entry) => entry.id}
+          renderRow={(entry) => <LogRow entry={entry} />}
+          className="min-h-0 flex-1 overflow-auto rounded border border-border bg-bg/50"
+          containerProps={{ role: "list", "aria-label": "Log entries" }}
+        />
       )}
       {data && (
         <div className="flex items-center justify-between text-text-dim">
@@ -170,6 +177,7 @@ function LogRow({ entry }: { entry: StructuredLogEntry }) {
       <button
         type="button"
         onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
         className="grid w-full grid-cols-[68px_72px_90px_1fr] gap-2 text-left"
       >
         <span className="text-text-dim">{new Date(entry.timestamp).toLocaleTimeString()}</span>

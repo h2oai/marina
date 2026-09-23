@@ -8,6 +8,11 @@ export interface ThemeDefinition {
   id: string;
   name: string;
   description: string;
+  /**
+   * Which `color-scheme` the palette is built for. Drives native form controls
+   * and scrollbars, and lets CSS branch on `[data-theme-scheme="light"]`.
+   */
+  scheme: "dark" | "light";
   colors: {
     bg: string;
     "bg-card": string;
@@ -40,6 +45,7 @@ export interface ThemeDefinition {
 export const themes: Record<string, ThemeDefinition> = {
   h2o: {
     id: "h2o",
+    scheme: "dark",
     name: "H2O",
     description: "H2O.ai brand — black & gold",
     colors: {
@@ -78,6 +84,7 @@ export const themes: Record<string, ThemeDefinition> = {
 
   cyberpunk: {
     id: "cyberpunk",
+    scheme: "dark",
     name: "Cyberpunk",
     description: "Neon cyan & magenta",
     colors: {
@@ -116,6 +123,7 @@ export const themes: Record<string, ThemeDefinition> = {
 
   synthwave: {
     id: "synthwave",
+    scheme: "dark",
     name: "Synthwave",
     description: "Retro purple & hot pink",
     colors: {
@@ -154,6 +162,7 @@ export const themes: Record<string, ThemeDefinition> = {
 
   matrix: {
     id: "matrix",
+    scheme: "dark",
     name: "Matrix",
     description: "Green phosphor terminal",
     colors: {
@@ -192,6 +201,7 @@ export const themes: Record<string, ThemeDefinition> = {
 
   ocean: {
     id: "ocean",
+    scheme: "dark",
     name: "Ocean",
     description: "Deep sea blues & coral",
     colors: {
@@ -227,10 +237,92 @@ export const themes: Record<string, ThemeDefinition> = {
       "#ef4444", // red
     ],
   },
+
+  light: {
+    id: "light",
+    name: "Light",
+    description: "Paper ground, ink text",
+    scheme: "light",
+    // A designed light palette, not an inversion: near-white ground with a
+    // slight cool bias, ink text, and every accent hue re-tuned so that text
+    // in that colour clears WCAG AA (>= 4.5:1) on bg, bg-card AND bg-hover.
+    // Ratios are asserted in src/__tests__/theme-resolution.test.tsx.
+    colors: {
+      bg: "#f4f6fa",
+      "bg-card": "#ffffff",
+      "bg-hover": "#e6eaf2",
+      border: "#d2d8e3",
+      "border-glow": "#7d600040",
+      primary: "#7d6000", // ochre — the gold, grounded
+      secondary: "#9a4f00", // burnt amber
+      accent: "#ad4209", // rust
+      text: "#1f2430",
+      "text-dim": "#5a6376",
+      "text-bright": "#0b0f19",
+      success: "#177536",
+      warning: "#7d6000",
+      danger: "#c62828",
+      coral: "#b63a0a",
+      teal: "#0f766e",
+      pink: "#be185d",
+    },
+    glass: ["rgba(255, 255, 255, 0.92)", "rgba(244, 246, 250, 0.96)"],
+    glowRgba: "rgba(125, 96, 0, 0.18)",
+    gradientStops: "#7d6000, #9a4f00, #ad4209",
+    districtPalette: [
+      "#7d6000", // ochre
+      "#ad4209", // rust
+      "#177536", // green
+      "#c62828", // red
+      "#1d4ed8", // blue
+      "#6d28d9", // purple
+      "#b63a0a", // coral
+      "#0e7490", // cyan
+    ],
+  },
 };
 
 export const DEFAULT_THEME = "h2o";
+/** Theme picked for a dark OS preference when the user has never chosen one. */
+export const DEFAULT_DARK_THEME = DEFAULT_THEME;
+/** Theme picked for a light OS preference when the user has never chosen one. */
+export const DEFAULT_LIGHT_THEME = "light";
+/** Sentinel stored choice meaning "follow the OS `prefers-color-scheme`". */
+export const SYSTEM_THEME = "system";
 export const THEME_IDS = Object.keys(themes);
+
+/** True when `id` names a real theme (not the `system` sentinel). */
+export function isThemeId(id: string | null | undefined): id is string {
+  return typeof id === "string" && id in themes;
+}
+
+/**
+ * Read the OS colour-scheme preference. Safe everywhere: returns `false`
+ * (dark-first, the historical default) when `matchMedia` is unavailable.
+ */
+export function prefersLightScheme(): boolean {
+  try {
+    return (
+      typeof window !== "undefined" &&
+      !!window.matchMedia?.("(prefers-color-scheme: light)")?.matches
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the theme to render from the stored choice and the OS preference.
+ *
+ * - a stored, valid theme id wins (explicit choice);
+ * - `null` (never chosen) or `"system"` follows the OS: light OS → `light`,
+ *   dark OS (or unknown) → the historical dark default;
+ * - an unknown stored value is treated as "never chosen".
+ */
+export function resolveThemeId(stored: string | null | undefined, prefersLight: boolean): string {
+  if (isThemeId(stored)) return stored;
+  return prefersLight ? DEFAULT_LIGHT_THEME : DEFAULT_DARK_THEME;
+}
 
 /** Apply a theme's CSS variables to the document.
  *  Injects/updates a <style> element so theme overrides are unlayered
@@ -240,12 +332,14 @@ export function applyTheme(themeId: string): void {
   const root = document.documentElement;
 
   root.setAttribute("data-theme", theme.id);
+  root.setAttribute("data-theme-scheme", theme.scheme);
+  root.style.colorScheme = theme.scheme;
 
   const colorVars = Object.entries(theme.colors)
     .map(([key, value]) => `--color-${key}:${value}`)
     .join(";");
 
-  const css = `:root{${colorVars};--glass-stop-1:${theme.glass[0]};--glass-stop-2:${theme.glass[1]};--glow-rgba:${theme.glowRgba};--gradient-stops:${theme.gradientStops}}`;
+  const css = `:root{${colorVars};--glass-stop-1:${theme.glass[0]};--glass-stop-2:${theme.glass[1]};--glow-rgba:${theme.glowRgba};--gradient-stops:${theme.gradientStops};color-scheme:${theme.scheme}}`;
 
   let el = document.getElementById("marina-theme") as HTMLStyleElement | null;
   if (!el) {

@@ -15,6 +15,7 @@ import type {
   RoomContext,
 } from "../../types";
 import { normalizePatternName } from "../../world/templates/orchestration";
+import { canonicalSub, parseModifiers, splitOnTerminator, unknownSubcommand } from "../parse-input";
 
 const VALID_FORMATIONS: ReadonlySet<CrewFormation> = new Set<CrewFormation>([
   "deliberation",
@@ -39,10 +40,33 @@ interface CrewCommandDeps {
   db?: MarinaDB;
 }
 
+const CREATE_USAGE =
+  "Usage: crew create <name> <a,b,c> [formation:<f>] [persist] -- <goal>   (also formation=<f> / --formation <f>)";
+
+const CREW_SUBS = [
+  "info",
+  "create",
+  "dispatch",
+  "invite",
+  "invitations",
+  "join",
+  "decline",
+  "leave",
+  "formation",
+  "persist",
+  "stage",
+  "artifact",
+  "stall",
+  "complete",
+  "dissolve",
+];
+
 /**
- * Parse `crew create <name> alice,bob[,carol] [formation=<f>] [persist] -- <goal>`.
- * Members come as the second positional token. Flags use `key=value` form.
- * Goal is everything after `--`.
+ * Parse `crew create <name> alice,bob[,carol] [formation:<f>] [persist] -- <goal>`.
+ * Members come as the second positional token. Modifiers use the platform
+ * grammar (`formation:pipeline`, `formation=pipeline`, `--formation pipeline`);
+ * `persist` is a bare flag (also `persist:true`). Goal is everything after a
+ * standalone `--`.
  */
 function parseCreateArgs(args: string): {
   name?: string;
@@ -52,48 +76,44 @@ function parseCreateArgs(args: string): {
   goal: string;
   error?: string;
 } {
-  const dashIdx = args.indexOf("--");
-  const head = dashIdx >= 0 ? args.slice(0, dashIdx).trim() : args.trim();
-  const goal = dashIdx >= 0 ? args.slice(dashIdx + 2).trim() : "";
+  const [head, tail] = splitOnTerminator(args);
+  const goal = tail ?? "";
 
-  const tokens = head.split(/\s+/).filter(Boolean);
-  if (tokens.length < 2) {
-    return {
-      members: [],
-      goal,
-      error: "Usage: crew create <name> <a,b,c> [formation=<f>] [persist] -- <goal>",
-    };
+  const { values, rest, errors } = parseModifiers(head.split(/\s+/).filter(Boolean), {
+    formation: { type: "string" },
+    persist: { type: "bool" },
+  });
+  if (errors.length > 0) {
+    return { members: [], goal, error: `${errors.join("; ")}. ${CREATE_USAGE}` };
+  }
+  if (rest.length < 2) {
+    return { members: [], goal, error: CREATE_USAGE };
   }
 
-  const name = tokens[0];
-  const members = tokens[1]!
+  const name = rest[0];
+  const members = rest[1]!
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
   let formation: CrewFormation | undefined;
   let lifetime: CrewLifetime | undefined;
 
-  for (const tok of tokens.slice(2)) {
-    if (tok === "persist") {
-      lifetime = "persisted";
-      continue;
+  // Legacy bare `persist` keyword among the trailing positionals.
+  if (values.persist === true || rest.slice(2).some((tok) => tok.toLowerCase() === "persist")) {
+    lifetime = "persisted";
+  }
+  if (typeof values.formation === "string") {
+    const value = values.formation.toLowerCase();
+    const canonical = normalizePatternName(value);
+    if (!VALID_FORMATIONS.has(canonical as CrewFormation)) {
+      return {
+        name,
+        members,
+        goal,
+        error: `Unknown formation "${value}". Valid: ${[...VALID_FORMATIONS].join(", ")}`,
+      };
     }
-    const eq = tok.indexOf("=");
-    if (eq < 0) continue;
-    const key = tok.slice(0, eq).toLowerCase();
-    const value = tok.slice(eq + 1).toLowerCase();
-    if (key === "formation") {
-      const canonical = normalizePatternName(value);
-      if (!VALID_FORMATIONS.has(canonical as CrewFormation)) {
-        return {
-          name,
-          members,
-          goal,
-          error: `Unknown formation "${value}". Valid: ${[...VALID_FORMATIONS].join(", ")}`,
-        };
-      }
-      formation = canonical as CrewFormation;
-    }
+    formation = canonical as CrewFormation;
   }
 
   return { name, members, formation, lifetime, goal };
@@ -113,10 +133,10 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
     help:
       "Crews — runtime containers for multi-agent coordination.\n" +
       "Usage:\n" +
-      "  crew create <name> <a,b,c> [formation=<f>] [persist] -- <goal>\n" +
+      "  crew create <name> <a,b,c> [formation:<f>] [persist] -- <goal>   (also formation=<f> / --formation <f>)\n" +
       "  crew dispatch <name> <message>\n" +
-      "  crew info <name>\n" +
-      "  crew invite <name> <agent> [role=<r>]\n" +
+      "  crew info <name>   (also show/view)\n" +
+      "  crew invite <name> <agent> [role:<r>]\n" +
       "  crew invitations\n" +
       "  crew join <name>\n" +
       "  crew decline <name>\n" +
@@ -134,7 +154,8 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
       const caller = deps.getEntity(input.entity);
       if (!caller) return;
       const tokens = input.tokens;
-      const sub = tokens[0]?.toLowerCase();
+      // `crew show/view <name>` normalize onto `info` — this command's detail verb.
+      const sub = canonicalSub(tokens[0], CREW_SUBS);
 
       if (!sub || sub === "info") {
         const target = tokens[sub === "info" ? 1 : 0];
@@ -303,7 +324,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         const crewName = tokens[1];
         const agentName = tokens[2];
         if (!crewName || !agentName) {
-          ctx.send(input.entity, "Usage: crew invite <name> <agent> [role=<r>]");
+          ctx.send(input.entity, "Usage: crew invite <name> <agent> [role:<r>]   (also role=<r>)");
           return;
         }
         const crew = deps.crews.getByName(crewName);
@@ -322,10 +343,9 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           return;
         }
         const role =
-          tokens
-            .slice(3)
-            .find((token) => token.startsWith("role="))
-            ?.slice(5) || "specialist";
+          (parseModifiers(tokens.slice(3), { role: { type: "string" } }).values.role as
+            | string
+            | undefined) || "specialist";
         try {
           deps.crews.invite(crew.id, agentName, caller.name, role);
           ctx.send(
@@ -576,8 +596,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           | "synthesis"
           | "draft"
           | undefined;
-        const dashIdx = input.args.indexOf("--");
-        const ref = dashIdx >= 0 ? input.args.slice(dashIdx + 2).trim() : "";
+        const ref = splitOnTerminator(input.args)[1] ?? "";
         if (!name || !kind || !ref) {
           ctx.send(
             input.entity,
@@ -668,8 +687,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           ctx.send(input.entity, `Only the owner or a member can complete crew "${crew.name}".`);
           return;
         }
-        const dashIdx = input.args.indexOf("--");
-        const summary = dashIdx >= 0 ? input.args.slice(dashIdx + 2).trim() : "";
+        const summary = splitOnTerminator(input.args)[1] ?? "";
         if (!summary) {
           ctx.send(input.entity, "Usage: crew complete <name> -- <summary>");
           return;
@@ -726,7 +744,11 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
 
       ctx.send(
         input.entity,
-        `Unknown crew subcommand "${sub}". Try: create, dispatch, info, invite, invitations, join, decline, leave, formation, persist, stage, artifact, stall, complete, dissolve.`,
+        unknownSubcommand(
+          "crew",
+          sub,
+          "Try: create, dispatch, info, invite, invitations, join, decline, leave, formation, persist, stage, artifact, stall, complete, dissolve.",
+        ),
       );
     },
   };

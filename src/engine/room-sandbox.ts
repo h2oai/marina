@@ -98,25 +98,37 @@ export class RoomSandbox {
   }
 
   /** Execute a room handler with safety wrapping */
-  execHandler(
+  execHandler<T = void>(
     roomId: string,
     handlerName: string,
-    fn: () => void,
+    fn: () => T,
     onError?: (roomId: string, error: string) => void,
-  ): void {
+  ): T | undefined {
     const m = this.getMetrics(roomId);
-    if (m.disabled) return;
+    if (m.disabled) return undefined;
 
     m.totalCalls++;
     const start = performance.now();
 
+    let result: T;
     try {
-      fn();
+      result = fn();
     } catch (err) {
       const msg = getErrorMessage(err);
       m.lastError = `${handlerName}: ${msg}`;
       this.recordViolation(roomId, m, `Error in ${handlerName}: ${msg}`, onError);
-      return;
+      return undefined;
+    }
+
+    // An async handler returns a promise: hand it back so the caller (the
+    // engine's per-entity command chain) can await it, and record a rejection
+    // as a violation instead of letting it escape as an unhandled rejection.
+    if (result && typeof (result as unknown as Promise<unknown>).then === "function") {
+      (result as unknown as Promise<unknown>).catch((err: unknown) => {
+        const msg = getErrorMessage(err);
+        m.lastError = `${handlerName}: ${msg}`;
+        this.recordViolation(roomId, m, `Error in ${handlerName} (async): ${msg}`, onError);
+      });
     }
 
     const elapsed = performance.now() - start;
@@ -248,9 +260,11 @@ export class RoomSandbox {
     if (module.commands) {
       const wrappedCommands: RoomModule["commands"] = {};
       for (const [name, handler] of Object.entries(module.commands)) {
-        wrappedCommands[name] = (ctx, input) => {
+        // Return the handler's value: an async room command's promise must reach
+        // processCommand so the per-entity command chain awaits it (previously the
+        // closure discarded it and async room commands were never awaited).
+        wrappedCommands[name] = (ctx, input) =>
           this.execHandler(roomId, `command:${name}`, () => handler(ctx, input), onError);
-        };
       }
       wrapped.commands = wrappedCommands;
     }

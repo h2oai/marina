@@ -4,11 +4,48 @@
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import type { ConnectorRuntime } from "../connector-runtime";
+import { type ModifierSpec, parseModifiers } from "../parse-input";
 import {
   initProvidersSync,
   search as providerSearch,
   type SearchResult,
 } from "../search-providers/index";
+
+/** `web search` modifiers: `engines:web,academic limit:5` (also `--engines web`). */
+const WEB_SEARCH_SPEC: ModifierSpec = {
+  engines: { type: "string", aliases: ["engine"] },
+  limit: { type: "int", aliases: ["max"] },
+};
+
+export interface WebSearchArgs {
+  query: string;
+  engines?: string[];
+  maxResults: number;
+}
+
+/**
+ * Parse `web search` arguments. Only LEADING modifiers are consumed so a
+ * query containing `engines:` or `limit:` as text survives; `--` ends
+ * modifier parsing explicitly. Returns an error string for a bad modifier.
+ */
+export function parseWebSearchArgs(tokens: readonly string[]): WebSearchArgs | { error: string } {
+  const mods = parseModifiers(tokens, WEB_SEARCH_SPEC, { leading: true });
+  if (mods.errors.length > 0) return { error: mods.errors.join("; ") };
+  const query = mods.rest.join(" ").trim();
+  const engines =
+    typeof mods.values.engines === "string"
+      ? mods.values.engines
+          .split(",")
+          .map((e) => e.trim())
+          .filter(Boolean)
+      : undefined;
+  const limit = typeof mods.values.limit === "number" ? mods.values.limit : 10;
+  return {
+    query,
+    ...(engines && engines.length > 0 ? { engines } : {}),
+    maxResults: Math.min(Math.max(limit, 1), 25),
+  };
+}
 
 /**
  * Web command — safe outbound web access for entities and agents.
@@ -38,10 +75,11 @@ export function webCommand(deps: {
     aliases: [],
     help: `Search the web or fetch a URL.
 Usage:
-  web search <query>                 — search the web (auto-detects academic/news/code)
-  web search --engines web <query>   — search specific engines only
-  web fetch <url>                    — fetch and extract text from a URL
-  web multisearch <q1> | <q2>        — parallel multi-query search`,
+  web search <query>                        — search the web (auto-detects academic/news/code)
+  web search engines:web,academic <query>   — search specific engines only (also --engines web)
+  web search limit:5 <query>                — cap results (default 10)
+  web fetch <url>                           — fetch and extract text from a URL
+  web multisearch <q1> | <q2>               — parallel multi-query search`,
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -87,22 +125,19 @@ async function handleSearch(
   tokens: string[],
   runtime: ConnectorRuntime,
 ): Promise<void> {
-  // Parse --engines flag (for agent explicit control)
-  let engines: string[] | undefined;
-  let queryTokens = tokens;
-
-  if (tokens[0] === "--engines" && tokens[1] && tokens.length > 2) {
-    engines = tokens[1].split(",").map((e) => e.trim());
-    queryTokens = tokens.slice(2);
+  // `engines:web,academic` / `--engines web` (agent explicit control), `limit:N`.
+  const parsed = parseWebSearchArgs(tokens);
+  if ("error" in parsed) {
+    ctx.send(eid, `${parsed.error}. Usage: web search [engines:<a,b>] [limit:N] <query>`);
+    return;
   }
-
-  const query = queryTokens.join(" ").trim();
+  const { query, engines, maxResults } = parsed;
   if (!query) {
-    ctx.send(eid, "Usage: web search <query>");
+    ctx.send(eid, "Usage: web search [engines:<a,b>] [limit:N] <query>");
     return;
   }
 
-  const results = await providerSearch(query, { engines, maxResults: 10 }, runtime, eid);
+  const results = await providerSearch(query, { engines, maxResults }, runtime, eid);
 
   if (results.length === 0) {
     ctx.send(

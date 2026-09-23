@@ -3,6 +3,7 @@
 
 import { secretsEqual } from "../auth/secret-compare";
 import type { Engine } from "../engine/engine";
+import { isLocalUngated } from "../engine/trust-profile";
 import type { EntityId } from "../types";
 import { corsHeaders } from "./cors";
 
@@ -43,6 +44,35 @@ export function isOperatorPrincipal(entityId: EntityId): boolean {
 /** Whether the principal is a sentinel (no backing in-world entity). */
 export function isSentinelPrincipal(entityId: EntityId): boolean {
   return entityId === OPEN_API_ENTITY_ID || entityId === DESKTOP_OPERATOR_ENTITY_ID;
+}
+
+/**
+ * Refuse a state-changing request from the dev-open sentinel.
+ *
+ * `MARINA_OPEN_API=true` opens *reads*; it must never let an anonymous caller
+ * create, modify or delete world state (assets, canvases, …) while also
+ * discarding the identity the write would be attributed to. Returns a 403 for
+ * {@link OPEN_API_ENTITY_ID}, `null` for every other principal — including the
+ * deliberately-provisioned desktop operator sentinel, which the dashboard
+ * already treats as a trusted local operator. Under the `local` trust profile
+ * (loopback bind, no auth) the sentinel IS the operator and writes are allowed.
+ */
+export function refuseOpenApiWrite(entityId: EntityId, origin: string | null): Response | null {
+  if (entityId !== OPEN_API_ENTITY_ID) return null;
+  // `local` = one operator on their own loopback machine with no auth configured
+  // (the same posture that makes every loopback login sovereign). The Canvas UI
+  // with MARINA_OPEN_API=true and no session token is that operator, so the
+  // dev write flow stays open there; shared/public keep the sentinel read-only
+  // (and MARINA_OPEN_API on a public bind is a fatal boot error anyway).
+  if (isLocalUngated()) return null;
+  return Response.json(
+    {
+      error:
+        "MARINA_OPEN_API grants read-only access; writes require a valid session token " +
+        "(Authorization: Bearer <token>).",
+    },
+    { status: 403, headers: corsHeaders(origin) },
+  );
 }
 
 /** Whether unauthenticated API access is allowed (development mode). */

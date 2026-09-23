@@ -17,7 +17,7 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import type { ReactElement, ReactNode } from "react";
 import { useCallback, useMemo, useState } from "react";
-import { useEntityBrief, useEntityDetail, useEntityWork } from "../hooks/use-api";
+import { useEntityBrief, useEntityDetail, useEntityWork, useOpsOverview } from "../hooks/use-api";
 import { useChatState } from "../hooks/use-chat-state";
 import {
   type ActivityItem,
@@ -35,6 +35,7 @@ import { cn, formatTime } from "../lib/utils";
 import { AgentPanel } from "./AgentPanel";
 import { EntitySymmetryBar } from "./EntitySymmetryBar";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
+import { AgentOpsBadges, opsRowsByName } from "./ops/AgentOpsBadges";
 import { WhoLink } from "./WhoLink";
 
 export function EntityRoster({
@@ -47,6 +48,10 @@ export function EntityRoster({
   const selectedEntity = useWorldState((s) => s.selectedEntity);
   const selectEntity = useWorldState((s) => s.selectEntity);
   const selectRoom = useWorldState((s) => s.selectRoom);
+  // Operator accounting (rolling-hour cost, pauses) for the agent rows —
+  // server-scoped, so a resident only gets rows for its own agents.
+  const { data: ops } = useOpsOverview();
+  const opsRows = useMemo(() => opsRowsByName(ops?.agents), [ops]);
 
   // Agents first, then clustered by origin (manual → crew → system → player →
   // joined) so the roster visually groups "what I launched" vs "the default
@@ -176,6 +181,7 @@ export function EntityRoster({
                     </span>
                   )}
                   {e.agentStatus && renderSupportsBadges(e.agentStatus.supports)}
+                  {e.agentStatus && <AgentOpsBadges row={opsRows[e.name]} />}
                   <span className="truncate text-text-dim text-[10px]">{e.room.split("/")[1]}</span>
                   {e.agentStatus && (
                     <button
@@ -701,6 +707,9 @@ function MessageThreadGroup({
         ? "text-primary"
         : "text-warning";
   const prefix = thread.kind === "entity" ? "→ " : thread.kind === "room" ? "@ " : "";
+  // Threads come from a pure grouping helper; guard anyway so a malformed
+  // activity payload degrades to an empty thread instead of a crashed roster.
+  const items = Array.isArray(thread.items) ? thread.items : [];
 
   return (
     <div>
@@ -720,9 +729,9 @@ function MessageThreadGroup({
             {thread.partner}
           </span>
         )}
-        <span className="text-text-dim">· {thread.items.length}</span>
+        <span className="text-text-dim">· {items.length}</span>
       </div>
-      {thread.items.map((item) => {
+      {items.map((item) => {
         const mark = KIND_MARK[item.kind];
         return (
           <div

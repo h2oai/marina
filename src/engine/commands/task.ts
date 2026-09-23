@@ -21,6 +21,38 @@ import type {
   EntityRank,
   RoomContext,
 } from "../../types";
+import { canonicalSub, parseModifiers, unknownSubcommand } from "../parse-input";
+
+const TASK_SUBS = [
+  "list",
+  "info",
+  "create",
+  "goal",
+  "progress",
+  "claim",
+  "heartbeat",
+  "recover",
+  "submit",
+  "approve",
+  "reject",
+  "cancel",
+  "bundle",
+  "assign",
+  "children",
+  "standing",
+];
+
+const TASK_USAGE =
+  "Usage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing [args]";
+
+/** Split `<title> | <description>` on the first pipe. */
+function splitTitle(rest: string): { title: string; rawDesc: string } {
+  const pipeIdx = rest.indexOf("|");
+  if (pipeIdx >= 0) {
+    return { title: rest.slice(0, pipeIdx).trim(), rawDesc: rest.slice(pipeIdx + 1).trim() };
+  }
+  return { title: rest, rawDesc: "" };
+}
 
 export function taskCommand(
   tasks: TaskManager,
@@ -31,13 +63,14 @@ export function taskCommand(
   return {
     name: "task",
     aliases: [],
-    help: "Manage tasks with leased create/claim/submit workflow.\nUsage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing\n\nExamples:\n  task create Map the grid | Explore all sectors and document exits\n  task goal Explore the world | Visit every sector !p7\n  task progress 3 +20\n  task claim 3\n  task heartbeat 3\n  task submit 3 All sectors documented\n  task standing\n  task list mine",
+    help: "Manage tasks with leased create/claim/submit workflow.\nUsage: task list|info|create|goal|progress|claim|heartbeat|recover|submit|approve|reject|cancel|bundle|assign|children|standing\n  task create <title> | <description> [standing:N] [bounty]   (also !N)\n  task goal <title> | <description> [priority:N]   (also !pN / --priority N)\n  task info <id>   (also show/view)\n\nExamples:\n  task create Map the grid | Explore all sectors and document exits\n  task goal Explore the world | Visit every sector priority:7\n  task progress 3 +20\n  task claim 3\n  task heartbeat 3\n  task submit 3 All sectors documented\n  task standing\n  task list mine",
     handler: (ctx: RoomContext, input) => {
       const self = ctx.getEntity(input.entity);
       if (!self) return;
 
       const tokens = input.tokens;
-      const sub = tokens[0]?.toLowerCase() ?? "list";
+      // `task show/view <id>` normalize onto `info`; `task ls` onto `list`.
+      const sub = canonicalSub(tokens[0], TASK_SUBS) ?? "list";
 
       switch (sub) {
         case "list": {
@@ -155,29 +188,33 @@ export function taskCommand(
         }
 
         case "create": {
-          // task create <title> | <description> [!N] [bounty]
-          const rest = tokens.slice(1).join(" ");
-          if (!rest) {
-            ctx.send(input.entity, "Usage: task create <title> | <description> [!N bounty]");
+          // task create <title> | <description> [standing:N] [bounty]   (also !N)
+          const createMods = parseModifiers(tokens.slice(1), {
+            standing: { type: "int" },
+            bounty: { type: "bool" },
+          });
+          if (createMods.errors.length > 0) {
+            ctx.send(input.entity, `task create: ${createMods.errors.join("; ")}`);
             return;
           }
-          const pipeIdx = rest.indexOf("|");
-          let title: string;
-          let rawDesc: string;
-          if (pipeIdx >= 0) {
-            title = rest.slice(0, pipeIdx).trim();
-            rawDesc = rest.slice(pipeIdx + 1).trim();
-          } else {
-            title = rest;
-            rawDesc = "";
+          const rest = createMods.rest.join(" ");
+          if (!rest) {
+            ctx.send(
+              input.entity,
+              "Usage: task create <title> | <description> [standing:N] [bounty]   (also !N)",
+            );
+            return;
           }
+          const split = splitTitle(rest);
+          const title = split.title;
+          let rawDesc = split.rawDesc;
 
-          // Parse !N standing and bounty keyword from description
-          let standing = 0;
-          let isBounty = false;
+          // Legacy !N standing and bare bounty keyword in the description.
+          let standing = (createMods.values.standing as number | undefined) ?? 0;
+          let isBounty = createMods.values.bounty === true;
           const standingMatch = rawDesc.match(/!(\d+)/);
           if (standingMatch?.[1]) {
-            standing = Number.parseInt(standingMatch[1], 10);
+            if (standing === 0) standing = Number.parseInt(standingMatch[1], 10);
             rawDesc = rawDesc.replace(standingMatch[0], "").trim();
           }
           if (/\bbounty\b/i.test(rawDesc)) {
@@ -200,30 +237,34 @@ export function taskCommand(
         }
 
         case "goal": {
-          // task goal <title> | <description> [!pN]
-          const rest = tokens.slice(1).join(" ");
-          if (!rest) {
-            ctx.send(input.entity, "Usage: task goal <title> | <description> [!pN]");
+          // task goal <title> | <description> [priority:N]   (also !pN)
+          const goalMods = parseModifiers(tokens.slice(1), { priority: { type: "int" } });
+          if (goalMods.errors.length > 0) {
+            ctx.send(input.entity, `task goal: ${goalMods.errors.join("; ")}`);
             return;
           }
-          const pipeIdx = rest.indexOf("|");
-          let title: string;
-          let rawDesc: string;
-          if (pipeIdx >= 0) {
-            title = rest.slice(0, pipeIdx).trim();
-            rawDesc = rest.slice(pipeIdx + 1).trim();
-          } else {
-            title = rest;
-            rawDesc = "";
+          const rest = goalMods.rest.join(" ");
+          if (!rest) {
+            ctx.send(
+              input.entity,
+              "Usage: task goal <title> | <description> [priority:N]   (also !pN / --priority N)",
+            );
+            return;
           }
+          const split = splitTitle(rest);
+          const title = split.title;
+          let rawDesc = split.rawDesc;
 
-          // Parse !pN for priority
+          // Priority: modifier first, then legacy !pN in the description.
           let priority = 5;
+          const prioMod = goalMods.values.priority as number | undefined;
           const prioMatch = rawDesc.match(/!p(\d+)/);
           if (prioMatch?.[1]) {
-            priority = Math.max(0, Math.min(10, Number.parseInt(prioMatch[1], 10)));
+            priority = Number.parseInt(prioMatch[1], 10);
             rawDesc = rawDesc.replace(prioMatch[0], "").trim();
           }
+          if (prioMod !== undefined) priority = prioMod;
+          priority = Math.max(0, Math.min(10, priority));
 
           const task = tasks.create({
             title,
@@ -567,10 +608,7 @@ export function taskCommand(
         }
 
         default:
-          ctx.send(
-            input.entity,
-            "Usage: task list|info|create|goal|progress|claim|submit|approve|reject|cancel|bundle|assign|children|standing [args]",
-          );
+          ctx.send(input.entity, unknownSubcommand("task", tokens[0], TASK_USAGE));
       }
     },
   };

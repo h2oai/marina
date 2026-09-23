@@ -4,42 +4,22 @@
 /**
  * Theme switcher for the unified canvas view.
  *
- * Provides a Zustand store tracking the current theme ID,
- * a cycleTheme() function to rotate through all 5 themes,
- * and a ThemeSwitcher React component (button) for the topbar.
+ * Thin façade over the shared `useTheme` store (hooks/use-theme.ts) so the
+ * unified topbar and the grid dashboard's ThemeSwitcher agree on the stored
+ * choice, the OS-preference fallback and the rendered theme.
  */
 
-import { create } from "zustand";
-import { applyTheme, DEFAULT_THEME, THEME_IDS, themes } from "../../lib/themes";
+import { THEME_IDS, themes } from "../../lib/themes";
 
-// ── Zustand store ─────────────────────────────────────────────────────────────
+export { useTheme } from "../../hooks/use-theme";
 
-/** Theme store state. */
-interface ThemeState {
-  /** Currently active theme ID. */
-  themeId: string;
-  /** Set the theme to a specific ID. */
-  setTheme: (id: string) => void;
-}
-
-/**
- * Zustand store tracking the current theme.
- * Persists selection in localStorage under "marina-theme".
- */
-export const useTheme = create<ThemeState>((set) => ({
-  themeId: localStorage.getItem("marina-theme") ?? DEFAULT_THEME,
-  setTheme: (id: string) => {
-    set({ themeId: id });
-    localStorage.setItem("marina-theme", id);
-    applyTheme(id);
-  },
-}));
+import { useTheme } from "../../hooks/use-theme";
 
 // ── Cycle helper ──────────────────────────────────────────────────────────────
 
 /**
- * Cycle to the next theme in the theme list.
- * Wraps around after the last theme.
+ * Cycle to the next theme in the theme list (an explicit choice — leaves
+ * `system` mode). Wraps around after the last theme.
  */
 export function cycleTheme(): void {
   const { themeId, setTheme } = useTheme.getState();

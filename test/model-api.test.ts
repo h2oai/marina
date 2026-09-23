@@ -16,6 +16,7 @@ import {
   roundRobinCounters,
   scheduleRequestReminders,
   selectAgent,
+  stripCacheControl,
   tryVerifiedArithmetic,
 } from "../src/net/model-api";
 import { setEndpointConfig } from "../src/net/model-endpoint";
@@ -459,7 +460,8 @@ describe("Model API", () => {
     expect(data.error.message).toContain("not found");
     expect(data.error.type).toBe("not_found_error");
     expect(data.error.param).toBeNull();
-    expect(data.error.code).toBeNull();
+    // `code` is a string OpenAI SDKs branch on (see src/net/openai-errors.ts).
+    expect(data.error.code).toBe("model_not_found");
   });
 
   it("responses include x-request-id header", async () => {
@@ -1723,12 +1725,72 @@ describe("prepareLlamaBody (llama upstream prep)", () => {
     expect(huge.max_tokens).toBe(999_999);
   });
 
-  it("scales the budget to half a small server's context window", () => {
+  it("scales the budget to a quarter of a small server's context window", () => {
     // Budget tracks the context window so a small server isn't starved of
-    // prompt space (the compactor reserves at most half the window for output).
+    // prompt space: LOCAL_OUTPUT_BUDGET_FRACTION defaults to 0.25 so a 16k
+    // model keeps ~12k for the fixed prefix + history (was 0.5 → 8k input).
     process.env.LLAMA_CONTEXT_WINDOW = "16384";
     const out = prepareLlamaBody({ messages: [] }, "llama");
-    expect(out.max_tokens).toBe(8192); // 16384 / 2
+    expect(out.max_tokens).toBe(4096); // 16384 / 4
+  });
+});
+
+describe("stripCacheControl (OpenAI-compatible upstreams)", () => {
+  it("removes cache_control from message parts and tools and collapses a pure-text system array", () => {
+    const body = {
+      model: "gpt-x",
+      messages: [
+        {
+          role: "system",
+          content: [
+            { type: "text", text: "You are Marina.", cache_control: { type: "ephemeral" } },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "hi", cache_control: { type: "ephemeral" } },
+            { type: "image_url", image_url: { url: "data:image/png;base64,AA==" } },
+          ],
+        },
+      ],
+      tools: [
+        { type: "function", function: { name: "a", parameters: {} } },
+        {
+          type: "function",
+          function: { name: "b", parameters: {} },
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+    };
+    const out = stripCacheControl(body) as {
+      messages: Array<{ role: string; content: unknown }>;
+      tools: unknown[];
+    };
+    expect(JSON.stringify(out)).not.toContain("cache_control");
+    expect(out.messages[0]!.content).toBe("You are Marina.");
+    expect(Array.isArray(out.messages[1]!.content)).toBe(true);
+    expect((out.messages[1]!.content as unknown[]).length).toBe(2);
+    expect(out.tools.length).toBe(2);
+    // Caller's body is untouched.
+    expect(JSON.stringify(body)).toContain("cache_control");
+  });
+
+  it("returns the same object when nothing needs stripping and keeps markers for anthropic", () => {
+    const clean = { model: "m", messages: [{ role: "user", content: "hi" }] };
+    expect(stripCacheControl(clean)).toBe(clean);
+    const marked = {
+      model: "m",
+      messages: [
+        {
+          role: "system",
+          content: [{ type: "text", text: "s", cache_control: { type: "ephemeral" } }],
+        },
+      ],
+    };
+    expect(JSON.stringify(prepareUpstreamBody(marked, "anthropic"))).toContain("cache_control");
+    expect(JSON.stringify(prepareUpstreamBody(marked, "openai"))).not.toContain("cache_control");
+    expect(JSON.stringify(prepareUpstreamBody(marked, "llama"))).not.toContain("cache_control");
   });
 });
 

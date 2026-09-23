@@ -8,6 +8,7 @@
  * Agents self-connect via WebSocket — the engine sees them as regular connections.
  */
 
+import { randomBytes } from "node:crypto";
 import { MARINA_DEFAULT_MODEL, positiveNumberFromEnv } from "../engine/constants";
 import {
   inferModelCapabilities,
@@ -23,6 +24,7 @@ import type {
   AgentHandle,
   AgentStatus,
   AgentSupports,
+  AgentThinkingLevel,
 } from "./agent-types";
 import { AgentExecutionTracer } from "./execution-trace";
 import {
@@ -74,7 +76,9 @@ function parseSupports(raw: string | null | undefined): AgentSupports | undefine
 // ─── Internal Model Token ───────────────────────────────────────────────────
 // Generated once at startup — room agents use this to authenticate against the
 // local model API without requiring MARINA_OPEN_API=true or MODEL_API_KEYS.
-const INTERNAL_MODEL_TOKEN = `marina-internal-${crypto.randomUUID().slice(0, 16)}`;
+// 256 bits of entropy (32 random bytes, base64url); consumers compare it with
+// `secretsEqual` and never assume a length.
+const INTERNAL_MODEL_TOKEN = `marina-internal-${randomBytes(32).toString("base64url")}`;
 
 /** Return the internal bearer token that room agents use for the local model API. */
 export function getInternalModelToken(): string {
@@ -789,7 +793,14 @@ export class AgentRuntime {
    */
   async reconfigure(
     name: string,
-    opts: { model?: string; role?: string; keyName?: string; supports?: AgentSupports },
+    opts: {
+      model?: string;
+      role?: string;
+      keyName?: string;
+      supports?: AgentSupports;
+      /** Reasoning depth (`agent config <name> thinking <level>`); runtime-only. */
+      thinkingLevel?: AgentThinkingLevel;
+    },
   ): Promise<void> {
     const key = this.resolveKey(name);
     const agent = key ? this.agents.get(key) : undefined;
@@ -829,6 +840,7 @@ export class AgentRuntime {
       rolePrompt,
       keyName: opts.keyName,
       supports,
+      thinkingLevel: opts.thinkingLevel,
       apiKey: apiKeyResolver,
     });
 

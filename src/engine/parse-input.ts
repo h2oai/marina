@@ -7,6 +7,7 @@
 // Commands can import individual helpers as needed.
 
 import type { CommandInput } from "../types";
+import { DURATION_UNITS_HINT, parseDuration } from "./commands/format-duration";
 
 /**
  * Get remaining text after skipping N tokens, joined by spaces.
@@ -175,4 +176,250 @@ export function resolveMultiWordName(
     }
   }
   return null;
+}
+
+// ─── One modifier grammar ─────────────────────────────────────────────────────
+//
+// Every command that takes named options accepts the SAME four spellings for
+// a declared key: `key:value` (canonical — what usage strings show),
+// `key=value`, `--key value`, `--key=value`. Undeclared keys are never
+// consumed, so positional text such as `project:marina` or a URL survives
+// unless the command declared that key. A literal `--` token ends modifier
+// parsing; everything after it is positional.
+
+export type ModifierType = "string" | "int" | "number" | "duration" | "bool";
+
+export interface ModifierSpec {
+  [key: string]: { type: ModifierType; aliases?: string[] };
+}
+
+export type ModifierValue = string | number | boolean;
+
+export interface ParsedModifiers {
+  /** Typed values keyed by canonical key — `int`/`number` → number, `duration` → ms, `bool` → boolean. */
+  values: Record<string, ModifierValue | undefined>;
+  /** The value exactly as typed, for echoing back ("last 30m"). */
+  raw: Record<string, string | undefined>;
+  /** Positional tokens with modifiers removed (tokens after `--` kept verbatim). */
+  rest: string[];
+  /** Tokens after a literal `--`, when one was present. */
+  after?: string[];
+  /** Human-readable problems: a bad int, an unparseable duration, a missing value. */
+  errors: string[];
+}
+
+export interface ParseModifiersOptions {
+  /**
+   * Stop at the first positional token: only LEADING modifiers are parsed and
+   * the remainder is free text (`tell <who> ttl:30s <message>` must not eat a
+   * `ttl:` inside the message).
+   */
+  leading?: boolean;
+}
+
+const BOOL_TRUE = new Set(["true", "yes", "on", "1"]);
+const BOOL_FALSE = new Set(["false", "no", "off", "0"]);
+
+/**
+ * Parse named modifiers out of a token list. See the module comment above for
+ * the accepted spellings. Keys and aliases match case-insensitively.
+ *
+ *   parseModifiers(["--kind", "x", "since:2h", "foo"], { kind: {type:"string"}, since: {type:"duration"} })
+ *     → { values: { kind: "x", since: 7_200_000 }, raw: { kind: "x", since: "2h" }, rest: ["foo"], errors: [] }
+ */
+export function parseModifiers(
+  tokens: readonly string[],
+  spec: ModifierSpec,
+  opts: ParseModifiersOptions = {},
+): ParsedModifiers {
+  const keyByName = new Map<string, string>();
+  for (const [key, def] of Object.entries(spec)) {
+    keyByName.set(key.toLowerCase(), key);
+    for (const alias of def.aliases ?? []) keyByName.set(alias.toLowerCase(), key);
+  }
+
+  const values: Record<string, ModifierValue | undefined> = {};
+  const raw: Record<string, string | undefined> = {};
+  const rest: string[] = [];
+  const errors: string[] = [];
+  let after: string[] | undefined;
+
+  const assign = (key: string, value: string | undefined, flagOnly: boolean): void => {
+    const def = spec[key]!;
+    if (def.type === "bool") {
+      if (value === undefined || flagOnly) {
+        values[key] = true;
+        raw[key] = value ?? "true";
+        return;
+      }
+      const lower = value.toLowerCase();
+      if (BOOL_TRUE.has(lower)) values[key] = true;
+      else if (BOOL_FALSE.has(lower)) values[key] = false;
+      else {
+        errors.push(`${key}: expected true|false, got "${value}"`);
+        return;
+      }
+      raw[key] = value;
+      return;
+    }
+    if (value === undefined || value === "") {
+      errors.push(`${key}: missing value`);
+      return;
+    }
+    raw[key] = value;
+    switch (def.type) {
+      case "int": {
+        if (!/^[+-]?\d+$/.test(value)) {
+          errors.push(`${key}: expected a whole number, got "${value}"`);
+          return;
+        }
+        values[key] = Number.parseInt(value, 10);
+        return;
+      }
+      case "number": {
+        const n = Number(value);
+        if (!Number.isFinite(n)) {
+          errors.push(`${key}: expected a number, got "${value}"`);
+          return;
+        }
+        values[key] = n;
+        return;
+      }
+      case "duration": {
+        const ms = parseDuration(value);
+        if (ms === undefined) {
+          errors.push(`${key}: expected a duration (${DURATION_UNITS_HINT}), got "${value}"`);
+          return;
+        }
+        values[key] = ms;
+        return;
+      }
+      default:
+        values[key] = value;
+    }
+  };
+
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i]!;
+    if (tok === "--") {
+      after = tokens.slice(i + 1);
+      rest.push(...after);
+      break;
+    }
+    // --key=value | --key value | --flag
+    if (tok.startsWith("--") && tok.length > 2) {
+      const body = tok.slice(2);
+      const eq = body.indexOf("=");
+      const name = (eq >= 0 ? body.slice(0, eq) : body).toLowerCase();
+      const key = keyByName.get(name);
+      if (key) {
+        if (eq >= 0) {
+          assign(key, body.slice(eq + 1), false);
+        } else if (spec[key]!.type === "bool") {
+          const next = tokens[i + 1]?.toLowerCase();
+          if (next && (BOOL_TRUE.has(next) || BOOL_FALSE.has(next))) {
+            assign(key, tokens[i + 1], false);
+            i++;
+          } else {
+            assign(key, undefined, true);
+          }
+        } else {
+          const next = tokens[i + 1];
+          if (next !== undefined && next !== "--" && !next.startsWith("--")) {
+            assign(key, next, false);
+            i++;
+          } else {
+            assign(key, undefined, false);
+          }
+        }
+        continue;
+      }
+    } else {
+      // key:value | key=value — the separator is the FIRST ':' or '=' so URL
+      // values (`source:https://…`) keep their own colons.
+      const sep = tok.search(/[:=]/);
+      if (sep > 0) {
+        const key = keyByName.get(tok.slice(0, sep).toLowerCase());
+        if (key) {
+          assign(key, tok.slice(sep + 1), false);
+          continue;
+        }
+      }
+    }
+    if (opts.leading) {
+      rest.push(...tokens.slice(i));
+      break;
+    }
+    rest.push(tok);
+  }
+
+  return { values, raw, rest, after, errors };
+}
+
+/**
+ * Split a raw args string on the first STANDALONE `--` token (not `--kind`).
+ * Returns [head, tail] with tail undefined when no terminator is present.
+ * Preserves the tail's internal whitespace.
+ */
+export function splitOnTerminator(args: string): [string, string | undefined] {
+  const m = /(?:^|\s)--(?:\s|$)/.exec(args);
+  if (!m) return [args.trim(), undefined];
+  return [args.slice(0, m.index).trim(), args.slice(m.index + m[0].length).trim()];
+}
+
+// ─── Canonical subcommand verbs ───────────────────────────────────────────────
+//
+// `list`, `show`, `delete` are the canonical verbs. The alternates below are
+// accepted everywhere the canonical verb exists. `canonicalSub` only rewrites
+// the token — handlers keep their own case labels — so a command that
+// genuinely distinguishes `info` from `show` is left alone (both are allowed
+// spellings there and match themselves first).
+
+export const SUB_ALIASES: Readonly<Record<string, string>> = {
+  ls: "list",
+  view: "show",
+  info: "show",
+  remove: "delete",
+  rm: "delete",
+};
+
+/** Verb families: the first member a command supports wins for any other member. */
+const SUB_FAMILIES: readonly (readonly string[])[] = [
+  ["list", "ls"],
+  ["show", "info", "view"],
+  ["delete", "remove", "rm"],
+];
+
+/**
+ * Normalize a subcommand token against the verbs a command actually handles.
+ * Returns the lower-cased token itself when it is already allowed, the
+ * command's member of the same verb family when it is an alternate spelling
+ * (`view` → `show`, or → `info` for a command that only has `info`), and the
+ * lower-cased original when nothing matches (so the `default:` branch reports
+ * exactly what the caller typed).
+ */
+export function canonicalSub(
+  sub: string | undefined,
+  allowed: Iterable<string>,
+  opts: {
+    /** Raw tokens that must NOT be family-aliased — for commands whose bare form
+     *  takes free text (e.g. `note remove the old config …` is a note, not a delete). */
+    noAlias?: readonly string[];
+  } = {},
+): string | undefined {
+  if (sub === undefined) return undefined;
+  const lower = sub.toLowerCase();
+  const set = allowed instanceof Set ? (allowed as Set<string>) : new Set(allowed);
+  if (set.has(lower)) return lower;
+  if (opts.noAlias?.includes(lower)) return lower;
+  for (const family of SUB_FAMILIES) {
+    if (!family.includes(lower)) continue;
+    for (const member of family) if (set.has(member)) return member;
+  }
+  return lower;
+}
+
+/** Consistent "unknown subcommand" reply: `Unknown <name> subcommand "<sub>". <usage>`. */
+export function unknownSubcommand(name: string, sub: string | undefined, usage: string): string {
+  return `Unknown ${name} subcommand "${sub ?? ""}". ${usage}`;
 }

@@ -128,10 +128,20 @@ export class FlywheelManager implements FlywheelToolBackend {
     this.operator = new FlywheelClient({ baseUrl, token: operatorToken, fetch });
     for (const binding of db?.listFlywheelBindings() ?? []) {
       this.workspaces.set(
-        binding.entity_id as EntityId,
+        this.key(binding.entity_id as EntityId),
         workspaceFromBinding(binding, this.operator),
       );
     }
+  }
+
+  /**
+   * Workspace map key. Bindings are owned by the durable world account
+   * (`users.id`, migration 117), not the transient entity id that is re-minted
+   * on every name-login — so a sandbox survives its owner logging out and back
+   * in. Ids with no account (tests, service principals) pass through.
+   */
+  private key(entityId: EntityId): EntityId {
+    return (this.db?.durableEntityKey(entityId) ?? entityId) as EntityId;
   }
 
   static fromEnv(db?: MarinaDB): FlywheelManager | undefined {
@@ -147,7 +157,8 @@ export class FlywheelManager implements FlywheelToolBackend {
   }
 
   async create(entityId: EntityId, image = this.defaultImage, keepAlive = true) {
-    if (this.workspaces.has(entityId) || this.creating.has(entityId)) {
+    const key = this.key(entityId);
+    if (this.workspaces.has(key) || this.creating.has(key)) {
       throw new Error(
         "This entity already has a Flywheel sandbox; stop it before creating another.",
       );
@@ -166,7 +177,7 @@ export class FlywheelManager implements FlywheelToolBackend {
         `Flywheel running-sandbox limit reached (${this.policy.maxRunningSandboxes}); hibernate an idle sandbox first.`,
       );
     }
-    this.creating.add(entityId);
+    this.creating.add(key);
     const startedAt = Date.now();
     try {
       const { sessionId } = await this.operator.createSession();
@@ -183,7 +194,7 @@ export class FlywheelManager implements FlywheelToolBackend {
         lastActivityAt: Date.now(),
         lifecycleExpiresAt: Date.now() + this.policy.absoluteLifetimeMs,
       };
-      this.workspaces.set(entityId, workspace);
+      this.workspaces.set(key, workspace);
       this.db?.saveFlywheelBinding({
         entityId,
         sessionId,
@@ -206,7 +217,7 @@ export class FlywheelManager implements FlywheelToolBackend {
       );
       throw error;
     } finally {
-      this.creating.delete(entityId);
+      this.creating.delete(key);
     }
   }
 
@@ -522,7 +533,7 @@ export class FlywheelManager implements FlywheelToolBackend {
     const client = await this.clientFor(workspace);
     try {
       await client.stopSandbox(workspace);
-      this.workspaces.delete(entityId);
+      this.workspaces.delete(this.key(entityId));
       this.db?.deleteFlywheelBinding(entityId);
     } catch (error) {
       workspace.state = "unavailable";
@@ -536,7 +547,7 @@ export class FlywheelManager implements FlywheelToolBackend {
   }
 
   status(entityId: EntityId): FlywheelWorkspace | undefined {
-    const workspace = this.workspaces.get(entityId);
+    const workspace = this.workspaces.get(this.key(entityId));
     return workspace ? publicWorkspace(workspace) : undefined;
   }
 
@@ -613,7 +624,7 @@ export class FlywheelManager implements FlywheelToolBackend {
   inventory(): FlywheelInventoryItem[] {
     if (!this.db) return [];
     return this.db.listFlywheelBindings().map((binding) => {
-      const workspace = this.workspaces.get(binding.entity_id as EntityId);
+      const workspace = this.workspaces.get(this.key(binding.entity_id as EntityId));
       return {
         ...(workspace
           ? publicWorkspace(workspace)
@@ -666,7 +677,7 @@ export class FlywheelManager implements FlywheelToolBackend {
     if (apply) {
       for (const candidate of candidates) {
         if (candidate.action !== "hibernate") continue;
-        const workspace = this.workspaces.get(candidate.entityId);
+        const workspace = this.workspaces.get(this.key(candidate.entityId));
         if (workspace?.state !== "running") continue;
         workspace.hibernatedReason = candidate.reason;
         try {
@@ -719,7 +730,7 @@ export class FlywheelManager implements FlywheelToolBackend {
   }
 
   private require(entityId: EntityId): EntityWorkspace {
-    const workspace = this.workspaces.get(entityId);
+    const workspace = this.workspaces.get(this.key(entityId));
     if (!workspace)
       throw new Error("No Flywheel sandbox for this entity. Use action=create first.");
     return workspace;

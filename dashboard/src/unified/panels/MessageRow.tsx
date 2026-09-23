@@ -108,7 +108,9 @@ export const MessageRow = memo(function MessageRow({
         >
           {msg.tell.from}
         </button>
-        <span className="uc-tell-arrow">&rarr;</span>
+        <span className="uc-tell-arrow" aria-hidden="true">
+          &rarr;
+        </span>
         <button
           type="button"
           className="uc-tell-to"

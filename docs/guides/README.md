@@ -28,6 +28,10 @@ and operate the environment. Start with one path below; the full catalog follows
 | Qualify a public release without skipped claims | [Release qualification](release-qualification.md) | [Troubleshooting](troubleshooting.md) |
 | Investigate execution or export OTLP | [Execution Traces](observability.md) | [Configuration](configuration.md) |
 
+Contributors changing Marina itself should start with [`CLAUDE.md`](../../CLAUDE.md) (the must-follow
+rules) and the [architecture deep dives](../architecture/README.md) (design, history, and per-subsystem
+walkthroughs).
+
 If something appears unavailable, run `readiness`. It reports whether the capability is healthy,
 degraded, or off and gives the next concrete action without exposing secrets.
 

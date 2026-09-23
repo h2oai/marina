@@ -20,7 +20,12 @@ import type { StorageProvider } from "../storage/provider";
 import type { Connection, Perception } from "../types";
 import { handleAssetApi, handleAssetServing } from "./asset-api";
 import { handleAuthApi } from "./auth-api";
-import { DESKTOP_OPERATOR_ENTITY_ID, OPEN_API_ENTITY_ID } from "./auth-middleware";
+import {
+  authenticateRequest,
+  DESKTOP_OPERATOR_ENTITY_ID,
+  isSentinelPrincipal,
+  OPEN_API_ENTITY_ID,
+} from "./auth-middleware";
 import { type CanvasNodeCreatedEvent, handleCanvasApi } from "./canvas-api";
 import { buildCanvasPrincipal, isLoopbackPeer, LOOPBACK_PRINCIPAL } from "./canvas-principal";
 import { CanvasBroadcaster, type CanvasSubscriptionPrincipal } from "./canvas-ws";
@@ -34,9 +39,20 @@ import { corsHeaders, isTrustedBrowserOrigin } from "./cors";
 import { handleDashboardApi } from "./dashboard-api";
 import type { DashboardBroadcaster, DashboardWSData } from "./dashboard-ws";
 import { handleEntityApi } from "./entity-api";
+import {
+  clientIp,
+  consumeHttpRate,
+  inlineScriptHashes,
+  rateLimitedResponse,
+  type SecurityHeaderOptions,
+  securityHeaders,
+  serverMaxRequestBodyBytes,
+  withSecurityHeaders,
+} from "./http-utils";
 import { handleMemApi } from "./mem-api";
 import { handleMemoryServiceApi } from "./memory-service-api";
-import { handleModelApi } from "./model-api";
+import { handleModelApi, isModelApiPath } from "./model-api";
+import { handleOrchestrationApi } from "./orchestration-api";
 import { handleProbeApi } from "./probe-api";
 
 const WEBCHAT_PATH = join(import.meta.dir, "webchat.html");
@@ -54,15 +70,45 @@ const DASHBOARD_NOT_BUILT_HTML = `<!doctype html>
 <p>Meanwhile, the <a href="/chat">web chat</a> works right away.</p>
 </main></body></html>`;
 
+/**
+ * Response headers for every HTML document we serve (nosniff, framing, CSP).
+ * Computed per response so `MARINA_DASHBOARD_CSP` is read live, and so the two
+ * static pages with inline scripts can pass their `'sha256-…'` grants.
+ */
+function htmlHeaders(opts: SecurityHeaderOptions = {}): Record<string, string> {
+  return { "Content-Type": "text/html; charset=utf-8", ...securityHeaders("html", opts) };
+}
+
 async function serveDashboardIndex(): Promise<Response> {
   const index = Bun.file(DASHBOARD_INDEX);
   if (await index.exists()) {
-    return new Response(index, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    return new Response(index, { headers: htmlHeaders() });
   }
-  return new Response(DASHBOARD_NOT_BUILT_HTML, {
-    status: 503,
-    headers: { "Content-Type": "text/html; charset=utf-8" },
-  });
+  return new Response(DASHBOARD_NOT_BUILT_HTML, { status: 503, headers: htmlHeaders() });
+}
+
+/**
+ * `/chat` and `/ask` are static files with inline `<script>` blocks. Instead of
+ * granting `'unsafe-inline'` to every HTML route, their script bodies are
+ * hashed once (the files don't change while the process runs) and allowed by
+ * digest — the page is still served if the read fails, just without the grants.
+ */
+const staticPageHashes = new Map<string, Promise<readonly string[]>>();
+function inlineScriptHashesFor(path: string): Promise<readonly string[]> {
+  let pending = staticPageHashes.get(path);
+  if (!pending) {
+    pending = Bun.file(path)
+      .text()
+      .then((html) => inlineScriptHashes(html))
+      .catch(() => []);
+    staticPageHashes.set(path, pending);
+  }
+  return pending;
+}
+
+async function serveStaticPage(path: string): Promise<Response> {
+  const hashes = await inlineScriptHashesFor(path);
+  return new Response(Bun.file(path), { headers: htmlHeaders({ inlineScriptHashes: hashes }) });
 }
 
 interface WSData {
@@ -266,6 +312,21 @@ export class WebSocketServer {
       // exposure is an explicit opt-in (WS_HOST=0.0.0.0 or MARINA_PUBLIC=true).
       hostname: bindHostname,
       idleTimeout: WS_IDLE_TIMEOUT_SECONDS,
+      // Bun's default body ceiling is 128 MiB. MARINA_MAX_REQUEST_BODY_BYTES
+      // (8 MiB) bounds JSON routes; the asset upload cap (MARINA_MAX_UPLOAD_BYTES)
+      // may be larger and is enforced by the upload handler itself.
+      maxRequestBodySize: serverMaxRequestBodyBytes(),
+
+      // A handler that throws (malformed body, unexpected DB error) must never
+      // surface as a Bun default error page with a stack trace — answer with a
+      // terse JSON 500 and log server-side.
+      error(error) {
+        console.error("[http] unhandled request error:", error);
+        return Response.json(
+          { error: "Internal server error" },
+          { status: 500, headers: securityHeaders("api") },
+        );
+      },
 
       async fetch(req, server) {
         const url = new URL(req.url);
@@ -369,7 +430,7 @@ export class WebSocketServer {
 
         // Asset binary serving: GET /assets/*
         if (url.pathname.startsWith("/assets/") && self.storage) {
-          return handleAssetServing(url, self.storage);
+          return handleAssetServing(url, self.storage, self.db);
         }
 
         // Asset API routes: /api/assets*
@@ -432,7 +493,13 @@ export class WebSocketServer {
         // Entity profile API — public per-entity view (the /who pages' data
         // source). Read-only, no auth. Cached briefly. See entity-api.ts.
         if (url.pathname.startsWith("/api/entity/") && self.db) {
-          const entityResp = await handleEntityApi(url, req.method, self.db, engine);
+          const entityResp = await handleEntityApi(
+            url,
+            req.method,
+            self.db,
+            engine,
+            clientIp(req, server),
+          );
           if (entityResp) return entityResp;
         }
 
@@ -451,11 +518,7 @@ export class WebSocketServer {
           );
           if (modelResp) return modelResp;
         }
-        if (
-          url.pathname === "/api/tags" ||
-          url.pathname === "/api/chat" ||
-          url.pathname === "/api/generate"
-        ) {
+        if (isModelApiPath(url.pathname)) {
           const modelResp = await handleModelApi(
             url,
             req.method,
@@ -480,6 +543,27 @@ export class WebSocketServer {
             self.authProvider,
           );
           if (authResp) return authResp;
+        }
+
+        // Orchestration pattern catalogue — authenticated like the dashboard
+        // REST surface (same session-token gate, same per-principal budget).
+        if (url.pathname.startsWith("/api/orchestration/")) {
+          const origin = req.headers.get("Origin");
+          if (req.method === "OPTIONS") {
+            return new Response(null, { status: 204, headers: corsHeaders(origin) });
+          }
+          const auth = authenticateRequest(req, engine);
+          if ("error" in auth) return auth.error;
+          const rateKey = isSentinelPrincipal(auth.entityId)
+            ? `${auth.entityId}@${clientIp(req, server)}`
+            : auth.entityId;
+          if (!consumeHttpRate("dashboard", rateKey)) return rateLimitedResponse(origin);
+          const orchestrationResp = handleOrchestrationApi(req, url);
+          if (orchestrationResp) return orchestrationResp;
+          return Response.json(
+            { error: "not_found" },
+            { status: 404, headers: { ...corsHeaders(origin), ...securityHeaders("api") } },
+          );
         }
 
         // API routes
@@ -518,7 +602,10 @@ export class WebSocketServer {
             .exists()
             .then((exists) => {
               if (exists) {
-                return new Response(file);
+                return withSecurityHeaders(
+                  new Response(file),
+                  subPath === "index.html" ? "html" : "static",
+                );
               }
               // SPA fallback
               return serveDashboardIndex();
@@ -545,21 +632,16 @@ export class WebSocketServer {
         }
 
         if (url.pathname === "/chat") {
-          const file = Bun.file(WEBCHAT_PATH);
-          return new Response(file, {
-            headers: { "Content-Type": "text/html; charset=utf-8" },
-          });
+          return serveStaticPage(WEBCHAT_PATH);
         }
 
         if (url.pathname === "/ask") {
-          const file = Bun.file(ASK_PATH);
-          return new Response(file, {
-            headers: { "Content-Type": "text/html; charset=utf-8" },
-          });
+          return serveStaticPage(ASK_PATH);
         }
 
         return new Response("Marina — connect via WebSocket at /ws", {
           status: 200,
+          headers: securityHeaders("api"),
         });
       },
 

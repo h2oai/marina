@@ -1,65 +1,30 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Mirror of src/net/entity-api.ts EntityProfile shape. Kept in sync manually
-// (no codegen yet) — backend changes that touch the response shape should
-// update this file too. Treated as the contract surface for the /who pages.
+/**
+ * Contract surface for the /who pages. The wire shape is the backend's
+ * `src/net/entity-profile-types.ts`, re-exported type-only through
+ * `../lib/entity-profile-types` — there is no hand-maintained mirror to drift.
+ * Only dashboard-side derived helpers live here.
+ */
 
-export type ChronicleKind = "event" | "narrative" | "digest" | "correction";
+export type {
+  Achievement,
+  ChronicleEntry,
+  ChronicleKind,
+  EntityProfile,
+} from "../lib/entity-profile-types";
 
-export interface ChronicleEntry {
-  id: number;
-  created_at: number;
-  kind: ChronicleKind;
-  source: string;
-  title: string;
-  body: string;
-  participants: string[];
-  refs: string[];
-  period: string | null;
-  supersedes: number | null;
-}
+import type { EntityProfile as Profile } from "../lib/entity-profile-types";
 
-export interface Achievement {
-  id: string;
-  title: string;
-  description: string;
-  achieved_at: number;
-  evidence_ref?: string;
-}
+/** The `identity` block of a profile (derived, so it follows the contract). */
+export type EntityIdentity = Profile["identity"];
 
-export interface EntityProfile {
-  identity: {
-    local_id: string;
-    id_stability: "durable" | "runtime" | "name_record";
-    name: string;
-    kind: string;
-    role: string | null;
-    rank: number;
-    standing: number;
-    first_seen: number | null;
-    last_active: number | null;
-    online: boolean;
-    spawned_by: string | null;
-    identity_assurance: "verified_human" | "internal_agent" | "session_only" | "record_only";
-  };
-  bio: {
-    goal: string | null;
-    model: string | null;
-    traits: string[];
-    operator_bio: string | null;
-  };
-  narratives: ChronicleEntry[];
-  achievements: Achievement[];
-  stats: {
-    chronicle_citations: Record<ChronicleKind, number>;
-    chronicle_citations_total: number;
-    rooms_visited: number;
-    unique_commands: number;
-    entities_interacted: number;
-    total_actions: number;
-    competence_gates_passed: number;
-    days_active: number;
-  };
-  connections: { name: string; co_chronicles: number }[];
-}
+/** One `connections` row (derived). */
+export type EntityConnection = Profile["connections"][number];
+
+/** Viewport width (px) at or below which the profile renders single-column. */
+export const NARROW_LAYOUT_MAX_WIDTH = 640;
+
+/** The media query the page consults for its narrow layout. */
+export const NARROW_LAYOUT_QUERY = `(max-width: ${NARROW_LAYOUT_MAX_WIDTH}px)`;

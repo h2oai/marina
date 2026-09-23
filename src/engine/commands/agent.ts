@@ -3,6 +3,11 @@
 
 import type { AgentRuntime } from "../../agent/agent-runtime";
 import { MAX_AGENTS } from "../../agent/agent-runtime";
+import {
+  AGENT_THINKING_LEVELS,
+  type AgentThinkingLevel,
+  parseAgentThinkingLevel,
+} from "../../agent/agent-types";
 import { formatUsd, operatorStatusOf } from "../../agent/lean-agent-adapter";
 import { isSeedDisabled, listDisabledSeedAgents, setSeedDisabled } from "../../agent/seed-registry";
 import { getStanding } from "../../agent/standing";
@@ -10,11 +15,82 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { MARINA_DEFAULT_MODEL, MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
+import { type ModifierSpec, parseModifiers } from "../parse-input";
 import { getRank } from "../permissions";
 import { checkGateForExecution, recordGateExecution, SAFETY_GATES } from "../safety-gates";
 
 const REQUIRES_BUILDER_RANK =
   "Requires builder rank (4+) — `agent list` and `agent status <name>` work now.";
+
+const SPAWN_USAGE =
+  "Usage: agent spawn <name> [model <model>] [role <role>] [key <key>] [budget <n-calls>] [thinking:off|low|medium|high] [goal <goal>]";
+
+/** Modifier grammar for `agent spawn` (`thinking:high`, `--thinking high`, `budget:30`). */
+const SPAWN_MODIFIER_SPEC: ModifierSpec = {
+  thinking: { type: "string", aliases: ["think", "reasoning"] },
+  budget: { type: "int" },
+};
+
+/** Words that take the NEXT token as their value in the historical spawn grammar. */
+const SPAWN_KEYWORDS = ["model", "role", "goal", "key", "budget", "thinking"] as const;
+
+export interface SpawnOptions {
+  model?: string;
+  role?: string;
+  goal?: string;
+  key?: string;
+  budgetCalls?: number;
+  thinkingLevel?: AgentThinkingLevel;
+}
+
+/**
+ * Parse the tokens after the agent name. Two spellings agree: the historical
+ * `key value` pairs (`model x role y thinking high budget 30 goal …`, where
+ * `goal` consumes the rest) and the shared modifier grammar (`thinking:high`,
+ * `budget:30`, `--thinking high`). Returns an error string for a bad value.
+ */
+export function parseSpawnOptions(tokens: readonly string[]): SpawnOptions | { error: string } {
+  const mods = parseModifiers(tokens, SPAWN_MODIFIER_SPEC);
+  if (mods.errors.length > 0) return { error: mods.errors.join("; ") };
+  const words: Record<string, string> = {};
+  const rest = mods.rest;
+  for (let i = 0; i < rest.length - 1; i++) {
+    const key = rest[i]?.toLowerCase() as (typeof SPAWN_KEYWORDS)[number] | undefined;
+    if (key && SPAWN_KEYWORDS.includes(key)) {
+      if (key === "goal") {
+        words[key] = rest.slice(i + 1).join(" ");
+        break;
+      }
+      words[key] = rest[i + 1] ?? "";
+      i++;
+    }
+  }
+  const out: SpawnOptions = {
+    model: words.model,
+    role: words.role,
+    goal: words.goal,
+    key: words.key,
+  };
+  const budgetRaw = mods.raw.budget ?? words.budget;
+  if (budgetRaw !== undefined) {
+    const parsed = Number(budgetRaw);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      return { error: "budget expects a positive whole number of model calls, e.g. `budget 30`." };
+    }
+    out.budgetCalls = parsed;
+  }
+  const thinkingRaw = mods.raw.thinking ?? words.thinking;
+  if (thinkingRaw !== undefined) {
+    const level = parseAgentThinkingLevel(thinkingRaw);
+    if (!level) {
+      return {
+        error: `thinking expects one of ${AGENT_THINKING_LEVELS.join("|")}, got "${thinkingRaw}".`,
+      };
+    }
+    out.thinkingLevel = level;
+  }
+  return out;
+}
 
 export function agentCommand(deps: {
   agentRuntime: AgentRuntime;
@@ -31,7 +107,8 @@ Usage:
   agent list                                 — list running agents
   agent status <name>                        — detailed agent status
   agent diagnose <name>                      — lifecycle health and remediation
-  agent spawn <name> [model <m>] [role <r>] [goal <g>] [key <k>] [budget <n-calls>]
+  agent spawn <name> [model <m>] [role <r>] [key <k>] [budget <n>] [thinking:<level>] [goal <g>]
+                                             — thinking: off|minimal|low|medium|high|xhigh (default MARINA_AGENT_THINKING)
   agent stop <name> [--keep-children]        — stop an agent and the agents it spawned (transient; reseeds on restart)
   agent disable <name>                        — retire a seeded agent so it stays gone across restarts
   agent enable <name>                         — clear a disable; the agent returns on next restart/room entry
@@ -40,7 +117,7 @@ Usage:
   agent restart <name>                       — restart in place, preserving config/focus
   agent failover <name> <provider/model>     — restart on a fallback provider/model
   agent focus <name> <description>           — set agent focus
-  agent config <name> model|role|key <value> — reconfigure agent`,
+  agent config <name> model|role|key|thinking <value> — reconfigure agent (thinking: off|low|medium|high)`,
     handler: async (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -486,10 +563,7 @@ async function handleSpawn(
   // we can act on a request we have already accepted as well-formed.
   const name = tokens[0];
   if (!name) {
-    ctx.send(
-      eid,
-      "Usage: agent spawn <name> [model <model>] [role <role>] [goal <goal>] [key <key>] [budget <n-calls>]",
-    );
+    ctx.send(eid, SPAWN_USAGE);
     return;
   }
   if (!/^[A-Za-z0-9_]{1,20}$/.test(name)) {
@@ -508,35 +582,19 @@ async function handleSpawn(
     return;
   }
 
-  // Parse optional keyword arguments
-  const opts: Record<string, string> = {};
-  for (let i = 1; i < tokens.length - 1; i++) {
-    const key = tokens[i]?.toLowerCase();
-    if (key && ["model", "role", "goal", "key", "budget"].includes(key)) {
-      // goal consumes the rest of the tokens
-      if (key === "goal") {
-        opts[key] = tokens.slice(i + 1).join(" ");
-        break;
-      }
-      opts[key] = tokens[i + 1] ?? "";
-      i++;
-    }
+  // Parse optional keyword arguments — `key value` words and `key:value` modifiers.
+  const parsed = parseSpawnOptions(tokens.slice(1));
+  if ("error" in parsed) {
+    ctx.send(eid, `${parsed.error} ${SPAWN_USAGE}`);
+    return;
   }
+  const opts = parsed;
+  const budgetCalls = opts.budgetCalls;
 
   ctx.send(
     eid,
-    `Spawning ${bold(name)} (${opts.model || deps.db?.getDefaultModel() || MARINA_DEFAULT_MODEL}${opts.role ? `, ${opts.role}` : ""})...`,
+    `Spawning ${bold(name)} (${opts.model || deps.db?.getDefaultModel() || MARINA_DEFAULT_MODEL}${opts.role ? `, ${opts.role}` : ""}${opts.thinkingLevel ? `, thinking ${opts.thinkingLevel}` : ""})...`,
   );
-
-  let budgetCalls: number | undefined;
-  if (opts.budget !== undefined) {
-    const parsed = Number(opts.budget);
-    if (!Number.isInteger(parsed) || parsed < 1) {
-      ctx.send(eid, "budget expects a positive whole number of model calls, e.g. `budget 30`.");
-      return;
-    }
-    budgetCalls = parsed;
-  }
 
   try {
     const handle = await deps.agentRuntime.spawn({
@@ -546,6 +604,7 @@ async function handleSpawn(
       goal: opts.goal,
       keyName: opts.key,
       budgetCalls,
+      thinkingLevel: opts.thinkingLevel,
       spawnedBy: spawner.name,
     });
 
@@ -740,7 +799,7 @@ async function handleConfig(
   const value = tokens.slice(2).join(" ");
 
   if (!name || !field || !value) {
-    ctx.send(eid, "Usage: agent config <name> model|role|key <value>");
+    ctx.send(eid, "Usage: agent config <name> model|role|key|thinking <value>");
     return;
   }
 
@@ -749,7 +808,12 @@ async function handleConfig(
     return;
   }
 
-  const opts: { model?: string; role?: string; keyName?: string } = {};
+  const opts: {
+    model?: string;
+    role?: string;
+    keyName?: string;
+    thinkingLevel?: AgentThinkingLevel;
+  } = {};
   switch (field) {
     case "model":
       opts.model = value;
@@ -760,8 +824,21 @@ async function handleConfig(
     case "key":
       opts.keyName = value;
       break;
+    case "thinking":
+    case "reasoning": {
+      const level = parseAgentThinkingLevel(value);
+      if (!level) {
+        ctx.send(
+          eid,
+          `thinking expects one of ${AGENT_THINKING_LEVELS.join("|")}, got "${value}".`,
+        );
+        return;
+      }
+      opts.thinkingLevel = level;
+      break;
+    }
     default:
-      ctx.send(eid, `Unknown config field: ${field}. Use: model, role, key`);
+      ctx.send(eid, `Unknown config field: ${field}. Use: model, role, key, thinking`);
       return;
   }
 

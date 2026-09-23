@@ -3,14 +3,17 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
+import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import {
   authenticateRequest,
   DESKTOP_OPERATOR_ENTITY_ID,
   isOperatorPrincipal,
   OPEN_API_ENTITY_ID,
+  refuseOpenApiWrite,
 } from "../src/net/auth-middleware";
+import { clientIp } from "../src/net/http-utils";
 import { MarinaDB } from "../src/persistence/database";
-import { roomId } from "../src/types";
+import { type EntityId, roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
 
 describe("authenticateRequest — dashboard auth gate", () => {
@@ -109,5 +112,59 @@ describe("authenticateRequest — dashboard auth gate", () => {
   it("classifies the open-API sentinel as non-operator (reads only)", () => {
     expect(isOperatorPrincipal(OPEN_API_ENTITY_ID)).toBe(false);
     expect(isOperatorPrincipal(DESKTOP_OPERATOR_ENTITY_ID)).toBe(true);
+  });
+});
+
+describe("refuseOpenApiWrite — dev-open sentinel is read-only", () => {
+  it("returns a 403 naming MARINA_OPEN_API for the open-API sentinel only", async () => {
+    const refused = refuseOpenApiWrite(OPEN_API_ENTITY_ID, "http://localhost:5173");
+    expect(refused?.status).toBe(403);
+    const body = (await refused!.json()) as { error: string };
+    expect(body.error).toContain("MARINA_OPEN_API");
+    expect(body.error).toContain("read-only");
+    // A provisioned desktop operator and a real entity are not refused.
+    expect(refuseOpenApiWrite(DESKTOP_OPERATOR_ENTITY_ID, null)).toBeNull();
+    expect(refuseOpenApiWrite("e_42" as EntityId, null)).toBeNull();
+  });
+
+  it("allows sentinel writes under the local trust profile (the sentinel IS the operator)", () => {
+    // MARINA_OPEN_API=true on a loopback bind with no auth is the single-operator
+    // dev posture; the Canvas UI writes without a session token there. shared/
+    // public keep the sentinel read-only (the default in-process profile).
+    setTrustProfile("local");
+    try {
+      expect(refuseOpenApiWrite(OPEN_API_ENTITY_ID, null)).toBeNull();
+    } finally {
+      resetTrustProfileForTests();
+    }
+    expect(refuseOpenApiWrite(OPEN_API_ENTITY_ID, null)?.status).toBe(403);
+  });
+});
+
+describe("clientIp — socket peer unless MARINA_TRUST_PROXY", () => {
+  const prev = process.env.MARINA_TRUST_PROXY;
+  afterEach(() => {
+    if (prev === undefined) delete process.env.MARINA_TRUST_PROXY;
+    else process.env.MARINA_TRUST_PROXY = prev;
+  });
+
+  const spoofed = () =>
+    new Request("http://localhost/api/x", {
+      headers: { "X-Forwarded-For": "1.2.3.4, 5.6.7.8", "X-Real-IP": "9.9.9.9" },
+    });
+  const server = { requestIP: () => ({ address: "203.0.113.5" }) };
+
+  it("uses the TCP peer and ignores forwarding headers by default", () => {
+    delete process.env.MARINA_TRUST_PROXY;
+    expect(clientIp(spoofed(), server)).toBe("203.0.113.5");
+    expect(clientIp(spoofed(), "203.0.113.6")).toBe("203.0.113.6");
+    expect(clientIp(spoofed())).toBe("unknown");
+  });
+
+  it("honors the first X-Forwarded-For hop only behind a declared trusted proxy", () => {
+    process.env.MARINA_TRUST_PROXY = "true";
+    expect(clientIp(spoofed(), server)).toBe("1.2.3.4");
+    // No forwarding header ⇒ falls back to the peer even when trusting the proxy.
+    expect(clientIp(new Request("http://localhost/api/x"), server)).toBe("203.0.113.5");
   });
 });

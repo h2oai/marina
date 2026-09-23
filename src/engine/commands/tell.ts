@@ -4,6 +4,7 @@
 import { tell } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { parseModifiers } from "../parse-input";
 
 export interface TellDeps {
   getEntity: (id: EntityId) => Entity | undefined;
@@ -18,11 +19,7 @@ export interface TellDeps {
   db?: MarinaDB;
 }
 
-function ttlMs(token: string | undefined): number | undefined {
-  const match = /^--ttl=(\d+)(s|m|h)$/.exec(token ?? "");
-  if (!match) return undefined;
-  return Number(match[1]) * { s: 1_000, m: 60_000, h: 3_600_000 }[match[2]!]!;
-}
+const TELL_USAGE = "Usage: tell <entity> [ttl:30s] <message>   (also --ttl=30s)";
 
 /**
  * Deliver a private message from `sender` to the named target. Shared by `tell`
@@ -94,7 +91,7 @@ export function tellCommand(deps: TellDeps): CommandDef {
   return {
     name: "tell",
     aliases: ["whisper", "msg"],
-    help: "Send durable private messages with delivery receipts. Usage: tell <entity> [--ttl=30s] <message> | tell inbox | tell status <id> | tell ack <id>",
+    help: "Send durable private messages with delivery receipts. Usage: tell <entity> [ttl:30s] <message> | tell inbox | tell status <id> | tell ack <id>\n(ttl also accepts --ttl 30s / --ttl=30s; units 30s, 5m, 2h, 1d)",
     handler: (ctx: RoomContext, input) => {
       const sender = deps.getEntity(input.entity);
       if (!sender) return;
@@ -158,15 +155,25 @@ export function tellCommand(deps: TellDeps): CommandDef {
       }
 
       if (input.tokens.length < 2) {
-        ctx.send(input.entity, "Tell whom what? Usage: tell <entity> <message>");
+        ctx.send(input.entity, `Tell whom what? ${TELL_USAGE}`);
         return;
       }
 
       const targetName = input.tokens[0]!;
-      const ttl = ttlMs(input.tokens[1]);
-      const message = input.tokens.slice(ttl ? 2 : 1).join(" ");
+      // Only LEADING modifiers are parsed — a `ttl:` inside the message is text.
+      const { values, rest, errors } = parseModifiers(
+        input.tokens.slice(1),
+        { ttl: { type: "duration" } },
+        { leading: true },
+      );
+      if (errors.length > 0) {
+        ctx.send(input.entity, `tell: ${errors.join("; ")}. ${TELL_USAGE}`);
+        return;
+      }
+      const ttl = values.ttl as number | undefined;
+      const message = rest.join(" ");
       if (!message) {
-        ctx.send(input.entity, "Tell whom what? Usage: tell <entity> [--ttl=30s] <message>");
+        ctx.send(input.entity, `Tell whom what? ${TELL_USAGE}`);
         return;
       }
       deliverTell(deps, ctx, input.entity, sender, targetName, message, ttl);

@@ -5,8 +5,9 @@
  * Entity profile API — the public per-entity view of a Marina's history.
  *
  * Projects existing per-event data (chronicle, standing ledger, entity_activity,
- * entity_competence) onto a per-actor axis. Read-only, no auth, generous rate
- * limit. This is the chronicle's public face — the "wiki" of each entity.
+ * entity_competence) onto a per-actor axis. Read-only, no auth, rate-limited
+ * per client IP (`publicRead` in http-utils.ts, 30 requests / 10 s). This is
+ * the chronicle's public face — the "wiki" of each entity.
  *
  *   GET /api/entity/:name/profile
  *
@@ -22,8 +23,14 @@
 
 import type { Engine } from "../engine/engine";
 import type { MarinaDB } from "../persistence/database";
-import type { ChronicleEntry, ChronicleKind } from "../persistence/db-chronicle";
 import type { Entity, EntityId } from "../types";
+import type {
+  Achievement,
+  ChronicleEntry,
+  ChronicleKind,
+  EntityProfile,
+} from "./entity-profile-types";
+import { consumeHttpRate, rateLimitedResponse, UNKNOWN_CLIENT_IP } from "./http-utils";
 
 /** Standing thresholds the rank ladder uses (mirrors src/agent/rank-progression.ts). */
 const RANK_THRESHOLDS = [5, 15, 40, 100];
@@ -34,49 +41,10 @@ const DAYS_ACTIVE_MILESTONES = [1, 7, 30, 100];
 /** Total chronicle-citation count milestones. */
 const CITATION_MILESTONES = [1, 5, 25, 100];
 
-export interface EntityProfile {
-  identity: {
-    local_id: string;
-    id_stability: "durable" | "runtime" | "name_record";
-    name: string;
-    kind: string;
-    role: string | null;
-    rank: number;
-    standing: number;
-    first_seen: number | null;
-    last_active: number | null;
-    online: boolean;
-    spawned_by: string | null;
-    identity_assurance: "verified_human" | "internal_agent" | "session_only" | "record_only";
-  };
-  bio: {
-    goal: string | null;
-    model: string | null;
-    traits: string[];
-    operator_bio: string | null;
-  };
-  narratives: ChronicleEntry[];
-  achievements: Achievement[];
-  stats: {
-    chronicle_citations: Record<ChronicleKind, number>;
-    chronicle_citations_total: number;
-    rooms_visited: number;
-    unique_commands: number;
-    entities_interacted: number;
-    total_actions: number;
-    competence_gates_passed: number;
-    days_active: number;
-  };
-  connections: { name: string; co_chronicles: number }[];
-}
-
-export interface Achievement {
-  id: string;
-  title: string;
-  description: string;
-  achieved_at: number;
-  evidence_ref?: string;
-}
+// The response shape lives in the dependency-free `entity-profile-types.ts`
+// (shared type-only with the dashboard); re-exported here so existing imports
+// of `EntityProfile` / `Achievement` from this module keep working.
+export type { Achievement, ChronicleEntry, ChronicleKind, EntityProfile };
 
 /**
  * Dispatcher for /api/entity/* routes. Returns null if no route matches so
@@ -87,6 +55,8 @@ export async function handleEntityApi(
   method: string,
   db: MarinaDB,
   engine: Engine,
+  /** Rate-limit key — the caller's client IP (`clientIp` in http-utils.ts). */
+  clientKey: string = UNKNOWN_CLIENT_IP,
 ): Promise<Response | null> {
   // Only GET is supported for this read-only public surface
   if (method !== "GET") return null;
@@ -94,6 +64,8 @@ export async function handleEntityApi(
   // /api/entity/<name>/profile
   const match = url.pathname.match(/^\/api\/entity\/([^/]+)\/profile\/?$/);
   if (match) {
+    // Public + unauthenticated ⇒ the only handle we have is the client IP.
+    if (!consumeHttpRate("publicRead", clientKey)) return rateLimitedResponse(null);
     const name = decodeURIComponent(match[1]!);
     const profile = buildEntityProfile(name, db, engine);
     if (!profile) {

@@ -2495,9 +2495,10 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
                   <button
                     type="button"
                     onClick={doSend}
+                    aria-label="Send command"
                     className="text-primary transition-colors hover:text-text-bright"
                   >
-                    <Send size={14} />
+                    <Send size={14} aria-hidden="true" />
                   </button>
                 </div>
               </>

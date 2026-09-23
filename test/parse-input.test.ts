@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "bun:test";
+import { parseDuration, parseSince } from "../src/engine/commands/format-duration";
+import { parseDurationMs } from "../src/engine/commands/market";
 import {
+  canonicalSub,
   extractFlags,
   extractModifiers,
   int,
   normalizeIdToken,
+  parseModifiers,
   resolveMultiWordName,
+  splitOnTerminator,
+  unknownSubcommand,
 } from "../src/engine/parse-input";
 
 // ── normalizeIdToken ─────────────────────────────────────────────────────────
@@ -161,5 +167,176 @@ describe("parse-input existing helpers", () => {
     expect(text).toBe("query text");
     expect(flags.has("recent")).toBe(true);
     expect(flags.has("important")).toBe(false);
+  });
+});
+
+// ── parseModifiers — one grammar, four spellings ─────────────────────────────
+
+describe("parseModifiers", () => {
+  const SPEC = {
+    kind: { type: "string" as const },
+    since: { type: "duration" as const },
+    limit: { type: "int" as const, aliases: ["n"] },
+    persist: { type: "bool" as const },
+    confidence: { type: "number" as const },
+  };
+
+  it("accepts key:value, key=value, --key value and --key=value identically", () => {
+    const forms = [
+      ["kind:market", "since:2h", "limit:10"],
+      ["kind=market", "since=2h", "limit=10"],
+      ["--kind", "market", "--since", "2h", "--limit", "10"],
+      ["--kind=market", "--since=2h", "--limit=10"],
+    ];
+    for (const tokens of forms) {
+      const r = parseModifiers(tokens, SPEC);
+      expect(r.errors).toEqual([]);
+      expect(r.values).toEqual({ kind: "market", since: 7_200_000, limit: 10 });
+      expect(r.raw.since).toBe("2h");
+      expect(r.rest).toEqual([]);
+    }
+  });
+
+  it("removes modifiers from rest and keeps positionals in order", () => {
+    const r = parseModifiers(["alpha", "--kind", "x", "beta", "limit:3", "gamma"], SPEC);
+    expect(r.rest).toEqual(["alpha", "beta", "gamma"]);
+    expect(r.values.kind).toBe("x");
+    expect(r.values.limit).toBe(3);
+  });
+
+  it("never consumes undeclared keys (positional ids and URLs survive)", () => {
+    const r = parseModifiers(["project:marina", "https://example.test/a:b", "--other", "v"], SPEC);
+    expect(r.rest).toEqual(["project:marina", "https://example.test/a:b", "--other", "v"]);
+    expect(r.values).toEqual({});
+  });
+
+  it("splits key:value on the FIRST separator so URL values keep their colons", () => {
+    const r = parseModifiers(["kind:https://x.test/p?q=1"], SPEC);
+    expect(r.values.kind).toBe("https://x.test/p?q=1");
+  });
+
+  it("honours aliases and matches keys case-insensitively", () => {
+    expect(parseModifiers(["N:4"], SPEC).values.limit).toBe(4);
+    expect(parseModifiers(["--Kind", "z"], SPEC).values.kind).toBe("z");
+  });
+
+  it("bool: bare --flag is true; explicit values parse; flag:false works", () => {
+    expect(parseModifiers(["--persist"], SPEC).values.persist).toBe(true);
+    expect(parseModifiers(["persist:false"], SPEC).values.persist).toBe(false);
+    expect(parseModifiers(["--persist", "no"], SPEC).values.persist).toBe(false);
+    // A following positional is not eaten by a bare bool flag.
+    const r = parseModifiers(["--persist", "goal"], SPEC);
+    expect(r.values.persist).toBe(true);
+    expect(r.rest).toEqual(["goal"]);
+  });
+
+  it("types: number accepts decimals, int rejects them, duration rejects garbage", () => {
+    expect(parseModifiers(["confidence:0.9"], SPEC).values.confidence).toBe(0.9);
+    const badInt = parseModifiers(["limit:1.5"], SPEC);
+    expect(badInt.values.limit).toBeUndefined();
+    expect(badInt.errors[0]).toContain("limit");
+    const badDur = parseModifiers(["since:soon"], SPEC);
+    expect(badDur.errors[0]).toContain("since");
+    expect(badDur.errors[0]).toContain("1mo");
+    const missing = parseModifiers(["--kind"], SPEC);
+    expect(missing.errors[0]).toContain("missing value");
+  });
+
+  it("a literal -- ends modifier parsing; everything after is positional", () => {
+    const r = parseModifiers(["a", "kind:x", "--", "kind:y", "--limit", "5"], SPEC);
+    expect(r.values).toEqual({ kind: "x" });
+    expect(r.after).toEqual(["kind:y", "--limit", "5"]);
+    expect(r.rest).toEqual(["a", "kind:y", "--limit", "5"]);
+  });
+
+  it("leading: stops at the first positional so free text is never scanned", () => {
+    const r = parseModifiers(["since:1h", "hello", "kind:inside", "text"], SPEC, {
+      leading: true,
+    });
+    expect(r.values).toEqual({ since: 3_600_000 });
+    expect(r.rest).toEqual(["hello", "kind:inside", "text"]);
+  });
+});
+
+describe("splitOnTerminator", () => {
+  it("splits on a standalone -- only, not on --key", () => {
+    expect(splitOnTerminator("alpha bob --formation pipeline -- ship it  now")).toEqual([
+      "alpha bob --formation pipeline",
+      "ship it  now",
+    ]);
+    expect(splitOnTerminator("alpha bob --formation pipeline")).toEqual([
+      "alpha bob --formation pipeline",
+      undefined,
+    ]);
+  });
+});
+
+// ── canonicalSub / unknownSubcommand ─────────────────────────────────────────
+
+describe("canonicalSub", () => {
+  it("maps ls→list, view/info→show, remove/rm→delete when the canonical verb exists", () => {
+    const allowed = ["list", "show", "delete", "add"];
+    expect(canonicalSub("ls", allowed)).toBe("list");
+    expect(canonicalSub("view", allowed)).toBe("show");
+    expect(canonicalSub("INFO", allowed)).toBe("show");
+    expect(canonicalSub("remove", allowed)).toBe("delete");
+    expect(canonicalSub("rm", allowed)).toBe("delete");
+    expect(canonicalSub("add", allowed)).toBe("add");
+  });
+
+  it("maps show/view onto info for a command whose detail verb is info", () => {
+    expect(canonicalSub("show", ["info", "create"])).toBe("info");
+    expect(canonicalSub("view", ["info", "create"])).toBe("info");
+  });
+
+  it("leaves a command that distinguishes info from show alone", () => {
+    expect(canonicalSub("info", ["info", "show"])).toBe("info");
+    expect(canonicalSub("show", ["info", "show"])).toBe("show");
+  });
+
+  it("returns the lower-cased original when nothing matches, and undefined for undefined", () => {
+    expect(canonicalSub("Frobnicate", ["list"])).toBe("frobnicate");
+    expect(canonicalSub("rm", ["list"])).toBe("rm");
+    expect(canonicalSub(undefined, ["list"])).toBeUndefined();
+  });
+});
+
+describe("unknownSubcommand", () => {
+  it("renders the shared shape", () => {
+    expect(unknownSubcommand("task", "frob", "Usage: task list")).toBe(
+      'Unknown task subcommand "frob". Usage: task list',
+    );
+  });
+});
+
+// ── parseDuration — one duration grammar ─────────────────────────────────────
+
+describe("parseDuration", () => {
+  it("m is minutes, mo is months, long spellings collapse onto the same units", () => {
+    expect(parseDuration("30s")).toBe(30_000);
+    expect(parseDuration("5m")).toBe(300_000);
+    expect(parseDuration("5min")).toBe(300_000);
+    expect(parseDuration("2h")).toBe(7_200_000);
+    expect(parseDuration("2hours")).toBe(7_200_000);
+    expect(parseDuration("1d")).toBe(86_400_000);
+    expect(parseDuration("1w")).toBe(604_800_000);
+    expect(parseDuration("1mo")).toBe(30 * 86_400_000);
+    expect(parseDuration("2months")).toBe(60 * 86_400_000);
+    expect(parseDuration("soon")).toBeUndefined();
+    expect(parseDuration("")).toBeUndefined();
+  });
+
+  it("parseSince is the same grammar (now including mo)", () => {
+    expect(parseSince("30m")).toBe(1_800_000);
+    expect(parseSince("1mo")).toBe(30 * 86_400_000);
+  });
+
+  it("minUnit refuses finer units — market keeps rejecting a bare 1m", () => {
+    expect(parseDuration("1m", { minUnit: "h" })).toBeUndefined();
+    expect(parseDuration("1h", { minUnit: "h" })).toBe(3_600_000);
+    expect(parseDurationMs("1m")).toBe(0);
+    expect(parseDurationMs("7d")).toBe(7 * 86_400_000);
+    expect(parseDurationMs("1mo")).toBe(30 * 86_400_000);
+    expect(parseDurationMs("2weeks")).toBe(14 * 86_400_000);
   });
 });

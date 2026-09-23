@@ -21,6 +21,8 @@ import type { LayoutPreset } from "../hooks/use-layout-presets";
 import { useWorldState } from "../hooks/use-world-state";
 import { formatUptime } from "../lib/utils";
 import { AnimatedNumber } from "./AnimatedNumber";
+import { HealthBadge } from "./ops/HealthBadge";
+import { SpendChip } from "./ops/SpendChip";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 
 interface HeaderProps {
@@ -158,6 +160,9 @@ export function Header({
             </>
           )}
         </button>
+
+        <HealthBadge />
+        <SpendChip />
 
         <div className="flex items-center gap-1.5">
           <Radio size={12} className={connected ? "text-success" : "text-danger"} />

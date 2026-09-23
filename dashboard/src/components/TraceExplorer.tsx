@@ -94,9 +94,9 @@ function formatDuration(durationMs?: number): string {
 }
 
 function StatusIcon({ status }: { status: TraceStatus }) {
-  if (status === "completed") return <CheckCircle2 size={11} aria-label="completed" />;
-  if (status === "failed") return <AlertTriangle size={11} aria-label="failed" />;
-  return <CircleDot size={11} aria-label="running" />;
+  if (status === "completed") return <CheckCircle2 size={11} role="img" aria-label="completed" />;
+  if (status === "failed") return <AlertTriangle size={11} role="img" aria-label="failed" />;
+  return <CircleDot size={11} role="img" aria-label="running" />;
 }
 
 export function TraceExplorerView({
