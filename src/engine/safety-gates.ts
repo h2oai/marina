@@ -16,7 +16,14 @@
  * Standing is necessary but not sufficient. Even an agent with 1000
  * standing cannot execute shell commands until they've performed N
  * supervised executions and a witness has confirmed each one. After the
- * threshold flips `supervised_only` to 0, unsupervised use is allowed.
+ * threshold flips `supervised_only` to 0, unsupervised use is allowed —
+ * for as long as standing stays at or above the gate's `minStanding`.
+ * Competence is a proof of demonstrations and is never un-flipped; standing
+ * is the LIVE prerequisite (60-day half-life decay, penalties). A flipped
+ * holder whose standing decays below the bar drops back to supervised-only
+ * until it recovers, with no re-demonstration required. Operator grants
+ * (`grant()`, `grantGatesForRank`) are admin overrides and are exempt from
+ * the re-check; `revoke()` is their revocation path.
  *
  * Witness rules: a witness must themselves have `supervised_only=0` on
  * the same gate. Per the user's locked-in policy: rank-8+ agents can
@@ -26,6 +33,7 @@
 
 import { getStanding } from "../agent/standing";
 import type { MarinaDB } from "../persistence/database";
+import { isGrantedCompetence } from "../persistence/db-competence";
 import { getAutonomyPosture, OPEN_POSTURE_CORE } from "./autonomy";
 import { isLocalUngated } from "./trust-profile";
 
@@ -139,6 +147,52 @@ export interface GateCheckResult {
   reason?: string;
   /** True when the entity may attempt the op but needs a supervisor witness. */
   supervisedOnly?: boolean;
+  /**
+   * True when `supervisedOnly` is the consequence of standing decay on a
+   * holder whose competence row is already unsupervised (demonstrated flip):
+   * solo use resumes the moment standing recovers, no re-demonstration.
+   */
+  standingDecayed?: boolean;
+}
+
+/**
+ * How an unsupervised competence row relates to the live standing bar.
+ * - `none`: no row, or the row is still supervised — standing + demos path.
+ * - `granted`: operator grant (`GRANTED_DEMONSTRATIONS` sentinel) — exempt
+ *   from the standing re-check in every profile. Reason: the two bootstrap
+ *   paths that make an instance operable — `grantSovereign` (MARINA_ADMINS /
+ *   verified admin email / loopback login) and world-seed operator grants —
+ *   produce zero-standing holders by design; re-checking them on a shared or
+ *   public instance would lock the operator out of `shell.exec` /
+ *   `key.manage` / `admin.destructive` and break the root of the witness
+ *   chain. `revoke()` remains the deliberate way to take a grant back.
+ * - `demonstrated`: earned flip — must ALSO satisfy `standing >= minStanding`.
+ */
+type UnsupervisedHolder =
+  | { kind: "none" }
+  | { kind: "granted" }
+  | { kind: "demonstrated"; standing: number; standingOk: boolean };
+
+function unsupervisedHolder(
+  db: MarinaDB,
+  entityId: string,
+  gate: GateDef,
+  now: number,
+): UnsupervisedHolder {
+  const competence = db.getCompetence(entityId, gate.id);
+  if (competence?.supervised_only !== 0) return { kind: "none" };
+  if (isGrantedCompetence(competence)) return { kind: "granted" };
+  // Same cached read (6 h TTL) the supervised path uses — no extra ledger scan.
+  const standing = getStanding(db, entityId, now);
+  return { kind: "demonstrated", standing, standingOk: standing >= gate.minStanding };
+}
+
+function decayedReason(gate: GateDef, standing: number): string {
+  return (
+    `standing decayed below ${gate.minStanding} (now ${standing.toFixed(1)}) — your ${gate.id} ` +
+    `competence is intact; solo use of ${gate.description} resumes when standing recovers, ` +
+    `no re-demonstration needed.`
+  );
 }
 
 /**
@@ -152,6 +206,11 @@ export interface GateCheckResult {
  * Operators are bootstrapped via `grant()` from the world seed; there is
  * no rank short-circuit. An entity must either have a competence row
  * (supervised or unsupervised) or earn one through standing + demonstrations.
+ *
+ * An unsupervised DEMONSTRATED holder is re-checked against the gate's
+ * `minStanding` on every call: below it the result is
+ * `{ ok: true, supervisedOnly: true, standingDecayed: true, reason }` — the
+ * competence row is left untouched, so recovery is automatic.
  */
 export function checkGate(
   db: MarinaDB,
@@ -166,9 +225,17 @@ export function checkGate(
 
   // Granted competence rows pass without a standing check — operators
   // seeded with grant() don't need to earn what's already authorized.
-  const competence = db.getCompetence(entityId, gateId);
-  if (competence?.supervised_only === 0) {
-    return { ok: true };
+  // Demonstrated flips pass only while standing still clears the bar.
+  const holder = unsupervisedHolder(db, entityId, gate, now);
+  if (holder.kind === "granted") return { ok: true };
+  if (holder.kind === "demonstrated") {
+    if (holder.standingOk) return { ok: true };
+    return {
+      ok: true,
+      supervisedOnly: true,
+      standingDecayed: true,
+      reason: decayedReason(gate, holder.standing),
+    };
   }
 
   const standing = getStanding(db, entityId, now);
@@ -212,6 +279,9 @@ export function checkUnattendedGate(
   if (!result.ok) return result;
   if (result.supervisedOnly) {
     const gate = SAFETY_GATES[gateId];
+    if (result.standingDecayed) {
+      return { ok: false, standingDecayed: true, reason: `Supervised-only: ${result.reason}` };
+    }
     return {
       ok: false,
       reason: `Supervised-only: you have the standing to ${gate?.description ?? "use this capability"}, but an unattended run is not permitted. This capability cannot be self-certified — an operator must grant it (or a qualified witness must attest a supervised demonstration) before you can run it solo.`,
@@ -235,6 +305,8 @@ export interface GateExecutionResult {
   mode?: GateExecutionMode;
   /** The witness whose supervision window authorized this run (windowed mode). */
   witnessId?: string;
+  /** Refused because a demonstrated holder's standing decayed below the bar. */
+  standingDecayed?: boolean;
 }
 
 /**
@@ -242,7 +314,10 @@ export interface GateExecutionResult {
  * operation. This is the walkable version of the ladder the gate registry
  * always promised. Outcomes, by autonomy posture (src/engine/autonomy.ts):
  *
- * - unsupervised competence → `unattended` (all postures).
+ * - unsupervised competence → `unattended` (all postures) — a granted row
+ *   always; a demonstrated flip only while standing ≥ `minStanding`. A
+ *   decayed holder falls through to the rules below exactly like an entity
+ *   that never flipped, and its refusal names the decay (not "not yet").
  * - `open` posture, gate outside the destructive core → `posture-open`:
  *   standing is descriptive, the gate auto-passes. Core gates fall through
  *   to normal rules even under `open`.
@@ -269,8 +344,9 @@ export function checkGateForExecution(
   const gate = SAFETY_GATES[gateId];
   if (!gate) return { ok: false, reason: `Unknown safety gate: ${gateId}` };
 
-  const competence = db.getCompetence(entityId, gateId);
-  if (competence?.supervised_only === 0) return { ok: true, mode: "unattended" };
+  const holder = unsupervisedHolder(db, entityId, gate, now);
+  if (holder.kind === "granted") return { ok: true, mode: "unattended" };
+  if (holder.kind === "demonstrated" && holder.standingOk) return { ok: true, mode: "unattended" };
 
   // LOCAL trust profile: the single operator's own machine, loopback-only.
   // Every gate — including the OPEN_POSTURE_CORE four — auto-passes and the
@@ -284,8 +360,16 @@ export function checkGateForExecution(
     return { ok: true, mode: "posture-open" };
   }
 
-  const standing = getStanding(db, entityId, now);
+  const standing =
+    holder.kind === "demonstrated" ? holder.standing : getStanding(db, entityId, now);
   if (standing < gate.minStanding) {
+    if (holder.kind === "demonstrated") {
+      return {
+        ok: false,
+        standingDecayed: true,
+        reason: `Not now: ${decayedReason(gate, standing)}`,
+      };
+    }
     return {
       ok: false,
       reason:
@@ -408,6 +492,11 @@ export interface GateProgress {
   description: string;
   /** unlocked = usable solo; supervised = enough standing, needs demos; locked = needs more standing. */
   status: "unlocked" | "supervised" | "locked";
+  /**
+   * The competence row is already unsupervised (demonstrated) but standing has
+   * decayed below `minStanding`; `status` is `locked` until it recovers.
+   */
+  decayed?: boolean;
   standing: number;
   minStanding: number;
   demonstrations: number;
@@ -426,8 +515,11 @@ export function getGateProgress(db: MarinaDB, entityId: string, now = Date.now()
     .map((gate): GateProgress => {
       const comp = db.getCompetence(entityId, gate.id);
       const demonstrations = comp?.demonstrations ?? 0;
-      const status: GateProgress["status"] =
-        comp?.supervised_only === 0
+      const flipped = comp?.supervised_only === 0;
+      const decayed = flipped && !isGrantedCompetence(comp) && standing < gate.minStanding;
+      const status: GateProgress["status"] = decayed
+        ? "locked"
+        : flipped
           ? "unlocked"
           : standing >= gate.minStanding
             ? "supervised"
@@ -436,6 +528,7 @@ export function getGateProgress(db: MarinaDB, entityId: string, now = Date.now()
         id: gate.id,
         description: gate.description,
         status,
+        ...(decayed ? { decayed: true } : {}),
         standing,
         minStanding: gate.minStanding,
         demonstrations,
