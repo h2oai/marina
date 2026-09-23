@@ -9,7 +9,12 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { MARINA_DEFAULT_MODEL, positiveNumberFromEnv } from "../engine/constants";
+import {
+  MARINA_DEFAULT_MODEL,
+  MEMORY_REFLECTOR_ROLE,
+  positiveNumberFromEnv,
+  reflectorIdleStopMs,
+} from "../engine/constants";
 import {
   inferModelCapabilities,
   isLocalProvider,
@@ -679,14 +684,17 @@ export class AgentRuntime {
    * team doesn't outlive the lead by accident. Use {@link stopWithReport} to
    * learn which children were cascaded.
    */
-  async stop(name: string, opts?: { keepConfig?: boolean; keepChildren?: boolean }): Promise<void> {
+  async stop(
+    name: string,
+    opts?: { keepConfig?: boolean; keepChildren?: boolean; shutdown?: boolean },
+  ): Promise<void> {
     await this.stopWithReport(name, opts);
   }
 
   /** {@link stop}, returning the cascaded child names (excluding `name` itself). */
   async stopWithReport(
     name: string,
-    opts?: { keepConfig?: boolean; keepChildren?: boolean },
+    opts?: { keepConfig?: boolean; keepChildren?: boolean; shutdown?: boolean },
   ): Promise<{ stoppedChildren: string[] }> {
     // Resolve to the canonical map key so `agent stop alice` finds "Alice".
     // Falls back to the raw name for the in-flight-only path (a spawn still
@@ -715,7 +723,12 @@ export class AgentRuntime {
     }
 
     if (agent) {
-      await agent.stop();
+      // `shutdown` tells the adapter its session-end reflection must take the
+      // template path: every other agent — any memory-reflector included — is
+      // stopping too, so there is no helper to hand the topic to. The handle
+      // contract is `stop()`; adapters that ignore the argument are unaffected.
+      const stopHandle = agent.stop as (opts?: { shutdown?: boolean }) => Promise<void>;
+      await stopHandle.call(agent, opts?.shutdown ? { shutdown: true } : undefined);
       this.agents.delete(key);
     }
     this.spawnedByOf.delete(key);
@@ -762,7 +775,9 @@ export class AgentRuntime {
     }
     const names = [...this.agents.keys()];
     await Promise.allSettled(
-      names.map((name) => this.stop(name, { keepConfig: true, keepChildren: true })),
+      names.map((name) =>
+        this.stop(name, { keepConfig: true, keepChildren: true, shutdown: true }),
+      ),
     );
   }
 
@@ -987,6 +1002,7 @@ export class AgentRuntime {
   // ─── Uptime Enforcement ────────────────────────────────────────────────
 
   private enforceUptimeLimits(): void {
+    void this.enforceReflectorIdleStop();
     for (const [name, agent] of this.agents) {
       const status = agent.getStatus();
       if (status.uptime > MAX_AGENT_UPTIME_MS) {
@@ -998,6 +1014,54 @@ export class AgentRuntime {
         );
       }
     }
+  }
+
+  /**
+   * Idle stop for memory-reflector helpers (2026-09-22). A reflector is a
+   * bounded errand: `reflect` spawns one on demand, it works the assistance
+   * jobs filed against it, and nothing ever stopped it — it kept looping on
+   * the model (~15 calls/min) until an operator noticed. Every check (60 s):
+   * a reflector whose uptime exceeds the window, that holds no open job and
+   * has had none created for it inside the window, is stopped (config deleted
+   * — the next `reflect` re-spawns one). `MARINA_REFLECTOR_IDLE_STOP_MS`, 0
+   * disables. Job activity is read from the durable ledger
+   * (`memory_assistance_jobs.worker_id` = the helper's world account), so a
+   * job filed by the hygiene/accumulation dispatch counts as well as one from
+   * `reflect`.
+   */
+  async enforceReflectorIdleStop(now: number = Date.now()): Promise<string[]> {
+    const windowMs = reflectorIdleStopMs();
+    if (windowMs <= 0 || !this.db) return [];
+    const stopped: string[] = [];
+    for (const [name, agent] of this.agents) {
+      const status = agent.getStatus();
+      if (status.role !== MEMORY_REFLECTOR_ROLE) continue;
+      const user = this.db.getUserByName(name);
+      const activity = user ? reflectorJobActivity(this.db, user.id, now) : null;
+      if (
+        !reflectorIsIdle({
+          uptimeMs: status.uptime,
+          lastJobCreatedAt: activity?.lastJobCreatedAt ?? null,
+          openJobs: activity?.openJobs ?? 0,
+          windowMs,
+          now,
+        })
+      )
+        continue;
+      console.log(
+        `[agents] memory-reflector "${name}" idle for ${Math.round(windowMs / 60000)} min (no assigned job) — stopping.`,
+      );
+      try {
+        await this.stop(name);
+        stopped.push(name);
+      } catch (error) {
+        console.warn(
+          `[agents] Failed to stop idle memory-reflector "${name}":`,
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+    return stopped;
   }
 
   // ─── API Key Resolution ───────────────────────────────────────────────
@@ -1100,4 +1164,45 @@ export class AgentRuntime {
     }
     return false;
   }
+}
+
+// ─── Memory-reflector idle stop ─────────────────────────────────────────────
+
+/** Assistance-job activity of one helper (as worker) from the durable ledger. */
+export function reflectorJobActivity(
+  db: MarinaDB,
+  workerPrincipalId: string,
+  now: number = Date.now(),
+): { lastJobCreatedAt: number | null; openJobs: number } {
+  const raw = db.memoryRepository().raw;
+  const last = raw
+    .query("SELECT MAX(created_at) AS at FROM memory_assistance_jobs WHERE worker_id=?")
+    .get(workerPrincipalId) as { at: number | null } | null;
+  const open = raw
+    .query(
+      `SELECT COUNT(*) AS n FROM memory_assistance_jobs
+       WHERE worker_id=? AND state IN ('pending','running') AND deadline>?`,
+    )
+    .get(workerPrincipalId, now) as { n: number } | null;
+  return { lastJobCreatedAt: last?.at ?? null, openJobs: open?.n ?? 0 };
+}
+
+/**
+ * Pure idle decision: up longer than the window, no open job, and no job
+ * created inside the window (a fresh spawn is given the whole window to
+ * receive its first assignment).
+ */
+export function reflectorIsIdle(input: {
+  uptimeMs: number;
+  lastJobCreatedAt: number | null;
+  openJobs: number;
+  windowMs: number;
+  now: number;
+}): boolean {
+  if (input.windowMs <= 0) return false;
+  if (input.uptimeMs < input.windowMs) return false;
+  if (input.openJobs > 0) return false;
+  if (input.lastJobCreatedAt !== null && input.now - input.lastJobCreatedAt < input.windowMs)
+    return false;
+  return true;
 }

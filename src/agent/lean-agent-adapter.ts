@@ -23,6 +23,7 @@ import {
   type Message,
   type Model,
   type OpenAICompletionsCompat,
+  type SimpleStreamOptions,
   type TextContent,
 } from "@earendil-works/pi-ai";
 import {
@@ -38,6 +39,7 @@ import {
   PERCEPTION_LINE_MAX_CHARS,
   PERCEPTION_MODEL_REQUEST_MAX_CHARS,
   PROVIDER_MAX_RETRIES,
+  perceiveSelfEcho,
   SPEND_CAP_POLL_MS,
   SPEND_WINDOW_MS,
   UPSTREAM_ERROR_PAUSE_MS,
@@ -51,6 +53,7 @@ import {
   UNIFIED_CONTEXT_HEADER,
   UNIFIED_TIER_LABELS,
 } from "../memory/unified-context";
+import { stripAnsi } from "../net/ansi";
 import {
   isLocalProvider,
   localProviderBaseUrl,
@@ -126,6 +129,46 @@ export function evolutionControlState(
   return { sessionId: perception.data.sessionId, active: perception.data.active };
 }
 
+/**
+ * Self-echo rule (2026-09-22). The world answers every command an agent runs
+ * with a `message` perception addressed back to the same agent. Two families
+ * of those replies carry nothing the agent did not just do itself and, before
+ * this rule, made up most of `[World Events]` (89 % of continuation prompts hit
+ * the event-level re-queue, driven by the continuity journal's own
+ * `memory api capture` / `save_checkpoint` acknowledgements):
+ *
+ *  (a) durable memory-service acknowledgements — `data.memory_service` (the
+ *      `memory api …` reply envelope the journal, archive and checkpoint paths
+ *      correlate on) and the legacy memory command payload
+ *      `data.memory.schema === "marina.memory.command.v1"` (`note` / `recall` /
+ *      `pool` replies, already returned to the tool call that issued them);
+ *  (b) the agent's own send receipts — `You tell <name>: …` / `You say: …` /
+ *      `You shout: …` echoes and the duplicate-suppressed tell receipt.
+ *
+ * Everything addressed to the agent by someone else (`<name> tells you`,
+ * channel messages, broadcasts, endpoint requests) is untouched. The tool
+ * result path is separate (`MarinaClient.command` drains its own buffer), so
+ * dropping these from the perception BUFFER loses no information.
+ * `MARINA_PERCEIVE_SELF_ECHO=on` restores the old behaviour.
+ */
+export function isSelfEchoPerception(p: Perception, text: string): boolean {
+  if (p.kind !== "message") return false;
+  const data = (p.data ?? {}) as Record<string, unknown>;
+  if (data.memory_service !== undefined) return true;
+  const memory = data.memory;
+  if (
+    memory &&
+    typeof memory === "object" &&
+    (memory as { schema?: unknown }).schema === "marina.memory.command.v1"
+  )
+    return true;
+  // Command echoes are ANSI-coloured; strip before matching the prefix.
+  const plain = stripAnsi(text).replace(/^>\s*/, "").trimStart();
+  if (/^You (tell \S[^:]*|say|shout): /.test(plain)) return true;
+  if (/^Duplicate suppressed; existing message #\d+/.test(plain)) return true;
+  return false;
+}
+
 export interface TurnUsageMetrics {
   inputTokens?: number;
   outputTokens?: number;
@@ -152,6 +195,58 @@ export function extractTurnUsage(message: unknown): TurnUsageMetrics {
     ...(finite(row.cacheWrite) === undefined ? {} : { cacheWriteTokens: finite(row.cacheWrite) }),
     ...(costUsd === undefined ? {} : { costUsd }),
   };
+}
+
+/**
+ * Per-response accounting the Marina proxy (`/v1/chat/completions`) reports in
+ * headers. The synthesized `marina/*` model has no price of its own, so the
+ * usage block prices every call at $0; the proxy knows the upstream it routed
+ * to and stamps `x-marina-cost-usd` (decimal string), `x-marina-upstream-model`,
+ * `x-marina-cache-write-tokens` and `x-marina-cache-read-tokens`. All optional —
+ * an older proxy or a registry model yields `null` and accounting is unchanged.
+ */
+export interface ProxyResponseMeta {
+  costUsd?: number;
+  upstreamModel?: string;
+  cacheWriteTokens?: number;
+  cacheReadTokens?: number;
+}
+
+export const PROXY_HEADER_COST_USD = "x-marina-cost-usd";
+export const PROXY_HEADER_UPSTREAM_MODEL = "x-marina-upstream-model";
+export const PROXY_HEADER_CACHE_WRITE_TOKENS = "x-marina-cache-write-tokens";
+export const PROXY_HEADER_CACHE_READ_TOKENS = "x-marina-cache-read-tokens";
+
+/** Parse the proxy accounting headers; `null` when none of them is present. */
+export function readProxyResponseHeaders(
+  headers: Headers | Record<string, string> | undefined | null,
+): ProxyResponseMeta | null {
+  if (!headers) return null;
+  const get = (name: string): string | undefined => {
+    if (typeof (headers as Headers).get === "function") {
+      return (headers as Headers).get(name) ?? undefined;
+    }
+    const record = headers as Record<string, string>;
+    for (const key of Object.keys(record)) {
+      if (key.toLowerCase() === name) return record[key];
+    }
+    return undefined;
+  };
+  const nonNegative = (raw: string | undefined): number | undefined => {
+    if (raw === undefined || raw.trim() === "") return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : undefined;
+  };
+  const meta: ProxyResponseMeta = {};
+  const cost = nonNegative(get(PROXY_HEADER_COST_USD));
+  if (cost !== undefined) meta.costUsd = cost;
+  const model = get(PROXY_HEADER_UPSTREAM_MODEL)?.trim();
+  if (model) meta.upstreamModel = model;
+  const write = nonNegative(get(PROXY_HEADER_CACHE_WRITE_TOKENS));
+  if (write !== undefined) meta.cacheWriteTokens = Math.floor(write);
+  const read = nonNegative(get(PROXY_HEADER_CACHE_READ_TOKENS));
+  if (read !== undefined) meta.cacheReadTokens = Math.floor(read);
+  return Object.keys(meta).length > 0 ? meta : null;
 }
 
 // ─── Spend Ceiling ───────────────────────────────────────────────────────────
@@ -237,6 +332,13 @@ export interface AgentOperatorStatus {
   paused: AgentPauseState | null;
   /** Milliseconds until the loop's next wake; null when the loop is not running. */
   nextTickInMs: number | null;
+  /** Upstream model the proxy last reported (`x-marina-upstream-model`); null before the first proxied call. */
+  upstreamModel?: string | null;
+  /** Lifetime prompt-cache token counts (provider usage, or the proxy headers when usage lacks them). */
+  totalCacheReadTokens?: number;
+  totalCacheWriteTokens?: number;
+  /** Own command echoes kept out of the perception buffer (see `isSelfEchoPerception`). */
+  selfEchoesDropped?: number;
 }
 
 /** Duck-typed accessor so command surfaces need not import the adapter class. */
@@ -950,9 +1052,21 @@ export class LeanAgentAdapter implements AgentHandle {
     totalInputTokens: 0,
     totalOutputTokens: 0,
     totalCostUsd: 0,
+    totalCacheReadTokens: 0,
+    totalCacheWriteTokens: 0,
     /** Compactions run BETWEEN turns of one prompt (prepareNextTurn), not between prompts. */
     midRunCompactions: 0,
   };
+  /** Accounting headers of the most recent provider response, consumed by the next turn_end. */
+  private pendingProxyMeta: ProxyResponseMeta | null = null;
+  /** Last `x-marina-upstream-model` seen — what the proxy actually routed this agent to. */
+  private lastUpstreamModel: string | null = null;
+  /** Injected fetch for provider HTTP (tests / embedders); undefined = globalThis.fetch. */
+  private readonly providerFetch: typeof fetch | undefined;
+  /** Whether the agent's own command echoes may enter the perception buffer (env, read at construction). */
+  private readonly perceiveSelfEcho: boolean;
+  /** Self-echo perceptions filtered out of the buffer (operator diagnostics). */
+  private selfEchoesDropped = 0;
   /** Wall-clock when the current LLM turn began (turn_start); 0 when none in flight.
    *  Observability only — used to time turn_start→turn_end latency. */
   /** True once budgetCalls is spent and the autonomous loop has paused. */
@@ -1069,10 +1183,13 @@ export class LeanAgentAdapter implements AgentHandle {
     apiKey?: string | (() => string | undefined | Promise<string | undefined>),
     internalToken?: string,
     spendGuard?: SpendGuard,
+    providerFetch?: typeof fetch,
   ) {
     config.supports = normalizeSupports(config.supports);
     this.name = config.name;
     this.config = config;
+    this.providerFetch = providerFetch;
+    this.perceiveSelfEcho = perceiveSelfEcho();
     this.spendGuard = spendGuard ?? {};
     this.rolePrompt = rolePrompt;
     this.loopCycleDelay = config.loopCycleDelay ?? 2000;
@@ -1278,12 +1395,11 @@ export class LeanAgentAdapter implements AgentHandle {
       // (reconnect) takes effect without rebuilding the Agent.
       // `maxRetries`: let pi-ai retry transient 5xx / short 429s inside the
       // request before Marina's loop-level backoff ever sees an error.
+      // Proxy accounting: `providerStreamOptions` adds `onResponse` (+ a fetch
+      // wrapper) on the marina/* proxy model so `x-marina-cost-usd` and friends
+      // are captured per response and settled at the next turn_end.
       streamFn: (model, context, options) =>
-        piModels.streamSimple(model, context, {
-          ...options,
-          maxRetries: PROVIDER_MAX_RETRIES,
-          ...(this.outputMaxTokens ? { maxTokens: this.outputMaxTokens } : {}),
-        }),
+        piModels.streamSimple(model, context, this.providerStreamOptions(model, options)),
       // Dynamic resolver if a function was passed in; pi-agent-core will
       // re-invoke this for every LLM call, picking up rotated credentials.
       getApiKey: apiKey
@@ -1354,6 +1470,12 @@ export class LeanAgentAdapter implements AgentHandle {
         if (this.autonomousMode) {
           const text = (p.data?.text as string) ?? (p.data?.message as string) ?? `[${p.kind}]`;
           if (text) {
+            // Self-echo filter — the agent's own memory-service acknowledgements
+            // and send receipts never enter the buffer (see isSelfEchoPerception).
+            if (!this.perceiveSelfEcho && isSelfEchoPerception(p, text)) {
+              this.selfEchoesDropped++;
+              return;
+            }
             // Perception dedup — skip identical text seen recently
             const percHash = Bun.hash(text).toString();
             if (this.recentPerceptionHashes.has(percHash)) return;
@@ -1660,7 +1782,13 @@ export class LeanAgentAdapter implements AgentHandle {
     this.emitStatusChange("autonomous");
   }
 
-  async stop(): Promise<void> {
+  /**
+   * @param opts.shutdown — the runtime is stopping EVERY agent (`stopAll`,
+   *   process shutdown). The session-end reflection then takes the template
+   *   path only: handing the topic to a running memory-reflector would file a
+   *   job against a helper that is itself about to stop.
+   */
+  async stop(opts?: { shutdown?: boolean }): Promise<void> {
     const loopPromise = this.autonomousLoopPromise;
     // The discovery turn may still be running in the background (start() no
     // longer awaits it). Capture it so we can unwind it cleanly below.
@@ -1699,9 +1827,15 @@ export class LeanAgentAdapter implements AgentHandle {
         );
       });
       const uptime = Math.round((Date.now() - this.metrics.startedAt) / 60000);
+      // Never `auto`: under LOCAL ungated the bare `reflect` would spawn a
+      // model-backed memory-reflector that keeps looping after this agent is
+      // gone (~40 % of a benchmark's spend was such orphans). A running helper
+      // may take the topic when this is an individual stop; a shutdown uses
+      // the deterministic template.
       await this.platformMemory
         .reflect(
           `Session ended: ${this.metrics.toolCalls} tool calls, ${this.metrics.errors} errors, uptime ${uptime}m`,
+          { helper: opts?.shutdown ? "never" : "existing" },
         )
         .catch(() => {});
     }
@@ -2983,13 +3117,7 @@ The goal is a smaller, sharper memory — not more notes.`;
         // Token + cost accounting per model call (every turn, not just the
         // last message of a cycle — a tool-calling prompt is several turns).
         // Feeds the lifetime totals and the rolling-hour spend ceiling.
-        const usage = extractTurnUsage(event.message);
-        this.metrics.totalInputTokens += (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
-        this.metrics.totalOutputTokens += usage.outputTokens ?? 0;
-        if (usage.costUsd) {
-          this.metrics.totalCostUsd += usage.costUsd;
-          this.spend.record(usage.costUsd, endedAt);
-        }
+        const usage = this.recordTurnUsage(extractTurnUsage(event.message), endedAt);
         this.emitEvent({
           type: "turn_end",
           hadToolCalls: event.toolResults.length > 0,
@@ -3366,6 +3494,86 @@ The goal is a smaller, sharper memory — not more notes.`;
     };
   }
 
+  /**
+   * Per-request stream options: pi-ai's retries + the output cap, plus — on the
+   * marina/* proxy model or when a fetch was injected — an `onResponse` hook
+   * and a fetch wrapper that both read the proxy's accounting headers into
+   * `pendingProxyMeta` (idempotent per response: the last response before a
+   * turn_end wins, so a retried request settles once). Registry models talk
+   * to their provider directly and keep pi-ai's own behaviour untouched.
+   */
+  private providerStreamOptions(
+    model: Model<Api>,
+    options: SimpleStreamOptions | undefined,
+  ): SimpleStreamOptions {
+    const base: SimpleStreamOptions = {
+      ...options,
+      maxRetries: PROVIDER_MAX_RETRIES,
+      ...(this.outputMaxTokens ? { maxTokens: this.outputMaxTokens } : {}),
+    };
+    if (!this.providerFetch && !isMarinaProxyModel(model)) return base;
+    const inner = options?.onResponse;
+    const upstream = this.providerFetch ?? globalThis.fetch;
+    // Bun's `typeof fetch` carries a static `preconnect`; the wrapper only needs
+    // the callable shape pi-ai's `FetchFunction` invokes.
+    const wrapped = (async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ) => {
+      const response = await upstream(input, init);
+      this.noteProviderResponse(response.headers);
+      return response;
+    }) as typeof fetch;
+    return {
+      ...base,
+      fetch: wrapped,
+      onResponse: async (response, m) => {
+        this.noteProviderResponse(response.headers);
+        await inner?.(response, m);
+      },
+    };
+  }
+
+  /** Stash the proxy accounting of one HTTP response for the next turn_end. */
+  private noteProviderResponse(headers: Headers | Record<string, string> | undefined): void {
+    const meta = readProxyResponseHeaders(headers);
+    if (!meta) return;
+    this.pendingProxyMeta = meta;
+    if (meta.upstreamModel) this.lastUpstreamModel = meta.upstreamModel;
+  }
+
+  /**
+   * Settle one model call: provider-reported usage first, the proxy headers
+   * fill what it lacks. Cost from the headers counts only when the model's own
+   * price came to nothing (the synthesized proxy model is $0), so a priced
+   * registry model is never double-charged. Feeds the lifetime totals and the
+   * rolling-hour spend window; returns the merged usage for the turn_end event.
+   */
+  private recordTurnUsage(usage: TurnUsageMetrics, endedAt: number): TurnUsageMetrics {
+    const proxy = this.pendingProxyMeta;
+    this.pendingProxyMeta = null;
+    const merged: TurnUsageMetrics = { ...usage };
+    if (proxy) {
+      if (merged.cacheWriteTokens === undefined && proxy.cacheWriteTokens !== undefined)
+        merged.cacheWriteTokens = proxy.cacheWriteTokens;
+      if (merged.cacheReadTokens === undefined && proxy.cacheReadTokens !== undefined)
+        merged.cacheReadTokens = proxy.cacheReadTokens;
+      if (!merged.costUsd && proxy.costUsd) merged.costUsd = proxy.costUsd;
+    }
+    // Input total stays anchored on the provider's own usage: an OpenAI-style
+    // prompt_tokens already includes cached tokens, so a header-only cache-read
+    // count must not be added on top of it a second time.
+    this.metrics.totalInputTokens += (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0);
+    this.metrics.totalOutputTokens += merged.outputTokens ?? 0;
+    this.metrics.totalCacheReadTokens += merged.cacheReadTokens ?? 0;
+    this.metrics.totalCacheWriteTokens += merged.cacheWriteTokens ?? 0;
+    if (merged.costUsd) {
+      this.metrics.totalCostUsd += merged.costUsd;
+      this.spend.record(merged.costUsd, endedAt);
+    }
+    return merged;
+  }
+
   /** Tokens, spend, last error, pause and next wake — see {@link AgentOperatorStatus}. */
   getOperatorStatus(): AgentOperatorStatus {
     const now = Date.now();
@@ -3373,6 +3581,10 @@ The goal is a smaller, sharper memory — not more notes.`;
       totalInputTokens: this.metrics.totalInputTokens,
       totalOutputTokens: this.metrics.totalOutputTokens,
       totalCostUsd: this.metrics.totalCostUsd,
+      totalCacheReadTokens: this.metrics.totalCacheReadTokens,
+      totalCacheWriteTokens: this.metrics.totalCacheWriteTokens,
+      upstreamModel: this.lastUpstreamModel,
+      selfEchoesDropped: this.selfEchoesDropped,
       costLastHourUsd: this.spend.total(now),
       spendCaps: {
         perAgentUsdPerHour: this.spendGuard.perAgentUsdPerHour,
