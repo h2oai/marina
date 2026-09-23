@@ -22,7 +22,7 @@ import {
   makeStrictJsonSchema,
   resolveJsonSchemaStrictSampling,
 } from "@earendil-works/pi-ai/api/constrained-sampling";
-import { Type } from "typebox";
+import { Type } from "@sinclair/typebox";
 import { effectivePromptWindow } from "../src/agent/context-manager";
 import {
   assembleContinuationPrompt,
