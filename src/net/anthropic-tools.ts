@@ -457,6 +457,69 @@ function outputConfig(responseFormat: unknown): Rec | undefined {
  * Throws `UnsupportedParameterError` for `n > 1`, `response_format` without
  * a schema, non-function tools and audio/file content parts.
  */
+// ─── Extended thinking ──────────────────────────────────────────────────────
+
+/** Tokens always left for the answer beside a thinking budget (mirrors pi-ai). */
+export const MIN_ANSWER_TOKENS = 1024;
+
+/**
+ * `reasoning_effort` level → Anthropic `budget_tokens`. The same table pi-ai
+ * uses for its Anthropic provider (`DEFAULT_THINKING_BUDGETS`), so an agent on
+ * the `marina/*` proxy and a direct pi-ai agent think with equal depth at the
+ * same level. `xhigh`/`max` clamp to `high`; `none`/`off`/`minimal-less`
+ * values disable thinking.
+ */
+export const THINKING_BUDGET_TOKENS: Readonly<Record<string, number>> = {
+  minimal: 1024,
+  low: 2048,
+  medium: 8192,
+  high: 16384,
+  xhigh: 16384,
+  max: 16384,
+};
+
+/**
+ * Anthropic `thinking` parameter for an OpenAI-shaped body, or undefined when
+ * thinking stays off. Accepted spellings, in precedence order:
+ *  - `thinking: { type: "enabled", budget_tokens }` — Anthropic-native, forwarded
+ *    (a `type: "disabled"` object turns thinking off even if `reasoning_effort` is set);
+ *  - `thinking: "<level>"` or `thinking: { effort: "<level>" }` — level names;
+ *  - `reasoning_effort: "<level>"` — the OpenAI spelling pi-ai emits.
+ * The budget is clamped so at least `MIN_ANSWER_TOKENS` fit under `max_tokens`
+ * when the caller set a cap large enough; otherwise `buildAnthropicRequest`
+ * raises `max_tokens` instead.
+ */
+export function anthropicThinking(
+  body: Record<string, unknown>,
+  maxTokens: number | undefined,
+): { type: "enabled"; budget_tokens: number } | undefined {
+  const raw = body.thinking;
+  let budget: number | undefined;
+  if (raw && typeof raw === "object") {
+    const obj = raw as { type?: unknown; budget_tokens?: unknown; effort?: unknown };
+    if (obj.type === "disabled") return undefined;
+    if (typeof obj.budget_tokens === "number" && Number.isFinite(obj.budget_tokens)) {
+      budget = Math.max(1024, Math.floor(obj.budget_tokens));
+    } else if (typeof obj.effort === "string") {
+      budget = THINKING_BUDGET_TOKENS[obj.effort.toLowerCase()];
+    } else if (obj.type === "enabled") {
+      budget = THINKING_BUDGET_TOKENS.medium;
+    }
+  } else if (typeof raw === "string") {
+    budget = THINKING_BUDGET_TOKENS[raw.toLowerCase()];
+  }
+  if (budget === undefined && typeof body.reasoning_effort === "string") {
+    budget = THINKING_BUDGET_TOKENS[body.reasoning_effort.toLowerCase()];
+  }
+  if (budget === undefined) return undefined;
+  // Fit under the caller's cap when it leaves room; a too-small cap is raised
+  // by the caller instead of silently shrinking the requested depth to nothing.
+  if (maxTokens !== undefined && maxTokens - MIN_ANSWER_TOKENS >= 1024) {
+    budget = Math.min(budget, maxTokens - MIN_ANSWER_TOKENS);
+  }
+  return { type: "enabled", budget_tokens: budget };
+}
+
 export function buildAnthropicRequest(
   body: Record<string, unknown>,
   model: string,
@@ -493,22 +556,34 @@ export function buildAnthropicRequest(
     body.tool_choice ?? body.function_call,
     body.parallel_tool_calls,
   );
-  const maxTokens =
+  const explicitMaxTokens =
     typeof body.max_tokens === "number"
       ? body.max_tokens
       : typeof body.max_completion_tokens === "number"
         ? body.max_completion_tokens
-        : 4096;
+        : undefined;
+  const maxTokens = explicitMaxTokens ?? 4096;
   const stops = stopSequences(body.stop);
   const config = outputConfig(body.response_format);
   const system = opts.autoCache ? applyAutoCache(translated.system) : translated.system;
+  // Only a cap the CLIENT set clamps the thinking budget; the 4096 default is
+  // raised to fit the requested depth instead.
+  const thinking = anthropicThinking(body, explicitMaxTokens);
 
   return {
     model,
-    max_tokens: maxTokens,
+    // Extended thinking must leave answer room: Anthropic requires
+    // budget_tokens < max_tokens, so the ceiling is raised when the client's
+    // cap would not fit the budget.
+    max_tokens: thinking
+      ? Math.max(maxTokens, thinking.budget_tokens + MIN_ANSWER_TOKENS)
+      : maxTokens,
     stream,
-    ...(typeof body.temperature === "number" ? { temperature: body.temperature } : {}),
-    ...(typeof body.top_p === "number" ? { top_p: body.top_p } : {}),
+    ...(thinking ? { thinking } : {}),
+    // Claude rejects sampling overrides while thinking is enabled
+    // ("temperature may only be set to 1", top_p likewise) — omit both.
+    ...(!thinking && typeof body.temperature === "number" ? { temperature: body.temperature } : {}),
+    ...(!thinking && typeof body.top_p === "number" ? { top_p: body.top_p } : {}),
     ...(stops ? { stop_sequences: stops } : {}),
     ...(typeof body.user === "string" && body.user ? { metadata: { user_id: body.user } } : {}),
     ...(Array.isArray(system) && system.length > 0 ? { system } : {}),

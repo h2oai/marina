@@ -35,6 +35,7 @@ export function renderProviderProbe(results: ProviderProbeResult[]): string[] {
       r.status === null ? "no response" : `HTTP ${r.status}`,
       r.textOk ? "text ok" : "EMPTY TEXT",
       r.systemHonored ? "second system message honored" : "SECOND SYSTEM MESSAGE IGNORED",
+      renderToolCallCheck(r),
       `${r.latencyMs} ms`,
     ];
     lines.push(`  ${r.ok ? "✓" : "✗"} ${r.provider}/${r.model} — ${checks.join(" · ")}`);
@@ -50,9 +51,23 @@ export function renderProviderProbe(results: ProviderProbeResult[]): string[] {
         lines.push(
           "      → memory injected as a second system message would be dropped for this provider",
         );
+      if (r.toolCallOk === false)
+        lines.push(
+          `      → tool call dropped${r.toolCallError ? ` (${r.toolCallError})` : ""}: tool schemas sent through this provider would be lost or answered in text`,
+        );
     }
   }
   return lines;
+}
+
+/**
+ * The tool-call column: `tool call ok` / `TOOL CALL DROPPED` for probed
+ * providers, `tool call not probed` where the passthru path does not
+ * translate tool schemas (`toolCallOk` undefined). `error` keeps its own line.
+ */
+export function renderToolCallCheck(r: Pick<ProviderProbeResult, "toolCallOk">): string {
+  if (r.toolCallOk === undefined) return "tool call not probed";
+  return r.toolCallOk ? "tool call ok" : "TOOL CALL DROPPED";
 }
 
 export function readinessCommand(deps: {

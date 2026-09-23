@@ -108,6 +108,36 @@ curl http://localhost:3300/v1/chat/completions \
 
 Responses arrive as Server-Sent Events in the standard OpenAI format.
 
+### Responses API streaming
+
+`POST /v1/responses` with `"stream": true` is incremental on both endpoint modes:
+
+- **passthru** — the upstream is asked for chat-completions SSE (with `stream_options.include_usage`)
+  and re-encoded as it arrives: each `delta.content` is one `response.output_text.delta`;
+  `delta.tool_calls` fragments become `function_call` output items
+  (`response.output_item.added` → `response.function_call_arguments.delta` …
+  `response.function_call_arguments.done` → `response.output_item.done`); the trailing `usage`
+  chunk lands on the record. The response cache is bypassed for streams.
+- **agents** — every `model_response_chunk` the routed agent sends is one delta.
+
+Event sequence, with a running `sequence_number`:
+
+```
+response.created → response.in_progress
+→ response.output_item.added (message) → response.content_part.added
+→ response.output_text.delta …                     (one per upstream/agent chunk)
+→ response.output_item.added (function_call) → response.function_call_arguments.delta …
+→ response.output_text.done → response.content_part.done → response.output_item.done
+→ response.function_call_arguments.done → response.output_item.done   (per call, output order)
+→ response.completed
+```
+
+The `response` payload of `response.completed` is byte-identical to the non-streaming body and to
+`GET /v1/responses/:id`. An upstream transport failure mid-stream ends with `response.failed`
+(`error.code: "upstream_error"`) and stores nothing; an agent timeout ends with `response.failed`
+(`error.code: "timeout"`). A stream request answered whole (a cache hit, a provider that ignored
+`stream`) still yields the standard sequence with a single delta.
+
 ---
 
 ## Multi-Turn Conversations
@@ -204,8 +234,10 @@ protocol carries system context in its own place:
 The Ollama routes and `/v1/responses` proxy upstream in passthru mode (previously they only routed
 to world agents). Ollama passthru always asks the upstream for a completed answer; a client that
 requested Ollama's default streaming receives it as a buffered ndjson stream. `/v1/responses`
-passthru is text-only (Responses tool schemas are not translated) and keeps `previous_response_id`
-threading through the conversation channel.
+passthru does not forward Responses tool schemas (structured `tool_calls` an upstream returns
+anyway are surfaced as `function_call` output items), streams incrementally when asked (see
+[Responses API streaming](#responses-api-streaming)), and keeps `previous_response_id` threading
+through the conversation channel.
 
 ### Identity — who gets memory
 
@@ -391,6 +423,7 @@ faithfully (`src/net/anthropic-tools.ts`):
 | `stop` (string or array) | `stop_sequences` |
 | `max_tokens` / `max_completion_tokens` | `max_tokens` (default 4096) |
 | `user` | `metadata.user_id` |
+| `reasoning_effort: "minimal|low|medium|high|xhigh"`, or `thinking: "<level>"` / `{effort}` / `{type:"enabled", budget_tokens}` | `thinking: {type:"enabled", budget_tokens}` — budgets 1024 / 2048 / 8192 / 16384 (xhigh → 16384, pi-ai's table); `temperature` and `top_p` are **omitted** (Claude rejects them while thinking); `max_tokens` is raised to `budget + 1024` when the client's cap would not fit the budget, and a client cap that does fit clamps the budget to leave 1024 answer tokens. `reasoning_effort: "none"` / `thinking: {type:"disabled"}` = off |
 | `response_format: {type:"json_schema", json_schema:{schema}}` | `output_config.format: {type:"json_schema", schema}` |
 | system / developer messages | `system[]` text blocks, in order (memory injection is the first block) |
 | user `text` / `image_url` parts | `text` / `image` blocks (data URLs → base64 source) |

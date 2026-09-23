@@ -405,7 +405,7 @@ describe("readiness providers command", () => {
     setTrustProfile("shared");
     expect(await run(0, "providers")).toContain(`rank ${PROVIDER_PROBE_MIN_RANK}+`);
     expect(await run(PROVIDER_PROBE_MIN_RANK, "providers")).toContain(
-      "✓ anthropic/claude-sonnet-5 — HTTP 200 · text ok · second system message honored · 812 ms",
+      "✓ anthropic/claude-sonnet-5 — HTTP 200 · text ok · second system message honored · tool call not probed · 812 ms",
     );
     setTrustProfile("local");
     expect(await run(0, "providers")).toContain("✓ anthropic/claude-sonnet-5");
