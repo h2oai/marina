@@ -38,8 +38,18 @@
  *   stop_reason end_turn|stop_sequence → "stop"; max_tokens → "length";
  *   refusal → "content_filter"
  *   usage input/cache_read/cache_creation → prompt_tokens (sum),
- *   prompt_tokens_details.cached_tokens, cache_read_input_tokens,
- *   cache_creation_input_tokens
+ *   prompt_tokens_details.{cached_tokens, cache_creation_tokens,
+ *   cache_write_tokens}, cache_read_input_tokens, cache_creation_input_tokens
+ *   (`cache_creation_tokens` is Marina's extension field; `cache_write_tokens`
+ *   is the spelling pi-ai's openai-completions client reads — both carry the
+ *   same number so an OpenAI-shaped client sees cache WRITES, not only reads)
+ *
+ * Cache breakpoints (`placeCacheBreakpoints`, auto-cache only): the proxy
+ * appends its memory addendum as the LAST system block, so a breakpoint on
+ * the last block alone re-writes the whole prefix whenever the relevance gate
+ * toggles the addendum. The layout is therefore: last STABLE system block
+ * (the caller's own prompt) → last system block → last tool, within
+ * Anthropic's four-breakpoint limit and never on top of a client marker.
  */
 
 import { UnsupportedParameterError } from "./openai-errors";
@@ -99,7 +109,13 @@ export interface OpenAIUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
-  prompt_tokens_details: { cached_tokens: number };
+  prompt_tokens_details: {
+    cached_tokens: number;
+    /** Cache WRITE tokens (Anthropic `cache_creation_input_tokens`). Marina extension. */
+    cache_creation_tokens?: number;
+    /** Same value under the name pi-ai's OpenAI-completions client reads. */
+    cache_write_tokens?: number;
+  };
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
 }
@@ -402,8 +418,14 @@ export function openaiMessagesToAnthropic(messages: unknown): TranslatedMessages
 // ─── Request ────────────────────────────────────────────────────────────────
 
 export interface AnthropicRequestOptions {
-  /** Add `cache_control: ephemeral` to the LAST system block when none is set. */
+  /** Place auto-cache breakpoints (`placeCacheBreakpoints`) on system blocks and tools. */
   autoCache?: boolean;
+  /**
+   * The LAST system block is the proxy's injected memory addendum (volatile),
+   * so the caller's stable prompt ends one block earlier. Drives where the
+   * stable-block breakpoint lands.
+   */
+  injectedSystemTail?: boolean;
   /**
    * Native Anthropic body (a `/v1/messages` client). When present it is
    * forwarded VERBATIM — system blocks, message blocks, tools, tool_choice,
@@ -413,13 +435,95 @@ export interface AnthropicRequestOptions {
   native?: Record<string, unknown>;
 }
 
-/** Apply the auto-cache breakpoint: last system block, only if none set. */
+/** Anthropic allows at most four `cache_control` breakpoints per request. */
+export const ANTHROPIC_CACHE_BREAKPOINT_LIMIT = 4;
+
+export interface CacheBreakpointOptions {
+  /** The last system block is the proxy's injected memory addendum. */
+  injectedSystemTail?: boolean;
+}
+
+function isTextBlock(value: unknown): value is Rec {
+  return isRec(value) && value.type === "text";
+}
+
+/** Number of `cache_control` markers on an array of blocks / tools (top level only). */
+function countMarkers(list: unknown): number {
+  if (!Array.isArray(list)) return 0;
+  let n = 0;
+  for (const item of list) if (cacheControlOf(item)) n++;
+  return n;
+}
+
+/** Markers on messages: message-level plus every content block. */
+function countMessageMarkers(messages: unknown): number {
+  if (!Array.isArray(messages)) return 0;
+  let n = 0;
+  for (const message of messages) {
+    if (!isRec(message)) continue;
+    if (cacheControlOf(message)) n++;
+    n += countMarkers(message.content);
+  }
+  return n;
+}
+
+/**
+ * Auto-cache breakpoint placement. Layout, in priority order and within the
+ * four-breakpoint limit (markers the client already set count against it):
+ *
+ *   1. the last STABLE system block — the caller's own prompt; when the proxy
+ *      appended a memory addendum (`injectedSystemTail`) that is the block
+ *      BEFORE the last one, otherwise the last block itself. This is the one
+ *      that keeps the prefix cached when the relevance-gated memory block
+ *      toggles between requests;
+ *   2. the last system block (the memory addendum) — only when the client set
+ *      no marker anywhere, so identical memory also reads from cache;
+ *   3. the last tool — only when the client set no marker anywhere.
+ *
+ * A client that placed its own markers (pi-ai with
+ * `cacheControlFormat: "anthropic"`, an Anthropic SDK on `/v1/messages`) keeps
+ * every one of them; the proxy then adds ONLY the stable-block breakpoint, and
+ * only if that block has none. Non-text blocks are never marked. Inputs are
+ * not mutated.
+ */
+export function placeCacheBreakpoints(
+  request: { system?: unknown; tools?: unknown; messages?: unknown },
+  opts: CacheBreakpointOptions = {},
+): { system?: unknown; tools?: unknown } {
+  const system = Array.isArray(request.system) ? [...request.system] : undefined;
+  const tools = Array.isArray(request.tools) ? [...request.tools] : undefined;
+  let used =
+    countMarkers(request.system) +
+    countMarkers(request.tools) +
+    countMessageMarkers(request.messages);
+  const clientMarked = used > 0;
+  const mark = (list: unknown[], index: number): void => {
+    if (index < 0 || index >= list.length) return;
+    const block = list[index];
+    if (!isRec(block) || cacheControlOf(block)) return;
+    if (used >= ANTHROPIC_CACHE_BREAKPOINT_LIMIT) return;
+    list[index] = { ...block, cache_control: { type: "ephemeral" } };
+    used++;
+  };
+
+  if (system && system.length > 0) {
+    const last = system.length - 1;
+    const stable = opts.injectedSystemTail ? last - 1 : last;
+    if (stable >= 0 && isTextBlock(system[stable])) mark(system, stable);
+    if (!clientMarked && stable !== last && isTextBlock(system[last])) mark(system, last);
+  }
+  if (!clientMarked && tools && tools.length > 0) mark(tools, tools.length - 1);
+
+  return {
+    ...(system ? { system } : {}),
+    ...(tools ? { tools } : {}),
+  };
+}
+
+/** System-only view of `placeCacheBreakpoints` (no injected tail, no tools). */
 export function applyAutoCache(system: unknown): unknown {
   if (!Array.isArray(system) || system.length === 0) return system;
-  if (system.some((block) => cacheControlOf(block))) return system;
-  const last = system[system.length - 1];
-  if (!isRec(last) || last.type !== "text") return system;
-  return [...system.slice(0, -1), { ...last, cache_control: { type: "ephemeral" } }];
+  return placeCacheBreakpoints({ system }).system;
 }
 
 function stopSequences(stop: unknown): string[] | undefined {
@@ -543,15 +647,23 @@ export function buildAnthropicRequest(
     const maxTokens = typeof native.max_tokens === "number" ? native.max_tokens : 4096;
     const out: Rec = { ...native, model, max_tokens: maxTokens, stream };
     if (Array.isArray(system) && system.length > 0) {
-      out.system = opts.autoCache ? applyAutoCache(system) : system;
+      out.system = system;
     } else {
       delete out.system;
+    }
+    if (opts.autoCache) {
+      const placed = placeCacheBreakpoints(
+        { system: out.system, tools: out.tools, messages: out.messages },
+        { injectedSystemTail: opts.injectedSystemTail },
+      );
+      if (placed.system) out.system = placed.system;
+      if (placed.tools) out.tools = placed.tools;
     }
     return out;
   }
 
   const translated = openaiMessagesToAnthropic(body.messages);
-  const tools = openaiToolsToAnthropic(body.tools, body.functions);
+  let tools: AnthropicToolDef[] = openaiToolsToAnthropic(body.tools, body.functions);
   const toolChoice = openaiToolChoiceToAnthropic(
     body.tool_choice ?? body.function_call,
     body.parallel_tool_calls,
@@ -565,7 +677,15 @@ export function buildAnthropicRequest(
   const maxTokens = explicitMaxTokens ?? 4096;
   const stops = stopSequences(body.stop);
   const config = outputConfig(body.response_format);
-  const system = opts.autoCache ? applyAutoCache(translated.system) : translated.system;
+  let system: unknown = translated.system;
+  if (opts.autoCache) {
+    const placed = placeCacheBreakpoints(
+      { system, tools, messages: translated.messages },
+      { injectedSystemTail: opts.injectedSystemTail },
+    );
+    system = placed.system ?? system;
+    if (Array.isArray(placed.tools)) tools = placed.tools as AnthropicToolDef[];
+  }
   // Only a cap the CLIENT set clamps the thinking budget; the 4096 default is
   // raised to fit the requested depth instead.
   const thinking = anthropicThinking(body, explicitMaxTokens);
@@ -659,7 +779,11 @@ export function anthropicUsageToOpenai(usage: unknown): OpenAIUsage {
     prompt_tokens: prompt,
     completion_tokens: output,
     total_tokens: prompt + output,
-    prompt_tokens_details: { cached_tokens: cacheRead },
+    prompt_tokens_details: {
+      cached_tokens: cacheRead,
+      cache_creation_tokens: cacheWrite,
+      cache_write_tokens: cacheWrite,
+    },
     ...(u.cache_read_input_tokens !== undefined ? { cache_read_input_tokens: cacheRead } : {}),
     ...(u.cache_creation_input_tokens !== undefined
       ? { cache_creation_input_tokens: cacheWrite }
@@ -731,6 +855,10 @@ export class AnthropicSseTranslator {
   constructor(
     private readonly model: string,
     private readonly includeUsage = false,
+    /** Final OpenAI-shaped usage, reported once at stream end whether or not the
+     *  client asked for `stream_options.include_usage` — the proxy's lifecycle
+     *  `completed` event records tokens the client never sees. */
+    private readonly onUsage?: (usage: OpenAIUsage) => void,
   ) {
     this.id = `chatcmpl-${crypto.randomUUID().slice(0, 8)}`;
   }
@@ -778,7 +906,9 @@ export class AnthropicSseTranslator {
     this.finished = true;
     const frames = this.role();
     const finishReason = anthropicFinishReason(this.stopReason, this.sawToolUse);
-    const extra = this.includeUsage ? { usage: anthropicUsageToOpenai(this.usage) } : {};
+    const usage = Object.keys(this.usage).length > 0 ? anthropicUsageToOpenai(this.usage) : null;
+    if (usage && this.onUsage) this.onUsage(usage);
+    const extra = this.includeUsage ? { usage: usage ?? anthropicUsageToOpenai(this.usage) } : {};
     frames.push(this.chunk({}, finishReason, extra), "data: [DONE]\n\n");
     return frames;
   }
@@ -880,8 +1010,9 @@ export function translateAnthropicStream(
   upstream: ReadableStream<Uint8Array>,
   model: string,
   includeUsage = false,
+  onUsage?: (usage: OpenAIUsage) => void,
 ): ReadableStream<Uint8Array> {
-  const translator = new AnthropicSseTranslator(model, includeUsage);
+  const translator = new AnthropicSseTranslator(model, includeUsage, onUsage);
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   return upstream.pipeThrough(

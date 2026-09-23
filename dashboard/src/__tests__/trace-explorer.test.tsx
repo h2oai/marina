@@ -4,6 +4,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
+  parsePromptSectionsAttribute,
   TraceExplorerView,
   traceSpanDepth,
   traceWaterfallLayout,
@@ -468,6 +469,80 @@ describe("TraceExplorerView · memory receipt", () => {
     render(<TraceExplorerView data={broken} isLoading={false} onRefresh={() => {}} />);
     expect(screen.queryByLabelText("Memory receipt")).not.toBeInTheDocument();
     expect(screen.getByText("req-visible")).toBeInTheDocument();
+  });
+});
+
+describe("TraceExplorerView · prompt sections", () => {
+  const sections = [
+    { name: "world-events", bytes: 2100, deferred: false },
+    { name: "relevant-notes", bytes: 1400, deferred: false },
+    { name: "reflection", bytes: 900, deferred: true },
+  ];
+  const withSections = (attributes: Record<string, string | number | boolean>): TracesResponse => ({
+    ...data,
+    traces: [
+      {
+        ...data.traces[0]!,
+        spans: data.traces[0]!.spans.map((span) =>
+          span.spanId === "turn"
+            ? { ...span, attributes: { ...span.attributes, ...attributes } }
+            : span,
+        ),
+      },
+    ],
+  });
+
+  it("lists a turn's sections with bytes, flags the deferred ones and shows the fixed sizes", () => {
+    render(
+      <TraceExplorerView
+        data={withSections({
+          promptBytes: 4300,
+          systemPromptBytes: 6100,
+          residentSchemaBytes: 9800,
+          // Span attributes are scalar on the wire: the list rides as JSON.
+          promptSections: JSON.stringify(sections),
+        })}
+        isLoading={false}
+        onRefresh={() => {}}
+      />,
+    );
+    const block = screen.getByTestId("prompt-sections-turn");
+    expect(block).toHaveAttribute("aria-label", "Prompt sections");
+    expect(block).toHaveTextContent("4.2 KB");
+    expect(block).toHaveTextContent("3 sections");
+    expect(block).toHaveTextContent("1 deferred");
+    expect(block).toHaveTextContent("system 6.0 KB");
+    expect(block).toHaveTextContent("schemas 9.6 KB");
+    const items = [...block.querySelectorAll<HTMLElement>("li")];
+    expect(items.map((item) => item.dataset.deferred)).toEqual(["false", "false", "true"]);
+    expect(items[0]).toHaveTextContent("world-events 2.1 KB");
+    expect(items[2]).toHaveTextContent("reflection 900 B · deferred");
+    // Only the turn span carries the block — the request and tool spans do not.
+    expect(screen.getAllByLabelText("Prompt sections")).toHaveLength(1);
+  });
+
+  it("renders no block for turns without metrics or with a malformed attribute", () => {
+    render(<TraceExplorerView data={data} isLoading={false} onRefresh={() => {}} />);
+    expect(screen.queryByLabelText("Prompt sections")).toBeNull();
+    expect(
+      parsePromptSectionsAttribute({
+        ...data.traces[0]!.spans[1]!,
+        attributes: { promptSections: "{not json" },
+      }),
+    ).toBeUndefined();
+    // A model_request span never carries prompt sections even if an attribute is present.
+    expect(
+      parsePromptSectionsAttribute({
+        ...data.traces[0]!.spans[0]!,
+        attributes: { promptSections: JSON.stringify(sections) },
+      }),
+    ).toBeUndefined();
+    expect(
+      parsePromptSectionsAttribute({
+        ...data.traces[0]!.spans[1]!,
+        attributes: { promptBytes: 10, promptSections: JSON.stringify(sections.slice(0, 1)) },
+      }),
+    ).toEqual({ promptBytes: 10, sections: sections.slice(0, 1) });
   });
 });
 

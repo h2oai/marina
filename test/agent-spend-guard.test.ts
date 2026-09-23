@@ -286,3 +286,166 @@ describe("LeanAgentAdapter remote-target guard", () => {
     expect(adapter.getStatus().model).toBe("anthropic/claude-haiku-4-5");
   });
 });
+
+// ─── Proxy cost headers ──────────────────────────────────────────────────────
+
+import type { TurnUsageMetrics } from "../src/agent/lean-agent-adapter";
+import { readProxyResponseHeaders } from "../src/agent/lean-agent-adapter";
+
+type ProxyInternals = AdapterInternals & {
+  model: unknown;
+  metrics: { totalCostUsd: number; totalCacheReadTokens: number; totalCacheWriteTokens: number };
+  pendingProxyMeta: unknown;
+  providerStreamOptions(
+    model: unknown,
+    options: unknown,
+  ): {
+    fetch?: typeof fetch;
+    onResponse?: (
+      r: { status: number; headers: Record<string, string> },
+      m: unknown,
+    ) => Promise<void>;
+    maxRetries?: number;
+  };
+  recordTurnUsage(usage: TurnUsageMetrics, endedAt: number): TurnUsageMetrics;
+};
+
+const PROXY_HEADERS = {
+  "content-type": "text/event-stream",
+  "x-marina-cost-usd": "0.0123",
+  "x-marina-upstream-model": "anthropic/claude-haiku-4-5",
+  "x-marina-cache-write-tokens": "512",
+  "x-marina-cache-read-tokens": "2048",
+};
+
+function makeProxyAdapter(
+  spendGuard?: ConstructorParameters<typeof LeanAgentAdapter>[5],
+  headers: Record<string, string> | undefined = PROXY_HEADERS,
+) {
+  const requests: string[] = [];
+  const fakeFetch = (async (input: Parameters<typeof fetch>[0]) => {
+    requests.push(String(input instanceof Request ? input.url : input));
+    return new Response("", { status: 200, headers: headers ?? {} });
+  }) as typeof fetch;
+  const adapter = new LeanAgentAdapter(
+    { name: "proxied", model: "marina/default" },
+    "ws://localhost:39999",
+    null,
+    "internal-token",
+    undefined,
+    spendGuard,
+    fakeFetch,
+  );
+  const internals = adapter as unknown as ProxyInternals;
+  internals.client.command = async () => ({ ok: true });
+  return { adapter, internals, requests };
+}
+
+describe("readProxyResponseHeaders", () => {
+  it("parses the four accounting headers case-insensitively from Headers or a record", () => {
+    expect(readProxyResponseHeaders(new Headers(PROXY_HEADERS))).toEqual({
+      costUsd: 0.0123,
+      upstreamModel: "anthropic/claude-haiku-4-5",
+      cacheWriteTokens: 512,
+      cacheReadTokens: 2048,
+    });
+    expect(readProxyResponseHeaders({ "X-Marina-Cost-USD": "0.5" })).toEqual({ costUsd: 0.5 });
+  });
+
+  it("returns null when none is present and drops junk values", () => {
+    expect(readProxyResponseHeaders(undefined)).toBeNull();
+    expect(readProxyResponseHeaders({ "content-type": "application/json" })).toBeNull();
+    expect(
+      readProxyResponseHeaders({ "x-marina-cost-usd": "free", "x-marina-cache-read-tokens": "-1" }),
+    ).toBeNull();
+  });
+});
+
+describe("LeanAgentAdapter proxy cost headers", () => {
+  afterEach(() => resetTrustProfileForTests());
+
+  it("a fake fetch returning the headers makes header cost accrue when the model's own cost is 0", async () => {
+    const { adapter, internals, requests } = makeProxyAdapter();
+    const options = internals.providerStreamOptions(internals.model, undefined);
+    expect(options.maxRetries).toBeDefined();
+    expect(typeof options.fetch).toBe("function");
+    await options.fetch!("http://localhost:3300/v1/chat/completions", { method: "POST" });
+    expect(requests).toEqual(["http://localhost:3300/v1/chat/completions"]);
+    expect(internals.pendingProxyMeta).toEqual({
+      costUsd: 0.0123,
+      upstreamModel: "anthropic/claude-haiku-4-5",
+      cacheWriteTokens: 512,
+      cacheReadTokens: 2048,
+    });
+
+    const now = Date.now();
+    const merged = internals.recordTurnUsage(
+      { inputTokens: 900, outputTokens: 40, costUsd: 0 },
+      now,
+    );
+    expect(merged.costUsd).toBeCloseTo(0.0123);
+    expect(merged.cacheWriteTokens).toBe(512);
+    expect(merged.cacheReadTokens).toBe(2048);
+    expect(internals.metrics.totalCostUsd).toBeCloseTo(0.0123);
+    expect(internals.spend.total(now)).toBeCloseTo(0.0123);
+    expect(internals.pendingProxyMeta).toBeNull();
+
+    const ops = operatorStatusOf(adapter);
+    expect(ops?.upstreamModel).toBe("anthropic/claude-haiku-4-5");
+    expect(ops?.totalCacheWriteTokens).toBe(512);
+    expect(ops?.totalCacheReadTokens).toBe(2048);
+    expect(ops?.totalCostUsd).toBeCloseTo(0.0123);
+  });
+
+  it("the spend cap trips on header-reported cost", async () => {
+    const { internals } = makeProxyAdapter({ perAgentUsdPerHour: 0.02 });
+    const options = internals.providerStreamOptions(internals.model, undefined);
+    expect(internals.checkSpendCaps()).toBeNull();
+    for (let i = 0; i < 2; i++) {
+      await options.onResponse!({ status: 200, headers: PROXY_HEADERS }, internals.model);
+      internals.recordTurnUsage({ inputTokens: 10, outputTokens: 1 }, Date.now());
+    }
+    expect(internals.metrics.totalCostUsd).toBeCloseTo(0.0246);
+    expect(internals.checkSpendCaps()).not.toBeNull();
+  });
+
+  it("a priced usage block wins over the header — never double-charged", () => {
+    const { internals } = makeProxyAdapter();
+    internals.providerStreamOptions(internals.model, undefined);
+    void internals.providerStreamOptions(internals.model, undefined).onResponse!(
+      { status: 200, headers: PROXY_HEADERS },
+      internals.model,
+    );
+    const merged = internals.recordTurnUsage(
+      { inputTokens: 10, outputTokens: 1, costUsd: 0.5, cacheReadTokens: 7 },
+      Date.now(),
+    );
+    expect(merged.costUsd).toBe(0.5);
+    expect(merged.cacheReadTokens).toBe(7);
+    expect(merged.cacheWriteTokens).toBe(512);
+    expect(internals.metrics.totalCostUsd).toBe(0.5);
+  });
+
+  it("absent headers (older proxy) leave accounting unchanged", async () => {
+    const { adapter, internals } = makeProxyAdapter(undefined, {
+      "content-type": "text/event-stream",
+    });
+    const options = internals.providerStreamOptions(internals.model, undefined);
+    await options.fetch!("http://localhost:3300/v1/chat/completions");
+    expect(internals.pendingProxyMeta).toBeNull();
+    const merged = internals.recordTurnUsage({ inputTokens: 10, outputTokens: 1 }, Date.now());
+    expect(merged.costUsd).toBeUndefined();
+    expect(internals.metrics.totalCostUsd).toBe(0);
+    expect(operatorStatusOf(adapter)?.upstreamModel).toBeNull();
+  });
+
+  it("registry models without an injected fetch keep pi-ai's own transport hooks", () => {
+    const { internals } = makeAdapter();
+    const options = (internals as unknown as ProxyInternals).providerStreamOptions(
+      (internals as unknown as ProxyInternals).model,
+      undefined,
+    );
+    expect(options.fetch).toBeUndefined();
+    expect(options.onResponse).toBeUndefined();
+  });
+});

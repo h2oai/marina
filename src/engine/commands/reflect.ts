@@ -18,11 +18,12 @@ import type { MemoryAssistanceJob, MemoryAssistancePage } from "../../sdk/memory
 import { memoryOperationError } from "../../sdk/memory-operations";
 import type { MemoryAdoptResult, MemoryReceipt, MemoryRecord } from "../../sdk/memory-types";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
+import { MEMORY_REFLECTOR_ROLE } from "../constants";
 import { isLocalUngated } from "../trust-profile";
 import { requiresPersistence } from "./command-messages";
 
 /** Role name of the resident helper `reflect` delegates to. */
-export const REFLECTOR_ROLE = "memory-reflector";
+export const REFLECTOR_ROLE = MEMORY_REFLECTOR_ROLE;
 /** Agent name used when `reflect` auto-spawns the helper (matches the hint). */
 export const REFLECTOR_AGENT_NAME = "Reflector";
 /** Spawn budget (model calls) for an auto-spawned helper — a bounded errand. */
@@ -46,6 +47,21 @@ export function helperAgentName(role: string): string {
 export interface SpawnedHelper {
   name: string;
   principalId: string;
+}
+
+/**
+ * Single-flight auto-spawn per helper role. Two agents reflecting in the same
+ * instant both see "no reflector" and would each spawn one — the runtime then
+ * rejects the second by name, and that requester silently fell back to the
+ * template. Sharing the in-flight promise means every concurrent `reflect`
+ * files its job against the ONE helper the first call spawned. Module-level:
+ * the cap is per process (one runtime), not per command registration.
+ */
+const helperSpawnsInFlight = new Map<string, Promise<SpawnedHelper | undefined>>();
+
+/** Test seam: forget any in-flight spawn so suites do not leak into each other. */
+export function resetHelperSpawnsForTests(): void {
+  helperSpawnsInFlight.clear();
 }
 
 /** Extract common themes from a set of notes via word frequency analysis */
@@ -243,7 +259,7 @@ export function reflectCommand(deps: {
   return {
     name: "reflect",
     aliases: [],
-    help: "Reflect on your notes. Usage: reflect [topic] (files a cited job with a memory-reflector when one is available, else the deterministic template) | reflect via <helper> [topic] | reflect --template [topic] | reflect adopt <job> | reflect jobs | reflect failure <description>. Add --share <pool> to also deposit the lesson into a shared pool as a reflection (authors earn standing when others recall it).",
+    help: "Reflect on your notes. Usage: reflect [topic] (files a cited job with a memory-reflector when one is available, else the deterministic template) | reflect via <helper> [topic] | reflect --template [topic] | reflect adopt <job> | reflect jobs | reflect failure <description>. Add --share <pool> to also deposit the lesson into a shared pool as a reflection (authors earn standing when others recall it). Add --no-spawn to use a running helper if there is one but never spawn a new one (session-end reflections).",
     handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
@@ -272,6 +288,16 @@ export function reflectCommand(deps: {
           return;
         }
         rawTokens.splice(shareAt, 2);
+      }
+      // `--no-spawn`: hand the topic to a RUNNING helper if one exists, else the
+      // deterministic template — never auto-spawn. The adapter's session-end
+      // reflection uses it: a shutdown must not purchase a new model-backed
+      // helper that then loops until someone stops it.
+      let noSpawn = false;
+      const noSpawnAt = rawTokens.findIndex((t) => t.toLowerCase() === "--no-spawn");
+      if (noSpawnAt >= 0) {
+        noSpawn = true;
+        rawTokens.splice(noSpawnAt, 1);
       }
       const tokens = rawTokens;
       const args = tokens.join(" ");
@@ -828,7 +854,7 @@ export function reflectCommand(deps: {
           // them instead of hinting, but only when a runtime can actually
           // serve it (keys present). Shared/public keep the hint: spawning
           // agents on someone else's behalf is a gated act there.
-          if (isLocalUngated() && deps.spawnHelper && deps.helpersAvailable?.()) {
+          if (!noSpawn && isLocalUngated() && deps.spawnHelper && deps.helpersAvailable?.()) {
             return spawnAndRequest(topic);
           }
           runTemplate(topic, true);
@@ -837,12 +863,26 @@ export function reflectCommand(deps: {
 
       // ── auto-spawn (local ungated only) ─────────────────────────────────
       async function spawnAndRequest(topic: string | undefined): Promise<void> {
-        let spawned: SpawnedHelper | undefined;
-        try {
-          spawned = await deps.spawnHelper?.(REFLECTOR_ROLE, requester);
-        } catch {
-          spawned = undefined;
+        // At most one live memory-reflector per runtime: join a spawn already
+        // in flight instead of racing it (see `helperSpawnsInFlight`).
+        let inFlight = helperSpawnsInFlight.get(REFLECTOR_ROLE);
+        const joined = inFlight !== undefined;
+        if (!inFlight) {
+          const started = (async (): Promise<SpawnedHelper | undefined> => {
+            try {
+              return await deps.spawnHelper?.(REFLECTOR_ROLE, requester);
+            } catch {
+              return undefined;
+            }
+          })();
+          inFlight = started;
+          helperSpawnsInFlight.set(REFLECTOR_ROLE, started);
+          void started.finally(() => {
+            if (helperSpawnsInFlight.get(REFLECTOR_ROLE) === started)
+              helperSpawnsInFlight.delete(REFLECTOR_ROLE);
+          });
         }
+        const spawned = await inFlight;
         if (!spawned || !usable(spawned.name)) {
           ctx.send(
             input.entity,
@@ -854,7 +894,9 @@ export function reflectCommand(deps: {
         ctx.send(
           input.entity,
           dim(
-            `Spawned ${spawned.name} (${REFLECTOR_ROLE}, budget ${REFLECTOR_SPAWN_BUDGET}) to reflect for you.`,
+            joined
+              ? `Reusing ${spawned.name} (${REFLECTOR_ROLE}) — another reflection spawned it a moment ago.`
+              : `Spawned ${spawned.name} (${REFLECTOR_ROLE}, budget ${REFLECTOR_SPAWN_BUDGET}) to reflect for you.`,
           ),
         );
         await requestReflection(spawned.name, topic);

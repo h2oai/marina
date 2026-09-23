@@ -112,6 +112,8 @@ const ops = (overrides: Partial<OpsOverview["spend"]> = {}, agentHour = 0.1): Op
       deferredToolCount: 0,
       continuationBudgetBytes: 6000,
       computedAt: Date.now(),
+      sections: [],
+      turnsSampled: 0,
     },
     providers: null,
     security: {

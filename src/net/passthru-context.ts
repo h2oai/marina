@@ -462,13 +462,22 @@ export async function buildInjectedContext(
 }
 
 /**
- * Put the addendum where each protocol natively carries system context:
- *  - `openai`           — prepend to the first system message (or unshift one);
- *                         also the Ollama `/api/chat` shape.
- *  - `anthropic`        — the top-level `system` string / block array.
- *  - `ollama-generate`  — the `system` string of `/api/generate`.
- *  - `responses`        — the `instructions` string of `/v1/responses`.
- * A null addendum is a strict no-op (byte-identical body).
+ * Put the addendum where each protocol natively carries system context —
+ * ALWAYS after the caller's own (stable) system text, as its own block where
+ * the protocol has blocks:
+ *  - `openai`           — a separate `system` message inserted right after the
+ *                         leading run of system/developer messages (index 0
+ *                         when the caller sent none); also the Ollama `/api/chat`
+ *                         shape.
+ *  - `anthropic`        — appended as the LAST text block of the top-level
+ *                         `system` (a string system becomes a two-block array).
+ *  - `ollama-generate`  — appended to the `system` string of `/api/generate`.
+ *  - `responses`        — appended to the `instructions` string of `/v1/responses`.
+ * Stable-first matters for provider prefix caches: the memory block is the
+ * volatile part (relevance-gated, changes as notes accrue), so it must sit
+ * after the caller's prompt and — for Anthropic — after the breakpoint the
+ * proxy places on the last stable block (`placeCacheBreakpoints`). A null
+ * addendum is a strict no-op (byte-identical body).
  */
 export function applyInjection(
   body: Record<string, unknown>,
@@ -477,10 +486,11 @@ export function applyInjection(
 ): Record<string, unknown> {
   if (!addendum) return body;
   if (format === "anthropic") {
+    const block = { type: "text", text: addendum };
     if (Array.isArray(body.system)) {
-      body.system = [{ type: "text", text: addendum }, ...body.system];
+      body.system = [...body.system, block];
     } else if (typeof body.system === "string" && body.system) {
-      body.system = `${addendum}\n\n${body.system}`;
+      body.system = [{ type: "text", text: body.system }, block];
     } else {
       body.system = addendum;
     }
@@ -489,20 +499,22 @@ export function applyInjection(
   if (format === "ollama-generate" || format === "responses") {
     const field = format === "responses" ? "instructions" : "system";
     const existing = typeof body[field] === "string" ? (body[field] as string) : "";
-    body[field] = existing ? `${addendum}\n\n${existing}` : addendum;
+    body[field] = existing ? `${existing}\n\n${addendum}` : addendum;
     return body;
   }
 
   const messages = Array.isArray(body.messages) ? (body.messages as OpenAIMessage[]) : [];
-  const system = messages.find((message) => message.role === "system");
-  if (system) {
-    const existing = messageText(system.content);
-    system.content = existing ? `${addendum}\n\n${existing}` : addendum;
-  } else {
-    messages.unshift({ role: "system", content: addendum });
-  }
+  // Stable prefix = the leading run of system/developer messages; the memory
+  // block goes right after it so every provider sees caller prompt → memory.
+  let insertAt = 0;
+  while (insertAt < messages.length && isSystemRole(messages[insertAt]?.role)) insertAt++;
+  messages.splice(insertAt, 0, { role: "system", content: addendum });
   body.messages = messages;
   return body;
+}
+
+function isSystemRole(role: unknown): boolean {
+  return role === "system" || role === "developer";
 }
 
 // ─── Transcript capture ──────────────────────────────────────────────────────

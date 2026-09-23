@@ -220,8 +220,22 @@ export class PlatformMemoryBackend {
     return { success: text.includes("deleted"), text };
   }
 
-  async reflect(topic?: string): Promise<PlatformMemoryResult> {
-    const cmd = topic ? `reflect ${topic}` : "reflect";
+  /**
+   * `reflect [topic]`. `helper` decides how the world may involve a
+   * memory-reflector: `auto` (default) lets the `reflect` command discover one
+   * or — LOCAL ungated — spawn one; `existing` (`--no-spawn`) files a job only
+   * with a helper that is already running, else the template; `never`
+   * (`--template`) is the deterministic template, no job, no helper. The
+   * adapter's session-end reflection never passes `auto`: a shutdown must not
+   * buy a model-backed helper that keeps looping after the agent is gone.
+   */
+  async reflect(
+    topic?: string,
+    opts?: { helper?: "auto" | "existing" | "never" },
+  ): Promise<PlatformMemoryResult> {
+    const mode = opts?.helper ?? "auto";
+    const flag = mode === "never" ? "--template" : mode === "existing" ? "--no-spawn" : "";
+    const cmd = ["reflect", flag, topic ?? ""].filter(Boolean).join(" ");
     const perceptions = await this.client.command(cmd);
     const text = extractText(perceptions);
     const idMatch = text.match(/Note #(\d+)/);

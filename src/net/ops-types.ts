@@ -93,6 +93,24 @@ export type OpsRetention = {
   policies: OpsRetentionPolicy[];
 };
 
+/**
+ * One continuation-prompt section aggregated over the sampled agent turns
+ * (`agent_turn_start.promptSections`). Byte statistics cover the appearances
+ * that reached the prompt (non-deferred); `deferralRate` counts every one.
+ */
+export type OpsPromptSection = {
+  name: string;
+  /** Turns in which the section appeared (deferred or not). */
+  turns: number;
+  meanBytes: number;
+  /** Nearest-rank p95 of the non-deferred byte sizes. */
+  p95Bytes: number;
+  /** deferred appearances / turns, 0..1. */
+  deferralRate: number;
+  /** This section's non-deferred bytes / total prompt bytes of the window, 0..1. */
+  share: number;
+};
+
 export type OpsPrompt = {
   /** `MARINA_DEFERRED_TOOLS` is not `off`: the `full` profile ships a loader instead of every schema. */
   deferredTools: boolean;
@@ -109,6 +127,15 @@ export type OpsPrompt = {
   continuationBudgetBytes: number;
   /** When these sizes were last measured (memoized per minute). */
   computedAt: number;
+  /**
+   * Per-section prompt mechanics over the last 24 h of `agent_turn_start`
+   * events in the event log, largest share first — scoped like `agents`
+   * (a resident sees only the turns of its own lineage). Empty until a
+   * producer emits `promptSections`.
+   */
+  sections: OpsPromptSection[];
+  /** Agent turns (last 24 h, in scope) that carried section metrics. */
+  turnsSampled: number;
 };
 
 /** One provider from the last `readiness providers` conformance probe. */

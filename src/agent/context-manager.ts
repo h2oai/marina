@@ -309,13 +309,16 @@ export function createContextManager(options: ContextManagerOptions) {
       const first = messages[0]!;
       const firstTokens = estimateMessageTokens(first);
 
-      let recentCount = Math.min(keepRecent, messages.length);
-      let recentMessages = messages.slice(-recentCount);
+      // The first message is always kept separately below, so the recent window
+      // must never reach back to it — otherwise a short history (length <=
+      // keepRecent) would emit the first message twice.
+      let recentCount = Math.min(keepRecent, Math.max(0, messages.length - 1));
+      let recentMessages = recentCount > 0 ? messages.slice(-recentCount) : [];
       let recentTokens = recentMessages.reduce((sum, msg) => sum + estimateMessageTokens(msg), 0);
 
       while (recentCount > 4 && firstTokens + recentTokens > budgetForMessages) {
         recentCount--;
-        recentMessages = messages.slice(-recentCount);
+        recentMessages = recentCount > 0 ? messages.slice(-recentCount) : [];
         recentTokens = recentMessages.reduce((sum, msg) => sum + estimateMessageTokens(msg), 0);
       }
 

@@ -150,6 +150,19 @@ export function projectTraces(events: readonly EngineEvent[]): TraceView[] {
             : {
                 ...(event.origin ? { origin: event.origin } : {}),
                 ...(event.model ? { model: event.model } : {}),
+                // Prompt-budget metrics of the turn (sizes only, never text).
+                // `promptSections` is compact JSON — attributes are scalar —
+                // parsed back by `promptTurnSampleFromSpan` (trace-analytics).
+                ...(event.promptBytes === undefined ? {} : { promptBytes: event.promptBytes }),
+                ...(event.systemPromptBytes === undefined
+                  ? {}
+                  : { systemPromptBytes: event.systemPromptBytes }),
+                ...(event.residentSchemaBytes === undefined
+                  ? {}
+                  : { residentSchemaBytes: event.residentSchemaBytes }),
+                ...(event.promptSections
+                  ? { promptSections: JSON.stringify(event.promptSections) }
+                  : {}),
               },
       });
     } else if (event.type === "agent_tool_call" || event.type === "agent_tool_result") {

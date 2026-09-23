@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   canWitness,
   checkGate,
+  checkGateForExecution,
   checkUnattendedGate,
   getGateProgress,
   grant,
@@ -15,7 +16,9 @@ import {
   revoke,
   SAFETY_GATES,
 } from "../src/engine/safety-gates";
+import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import { MarinaDB } from "../src/persistence/database";
+import { GRANTED_DEMONSTRATIONS, isGrantedCompetence } from "../src/persistence/db-competence";
 import { cleanupDb } from "./helpers";
 
 const TEST_DB = "test_safety_gates.db";
@@ -303,6 +306,164 @@ describe("Safety gates", () => {
       const spawn = progress.find((g) => g.id === "agent.spawn")!;
       expect(spawn.status).toBe("unlocked");
       expect(spawn.demonstrations).toBeGreaterThanOrEqual(3);
+    });
+  });
+
+  // ── Standing re-check on unsupervised holders (decay never un-flips competence) ──
+  describe("standing re-check on demonstrated (flipped) holders", () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    /** Four half-lives later: standing / 16 — well below every gate's bar. */
+    const LATER = Date.now() + 240 * DAY;
+
+    /** Flip shell.exec (threshold 3) for an entity with standing 120 via demonstrations. */
+    function flipShellExec(entityId: string, name: string): void {
+      seedStanding(db, entityId, name, 120);
+      for (let i = 0; i < SAFETY_GATES["shell.exec"]!.demoThreshold; i++) {
+        recordDemonstration(db, entityId, "shell.exec");
+      }
+      expect(db.getCompetence(entityId, "shell.exec")?.supervised_only).toBe(0);
+    }
+
+    const prevAutonomy = process.env.MARINA_AUTONOMY;
+    beforeEach(() => {
+      delete process.env.MARINA_AUTONOMY;
+      resetTrustProfileForTests();
+    });
+    afterEach(() => {
+      if (prevAutonomy === undefined) delete process.env.MARINA_AUTONOMY;
+      else process.env.MARINA_AUTONOMY = prevAutonomy;
+      resetTrustProfileForTests();
+    });
+
+    it("a flipped holder with standing at or above the bar passes solo", () => {
+      flipShellExec("e_alice", "Alice");
+      const now = checkGate(db, "e_alice", "shell.exec");
+      expect(now).toEqual({ ok: true });
+      expect(checkGateForExecution(db, "e_alice", "shell.exec")).toEqual({
+        ok: true,
+        mode: "unattended",
+      });
+    });
+
+    it("a flipped holder whose standing decayed below the bar is supervised-only, row untouched", () => {
+      flipShellExec("e_alice", "Alice");
+      const before = db.getCompetence("e_alice", "shell.exec")!;
+
+      const decayed = checkGate(db, "e_alice", "shell.exec", LATER);
+      expect(decayed.ok).toBe(true);
+      expect(decayed.supervisedOnly).toBe(true);
+      expect(decayed.standingDecayed).toBe(true);
+      expect(decayed.reason).toContain("standing decayed below 100");
+      expect(decayed.reason).toContain("no re-demonstration");
+
+      // Competence is a proof of demonstrations — decay never flips it back.
+      const after = db.getCompetence("e_alice", "shell.exec")!;
+      expect(after.supervised_only).toBe(0);
+      expect(after.demonstrations).toBe(before.demonstrations);
+
+      // Unattended sites refuse, naming the decay rather than "cannot be self-certified".
+      const unattended = checkUnattendedGate(db, "e_alice", "shell.exec", LATER);
+      expect(unattended.ok).toBe(false);
+      expect(unattended.standingDecayed).toBe(true);
+      expect(unattended.reason).toContain("standing decayed below 100");
+
+      // The execution check (guarded posture, shared profile): refused, decay named.
+      const exec = checkGateForExecution(db, "e_alice", "shell.exec", LATER);
+      expect(exec.ok).toBe(false);
+      expect(exec.mode).toBeUndefined();
+      expect(exec.standingDecayed).toBe(true);
+      expect(exec.reason).toContain("standing decayed below 100");
+    });
+
+    it("recovery: standing climbing back over the bar passes again with no re-demonstration", () => {
+      flipShellExec("e_alice", "Alice");
+      expect(checkGate(db, "e_alice", "shell.exec", LATER).supervisedOnly).toBe(true);
+      // Fresh contribution (a ledger write invalidates the standing cache):
+      // 2000 / 16 = 125 ≥ 100 at LATER.
+      seedStanding(db, "e_alice", "Alice", 2000);
+      expect(checkGate(db, "e_alice", "shell.exec", LATER)).toEqual({ ok: true });
+      expect(checkGateForExecution(db, "e_alice", "shell.exec", LATER).mode).toBe("unattended");
+      // Still exactly the three demonstrations that flipped it.
+      expect(db.getCompetence("e_alice", "shell.exec")?.demonstrations).toBe(3);
+    });
+
+    it("the decayed holder is reported as locked + decayed on the progress ladder", () => {
+      flipShellExec("e_alice", "Alice");
+      const fresh = getGateProgress(db, "e_alice").find((g) => g.id === "shell.exec")!;
+      expect(fresh.status).toBe("unlocked");
+      expect(fresh.decayed).toBeUndefined();
+      const later = getGateProgress(db, "e_alice", LATER).find((g) => g.id === "shell.exec")!;
+      expect(later.status).toBe("locked");
+      expect(later.decayed).toBe(true);
+      expect(later.demonstrations).toBe(3);
+    });
+
+    it("operator grants are distinguishable (sentinel) and exempt from the re-check in every profile", () => {
+      grant(db, "e_operator", "shell.exec");
+      const row = db.getCompetence("e_operator", "shell.exec")!;
+      expect(row.demonstrations).toBe(GRANTED_DEMONSTRATIONS);
+      expect(isGrantedCompetence(row)).toBe(true);
+      // A demonstrated flip is NOT a grant.
+      flipShellExec("e_alice", "Alice");
+      expect(isGrantedCompetence(db.getCompetence("e_alice", "shell.exec"))).toBe(false);
+
+      // Zero standing, far future, shared (default) profile: the grant still passes.
+      expect(checkGate(db, "e_operator", "shell.exec", LATER)).toEqual({ ok: true });
+      expect(checkGateForExecution(db, "e_operator", "shell.exec", LATER)).toEqual({
+        ok: true,
+        mode: "unattended",
+      });
+      expect(
+        getGateProgress(db, "e_operator", LATER).find((g) => g.id === "shell.exec")!.status,
+      ).toBe("unlocked");
+
+      // Public profile: same — grants are admin overrides; `revoke` is their revocation.
+      setTrustProfile("public");
+      expect(checkGate(db, "e_operator", "shell.exec", LATER)).toEqual({ ok: true });
+      expect(checkGateForExecution(db, "e_operator", "shell.exec", LATER).mode).toBe("unattended");
+      // ...while the demonstrated holder is re-checked under public too.
+      expect(checkGate(db, "e_alice", "shell.exec", LATER).standingDecayed).toBe(true);
+      expect(checkGateForExecution(db, "e_alice", "shell.exec", LATER).ok).toBe(false);
+    });
+
+    it("under the local ungated profile a decayed holder still executes (profile-local), but checkGate stays honest", () => {
+      flipShellExec("e_alice", "Alice");
+      setTrustProfile("local");
+      const exec = checkGateForExecution(db, "e_alice", "shell.exec", LATER);
+      expect(exec).toEqual({ ok: true, mode: "profile-local" });
+      // The read-only check reports the decay regardless of profile.
+      expect(checkGate(db, "e_alice", "shell.exec", LATER).standingDecayed).toBe(true);
+    });
+
+    it("under the open posture a decayed holder passes non-core gates as posture-open, core gates are refused", () => {
+      // agent.spawn (min 40, not core) and shell.exec (core).
+      seedStanding(db, "e_org", "Organizer", 60);
+      for (let i = 0; i < 3; i++) recordDemonstration(db, "e_org", "agent.spawn");
+      flipShellExec("e_alice", "Alice");
+      process.env.MARINA_AUTONOMY = "open";
+      expect(checkGateForExecution(db, "e_org", "agent.spawn", LATER).mode).toBe("posture-open");
+      const core = checkGateForExecution(db, "e_alice", "shell.exec", LATER);
+      expect(core.ok).toBe(false);
+      expect(core.standingDecayed).toBe(true);
+    });
+
+    it("RANK_GATES are untouched: grantGatesForRank(9) still grants the nine tiered gates as grants", () => {
+      grantGatesForRank(db, "e_sov", 9);
+      for (const id of [
+        "shell.exec",
+        "agent.spawn",
+        "code.exec",
+        "agent.run",
+        "adapter.enable",
+        "connect.manage",
+        "gateway.connect",
+        "key.manage",
+        "admin.destructive",
+      ]) {
+        expect(isGrantedCompetence(db.getCompetence("e_sov", id))).toBe(true);
+        expect(checkGate(db, "e_sov", id, LATER)).toEqual({ ok: true });
+      }
+      expect(db.getCompetence("e_sov", "code.exec.unrestricted")).toBeUndefined();
     });
   });
 });

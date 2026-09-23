@@ -15,6 +15,30 @@ export interface TraceParent {
   spanId: string;
 }
 
+/**
+ * One continuation-prompt section as the budget saw it, in priority order.
+ * `deferred: true` = dropped by `assembleContinuationPrompt` for this prompt;
+ * `bytes` is then what it WOULD have cost.
+ */
+export interface PromptSectionMetric {
+  name: string;
+  bytes: number;
+  deferred: boolean;
+}
+
+/**
+ * Byte attribution for one prompt, stamped once on the first `turn_start` of
+ * the `prompt()` it built. `promptBytes` is the emitted continuation text;
+ * `systemPromptBytes` + `residentSchemaBytes` are the fixed per-request prefix
+ * so cost can be split between the stable prefix and the volatile sections.
+ */
+export interface PromptMetrics {
+  promptBytes: number;
+  promptSections: PromptSectionMetric[];
+  systemPromptBytes?: number;
+  residentSchemaBytes?: number;
+}
+
 type TraceableAgentEventType =
   | "turn_start"
   | "turn_end"
@@ -48,17 +72,20 @@ export class AgentExecutionTracer {
     type: TraceableAgentEventType,
     toolName?: string,
     parent?: TraceParent,
-  ): AgentTraceFields | undefined {
+    prompt?: PromptMetrics,
+  ): (AgentTraceFields & Partial<PromptMetrics>) | undefined {
     if (type === "turn_start") this.activeTurn = this.createTurn(parent);
     if (!this.activeTurn) return undefined;
 
     const turn = this.activeTurn;
-    let fields: AgentTraceFields = {
+    let fields: AgentTraceFields & Partial<PromptMetrics> = {
       runId: turn.runId,
       traceId: turn.traceId,
       spanId: turn.spanId,
       ...(turn.parentSpanId ? { parentSpanId: turn.parentSpanId } : {}),
       origin: turn.origin,
+      // Prompt byte attribution rides only on the turn that opened the prompt.
+      ...(type === "turn_start" && prompt ? promptMetricFields(prompt) : {}),
     };
 
     if (type === "tool_call" && toolName) {
@@ -89,6 +116,20 @@ export class AgentExecutionTracer {
       toolSpans: new Map(),
     };
   }
+}
+
+/** The `agent_turn_start` prompt-metric fields, omitting the optional prefix sizes when unknown. */
+function promptMetricFields(prompt: PromptMetrics): PromptMetrics {
+  return {
+    promptBytes: prompt.promptBytes,
+    promptSections: prompt.promptSections.map((s) => ({ ...s })),
+    ...(prompt.systemPromptBytes === undefined
+      ? {}
+      : { systemPromptBytes: prompt.systemPromptBytes }),
+    ...(prompt.residentSchemaBytes === undefined
+      ? {}
+      : { residentSchemaBytes: prompt.residentSchemaBytes }),
+  };
 }
 
 /** Extract an explicitly propagated trace from a rendered model-request perception. */

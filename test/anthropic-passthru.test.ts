@@ -366,10 +366,23 @@ describe("Anthropic passthru: prompt caching", () => {
       prompt_tokens: 850,
       completion_tokens: 6,
       total_tokens: 856,
-      prompt_tokens_details: { cached_tokens: 800 },
+      // Cache WRITES ride along under Marina's extension name and the name
+      // pi-ai's openai-completions client reads, so agent-side cacheWriteTokens
+      // is no longer always 0.
+      prompt_tokens_details: {
+        cached_tokens: 800,
+        cache_creation_tokens: 40,
+        cache_write_tokens: 40,
+      },
       cache_read_input_tokens: 800,
       cache_creation_input_tokens: 40,
     });
+    // claude-sonnet-5 list price: 10 uncached input × $2/M + 6 output × $10/M
+    // + 800 cache-read × $0.2/M + 40 cache-write × $2.5/M = $0.00034.
+    expect(resp.headers.get("x-marina-upstream-model")).toBe("anthropic/claude-sonnet-5");
+    expect(resp.headers.get("x-marina-cache-read-tokens")).toBe("800");
+    expect(resp.headers.get("x-marina-cache-write-tokens")).toBe("40");
+    expect(Number(resp.headers.get("x-marina-cost-usd"))).toBeCloseTo(0.00034, 8);
     const completed = engine
       .getEventLog()
       .find((e) => e.type === "model_request_lifecycle" && e.phase === "completed");
@@ -381,9 +394,10 @@ describe("Anthropic passthru: prompt caching", () => {
       inputTokens: 850,
       outputTokens: 6,
     });
+    expect((completed as { costUsd?: number }).costUsd).toBeCloseTo(0.00034, 8);
   });
 
-  it("MARINA_ANTHROPIC_AUTO_CACHE=true adds an ephemeral marker to the LAST system block only when the client set none", async () => {
+  it("MARINA_ANTHROPIC_AUTO_CACHE=true marks the last system block; with client markers only the last stable block is added when absent", async () => {
     process.env.MARINA_ANTHROPIC_AUTO_CACHE = "true";
     await post("/v1/chat/completions", {
       model: "marina",
@@ -397,7 +411,8 @@ describe("Anthropic passthru: prompt caching", () => {
       { type: "text", text: "A" },
       { type: "text", text: "B", cache_control: { type: "ephemeral" } },
     ]);
-    // Client marker present → untouched.
+    // Client markers are preserved; the proxy adds ONLY the last-stable-block
+    // breakpoint (B — no injection, so the last block IS the stable one).
     await post("/v1/chat/completions", {
       model: "marina",
       messages: [
@@ -411,8 +426,28 @@ describe("Anthropic passthru: prompt caching", () => {
     });
     expect(upstream[1]!.body.system).toEqual([
       { type: "text", text: "A", cache_control: { type: "ephemeral" } },
-      { type: "text", text: "B" },
+      { type: "text", text: "B", cache_control: { type: "ephemeral" } },
     ]);
+    // A client marker already on the last stable block → nothing added at all.
+    await post("/v1/chat/completions", {
+      model: "marina",
+      messages: [
+        { role: "system", content: "A" },
+        {
+          role: "system",
+          content: [{ type: "text", text: "B", cache_control: { type: "ephemeral", ttl: "1h" } }],
+        },
+        { role: "user", content: "hi" },
+      ],
+      tools: TOOLS,
+    });
+    expect(upstream[2]!.body.system).toEqual([
+      { type: "text", text: "A" },
+      { type: "text", text: "B", cache_control: { type: "ephemeral", ttl: "1h" } },
+    ]);
+    expect((upstream[2]!.body.tools as Record<string, unknown>[])[0]).not.toHaveProperty(
+      "cache_control",
+    );
   });
 
   it("auto-cache defaults on under the local trust profile and off otherwise", () => {

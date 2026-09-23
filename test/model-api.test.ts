@@ -1927,13 +1927,21 @@ describe("passthru memory gateway", () => {
     cleanupDb(GATEWAY_DB);
   });
 
+  /** Every system message the upstream saw, in order, joined the way the string
+   *  slots (`/api/generate` system, `/v1/responses` instructions) join them:
+   *  caller prompt first, memory addendum last. */
   function systemOf(body: Record<string, unknown> | undefined): string {
     const messages = (body?.messages ?? []) as { role: string; content: unknown }[];
-    const system = messages.find((m) => m.role === "system");
-    return typeof system?.content === "string" ? system.content : "";
+    return messages
+      .filter((m) => m.role === "system" && typeof m.content === "string")
+      .map((m) => m.content as string)
+      .join("\n\n");
   }
-  /** The injected addendum is everything before the client's own system text. */
-  const addendumOf = (system: string) => system.split("\n\n")[0] ?? "";
+  /** The injected addendum is everything from the marker on (it follows the client's own text). */
+  const addendumOf = (system: string) => {
+    const at = system.indexOf(INJECTION_MARKER);
+    return at < 0 ? "" : system.slice(at);
+  };
 
   async function send(path: string, body: unknown, headers: Record<string, string> = AUTH) {
     const [url, method, req] = makeRequest(path, "POST", body, headers);
@@ -1999,12 +2007,18 @@ describe("passthru memory gateway", () => {
     expect(forwarded).toHaveLength(5);
 
     const systems = forwarded.map(systemOf);
-    // Each protocol's own system text survives AFTER the addendum.
-    expect(systems[0]).toEndWith("You are terse.");
-    expect(systems[1]).toEndWith("You are Claude.");
-    expect(systems[2]).toEndWith("You are local.");
-    expect(systems[3]).toEndWith("You are generating.");
-    expect(systems[4]).toEndWith("You are responsive.");
+    // Each protocol's own system text survives FIRST (stable prefix); the
+    // addendum follows it as the volatile tail.
+    expect(systems[0]).toStartWith("You are terse.");
+    expect(systems[1]).toStartWith("You are Claude.");
+    expect(systems[2]).toStartWith("You are local.");
+    expect(systems[3]).toStartWith("You are generating.");
+    expect(systems[4]).toStartWith("You are responsive.");
+    // Chat-shaped surfaces carry the memory as its OWN system message after the caller's.
+    const chatMessages = forwarded[0]!.messages as { role: string; content: string }[];
+    expect(chatMessages.map((m) => m.role)).toEqual(["system", "system", "user"]);
+    expect(chatMessages[0]!.content).toBe("You are terse.");
+    expect(chatMessages[1]!.content).toStartWith(INJECTION_MARKER);
 
     const addenda = systems.map(addendumOf);
     expect(addenda[0]).toStartWith(INJECTION_MARKER);

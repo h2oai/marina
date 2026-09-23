@@ -18,6 +18,22 @@ export interface CompetenceRow {
   supervised_only: number;
 }
 
+/**
+ * `demonstrations` value written by `grantCompetence`. An operator grant is an
+ * explicit admin override, not a demonstration count, and this sentinel is
+ * what distinguishes a granted row from a demonstrated flip (whose count sits
+ * at or a little above the gate's `demoThreshold`, single digits). The gate
+ * layer uses it to exempt grants from the live standing re-check.
+ */
+export const GRANTED_DEMONSTRATIONS = 999;
+
+/** True for a row `grantCompetence` produced (or later revoked-and-regranted). */
+export function isGrantedCompetence(row: CompetenceRow | undefined): boolean {
+  return (
+    row !== undefined && row.supervised_only === 0 && row.demonstrations >= GRANTED_DEMONSTRATIONS
+  );
+}
+
 export function getCompetence(
   db: Database,
   entityId: string,
@@ -69,11 +85,11 @@ export function recordDemonstration(
 export function grantCompetence(db: Database, entityId: string, gate: string): void {
   db.run(
     `INSERT INTO entity_competence (entity_id, gate, demonstrations, supervised_only)
-     VALUES (?, ?, 999, 0)
+     VALUES (?, ?, ?, 0)
      ON CONFLICT(entity_id, gate) DO UPDATE SET
-       demonstrations = MAX(demonstrations, 999),
+       demonstrations = MAX(demonstrations, ?),
        supervised_only = 0`,
-    [entityId, gate],
+    [entityId, gate, GRANTED_DEMONSTRATIONS, GRANTED_DEMONSTRATIONS],
   );
 }
 

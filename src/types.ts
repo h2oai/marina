@@ -728,6 +728,15 @@ export type EngineEvent =
       parentSpanId?: string;
       origin?: "autonomous" | "request";
       model?: string;
+      // Prompt-budget metrics (bytes, never text): total continuation prompt,
+      // one entry per section in assembly order with whether the section was
+      // deferred (re-queued past the budget), plus the fixed system-prompt and
+      // resident tool-schema sizes of this turn. Aggregated by
+      // `trace stats` / `/api/ops/overview` (`prompt.sections`).
+      promptBytes?: number;
+      promptSections?: Array<{ name: string; bytes: number; deferred: boolean }>;
+      systemPromptBytes?: number;
+      residentSchemaBytes?: number;
       timestamp: number;
     }
   | {

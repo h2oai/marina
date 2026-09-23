@@ -349,3 +349,42 @@ export const PROVIDER_MAX_RETRIES = (() => {
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 2;
 })();
+
+/** Context usage ratio (of the effective prompt window) at which the context
+ *  manager compacts. Shared by the per-request transform and the mid-run
+ *  `prepareNextTurn` gauge so both fire on the same threshold. */
+export const CONTEXT_PRUNE_THRESHOLD = 0.8;
+/** Usage ratio compaction targets once it fires. */
+export const CONTEXT_PRUNE_TARGET = 0.6;
+
+// ─── Memory helpers and perception hygiene (2026-09-22, agent track 2) ───────
+
+/** Role name of the resident memory helper `reflect` delegates to. Shared by the
+ *  `reflect` command (spawn / discovery) and the runtime's idle stop so both
+ *  agree on which agents are bounded errands rather than residents. */
+export const MEMORY_REFLECTOR_ROLE = "memory-reflector";
+
+/** Default idle window after which a memory-reflector with no assigned job is stopped. */
+export const REFLECTOR_IDLE_STOP_MS = 10 * 60 * 1000;
+
+/** Idle window for memory-reflector helpers: a reflector that has had no
+ *  assistance job created for it and holds no open one for this long is
+ *  stopped by the runtime (the next `reflect` re-spawns one on demand).
+ *  Override: MARINA_REFLECTOR_IDLE_STOP_MS (milliseconds; 0 disables).
+ *  Read per check (not at module load) so operators — and tests — can change
+ *  it without a restart. */
+export function reflectorIdleStopMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.MARINA_REFLECTOR_IDLE_STOP_MS;
+  if (raw === undefined || raw.trim() === "") return REFLECTOR_IDLE_STOP_MS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : REFLECTOR_IDLE_STOP_MS;
+}
+
+/** `MARINA_PERCEIVE_SELF_ECHO=on` restores the pre-2026-09-22 behaviour in
+ *  which an agent's own command echoes (memory-service acknowledgements for
+ *  its continuity journal, `You tell …` receipts) entered `[World Events]`.
+ *  Off by default: those perceptions carry nothing the agent did not just do. */
+export function perceiveSelfEcho(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env.MARINA_PERCEIVE_SELF_ECHO ?? "").trim().toLowerCase();
+  return raw === "on" || raw === "true" || raw === "1";
+}

@@ -263,11 +263,15 @@ protocol carries system context in its own place:
 
 | Surface | Native slot the memory lands in |
 |---------|--------------------------------|
-| `POST /v1/chat/completions` | first `system` message (prepended; created when absent) |
-| `POST /v1/messages` (Anthropic) | the `system` field (string or block array) |
-| `POST /api/chat` (Ollama) | first `system`-role message |
-| `POST /api/generate` (Ollama) | the `system` string |
-| `POST /v1/responses` | the `instructions` string |
+| `POST /v1/chat/completions` | its own `system` message right after the caller's leading system/developer messages (index 0 when there are none) |
+| `POST /v1/messages` (Anthropic) | appended as the LAST text block of `system` (a string system becomes a two-block array) |
+| `POST /api/chat` (Ollama) | its own `system`-role message after the caller's |
+| `POST /api/generate` (Ollama) | appended to the `system` string |
+| `POST /v1/responses` | its own `system` message after the caller's `instructions` on the upstream chat body |
+
+The caller's own system text always comes **first** and byte-identical; the memory block is the
+volatile tail. That ordering is what lets provider prefix caches (and the Anthropic breakpoints
+below) keep the stable prompt cached while the relevance-gated memory block changes.
 
 The Ollama routes and `/v1/responses` proxy upstream in passthru mode (previously they only routed
 to world agents). Ollama passthru always asks the upstream for a completed answer; a client that
@@ -485,18 +489,48 @@ with the nonce in its arguments. A provider that answers in text fails with `too
 
 - **`/v1/messages` clients** (Claude Code, Anthropic SDKs): when the upstream is Anthropic the
   client's native body is forwarded **verbatim** — `cache_control` on system, tool and message
-  blocks, `thinking`, `tool_choice`, `metadata`. Memory injection lands as a leading system block.
+  blocks, `thinking`, `tool_choice`, `metadata`. Memory injection lands as the LAST system block.
 - **OpenAI-completions clients** (pi-ai with `cacheControlFormat: "anthropic"`, or any client that
   puts `cache_control` on system content parts or on a tool): the markers are carried onto the
   translated Anthropic `system` blocks and tools.
 - **Auto-cache** — `MARINA_ANTHROPIC_AUTO_CACHE` (default `true` under the `local` trust profile,
-  `false` otherwise) adds `cache_control: { type: "ephemeral" }` to the **last** system block when
-  the client set no marker of its own. A client marker is never second-guessed.
+  `false` otherwise) places `cache_control: { type: "ephemeral" }` breakpoints in this order,
+  within Anthropic's limit of four (the client's own markers count against it):
+  1. the **last stable system block** — the caller's own prompt (the block before the memory block
+     when memory was injected, else the last block);
+  2. the **last system block** (the memory block) — only when the client set no marker anywhere;
+  3. the **last tool** — only when the client set no marker anywhere.
+
+  A client's markers are always preserved; with any present, the proxy adds only breakpoint 1 and
+  only if that block has none. A native `/v1/messages` body whose last system block is already
+  marked is forwarded untouched.
 - **OpenAI upstreams**: Marina forwards its traced `x-request-id` as a request header and leaves
   `prompt_cache_key` in the body untouched.
 - Cache counters (`cache_read_input_tokens`, `cache_creation_input_tokens`,
   `prompt_tokens_details.cached_tokens`) land on the `model_request_lifecycle` completed event as
   `cacheReadTokens` / `cacheWriteTokens`, so `trace show <id>` shows cache hits per request.
+
+### Cost and cache headers
+
+Every proxied reply carries:
+
+| Header | Value | Streams |
+|--------|-------|---------|
+| `x-marina-upstream-model` | the served `provider/model` (e.g. `anthropic/claude-sonnet-5`) | yes |
+| `x-marina-cache-read-tokens` | cache-read input tokens | no |
+| `x-marina-cache-write-tokens` | cache-write (creation) input tokens | no |
+| `x-marina-cost-usd` | list-price cost of the call in USD | no |
+
+Streams cannot carry token headers (they are sent before the usage is known); their tokens ride the
+final SSE `usage` chunk and the lifecycle `completed` event. Cost is the upstream's own `usage.cost`
+when it reports one (OpenRouter), else computed from pi-ai's built-in model catalog for the served
+model; it is omitted — never `0` — for models the catalog does not list (local runtimes). The same
+`costUsd` is on the lifecycle `completed` event, so agents running on `marina/default` are priced by
+the model that actually served them.
+
+Usage bodies extend `prompt_tokens_details` with `cache_creation_tokens` (cache writes) and, with the
+same value, `cache_write_tokens` — the field pi-ai's OpenAI-completions client reads. Responses API
+bodies mirror it as `usage.input_tokens_details.cache_creation_tokens`.
 
 ### Usage
 
@@ -522,10 +556,15 @@ open the API.
 
 Room agents (spawned by world rooms) use model `marina/default` which routes through the local model API. The flow:
 
-1. Room agent calls `http://localhost:3300/v1/chat/completions` with model "default"
-2. Model API tries channel-based routing first (if model-serving agents are connected)
-3. Falls back to direct upstream proxy using configured API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
-4. Response returned to room agent
+1. Room agent calls `http://localhost:3300/v1/chat/completions` with model "default" (with its tools)
+2. Because the request carries the internal token, the model API **always** proxies it straight to
+   the configured upstream (ANTHROPIC_API_KEY, OPENAI_API_KEY, … or the pinned passthru model) —
+   in every endpoint mode. Marina's own agents are consumers of the upstream, never participants
+   of the `agents` / `open` / `panel` routes, so they are never handed to another agent and never
+   hit the agents-mode `400 unsupported_parameter: tools`.
+3. Response returned to room agent, with `x-marina-upstream-model` and (non-streaming)
+   `x-marina-cost-usd` headers; the lifecycle events carry `routeKind: "passthru"`,
+   `routeReason: "internal"`.
 
 Room agents authenticate via an auto-generated internal token — no `MODEL_API_KEYS` or `MARINA_OPEN_API` configuration needed.
 
