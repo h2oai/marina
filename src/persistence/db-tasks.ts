@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Database } from "bun:sqlite";
+import { liveEntityIdSql } from "./db-entities";
 import { buildFtsQuery } from "./fts";
+
+// `creator_id` is durable-keyed (migration 118); every read projects the live
+// entity id back so `TaskManager` keeps comparing it against entity ids.
+const TASK_COLUMNS = `t.*, ${liveEntityIdSql("t", "creator_id")} AS creator_id`;
 
 // ─── Task Persistence ─────────────────────────────────────────────────────
 
@@ -54,7 +59,10 @@ export function updateTaskPriority(db: Database, id: number, priority: number): 
 }
 
 export function getTask(db: Database, id: number): TaskRow | undefined {
-  return (db.query("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | null) ?? undefined;
+  return (
+    (db.query(`SELECT ${TASK_COLUMNS} FROM tasks t WHERE t.id = ?`).get(id) as TaskRow | null) ??
+    undefined
+  );
 }
 
 export function listTasks(
@@ -71,24 +79,28 @@ export function listTasks(
   const params: (string | number)[] = [];
 
   if (opts?.status) {
-    conditions.push("status = ?");
+    conditions.push("t.status = ?");
     params.push(opts.status);
   }
   if (opts?.groupId) {
-    conditions.push("group_id = ?");
+    conditions.push("t.group_id = ?");
     params.push(opts.groupId);
   }
   if (opts?.parentId !== undefined) {
-    conditions.push("parent_task_id = ?");
+    conditions.push("t.parent_task_id = ?");
     params.push(opts.parentId);
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  const order = opts?.orderByStanding ? "ORDER BY standing DESC, id DESC" : "ORDER BY id DESC";
+  const order = opts?.orderByStanding
+    ? "ORDER BY t.standing DESC, t.id DESC"
+    : "ORDER BY t.id DESC";
   const limit = opts?.limit ?? 20;
   params.push(limit);
 
-  return db.query(`SELECT * FROM tasks ${where} ${order} LIMIT ?`).all(...params) as TaskRow[];
+  return db
+    .query(`SELECT ${TASK_COLUMNS} FROM tasks t ${where} ${order} LIMIT ?`)
+    .all(...params) as TaskRow[];
 }
 
 export function countTasks(
@@ -199,7 +211,7 @@ export function getTaskClaim(
 export function listTasksClaimedBy(db: Database, entityId: string): TaskRow[] {
   return db
     .query(
-      `SELECT t.* FROM tasks t
+      `SELECT ${TASK_COLUMNS} FROM tasks t
        JOIN task_claims c ON t.id = c.task_id
        WHERE c.entity_id = ? AND c.status = 'claimed' AND t.status != 'completed' AND t.status != 'cancelled'
        ORDER BY t.priority DESC, t.id DESC`,
@@ -275,7 +287,7 @@ export function searchTasks(
   const where = conditions.join(" AND ");
   return db
     .query(
-      `SELECT t.*, rank * -1 AS score
+      `SELECT ${TASK_COLUMNS}, rank * -1 AS score
        FROM tasks t
        JOIN tasks_fts fts ON t.id = fts.rowid
        WHERE ${where}

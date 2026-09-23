@@ -365,6 +365,47 @@ export function servableRecord(
   return until === null || until === undefined || until > now;
 }
 
+/**
+ * Which of `sourceIds` may still be served as evidence: a source with no
+ * deriving record (a raw capture) always may; one referenced only by records
+ * that fail `servableRecord` — a retired twin (`valid_time.until` closed by a
+ * tombstone `revise` or a `resolve` loser) or a superseded / non-active record
+ * — may not, or the retired claim's captured excerpt resurfaces as
+ * `[evidence]` after the record itself was filtered. Mirrors the durable
+ * `search` visibility predicate (active, current note not superseded) plus
+ * the validity interval `servableRecord` checks. On a query failure every id
+ * is kept: this is a guard on already-authorized hits, not an access check.
+ */
+export function servableSourceIds(
+  db: MarinaDB,
+  spaceId: string | undefined,
+  sourceIds: readonly string[],
+  now = Date.now(),
+): Set<string> {
+  const out = new Set(sourceIds);
+  if (!spaceId || sourceIds.length === 0) return out;
+  try {
+    const rows = db
+      .memoryRepository()
+      .raw.query(
+        `SELECT d.source_id AS source_id,
+                MAX(CASE WHEN r.status = 'active'
+                          AND COALESCE(n.verification_status, '') != 'superseded'
+                          AND (r.valid_until IS NULL OR r.valid_until > ?) THEN 1 ELSE 0 END) AS servable
+           FROM memory_derivations d
+           JOIN memory_records r ON r.id = d.record_id AND r.space_id = ?
+           LEFT JOIN notes n ON n.id = r.current_note_id
+          WHERE d.source_id IN (SELECT value FROM json_each(?))
+          GROUP BY d.source_id`,
+      )
+      .all(now, spaceId, JSON.stringify(sourceIds)) as { source_id: string; servable: number }[];
+    for (const row of rows) if (!row.servable) out.delete(row.source_id);
+  } catch {
+    // Keep the hits — see the doc comment.
+  }
+  return out;
+}
+
 function recordItem(record: MemorySearchResult["results"][number]): UnifiedContextItem {
   const freshness =
     record.freshness && record.freshness !== "current" ? ` ${record.freshness}` : "";
@@ -598,9 +639,21 @@ async function fetchDurable(
     });
     spaceId ??= sources.space_id;
     const result = sources.result as MemorySourceSearchResult;
+    const hits = result.results.filter(
+      (hit) => !jobArtifacts.has(hit.id) && !hit.session_id?.startsWith("assistance:"),
+    );
+    // `source_search` is not validity-filtered either: a retired twin's
+    // captured excerpt is still a lexical hit after its record was dropped
+    // above. Serve a source only while some deriving record is servable.
+    const servable = servableSourceIds(
+      db,
+      spaceId,
+      hits.map((hit) => hit.id),
+      Date.now(),
+    );
     out.items.evidence!.push(
-      ...result.results
-        .filter((hit) => !jobArtifacts.has(hit.id) && !hit.session_id?.startsWith("assistance:"))
+      ...hits
+        .filter((hit) => servable.has(hit.id))
         .slice(0, limits.sources)
         .map((hit) => sourceItem(spaceId, hit)),
     );

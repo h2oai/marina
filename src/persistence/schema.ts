@@ -3425,4 +3425,24 @@ UPDATE OR IGNORE coding_services
    AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = coding_services.entity_id);
 `,
   },
+  // Migration 118: the last two transient keys — `groups_.leader_id` and
+  // `tasks.creator_id`. Both are ownership columns (who may edit / cancel /
+  // approve), so a re-login after eviction silently lost the leader's and the
+  // creator's authority over their own group / task. Rewrite onto users.id
+  // where an account exists (same EXISTS guard as 109/117); neither column is
+  // unique, so nothing can collide and nothing is deleted. Delegates resolve
+  // `durableEntityKey()` on write and project `liveEntityIdSql` on read.
+  {
+    version: 118,
+    sql: `
+UPDATE OR IGNORE groups_
+   SET leader_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = groups_.leader_id)
+ WHERE leader_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = groups_.leader_id);
+UPDATE OR IGNORE tasks
+   SET creator_id = (SELECT u.id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = tasks.creator_id)
+ WHERE creator_id NOT IN (SELECT id FROM users)
+   AND EXISTS (SELECT 1 FROM entities e JOIN users u ON u.name = e.name WHERE e.id = tasks.creator_id);
+`,
+  },
 ];

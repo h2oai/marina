@@ -89,9 +89,55 @@ describe("durable keys survive re-login", () => {
     expect(db.getGroupMembers("g1").map((m) => m.entity_id)).toEqual(["u_alice"]);
   });
 
+  it("keys the group leader and task creator by the account (migration 118)", () => {
+    db.createGroup({ id: "g3", name: "leaders", leaderId: "e_1" });
+    db.addGroupMember("g3", "e_1", 2);
+    const tasks = new TaskManager(db);
+    const task = tasks.create({ title: "owned", creatorId: "e_1", creatorName: "Alice" });
+
+    // Stored under the durable key …
+    expect(
+      (raw.query("SELECT leader_id FROM groups_ WHERE id = 'g3'").get() as { leader_id: string })
+        .leader_id,
+    ).toBe("u_alice");
+    expect(
+      (
+        raw.query("SELECT creator_id FROM tasks WHERE id = ?").get(task.id) as {
+          creator_id: string;
+        }
+      ).creator_id,
+    ).toBe("u_alice");
+    // … and read back as the live entity id on every read path.
+    expect(db.getGroup("g3")?.leader_id).toBe("e_1");
+    expect(db.getGroupByName("leaders")?.leader_id).toBe("e_1");
+    expect(db.getAllGroups().find((g) => g.id === "g3")?.leader_id).toBe("e_1");
+    expect(db.getEntityGroups("e_1").map((g) => g.leader_id)).toEqual(["e_1"]);
+    expect(task.creatorId).toBe("e_1");
+    expect(db.listTasks().find((t) => t.id === task.id)?.creator_id).toBe("e_1");
+    expect(db.searchTasks("owned").map((t) => t.creator_id)).toEqual(["e_1"]);
+
+    const e2 = relogin();
+    expect(db.getGroup("g3")?.leader_id).toBe(e2);
+    expect(db.getGroupByName("leaders")?.leader_id).toBe(e2);
+    expect(db.getEntityGroups(e2).map((g) => g.leader_id)).toEqual([e2]);
+    expect(tasks.get(task.id)?.creatorId).toBe(e2);
+    expect(db.listTasks({ status: "open" }).find((t) => t.id === task.id)?.creator_id).toBe(e2);
+    // Ownership checks that compare against the caller's entity id still pass.
+    expect(tasks.cancel(task.id, e2)).toBe(true);
+    expect(tasks.get(task.id)?.status).toBe("cancelled");
+
+    // Offline account: the durable key itself is returned.
+    db.deleteEntity(e2);
+    expect(db.getGroup("g3")?.leader_id).toBe("u_alice");
+    expect(db.getTask(task.id)?.creator_id).toBe("u_alice");
+  });
+
   it("passes ids with no world account through unchanged", () => {
     db.createGroup({ id: "g2", name: "guests", leaderId: "e_9" });
     db.addGroupMember("g2", "e_9");
+    expect(db.getGroup("g2")?.leader_id).toBe("e_9");
+    const orphanTask = db.createTask({ title: "t", creatorId: "e_9", creatorName: "Nine" });
+    expect(db.getTask(orphanTask)?.creator_id).toBe("e_9");
     expect(
       (
         raw.query("SELECT entity_id FROM group_members WHERE group_id = 'g2'").get() as {

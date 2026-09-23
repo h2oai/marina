@@ -391,18 +391,28 @@ export function createGroup(
   );
 }
 
+// `leader_id` is durable-keyed (migration 118); every read projects the live
+// entity id back so callers keep comparing against entity ids.
+const GROUP_COLUMNS = `g.*, ${liveEntityIdSql("g", "leader_id")} AS leader_id`;
+
 export function getGroup(db: Database, id: string): GroupRow | undefined {
-  return (db.query("SELECT * FROM groups_ WHERE id = ?").get(id) as GroupRow | null) ?? undefined;
+  return (
+    (db
+      .query(`SELECT ${GROUP_COLUMNS} FROM groups_ g WHERE g.id = ?`)
+      .get(id) as GroupRow | null) ?? undefined
+  );
 }
 
 export function getGroupByName(db: Database, name: string): GroupRow | undefined {
   return (
-    (db.query("SELECT * FROM groups_ WHERE name = ?").get(name) as GroupRow | null) ?? undefined
+    (db
+      .query(`SELECT ${GROUP_COLUMNS} FROM groups_ g WHERE g.name = ?`)
+      .get(name) as GroupRow | null) ?? undefined
   );
 }
 
 export function getAllGroups(db: Database): GroupRow[] {
-  return db.query("SELECT * FROM groups_ ORDER BY name").all() as GroupRow[];
+  return db.query(`SELECT ${GROUP_COLUMNS} FROM groups_ g ORDER BY g.name`).all() as GroupRow[];
 }
 
 export function deleteGroup(db: Database, id: string): void {
@@ -459,7 +469,7 @@ export function getGroupMember(
 export function getEntityGroups(db: Database, entityId: string): GroupRow[] {
   return db
     .query(
-      `SELECT g.* FROM groups_ g
+      `SELECT ${GROUP_COLUMNS} FROM groups_ g
        JOIN group_members gm ON g.id = gm.group_id
        WHERE gm.entity_id = ?
        ORDER BY g.name`,

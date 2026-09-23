@@ -1035,7 +1035,8 @@ export class MarinaDB {
     channelId?: string;
     boardId?: string;
   }): void {
-    channelsDb.createGroup(this.db, g);
+    // Durable-keyed leader (migration 118); reads project the live id back.
+    channelsDb.createGroup(this.db, { ...g, leaderId: this.durableEntityKey(g.leaderId) });
   }
   getGroup(id: string): GroupRow | undefined {
     return channelsDb.getGroup(this.db, id);
@@ -1296,7 +1297,11 @@ export class MarinaDB {
     parentTaskId?: number;
     priority?: number;
   }): number {
-    return tasksDb.createTask(this.db, task);
+    // Durable-keyed creator (migration 118); reads project the live id back.
+    return tasksDb.createTask(this.db, {
+      ...task,
+      creatorId: this.durableEntityKey(task.creatorId),
+    });
   }
 
   updateTaskProgress(id: number, progress: number): void {

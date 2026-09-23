@@ -6,13 +6,16 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
   describeRetentionPolicies,
   effectivePolicies,
+  formatKeepWindow,
   formatRetentionSummary,
+  getLastRetentionReport,
   isRetentionTick,
   parseRetentionOverrides,
   parseRetentionValue,
   RETENTION_DEFAULTS,
   RETENTION_POLICIES,
   type RetentionPolicy,
+  resetRetentionReportForTests,
   runRetentionPass,
 } from "../src/engine/retention";
 import { MarinaDB } from "../src/persistence/database";
@@ -61,11 +64,22 @@ describe("retention overrides", () => {
   });
 
   it("describes the shipped policy table", () => {
-    const rows = describeRetentionPolicies("feed_events=0");
-    expect(rows.find((r) => r.table === "chronicle")?.keep).toBe("never");
-    expect(rows.find((r) => r.table === "feed_events")?.keep).toBe("never (override)");
-    expect(rows.find((r) => r.table === "primitive_usage")?.keep).toBe("14d");
-    expect(rows.find((r) => r.table === "event_log")?.keep).toMatch(/rows$/);
+    const rows = describeRetentionPolicies("feed_events=0,shell_log=12h");
+    const by = (table: string) => rows.find((r) => r.table === table)!;
+    expect(by("chronicle")).toMatchObject({
+      kind: "append-only",
+      keep: "never",
+      overridden: false,
+    });
+    expect(by("feed_events")).toMatchObject({ keep: "never", overridden: true });
+    expect(by("shell_log")).toMatchObject({ keep: "12h", overridden: true });
+    expect(by("primitive_usage")).toMatchObject({ keep: "14d", overridden: false });
+    expect(by("event_log").keep).toMatch(/^\d+ rows$/);
+    expect(by("event_log").overridden).toBe(false);
+    for (const row of rows) expect(typeof row.overridden).toBe("boolean");
+    expect(formatKeepWindow(90 * 24 * 3_600_000)).toBe("90d");
+    expect(formatKeepWindow(36 * 3_600_000)).toBe("36h");
+    expect(formatKeepWindow(90_000)).toBe("90s");
   });
 
   it("runs on its own hourly phase", () => {
@@ -118,6 +132,29 @@ describe("retention pass", () => {
     const result = runRetentionPass(db, { now, overridesEnv: "" });
     expect(result.deleted).toEqual({});
     expect(result.skipped).toEqual([]);
+  });
+
+  it("keeps the last pass as a report for the dashboard", () => {
+    resetRetentionReportForTests();
+    expect(getLastRetentionReport()).toBeNull();
+    const result = runRetentionPass(db, {
+      now,
+      overridesEnv: "",
+      policies: [
+        { table: "does_not_exist", timeColumn: "created_at", kind: "telemetry" },
+        ...RETENTION_POLICIES,
+      ],
+    });
+    const report = getLastRetentionReport()!;
+    expect(report).toEqual({
+      at: now,
+      deleted: result.deleted,
+      skipped: ["does_not_exist"],
+      durationMs: result.durationMs,
+    });
+    // A copy, not the live object.
+    report.skipped.push("mutated");
+    expect(getLastRetentionReport()?.skipped).toEqual(["does_not_exist"]);
   });
 
   it("migration 116 added the hot-path indexes", () => {

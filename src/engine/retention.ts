@@ -297,6 +297,17 @@ export function runRetentionPass(
   db: MarinaDB,
   opts: RetentionPassOptions = {},
 ): RetentionPassResult {
+  const result = runRetentionPassInner(db, opts);
+  lastReport = {
+    at: opts.now ?? Date.now(),
+    deleted: { ...result.deleted },
+    skipped: [...result.skipped],
+    durationMs: result.durationMs,
+  };
+  return result;
+}
+
+function runRetentionPassInner(db: MarinaDB, opts: RetentionPassOptions): RetentionPassResult {
   const started = Date.now();
   const now = opts.now ?? started;
   const policies = opts.policies ?? RETENTION_POLICIES;
@@ -378,22 +389,62 @@ export function formatRetentionSummary(result: RetentionPassResult): string {
   return `${parts.join(" ")}${extras.length ? ` [${extras.join("; ")}]` : ""} (${result.durationMs}ms)`;
 }
 
-/** Human-readable policy table (for docs / operator introspection). */
+/** Snapshot of the most recent `runRetentionPass` in this process (dashboard / operator view). */
+export interface RetentionReport {
+  /** Epoch-ms the pass ran (`opts.now` when supplied). */
+  at: number;
+  deleted: Record<string, number>;
+  skipped: string[];
+  durationMs: number;
+}
+
+let lastReport: RetentionReport | null = null;
+
+/** The last pass this process ran, or `null` before the first hourly pass. */
+export function getLastRetentionReport(): RetentionReport | null {
+  if (!lastReport) return null;
+  return { ...lastReport, deleted: { ...lastReport.deleted }, skipped: [...lastReport.skipped] };
+}
+
+/** @internal test seam */
+export function resetRetentionReportForTests(): void {
+  lastReport = null;
+}
+
+export interface RetentionPolicyDescription {
+  table: string;
+  kind: RetentionKind;
+  /** Human keep window: `"90d"`, `"12h"`, `"never"`, `"250000 rows"`. */
+  keep: string;
+  /** True when `MARINA_RETENTION_OVERRIDES` changed this table's window. */
+  overridden: boolean;
+  note?: string;
+}
+
+/** `90d` / `12h` / `45m` / `30s` — the largest unit that divides evenly. */
+export function formatKeepWindow(ms: number): string {
+  if (ms > 0 && ms % DAY_MS === 0) return `${ms / DAY_MS}d`;
+  if (ms > 0 && ms % HOUR_MS === 0) return `${ms / HOUR_MS}h`;
+  if (ms > 0 && ms % 60_000 === 0) return `${ms / 60_000}m`;
+  if (ms > 0 && ms % 1_000 === 0) return `${ms / 1_000}s`;
+  return `${ms}ms`;
+}
+
+/** Human-readable policy table (for docs / operator introspection / `GET /api/retention`). */
 export function describeRetentionPolicies(
   overridesEnv = process.env[RETENTION_OVERRIDES_ENV],
-): { table: string; kind: RetentionKind; keep: string; note?: string }[] {
+): RetentionPolicyDescription[] {
   const { overrides } = parseRetentionOverrides(overridesEnv);
   return effectivePolicies(overrides).map((p) => ({
     table: p.table,
     kind: p.kind,
     keep:
-      p.kind === "append-only"
+      p.kind === "append-only" || p.disabled
         ? "never"
-        : p.disabled
-          ? "never (override)"
-          : p.effectiveKeepRows !== undefined
-            ? `${p.effectiveKeepRows} rows`
-            : `${Math.round((p.effectiveKeepMs ?? 0) / DAY_MS)}d`,
+        : p.effectiveKeepRows !== undefined
+          ? `${p.effectiveKeepRows} rows`
+          : formatKeepWindow(p.effectiveKeepMs ?? 0),
+    overridden: p.kind !== "append-only" && overrides.has(p.table),
     ...(p.note ? { note: p.note } : {}),
   }));
 }

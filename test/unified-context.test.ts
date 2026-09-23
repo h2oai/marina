@@ -24,6 +24,7 @@ import {
   relevantToQuery,
   renderUnifiedContext,
   servableRecord,
+  servableSourceIds,
   truncateToBytes,
   UNIFIED_CONTEXT_HEADER,
   UNIFIED_TIER_LABELS,
@@ -474,5 +475,82 @@ describe("relevance gate and validity filter (HISTORY §8: recall pollution)", (
   it("the header tells the model how to use the block instead of asserting relevance", () => {
     expect(UNIFIED_CONTEXT_HEADER).toContain("use only items that answer the question");
     expect(UNIFIED_CONTEXT_HEADER).not.toContain("Relevant Memory");
+  });
+});
+
+describe("retired records take their captured source excerpts out of [evidence]", () => {
+  let db: MarinaDB;
+  let engine: Engine;
+  beforeEach(() => {
+    cleanupDb(TEST_DB);
+    db = new MarinaDB(TEST_DB);
+    engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
+    engine.registerRoom(roomId("test/start"), makeTestRoom({ short: "Start" }));
+  });
+  afterEach(() => {
+    db.close();
+    cleanupDb(TEST_DB);
+  });
+
+  const evidenceIds = async (owner: string) =>
+    (await buildUnifiedContext(db, owner, FIXTURE_QUERY)).tiers
+      .find((t) => t.tier === "evidence")!
+      .items.map((i) => i.id);
+
+  it("drops a source whose only deriving record was retired, keeps raw captures and live-backed ones", async () => {
+    const fx = await seedUnifiedFixture(engine, db);
+    expect(await evidenceIds(fx.owner)).toEqual(expect.arrayContaining([fx.recordId, fx.sourceId]));
+
+    // A capture nobody remembered from is a raw source: always servable.
+    const orphan = (
+      await residentMemoryOperation(db, fx.owner, {
+        operation: "capture",
+        input: {
+          session_id: "fixture",
+          content: "Amber deployment port scratch note: the runbook says 7419, verify later.",
+        },
+      })
+    ).result as { id: string };
+
+    // Retire the fixture record the way `note delete` does (tombstone revise,
+    // validity closed now). The record leaves [evidence] via servableRecord …
+    const current = (
+      await residentMemoryOperation(db, fx.owner, { operation: "get", id: fx.recordId })
+    ).result as { version: number; valid_time?: { from: number | null } | null };
+    await residentMemoryOperation(db, fx.owner, {
+      operation: "revise",
+      id: fx.recordId,
+      key: "retire-fixture",
+      input: {
+        expected_version: current.version,
+        content: "[deleted legacy note #0]",
+        importance: 1,
+        valid_time: { from: current.valid_time?.from ?? null, until: Date.now() },
+      },
+    });
+    const after = await evidenceIds(fx.owner);
+    expect(after).not.toContain(fx.recordId);
+    // … and so does the excerpt of the source only that record derived from.
+    expect(after).not.toContain(fx.sourceId);
+    expect(after).toContain(orphan.id);
+
+    // Direct predicate: unknown space or empty input passes everything through.
+    expect([...servableSourceIds(db, undefined, [fx.sourceId])]).toEqual([fx.sourceId]);
+    expect([...servableSourceIds(db, fx.spaceId, [])]).toEqual([]);
+    expect(servableSourceIds(db, fx.spaceId, [fx.sourceId, orphan.id])).toEqual(
+      new Set([orphan.id]),
+    );
+    // A second, live record deriving from the same source makes it servable again.
+    await residentMemoryOperation(db, fx.owner, {
+      operation: "remember",
+      key: "re-derive",
+      input: {
+        content: "Amber deployment still listens on port 7419 (re-checked)",
+        subject: "amber",
+        source_ids: [fx.sourceId],
+      },
+    });
+    expect(servableSourceIds(db, fx.spaceId, [fx.sourceId]).has(fx.sourceId)).toBe(true);
+    expect(await evidenceIds(fx.owner)).toContain(fx.sourceId);
   });
 });
