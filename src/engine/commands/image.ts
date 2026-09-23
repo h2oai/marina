@@ -4,6 +4,7 @@
 import type { MediaJobRow } from "../../persistence/database";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
 import type { Engine } from "../engine";
+import { type ModifierSpec, parseModifiers } from "../parse-input";
 
 interface GenerateOptions {
   prompt: string;
@@ -17,13 +18,13 @@ interface GenerateOptions {
 export function imageCommand(engine: Engine): CommandDef {
   return {
     name: "image",
-    help: "Generate images. Usage: image generate <prompt...> [--model <provider/model>] [--style <style>] [--width <px>] [--height <px>] [--canvas <name>]",
+    help: "Generate images. Usage: image generate <prompt...> [model:<provider/model>] [style:<style>] [width:<px>] [height:<px>] [canvas:<name>] (also --width 1024)",
     handler: async (ctx, input) => {
       const sub = input.tokens[0];
       if (!sub) {
         ctx.send(
           input.entity,
-          "Usage: image generate <prompt...> [--style synthwave] [--width 1024] [--canvas name]",
+          "Usage: image generate <prompt...> [style:synthwave] [width:1024] [canvas:name]",
         );
         return;
       }
@@ -31,7 +32,7 @@ export function imageCommand(engine: Engine): CommandDef {
         ctx.send(input.entity, "Unknown subcommand. Usage: image generate <prompt...>");
         return;
       }
-      const parsed = parseGenerateArgs(input.tokens.slice(1));
+      const parsed = parseImageGenerateArgs(input.tokens.slice(1));
       if ("error" in parsed) {
         ctx.send(input.entity, parsed.error);
         return;
@@ -108,63 +109,42 @@ export function sendMediaJobStatus(ctx: RoomContext, entityId: EntityId, job: Me
   ctx.send(entityId, statusMessage);
 }
 
-function parseGenerateArgs(tokens: string[]): GenerateOptions | { error: string } {
-  const promptParts: string[] = [];
-  const opts: GenerateOptions = { prompt: "" };
+/** `image generate` modifiers: `model:openai/gpt-image-1 style:synthwave width:1024 canvas:x`. */
+const IMAGE_GENERATE_SPEC: ModifierSpec = {
+  model: { type: "string" },
+  style: { type: "string" },
+  width: { type: "int", aliases: ["w"] },
+  height: { type: "int", aliases: ["h"] },
+  canvas: { type: "string" },
+};
 
-  let i = 0;
-  while (i < tokens.length) {
-    const token = tokens[i]!;
-    if (token.startsWith("--")) {
-      const [flag, valueInline] = token.split("=", 2);
-      let value = valueInline;
-      if (!value) {
-        value = tokens[i + 1];
-        if (value && !value.startsWith("--")) {
-          i++;
-        } else {
-          value = undefined;
-        }
-      }
-      const key = flag!.slice(2).toLowerCase();
-      switch (key) {
-        case "model":
-          if (value) opts.model = value;
-          break;
-        case "style":
-          if (value) opts.style = value;
-          break;
-        case "width":
-          if (value) opts.width = Number(value);
-          break;
-        case "height":
-          if (value) opts.height = Number(value);
-          break;
-        case "canvas":
-          if (value) opts.canvas = value;
-          break;
-        default:
-          break;
-      }
-    } else {
-      promptParts.push(token);
-    }
-    i++;
-  }
-
-  opts.prompt = promptParts.join(" ").trim();
-  if (!opts.prompt) {
+/**
+ * Parse `image generate` arguments. Modifiers may appear anywhere (a prompt
+ * rarely contains `width:`-shaped words; use `--` to protect one that does),
+ * in any of the shared spellings — `width:1024`, `width=1024`, `--width 1024`,
+ * `--width=1024`. Everything else is the prompt.
+ */
+export function parseImageGenerateArgs(
+  tokens: readonly string[],
+): GenerateOptions | { error: string } {
+  const mods = parseModifiers(tokens, IMAGE_GENERATE_SPEC);
+  if (mods.errors.length > 0) return { error: mods.errors.join("; ") };
+  const prompt = mods.rest.join(" ").trim();
+  if (!prompt) {
     return { error: "Provide a prompt: image generate <prompt...>" };
   }
-
-  if (opts.width !== undefined && (!Number.isFinite(opts.width) || opts.width <= 0)) {
-    return { error: "Width must be a positive number." };
-  }
-  if (opts.height !== undefined && (!Number.isFinite(opts.height) || opts.height <= 0)) {
-    return { error: "Height must be a positive number." };
-  }
-
-  return opts;
+  const width = typeof mods.values.width === "number" ? mods.values.width : undefined;
+  const height = typeof mods.values.height === "number" ? mods.values.height : undefined;
+  if (width !== undefined && width <= 0) return { error: "Width must be a positive number." };
+  if (height !== undefined && height <= 0) return { error: "Height must be a positive number." };
+  return {
+    prompt,
+    ...(typeof mods.values.model === "string" ? { model: mods.values.model } : {}),
+    ...(typeof mods.values.style === "string" ? { style: mods.values.style } : {}),
+    ...(width !== undefined ? { width } : {}),
+    ...(height !== undefined ? { height } : {}),
+    ...(typeof mods.values.canvas === "string" ? { canvas: mods.values.canvas } : {}),
+  };
 }
 
 function resolveCanvas(engine: Engine, canvas?: string): string | undefined {

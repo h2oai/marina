@@ -9,6 +9,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { parseImageGenerateArgs } from "../src/engine/commands/image";
+import { parseWebSearchArgs } from "../src/engine/commands/web";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
@@ -181,6 +183,96 @@ describe("command argument grammar (old + canonical spellings)", () => {
     expect(help).toContain("Key-value beliefs");
     expect(help).toContain("Which verb?");
     expect(help).toContain("memory kv set");
+  });
+
+  // ── chronicle ──
+  it("chronicle since: positional 2h, since:2h and --since 2h are the same window; limit:N caps", () => {
+    for (let i = 0; i < 3; i++) {
+      db.appendChronicle({
+        kind: "event",
+        source: "test",
+        title: `Happening ${i}`,
+        body: "something canonical",
+        participants: [],
+        refs: [],
+      });
+    }
+    const positional = run(alice, "chronicle since 2h");
+    const canon = run(alice, "chronicle since since:2h");
+    const flag = run(alice, "chronicle since --since 2h");
+    for (const text of [positional, canon, flag]) {
+      expect(text).toContain("last 2h (3 entries)");
+    }
+    expect(run(alice, "chronicle since since:2h limit:1")).toContain("last 2h (1 entries)");
+    expect(run(alice, "chronicle since since:soon")).toContain("since: expected a duration");
+    expect(run(alice, "chronicle since")).toContain("Usage: chronicle since");
+    expect(run(alice, "chronicle pending since:2h limit:2")).toContain("last 2h (2 events)");
+    expect(run(alice, "chronicle pending since 2h")).toContain("last 2h (3 events)");
+  });
+
+  // ── web ──
+  it("web search: --engines web, engines:web and engines=web select engines; limit:N caps; the query survives", () => {
+    const legacy = parseWebSearchArgs(["--engines", "web,academic", "quantum", "tides"]);
+    const canon = parseWebSearchArgs(["engines:web,academic", "quantum", "tides"]);
+    const eq = parseWebSearchArgs(["engines=web,academic", "limit:5", "quantum", "tides"]);
+    for (const parsed of [legacy, canon, eq]) {
+      expect(parsed).toMatchObject({ engines: ["web", "academic"], query: "quantum tides" });
+    }
+    expect(eq).toMatchObject({ maxResults: 5 });
+    expect(legacy).toMatchObject({ maxResults: 10 });
+    // Only LEADING modifiers are consumed: `limit:` inside the query is text.
+    expect(parseWebSearchArgs(["what", "is", "limit:5"])).toMatchObject({
+      query: "what is limit:5",
+      maxResults: 10,
+    });
+    expect(parseWebSearchArgs(["limit:many", "x"])).toMatchObject({
+      error: expect.stringContaining("limit: expected a whole number"),
+    });
+  });
+
+  // ── image ──
+  it("image generate: --width 1024 --style x, width:1024 style:x and width=1024 agree", () => {
+    const legacy = parseImageGenerateArgs([
+      "a",
+      "lighthouse",
+      "--width",
+      "1024",
+      "--style",
+      "synthwave",
+      "--canvas",
+      "art",
+    ]);
+    const canon = parseImageGenerateArgs([
+      "a",
+      "lighthouse",
+      "width:1024",
+      "style:synthwave",
+      "canvas:art",
+    ]);
+    const eq = parseImageGenerateArgs([
+      "width=1024",
+      "--style=synthwave",
+      "a",
+      "lighthouse",
+      "canvas=art",
+    ]);
+    for (const parsed of [legacy, canon, eq]) {
+      expect(parsed).toEqual({
+        prompt: "a lighthouse",
+        width: 1024,
+        style: "synthwave",
+        canvas: "art",
+      });
+    }
+    expect(parseImageGenerateArgs(["a", "lighthouse", "height:0"])).toEqual({
+      error: "Height must be a positive number.",
+    });
+    expect(parseImageGenerateArgs(["a", "lighthouse", "width:wide"])).toMatchObject({
+      error: expect.stringContaining("width: expected a whole number"),
+    });
+    expect(parseImageGenerateArgs(["width:512"])).toEqual({
+      error: "Provide a prompt: image generate <prompt...>",
+    });
   });
 
   // ── market ──

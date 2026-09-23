@@ -6,9 +6,15 @@ import { bold, category, dim, id as fmtId, header, separator, status } from "../
 import type { MarinaDB } from "../../persistence/database";
 import type { ChronicleEntry, ChronicleKind } from "../../persistence/db-chronicle";
 import type { CommandDef, Entity, RoomContext } from "../../types";
-import { extractModifiers, splitOn } from "../parse-input";
+import { extractModifiers, type ModifierSpec, parseModifiers, splitOn } from "../parse-input";
 import { requiresPersistence } from "./command-messages";
 import { formatAge, parseSince } from "./format-duration";
+
+/** `chronicle since` / `chronicle pending` window modifiers (`since:2h limit:20`). */
+const CHRONICLE_SINCE_SPEC: ModifierSpec = {
+  since: { type: "duration" },
+  limit: { type: "int" },
+};
 
 const CHRONICLER_ROLE = "chronicler";
 
@@ -194,18 +200,28 @@ export function chronicleCommand(deps: {
       }
 
       if (sub === "since") {
-        const since = parseSince(tokens[1]);
-        if (since === undefined) {
-          ctx.send(input.entity, "Usage: chronicle since <30m|2h|7d|1w>");
+        // `chronicle since 2h` (positional) and the modifier grammar
+        // (`since:2h`, `--since 2h`, `limit:50`) name the same window.
+        const mods = parseModifiers(tokens.slice(1), CHRONICLE_SINCE_SPEC);
+        const sinceMs =
+          typeof mods.values.since === "number" ? mods.values.since : parseSince(mods.rest[0]);
+        const sinceLabel = mods.raw.since ?? mods.rest[0];
+        if (mods.errors.length > 0 || sinceMs === undefined) {
+          ctx.send(
+            input.entity,
+            `${mods.errors.length > 0 ? `${mods.errors.join("; ")}. ` : ""}Usage: chronicle since <30m|2h|7d|1w> [limit:N]`,
+          );
           return;
         }
-        const entries = db.queryChronicle({ since: now - since, limit: 100 });
+        const limitArg = typeof mods.values.limit === "number" ? mods.values.limit : 100;
+        const limit = limitArg > 0 ? Math.min(limitArg, 500) : 100;
+        const entries = db.queryChronicle({ since: now - sinceMs, limit });
         if (entries.length === 0) {
-          ctx.send(input.entity, `Nothing chronicled in the last ${tokens[1]}.`);
+          ctx.send(input.entity, `Nothing chronicled in the last ${sinceLabel}.`);
           return;
         }
         const lines = [
-          header(`Chronicle — last ${tokens[1]} (${entries.length} entries)`),
+          header(`Chronicle — last ${sinceLabel} (${entries.length} entries)`),
           separator(),
           ...formatList(entries, now),
         ];
@@ -256,8 +272,25 @@ export function chronicleCommand(deps: {
       // Returns event-kind entries since the most recent narrative/digest, or
       // since `--since <dur>` if given. Rank 0 — anyone can inspect the queue.
       if (sub === "pending") {
-        const rest = tokens.slice(1).join(" ");
-        const { modifiers } = extractModifiers(rest, ["since", "limit"]);
+        // Canonical `since:2h limit:20`; the historical trailing `since 2h` /
+        // `limit 20` word pairs are still read from the positional rest.
+        const mods = parseModifiers(tokens.slice(1), CHRONICLE_SINCE_SPEC);
+        const legacy: Record<string, string> = {};
+        for (let i = 0; i + 1 < mods.rest.length; i += 2) {
+          const key = mods.rest[i]!.toLowerCase();
+          if (key === "since" || key === "limit") legacy[key] = mods.rest[i + 1]!;
+        }
+        if (mods.errors.length > 0) {
+          ctx.send(
+            input.entity,
+            `${mods.errors.join("; ")}. Usage: chronicle pending [since:<dur>] [limit:N]`,
+          );
+          return;
+        }
+        const modifiers = {
+          since: mods.raw.since ?? legacy.since,
+          limit: mods.raw.limit ?? legacy.limit,
+        };
         const sinceMs = parseSince(modifiers.since);
 
         let cursor: number;
