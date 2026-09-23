@@ -289,9 +289,9 @@ export function benchmarkCommand(deps: {
           const { modifiers } = extractModifiers(rawArgs, [
             "limit",
             "seed",
+            "judge-model",
             "model",
             "judge",
-            "judge-model",
             "concurrency",
           ]);
           const limit = Number.parseInt(modifiers.limit ?? "", 10);

@@ -30,10 +30,25 @@ export type SocialEventType =
 
 // ─── Social Awareness ───────────────────────────────────────────────────────
 
+/** How long a speaker counts as "recently active" (also the eviction horizon). */
+const RECENT_SPEAKER_WINDOW_MS = 5 * 60 * 1000;
+/** Above this many tracked speakers, every write sweeps stale entries. */
+export const RECENT_SPEAKERS_MAX = 256;
+/** Below the cap, sweep stale speakers once per this many writes. */
+const RECENT_SPEAKERS_SWEEP_EVERY = 64;
+
 export class SocialAwareness {
   private socialEvents: SocialEvent[] = [];
   private entitiesInRoom: Set<string> = new Set();
+  /**
+   * Speaker name → last-heard timestamp. Bounded by eviction in `noteSpeaker`:
+   * entries older than the five-minute window are swept every
+   * `RECENT_SPEAKERS_SWEEP_EVERY` writes, or on every write once the map holds
+   * more than `RECENT_SPEAKERS_MAX` names — so it holds only active speakers
+   * (plus at most a sweep interval of stale ones) rather than everyone ever heard.
+   */
   private recentSpeakers: Map<string, number> = new Map();
+  private recentSpeakerWrites = 0;
   /** Interaction count per entity — drives relationship-aware social behavior. */
   private relationships: Map<string, number> = new Map();
 
@@ -81,7 +96,7 @@ export class SocialAwareness {
         }
 
         if (speaker) {
-          this.recentSpeakers.set(speaker, timestamp);
+          this.noteSpeaker(speaker, timestamp);
           this.trackInteraction(speaker);
         }
         break;
@@ -98,7 +113,7 @@ export class SocialAwareness {
         });
 
         if (data.from) {
-          this.recentSpeakers.set(data.from, timestamp);
+          this.noteSpeaker(data.from, timestamp);
           this.trackInteraction(data.from);
         }
         break;
@@ -246,12 +261,33 @@ export class SocialAwareness {
   }
 
   getActiveSpeakers(): string[] {
-    const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+    const fiveMinutesAgo = Date.now() - RECENT_SPEAKER_WINDOW_MS;
     const active: string[] = [];
     for (const [speaker, timestamp] of this.recentSpeakers.entries()) {
       if (timestamp > fiveMinutesAgo) active.push(speaker);
     }
     return active;
+  }
+
+  /** Number of speakers currently tracked (active + not-yet-swept) — for tests. */
+  recentSpeakerCount(): number {
+    return this.recentSpeakers.size;
+  }
+
+  private noteSpeaker(name: string, timestamp: number): void {
+    this.recentSpeakers.set(name, timestamp);
+    this.recentSpeakerWrites++;
+    if (
+      this.recentSpeakers.size > RECENT_SPEAKERS_MAX ||
+      this.recentSpeakerWrites >= RECENT_SPEAKERS_SWEEP_EVERY
+    ) {
+      this.recentSpeakerWrites = 0;
+      // Same boundary as getActiveSpeakers: `timestamp > cutoff` is active.
+      const cutoff = timestamp - RECENT_SPEAKER_WINDOW_MS;
+      for (const [speaker, last] of this.recentSpeakers) {
+        if (last <= cutoff) this.recentSpeakers.delete(speaker);
+      }
+    }
   }
 
   getSocialContext(): string {
@@ -302,6 +338,7 @@ export class SocialAwareness {
     this.socialEvents = [];
     this.entitiesInRoom.clear();
     this.recentSpeakers.clear();
+    this.recentSpeakerWrites = 0;
     this.relationships.clear();
   }
 }

@@ -3,6 +3,7 @@
 
 import type { ServerWebSocket } from "bun";
 import type { AgentSupports } from "../agent/agent-types";
+import { DASHBOARD_OBSERVER_TTL_MS } from "../engine/constants";
 import type { Engine } from "../engine/engine";
 import type { EngineEvent } from "../types";
 import { memoryObserver } from "./memory-visibility";
@@ -57,13 +58,56 @@ export interface WorldSnapshot {
   gridPositions?: Record<string, { row: number; col: number }>;
 }
 
+type SnapshotEntity = WorldSnapshot["entities"][number];
+type Observer = ReturnType<typeof memoryObserver>;
+
+/** Everything in a snapshot that does not vary by principal, plus both shapes
+ *  of every entity so a client payload is a per-entity pick, not a rebuild. */
+interface BaseSnapshot {
+  shared: Omit<WorldSnapshot, "entities">;
+  entities: { id: string; pub: SnapshotEntity; priv: SnapshotEntity }[];
+}
+
+/**
+ * Events after which a cached per-principal observer may be wrong before its
+ * TTL lapses. `memoryObserver` captures the principal's live entity binding
+ * (`engine.entities.get`) and its sovereign check (`getRank(entity) >= 9`);
+ * these are the `EngineEvent`s that change either. Standing / gate / witness
+ * changes emit no engine event — the TTL (`DASHBOARD_OBSERVER_TTL_MS`) bounds
+ * how long an `admin.destructive` grant or revoke takes to reach the WS view.
+ */
+export const OBSERVER_INVALIDATING_EVENTS: ReadonlySet<EngineEvent["type"]> = new Set<
+  EngineEvent["type"]
+>(["rank_change", "agent_spawn", "agent_stop", "entity_enter", "entity_leave"]);
+
+/** Test seams: swap the observer factory / clock, shorten the TTL. */
+export interface DashboardBroadcasterDeps {
+  observer?: typeof memoryObserver;
+  now?: () => number;
+  observerTtlMs?: number;
+}
+
 export class DashboardBroadcaster {
   private clients = new Map<ServerWebSocket<DashboardWSData>, Engine>();
+  /** Per-principal observer, reused across clients and events within one TTL. */
+  private observers = new Map<string, { observer: Observer; expires: number }>();
+  private readonly makeObserver: typeof memoryObserver;
+  private readonly now: () => number;
+  private readonly observerTtlMs: number;
+
+  constructor(deps: DashboardBroadcasterDeps = {}) {
+    this.makeObserver = deps.observer ?? memoryObserver;
+    this.now = deps.now ?? Date.now;
+    this.observerTtlMs = deps.observerTtlMs ?? DASHBOARD_OBSERVER_TTL_MS;
+  }
 
   addClient(ws: ServerWebSocket<DashboardWSData>, engine: Engine): void {
     this.clients.set(ws, engine);
     // Send initial snapshot
-    const snapshot = this.buildSnapshot(engine, ws.data.principal);
+    const snapshot = this.maskSnapshot(
+      this.buildBaseSnapshot(engine),
+      this.observerFor(engine, ws.data.principal),
+    );
     ws.send(JSON.stringify({ type: "snapshot", data: snapshot }));
   }
 
@@ -73,6 +117,9 @@ export class DashboardBroadcaster {
 
   broadcastEvent(event: EngineEvent): void {
     if (event.type === "tick") return;
+    // Invalidate before the visibility check so the event that changed a
+    // principal's privilege is itself judged by a fresh observer.
+    this.invalidateObservers(event);
     if (this.clients.size === 0) return;
     const filtered = this.filterEvent(event);
     if (!filtered) return;
@@ -84,7 +131,7 @@ export class DashboardBroadcaster {
     const publicShape = event.type === "memory_job" || event.type === "memory_service_event";
     for (const [ws, engine] of this.clients) {
       try {
-        if (publicShape || memoryObserver(engine, ws.data.principal).event(event)) ws.send(msg);
+        if (publicShape || this.observerFor(engine, ws.data.principal).event(event)) ws.send(msg);
       } catch (err) {
         console.warn("[dashboard-ws] broadcast event send failed:", (err as Error).message);
         this.clients.delete(ws);
@@ -126,13 +173,32 @@ export class DashboardBroadcaster {
     }
   }
 
+  /**
+   * One base snapshot per tick (entity walk, room walk, `getAllAgentConfigs`),
+   * then a per-entity shape pick per client. Clients in the same visibility
+   * class — privileged, or unprivileged with no entity of their own — share
+   * the serialized JSON too; only a principal viewing its own entity gets a
+   * bespoke payload (and two tabs of that principal still share one).
+   */
   broadcastState(engine: Engine): void {
     if (this.clients.size === 0) return;
+    this.pruneObservers();
+    const base = this.buildBaseSnapshot(engine);
+    const serialized = new Map<string, string>();
     for (const [ws] of this.clients) {
       try {
-        ws.send(
-          JSON.stringify({ type: "state", data: this.buildSnapshot(engine, ws.data.principal) }),
-        );
+        const observer = this.observerFor(engine, ws.data.principal);
+        const cls = observer.privilegedRead
+          ? "privileged"
+          : observer.entity
+            ? `own:${observer.entity.id}`
+            : "public";
+        let msg = serialized.get(cls);
+        if (msg === undefined) {
+          msg = JSON.stringify({ type: "state", data: this.maskSnapshot(base, observer) });
+          serialized.set(cls, msg);
+        }
+        ws.send(msg);
       } catch (err) {
         console.warn("[dashboard-ws] broadcast state send failed:", (err as Error).message);
         this.clients.delete(ws);
@@ -144,8 +210,55 @@ export class DashboardBroadcaster {
     return this.clients.size;
   }
 
-  private buildSnapshot(engine: Engine, principal?: string): WorldSnapshot {
-    const observer = memoryObserver(engine, principal);
+  // ─── Observer cache ────────────────────────────────────────────────────
+
+  private observerFor(engine: Engine, principal?: string): Observer {
+    const key = principal ?? "";
+    const now = this.now();
+    const hit = this.observers.get(key);
+    if (hit && hit.expires > now) return hit.observer;
+    const observer = this.makeObserver(engine, principal);
+    this.observers.set(key, { observer, expires: now + this.observerTtlMs });
+    return observer;
+  }
+
+  /** Drop the affected principal's cached observer (or all, when the event
+   *  names no entity) for events in `OBSERVER_INVALIDATING_EVENTS`. */
+  private invalidateObservers(event: EngineEvent): void {
+    if (!OBSERVER_INVALIDATING_EVENTS.has(event.type)) return;
+    if ("entity" in event && typeof event.entity === "string") this.observers.delete(event.entity);
+    else this.observers.clear();
+  }
+
+  private pruneObservers(): void {
+    const now = this.now();
+    for (const [key, entry] of this.observers) if (entry.expires <= now) this.observers.delete(key);
+  }
+
+  // ─── Snapshot ──────────────────────────────────────────────────────────
+
+  /** Pick each entity's private or public shape for one observer. Field order
+   *  is fixed here so every principal's payload has the same wire layout. */
+  private maskSnapshot(base: BaseSnapshot, observer: Observer): WorldSnapshot {
+    const { privilegedRead, entity } = observer;
+    const own = entity?.id;
+    const entities = base.entities.map((e) => (privilegedRead || own === e.id ? e.priv : e.pub));
+    const s = base.shared;
+    return {
+      timestamp: s.timestamp,
+      instanceName: s.instanceName,
+      worldName: s.worldName,
+      startRoom: s.startRoom,
+      entities,
+      roomPopulations: s.roomPopulations,
+      rooms: s.rooms,
+      connections: s.connections,
+      memory: s.memory,
+      gridPositions: s.gridPositions,
+    };
+  }
+
+  private buildBaseSnapshot(engine: Engine): BaseSnapshot {
     // One bulk read per snapshot (broadcast every 2s) — a per-entity
     // getAgentConfig lookup was ~N queries/snapshot just for spawned_by.
     const spawnedByName = new Map<string, string | null>();
@@ -154,53 +267,53 @@ export class DashboardBroadcaster {
         spawnedByName.set(config.name, config.spawned_by);
       }
     }
+    const roomPopulations: Record<string, number> = {};
     const entities = engine.entities.all().map((e) => {
-      const privateView = observer.privilegedRead || observer.entity?.id === e.id;
+      const room = e.room as string;
+      roomPopulations[room] = (roomPopulations[room] ?? 0) + 1;
       const agentHandle = engine.agentRuntime.get(e.name);
-      const agentStatus = agentHandle
-        ? (() => {
-            const s = agentHandle.getStatus();
-            return {
-              state: s.state,
-              model: s.model,
-              role: s.role,
-              focus: privateView ? s.focus : null,
-              uptime: s.uptime,
-              toolCalls: s.toolCalls,
-              errors: s.errors,
-              errorReason: privateView ? s.errorReason : null,
-              supports: s.supports,
+      const status = agentHandle?.getStatus();
+      // `focus` and `errorReason` are the only per-principal fields of the
+      // status — they may quote a goal or an upstream error body, so they
+      // are visible to the entity itself and privileged readers only.
+      const agentStatus = (privateView: boolean): SnapshotEntity["agentStatus"] =>
+        status
+          ? {
+              state: status.state,
+              model: status.model,
+              role: status.role,
+              focus: privateView ? status.focus : null,
+              uptime: status.uptime,
+              toolCalls: status.toolCalls,
+              errors: status.errors,
+              errorReason: privateView ? status.errorReason : null,
+              supports: status.supports,
               // Liveness signals (observability): "last acted", model latency,
               // and the stuck counter — let the roster show alive/idle/stuck/dead.
-              lastActivity: s.lastActivity,
-              avgTurnMs: s.avgTurnMs,
-              silentTurns: s.silentTurns,
-            };
-          })()
-        : undefined;
+              lastActivity: status.lastActivity,
+              avgTurnMs: status.avgTurnMs,
+              silentTurns: status.silentTurns,
+            }
+          : undefined;
 
       // Origin: world-seeded ("system"), operator-launched ("operator"), or a
       // spawning agent's name (crew). Read from the persisted AgentConfig; only
       // meaningful for agent entities (humans / external agents have no config).
       const spawnedBy = agentHandle ? (spawnedByName.get(e.name) ?? undefined) : undefined;
 
-      return {
+      const shape = (privateView: boolean): SnapshotEntity => ({
         id: e.id,
         name: e.name,
         kind: e.kind,
-        room: e.room as string,
+        room,
         properties: privateView
           ? e.properties
           : { rank: e.properties.rank, role: e.properties.role },
-        agentStatus,
+        agentStatus: agentStatus(privateView),
         spawnedBy,
-      };
+      });
+      return { id: e.id as string, pub: shape(false), priv: shape(true) };
     });
-
-    const roomPopulations: Record<string, number> = {};
-    for (const e of entities) {
-      roomPopulations[e.room] = (roomPopulations[e.room] ?? 0) + 1;
-    }
 
     const rooms = engine.rooms.all().map((r) => ({
       id: r.id as string,
@@ -213,16 +326,18 @@ export class DashboardBroadcaster {
 
     const mem = process.memoryUsage();
     return {
-      timestamp: Date.now(),
-      instanceName: engine.instanceName,
-      worldName: engine.world?.name ?? "Unknown",
-      startRoom: engine.config.startRoom as string,
+      shared: {
+        timestamp: this.now(),
+        instanceName: engine.instanceName,
+        worldName: engine.world?.name ?? "Unknown",
+        startRoom: engine.config.startRoom as string,
+        roomPopulations,
+        rooms,
+        connections: engine.getConnections().size,
+        memory: { heapUsed: mem.heapUsed, rss: mem.rss },
+        gridPositions: engine.world?.gridPositions,
+      },
       entities,
-      roomPopulations,
-      rooms,
-      connections: engine.getConnections().size,
-      memory: { heapUsed: mem.heapUsed, rss: mem.rss },
-      gridPositions: engine.world?.gridPositions,
     };
   }
 }

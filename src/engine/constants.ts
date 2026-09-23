@@ -388,3 +388,20 @@ export function perceiveSelfEcho(env: NodeJS.ProcessEnv = process.env): boolean 
   const raw = (env.MARINA_PERCEIVE_SELF_ECHO ?? "").trim().toLowerCase();
   return raw === "on" || raw === "true" || raw === "1";
 }
+
+// ─── Dashboard broadcast + persistence caches ────────────────────────────────
+
+/** How long `DashboardBroadcaster` reuses a per-principal `memoryObserver`
+ *  before rebuilding it (gate + standing reads). One broadcast tick by default;
+ *  privilege-changing events (`rank_change`, `agent_stop`, `entity_leave`, …)
+ *  invalidate the entry early. */
+export const DASHBOARD_OBSERVER_TTL_MS = 2_000;
+
+/** Upper bound on `MarinaDB.durableEntityKey()`'s transient-id → `users.id`
+ *  cache. Entity ids re-mint on every name-login, so without a bound the map
+ *  grows with the lifetime login count; LRU eviction keeps the hot set. */
+export const DURABLE_KEY_CACHE_MAX = 5_000;
+
+/** Ids per `WHERE id IN (…)` chunk in `getNotes` — comfortably under SQLite's
+ *  default 999/32766 bound-parameter limit. */
+export const NOTES_BATCH_CHUNK_SIZE = 500;

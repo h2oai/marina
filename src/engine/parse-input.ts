@@ -29,6 +29,57 @@ export function splitOn(text: string, delimiter: string): [string, string] | nul
   return [text.slice(0, idx).trim(), text.slice(idx + delimiter.length).trim()];
 }
 
+// ─── Trailing-modifier regex cache ────────────────────────────────────────────
+//
+// `extractModifiers` / `extractFlags` run on every command that takes legacy
+// trailing options, and each call used to compile one RegExp per known key.
+// The known-key lists are static per command, so the patterns are cached at
+// module level keyed by the key name. Keys are escaped so a metacharacter in
+// a key (`.`, `+`, …) matches literally rather than as regex syntax. The
+// caches are capped: a stream of never-repeating keys clears them instead of
+// growing them without bound.
+
+/** Entries per cache before it is cleared (each command's key list is a handful). */
+export const REGEX_CACHE_MAX = 1000;
+
+const modifierPatterns = new Map<string, RegExp>();
+const flagPatterns = new Map<string, RegExp>();
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function cachedPattern(
+  cache: Map<string, RegExp>,
+  key: string,
+  build: (escaped: string) => string,
+): RegExp {
+  let pattern = cache.get(key);
+  if (pattern === undefined) {
+    if (cache.size >= REGEX_CACHE_MAX) cache.clear();
+    // No `g`/`y` flag: the instance carries no `lastIndex` state, so sharing it
+    // across calls is safe.
+    pattern = new RegExp(build(escapeRegex(key)), "i");
+    cache.set(key, pattern);
+  }
+  return pattern;
+}
+
+/** Cached pattern matching `key value` or `--key value` at the end of a string. */
+export function modifierPattern(key: string): RegExp {
+  return cachedPattern(modifierPatterns, key, (k) => `(?:--|\\b)${k}\\s+(\\S+)\\s*$`);
+}
+
+/** Cached pattern matching `flag` or `--flag` at the end of a string. */
+export function flagPattern(flag: string): RegExp {
+  return cachedPattern(flagPatterns, flag, (f) => `(?:--|\\b)${f}\\s*$`);
+}
+
+/** Current cache sizes — for tests asserting the cap. */
+export function regexCacheSizes(): { modifiers: number; flags: number } {
+  return { modifiers: modifierPatterns.size, flags: flagPatterns.size };
+}
+
 /**
  * Extract trailing key-value modifiers from text.
  * Scans for known modifier names at the end of the string.
@@ -49,8 +100,7 @@ export function extractModifiers(
     for (const key of known) {
       if (key in modifiers) continue;
       // Match "key value" or "--key value" at end of string
-      const pattern = new RegExp(`(?:--|\\b)${key}\\s+(\\S+)\\s*$`, "i");
-      const m = remaining.match(pattern);
+      const m = remaining.match(modifierPattern(key));
       if (m) {
         modifiers[key] = m[1]!;
         remaining = remaining.slice(0, remaining.length - m[0].length).trim();
@@ -76,7 +126,7 @@ export function extractFlags(text: string, known: string[]): { text: string; fla
   let remaining = text;
 
   for (const flag of known) {
-    const pattern = new RegExp(`(?:--|\\b)${flag}\\s*$`, "i");
+    const pattern = flagPattern(flag);
     if (pattern.test(remaining)) {
       flags.add(flag);
       remaining = remaining.replace(pattern, "").trim();

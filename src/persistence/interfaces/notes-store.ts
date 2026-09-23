@@ -50,6 +50,8 @@ export interface NotesStore {
   searchNotes(entityName: string, query: string): NoteRow[];
   deleteNote(id: number, entityName: string): boolean;
   getNote(id: number): NoteRow | undefined;
+  /** Batch read of every existing note among `ids` (one `IN (…)` per 500-id chunk). */
+  getNotes(ids: number[]): NoteRow[];
   addNoteSource(noteId: number, source: notesDb.NoteSourceInput): number;
   getNoteSources(noteId: number): notesDb.NoteSourceRow[];
   getNotesBySourceUrl(url: string, entityName?: string, limit?: number): NoteRow[];
@@ -169,6 +171,7 @@ export const NOTES_STORE_METHODS = [
   "searchNotes",
   "deleteNote",
   "getNote",
+  "getNotes",
   "addNoteSource",
   "getNoteSources",
   "getNotesBySourceUrl",
