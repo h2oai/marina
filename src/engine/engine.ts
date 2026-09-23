@@ -19,6 +19,7 @@ import { GroupManager } from "../coordination/group-manager";
 import { MacroManager } from "../coordination/macro-manager";
 import { TaskManager } from "../coordination/task-manager";
 import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywheel-manager";
+import { memoryAccess } from "../memory/access";
 import type { AdapterManager } from "../net/adapter-manager";
 import { connects, disconnects } from "../net/ansi";
 import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory-observability";
@@ -91,6 +92,9 @@ import { checkGateForExecution, grantGatesForRank, recordGateExecution } from ".
 import { compileCommandModule, compileRoomModule } from "./sandbox";
 import { ShellRuntime } from "./shell-runtime";
 import { isLocalProfile, isLocalUngated } from "./trust-profile";
+
+/** Identical tick-failure messages are logged at most once per this interval. */
+const TICK_ERROR_LOG_INTERVAL_MS = 30_000;
 
 /** A verified external identity (from the better-auth bridge) passed to login(). */
 export interface LoginIdentity {
@@ -171,6 +175,10 @@ export class Engine {
   private running = false;
   private ticking = false;
   private tickCount = 0;
+  /** Ticks whose body threw. Caught and logged; the loop always continues. */
+  private _tickErrors = 0;
+  private lastTickErrorMessage = "";
+  private lastTickErrorLoggedAt = 0;
   /** @internal */ readonly logger: Logger;
   private otlpStatusProvider?: () => OtlpExporterStatus;
   private otlpLogStatusProvider?: () => OtlpLogExporterStatus;
@@ -1173,33 +1181,65 @@ export class Engine {
     this.logger.info("engine", "Marina engine stopped.");
   }
 
+  /** Number of ticks whose body threw (each was caught; the loop kept running). */
+  get tickErrors(): number {
+    return this._tickErrors;
+  }
+
   private tick(): void {
     // Re-entrancy guard: prevent overlapping ticks from setInterval
     if (this.ticking) return;
     this.ticking = true;
     try {
       this.tickInner();
+    } catch (err) {
+      // A throw here (e.g. SQLITE_BUSY past the busy timeout) would otherwise
+      // escape setInterval → uncaughtException → shutdown(1). Log and carry on;
+      // the next tick retries whatever failed.
+      this.recordTickError(err);
     } finally {
       this.ticking = false;
     }
   }
 
+  /** Count + log a tick failure, collapsing identical messages to one log line per 30 s. */
+  private recordTickError(err: unknown): void {
+    this._tickErrors++;
+    const message = getErrorMessage(err);
+    const now = Date.now();
+    const repeat =
+      message === this.lastTickErrorMessage &&
+      now - this.lastTickErrorLoggedAt < TICK_ERROR_LOG_INTERVAL_MS;
+    if (repeat) return;
+    this.lastTickErrorMessage = message;
+    this.lastTickErrorLoggedAt = now;
+    this.logger.error("tick", "Tick failed; loop continues", {
+      error: message,
+      tick: this.tickCount,
+      tickErrors: this._tickErrors,
+    });
+  }
+
   private tickInner(): void {
     this.tickCount++;
-    this.sandbox.tick();
+    tryLog(this.logger, "tick", "Sandbox tick failed", () => this.sandbox.tick());
 
     // Lease expiry is persisted coordination state. Recover abandoned work
     // before entities inspect the queue on this tick.
-    for (const claim of this.taskManager?.recoverExpired() ?? []) {
-      this.logEvent({
-        type: "task_released",
-        entity: claim.entityId as EntityId,
-        taskId: claim.taskId,
-        reason: "lease_expired",
-        timestamp: Date.now(),
-      });
-    }
-    this.db?.expireDirectMessages();
+    tryLog(this.logger, "tick", "Task lease recovery failed", () => {
+      for (const claim of this.taskManager?.recoverExpired() ?? []) {
+        this.logEvent({
+          type: "task_released",
+          entity: claim.entityId as EntityId,
+          taskId: claim.taskId,
+          reason: "lease_expired",
+          timestamp: Date.now(),
+        });
+      }
+    });
+    tryLog(this.logger, "tick", "Direct-message expiry failed", () => {
+      this.db?.expireDirectMessages();
+    });
 
     // 1. Process queued commands — per-entity round-robin for fairness
     //    No single entity can monopolize a tick; each gets one command per round.
@@ -2550,11 +2590,13 @@ export class Engine {
         },
       },
       pool: {
+        // Same ACL as the `pool` command: members-only (group-scoped) pools are
+        // invisible to non-members — recall returns [] and add is a no-op.
         recall: (poolName, query) => {
           if (!db) return [];
           const pool = db.getMemoryPool(poolName);
-          if (!pool) return [];
-          return db.recallPoolNotes(pool.id, query).map((n) => ({
+          if (!memoryAccess(db, { name: entityName, id: entityId }).pool(pool)) return [];
+          return db.recallPoolNotes(pool!.id, query).map((n) => ({
             id: n.id,
             content: n.content,
             score: n.score,
@@ -2563,8 +2605,8 @@ export class Engine {
         add: (poolName, content, importance) => {
           if (!db) return;
           const pool = db.getMemoryPool(poolName);
-          if (!pool) return;
-          db.addPoolNote(pool.id, entityName, content, importance);
+          if (!memoryAccess(db, { name: entityName, id: entityId }).pool(pool)) return;
+          db.addPoolNote(pool!.id, entityName, content, importance);
         },
       },
       caller: { id: entityId, name: entityName, rank },

@@ -8,9 +8,11 @@
  * rate, reflection repetition, storage against the admission budget,
  * write/read cost, consolidation ROI and repair success.
  *
- * Read model only: every figure is derived on demand from both silos (legacy
- * `notes` and the durable `memory_*` tables) plus the memory receipts already
- * on the event log. Nothing here writes, awaits, or calls a model. Scoping
+ * Read model, plus one ledger: every figure is derived on demand from both
+ * silos (legacy `notes` and the durable `memory_*` tables) plus the memory
+ * receipts already on the event log; the only write is the hourly
+ * `memory_hygiene_snapshots` row (`recordHygieneSnapshot`) that gives the
+ * ratios a history. Nothing here awaits or calls a model. Scoping
  * follows the observer: an operator sees the whole instance, a resident only
  * its own spaces, notes and receipts. Each ratio carries its numerator and
  * denominator so a reader can check the arithmetic; a zero denominator yields
@@ -24,19 +26,41 @@
 
 import type { Database } from "bun:sqlite";
 import type {
+  MemoryHygieneHistory,
   MemoryHygieneRatios,
+  MemoryHygieneSample,
   MemoryRatio,
+  MemorySpaceHealth,
   MemoryStorageBudgetView,
 } from "../net/memory-observability-types";
-import type { MemoryReceipt } from "../net/memory-receipt";
+import { type MemoryReceipt, parseMemoryReceipt } from "../net/memory-receipt";
+import { responseCacheCounters } from "../net/response-cache";
+import { SYBIL_STANDING_FLOOR } from "../persistence/db-memory-resolve";
 import { COMPETING_RECORD_PREDICATE } from "../persistence/db-memory-review";
 import { memoryStorageUsage } from "../persistence/db-memory-storage";
+import type { EngineEvent } from "../types";
 import { LEGACY_SOURCE_SESSION } from "./legacy-bridge";
 
 export const HYGIENE_RATIOS_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const HYGIENE_RATIOS_TTL_MS = 30_000;
 /** Owners listed in the storage table (operator view), largest first. */
 export const STORAGE_OWNERS_LIMIT = 20;
+/** Shared spaces listed in `MemoryOverview.spaces.shared`. */
+export const SPACE_HEALTH_LIMIT = 50;
+/** Hygiene snapshots older than this are pruned on every write. */
+export const HYGIENE_HISTORY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+export const HYGIENE_HISTORY_DEFAULT_HOURS = 168;
+export const HYGIENE_HISTORY_MAX_HOURS = 720;
+
+/**
+ * Cross-scope reads/cancels refused by the observability layer since process
+ * start. Lives here (not in memory-observability.ts) so the hourly snapshot
+ * can read it without an import cycle; memory-observability re-exports it.
+ */
+export const memoryLeakageCounters = { crossScopeAttempts: 0 };
+export function resetMemoryLeakageCountersForTests(): void {
+  memoryLeakageCounters.crossScopeAttempts = 0;
+}
 
 export interface HygieneRatiosScope {
   privileged: boolean;
@@ -397,4 +421,222 @@ export function emptyHygieneRatios(
       cacheHitRate: ratio(input.cache.hits, input.cache.hits + input.cache.misses),
     },
   };
+}
+
+// ─── Served receipts (event log scan) ───────────────────────────────────────
+
+export interface ServedReceiptEvent extends ServedReceipt {
+  requestId: string;
+  /** Protocol surface recorded on the lifecycle event; `unknown` for producers that predate the field. */
+  surface: ReceiptSurface;
+}
+
+export type ReceiptSurface = "openai" | "anthropic" | "ollama-generate" | "responses" | "unknown";
+const RECEIPT_SURFACES: ReadonlySet<string> = new Set([
+  "openai",
+  "anthropic",
+  "ollama-generate",
+  "responses",
+]);
+
+/** The PROTOCOL surface of a lifecycle event (never the route kind), `unknown` when absent/foreign. */
+export function receiptSurfaceOf(event: { surface?: string }): ReceiptSurface {
+  return event.surface && RECEIPT_SURFACES.has(event.surface)
+    ? (event.surface as ReceiptSurface)
+    : "unknown";
+}
+
+/**
+ * Every injected response on the event log the observer may see, newest
+ * first, one per request. Feeds the recent-receipts list, the hygiene ratios
+ * (unsafe-served, cost) and the hourly snapshot.
+ */
+export function servedReceiptsFromEvents(
+  events: readonly EngineEvent[],
+  scope: Pick<HygieneRatiosScope, "privileged" | "entityName">,
+  limit = Number.POSITIVE_INFINITY,
+): ServedReceiptEvent[] {
+  const byRequest = new Map<string, ServedReceiptEvent>();
+  for (let i = events.length - 1; i >= 0 && byRequest.size < limit; i--) {
+    const event = events[i]!;
+    if (event.type !== "model_request_lifecycle" || !event.memoryReceipt) continue;
+    if (byRequest.has(event.requestId)) continue;
+    const receipt: MemoryReceipt | undefined = parseMemoryReceipt(event.memoryReceipt);
+    if (!receipt) continue;
+    if (!scope.privileged && receipt.entity !== scope.entityName) continue;
+    byRequest.set(event.requestId, {
+      receipt,
+      at: event.timestamp,
+      cacheHit: event.target === "response-cache",
+      requestId: event.requestId,
+      surface: receiptSurfaceOf(event),
+    });
+  }
+  return [...byRequest.values()];
+}
+
+// ─── Per-space health ───────────────────────────────────────────────────────
+
+/** Service-event operations that make their actor a WRITER of the space. */
+const WRITE_OPERATIONS = "('memory.created','memory.revised')";
+
+interface SpaceHealthRow {
+  id: string;
+  name: string;
+  owner_id: string;
+  institutional: number;
+  writers: number;
+  records: number;
+  ratified: number;
+  competing: number;
+  last_write_at: number | null;
+}
+
+/**
+ * Health of every SHARED durable space the observer may see: institutional
+ * spaces plus any space with ≥ 2 distinct writers or ≥ 1 grant. A resident
+ * sees only spaces it owns or is granted. Same predicates as the global
+ * ratios: `COMPETING_RECORD_PREDICATE` for contradictions, and a writer is
+ * "fresh" when its standing (durable key, `users ⋈ entity_standing_cache`)
+ * is below `SYBIL_STANDING_FLOOR` — the same floor `evidence_weighted` pools
+ * fresh writers under. Ordered by competing desc, records desc; max `limit`.
+ */
+export function computeSpaceHealth(
+  raw: Database,
+  scope: Pick<HygieneRatiosScope, "privileged" | "principalId">,
+  opts: { now?: number; windowMs?: number; limit?: number } = {},
+): MemorySpaceHealth[] {
+  const now = opts.now ?? Date.now();
+  const since = now - (opts.windowMs ?? HYGIENE_RATIOS_WINDOW_MS);
+  const limit = opts.limit ?? SPACE_HEALTH_LIMIT;
+  const self = scope.privileged ? null : (scope.principalId ?? "");
+  const rows = raw
+    .query(
+      `SELECT * FROM (
+         SELECT s.id, s.name, s.owner_id,
+           coalesce(json_extract(s.metadata,'$.institutional'),0) AS institutional,
+           (SELECT count(DISTINCT e.actor_id) FROM memory_service_events e
+             WHERE e.space_id=s.id AND e.operation IN ${WRITE_OPERATIONS}) AS writers,
+           (SELECT count(*) FROM memory_grants g WHERE g.space_id=s.id) AS grants,
+           (SELECT count(*) FROM memory_records r WHERE r.space_id=s.id AND r.status='active') AS records,
+           (SELECT count(*) FROM memory_records r WHERE r.space_id=s.id AND r.status='active'
+             AND json_extract(r.metadata,'$.ratified_by') IS NOT NULL) AS ratified,
+           (SELECT count(*) FROM memory_records r WHERE r.space_id=s.id AND r.status='active'
+             AND ${COMPETING_RECORD_PREDICATE}) AS competing,
+           (SELECT max(e.created_at) FROM memory_service_events e
+             WHERE e.space_id=s.id AND e.operation IN ${WRITE_OPERATIONS}) AS last_write_at
+         FROM memory_spaces s
+         WHERE s.status='active'
+           AND (? IS NULL OR s.owner_id=?
+                OR EXISTS(SELECT 1 FROM memory_grants g WHERE g.space_id=s.id AND g.principal_id=?))
+       ) WHERE institutional=1 OR writers>=2 OR grants>=1
+       ORDER BY competing DESC, records DESC, name, id LIMIT ?`,
+    )
+    .all(self, self, self, limit) as SpaceHealthRow[];
+  const freshWriters = raw.query(
+    `SELECT count(*) AS n FROM (
+       SELECT DISTINCT e.actor_id FROM memory_service_events e
+       WHERE e.space_id=? AND e.operation IN ${WRITE_OPERATIONS}) w
+     WHERE coalesce((SELECT sc.standing FROM users u JOIN entity_standing_cache sc ON sc.entity_id=u.id
+                     WHERE u.id=w.actor_id),0) < ?`,
+  );
+  const settled = raw.query(
+    `SELECT count(DISTINCT m.record_id) AS n FROM memory_resolution_members m
+     JOIN memory_resolutions x ON x.id=m.resolution_id
+     WHERE x.space_id=? AND x.status='applied' AND x.created_at>=?
+       AND m.role IN ('winner','superseded','peer')`,
+  );
+  const resolutions = raw.query(
+    "SELECT count(*) AS n FROM memory_resolutions WHERE space_id=? AND created_at>=?",
+  );
+  const ownerName = raw.query("SELECT display_name FROM principals WHERE principal_id=?");
+  const n = (row: unknown): number => ((row as { n: number | null } | null)?.n ?? 0) as number;
+  return rows.map((row): MemorySpaceHealth => {
+    const fresh = n(freshWriters.get(row.id, SYBIL_STANDING_FLOOR));
+    const settledInWindow = n(settled.get(row.id, since));
+    return {
+      id: row.id,
+      name: row.name,
+      institutional: row.institutional === 1,
+      ownerName:
+        (ownerName.get(row.owner_id) as { display_name: string } | null)?.display_name ??
+        row.owner_id.slice(0, 8),
+      records: row.records,
+      ratified: row.ratified,
+      writers: row.writers,
+      freshWriters: fresh,
+      freshWriterShare: ratio(fresh, row.writers),
+      competing: row.competing,
+      resolutions24h: n(resolutions.get(row.id, since)),
+      unresolvedContradictionRate: ratio(row.competing, row.competing + settledInWindow),
+      lastWriteAt: row.last_write_at,
+    };
+  });
+}
+
+// ─── Ratio history (memory_hygiene_snapshots, migration 115) ────────────────
+
+/** Clamp a requested history window to [1, HYGIENE_HISTORY_MAX_HOURS]; default 168 h. */
+export function clampHistoryHours(hours: number | undefined): number {
+  if (hours === undefined || !Number.isFinite(hours) || hours <= 0)
+    return HYGIENE_HISTORY_DEFAULT_HOURS;
+  return Math.min(Math.floor(hours), HYGIENE_HISTORY_MAX_HOURS);
+}
+
+/** Append one snapshot row and prune everything past the retention window. */
+export function recordHygieneSnapshot(
+  raw: Database,
+  ratios: MemoryHygieneRatios,
+  at: number = ratios.computedAt,
+): MemoryHygieneSample {
+  raw
+    .query("INSERT INTO memory_hygiene_snapshots (at, scope, ratios) VALUES (?, ?, ?)")
+    .run(at, ratios.scope, JSON.stringify(ratios));
+  raw
+    .query("DELETE FROM memory_hygiene_snapshots WHERE at < ?")
+    .run(at - HYGIENE_HISTORY_RETENTION_MS);
+  return { at, ratios };
+}
+
+/** Snapshots for `scope` inside the last `hours`, oldest → newest. */
+export function listHygieneSnapshots(
+  raw: Database,
+  opts: { hours?: number; now?: number } = {},
+): MemoryHygieneHistory {
+  const hours = clampHistoryHours(opts.hours);
+  const now = opts.now ?? Date.now();
+  const rows = raw
+    .query(
+      "SELECT at, ratios FROM memory_hygiene_snapshots WHERE scope='all' AND at >= ? ORDER BY at ASC, id ASC",
+    )
+    .all(now - hours * 60 * 60 * 1000) as { at: number; ratios: string }[];
+  const samples: MemoryHygieneSample[] = [];
+  for (const row of rows) {
+    try {
+      samples.push({ at: row.at, ratios: JSON.parse(row.ratios) as MemoryHygieneRatios });
+    } catch {
+      // A corrupt row is skipped, never fatal to the series.
+    }
+  }
+  return { scope: "all", hours, samples };
+}
+
+/**
+ * Compute the operator-scope (`all`) ratios from the live state and the given
+ * event log, and persist them as one history sample. Sync SQL only — called
+ * from the hourly hygiene tick and `POST /api/memory/hygiene/snapshot`.
+ */
+export function snapshotHygieneRatios(
+  raw: Database,
+  events: readonly EngineEvent[],
+  now: number = Date.now(),
+): MemoryHygieneSample {
+  const scope: HygieneRatiosScope = { privileged: true };
+  const ratios = computeHygieneRatios(raw, scope, {
+    now,
+    receipts: servedReceiptsFromEvents(events, scope),
+    cache: responseCacheCounters,
+    leakage: memoryLeakageCounters,
+  });
+  return recordHygieneSnapshot(raw, ratios, now);
 }

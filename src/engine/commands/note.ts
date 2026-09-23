@@ -3,8 +3,14 @@
 
 import { memoryAccess } from "../../memory/access";
 import {
+  bridgeLegacyConsolidationQuietly,
+  bridgeLegacyLinkQuietly,
   bridgeLegacyNoteQuietly,
+  bridgeLegacyResolutionQuietly,
   bridgeLegacyRevisionQuietly,
+  bridgeLegacySourceQuietly,
+  bridgeLegacyUnlinkQuietly,
+  bridgeLegacyVerificationQuietly,
   findDurableTwin,
   retireDurableTwinQuietly,
 } from "../../memory/legacy-bridge";
@@ -188,7 +194,8 @@ export function noteCommand(deps: {
       if (!sub) {
         ctx.send(
           input.entity,
-          "Usage: note <text> [importance N] [type T] | note list | note room | note search <query> | note delete <id> | note link <id1> <id2> <rel> | note unlink <id1> <id2> <rel> | note correct <id> <text> | note trace <id> | note graph | note evolve <id> | note types",
+          "Usage: note <text> [importance N] [type T] | note list | note room | note search <query> | note delete <id> | note link <id1> <id2> <rel> | note unlink <id1> <id2> <rel> | note correct <id> <text> | note trace <id> | note graph | note evolve <id> | note types\n" +
+            "(see also: `memory graph <subject>` follows asserted relationships between durable records; `note graph` summarises your legacy notes and links. Every note verb mirrors to your durable twin automatically.)",
         );
         return;
       }
@@ -203,7 +210,8 @@ export function noteCommand(deps: {
           if (!text) {
             ctx.send(
               input.entity,
-              "Usage: note claim <text> [confidence 0..1] [source URL] [observed YYYY-MM-DD]",
+              "Usage: note claim <text> [confidence 0..1] [source URL] [observed YYYY-MM-DD]\n" +
+                "(see also: `memory claim <subject> <predicate> <JSON scalar>` asserts a typed durable claim; `note claim` records a free-text legacy claim and mirrors it to a durable twin.)",
             );
             return;
           }
@@ -232,8 +240,17 @@ export function noteCommand(deps: {
             `Claim #${id} saved (confidence=${confidence.toFixed(2)}, ${modifiers.source ? "sourced, unverified" : "unverified"}).`,
           );
           // Same twin scheme as a plain `note`: fire-and-forget so the reply
-          // lands in-tick; sequencing callers use awaitPendingBridges().
-          void bridgeLegacyNoteQuietly(db, entity.name, id);
+          // lands in-tick; sequencing callers use awaitPendingBridges(). With a
+          // source the bridge twins the note first, then mirrors the url.
+          if (modifiers.source) {
+            const observedAt = modifiers.observed ? Date.parse(modifiers.observed) : undefined;
+            void bridgeLegacySourceQuietly(db, entity.name, id, {
+              url: modifiers.source,
+              observedAt: Number.isFinite(observedAt) ? observedAt : undefined,
+            });
+          } else {
+            void bridgeLegacyNoteQuietly(db, entity.name, id);
+          }
           return;
         }
 
@@ -244,7 +261,8 @@ export function noteCommand(deps: {
           if (!access.write(note) || !reference) {
             ctx.send(
               input.entity,
-              "Usage: note source <your-note-id> <url|note:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]",
+              "Usage: note source <your-note-id> <url|note:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]\n" +
+                "(see also: `memory source <source ID> [start end]` reads a durable original source by byte range; `note source` attaches a reference to a legacy note and mirrors it onto the durable twin's sources.)",
             );
             return;
           }
@@ -270,18 +288,19 @@ export function noteCommand(deps: {
             return;
           }
           const observedAt = modifiers.observed ? Date.parse(modifiers.observed) : undefined;
+          const sourceType =
+            sourceNoteId !== undefined
+              ? "note"
+              : (modifiers.type as
+                  | "url"
+                  | "message"
+                  | "observation"
+                  | "artifact"
+                  | "dataset"
+                  | undefined);
           db.addNoteSource(id, {
             url: reference,
-            sourceType:
-              sourceNoteId !== undefined
-                ? "note"
-                : (modifiers.type as
-                    | "url"
-                    | "message"
-                    | "observation"
-                    | "artifact"
-                    | "dataset"
-                    | undefined),
+            sourceType,
             sourceNoteId,
             sourceEntity:
               sourceNoteId !== undefined ? db.getNote(sourceNoteId)?.entity_name : undefined,
@@ -290,6 +309,15 @@ export function noteCommand(deps: {
             observedAt: Number.isFinite(observedAt) ? observedAt : undefined,
           });
           ctx.send(input.entity, `Source attached to note #${id}.`);
+          // Mirror the reference onto the durable twin's sources (capture +
+          // revise). Fire-and-forget; sequencing callers use awaitPendingBridges().
+          void bridgeLegacySourceQuietly(db, entity.name, id, {
+            url: reference,
+            sourceType,
+            sourceNoteId,
+            credibility,
+            observedAt: Number.isFinite(observedAt) ? observedAt : undefined,
+          });
           return;
         }
 
@@ -315,6 +343,16 @@ export function noteCommand(deps: {
             db.createNoteLink(id, sourceId, "derived_from");
           } catch {}
           ctx.send(input.entity, `Note #${id} now records derivation from #${sourceId}.`);
+          // Durable side: the source note's twin becomes a (self-derived)
+          // source of this note's twin, and a `derived_from` relation is asserted.
+          void bridgeLegacySourceQuietly(db, entity.name, id, {
+            url: `note:${sourceId}`,
+            sourceType: "note",
+            sourceNoteId: sourceId,
+            credibility: source.confidence ?? 0.5,
+            excerpt: source.content.slice(0, 240),
+          });
+          void bridgeLegacyLinkQuietly(db, entity.name, id, sourceId, "derived_from");
           return;
         }
 
@@ -337,10 +375,11 @@ export function noteCommand(deps: {
             return;
           }
           const rationale = tokens.slice(4).join(" ") || undefined;
-          db.recordNoteVerification(
+          const verdict = verification as "unverified" | "verified" | "disputed";
+          const verificationId = db.recordNoteVerification(
             id,
             entity.name,
-            verification as "unverified" | "verified" | "disputed",
+            verdict,
             confidence,
             rationale,
           );
@@ -348,6 +387,14 @@ export function noteCommand(deps: {
             input.entity,
             `Note #${id} marked ${verification} (confidence=${Math.max(0, Math.min(1, confidence)).toFixed(2)}).`,
           );
+          // Durable twin follows the verdict: `disputed` closes its validity
+          // (dropped from the [evidence] tier), `verified` reaffirms / reopens.
+          // Fire-and-forget; sequencing callers use awaitPendingBridges().
+          void bridgeLegacyVerificationQuietly(db, entity.name, id, verdict, {
+            key: `legacy-note-${id}-verify-${verificationId}`,
+            confidence: Math.max(0, Math.min(1, confidence)),
+            rationale,
+          });
           return;
         }
 
@@ -452,7 +499,8 @@ export function noteCommand(deps: {
           ) {
             ctx.send(
               input.entity,
-              "Usage: note resolve <case-id> left|right|both|neither <evidence-backed rationale>",
+              "Usage: note resolve <case-id> left|right|both|neither <evidence-backed rationale>\n" +
+                "(see also: `memory resolve <ID> <policy> <JSON>` settles competing DURABLE assertions by policy; `note resolve` adjudicates a legacy contradiction case and mirrors the verdicts onto the notes' durable twins.)",
             );
             return;
           }
@@ -470,6 +518,33 @@ export function noteCommand(deps: {
               ? `Contradiction case #${caseId} resolved as ${resolution}; verification history was updated.`
               : `Open contradiction case #${caseId} not found.`,
           );
+          if (ok && conflict) {
+            // Mirror the legacy verdicts onto the twins: winners reaffirmed,
+            // losers closed as disputed (`neither` disputes both, like the
+            // legacy side). Fire-and-forget; sequenced by awaitPendingBridges().
+            const { left_note_id: left, right_note_id: right } = conflict;
+            const winners =
+              resolution === "left"
+                ? [left]
+                : resolution === "right"
+                  ? [right]
+                  : resolution === "both"
+                    ? [left, right]
+                    : [];
+            const losers =
+              resolution === "left"
+                ? [right]
+                : resolution === "right"
+                  ? [left]
+                  : resolution === "neither"
+                    ? [left, right]
+                    : [];
+            void bridgeLegacyResolutionQuietly(db, entity.name, caseId, {
+              winners,
+              losers,
+              rationale,
+            });
+          }
           return;
         }
 
@@ -487,11 +562,24 @@ export function noteCommand(deps: {
             ctx.send(input.entity, "One or more notes not found or not yours.");
             return;
           }
+          // Snapshot which duplicates are still current: only the ones this
+          // call flips to `superseded` get their durable twin retired.
+          const wasCurrent = duplicates.filter(
+            (dupId) => db.getNote(dupId)?.verification_status !== "superseded",
+          );
           const changed = db.consolidateNotes(entity.name, keeper, duplicates);
           ctx.send(
             input.entity,
             `${changed} memory record(s) safely superseded by #${keeper}; provenance was retained.`,
           );
+          const superseded = wasCurrent.filter(
+            (dupId) => db.getNote(dupId)?.verification_status === "superseded",
+          );
+          // Losers' twins become tombstones pointing at the keeper (same
+          // retirement as `note delete`); the keeper's twin is untouched.
+          // Fire-and-forget; sequencing callers use awaitPendingBridges().
+          if (superseded.length > 0)
+            void bridgeLegacyConsolidationQuietly(db, entity.name, keeper, superseded);
           return;
         }
 
@@ -621,6 +709,9 @@ export function noteCommand(deps: {
               timestamp: Date.now(),
             });
             ctx.send(input.entity, `Linked note #${id1} -> #${id2} (${rel}).`);
+            // Durable `relate` between the two twins (skipped when either note
+            // has none). Fire-and-forget; sequenced by awaitPendingBridges().
+            void bridgeLegacyLinkQuietly(db, entity.name, id1, id2, rel);
           } catch {
             ctx.send(input.entity, "Link already exists.");
           }
@@ -652,6 +743,9 @@ export function noteCommand(deps: {
             timestamp: Date.now(),
           });
           ctx.send(input.entity, `Unlinked note #${id1} -> #${id2} (${rel}).`);
+          // Close the durable relation's validity (the service has no
+          // destructive un-relate short of `forget`). Fire-and-forget.
+          void bridgeLegacyUnlinkQuietly(db, entity.name, id1, id2, rel);
           return;
         }
 

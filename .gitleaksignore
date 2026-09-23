@@ -13,3 +13,5 @@ fe683112527dc3cddae8c7f43ed3408c10b7e2db:test/key-crypto.test.ts:generic-api-key
 # Public tokenizer artifact SHA-256 checksums, not authentication credentials.
 4987462a1e54338d7c8d7f37f847ef03ef7b1aa2:extensions/local-embeddings/index.ts:generic-api-key:14
 4987462a1e54338d7c8d7f37f847ef03ef7b1aa2:extensions/local-embeddings/index.ts:generic-api-key:15
+# RFC 6455 §1.3 example Sec-WebSocket-Key ("the sample nonce"), used by the raw-handshake origin test; not a credential.
+162c4f3e8af5050c67767cc86bff3faad7756e29:test/websocket.test.ts:generic-api-key:704

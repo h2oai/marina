@@ -3329,4 +3329,21 @@ SELECT 'resolution',id,space_id,length(CAST(input AS BLOB))+length(CAST(output A
 ALTER TABLE memory_spaces ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}';
 `,
   },
+  // Migration 115: continuous-hygiene ratio history. One row per hourly (or
+  // on-demand) snapshot of the operator-scope `MemoryHygieneRatios`
+  // (`src/memory/hygiene-ratios.ts`), serialized as JSON. `scope` is always
+  // `all` today; kept as a column so per-principal series can be added without
+  // a schema change. Retained 30 days (pruned on write).
+  {
+    version: 115,
+    sql: `
+CREATE TABLE memory_hygiene_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at INTEGER NOT NULL,
+  scope TEXT NOT NULL,
+  ratios TEXT NOT NULL
+);
+CREATE INDEX idx_memory_hygiene_snapshots_scope_at ON memory_hygiene_snapshots(scope, at);
+`,
+  },
 ];

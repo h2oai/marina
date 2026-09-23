@@ -23,6 +23,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { sanitizeEntityName } from "../src/engine/entity-name";
 import { formatPerception } from "../src/net/formatter";
 import { MarinaAgent } from "../src/sdk/client";
 
@@ -71,10 +72,19 @@ if (waitIdx !== -1) {
   consumed.add(waitIdx);
   consumed.add(waitIdx + 1);
 }
-const name: string | undefined = args.filter((_, i) => !consumed.has(i))[0];
+const requestedName: string | undefined = args.filter((_, i) => !consumed.has(i))[0];
 
-if (!name) {
+if (!requestedName) {
   console.error('Usage: marina connect <name> [-c "command"] [--wait <sec>]');
+  process.exit(1);
+}
+
+// The engine normalizes login names (alphanumerics + underscore, 20 chars max)
+// with the same helper, so the name the server will actually use is knowable
+// here — no round trip needed. "Jeff Smith" logs in as "JeffSmith".
+const name = sanitizeEntityName(requestedName);
+if (!name) {
+  console.error(`"${requestedName}" contains no usable characters (letters, digits, underscore).`);
   process.exit(1);
 }
 
@@ -156,7 +166,16 @@ async function lingerForQuiet(quietMs: number, maxMs: number): Promise<void> {
   }
 }
 
-const cachedToken = loadCachedToken(name);
+// Cache under the ACTUAL (normalized) name; fall back to a legacy entry saved
+// under the raw requested spelling so existing sessions keep their identity.
+const cachedToken = loadCachedToken(name) ?? loadCachedToken(requestedName);
+
+/** True for a transport failure (server down / unreachable), false for a login refusal. */
+function isTransportFailure(message: string): boolean {
+  return /WebSocket connection|ECONNREFUSED|ECONNRESET|ENOTFOUND|EHOSTUNREACH|timed out/i.test(
+    message,
+  );
+}
 
 try {
   let session: Awaited<ReturnType<typeof agent.connect>>;
@@ -172,9 +191,20 @@ try {
     session = await agent.connect(name);
   }
   if (session.token) saveSessionToken(name, session.token);
-  console.error(`Connected as ${session.name} (${session.entityId})`);
+  if (name !== requestedName) {
+    console.error(`Logged in as "${name}" (requested "${requestedName}")`);
+  }
+  console.error(`Connected as ${session.name || name} (${session.entityId})`);
 } catch (err) {
-  console.error(`Failed to connect: ${(err as Error).message}`);
+  const message = (err as Error).message;
+  if (isTransportFailure(message)) {
+    console.error(
+      `Failed to connect to ${URL}. Is Marina running? Start it with \`bun run start\`.` +
+        (message ? ` (${message})` : ""),
+    );
+  } else {
+    console.error(`Failed to connect: ${message}`);
+  }
   process.exit(1);
 }
 

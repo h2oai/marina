@@ -31,8 +31,17 @@ interface GraphState {
   recentTraces: RecallTrace[];
   /** True once a snapshot has been merged — gates the "loading" state. */
   snapshotLoaded: boolean;
+  /**
+   * Last snapshot-fetch failure (HTTP status or thrown message), null when the
+   * most recent `/api/graph` load succeeded. Distinguishes "no notes yet" from
+   * "the backend is unreachable".
+   */
+  error: string | null;
+  /** Epoch ms of the last snapshot attempt (success or failure); null before the first. */
+  lastFetchAt: number | null;
 
   setSnapshot: (snap: GraphSnapshot) => void;
+  setError: (error: string | null) => void;
   applyEvent: (event: DashboardEvent) => void;
   reset: () => void;
 }
@@ -44,6 +53,8 @@ export const useGraphState = create<GraphState>((set) => ({
   links: new Map(),
   recentTraces: [],
   snapshotLoaded: false,
+  error: null,
+  lastFetchAt: null,
 
   setSnapshot: (snap) =>
     set(() => {
@@ -51,8 +62,9 @@ export const useGraphState = create<GraphState>((set) => ({
       for (const n of snap.notes) notes.set(n.id, n);
       const links = new Map<string, GraphLink>();
       for (const l of snap.links) links.set(linkKey(l.sourceId, l.targetId, l.relationship), l);
-      return { notes, links, snapshotLoaded: true };
+      return { notes, links, snapshotLoaded: true, error: null, lastFetchAt: Date.now() };
     }),
+  setError: (error) => set({ error, lastFetchAt: Date.now() }),
 
   applyEvent: (event) =>
     set((state) => {
@@ -132,13 +144,33 @@ export const useGraphState = create<GraphState>((set) => ({
       }
     }),
 
-  reset: () => set({ notes: new Map(), links: new Map(), recentTraces: [], snapshotLoaded: false }),
+  reset: () =>
+    set({
+      notes: new Map(),
+      links: new Map(),
+      recentTraces: [],
+      snapshotLoaded: false,
+      error: null,
+      lastFetchAt: null,
+    }),
 }));
 
-/** Fetch the initial graph snapshot — call once on connect. */
+/**
+ * Fetch the initial graph snapshot — call once on connect, or from a "retry"
+ * button. Never throws: a non-OK response or a network failure is recorded in
+ * `error` so consumers can render it instead of an empty graph.
+ */
 export async function loadGraphSnapshot(limit = 500): Promise<void> {
-  const res = await fetch(`/api/graph?limit=${limit}`, { credentials: "same-origin" });
-  if (!res.ok) return;
-  const snap = (await res.json()) as GraphSnapshot;
-  useGraphState.getState().setSnapshot(snap);
+  const store = useGraphState.getState();
+  try {
+    const res = await fetch(`/api/graph?limit=${limit}`, { credentials: "same-origin" });
+    if (!res.ok) {
+      store.setError(`HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`);
+      return;
+    }
+    const snap = (await res.json()) as GraphSnapshot;
+    store.setSnapshot(snap);
+  } catch (err) {
+    store.setError(err instanceof Error ? err.message : String(err));
+  }
 }

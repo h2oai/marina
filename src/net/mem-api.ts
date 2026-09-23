@@ -14,6 +14,7 @@
  */
 
 import type { RateLimiter } from "../auth/rate-limiter";
+import { sanitizeEntityName } from "../engine/entity-name";
 import { memoryAccess } from "../memory/access";
 import { expandMemoryRecall } from "../memory/retrieval";
 import { buildUnifiedContext, type UnifiedScope } from "../memory/unified-context";
@@ -201,11 +202,16 @@ interface MemApiKeySet {
   keys: Map<string, string>; // secret → agent_name
 }
 
+// Parsed once per distinct env value: the raw string is the cache key, so a
+// process that changes MEM_API_KEYS (tests booting several servers in one
+// process; an operator reloading config) is never served a stale key set.
 let cachedEnvKeys: MemApiKeySet | null | undefined;
+let cachedEnvRaw: string | undefined;
 
 function getEnvKeys(): MemApiKeySet | null {
-  if (cachedEnvKeys !== undefined) return cachedEnvKeys;
   const raw = process.env.MEM_API_KEYS;
+  if (cachedEnvKeys !== undefined && cachedEnvRaw === raw) return cachedEnvKeys;
+  cachedEnvRaw = raw;
   if (!raw) {
     cachedEnvKeys = null;
     return null;
@@ -262,12 +268,18 @@ function authenticate(req: Request, db: MarinaDB): { agent: string } | { error: 
     };
   }
 
-  // Open mode: get agent name from header
-  const agentName = req.headers.get("X-Agent-Name");
-  if (!agentName) {
+  // Open mode: get agent name from header. Normalized with the same rule as a
+  // world login so a header like `memory:<principal>` cannot name the durable
+  // service silo (`isServiceMemoryNote`) or any other reserved namespace.
+  const rawAgentName = req.headers.get("X-Agent-Name");
+  if (!rawAgentName) {
     return {
       error: error(400, "X-Agent-Name header required (or set MEM_API_KEYS and use Bearer auth)"),
     };
+  }
+  const agentName = sanitizeEntityName(rawAgentName);
+  if (!agentName) {
+    return { error: error(400, "X-Agent-Name must contain letters, digits or underscores") };
   }
   return { agent: agentName };
 }
@@ -427,8 +439,11 @@ export async function handleMemApi(
       };
     }
 
-    let results = db.recallNotes(agent, q, weights);
-    results = expandMemoryRecall(db, results, agent);
+    // Same owner/pool predicate as GET /mem/notes — never serve a note the
+    // caller could not list (another namespace, a members-only pool, a durable
+    // `memory:<id>` twin).
+    let results = db.recallNotes(agent, q, weights).filter(access.read);
+    results = expandMemoryRecall(db, results, agent).filter(access.read);
 
     // Touch recalled notes
     for (const note of results) {
@@ -463,6 +478,15 @@ export async function handleMemApi(
       budgetBytes,
       scope: scopeRaw as UnifiedScope,
     });
+    // Legacy-note tiers carry note ids — apply the GET /mem/notes read predicate
+    // so the unified surface cannot leak what the list surface hides.
+    for (const tier of context.tiers) {
+      if (tier.tier === "evidence" || tier.tier === "proposal") continue;
+      tier.items = tier.items.filter((item) => {
+        const id = Number(item.id);
+        return Number.isInteger(id) && access.read(db.getNote(id));
+      });
+    }
     return json(context);
   }
 

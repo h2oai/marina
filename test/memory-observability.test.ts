@@ -35,6 +35,7 @@ import {
   memoryObservabilityPollTicks,
   memoryObserverScope,
   pollMemoryEvents,
+  receiptSurfaceOf,
   resetMemoryHygieneRatiosMemoForTests,
   resetMemoryLeakageCountersForTests,
 } from "../src/net/memory-observability";
@@ -43,6 +44,7 @@ import type {
   MemoryHygieneRatios,
   MemoryJobView,
   MemoryOverview,
+  MemorySpaceHealth,
 } from "../src/net/memory-observability-types";
 import { encodeMemoryReceiptHeader, finalizeMemoryReceipt } from "../src/net/memory-receipt";
 import { MarinaDB } from "../src/persistence/database";
@@ -800,6 +802,7 @@ function serveReceipt(
   refs: { id: string; version: number }[],
   at: number,
   usedBytes = 900,
+  extra: { surface?: string; cacheHit?: boolean } = {},
 ): void {
   const receipt = finalizeMemoryReceipt(
     {
@@ -820,6 +823,8 @@ function serveReceipt(
     model: "marina/default",
     routeKind: "passthru",
     memoryReceipt: encodeMemoryReceiptHeader(receipt),
+    ...(extra.surface ? { surface: extra.surface } : {}),
+    ...(extra.cacheHit ? { target: "response-cache" } : {}),
     timestamp: at,
   } as EngineEvent);
 }
@@ -932,5 +937,168 @@ describe("continuous-hygiene ratios", () => {
     expect(fresh.leakage.crossScopeAttempts).toBe(2);
     // Anonymous is refused like every other observability route.
     expect((await api("/api/memory/hygiene")).status).toBe(401);
+  });
+});
+
+// ─── Receipt surface ────────────────────────────────────────────────────────
+
+describe("receipt surface", () => {
+  it("maps the lifecycle `surface` field to the protocol surface, never the route kind", () => {
+    for (const surface of ["openai", "anthropic", "ollama-generate", "responses"] as const) {
+      expect(receiptSurfaceOf({ surface })).toBe(surface);
+    }
+    expect(receiptSurfaceOf({})).toBe("unknown");
+    expect(receiptSurfaceOf({ surface: undefined })).toBe("unknown");
+    // A route kind or any foreign token is not a surface.
+    expect(receiptSurfaceOf({ surface: "passthru" })).toBe("unknown");
+    expect(receiptSurfaceOf({ surface: "agent" })).toBe("unknown");
+  });
+
+  it("tags every recent receipt in the overview with its surface and cache hit", async () => {
+    const now = Date.now();
+    serveReceipt(OWNER, [], now - 400, 100, { surface: "openai" });
+    serveReceipt(OWNER, [], now - 300, 100, { surface: "anthropic", cacheHit: true });
+    serveReceipt(OWNER, [], now - 200, 100, { surface: "ollama-generate" });
+    serveReceipt(OWNER, [], now - 100, 100, { surface: "responses" });
+    serveReceipt(OWNER, [], now, 100); // a producer without the field
+    const overview = (await api("/api/memory/overview", { desktop: true })).body as MemoryOverview;
+    expect(overview.receipts.recent.map((r) => [r.surface, r.cacheHit])).toEqual([
+      ["unknown", false],
+      ["responses", false],
+      ["ollama-generate", false],
+      ["anthropic", true],
+      ["openai", false],
+    ]);
+    // Cache hits are counted from the same events.
+    expect(overview.ratios.cost.receipts).toBe(5);
+  });
+});
+
+// ─── Per-space health ───────────────────────────────────────────────────────
+
+describe("per-space health", () => {
+  const byId = (spaces: MemorySpaceHealth[], id: string) => spaces.find((s) => s.id === id);
+
+  it("lists institutional spaces plus granted spaces with writer, freshness and contradiction counts", async () => {
+    const fx = await buildFixture();
+    let overview = (await api("/api/memory/overview", { desktop: true })).body as MemoryOverview;
+    // The guide space is institutional → always listed. Owner's private space
+    // has one writer (the proposal is written AS the owner) and no grant → not
+    // shared yet.
+    const guide = byId(overview.spaces.shared, fx.guideSpaceId);
+    expect(guide).toMatchObject({
+      institutional: true,
+      ownerName: "guide",
+      records: 1,
+      ratified: 1,
+      competing: 0,
+      resolutions24h: 0,
+    });
+    expect(guide!.writers).toBeGreaterThanOrEqual(1);
+    expect(guide!.lastWriteAt).toBeGreaterThan(0);
+    expect(byId(overview.spaces.shared, fx.ownerSpaceId)).toBeUndefined();
+    expect(overview.spaces.institutional.map((s) => s.id)).toContain(fx.guideSpaceId);
+
+    // A grant makes the owner's space shared.
+    const stranger = db.getUserByName(STRANGER)!.id;
+    await op(OWNER, {
+      operation: "grant",
+      key: "grant-stranger",
+      input: { principal_id: stranger, role: "reader" },
+    });
+    resetMemoryHygieneRatiosMemoForTests();
+    overview = (await api("/api/memory/overview", { desktop: true })).body as MemoryOverview;
+    const own = byId(overview.spaces.shared, fx.ownerSpaceId);
+    expect(own).toBeTruthy();
+    expect(own).toMatchObject({
+      institutional: false,
+      ownerName: OWNER,
+      writers: 1,
+      // Owner is a fresh rank-0 account: below the Sybil floor.
+      freshWriters: 1,
+      freshWriterShare: { numerator: 1, denominator: 1, value: 1 },
+      // Berlin/Paris were settled by the fixture's last_writer_wins resolution.
+      competing: 0,
+      resolutions24h: 1,
+      unresolvedContradictionRate: { numerator: 0, denominator: 2, value: 0 },
+    });
+    expect(own!.records).toBeGreaterThanOrEqual(4);
+    expect(own!.ratified).toBe(0);
+    expect(own!.lastWriteAt).toBeGreaterThan(0);
+
+    // A fresh competing pair shows up as unresolved until it is resolved.
+    const claim = (value: string) => ({
+      subject: "hq",
+      predicate: "city",
+      object: { kind: "literal" as const, value },
+    });
+    const c1 = (
+      await op(OWNER, {
+        operation: "remember",
+        key: "rem-c1",
+        input: { content: "HQ is in Lisbon", claim: claim("lisbon") },
+      })
+    ).result as { id: string };
+    const c2 = (
+      await op(OWNER, {
+        operation: "remember",
+        key: "rem-c2",
+        input: { content: "HQ is in Porto", claim: claim("porto") },
+      })
+    ).result as { id: string };
+    resetMemoryHygieneRatiosMemoForTests();
+    overview = (await api("/api/memory/overview", { desktop: true })).body as MemoryOverview;
+    const contested = byId(overview.spaces.shared, fx.ownerSpaceId)!;
+    expect(contested.competing).toBe(2);
+    expect(contested.unresolvedContradictionRate).toEqual({
+      numerator: 2,
+      denominator: 4,
+      value: 0.5,
+    });
+    // Same predicate as the global ratio: the instance-wide count matches.
+    expect(overview.ratios.unresolvedContradictionRate.numerator).toBe(2);
+    // Contested spaces sort first.
+    expect(overview.spaces.shared[0]!.id).toBe(fx.ownerSpaceId);
+
+    await op(OWNER, {
+      operation: "resolve",
+      id: c2.id,
+      key: "lww-2",
+      input: { policy: "last_writer_wins", competing: [c1.id], rationale: "moved to Porto" },
+    });
+    resetMemoryHygieneRatiosMemoForTests();
+    overview = (await api("/api/memory/overview", { desktop: true })).body as MemoryOverview;
+    expect(byId(overview.spaces.shared, fx.ownerSpaceId)).toMatchObject({
+      competing: 0,
+      resolutions24h: 2,
+      unresolvedContradictionRate: { numerator: 0, denominator: 4, value: 0 },
+    });
+  });
+
+  it("scopes shared spaces to what a resident owns or is granted", async () => {
+    const fx = await buildFixture();
+    const stranger = db.getUserByName(STRANGER)!.id;
+    await op(OWNER, {
+      operation: "grant",
+      key: "grant-stranger",
+      input: { principal_id: stranger, role: "reader" },
+    });
+    const ids = (view: MemoryOverview) => view.spaces.shared.map((s) => s.id).sort();
+    const operator = (await api("/api/memory/overview", { desktop: true })).body as MemoryOverview;
+    expect(ids(operator)).toEqual([fx.guideSpaceId, fx.ownerSpaceId].sort());
+    // Owner: owns its space; the guide space is institutional but not its own.
+    const owner = (await api("/api/memory/overview", { token: tokens[OWNER] }))
+      .body as MemoryOverview;
+    expect(ids(owner)).toEqual([fx.ownerSpaceId]);
+    // Stranger: granted reader on Owner's space.
+    const granted = (await api("/api/memory/overview", { token: tokens[STRANGER] }))
+      .body as MemoryOverview;
+    expect(ids(granted)).toEqual([fx.ownerSpaceId]);
+    // Helper: worked a job in Owner's space but holds no grant on it.
+    const helper = (await api("/api/memory/overview", { token: tokens[HELPER] }))
+      .body as MemoryOverview;
+    expect(ids(helper)).toEqual([]);
+    // Institutional spaces stay listed under `institutional` for everyone.
+    expect(helper.spaces.institutional.map((s) => s.id)).toContain(fx.guideSpaceId);
   });
 });

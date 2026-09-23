@@ -3,6 +3,7 @@
 
 import type { AgentRuntime } from "../../agent/agent-runtime";
 import { MAX_AGENTS } from "../../agent/agent-runtime";
+import { formatUsd, operatorStatusOf } from "../../agent/lean-agent-adapter";
 import { isSeedDisabled, listDisabledSeedAgents, setSeedDisabled } from "../../agent/seed-registry";
 import { getStanding } from "../../agent/standing";
 import { bold, dim, header, separator } from "../../net/ansi";
@@ -31,7 +32,7 @@ Usage:
   agent status <name>                        — detailed agent status
   agent diagnose <name>                      — lifecycle health and remediation
   agent spawn <name> [model <m>] [role <r>] [goal <g>] [key <k>] [budget <n-calls>]
-  agent stop <name>                          — stop a running agent (transient; reseeds on restart)
+  agent stop <name> [--keep-children]        — stop an agent and the agents it spawned (transient; reseeds on restart)
   agent disable <name>                        — retire a seeded agent so it stays gone across restarts
   agent enable <name>                         — clear a disable; the agent returns on next restart/room entry
   agent attention <name> <message>           — send attention to agent
@@ -70,7 +71,11 @@ Usage:
             ctx.send(input.entity, REQUIRES_BUILDER_RANK);
             return;
           }
-          return handleStop(ctx, input.entity, tokens[1], deps);
+          return handleStop(ctx, input.entity, tokens[1], deps, {
+            keepChildren: tokens
+              .slice(2)
+              .some((t) => ["--keep-children", "keep-children"].includes(t.toLowerCase())),
+          });
         }
 
         case "restart": {
@@ -252,8 +257,13 @@ function handleList(
   const lines = [header("Agents"), separator()];
   for (const a of agents) {
     const upMin = Math.round(a.uptime / 60000);
+    const handle = deps.agentRuntime.get(a.name);
+    const ops = handle ? operatorStatusOf(handle) : undefined;
+    const cost = ops
+      ? `${formatUsd(ops.totalCostUsd)} (${formatUsd(ops.costLastHourUsd)}/h)`
+      : formatUsd(a.totalCostUsd ?? 0);
     lines.push(
-      `${bold(a.name)} ${dim(`[${a.healthState ?? a.state}]`)} ${a.model} ${a.role ? `role:${a.role}` : ""} ${dim(`${upMin}m · ${a.toolCalls} calls`)}`,
+      `${bold(a.name)} ${dim(`[${a.healthState ?? a.state}]`)} ${a.model} ${a.role ? `role:${a.role}` : ""} ${dim(`${upMin}m · ${a.toolCalls} calls · ${cost}`)}${ops?.paused ? ` ${dim(`paused: ${ops.paused.kind}`)}` : ""}`,
     );
     if (a.focus) lines.push(`  ${dim(`focus: ${a.focus}`)}`);
   }
@@ -285,8 +295,20 @@ function handleStatus(
   }
 
   const s = agent.getStatus();
+  const ops = operatorStatusOf(agent);
   const upMin = Math.round(s.uptime / 60000);
   const usage = deps.db?.getPrimitiveUsageSummary(s.name);
+  const limits = deps.agentRuntime.getSpendLimits?.() ?? {};
+  const capText = [
+    (ops?.spendCaps.perAgentUsdPerHour ?? limits.perAgentUsdPerHour)
+      ? `${formatUsd((ops?.spendCaps.perAgentUsdPerHour ?? limits.perAgentUsdPerHour)!)}/h per agent`
+      : null,
+    (ops?.spendCaps.globalUsdPerHour ?? limits.globalUsdPerHour)
+      ? `${formatUsd((ops?.spendCaps.globalUsdPerHour ?? limits.globalUsdPerHour)!)}/h runtime-wide`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
   const lines = [
     header(`Agent: ${s.name}`),
     separator(),
@@ -306,11 +328,39 @@ function handleStatus(
           `${bold("Tool provenance (7d):")} ${usage.marinaToolCalls}/${usage.toolCalls} Marina tools · ${usage.reasoningOnlyCalls} think-only`,
         ]
       : []),
-    `${bold("Errors:")} ${s.errors}`,
+    `${bold("Tokens:")} ${(ops?.totalInputTokens ?? s.totalInputTokens ?? 0).toLocaleString()} in · ${(ops?.totalOutputTokens ?? s.totalOutputTokens ?? 0).toLocaleString()} out`,
+    `${bold("Cost:")} ${formatUsd(ops?.totalCostUsd ?? s.totalCostUsd ?? 0)} total · ${formatUsd(ops?.costLastHourUsd ?? 0)} last hour${capText ? dim(` (caps: ${capText})`) : ""}`,
+    `${bold("Errors:")} ${s.errors}${ops?.consecutiveErrors ? ` · ${ops.consecutiveErrors} consecutive` : ""}`,
+    `${bold("Last error:")} ${ops?.lastError ? `${ops.lastError.text} ${dim(`(${formatAgo(ops.lastError.at)})`)}` : dim("none")}`,
+    ...(ops?.paused
+      ? [
+          `${bold("Paused:")} ${ops.paused.reason} ${dim(`(${ops.paused.kind}, since ${formatAgo(ops.paused.since)}${ops.paused.until ? `, resumes in ${formatDuration(ops.paused.until - Date.now())}` : ""})`)}`,
+        ]
+      : []),
+    `${bold("Next tick:")} ${ops?.nextTickInMs === null || ops?.nextTickInMs === undefined ? dim("loop not running") : `in ${formatDuration(ops.nextTickInMs)}`}`,
     `${bold("Attention:")} ${s.attentionMode ?? "balanced"} · threshold ${s.attentionThreshold ?? 50} · ${s.queuedPerceptions ?? 0} queued · ${s.droppedPerceptions ?? 0} dropped`,
     `${bold("Entity ID:")} ${s.entityId || dim("not connected")}`,
   ];
   ctx.send(eid, lines.join("\n"));
+}
+
+/** "12s ago" / "3m ago" / "2h ago" for operator status lines. */
+function formatAgo(at: number): string {
+  return `${formatDuration(Date.now() - at)} ago`;
+}
+
+/** Compact duration: "850ms", "12s", "3m 5s", "2h 4m". */
+export function formatDuration(ms: number): string {
+  const t = Math.max(0, Math.round(ms));
+  if (t < 1000) return `${t}ms`;
+  const totalSec = Math.round(t / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (min < 60) return sec ? `${min}m ${sec}s` : `${min}m`;
+  const hr = Math.floor(min / 60);
+  const rem = min % 60;
+  return rem ? `${hr}h ${rem}m` : `${hr}h`;
 }
 
 /**
@@ -528,9 +578,10 @@ async function handleStop(
     agentRuntime: AgentRuntime;
     logEvent: (event: EngineEvent) => void;
   },
+  opts: { keepChildren?: boolean } = {},
 ): Promise<void> {
   if (!name) {
-    ctx.send(eid, "Usage: agent stop <name>");
+    ctx.send(eid, "Usage: agent stop <name> [--keep-children]");
     return;
   }
 
@@ -541,8 +592,19 @@ async function handleStop(
   }
 
   const status = agent.getStatus();
+  // Snapshot child entity ids before the cascade removes them.
+  const childEntities = new Map<string, EntityId | null>();
+  if (!opts.keepChildren && typeof deps.agentRuntime.childrenOf === "function") {
+    for (const child of deps.agentRuntime.childrenOf(name)) {
+      childEntities.set(child, deps.agentRuntime.get(child)?.getStatus().entityId ?? null);
+    }
+  }
   try {
-    await deps.agentRuntime.stop(name);
+    const result =
+      typeof deps.agentRuntime.stopWithReport === "function"
+        ? await deps.agentRuntime.stopWithReport(name, { keepChildren: opts.keepChildren })
+        : await deps.agentRuntime.stop(name, { keepChildren: opts.keepChildren });
+    const stoppedChildren = result?.stoppedChildren ?? [];
 
     deps.logEvent({
       type: "agent_stop",
@@ -551,8 +613,23 @@ async function handleStop(
       reason: "manual",
       timestamp: Date.now(),
     });
+    for (const child of stoppedChildren) {
+      deps.logEvent({
+        type: "agent_stop",
+        entity: (childEntities.get(child) ?? eid) as EntityId,
+        name: child,
+        reason: `cascade:${name}`,
+        timestamp: Date.now(),
+      });
+    }
 
-    ctx.send(eid, `Agent ${bold(name)} stopped.`);
+    const childrenLine =
+      stoppedChildren.length > 0
+        ? ` Also stopped ${stoppedChildren.length} spawned agent(s): ${stoppedChildren.join(", ")}.`
+        : opts.keepChildren
+          ? dim(" (children kept running)")
+          : "";
+    ctx.send(eid, `Agent ${bold(name)} stopped.${childrenLine}`);
   } catch (error) {
     ctx.send(eid, `Failed to stop agent: ${error instanceof Error ? error.message : error}`);
   }

@@ -86,14 +86,21 @@ describe("experiment arms (A/B comparison)", () => {
   });
 
   it("completes with a winner, writes an outcome note, and credits standing", () => {
+    // A second recorder: standing requires samples from >= 2 distinct entities.
+    const bobConn = new MockConnection("c2");
+    engine.addConnection(bobConn);
+    engine.spawnEntity("c2", "Bob");
+
     run("experiment create Prompt arms terse,verbose metric accuracy goal higher");
     run("experiment start Prompt");
     run("experiment record Prompt terse accuracy 0.9");
-    run("experiment record Prompt verbose accuracy 0.5");
+    engine.processCommand(bobConn.entity!, "experiment record Prompt verbose accuracy 0.5");
+    expect(stripAnsi(bobConn.lastText())).toContain("Recorded");
 
     const done = run("experiment complete Prompt");
     expect(done).toContain("winner");
     expect(done).toContain("terse");
+    expect(done).not.toContain("No standing credited");
 
     // Outcome note authored by the creator for the generational-memory loop.
     const outcome = db
@@ -104,5 +111,39 @@ describe("experiment arms (A/B comparison)", () => {
 
     // Standing flowed to the completer.
     expect(getStanding(db, conn.entity!)).toBeGreaterThan(0);
+  });
+
+  it("creator recording every arm alone completes without standing (anti-farming)", () => {
+    run("experiment create Solo arms terse,verbose metric accuracy goal higher");
+    run("experiment start Solo");
+    run("experiment record Solo terse accuracy 0.9");
+    run("experiment record Solo verbose accuracy 0.5");
+
+    const done = run("experiment complete Solo");
+    expect(done).toContain("completed");
+    expect(done).toContain("winner");
+    expect(done).toContain("No standing credited");
+    expect(done).toContain("recorders=1");
+    // Outcome note is still written — completion itself is not blocked.
+    const outcome = db
+      .getNotesByEntity("Alice")
+      .filter((n) => n.note_type === "experiment-outcome");
+    expect(outcome.length).toBe(1);
+    expect(getStanding(db, conn.entity!)).toBe(0);
+  });
+
+  it("two recorders on a single arm completes without standing", () => {
+    const bobConn = new MockConnection("c2");
+    engine.addConnection(bobConn);
+    engine.spawnEntity("c2", "Bob");
+    run("experiment create OneArm arms terse,verbose metric accuracy goal higher");
+    run("experiment start OneArm");
+    run("experiment record OneArm terse accuracy 0.9");
+    engine.processCommand(bobConn.entity!, "experiment record OneArm terse accuracy 0.8");
+
+    const done = run("experiment complete OneArm");
+    expect(done).toContain("No standing credited");
+    expect(done).toContain("arms=1");
+    expect(getStanding(db, conn.entity!)).toBe(0);
   });
 });

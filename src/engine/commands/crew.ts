@@ -3,6 +3,7 @@
 
 import type { ChannelManager } from "../../coordination/channel-manager";
 import { CrewError, type CrewManager } from "../../coordination/crew-manager";
+import { memoryAccess } from "../../memory/access";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type {
@@ -149,6 +150,9 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
             fmtCrewLine(crew),
             dim(`  channel: ${crew.channelId ?? "(unallocated)"}  owner: ${crew.ownerId}`),
           ];
+          if (crew.poolId) {
+            lines.push(dim(`  pool: crew:${crew.name} (members-only — group crew:${crew.name})`));
+          }
           ctx.send(input.entity, lines.join("\n"));
           return;
         }
@@ -158,6 +162,20 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         if (deps.db) {
           const pool = deps.db.getMemoryPool(`crew:${target}`);
           if (pool) {
+            // Crew pools are members-only: the group keeps the final roster
+            // past dissolution, so outsiders learn the pool exists but never
+            // see its notes (same ACL as `pool crew:<name> recall`).
+            if (!memoryAccess(deps.db, caller).pool(pool)) {
+              ctx.send(
+                input.entity,
+                [
+                  header(`Crew: ${target} (dissolved)`),
+                  separator(),
+                  dim(`  pool: ${pool.name} — members-only; you were not part of this crew.`),
+                ].join("\n"),
+              );
+              return;
+            }
             const recent = deps.db.getPoolNotes(pool.id, 8);
             const lines = [
               header(`Crew: ${target} (dissolved)`),
@@ -178,10 +196,14 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           // tradition pool ([crew:<name> formation:<f>] <summary>). Fall
           // back to a full-note search for that prefix so dissolved
           // ephemeral crews still have a recallable trace.
+          // `searchAllNotes` is unscoped (every entity's notes), so apply the
+          // caller's read predicate: own notes plus notes in pools the caller
+          // can access. Private notes that merely mention the tag stay private.
           const tagPrefix = `[crew:${target}`;
+          const access = memoryAccess(deps.db, caller);
           const tagged = deps.db
             .searchAllNotes(`crew:${target}`, 10)
-            .filter((n) => n.content.includes(tagPrefix));
+            .filter((n) => n.content.includes(tagPrefix) && access.read(n));
           if (tagged.length > 0) {
             const lines = [
               header(`Crew: ${target} (dissolved, ephemeral)`),
@@ -508,7 +530,7 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
           deps.crews.persist(crew.id);
           ctx.send(
             input.entity,
-            `Crew "${crew.name}" upgraded to persisted (pool: crew:${crew.name}).`,
+            `Crew "${crew.name}" upgraded to persisted (pool: crew:${crew.name}, members-only).`,
           );
         } catch (e) {
           if (e instanceof CrewError) ctx.send(input.entity, e.message);
@@ -655,7 +677,10 @@ export function crewCommand(deps: CrewCommandDeps): CommandDef {
         try {
           const result = deps.crews.complete(crew.id, summary, caller.name);
           const noteHint = result.resultNoteId ? ` (note ${result.resultNoteId})` : "";
-          ctx.send(input.entity, `Crew "${crew.name}" completed${noteHint}.`);
+          const standingHint = result.standingCredited
+            ? "."
+            : `; no standing credited: ${result.standingSkippedReason}.`;
+          ctx.send(input.entity, `Crew "${crew.name}" completed${noteHint}${standingHint}`);
         } catch (e) {
           if (e instanceof CrewError) ctx.send(input.entity, e.message);
           else throw e;

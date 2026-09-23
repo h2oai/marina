@@ -236,3 +236,58 @@ export const RECRUIT_MIN_STANDING = 15;
  * spawned_by chain) and are unaffected.
  */
 export const MAX_SPAWN_DEPTH = 3;
+
+// ─── Agent Spend Ceiling & Upstream-Error Guards ─────────────────────────────
+// Rolling-window cost caps and the consecutive-failure circuit breaker for the
+// autonomous agent loop (src/agent/lean-agent-adapter.ts). Env parsing lives
+// here so the adapter, runtime and tests read one definition.
+
+/** Rolling window over which agent spend is summed for the cost caps (1 hour). */
+export const SPEND_WINDOW_MS = HOUR_MS;
+
+/** How often a loop paused on a spend cap re-checks the rolling window (ms). */
+export const SPEND_CAP_POLL_MS = 30_000;
+
+/** Parse a positive finite number from `env[name]`; unset / 0 / invalid ⇒ undefined. */
+export function positiveNumberFromEnv(
+  name: string,
+  env: NodeJS.ProcessEnv = process.env,
+): number | undefined {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** Base delay of the exponential backoff after an upstream LLM error (ms). */
+export const UPSTREAM_ERROR_BACKOFF_BASE_MS = 5_000;
+
+/** Ceiling of the per-attempt backoff after an upstream LLM error (ms). */
+export const UPSTREAM_ERROR_BACKOFF_CAP_MS = 30_000;
+
+/**
+ * Backoff before retrying after the `attempt`-th consecutive upstream error:
+ * 5 s, 10 s, 20 s, then capped at 30 s. Attempt counts from 1.
+ */
+export function upstreamErrorBackoffMs(attempt: number): number {
+  const n = Math.max(1, Math.floor(attempt));
+  return Math.min(UPSTREAM_ERROR_BACKOFF_CAP_MS, UPSTREAM_ERROR_BACKOFF_BASE_MS * 2 ** (n - 1));
+}
+
+/**
+ * Consecutive upstream/loop errors that trip the circuit breaker: the loop
+ * pauses for UPSTREAM_ERROR_PAUSE_MS, tells its spawner once, then resumes
+ * with the counter reset. Override: MARINA_MAX_CONSECUTIVE_UPSTREAM_ERRORS.
+ */
+export function maxConsecutiveUpstreamErrorsFromEnv(env: NodeJS.ProcessEnv = process.env): number {
+  const n = positiveNumberFromEnv("MARINA_MAX_CONSECUTIVE_UPSTREAM_ERRORS", env);
+  return n === undefined ? 20 : Math.max(1, Math.floor(n));
+}
+export const MAX_CONSECUTIVE_UPSTREAM_ERRORS = maxConsecutiveUpstreamErrorsFromEnv();
+
+/** Pause length after the consecutive-error breaker trips (default 10 min).
+ *  Override: MARINA_UPSTREAM_ERROR_PAUSE_MS. */
+export function upstreamErrorPauseMsFromEnv(env: NodeJS.ProcessEnv = process.env): number {
+  return positiveNumberFromEnv("MARINA_UPSTREAM_ERROR_PAUSE_MS", env) ?? 10 * 60 * 1000;
+}
+export const UPSTREAM_ERROR_PAUSE_MS = upstreamErrorPauseMsFromEnv();

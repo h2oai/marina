@@ -20,7 +20,8 @@ import { getTrustProfile, isLocalUngated, type TrustProfile } from "./trust-prof
  *
  * `computeReadiness` inspects the LIVE instance and reports each capability as
  * ok / degraded / off with a remediation hint, so an operator can answer "is it
- * functioning?" at runtime. Backs the `status` command and `GET /api/readiness`.
+ * functioning?" at runtime. Backs the `readiness` command (aliases `doctor` /
+ * `health`) and `GET /api/readiness`.
  */
 
 export type ReadinessStatus = "ok" | "degraded" | "off";

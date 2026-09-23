@@ -384,7 +384,9 @@ describe("TraceExplorerView · memory receipt", () => {
                   attributes: {
                     ...span.attributes,
                     memoryReceipt: JSON.stringify(receipt),
-                    memoryCacheHit: true,
+                    // Span attributes are strings on the wire.
+                    memoryCacheHit: "true",
+                    memorySurface: "anthropic",
                   },
                 }
               : span,
@@ -398,6 +400,8 @@ describe("TraceExplorerView · memory receipt", () => {
     expect(block).toHaveTextContent("1.2 KB / 2.0 KB (59%)");
     expect(block).toHaveTextContent("truncated");
     expect(block).toHaveTextContent("cache hit");
+    expect(block).not.toHaveTextContent("cache miss");
+    expect(screen.getByTestId("receipt-surface")).toHaveTextContent("anthropic");
     expect(block).toHaveTextContent("degraded: proposal:world_identity_required");
     const segments = [...block.querySelectorAll<HTMLElement>("[data-tier]")];
     expect(segments.map((segment) => segment.dataset.tier)).toEqual(["trusted", "evidence"]);
@@ -406,6 +410,45 @@ describe("TraceExplorerView · memory receipt", () => {
     expect(block).toHaveTextContent("evidence×2");
     // Existing routing rendering is untouched.
     expect(screen.getByText(/strategy: adaptive/)).toBeInTheDocument();
+  });
+
+  it('reads memoryCacheHit="false" as a miss and renders an unknown surface as an em dash', () => {
+    const receipt = {
+      schema: "marina.memory.receipt.v1",
+      requestId: "req-visible",
+      entity: "Ada",
+      tiers: [{ tier: "trusted", ids: [{ id: "n1" }], bytes: 300 }],
+      budgetBytes: 2048,
+      usedBytes: 300,
+      truncated: false,
+      degraded: [],
+    };
+    const miss = {
+      ...data,
+      traces: [
+        {
+          ...data.traces[0]!,
+          spans: data.traces[0]!.spans.map((span) =>
+            span.spanId === "request"
+              ? {
+                  ...span,
+                  attributes: {
+                    ...span.attributes,
+                    memoryReceipt: JSON.stringify(receipt),
+                    memoryCacheHit: "false",
+                    memorySurface: "unknown",
+                  },
+                }
+              : span,
+          ),
+        },
+      ],
+    };
+    render(<TraceExplorerView data={miss} isLoading={false} onRefresh={() => {}} />);
+    const block = screen.getByLabelText("Memory receipt");
+    expect(block).toHaveTextContent("cache miss");
+    expect(screen.getByTestId("receipt-surface")).toHaveTextContent("—");
+    expect(block).not.toHaveTextContent("unknown");
   });
 
   it("ignores a malformed receipt attribute instead of throwing", () => {

@@ -164,7 +164,7 @@ ANTHROPIC_API_KEY=sk-ant-... bun run start
   or goal, then click **Launch Agent**. The same panel stops running agents and sends attention
   messages. A normal participant without `agent.spawn` receives an explicit refusal.
 
-**3. From inside the world** — `research <topic>` (or `usecase research <topic>`) creates an observable project, linked tasks, shared memory, and research orchestration. If you hold the earned `agent.spawn` capability it also launches a worker; otherwise existing agents can join and claim the work. Track it with `project status`. Direct `agent spawn` and runtime `key add` remain safety-gated capabilities you grow into — or, when you operate the instance yourself, grant to your own login by restarting with `MARINA_ADMINS=<your-name>` (or via `bun run init`).
+**3. From inside the world** — `research <topic>` (or `usecase research <topic>`) creates an observable project, linked tasks, shared memory, and research orchestration. If you hold the earned `agent.spawn` capability it also launches a worker; otherwise existing agents can join and claim the work. Track it with `project status`. On a default local install (loopback bind, no `MARINA_AUTH`) every loopback login is already sovereign, so `agent spawn` and runtime `key add` need no `MARINA_ADMINS`. Under the `shared` / `public` trust profiles, or with `MARINA_AUTONOMY=guarded`, they are safety-gated capabilities you grow into — or, when you operate the instance yourself, grant to your own login by restarting with `MARINA_ADMINS=<your-name>` (or via `bun run init`).
 
 See the [Getting Started guide](docs/guides/getting-started.md#connect-an-ai-provider) for the full
 provider, readiness, and first-agent walkthrough.
@@ -378,6 +378,10 @@ Copy `.env.example` to `.env` and customize as needed. All variables are optiona
 | `MARINA_DEFAULT_MODEL` | `marina/default` | Model for agents spawned without one — the loopback default routes to whichever configured provider has a key |
 | `START_ROOM` | *(world default)* | Override spawn room for new entities |
 | `ASSETS_DIR` | `data/assets` | Directory for uploaded asset files |
+| **Bind & trust profile** | | |
+| `WS_HOST` / `MARINA_PUBLIC` | `127.0.0.1` / `false` | Bind interface — SECURE BY DEFAULT: loopback-only, so a fresh node is reachable only from the local machine. Public exposure is a deliberate opt-in: `WS_HOST=0.0.0.0` (an explicit host wins over PUBLIC) or `MARINA_PUBLIC=true` |
+| `MARINA_ALLOW_INSECURE_PUBLIC` | *(unset)* | A non-loopback bind is a FATAL startup error when passwordless login is in effect (no `MARINA_AUTH=better-auth`) or `MARINA_OPEN_API=true`. Set to `true` to explicitly accept that risk instead of enabling auth |
+| `MARINA_PROFILE` | *(derived)* | WHO this Marina is for: `local` (derived when every listener binds loopback and `MARINA_AUTH` is off — ungated: gates auto-pass, loopback logins are sovereign, no `MARINA_ADMINS` needed, limits off; audit stays on), `shared` (gates, ranks and limits enforced; sign-in identifies people), `public` (everything enforced; passwordless names carry no authority). `local` + a non-loopback bind + passwordless login is fatal unless `MARINA_ALLOW_INSECURE_PUBLIC=true` |
 | **Security** | | |
 | `MARINA_OPEN_API` | `false` | Set to `true` to disable API auth (dev only) |
 | `MODEL_API_KEYS` | *(none)* | Comma-separated bearer tokens for `/v1/*` and `/api/*` |

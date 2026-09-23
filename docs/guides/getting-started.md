@@ -242,7 +242,13 @@ will say whether the model is unavailable or the caller lacks the `agent.spawn` 
 refusal itself names the path to earning it. Do not disable safety gates merely to hide an
 onboarding error.
 
-There are three routes to `agent.spawn`:
+**Default local install: nothing to configure.** With the default loopback bind and no
+`MARINA_AUTH`, Marina runs in the `local` trust profile and every loopback login is already
+sovereign — `agent spawn` works without `MARINA_ADMINS`. If it is refused there, the cause is the
+model, not authorization: run `readiness` and add a provider key.
+
+Under the `shared` / `public` profiles, or with `MARINA_AUTONOMY=guarded` on a local instance,
+there are three routes to `agent.spawn`:
 
 1. **Operator grant.** If you operate this instance yourself, restart with your login name in
    `MARINA_ADMINS`:

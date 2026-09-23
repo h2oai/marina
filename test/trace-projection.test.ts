@@ -156,3 +156,118 @@ describe("projectTraces", () => {
     ).toEqual([]);
   });
 });
+
+describe("projectTraces memory attributes", () => {
+  const base = { runId: "run-m", traceId: "trace-m", spanId: "request", model: "marina" } as const;
+  const receipt = '{"schema":"marina.memory.receipt.v1","entity":"Ada"}';
+
+  it("exposes memoryCacheHit=true, memorySurface and memoryReceipt on a cache-served passthru span", () => {
+    const [trace] = projectTraces([
+      {
+        type: "model_request_lifecycle",
+        phase: "received",
+        requestId: "req-m",
+        ...base,
+        routeKind: "passthru",
+        surface: "openai",
+        memoryReceipt: receipt,
+        timestamp: 100,
+      },
+      {
+        type: "model_request_lifecycle",
+        phase: "completed",
+        requestId: "req-m",
+        ...base,
+        routeKind: "passthru",
+        surface: "openai",
+        target: "response-cache",
+        memoryReceipt: receipt,
+        durationMs: 2,
+        timestamp: 102,
+      },
+    ]);
+    expect(trace?.spans[0]?.attributes).toMatchObject({
+      routeKind: "passthru",
+      memoryCacheHit: "true",
+      memorySurface: "openai",
+      memoryReceipt: receipt,
+    });
+    // Strings, not booleans — the dashboard reads `attributes.memoryCacheHit === "true"`.
+    expect(typeof trace?.spans[0]?.attributes.memoryCacheHit).toBe("string");
+  });
+
+  it("reports memoryCacheHit=false for an upstream-served passthru span and keeps each surface", () => {
+    for (const surface of ["anthropic", "ollama-generate", "responses"] as const) {
+      const [trace] = projectTraces([
+        {
+          type: "model_request_lifecycle",
+          phase: "received",
+          requestId: `req-${surface}`,
+          ...base,
+          routeKind: "passthru",
+          surface,
+          timestamp: 100,
+        },
+        {
+          type: "model_request_lifecycle",
+          phase: "routed",
+          requestId: `req-${surface}`,
+          ...base,
+          routeKind: "passthru",
+          surface,
+          target: "openai/gpt-4o",
+          timestamp: 101,
+        },
+        {
+          type: "model_request_lifecycle",
+          phase: "completed",
+          requestId: `req-${surface}`,
+          ...base,
+          routeKind: "passthru",
+          surface,
+          target: "openai/gpt-4o",
+          durationMs: 5,
+          timestamp: 105,
+        },
+      ]);
+      expect(trace?.spans[0]?.attributes).toMatchObject({
+        memoryCacheHit: "false",
+        memorySurface: surface,
+        target: "openai/gpt-4o",
+      });
+    }
+  });
+
+  it("falls back to memorySurface=unknown for passthru producers that predate the field, and omits both on non-passthru spans", () => {
+    const [legacy] = projectTraces([
+      {
+        type: "model_request_lifecycle",
+        phase: "completed",
+        requestId: "req-legacy",
+        ...base,
+        routeKind: "passthru",
+        target: "anthropic/claude",
+        durationMs: 1,
+        timestamp: 200,
+      },
+    ]);
+    expect(legacy?.spans[0]?.attributes).toMatchObject({
+      memoryCacheHit: "false",
+      memorySurface: "unknown",
+    });
+    const [agent] = projectTraces([
+      {
+        type: "model_request_lifecycle",
+        phase: "completed",
+        requestId: "req-agent",
+        ...base,
+        routeKind: "agent",
+        target: "Ada",
+        durationMs: 1,
+        timestamp: 300,
+      },
+    ]);
+    expect(agent?.spans[0]?.attributes.memoryCacheHit).toBeUndefined();
+    expect(agent?.spans[0]?.attributes.memorySurface).toBeUndefined();
+  });
+});

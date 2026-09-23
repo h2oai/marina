@@ -8,8 +8,13 @@
  * arithmetic; a zero denominator renders "n/a", never a fake 0 %.
  */
 
-import type { MemoryHygieneRatios, MemoryRatio } from "../../lib/memory-observability-types";
+import type {
+  MemoryHygieneRatios,
+  MemoryHygieneSample,
+  MemoryRatio,
+} from "../../lib/memory-observability-types";
 import { formatBytes } from "./format";
+import { Sparkline } from "./Sparkline";
 
 type Direction = "lower" | "higher";
 
@@ -111,11 +116,28 @@ export const RATIO_SPECS: RatioSpec[] = [
   },
 ];
 
+export function formatRatioValue(value: number, unit: RatioSpec["unit"]): string {
+  if (unit === "average") return `${value.toFixed(1)}×`;
+  const pct = value * 100;
+  return pct > 0 && pct < 1 ? "<1%" : `${Math.round(pct)}%`;
+}
+
 export function formatRatio(r: MemoryRatio, unit: RatioSpec["unit"]): string {
   if (r.value === null) return "n/a";
-  if (unit === "average") return `${r.value.toFixed(1)}×`;
-  const pct = r.value * 100;
-  return pct > 0 && pct < 1 ? "<1%" : `${Math.round(pct)}%`;
+  return formatRatioValue(r.value, unit);
+}
+
+const formatShare = (value: number) => formatRatioValue(value, "share");
+
+/** Utilization of `ownerName` at each snapshot — null where the owner had no row. */
+export function storageUtilizationSeries(
+  samples: readonly MemoryHygieneSample[],
+  ownerName: string,
+): (number | null)[] {
+  return samples.map(
+    (sample) =>
+      sample.ratios.storage.find((row) => row.ownerName === ownerName)?.utilization ?? null,
+  );
 }
 
 export function ratioTone(
@@ -133,8 +155,18 @@ const TONE_CLASS = {
   warning: "text-warning",
 } as const;
 
-export function RatiosSection({ ratios }: { ratios: MemoryHygieneRatios }) {
+export function RatiosSection({
+  ratios,
+  samples,
+}: {
+  ratios: MemoryHygieneRatios;
+  /** Hygiene history, oldest → newest. Omit to render the cards without sparklines. */
+  samples?: readonly MemoryHygieneSample[];
+}) {
   const hours = Math.round(ratios.windowMs / 3_600_000);
+  const trend = samples && samples.length > 0 ? samples : undefined;
+  // The first storage row is the one the server put on top (largest footprint).
+  const topOwner = ratios.storage[0]?.ownerName;
   return (
     <div className="space-y-2" data-testid="hygiene-ratios">
       <div className="flex items-center justify-between text-[9px] text-text-dim">
@@ -163,6 +195,15 @@ export function RatiosSection({ ratios }: { ratios: MemoryHygieneRatios }) {
               <div className="text-[8px] text-text-dim">
                 {r.numerator} / {r.denominator}
               </div>
+              {trend && (
+                <Sparkline
+                  values={trend.map((sample) => sample.ratios[spec.key].value)}
+                  format={(value) => formatRatioValue(value, spec.unit)}
+                  label={spec.label}
+                  className={`mt-1 h-4 w-full ${TONE_CLASS[tone]}`}
+                  testId={`sparkline-${spec.key}`}
+                />
+              )}
             </div>
           );
         })}
@@ -180,6 +221,15 @@ export function RatiosSection({ ratios }: { ratios: MemoryHygieneRatios }) {
           <div className="text-[8px] text-text-dim">
             {ratios.cost.receipts} injected · cache {formatRatio(ratios.cost.cacheHitRate, "share")}
           </div>
+          {trend && (
+            <Sparkline
+              values={trend.map((sample) => sample.ratios.cost.cacheHitRate.value)}
+              format={formatShare}
+              label="cache hit rate"
+              className="mt-1 h-4 w-full text-text-bright"
+              testId="sparkline-cacheHitRate"
+            />
+          )}
         </div>
       </div>
       {ratios.storage.length > 0 && (
@@ -217,6 +267,15 @@ export function RatiosSection({ ratios }: { ratios: MemoryHygieneRatios }) {
                       style={{ width: `${Math.max(1, pct)}%` }}
                     />
                   </div>
+                )}
+                {trend && row.ownerName === topOwner && (
+                  <Sparkline
+                    values={storageUtilizationSeries(trend, row.ownerName)}
+                    format={formatShare}
+                    label={`${row.ownerName} utilization`}
+                    className="mt-1 h-4 w-full text-text-dim"
+                    testId="sparkline-storage"
+                  />
                 )}
               </div>
             );

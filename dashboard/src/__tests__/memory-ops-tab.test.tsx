@@ -5,17 +5,36 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryOpsTab } from "../components/MemoryOpsTab";
 import {
+  parseCacheHitAttribute,
   parseHygieneLine,
   parseReceiptAttribute,
   sortTiers,
+  surfaceLabel,
 } from "../components/memory-ops/format";
+import {
+  HYGIENE_SNAPSHOT_PATH,
+  hygieneHistoryUrl,
+  isForbiddenError,
+  TRENDS_EMPTY_TEXT,
+  TRENDS_FORBIDDEN_TEXT,
+} from "../components/memory-ops/HygieneTrends";
 import { JOBS_EMPTY_COMMANDS } from "../components/memory-ops/JobsSection";
-import { formatRatio, RATIO_SPECS, ratioTone } from "../components/memory-ops/RatiosSection";
+import {
+  formatRatio,
+  RATIO_SPECS,
+  ratioTone,
+  storageUtilizationSeries,
+} from "../components/memory-ops/RatiosSection";
+import { FOCUS_SPACE_EVENT, sybilSignal } from "../components/memory-ops/SpaceHealth";
+import { sparklineStats } from "../components/memory-ops/Sparkline";
 import { useWorldState } from "../hooks/use-world-state";
 import type {
+  MemoryHygieneHistory,
+  MemoryHygieneSample,
   MemoryJobsResponse,
   MemoryJobView,
   MemoryOverview,
+  MemorySpaceHealth,
 } from "../lib/memory-observability-types";
 import type { DashboardEvent } from "../lib/types";
 import { renderWithProviders, resetWorldState } from "./test-utils";
@@ -180,6 +199,17 @@ const overview: MemoryOverview = {
         cacheHit: true,
         at: NOW - 10_000,
       },
+      {
+        requestId: "req-2",
+        entity: "Grace",
+        surface: "unknown",
+        tiers: [{ tier: "unverified", count: 1, bytes: 120 }],
+        usedBytes: 120,
+        budgetBytes: 2048,
+        truncated: false,
+        cacheHit: false,
+        at: NOW - 5_000,
+      },
     ],
     cache: { hits: 3, misses: 1, stores: 2 },
   },
@@ -189,8 +219,80 @@ const overview: MemoryOverview = {
       { id: "guide", name: "guide", records: 12, ratified: 7 },
       { id: "tradition-lore", name: "tradition · lore", records: 3, ratified: 1 },
     ],
+    shared: [
+      {
+        id: "guide",
+        name: "guide",
+        institutional: true,
+        ownerName: "Sovereign",
+        records: 12,
+        ratified: 7,
+        writers: 2,
+        freshWriters: 1,
+        freshWriterShare: share(1, 2),
+        competing: 0,
+        resolutions24h: 2,
+        unresolvedContradictionRate: share(0, 0),
+        lastWriteAt: NOW - 3 * 3_600_000,
+      },
+      {
+        id: "commons",
+        name: "commons",
+        institutional: false,
+        ownerName: "Ada",
+        records: 9,
+        ratified: 0,
+        writers: 4,
+        freshWriters: 3,
+        freshWriterShare: share(3, 4),
+        competing: 2,
+        resolutions24h: 1,
+        unresolvedContradictionRate: share(2, 3),
+        lastWriteAt: null,
+      },
+    ] satisfies MemorySpaceHealth[],
   },
 };
+
+/** Oldest → newest, one per hour. Redundancy has a 0/0 gap in the third sample. */
+const sample = (
+  hoursAgo: number,
+  patch: Partial<Pick<MemoryOverview["ratios"], "redundancy" | "cost" | "storage">>,
+): MemoryHygieneSample => ({
+  at: NOW - hoursAgo * 3_600_000,
+  ratios: { ...ratios, computedAt: NOW - hoursAgo * 3_600_000, ...patch },
+});
+const storageAt = (utilization: number) => [
+  { ...ratios.storage[0]!, utilization },
+  ratios.storage[1]!,
+];
+const history: MemoryHygieneHistory = {
+  scope: "all",
+  hours: 168,
+  samples: [
+    sample(3, {
+      redundancy: share(4, 40),
+      cost: { ...ratios.cost, cacheHitRate: share(1, 4) },
+      storage: storageAt(0.6),
+    }),
+    sample(2, {
+      redundancy: share(2, 40),
+      cost: { ...ratios.cost, cacheHitRate: share(2, 4) },
+      storage: storageAt(0.65),
+    }),
+    sample(1, {
+      redundancy: share(0, 0),
+      cost: { ...ratios.cost, cacheHitRate: share(3, 6) },
+      storage: storageAt(0.7),
+    }),
+    sample(0, {
+      redundancy: share(2, 40),
+      cost: { ...ratios.cost, cacheHitRate: share(3, 8) },
+      storage: storageAt(0.73),
+    }),
+  ],
+};
+const emptyHistory: MemoryHygieneHistory = { scope: "all", hours: 168, samples: [] };
 
 const emptyOverview: MemoryOverview = {
   ...overview,
@@ -200,7 +302,7 @@ const emptyOverview: MemoryOverview = {
   ratifications: [],
   credits: [],
   receipts: { recent: [], cache: { hits: 0, misses: 0, stores: 0 } },
-  spaces: { institutional: [] },
+  spaces: { institutional: [], shared: [] },
   ratios: {
     ...ratios,
     redundancy: share(0, 0),
@@ -210,15 +312,25 @@ const emptyOverview: MemoryOverview = {
   },
 };
 
-function routeFetch(view: MemoryOverview, jobs: MemoryJobView[], details?: MemoryJobView) {
+function routeFetch(
+  view: MemoryOverview,
+  jobs: MemoryJobView[],
+  details?: MemoryJobView,
+  trend: MemoryHygieneHistory | Error = view === emptyOverview ? emptyHistory : history,
+) {
   fetchApi.mockImplementation((path: string) => {
     if (path === "/api/memory/overview") return Promise.resolve(view);
     if (path.startsWith("/api/memory/jobs?"))
       return Promise.resolve({ jobs, nextCursor: null } satisfies MemoryJobsResponse);
     if (path.startsWith("/api/memory/jobs/") && details) return Promise.resolve(details);
+    if (path.startsWith("/api/memory/hygiene/history"))
+      return trend instanceof Error ? Promise.reject(trend) : Promise.resolve(trend);
     return Promise.reject(new Error(`unexpected ${path}`));
   });
 }
+
+const historyCalls = () =>
+  fetchApi.mock.calls.filter(([path]) => String(path).startsWith("/api/memory/hygiene/history"));
 
 beforeEach(() => {
   resetWorldState();
@@ -242,7 +354,7 @@ describe("MemoryOpsTab", () => {
       "Standing credits",
       "Receipts",
       "Hygiene",
-      "Institutional spaces",
+      "Spaces",
     ]) {
       expect(screen.getByLabelText(title)).toBeInTheDocument();
     }
@@ -290,9 +402,11 @@ describe("MemoryOpsTab", () => {
     expect(within(hygiene).getByText("pending").nextElementSibling).toHaveTextContent("4");
     expect(within(hygiene).getByText("unsupported").nextElementSibling).toHaveTextContent("3");
 
-    // Institutional spaces
-    expect(screen.getByTestId("space-guide")).toHaveTextContent("12 records · 7 ratified");
-    expect(screen.getByTestId("space-tradition-lore")).toBeInTheDocument();
+    // Spaces come from `spaces.shared`, in delivered order.
+    const spaces = screen.getByTestId("space-health");
+    expect(spaces.firstElementChild).toHaveAttribute("data-testid", "space-guide");
+    expect(screen.getByTestId("space-guide")).toHaveTextContent("12 / 7");
+    expect(screen.getByTestId("space-commons")).toBeInTheDocument();
   });
 
   it("cancels a job: optimistic patch, POST, then reconcile with the server row", async () => {
@@ -401,6 +515,11 @@ describe("MemoryOpsTab", () => {
     expect(within(receipt).getByText("cache hit")).toBeInTheDocument();
     expect(within(receipt).getByText("truncated")).toBeInTheDocument();
     expect(within(receipt).getByText(/1\.5 KB \/ 2\.0 KB \(73%\)/)).toBeInTheDocument();
+    expect(within(receipt).getByTitle("passthru surface")).toHaveTextContent("openai");
+    // An `unknown` surface renders as an em dash, never the literal word.
+    const unknown = screen.getByTestId("receipt-req-2");
+    expect(within(unknown).getByTitle("passthru surface")).toHaveTextContent("—");
+    expect(within(unknown).queryByText("unknown")).not.toBeInTheDocument();
 
     fireEvent.click(within(receipt).getByRole("button", { name: /open trace/ }));
     expect(onOpenTrace).toHaveBeenCalledWith("req-1");
@@ -418,6 +537,12 @@ describe("MemoryOpsTab", () => {
     expect(screen.getByText(/No memory receipts yet/)).toBeInTheDocument();
     expect(screen.getByText(/No hygiene lines yet/)).toBeInTheDocument();
     expect(screen.getByText(/No institutional spaces/)).toBeInTheDocument();
+    // Empty history: the nudge, no sparklines, Snapshot still offered.
+    await waitFor(() =>
+      expect(screen.getByTestId("trend-status")).toHaveTextContent(TRENDS_EMPTY_TEXT),
+    );
+    expect(screen.queryByTestId("sparkline-redundancy")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Snapshot now" })).toBeInTheDocument();
   });
 
   it("filters jobs server-side by state/role and client-side by marker", async () => {
@@ -464,6 +589,17 @@ describe("memory-ops/format", () => {
     expect(receipt?.degraded).toEqual([]);
   });
 
+  it("labels passthru surfaces and parses stringly-typed cache-hit attributes", () => {
+    expect(surfaceLabel("anthropic")).toBe("anthropic");
+    expect(surfaceLabel("unknown")).toBe("—");
+    expect(surfaceLabel(undefined)).toBe("—");
+    expect(parseCacheHitAttribute("true")).toBe(true);
+    expect(parseCacheHitAttribute("false")).toBe(false);
+    expect(parseCacheHitAttribute(true)).toBe(true);
+    expect(parseCacheHitAttribute("yes")).toBeUndefined();
+    expect(parseCacheHitAttribute(undefined)).toBeUndefined();
+  });
+
   it("orders tiers by injection order with unknown tiers trailing", () => {
     expect(
       sortTiers([
@@ -500,11 +636,7 @@ describe("MemoryOpsTab deep link", () => {
 
 describe("continuous hygiene ratios", () => {
   it("renders every ratio with value and numerator/denominator, n/a for empty denominators, and the storage budget", async () => {
-    fetchApi.mockImplementation(async (url: string) => {
-      if (url.startsWith("/api/memory/overview")) return overview;
-      if (url.startsWith("/api/memory/jobs")) return { jobs: [], nextCursor: null };
-      throw new Error(`unexpected ${url}`);
-    });
+    routeFetch(overview, []);
     renderWithProviders(<MemoryOpsTab />);
     const section = await screen.findByTestId("hygiene-ratios");
     for (const spec of RATIO_SPECS) {
@@ -534,5 +666,150 @@ describe("continuous hygiene ratios", () => {
     expect(ratioTone(share(1, 4), { better: "higher", warnAt: 0.5 })).toBe("warning");
     expect(ratioTone(share(0, 0), { better: "higher", warnAt: 0.5 })).toBe("default");
     expect(formatRatio(share(1, 400), "share")).toBe("<1%");
+  });
+});
+
+describe("hygiene trends", () => {
+  it("draws a sparkline per ratio card: null samples are gaps, latest is highlighted, tooltip carries min/max/latest", async () => {
+    routeFetch(overview, []);
+    renderWithProviders(<MemoryOpsTab />);
+    const section = await screen.findByTestId("hygiene-ratios");
+    const spark = await within(section).findByTestId("sparkline-redundancy");
+    expect(fetchApi).toHaveBeenCalledWith(hygieneHistoryUrl(168));
+    // 4 samples, one 0/0 gap → two runs: a 2-point polyline and a lone point.
+    expect(spark.dataset.points).toBe("3");
+    expect(spark.dataset.gaps).toBe("1");
+    expect(spark.querySelectorAll("polyline")).toHaveLength(1);
+    expect(spark.querySelectorAll("[data-lone]")).toHaveLength(1);
+    expect(spark.querySelectorAll("[data-latest]")).toHaveLength(1);
+    expect(spark.querySelector("title")?.textContent).toBe(
+      "redundancy: min 5% · max 10% · latest 5%",
+    );
+    // Every ratio card has one, plus the cost card and the top storage owner only.
+    for (const spec of RATIO_SPECS) {
+      expect(within(section).getByTestId(`sparkline-${spec.key}`)).toBeInTheDocument();
+    }
+    expect(
+      within(section).getByTestId("sparkline-cacheHitRate").querySelector("title"),
+    ).toHaveTextContent("cache hit rate: min 25% · max 50% · latest 38%");
+    const ada = within(section).getByTestId("storage-Ada");
+    expect(within(ada).getByTestId("sparkline-storage").querySelector("title")).toHaveTextContent(
+      "Ada utilization: min 60% · max 73% · latest 73%",
+    );
+    expect(
+      within(within(section).getByTestId("storage-Grace")).queryByTestId("sparkline-storage"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("trend-status")).toHaveTextContent("4 snapshots");
+  });
+
+  it("switches the range (24h / 7d / 30d, default 7d) and refetches", async () => {
+    routeFetch(overview, []);
+    renderWithProviders(<MemoryOpsTab />);
+    await screen.findByTestId("sparkline-redundancy");
+    const range = screen.getByLabelText("Trend range");
+    expect(within(range).getByText("7d")).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(within(range).getByText("24h"));
+    await waitFor(() => expect(fetchApi).toHaveBeenCalledWith(hygieneHistoryUrl(24)));
+    fireEvent.click(within(range).getByText("30d"));
+    await waitFor(() => expect(fetchApi).toHaveBeenCalledWith(hygieneHistoryUrl(720)));
+  });
+
+  it("Snapshot now POSTs the snapshot then refetches the history", async () => {
+    routeFetch(overview, []);
+    postApi.mockResolvedValue({ at: NOW });
+    renderWithProviders(<MemoryOpsTab />);
+    await screen.findByTestId("sparkline-redundancy");
+    const before = historyCalls().length;
+    fireEvent.click(screen.getByRole("button", { name: "Snapshot now" }));
+    await waitFor(() => expect(postApi).toHaveBeenCalledWith(HYGIENE_SNAPSHOT_PATH));
+    await waitFor(() => expect(historyCalls().length).toBeGreaterThan(before));
+  });
+
+  it("hides trends behind a one-line note when the history endpoint answers 403", async () => {
+    routeFetch(overview, [], undefined, new Error("API error: 403"));
+    renderWithProviders(<MemoryOpsTab />);
+    const section = await screen.findByTestId("hygiene-ratios");
+    await waitFor(() =>
+      expect(screen.getByTestId("trend-status")).toHaveTextContent(TRENDS_FORBIDDEN_TEXT),
+    );
+    // Live ratios still render; nothing privileged is offered.
+    expect(within(section).getByTestId("ratio-redundancy")).toBeInTheDocument();
+    expect(screen.queryByTestId("sparkline-redundancy")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Snapshot now" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Trend range")).not.toBeInTheDocument();
+    expect(isForbiddenError(new Error("API error: 403"))).toBe(true);
+    expect(isForbiddenError(new Error("API error: 500"))).toBe(false);
+  });
+
+  it("summarises sparkline values and pulls one owner's utilization out of the history", () => {
+    expect(sparklineStats([null, null])).toBeNull();
+    expect(sparklineStats([0.1, null, 0.3])).toEqual({
+      min: 0.1,
+      max: 0.3,
+      latest: 0.3,
+      points: 2,
+      gaps: 1,
+    });
+    expect(storageUtilizationSeries(history.samples, "Ada")).toEqual([0.6, 0.65, 0.7, 0.73]);
+    expect(storageUtilizationSeries(history.samples, "Grace")).toEqual([null, null, null, null]);
+  });
+});
+
+describe("space health", () => {
+  it("renders each shared space with owner, records/ratified, writers bar, competing, resolutions, unresolved rate and last write", async () => {
+    routeFetch(overview, []);
+    renderWithProviders(<MemoryOpsTab />);
+    const guide = await screen.findByTestId("space-guide");
+    expect(within(guide).getByText("institutional")).toBeInTheDocument();
+    expect(within(guide).getByText("owner Sovereign")).toBeInTheDocument();
+    expect(within(guide).getByText("records / ratified").nextElementSibling).toHaveTextContent(
+      "12 / 7",
+    );
+    expect(within(guide).getByText("resolutions 24h").nextElementSibling).toHaveTextContent("2");
+    // 0/0 unresolved is n/a, never 0 %.
+    expect(within(guide).getByText("unresolved").nextElementSibling).toHaveTextContent("n/a");
+    expect(within(guide).getByText(/last write 3h ago/)).toBeInTheDocument();
+    // 1 of 2 fresh is 50 % but only two writers — no Sybil warning.
+    expect(guide).not.toHaveAttribute("data-warn");
+
+    const commons = screen.getByTestId("space-commons");
+    expect(within(commons).queryByText("institutional")).not.toBeInTheDocument();
+    expect(within(commons).getByText("owner Ada")).toBeInTheDocument();
+    expect(within(commons).getByText("competing").nextElementSibling).toHaveTextContent("2");
+    expect(within(commons).getByText("unresolved").nextElementSibling).toHaveTextContent("67%");
+    expect(within(commons).getByText("no writes yet")).toBeInTheDocument();
+    // 3 of 4 writers fresh → Sybil-shaped: warn tone + bar width = share.
+    expect(commons).toHaveAttribute("data-warn", "true");
+    expect(within(commons).getByTestId("space-fresh-bar-commons").style.width).toBe("75%");
+    expect(within(commons).getByTestId("space-writers-commons")).toHaveAttribute(
+      "title",
+      expect.stringContaining("Sybil-shaped"),
+    );
+  });
+
+  it("dispatches marina:focus-space with the space id when a row is clicked", async () => {
+    routeFetch(overview, []);
+    renderWithProviders(<MemoryOpsTab />);
+    const guide = await screen.findByTestId("space-guide");
+    const seen: string[] = [];
+    const listener = (event: Event) => {
+      seen.push((event as CustomEvent<{ spaceId: string }>).detail.spaceId);
+    };
+    window.addEventListener(FOCUS_SPACE_EVENT, listener);
+    try {
+      fireEvent.click(guide);
+      fireEvent.click(screen.getByTestId("space-commons"));
+    } finally {
+      window.removeEventListener(FOCUS_SPACE_EVENT, listener);
+    }
+    expect(seen).toEqual(["guide", "commons"]);
+  });
+
+  it("flags the Sybil shape only when the fresh share is high AND there are several writers", () => {
+    expect(sybilSignal({ writers: 4, freshWriterShare: share(3, 4) })).toBe(true);
+    expect(sybilSignal({ writers: 3, freshWriterShare: share(2, 4) })).toBe(true);
+    expect(sybilSignal({ writers: 2, freshWriterShare: share(2, 2) })).toBe(false);
+    expect(sybilSignal({ writers: 6, freshWriterShare: share(2, 6) })).toBe(false);
+    expect(sybilSignal({ writers: 0, freshWriterShare: share(0, 0) })).toBe(false);
   });
 });

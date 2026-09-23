@@ -36,8 +36,17 @@ interface FeedState {
   kindFilter: string | null;
   /** Active entity filter (null = show all). */
   entityFilter: string | null;
+  /**
+   * Last snapshot-fetch failure (HTTP status or thrown message), null when the
+   * most recent `/api/feed` load succeeded. Lets panels distinguish "no events
+   * yet" from "the backend is unreachable".
+   */
+  error: string | null;
+  /** Epoch ms of the last snapshot attempt (success or failure); null before the first. */
+  lastFetchAt: number | null;
 
   setSnapshot: (events: FeedEvent[]) => void;
+  setError: (error: string | null) => void;
   applyEvent: (event: DashboardEvent) => void;
   setKindFilter: (kind: string | null) => void;
   setEntityFilter: (entity: string | null) => void;
@@ -49,8 +58,17 @@ export const useFeedState = create<FeedState>((set) => ({
   snapshotLoaded: false,
   kindFilter: null,
   entityFilter: null,
+  error: null,
+  lastFetchAt: null,
 
-  setSnapshot: (events) => set({ events: events.slice(0, MAX_FEED), snapshotLoaded: true }),
+  setSnapshot: (events) =>
+    set({
+      events: events.slice(0, MAX_FEED),
+      snapshotLoaded: true,
+      error: null,
+      lastFetchAt: Date.now(),
+    }),
+  setError: (error) => set({ error, lastFetchAt: Date.now() }),
 
   applyEvent: (event) =>
     set((state) => {
@@ -70,13 +88,34 @@ export const useFeedState = create<FeedState>((set) => ({
   setKindFilter: (kind) => set({ kindFilter: kind }),
   setEntityFilter: (entity) => set({ entityFilter: entity }),
 
-  reset: () => set({ events: [], snapshotLoaded: false, kindFilter: null, entityFilter: null }),
+  reset: () =>
+    set({
+      events: [],
+      snapshotLoaded: false,
+      kindFilter: null,
+      entityFilter: null,
+      error: null,
+      lastFetchAt: null,
+    }),
 }));
 
-/** Pull initial timeline state from the backend — called once on WS connect. */
+/**
+ * Pull initial timeline state from the backend — called once on WS connect and
+ * again from a panel's "retry" button. Never throws: a non-OK response or a
+ * network failure is recorded in `error` so the UI can say so instead of
+ * rendering an empty timeline.
+ */
 export async function loadFeedSnapshot(limit = 200): Promise<void> {
-  const res = await fetch(`/api/feed?limit=${limit}`, { credentials: "same-origin" });
-  if (!res.ok) return;
-  const events = (await res.json()) as FeedEvent[];
-  useFeedState.getState().setSnapshot(events);
+  const store = useFeedState.getState();
+  try {
+    const res = await fetch(`/api/feed?limit=${limit}`, { credentials: "same-origin" });
+    if (!res.ok) {
+      store.setError(`HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`);
+      return;
+    }
+    const events = (await res.json()) as FeedEvent[];
+    store.setSnapshot(events);
+  } catch (err) {
+    store.setError(err instanceof Error ? err.message : String(err));
+  }
 }

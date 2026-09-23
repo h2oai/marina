@@ -13,7 +13,7 @@
 import { record as recordStanding } from "../agent/standing";
 import { getErrorMessage } from "../engine/errors";
 import type { Logger } from "../engine/logger";
-import type { MarinaDB } from "../persistence/database";
+import type { MarinaDB, MemoryPoolRow } from "../persistence/database";
 import type { CrewMemberRow, CrewRow } from "../persistence/db-crews";
 import type {
   Crew,
@@ -77,6 +77,14 @@ export interface CreateCrewOpts {
   members: { agentName: string; role?: string }[];
 }
 
+export interface CrewCompletionResult {
+  resultNoteId?: number;
+  /** False when a completion precondition failed and no standing was paid. */
+  standingCredited: boolean;
+  /** One-line, agent-facing reason when `standingCredited` is false. */
+  standingSkippedReason?: string;
+}
+
 export class CrewError extends Error {
   constructor(
     message: string,
@@ -114,6 +122,13 @@ export class CrewManager {
   private readonly invitations = new Map<string, CrewInvitation>();
   /** Per-(crew,member) stall offense counter. Standing only debits at >= 3. */
   private readonly memberOffenses = new Map<string, number>();
+  /**
+   * Crews with at least one completed dispatch — a stage completion, an
+   * artifact deposit, or a member pool deposit while active. `complete()`
+   * credits standing only for crews in this set (anti-farming: `crew create`
+   * + `crew complete` with no work must not pay the owner).
+   */
+  private readonly workEvidence = new Set<CrewId>();
 
   constructor(deps: CrewManagerDeps) {
     this.channels = deps.channels;
@@ -138,6 +153,9 @@ export class CrewManager {
       if (this.crews.has(toCrewId(row.id))) continue;
       const crew = this.crewFromRow(row, this.db.getCrewMembers(row.id));
       this.indexCrew(crew);
+      // Backfill: crew pools predating the group object get grouped here.
+      this.ensureCrewPoolGroup(crew);
+      this.rehydrateWorkEvidence(crew);
       loaded++;
     }
     for (const row of this.db.getOpenCrewInvitations()) {
@@ -155,6 +173,24 @@ export class CrewManager {
       });
     }
     return loaded;
+  }
+
+  /**
+   * Work evidence is in-memory; after a restart a persisted crew's channel
+   * history is the durable trace — `onMemberPoolDeposit` posts a
+   * `[crew-deposit]` line for every deposit that landed while active.
+   */
+  private rehydrateWorkEvidence(crew: Crew): void {
+    if (!crew.channelId) return;
+    try {
+      const delivered = this.channels
+        .getHistory(crew.channelId, 200)
+        .some((m) => m.senderId === "__crew_manager__" && m.content.startsWith("[crew-deposit]"));
+      if (delivered) this.workEvidence.add(crew.id);
+    } catch {
+      // History lookup is best-effort; without it the crew simply has to
+      // demonstrate work again before completion pays standing.
+    }
   }
 
   // ─── Lookup ────────────────────────────────────────────────────────────────
@@ -364,6 +400,7 @@ export class CrewManager {
     if (firstActivation) {
       this.postFormationBrief(crew);
     }
+    this.syncCrewPoolGroup(crew);
 
     this.transition(crew, "active");
     // The [crew-task] marker makes a dispatch a DIRECTED-work perception:
@@ -500,7 +537,9 @@ export class CrewManager {
    */
   onMemberPoolDeposit(agentName: string, poolName: string, content: string): void {
     for (const crew of this.forAgent(agentName)) {
+      if (crew.poolId) this.syncCrewPoolGroup(crew);
       if (crew.state !== "active" || !crew.channelId) continue;
+      this.workEvidence.add(crew.id);
       this.clearDepositFallbacks(crew.id);
       const snippet = content.length > 100 ? `${content.slice(0, 97)}…` : content;
       this.channels.send(
@@ -582,6 +621,7 @@ export class CrewManager {
     if (crew.lifetime === "persisted" && this.db) {
       this.db.addCrewMember(crew.id, agentName, role, member.joinedAt);
       this.persistRow(crew);
+      this.syncCrewPoolGroup(crew);
     }
     this.emit({
       type: "crew_member_joined",
@@ -610,6 +650,7 @@ export class CrewManager {
     if (crew.lifetime === "persisted" && this.db) {
       this.db.removeCrewMember(crew.id, agentName);
       this.persistRow(crew);
+      this.syncCrewPoolGroup(crew);
     }
     this.emit({
       type: "crew_member_left",
@@ -628,6 +669,10 @@ export class CrewManager {
     const crew = this.requireCrew(id);
     if (crew.state === "dissolved") return;
     this.clearDepositFallbacks(id);
+    this.workEvidence.delete(id);
+    // Final roster sync: the pool (and its group) outlive the crew row, and
+    // the group keeps whoever was in the crew at the end.
+    this.syncCrewPoolGroup(crew);
 
     this.transition(crew, "dissolved");
     this.byName.delete(crew.name);
@@ -703,6 +748,93 @@ export class CrewManager {
       poolRow = this.db.getMemoryPool(poolName);
     }
     crew.poolId = poolRow?.id;
+    this.ensureCrewPoolGroup(crew);
+  }
+
+  /**
+   * Crew pools are members-only. Every `crew:<name>` pool is scoped by a
+   * group object of the same id (`crew:<name>`, leader = crew owner) whose
+   * roster mirrors the crew: owner + current members. The legacy-memory
+   * ACL (`memoryAccess().pool`, `gatherRetrievalContext`, passthru
+   * harvesting) already honors `memory_pools.group_id`, so attaching the
+   * group is what turns an open world pool into crew-private memory.
+   *
+   * Idempotent and safe on every boot: an existing ungrouped crew pool (one
+   * created before the group object existed) gets the group attached and its
+   * roster populated from the live crew — no migration.
+   */
+  private ensureCrewPoolGroup(crew: Crew): void {
+    if (!this.db || crew.lifetime !== "persisted") return;
+    const pool = this.resolveCrewPool(crew);
+    if (!pool) return;
+    try {
+      if (!pool.group_id) {
+        const groupId = pool.name;
+        if (!this.db.getGroup(groupId)) {
+          this.db.createGroup({
+            id: groupId,
+            name: groupId,
+            description: `Members-only memory scope for crew "${crew.name}"`,
+            leaderId: String(crew.ownerId),
+          });
+        }
+        this.db.setMemoryPoolGroup(pool.id, groupId);
+        pool.group_id = groupId;
+      }
+      this.syncCrewPoolGroup(crew);
+    } catch (err) {
+      this.logger?.warn("crew", "pool group provisioning failed", {
+        crew: crew.name,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
+  /**
+   * Make the pool group's roster exactly {owner} ∪ {resolvable members}.
+   * Entity ids are transient (re-minted on reconnect), so this re-runs at
+   * every point a member's identity matters — join/leave, dispatch, pool
+   * deposit, boot — rather than only once. Members whose name resolves to
+   * no live entity are skipped and picked up on the next sync.
+   *
+   * On dissolution the final sync leaves the roster as it stood: the pool
+   * and its notes outlive the crew (generational memory), and reads stay
+   * scoped to the people who were in it. A successor crew of the same
+   * name inherits the pool and re-syncs the group to its own roster.
+   */
+  syncCrewPoolGroup(target: CrewId | Crew): void {
+    const crew = typeof target === "string" ? this.crews.get(target) : target;
+    if (!crew || !this.db || crew.lifetime !== "persisted") return;
+    const pool = this.resolveCrewPool(crew);
+    if (!pool?.group_id) return;
+    const groupId = pool.group_id;
+    try {
+      const desired = new Map<string, number>([[String(crew.ownerId), 2]]);
+      for (const m of crew.members) {
+        const memberId = this.resolveAgentId(m.agentName);
+        if (memberId && !desired.has(memberId)) desired.set(memberId, 0);
+      }
+      const current = new Set(this.db.getGroupMembers(groupId).map((row) => row.entity_id));
+      for (const [entityId, rank] of desired) {
+        if (!current.has(entityId)) this.db.addGroupMember(groupId, entityId, rank);
+      }
+      for (const entityId of current) {
+        if (!desired.has(entityId)) this.db.removeGroupMember(groupId, entityId);
+      }
+    } catch (err) {
+      this.logger?.warn("crew", "pool group sync failed", {
+        crew: crew.name,
+        error: getErrorMessage(err),
+      });
+    }
+  }
+
+  private resolveCrewPool(crew: Crew): MemoryPoolRow | undefined {
+    if (!this.db) return undefined;
+    return (
+      (crew.poolId ? this.db.getMemoryPoolById(crew.poolId) : undefined) ??
+      this.db.getMemoryPool(`crew:${crew.name}`)
+    );
   }
 
   /**
@@ -711,13 +843,17 @@ export class CrewManager {
    * the owner's notes (ephemeral). Members can recall it via the standard
    * note paths — no special crew_results surface.
    */
-  complete(id: CrewId, summary: string, ownerName: string): { resultNoteId?: number } {
+  complete(id: CrewId, summary: string, ownerName: string): CrewCompletionResult {
     const crew = this.requireCrew(id);
     if (crew.state === "dissolved") {
       throw new CrewError(`Crew ${crew.name} is dissolved`, "dissolved");
     }
     const text = summary.trim();
     if (!text) throw new CrewError("Result summary required", "no_members");
+    // Evaluate before the state transition below: standing is only earned by
+    // a crew that was actually dispatched (active), staffed by >= 2 distinct
+    // members, and completed at least one dispatch.
+    const standingSkipped = this.standingSkipReason(crew);
 
     let noteId: number | undefined;
     const noteIds: number[] = [];
@@ -767,7 +903,7 @@ export class CrewManager {
     // on top. Standing is keyed by entity id, so we resolve via the deps
     // callback (silent skip on unknown agents — this is best-effort civic
     // accounting, not a hard requirement).
-    if (this.db) {
+    if (this.db && !standingSkipped) {
       for (const member of crew.members) {
         const memberId = this.resolveAgentId(member.agentName);
         if (!memberId) continue;
@@ -808,7 +944,24 @@ export class CrewManager {
     // ordering deterministic for listeners and avoids a tick-delay window
     // where members could keep dispatching.
     this.dissolve(id, "completed");
-    return { resultNoteId: noteId };
+    return standingSkipped
+      ? { resultNoteId: noteId, standingCredited: false, standingSkippedReason: standingSkipped }
+      : { resultNoteId: noteId, standingCredited: true };
+  }
+
+  /** Why `complete()` would withhold standing for this crew, or undefined if it pays. */
+  private standingSkipReason(crew: Crew): string | undefined {
+    if (crew.state !== "active") {
+      return `crew was never dispatched (state: ${crew.state})`;
+    }
+    const distinct = new Set(crew.members.map((m) => m.agentName.toLowerCase())).size;
+    if (distinct < 2) {
+      return `crew needs at least 2 distinct members (had ${distinct})`;
+    }
+    if (!this.workEvidence.has(crew.id)) {
+      return "no dispatch was completed (no stage, artifact, or pool deposit recorded)";
+    }
+    return undefined;
   }
 
   /**
@@ -824,6 +977,7 @@ export class CrewManager {
     if (!crew.members.some((m) => m.agentName === agentName)) {
       throw new CrewError(`${agentName} is not a member of ${crew.name}`, "not_member");
     }
+    this.workEvidence.add(crew.id);
     this.touch(crew);
     this.persistRow(crew);
     this.emit({
@@ -854,6 +1008,7 @@ export class CrewManager {
     if (!crew.members.some((m) => m.agentName === agentName)) {
       throw new CrewError(`${agentName} is not a member of ${crew.name}`, "not_member");
     }
+    this.workEvidence.add(crew.id);
     this.touch(crew);
     this.persistRow(crew);
     this.emit({

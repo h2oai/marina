@@ -2,80 +2,54 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * memory-map-types -- The unified canvas's own mirror of the memory-graph
- * contract served by `GET /api/memory/graph?entity=<name>&limit=400`, plus the
- * visual vocabulary (state colors, unified tier colors, relationship styles)
- * the MEMORY layer renders from.
+ * memory-map-types -- The unified canvas's view of the memory-graph contract
+ * served by `GET /api/memory/graph?entity=<name>&limit=400`, plus the visual
+ * vocabulary (state colors, unified tier colors, relationship styles) the
+ * MEMORY layer renders from.
  *
- * This file deliberately does NOT import the components/ mirror
- * (`dashboard/src/lib/memory-observability-types.ts`) — the unified surface
- * owns its own copy so the two halves of the dashboard can evolve on their
- * own cadence. Keep the shapes byte-identical to the backend contract.
+ * The wire contract (`MemoryGraph`, `MemoryGraphNode`, `MemoryGraphEdge`) is
+ * re-exported type-only from the backend's single source,
+ * `src/net/memory-observability-types.ts` — Vite erases the import and the
+ * backend file is dependency-free. The `…Kind` / `…Relationship` unions are
+ * derived from it by indexed access, so they cannot drift.
+ *
+ * This file still deliberately does NOT import the components/ module
+ * (`dashboard/src/lib/memory-observability-types.ts`): the two halves of the
+ * dashboard share the backend contract, not each other.
+ *
+ * The live WebSocket payload types below are intentionally LOOSE (`| string`,
+ * every job field optional): the reducer tolerates partial frames. The one
+ * structured field, `adopted`, is typed from `MemoryJobView` so the live
+ * frame and the REST view cannot disagree on its shape. See
+ * `src/__tests__/memory-observability-contract.test.ts` for what is pinned.
  */
 
-// ── Wire contract ───────────────────────────────────────────────────────────
+import type {
+  MemoryGraph,
+  MemoryGraphEdge,
+  MemoryGraphNode,
+  MemoryJobView,
+} from "../../../../src/net/memory-observability-types";
 
-export type MemoryGraphNodeKind =
-  | "note"
-  | "record"
-  | "job"
-  | "proposal"
-  | "resolution"
-  | "space"
-  | "helper";
+// ── Wire contract (single-sourced from the backend) ─────────────────────────
 
-export type MemoryGraphNode = {
-  /** Prefixed id: `note:<id>`, `record:<id>`, `job:<id>`, `proposal:<recordId>`,
-   *  `resolution:<id>`, `space:<id>`, `helper:<name>`. */
-  id: string;
-  kind: MemoryGraphNodeKind;
-  label: string;
-  entityName?: string;
-  spaceId?: string;
-  state?: string;
-  tier?: string;
-  policy?: string;
-  role?: string;
-  institutional?: boolean;
-  at?: number;
-  meta?: Record<string, string | number | boolean | null>;
-};
+export type {
+  MemoryGraph,
+  MemoryGraphEdge,
+  MemoryGraphNode,
+} from "../../../../src/net/memory-observability-types";
 
-export type MemoryGraphRelationship =
-  | "twin"
-  | "cites"
-  | "derived_from"
-  | "resolves"
-  | "superseded_by"
-  | "in_space"
-  | "worker"
-  | "requester"
-  | "adopted_as"
-  | "related_to"
-  | "part_of"
-  | "supersedes"
-  | "contradicts";
+export type MemoryGraphNodeKind = MemoryGraphNode["kind"];
 
-export type MemoryGraphEdge = {
-  id: string;
-  source: string;
-  target: string;
-  relationship: MemoryGraphRelationship;
-};
-
-export type MemoryGraph = {
-  nodes: MemoryGraphNode[];
-  edges: MemoryGraphEdge[];
-  truncated: boolean;
-};
+export type MemoryGraphRelationship = MemoryGraphEdge["relationship"];
 
 export const EMPTY_MEMORY_GRAPH: MemoryGraph = { nodes: [], edges: [], truncated: false };
 
 // ── Live WebSocket payloads ─────────────────────────────────────────────────
 
-export type MemoryJobState = "pending" | "running" | "answered" | "abstained" | "cancelled";
+export type MemoryJobState = MemoryJobView["state"];
 
-export type MemoryJobMarker = "hygiene" | "accumulation" | "shared-write-review";
+export type MemoryJobMarker = NonNullable<MemoryJobView["marker"]>;
 
 /** `{ type: "memory_job", job, timestamp }` on the dashboard WebSocket. */
 export type MemoryJobEvent = {
@@ -95,9 +69,8 @@ export type MemoryJobEvent = {
     deadline?: number;
     createdAt?: number;
     marker?: string;
-    adopted?: boolean;
-    /** Present when the backend knows which record the proposal became. */
-    adoptedRecordId?: string;
+    /** Same shape as the REST view: `{ recordId, spaceId, at }` once adopted, else null/absent. */
+    adopted?: MemoryJobView["adopted"];
   };
   timestamp: number;
 };

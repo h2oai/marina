@@ -40,6 +40,15 @@ export function __setDnsResolverForTest(resolver: DnsResolver | null): void {
 }
 
 /**
+ * Operator opt-in: treat a DNS resolution FAILURE as "nothing to block" instead
+ * of refusing the URL. Off by default (fail closed). Read per call so a test or
+ * a long-running process can flip it without a restart.
+ */
+function dnsFailOpen(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.MARINA_URL_GUARD_DNS_FAIL_OPEN?.trim().toLowerCase() === "true";
+}
+
+/**
  * Check if an IP address belongs to a private, loopback, or link-local range.
  *
  * Covers: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
@@ -222,6 +231,39 @@ export function validateFetchUrlSync(urlStr: string): string | null {
   return null;
 }
 
+/** Link-local (169.254/16, fe80::/10) and cloud-metadata literals, incl. IPv4-mapped IPv6 forms. */
+function isLinkLocalOrMetadataIp(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const v4 = h.startsWith("::ffff:") ? h.slice("::ffff:".length) : h;
+  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(v4)) return true;
+  if (v4 === "100.100.100.200") return true; // Alibaba Cloud metadata
+  return /^fe[89ab][0-9a-f]:/i.test(h);
+}
+
+/**
+ * Relaxed validation for the `local` trust profile, where the single operator is
+ * trusted with their own machine and LAN (a second Marina on a LAN GPU box, a
+ * dev federation peer). Checks only the URL shape — http/https scheme and a
+ * hostname — and still refuses link-local / cloud-metadata literals, which are
+ * never a legitimate peer. No DNS check. Returns an error string or `null`.
+ */
+export function validateOperatorLanUrl(urlStr: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(urlStr);
+  } catch {
+    return "Invalid URL";
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return `Blocked protocol: ${parsed.protocol}`;
+  }
+  if (!parsed.hostname) return "Invalid URL";
+  if (isLinkLocalOrMetadataIp(parsed.hostname)) {
+    return `Blocked link-local/metadata IP: ${parsed.hostname}`;
+  }
+  return null;
+}
+
 /**
  * Validate a URL for SSRF safety at fetch time. Returns an error string if the
  * URL is blocked, or `null` if it's safe to fetch.
@@ -245,7 +287,7 @@ export async function validateFetchUrl(urlStr: string): Promise<string | null> {
  * a rebinding host could serve a private IP after passing the check.
  *
  * `addresses` is empty for IP-literal hosts (nothing to pin) and for the
- * fail-open resolution-failure case.
+ * opt-in fail-open resolution-failure case (`MARINA_URL_GUARD_DNS_FAIL_OPEN`).
  */
 async function checkAndResolve(
   urlStr: string,
@@ -263,10 +305,13 @@ async function checkAndResolve(
   try {
     addresses = await dnsResolver(hostname);
   } catch {
-    // Fail OPEN on resolution failure: a host we can't resolve can't reach a
-    // private resource (the fetch itself will fail), and failing closed would
-    // break legitimate fetches in restricted-DNS environments.
-    return { addresses: [] };
+    // Fail CLOSED on resolution failure by default: an unresolvable host cannot
+    // be range-checked, and the caller's own fetch would re-resolve at connect
+    // time (a rebinding resolver that failed us once may answer 127.0.0.1 next).
+    // `MARINA_URL_GUARD_DNS_FAIL_OPEN=true` restores the permissive behavior for
+    // restricted-DNS environments where legitimate fetches would otherwise break.
+    if (dnsFailOpen()) return { addresses: [] };
+    return { error: `Blocked host ${hostname} — DNS resolution failed` };
   }
   for (const address of addresses) {
     if (isPrivateIp(address.toLowerCase())) {

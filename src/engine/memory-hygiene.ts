@@ -28,8 +28,16 @@
  * The job-filing machinery (find the running helper, one-open-marked-job
  * guard, bounded `assist_create`) lives in `memory-dispatch.ts` and is shared
  * with the accumulation and shared-write triggers.
+ *
+ * The same hourly run also writes ONE operator-scope sample of the
+ * continuous-hygiene ratios to `memory_hygiene_snapshots` (migration 115,
+ * `snapshotHygieneRatios`, 30-day retention) — the series behind
+ * `GET /api/memory/hygiene/history`. It runs AFTER the per-entity pass so the
+ * sample reflects any job filed this hour, is sync SQL under `tryLog`, and
+ * shares the hygiene phase so engine.ts needs no extra wiring.
  */
 
+import { snapshotHygieneRatios } from "../memory/hygiene-ratios";
 import { residentMemoryOperation } from "../memory/resident-service";
 import type { MarinaDB, NoteRow } from "../persistence/database";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
@@ -38,6 +46,7 @@ import type { EntityId } from "../types";
 import { auditKnowledgeNotes } from "./commands/knowledge-hygiene";
 import { NOTE_IMPORTANCE_INTERVAL } from "./constants";
 import type { Engine } from "./engine";
+import { tryLog } from "./errors";
 import {
   fileHelperJob,
   findOpenMarkedJob,
@@ -264,20 +273,27 @@ export function isMemoryHygieneTick(tickCount: number): boolean {
 export async function runEngineMemoryHygiene(engine: Engine): Promise<MemoryHygieneReport[]> {
   const db = engine.db;
   if (!db) return [];
-  return runMemoryHygiene(db, {
-    onlineEntities: () =>
-      engine.entities
-        .all()
-        .filter((e) => engine.getConnectionForEntity(e.id) !== undefined)
-        .map((e) => ({ id: e.id, name: e.name })),
-    residentMemoryOperation: (name, request) => residentMemoryOperation(db, name, request),
-    tell: (entityId, text) =>
-      engine.sendToEntity(entityId, text, "tell", {
-        from: "Marina memory",
-        message: text,
-        memory_hygiene: true,
-      }),
-    findRunningHelper: (role) => findRunningEngineHelper(engine, db, role),
-    warn: (message, detail) => engine.logger.warn("hygiene", message, detail),
-  });
+  try {
+    return await runMemoryHygiene(db, {
+      onlineEntities: () =>
+        engine.entities
+          .all()
+          .filter((e) => engine.getConnectionForEntity(e.id) !== undefined)
+          .map((e) => ({ id: e.id, name: e.name })),
+      residentMemoryOperation: (name, request) => residentMemoryOperation(db, name, request),
+      tell: (entityId, text) =>
+        engine.sendToEntity(entityId, text, "tell", {
+          from: "Marina memory",
+          message: text,
+          memory_hygiene: true,
+        }),
+      findRunningHelper: (role) => findRunningEngineHelper(engine, db, role),
+      warn: (message, detail) => engine.logger.warn("hygiene", message, detail),
+    });
+  } finally {
+    // One operator-scope ratio sample per hour, whatever the per-entity pass did.
+    tryLog(engine.logger, "hygiene", "Memory hygiene snapshot failed", () =>
+      snapshotHygieneRatios(db.memoryRepository().raw, engine.getEventLog()),
+    );
+  }
 }

@@ -3,12 +3,14 @@
 
 /**
  * Admin → Memory: operator view of the memory system's moving parts —
- * trust posture, assistance jobs, resolutions/ratifications, standing credits,
- * passthru receipts, hygiene lines, and institutional spaces.
+ * trust posture, continuous-hygiene ratios with their snapshot trends,
+ * assistance jobs, resolutions/ratifications, standing credits, passthru
+ * receipts, hygiene lines, and per-space health.
  *
  * Bootstraps from `GET /api/memory/overview` and stays live through the
  * dashboard WebSocket: `memory_service_event` refreshes the overview
  * (debounced 2 s); `memory_job` patches jobs in place (see JobsSection).
+ * Hygiene history comes from `GET /api/memory/hygiene/history` (HygieneTrends).
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -42,11 +44,13 @@ import {
   HYGIENE_KEYS,
   parseHygieneLine,
   resolutionPolicyClass,
+  surfaceLabel,
   trustProfileClass,
   trustProfileLabel,
 } from "./memory-ops/format";
+import { HygieneTrends } from "./memory-ops/HygieneTrends";
 import { JobsSection } from "./memory-ops/JobsSection";
-import { RatiosSection } from "./memory-ops/RatiosSection";
+import { SpacesSection } from "./memory-ops/SpaceHealth";
 import { TierBars } from "./memory-ops/TierBars";
 
 export const MEMORY_OVERVIEW_KEY = ["memory-overview"] as const;
@@ -110,7 +114,7 @@ export function MemoryOpsTab({
       </Section>
 
       <Section title="Continuous hygiene" icon={<Gauge size={12} />}>
-        {data ? <RatiosSection ratios={data.ratios} /> : <Placeholder />}
+        {data ? <HygieneTrends ratios={data.ratios} /> : <Placeholder />}
       </Section>
 
       <Section title="Jobs" icon={<ListChecks size={12} />}>
@@ -141,8 +145,8 @@ export function MemoryOpsTab({
         {data ? <HygieneSection hygiene={data.hygiene} /> : <Placeholder />}
       </Section>
 
-      <Section title="Institutional spaces" icon={<Landmark size={12} />}>
-        {data ? <SpacesSection spaces={data.spaces.institutional} /> : <Placeholder />}
+      <Section title="Spaces" icon={<Landmark size={12} />}>
+        {data ? <SpacesSection spaces={data.spaces.shared} /> : <Placeholder />}
       </Section>
     </div>
   );
@@ -501,7 +505,9 @@ function ReceiptRow({
       data-testid={`receipt-${receipt.requestId}`}
     >
       <div className="flex flex-wrap items-center gap-1.5">
-        <Chip className="border-cyan-400/60 text-cyan-300">{receipt.surface}</Chip>
+        <Chip className="border-cyan-400/60 text-cyan-300" title="passthru surface">
+          {surfaceLabel(receipt.surface)}
+        </Chip>
         <span className="text-text">{receipt.entity}</span>
         {receipt.cacheHit && (
           <Chip
@@ -586,39 +592,6 @@ function HygieneSection({ hygiene }: { hygiene: MemoryOverview["hygiene"] }) {
           </div>
         );
       })}
-    </div>
-  );
-}
-
-// ── 7. Institutional spaces ─────────────────────────────────────────────────
-
-function SpacesSection({ spaces }: { spaces: MemoryOverview["spaces"]["institutional"] }) {
-  if (spaces.length === 0) {
-    return (
-      <Empty>
-        No institutional spaces reported. <code>guide</code> is seeded on first boot and tradition
-        pools are created lazily — if this stays empty after boot, check <code>readiness</code>.
-      </Empty>
-    );
-  }
-  return (
-    <div className="grid gap-1 sm:grid-cols-2">
-      {spaces.map((space) => (
-        <div
-          key={space.id}
-          className="flex items-center gap-2 rounded border border-border bg-bg/30 px-2 py-1"
-          data-testid={`space-${space.id}`}
-        >
-          <Landmark size={10} className="text-primary" />
-          <span className="text-text" title={space.id}>
-            {space.name}
-          </span>
-          <span className="ml-auto text-[9px] text-text-dim">
-            <span className="text-text">{space.records}</span> records ·{" "}
-            <span className="text-emerald-400">{space.ratified}</span> ratified
-          </span>
-        </div>
-      ))}
     </div>
   );
 }

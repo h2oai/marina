@@ -35,6 +35,7 @@
 import { creditRecalledReflections } from "../agent/standing";
 import { getErrorMessage } from "../engine/errors";
 import type { MarinaDB, NoteRow, ScoredNoteRow } from "../persistence/database";
+import { ftsTerms } from "../persistence/fts";
 import type { MemoryAssistanceJob, MemoryAssistancePage } from "../sdk/memory-assistance";
 import { MemoryClientError } from "../sdk/memory-client";
 import type { MemorySearchResult, MemorySourceSearchResult } from "../sdk/memory-types";
@@ -66,7 +67,115 @@ export const UNIFIED_TIER_LABELS: Readonly<Record<UnifiedTier, string>> = {
   unverified: "[unverified — own notes, verify before relying]",
 };
 
-export const UNIFIED_CONTEXT_HEADER = "[Relevant Memory — evidence, preserve provenance]";
+/**
+ * Prompt header. Deliberately NOT "Relevant Memory": retrieval is a keyword
+ * match, and HISTORY §7/§8 measured that a header asserting relevance made a
+ * strong model prefer an unrelated note's value over its own knowledge
+ * (simple-qa: warm −9 net items vs bare). Say what the block is and how to use it.
+ */
+export const UNIFIED_CONTEXT_HEADER =
+  "[Memory — retrieved by keyword match; use only items that answer the question, preserve provenance]";
+
+/**
+ * Relevance gate. Legacy recall runs FTS in OR mode, so one shared common
+ * word ("first", "year", "river") is enough to surface a note about something
+ * else; injected into a prompt, such notes measurably mislead (recall
+ * pollution). A candidate must share at least `minOverlap(terms)` distinct
+ * query terms with the content: 1 for queries of ≤ 2 content terms, else
+ * max(2, ⌈25 % of terms⌉). Matching is case-insensitive on word prefixes so
+ * porter-stemmed forms ("deploys" / "deploy") still count. Graph-expanded
+ * neighbours are NOT gated — only the seeds that pull them in.
+ */
+export const MIN_OVERLAP_SHARE = 0.25;
+
+export function minOverlap(termCount: number): number {
+  if (termCount <= 2) return Math.min(1, termCount);
+  return Math.max(2, Math.ceil(termCount * MIN_OVERLAP_SHARE));
+}
+
+const stem = (word: string) =>
+  word.length > 5 ? word.slice(0, Math.max(4, word.length - 2)) : word;
+
+export function queryTerms(query: string): string[] {
+  return [...new Set(ftsTerms(query).map((t) => t.toLowerCase()))];
+}
+
+/**
+ * Distinctiveness: which query terms are RARE in the entity's own fact-like
+ * notes. A note that shares only common words with the question ("first",
+ * "university", "year") is almost never about the question; HISTORY §8
+ * measured that the plain overlap gate left such notes in the prompt (78 %
+ * hit rate on simple-qa, still a net loss). A term is distinctive when it
+ * appears in ≤ `DISTINCT_TERM_MAX_SHARE` of the entity's notes (and at most
+ * `DISTINCT_TERM_MAX_NOTES` when the corpus is small). One indexed LIKE count
+ * per query term, once per context build — never per candidate.
+ */
+export const DISTINCT_TERM_MAX_SHARE = 0.2;
+export const DISTINCT_TERM_MAX_NOTES = 3;
+
+export function distinctiveTerms(
+  db: MarinaDB,
+  entityName: string,
+  terms: readonly string[],
+): Set<string> {
+  const out = new Set<string>();
+  if (terms.length === 0) return out;
+  try {
+    const raw = db.memoryRepository().raw;
+    const total = (
+      raw
+        .query(
+          `SELECT count(*) AS n FROM notes WHERE entity_name=? COLLATE NOCASE AND pool_id IS NULL
+           AND tier IN ('fact','reflection','skill')`,
+        )
+        .get(entityName) as { n: number }
+    ).n;
+    if (total === 0) return new Set(terms);
+    const cap = Math.max(DISTINCT_TERM_MAX_NOTES, Math.floor(total * DISTINCT_TERM_MAX_SHARE));
+    const count = raw.query(
+      `SELECT count(*) AS n FROM notes WHERE entity_name=? COLLATE NOCASE AND pool_id IS NULL
+       AND tier IN ('fact','reflection','skill') AND lower(content) LIKE ? ESCAPE '\\'`,
+    );
+    for (const term of terms) {
+      const pattern = `%${term.toLowerCase().replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+      const n = (count.get(entityName, pattern) as { n: number }).n;
+      if (n <= cap) out.add(term);
+    }
+  } catch {
+    // Distinctiveness is an optimisation over the overlap gate — on any
+    // failure every term counts as distinctive (the pre-§8 behaviour).
+    return new Set(terms);
+  }
+  return out;
+}
+
+export function relevantToQuery(
+  content: string,
+  query: string | readonly string[],
+  distinctive?: ReadonlySet<string>,
+): boolean {
+  const terms = typeof query === "string" ? queryTerms(query) : query;
+  if (terms.length === 0) return true;
+  const words = new Set(
+    content
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}_]+/u)
+      .filter(Boolean),
+  );
+  const prefixes = [...words].map(stem);
+  const matches = (term: string) => {
+    const st = stem(term);
+    return words.has(term) || prefixes.some((w) => w.startsWith(st) || st.startsWith(w));
+  };
+  let overlap = 0;
+  let distinct = distinctive === undefined || distinctive.size === 0;
+  for (const term of terms) {
+    if (!matches(term)) continue;
+    overlap++;
+    if (distinctive?.has(term)) distinct = true;
+  }
+  return overlap >= minOverlap(terms.length) && distinct;
+}
 
 /** Durable-only tiers — `scope: "evidence"` renders just these. */
 const DURABLE_TIERS: readonly UnifiedTier[] = ["evidence", "proposal"];
@@ -246,6 +355,16 @@ export function inheritedAuthority(
   };
 }
 
+/** Current version, valid now: not superseded by a resolution and not a historical read. */
+export function servableRecord(
+  record: { freshness?: string; valid_time?: { from: number | null; until: number | null } | null },
+  now = Date.now(),
+): boolean {
+  if (record.freshness === "historical") return false;
+  const until = record.valid_time?.until;
+  return until === null || until === undefined || until > now;
+}
+
 function recordItem(record: MemorySearchResult["results"][number]): UnifiedContextItem {
   const freshness =
     record.freshness && record.freshness !== "current" ? ` ${record.freshness}` : "";
@@ -371,20 +490,27 @@ function fetchLegacy(
   opts: Required<Pick<UnifiedContextOptions, "weights">> & Pick<UnifiedContextOptions, "noteType">,
 ): Fetched {
   const out: Fetched = { items: {}, degraded: [] };
+  const terms = queryTerms(query);
+  const distinctive = distinctiveTerms(db, entityName, terms);
+  const relevant = (n: { content: string }) => relevantToQuery(n.content, terms, distinctive);
   try {
-    const skills = db.recallNotesWithType(entityName, query, "skill", {
-      weightImportance: 0.4,
-      weightRecency: 0.2,
-      weightRelevance: 0.4,
-    });
+    const skills = db
+      .recallNotesWithType(entityName, query, "skill", {
+        weightImportance: 0.4,
+        weightRecency: 0.2,
+        weightRelevance: 0.4,
+      })
+      .filter(relevant);
     out.items.skill = skills.map((n) => noteItem("skill", n));
   } catch (error) {
     out.degraded.push({ tier: "skill", ...errorCode(error) });
   }
   try {
-    const seeds = opts.noteType
-      ? db.recallNotesWithType(entityName, query, opts.noteType, opts.weights)
-      : db.recallNotes(entityName, query, opts.weights);
+    const seeds = (
+      opts.noteType
+        ? db.recallNotesWithType(entityName, query, opts.noteType, opts.weights)
+        : db.recallNotes(entityName, query, opts.weights)
+    ).filter(relevant);
     const trusted = expandMemoryRecall(db, seeds, entityName, {
       noteType: opts.noteType,
       trusted: true,
@@ -442,9 +568,17 @@ async function fetchDurable(
     });
     spaceId = search.space_id;
     const result = search.result as MemorySearchResult;
+    const now = Date.now();
+    const terms = queryTerms(query);
+    const distinctive = distinctiveTerms(db, entityName, terms);
     out.items.evidence!.push(
       ...result.results
         .filter((record) => !jobArtifacts.has(record.id))
+        // Lexical `search` is not validity-filtered: a record whose interval a
+        // `resolve` closed (a superseded loser) or a historical version is
+        // still reachable by keyword. Never serve it as evidence.
+        .filter((record) => servableRecord(record, now))
+        .filter((record) => relevantToQuery(record.content, terms, distinctive))
         .slice(0, limits.records)
         .map(recordItem),
     );

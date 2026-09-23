@@ -75,7 +75,8 @@ export type MemoryCreditView = {
 export type MemoryReceiptView = {
   requestId: string;
   entity: string;
-  surface: string;
+  /** The PROTOCOL surface the request arrived on (the `applyInjection` format), not the route kind. */
+  surface: "openai" | "anthropic" | "ollama-generate" | "responses" | "unknown";
   tiers: { tier: string; count: number; bytes: number }[];
   usedBytes: number;
   budgetBytes: number;
@@ -151,6 +152,39 @@ export type MemoryHygieneRatios = {
   };
 };
 
+/** One hourly (or on-demand) snapshot of the operator-scope hygiene ratios. */
+export type MemoryHygieneSample = { at: number; ratios: MemoryHygieneRatios };
+/**
+ * `GET /api/memory/hygiene/history?hours=168` (default 168, max 720); privileged
+ * only (403 otherwise); samples oldest → newest. Written by the hourly hygiene
+ * tick and `POST /api/memory/hygiene/snapshot`; retained 30 days.
+ */
+export type MemoryHygieneHistory = { scope: "all"; hours: number; samples: MemoryHygieneSample[] };
+/**
+ * Health of one SHARED durable space — every institutional space plus any
+ * space with ≥ 2 distinct writers (authors of `memory.created` / `memory.revised`
+ * events) or ≥ 1 grant. Same predicates as the global ratios
+ * (`COMPETING_RECORD_PREDICATE`; a "fresh" writer is one below
+ * `SYBIL_STANDING_FLOOR` standing). Residents see only spaces they own or are
+ * granted; operators see all, max 50, ordered by `competing` desc then
+ * `records` desc.
+ */
+export type MemorySpaceHealth = {
+  id: string;
+  name: string;
+  institutional: boolean;
+  ownerName: string;
+  records: number;
+  ratified: number;
+  writers: number;
+  freshWriters: number;
+  freshWriterShare: MemoryRatio;
+  competing: number;
+  resolutions24h: number;
+  unresolvedContradictionRate: MemoryRatio;
+  lastWriteAt: number | null;
+};
+
 export type MemoryOverview = {
   ratios: MemoryHygieneRatios;
   trust: { profile: string; ungated: boolean; autonomy: string };
@@ -170,7 +204,11 @@ export type MemoryOverview = {
     cache: { hits: number; misses: number; stores: number };
   };
   dispatch: { accumulationJobs24h: number; sharedWriteJobs24h: number; hygieneJobs24h: number };
-  spaces: { institutional: { id: string; name: string; records: number; ratified: number }[] };
+  spaces: {
+    institutional: { id: string; name: string; records: number; ratified: number }[];
+    /** Per-space health for shared spaces (see `MemorySpaceHealth`). */
+    shared: MemorySpaceHealth[];
+  };
 };
 
 export type MemoryGraphNode = {

@@ -182,6 +182,12 @@ function sendBootstrap(ctx: RoomContext, eid: EntityId, _entity: Entity, deps: B
     `  ${dim("grow:")} evolve — your self-improvement loop + next step, skill list`,
   ];
 
+  // No upstream LLM provider: `ask`, agents and crews are inert until one is
+  // configured. Say so once, at arrival, and point at the remediation surface.
+  if (deps.hasLlmKeys === false) {
+    lines.push("", `No model provider configured — run "readiness" to see what to set.`);
+  }
+
   // Arrival digest — recent canonical history so newcomers have shared social
   // context. Narrative + digest only (engine event entries are noisy templated
   // titles and don't give the arrival a sense of the polity's interpretation).

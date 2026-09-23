@@ -203,6 +203,23 @@ export function parseReceiptAttribute(value: unknown): MemoryReceiptAttribute | 
   };
 }
 
+/** Passthru surface chip text — `unknown` (or empty) renders as an em dash. */
+export function surfaceLabel(surface: string | undefined | null): string {
+  return !surface || surface === "unknown" ? "\u2014" : surface;
+}
+
+/**
+ * Trace spans carry `memoryCacheHit` as the STRING "true" | "false" (span
+ * attributes are stringly typed). Older servers stamped a boolean; accept both
+ * and treat anything else as "not stamped".
+ */
+export function parseCacheHitAttribute(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
+}
+
 export function trustProfileLabel(trust: { profile: string; ungated: boolean }): string {
   const profile = trust.profile.toUpperCase();
   return trust.profile === "local" && trust.ungated ? `${profile} · ungated` : profile;

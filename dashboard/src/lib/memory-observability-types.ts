@@ -2,144 +2,64 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Dashboard mirror of the memory-observability contract served by
- * `GET /api/memory/overview`, `GET /api/memory/jobs*`, and the
- * `memory_job` / `memory_service_event` WebSocket events.
+ * Dashboard view of the memory-observability contract served by
+ * `GET /api/memory/overview`, `GET /api/memory/jobs*`,
+ * `GET /api/memory/hygiene/history`, `POST /api/memory/hygiene/snapshot` and
+ * the `memory_job` / `memory_service_event` WebSocket events.
  *
- * Keep this file in lockstep with the backend contract — it is a mirror,
- * not a place for dashboard-only fields.
+ * The wire contract is NOT mirrored here — it is re-exported (type-only) from
+ * the backend's single source of truth, `src/net/memory-observability-types.ts`,
+ * so a field added or renamed on the server is the same field here, with no
+ * copy to drift. `export type … from` is erased by Vite (`isolatedModules`) and
+ * the backend file is dependency-free, so the dashboard bundle and its
+ * `tsc --noEmit` pass never pull in anything else from `src/`.
+ *
+ * What IS declared locally is dashboard-only: the named aliases the components
+ * key on (derived by indexed access, so they follow the contract), the WebSocket
+ * envelopes, the `/api/memory/jobs` page, and the trace-span receipt attribute.
+ * `src/__tests__/memory-observability-contract.test.ts` pins these to the
+ * backend shapes.
  */
 
-export type MemoryJobState = "pending" | "running" | "answered" | "abstained" | "cancelled";
-export type MemoryJobRole = "librarian" | "reflector" | "evaluator";
-export type MemoryJobMarker = "hygiene" | "accumulation" | "shared-write-review";
+export type {
+  MemoryCreditView,
+  MemoryHygieneHistory,
+  MemoryHygieneRatios,
+  MemoryHygieneSample,
+  MemoryJobView,
+  MemoryOverview,
+  MemoryRatificationView,
+  MemoryRatio,
+  MemoryReceiptView,
+  MemoryResolutionView,
+  MemorySpaceHealth,
+  MemoryStorageBudgetView,
+} from "../../../src/net/memory-observability-types";
 
-export type MemoryJobView = {
-  id: string;
-  state: MemoryJobState;
-  workOpen: boolean;
-  role: MemoryJobRole;
-  workerName: string;
-  requesterName: string;
-  spaceId: string;
-  spaceName?: string;
-  rootId: string;
-  parentId: string | null;
-  depth: number;
-  remainingOperations: number;
-  deadline: number;
-  createdAt: number;
-  marker?: MemoryJobMarker | null;
-  task?: string;
-  answer?: string;
-  citations?: number;
-  adopted?: { recordId: string; spaceId: string; at: number } | null;
-};
+import type { MemoryJobView, MemoryReceiptView } from "../../../src/net/memory-observability-types";
 
-export type MemoryResolutionView = {
-  id: string;
-  policy: string;
-  spaceId: string;
-  spaceName?: string;
-  actorName: string;
-  at: number;
-  winnerId: string | null;
-  loserIds: string[];
-  rationale?: string;
-};
+// ── Named aliases (derived — never restate the union) ───────────────────────
 
-export type MemoryRatificationView = {
-  recordId: string;
-  spaceId: string;
-  spaceName: string;
-  ratifiedBy: { name: string; standing: number; basis: string };
-  at: number;
-  preview?: string;
-};
+export type MemoryJobState = MemoryJobView["state"];
+export type MemoryJobRole = MemoryJobView["role"];
+/** The three dispatch markers; `MemoryJobView.marker` itself is `MemoryJobMarker | null | undefined`. */
+export type MemoryJobMarker = NonNullable<MemoryJobView["marker"]>;
+/** Passthru protocol a receipt was minted on — `unknown` renders as "—". */
+export type MemoryReceiptSurface = MemoryReceiptView["surface"];
 
-export type MemoryCreditView = {
-  kind: string;
-  entityName: string;
-  amount: number;
-  ref: string;
-  at: number;
-};
+// ── Dashboard-only envelopes ────────────────────────────────────────────────
 
-export type MemoryReceiptView = {
-  requestId: string;
-  entity: string;
-  surface: string;
-  tiers: { tier: string; count: number; bytes: number }[];
-  usedBytes: number;
-  budgetBytes: number;
-  truncated: boolean;
-  cacheHit: boolean;
-  at: number;
-};
-
-export type MemoryRatio = { value: number | null; numerator: number; denominator: number };
-export type MemoryStorageBudgetView = {
-  ownerName: string;
-  logicalBytes: number;
-  maxBytes: number | null;
-  sources: number;
-  maxSources: number | null;
-  revisions: number;
-  maxRevisions: number | null;
-  spaces: number;
-  maxSpaces: number | null;
-  utilization: number | null;
-  overLimit: string[];
-};
-/** Mirror of `MemoryHygieneRatios` in src/net/memory-observability-types.ts. */
-export type MemoryHygieneRatios = {
-  computedAt: number;
-  windowMs: number;
-  scope: "all" | "own";
-  redundancy: MemoryRatio;
-  contradictionRate: MemoryRatio;
-  unresolvedContradictionRate: MemoryRatio;
-  provenanceCoverage: MemoryRatio;
-  stalenessRatio: MemoryRatio;
-  unsafeServedRate: MemoryRatio;
-  reflectionRepetitionRate: MemoryRatio;
-  consolidationRoi: MemoryRatio;
-  repairSuccess: MemoryRatio;
-  leakage: { crossScopeAttempts: number; crossScopeCacheHits: number };
-  storage: MemoryStorageBudgetView[];
-  cost: { receipts: number; avgInjectedBytes: number | null; cacheHitRate: MemoryRatio };
-};
-
-export type MemoryOverview = {
-  ratios: MemoryHygieneRatios;
-  trust: { profile: string; ungated: boolean; autonomy: string };
-  hygiene: { entityName: string; line: string; at: number }[];
-  jobs: {
-    open: number;
-    answered24h: number;
-    abstained24h: number;
-    cancelled24h: number;
-    byMarker: Record<string, number>;
-  };
-  resolutions: MemoryResolutionView[];
-  ratifications: MemoryRatificationView[];
-  credits: MemoryCreditView[];
-  receipts: {
-    recent: MemoryReceiptView[];
-    cache: { hits: number; misses: number; stores: number };
-  };
-  dispatch: { accumulationJobs24h: number; sharedWriteJobs24h: number; hygieneJobs24h: number };
-  spaces: {
-    institutional: { id: string; name: string; records: number; ratified: number }[];
-  };
-};
-
+/** `GET /api/memory/jobs` page (`listJobs` in src/net/memory-observability.ts). */
 export type MemoryJobsResponse = { jobs: MemoryJobView[]; nextCursor?: string | null };
 
-/** `{ type: "memory_job" }` WebSocket event payload. */
+/**
+ * `{ type: "memory_job" }` WebSocket event payload. The backend strips
+ * `task` / `answer` / `citations` before broadcasting (all three are optional
+ * on `MemoryJobView`, so the full view type is the honest superset here).
+ */
 export type MemoryJobEvent = { type: "memory_job"; job: MemoryJobView; timestamp: number };
 
-/** `{ type: "memory_service_event" }` WebSocket event payload. */
+/** `{ type: "memory_service_event" }` WebSocket event payload (mirrors the `EngineEvent` member in src/types.ts). */
 export type MemoryServiceEvent = {
   type: "memory_service_event";
   kind: string;
@@ -155,15 +75,10 @@ export type MemoryServiceEvent = {
 
 /**
  * The `marina.memory.receipt.v1` payload as it rides a trace span's
- * `attributes.memoryReceipt` (JSON string). Mirrors `src/net/memory-receipt.ts`.
+ * `attributes.memoryReceipt` (JSON string) — the backend's `MemoryReceipt`
+ * from `src/net/memory-receipt.ts`, re-exported under the attribute's name.
+ *
+ * Sibling string attributes on the same span: `memoryCacheHit` ("true" | "false")
+ * and `memorySurface` (a `MemoryReceiptSurface`).
  */
-export type MemoryReceiptAttribute = {
-  schema: "marina.memory.receipt.v1";
-  requestId: string;
-  entity: string;
-  tiers: { tier: string; ids: { id: string; version?: number; hash?: string }[]; bytes: number }[];
-  budgetBytes: number;
-  usedBytes: number;
-  truncated: boolean;
-  degraded: string[];
-};
+export type { MemoryReceipt as MemoryReceiptAttribute } from "../../../src/net/memory-receipt";

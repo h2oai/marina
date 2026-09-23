@@ -656,6 +656,77 @@ describe("WebSocket Server", () => {
     expect(resp.headers.get("Access-Control-Allow-Headers")).toBeTruthy();
   });
 
+  // ─── Browser Origin gate on every upgrade path ─────────────────────────
+
+  /** Open a socket with an explicit Origin header; resolve true iff it opened. */
+  async function opensWithOrigin(path: string, origin: string): Promise<boolean> {
+    const ws = new WebSocket(`ws://localhost:${WS_PORT}${path}`, {
+      headers: { Origin: origin },
+    } as unknown as string[]);
+    const opened = await new Promise<boolean>((resolve) => {
+      ws.onopen = () => resolve(true);
+      ws.onerror = () => resolve(false);
+      ws.onclose = () => resolve(false);
+      setTimeout(() => resolve(ws.readyState === WebSocket.OPEN), 1500);
+    });
+    if (opened) ws.close();
+    await Bun.sleep(30);
+    return opened;
+  }
+
+  it("refuses /ws, /dashboard-ws and /canvas-ws upgrades from a foreign browser Origin", async () => {
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+    try {
+      expect(await opensWithOrigin("/ws", "https://evil.example")).toBe(false);
+      expect(await opensWithOrigin("/dashboard-ws", "https://evil.example")).toBe(false);
+      expect(await opensWithOrigin("/canvas-ws?canvas=test", "https://evil.example")).toBe(false);
+    } finally {
+      console.warn = origWarn;
+    }
+    expect(warnings.filter((w) => w.includes("https://evil.example")).length).toBe(3);
+    // The refused upgrade never became a connection.
+    expect([...engine.connections.values()].filter((c) => c.protocol === "websocket")).toHaveLength(
+      0,
+    );
+  });
+
+  it("returns 403 Forbidden origin (not 401) on the refused handshake", async () => {
+    const resp = await fetch(`http://localhost:${WS_PORT}/ws`, {
+      headers: {
+        Origin: "https://evil.example",
+        Connection: "Upgrade",
+        Upgrade: "websocket",
+        "Sec-WebSocket-Version": "13",
+        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+      },
+    });
+    expect(resp.status).toBe(403);
+    expect(await resp.text()).toBe("Forbidden origin");
+  });
+
+  it("admits same-origin, loopback (loopback bind) and ALLOWED_ORIGINS browser Origins", async () => {
+    // Same origin as the listener.
+    expect(await opensWithOrigin("/ws", `http://localhost:${WS_PORT}`)).toBe(true);
+    // The dashboard dev server on another loopback port — the listener binds
+    // loopback in tests (secure default), so loopback origins are trusted.
+    expect(await opensWithOrigin("/dashboard-ws", "http://localhost:5173")).toBe(true);
+    expect(await opensWithOrigin("/canvas-ws?canvas=test", "http://127.0.0.1:5173")).toBe(true);
+
+    const prev = process.env.ALLOWED_ORIGINS;
+    process.env.ALLOWED_ORIGINS = "https://dash.example.com";
+    try {
+      expect(await opensWithOrigin("/ws", "https://dash.example.com")).toBe(true);
+      expect(await opensWithOrigin("/ws", "https://other.example.com")).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.ALLOWED_ORIGINS;
+      else process.env.ALLOWED_ORIGINS = prev;
+    }
+  });
+
   // ─── Non-WS Routes ────────────────────────────────────────────────────
 
   it("should direct the root path to the dashboard", async () => {

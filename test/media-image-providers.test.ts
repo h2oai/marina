@@ -20,9 +20,9 @@ const realFetch = globalThis.fetch;
 // plain fetch, which the fetch mock then intercepts. Tests that exercise the
 // SSRF path override this resolver in-body.
 beforeEach(() => {
-  __setDnsResolverForTest(async () => {
-    throw new Error("DNS disabled in unit tests");
-  });
+  // The URL guard fails CLOSED on DNS errors, so unit tests resolve every
+  // mocked provider host to a public address instead of disabling DNS.
+  __setDnsResolverForTest(async () => ["93.184.216.34"]);
 });
 afterEach(() => {
   globalThis.fetch = realFetch;

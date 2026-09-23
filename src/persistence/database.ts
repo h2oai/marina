@@ -2706,6 +2706,10 @@ export class MarinaDB {
     notesDb.createMemoryPool(this.db, id, name, createdBy, groupId);
   }
 
+  setMemoryPoolGroup(poolId: string, groupId: string | null): void {
+    notesDb.setMemoryPoolGroup(this.db, poolId, groupId);
+  }
+
   getMemoryPool(name: string): MemoryPoolRow | undefined {
     return notesDb.getMemoryPool(this.db, name);
   }

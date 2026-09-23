@@ -33,9 +33,14 @@ import { HYGIENE_NOTE_PREFIX, HYGIENE_TASK_MARKER } from "../engine/memory-hygie
 import { computeTrustProfile } from "../engine/readiness";
 import {
   computeHygieneRatios,
+  computeSpaceHealth,
   emptyHygieneRatios,
   HYGIENE_RATIOS_TTL_MS,
-  type ServedReceipt,
+  listHygieneSnapshots,
+  memoryLeakageCounters,
+  type ServedReceiptEvent,
+  servedReceiptsFromEvents,
+  snapshotHygieneRatios,
 } from "../memory/hygiene-ratios";
 import { DURABLE_TWIN_URL_PREFIX, parseDurableTwinUrl } from "../memory/legacy-bridge";
 import { residentMemoryOperation } from "../memory/resident-service";
@@ -47,14 +52,15 @@ import type {
   MemoryGraph,
   MemoryGraphEdge,
   MemoryGraphNode,
+  MemoryHygieneHistory,
   MemoryHygieneRatios,
+  MemoryHygieneSample,
   MemoryJobView,
   MemoryOverview,
   MemoryRatificationView,
   MemoryReceiptView,
   MemoryResolutionView,
 } from "./memory-observability-types";
-import { type MemoryReceipt, parseMemoryReceipt } from "./memory-receipt";
 import { memoryObserver } from "./memory-visibility";
 import { responseCacheCounters } from "./response-cache";
 
@@ -421,10 +427,13 @@ export function getMemoryJob(
  * neither its requester, its worker, nor an operator). In-memory since process
  * start — a refusal is a prevented leak, counted so the trend is visible.
  */
-export const memoryLeakageCounters = { crossScopeAttempts: 0 };
-export function resetMemoryLeakageCountersForTests(): void {
-  memoryLeakageCounters.crossScopeAttempts = 0;
-}
+// The counter itself lives in hygiene-ratios.ts (the hourly snapshot reads it
+// without importing this module); re-exported here for the existing callers.
+export {
+  memoryLeakageCounters,
+  receiptSurfaceOf,
+  resetMemoryLeakageCountersForTests,
+} from "../memory/hygiene-ratios";
 
 export type MemoryJobCancelResult =
   | { ok: true; job: MemoryJobView }
@@ -564,39 +573,17 @@ function ratificationView(row: RatifiedRow): MemoryRatificationView {
   };
 }
 
-interface ServedReceiptEvent extends ServedReceipt {
-  requestId: string;
-  surface: string;
-}
-
 /**
  * Every injected response on the in-memory event log the observer may see,
- * newest first, one per request. Feeds both the recent-receipts list and the
- * hygiene ratios (unsafe-served, cost).
+ * newest first, one per request (`servedReceiptsFromEvents`). Feeds both the
+ * recent-receipts list and the hygiene ratios (unsafe-served, cost).
  */
 function servedReceipts(
   engine: Engine,
   scope: MemoryObserverScope,
   limit = Number.POSITIVE_INFINITY,
 ): ServedReceiptEvent[] {
-  const byRequest = new Map<string, ServedReceiptEvent>();
-  const events = engine.getEventLog();
-  for (let i = events.length - 1; i >= 0 && byRequest.size < limit; i--) {
-    const event = events[i]!;
-    if (event.type !== "model_request_lifecycle" || !event.memoryReceipt) continue;
-    if (byRequest.has(event.requestId)) continue;
-    const receipt: MemoryReceipt | undefined = parseMemoryReceipt(event.memoryReceipt);
-    if (!receipt) continue;
-    if (!scope.privileged && receipt.entity !== scope.entityName) continue;
-    byRequest.set(event.requestId, {
-      receipt,
-      at: event.timestamp,
-      cacheHit: event.target === "response-cache",
-      requestId: event.requestId,
-      surface: event.routeKind ?? "passthru",
-    });
-  }
-  return [...byRequest.values()];
+  return servedReceiptsFromEvents(engine.getEventLog(), scope, limit);
 }
 
 function receiptViews(
@@ -672,7 +659,7 @@ export function buildMemoryOverview(
     credits: [],
     receipts: { recent: receiptViews(engine, scope, 20), cache: { ...responseCacheCounters } },
     dispatch: { accumulationJobs24h: 0, sharedWriteJobs24h: 0, hygieneJobs24h: 0 },
-    spaces: { institutional: [] },
+    spaces: { institutional: [], shared: [] },
   };
   if (!db) return overview;
   const raw = rawDb(db);
@@ -770,7 +757,38 @@ export function buildMemoryOverview(
        ORDER BY s.name,s.id`,
     )
     .all() as { id: string; name: string; records: number; ratified: number }[];
+  overview.spaces.shared = computeSpaceHealth(raw, scope, { now });
   return overview;
+}
+
+// ─── Ratio history ──────────────────────────────────────────────────────────
+
+/**
+ * Write one operator-scope (`all`) hygiene sample now (hourly tick via
+ * `memory-hygiene.ts`, or `POST /api/memory/hygiene/snapshot`). Also refreshes
+ * the privileged memo so the next overview poll agrees with the sample.
+ * `undefined` without a database.
+ */
+export function snapshotMemoryHygiene(
+  engine: Engine,
+  now = Date.now(),
+): MemoryHygieneSample | undefined {
+  const db = engine.db;
+  if (!db) return undefined;
+  const sample = snapshotHygieneRatios(rawDb(db), engine.getEventLog(), now);
+  ratiosMemo.set("*", { at: now, value: sample.ratios });
+  return sample;
+}
+
+/** Operator-scope samples inside the last `hours` (default 168, max 720), oldest → newest. */
+export function memoryHygieneHistory(
+  engine: Engine,
+  hours?: number,
+  now = Date.now(),
+): MemoryHygieneHistory {
+  const db = engine.db;
+  if (!db) return { scope: "all", hours: hours ?? 168, samples: [] };
+  return listHygieneSnapshots(rawDb(db), { hours, now });
 }
 
 // ─── Graph (memory MAP) ─────────────────────────────────────────────────────

@@ -8,7 +8,7 @@
  * Agents self-connect via WebSocket — the engine sees them as regular connections.
  */
 
-import { MARINA_DEFAULT_MODEL } from "../engine/constants";
+import { MARINA_DEFAULT_MODEL, positiveNumberFromEnv } from "../engine/constants";
 import {
   inferModelCapabilities,
   isLocalProvider,
@@ -25,8 +25,13 @@ import type {
   AgentSupports,
 } from "./agent-types";
 import { AgentExecutionTracer } from "./execution-trace";
-import { classifyModelResolution, LeanAgentAdapter } from "./lean-agent-adapter";
-import { detectModelLimits } from "./model-probe";
+import {
+  classifyModelResolution,
+  LeanAgentAdapter,
+  operatorStatusOf,
+  type SpendGuard,
+} from "./lean-agent-adapter";
+import { assertMarinaRemoteTargetAllowed, detectModelLimits } from "./model-probe";
 import { getRolePrompt, inferTaskCategory } from "./roles";
 import { isSeedDisabled } from "./seed-registry";
 
@@ -82,6 +87,28 @@ export function getInternalModelToken(): string {
  * command can clamp per-parent budgets to it (see the conductor design (private archive: marina-internal design/conductor-design.md)). */
 export const MAX_AGENTS = Number(process.env.MAX_AGENTS) || 30;
 const MAX_AGENT_UPTIME_MS = Number(process.env.MAX_AGENT_UPTIME_MS) || 24 * 60 * 60 * 1000;
+
+/** Rolling-hour USD spend ceilings; undefined = unlimited (unset / 0 / invalid). */
+export interface SpendLimits {
+  /** MARINA_MAX_COST_USD_PER_HOUR — summed across every agent in this runtime. */
+  globalUsdPerHour?: number;
+  /** MARINA_MAX_AGENT_COST_USD_PER_HOUR — per agent. */
+  perAgentUsdPerHour?: number;
+}
+
+/**
+ * Read the spend ceilings once from the environment. Both default to unlimited;
+ * the caps only bite on provider-reported cost, so a runtime full of $0 local
+ * models never pauses on them.
+ */
+export function spendLimitsFromEnv(env: NodeJS.ProcessEnv = process.env): SpendLimits {
+  const globalUsdPerHour = positiveNumberFromEnv("MARINA_MAX_COST_USD_PER_HOUR", env);
+  const perAgentUsdPerHour = positiveNumberFromEnv("MARINA_MAX_AGENT_COST_USD_PER_HOUR", env);
+  return {
+    ...(globalUsdPerHour === undefined ? {} : { globalUsdPerHour }),
+    ...(perAgentUsdPerHour === undefined ? {} : { perAgentUsdPerHour }),
+  };
+}
 
 /**
  * Pick a tool profile for a role.
@@ -272,11 +299,54 @@ export class AgentRuntime {
   private wsPort: number;
   private uptimeCheckInterval: ReturnType<typeof setInterval> | null = null;
   private onEvent?: (event: EngineEvent) => void;
+  /** Running agent → the entity that spawned it (`config.spawnedBy`, default "system"). */
+  private spawnedByOf = new Map<string, string>();
+  private readonly spendLimits: SpendLimits;
 
-  constructor(opts: { db?: MarinaDB; wsPort?: number; onEvent?: (event: EngineEvent) => void }) {
+  constructor(opts: {
+    db?: MarinaDB;
+    wsPort?: number;
+    onEvent?: (event: EngineEvent) => void;
+    /** Override the env-derived spend ceilings (tests / embedders). */
+    spendLimits?: SpendLimits;
+  }) {
     this.db = opts.db;
     this.wsPort = opts.wsPort ?? 3300;
     this.onEvent = opts.onEvent;
+    this.spendLimits = opts.spendLimits ?? spendLimitsFromEnv();
+  }
+
+  /** The spend ceilings this runtime enforces. */
+  getSpendLimits(): SpendLimits {
+    return { ...this.spendLimits };
+  }
+
+  /** USD every running agent spent in the rolling hour — the global cap's input. */
+  costLastHour(): number {
+    let sum = 0;
+    for (const agent of this.agents.values()) {
+      sum += operatorStatusOf(agent)?.costLastHourUsd ?? 0;
+    }
+    return sum;
+  }
+
+  /**
+   * Names of running agents spawned by `name` (direct children only). Uses the
+   * in-memory lineage recorded at spawn, falling back to the persisted
+   * `agent_configs.spawned_by` for agents respawned from saved configs.
+   */
+  childrenOf(name: string): string[] {
+    const key = this.resolveKey(name) ?? name;
+    const children = new Set<string>();
+    for (const [child, parent] of this.spawnedByOf) {
+      if (child !== key && parent === key && this.agents.has(child)) children.add(child);
+    }
+    if (this.db) {
+      for (const cfg of this.db.getAgentConfigsBySpawnedBy(key)) {
+        if (cfg.name !== key && this.agents.has(cfg.name)) children.add(cfg.name);
+      }
+    }
+    return [...children];
   }
 
   /** Configure the in-process WebSocket endpoint without replacing this runtime instance. */
@@ -505,6 +575,16 @@ export class AgentRuntime {
       }
       const apiKeyResolver = () => this.resolveApiKey(effectiveConfig.model, config.keyName);
 
+      // A remote `marina@<host>` target is caller-supplied: refuse private /
+      // metadata / loopback (outside the local profile) hosts before anything
+      // is constructed or connected. Throws with the reason.
+      await assertMarinaRemoteTargetAllowed(modelStr);
+
+      const spendGuard: SpendGuard = {
+        ...this.spendLimits,
+        globalCostLastHour: () => this.costLastHour(),
+      };
+
       // Create adapter — use effectiveConfig so the inferred crewResponder
       // flag (and any other adapter-level defaults) reach the runtime.
       const wsUrl = `ws://localhost:${this.wsPort}`;
@@ -529,6 +609,7 @@ export class AgentRuntime {
         rolePrompt,
         apiKeyResolver,
         internalCredential,
+        spendGuard,
       );
 
       // Relay per-agent adapter events as engine events (see
@@ -549,8 +630,9 @@ export class AgentRuntime {
       // Spawn succeeded — now consume the cooldown window.
       this.lastSpawnAt = Date.now();
 
-      // Track it
+      // Track it (and its lineage, for cascade stop)
       this.agents.set(config.name, adapter);
+      this.spawnedByOf.set(config.name, config.spawnedBy ?? "system");
       if (issuedCredentialId) this.workloadCredentials.set(config.name, issuedCredentialId);
 
       // Save config for auto-respawn
@@ -582,8 +664,21 @@ export class AgentRuntime {
    * Stop a running agent by name. Also clears any in-flight spawn
    * reservation under the same name — without that, a hung discovery
    * prompt would leave the name permanently unbookable.
+   *
+   * Cascades to the agents it spawned (`config.spawnedBy === name`),
+   * recursively and children-first, unless `keepChildren` is set — a lead's
+   * team doesn't outlive the lead by accident. Use {@link stopWithReport} to
+   * learn which children were cascaded.
    */
-  async stop(name: string, opts?: { keepConfig?: boolean }): Promise<void> {
+  async stop(name: string, opts?: { keepConfig?: boolean; keepChildren?: boolean }): Promise<void> {
+    await this.stopWithReport(name, opts);
+  }
+
+  /** {@link stop}, returning the cascaded child names (excluding `name` itself). */
+  async stopWithReport(
+    name: string,
+    opts?: { keepConfig?: boolean; keepChildren?: boolean },
+  ): Promise<{ stoppedChildren: string[] }> {
     // Resolve to the canonical map key so `agent stop alice` finds "Alice".
     // Falls back to the raw name for the in-flight-only path (a spawn still
     // reserving the name, not yet in the agents map).
@@ -594,10 +689,27 @@ export class AgentRuntime {
       throw new Error(`Agent "${name}" is not running.`);
     }
 
+    const stoppedChildren: string[] = [];
+    if (agent && !opts?.keepChildren) {
+      for (const child of this.childrenOf(key)) {
+        if (!this.agents.has(child)) continue; // already gone via a sibling's cascade
+        try {
+          const nested = await this.stopWithReport(child, { keepConfig: opts?.keepConfig });
+          stoppedChildren.push(...nested.stoppedChildren, child);
+        } catch (error) {
+          console.warn(
+            `[agents] Failed to cascade-stop "${child}" (spawned by "${key}"):`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }
+    }
+
     if (agent) {
       await agent.stop();
       this.agents.delete(key);
     }
+    this.spawnedByOf.delete(key);
     const credentialId = this.workloadCredentials.get(key);
     if (credentialId) {
       this.db?.revokeWorkloadCredential(credentialId);
@@ -626,6 +738,7 @@ export class AgentRuntime {
     if (this.db && !opts?.keepConfig) {
       this.db.deleteAgentConfig(key);
     }
+    return { stoppedChildren };
   }
 
   /**
@@ -639,7 +752,9 @@ export class AgentRuntime {
       this.uptimeCheckInterval = null;
     }
     const names = [...this.agents.keys()];
-    await Promise.allSettled(names.map((name) => this.stop(name, { keepConfig: true })));
+    await Promise.allSettled(
+      names.map((name) => this.stop(name, { keepConfig: true, keepChildren: true })),
+    );
   }
 
   /**

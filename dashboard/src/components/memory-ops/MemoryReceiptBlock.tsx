@@ -2,20 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MemoryReceiptAttribute } from "../../lib/memory-observability-types";
-import { formatBytes } from "./format";
+import { formatBytes, surfaceLabel } from "./format";
 import { TierBars, TierLegend } from "./TierBars";
 
 /**
  * The "Memory" block rendered inside a trace span when the span carries a
  * `marina.memory.receipt.v1` receipt. Mirrors what `trace show <id>` prints:
- * tiers with counts/bytes, used/budget, truncated, cache hit, degraded tiers.
+ * tiers with counts/bytes, used/budget, truncated, cache hit, degraded tiers,
+ * plus the passthru `surface` the span was stamped with.
  */
 export function MemoryReceiptBlock({
   receipt,
   cacheHit,
+  surface,
 }: {
   receipt: MemoryReceiptAttribute;
   cacheHit?: boolean;
+  surface?: string;
 }) {
   const segments = receipt.tiers.map((tier) => ({
     tier: tier.tier,
@@ -32,6 +35,15 @@ export function MemoryReceiptBlock({
       <div className="mb-0.5 flex items-center gap-2">
         <span className="uppercase tracking-wider text-primary">Memory</span>
         <span className="text-text-dim">{receipt.entity}</span>
+        {surface !== undefined && (
+          <span
+            className="rounded border border-cyan-400/60 px-1 text-cyan-300"
+            title="passthru surface"
+            data-testid="receipt-surface"
+          >
+            {surfaceLabel(surface)}
+          </span>
+        )}
         <span className="ml-auto text-text-dim">
           {formatBytes(receipt.usedBytes)} / {formatBytes(receipt.budgetBytes)} ({pct}%)
         </span>

@@ -25,6 +25,15 @@
  * `buildResidentMemoryContext` below is the one function to swap once that
  * module is committed, bumping RESIDENT_CONTEXT_VERSION.
  *
+ * Skill transfer (`synthetic-skills-v1`, `--split family`): the seed side of a
+ * split is a family's PROCEDURE, stored as a `skill`-tier note (the same shape
+ * `skill store` writes and the same `<example>` tier the continuation prompt
+ * renders), and every scored item is a fresh problem that needs that procedure.
+ * No eval answer is ever in memory, so a lift is procedure transfer — the
+ * question HISTORY §7.2 (Q/A notes about OTHER problems do not transfer) left
+ * open. `skillHitRate` reports whether the family's skill actually reached
+ * the prompt, next to `memoryHitRate`.
+ *
  * `--model stub --judge stub` runs the entire pipeline offline and
  * deterministically; that is what CI exercises. Nothing here ever calls a
  * paid model unless you name one.
@@ -73,6 +82,11 @@ Verdict:`;
 const LETTERS = "ABCDEFGHIJ";
 const TOPIC_CHARS = 200;
 const SYNTHETIC_ITEMS_PATH = join(import.meta.dir, "items", "synthetic-v1.json");
+const SYNTHETIC_SKILLS_ITEMS_PATH = join(import.meta.dir, "items", "synthetic-skills-v1.json");
+/** The committed skill-transfer set (12 procedure families × 10 problems + 1 worked example). */
+export const SKILLS_DATASET = "synthetic-skills-v1";
+/** Importance `skill store` assigns; seeded skill notes match it so tier scoring is the agent's. */
+const SKILL_NOTE_IMPORTANCE = 6;
 const DEFAULT_RESULTS_DIR = join(import.meta.dir, "..", "results", "memory");
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -99,8 +113,13 @@ export interface MemoryBenchmarkOptions {
    * in the seed set only by chance — the reachable ceiling is ≈ seedFraction).
    * `paraphrase`: for datasets whose items carry `metadata.factId`, exactly one
    * paraphrase of every fact is held out and the rest are seeded, so every
-   * eval item is reachable. Default: `paraphrase` when every item has a
-   * factId (synthetic-v1), else `item`.
+   * eval item is reachable.
+   * `family`: for datasets whose items carry `metadata.familyId`, every
+   * problem of a family is EVAL and only the family's held-back worked example
+   * is seeded — as a `skill`-tier procedure note, never a Q/A note — so no
+   * eval answer is ever in memory (reachable = 1). Default: `family` when every
+   * item has a familyId (synthetic-skills-v1), else `paraphrase` when every
+   * item has a factId (synthetic-v1), else `item`.
    */
   split?: SplitMode;
   /** `model`: warm DB holds what the model learned on the seed set. `gold`: oracle-seeded ceiling. */
@@ -144,6 +163,10 @@ export interface QueryRecord {
   correct: boolean;
   tokenF1: number;
   memoryHits: number;
+  /** Procedure family (`metadata.familyId`) when the dataset has one. */
+  familyId?: string;
+  /** True iff the injected context contained this item's family skill statement. */
+  skillHit?: boolean;
   injectedChars: number;
   injectedTokens: number;
   promptTokens?: number;
@@ -168,8 +191,14 @@ export interface SeedSummary {
   tokenF1Mean: number;
   /** Transfer ceiling of this seed's split (see `Split.reachable`). */
   reachable: number | null;
-  /** Seeding-pass bookkeeping (never scored): notes written + seed-set accuracy. */
-  seedPass?: { items: number; correct: number; notes: number };
+  /**
+   * Seeding-pass bookkeeping (never scored): notes written + seed-set accuracy.
+   * Under the `family` split `items` counts families, `skills` counts the
+   * procedure notes written, and `correct` counts families for which a
+   * procedure was written (gold: all; model: non-empty replies) — there is no
+   * accuracy to report for writing a procedure.
+   */
+  seedPass?: { items: number; correct: number; notes: number; skills?: number };
 }
 
 export interface Interval {
@@ -202,6 +231,14 @@ export interface ArmMetrics {
    */
   reachable: number | null;
   memoryHitRate: number;
+  /**
+   * Share of eval items whose injected context contained their family's skill
+   * statement — whether the procedure actually reached the prompt. `null` for
+   * datasets without `metadata.skill`.
+   */
+  skillHitRate: number | null;
+  /** Per-family accuracy for skill datasets; `null` otherwise. */
+  perFamily: Record<string, FamilyMetrics> | null;
   injectedTokens: { mean: number; p95: number; max: number };
   injectedChars: { mean: number; p95: number };
   promptTokens: { mean: number; total: number } | null;
@@ -209,6 +246,13 @@ export interface ArmMetrics {
   latencyMs: { total: Percentiles; retrieval: Percentiles; model: Percentiles };
   costUsd: number | null;
   skipped?: string;
+}
+
+export interface FamilyMetrics {
+  n: number;
+  correct: number;
+  accuracy: number;
+  skillHitRate: number;
 }
 
 export interface ArmConfig {
@@ -277,7 +321,7 @@ export function stableHash(input: string): number {
 }
 
 /** Seed/eval split by seed-stable hash. Disjoint by construction; covers every item. */
-export type SplitMode = "item" | "paraphrase";
+export type SplitMode = "item" | "paraphrase" | "family";
 
 export interface Split<T> {
   seedSet: T[];
@@ -299,15 +343,35 @@ const factIdOf = (item: FactItem): string | undefined => {
   return value === undefined || value === null ? undefined : String(value);
 };
 
-/** Share of eval items whose fact is represented in the seed set (see `Split.reachable`). */
+const familyIdOf = (item: FactItem): string | undefined => {
+  const value = item.metadata?.familyId;
+  return value === undefined || value === null ? undefined : String(value);
+};
+
+/** The worked example of a family: the one item the `family` split seeds instead of scoring. */
+const isFamilyExample = (item: FactItem): boolean => item.metadata?.kind === "example";
+
+/** The procedure statement an item's family carries (`metadata.skill`), if any. */
+const skillOf = (item: FactItem): string | undefined => {
+  const value = item.metadata?.skill;
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+};
+
+/** The group a seeded note can transfer within: a fact's paraphrases, or a procedure family. */
+const transferKeyOf = (item: FactItem): string | undefined => factIdOf(item) ?? familyIdOf(item);
+
+/**
+ * Share of eval items whose fact (or procedure family) is represented in the
+ * seed set (see `Split.reachable`).
+ */
 export function reachableFraction<T extends FactItem>(
   seedSet: readonly T[],
   evalSet: readonly T[],
 ): number | null {
-  const seeded = new Set(seedSet.map(factIdOf).filter((f): f is string => f !== undefined));
-  const withFact = evalSet.filter((item) => factIdOf(item) !== undefined);
-  if (withFact.length === 0) return null;
-  return withFact.filter((item) => seeded.has(factIdOf(item)!)).length / withFact.length;
+  const seeded = new Set(seedSet.map(transferKeyOf).filter((f): f is string => f !== undefined));
+  const withKey = evalSet.filter((item) => transferKeyOf(item) !== undefined);
+  if (withKey.length === 0) return null;
+  return withKey.filter((item) => seeded.has(transferKeyOf(item)!)).length / withKey.length;
 }
 
 function fingerprintOf(evalSet: readonly { id: string }[]): string {
@@ -349,7 +413,9 @@ export function splitParaphrases<T extends FactItem>(
     }
     const ordered = [...members].sort((a, b) => a.id.localeCompare(b.id));
     const held = stableHash(`${seed}:${salt}:${fact}`) % ordered.length;
-    ordered.forEach((item, index) => (index === held ? evalSet : seedSet).push(item));
+    ordered.forEach((item, index) => {
+      (index === held ? evalSet : seedSet).push(item);
+    });
   }
   const rest = splitItems(loose, seed, salt, seedFraction);
   seedSet.push(...rest.seedSet);
@@ -362,11 +428,64 @@ export function splitParaphrases<T extends FactItem>(
   };
 }
 
-/** Choose the split for a dataset: `paraphrase` iff every item carries a factId. */
+/**
+ * Family split (skill transfer): every problem of a family is EVAL; the seed
+ * side is the family's worked example (`metadata.kind === "example"`, or one
+ * problem held back by a seed-stable hash when a family ships none), which the
+ * seed pass turns into a `skill`-tier procedure note. No eval answer is ever
+ * in memory; reachable = 1 for every family. Items without a familyId fall
+ * back to the item split. The eval set is identical across seeds — the seed
+ * only reorders it (cold/warm learning order) and picks the fallback example.
+ */
+export function splitFamilies<T extends FactItem>(
+  items: readonly T[],
+  seed: number,
+  salt: string,
+  seedFraction = 0.5,
+): Split<T> {
+  const groups = new Map<string, T[]>();
+  const loose: T[] = [];
+  for (const item of items) {
+    const family = familyIdOf(item);
+    if (family === undefined) loose.push(item);
+    else groups.set(family, [...(groups.get(family) ?? []), item]);
+  }
+  const seedSet: T[] = [];
+  const evalSet: T[] = [];
+  for (const [family, members] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (members.length < 2) {
+      loose.push(...members);
+      continue;
+    }
+    const ordered = [...members].sort((a, b) => a.id.localeCompare(b.id));
+    const declared = ordered.findIndex(isFamilyExample);
+    const held =
+      declared >= 0 ? declared : stableHash(`${seed}:${salt}:${family}`) % ordered.length;
+    ordered.forEach((item, index) => {
+      (index === held ? seedSet : evalSet).push(item);
+    });
+  }
+  const rest = splitItems(loose, seed, salt, seedFraction);
+  seedSet.push(...rest.seedSet);
+  evalSet.push(...rest.evalSet);
+  const order = (item: T) => stableHash(`${seed}:${salt}:order:${item.id}`);
+  evalSet.sort((a, b) => order(a) - order(b) || a.id.localeCompare(b.id));
+  return {
+    seedSet,
+    evalSet,
+    fingerprint: fingerprintOf(evalSet),
+    reachable: reachableFraction(seedSet, evalSet),
+  };
+}
+
+/**
+ * Choose the split for a dataset: `family` iff every item carries a familyId,
+ * else `paraphrase` iff every item carries a factId, else `item`.
+ */
 export function defaultSplitMode(items: readonly FactItem[]): SplitMode {
-  return items.length > 0 && items.every((item) => factIdOf(item) !== undefined)
-    ? "paraphrase"
-    : "item";
+  if (items.length === 0) return "item";
+  if (items.every((item) => familyIdOf(item) !== undefined)) return "family";
+  return items.every((item) => factIdOf(item) !== undefined) ? "paraphrase" : "item";
 }
 
 export function splitDataset<T extends FactItem>(
@@ -376,6 +495,7 @@ export function splitDataset<T extends FactItem>(
   seedFraction: number,
   mode: SplitMode,
 ): Split<T> {
+  if (mode === "family") return splitFamilies(items, seed, salt, seedFraction);
   return mode === "paraphrase"
     ? splitParaphrases(items, seed, salt, seedFraction)
     : splitItems(items, seed, salt, seedFraction);
@@ -520,6 +640,38 @@ export function loadSyntheticItems(): DatasetItem[] {
   return raw.items;
 }
 
+/** The committed skill-transfer set (`items/synthetic-skills-v1.json`). */
+export function loadSyntheticSkillItems(): DatasetItem[] {
+  const raw = JSON.parse(readFileSync(SYNTHETIC_SKILLS_ITEMS_PATH, "utf-8")) as {
+    items: DatasetItem[];
+  };
+  return raw.items;
+}
+
+/**
+ * The note the seed pass writes for a procedure family: the same
+ * `[Skill: name] description || …` shape `skill store` produces, so the
+ * `<example skill=…>` tier renders it exactly as it would an agent's own skill.
+ * `procedure` is the family's statement (gold) or the model's own wording
+ * (seed-source model); `example` is the held-back worked example.
+ */
+export function skillNoteText(
+  familyId: string,
+  procedure: string,
+  example: Pick<DatasetItem, "question" | "answer">,
+): string {
+  const rule = procedure.replace(/\s+/g, " ").trim();
+  const q = example.question.replace(/\s+/g, " ").trim();
+  return `[Skill: ${familyId}] ${rule} || Example: Q: ${q} A: ${example.answer}`;
+}
+
+/** True iff `context` contains the item's family skill statement (normalized containment). */
+export function contextContainsSkill(context: string, item: DatasetItem): boolean {
+  const skill = skillOf(item);
+  if (!skill || context.length === 0) return false;
+  return ` ${normalizeAnswer(context)} `.includes(` ${normalizeAnswer(skill)} `);
+}
+
 type Loader = (dir: string, limit?: number) => Promise<DatasetItem[]>;
 const DATASET_LOADERS: Record<string, Loader> = {
   "mmlu-pro": downloads.downloadMMLUPro,
@@ -535,11 +687,15 @@ const DATASET_LOADERS: Record<string, Loader> = {
   aime: downloads.downloadAIME,
 };
 
-export const DATASETS = ["synthetic-v1", ...Object.keys(DATASET_LOADERS)];
+export const DATASETS = ["synthetic-v1", SKILLS_DATASET, ...Object.keys(DATASET_LOADERS)];
 
 export async function loadDataset(name: string, limit?: number): Promise<DatasetItem[]> {
   if (name === "synthetic-v1") {
     const items = loadSyntheticItems();
+    return limit ? items.slice(0, limit) : items;
+  }
+  if (name === SKILLS_DATASET) {
+    const items = loadSyntheticSkillItems();
     return limit ? items.slice(0, limit) : items;
   }
   const loader = DATASET_LOADERS[name];
@@ -914,12 +1070,28 @@ class ScratchDb {
   }
 }
 
-function writeNote(db: MarinaDB, text: string): void {
+/** One seeded note: a `qa` fact (`Q: … | A: …`) or a `skill` procedure (`[Skill: …] …`). */
+export interface CorpusNote {
+  text: string;
+  kind: "qa" | "skill";
+  familyId?: string;
+}
+
+function writeNote(db: MarinaDB, text: string, kind: CorpusNote["kind"] = "qa"): void {
+  if (kind === "skill") {
+    // Exactly what `skill store` writes: note_type skill → tier skill, importance 6.
+    db.createNote(MEMORY_OWNER, text, undefined, {
+      noteType: "skill",
+      tier: "skill",
+      importance: SKILL_NOTE_IMPORTANCE,
+    });
+    return;
+  }
   db.createNote(MEMORY_OWNER, text, undefined, { noteType: "fact", tier: "fact" });
 }
 
-function seedNotesInto(db: MarinaDB, notes: readonly string[]): void {
-  for (const note of notes) writeNote(db, note);
+function seedNotesInto(db: MarinaDB, entries: readonly CorpusNote[]): void {
+  for (const note of entries) writeNote(db, note.text, note.kind);
 }
 
 async function runOne(
@@ -960,6 +1132,9 @@ async function runOne(
     correct,
     tokenF1: error ? 0 : tokenF1(prediction, goldText(item)),
     memoryHits: context.hits,
+    ...(familyIdOf(item) === undefined
+      ? {}
+      : { familyId: familyIdOf(item), skillHit: contextContainsSkill(context.text, item) }),
     injectedChars: context.text.length,
     injectedTokens: estimateTokens(context.text),
     promptTokens: usage?.promptTokens,
@@ -992,8 +1167,89 @@ async function mapPool<T, U>(
 }
 
 interface SeedCorpus {
+  /** Note texts in write order (what `fullcontext` inlines). */
   notes: string[];
+  /** The same notes with their kind — what `warm`/`bm25` seed into the DB. */
+  entries: CorpusNote[];
   seedPass: SeedSummary["seedPass"];
+}
+
+/** Ask the model to state a family's procedure from its worked example alone (seed-source model). */
+function buildProcedureMessages(example: DatasetItem): Message[] {
+  return [
+    {
+      role: "system",
+      content:
+        "You are writing a reusable procedure note for your future self. From the worked example, state the general rule as a procedure in one to three imperative sentences. Do not restate the example's numbers or its answer. Reply with the procedure only.",
+    },
+    {
+      role: "user",
+      content: `Worked example:\nQ: ${example.question}\nA: ${example.answer}`,
+    },
+  ];
+}
+
+/**
+ * Family split seeding: one `skill`-tier note per family — the procedure plus
+ * the held-back worked example — never a Q/A note about a scored item. `gold`
+ * writes the family's own statement; `model` asks the model to write the
+ * procedure in its own words from the worked example only (recorded verbatim:
+ * a rule the example under-determines yields a wrong or vague note, which is
+ * the honest condition). Loose items (no familyId) still get Q/A notes.
+ */
+async function buildSkillSeedCorpus(
+  r: Resolved,
+  seed: number,
+  seedSet: DatasetItem[],
+): Promise<SeedCorpus> {
+  const entries: CorpusNote[] = [];
+  const families = seedSet.filter((item) => familyIdOf(item) !== undefined);
+  const loose = seedSet.filter((item) => familyIdOf(item) === undefined);
+  let written = 0;
+  for (const example of families) {
+    const familyId = familyIdOf(example) as string;
+    let procedure: string | undefined;
+    if (r.seedSource === "gold") {
+      procedure = skillOf(example);
+    } else {
+      try {
+        const reply = await r.model.answer(
+          buildProcedureMessages(example),
+          { id: `${example.id}:procedure`, question: example.question, answer: "" },
+          "",
+        );
+        procedure = reply.text.trim() || undefined;
+      } catch {
+        procedure = undefined;
+      }
+    }
+    if (!procedure) {
+      // Keep the note so the corpus shape is fixed across seeds; say plainly
+      // that no procedure was written rather than silently falling back to gold.
+      entries.push({
+        text: skillNoteText(familyId, "(no procedure written)", example),
+        kind: "skill",
+        familyId,
+      });
+      continue;
+    }
+    written++;
+    entries.push({ text: skillNoteText(familyId, procedure, example), kind: "skill", familyId });
+  }
+  if (loose.length > 0) {
+    const rest = await buildQaSeedCorpus(r, seed, loose);
+    entries.push(...rest.entries);
+  }
+  return {
+    notes: entries.map((e) => e.text),
+    entries,
+    seedPass: {
+      items: families.length,
+      correct: r.seedSource === "gold" ? families.length : written,
+      notes: entries.length,
+      skills: families.length,
+    },
+  };
 }
 
 /**
@@ -1003,21 +1259,24 @@ interface SeedCorpus {
  * `gold` source skips the model and writes the reference answers (an oracle
  * ceiling, labeled as such in the config block).
  */
-async function buildSeedCorpus(
+async function buildQaSeedCorpus(
   r: Resolved,
   seed: number,
   seedSet: DatasetItem[],
 ): Promise<SeedCorpus> {
   if (r.seedSource === "gold") {
-    const notes = seedSet.map((item) => learnNoteText(item, goldText(item)));
+    const entries = seedSet.map(
+      (item): CorpusNote => ({ text: learnNoteText(item, goldText(item)), kind: "qa" }),
+    );
     return {
-      notes,
-      seedPass: { items: seedSet.length, correct: seedSet.length, notes: notes.length },
+      notes: entries.map((e) => e.text),
+      entries,
+      seedPass: { items: seedSet.length, correct: seedSet.length, notes: entries.length },
     };
   }
   const scratch = new ScratchDb(`seed${seed}`);
   try {
-    const notes: string[] = [];
+    const entries: CorpusNote[] = [];
     let correct = 0;
     for (const item of seedSet) {
       const tr = performance.now();
@@ -1027,13 +1286,29 @@ async function buildSeedCorpus(
       if (!record.error) {
         const note = learnNoteText(item, record.prediction);
         writeNote(scratch.db, note);
-        notes.push(note);
+        entries.push({ text: note, kind: "qa" });
       }
     }
-    return { notes, seedPass: { items: seedSet.length, correct, notes: notes.length } };
+    return {
+      notes: entries.map((e) => e.text),
+      entries,
+      seedPass: { items: seedSet.length, correct, notes: entries.length },
+    };
   } finally {
     scratch.close();
   }
+}
+
+/** Seed corpus for one seed: procedure notes under the `family` split, Q/A notes otherwise. */
+function buildSeedCorpus(
+  r: Resolved,
+  seed: number,
+  seedSet: DatasetItem[],
+  splitMode: SplitMode,
+): Promise<SeedCorpus> {
+  return splitMode === "family"
+    ? buildSkillSeedCorpus(r, seed, seedSet)
+    : buildQaSeedCorpus(r, seed, seedSet);
 }
 
 async function runArmForSeed(
@@ -1064,7 +1339,7 @@ async function runArmForSeed(
   }
   const scratch = new ScratchDb(`${arm}${seed}`);
   try {
-    if (arm !== "cold") seedNotesInto(scratch.db, corpus.notes);
+    if (arm !== "cold") seedNotesInto(scratch.db, corpus.entries);
     if (arm === "bm25") {
       const records = await mapPool(evalSet, r.concurrency, async (item) => {
         const tr = performance.now();
@@ -1132,6 +1407,31 @@ function summarize(records: QueryRecord[], perSeed: SeedSummary[], r: Resolved):
             evalItems;
     })(),
     memoryHitRate: n > 0 ? records.filter((x) => x.memoryHits > 0).length / n : 0,
+    skillHitRate: (() => {
+      const withSkill = records.filter((x) => x.skillHit !== undefined);
+      return withSkill.length === 0
+        ? null
+        : withSkill.filter((x) => x.skillHit).length / withSkill.length;
+    })(),
+    perFamily: (() => {
+      const byFamily = new Map<string, QueryRecord[]>();
+      for (const x of records) {
+        if (x.familyId === undefined) continue;
+        byFamily.set(x.familyId, [...(byFamily.get(x.familyId) ?? []), x]);
+      }
+      if (byFamily.size === 0) return null;
+      const out: Record<string, FamilyMetrics> = {};
+      for (const [family, xs] of [...byFamily.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+        const c = xs.filter((x) => x.correct).length;
+        out[family] = {
+          n: xs.length,
+          correct: c,
+          accuracy: c / xs.length,
+          skillHitRate: xs.filter((x) => x.skillHit).length / xs.length,
+        };
+      }
+      return out;
+    })(),
     injectedTokens: {
       mean: mean(records.map((x) => x.injectedTokens)),
       p95: percentile(
@@ -1191,26 +1491,46 @@ export function renderSummaryMarkdown(results: ArmResult[]): string {
     );
   }
   lines.push(
-    "| Arm | Model | n (eval×seeds) | Judge acc | Wilson 95% | Ceiling | Seed-mean ± CI | Token-F1 | Hit rate | Injected tok mean/p95 | Latency p50/p95 ms | Cost USD |",
-    "|---|---|---|---|---|---|---|---|---|---|---|---|",
+    "| Arm | Model | n (eval×seeds) | Judge acc | Wilson 95% | Ceiling | Seed-mean ± CI | Token-F1 | Hit rate | Skill hit | Injected tok mean/p95 | Latency p50/p95 ms | Cost USD |",
+    "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
   );
   for (const r of results) {
     const m = r.metrics;
     if (m.skipped) {
       lines.push(
-        `| ${r.config.arm} | ${r.config.model} | 0 | skipped | — | — | — | — | — | — | — | ${m.skipped} |`,
+        `| ${r.config.arm} | ${r.config.model} | 0 | skipped | — | — | — | — | — | — | — | — | ${m.skipped} |`,
       );
       continue;
     }
     const seedCi = `${fmtPct(m.judgeAccuracy.seedMean)} ± ${fmtPct(m.judgeAccuracy.seedMean - m.judgeAccuracy.seedCi95.low)}`;
     lines.push(
-      `| ${r.config.arm} | ${r.config.model} | ${m.n} | ${fmtPct(m.judgeAccuracy.pooled)} | ${fmtCi(m.judgeAccuracy.wilson95)} | ${m.reachable === null ? "n/a" : fmtPct(m.reachable)} | ${seedCi} | ${m.tokenF1.mean.toFixed(3)} | ${fmtPct(m.memoryHitRate)} | ${m.injectedTokens.mean.toFixed(0)}/${m.injectedTokens.p95} | ${m.latencyMs.total.p50.toFixed(1)}/${m.latencyMs.total.p95.toFixed(1)} | ${m.costUsd === null ? "n/a" : m.costUsd.toFixed(4)} |`,
+      `| ${r.config.arm} | ${r.config.model} | ${m.n} | ${fmtPct(m.judgeAccuracy.pooled)} | ${fmtCi(m.judgeAccuracy.wilson95)} | ${m.reachable === null ? "n/a" : fmtPct(m.reachable)} | ${seedCi} | ${m.tokenF1.mean.toFixed(3)} | ${fmtPct(m.memoryHitRate)} | ${m.skillHitRate === null ? "n/a" : fmtPct(m.skillHitRate)} | ${m.injectedTokens.mean.toFixed(0)}/${m.injectedTokens.p95} | ${m.latencyMs.total.p50.toFixed(1)}/${m.latencyMs.total.p95.toFixed(1)} | ${m.costUsd === null ? "n/a" : m.costUsd.toFixed(4)} |`,
     );
   }
   lines.push(
     "",
-    "Injected tokens use the chars/4 heuristic; `promptTokens` in the JSON carries provider-reported usage when a real model ran. Held-out: every scored item is in the eval split; every note came from the seed split or from earlier eval items in the same arm (cold/warm learning). Ceiling = share of eval items whose fact has a seeded paraphrase (the accuracy a perfect memory could reach on this split); n/a for datasets without fact groups.",
+    "Injected tokens use the chars/4 heuristic; `promptTokens` in the JSON carries provider-reported usage when a real model ran. Held-out: every scored item is in the eval split; every note came from the seed split or from earlier eval items in the same arm (cold/warm learning). Ceiling = share of eval items whose fact has a seeded paraphrase (the accuracy a perfect memory could reach on this split); n/a for datasets without fact groups. Skill hit = share of eval items whose injected context contained their family's procedure statement (skill datasets only; `perFamily` in the JSON breaks accuracy down per procedure).",
   );
+  const withFamilies = results.filter((r) => r.metrics.perFamily && !r.metrics.skipped);
+  if (withFamilies.length > 0) {
+    const families = [
+      ...new Set(withFamilies.flatMap((r) => Object.keys(r.metrics.perFamily ?? {}))),
+    ].sort();
+    lines.push(
+      "",
+      "### Per family (judge accuracy · skill hit)",
+      "",
+      `| Family | ${withFamilies.map((r) => r.config.arm).join(" | ")} |`,
+      `|---|${withFamilies.map(() => "---").join("|")}|`,
+    );
+    for (const family of families) {
+      const cells = withFamilies.map((r) => {
+        const f = r.metrics.perFamily?.[family];
+        return f ? `${fmtPct(f.accuracy)} · ${fmtPct(f.skillHitRate)}` : "—";
+      });
+      lines.push(`| ${family} | ${cells.join(" | ")} |`);
+    }
+  }
   return `${lines.join("\n")}\n`;
 }
 
@@ -1303,8 +1623,8 @@ export async function runMemoryBenchmark(
         );
       }
       const corpus: SeedCorpus = needsCorpus
-        ? await buildSeedCorpus(r, seed, split.seedSet)
-        : { notes: [], seedPass: undefined };
+        ? await buildSeedCorpus(r, seed, split.seedSet, splitMode)
+        : { notes: [], entries: [], seedPass: undefined };
       perSeedState.set(seed, { split, corpus });
       log(
         `  seed ${seed}: seed-set=${split.seedSet.length} eval-set=${split.evalSet.length} fingerprint=${split.fingerprint}${split.reachable === null ? "" : ` reachable=${fmtPct(split.reachable)}`}${corpus.seedPass ? ` seed-pass acc=${fmtPct(corpus.seedPass.correct / Math.max(1, corpus.seedPass.items))} notes=${corpus.seedPass.notes}` : ""}`,
@@ -1380,7 +1700,7 @@ export async function runMemoryBenchmark(
         items: records,
       });
       log(
-        `  ${arm.padEnd(11)} acc=${fmtPct(metrics.judgeAccuracy.pooled)} ${fmtCi(metrics.judgeAccuracy.wilson95)}${metrics.reachable === null ? "" : ` ceiling=${fmtPct(metrics.reachable)}`} f1=${metrics.tokenF1.mean.toFixed(3)} hits=${fmtPct(metrics.memoryHitRate)} inj=${metrics.injectedTokens.mean.toFixed(0)}tok${skipped ? ` SKIPPED: ${skipped}` : ""}`,
+        `  ${arm.padEnd(11)} acc=${fmtPct(metrics.judgeAccuracy.pooled)} ${fmtCi(metrics.judgeAccuracy.wilson95)}${metrics.reachable === null ? "" : ` ceiling=${fmtPct(metrics.reachable)}`} f1=${metrics.tokenF1.mean.toFixed(3)} hits=${fmtPct(metrics.memoryHitRate)}${metrics.skillHitRate === null ? "" : ` skill-hits=${fmtPct(metrics.skillHitRate)}`} inj=${metrics.injectedTokens.mean.toFixed(0)}tok${skipped ? ` SKIPPED: ${skipped}` : ""}`,
       );
     }
 
@@ -1422,7 +1742,7 @@ Usage:
   bun --env-file=/dev/null run benchmarks/memory/genbench.ts [options]
 
 Options:
-  --dataset <name>        synthetic-v1 (default, offline) | ${Object.keys(DATASET_LOADERS).join(" | ")}
+  --dataset <name>        synthetic-v1 (default, offline) | ${SKILLS_DATASET} (offline, skill transfer) | ${Object.keys(DATASET_LOADERS).join(" | ")}
   --arms <a,b,..>         subset of: ${ARMS.join(", ")} (default: all)
   --model <id>            stub (default) | any model id routed via --endpoint (e.g. marina/default)
   --judge <id>            stub (default, exact-match) | model id for the LLM judge
@@ -1430,9 +1750,11 @@ Options:
   --seed-start <n>        first seed (default 1)
   --limit <n>             cap items before the split
   --split-salt <s>        salt for the seed/eval hash (default v1)
-  --split <mode>          item | paraphrase (default: paraphrase when every item has metadata.factId, else item)
+  --split <mode>          item | paraphrase | family (default: family when every item has metadata.familyId,
+                          paraphrase when every item has metadata.factId, else item)
   --seed-fraction <f>     fraction of items in the seed set (default 0.5)
-  --seed-source <m>       model (default: warm holds what the model learned) | gold (oracle ceiling)
+  --seed-source <m>       model (default: warm holds what the model learned) | gold (oracle ceiling;
+                          under --split family: the family's own procedure statement as a skill note)
   --top-k <n>             bm25 control top-k (default 5)
   --context-budget <n>    fullcontext budget in tokens (default 8000)
   --no-learn              disable within-run learning in cold/warm
@@ -1505,7 +1827,10 @@ export async function runCli(argv: string[]): Promise<number> {
     seedStart: Number(values["seed-start"] ?? "1"),
     limit: num(values.limit),
     splitSalt: values["split-salt"],
-    split: values.split === "item" || values.split === "paraphrase" ? values.split : undefined,
+    split:
+      values.split === "item" || values.split === "paraphrase" || values.split === "family"
+        ? values.split
+        : undefined,
     seedFraction: Number(values["seed-fraction"] ?? "0.5"),
     seedSource,
     topK: Number(values["top-k"] ?? "5"),
