@@ -15,3 +15,5 @@ fe683112527dc3cddae8c7f43ed3408c10b7e2db:test/key-crypto.test.ts:generic-api-key
 4987462a1e54338d7c8d7f37f847ef03ef7b1aa2:extensions/local-embeddings/index.ts:generic-api-key:15
 # RFC 6455 §1.3 example Sec-WebSocket-Key ("the sample nonce"), used by the raw-handshake origin test; not a credential.
 162c4f3e8af5050c67767cc86bff3faad7756e29:test/websocket.test.ts:generic-api-key:704
+# Provider → default model-id map (env var NAME as the key, a public model id as the value) — moved into model-api/upstream.ts by the split; not a credential.
+0f10b52f3ddb42feb22826e9faef3225230e092e:src/net/model-api/upstream.ts:generic-api-key:65
