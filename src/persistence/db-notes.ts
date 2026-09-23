@@ -12,6 +12,7 @@ import {
   NOTE_LINKED_DECAY_DAYS,
   NOTE_ORPHAN_DECAY_DAYS,
   NOTE_WELL_LINKED_THRESHOLD,
+  NOTES_BATCH_CHUNK_SIZE,
   type NoteTier,
   PROCESS_TIER_QUOTA,
   SIMILAR_NOTE_RELEVANCE_THRESHOLD,
@@ -306,6 +307,23 @@ export function deleteNote(db: Database, id: number, entityName: string): boolea
 
 export function getNote(db: Database, id: number): NoteRow | undefined {
   return (db.query("SELECT * FROM notes WHERE id = ?").get(id) as NoteRow | null) ?? undefined;
+}
+
+/** Batch read: every existing note among `ids`, in one `WHERE id IN (…)` per
+ *  chunk of `NOTES_BATCH_CHUNK_SIZE`. Duplicates are collapsed; order is not
+ *  guaranteed — callers that need lookups build a Map. */
+export function getNotes(db: Database, ids: number[]): NoteRow[] {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return [];
+  const rows: NoteRow[] = [];
+  for (let i = 0; i < unique.length; i += NOTES_BATCH_CHUNK_SIZE) {
+    const chunk = unique.slice(i, i + NOTES_BATCH_CHUNK_SIZE);
+    const placeholders = chunk.map(() => "?").join(", ");
+    rows.push(
+      ...(db.query(`SELECT * FROM notes WHERE id IN (${placeholders})`).all(...chunk) as NoteRow[]),
+    );
+  }
+  return rows;
 }
 
 function normalizeClaim(content: string): string {

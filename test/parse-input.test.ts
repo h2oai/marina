@@ -8,9 +8,13 @@ import {
   canonicalSub,
   extractFlags,
   extractModifiers,
+  flagPattern,
   int,
+  modifierPattern,
   normalizeIdToken,
   parseModifiers,
+  REGEX_CACHE_MAX,
+  regexCacheSizes,
   resolveMultiWordName,
   splitOnTerminator,
   unknownSubcommand,
@@ -338,5 +342,111 @@ describe("parseDuration", () => {
     expect(parseDurationMs("7d")).toBe(7 * 86_400_000);
     expect(parseDurationMs("1mo")).toBe(30 * 86_400_000);
     expect(parseDurationMs("2weeks")).toBe(14 * 86_400_000);
+  });
+});
+
+// ── extractModifiers / extractFlags regex cache ──────────────────────────────
+
+describe("trailing-modifier regex cache", () => {
+  it("repeat calls return the identical RegExp instance, with no lastIndex state", () => {
+    const a = modifierPattern("importance");
+    const b = modifierPattern("importance");
+    expect(a).toBe(b);
+    expect(a.global).toBe(false);
+    expect(a.sticky).toBe(false);
+    expect(a.flags).toBe("i");
+    // Exercising the shared instance leaves lastIndex untouched (no g/y flag).
+    expect("x importance 7".match(a)?.[1]).toBe("7");
+    expect(a.lastIndex).toBe(0);
+
+    const f1 = flagPattern("recent");
+    const f2 = flagPattern("recent");
+    expect(f1).toBe(f2);
+    expect(f1.global).toBe(false);
+    expect(f1.test("query recent")).toBe(true);
+    expect(f1.test("query recent")).toBe(true); // a `g` regex would flip here
+    expect(f1.lastIndex).toBe(0);
+  });
+
+  it("modifier and flag caches are separate shapes for the same name", () => {
+    expect(modifierPattern("recent")).not.toBe(flagPattern("recent"));
+    expect(modifierPattern("recent").source).toContain("(\\S+)");
+    expect(flagPattern("recent").source).not.toContain("(\\S+)");
+  });
+
+  it("extractModifiers results are unchanged across repeated calls (cache hit path)", () => {
+    for (let i = 0; i < 3; i++) {
+      const { text, modifiers } = extractModifiers("some text importance 7 type fact", [
+        "importance",
+        "type",
+      ]);
+      expect(text).toBe("some text");
+      expect(modifiers).toEqual({ importance: "7", type: "fact" });
+    }
+    for (let i = 0; i < 3; i++) {
+      const { text, flags } = extractFlags("query text recent", ["recent", "important"]);
+      expect(text).toBe("query text");
+      expect([...flags]).toEqual(["recent"]);
+    }
+  });
+
+  it("still handles --key spelling and case-insensitivity", () => {
+    const { text, modifiers } = extractModifiers("body --Limit 5", ["limit"]);
+    expect(text).toBe("body");
+    expect(modifiers.limit).toBe("5");
+    const { flags } = extractFlags("q --TRUSTED", ["trusted"]);
+    expect(flags.has("trusted")).toBe(true);
+  });
+
+  it("hyphenated keys (benchmark's judge-model) still match literally", () => {
+    const { text, modifiers } = extractModifiers("mmlu judge-model gpt-5 limit 3", [
+      "limit",
+      "judge-model",
+    ]);
+    expect(text).toBe("mmlu");
+    expect(modifiers["judge-model"]).toBe("gpt-5");
+    expect(modifiers.limit).toBe("3");
+  });
+
+  it("escapes regex metacharacters in keys so they match literally", () => {
+    // `a.b` used to match any character in the dot position (`aXb 1` would parse);
+    // escaped, only the literal key does.
+    const hit = extractModifiers("text a.b 1", ["a.b"]);
+    expect(hit.modifiers["a.b"]).toBe("1");
+    expect(hit.text).toBe("text");
+    const miss = extractModifiers("text aXb 1", ["a.b"]);
+    expect(miss.modifiers["a.b"]).toBeUndefined();
+    expect(miss.text).toBe("text aXb 1");
+    // A key that would be an invalid pattern unescaped must not throw.
+    expect(() => extractFlags("q c++", ["c++"])).not.toThrow();
+    expect(extractFlags("q c++", ["c++"]).flags.has("c++")).toBe(true);
+  });
+
+  it("caps the caches so never-repeating keys cannot grow them without bound", () => {
+    const before = regexCacheSizes();
+    for (let i = 0; i < REGEX_CACHE_MAX * 2 + 5; i++) {
+      modifierPattern(`hostile-key-${i}`);
+      flagPattern(`hostile-flag-${i}`);
+    }
+    const after = regexCacheSizes();
+    expect(after.modifiers).toBeLessThanOrEqual(REGEX_CACHE_MAX);
+    expect(after.flags).toBeLessThanOrEqual(REGEX_CACHE_MAX);
+    expect(before.modifiers).toBeLessThanOrEqual(REGEX_CACHE_MAX);
+    // A cleared cache simply recompiles: behaviour is unchanged.
+    expect(extractModifiers("t importance 9", ["importance"]).modifiers.importance).toBe("9");
+  });
+});
+
+describe("extractModifiers key ordering (hyphenated keys)", () => {
+  it("a hyphenated key listed before its suffix is not shadowed by the \\b boundary", () => {
+    // `\bmodel` matches at the hyphen in `judge-model`, so `model` must not
+    // be tried first — benchmark.ts lists `judge-model` ahead of `model`.
+    const { modifiers, text } = extractModifiers("run x judge-model gpt-5 model claude", [
+      "judge-model",
+      "model",
+    ]);
+    expect(modifiers["judge-model"]).toBe("gpt-5");
+    expect(modifiers.model).toBe("claude");
+    expect(text).toBe("run x");
   });
 });

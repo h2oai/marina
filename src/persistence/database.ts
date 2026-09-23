@@ -4,7 +4,7 @@
 import { Database } from "bun:sqlite";
 import type { AgentSupports, AgentThinkingLevel } from "../agent/agent-types";
 import type { Session } from "../auth/session-manager";
-import type { NoteTier } from "../engine/constants";
+import { DURABLE_KEY_CACHE_MAX, type NoteTier } from "../engine/constants";
 import type { MemoryStorageAmounts } from "../sdk/memory-types";
 import type { EngineEvent, Entity, EntityId, RoomId } from "../types";
 import type { TraitCapabilities } from "./db-agents";
@@ -1154,15 +1154,28 @@ export class MarinaDB implements MarinaStores {
   // backfilled legacy rows). Ids with no entity/user row (tests, service
   // principals) pass through unchanged.
 
+  // Bounded LRU: Map iteration order is insertion order, so a hit is refreshed
+  // by delete + re-insert and the eviction victim is always the first key.
+  // Entity ids re-mint on every name-login, so an unbounded map would grow
+  // with the lifetime login count. `deleteUser` still drops every entry that
+  // resolved to the deleted account.
   private durableKeyCache = new Map<string, string>();
 
   durableEntityKey(entityId: string): string {
     const cached = this.durableKeyCache.get(entityId);
-    if (cached) return cached;
+    if (cached) {
+      this.durableKeyCache.delete(entityId);
+      this.durableKeyCache.set(entityId, cached);
+      return cached;
+    }
     const row = this.db
       .query("SELECT u.id AS id FROM entities e JOIN users u ON u.name = e.name WHERE e.id = ?")
       .get(entityId) as { id: string } | null;
     if (!row) return entityId;
+    if (this.durableKeyCache.size >= DURABLE_KEY_CACHE_MAX) {
+      const oldest = this.durableKeyCache.keys().next().value;
+      if (oldest !== undefined) this.durableKeyCache.delete(oldest);
+    }
     this.durableKeyCache.set(entityId, row.id);
     return row.id;
   }
@@ -1704,6 +1717,10 @@ export class MarinaDB implements MarinaStores {
 
   getNote(id: number): NoteRow | undefined {
     return notesDb.getNote(this.db, id);
+  }
+
+  getNotes(ids: number[]): NoteRow[] {
+    return notesDb.getNotes(this.db, ids);
   }
 
   addNoteSource(noteId: number, source: notesDb.NoteSourceInput): number {

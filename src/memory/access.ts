@@ -23,10 +23,19 @@ export function memoryAccess(db: MarinaDB, actor: { name: string; id?: string })
   }
   function links(noteId: number) {
     if (!read(db.getNote(noteId))) return [];
-    return db
-      .getNoteLinks(noteId)
-      .filter((link) => read(db.getNote(link.source_id)) && read(db.getNote(link.target_id)));
+    const rows = db.getNoteLinks(noteId);
+    if (rows.length === 0) return rows;
+    // One batched read for every note the links reference instead of two
+    // getNote round-trips per link (the N+1 the dashboard observer also had).
+    const ids = new Set<number>();
+    for (const link of rows) {
+      ids.add(link.source_id);
+      ids.add(link.target_id);
+    }
+    const byId = new Map(db.getNotes([...ids]).map((n) => [n.id, n] as const));
+    return rows.filter((link) => read(byId.get(link.source_id)) && read(byId.get(link.target_id)));
   }
+
   return {
     pool,
     read,

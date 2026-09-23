@@ -31,19 +31,33 @@ export function memoryObserver(engine: Engine, principal?: string) {
     pool: (pool: Parameters<NonNullable<typeof access>["pool"]>[0]) =>
       !!pool && (privilegedRead || !!access?.pool(pool)),
     write: (note: NoteRow | undefined) => !!note && (operator || !!access?.write(note)),
-    links: (id: number) =>
-      engine.db
-        ?.getNoteLinks(id)
-        .filter(
-          (link) =>
-            read(engine.db?.getNote(link.source_id)) && read(engine.db?.getNote(link.target_id)),
-        ) ?? [],
-    sources: (id: number) =>
-      engine.db
-        ?.getNoteSources(id)
-        .filter(
-          (source) => !source.source_note_id || read(engine.db?.getNote(source.source_note_id)),
-        ) ?? [],
+    // Both endpoints of every link (and every source note) are fetched in ONE
+    // batched read, then filtered in memory — the per-link `getNote` pair was
+    // an N+1 on every hydrated note detail.
+    links: (id: number) => {
+      const db = engine.db;
+      if (!db) return [];
+      const links = db.getNoteLinks(id);
+      const notes = notesById(
+        db,
+        links.flatMap((link) => [link.source_id, link.target_id]),
+      );
+      return links.filter(
+        (link) => read(notes.get(link.source_id)) && read(notes.get(link.target_id)),
+      );
+    },
+    sources: (id: number) => {
+      const db = engine.db;
+      if (!db) return [];
+      const sources = db.getNoteSources(id);
+      const notes = notesById(
+        db,
+        sources.flatMap((source) => (source.source_note_id ? [source.source_note_id] : [])),
+      );
+      return sources.filter(
+        (source) => !source.source_note_id || read(notes.get(source.source_note_id)),
+      );
+    },
     event: (event: EngineEvent): boolean => {
       if (privilegedRead) return true;
       const own = "entity" in event && event.entity === principal;
@@ -79,6 +93,14 @@ export function memoryObserver(engine: Engine, principal?: string) {
       }
     },
   };
+}
+
+/** One `getNotes` round trip for every distinct id, as a lookup map. */
+function notesById(db: MarinaDB, ids: number[]): Map<number, NoteRow> {
+  const map = new Map<number, NoteRow>();
+  if (ids.length === 0) return map;
+  for (const note of db.getNotes(ids)) map.set(note.id, note);
+  return map;
 }
 
 /** The global civic feed may publish only deliberately world-shared notes. */
