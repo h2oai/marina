@@ -116,6 +116,17 @@ const ops = (overrides: Partial<OpsOverview["spend"]> = {}, agentHour = 0.1): Op
       turnsSampled: 0,
     },
     providers: null,
+    decisions: {
+      configured: false,
+      backend: null,
+      model: null,
+      calibrated: null,
+      gate: false,
+      verify: false,
+      windowMs: 86_400_000,
+      counts: {},
+      recent: [],
+    },
     security: {
       trustProfile: "local",
       ungated: true,

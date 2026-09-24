@@ -160,6 +160,17 @@ const overview = (overrides: Partial<OpsOverview> = {}): OpsOverview => ({
       toolCallError: "no tool_calls",
     }),
   ],
+  decisions: {
+    configured: false,
+    backend: null,
+    model: null,
+    calibrated: null,
+    gate: false,
+    verify: false,
+    windowMs: 86_400_000,
+    counts: {},
+    recent: [],
+  },
   security: {
     trustProfile: "shared",
     ungated: false,
