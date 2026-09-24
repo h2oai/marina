@@ -103,6 +103,7 @@
     "qualify:memory": "bun run scripts/qualify-memory-service.ts",
     "qualify:memory:benchmark": "bun --env-file=/dev/null run scripts/qualify-memory-benchmark.ts",
     "qualify:paraphrase": "bun --env-file=/dev/null run scripts/qualify-paraphrase.ts",
+    "qualify:decisions": "bun run scripts/qualify-decisions.ts",
     "qualify:memory:assistance": "bun run scripts/research/memory-assistance-qualification.ts",
     "qualify:memory:reliability": "bun run scripts/qualify-memory-reliability.ts",
     "build:memory": "bun build src/sdk/memory.ts --target browser --outfile dist/memory.js",
