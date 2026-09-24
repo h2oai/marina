@@ -218,21 +218,26 @@ export interface VerifyVerdict {
   signals: Record<string, number>;
 }
 
-/** `attempt` is 1-based. Never retries past `maxAttempts`, on an unsure judge, or on an outage. */
+/**
+ * `attempt` is 1-based. Never retries past `maxAttempts`, on an unsure judge, or
+ * on an outage. `supportKey` names the yes/no support question (`grounded` for
+ * answers checked against evidence, `delivered` for task submissions).
+ */
 export function decideVerify(
   answers: Record<string, DecisionAnswer> | undefined,
   attempt: number,
   policy: VerifyPolicy = DEFAULT_VERIFY_POLICY,
+  supportKey = "grounded",
 ): VerifyVerdict {
   const quality = answers?.quality;
-  const grounded = noulOf(answers, "grounded");
+  const grounded = noulOf(answers, supportKey);
   if (quality?.type !== "score" || grounded === undefined) {
     return { action: "accept", reason: "Verifier unavailable; accepting (advisory).", signals: {} };
   }
-  const signals: Record<string, number> = { quality: quality.score, grounded };
+  const signals: Record<string, number> = { quality: quality.score, [supportKey]: grounded };
   if (quality.confidence !== undefined) signals.confidence = quality.confidence;
   const passes = quality.score >= policy.acceptQuality && grounded >= policy.minGrounded;
-  if (passes) return { action: "accept", reason: "passes quality and grounding", signals };
+  if (passes) return { action: "accept", reason: `passes quality and ${supportKey}`, signals };
   if (attempt >= policy.maxAttempts) {
     return { action: "accept", reason: `below bar but out of attempts (${attempt})`, signals };
   }
@@ -241,7 +246,7 @@ export function decideVerify(
   }
   return {
     action: "retry",
-    reason: `quality ${quality.score.toFixed(2)} / grounded ${grounded.toFixed(2)} below the bar`,
+    reason: `quality ${quality.score.toFixed(2)} / ${supportKey} ${grounded.toFixed(2)} below the bar`,
     signals,
   };
 }
