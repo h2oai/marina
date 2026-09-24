@@ -11,12 +11,14 @@ bun run lint           # Biome lint
 bun run format         # Biome auto-format (run before committing)
 bun run test:fast      # pre-commit loop: 139 engine-free files, ~45 s (scripts/test-fast.ts --check reports drift)
 bun run test:shard I N # time-balanced shard I of N from test/timing.json (CI runs 3); regenerate timings per docs/guides/testing.md
+bun run test:coverage  # full suite + coverage (text + coverage/lcov.info); opt-in, never in PR CI
+bun run check:coverage # per-directory line coverage from lcov (--strict gates on MARINA_COVERAGE_MIN_LINES, default 75)
 bun run check:versions # every package.json must match the root version
 bun run check:overrides # audit root `overrides` (--strict to gate, --offline without registry)
 bun run clean          # Reset database and scratch files
 cd dashboard && bun run test  # Frontend tests (vitest)
 ```
-Single Bun workspace: one root `bun install` covers `dashboard`, `site`, `marina-desktop`, `examples/*`, `src/sdk` (extensions/* are excluded on purpose — native deps, own lockfiles). Isolated linker: declare every import in the member's `package.json`; transitive deps are not resolvable. Tests: no real sleeps ≥ 500 ms — poll with `until()` from `test/helpers.ts`; a new empty `catch {}` fails `test/lint-no-empty-catch.test.ts` (opt out with `// allow-empty-catch: <reason>`); `lean-agent-adapter.ts` logs through `Logger`, never `console`.
+Single Bun workspace: one root `bun install` covers `dashboard`, `site`, `marina-desktop`, `examples/*`, `src/sdk` (extensions/* are excluded on purpose — native deps, own lockfiles). Isolated linker: declare every import in the member's `package.json`; transitive deps are not resolvable. Tests: no real sleeps ≥ 500 ms — poll with `until()` from `test/helpers.ts`; a new empty `catch {}` fails `test/lint-no-empty-catch.test.ts` (opt out with `// allow-empty-catch: <reason>`); `lean-agent-adapter.ts` logs through `Logger`, never `console`. Nothing under `src/net/**` or `src/integrations/**` may use `console.*` either (`test/net-logging.test.ts`; the sole exception is the boot banner in `src/main.ts`) — log through a module `Logger` with the module's category (`ws`, `mcp`, `telnet`, `discord`, `telegram`, `feed`, `main`). `test/docs-contract.test.ts` additionally asserts the POSITIVE contract: every safety gate is in `docs/architecture/civic-substrate.md`, every builtin resolves to `src/engine/commands/` and is documented, migration versions are contiguous, every architecture page is linked, every `MARINA_*` in `.env.example` is read — fix the doc or the named allowlist, never the assertion. Coverage is opt-in and non-blocking; bun's own `coverageThreshold` is per-file and unusable as a repo floor, so the floor lives in `scripts/check-coverage.ts` (see docs/guides/testing.md).
 
 
 ## Code Style
@@ -102,6 +104,7 @@ Compat profiles (`src/net/compat-profiles.ts`) are self-contained — they only 
 ## Key Files
 - `src/types.ts` — all core types (includes `KnownProperties`, `RoomContext.brief`, `RoomContext.logEvent`, market event types)
 - `src/engine/engine.ts` — engine class, command processing (round-robin), tick loop
+- `src/engine/tick-scheduler.ts` — the periodic half of the tick, extracted from `Engine.tickInner()` (same pattern as `ConnectionManager` / `EventLog` / `BriefManager`): declarative `TickJob { name, every, phase, run, critical? }` registered in `Engine.registerTickJobs()` and fired by `runDue(tick)` on `tick % every === phase`. `register()` ENFORCES the distinct-phase invariant (two jobs sharing an interval may not share a phase) that used to be only a comment; `describeTickSchedule()` reports name/every/phase/runs/lastError for operators. Per-tick work (command phase, room `onTick`, sandbox, DM expiry, briefs) stays in `engine.ts`.
 - `src/engine/connection-manager.ts` — connection tracking, entity-connection mapping
 - `src/engine/event-log.ts` — event storage, trimming, listener notification
 - `src/engine/brief-manager.ts` — brief subscription lifecycle
@@ -117,6 +120,8 @@ Compat profiles (`src/net/compat-profiles.ts`) are self-contained — they only 
 - `src/persistence/db-agents.ts` — traits, roles, agent configs, API keys, adapters
 - `src/net/mcp-server.ts` — MCP server with 30 tools, rate-limited via `runCmd()` wrapper
 - `src/net/model-api.ts` — model-API entry: auth, rate limit, path dispatch + stable re-exports; surfaces live in `src/net/model-api/` behind a strict import DAG rooted at `shared.ts` (`upstream`, `anthropic-bridge`, `routing`, `passthru`, `responses-sse`, `chat-completions`, `responses`, `ollama`, `models`) — see docs/architecture/passthru.md → "Source layout"
+- `src/net/dashboard-api.ts` — dashboard REST entry: auth gate, per-principal limiter, ordered route dispatch, stable re-exports. Route groups live in `src/net/dashboard-api/*` (`shared` DAG root, `command` pre-auth ingress, `system`, `traces`, `readiness`, `ops`, `memory`, `agents`, `keys`, `world`) — dispatch ORDER is load-bearing; see docs/architecture/dashboard.md → "Dashboard API source layout"
+- `src/agent/tools/index.ts` — agent tool entry: re-exports only. Tools live in `src/agent/tools/*` (`shared` DAG root, `command`, `world`, `code`, `media`, `memory`, `memory-service`, `memory-assistance`, `think`, `evolution`, `profiles`); `profiles.ts` owns the resident/deferred split, `marina_tool_search`, execution modes and strict schemas. Schema bytes per profile are byte-identical to the pre-split monolith.
 - `src/net/mem-api.ts` — Memory API REST endpoint with per-agent rate limiting
 - `src/net/url-guard.ts` — SSRF protection (private IP, IPv6, cloud metadata blocking)
 - `src/agent/agent-runtime.ts` — agent spawning, lifecycle, LLM dispatch
