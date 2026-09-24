@@ -9,6 +9,7 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { isRouteModel, routeModelForGoal, routeTiersFromEnv } from "../decisions/route";
 import {
   MARINA_DEFAULT_MODEL,
   MEMORY_REFLECTOR_ROLE,
@@ -502,7 +503,37 @@ export class AgentRuntime {
       // from the role name. Specialist roles (mathematician, scholar, etc.)
       // default to crew responders; coordinator and freeform roles stay
       // false. Explicit values from the caller win.
-      const resolvedModel = config.model ?? this.db?.getDefaultModel() ?? MARINA_DEFAULT_MODEL;
+      // `model:route` — pick a tier model from the goal ONCE, before the
+      // conversation exists (src/decisions/route.ts). The resolved id is what
+      // gets persisted, so respawns never re-route mid-history.
+      let routedModel: string | undefined;
+      if (isRouteModel(config.model)) {
+        const tiers = routeTiersFromEnv();
+        if (!tiers) {
+          throw new Error(
+            "model:route needs MARINA_ROUTE_FAST_MODEL and MARINA_ROUTE_POWERFUL_MODEL (see .env.example).",
+          );
+        }
+        const routed = await routeModelForGoal(config.goal, config.role, tiers);
+        routedModel = routed.model;
+        this.onEvent?.({
+          type: "agent_decision",
+          name: config.name,
+          stage: "route",
+          verdict: routed.tier,
+          subject: routed.model,
+          reason: routed.verdict.reason,
+          signals: routed.verdict.signals,
+          ...(routed.provider ? { provider: routed.provider } : {}),
+          ...(routed.decisionModel ? { model: routed.decisionModel } : {}),
+          ...(routed.latencyMs === undefined ? {} : { latencyMs: routed.latencyMs }),
+          ...(routed.costUsd === undefined ? {} : { costUsd: routed.costUsd }),
+          ...(routed.error ? { error: routed.error } : {}),
+          timestamp: Date.now(),
+        });
+      }
+      const resolvedModel =
+        routedModel ?? config.model ?? this.db?.getDefaultModel() ?? MARINA_DEFAULT_MODEL;
       const supports = resolveSupports(resolvedModel, config.supports);
 
       // Autodetect the real context window for local models so the compactor

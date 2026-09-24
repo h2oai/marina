@@ -109,6 +109,7 @@ Usage:
   agent diagnose <name>                      — lifecycle health and remediation
   agent spawn <name> [model <m>] [role <r>] [key <k>] [budget <n>] [thinking:<level>] [goal <g>]
                                              — thinking: off|minimal|low|medium|high|xhigh (default MARINA_AGENT_THINKING)
+                                             — model route: pick fast/powerful from the goal once (MARINA_ROUTE_*_MODEL)
   agent stop <name> [--keep-children]        — stop an agent and the agents it spawned (transient; reseeds on restart)
   agent disable <name>                        — retire a seeded agent so it stays gone across restarts
   agent enable <name>                         — clear a disable; the agent returns on next restart/room entry

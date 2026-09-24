@@ -43,6 +43,7 @@ Route once per request (a task claim, job, `model_request` or session start), ne
 
 ## Where it runs
 
+- **Spawn-time routing** — `agent spawn <name> model:route goal:<…>` (`src/decisions/route.ts`): the runtime asks the router questions about the goal (plus role) before the agent exists and resolves `route` to `MARINA_ROUTE_FAST_MODEL` or `MARINA_ROUTE_POWERFUL_MODEL`. The resolved id is what `agent_configs` stores, so respawns never re-route. Missing tiers refuse the spawn with a remediation; no backend, no goal or a backend error resolve to the powerful tier. Emits an `agent_decision` (`stage: "route"`, `subject` = the chosen model).
 - **pi agents (`LeanAgentAdapter`)** — `MARINA_DECISION_GATE=on` scores tool calls in `beforeToolCall`, AFTER the deterministic reference monitor (`mediateToolCall`), and only for `mutate` / `consequential` risk: reads and messages never leave the process. `ask` blocks too (autonomous calls have no approver attached yet) and says so. What is sent is the tool name and arguments only (`redactToolCall`: sensitive keys redacted, emails and key-shaped strings masked, values truncated) — never the transcript, which also keeps the gate robust to prompt injection.
 - **Any other harness** — `POST /v1/decisions` (model-API auth and per-IP rate limit; fails closed). Body `{ state, questions }`; response `{ answers, model, provider, latency_ms, usage?: { cost } }`. The backend model is operator configuration — a request naming another `model` gets `400 unsupported_parameter`; `MARINA_DECISIONS` off gets `404 decisions_disabled`.
 - **Observability** — every agent decision emits an `agent_decision` engine event (stage, verdict, subject = tool name, reason, the numbers, backend model, latency, cost, error). Arguments are never in the event.
@@ -55,4 +56,4 @@ Route once per request (a task claim, job, `model_request` or session start), ne
 
 ## Status
 
-Spike (2026-09-24): wire format, both backends, the three policies, the pi tool gate, `/v1/decisions`, events and readiness. Not yet wired: the router at task boundaries and the verifier on agent answers (policies exist; hook points are the task-claim / session-start and answer paths), an approver for gate `ask` verdicts, and dashboard views of `agent_decision`.
+Spike (2026-09-24): wire format, both backends, the three policies, the pi tool gate, `/v1/decisions`, events and readiness. Spawn-time routing followed. Not yet wired: the verifier on agent answers, an approver for gate `ask` verdicts, and dashboard views of `agent_decision`.
