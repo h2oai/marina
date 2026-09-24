@@ -7,6 +7,7 @@
  * explicit operator choice, never an in-world setting.
  *
  *   MARINA_DECISIONS           off (default) | decisions-api (alias jev) |
+ *                              typesafe (TypeSafe's direct API) |
  *                              chat-classifier (alias classifier, llm)
  *   MARINA_DECISION_MODEL      backend model id. decisions-api default
  *                              `typesafe/jev-1.13` (pin a version; any Jev-family
@@ -15,6 +16,7 @@
  *                              chat-classifier default https://openrouter.ai/api/v1
  *   MARINA_DECISION_API_KEY    bearer for the backend; falls back to
  *                              OPENROUTER_API_KEY only for openrouter.ai URLs
+ *   MARINA_DECISION_PATH       Decisions API path; default /decisions (typesafe: /v1/systemone)
  *   MARINA_DECISION_TIMEOUT_MS per call; default 2000 (decisions-api) / 8000
  *   MARINA_DECISION_GATE       on | off (default off) — score mutating agent
  *                              tool calls before they run (fail-closed)
@@ -30,27 +32,48 @@ export interface DecisionConfig {
   kind: DecisionBackendKind;
   model: string;
   baseUrl: string;
+  /** Decisions API path (decisions-api only). */
+  path?: string;
   apiKey?: string;
   timeoutMs: number;
 }
 
-const DEFAULTS: Record<
-  DecisionBackendKind,
-  { baseUrl: string; model?: string; timeoutMs: number }
+type Preset = "openrouter" | "typesafe" | "chat-classifier";
+
+const PRESETS: Record<
+  Preset,
+  { kind: DecisionBackendKind; baseUrl: string; path?: string; model?: string; timeoutMs: number }
 > = {
-  "decisions-api": {
+  // Jev family through OpenRouter's Decisions API (pin a version).
+  openrouter: {
+    kind: "decisions-api",
     baseUrl: "https://openrouter.ai/api/alpha",
+    path: "/decisions",
     model: "typesafe/jev-1.13",
     timeoutMs: 2_000,
   },
-  "chat-classifier": { baseUrl: "https://openrouter.ai/api/v1", timeoutMs: 8_000 },
+  // TypeSafe's own API (same wire format; what `langchain-typesafe` calls).
+  typesafe: {
+    kind: "decisions-api",
+    baseUrl: "https://api.typesafe.ai",
+    path: "/v1/systemone",
+    model: "jev-latest",
+    timeoutMs: 2_000,
+  },
+  "chat-classifier": {
+    kind: "chat-classifier",
+    baseUrl: "https://openrouter.ai/api/v1",
+    timeoutMs: 8_000,
+  },
 };
 
-function backendKind(raw: string | undefined): DecisionBackendKind | undefined {
+function preset(raw: string | undefined): Preset | undefined {
   switch ((raw ?? "").trim().toLowerCase()) {
     case "decisions-api":
     case "jev":
-      return "decisions-api";
+      return "openrouter";
+    case "typesafe":
+      return "typesafe";
     case "chat-classifier":
     case "classifier":
     case "llm":
@@ -64,20 +87,26 @@ function backendKind(raw: string | undefined): DecisionBackendKind | undefined {
 export function decisionConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): DecisionConfig | undefined {
-  const kind = backendKind(env.MARINA_DECISIONS);
-  if (!kind) return undefined;
-  const d = DEFAULTS[kind];
+  const name = preset(env.MARINA_DECISIONS);
+  if (!name) return undefined;
+  const d = PRESETS[name];
+  const kind = d.kind;
   const model = env.MARINA_DECISION_MODEL?.trim() || d.model;
   if (!model) return undefined;
   const baseUrl = env.MARINA_DECISION_BASE_URL?.trim() || d.baseUrl;
-  const openrouter = /^https:\/\/openrouter\.ai\//.test(baseUrl);
-  const apiKey =
-    env.MARINA_DECISION_API_KEY?.trim() ||
-    (openrouter ? env.OPENROUTER_API_KEY?.trim() : undefined);
+  const path = kind === "decisions-api" ? env.MARINA_DECISION_PATH?.trim() || d.path : undefined;
+  // A vendor key only ever goes to that vendor's host.
+  const vendorKey = /^https:\/\/openrouter\.ai\//.test(baseUrl)
+    ? env.OPENROUTER_API_KEY
+    : /^https:\/\/api\.typesafe\.ai(\/|$)/.test(baseUrl)
+      ? env.TYPESAFE_API_KEY
+      : undefined;
+  const apiKey = env.MARINA_DECISION_API_KEY?.trim() || vendorKey?.trim() || undefined;
   return {
     kind,
     model,
     baseUrl,
+    ...(path ? { path } : {}),
     ...(apiKey ? { apiKey } : {}),
     timeoutMs: positiveNumberFromEnv("MARINA_DECISION_TIMEOUT_MS", env) ?? d.timeoutMs,
   };
@@ -89,6 +118,7 @@ export function providerFromConfig(config: DecisionConfig): DecisionProvider {
     model: config.model,
     apiKey: config.apiKey,
     timeoutMs: config.timeoutMs,
+    ...(config.path ? { path: config.path } : {}),
   };
   return config.kind === "decisions-api"
     ? decisionsApiProvider(opts)

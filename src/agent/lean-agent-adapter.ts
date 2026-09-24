@@ -1438,7 +1438,10 @@ export class LeanAgentAdapter implements AgentHandle {
         // deterministic monitor, score calls that change things. Reads and
         // messages never leave the process for scoring.
         if (policy.risk === "mutate" || policy.risk === "consequential") {
-          const held = await this.decisionGate(context.toolCall.name, args);
+          const description = context.context.tools?.find(
+            (tool) => tool.name === context.toolCall.name,
+          )?.description;
+          const held = await this.decisionGate(context.toolCall.name, args, description);
           if (held) return { block: true, reason: held };
         }
         const command = typeof args.command === "string" ? args.command.trim().toLowerCase() : "";
@@ -1483,11 +1486,12 @@ export class LeanAgentAdapter implements AgentHandle {
   private async decisionGate(
     toolName: string,
     args: Record<string, unknown>,
+    description?: string,
   ): Promise<string | undefined> {
     if (!decisionGateEnabled()) return undefined;
     const provider = getDecisionProvider();
     if (!provider) return undefined;
-    const decision = await gateToolCall(provider, toolName, args);
+    const decision = await gateToolCall(provider, toolName, args, undefined, description);
     this.emitEvent({
       type: "decision",
       stage: "gate",
