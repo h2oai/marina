@@ -32,6 +32,7 @@ import { getAutonomyPosture } from "../engine/autonomy";
 import { CONTINUATION_PROMPT_BUDGET_BYTES } from "../engine/constants";
 import type { Engine } from "../engine/engine";
 import { getErrorMessage } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import { describeRetentionPolicies, getLastRetentionReport } from "../engine/retention";
 import {
   aggregatePromptSections,
@@ -56,6 +57,9 @@ import type {
   OpsToolProfile,
   ProviderProbeSummary,
 } from "./ops-types";
+
+/** Module logger: ops HTTP route — measurement failures. */
+const logger = new Logger();
 
 // ─── Scope ──────────────────────────────────────────────────────────────────
 
@@ -273,7 +277,10 @@ function measureToolSchemas(): Pick<
         deferredToolCount = set.deferred.length;
       }
     } catch (error) {
-      console.warn(`[ops] tool schema measurement failed for ${profile}:`, getErrorMessage(error));
+      logger.warn("ops", `tool schema measurement failed for ${profile}`, {
+        profile,
+        error: getErrorMessage(error),
+      });
     }
   }
   return { residentSchemaBytesByProfile: resident, deferredSchemaBytes, deferredToolCount };
@@ -288,7 +295,7 @@ export function promptBudget(now = Date.now()): OpsPromptBudget {
   try {
     systemPromptBytes = Buffer.byteLength(getLeanSystemPrompt(null), "utf8");
   } catch (error) {
-    console.warn("[ops] system prompt measurement failed:", getErrorMessage(error));
+    logger.warn("ops", "system prompt measurement failed", { error: getErrorMessage(error) });
   }
   promptMemo = {
     deferredTools: deferredToolsEnabled(),

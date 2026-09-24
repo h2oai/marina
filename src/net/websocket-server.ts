@@ -13,6 +13,7 @@ import {
   WS_MAX_TOTAL_CONNECTIONS,
 } from "../engine/constants";
 import type { Engine } from "../engine/engine";
+import { Logger } from "../engine/logger";
 import type { MemoryService } from "../memory/service";
 import { worldMemoryService } from "../memory/world-service";
 import type { MarinaDB } from "../persistence/database";
@@ -54,6 +55,9 @@ import { handleMemoryServiceApi } from "./memory-service-api";
 import { handleModelApi, isModelApiPath } from "./model-api";
 import { handleOrchestrationApi } from "./orchestration-api";
 import { handleProbeApi } from "./probe-api";
+
+/** Module logger: network-surface lifecycle and request-path failures. */
+const logger = new Logger();
 
 const WEBCHAT_PATH = join(import.meta.dir, "webchat.html");
 const ASK_PATH = join(import.meta.dir, "ask.html");
@@ -321,7 +325,7 @@ export class WebSocketServer {
       // surface as a Bun default error page with a stack trace — answer with a
       // terse JSON 500 and log server-side.
       error(error) {
-        console.error("[http] unhandled request error:", error);
+        logger.error("ws", "Unhandled HTTP request error", { error });
         return Response.json(
           { error: "Internal server error" },
           { status: 500, headers: securityHeaders("api") },
@@ -354,7 +358,10 @@ export class WebSocketServer {
           // clients send no Origin and pass; see `isTrustedBrowserOrigin`.
           const origin = req.headers.get("Origin");
           if (!isTrustedBrowserOrigin(origin, req.headers.get("Host"), { loopbackBind })) {
-            console.warn(`[ws] Rejected ${url.pathname} upgrade from untrusted origin ${origin}`);
+            logger.warn("ws", `Rejected ${url.pathname} upgrade from untrusted origin ${origin}`, {
+              path: url.pathname,
+              origin,
+            });
             return new Response("Forbidden origin", { status: 403 });
           }
 
@@ -922,15 +929,18 @@ export class WebSocketServer {
 
     this.port = this.server.port ?? this.port;
     registerConnectEndpoint(this.engine, "websocket", this.port);
-    console.log(`WebSocket server listening on ws://localhost:${this.port}/ws`);
+    logger.info("ws", `WebSocket server listening on ws://localhost:${this.port}/ws`, {
+      port: this.port,
+    });
     if (existsSync(DASHBOARD_INDEX)) {
-      console.log(`Dashboard available at http://localhost:${this.port}/dashboard`);
+      logger.info("ws", `Dashboard available at http://localhost:${this.port}/dashboard`);
     } else {
-      console.warn(
+      logger.warn(
+        "ws",
         `Dashboard not built yet — run \`bun run dashboard:build\` (installs + builds dashboard/), then reload http://localhost:${this.port}/dashboard. No server restart needed.`,
       );
     }
-    console.log(`Canvas available at http://localhost:${this.port}/canvas`);
+    logger.info("ws", `Canvas available at http://localhost:${this.port}/canvas`);
   }
 
   getPort(): number {

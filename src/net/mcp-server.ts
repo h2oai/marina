@@ -10,6 +10,7 @@ import { RateLimiter } from "../auth/rate-limiter";
 import { secretsEqual } from "../auth/secret-compare";
 import { WS_IDLE_TIMEOUT_SECONDS } from "../engine/constants";
 import type { Engine } from "../engine/engine";
+import { Logger } from "../engine/logger";
 import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
 import { formatMemoryOperation } from "../memory/human-interface";
 import type { MarinaMemoryClient } from "../sdk/memory-client";
@@ -33,6 +34,9 @@ import { isTrustedBrowserOrigin } from "./cors";
 import { consumeHttpRate, rateLimitedResponse, securityHeaders } from "./http-utils";
 import { registerMemoryResources } from "./memory-mcp-resources";
 import { isLoopbackHostname, resolveWsBindHostname } from "./websocket-server";
+
+/** Module logger: MCP surface lifecycle and request-path failures. */
+const logger = new Logger();
 
 // ─── Session State ────────────────────────────────────────────────────────────
 
@@ -326,7 +330,7 @@ export class McpServerAdapter {
       idleTimeout: WS_IDLE_TIMEOUT_SECONDS,
       maxRequestBodySize: 8 * 1024 * 1024,
       error(error: unknown) {
-        console.error("[mcp] unhandled request error:", error);
+        logger.error("mcp", "Unhandled request error", { error });
         return Response.json(
           { error: "Internal server error" },
           { status: 500, headers: securityHeaders("api") },
@@ -407,8 +411,9 @@ export class McpServerAdapter {
           );
           if (!allowedHosts && !warnedNoAllowedHosts) {
             warnedNoAllowedHosts = true;
-            console.warn(
-              "[mcp] Non-loopback bind without MARINA_MCP_ALLOWED_HOSTS — Host validation is off; " +
+            logger.warn(
+              "mcp",
+              "Non-loopback bind without MARINA_MCP_ALLOWED_HOSTS — Host validation is off; " +
                 "set MARINA_MCP_ALLOWED_HOSTS=mcp.example.com[:port] to enable it.",
             );
           }
@@ -496,7 +501,9 @@ export class McpServerAdapter {
 
     this.port = this.server.port ?? this.port;
     registerConnectEndpoint(this.engine, "mcp", this.port);
-    console.log(`MCP server listening on http://localhost:${this.port}/mcp`);
+    logger.info("mcp", `MCP server listening on http://localhost:${this.port}/mcp`, {
+      port: this.port,
+    });
   }
 
   getPort(): number {

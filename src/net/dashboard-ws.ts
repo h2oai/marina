@@ -5,8 +5,12 @@ import type { ServerWebSocket } from "bun";
 import type { AgentSupports } from "../agent/agent-types";
 import { DASHBOARD_OBSERVER_TTL_MS } from "../engine/constants";
 import type { Engine } from "../engine/engine";
+import { Logger } from "../engine/logger";
 import type { EngineEvent } from "../types";
 import { memoryObserver } from "./memory-visibility";
+
+/** Module logger: dashboard broadcast failures. */
+const logger = new Logger();
 
 export interface DashboardWSData {
   connId: string;
@@ -133,7 +137,9 @@ export class DashboardBroadcaster {
       try {
         if (publicShape || this.observerFor(engine, ws.data.principal).event(event)) ws.send(msg);
       } catch (err) {
-        console.warn("[dashboard-ws] broadcast event send failed:", (err as Error).message);
+        logger.warn("dashboard-ws", "broadcast event send failed", {
+          error: (err as Error).message,
+        });
         this.clients.delete(ws);
       }
     }
@@ -200,7 +206,9 @@ export class DashboardBroadcaster {
         }
         ws.send(msg);
       } catch (err) {
-        console.warn("[dashboard-ws] broadcast state send failed:", (err as Error).message);
+        logger.warn("dashboard-ws", "broadcast state send failed", {
+          error: (err as Error).message,
+        });
         this.clients.delete(ws);
       }
     }

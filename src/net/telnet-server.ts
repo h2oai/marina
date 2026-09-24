@@ -4,10 +4,14 @@
 import type { Socket } from "bun";
 import type { RateLimiter } from "../auth/rate-limiter";
 import type { Engine } from "../engine/engine";
+import { Logger } from "../engine/logger";
 import type { Connection, EntityId, Perception } from "../types";
 import { A } from "./ansi";
 import { formatPerception } from "./formatter";
 import { resolveWsBindHostname } from "./websocket-server";
+
+/** Module logger: telnet surface lifecycle and socket-level failures. */
+const logger = new Logger();
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — strip telnet control chars
 const CONTROL_CHARS = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
@@ -154,12 +158,15 @@ export class TelnetServer {
         },
 
         error(socket, error) {
-          console.error(`Telnet error [${socket.data.connId}]:`, error);
+          logger.error("telnet", "Telnet socket error", {
+            connId: socket.data.connId,
+            error,
+          });
         },
       },
     });
 
-    console.log(`Telnet server listening on port ${this.port}`);
+    logger.info("telnet", `Telnet server listening on port ${this.port}`, { port: this.port });
   }
 
   stop(): void {

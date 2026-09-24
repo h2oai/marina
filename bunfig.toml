@@ -1,0 +1,25 @@
+# Copyright 2025-2026 H2O.ai, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+[test]
+# Coverage is OPT-IN: plain `bun test` is unchanged and unaffected. Everything
+# below only takes effect when `--coverage` is passed (`bun run test:coverage`).
+# Coverage of a test file measures the test, not the code under test.
+coverageSkipTestFiles = true
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage"
+
+# NO `coverageThreshold` here — deliberately. Measured on bun 1.4.2:
+#
+#   * the documented table form (`{ line = 0.9, function = 0.9 }`) is parsed and
+#     then IGNORED — `{ line = 0.99 }` still exits 0 on a 12%-covered run;
+#   * the scalar form is enforced PER FILE, not against the repo aggregate. A
+#     run reporting "All files 12.50 | 17.41" exits 1 under `0.05`, because some
+#     individual file is under 5%. This tree has source files at 2-4% (rarely
+#     exercised worlds, media providers, venue clients), so NO positive scalar
+#     both passes today and means anything tomorrow.
+#
+# The soft floor therefore lives in `scripts/check-coverage.ts` (default 75%
+# line-weighted, enforced only with `--strict`), which measures the aggregate
+# the way a floor is meant to be read. `bun run test:coverage` stays green.
+# See docs/guides/testing.md.

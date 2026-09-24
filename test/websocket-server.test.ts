@@ -4,9 +4,10 @@
 // Split from websocket.test.ts ("WebSocket Server" describe). Assertions
 // unchanged; shared fixtures live in websocket-helpers.ts.
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { isLoopbackConnection } from "../src/engine/commands/code";
 import { Engine } from "../src/engine/engine";
+import { Logger } from "../src/engine/logger";
 import { DESKTOP_OPERATOR_ENTITY_ID, OPEN_API_ENTITY_ID } from "../src/net/auth-middleware";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
@@ -538,19 +539,27 @@ describe("WebSocket Server", () => {
   }
 
   it("refuses /ws, /dashboard-ws and /canvas-ws upgrades from a foreign browser Origin", async () => {
-    const warnings: string[] = [];
-    const origWarn = console.warn;
-    console.warn = (...args: unknown[]) => {
-      warnings.push(args.map(String).join(" "));
-    };
+    // The rejection is logged through the module `Logger` (category "ws"), not
+    // `console.warn` — see test/net-logging.test.ts for the fence that keeps it
+    // that way. Spy on the prototype so the module-private logger instance is
+    // covered; `spyOn` calls through, so the line is still written.
+    const warnSpy = spyOn(Logger.prototype, "warn");
+    let rejections: unknown[][] = [];
     try {
       expect(await opensWithOrigin("/ws", "https://evil.example")).toBe(false);
       expect(await opensWithOrigin("/dashboard-ws", "https://evil.example")).toBe(false);
       expect(await opensWithOrigin("/canvas-ws?canvas=test", "https://evil.example")).toBe(false);
+      // Snapshot BEFORE mockRestore() — restoring also clears `mock.calls`.
+      rejections = warnSpy.mock.calls.filter(
+        ([category, message, data]) =>
+          category === "ws" &&
+          String(message).includes("https://evil.example") &&
+          (data as { origin?: string } | undefined)?.origin === "https://evil.example",
+      );
     } finally {
-      console.warn = origWarn;
+      warnSpy.mockRestore();
     }
-    expect(warnings.filter((w) => w.includes("https://evil.example")).length).toBe(3);
+    expect(rejections).toHaveLength(3);
     // The refused upgrade never became a connection.
     expect([...engine.connections.values()].filter((c) => c.protocol === "websocket")).toHaveLength(
       0,

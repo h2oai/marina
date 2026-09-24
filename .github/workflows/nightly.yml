@@ -61,6 +61,38 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  coverage:
+    name: Backend coverage (report only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Non-blocking by design: the soft floor in bunfig.toml exists to surface a
+    # large regression, never to gate a merge. The PR CI sharded matrix is
+    # untouched — coverage runs the suite unsharded and is far too slow for it.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: main
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version-file: .bun-version
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Test with coverage
+        run: bun run test:coverage
+      - name: Per-directory coverage report
+        # Report-only (no --strict): prints the per-directory table and the
+        # least-covered files, and never fails the step.
+        run: bun run check:coverage
+      - name: Upload lcov report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: warn
+          retention-days: 14
+
   release-qualifier:
     name: Release qualifier (qualify:release)
     runs-on: ubuntu-latest

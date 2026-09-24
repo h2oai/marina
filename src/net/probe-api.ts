@@ -24,6 +24,7 @@
  */
 
 import type { RateLimiter } from "../auth/rate-limiter";
+import { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
 import { getResolver, listResolvers } from "../resolvers/registry";
 import { findLatestSample, writeSample } from "../resolvers/sample-writer";
@@ -31,6 +32,9 @@ import type { ResolverOutput, Sample } from "../resolvers/types";
 import { getActiveWatch, retireWatchNote } from "../resolvers/watch-spec";
 import type { EngineEvent } from "../types";
 import { corsHeaders } from "./cors";
+
+/** Module logger: probe HTTP route — resolver failures. */
+const logger = new Logger();
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: corsHeaders(null) });
@@ -176,7 +180,7 @@ export async function handleProbeApi(
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[probe] resolver ${kind} threw: ${message}`);
+    logger.warn("probe", `resolver ${kind} threw: ${message}`, { kind, error: message });
     output = { status: "error", reason: "resolver error" };
   }
 

@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Bot } from "grammy";
+import { Logger } from "../engine/logger";
 import type { Connection, Perception } from "../types";
 import type { Adapter, AdapterContext } from "./adapter";
 import { formatPerception } from "./formatter";
+
+/** Module logger: Telegram adapter lifecycle and handler failures. */
+const logger = new Logger();
 
 export class TelegramAdapter implements Adapter {
   readonly name = "telegram";
@@ -132,7 +136,7 @@ export class TelegramAdapter implements Adapter {
 
         engine.processCommand(entityId, text);
       } catch (err) {
-        console.error("[telegram] Message handler error:", err);
+        logger.error("telegram", "Message handler error", { error: err });
       }
     });
   }
@@ -147,7 +151,7 @@ export class TelegramAdapter implements Adapter {
 
   async start(): Promise<void> {
     await this.bot.start({
-      onStart: () => console.log("Telegram adapter started."),
+      onStart: () => logger.info("telegram", "Telegram adapter started."),
     });
   }
 
