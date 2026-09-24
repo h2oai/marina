@@ -50,7 +50,7 @@ export function NodeMeta({ filename, data, className }: NodeMetaProps) {
   );
 
   return (
-    <div className={`bg-black/70 px-2 py-1.5 rounded text-xs text-text ${className ?? ""}`}>
+    <div className={`bg-bg-hover px-2 py-1.5 rounded text-xs text-text ${className ?? ""}`}>
       <div className="flex items-baseline justify-between gap-2">
         <span className="font-medium truncate">{filename}</span>
         {createdAt && <span className="text-[10px] text-text-dim shrink-0">{createdAt}</span>}

@@ -6,6 +6,49 @@
 
 `src/net/dashboard-api.ts` is the entry point and the only import path other modules use — it owns the pre-auth ingress hand-off, the session gate (`authenticateRequest`), the per-principal `consumeHttpRate("dashboard", …)` budget, the operator-read fence on `/api/traces|/api/logs|/api/evidence/*`, the ordered dispatch table and a stable re-export block (`handleDashboardApi`, `projectEnvValueForRead`, `DashboardApiOptions`), so importers never see the layout. The route groups live in `src/net/dashboard-api/` behind a strict import DAG rooted at `shared.ts` (`json`/CORS helper, `extractIp`, `readCommandBody`/`readJsonBody`, `bearerToken`, `authorizePrivileged`, `authorizeEntityRead`, `clampLimit`/`maskKey`/`safeParse`/`numberOrNull`, `ROOMS_DIR`/`PROJECT_ROOT`, and the `DashboardRouteContext` every group receives). Above it: `command.ts` (the pre-auth routes — setup-status with its per-IP cap, ui-config, `/api/command`, `/api/ask`, the public federation manifest), `system.ts` (logout, world/entities/events/system, evidence chain, principals, collective variants, federation peers, security posture), `traces.ts` (the `/api/traces` + `/api/logs` implementations with the per-database span-projection cache and the export shapes — its route predicates stay in `system.ts`), `readiness.ts` (readiness, operational alerts, productivity), `ops.ts` (the `/api/ops/*` glue over `ops-api.ts`), `memory.ts` (observability, graph snapshots, per-entity notes/core/pools), `agents.ts`, `keys.ts` (keys, default model, endpoint posture, model discovery, adapters, roles/traits, MCP info, the .env editor) and `world.ts` (coordination/coding/room/canvas/feed/media detail routes, entity brief/work/detail, the coordination lists, the catalog tail). **Dispatch order is load-bearing and unchanged**: the groups are called in the pre-split sequence, several modules export more than one group because other groups are interleaved between them (memory is three, readiness and world are split around them), and the greedy `(.+)` detail matchers stay ahead of the list routes. No module under `dashboard-api/` imports `dashboard-api.ts`.
 
+The authenticated `discovery.ts` group precedes the entity catch-all. It serves
+`GET /api/command-catalog` from the live command registry, bounded `GET /api/search?q=…`,
+and `/api/entities/:name/preview|quests`. Search filters legacy note FTS hits with the same
+memory observer and excludes process/service notes. Previews expose inventory and work only
+to the owner or operator; quests use the world's real step predicates with the same owner
+read check. Wire contracts live in `src/net/discovery-types.ts` and are imported type-only
+by the dashboard. The palette drafts via `marina:draft-command` and sends only on explicit
+submission through the existing chat command route.
+
+`command-forms.ts` parses catalog help and the handler usage strings maintained in
+`command-usage.ts` into action forms, optional groups, choices, numbers, and JSON fields.
+When changing a handler's syntax, update its supplemental usage entry if present; the registry
+coverage test in `test/dashboard-command-forms.test.ts` checks every live command has composable
+forms, while UI and browser tests verify concrete drafts. No form bypasses server permissions.
+`use-command-favorites.ts` stores exact commands locally per instance and resident. Favorites
+and task/board/channel action buttons dispatch the same draft event and never send on selection.
+
+## Dashboard workspace shell
+
+`App.tsx` owns the persistent chat, global discovery/feedback surfaces, responsive grid and
+versioned presets. `WorkspacePanels.tsx` mounts visited workspace tabs once, including the
+lazy Canvas editor; the shared Context inspector is the portal target for Canvas node details.
+`use-workspace-state.ts` stores UI selection, active view, mobile pane, fullscreen state and an
+explicit unsent chat attachment. It contains no canonical task or memory data.
+
+Built-ins (Operate, Explore, Create, Observe) carry a version in `workspace-layouts.ts`.
+`use-layout-presets.ts` refreshes their definitions while preserving custom layouts and
+archiving the previous auto-saved grid. The default uses a 20-column 6/9/5 split and derives
+row height from the container. Mobile panes are hidden in place to retain their state.
+
+Both `/dashboard` and `/canvas` render the shell. Public Canvas links still select exact
+canvases/nodes; embedded links include `view=canvas`. Same-origin ordinary navigation uses
+history, leaving chat mounted. Modified clicks retain browser behavior. The experimental
+`?unified` surface keeps its existing server opt-in gate.
+
+`CanvasReference.tsx` writes an `embed` node whose data contains only a validated reference
+(`task`, legacy `note`, or coding `artifact` plus session id). `ReferenceNode` resolves existing
+REST records per viewer and refreshes them while mounted. It never snapshots private source
+content into Canvas metadata. Node discussions use the existing `canvas post on:<id>
+reply:<node-id>` command after explicit Send; `canvas post` resolves both ids and names.
+The editor cancels obsolete snapshot requests, retains viewport state, surfaces failed writes,
+and keeps property drafts when saving fails.
+
 ## Canvas intent system
 - **Intents**: work requests attached to canvas nodes — humans set them (double-click node in dashboard), agents discover and fulfill
 - **Lifecycle**: pending → active (claimed) → done/failed. Active intents timeout after 5 min back to pending

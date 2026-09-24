@@ -1,10 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FirstRunGuide } from "../components/FirstRunGuide";
 import { useChatState } from "../hooks/use-chat-state";
+
+import { renderWithProviders as render } from "./test-utils";
 
 beforeEach(() => {
   localStorage.clear();

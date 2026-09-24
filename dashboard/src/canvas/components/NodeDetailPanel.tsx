@@ -5,8 +5,11 @@ import type { Node } from "@xyflow/react";
 import { CheckCircle2, Hand, XCircle } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useState } from "react";
+import { parseCanvasReference, ReferenceContent } from "../../components/CanvasReference";
+import { useWorkspaceState } from "../../hooks/use-workspace-state";
 import { authFetch } from "../../lib/api";
 import { resolveAuthor, resolveTitle } from "../lib/node-fields";
+import type { CanvasEdgeData } from "../lib/types";
 
 const API_BASE = window.location.origin;
 
@@ -59,12 +62,15 @@ interface Props {
   onIntentActionResult?: (nodeId: string, data: Record<string, unknown>) => void;
   nodes: Node[];
   suggestedPrompt?: string;
+  embedded?: boolean;
+  relationships?: CanvasEdgeData[];
+  onConnect?: () => void;
 }
 
 export function NodeDetailPanel(props: Props) {
   return (
     <AnimatePresence>
-      {props.node && <NodeDetailPanelInner {...props} node={props.node} />}
+      {props.node && <NodeDetailPanelInner key={props.node.id} {...props} node={props.node} />}
     </AnimatePresence>
   );
 }
@@ -77,6 +83,9 @@ function NodeDetailPanelInner({
   onIntentActionResult,
   nodes,
   suggestedPrompt,
+  embedded,
+  relationships = [],
+  onConnect,
 }: Props & { node: Node }) {
   const [promptText, setPromptText] = useState("");
   const [editText, setEditText] = useState("");
@@ -106,6 +115,8 @@ function NodeDetailPanelInner({
         intent: { prompt: promptText.trim(), status: "pending" },
       });
       setPromptText("");
+    } catch (cause) {
+      setIntentError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSubmitting(false);
     }
@@ -120,6 +131,8 @@ function NodeDetailPanelInner({
         ...d,
         intent: { ...intent, prompt: editText.trim() },
       });
+    } catch (cause) {
+      setIntentError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSubmitting(false);
     }
@@ -132,6 +145,8 @@ function NodeDetailPanelInner({
       const cleaned = { ...d };
       cleaned.intent = undefined;
       await onSetIntent(node.id, cleaned);
+    } catch (cause) {
+      setIntentError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSubmitting(false);
     }
@@ -180,7 +195,7 @@ function NodeDetailPanelInner({
     if (!node || !chatText.trim() || !canvasId) return;
     setSubmitting(true);
     try {
-      await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes`, {
+      const response = await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -194,7 +209,10 @@ function NodeDetailPanelInner({
           },
         }),
       });
+      if (!response.ok) throw new Error(`Message could not be sent (${response.status}).`);
       setChatText("");
+    } catch (cause) {
+      setIntentError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setSubmitting(false);
     }
@@ -214,11 +232,16 @@ function NodeDetailPanelInner({
   return (
     <motion.aside
       key="node-detail"
+      aria-label="Node inspector"
       initial={{ x: "100%", opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: "100%", opacity: 0 }}
       transition={{ type: "spring", stiffness: 320, damping: 32 }}
-      className="fixed right-0 top-0 bottom-0 w-96 bg-bg-card border-l border-border shadow-2xl z-50 flex flex-col overflow-hidden"
+      className={
+        embedded
+          ? "h-full min-h-0 bg-bg-card flex flex-col overflow-hidden"
+          : "fixed right-0 top-0 bottom-0 w-[min(24rem,100vw)] bg-bg-card border-l border-border shadow-2xl z-50 flex flex-col overflow-hidden"
+      }
     >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 bg-bg-hover border-b border-border">
@@ -226,6 +249,7 @@ function NodeDetailPanelInner({
         <motion.button
           type="button"
           onClick={onClose}
+          aria-label="Close node inspector"
           whileHover={{ scale: 1.15, color: "rgb(229 231 235)" }}
           whileTap={{ scale: 0.92 }}
           className="text-text text-lg leading-none px-1"
@@ -236,6 +260,48 @@ function NodeDetailPanelInner({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
+        {intentError && (
+          <p role="alert" className="text-danger">
+            {intentError}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          {(["discuss", "ask"] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className="rounded border border-border px-2 py-1 text-xs text-primary"
+              onClick={() => {
+                if (!canvasId) return;
+                useWorkspaceState.setState({ fullscreen: false });
+                useWorkspaceState
+                  .getState()
+                  .attach({ canvasId, nodeId: node.id, title: filename, mode });
+              }}
+            >
+              {mode === "discuss" ? "Discuss this node" : "Ask an agent"}
+            </button>
+          ))}
+        </div>
+        {parseCanvasReference(d.reference) ? (
+          <ReferenceContent reference={parseCanvasReference(d.reference)!} />
+        ) : (
+          <NodeProperties key={node.id} data={d} save={(data) => onSetIntent(node.id, data)} />
+        )}
+        <section>
+          <h3 className="mb-2 font-semibold">Relationships</h3>
+          {relationships
+            .filter((edge) => edge.sourceId === node.id || edge.targetId === node.id)
+            .map((edge) => (
+              <p key={edge.id} className="mb-1 break-all text-xs">
+                {edge.relationship}:{" "}
+                {edge.sourceId === node.id ? `→ ${edge.targetId}` : `← ${edge.sourceId}`}
+              </p>
+            ))}
+          <button type="button" onClick={onConnect} className="text-xs text-primary">
+            Connect nodes
+          </button>
+        </section>
         {/* Identity */}
         <section>
           <h3 className="text-[10px] uppercase tracking-widest text-text-dim mb-1">Identity</h3>
@@ -550,5 +616,70 @@ function Row({
         </span>
       )}
     </div>
+  );
+}
+
+function NodeProperties({
+  data,
+  save,
+}: {
+  data: Record<string, unknown>;
+  save: (data: Record<string, unknown>) => Promise<void>;
+}) {
+  const [title, setTitle] = useState<string | null>(null);
+  const contentKey = typeof data.body === "string" ? "body" : "content";
+  const [content, setContent] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <form
+      className="space-y-2"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setError("");
+        try {
+          await save({
+            ...data,
+            ...(title !== null ? { title } : {}),
+            ...(content !== null ? { [contentKey]: content } : {}),
+          });
+          setTitle(null);
+          setContent(null);
+        } catch (cause) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <label className="block text-xs">
+        Title
+        <input
+          aria-label="Node title"
+          value={title ?? String(data.title ?? "")}
+          onChange={(e) => setTitle(e.target.value)}
+          className="mt-1 w-full rounded border border-border bg-bg p-2"
+        />
+      </label>
+      <label className="block text-xs">
+        Content
+        <textarea
+          aria-label="Node content"
+          rows={3}
+          value={content ?? String(data[contentKey] ?? "")}
+          onChange={(e) => setContent(e.target.value)}
+          className="mt-1 w-full rounded border border-border bg-bg p-2"
+        />
+      </label>
+      {error && (
+        <p role="alert" className="text-danger">
+          {error}
+        </p>
+      )}
+      <button type="submit" disabled={busy} className="text-xs text-primary">
+        {busy ? "Saving…" : "Save properties"}
+      </button>
+    </form>
   );
 }

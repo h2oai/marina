@@ -3,7 +3,7 @@
 
 import { X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
 interface StatusOverlayProps {
@@ -26,13 +26,25 @@ const overlayRoot =
     : null;
 
 export function StatusOverlay({ open, title, onClose, children, footer }: StatusOverlayProps) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (open && dialog && !dialog.open) dialog.showModal();
+    return () => dialog?.close();
+  }, [open]);
   if (!overlayRoot) return null;
 
   return createPortal(
     <AnimatePresence>
       {open && (
-        <motion.div
-          className="fixed inset-0 z-[1000] flex items-center justify-center"
+        <motion.dialog
+          ref={dialogRef}
+          aria-label={title}
+          onCancel={(event) => {
+            event.preventDefault();
+            onClose();
+          }}
+          className="fixed inset-0 z-[1000] m-0 h-dvh max-h-none w-screen max-w-none items-center justify-center border-0 bg-transparent p-0 text-text open:flex"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -70,7 +82,7 @@ export function StatusOverlay({ open, title, onClose, children, footer }: Status
               </div>
             )}
           </motion.div>
-        </motion.div>
+        </motion.dialog>
       )}
     </AnimatePresence>,
     overlayRoot,

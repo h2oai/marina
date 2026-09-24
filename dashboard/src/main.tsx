@@ -10,10 +10,6 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { initTheme } from "./hooks/use-theme";
 import "./index.css";
 
-const LazyCanvasPage = lazy(() =>
-  import("./canvas/CanvasPage").then((m) => ({ default: m.CanvasPage })),
-);
-
 const LazyUnifiedCanvas = lazy(() =>
   import("./unified/UnifiedCanvas").then((m) => ({ default: m.UnifiedCanvas })),
 );
@@ -44,7 +40,6 @@ function RouteFallback({ label }: { label: string }) {
   );
 }
 
-const isCanvas = window.location.pathname.startsWith("/canvas");
 const isUnified = new URLSearchParams(window.location.search).has("unified");
 const isWho = window.location.pathname.startsWith("/who");
 
@@ -93,14 +88,6 @@ function RootContent() {
   let surface: ReactNode;
   if (isUnified) {
     surface = <UnifiedSurface />;
-  } else if (isCanvas) {
-    surface = (
-      <ErrorBoundary fallbackTitle="Canvas crashed">
-        <Suspense fallback={<RouteFallback label="canvas" />}>
-          <LazyCanvasPage />
-        </Suspense>
-      </ErrorBoundary>
-    );
   } else {
     // The grid dashboard is one React tree of live panels; a throw in any of
     // them lands here instead of unmounting the page.

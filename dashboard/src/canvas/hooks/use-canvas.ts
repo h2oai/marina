@@ -92,25 +92,35 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
       setError(null);
       previousCanvasIdRef.current = canvasId;
     }
+    let cancelled = false;
+    const controller = new AbortController();
     setLoading(true);
     onBeforeFetchRef.current?.();
-    authFetch(`${API_BASE}/api/canvases/${canvasId}`)
+    authFetch(`${API_BASE}/api/canvases/${canvasId}`, { signal: controller.signal })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
       })
       .then((data: CanvasData) => {
+        if (cancelled) return;
         setCanvas(data);
         setNodes(data.nodes.map((n, i) => toFlowNode(n, i)));
         setError(null);
       })
-      .catch((e) => setError(e.message))
+      .catch((e) => {
+        if (!cancelled) setError(e.message);
+      })
       .finally(() => {
+        if (cancelled) return;
         // A failed snapshot is still a completed snapshot attempt. Release the
         // live-event buffer so recovery events do not remain queued forever.
         onSnapshotReadyRef.current?.();
         setLoading(false);
       });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [canvasId, refreshKey]);
 
   // Handle node position/size changes (from drag or resize)
@@ -188,6 +198,7 @@ export function useCanvas(canvasId: string | null, options: UseCanvasOptions = {
         onMutationErrorRef.current?.(
           "Could not save the node changes. Your previous content was restored.",
         );
+        throw new Error("Could not save changes. Please retry.");
       }
     },
     [canvasId],

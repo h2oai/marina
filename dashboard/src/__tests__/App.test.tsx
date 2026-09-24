@@ -5,6 +5,7 @@ import { fireEvent, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
+import { useWorkspaceState } from "../hooks/use-workspace-state";
 import { renderWithProviders, resetWorldState } from "./test-utils";
 
 // Mock the WebSocket hook — no real WS connection in tests
@@ -30,6 +31,16 @@ vi.mock("react-grid-layout", async () => {
 
 beforeEach(() => {
   resetWorldState();
+  localStorage.clear();
+  window.history.replaceState(null, "", "/dashboard");
+  useWorkspaceState.setState({
+    view: "work",
+    pane: "workspace",
+    selection: null,
+    fullscreen: false,
+    attachment: null,
+    pendingPin: null,
+  });
 });
 
 describe("App", () => {
@@ -61,6 +72,17 @@ describe("App", () => {
     expect(screen.getByTestId("grid-layout")).toBeInTheDocument();
   });
 
+  it("maximizes the three-pane layout and ignores double-clicks on header buttons", () => {
+    renderWithProviders(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /^Maximize Workspace/ }));
+    const restore = screen.getByRole("button", { name: /^Restore Workspace/ });
+    fireEvent.doubleClick(restore);
+    expect(restore).toBeInTheDocument();
+    expect(screen.getByTestId("grid-layout").children).toHaveLength(3);
+    fireEvent.click(restore);
+    expect(screen.getByRole("button", { name: /^Maximize Workspace/ })).toBeInTheDocument();
+  });
+
   it("shows actionable first-run guidance on the standard dashboard", () => {
     renderWithProviders(<App />);
     expect(screen.getByRole("complementary", { name: /getting started/i })).toBeInTheDocument();
@@ -75,9 +97,16 @@ describe("App", () => {
 
   it("opens the isolated trace explorer from Admin without changing the grid", async () => {
     renderWithProviders(<App />);
+    fireEvent.click(screen.getByRole("tab", { name: "Admin" }));
     fireEvent.click(screen.getByRole("button", { name: "traces" }));
     // The trace explorer is a lazy chunk (components/lazy-tabs.tsx).
     expect(await screen.findByText("Recent execution traces")).toBeInTheDocument();
     expect(screen.getByTestId("grid-layout")).toBeInTheDocument();
   });
+});
+
+it("opens the Admin workspace for health and spending hand-offs", () => {
+  renderWithProviders(<App />);
+  fireEvent(window, new CustomEvent("marina:open-admin", { detail: { tab: "readiness" } }));
+  expect(screen.getByRole("tab", { name: "Admin" })).toHaveAttribute("aria-selected", "true");
 });

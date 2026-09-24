@@ -5,6 +5,7 @@ import { BriefcaseBusiness, Code2, FolderKanban, RefreshCw, SquareCheckBig, X } 
 import { AnimatePresence, motion } from "motion/react";
 import { useProjects, useTasks } from "../hooks/use-api";
 import { useCodingSessionsSnapshot } from "../hooks/use-coding";
+import { draftCommand } from "../lib/command-discovery";
 
 const TERMINAL_TASKS = new Set(["completed", "cancelled", "failed"]);
 const TERMINAL_PROJECTS = new Set(["completed", "archived", "cancelled"]);
@@ -14,11 +15,17 @@ const TERMINAL_CODING = new Set(["completed", "closed", "cancelled", "failed"]);
  *  only while open — a closed drawer costs nothing per event. */
 export function WorkDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <AnimatePresence>{open && <WorkDrawerPanel key="panel" onClose={onClose} />}</AnimatePresence>
+    <AnimatePresence>{open && <WorkOverview key="panel" onClose={onClose} />}</AnimatePresence>
   );
 }
 
-function WorkDrawerPanel({ onClose }: { onClose: () => void }) {
+export function WorkOverview({
+  onClose = () => {},
+  embedded = false,
+}: {
+  onClose?: () => void;
+  embedded?: boolean;
+}) {
   const tasks = useTasks();
   const projects = useProjects();
   const coding = useCodingSessionsSnapshot(true);
@@ -46,7 +53,11 @@ function WorkDrawerPanel({ onClose }: { onClose: () => void }) {
       exit={{ opacity: 0, x: 24 }}
       transition={{ duration: 0.16 }}
       aria-label="Work overview"
-      className="fixed right-2 top-12 z-[100] flex max-h-[calc(100vh-4rem)] w-[min(460px,calc(100vw-1rem))] flex-col overflow-hidden rounded-lg border border-border bg-bg-card/98 shadow-2xl backdrop-blur"
+      className={
+        embedded
+          ? "flex h-full min-h-0 flex-col bg-bg-card"
+          : "fixed right-2 top-12 z-[100] flex max-h-[calc(100vh-4rem)] w-[min(460px,calc(100vw-1rem))] flex-col overflow-hidden rounded-lg border border-border bg-bg-card/98 shadow-2xl backdrop-blur"
+      }
     >
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
         <BriefcaseBusiness size={14} className="text-primary" />
@@ -62,6 +73,7 @@ function WorkDrawerPanel({ onClose }: { onClose: () => void }) {
         </button>
         <button
           type="button"
+          hidden={embedded}
           onClick={onClose}
           className="text-text-dim hover:text-text"
           aria-label="Close work overview"
@@ -69,7 +81,7 @@ function WorkDrawerPanel({ onClose }: { onClose: () => void }) {
           <X size={14} />
         </button>
       </div>
-      <div className="overflow-y-auto p-2 text-[11px]">
+      <div className="overflow-y-auto p-3 text-sm">
         {loading && <div className="p-4 text-center text-text-dim">Loading work…</div>}
         {failed && (
           <div role="alert" className="p-4 text-center text-danger">
@@ -86,14 +98,23 @@ function WorkDrawerPanel({ onClose }: { onClose: () => void }) {
               <SquareCheckBig size={11} /> Tasks · {activeTasks.length}
             </h3>
             {activeTasks.map((task) => (
-              <a
-                key={task.id}
-                href={`/dashboard?inspect=task:${task.id}`}
-                className="mb-1 flex items-center justify-between gap-3 rounded border border-border bg-bg/70 p-2 hover:border-primary/50"
-              >
-                <span className="min-w-0 truncate text-text">{task.title}</span>
-                <span className="shrink-0 text-primary">{task.status}</span>
-              </a>
+              <div key={task.id} className="flex items-center gap-2">
+                <a
+                  href={`/dashboard?inspect=task:${task.id}`}
+                  className="mb-1 flex min-w-0 flex-1 items-center justify-between gap-3 rounded border border-border bg-bg/70 p-2 hover:border-primary/50"
+                >
+                  <span className="min-w-0 truncate text-text">{task.title}</span>
+                  <span className="shrink-0 text-primary">{task.status}</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => draftCommand(`task claim ${task.id}`)}
+                  className="shrink-0 text-xs text-primary"
+                  title={`Draft task claim ${task.id}`}
+                >
+                  Claim
+                </button>
+              </div>
             ))}
           </section>
         )}

@@ -121,3 +121,59 @@ describe("useLayoutPresets", () => {
     expect(second.result.current.presets.some((p) => p.name === "Focus")).toBe(true);
   });
 });
+
+describe("versioned workspace presets", () => {
+  it("refreshes built-ins while retaining custom layouts and active selection", () => {
+    const custom = { id: "custom", name: "My grid", layouts: LAYOUT_B, createdAt: 1, updatedAt: 2 };
+    localStorage.setItem(
+      "marina-dashboard-layout-presets-v1",
+      JSON.stringify({
+        activeId: "custom",
+        presets: [
+          { id: "default", name: "Old default", locked: true, version: 1, layouts: LAYOUT_B },
+          custom,
+        ],
+      }),
+    );
+    const builtins = [
+      {
+        id: "default",
+        name: "Operate",
+        locked: true,
+        version: 2,
+        layouts: DEFAULTS,
+        createdAt: 0,
+        updatedAt: 0,
+      },
+    ];
+    const { result } = renderHook(() => useLayoutPresets(DEFAULTS, builtins));
+    expect(result.current.activeId).toBe("custom");
+    expect(result.current.presets[0]).toEqual(builtins[0]);
+    expect(result.current.presets.find((p) => p.id === "custom")).toEqual(custom);
+  });
+  it("remembers the workspace view when saving a custom arrangement", () => {
+    const { result } = renderHook(() => useLayoutPresets(DEFAULTS));
+    act(() => {
+      result.current.savePreset("Research", LAYOUT_B, "canvas");
+    });
+    expect(result.current.presets.find((p) => p.name === "Research")?.view).toBe("canvas");
+  });
+});
+
+it("archives the auto-saved classic grid without changing the new default", () => {
+  localStorage.setItem("marina-dashboard-layouts-v3", JSON.stringify(LAYOUT_B));
+  const builtins = [
+    {
+      id: "default",
+      name: "Operate",
+      locked: true,
+      version: 2,
+      layouts: DEFAULTS,
+      createdAt: 0,
+      updatedAt: 0,
+    },
+  ];
+  const { result } = renderHook(() => useLayoutPresets(DEFAULTS, builtins));
+  expect(result.current.activeId).toBe("default");
+  expect(result.current.presets.find((p) => p.id === "previous-grid")?.layouts).toEqual(LAYOUT_B);
+});

@@ -12,6 +12,7 @@ import type { MarinaDB } from "../persistence/database";
 import { authenticateRequest, isSentinelPrincipal } from "./auth-middleware";
 import { handleAgentRoutes } from "./dashboard-api/agents";
 import { handlePreAuthRoutes } from "./dashboard-api/command";
+import { handleDiscoveryRoutes } from "./dashboard-api/discovery";
 import { handleKeyRoutes } from "./dashboard-api/keys";
 import {
   handleMemoryGraphRoutes,
@@ -92,6 +93,7 @@ export async function handleDashboardApi(
     (await handleProductivityRoute(ctx)) ??
     (await handleCoordinationRoutes(ctx)) ??
     (await handleMemoryGraphRoutes(ctx)) ??
+    (await handleDiscoveryRoutes(ctx)) ??
     (await handleEntityRoutes(ctx)) ??
     (await handleMemoryNoteRoutes(ctx)) ??
     (await handleCoordinationListRoutes(ctx)) ??

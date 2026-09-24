@@ -27,3 +27,13 @@ describe("Canvas deep links", () => {
     ).toBe("/canvas?canvas=canvas%2F1&node=node+1");
   });
 });
+
+it("embedded node links restore the Canvas workspace", () => {
+  expect(
+    canvasPermalink(
+      { canvasId: "board", nodeId: "node" },
+      "https://marina.example/dashboard",
+      "/dashboard",
+    ),
+  ).toBe("/dashboard?view=canvas&canvas=board&node=node");
+});

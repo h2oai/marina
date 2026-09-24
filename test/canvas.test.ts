@@ -285,6 +285,24 @@ describe("Canvas — Phase 1: Asset Store", () => {
       expect(JSON.parse(node!.data).content).toBe("hello from a newcomer");
     });
 
+    it("canvas post replies on a canvas id without creating a duplicate board", () => {
+      db.createCanvas({ id: "workspace-board", name: "Ideas with spaces", creatorName: "Tester" });
+      db.createNode({
+        id: "parent-node",
+        creatorName: "Tester",
+        canvasId: "workspace-board",
+        type: "text",
+        data: { content: "Topic" },
+      });
+      engine.processCommand(entityId, "canvas post on:workspace-board reply:parent-node A reply");
+      const reply = db
+        .getNodesByCanvas("workspace-board")
+        .find((node) => node.parent_node_id === "parent-node");
+      expect(reply).toBeDefined();
+      expect(JSON.parse(reply!.data).content).toBe("A reply");
+      expect(db.getCanvasByName("workspace-board")).toBeUndefined();
+    });
+
     it("canvas post routes to a named canvas via on:<name>", () => {
       conn.clear();
       engine.processCommand(entityId, "canvas post on:ideas spark of insight");

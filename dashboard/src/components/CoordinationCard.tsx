@@ -33,6 +33,7 @@ import {
   useTasksPaged,
 } from "../hooks/use-api";
 import { useInvalidateOnEvent } from "../hooks/use-realtime";
+import { draftCommand } from "../lib/command-discovery";
 import { dashboardInspectionFromSearch } from "../lib/marina-reference";
 import type { DashboardEvent } from "../lib/types";
 import { cn, formatTime } from "../lib/utils";
@@ -61,7 +62,7 @@ const SECTIONS: Section[] = [
 ];
 
 // Detail view navigation state
-type DetailView =
+export type DetailView =
   | { type: "task"; id: number }
   | { type: "board"; name: string }
   | { type: "group"; name: string }
@@ -74,13 +75,21 @@ type DetailView =
 
 export function CoordinationCard({
   backContent,
+  onInspect,
   isFocused,
   onToggleFocus,
-}: { backContent?: React.ReactNode } & PanelFocusProps) {
+}: { backContent?: React.ReactNode; onInspect?: (view: DetailView) => void } & PanelFocusProps) {
   const [expanded, setExpanded] = useState<Section>(null);
   const [highlightedSection, setHighlightedSection] = useState<number | null>(null);
-  const [detail, setDetail] = useState<DetailView>(
-    () => dashboardInspectionFromSearch(window.location.search) ?? null,
+  const [detail, setLocalDetail] = useState<DetailView>(() =>
+    onInspect ? null : (dashboardInspectionFromSearch(window.location.search) ?? null),
+  );
+  const setDetail = useCallback(
+    (next: DetailView) => {
+      if (onInspect) onInspect(next);
+      else setLocalDetail(next);
+    },
+    [onInspect],
   );
 
   const toggle = useCallback(
@@ -139,7 +148,7 @@ export function CoordinationCard({
           break;
       }
     },
-    [highlightedSection, expanded, detail, toggle],
+    [highlightedSection, expanded, detail, toggle, setDetail],
   );
 
   return (
@@ -247,7 +256,7 @@ export function CoordinationCard({
 
 // --- Detail Panel (drill-down view) ---
 
-function DetailPanel({
+export function DetailPanel({
   detail,
   onBack,
   onNavigate,
@@ -330,6 +339,13 @@ function TaskDetailView({
 
   return (
     <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        onClick={() => draftCommand(`task claim ${id}`)}
+        className="self-start rounded border border-border px-2 py-1 text-xs text-primary"
+      >
+        Claim task
+      </button>
       <div>
         <div className="text-text-bright font-semibold text-xs">
           #{data.id} {data.title}
@@ -381,7 +397,7 @@ function TaskDetailView({
 
 const POSTS_PAGE = 25;
 
-function BoardDetailView({ name }: { name: string }) {
+export function BoardDetailView({ name }: { name: string }) {
   const { data, isLoading } = useBoardDetail(name);
   const [limit, setLimit] = useState(POSTS_PAGE);
   const { data: paged } = useBoardPosts(name, limit);
@@ -416,6 +432,13 @@ function BoardDetailView({ name }: { name: string }) {
                 <div className="text-text-bright text-[10px] font-medium">{p.title}</div>
                 <div className="text-text text-[10px] leading-relaxed line-clamp-3">{p.body}</div>
                 <div className="flex gap-2 mt-0.5 text-[9px] text-text-dim">
+                  <button
+                    type="button"
+                    onClick={() => draftCommand(`board reply ${p.id} `)}
+                    className="text-primary"
+                  >
+                    Reply
+                  </button>
                   <span>{p.author_name}</span>
                   <span>{formatTime(p.created_at)}</span>
                 </div>
@@ -494,7 +517,7 @@ function GroupDetailView({ name }: { name: string }) {
 
 const MESSAGES_PAGE = 25;
 
-function ChannelDetailView({ name }: { name: string }) {
+export function ChannelDetailView({ name }: { name: string }) {
   const { data, isLoading } = useChannelDetail(name);
   const [limit, setLimit] = useState(MESSAGES_PAGE);
   const { data: paged } = useChannelMessages(name, limit);
@@ -513,6 +536,13 @@ function ChannelDetailView({ name }: { name: string }) {
 
   return (
     <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        onClick={() => draftCommand(`channel join ${name}`)}
+        className="self-start rounded border border-border px-2 py-1 text-xs text-primary"
+      >
+        Join channel
+      </button>
       <div>
         <div className="text-text-bright font-semibold text-xs">#{data.name}</div>
         <div className="flex items-center gap-2 mt-0.5 text-[10px] text-text-dim">

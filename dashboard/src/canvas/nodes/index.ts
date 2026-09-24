@@ -10,6 +10,7 @@ import { FrameNode } from "./FrameNode";
 import { ImageNode } from "./ImageNode";
 import { IntentBadge } from "./IntentBadge";
 import { NodeActionBar } from "./NodeActionBar";
+import { ReferenceNode } from "./ReferenceNode";
 import { TextNode } from "./TextNode";
 import { VideoNode } from "./VideoNode";
 
@@ -56,6 +57,6 @@ export const nodeTypes: NodeTypes = {
   audio: withIntent(AudioNode),
   document: withIntent(DocumentNode),
   text: withIntent(TextNode),
-  embed: withIntent(TextNode),
+  embed: withIntent(ReferenceNode),
   frame: withIntent(FrameNode),
 };

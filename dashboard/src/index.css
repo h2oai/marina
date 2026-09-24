@@ -401,3 +401,28 @@ select optgroup {
     transition-duration: 0.01ms;
   }
 }
+
+/* Keep work within the available viewport; each pane owns its scrolling. */
+.workspace-shell .react-grid-layout { height: 100%; min-height: 0; }
+.workspace-shell .workspace-view[hidden] { display: none; }
+.workspace-shell .glass-panel h2 { font-size: 12px; letter-spacing: 0.035em; }
+.workspace-shell #marina-command-input { min-width: 0; font-size: 14px; padding-block: 8px; }
+.workspace-shell .mobile-pane-tabs { display: none; }
+.workspace-shell .workspace-grid .react-grid-item { min-width: 0; min-height: 0; }
+.canvas-fullscreen .workspace-grid [data-pane-key="workspace"] { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; transform: none !important; }
+.canvas-fullscreen .workspace-grid [data-pane-key="webchat"],
+.canvas-fullscreen .workspace-grid [data-pane-key="context"] { display: none; }
+.canvas-fullscreen .workspace-grid .react-resizable-handle { display: none; }
+@media (max-width: 799px) {
+  .workspace-shell .mobile-pane-tabs { display: flex; }
+  .workspace-grid .react-grid-item { position: absolute !important; inset: 0 !important; width: 100% !important; height: 100% !important; transform: none !important; display: none; }
+  .workspace-shell[data-pane="webchat"] .workspace-grid [data-pane-key="webchat"],
+  .workspace-shell[data-pane="workspace"] .workspace-grid [data-pane-key="workspace"],
+  .workspace-shell[data-pane="context"] .workspace-grid [data-pane-key="context"] { display: block; }
+  .workspace-grid .react-resizable-handle { display: none; }
+}
+.workspace-shell .text-sm { font-size: 14px; }
+.workspace-shell header { font-size: 12px; }
+@media (max-width: 799px) {
+  .workspace-shell #marina-command-input { font-size: 16px; }
+}

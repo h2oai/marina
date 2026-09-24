@@ -16,6 +16,7 @@ interface CanvasToolbarProps {
   onConnect?: () => void;
   onMutationError?: (message: string) => void;
   onDelete?: () => void;
+  onDeleteCanvas?: () => void;
   onAnimateLayout?: (
     targetMap: Map<string, { x: number; y: number; w: number; h: number }>,
   ) => Promise<void>;
@@ -28,6 +29,7 @@ export function CanvasToolbar({
   nodes,
   selectedCount = 0,
   onDelete,
+  onDeleteCanvas,
   onConnect,
   onMutationError,
   onAnimateLayout,
@@ -211,6 +213,16 @@ export function CanvasToolbar({
         >
           Connect
         </motion.button>
+      )}
+      {onDeleteCanvas && (
+        <button
+          type="button"
+          disabled={!canvasId}
+          onClick={onDeleteCanvas}
+          className="rounded border border-border px-2 py-1 text-xs text-danger disabled:opacity-40"
+        >
+          Delete canvas
+        </button>
       )}
     </div>
   );

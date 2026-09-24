@@ -61,3 +61,11 @@ if (typeof globalThis.localStorage === "undefined" || !globalThis.localStorage.g
     },
   } as Storage;
 }
+
+// jsdom has no native modal/focus implementation; browser tests exercise the real dialog.
+HTMLDialogElement.prototype.showModal = function () {
+  this.setAttribute("open", "");
+};
+HTMLDialogElement.prototype.close = function () {
+  this.removeAttribute("open");
+};

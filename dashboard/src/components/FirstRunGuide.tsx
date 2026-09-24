@@ -6,6 +6,8 @@ import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 import { useChatState } from "../hooks/use-chat-state";
 
+import { QuestProgressCard } from "./QuestProgressCard";
+
 const STORAGE_KEY = "marina:first-run-guide:v2";
 const ORIENTATION_COMMANDS = ["look", "brief", "next"] as const;
 
@@ -63,7 +65,7 @@ export function FirstRunGuide({ onFocusChat, onOpenKeys }: FirstRunGuideProps) {
             initial={{ opacity: 1, y: 0 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -12 }}
-            className="fixed top-14 left-1/2 z-50 w-[min(420px,calc(100vw-24px))] -translate-x-1/2 rounded border border-primary/50 bg-bg/95 p-3 font-mono text-text shadow-2xl backdrop-blur"
+            className="max-h-[80vh] overflow-y-auto fixed top-14 left-1/2 z-50 w-[min(420px,calc(100vw-24px))] -translate-x-1/2 rounded border border-primary/50 bg-bg/95 p-3 font-mono text-text shadow-2xl backdrop-blur"
           >
             <div className="mb-2 flex items-center gap-2">
               <span className="text-[10px] font-bold tracking-[0.18em] text-primary">
@@ -126,6 +128,7 @@ export function FirstRunGuide({ onFocusChat, onOpenKeys }: FirstRunGuideProps) {
                     Begin
                   </button>
                 </form>
+                {entityName && <QuestProgressCard name={entityName} onFocusChat={onFocusChat} />}
                 <div className="mb-1 text-[10px] font-bold tracking-wide text-text-muted">
                   EXPLORE MARINA
                 </div>
@@ -164,7 +167,7 @@ export function FirstRunGuide({ onFocusChat, onOpenKeys }: FirstRunGuideProps) {
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="fixed right-3 bottom-3 z-40 rounded border border-primary/40 bg-bg/90 px-2 py-1 font-mono text-[10px] text-primary shadow-lg backdrop-blur hover:border-primary"
+          className="fixed right-3 bottom-16 sm:bottom-3 z-40 rounded border border-primary/40 bg-bg/90 px-2 py-1 font-mono text-[10px] text-primary shadow-lg backdrop-blur hover:border-primary"
         >
           START HERE
         </button>

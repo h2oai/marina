@@ -14,6 +14,8 @@
 
 import { lazy, type ReactNode, Suspense, useState } from "react";
 
+import { PanelSkeleton } from "./OperatorFeedback";
+
 export const OpsTab = lazy(() => import("./ops/OpsTab").then((m) => ({ default: m.OpsTab })));
 export const MemoryOpsTab = lazy(() =>
   import("./MemoryOpsTab").then((m) => ({ default: m.MemoryOpsTab })),
@@ -37,11 +39,7 @@ export const MemoryWorkspace = lazy(() =>
 
 /** Suspense boundary for a lazy tab body. */
 export function TabSuspense({ children }: { children: ReactNode }) {
-  return (
-    <Suspense fallback={<div className="p-2 text-[10px] text-text-dim">Loading…</div>}>
-      {children}
-    </Suspense>
-  );
+  return <Suspense fallback={<PanelSkeleton />}>{children}</Suspense>;
 }
 
 /**

@@ -35,6 +35,7 @@ export function CanvasNodeEmbed({
   timestamp,
 }: CanvasNodeEmbedProps) {
   const { data, isLoading, isError, refetch } = useCanvasNode(canvasId, nodeId);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [localData, setLocalData] = useState<NodeData | null>(null);
   const { open: openAsset } = useAssetViewer();
 
@@ -61,14 +62,16 @@ export function CanvasNodeEmbed({
             timestamp: Date.now(),
           },
         };
-        await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
+        const response = await authFetch(`${API_BASE}/api/canvases/${canvasId}/nodes/${nodeId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ data: updated }),
         });
+        if (!response.ok) throw new Error(`Could not save canvas action (${response.status}).`);
+        setActionError(null);
         setLocalData(updated);
-      } catch {
-        // ignore — the canvas view will still reflect the change if it succeeded
+      } catch (error) {
+        setActionError(error instanceof Error ? error.message : "Could not save canvas action.");
       }
     },
     [canvasId, node, nodeId],
@@ -116,6 +119,11 @@ export function CanvasNodeEmbed({
   return (
     <div className="group relative my-1.5 rounded-md border border-border bg-bg/80 p-2 shadow-sm">
       {nodeHeader}
+      {actionError && (
+        <p role="alert" className="text-xs text-danger">
+          {actionError} Try the action again.
+        </p>
+      )}
       {body}
       <div className="mt-2 flex items-center gap-2 text-[10px] text-text-dim">
         <a
@@ -125,7 +133,7 @@ export function CanvasNodeEmbed({
           className="flex items-center gap-1 text-text-dim hover:text-primary transition-colors"
         >
           <ExternalLink size={11} />
-          Open canvas
+          Edit in canvas
         </a>
         <button
           type="button"

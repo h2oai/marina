@@ -250,8 +250,18 @@ const EntityDots = React.memo(function EntityDots({
 
         return (
           <g key={ent.id}>
-            {/* biome-ignore lint/a11y/noStaticElementInteractions: SVG <circle> cannot be a button; pointer-only entity dot, keyboard nav via entity panel */}
+            {/* biome-ignore lint/a11y/useSemanticElements: SVG circles need a button role to expose keyboard activation */}
             <circle
+              data-entity-preview={ent.name}
+              tabIndex={0}
+              role="button"
+              aria-label={`Inspect ${ent.name}`}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelectEntity(ent.name);
+                }
+              }}
               cx={ex}
               cy={ey}
               r={3.5}
@@ -282,10 +292,17 @@ const EntityDots = React.memo(function EntityDots({
 // ── Main WorldMap Component ───────────────────────────────────────────
 interface WorldMapProps extends PanelFocusProps {
   worldData?: WorldData;
+  showTimeline?: boolean;
   backContent?: React.ReactNode;
 }
 
-export function WorldMap({ worldData, backContent, isFocused, onToggleFocus }: WorldMapProps) {
+export function WorldMap({
+  worldData,
+  backContent,
+  isFocused,
+  onToggleFocus,
+  showTimeline = true,
+}: WorldMapProps) {
   const selectedRoom = useWorldState((s) => s.selectedRoom);
   const selectRoom = useWorldState((s) => s.selectRoom);
   const selectEntity = useWorldState((s) => s.selectEntity);
@@ -1305,7 +1322,7 @@ export function WorldMap({ worldData, backContent, isFocused, onToggleFocus }: W
         {/* Activity timeline, anchored inside the World Map (last 30m of feed
             events). Independent feed store — no per-event re-render of the map. */}
         <div className="h-24 shrink-0 overflow-hidden border-t border-border">
-          <TimelineStrip inline />
+          {showTimeline && <TimelineStrip inline />}
         </div>
       </div>
     </GlassPanel>

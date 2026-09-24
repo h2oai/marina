@@ -19,6 +19,8 @@ import {
 import "@xyflow/react/dist/style.css";
 import { AnimatePresence } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useWorkspaceState } from "../hooks/use-workspace-state";
 import { authFetch } from "../lib/api";
 import { CreateCanvasDialog, CreateRelationshipDialog } from "./components/CanvasDialogs";
 import { CanvasToolbar } from "./components/CanvasToolbar";
@@ -35,6 +37,12 @@ import { selectInitialCanvas } from "./lib/select-canvas";
 import type { CanvasData, CanvasEdgeData } from "./lib/types";
 import { nodeTypes } from "./nodes";
 
+const savedViewports = new Map<string, { x: number; y: number; zoom: number }>();
+
+interface CanvasPageProps {
+  embedded?: boolean;
+  active?: boolean;
+}
 const API_BASE = window.location.origin;
 
 const MIME_TO_NODE_TYPE: Record<string, string> = {
@@ -68,7 +76,10 @@ function guessNodeType(mime: string): string {
   return "document";
 }
 
-function CanvasInner() {
+function CanvasInner({ embedded = false, active = true }: CanvasPageProps) {
+  const fullscreen = useWorkspaceState((s) => s.fullscreen);
+  const inspect = useWorkspaceState((s) => s.inspect);
+  const viewports = useRef(savedViewports);
   const initialSelectionRef = useRef(canvasSelectionFromSearch(window.location.search));
   const [canvasList, setCanvasList] = useState<CanvasData[]>([]);
   const [listError, setListError] = useState<string | null>(null);
@@ -78,7 +89,7 @@ function CanvasInner() {
   const [filteredIds, setFilteredIds] = useState<Set<string> | null>(null);
   const [dropping, setDropping] = useState(false);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
-  const { fitView, screenToFlowPosition } = useReactFlow();
+  const { fitView, screenToFlowPosition, setViewport } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
   const prevNodeIdsRef = useRef<Set<string>>(new Set());
   const [snapshotRefreshKey, setSnapshotRefreshKey] = useState(0);
@@ -118,17 +129,21 @@ function CanvasInner() {
   // Keep deep links truthful even when an invalid/deleted requested canvas
   // falls back to a valid guide/feed workspace.
   useEffect(() => {
+    if (!active || !selectedId) return;
     const url = new URL(window.location.href);
+    if (embedded) url.searchParams.set("view", "canvas");
     if (selectedId) url.searchParams.set("canvas", selectedId);
     else url.searchParams.delete("canvas");
     window.history.replaceState(null, "", url);
-  }, [selectedId]);
+  }, [selectedId, active, embedded]);
 
   // Browser history is semantic navigation: restore the selected canvas and
   // exact node rather than leaving React state on the page the user left.
   useEffect(() => {
     const restoreHistorySelection = () => {
       const selection = canvasSelectionFromSearch(window.location.search);
+      if (selection.canvasId === selectedId && selection.nodeId === requestedNodeIdRef.current)
+        return;
       requestedCanvasIdRef.current = selection.canvasId;
       requestedNodeIdRef.current = selection.nodeId;
       resolvedNodeLinkRef.current = undefined;
@@ -139,7 +154,7 @@ function CanvasInner() {
     };
     window.addEventListener("popstate", restoreHistorySelection);
     return () => window.removeEventListener("popstate", restoreHistorySelection);
-  }, [canvasList]);
+  }, [canvasList, selectedId]);
 
   // Real-time updates via WebSocket. The hook subscribes first and buffers
   // every event; we flip its `markReady` once the snapshot has been applied,
@@ -208,11 +223,16 @@ function CanvasInner() {
   // are measured. Fit once after each canvas snapshot becomes renderable so
   // valid nodes cannot remain off-screen or visibility:hidden until interaction.
   useEffect(() => {
-    if (!selectedId || loading || nodes.length === 0 || !nodesInitialized) return;
+    if (!active || !selectedId || loading || nodes.length === 0 || !nodesInitialized) return;
     const snapshotKey = `${selectedId}:${snapshotRefreshKey}`;
     if (fittedSnapshotRef.current === snapshotKey) return;
     fittedSnapshotRef.current = snapshotKey;
     requestAnimationFrame(() => {
+      const saved = viewports.current.get(selectedId);
+      if (saved) {
+        void setViewport(saved);
+        return;
+      }
       if (window.innerWidth < 640 && nodes[0]) {
         // Fitting a desktop-wide board onto a phone makes every card illegible.
         // Start on the first card at a readable scale; the minimap and pan
@@ -222,7 +242,16 @@ function CanvasInner() {
         void fitView({ padding: 0.18, duration: 250 });
       }
     });
-  }, [fitView, loading, nodes, nodesInitialized, selectedId, snapshotRefreshKey]);
+  }, [
+    active,
+    setViewport,
+    fitView,
+    loading,
+    nodes,
+    nodesInitialized,
+    selectedId,
+    snapshotRefreshKey,
+  ]);
 
   // Selecting a different canvas already starts its own snapshot fetch; its
   // first connection must not schedule a duplicate recovery fetch.
@@ -286,16 +315,18 @@ function CanvasInner() {
     (_event: React.MouseEvent, node: Node) => {
       requestedNodeIdRef.current = node.id;
       setDetailNode(node);
+      inspect({ type: "node", id: node.id });
       window.history.pushState(
         null,
         "",
         canvasPermalink(
           { canvasId: selectedId ?? undefined, nodeId: node.id },
           window.location.href,
+          embedded && !fullscreen ? "/dashboard" : "/canvas",
         ),
       );
     },
-    [selectedId],
+    [selectedId, inspect, embedded, fullscreen],
   );
 
   // Resolve an exact node deep link only after the selected canvas snapshot is
@@ -307,7 +338,6 @@ function CanvasInner() {
     if (!selectedId || !requestedNodeId || loading || !nodesInitialized) return;
     const key = `${selectedId}:${requestedNodeId}:${snapshotRefreshKey}`;
     if (resolvedNodeLinkRef.current === key) return;
-    resolvedNodeLinkRef.current = key;
     const target = nodes.find((node) => node.id === requestedNodeId);
     if (!target) {
       setNotice({
@@ -316,10 +346,14 @@ function CanvasInner() {
       });
       return;
     }
+    resolvedNodeLinkRef.current = key;
+    setNotice(null);
     setDetailNode(target);
+    inspect({ type: "node", id: target.id });
     void fitView({ nodes: [{ id: target.id }], padding: 0.6, duration: 350, maxZoom: 1.4 });
   }, [
     fitView,
+    inspect,
     loading,
     navigationRevision,
     nodes,
@@ -344,11 +378,14 @@ function CanvasInner() {
     const handler = (e: Event) => {
       const nodeId = (e as CustomEvent).detail.nodeId as string;
       const node = nodes.find((n) => n.id === nodeId);
-      if (node) setDetailNode(node);
+      if (node) {
+        setDetailNode(node);
+        inspect({ type: "node", id: node.id });
+      }
     };
     window.addEventListener("marina:open-detail", handler);
     return () => window.removeEventListener("marina:open-detail", handler);
-  }, [nodes]);
+  }, [nodes, inspect]);
 
   // Right-click context menu
   const [contextMenu, setContextMenu] = useState<{
@@ -429,6 +466,31 @@ function CanvasInner() {
       });
     }
   }, [selectedId]);
+
+  const deleteCanvas = useCallback(async () => {
+    if (
+      !selectedId ||
+      !canvas ||
+      !window.confirm(`Delete canvas "${canvas.name}" and all its nodes?`)
+    )
+      return;
+    try {
+      const response = await authFetch(
+        `${API_BASE}/api/canvases/${encodeURIComponent(selectedId)}`,
+        { method: "DELETE" },
+      );
+      if (!response.ok) throw new Error(`Could not delete canvas (${response.status}).`);
+      setDetailNode(null);
+      inspect(null);
+      setSelectedId(null);
+      requestedCanvasIdRef.current = undefined;
+      requestedNodeIdRef.current = undefined;
+      loadCanvasList();
+      setNotice({ tone: "success", message: "Canvas deleted." });
+    } catch (cause) {
+      setNotice({ tone: "error", message: cause instanceof Error ? cause.message : String(cause) });
+    }
+  }, [selectedId, canvas, inspect, loadCanvasList]);
 
   const createRelationship = useCallback(
     async (sourceId: string, targetId: string, relationship: string) => {
@@ -694,15 +756,25 @@ function CanvasInner() {
   );
 
   return (
-    <div className="w-screen h-screen bg-bg flex flex-col">
+    <div
+      className={
+        embedded
+          ? "h-full min-h-0 w-full bg-bg flex flex-col"
+          : "w-screen h-screen bg-bg flex flex-col"
+      }
+    >
       {/* Top bar */}
-      <div className="flex items-center gap-3 overflow-x-auto px-3 md:px-4 py-2 bg-bg-card border-b border-border shrink-0">
-        <h1 className="text-primary font-bold text-sm tracking-wider whitespace-nowrap shrink-0">
+      <div className="flex flex-wrap items-center gap-2 px-2 py-2 bg-bg-card border-b border-border shrink-0">
+        <h1
+          hidden={embedded && !fullscreen}
+          className="text-primary font-bold text-sm tracking-wider whitespace-nowrap shrink-0"
+        >
           MARINA CANVAS
         </h1>
         <div className="w-px h-5 bg-bg-hover" />
         <select
-          className="bg-bg-hover text-text text-sm rounded px-2 py-1 border border-border focus:outline-none focus:border-primary shrink-0"
+          aria-label="Active canvas"
+          className="max-w-[min(180px,45vw)] bg-bg-hover text-text text-sm rounded px-2 py-1 border border-border focus:outline-none focus:border-primary shrink-0"
           value={selectedId ?? ""}
           onFocus={loadCanvasList}
           onChange={(e) => {
@@ -714,7 +786,11 @@ function CanvasInner() {
             window.history.pushState(
               null,
               "",
-              canvasPermalink({ canvasId: nextId ?? undefined }, window.location.href),
+              canvasPermalink(
+                { canvasId: nextId ?? undefined },
+                window.location.href,
+                embedded && !fullscreen ? "/dashboard" : "/canvas",
+              ),
             );
           }}
         >
@@ -742,7 +818,7 @@ function CanvasInner() {
         >
           + Note
         </button>
-        {canvas && (
+        {canvas && !embedded && (
           <span className="hidden lg:inline text-xs text-text-dim whitespace-nowrap">
             {canvas.description} &middot; {nodes.length} nodes &middot; by {canvas.creator_name}
           </span>
@@ -766,6 +842,7 @@ function CanvasInner() {
           nodes={nodes}
           selectedCount={selectedNodeIds.length}
           onDelete={handleToolbarDelete}
+          onDeleteCanvas={deleteCanvas}
           onConnect={() => setDialog("relationship")}
           onMutationError={(message) => {
             setNotice({ tone: "error", message });
@@ -775,6 +852,7 @@ function CanvasInner() {
         />
         <div className="w-px h-5 bg-bg-hover" />
         <a
+          hidden={embedded}
           href="/dashboard"
           className="text-xs text-text-dim hover:text-text-bright transition-colors"
         >
@@ -791,7 +869,7 @@ function CanvasInner() {
         onDragLeave={onDragLeave}
         onDrop={onDrop}
       >
-        {notice && (
+        {notice && !dialog && (
           <div
             role={notice.tone === "error" ? "alert" : "status"}
             className={`absolute left-1/2 top-3 z-[60] flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-3 rounded border px-3 py-2 text-xs shadow-xl ${
@@ -899,8 +977,18 @@ function CanvasInner() {
           nodeTypes={nodeTypes}
           onNodesChange={handleNodesChange}
           onNodeDragStop={onNodeDragStop}
+          onConnect={(connection) =>
+            void createRelationship(connection.source, connection.target, "relates_to")
+          }
           onNodesDelete={onNodesDelete}
           onSelectionChange={onSelectionChange}
+          onNodeClick={(event, node) => {
+            if (embedded && !fullscreen && !event.ctrlKey && !event.metaKey)
+              onNodeDoubleClick(event, node);
+          }}
+          onMoveEnd={(_event, viewport) => {
+            if (selectedId && active) viewports.current.set(selectedId, viewport);
+          }}
           onNodeDoubleClick={onNodeDoubleClick}
           onNodeContextMenu={onNodeContextMenu}
           onEdgeClick={(_event, edge) => setSelectedEdgeId(edge.id)}
@@ -923,7 +1011,7 @@ function CanvasInner() {
           <MiniMap
             className="!bg-bg-card !border-border"
             nodeColor="var(--color-primary)"
-            maskColor="rgba(0,0,0,0.7)"
+            maskColor="var(--color-bg-hover)"
           />
         </ReactFlow>
         {selectedEdgeId && liveEdges.some((edge) => edge.id === selectedEdgeId) && (
@@ -954,24 +1042,64 @@ function CanvasInner() {
       </div>
 
       {/* Detail panel — double-click a node to inspect */}
-      <NodeDetailPanel
-        node={detailNode}
-        onClose={() => {
-          setDetailNode(null);
-          setSuggestedPrompt(undefined);
-          requestedNodeIdRef.current = undefined;
-          window.history.pushState(
-            null,
-            "",
-            canvasPermalink({ canvasId: selectedId ?? undefined }, window.location.href),
-          );
-        }}
-        canvasId={selectedId}
-        onSetIntent={persistNodeData}
-        onIntentActionResult={applyNodeDataSnapshot}
-        nodes={nodes}
-        suggestedPrompt={suggestedPrompt}
-      />
+      {embedded && !fullscreen && document.getElementById("canvas-inspector") ? (
+        createPortal(
+          <NodeDetailPanel
+            embedded={embedded && !fullscreen}
+            relationships={liveEdges}
+            onConnect={() => setDialog("relationship")}
+            node={detailNode}
+            onClose={() => {
+              setDetailNode(null);
+              inspect(null);
+              setSuggestedPrompt(undefined);
+              requestedNodeIdRef.current = undefined;
+              window.history.pushState(
+                null,
+                "",
+                canvasPermalink(
+                  { canvasId: selectedId ?? undefined },
+                  window.location.href,
+                  embedded && !fullscreen ? "/dashboard" : "/canvas",
+                ),
+              );
+            }}
+            canvasId={selectedId}
+            onSetIntent={persistNodeData}
+            onIntentActionResult={applyNodeDataSnapshot}
+            nodes={nodes}
+            suggestedPrompt={suggestedPrompt}
+          />,
+          document.getElementById("canvas-inspector")!,
+        )
+      ) : (
+        <NodeDetailPanel
+          embedded={embedded && !fullscreen}
+          relationships={liveEdges}
+          onConnect={() => setDialog("relationship")}
+          node={detailNode}
+          onClose={() => {
+            setDetailNode(null);
+            inspect(null);
+            setSuggestedPrompt(undefined);
+            requestedNodeIdRef.current = undefined;
+            window.history.pushState(
+              null,
+              "",
+              canvasPermalink(
+                { canvasId: selectedId ?? undefined },
+                window.location.href,
+                embedded && !fullscreen ? "/dashboard" : "/canvas",
+              ),
+            );
+          }}
+          canvasId={selectedId}
+          onSetIntent={persistNodeData}
+          onIntentActionResult={applyNodeDataSnapshot}
+          nodes={nodes}
+          suggestedPrompt={suggestedPrompt}
+        />
+      )}
 
       {/* Right-click context menu */}
       <AnimatePresence>
@@ -990,11 +1118,20 @@ function CanvasInner() {
         )}
       </AnimatePresence>
       {dialog === "canvas" && (
-        <CreateCanvasDialog onClose={() => setDialog(null)} onCreate={createCanvas} />
+        <CreateCanvasDialog
+          error={notice?.tone === "error" ? notice.message : undefined}
+          onClose={() => setDialog(null)}
+          onCreate={createCanvas}
+        />
       )}
       {dialog === "relationship" && (
         <CreateRelationshipDialog
-          nodes={nodes.filter((node) => selectedNodeIds.includes(node.id))}
+          error={notice?.tone === "error" ? notice.message : undefined}
+          nodes={
+            selectedNodeIds.length >= 2
+              ? nodes.filter((node) => selectedNodeIds.includes(node.id))
+              : nodes
+          }
           onClose={() => setDialog(null)}
           onCreate={createRelationship}
         />
@@ -1003,10 +1140,10 @@ function CanvasInner() {
   );
 }
 
-export function CanvasPage() {
+export function CanvasPage(props: CanvasPageProps) {
   return (
     <ReactFlowProvider>
-      <CanvasInner />
+      <CanvasInner {...props} />
     </ReactFlowProvider>
   );
 }

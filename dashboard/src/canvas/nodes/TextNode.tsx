@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Handle, type NodeProps, NodeResizer, Position } from "@xyflow/react";
-import { resolveAuthor } from "../lib/node-fields";
+import { resolveAuthor, resolveTitle } from "../lib/node-fields";
 import { NodeMeta } from "./NodeMeta";
 
 /**
@@ -127,7 +127,7 @@ export function TextNode({ data, selected }: NodeProps) {
   const content = resolveContent(data as Record<string, unknown>);
   const feedType = data.feedType as string | undefined;
   const label =
-    (data.label as string) ??
+    (resolveTitle(data as Record<string, unknown>) || undefined) ??
     (feedType ? (FEED_LABEL[feedType] ?? friendlyFeedType(feedType)) : "") ??
     "";
   const author = resolveAuthor(data as Record<string, unknown>);

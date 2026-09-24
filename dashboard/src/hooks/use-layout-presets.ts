@@ -4,6 +4,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ResponsiveLayouts } from "react-grid-layout";
 
+import type { WorkspaceView } from "./use-workspace-state";
+
 type Bp = "lg" | "md";
 
 export interface LayoutPreset {
@@ -13,6 +15,8 @@ export interface LayoutPreset {
   createdAt: number;
   updatedAt: number;
   locked?: boolean;
+  version?: number;
+  view?: WorkspaceView;
 }
 
 interface StoredState {
@@ -30,36 +34,70 @@ function createId(): string {
   return `preset_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
 }
 
-function loadStoredState(defaultLayouts: ResponsiveLayouts<Bp>): StoredState {
+function readPreviousGrid(): LayoutPreset | undefined {
+  try {
+    const raw = localStorage.getItem("marina-dashboard-layouts-v3");
+    if (!raw) return;
+    const layouts = JSON.parse(raw) as ResponsiveLayouts<Bp>;
+    if (Array.isArray(layouts.lg) && Array.isArray(layouts.md))
+      return { id: "previous-grid", name: "Previous grid", layouts, createdAt: 0, updatedAt: 0 };
+  } catch {
+    // A corrupt old auto-save must never discard valid named presets.
+  }
+}
+
+function loadStoredState(
+  defaultLayouts: ResponsiveLayouts<Bp>,
+  builtins?: LayoutPreset[],
+): StoredState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as StoredState;
       if (parsed?.presets?.length) {
-        return parsed;
+        if (!builtins) return parsed;
+        const custom = parsed.presets.filter(
+          (p) => !p.locked && !builtins.some((b) => b.id === p.id),
+        );
+        // Retain the old auto-saved grid as a named preset during this one-time migration.
+        if (
+          !parsed.presets.some((p) => p.id === DEFAULT_ID && p.version === builtins[0]?.version)
+        ) {
+          const previous = readPreviousGrid();
+          if (previous && !custom.some((p) => p.id === previous.id)) custom.push(previous);
+        }
+
+        const presets = [...builtins, ...custom];
+        return {
+          presets,
+          activeId: presets.some((p) => p.id === parsed.activeId) ? parsed.activeId : DEFAULT_ID,
+        };
       }
     }
   } catch {
     // ignore corrupt data
   }
   const now = Date.now();
+  const previous = builtins ? readPreviousGrid() : undefined;
   return {
-    presets: [
-      {
-        id: DEFAULT_ID,
-        name: "Default",
-        layouts: defaultLayouts,
-        createdAt: now,
-        updatedAt: now,
-        locked: true,
-      },
-    ],
+    presets: builtins
+      ? [...builtins, ...(previous ? [previous] : [])]
+      : [
+          {
+            id: DEFAULT_ID,
+            name: "Default",
+            layouts: defaultLayouts,
+            createdAt: now,
+            updatedAt: now,
+            locked: true,
+          },
+        ],
     activeId: DEFAULT_ID,
   };
 }
 
-export function useLayoutPresets(defaultLayouts: ResponsiveLayouts<Bp>) {
-  const [state, setState] = useState<StoredState>(() => loadStoredState(defaultLayouts));
+export function useLayoutPresets(defaultLayouts: ResponsiveLayouts<Bp>, builtins?: LayoutPreset[]) {
+  const [state, setState] = useState<StoredState>(() => loadStoredState(defaultLayouts, builtins));
 
   // Ensure default preset is present even if stored data is missing it.
   useEffect(() => {
@@ -105,21 +143,25 @@ export function useLayoutPresets(defaultLayouts: ResponsiveLayouts<Bp>) {
     [state.presets],
   );
 
-  const savePreset = useCallback((name: string, layouts: ResponsiveLayouts<Bp>) => {
-    const now = Date.now();
-    const preset: LayoutPreset = {
-      id: createId(),
-      name: name.trim() || `Workspace ${new Date(now).toLocaleTimeString()}`,
-      layouts,
-      createdAt: now,
-      updatedAt: now,
-    };
-    setState((prev) => ({
-      presets: [preset, ...prev.presets],
-      activeId: preset.id,
-    }));
-    return preset.id;
-  }, []);
+  const savePreset = useCallback(
+    (name: string, layouts: ResponsiveLayouts<Bp>, view?: WorkspaceView) => {
+      const now = Date.now();
+      const preset: LayoutPreset = {
+        id: createId(),
+        name: name.trim() || `Workspace ${new Date(now).toLocaleTimeString()}`,
+        layouts,
+        view,
+        createdAt: now,
+        updatedAt: now,
+      };
+      setState((prev) => ({
+        presets: [preset, ...prev.presets],
+        activeId: preset.id,
+      }));
+      return preset.id;
+    },
+    [],
+  );
 
   const renamePreset = useCallback((id: string, name: string) => {
     setState((prev) => ({
@@ -144,12 +186,17 @@ export function useLayoutPresets(defaultLayouts: ResponsiveLayouts<Bp>) {
   }, []);
 
   const updateActiveLayouts = useCallback((layouts: ResponsiveLayouts<Bp>) => {
-    setState((prev) => ({
-      ...prev,
-      presets: prev.presets.map((p) =>
-        p.id === prev.activeId && !p.locked ? { ...p, layouts, updatedAt: Date.now() } : p,
-      ),
-    }));
+    setState((prev) => {
+      const active = prev.presets.find((p) => p.id === prev.activeId);
+      if (!active || active.locked || JSON.stringify(active.layouts) === JSON.stringify(layouts))
+        return prev;
+      return {
+        ...prev,
+        presets: prev.presets.map((p) =>
+          p.id === prev.activeId ? { ...p, layouts, updatedAt: Date.now() } : p,
+        ),
+      };
+    });
   }, []);
 
   return {

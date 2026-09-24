@@ -501,9 +501,9 @@ function handlePost(
     return;
   }
 
-  // Find or create the target canvas — prefer the named one, else "global".
+  // Resolve an explicit id or name before falling back to the global canvas.
   let canvas = canvasName
-    ? db.getCanvasByName(canvasName)
+    ? (db.getCanvas(canvasName) ?? db.getCanvasByName(canvasName))
     : (db.getCanvasByName("global") ?? db.listCanvases({ limit: 1 })[0]);
   if (!canvas) {
     const id = crypto.randomUUID();

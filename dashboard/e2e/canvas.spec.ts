@@ -16,18 +16,22 @@ test("dashboard attention is globally visible and opens without navigating away"
 
 test("dashboard Work and Pulse are globally reachable and mutually coherent", async ({ page }) => {
   await page.goto("/dashboard");
-  await page.getByRole("button", { name: "Pulse" }).click();
+  await page.getByText("More", { exact: true }).click();
+  await page.getByRole("button", { name: "Pulse", exact: true }).click();
   await expect(page.getByRole("complementary", { name: "Live pulse" })).toBeVisible();
   await expect(page.getByText(/live WebSocket window, not historical totals/i)).toBeVisible();
 
-  await page.getByRole("button", { name: "Work" }).click();
+  await page.getByRole("button", { name: "Work", exact: true }).click();
   await expect(page.getByRole("complementary", { name: "Live pulse" })).toHaveCount(0);
   await expect(page.getByRole("complementary", { name: "Work overview" })).toBeVisible();
   await expect(page.locator('.glass-panel[style*="opacity: 0"]')).toHaveCount(0);
 });
 
-test("production Canvas opens in a coherent, actionable state", async ({ page }) => {
-  await page.goto("/canvas");
+test("production Canvas opens in a coherent, actionable state", async ({ page, request }) => {
+  const canvas = await (
+    await request.post("/api/canvases", { data: { name: "Empty board", scope: "global" } })
+  ).json();
+  await page.goto(`/canvas?canvas=${canvas.id}`);
   await expect(page.getByRole("heading", { name: "MARINA CANVAS" })).toBeVisible();
   await expect(page.getByRole("button", { name: "+ Canvas" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Add a note" })).toBeVisible();
@@ -35,15 +39,15 @@ test("production Canvas opens in a coherent, actionable state", async ({ page })
   await expect(page.locator('.react-flow__node [style*="scale(0)"]')).toHaveCount(0);
 });
 
-test("a user can create a canvas, add notes, and connect them without reloading", async ({
+test("a user can create, connect, remove nodes, and delete a canvas through the UI", async ({
   page,
 }) => {
   await page.goto("/canvas");
   await page.getByRole("button", { name: "+ Canvas" }).click();
-  await page.getByLabel("Name").fill("Browser workflow");
+  await page.getByLabel("Name", { exact: true }).fill("Browser workflow");
   await page.getByLabel(/Description/).fill("Created entirely through the Canvas UI");
   await page.getByRole("button", { name: "Create canvas" }).click();
-  await expect(page.getByRole("status")).toContainText("Created");
+  await expect(page.getByRole("status").filter({ hasText: "Created" })).toBeVisible();
   await expect(page.getByText("This canvas is empty")).toBeVisible();
 
   await page.getByRole("button", { name: "Add a note" }).click();
@@ -61,11 +65,28 @@ test("a user can create a canvas, add notes, and connect them without reloading"
   await page.reload();
   await expect(page.locator(".react-flow__node")).toHaveCount(2);
   await expect(page.getByText("supports", { exact: true })).toBeVisible();
+  await page.locator(".react-flow__node").first().click();
+  await page.getByRole("button", { name: "Delete (1)", exact: true }).click();
+  await expect(page.locator(".react-flow__node")).toHaveCount(1);
+  await expect(page.getByText("supports", { exact: true })).toHaveCount(0);
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain('Delete canvas "Browser workflow"');
+    await dialog.accept();
+  });
+  await page.getByRole("button", { name: "Delete canvas", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Deleted" })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Browser workflow", exact: true })).toHaveCount(0);
 });
 
-test("mobile Canvas keeps the primary controls and a node in view", async ({ page }) => {
+test("mobile Canvas keeps the primary controls and a node in view", async ({ page, request }) => {
+  const canvas = await (
+    await request.post("/api/canvases", { data: { name: "Mobile board", scope: "global" } })
+  ).json();
+  await request.post(`/api/canvases/${canvas.id}/nodes`, {
+    data: { type: "text", data: { content: "Mobile card" } },
+  });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/canvas");
+  await page.goto(`/canvas?canvas=${canvas.id}`);
   await expect(page.getByRole("button", { name: "+ Canvas" })).toBeVisible();
   await expect(page.getByRole("button", { name: "+ Note" })).toBeVisible();
   await expect(page.locator(".react-flow__node").first()).toBeInViewport();
@@ -121,20 +142,24 @@ test("an exact Canvas node link restores, focuses, and explains a missing target
   );
   await expect(page.getByText("Exact destination").first()).toBeVisible();
   await expect(
-    page.getByRole("complementary").getByRole("heading", { name: "Node Detail" }),
+    page
+      .getByRole("complementary", { name: "Node inspector" })
+      .getByRole("heading", { name: "Node Detail" }),
   ).toBeVisible();
   await expect(page).toHaveURL((url) => {
     return url.searchParams.get("canvas") === canvas.id && url.searchParams.get("node") === node.id;
   });
 
-  await page.getByRole("complementary").getByRole("button", { name: "×" }).click();
+  await page.getByRole("button", { name: "Close node inspector" }).click();
   await expect(page).toHaveURL((url) => !url.searchParams.has("node"));
   await page.goBack();
   await expect(
-    page.getByRole("complementary").getByRole("heading", { name: "Node Detail" }),
+    page
+      .getByRole("complementary", { name: "Node inspector" })
+      .getByRole("heading", { name: "Node Detail" }),
   ).toBeVisible();
   await page.goForward();
-  await expect(page.getByRole("complementary")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: "Node inspector" })).toHaveCount(0);
 
   await page.goto(`/canvas?canvas=${encodeURIComponent(canvas.id)}&node=deleted-node`);
   await expect(page.getByRole("alert")).toContainText("unavailable or was deleted");

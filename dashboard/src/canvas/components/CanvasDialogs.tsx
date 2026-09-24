@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Node } from "@xyflow/react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const RELATIONSHIPS = [
   "supports",
@@ -24,38 +24,44 @@ function labelFor(node: Node): string {
 
 interface DialogFrameProps {
   title: string;
+  error?: string;
   children: React.ReactNode;
   onClose: () => void;
 }
 
-function DialogFrame({ title, children, onClose }: DialogFrameProps) {
+function DialogFrame({ title, children, onClose, error }: DialogFrameProps) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    dialog.current?.showModal();
+  }, []);
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4"
-      role="presentation"
+    <dialog
+      ref={dialog}
+      onCancel={onClose}
+      onClose={onClose}
+      aria-labelledby="canvas-dialog-title"
+      className="w-[min(28rem,calc(100vw-2rem))] max-h-[90dvh] overflow-auto rounded-lg border border-border bg-bg-card p-5 text-text shadow-2xl backdrop:bg-black/60"
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="canvas-dialog-title"
-        className="w-full max-w-md rounded-lg border border-border bg-bg-card p-5 shadow-2xl"
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 id="canvas-dialog-title" className="text-sm font-semibold text-text-bright">
-            {title}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-text-dim hover:text-text"
-            aria-label="Close dialog"
-          >
-            ×
-          </button>
-        </div>
-        {children}
+      <div className="mb-4 flex items-center justify-between">
+        <h2 id="canvas-dialog-title" className="text-sm font-semibold text-text-bright">
+          {title}
+        </h2>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-text-dim hover:text-text"
+          aria-label="Close dialog"
+        >
+          ×
+        </button>
       </div>
-    </div>
+      {error && (
+        <p role="alert" className="mb-3 text-sm text-danger">
+          {error}
+        </p>
+      )}
+      {children}
+    </dialog>
   );
 }
 
@@ -67,15 +73,17 @@ const buttonClass =
 export function CreateCanvasDialog({
   onClose,
   onCreate,
+  error,
 }: {
   onClose: () => void;
+  error?: string;
   onCreate: (name: string, description: string) => Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   return (
-    <DialogFrame title="Create a canvas" onClose={onClose}>
+    <DialogFrame title="Create a canvas" onClose={onClose} error={error}>
       <form
         className="space-y-3"
         onSubmit={async (event) => {
@@ -129,9 +137,11 @@ export function CreateRelationshipDialog({
   nodes,
   onClose,
   onCreate,
+  error,
 }: {
   nodes: Node[];
   onClose: () => void;
+  error?: string;
   onCreate: (sourceId: string, targetId: string, relationship: string) => Promise<void>;
 }) {
   const [sourceId, setSourceId] = useState(nodes[0]?.id ?? "");
@@ -139,7 +149,7 @@ export function CreateRelationshipDialog({
   const [relationship, setRelationship] = useState<string>("relates_to");
   const [busy, setBusy] = useState(false);
   return (
-    <DialogFrame title="Connect selected nodes" onClose={onClose}>
+    <DialogFrame title="Connect selected nodes" onClose={onClose} error={error}>
       <form
         className="space-y-3"
         onSubmit={async (event) => {

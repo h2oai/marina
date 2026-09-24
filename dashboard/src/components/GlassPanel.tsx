@@ -121,6 +121,7 @@ export function GlassPanel({
               }}
               className="text-text-dim transition-colors hover:text-primary"
               title={isFocused ? "Restore panel size (Esc)" : "Pop out — enlarge this panel"}
+              aria-label={isFocused ? `Restore ${title} panel` : `Maximize ${title} panel`}
             >
               {isFocused ? <Minimize2 size={10} /> : <Maximize2 size={10} />}
             </button>

@@ -33,6 +33,7 @@ import { entityOrigin, ORIGIN_META } from "../lib/entity-origin";
 import type { DashboardEvent, WorkItemKind } from "../lib/types";
 import { cn, formatTime } from "../lib/utils";
 import { AgentPanel } from "./AgentPanel";
+import { PinToCanvas } from "./CanvasReference";
 import { EntitySymmetryBar } from "./EntitySymmetryBar";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { AgentOpsBadges, opsRowsByName } from "./ops/AgentOpsBadges";
@@ -40,9 +41,10 @@ import { WhoLink } from "./WhoLink";
 
 export function EntityRoster({
   backContent,
+  compact = false,
   isFocused,
   onToggleFocus,
-}: { backContent?: ReactNode } & PanelFocusProps) {
+}: { backContent?: ReactNode; compact?: boolean } & PanelFocusProps) {
   const entities = useWorldState((s) => s.entities);
   const thinkingAgents = useWorldState((s) => s.thinkingAgents);
   const selectedEntity = useWorldState((s) => s.selectedEntity);
@@ -115,7 +117,8 @@ export function EntityRoster({
                 {/* biome-ignore lint/a11y/useSemanticElements: contains nested interactive elements — cannot use <button> */}
                 <div
                   role="button"
-                  tabIndex={-1}
+                  data-entity-preview={e.name}
+                  tabIndex={0}
                   onClick={() => selectEntity(isSelected ? null : e.name)}
                   onKeyDown={(ev) => {
                     if (ev.key === "Enter" || ev.key === " ") {
@@ -221,7 +224,7 @@ export function EntityRoster({
 
                 <EntityActivitySnippet name={e.name} />
 
-                {isSelected && (
+                {isSelected && !compact && (
                   <>
                     {e.agentStatus && <AgentPanel name={e.name} status={e.agentStatus} />}
                     {e.agentStatus && <AgentIntent name={e.name} />}
@@ -752,7 +755,7 @@ function MessageThreadGroup({
   );
 }
 
-function EntityExpandedDetail({
+export function EntityExpandedDetail({
   name,
   room,
   onRoomClick,
@@ -820,23 +823,27 @@ function EntityExpandedDetail({
                 Notes ({data.notes.length})
               </div>
               {data.notes.slice(0, 5).map((n) => (
-                <button
-                  key={n.id}
-                  type="button"
-                  onClick={() => setExpandedNoteId(expandedNoteId === n.id ? null : n.id)}
-                  className="flex w-full gap-1 text-[10px] leading-tight text-left hover:bg-bg-hover transition-colors"
-                >
-                  <span className="text-warning shrink-0">!{n.importance}</span>
-                  <span className="text-accent shrink-0">#{n.note_type}</span>
-                  <span
-                    className={cn(
-                      "text-text",
-                      expandedNoteId === n.id ? "whitespace-pre-wrap" : "truncate",
-                    )}
+                <div key={n.id}>
+                  <button
+                    type="button"
+                    onClick={() => setExpandedNoteId(expandedNoteId === n.id ? null : n.id)}
+                    className="flex w-full gap-1 text-[10px] leading-tight text-left hover:bg-bg-hover transition-colors"
                   >
-                    {n.content}
-                  </span>
-                </button>
+                    <span className="text-warning shrink-0">!{n.importance}</span>
+                    <span className="text-accent shrink-0">#{n.note_type}</span>
+                    <span
+                      className={cn(
+                        "text-text",
+                        expandedNoteId === n.id ? "whitespace-pre-wrap" : "truncate",
+                      )}
+                    >
+                      {n.content}
+                    </span>
+                  </button>
+                  {expandedNoteId === n.id && (
+                    <PinToCanvas reference={{ kind: "note", id: String(n.id) }} />
+                  )}
+                </div>
               ))}
             </div>
           )}

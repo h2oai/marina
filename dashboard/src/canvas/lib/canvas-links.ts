@@ -36,6 +36,7 @@ export function canvasPermalink(
   url.pathname = path;
   url.hash = "";
   url.search = "";
+  if (path === "/dashboard") url.searchParams.set("view", "canvas");
   if (selection.canvasId) url.searchParams.set("canvas", selection.canvasId);
   if (selection.nodeId) url.searchParams.set("node", selection.nodeId);
   if (selection.edgeId) url.searchParams.set("edge", selection.edgeId);

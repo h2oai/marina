@@ -39,6 +39,7 @@ import { traceIdFromSearch } from "../lib/trace-links";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { LogExplorer, MemoryOpsTab, OpsTab, TabSuspense, TraceExplorer } from "./lazy-tabs";
 import { ModelSelect } from "./ModelSelect";
+import { PanelSkeleton } from "./OperatorFeedback";
 
 const SUPPORTED_PROVIDERS = [
   "anthropic",
@@ -801,7 +802,7 @@ function EndpointTab() {
     }
   };
 
-  if (!cfg) return <div className="text-text-dim text-[10px]">Loading…</div>;
+  if (!cfg) return <PanelSkeleton />;
 
   const showPassthruModel = cfg.mode === "passthru" || cfg.fallback;
   const modelSel = cfg.passthruModel === "" ? "__default" : cfg.passthruModel;
@@ -938,7 +939,7 @@ function EndpointTab() {
 // ─── Keys Tab ───────────────────────────────────────────────────────────────
 
 function KeysTab() {
-  const { data: keys, isError, error, refetch } = useKeys();
+  const { data: keys, isLoading, isError, error, refetch } = useKeys();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [provider, setProvider] = useState("");
@@ -1003,6 +1004,7 @@ function KeysTab() {
     }
   };
 
+  if (isLoading) return <PanelSkeleton />;
   return (
     <div className="space-y-2">
       <DefaultModelSelector />
@@ -1102,7 +1104,7 @@ function KeysTab() {
 // ─── Adapters Tab ───────────────────────────────────────────────────────────
 
 function AdaptersTab() {
-  const { data: adapters, refetch } = useAdapters();
+  const { data: adapters, isLoading, refetch } = useAdapters();
   const [adding, setAdding] = useState(false);
   const [platform, setPlatform] = useState("");
 
@@ -1125,6 +1127,7 @@ function AdaptersTab() {
     refetch();
   };
 
+  if (isLoading) return <PanelSkeleton />;
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -1222,8 +1225,9 @@ function AdaptersTab() {
 // ─── Roles Tab ──────────────────────────────────────────────────────────────
 
 function RolesTab() {
-  const { data: roles } = useRoles();
-  const { data: traits } = useTraits();
+  const { data: roles, isLoading: rolesLoading } = useRoles();
+  const { data: traits, isLoading: traitsLoading } = useTraits();
+  if (rolesLoading || traitsLoading) return <PanelSkeleton />;
 
   return (
     <div className="space-y-2">
@@ -1273,7 +1277,7 @@ function McpTab() {
   const { data: mcp } = useMcpInfo();
 
   if (!mcp) {
-    return <div className="text-text-dim text-[10px]">Loading MCP info...</div>;
+    return <PanelSkeleton />;
   }
 
   const totalTools = Object.values(mcp.tools).reduce((n, arr) => n + arr.length, 0);
@@ -1349,7 +1353,7 @@ function ConfigTab() {
   };
 
   if (!envVars) {
-    return <div className="text-text-dim text-[10px]">Loading configuration...</div>;
+    return <PanelSkeleton />;
   }
 
   // Group by category
@@ -1805,7 +1809,7 @@ function IdentityTab() {
           {error}
         </div>
       )}
-      {query.isLoading && <div className="text-text-dim">Loading identities…</div>}
+      {query.isLoading && <PanelSkeleton />}
       {query.isError && <div className="text-danger">Identity registry unavailable.</div>}
       {(query.data ?? []).map((principal) => (
         <article key={principal.principal_id} className="rounded border border-border bg-bg/50 p-2">

@@ -27,6 +27,7 @@ import { useMediaJobs } from "../hooks/use-api";
 import type { ChatMessage, StoredPerception } from "../hooks/use-chat-state";
 import { ensureChatWs, getChatWs, useChatState } from "../hooks/use-chat-state";
 import { useCodingSessionDetail, useCodingSessionsSnapshot } from "../hooks/use-coding";
+import { useCommandFavorites } from "../hooks/use-command-favorites";
 import { useFeedState } from "../hooks/use-feed-state";
 import {
   useBoardsSnapshot,
@@ -34,14 +35,20 @@ import {
   useGroupsSnapshot,
   useTasksSnapshot,
 } from "../hooks/use-status-cards";
+import { attachedCommand, openCanvas, useWorkspaceState } from "../hooks/use-workspace-state";
 import { useWorldState } from "../hooks/use-world-state";
 import { authFetch, clearToken, setToken } from "../lib/api";
+import { draftCommand } from "../lib/command-discovery";
 import { linkifyHtml } from "../lib/linkify";
 import { parseSpeech } from "../lib/perception";
 import { sanitizeChatHtml } from "../lib/sanitize";
 import type { MediaJob } from "../lib/types";
 import { AssetViewerProvider } from "./AssetLightbox";
 import { CanvasNodeEmbed } from "./CanvasNodeEmbed";
+import { PinToCanvas } from "./CanvasReference";
+import { CommandFavorites, FavoriteCommandButton } from "./CommandFavorites";
+import { BoardDetailView, ChannelDetailView } from "./CoordinationCard";
+import { DiffViewer } from "./DiffViewer";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { MediaJobsList } from "./MediaJobsList";
 import { StatusOverlay } from "./StatusOverlay";
@@ -79,6 +86,8 @@ function codingSessionStorageKey(instanceName: string | null | undefined): strin
 type OverlayType =
   | "tasks"
   | "boards"
+  | "board-posts"
+  | "channel-messages"
   | "channels"
   | "groups"
   | "media"
@@ -525,6 +534,10 @@ function handlePerception(raw: unknown) {
 ensureChatWs(handlePerception);
 
 export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
+  const favorites = useCommandFavorites();
+  const attachment = useWorkspaceState((s) => s.attachment);
+  const [attachmentAgent, setAttachmentAgent] = useState("");
+  const attachmentEntities = useWorldState((s) => s.entities);
   const messages = useChatState((s) => s.messages);
   const loggedIn = useChatState((s) => s.loggedIn);
   const connected = useChatState((s) => s.connected);
@@ -563,11 +576,40 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
   // Artifact id whose full content is expanded in the coding-artifacts overlay.
   const [inspectedArtifactId, setInspectedArtifactId] = useState<string | null>(null);
 
+  const [externalDraft, setExternalDraft] = useState<string | null>(null);
   const outputRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const draft = (event: Event) => {
+      const command = (event as CustomEvent<{ command: string }>).detail?.command;
+      if (typeof command !== "string") return;
+      setOverlay(null);
+      setExternalDraft(command);
+    };
+    window.addEventListener("marina:draft-command", draft);
+    return () => window.removeEventListener("marina:draft-command", draft);
+  }, []);
   const historyIdxRef = useRef(-1);
   const cmdValueRef = useRef("");
+
+  useEffect(() => {
+    if (externalDraft === null) return;
+    const frame = requestAnimationFrame(() => {
+      if (!loggedIn) {
+        nameRef.current?.focus();
+        return;
+      }
+      if (inputRef.current) {
+        inputRef.current.value = externalDraft;
+        inputRef.current.rows = Math.min(6, externalDraft.split("\n").length);
+        cmdValueRef.current = externalDraft;
+        inputRef.current.focus();
+        setExternalDraft(null);
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [externalDraft, loggedIn]);
 
   // Transient "copied" feedback keyed by message index, or "all" for copy-all.
   const [copied, setCopied] = useState<number | "all" | null>(null);
@@ -639,6 +681,18 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
           issuedFrom: trimmed,
           params: { scope: scope ?? "open", group },
         });
+      } else if (/^board read \S+$/.test(lower)) {
+        setOverlay({
+          type: "board-posts",
+          issuedFrom: trimmed,
+          params: { name: trimmed.split(/\s+/)[2] },
+        });
+      } else if (/^channel history \S+/.test(lower)) {
+        setOverlay({
+          type: "channel-messages",
+          issuedFrom: trimmed,
+          params: { name: trimmed.split(/\s+/)[2] },
+        });
       } else if (lower.startsWith("board list")) {
         setOverlay({ type: "boards", issuedFrom: trimmed });
       } else if (lower.startsWith("group list")) {
@@ -708,37 +762,49 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
   }, [overlay]);
 
   const doSend = useCallback(() => {
-    const cmd = cmdValueRef.current.trim();
+    const text = cmdValueRef.current.trim();
+    if (!text || (attachment && codePrompt)) return;
+    const cmd = attachment ? attachedCommand(attachment, text, attachmentAgent) : text;
     if (!cmd) return;
     const ok = sendCommandWithOverlay(cmd);
     if (ok) {
+      if (attachment) useWorkspaceState.getState().attach(null);
       historyIdxRef.current = -1;
       if (inputRef.current) {
         inputRef.current.value = "";
+        inputRef.current.rows = 1;
         cmdValueRef.current = "";
       }
     }
-  }, [sendCommandWithOverlay]);
+  }, [sendCommandWithOverlay, attachment, attachmentAgent, codePrompt]);
 
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === "Enter") {
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.nativeEvent.isComposing) return;
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
         doSend();
-      } else if (e.key === "ArrowUp") {
+      } else if (e.key === "ArrowUp" && !cmdValueRef.current.includes("\n")) {
         e.preventDefault();
         if (historyIdxRef.current < commandHistory.length - 1) {
           historyIdxRef.current++;
           const val = commandHistory[historyIdxRef.current]!;
           cmdValueRef.current = val;
-          if (inputRef.current) inputRef.current.value = val;
+          if (inputRef.current) {
+            inputRef.current.value = val;
+            inputRef.current.rows = Math.min(6, val.split("\n").length);
+          }
         }
-      } else if (e.key === "ArrowDown") {
+      } else if (e.key === "ArrowDown" && !cmdValueRef.current.includes("\n")) {
         e.preventDefault();
         if (historyIdxRef.current > 0) {
           historyIdxRef.current--;
           const val = commandHistory[historyIdxRef.current]!;
           cmdValueRef.current = val;
-          if (inputRef.current) inputRef.current.value = val;
+          if (inputRef.current) {
+            inputRef.current.value = val;
+            inputRef.current.rows = Math.min(6, val.split("\n").length);
+          }
         } else {
           historyIdxRef.current = -1;
           cmdValueRef.current = "";
@@ -1250,12 +1316,13 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
   };
 
   const renderCodeBlock = (content: string, variant: "diff" | "output" | "text") => {
+    if (variant === "diff") return <DiffViewer patch={content} />;
     const lines = content.trimEnd().split("\n");
     const stats = diffStats(content);
     return (
       <div className="mt-2 overflow-hidden rounded border border-border/70 bg-black/30">
         <div className="flex items-center justify-between gap-2 border-border/60 border-b px-2 py-1 font-mono text-[10px] text-text-dim">
-          <span>{variant === "diff" ? "patch" : variant === "output" ? "output" : "text"}</span>
+          <span>{variant === "output" ? "output" : "text"}</span>
           <span>
             {stats
               ? `${stats.files} file${stats.files === 1 ? "" : "s"} +${stats.additions} -${stats.deletions}`
@@ -1265,20 +1332,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
         <pre className="max-h-[420px] overflow-auto p-2 font-mono text-[11px] leading-relaxed text-text">
           {lines.map((line, idx) => {
             const color =
-              variant === "diff" && line.startsWith("+") && !line.startsWith("+++")
-                ? "text-emerald-300"
-                : variant === "diff" && line.startsWith("-") && !line.startsWith("---")
-                  ? "text-red-300"
-                  : variant === "diff" && line.startsWith("@@")
-                    ? "text-cyan-300"
-                    : variant === "diff" &&
-                        (line.startsWith("diff --git") ||
-                          line.startsWith("---") ||
-                          line.startsWith("+++"))
-                      ? "text-primary"
-                      : variant === "output" && line === "--- stderr ---"
-                        ? "text-yellow-200"
-                        : "text-text";
+              variant === "output" && line === "--- stderr ---" ? "text-yellow-200" : "text-text";
             return (
               <div
                 // biome-ignore lint/suspicious/noArrayIndexKey: rendered terminal blocks preserve line order; content has no stable ids
@@ -1888,7 +1942,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
                 <button
                   type="button"
                   className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
-                  onClick={() => sendCommandWithOverlay(`task claim ${task.id}`)}
+                  onClick={() => draftCommand(`task claim ${task.id}`)}
                 >
                   Claim
                 </button>
@@ -1929,20 +1983,37 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
               </div>
               <div className="mt-1 flex items-center justify-between text-[10px] text-text-dim">
                 <span>{board.postCount} posts</span>
+                <button
+                  type="button"
+                  className="text-primary"
+                  onClick={() => draftCommand(`board read ${board.name}`)}
+                >
+                  Draft read
+                </button>
                 <span>{new Date(board.created_at).toLocaleDateString()}</span>
               </div>
               <div className="mt-2 flex flex-wrap gap-1">
                 <button
                   type="button"
+                  className="text-xs text-primary"
+                  onClick={() => draftCommand(`board post ${board.name} `)}
+                >
+                  Draft post
+                </button>
+                <button
+                  type="button"
                   className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
-                  onClick={() => sendCommandWithOverlay(`board show ${board.name}`)}
+                  onClick={() => sendCommandWithOverlay(`board read ${board.name}`)}
                 >
                   Show board
                 </button>
                 <button
                   type="button"
                   className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
-                  onClick={() => sendCommandWithOverlay(`board posts ${board.name}`)}
+                  onClick={() => {
+                    useWorkspaceState.getState().inspect({ type: "board", name: board.name });
+                    closeOverlay();
+                  }}
                 >
                   Recent posts
                 </button>
@@ -1987,7 +2058,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
                 <button
                   type="button"
                   className="rounded border border-border/70 bg-bg px-2 py-0.5 text-[10px] text-text transition-colors hover:border-primary hover:text-primary"
-                  onClick={() => sendCommandWithOverlay(`channel join ${channel.name}`)}
+                  onClick={() => draftCommand(`channel join ${channel.name}`)}
                 >
                   Join
                 </button>
@@ -2225,6 +2296,11 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
                 Collapse
               </button>
             </div>
+            {activeCodingSessionId && (
+              <PinToCanvas
+                reference={{ kind: "artifact", id: inspected.id, sessionId: activeCodingSessionId }}
+              />
+            )}
             {renderCodeBlock(
               inspected.content_text,
               inspected.content_text.startsWith("diff --git") ? "diff" : "text",
@@ -2314,6 +2390,8 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
   const overlayTitle: Record<OverlayType, string> = {
     tasks: "Task Snapshot",
     boards: "Boards Snapshot",
+    "board-posts": "Board posts",
+    "channel-messages": "Channel messages",
     channels: "Channels Snapshot",
     groups: "Groups Snapshot",
     media: "Media Jobs",
@@ -2328,6 +2406,10 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
         return renderTasksOverlay();
       case "boards":
         return renderBoardsOverlay();
+      case "board-posts":
+        return <BoardDetailView name={String(overlay.params?.name ?? "")} />;
+      case "channel-messages":
+        return <ChannelDetailView name={String(overlay.params?.name ?? "")} />;
       case "channels":
         return renderChannelsOverlay();
       case "groups":
@@ -2353,6 +2435,14 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="truncate text-text-dim">
               Command: <code className="text-text">{overlay.issuedFrom}</code>
+              <FavoriteCommandButton command={overlay.issuedFrom} />
+              <button
+                type="button"
+                onClick={() => draftCommand(overlay.issuedFrom)}
+                className="ml-2 text-primary"
+              >
+                Copy command to input
+              </button>
             </span>
             <button
               type="button"
@@ -2445,7 +2535,63 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
             />
           )}
           <ContextualCompass onExecute={sendCommandWithOverlay} />
+          <CommandFavorites />
 
+          {attachment && (
+            <section
+              className="mx-2 mb-2 rounded border border-primary/40 bg-primary/5 p-2 text-xs"
+              aria-label="Attached canvas context"
+            >
+              <div className="flex justify-between gap-2">
+                <button
+                  type="button"
+                  className="truncate text-primary"
+                  onClick={() => openCanvas(attachment.canvasId, attachment.nodeId)}
+                >
+                  {attachment.title || "Canvas node"}
+                </button>
+                <button
+                  type="button"
+                  aria-label="Remove canvas context"
+                  onClick={() => useWorkspaceState.getState().attach(null)}
+                >
+                  ×
+                </button>
+              </div>
+              <p className="mt-1 text-text-dim">
+                {attachment.mode === "discuss"
+                  ? "Your message will be posted as a reply to this node."
+                  : "Your message and this node reference will be sent to the selected agent."}
+              </p>
+              {attachment.mode === "ask" && (
+                <select
+                  aria-label="Agent to ask"
+                  value={attachmentAgent}
+                  onChange={(e) => setAttachmentAgent(e.target.value)}
+                  className="mt-2 w-full rounded border border-border bg-bg p-1"
+                >
+                  <option value="">Choose an agent…</option>
+                  {attachmentEntities
+                    .filter((entity) => entity.kind === "agent")
+                    .map((entity) => (
+                      <option key={entity.name}>{entity.name}</option>
+                    ))}
+                </select>
+              )}
+              {codePrompt && (
+                <p role="status" className="mt-2 text-warning">
+                  Exit Code Mode to send a canvas message.{" "}
+                  <button
+                    type="button"
+                    className="underline"
+                    onClick={() => sendCommandWithOverlay("code exit")}
+                  >
+                    Exit Code Mode
+                  </button>
+                </p>
+              )}
+            </section>
+          )}
           {/* Input area */}
           <div className="border-t border-border px-2 py-1.5">
             {!loggedIn ? (
@@ -2479,22 +2625,44 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
                       {codePrompt}&gt;
                     </span>
                   )}
-                  <input
+                  <textarea
                     id="marina-command-input"
                     ref={inputRef}
-                    type="text"
+                    rows={1}
+                    title="Enter to send; Shift+Enter for a new line"
                     onChange={(e) => {
                       cmdValueRef.current = e.target.value;
+                      e.target.rows = Math.min(6, e.target.value.split("\n").length);
                     }}
                     onKeyDown={handleKeyDown}
                     placeholder={
-                      codePrompt ? `Type a ${codePrompt} command...` : "Type a command..."
+                      attachment
+                        ? "Write a message about this node…"
+                        : codePrompt
+                          ? `Type a ${codePrompt} command...`
+                          : "Type a command..."
                     }
-                    className="flex-1 rounded border border-border bg-bg px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
+                    className="min-w-0 flex-1 resize-y rounded border border-border bg-bg px-2 py-1 text-[12px] text-text outline-none focus:border-primary"
                   />
                   <button
                     type="button"
+                    aria-label="Pin current draft"
+                    title="Pin current draft to favorites"
+                    className="text-xs text-text-dim"
+                    onClick={() => {
+                      const command = cmdValueRef.current.trim();
+                      if (command) favorites.toggle(command);
+                    }}
+                  >
+                    Pin
+                  </button>
+                  <button
+                    type="button"
                     onClick={doSend}
+                    disabled={
+                      !!attachment &&
+                      (!!codePrompt || (attachment.mode === "ask" && !attachmentAgent))
+                    }
                     aria-label="Send command"
                     className="text-primary transition-colors hover:text-text-bright"
                   >
