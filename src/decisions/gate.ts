@@ -27,6 +27,7 @@ const SECRET =
 export function redactToolCall(
   toolName: string,
   args: Record<string, unknown>,
+  description?: string,
 ): Record<string, unknown> {
   const mask = (value: unknown): unknown => {
     if (typeof value === "string") {
@@ -39,7 +40,10 @@ export function redactToolCall(
     }
     return value;
   };
-  return { tool: toolName, arguments: mask(redactLogData(args)) };
+  const state: Record<string, unknown> = { tool: toolName, arguments: mask(redactLogData(args)) };
+  // What the tool does, so the judge need not guess from the name alone.
+  if (description?.trim()) state.tool_description = mask(description.trim());
+  return state;
 }
 
 export interface GateDecision extends GateVerdict {
@@ -57,10 +61,11 @@ export async function gateToolCall(
   toolName: string,
   args: Record<string, unknown>,
   policy: GatePolicy = DEFAULT_GATE_POLICY,
+  description?: string,
 ): Promise<GateDecision> {
   try {
     const result = await provider.ask({
-      state: redactToolCall(toolName, args),
+      state: redactToolCall(toolName, args, description),
       questions: GATE_QUESTIONS,
     });
     return {

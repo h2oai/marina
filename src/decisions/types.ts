@@ -51,6 +51,8 @@ export interface ChoiceAnswer {
   choice: string;
   /** 0..1 when the backend reports it. */
   confidence?: number;
+  /** Probability per option key, when the backend reports a distribution. */
+  probabilities?: Record<string, number>;
 }
 
 export interface ScoreAnswer {
@@ -58,6 +60,8 @@ export interface ScoreAnswer {
   /** Probability-weighted level index, 0..(criteria.length - 1). */
   score: number;
   confidence?: number;
+  /** Probability per level index ("0", "1", …), when the backend reports it. */
+  probabilities?: Record<string, number>;
 }
 
 export type DecisionAnswer = NoulAnswer | ChoiceAnswer | ScoreAnswer;
@@ -77,6 +81,8 @@ export interface DecisionResult {
   latencyMs: number;
   /** USD, when the backend reports it. */
   costUsd?: number;
+  /** Token usage, when the backend reports it. */
+  usage?: { inputTokens?: number; outputTokens?: number };
 }
 
 /** A backend that answers decision questions. Implementations never throw for

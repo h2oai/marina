@@ -35,6 +35,8 @@ export interface ProviderOptions {
   model: string;
   apiKey?: string;
   timeoutMs: number;
+  /** Decisions API path under `baseUrl`: `/decisions` (OpenRouter), `/v1/systemone` (TypeSafe). */
+  path?: string;
   /** Test seam. */
   fetch?: FetchLike;
 }
@@ -88,17 +90,33 @@ export function decisionsApiProvider(opts: ProviderOptions): DecisionProvider {
       const started = performance.now();
       const body = (await post(
         opts,
-        "/decisions",
+        opts.path ?? "/decisions",
         { model: opts.model, state: request.state, questions: request.questions },
         signal,
-      )) as { answers?: unknown; model?: unknown; usage?: { cost?: unknown } };
+      )) as {
+        answers?: unknown;
+        model?: unknown;
+        usage?: { cost?: unknown; input_tokens?: unknown; output_tokens?: unknown };
+      };
       const cost = typeof body?.usage?.cost === "number" ? body.usage.cost : undefined;
+      const inputTokens =
+        typeof body?.usage?.input_tokens === "number" ? body.usage.input_tokens : undefined;
+      const outputTokens =
+        typeof body?.usage?.output_tokens === "number" ? body.usage.output_tokens : undefined;
       return {
         answers: normalizeAnswers(request.questions, body?.answers),
         model: typeof body?.model === "string" ? body.model : opts.model,
         provider: "decisions-api",
         latencyMs: Math.round(performance.now() - started),
         ...(cost === undefined ? {} : { costUsd: cost }),
+        ...(inputTokens === undefined && outputTokens === undefined
+          ? {}
+          : {
+              usage: {
+                ...(inputTokens === undefined ? {} : { inputTokens }),
+                ...(outputTokens === undefined ? {} : { outputTokens }),
+              },
+            }),
       };
     },
   };

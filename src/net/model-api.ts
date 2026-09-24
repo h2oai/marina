@@ -122,7 +122,8 @@ export async function handleModelApi(
   }
 
   // Decisions API (noul / choice / score) for any harness — src/net/decisions-api.ts.
-  if (url.pathname === "/v1/decisions" && method === "POST") {
+  // `/v1/systemone` is TypeSafe's path: point `langchain-typesafe` (TYPESAFE_BASE_URL) here.
+  if ((url.pathname === "/v1/decisions" || url.pathname === "/v1/systemone") && method === "POST") {
     return await handleDecisions(req);
   }
 

@@ -296,6 +296,7 @@ describe("config", () => {
       kind: "decisions-api",
       model: "typesafe/jev-1.13",
       baseUrl: "https://openrouter.ai/api/alpha",
+      path: "/decisions",
       apiKey: "or",
       timeoutMs: 2000,
     });
