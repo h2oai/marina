@@ -3,6 +3,13 @@
 
 import type { TaskManager } from "../../coordination/task-manager";
 import { parseTaskNodeType, TASK_NODE_TYPE_MEANING } from "../../coordination/task-node-type";
+import { getDecisionProvider } from "../../decisions/config";
+import {
+  clearSubmissionAttempts,
+  decisionVerifyEnabled,
+  nextSubmissionAttempt,
+  verifySubmission,
+} from "../../decisions/verify";
 import {
   bold,
   dim,
@@ -401,7 +408,15 @@ export function taskCommand(
           }
           const id = Number.parseInt(idStr, 10);
           const task = tasks.get(id);
-          if (tasks.submit(id, input.entity, text)) {
+          const record = () => {
+            if (!tasks.submit(id, input.entity, text)) {
+              ctx.send(
+                input.entity,
+                `Cannot submit for task #${idStr}. You may not have claimed it or already submitted.`,
+              );
+              return;
+            }
+            clearSubmissionAttempts(id, input.entity);
             ctx.send(input.entity, `Submitted work for task #${id}.`);
             if (task && task.creatorId !== input.entity) {
               ctx.send(
@@ -415,13 +430,42 @@ export function taskCommand(
               taskId: id,
               timestamp: Date.now(),
             });
-          } else {
+          };
+          // Verifier (opt-in, src/decisions/verify.ts): only for a live claim,
+          // so a doomed submit never costs a judge call. One bounce at most.
+          const provider = decisionVerifyEnabled() ? getDecisionProvider() : undefined;
+          if (!provider || !task || tasks.getClaim(id, input.entity)?.status !== "claimed") {
+            record();
+            return;
+          }
+          const attempt = nextSubmissionAttempt(id, input.entity);
+          return verifySubmission(provider, task, text, attempt).then((verdict) => {
+            logEvent?.({
+              type: "agent_decision",
+              name: self.name,
+              stage: "verify",
+              verdict: verdict.action,
+              subject: `task #${id}`,
+              reason: verdict.reason,
+              signals: verdict.signals,
+              ...(verdict.provider ? { provider: verdict.provider } : {}),
+              ...(verdict.model ? { model: verdict.model } : {}),
+              ...(verdict.latencyMs === undefined ? {} : { latencyMs: verdict.latencyMs }),
+              ...(verdict.costUsd === undefined ? {} : { costUsd: verdict.costUsd }),
+              ...(verdict.error ? { error: verdict.error } : {}),
+              timestamp: Date.now(),
+            });
+            if (verdict.action === "accept") {
+              record();
+              return;
+            }
             ctx.send(
               input.entity,
-              `Cannot submit for task #${idStr}. You may not have claimed it or already submitted.`,
+              `Not submitted yet — the verifier scored this below the bar (${verdict.reason}). ` +
+                `Report the work actually done (results, evidence, artifacts) and run \`task submit ${id} …\` again; ` +
+                "the next submission is recorded as is.",
             );
-          }
-          return;
+          });
         }
 
         case "approve": {
