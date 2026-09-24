@@ -92,6 +92,13 @@ export interface DecisionResult {
 export interface DecisionProvider {
   readonly kind: string;
   readonly model: string;
+  /**
+   * Whether the backend's probabilities are calibrated (a purpose-built
+   * decision model). A chat model used as a classifier is not: its "0.8" is not
+   * a frequency, so policies must not read fine thresholds into it. Absent ⇒
+   * treated as calibrated.
+   */
+  readonly calibrated?: boolean;
   ask(request: DecisionRequest, signal?: AbortSignal): Promise<DecisionResult>;
 }
 

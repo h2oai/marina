@@ -89,6 +89,9 @@ export async function handleDecisions(req: Request): Promise<Response> {
       answers: toWireAnswers(questions, result.answers),
       ...(Object.keys(usage).length > 0 ? { usage } : {}),
       provider: result.provider,
+      // False for a chat model used as a classifier: read its numbers as
+      // rankings, not probabilities (no fine thresholds).
+      calibrated: provider.calibrated !== false,
       latency_ms: result.latencyMs,
     });
   } catch (err) {
