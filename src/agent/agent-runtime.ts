@@ -9,7 +9,13 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { isRouteModel, routeModelForGoal, routeTiersFromEnv } from "../decisions/route";
+import {
+  isRouteModel,
+  routeModelForGoal,
+  routeModelWithTable,
+  routeTableFromEnv,
+  routeTiersFromEnv,
+} from "../decisions/route";
 import {
   MARINA_DEFAULT_MODEL,
   MEMORY_REFLECTOR_ROLE,
@@ -508,13 +514,16 @@ export class AgentRuntime {
       // gets persisted, so respawns never re-route mid-history.
       let routedModel: string | undefined;
       if (isRouteModel(config.model)) {
-        const tiers = routeTiersFromEnv();
-        if (!tiers) {
+        const table = routeTableFromEnv(); // throws RouteConfigError on a malformed table
+        const tiers = table ? undefined : routeTiersFromEnv();
+        if (!table && !tiers) {
           throw new Error(
-            "model:route needs MARINA_ROUTE_FAST_MODEL and MARINA_ROUTE_POWERFUL_MODEL (see .env.example).",
+            "model:route needs MARINA_ROUTES (a route table) or MARINA_ROUTE_FAST_MODEL and MARINA_ROUTE_POWERFUL_MODEL (see .env.example).",
           );
         }
-        const routed = await routeModelForGoal(config.goal, config.role, tiers);
+        const routed = table
+          ? await routeModelWithTable(config.goal, config.role, table)
+          : await routeModelForGoal(config.goal, config.role, tiers!);
         routedModel = routed.model;
         this.onEvent?.({
           type: "agent_decision",
