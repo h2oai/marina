@@ -81,9 +81,12 @@ jobs:
       - name: Test with coverage
         run: bun run test:coverage
       - name: Per-directory coverage report
-        # Report-only (no --strict): prints the per-directory table and the
-        # least-covered files, and never fails the step.
-        run: bun run check:coverage
+        # `--strict` so the floor in scripts/check-coverage.ts actually means
+        # something: the STEP goes red below it. The job keeps
+        # continue-on-error above, so coverage still never blocks a merge —
+        # it is a visible signal, not a gate. Without --strict the floor would
+        # enforce nothing at all.
+        run: bun run check:coverage -- --strict
       - name: Upload lcov report
         if: always()
         uses: actions/upload-artifact@v4

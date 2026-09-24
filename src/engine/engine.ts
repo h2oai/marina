@@ -92,6 +92,7 @@ import { RoomSandbox } from "./room-sandbox";
 import { checkGateForExecution, grantGatesForRank, recordGateExecution } from "./safety-gates";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
 import { ShellRuntime } from "./shell-runtime";
+import { registerTickJobs } from "./tick-jobs";
 import { type TickJobStatus, TickScheduler } from "./tick-scheduler";
 import { isLocalProfile, isLocalUngated } from "./trust-profile";
 
@@ -1251,205 +1252,47 @@ export class Engine {
   }
 
   /**
-   * Declare the periodic maintenance jobs. Every job fires on
-   * `tick % every === phase`; the scheduler rejects two jobs sharing a slot.
-   * The hourly jobs share a 3600-tick interval but run at DISTINCT phases so
-   * they never all land on the same tick — previously board-archive +
-   * note-importance + alerts + standing + rank progression all fired together
-   * on tick 3600, outside the tick budget. Optional collaborators
-   * (`db`, managers) are checked when the job runs, not when it is declared.
+   * Declare the periodic maintenance jobs. The schedule itself lives in
+   * `tick-jobs.ts`; this only supplies the engine's collaborators as LAZY
+   * getters, because registration happens in the constructor while `db` and
+   * the managers may be assigned afterwards — a job must see the current
+   * value when it fires. → docs/architecture/persistence.md
    */
   private registerTickJobs(): void {
-    const s = this.tickScheduler;
-
-    s.register({
-      name: "board-archive",
-      every: BOARD_ARCHIVE_INTERVAL,
-      phase: 300,
-      failureMessage: "Board auto-archive failed",
-      run: () => {
-        this.boardManager?.autoArchive(BOARD_ARCHIVE_AGE_DAYS, 0);
+    const engine = this;
+    registerTickJobs(
+      {
+        engine,
+        get db() {
+          return engine.db;
+        },
+        get logger() {
+          return engine.logger;
+        },
+        get config() {
+          return engine.config;
+        },
+        get channelManager() {
+          return engine.channelManager;
+        },
+        get boardManager() {
+          return engine.boardManager;
+        },
+        get taskManager() {
+          return engine.taskManager;
+        },
+        get agentRuntime() {
+          return engine.agentRuntime;
+        },
+        get flywheel() {
+          return engine.flywheel;
+        },
+        readiness: () => computeReadiness(engine),
+        cleanupOrphanedAgents: () => engine.cleanupOrphanedAgents(),
+        applyRankProgression: (db) => engine.applyRankProgressionToOnlineEntities(db),
       },
-    });
-
-    // Channel prune + Flywheel workspace maintenance share the slot: the
-    // prune runs inside the tick, the maintenance is fire-and-forget with its
-    // own warning (category `flywheel`).
-    s.register({
-      name: "channel-prune",
-      every: CHANNEL_PRUNE_INTERVAL,
-      phase: 0,
-      failureMessage: "Channel prune failed",
-      run: () => {
-        this.flywheel?.maintenance?.().catch((error) => {
-          this.logger.warn("flywheel", "Workspace maintenance failed", {
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
-        this.channelManager?.pruneExpiredMessages();
-      },
-    });
-
-    // Hourly: clean up stale model conversation channels
-    s.register({
-      name: "conversation-cleanup",
-      every: CONVERSATION_CLEANUP_INTERVAL,
-      phase: 600,
-      failureMessage: "Conversation cleanup failed",
-      run: () => {
-        if (this.channelManager) cleanupStaleConversationChannels(this.channelManager);
-      },
-    });
-
-    // Hourly: adjust note importance based on recall patterns. Three
-    // independent passes — one failing must not skip the others.
-    s.register({
-      name: "note-importance",
-      every: NOTE_IMPORTANCE_INTERVAL,
-      phase: 1200,
-      run: () => {
-        const db = this.db;
-        if (!db) return;
-        tryLog(this.logger, "tick", "Note importance adjustment failed", () =>
-          db.adjustNoteImportance(),
-        );
-        tryLog(this.logger, "tick", "Memory confidence calibration failed", () =>
-          db.calibrateMemoryConfidence(),
-        );
-        tryLog(this.logger, "tick", "Shared contradiction scan failed", () =>
-          db.refreshContradictionCases(),
-        );
-      },
-    });
-
-    s.register({
-      name: "operational-alerts",
-      every: NOTE_IMPORTANCE_INTERVAL,
-      phase: 1800,
-      failureMessage: "Operational alert sync failed",
-      run: () => {
-        if (!this.db || !this.taskManager) return;
-        syncOperationalAlerts({
-          db: this.db,
-          tasks: this.taskManager,
-          runtime: this.agentRuntime,
-          readiness: () => computeReadiness(this),
-        });
-      },
-    });
-
-    // Hourly: refresh civic-standing rollup cache from the ledger.
-    // Decay is real-valued; reads recompute on cache stale, but a periodic
-    // pass keeps the leaderboard hot without waiting for a read on every
-    // entity.
-    s.register({
-      name: "standing-recompute",
-      every: NOTE_IMPORTANCE_INTERVAL,
-      phase: 2400,
-      failureMessage: "Standing recompute failed",
-      run: () => {
-        if (this.db) recomputeStanding(this.db);
-      },
-    });
-
-    // Hourly: memory hygiene — count the durable review queue (stale /
-    // competing) + legacy note findings per online resident, write one
-    // process-tier `[hygiene]` line, and (local profile) file an evaluator
-    // review when the queue is deep enough. Async: the review/assist calls go
-    // through the resident memory client, so this is fire-and-forget under
-    // tryLogAsync rather than blocking the tick budget.
-    s.register({
-      name: "memory-hygiene",
-      every: NOTE_IMPORTANCE_INTERVAL,
-      phase: MEMORY_HYGIENE_PHASE,
-      failureMessage: "Memory hygiene failed",
-      run: async () => {
-        if (!this.db) return;
-        await runEngineMemoryHygiene(this);
-      },
-    });
-
-    // Hourly (own phase): accumulation → reflector. Per online resident, ≥ N
-    // fact-like notes on one topic inside the 24h window file ONE reflector
-    // job to consolidate them into a cited lesson (memory-dispatch.ts).
-    // Same fire-and-forget shape as hygiene — durable calls never block the tick.
-    s.register({
-      name: "memory-accumulation",
-      every: NOTE_IMPORTANCE_INTERVAL,
-      phase: MEMORY_ACCUMULATION_PHASE,
-      failureMessage: "Memory accumulation dispatch failed",
-      run: async () => {
-        if (!this.db) return;
-        await runEngineAccumulationDispatch(this);
-      },
-    });
-
-    // ~2 s: memory observability poller. Reads `memory_service_events` past
-    // the last seen seq (indexed, O(new rows), capped per call) and emits
-    // `memory_job` / `memory_service_event` for dashboard clients. Sync SQL —
-    // never awaits; the first call only primes the cursor.
-    s.register({
-      name: "memory-observability-poll",
-      every: memoryObservabilityPollTicks(this.config.tickInterval),
-      phase: 0,
-      failureMessage: "Memory observability poll failed",
-      run: () => {
-        if (this.db) pollMemoryEvents(this);
-      },
-    });
-
-    // Hourly (own phase): declarative row retention — event_log (row-bounded,
-    // MARINA_EVENT_RETENTION), telemetry / ledger / audit tables by age, in
-    // ≤ 5k-row batches (src/engine/retention.ts, MARINA_RETENTION_OVERRIDES).
-    // Without this the append-only tables grow for the life of the deployment
-    // and every scan over them (traces, activity, expiry) degrades linearly.
-    s.register({
-      name: "retention",
-      every: NOTE_IMPORTANCE_INTERVAL,
-      phase: RETENTION_TICK_PHASE,
-      failureMessage: "Retention pass failed",
-      run: async () => {
-        const db = this.db;
-        if (!db) return;
-        const result = runRetentionPass(db);
-        if (result.skipped.length) {
-          this.logger.debug("retention", "Skipped tables missing from this schema", {
-            tables: result.skipped,
-          });
-        }
-        if (result.rejectedOverrides.length) {
-          this.logger.warn("retention", "Ignored MARINA_RETENTION_OVERRIDES entries", {
-            entries: result.rejectedOverrides,
-          });
-        }
-        if (Object.keys(result.deleted).length > 0) {
-          this.logger.info("retention", `Pruned ${formatRetentionSummary(result)}`);
-        }
-      },
-    });
-
-    // Periodic: clean up orphaned agents (entities without active connections).
-    // Critical: ran unwrapped before the extraction, so a throw reaches the
-    // tick error counter instead of a warning.
-    s.register({
-      name: "agent-cleanup",
-      every: AGENT_CLEANUP_INTERVAL,
-      phase: 0,
-      critical: true,
-      run: () => this.cleanupOrphanedAgents(),
-    });
-
-    // Hourly: check rank progression for all online entities (critical for the
-    // same reason as agent-cleanup; each entity is already guarded individually).
-    s.register({
-      name: "rank-progression",
-      every: NOTE_IMPORTANCE_INTERVAL,
-      phase: 3000,
-      critical: true,
-      run: () => {
-        if (this.db) this.applyRankProgressionToOnlineEntities(this.db);
-      },
-    });
+      this.tickScheduler,
+    );
   }
 
   private applyRankProgressionToOnlineEntities(db: MarinaDB): void {

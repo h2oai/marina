@@ -70,10 +70,12 @@ export function memoryObserver(engine: Engine, principal?: string) {
         case "command":
           return own;
         case "note_link_created":
-        case "note_link_deleted":
-          return (
-            read(engine.db?.getNote(event.sourceId)) && read(engine.db?.getNote(event.targetId))
-          );
+        case "note_link_deleted": {
+          // One batched read, same as links()/sources() above.
+          if (!engine.db) return false;
+          const ends = notesById(engine.db, [event.sourceId, event.targetId]);
+          return read(ends.get(event.sourceId)) && read(ends.get(event.targetId));
+        }
         // Raw traces/logs can contain tool arguments and retrieved memory. They
         // require the operator endpoint, not a public projection of their body.
         case "entity_enter":

@@ -21,3 +21,25 @@
 - **Cost control**: Dynamic tick rate — idle room agents slow to 15s ticks, consolidate memory
 
 See also: `docs/guides/building-worlds.md`, `docs/guides/example-worlds.md`.
+
+## Per-world model overrides (read only in `worlds/`)
+
+World definitions read a handful of `MARINA_*` variables directly, so they never
+appear in `src/` and are easy to miss. `.env.example` lists them; this is where
+they are explained. All are optional — unset means the world's own default.
+
+| Variable | Read by | Effect | Default |
+|---|---|---|---|
+| `MARINA_CREW_MODEL` | `default`, `showcase`, focused worlds | Shared model for every seeded crew. Per-crew overrides below win over it. | `marina/default` |
+| `MARINA_WORKBENCH_MODEL` | `default` | Model for the Workbench agent; wins over `MARINA_CREW_MODEL`. | falls back to `MARINA_CREW_MODEL`, then `marina/default` |
+| `MARINA_ANSWERER_MODEL` | `showcase` | Model for the answerer crew. | `MARINA_CREW_MODEL` |
+| `MARINA_ANSWERER_COUNT` | `showcase` | Size of the answerer crew. | `4` |
+| `MARINA_MATH_MODEL` | `showcase` | Model for the mathematician specialist. | `MARINA_CREW_MODEL` |
+| `MARINA_REFLECTOR_MODEL` | `showcase` | Model for the crew reflector. | `MARINA_CREW_MODEL` |
+| `MARINA_SEED_SKILLS` | `showcase` | `true` seeds the universal skill packages on first boot. | off |
+
+Precedence for a seeded agent's model is: its own specific override, then
+`MARINA_CREW_MODEL`, then `marina/default` (which routes through the local
+model API to whatever upstream is configured). Changing one of these takes
+effect on the next boot; a world's `seed()` runs once, so a model change does
+not re-seed an existing database.
