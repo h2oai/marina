@@ -9,6 +9,7 @@ import {
   formatUntrustedContext,
 } from "../agent/prompts/support-prompts";
 import { parseExecUnrestricted } from "../coding/exec-approver";
+import { setApprovalNotifier } from "../decisions/approvals";
 import { worldMemoryService } from "../memory/world-service";
 import { probeConfiguredProviders } from "../net/model-api";
 import { registerBuiltinResolvers } from "../resolvers";
@@ -35,6 +36,7 @@ import { conductCommand } from "./commands/conduct";
 import { connectCommand } from "./commands/connect";
 import { crewCommand } from "./commands/crew";
 import { debriefCommand } from "./commands/debrief";
+import { decisionCommand } from "./commands/decision";
 import { demoCommand } from "./commands/demo";
 import { desireCommand } from "./commands/desire";
 import { digCommand } from "./commands/dig";
@@ -843,6 +845,25 @@ export function registerBuiltinCommands(engine: Engine): void {
       groupCommand(engine.groupManager, (name) => engine.findEntityGlobal(name)),
     );
   }
+  // Decision-gate approvals: deliver `ask` holds to the agent's owner, and let
+  // the owner settle them (src/decisions/approvals.ts). Unreachable owner ⇒
+  // the waiting call fails closed at once instead of waiting out the timeout.
+  setApprovalNotifier((request) => {
+    const owner = engine.findEntityGlobal(request.ownerName);
+    if (!owner || !engine._connections.isEntityConnected(owner.id)) return false;
+    engine.sendToEntity(
+      owner.id,
+      `${request.agentName} wants to run ${request.summary}
+` +
+        `  ${request.reason}
+` +
+        `  decision approve ${request.token}  ·  decision deny ${request.token}  (expires in ${Math.round((request.expiresAt - request.createdAt) / 1000)}s)`,
+      "decision",
+    );
+    return true;
+  });
+  engine.commands.registerBuiltin(decisionCommand({ getEntity: (id) => engine.entities.get(id) }));
+
   if (engine.taskManager) {
     engine.commands.registerBuiltin(
       taskCommand(

@@ -53,7 +53,7 @@ export const COMMAND_CATEGORIES: Record<string, string[]> = {
   ],
   Civic: ["witness", "standing"],
   "Canvas & Media": ["canvas", "image", "video"],
-  Agents: ["agent", "run"],
+  Agents: ["agent", "run", "decision"],
   Building: ["build", "connect"],
   Federation: ["gateway"],
   "Admin & Security": ["admin", "key", "adapter"],
