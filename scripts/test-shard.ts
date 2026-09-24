@@ -5,7 +5,7 @@
 /**
  * Deterministic, time-balanced test sharding for CI.
  *
- *   bun run scripts/test-shard.ts <index> <total> [-- <extra bun test args>]
+ *   bun run scripts/test-shard.ts <index> <total> [--serial] [-- <extra bun test args>]
  *   bun run scripts/test-shard.ts --list [<total>]        # print every bucket + coverage check
  *   bun run scripts/test-shard.ts --list <index> <total>  # print one bucket
  *
@@ -165,13 +165,24 @@ function parseIndexTotal(args: string[]): { index: number | null; total: number 
   return usage();
 }
 
+/** Files run in parallel worker processes unless `--serial` is given or the
+ *  caller already passed its own `--parallel[=N]` (measured: ~4x faster).
+ *  Contended workers run slower than a lone process, so parallel mode raises
+ *  the per-test default timeout from 5 s to 15 s (a caller's `--timeout` wins). */
+function parallelArgs(own: string[], passthrough: string[]): string[] {
+  if (own.includes("--serial")) return [];
+  if (passthrough.some((a) => a.startsWith("--parallel"))) return [];
+  const timeout = passthrough.some((a) => a.startsWith("--timeout")) ? [] : ["--timeout=15000"];
+  return ["--parallel", ...timeout];
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const dashdash = argv.indexOf("--");
   const own = dashdash === -1 ? argv : argv.slice(0, dashdash);
   const passthrough = dashdash === -1 ? [] : argv.slice(dashdash + 1);
   const list = own.includes("--list");
-  const positional = own.filter((a) => a !== "--list");
+  const positional = own.filter((a) => a !== "--list" && a !== "--serial");
 
   const files = listTestFiles();
   const timings = loadTimings();
@@ -217,11 +228,14 @@ async function main(): Promise<void> {
     )}s estimated`,
   );
   const started = performance.now();
-  const proc = Bun.spawn(["bun", "test", ...IGNORE, ...passthrough, ...bucket.files], {
-    cwd: ROOT,
-    stdio: ["inherit", "inherit", "inherit"],
-    env: process.env,
-  });
+  const proc = Bun.spawn(
+    ["bun", "test", ...IGNORE, ...parallelArgs(own, passthrough), ...passthrough, ...bucket.files],
+    {
+      cwd: ROOT,
+      stdio: ["inherit", "inherit", "inherit"],
+      env: process.env,
+    },
+  );
   const code = await proc.exited;
   console.log(
     `shard ${index}/${total}: exit ${code} after ${((performance.now() - started) / 1000).toFixed(

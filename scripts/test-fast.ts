@@ -6,7 +6,7 @@
  * Pre-commit fast loop: the subset of backend test files that are cheap AND
  * self-contained.
  *
- *   bun run scripts/test-fast.ts [--list] [--check] [-- <extra bun test args>]
+ *   bun run scripts/test-fast.ts [--list] [--check] [--serial] [-- <extra bun test args>]
  *
  * Selection rule (encoded as the explicit FAST_FILES array below so the loop is
  * deterministic and reviewable in diffs):
@@ -213,6 +213,17 @@ export function computeFastFiles(timings: Record<string, number>): string[] {
   });
 }
 
+/** Files run in parallel worker processes unless `--serial` is given or the
+ *  caller already passed its own `--parallel[=N]` (measured: ~4x faster).
+ *  Contended workers run slower than a lone process, so parallel mode raises
+ *  the per-test default timeout from 5 s to 15 s (a caller's `--timeout` wins). */
+function parallelArgs(own: string[], passthrough: string[]): string[] {
+  if (own.includes("--serial")) return [];
+  if (passthrough.some((a) => a.startsWith("--parallel"))) return [];
+  const timeout = passthrough.some((a) => a.startsWith("--timeout")) ? [] : ["--timeout=15000"];
+  return ["--parallel", ...timeout];
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const dashdash = argv.indexOf("--");
@@ -265,11 +276,14 @@ async function main(): Promise<void> {
     `[test-fast] ${present.length} files, ~${(estimatedMs / 1000).toFixed(1)}s estimated`,
   );
   const started = performance.now();
-  const proc = Bun.spawn(["bun", "test", ...IGNORE, ...passthrough, ...present], {
-    cwd: ROOT,
-    stdio: ["inherit", "inherit", "inherit"],
-    env: process.env,
-  });
+  const proc = Bun.spawn(
+    ["bun", "test", ...IGNORE, ...parallelArgs(own, passthrough), ...passthrough, ...present],
+    {
+      cwd: ROOT,
+      stdio: ["inherit", "inherit", "inherit"],
+      env: process.env,
+    },
+  );
   const code = await proc.exited;
   console.log(
     `[test-fast] exit ${code} after ${((performance.now() - started) / 1000).toFixed(1)}s`,
