@@ -24,7 +24,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { MemoryOpsTab } from "../../components/MemoryOpsTab";
+import { MemoryOpsTab, TabSuspense } from "../../components/lazy-tabs";
 import { ensureChatWs, getChatWs, useChatState } from "../../hooks/use-chat-state";
 import { clearToken, logout, setToken } from "../../lib/api";
 import { ansiToHtml, stripAnsi } from "../lib/ansi";
@@ -975,12 +975,16 @@ export const CommandBar = memo(
         {isCoordTab && !coordDetail && activeTab === "config" && <ConfigAdminTab />}
         {isCoordTab && !coordDetail && activeTab === "memory" && (
           <div className="uc-cmd-msgs" style={{ overflow: "auto", padding: "6px" }}>
-            <MemoryOpsTab
-              focusJobId={memoryFocusJobId}
-              onOpenTrace={(traceId) =>
-                window.dispatchEvent(new CustomEvent("marina:open-traces", { detail: { traceId } }))
-              }
-            />
+            <TabSuspense>
+              <MemoryOpsTab
+                focusJobId={memoryFocusJobId}
+                onOpenTrace={(traceId) =>
+                  window.dispatchEvent(
+                    new CustomEvent("marina:open-traces", { detail: { traceId } }),
+                  )
+                }
+              />
+            </TabSuspense>
           </div>
         )}
 

@@ -37,11 +37,8 @@ import {
 import { deleteApi, describeApiError, fetchApi, patchApi, postApi, putApi } from "../lib/api";
 import { traceIdFromSearch } from "../lib/trace-links";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
-import { LogExplorer } from "./LogExplorer";
-import { MemoryOpsTab } from "./MemoryOpsTab";
+import { LogExplorer, MemoryOpsTab, OpsTab, TabSuspense, TraceExplorer } from "./lazy-tabs";
 import { ModelSelect } from "./ModelSelect";
-import { OpsTab } from "./ops/OpsTab";
-import { TraceExplorer } from "./TraceExplorer";
 
 const SUPPORTED_PROVIDERS = [
   "anthropic",
@@ -181,18 +178,20 @@ export function AdminPanel({
         {tab === "identity" && <IdentityTab />}
         {tab === "collective" && <CollectiveTab />}
         {tab === "health" && <OperationsTab />}
-        {tab === "ops" && <OpsTab />}
-        {tab === "memory" && (
-          <MemoryOpsTab
-            focusJobId={requestedJobId}
-            onOpenTrace={(traceId) => {
-              setRequestedTraceId(traceId);
-              setTab("traces");
-            }}
-          />
-        )}
-        {tab === "traces" && <TraceExplorer requestedTraceId={requestedTraceId} />}
-        {tab === "logs" && <LogExplorer />}
+        <TabSuspense>
+          {tab === "ops" && <OpsTab />}
+          {tab === "memory" && (
+            <MemoryOpsTab
+              focusJobId={requestedJobId}
+              onOpenTrace={(traceId) => {
+                setRequestedTraceId(traceId);
+                setTab("traces");
+              }}
+            />
+          )}
+          {tab === "traces" && <TraceExplorer requestedTraceId={requestedTraceId} />}
+          {tab === "logs" && <LogExplorer />}
+        </TabSuspense>
       </div>
     </GlassPanel>
   );
