@@ -73,10 +73,11 @@ describe("App", () => {
     expect(screen.getByRole("complementary", { name: "Attention inbox" })).toBeInTheDocument();
   });
 
-  it("opens the isolated trace explorer from Admin without changing the grid", () => {
+  it("opens the isolated trace explorer from Admin without changing the grid", async () => {
     renderWithProviders(<App />);
     fireEvent.click(screen.getByRole("button", { name: "traces" }));
-    expect(screen.getByText("Recent execution traces")).toBeInTheDocument();
+    // The trace explorer is a lazy chunk (components/lazy-tabs.tsx).
+    expect(await screen.findByText("Recent execution traces")).toBeInTheDocument();
     expect(screen.getByTestId("grid-layout")).toBeInTheDocument();
   });
 });

@@ -93,6 +93,10 @@ export function finishProductivitySession(
   );
 }
 
+/** The columns the productivity read models need — never `metadata`. */
+const PRODUCTIVITY_COLUMNS =
+  "outcome, started_at, completed_at, start_tool_calls, end_tool_calls, handoffs";
+
 interface ProductivityRow {
   outcome: string;
   started_at: number;
@@ -135,12 +139,12 @@ export function getProductivitySummary(db: Database, entityName?: string): Produ
     entityName
       ? db
           .query(
-            "SELECT outcome, started_at, completed_at, start_tool_calls, end_tool_calls, handoffs FROM productivity_sessions WHERE completed_at IS NOT NULL AND entity_name=? ORDER BY completed_at",
+            `SELECT ${PRODUCTIVITY_COLUMNS} FROM productivity_sessions WHERE completed_at IS NOT NULL AND entity_name=? ORDER BY completed_at`,
           )
           .all(entityName)
       : db
           .query(
-            "SELECT outcome, started_at, completed_at, start_tool_calls, end_tool_calls, handoffs FROM productivity_sessions WHERE completed_at IS NOT NULL ORDER BY completed_at",
+            `SELECT ${PRODUCTIVITY_COLUMNS} FROM productivity_sessions WHERE completed_at IS NOT NULL ORDER BY completed_at`,
           )
           .all()
   ) as ProductivityRow[];
@@ -150,7 +154,7 @@ export function getProductivitySummary(db: Database, entityName?: string): Produ
 export function getProductivityLeaderboard(db: Database, limit = 20): ProductivitySummary[] {
   const rows = db
     .query(
-      "SELECT entity_name, outcome, started_at, completed_at, start_tool_calls, end_tool_calls, handoffs FROM productivity_sessions WHERE completed_at IS NOT NULL ORDER BY entity_name, completed_at",
+      `SELECT entity_name, ${PRODUCTIVITY_COLUMNS} FROM productivity_sessions WHERE completed_at IS NOT NULL ORDER BY entity_name, completed_at`,
     )
     .all() as Array<ProductivityRow & { entity_name: string }>;
   const byEntity = new Map<string, ProductivityRow[]>();
@@ -179,24 +183,21 @@ export function getProductivityTrend(
     entityName
       ? db
           .query(
-            "SELECT * FROM productivity_sessions WHERE completed_at>=? AND entity_name=? ORDER BY completed_at",
+            `SELECT ${PRODUCTIVITY_COLUMNS} FROM productivity_sessions WHERE completed_at>=? AND entity_name=? ORDER BY completed_at`,
           )
           .all(since, entityName)
       : db
-          .query("SELECT * FROM productivity_sessions WHERE completed_at>=? ORDER BY completed_at")
+          .query(
+            `SELECT ${PRODUCTIVITY_COLUMNS} FROM productivity_sessions WHERE completed_at>=? ORDER BY completed_at`,
+          )
           .all(since)
-  ) as Array<{
-    outcome: string;
-    started_at: number;
-    completed_at: number;
-    start_tool_calls: number;
-    end_tool_calls: number | null;
-    handoffs: number;
-  }>;
-  const groups = new Map<string, typeof rows>();
+  ) as ProductivityRow[];
+  const groups = new Map<string, ProductivityRow[]>();
   for (const row of rows) {
     const date = new Date(row.completed_at).toISOString().slice(0, 10);
-    groups.set(date, [...(groups.get(date) ?? []), row]);
+    const day = groups.get(date);
+    if (day) day.push(row);
+    else groups.set(date, [row]);
   }
   return [...groups.entries()].map(([date, entries]) => ({
     date,

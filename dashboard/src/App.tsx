@@ -25,12 +25,10 @@ import { CoordinationCard } from "./components/CoordinationCard";
 import { EntityRoster } from "./components/EntityRoster";
 import { FirstRunGuide } from "./components/FirstRunGuide";
 import { Header } from "./components/Header";
-import { MemoryWorkspace } from "./components/MemoryWorkspace";
+import { DeferredDrawer, MemoryWorkspace, PulseDrawer, WorkDrawer } from "./components/lazy-tabs";
 import { NarrativePlayback } from "./components/NarrativePlayback";
-import { PulseDrawer } from "./components/PulseDrawer";
 import { RoomDetail } from "./components/RoomDetail";
 import { WebChat } from "./components/WebChat";
-import { WorkDrawer } from "./components/WorkDrawer";
 import { WorldMap } from "./components/WorldMap";
 import { useSystem, useWorld } from "./hooks/use-api";
 import { useChatState } from "./hooks/use-chat-state";
@@ -474,9 +472,15 @@ export default function App() {
       />
 
       <AttentionDrawer open={attentionOpen} onClose={() => setAttentionOpen(false)} />
-      <PulseDrawer open={pulseOpen} onClose={() => setPulseOpen(false)} />
-      <WorkDrawer open={workOpen} onClose={() => setWorkOpen(false)} />
-      <MemoryWorkspace open={memoryOpen} onClose={() => setMemoryOpen(false)} />
+      <DeferredDrawer open={pulseOpen}>
+        <PulseDrawer open={pulseOpen} onClose={() => setPulseOpen(false)} />
+      </DeferredDrawer>
+      <DeferredDrawer open={workOpen}>
+        <WorkDrawer open={workOpen} onClose={() => setWorkOpen(false)} />
+      </DeferredDrawer>
+      <DeferredDrawer open={memoryOpen}>
+        <MemoryWorkspace open={memoryOpen} onClose={() => setMemoryOpen(false)} />
+      </DeferredDrawer>
 
       <FirstRunGuide
         onFocusChat={() => {
