@@ -12,6 +12,7 @@ These pages hold the long-form design, history, measurements, and per-feature wa
 | [orchestration.md](orchestration.md) | The 10 orchestration patterns, members-only crew pools, crew briefs and formation mediators |
 | [dashboard.md](dashboard.md) | Canvas intents, WebSocket event taxonomy, layer toggles, MEMORY layer, Admin → Memory tab, memory observability API and hygiene ratios (user guide: [`docs/guides/dashboard.md`](../guides/dashboard.md)) |
 | [resolvers.md](resolvers.md) | Resolver primitive and sample taxonomy, `probe`/`watch`, calibration finder registry, `position` invariants, SDK client, TabH2O integration |
+| [decisions.md](decisions.md) | Harness decisions: noul / choice / score wire format, decision backends (Jev family / OpenJev via the Decisions API, or any chat model as a classifier), route / gate / verify policies and failure rules, the pi tool gate, `POST /v1/decisions` |
 | [traces.md](traces.md) | Causal tracing end-to-end, `trace` command and `/api/traces`, judgments ledger, adaptive routing |
 | [security.md](security.md) | API authentication, rate limits, 2026-09-22 HTTP hardening, login limits, better-auth, SSRF guard, gateway auth and protocol, dashboard scoping, adapter persistence |
 | [passthru.md](passthru.md) | Compat profiles, OpenAI/Responses surface, Anthropic upstream (text blocks, system messages, tool calling, error codes, caching, provider probe), Ollama surface, ACP bridge |

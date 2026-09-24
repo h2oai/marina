@@ -296,6 +296,11 @@ export function createAgentEventRelay(
           timestamp: now,
         });
         break;
+      case "decision": {
+        const { type: _type, ...decision } = event;
+        onEvent({ type: "agent_decision", name, ...decision, timestamp: now });
+        break;
+      }
     }
   };
 }
