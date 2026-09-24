@@ -10,6 +10,10 @@ import {
   CONNECTOR_TOOL_RATE_MS,
 } from "./constants";
 import { getErrorMessage } from "./errors";
+import { Logger } from "./logger";
+
+/** Module logger. */
+const logger = new Logger();
 
 /**
  * MCPorter-backed connector runtime.
@@ -41,7 +45,7 @@ export class ConnectorRuntime {
       this.available = true;
       return true;
     } catch {
-      console.warn("[connectors] mcporter not available. External connectors disabled.");
+      logger.warn("connectors", "mcporter not available. External connectors disabled.");
       this.available = false;
       return false;
     }
@@ -73,8 +77,9 @@ export class ConnectorRuntime {
           // runtime dials it. Skip + warn; the row keeps its status.
           const urlError = await validateFetchUrl(conn.url);
           if (urlError) {
-            console.warn(
-              `[connectors] Skipping connector "${conn.name}" (${conn.url}): ${urlError}`,
+            logger.warn(
+              "connectors",
+              `Skipping connector "${conn.name}" (${conn.url}): ${urlError}`,
             );
             continue;
           }
@@ -96,14 +101,14 @@ export class ConnectorRuntime {
           loaded++;
         }
       } catch (err) {
-        console.error(`[connectors] Failed to load connector "${conn.name}":`, err);
+        logger.error("connectors", `Failed to load connector "${conn.name}"`, { error: err });
         if (this.db) {
           this.db.updateConnectorStatus(conn.id, "error");
         }
       }
     }
     if (loaded > 0) {
-      console.log(`[connectors] Loaded ${loaded} connectors from database.`);
+      logger.info("connectors", `Loaded ${loaded} connectors from database.`);
     }
     return loaded;
   }

@@ -3,8 +3,12 @@
 
 import type { Database } from "bun:sqlite";
 import { DAY_MS } from "../engine/constants";
+import { Logger } from "../engine/logger";
 import { liveEntityIdSql } from "./db-entities";
 import { buildFtsQuery } from "./fts";
+
+/** Module logger. */
+const logger = new Logger();
 
 // ─── Channel Persistence ──────────────────────────────────────────────────
 
@@ -527,7 +531,7 @@ export function globalSearch(db: Database, query: string): GlobalSearchResult[] 
       });
     }
   } catch (err) {
-    console.warn("[db] search board FTS5 query failed:", (err as Error).message);
+    logger.warn("db", "search board FTS5 query failed", { error: (err as Error).message });
   }
 
   // Search channel messages via LIKE
@@ -555,7 +559,7 @@ export function globalSearch(db: Database, query: string): GlobalSearchResult[] 
       });
     }
   } catch (err) {
-    console.warn("[db] search channel LIKE query failed:", (err as Error).message);
+    logger.warn("db", "search channel LIKE query failed", { error: (err as Error).message });
   }
 
   try {
@@ -577,7 +581,7 @@ export function globalSearch(db: Database, query: string): GlobalSearchResult[] 
       });
     }
   } catch (err) {
-    console.warn("[db] search task FTS5 query failed:", (err as Error).message);
+    logger.warn("db", "search task FTS5 query failed", { error: (err as Error).message });
   }
 
   try {
@@ -599,7 +603,7 @@ export function globalSearch(db: Database, query: string): GlobalSearchResult[] 
       });
     }
   } catch (err) {
-    console.warn("[db] search market FTS5 query failed:", (err as Error).message);
+    logger.warn("db", "search market FTS5 query failed", { error: (err as Error).message });
   }
 
   // Pool notes — OPEN pools only (group-gated pools stay member-visible; this
@@ -626,7 +630,7 @@ export function globalSearch(db: Database, query: string): GlobalSearchResult[] 
       });
     }
   } catch (err) {
-    console.warn("[db] search note FTS5 query failed:", (err as Error).message);
+    logger.warn("db", "search note FTS5 query failed", { error: (err as Error).message });
   }
 
   // Chronicle is public by design (rank-0 readable) — LIKE over title+body.
@@ -647,7 +651,7 @@ export function globalSearch(db: Database, query: string): GlobalSearchResult[] 
       });
     }
   } catch (err) {
-    console.warn("[db] search chronicle LIKE query failed:", (err as Error).message);
+    logger.warn("db", "search chronicle LIKE query failed", { error: (err as Error).message });
   }
 
   return results;

@@ -10,7 +10,11 @@ import { parseCanvasIntent } from "../../persistence/database";
 import type { StorageProvider } from "../../storage/provider";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getErrorMessage } from "../errors";
+import { Logger } from "../logger";
 import { requiresPersistence } from "./command-messages";
+
+/** Module logger. */
+const logger = new Logger();
 
 const HELP =
   "Canvas management. Subcommands: canvas create <name> [desc] | canvas list | canvas info <name> | canvas visit <self|entity|name> | canvas post [on:<canvas>] [reply:<node_id>] <text> | canvas publish <type> <asset_id> [canvas] [reply:<node_id>] | canvas nodes <name> | canvas edges <name> | canvas layout <grid|timeline|feed> <name> | canvas delete <name> | canvas asset upload|list|info|delete | canvas intent list [canvas] | canvas intent claim <node_id> | canvas intent fail <node_id> [reason] | canvas intent complete <node_id> [--type <type>] <result> | canvas intent complete-rich <node_id> <json> | canvas connect <src_node_id> <tgt_node_id> <relationship> [canvas] | canvas disconnect <edge_id>";
@@ -451,7 +455,7 @@ function handlePublish(
         });
       })
       .catch((err) => {
-        console.warn("[canvas] preview build failed:", (err as Error).message);
+        logger.warn("canvas", "preview build failed", { error: (err as Error).message });
       });
   }
 

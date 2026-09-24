@@ -3490,4 +3490,14 @@ ALTER TABLE agent_configs ADD COLUMN thinking_level TEXT;
 CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
 `,
   },
+  // Migration 122: write-path dedup index. `createNote` checks for an exact
+  // (entity, note_type, content) twin on every fact-like write; without this the
+  // lookup scans all of an entity's notes (~8 ms at 50k). A 64-char content
+  // prefix keeps the index small; the query still compares full content.
+  {
+    version: 122,
+    sql: `
+CREATE INDEX IF NOT EXISTS idx_notes_dedup ON notes(entity_name, note_type, substr(content, 1, 64));
+`,
+  },
 ];

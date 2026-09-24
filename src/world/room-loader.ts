@@ -5,7 +5,11 @@ import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import { Glob } from "bun";
 import type { Engine } from "../engine/engine";
+import { Logger } from "../engine/logger";
 import type { RoomId, RoomModule } from "../types";
+
+/** Module logger. */
+const logger = new Logger();
 
 const DEFAULT_ROOMS_DIR = join(import.meta.dir, "../../rooms");
 
@@ -33,13 +37,13 @@ export async function loadRooms(engine: Engine, roomsDir?: string): Promise<void
       const room: RoomModule = mod.default ?? mod;
 
       if (!room.short || !room.long) {
-        console.warn(`[rooms] Skipping ${rel}: missing short or long`);
+        logger.warn("rooms", `Skipping ${rel}: missing short or long`);
         continue;
       }
 
       engine.registerRoom(id, room);
     } catch (err) {
-      console.error(`[rooms] Failed to load room ${rel}:`, err);
+      logger.error("rooms", `Failed to load room ${rel}`, { error: err });
     }
   }
 }

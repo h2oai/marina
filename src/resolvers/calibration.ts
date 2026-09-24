@@ -17,9 +17,13 @@
 
 import { recordScoreOutcome } from "../coordination/score-outcome";
 import { loadScore } from "../coordination/score-store";
+import { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId, RoomId } from "../types";
 import type { Sample } from "./types";
+
+/** Module logger. */
+const logger = new Logger();
 
 export interface CalibrationFinder {
   /** Short name for diagnostics + idempotency-on-register. */
@@ -61,7 +65,7 @@ export function runCalibration(
     try {
       finder.calibrate(db, sample, emitEvent);
     } catch (err) {
-      console.warn(`[calibration] finder ${finder.name} failed:`, (err as Error).message);
+      logger.warn("calibration", `finder ${finder.name} failed`, { error: (err as Error).message });
     }
   }
 }
@@ -132,7 +136,9 @@ export const tabh2oForecastFinder: CalibrationFinder = {
           noteType: "inference",
         });
       } catch (err) {
-        console.warn("[calibration tabh2o] outcome note write failed:", (err as Error).message);
+        logger.warn("calibration", "tabh2o: outcome note write failed", {
+          error: (err as Error).message,
+        });
         continue;
       }
 
@@ -222,7 +228,9 @@ export const positionThesisFinder: CalibrationFinder = {
           noteType: "inference",
         });
       } catch (err) {
-        console.warn("[calibration position] outcome note write failed:", (err as Error).message);
+        logger.warn("calibration", "position: outcome note write failed", {
+          error: (err as Error).message,
+        });
         continue;
       }
       emitEvent?.({
@@ -268,14 +276,18 @@ export const inworldMarketResolverFinder: CalibrationFinder = {
     try {
       db.resolveMarket(marketId, value.outcome, resolvedBy);
     } catch (err) {
-      console.warn("[calibration inworld] resolveMarket failed:", (err as Error).message);
+      logger.warn("calibration", "inworld: resolveMarket failed", {
+        error: (err as Error).message,
+      });
     }
     if (value.scores) {
       for (const s of value.scores) {
         try {
           db.recordMarketScore(marketId, s.entity, s.brier, s.correct);
         } catch (err) {
-          console.warn("[calibration inworld] recordMarketScore failed:", (err as Error).message);
+          logger.warn("calibration", "inworld: recordMarketScore failed", {
+            error: (err as Error).message,
+          });
         }
       }
     }

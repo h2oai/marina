@@ -72,16 +72,18 @@ describe("ConnectorRuntime.loadFromDB re-validates stored URLs", () => {
       createdBy: "s",
     });
 
+    // The runtime warns through its module Logger, whose text sink writes
+    // non-error levels to stdout — capture that.
     const warnings: string[] = [];
-    const origWarn = console.warn;
-    console.warn = (...args: unknown[]) => {
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => {
       warnings.push(args.map(String).join(" "));
     };
     let loaded: number;
     try {
       loaded = await runtime.loadFromDB();
     } finally {
-      console.warn = origWarn;
+      console.log = origLog;
     }
 
     expect(loaded).toBe(1);

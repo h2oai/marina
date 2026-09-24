@@ -296,8 +296,9 @@ export class Engine {
           const formatted = `[gateway] ${senderLabel}: ${message}`;
           const meta = { untrusted: true, source: "gateway", gatewaySender: senderLabel };
           if (!target) {
-            console.warn(
-              `[gateway] dropped relayed tell from ${senderLabel}: no recoverable local target (not broadcasting)`,
+            this.logger.warn(
+              "gateway",
+              `dropped relayed tell from ${senderLabel}: no recoverable local target (not broadcasting)`,
             );
             return;
           }
@@ -305,8 +306,9 @@ export class Engine {
             this.entities.findAgentByName(target) ??
             this.entities.all().find((e) => e.name.toLowerCase() === target.toLowerCase());
           if (!recipient) {
-            console.warn(
-              `[gateway] dropped relayed tell from ${senderLabel}: local target "${target}" not found`,
+            this.logger.warn(
+              "gateway",
+              `dropped relayed tell from ${senderLabel}: local target "${target}" not found`,
             );
             return;
           }
