@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { decisionConfigFromEnv, decisionGateEnabled } from "../decisions/config";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
 import { getTrustProfile, isLocalUngated, isOpenApiMode, type TrustProfile } from "./trust-profile";
@@ -298,6 +299,34 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       status: "off",
       detail: "no caller auth — /v1 rejects external clients",
       remediation: "Set MODEL_API_KEYS=<token> (or MARINA_OPEN_API=true for local dev).",
+    });
+  }
+
+  // ── Decisions — cheap per-step judgement calls (src/decisions) ───────────
+  const decisions = decisionConfigFromEnv(env);
+  if (!decisions) {
+    checks.push({
+      id: "decisions",
+      label: "Decisions (route / gate / verify)",
+      status: "off",
+      detail: "MARINA_DECISIONS unset — no decision backend; /v1/decisions returns 404",
+      remediation:
+        "Set MARINA_DECISIONS=decisions-api (Jev family / OpenJev) or chat-classifier (any chat model) — see .env.example.",
+    });
+  } else if (!decisions.apiKey && /^https:\/\//.test(decisions.baseUrl)) {
+    checks.push({
+      id: "decisions",
+      label: "Decisions (route / gate / verify)",
+      status: "degraded",
+      detail: `${decisions.kind} → ${decisions.model} at ${decisions.baseUrl}, but no API key`,
+      remediation: "Set MARINA_DECISION_API_KEY (or OPENROUTER_API_KEY for openrouter.ai).",
+    });
+  } else {
+    checks.push({
+      id: "decisions",
+      label: "Decisions (route / gate / verify)",
+      status: "ok",
+      detail: `${decisions.kind} → ${decisions.model}; agent tool gate ${decisionGateEnabled(env) ? "on" : "off"} (MARINA_DECISION_GATE)`,
     });
   }
 

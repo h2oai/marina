@@ -308,4 +308,19 @@ export type AgentEvent =
   // should filter. Pro-presence: observers see the agent thinking in
   // real time; pro-emergence: a human can engage mid-thought and steer.
   | { type: "text_delta"; delta: string }
-  | { type: "thinking_delta"; delta: string };
+  | { type: "thinking_delta"; delta: string }
+  // A harness decision (src/decisions): the verdict plus the numbers behind
+  // it, so every block / hold / route / retry is explainable and tunable.
+  | {
+      type: "decision";
+      stage: "gate" | "route" | "verify";
+      verdict: string;
+      subject: string;
+      reason: string;
+      signals: Record<string, number | string>;
+      provider?: string;
+      model?: string;
+      latencyMs?: number;
+      costUsd?: number;
+      error?: string;
+    };

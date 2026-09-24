@@ -23,7 +23,9 @@ export type OpenAIErrorCode =
   | "unsupported_parameter"
   | "invalid_request_error"
   | "upstream_error"
-  | "server_error";
+  | "server_error"
+  // POST /v1/decisions while MARINA_DECISIONS is off (src/net/decisions-api.ts).
+  | "decisions_disabled";
 
 export type OpenAIErrorType =
   | "invalid_request_error"

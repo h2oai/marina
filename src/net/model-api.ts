@@ -10,6 +10,7 @@ import { version as MARINA_VERSION } from "../../package.json";
 import type { RateLimiter } from "../auth/rate-limiter";
 import type { Engine } from "../engine/engine";
 import { handleAnthropicMessages } from "./anthropic-inbound";
+import { handleDecisions } from "./decisions-api";
 import { handleMediaApi } from "./media-api";
 import { handleOpenaiChat, runOpenaiChat } from "./model-api/chat-completions";
 import { listModels, openaiModelList } from "./model-api/models";
@@ -118,6 +119,11 @@ export async function handleModelApi(
 
   if (url.pathname.startsWith("/v1/media")) {
     return await handleMediaApi(url, method, req, engine, server);
+  }
+
+  // Decisions API (noul / choice / score) for any harness — src/net/decisions-api.ts.
+  if (url.pathname === "/v1/decisions" && method === "POST") {
+    return await handleDecisions(req);
   }
 
   // OpenAI: GET /v1/models

@@ -26,6 +26,8 @@ import {
   type SimpleStreamOptions,
   type TextContent,
 } from "@earendil-works/pi-ai";
+import { decisionGateEnabled, getDecisionProvider } from "../decisions/config";
+import { gateToolCall } from "../decisions/gate";
 import {
   ACTIVE_CODING_TASK_MAX_CHARS,
   CONTEXT_PRUNE_TARGET,
@@ -1430,6 +1432,13 @@ export class LeanAgentAdapter implements AgentHandle {
         const args = (context.args ?? {}) as Record<string, unknown>;
         const policy = mediateToolCall(context.toolCall.name, args, [...this.currentTrustSources]);
         if (policy.block) return { block: true, reason: policy.block };
+        // Decision gate (opt-in, MARINA_DECISION_GATE=on): after the
+        // deterministic monitor, score calls that change things. Reads and
+        // messages never leave the process for scoring.
+        if (policy.risk === "mutate" || policy.risk === "consequential") {
+          const held = await this.decisionGate(context.toolCall.name, args);
+          if (held) return { block: true, reason: held };
+        }
         const command = typeof args.command === "string" ? args.command.trim().toLowerCase() : "";
         const isChannelSend =
           (context.toolCall.name === "marina_channel" && args.action === "send") ||
@@ -1461,6 +1470,40 @@ export class LeanAgentAdapter implements AgentHandle {
         return undefined;
       },
     });
+  }
+
+  /**
+   * Score a mutating tool call with the configured decision backend. Returns a
+   * block reason, or undefined to let the call run. Fails closed: a backend
+   * error blocks. `ask` also blocks — autonomous calls have no approver
+   * attached yet — and says so, so the agent can choose another route.
+   */
+  private async decisionGate(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<string | undefined> {
+    if (!decisionGateEnabled()) return undefined;
+    const provider = getDecisionProvider();
+    if (!provider) return undefined;
+    const decision = await gateToolCall(provider, toolName, args);
+    this.emitEvent({
+      type: "decision",
+      stage: "gate",
+      verdict: decision.action,
+      subject: toolName,
+      reason: decision.reason,
+      signals: decision.signals,
+      ...(decision.provider ? { provider: decision.provider } : {}),
+      ...(decision.model ? { model: decision.model } : {}),
+      ...(decision.latencyMs === undefined ? {} : { latencyMs: decision.latencyMs }),
+      ...(decision.costUsd === undefined ? {} : { costUsd: decision.costUsd }),
+      ...(decision.error ? { error: decision.error } : {}),
+    });
+    if (decision.action === "allow") return undefined;
+    if (decision.action === "ask") {
+      return `${decision.reason} No approver is attached to autonomous tool calls, so it did not run; choose a less destructive step or ask a person.`;
+    }
+    return decision.reason;
   }
 
   // ─── Perception Handling ──────────────────────────────────────────────

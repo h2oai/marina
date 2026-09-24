@@ -707,6 +707,23 @@ export type EngineEvent =
       error: string;
       timestamp: number;
     }
+  // Harness decision (src/decisions): route / gate / verify verdict with the
+  // decision model's numbers. Carries the tool NAME only, never arguments.
+  | {
+      type: "agent_decision";
+      name: string;
+      stage: "gate" | "route" | "verify";
+      verdict: string;
+      subject: string;
+      reason: string;
+      signals: Record<string, number | string>;
+      provider?: string;
+      model?: string;
+      latencyMs?: number;
+      costUsd?: number;
+      error?: string;
+      timestamp: number;
+    }
   // Lifecycle state transition (connected → autonomous → stopped, etc.).
   // Fires at milestones only (not per turn), so observers can refresh an
   // agent's displayed state live without polling.
