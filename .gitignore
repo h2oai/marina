@@ -41,3 +41,6 @@ __pycache__/
 # Generated browser qualification artifacts
 dashboard/test-results/
 dashboard/playwright-report/
+
+# Coverage reports (bun test --coverage; see docs/guides/testing.md)
+coverage/

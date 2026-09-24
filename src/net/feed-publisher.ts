@@ -3,6 +3,7 @@
 
 import { recordChronicleCitation } from "../agent/standing";
 import { getErrorMessage } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import type { CanvasNodeRow, MarinaDB } from "../persistence/database";
 import type { StorageProvider } from "../storage/provider";
 import type { EngineEvent, EntityId } from "../types";
@@ -15,6 +16,9 @@ const FEED_CANVAS_NAME = "feed";
 const FEED_CANVAS_MAX_NODES = 500;
 /** Trim every Nth insert (amortizes the DELETE cost). */
 const FEED_TRIM_INTERVAL = 20;
+
+/** Module logger: feed→canvas bridge — corrupt-row and broadcast failures. */
+const logger = new Logger();
 
 interface FeedPublisherDeps {
   db: MarinaDB;
@@ -264,9 +268,10 @@ export class FeedPublisher {
     try {
       return JSON.parse(row.data) as Record<string, unknown>;
     } catch (err) {
-      console.warn(
-        `[feed] edge ${edgeId} has corrupt data, broadcasting without it: ${getErrorMessage(err)}`,
-      );
+      logger.warn("feed", `edge ${edgeId} has corrupt data, broadcasting without it`, {
+        edgeId,
+        error: getErrorMessage(err),
+      });
       return null;
     }
   }
@@ -708,8 +713,13 @@ export class FeedPublisher {
         const intent = JSON.parse(intentNode.data).intent as { resultNodeId?: string } | undefined;
         if (intent?.resultNodeId) this.broadcastNodeAdded(event.canvasId, intent.resultNodeId);
       } catch (err) {
-        console.warn(
-          `[feed] intent node ${event.nodeId} has corrupt data, skipping result broadcast: ${getErrorMessage(err)}`,
+        logger.warn(
+          "feed",
+          `intent node ${event.nodeId} has corrupt data, skipping result broadcast`,
+          {
+            nodeId: event.nodeId,
+            error: getErrorMessage(err),
+          },
         );
       }
     }
@@ -858,9 +868,10 @@ export class FeedPublisher {
       const parsed = JSON.parse(node.data) as Record<string, unknown>;
       return { ...node, data: enrichNodeData(node, parsed, this.db, this.storage) };
     } catch (err) {
-      console.warn(
-        `[feed] node ${node.id} has corrupt data, skipping broadcast: ${getErrorMessage(err)}`,
-      );
+      logger.warn("feed", `node ${node.id} has corrupt data, skipping broadcast`, {
+        nodeId: node.id,
+        error: getErrorMessage(err),
+      });
       return undefined;
     }
   }

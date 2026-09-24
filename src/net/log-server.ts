@@ -3,7 +3,17 @@
 
 import { resolve } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
+import { Logger } from "../engine/logger";
 import type { EngineEvent, EntityId } from "../types";
+
+/**
+ * Module logger: log-viewer broadcast failures.
+ *
+ * Safe to use here: the Logger's sinks are the structured-log table and the
+ * OTLP exporter, never this server, so logging a failed broadcast cannot
+ * recurse back into another broadcast.
+ */
+const logger = new Logger();
 
 export interface LogEntry {
   timestamp: number;
@@ -95,7 +105,9 @@ export class LogServer {
         try {
           ws.send(msg);
         } catch (err) {
-          console.warn("[log-server] viewer broadcast failed:", (err as Error).message);
+          logger.warn("log-server", "viewer broadcast failed", {
+            error: (err as Error).message,
+          });
           this.clients.delete(ws);
         }
       }
@@ -130,7 +142,7 @@ export class LogServer {
       try {
         ws.send(msg);
       } catch (err) {
-        console.warn("[log-server] entry broadcast failed:", (err as Error).message);
+        logger.warn("log-server", "entry broadcast failed", { error: (err as Error).message });
         this.clients.delete(ws);
       }
     }

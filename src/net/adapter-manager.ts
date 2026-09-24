@@ -9,8 +9,12 @@
  * modules to avoid hard dependencies on optional packages (discord.js, grammy).
  */
 
+import { Logger } from "../engine/logger";
 import type { MarinaDB } from "../persistence/database";
 import type { Adapter, AdapterContext } from "./adapter";
+
+/** Module logger: platform-adapter lifecycle failures. */
+const logger = new Logger();
 
 export interface AdapterInfo {
   name: string;
@@ -82,7 +86,7 @@ export class AdapterManager {
       try {
         await this.stop(name);
       } catch (err) {
-        console.warn(`[adapters] Failed to stop "${name}":`, err);
+        logger.warn("adapters", `Failed to stop "${name}"`, { adapter: name, error: err });
       }
     }
   }

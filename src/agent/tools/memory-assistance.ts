@@ -5,7 +5,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@sinclair/typebox";
 import { MEMORY_ASSISTANCE_READS, MEMORY_HELPER_ROLES } from "../../sdk/memory-assistance";
 import type { MemoryOperationRequest } from "../../sdk/memory-operations";
-import type { ToolContext } from "./index";
+import type { ToolContext } from "./shared";
 
 const schema = Type.Object({
   action: Type.Union(

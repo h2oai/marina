@@ -2,9 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Client, Events, GatewayIntentBits, type Message } from "discord.js";
+import { Logger } from "../engine/logger";
 import type { Connection, Perception } from "../types";
 import type { Adapter, AdapterContext } from "./adapter";
 import { formatPerception } from "./formatter";
+
+/** Module logger: Discord adapter lifecycle and handler failures. */
+const logger = new Logger();
 
 export class DiscordAdapter implements Adapter {
   readonly name = "discord";
@@ -71,7 +75,7 @@ export class DiscordAdapter implements Adapter {
     const allowedChannels = this.allowedChannels;
 
     this.client.once(Events.ClientReady, (c) => {
-      console.log(`[discord] Adapter ready as ${c.user.tag}`);
+      logger.info("discord", `Adapter ready as ${c.user.tag}`, { user: c.user.tag });
     });
 
     this.client.on(Events.MessageCreate, async (message: Message) => {
@@ -143,7 +147,7 @@ export class DiscordAdapter implements Adapter {
 
         engine.processCommand(entityId, text);
       } catch (err) {
-        console.error("[discord] Message handler error:", err);
+        logger.error("discord", "Message handler error", { error: err });
       }
     });
   }
@@ -159,11 +163,11 @@ export class DiscordAdapter implements Adapter {
   async start(): Promise<void> {
     const token = process.env.DISCORD_TOKEN;
     if (!token) {
-      console.warn("[discord] DISCORD_TOKEN not set, skipping.");
+      logger.warn("discord", "DISCORD_TOKEN not set, skipping.");
       return;
     }
     await this.client.login(token);
-    console.log("[discord] Adapter started.");
+    logger.info("discord", "Adapter started.");
   }
 
   async stop(): Promise<void> {

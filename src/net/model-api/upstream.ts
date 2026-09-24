@@ -11,6 +11,7 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { localOutputBudget } from "../../engine/constants";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
+import { Logger } from "../../engine/logger";
 import type { EngineEvent, EntityId } from "../../types";
 import {
   encodeMemoryReceiptAttribute,
@@ -47,6 +48,9 @@ import {
   SSE_HEADERS,
   UPSTREAM_MODEL_HEADER,
 } from "./shared";
+
+/** Module logger: upstream proxy — provider transport and HTTP-status failures. */
+const logger = new Logger();
 
 // --- Direct upstream proxy (fallback when no model agents are online) ---
 
@@ -558,8 +562,13 @@ async function dispatchOpenAICompatible(
       } catch {
         // Status and provider host are still enough to distinguish routing failures.
       }
-      console.warn(
-        `[model-api] upstream ${new URL(url).host} returned HTTP ${resp.status}${detail}`,
+      logger.warn(
+        "model-api",
+        `upstream ${new URL(url).host} returned HTTP ${resp.status}${detail}`,
+        {
+          host: new URL(url).host,
+          status: resp.status,
+        },
       );
       return { response: null, errorStatus: resp.status };
     }
@@ -578,9 +587,9 @@ async function dispatchOpenAICompatible(
       }),
     };
   } catch (error) {
-    console.warn(
-      `[model-api] upstream request failed: ${error instanceof Error ? error.message : "unknown error"}`,
-    );
+    logger.warn("model-api", `upstream request failed: ${getErrorMessage(error)}`, {
+      error: getErrorMessage(error),
+    });
     return { response: null, networkError: true };
   }
 }

@@ -69,6 +69,8 @@
     "test": "bun test --path-ignore-patterns '**/dashboard/**' --path-ignore-patterns '**/examples/coding-agent-demo/**' --path-ignore-patterns '**/marina-desktop/**'",
     "test:fast": "bun run scripts/test-fast.ts",
     "test:shard": "bun run scripts/test-shard.ts",
+    "test:coverage": "bun test --path-ignore-patterns '**/dashboard/**' --path-ignore-patterns '**/examples/coding-agent-demo/**' --path-ignore-patterns '**/marina-desktop/**' --coverage",
+    "check:coverage": "bun run scripts/check-coverage.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome check src/ test/ dashboard/src/",
     "format": "biome format --write src/ test/ dashboard/src/",

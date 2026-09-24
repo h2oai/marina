@@ -64,6 +64,9 @@ const LOG_PORT = parsePort("LOG_PORT", 3302);
 const TICK_MS = Number(process.env.TICK_MS) || 1000;
 const DB_PATH = process.env.DB_PATH || "marina.db";
 
+/** Process-wide structured logger (sinks are attached below, after the DB opens). */
+const logger = new Logger();
+
 // ─── Load World Definition ───────────────────────────────────────────────────
 
 const WORLD_NAME = process.env.MARINA_WORLD ?? "default";
@@ -93,12 +96,14 @@ try {
 } catch (err) {
   const message = err instanceof Error ? err.message : String(err);
   const isMissing = /Cannot find module|Could not resolve|ENOENT|not found/i.test(message);
-  console.error(
+  logger.error(
+    "main",
     isMissing
       ? `World "${WORLD_NAME}" not found. Available worlds: ${listAvailableWorlds().join(", ")}`
       : `World "${WORLD_NAME}" failed to load: ${message}\nAvailable worlds: ${listAvailableWorlds().join(", ")}`,
+    { world: WORLD_NAME },
   );
-  console.error("Set MARINA_WORLD to one of them (or unset it for `default`).");
+  logger.error("main", "Set MARINA_WORLD to one of them (or unset it for `default`).");
   process.exit(1);
 }
 const INSTANCE_NAME = process.env.MARINA_NAME ?? world.name;
@@ -142,8 +147,6 @@ RateLimiter.bypass = TRUST.profile === "local";
 parseEmbeddingEnv(process.env);
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
-
-const logger = new Logger();
 
 // ─── Ingress posture gate: fail fast on an unsafe public bind ─────────────────
 // A non-loopback bind exposes Marina to the network. Combined with passwordless
@@ -315,7 +318,10 @@ if (process.env.START_ROOM) {
   if (engine.rooms.has(override)) {
     engine.config.startRoom = override;
   } else {
-    console.warn(`[warn] START_ROOM="${override}" not found, using ${world.startRoom}`);
+    logger.warn("main", `START_ROOM="${override}" not found, using ${world.startRoom}`, {
+      startRoom: override,
+      fallback: world.startRoom,
+    });
   }
 }
 
@@ -471,16 +477,18 @@ if (AUTH_ENABLED) {
 try {
   const removed = db.trimFeedEvents(7 * 86_400_000);
   if (removed > 0) {
-    console.log(`[feed] trimmed ${removed} feed_events older than 7d`);
+    logger.info("main", `[feed] trimmed ${removed} feed_events older than 7d`, { removed });
   }
   // Bound the gated-exec audit trail too (90d retention — longer than the feed
   // since it's a security log, but still finite so it can't grow forever).
   const shellRemoved = db.trimShellLog(90 * 86_400_000);
   if (shellRemoved > 0) {
-    console.log(`[shell] trimmed ${shellRemoved} shell_log rows older than 90d`);
+    logger.info("main", `[shell] trimmed ${shellRemoved} shell_log rows older than 90d`, {
+      removed: shellRemoved,
+    });
   }
 } catch (err) {
-  console.warn("[feed] startup trim failed:", (err as Error).message);
+  logger.warn("main", "[feed] startup trim failed", { error: (err as Error).message });
 }
 
 const feedPublisher = new FeedPublisher({
@@ -538,8 +546,10 @@ function startListener(label: string, envVar: string, port: number, start: () =>
     const inUse =
       e?.code === "EADDRINUSE" || /EADDRINUSE|address already in use/i.test(e?.message ?? "");
     if (!inUse) throw err;
-    console.error(
+    logger.error(
+      "main",
       `Port ${port} is in use (${label}). Try ${envVar}=${port + 1} bun run start, or lsof -i :${port}`,
+      { port, label, envVar },
     );
     process.exit(1);
   }
@@ -668,6 +678,11 @@ if (
   if (mcpServer) surfaces.push(`MCP http://localhost:${mcpServer.getPort()}/mcp`);
   if (telnetServer) surfaces.push(`Telnet localhost:${TELNET_PORT}`);
   if (logServer) surfaces.push(`Logs http://localhost:${LOG_PORT}`);
+  // DELIBERATE console: the only surviving one in main.ts. This is a multi-line
+  // human-facing banner, and the Logger has no plain/banner sink — its text
+  // writer stamps `[iso] INFO  [main]` on the entry, which would prefix the
+  // first line and leave the indented continuation lines dangling. Everything
+  // operational (including the wiring summary right below) goes through Logger.
   console.log(
     [
       `Marina "${INSTANCE_NAME}" is up · world: ${world.name}`,
@@ -740,14 +755,15 @@ async function shutdown(code = 0) {
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 process.on("uncaughtException", (err) => {
-  logger.error("fatal", "Uncaught exception", { error: String(err) });
-  console.error("[fatal] Uncaught exception:", err);
+  logger.error("fatal", "Uncaught exception", { error: String(err), stack: err?.stack });
   // Best-effort: run graceful shutdown so agents flush checkpoints before the
   // process dies — otherwise a crash loses everything since the last periodic
   // save. The watchdog inside shutdown() bounds how long this can hang.
   void shutdown(1);
 });
 process.on("unhandledRejection", (reason) => {
-  logger.error("fatal", "Unhandled rejection", { error: String(reason) });
-  console.error("[fatal] Unhandled rejection:", reason);
+  logger.error("fatal", "Unhandled rejection", {
+    error: String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  });
 });
