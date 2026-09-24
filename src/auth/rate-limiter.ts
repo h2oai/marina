@@ -8,6 +8,9 @@ export interface RateLimiterConfig {
   refillRate: number; // tokens per refill (default: 5)
   refillInterval: number; // ms between refills (default: 1000)
   now?: () => number; // clock source for testing (default: Date.now)
+  /** Enforce even when `RateLimiter.bypass` is on. For limits that guard
+   *  internet-facing credential checks, which the local profile must not relax. */
+  ignoreBypass?: boolean;
 }
 
 interface Bucket {
@@ -36,7 +39,7 @@ export class RateLimiter {
 
   /** Try to consume tokens from a key's bucket. Returns false if rate-limited. */
   consume(key: string, cost = 1): boolean {
-    if (RateLimiter.bypass) return true;
+    if (RateLimiter.bypass && !this.config.ignoreBypass) return true;
     const now = (this.config.now ?? Date.now)();
     let bucket = this.buckets.get(key);
 
