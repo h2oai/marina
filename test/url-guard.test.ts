@@ -1,12 +1,26 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { __setDnsResolverForTest, guardedFetch, validateFetchUrl } from "../src/net/url-guard";
+
+/** A public address every stubbed resolution maps to (example.com's own A record). */
+const PUBLIC_IP = "93.184.216.34";
 
 describe("validateFetchUrl", async () => {
   // 1. Valid public URLs pass
   describe("public URLs", async () => {
+    // The guard resolves named hosts, and since it fails CLOSED a real lookup
+    // makes these cases depend on the network: under full-suite load the
+    // github.com case timed out at 5 s. Stub the resolver like every other
+    // block in this file.
+    beforeEach(() => {
+      __setDnsResolverForTest(async () => [PUBLIC_IP]);
+    });
+    afterEach(() => {
+      __setDnsResolverForTest(null);
+    });
+
     it("should allow http://example.com", async () => {
       expect(await validateFetchUrl("http://example.com")).toBeNull();
     });

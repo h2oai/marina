@@ -139,11 +139,9 @@ const mentions = (haystack: string, token: string): boolean =>
  * `help` fully describes; the guide covers the world-facing primitives. A NEW
  * command must land in the guide or be added here on purpose.
  */
-const COMMANDS_DOCUMENTED_ONLY_IN_HELP = new Set([
-  "calc", // arithmetic scratchpad — `help calc` is the whole reference
-  "debrief", // session-close view composed from note/standing primitives
-  "observe", // experiment-scoped observation verb, documented under `experiment`
-  "system-prompt", // read-only prompt inspection (alias `sysprompt`)
+const COMMANDS_DOCUMENTED_ONLY_IN_HELP = new Set<string>([
+  // Empty by design: every builtin is in docs/guides/commands.md. Adding a
+  // command here needs a reason a reader would accept — prefer documenting it.
 ]);
 
 /**
@@ -286,5 +284,33 @@ describe("documentation contract — structure", () => {
     // Keep the composed-name allowlist honest: each entry must still be
     // documented in .env.example.
     expect([...ENV_VARS_COMPOSED_AT_RUNTIME].filter((n) => !documented.includes(n))).toEqual([]);
+  });
+
+  it("explains every MARINA_* variable that only a world definition reads", async () => {
+    // A var read solely in worlds/ appears nowhere in src/, so an operator
+    // grepping the server finds nothing. docs/architecture/worlds.md is where
+    // those per-world overrides are explained; keep the two in step.
+    const example = await readDoc(".env.example");
+    const documented = [...new Set(example.match(/MARINA_[A-Z0-9_]+/g) ?? [])].sort();
+
+    const read = async (roots: string[]): Promise<string> => {
+      const glob = new Bun.Glob("**/*.ts");
+      let tree = "";
+      for (const root of roots) {
+        for await (const file of glob.scan({ cwd: root })) {
+          tree += await Bun.file(`${root}/${file}`).text();
+        }
+      }
+      return tree;
+    };
+    const server = await read(["src", "scripts"]);
+    const worldCode = await read(["worlds"]);
+    const worldsDoc = await readDoc("docs/architecture/worlds.md");
+
+    const worldOnly = documented.filter(
+      (name) => !server.includes(name) && worldCode.includes(name),
+    );
+    expect(worldOnly.length).toBeGreaterThan(0); // the class exists; keep the guard meaningful
+    expect(worldOnly.filter((name) => !worldsDoc.includes(name))).toEqual([]);
   });
 });

@@ -221,7 +221,10 @@ export class DashboardBroadcaster {
   // ─── Observer cache ────────────────────────────────────────────────────
 
   private observerFor(engine: Engine, principal?: string): Observer {
-    const key = principal ?? "";
+    // `undefined` (no principal on the socket) and `""` (an empty one) are both
+    // anonymous but must not share an entry — keep them distinct sentinels so a
+    // future change to either path cannot silently reuse the other's observer.
+    const key = principal === undefined ? "\u0000anon" : `p:${principal}`;
     const now = this.now();
     const hit = this.observers.get(key);
     if (hit && hit.expires > now) return hit.observer;
@@ -230,11 +233,19 @@ export class DashboardBroadcaster {
     return observer;
   }
 
-  /** Drop the affected principal's cached observer (or all, when the event
-   *  names no entity) for events in `OBSERVER_INVALIDATING_EVENTS`. */
+  /**
+   * Drop the affected principal's cached observer for events in
+   * `OBSERVER_INVALIDATING_EVENTS`. An event that names no entity clears the
+   * whole cache: deliberately conservative, since we cannot tell whose
+   * privilege changed. These events are rare and an observer costs one gate +
+   * standing read to rebuild, so thrash is bounded; correctness wins over the
+   * cache. If an entity-less invalidating event ever becomes frequent, narrow
+   * it rather than dropping the clear.
+   */
   private invalidateObservers(event: EngineEvent): void {
     if (!OBSERVER_INVALIDATING_EVENTS.has(event.type)) return;
-    if ("entity" in event && typeof event.entity === "string") this.observers.delete(event.entity);
+    if ("entity" in event && typeof event.entity === "string")
+      this.observers.delete(`p:${event.entity}`);
     else this.observers.clear();
   }
 

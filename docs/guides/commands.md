@@ -192,6 +192,7 @@ note contradictions
 note conflicts
 note resolve 7 left The signed approval record confirms the left claim
 note consolidate 42 38 39
+debrief                    # session close: recent notes, open claims, standing, reflect nudge
 ```
 
 Consolidation retains older records as traceable, superseded memories while excluding them from
@@ -441,6 +442,8 @@ run or promote candidates automatically. See [Native Evolution Protocols](native
 > evolve pause Trial
 > evolve resume Trial
 > evolve complete Trial
+> observe Trial baseline accuracy 0.72 Ran on the clean fixture
+                                             Record one observation for an experiment arm
 ```
 
 ## Projects
@@ -682,6 +685,8 @@ and silent turns. Recruitment remains explicit: recommendations never pull an ag
 > role diff researcher analyst                 Compare two roles (traits, focus, guidelines, tone)
 > role create analyst traits careful,logical guidelines Be precise|Cite sources focus data,metrics tone professional
 > role edit analyst tone concise               Edit role properties
+> system-prompt                               Show the assembled system prompt (alias `sysprompt`)
+> system-prompt role researcher goal audit    Preview the prompt an agent with that role and goal receives
 > role delete analyst                         Delete a role
 
 > trait list                                  List all traits by category
@@ -755,6 +760,7 @@ and provenance. Promote a snapshot to the new default by restarting with
 
 ```
 > batch look ; who ; brief           Run multiple commands in sequence
+> calc 128 * 1024                    Exact arithmetic scratchpad (one binary expression)
 > shell list                         Shell allowlist + saved output routing (rank 5 + `shell.exec` gate; `run <binary>` executes)
 > gateway list                       Bridges to peer Marina instances (rank 5 + `gateway.connect` gate)
 > demo preflight                     Demo health: score, warm agents, blockers (`demo reset` needs rank 2+)
