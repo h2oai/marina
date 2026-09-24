@@ -1,8 +1,13 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { RateLimiter } from "../../auth/rate-limiter";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { Logger } from "../logger";
+
+/** Module logger. */
+const logger = new Logger();
 
 /**
  * Verification codes for linking external adapters (Telegram/Discord) to game accounts.
@@ -54,6 +59,28 @@ export function verifyLinkCode(code: string): { userId: string; entityName: stri
   return { userId: pending.userId, entityName: pending.entityName };
 }
 
+// ─── Guessing limits ─────────────────────────────────────────────────────────
+// A code is a 6-symbol bearer credential (32^6 ≈ 1.07e9) live for 5 minutes, and
+// adapters are internet-facing even on a `local` box, so both buckets ignore
+// `RateLimiter.bypass`. Only code-shaped messages are charged.
+
+const LINK_ATTEMPTS_PER_ACCOUNT = { maxTokens: 5, refillRate: 1, refillInterval: 120_000 };
+const LINK_FAILURES_GLOBAL = { maxTokens: 30, refillRate: 1, refillInterval: 10_000 };
+const GLOBAL_KEY = "*";
+/** Sweep idle per-account buckets this often so many throwaway accounts can't grow the map. */
+const CLEANUP_EVERY_ATTEMPTS = 1000;
+let attemptsSinceCleanup = 0;
+
+let accountAttempts = new RateLimiter({ ...LINK_ATTEMPTS_PER_ACCOUNT, ignoreBypass: true });
+let globalFailures = new RateLimiter({ ...LINK_FAILURES_GLOBAL, ignoreBypass: true });
+
+/** Test seam: fresh buckets, optionally on an injected clock. */
+export function resetLinkRateLimitsForTests(now?: () => number): void {
+  attemptsSinceCleanup = 0;
+  accountAttempts = new RateLimiter({ ...LINK_ATTEMPTS_PER_ACCOUNT, ignoreBypass: true, now });
+  globalFailures = new RateLimiter({ ...LINK_FAILURES_GLOBAL, ignoreBypass: true, now });
+}
+
 /**
  * Adapter side of `link`: if `text` is a live code, bind the external account
  * (`adapter`, `externalId`) to the code's user and return the entity name to
@@ -61,6 +88,11 @@ export function verifyLinkCode(code: string): { userId: string; entityName: stri
  * usual. This only records the binding shown by `link status` — the login that
  * follows is an ordinary passwordless adapter login, so `engine.login` still
  * applies every gate (auth-required mode, bans, rank cap for remote logins).
+ *
+ * Guessing is rate-limited per external account and globally on failures. A
+ * limited attempt is NOT checked and falls through as null — the same as any
+ * non-code text — so a player whose login name happens to look like a code is
+ * never locked out of name login.
  */
 export function redeemLinkCode(
   db: Pick<MarinaDB, "linkAdapter"> | undefined,
@@ -71,8 +103,28 @@ export function redeemLinkCode(
   if (!db) return null;
   const candidate = text.trim().toUpperCase();
   if (!CODE_RE.test(candidate)) return null;
+  const accountKey = `${adapter}:${externalId}`;
+  if (++attemptsSinceCleanup >= CLEANUP_EVERY_ATTEMPTS) {
+    attemptsSinceCleanup = 0;
+    accountAttempts.cleanup();
+  }
+  if (!accountAttempts.consume(accountKey)) {
+    logger.warn("link", "Link-code attempts rate-limited for an external account", {
+      adapter,
+      externalId,
+    });
+    return null;
+  }
+  if (globalFailures.getRemaining(GLOBAL_KEY) < 1) {
+    logger.warn("link", "Link-code redemption paused: too many failed attempts", { adapter });
+    return null;
+  }
   const linked = verifyLinkCode(candidate);
-  if (!linked) return null;
+  if (!linked) {
+    globalFailures.consume(GLOBAL_KEY);
+    return null;
+  }
+  accountAttempts.reset(accountKey);
   db.linkAdapter(adapter, externalId, linked.userId);
   return { entityName: linked.entityName };
 }

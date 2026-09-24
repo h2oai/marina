@@ -3,7 +3,11 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { RateLimiter } from "../src/auth/rate-limiter";
-import { redeemLinkCode, verifyLinkCode } from "../src/engine/commands/link";
+import {
+  redeemLinkCode,
+  resetLinkRateLimitsForTests,
+  verifyLinkCode,
+} from "../src/engine/commands/link";
 import { Engine } from "../src/engine/engine";
 import { RoomSandbox } from "../src/engine/room-sandbox";
 import { MarinaDB } from "../src/persistence/database";
@@ -227,6 +231,7 @@ describe("Link Command", () => {
     engine.addConnection(conn);
     const result = engine.login("c1", "LinkTester");
     if ("entityId" in result) entityId = result.entityId;
+    resetLinkRateLimitsForTests();
   });
 
   afterEach(() => {
@@ -286,6 +291,59 @@ describe("Link Command", () => {
     conn.clear();
     engine.processCommand(entityId, "link status");
     expect(conn.lastText()).toContain("4242");
+  });
+
+  describe("guessing limits", () => {
+    let now = 0;
+    const newCode = () => {
+      conn.clear();
+      engine.processCommand(entityId, "link");
+      return stripAnsi(conn.lastText()).match(/Your code: ([A-Z0-9]{6})/)![1]!;
+    };
+    beforeEach(() => {
+      now = 1_000_000;
+      resetLinkRateLimitsForTests(() => now);
+    });
+    afterEach(() => {
+      RateLimiter.bypass = false;
+    });
+
+    it("stops checking codes from one account after 5 attempts, then refills", () => {
+      const code = newCode();
+      for (let i = 0; i < 5; i++)
+        expect(redeemLinkCode(db, "telegram", "666", "ZZZZZZ")).toBeNull();
+      // Even the right code is not checked while the account is limited…
+      expect(redeemLinkCode(db, "telegram", "666", code)).toBeNull();
+      expect(db.getLinkedUser("telegram", "666")).toBeUndefined();
+      // …while another account is unaffected (and the code was not consumed).
+      expect(redeemLinkCode(db, "telegram", "777", code)).toEqual({ entityName: "LinkTester" });
+      // One attempt comes back per 2 minutes.
+      now += 120_000;
+      expect(redeemLinkCode(db, "telegram", "666", newCode())).toEqual({
+        entityName: "LinkTester",
+      });
+    });
+
+    it("pauses redemption for everyone after 30 failures across accounts", () => {
+      for (let i = 0; i < 30; i++) redeemLinkCode(db, "discord", `bot-${i}`, "ZZZZZZ");
+      const code = newCode();
+      expect(redeemLinkCode(db, "discord", "fresh", code)).toBeNull();
+      now += 10_000;
+      expect(redeemLinkCode(db, "discord", "fresh", code)).toEqual({ entityName: "LinkTester" });
+    });
+
+    it("is enforced even when the local profile bypasses rate limits", () => {
+      RateLimiter.bypass = true;
+      for (let i = 0; i < 5; i++) redeemLinkCode(db, "telegram", "666", "ZZZZZZ");
+      expect(redeemLinkCode(db, "telegram", "666", newCode())).toBeNull();
+    });
+
+    it("never charges text that is not code-shaped", () => {
+      for (let i = 0; i < 20; i++) redeemLinkCode(db, "telegram", "666", "LinkTester");
+      expect(redeemLinkCode(db, "telegram", "666", newCode())).toEqual({
+        entityName: "LinkTester",
+      });
+    });
   });
 });
 
