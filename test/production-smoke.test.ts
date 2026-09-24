@@ -51,7 +51,9 @@ describe("production smoke boundaries", () => {
       ok: false,
       error: "no-providers-configured",
     });
-  });
+    // Spawns a full `bun run` child (cold start + module graph): give it room
+    // when the suite runs in parallel workers.
+  }, 30_000);
 
   it("checks live response shapes and limits credentials to authenticated API routes", async () => {
     const { network, seen } = server();

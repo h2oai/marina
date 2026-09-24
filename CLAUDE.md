@@ -5,11 +5,11 @@ This file keeps only what a contributor must follow to make a correct change: bu
 ## Build & Test
 ```bash
 bun run start          # Start server
-bun run test           # Run all backend tests
+bun run test           # Run all backend tests (parallel workers; `test:serial` for one process)
 bun run typecheck      # TypeScript strict check
 bun run lint           # Biome lint
 bun run format         # Biome auto-format (run before committing)
-bun run test:fast      # pre-commit loop: 139 engine-free files, ~45 s (scripts/test-fast.ts --check reports drift)
+bun run test:fast      # pre-commit loop: 139 engine-free files, ~10 s parallel (scripts/test-fast.ts --check reports drift; --serial opts out)
 bun run test:shard I N # time-balanced shard I of N from test/timing.json (CI runs 3); regenerate timings per docs/guides/testing.md
 bun run test:coverage  # full suite + coverage (text + coverage/lcov.info); opt-in, never in PR CI
 bun run check:coverage # per-directory line coverage from lcov (--strict gates on MARINA_COVERAGE_MIN_LINES, default 75)

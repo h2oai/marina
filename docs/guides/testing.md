@@ -8,8 +8,9 @@ reference for file layout and rules is `test/README.md`.
 ## Commands
 
 ```bash
-bun run test:fast              # pre-commit subset, ~43 s
-bun run test                   # full backend suite
+bun run test:fast              # pre-commit subset, ~10 s (parallel)
+bun run test                   # full backend suite, parallel (~100 s on 16 cores)
+bun run test:serial            # full suite in one process (debugging order-dependent failures)
 bun run test:shard 0 3         # one of three time-balanced CI buckets
 bun run test:coverage          # full suite + coverage (text + coverage/lcov.info)
 bun run check:coverage         # per-directory report from coverage/lcov.info
@@ -19,6 +20,15 @@ cd dashboard && bun run test   # frontend (vitest)
 
 Both wrappers forward everything after `--` to `bun test`
 (`bun run test:fast -- --bail`, `bun run test:shard 1 3 -- --only-failures`).
+
+**Parallel by default.** `test`, `test:fast` and `test:shard` run files in
+`bun test --parallel` worker processes (one per core) with the per-test
+timeout raised from 5 s to 15 s, because contended workers run slower than a
+lone process. Measured 2026-09-24: `test:fast` 49.5 s → 8.9 s; full suite
+~400 s → ~100 s; three consecutive full parallel runs 4083/4083. Pass
+`--serial` to either wrapper (or use `test:serial`) to run in one process; an
+explicit `-- --parallel=N` or `-- --timeout=MS` wins. Tests that spawn a child
+`bun` process should set their own generous timeout.
 
 ## The fast loop
 
@@ -169,8 +179,8 @@ affects balance — it never drops a file from a shard.
   real sleep only for negative assertions ("nothing arrives within N ms").
 - **Boot one engine per file** when the tests are read-only; per-test engine
   boot (schema migrations + world seed) dominates the slow files.
-- **Unique DB paths and ports per file** so split files and shards can run in
-  parallel processes.
+- **Unique DB paths and ports per file** — the suite runs files in parallel
+  worker processes, so a fixed shared path or port is a race.
 - **Split by `describe`** once a file passes ~1 s or ~1,000 lines; move shared
   fixtures into `test/<family>-helpers.ts`.
 - Never reach the network: the model-API and adapter tests use mocked `fetch`
