@@ -3482,4 +3482,12 @@ UPDATE OR IGNORE macros
 ALTER TABLE agent_configs ADD COLUMN thinking_level TEXT;
 `,
   },
+  // Migration 121: index entities.name for faster name-based lookups
+  // (restoring from DB, command registry name resolution, seed checks).
+  {
+    version: 121,
+    sql: `
+CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
+`,
+  },
 ];

@@ -308,6 +308,11 @@ describe("Item System", () => {
     // Item should be in inventory
     const alice = engine.entities.get(conn1.entity!);
     expect(alice?.inventory).toContain(itemId);
+
+    // It left the room: a second pick-up must not duplicate it.
+    engine.processCommand(conn1.entity!, "get crystal");
+    expect(stripAnsi(conn1.lastText())).toContain("You don't see that here.");
+    expect(alice?.inventory.filter((id) => id === itemId)).toHaveLength(1);
   });
 
   it("should work with take alias", () => {
@@ -326,6 +331,8 @@ describe("Item System", () => {
 
     const alice = engine.entities.get(conn1.entity!);
     expect(alice?.inventory).not.toContain(itemId);
+    // Back in the room, so it can be picked up again.
+    expect(engine.entities.inRoom(alice!.room).some((e) => e.id === itemId)).toBe(true);
   });
 
   it("should not pick up non-existent items", () => {
