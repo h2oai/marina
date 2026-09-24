@@ -138,6 +138,7 @@ describe("pi adapter gate hold", () => {
             destructive: { type: "noul", noul: 0.8 },
             irreversible: { type: "noul", noul: 0.3 },
             outsideScope: { type: "noul", noul: 0.1 },
+            unauthorized: { type: "noul", noul: 0.1 },
           },
         }),
     });
