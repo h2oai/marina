@@ -26,8 +26,9 @@ import {
   type SimpleStreamOptions,
   type TextContent,
 } from "@earendil-works/pi-ai";
+import { DEFAULT_APPROVAL_TIMEOUT_MS, requestApproval } from "../decisions/approvals";
 import { decisionGateEnabled, getDecisionProvider } from "../decisions/config";
-import { gateToolCall } from "../decisions/gate";
+import { gateToolCall, redactToolCall } from "../decisions/gate";
 import {
   ACTIVE_CODING_TASK_MAX_CHARS,
   CONTEXT_PRUNE_TARGET,
@@ -42,6 +43,7 @@ import {
   PERCEPTION_MODEL_REQUEST_MAX_CHARS,
   PROVIDER_MAX_RETRIES,
   perceiveSelfEcho,
+  positiveNumberFromEnv,
   SPEND_CAP_POLL_MS,
   SPEND_WINDOW_MS,
   UPSTREAM_ERROR_PAUSE_MS,
@@ -1501,7 +1503,38 @@ export class LeanAgentAdapter implements AgentHandle {
     });
     if (decision.action === "allow") return undefined;
     if (decision.action === "ask") {
-      return `${decision.reason} No approver is attached to autonomous tool calls, so it did not run; choose a less destructive step or ask a person.`;
+      // Hold the call for the agent's owner (src/decisions/approvals.ts).
+      // Fails closed: no approvable owner, unreachable, deny or timeout ⇒ block.
+      const state = redactToolCall(toolName, args);
+      const approval = await requestApproval(
+        {
+          agentName: this.name,
+          ownerName: this.config.spawnedBy ?? "",
+          toolName,
+          summary: `${toolName} ${JSON.stringify(state.arguments).slice(0, 240)}`,
+          reason: decision.reason,
+          signals: decision.signals,
+        },
+        positiveNumberFromEnv("MARINA_DECISION_APPROVAL_TIMEOUT_MS") ?? DEFAULT_APPROVAL_TIMEOUT_MS,
+      );
+      this.emitEvent({
+        type: "decision",
+        stage: "gate",
+        verdict: approval.outcome,
+        subject: toolName,
+        reason:
+          approval.outcome === "approved"
+            ? `approved by ${approval.by}`
+            : approval.outcome === "denied"
+              ? `denied by ${approval.by}${approval.note ? `: ${approval.note}` : ""}`
+              : "no approval before the deadline (or no approvable owner)",
+        signals: decision.signals,
+      });
+      if (approval.outcome === "approved") return undefined;
+      if (approval.outcome === "denied") {
+        return `${decision.reason} Your owner denied it${approval.note ? `: ${approval.note}` : "."} Choose another step.`;
+      }
+      return `${decision.reason} No approval arrived, so it did not run; choose a less destructive step or ask a person.`;
     }
     return decision.reason;
   }

@@ -675,6 +675,16 @@ Recruitment is availability- and evidence-aware:
 Matching weighs role/goal/focus overlap, standing, approved task outcomes, current availability, errors,
 and silent turns. Recruitment remains explicit: recommendations never pull an agent away from live work.
 
+## Decision Approvals
+
+When the decision gate (`MARINA_DECISION_GATE=on`, see [docs/architecture/decisions.md](../architecture/decisions.md)) scores an agent's tool call in the "ask a person" band, the call waits and the agent's **owner** — whoever spawned it — gets a notice with a token. Only the owner can settle it, an agent can never approve its own call, and no answer before the deadline blocks the call.
+
+| Command | Description |
+|---------|-------------|
+| `decision list` | Tool calls from your agents waiting for your approval (token, agent, redacted call, reason, time left). Alias: `decisions` |
+| `decision approve <token>` | Let the held call run |
+| `decision deny <token> [reason]` | Block it; the reason is passed back to the agent |
+
 ## Roles & Traits
 
 ```
