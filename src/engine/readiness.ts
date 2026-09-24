@@ -3,7 +3,7 @@
 
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
-import { getTrustProfile, isLocalUngated, type TrustProfile } from "./trust-profile";
+import { getTrustProfile, isLocalUngated, isOpenApiMode, type TrustProfile } from "./trust-profile";
 
 /**
  * Operator-facing capability readiness.
@@ -273,7 +273,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
   );
 
   // ── Model API (/v1) — Marina-as-an-LLM for external clients ───────────────
-  const apiAuth = !!env.MODEL_API_KEYS || env.MARINA_OPEN_API === "true";
+  const apiAuth = !!env.MODEL_API_KEYS || isOpenApiMode(env);
   if (apiAuth && hasKey) {
     checks.push({
       id: "model-api",

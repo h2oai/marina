@@ -3,7 +3,7 @@
 
 import { secretsEqual } from "../auth/secret-compare";
 import type { Engine } from "../engine/engine";
-import { isLocalUngated } from "../engine/trust-profile";
+import { isLocalUngated, isOpenApiMode } from "../engine/trust-profile";
 import type { EntityId } from "../types";
 import { corsHeaders } from "./cors";
 
@@ -75,11 +75,6 @@ export function refuseOpenApiWrite(entityId: EntityId, origin: string | null): R
   );
 }
 
-/** Whether unauthenticated API access is allowed (development mode). */
-function openApiEnabled(): boolean {
-  return process.env.MARINA_OPEN_API === "true";
-}
-
 /**
  * Validate a Bearer session token from the Authorization header.
  *
@@ -114,7 +109,7 @@ export function authenticateRequest(
     // bypass when enabled, otherwise reject below.
   }
 
-  if (openApiEnabled()) {
+  if (isOpenApiMode()) {
     return { entityId: OPEN_API_ENTITY_ID };
   }
 

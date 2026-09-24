@@ -218,12 +218,7 @@ export function safeParse(raw: string | null): unknown {
   }
 }
 
-/** Last four characters only — a leading prefix identifies the provider/format
- *  and, combined with the tail, narrows a brute-force search. */
-export function maskKey(value: string): string {
-  if (value.length <= 8) return "****";
-  return `****${value.slice(-4)}`;
-}
+export { maskKey } from "../../engine/commands/key";
 
 /** Per-principal memory visibility predicates, resolved once per request. */
 export type MemoryObserver = ReturnType<typeof memoryObserver>;

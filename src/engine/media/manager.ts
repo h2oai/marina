@@ -65,7 +65,6 @@ interface ActivePoll {
 export class MediaManager {
   private engine: Engine;
   private db: MarinaDB;
-  private storage: StorageProvider;
   private resolveApiKey: ProviderKeyResolver;
   private logEvent: (event: EngineEvent) => void;
   private polls = new Map<string, ActivePoll>();
@@ -73,7 +72,6 @@ export class MediaManager {
   constructor(deps: MediaManagerDeps) {
     this.engine = deps.engine;
     this.db = deps.db;
-    this.storage = deps.storage;
     this.resolveApiKey = deps.resolveApiKey;
     this.logEvent = deps.logEvent;
   }

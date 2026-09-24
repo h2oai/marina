@@ -89,12 +89,6 @@ export type ResponseCacheLookup =
  */
 export const responseCacheCounters = { hits: 0, misses: 0, stores: 0 };
 
-export function resetResponseCacheCounters(): void {
-  responseCacheCounters.hits = 0;
-  responseCacheCounters.misses = 0;
-  responseCacheCounters.stores = 0;
-}
-
 export function responseCacheEnabled(
   entity: Entity,
   env: NodeJS.ProcessEnv = process.env,

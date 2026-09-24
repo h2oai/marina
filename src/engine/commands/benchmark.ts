@@ -12,6 +12,7 @@ import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
 import { BENCHMARKS, type BenchmarkRunner } from "../benchmark-runner";
 import { extractModifiers, resolveMultiWordName } from "../parse-input";
+import { formatAge } from "./format-duration";
 
 /** Render an id-shaped string with dim styling (ansi.id is numeric-only). */
 function fmtId(s: string): string {
@@ -58,22 +59,12 @@ Examples:
   benchmark reference anthropic/claude-haiku-4-5-20251001
   benchmark reference mmlu-pro                    # all models' published scores for mmlu-pro`;
 
-function formatAge(ms: number): string {
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.round(h / 24)}d ago`;
-}
-
 function formatRunLine(row: BenchmarkRunRow): string {
   const score =
     row.score === null || row.score === undefined
       ? fmtStatus(row.status.padEnd(10), variantFromStatus(row.status))
       : `${(row.score * 100).toFixed(1)}%`.padStart(6);
-  const age = dim(formatAge(Date.now() - row.started_at).padStart(8));
+  const age = dim(`${formatAge(Date.now() - row.started_at)} ago`.padStart(8));
   const ans = row.total > 0 ? `${row.answered}/${row.total}` : "-";
   const id = fmtId(row.id);
   const agent = row.agent_id ? bold(row.agent_id) : dim("—");
@@ -337,7 +328,7 @@ export function benchmarkCommand(deps: {
             separator(),
             `  ${bold("benchmark")}:   ${category(row.benchmark)}`,
             `  ${bold("status")}:      ${fmtStatus(row.status, variantFromStatus(row.status))}`,
-            `  ${bold("started")}:     ${new Date(row.started_at).toISOString()} (${formatAge(Date.now() - row.started_at)})`,
+            `  ${bold("started")}:     ${new Date(row.started_at).toISOString()} (${formatAge(Date.now() - row.started_at)} ago)`,
           ];
           if (row.duration_ms) {
             lines.push(`  ${bold("duration")}:    ${Math.round(row.duration_ms / 1000)}s`);

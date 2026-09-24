@@ -448,7 +448,3 @@ export function describeRetentionPolicies(
     ...(p.note ? { note: p.note } : {}),
   }));
 }
-
-export function isRetentionTick(tickCount: number, interval: number): boolean {
-  return tickCount % interval === RETENTION_TICK_PHASE;
-}

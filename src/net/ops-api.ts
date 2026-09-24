@@ -39,7 +39,7 @@ import {
   type PromptTurnSample,
   promptTurnSampleFromEvent,
 } from "../engine/trace-analytics";
-import { getTrustProfile, isLocalUngated } from "../engine/trust-profile";
+import { getTrustProfile, isLocalUngated, isOpenApiMode } from "../engine/trust-profile";
 import type { EngineEvent, EntityId } from "../types";
 import { HTTP_RATE_LIMITS } from "./http-utils";
 import { memoryObserver } from "./memory-visibility";
@@ -467,7 +467,7 @@ export function securityPosture(engine: Engine): OpsSecurity {
     ungated: isLocalUngated(),
     autonomy: getAutonomyPosture(),
     mcpAuthRequired: mcpAuthRequiredFromEnv(loopbackBind),
-    openApi: process.env.MARINA_OPEN_API === "true",
+    openApi: isOpenApiMode(),
     trustProxy: process.env.MARINA_TRUST_PROXY === "true",
     authRequired: !!engine.config.authRequired,
     loopbackBind,

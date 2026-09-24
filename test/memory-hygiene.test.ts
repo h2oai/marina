@@ -22,7 +22,6 @@ import {
   HYGIENE_TASK,
   HYGIENE_TASK_MARKER,
   hygieneAssistCommand,
-  isMemoryHygieneTick,
   MEMORY_HYGIENE_PHASE,
   type MemoryHygieneDeps,
   runMemoryHygiene,
@@ -335,11 +334,6 @@ describe("runMemoryHygiene", () => {
 
   it("runs on its own hourly phase, distinct from the other hourly jobs", () => {
     expect(MEMORY_HYGIENE_PHASE).toBe(2700);
-    expect(isMemoryHygieneTick(2700)).toBe(true);
-    expect(isMemoryHygieneTick(3600 + 2700)).toBe(true);
-    for (const other of [0, 300, 600, 1200, 1800, 2400, 3000, 3300, 3600]) {
-      expect(isMemoryHygieneTick(other)).toBe(false);
-    }
   });
 });
 

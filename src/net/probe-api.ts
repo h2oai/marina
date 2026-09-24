@@ -25,6 +25,7 @@
 
 import type { RateLimiter } from "../auth/rate-limiter";
 import { Logger } from "../engine/logger";
+import { isOpenApiMode } from "../engine/trust-profile";
 import type { MarinaDB } from "../persistence/database";
 import { getResolver, listResolvers } from "../resolvers/registry";
 import { findLatestSample, writeSample } from "../resolvers/sample-writer";
@@ -55,10 +56,6 @@ function getEnvKeys(): Map<string, string> | null {
     if (secret && agent) keys.set(secret.trim(), agent.trim());
   }
   return keys.size > 0 ? keys : null;
-}
-
-function isOpenApiMode(): boolean {
-  return process.env.MARINA_OPEN_API === "true";
 }
 
 function authenticate(req: Request, db: MarinaDB): { agent: string } | { error: Response } {

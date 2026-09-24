@@ -94,13 +94,6 @@ export async function embeddingProviderFromConfig(
   }
 }
 
-/** The world server entry point: env → provider. `none`/unset → undefined. */
-export async function embeddingProviderFromEnv(
-  env: Env = process.env,
-): Promise<EmbeddingProvider | undefined> {
-  return embeddingProviderFromConfig(parseEmbeddingEnv(env));
-}
-
 /** The provider id is known before the (async, optional) extension loads.
  *  Callers that need a synchronous `MemoryService` — the world server —
  *  wrap the load so the first `embed` awaits it; a load failure surfaces as

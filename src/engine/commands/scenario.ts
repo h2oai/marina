@@ -5,6 +5,7 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import type { ConnectorRuntime } from "../connector-runtime";
+import { extractReadableText } from "../html-text";
 
 /**
  * Scenario command — drives the society-of-agents forecasting pipeline.
@@ -397,59 +398,4 @@ function handleReport(
     eid,
     `${header("Report synthesis queued")}\n${separator()}\n  ${dim("Task:")} #${taskId}\n  ${dim("Board:")} ${SCENARIO_REPORT_BOARD}\n\n${dim("Conductor will recall, synthesize, and write the calibrated forecast.")}`,
   );
-}
-
-// ─── HTML readability extraction ────────────────────────────────────────────
-// (mirrors the implementation in commands/web.ts — kept inline so this file
-// has no cross-command dependency. If a third caller appears, factor out.)
-
-interface ExtractedContent {
-  text: string;
-  title?: string;
-  wordCount: number;
-}
-
-function extractReadableText(html: string): ExtractedContent {
-  let text = html;
-
-  const titleMatch = text.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  const title = titleMatch?.[1] ? titleMatch[1].replace(/\s+/g, " ").trim() : undefined;
-
-  text = text.replace(/<script[\s\S]*?<\/script>/gi, "");
-  text = text.replace(/<style[\s\S]*?<\/style>/gi, "");
-  text = text.replace(/<noscript[\s\S]*?<\/noscript>/gi, "");
-  text = text.replace(/<nav[\s\S]*?<\/nav>/gi, "");
-  text = text.replace(/<footer[\s\S]*?<\/footer>/gi, "");
-  text = text.replace(/<header[\s\S]*?<\/header>/gi, "\n");
-  text = text.replace(/<!--[\s\S]*?-->/g, "");
-
-  const articleMatch = text.match(/<(?:article|main)[^>]*>([\s\S]*?)<\/(?:article|main)>/i);
-  if (articleMatch?.[1] && articleMatch[1].length > 200) {
-    text = articleMatch[1];
-  }
-
-  text = text.replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, "\n\n## $1\n\n");
-  text = text.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, "\n- $1");
-  text = text.replace(/<\/?(p|div|br|tr|blockquote|section|article)[^>]*>/gi, "\n");
-  text = text.replace(/<[^>]+>/g, "");
-  text = decodeEntities(text);
-  text = text.replace(/[ \t]+/g, " ");
-  text = text.replace(/\n[ \t]+/g, "\n");
-  text = text.replace(/\n{3,}/g, "\n\n");
-  text = text.trim();
-
-  const wordCount = text.split(/\s+/).filter(Boolean).length;
-  return { text, title, wordCount };
-}
-
-function decodeEntities(text: string): string {
-  return text
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number.parseInt(n, 10)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(Number.parseInt(h, 16)));
 }

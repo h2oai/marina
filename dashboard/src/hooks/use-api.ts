@@ -29,7 +29,6 @@ import type {
   GroupEntry,
   KeyStatus,
   LogsResponse,
-  MacroEntry,
   MarketEntry,
   McpInfo,
   MediaJob,
@@ -577,14 +576,6 @@ export function useRoomTemplates() {
     queryKey: ["roomTemplates"],
     queryFn: () => fetchApi<RoomTemplateEntry[]>("/api/room-templates"),
     staleTime: 60_000,
-  });
-}
-
-export function useMacros() {
-  return useQuery({
-    queryKey: ["macros"],
-    queryFn: () => fetchApi<MacroEntry[]>("/api/macros"),
-    staleTime: 30_000,
   });
 }
 

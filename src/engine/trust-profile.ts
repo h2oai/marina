@@ -139,6 +139,13 @@ export function isLocalUngated(env: NodeJS.ProcessEnv = process.env): boolean {
   return isLocalProfile(env) && env.MARINA_AUTONOMY?.trim().toLowerCase() !== "guarded";
 }
 
+/** `MARINA_OPEN_API=true` — the dev-only unauthenticated-API switch. Env-only by
+ *  design and the single read every HTTP surface consults: only the exact string
+ *  `"true"` enables it. */
+export function isOpenApiMode(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.MARINA_OPEN_API === "true";
+}
+
 export function describeTrustProfile(profile: TrustProfile = getTrustProfile()): string {
   switch (profile) {
     case "local":

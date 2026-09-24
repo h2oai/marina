@@ -38,7 +38,6 @@ import {
   engineSharedWriteHook,
   formatAccumulationReceipt,
   helperSpawnCommand,
-  isMemoryAccumulationTick,
   LOW_STANDING_WRITE_THRESHOLD,
   MEMORY_ACCUMULATION_PHASE,
   type MemoryDispatchDeps,
@@ -382,11 +381,6 @@ describe("accumulation → reflector", () => {
   it("runs on its own hourly phase, distinct from hygiene and the other hourly jobs", () => {
     expect(MEMORY_ACCUMULATION_PHASE).toBe(900);
     expect(MEMORY_ACCUMULATION_PHASE).not.toBe(MEMORY_HYGIENE_PHASE);
-    expect(isMemoryAccumulationTick(900)).toBe(true);
-    expect(isMemoryAccumulationTick(3600 + 900)).toBe(true);
-    for (const other of [0, 600, 1200, 1800, 2400, 2700, 3000, 3300, 3600]) {
-      expect(isMemoryAccumulationTick(other)).toBe(false);
-    }
   });
 });
 

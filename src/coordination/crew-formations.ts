@@ -26,55 +26,7 @@
  */
 
 import type { CrewFormation } from "../types";
-import {
-  BLACKBOARD_TEMPLATE,
-  CHORUS_TEMPLATE,
-  DEBATE_TEMPLATE,
-  DELIBERATION_TEMPLATE,
-  FOUNDRY_TEMPLATE,
-  MAPREDUCE_TEMPLATE,
-  normalizePatternName,
-  PIPELINE_TEMPLATE,
-  RESEARCH_TEMPLATE,
-  SWARM_TEMPLATE,
-  SYMBIOSIS_TEMPLATE,
-  type TemplateNote,
-} from "../world/templates/orchestration";
-
-// Re-export so callers don't need to know about the orchestration module.
-export type { TemplateNote };
-
-const FREEFORM_TEMPLATE: TemplateNote[] = [
-  {
-    content:
-      "This crew has no formation. Coordinate by talking on the crew channel; " +
-      "decide together how to divide work and merge results. The crew exists " +
-      "for the duration of one task — when the goal is met, complete or dissolve it.",
-    importance: 6,
-    type: "skill",
-  },
-];
-
-const TEMPLATES: Record<CrewFormation, TemplateNote[]> = {
-  deliberation: DELIBERATION_TEMPLATE,
-  chorus: CHORUS_TEMPLATE,
-  foundry: FOUNDRY_TEMPLATE,
-  swarm: SWARM_TEMPLATE,
-  pipeline: PIPELINE_TEMPLATE,
-  debate: DEBATE_TEMPLATE,
-  mapreduce: MAPREDUCE_TEMPLATE,
-  blackboard: BLACKBOARD_TEMPLATE,
-  symbiosis: SYMBIOSIS_TEMPLATE,
-  research: RESEARCH_TEMPLATE,
-  freeform: FREEFORM_TEMPLATE,
-};
-
-/** Return the template notes for a formation. Empty array if unknown.
- * Legacy names in persisted crews (e.g. `nsed`) normalize to their
- * functional form. */
-export function getFormationTemplate(formation: CrewFormation): TemplateNote[] {
-  return TEMPLATES[normalizePatternName(formation) as CrewFormation] ?? [];
-}
+import { normalizePatternName } from "../world/templates/orchestration";
 
 /**
  * Protocol-priority preamble prepended to every formation brief. Measured in

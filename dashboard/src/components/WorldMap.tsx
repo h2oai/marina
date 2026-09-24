@@ -15,6 +15,7 @@ import { type AnimationPlaybackControlsWithThen, animate, motion } from "motion/
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useOperationalAlerts } from "../hooks/use-api";
 import { useWorldState } from "../hooks/use-world-state";
+import { prefersReducedMotion } from "../lib/motion-prefs";
 import type { DashboardEvent, WorldData } from "../lib/types";
 import {
   computeLayout,
@@ -26,11 +27,6 @@ import { TimelineStrip } from "../unified/overlays/TimelineStrip";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 
 const DEFAULT_VIEWBOX = { x: 50, y: 10, w: 900, h: 730 };
-
-function prefersReducedMotion(): boolean {
-  if (typeof window === "undefined") return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
 
 function avg(nums: number[]): number {
   return nums.reduce((a, b) => a + b, 0) / nums.length;

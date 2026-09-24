@@ -19,6 +19,7 @@ import { projectTraces } from "./engine/trace-projection";
 import {
   assertTrustProfileSafe,
   describeTrustProfile,
+  isOpenApiMode,
   resolveTrustProfile,
   setTrustProfile,
 } from "./engine/trust-profile";
@@ -168,7 +169,7 @@ if (!LOOPBACK_ONLY_BIND && !INSECURE_PUBLIC_ACK) {
     logger.error("security", msg);
     throw new Error(msg);
   }
-  if (process.env.MARINA_OPEN_API === "true") {
+  if (isOpenApiMode()) {
     const msg =
       `FATAL: MARINA_OPEN_API=true (unauthenticated API access) combined with a ` +
       `NON-LOOPBACK bind ("${RESOLVED_WS_HOST}") exposes every API endpoint to the ` +
@@ -601,19 +602,19 @@ if (!LOOPBACK_ONLY_BIND) {
 } else {
   logger.info("security", "Bound loopback-only (127.0.0.1) — local-only, not reachable remotely.");
 }
-if (process.env.MARINA_OPEN_API === "true") {
+if (isOpenApiMode()) {
   logger.warn(
     "security",
     "MARINA_OPEN_API=true — API endpoints accept unauthenticated requests (development mode)",
   );
 }
-if (!process.env.MODEL_API_KEYS && process.env.MARINA_OPEN_API !== "true") {
+if (!process.env.MODEL_API_KEYS && !isOpenApiMode()) {
   logger.warn(
     "security",
     "MODEL_API_KEYS is not set — model API endpoints will reject requests. Set MODEL_API_KEYS or MARINA_OPEN_API=true",
   );
 }
-if (!process.env.MEM_API_KEYS && process.env.MARINA_OPEN_API !== "true") {
+if (!process.env.MEM_API_KEYS && !isOpenApiMode()) {
   logger.warn(
     "security",
     "MEM_API_KEYS is not set — memory API endpoints will reject requests. Set MEM_API_KEYS or MARINA_OPEN_API=true",
@@ -703,7 +704,7 @@ if (
   const hasUpstream = engine.agentRuntime.isAvailable();
   const authMode = process.env.MODEL_API_KEYS
     ? "Bearer <token from MODEL_API_KEYS>"
-    : process.env.MARINA_OPEN_API === "true"
+    : isOpenApiMode()
       ? "none (MARINA_OPEN_API=true, dev only)"
       : "NOT CONFIGURED — set MODEL_API_KEYS or MARINA_OPEN_API=true";
   logger.info(

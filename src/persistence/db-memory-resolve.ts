@@ -194,11 +194,6 @@ export function independentEvidence(db: Database, record: MemoryRecord): Indepen
   };
 }
 
-/** Backwards-compatible count — the independent (hash, author) pairs. */
-export function independentEvidenceCount(db: Database, record: MemoryRecord): number {
-  return independentEvidence(db, record).count;
-}
-
 /**
  * Most recently revised first. `created_at` is the CURRENT version's note
  * timestamp (millisecond resolution), so two writes in the same millisecond

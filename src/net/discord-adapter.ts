@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Client, Events, GatewayIntentBits, type Message } from "discord.js";
+import { redeemLinkCode } from "../engine/commands/link";
 import { Logger } from "../engine/logger";
 import type { Connection, Perception } from "../types";
 import type { Adapter, AdapterContext } from "./adapter";
@@ -91,8 +92,15 @@ export class DiscordAdapter implements Adapter {
         if (!text) return;
 
         const existingConnId = userConns.get(discordUserId);
+        // A `link` code binds this Discord user to the code's account (see link.ts).
+        const linked = redeemLinkCode(this.ctx.db, "discord", discordUserId, text);
+        if (linked && existingConnId) {
+          await message.reply(`Linked this account to ${linked.entityName}.`).catch(() => {});
+          return;
+        }
 
         if (!existingConnId) {
+          const loginName = linked?.entityName ?? text;
           // Not connected — treat first message as login name
           const connId = `discord_${++this.connIdCounter}`;
 
@@ -117,7 +125,7 @@ export class DiscordAdapter implements Adapter {
           engine.addConnection(conn);
           userConns.set(discordUserId, connId);
 
-          const result = engine.login(connId, text);
+          const result = engine.login(connId, loginName);
           if ("error" in result) {
             await message.reply(result.error).catch(() => {});
             engine.removeConnection(connId);
@@ -125,8 +133,12 @@ export class DiscordAdapter implements Adapter {
             return;
           }
 
-          this.persistMapping(discordUserId, text);
-          await message.reply(`Logged in as ${text}. Type commands to play!`).catch(() => {});
+          this.persistMapping(discordUserId, loginName);
+          await message
+            .reply(
+              `${linked ? "Linked and logged in" : "Logged in"} as ${loginName}. Type commands to play!`,
+            )
+            .catch(() => {});
           return;
         }
 

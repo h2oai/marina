@@ -30,7 +30,6 @@ import { CONNECTOR_HTTP_TIMEOUT_MS } from "../engine/constants";
 import { guardedFetch, validateFetchUrl } from "./url-guard";
 
 const DEFAULT_GAMMA_BASE = "https://gamma-api.polymarket.com";
-const _DEFAULT_CLOB_BASE = "https://clob.polymarket.com";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

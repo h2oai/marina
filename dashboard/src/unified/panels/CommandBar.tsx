@@ -192,8 +192,6 @@ const ADMIN_TABS: TabDef[] = [
   { key: "memory", label: "Memory" },
 ];
 
-const _ALL_DATA_TAB_KEYS = new Set([...COORD_TABS, ...ADMIN_TABS].map((t) => t.key));
-
 const COORD_TAB_KEYS = new Set([...COORD_TABS, ...ADMIN_TABS].map((t) => t.key));
 
 // ── Message counter ─────────────────────────────────────────────────────────

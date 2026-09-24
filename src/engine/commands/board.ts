@@ -40,10 +40,7 @@ export function boardCommand(
           const lines = [
             header("Boards"),
             separator(),
-            ...all.map((b) => {
-              const _posts = boards.listPosts(b.id, { limit: 0 });
-              return `  ${bold(b.name)} ${dim(`[${b.scopeType}]`)}`;
-            }),
+            ...all.map((b) => `  ${bold(b.name)} ${dim(`[${b.scopeType}]`)}`),
           ];
           ctx.send(input.entity, lines.join("\n"));
           return;

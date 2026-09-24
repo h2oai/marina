@@ -14,6 +14,7 @@ import {
 } from "../engine/constants";
 import type { Engine } from "../engine/engine";
 import { Logger } from "../engine/logger";
+import { isOpenApiMode } from "../engine/trust-profile";
 import type { MemoryService } from "../memory/service";
 import { worldMemoryService } from "../memory/world-service";
 import type { MarinaDB } from "../persistence/database";
@@ -268,7 +269,7 @@ export class WebSocketServer {
       return DESKTOP_OPERATOR_ENTITY_ID as string;
     }
 
-    if (process.env.MARINA_OPEN_API === "true") return OPEN_API_ENTITY_ID as string;
+    if (isOpenApiMode()) return OPEN_API_ENTITY_ID as string;
 
     // Zero-config desktop: a genuine loopback peer (never header-derived) is
     // admitted as an unauthenticated-but-local principal. A remote peer that

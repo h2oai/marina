@@ -6,6 +6,9 @@
  * block. No React, no fetch — everything here is unit-testable in isolation.
  */
 
+// Byte and trust-profile formatting is shared with the Ops tab.
+export { formatBytes, trustProfileClass } from "../ops/format";
+
 import type {
   MemoryJobMarker,
   MemoryJobState,
@@ -75,13 +78,6 @@ export const RESOLUTION_POLICY_CLASS: Record<string, string> = {
 
 export function resolutionPolicyClass(policy: string): string {
   return RESOLUTION_POLICY_CLASS[policy] ?? "border-border text-text";
-}
-
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes)) return "0 B";
-  if (bytes < 1024) return `${Math.round(bytes)} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 /** "3s", "4m", "2h", "5d" — compact age for table cells. */
@@ -223,17 +219,4 @@ export function parseCacheHitAttribute(value: unknown): boolean | undefined {
 export function trustProfileLabel(trust: { profile: string; ungated: boolean }): string {
   const profile = trust.profile.toUpperCase();
   return trust.profile === "local" && trust.ungated ? `${profile} · ungated` : profile;
-}
-
-export function trustProfileClass(profile: string): string {
-  switch (profile) {
-    case "local":
-      return "border-emerald-400/60 bg-emerald-400/10 text-emerald-400";
-    case "shared":
-      return "border-amber-400/60 bg-amber-400/10 text-amber-300";
-    case "public":
-      return "border-red-400/60 bg-red-400/10 text-red-300";
-    default:
-      return "border-border text-text";
-  }
 }

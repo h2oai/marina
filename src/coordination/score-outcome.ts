@@ -15,7 +15,7 @@
 
 import type { MarinaDB } from "../persistence/database";
 import type { Score } from "./score";
-import { characterizeScore, type ScoreShape, shapeSummary } from "./score-shape";
+import { characterizeScore, shapeSummary } from "./score-shape";
 
 export const CONDUCTOR_POOL = "conductor";
 
@@ -28,14 +28,6 @@ export interface ScoreOutcomeInput {
   /** Free-text detail, e.g. "passed 8/10 tests". */
   label?: string;
   recordedBy: string;
-}
-
-export interface ScoreOutcomeRecord {
-  category: string;
-  score: number;
-  /** The full recall-friendly note line. */
-  content: string;
-  shape: ScoreShape;
 }
 
 function ensurePool(db: MarinaDB): { id: string } | undefined {

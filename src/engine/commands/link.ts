@@ -24,11 +24,15 @@ const LINK_NEEDS_USER =
 const CODE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no ambiguous chars (0/O, 1/I)
 
+const CODE_LENGTH = 6;
+const CODE_RE = new RegExp(`^[${CODE_CHARS}]{${CODE_LENGTH}}$`);
+
+/** A code is a bearer credential for the link step, so it comes from the CSPRNG. */
 function generateCode(): string {
+  // 32 symbols divide 256 evenly, so `byte % 32` is unbiased.
+  const bytes = crypto.getRandomValues(new Uint8Array(CODE_LENGTH));
   let code = "";
-  for (let i = 0; i < 6; i++) {
-    code += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
-  }
+  for (const byte of bytes) code += CODE_CHARS[byte % CODE_CHARS.length];
   return code;
 }
 
@@ -48,6 +52,29 @@ export function verifyLinkCode(code: string): { userId: string; entityName: stri
 
   pendingLinks.delete(upper);
   return { userId: pending.userId, entityName: pending.entityName };
+}
+
+/**
+ * Adapter side of `link`: if `text` is a live code, bind the external account
+ * (`adapter`, `externalId`) to the code's user and return the entity name to
+ * log in as. Anything else returns null and the adapter treats the message as
+ * usual. This only records the binding shown by `link status` — the login that
+ * follows is an ordinary passwordless adapter login, so `engine.login` still
+ * applies every gate (auth-required mode, bans, rank cap for remote logins).
+ */
+export function redeemLinkCode(
+  db: Pick<MarinaDB, "linkAdapter"> | undefined,
+  adapter: string,
+  externalId: string,
+  text: string,
+): { entityName: string } | null {
+  if (!db) return null;
+  const candidate = text.trim().toUpperCase();
+  if (!CODE_RE.test(candidate)) return null;
+  const linked = verifyLinkCode(candidate);
+  if (!linked) return null;
+  db.linkAdapter(adapter, externalId, linked.userId);
+  return { entityName: linked.entityName };
 }
 
 export function linkCommand(deps: {

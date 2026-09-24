@@ -700,7 +700,6 @@ export const RoomNode = memo(function RoomNode({ data }: NodeProps) {
               ({ ent, ec, stateColor, isIdle, sprW, sprH, face, orbitDur, beginOffset }) => {
                 const px = 5; // pixel size for the 5x5 face grid
                 const faceW = 5 * px;
-                const _faceH = 5 * px;
                 const bodyOp = isIdle ? 0.55 : 0.92;
 
                 return (

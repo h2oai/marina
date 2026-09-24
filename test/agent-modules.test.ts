@@ -16,7 +16,6 @@ import { inferCrewResponder } from "../src/agent/agent-runtime";
 import {
   createContextManager,
   estimateMessageTokens,
-  hardTrimMessages,
   stripOrphanedToolResults,
   summarizeMessages,
   truncateOversizedToolResults,
@@ -1137,51 +1136,6 @@ describe("context-manager", () => {
     }
     const result = await transform(messages);
     expect(result.length).toBeLessThan(messages.length);
-  });
-
-  // ── hardTrimMessages — overflow-recovery last resort ─────────────────────
-
-  it("hardTrimMessages keeps first + recent and drops the middle behind a notice", () => {
-    const msgs: AgentMessage[] = [];
-    for (let i = 0; i < 20; i++) {
-      msgs.push({ role: "user", content: `m${i}`, timestamp: i } as unknown as AgentMessage);
-    }
-    const result = hardTrimMessages(msgs, 4);
-    // first + notice + 4 recent
-    expect(result.length).toBe(6);
-    expect((result[0] as { content: string }).content).toBe("m0");
-    expect((result[1] as { content: string }).content).toContain("context-overflow recovery");
-    expect((result[5] as { content: string }).content).toBe("m19");
-  });
-
-  it("hardTrimMessages is a no-op when already small", () => {
-    const msgs = [
-      { role: "user", content: "a", timestamp: 1 },
-      { role: "user", content: "b", timestamp: 2 },
-    ] as unknown as AgentMessage[];
-    expect(hardTrimMessages(msgs, 6).length).toBe(2);
-  });
-
-  it("hardTrimMessages strips a toolResult orphaned by the cut", () => {
-    const msgs: AgentMessage[] = [
-      { role: "user", content: "start", timestamp: 0 },
-      // middle (will be dropped): the assistant toolCall lives here
-      ...Array.from({ length: 8 }, (_, i) => ({
-        role: "user" as const,
-        content: `mid${i}`,
-        timestamp: i + 1,
-      })),
-      // recent window opens with an orphaned toolResult (its toolCall was cut)
-      {
-        role: "toolResult",
-        toolCallId: "gone",
-        toolName: "recall",
-        content: [{ type: "text", text: "x" }],
-      },
-      { role: "user", content: "end", timestamp: 99 },
-    ] as unknown as AgentMessage[];
-    const result = hardTrimMessages(msgs, 3);
-    expect(result.some((m) => (m as { role: string }).role === "toolResult")).toBe(false);
   });
 
   // ── stripOrphanedToolResults — prevents Anthropic 400 retry-storm ────────

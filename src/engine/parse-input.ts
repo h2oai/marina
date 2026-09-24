@@ -425,14 +425,6 @@ export function splitOnTerminator(args: string): [string, string | undefined] {
 // genuinely distinguishes `info` from `show` is left alone (both are allowed
 // spellings there and match themselves first).
 
-export const SUB_ALIASES: Readonly<Record<string, string>> = {
-  ls: "list",
-  view: "show",
-  info: "show",
-  remove: "delete",
-  rm: "delete",
-};
-
 /** Verb families: the first member a command supports wins for any other member. */
 const SUB_FAMILIES: readonly (readonly string[])[] = [
   ["list", "ls"],

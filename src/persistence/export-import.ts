@@ -3,6 +3,7 @@
 
 import { Database } from "bun:sqlite";
 import { getErrorMessage } from "../engine/errors";
+import { tableExists } from "./db-maintenance";
 import { rebuildMemoryStorage } from "./db-memory-storage";
 
 // ─── Export Format ──────────────────────────────────────────────────────────
@@ -471,11 +472,6 @@ function getSchemaVersion(db: Database): number {
   } catch {
     return 0;
   }
-}
-
-function tableExists(db: Database, table: string): boolean {
-  const row = db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
-  return row !== null;
 }
 
 function getTableColumns(db: Database, table: string): string[] {

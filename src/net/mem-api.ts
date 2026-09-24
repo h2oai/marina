@@ -15,6 +15,7 @@
 
 import type { RateLimiter } from "../auth/rate-limiter";
 import { sanitizeEntityName } from "../engine/entity-name";
+import { isOpenApiMode } from "../engine/trust-profile";
 import { memoryAccess } from "../memory/access";
 import { expandMemoryRecall } from "../memory/retrieval";
 import { buildUnifiedContext, type UnifiedScope } from "../memory/unified-context";
@@ -29,6 +30,28 @@ function json(data: unknown, status = 200): Response {
 
 function error(status: number, message: string): Response {
   return json({ error: message }, status);
+}
+
+/** Shared validation for a note body (`content`, optional `importance` 1–10, `type`). */
+function parseNoteBody(
+  body: Record<string, unknown>,
+): { content: string; importance: number | undefined; noteType: string } | Response {
+  const content = body.content as string | undefined;
+  if (!content || typeof content !== "string") {
+    return error(400, "content is required (string)");
+  }
+  const importance = body.importance as number | undefined;
+  if (
+    importance !== undefined &&
+    (!Number.isFinite(importance) || importance < 1 || importance > 10)
+  ) {
+    return error(400, "importance must be 1-10");
+  }
+  const noteType = (body.type as string) ?? "observation";
+  if (!VALID_NOTE_TYPES.has(noteType)) {
+    return error(400, `Invalid type. Valid: ${[...VALID_NOTE_TYPES].join(", ")}`);
+  }
+  return { content, importance, noteType };
 }
 
 const VALID_NOTE_TYPES = new Set([
@@ -227,10 +250,6 @@ function getEnvKeys(): MemApiKeySet | null {
   return cachedEnvKeys;
 }
 
-function isOpenApiMode(): boolean {
-  return process.env.MARINA_OPEN_API === "true";
-}
-
 function authenticate(req: Request, db: MarinaDB): { agent: string } | { error: Response } {
   const envKeys = getEnvKeys();
 
@@ -346,21 +365,9 @@ export async function handleMemApi(
   // POST /mem/notes — create note
   if (path === "/mem/notes" && method === "POST") {
     const body = (await req.json()) as Record<string, unknown>;
-    const content = body.content as string | undefined;
-    if (!content || typeof content !== "string") {
-      return error(400, "content is required (string)");
-    }
-    const importance = body.importance as number | undefined;
-    if (
-      importance !== undefined &&
-      (!Number.isFinite(importance) || importance < 1 || importance > 10)
-    ) {
-      return error(400, "importance must be 1-10");
-    }
-    const noteType = (body.type as string) ?? "observation";
-    if (!VALID_NOTE_TYPES.has(noteType)) {
-      return error(400, `Invalid type. Valid: ${[...VALID_NOTE_TYPES].join(", ")}`);
-    }
+    const parsed = parseNoteBody(body);
+    if (parsed instanceof Response) return parsed;
+    const { content, importance, noteType } = parsed;
 
     // Validate every dependency before persisting any part of the request.
     if (body.links !== undefined && !Array.isArray(body.links))
@@ -637,21 +644,9 @@ export async function handleMemApi(
     if (sub === "/notes" && method === "POST") {
       const body = (await req.json()) as Record<string, unknown>;
       if (!access.pool(db.getMemoryPoolById(pool.id))) return error(404, "Pool not found");
-      const content = body.content as string | undefined;
-      if (!content || typeof content !== "string") {
-        return error(400, "content is required (string)");
-      }
-      const importance = body.importance as number | undefined;
-      if (
-        importance !== undefined &&
-        (!Number.isFinite(importance) || importance < 1 || importance > 10)
-      ) {
-        return error(400, "importance must be 1-10");
-      }
-      const noteType = (body.type as string) ?? "observation";
-      if (!VALID_NOTE_TYPES.has(noteType)) {
-        return error(400, `Invalid type. Valid: ${[...VALID_NOTE_TYPES].join(", ")}`);
-      }
+      const parsed = parseNoteBody(body);
+      if (parsed instanceof Response) return parsed;
+      const { content, importance, noteType } = parsed;
       const id = db.addPoolNote(pool.id, agent, content, importance, noteType);
       return json({ id, pool: poolName }, 201);
     }
