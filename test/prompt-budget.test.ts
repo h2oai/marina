@@ -352,7 +352,8 @@ describe("mid-run compaction (prepareNextTurn)", () => {
     );
     try {
       const agent = i.agent;
-      agent.state.systemPrompt = "sys";
+      // pi-agent-core ≥ 0.86: the prompt is the transcript's leading system message.
+      adapter.setSystemPrompt("sys");
       agent.state.tools = [
         {
           name: "probe",
@@ -369,9 +370,17 @@ describe("mid-run compaction (prepareNextTurn)", () => {
       const TOOL_TURNS = 8;
       let calls = 0;
       const messageCounts: number[] = [];
+      const leadingPrompts: unknown[] = [];
       agent.streamFunction = async (model, context) => {
         calls++;
-        messageCounts.push(context.messages.length);
+        // pi-agent-core ≥ 0.86 sends the prompt + tool declarations as `system`
+        // messages; count the conversation, and record the leading prompt.
+        const conversation = (
+          context.messages as Array<{ role: string; content?: unknown }>
+        ).filter((m) => m.role !== "system");
+        messageCounts.push(conversation.length);
+        const lead = (context.messages as Array<{ role: string; content?: unknown }>)[0];
+        leadingPrompts.push(lead?.role === "system" ? lead.content : undefined);
         const toolTurn = calls <= TOOL_TURNS;
         const message: AssistantMessage = {
           role: "assistant",
@@ -413,6 +422,8 @@ describe("mid-run compaction (prepareNextTurn)", () => {
       expect(messageCounts[TOOL_TURNS]).toBe(14);
       // Before the crossing, the working context grew untouched.
       expect(messageCounts.slice(0, 7)).toEqual([1, 3, 5, 7, 9, 11, 13]);
+      // Compaction never drops or rewrites the system prompt.
+      expect(leadingPrompts.every((p) => p === "sys")).toBe(true);
       // The threshold is the shared constant the transform uses.
       expect(CONTEXT_PRUNE_THRESHOLD).toBe(0.8);
     } finally {

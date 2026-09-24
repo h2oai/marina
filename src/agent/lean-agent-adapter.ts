@@ -1399,7 +1399,10 @@ export class LeanAgentAdapter implements AgentHandle {
       // Turn cap per prompt(): a run that keeps calling tools without finishing
       // yields to the next cycle (MAX_TURNS_PER_PROMPT) — complements the
       // tool-call run cap enforced on tool_execution_end.
-      shouldStopAfterTurn: () => this.shouldStopAfterTurn(),
+      // pi-agent-core ≥ 0.87: `finishTurn` replaces `shouldStopAfterTurn`. It
+      // runs after the turn's tool results, before `turn_end`; the per-prompt
+      // counter is bumped on `turn_start`, so the cap check is unchanged.
+      finishTurn: () => (this.shouldStopAfterTurn() ? { action: "end" as const } : undefined),
       transformContext: contextTransform,
       // Mid-run compaction: `transformContext` shapes each request but never
       // shrinks the loop's working context, so a long tool-calling run keeps
@@ -3070,9 +3073,11 @@ The goal is a smaller, sharper memory — not more notes.`;
     try {
       const gauge = computeContextBudget({
         model: { ...this.model, contextWindow: this.effectiveContextWindow } as Model<Api>,
-        systemPrompt: context.context.systemPrompt ?? this.agent.state.systemPrompt ?? "",
-        tools: context.context.tools ?? this.agent.state.tools,
-        messages,
+        // pi-agent-core ≥ 0.86 carries the system prompt as transcript system
+        // messages; count it once (the replayed prompt) and gauge the rest.
+        systemPrompt: this.agent.state.systemPrompt ?? "",
+        tools: this.agent.state.tools,
+        messages: messages.filter((m) => m.role !== "system"),
         targetRatio: CONTEXT_PRUNE_TARGET,
       });
       if (gauge.usageRatio < CONTEXT_PRUNE_THRESHOLD) return undefined;
@@ -3172,7 +3177,10 @@ The goal is a smaller, sharper memory — not more notes.`;
       // pi-agent-core awaits message_end listeners before progressing to tools,
       // another model call, or idle. Partial streaming deltas are not receipts.
       if (event.type === "message_end")
-        if (!journalFailed) {
+        if (!journalFailed && (event.message as { role?: string }).role !== "system") {
+          // `system` messages (pi-agent-core ≥ 0.86: the prompt and tool
+          // announcements) are code-derived state, regenerated on restart — the
+          // continuity journal records the conversation, not tool schemas.
           // Pi emits a synthetic error message after a listener throws. Do not
           // advance the durable checkpoint past the original, uncommitted message
           // or retry storage with an already-aborted signal during error cleanup.
@@ -3788,7 +3796,23 @@ The goal is a smaller, sharper memory — not more notes.`;
   }
 
   setSystemPrompt(prompt: string | undefined): void {
-    this.agent.state.systemPrompt = prompt || getLeanSystemPrompt(this.rolePrompt);
+    this.replaceSystemPrompt(prompt || getLeanSystemPrompt(this.rolePrompt));
+  }
+
+  /**
+   * Replace the base system prompt. pi-agent-core ≥ 0.86 keeps it as the
+   * transcript's leading system message (`agent.state.systemPrompt` is a
+   * read-only replay); a LATER system message would only ADD instructions, so
+   * the leading message's content is swapped in place — one base prompt, the
+   * same bytes a direct assignment used to produce.
+   */
+  private replaceSystemPrompt(prompt: string): void {
+    const messages = this.agent.state.messages;
+    const first = messages[0];
+    this.agent.state.messages =
+      first?.role === "system"
+        ? [{ ...first, content: prompt }, ...messages.slice(1)]
+        : [{ role: "system", content: prompt, timestamp: Date.now() }, ...messages];
   }
 
   subscribe(handler: (event: AgentEvent) => void): () => void {
@@ -3846,7 +3870,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       this.config.role = opts.role;
       // Update rolePrompt and regenerate system prompt
       this.rolePrompt = opts.rolePrompt ?? null;
-      this.agent.state.systemPrompt = getLeanSystemPrompt(this.rolePrompt);
+      this.replaceSystemPrompt(getLeanSystemPrompt(this.rolePrompt));
       this.log.info(
         LEAN_AGENT_LOG_CATEGORY,
         `role reconfigured to "${opts.role}", system prompt regenerated`,

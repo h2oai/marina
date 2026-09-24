@@ -111,7 +111,7 @@ const toolSearchSchema = Type.Object({
  * OpenAI-completions self-proxy, so Marina loads schemas itself: the
  * description carries the catalog (`name — one line`), a call resolves the
  * requested tools, hands them to `onLoad` (the adapter registers them for the
- * rest of the session), and the result names them via `addedToolNames`.
+ * rest of the session), and the result names them in `details.loaded`.
  */
 export function createToolSearchTool(
   deferred: readonly AgentTool[],
@@ -155,7 +155,6 @@ export function createToolSearchTool(
           },
         ],
         details: { loaded: matches.map((t) => t.name), unknown },
-        addedToolNames: matches.map((t) => t.name),
       };
     },
   };

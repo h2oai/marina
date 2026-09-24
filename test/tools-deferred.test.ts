@@ -82,7 +82,7 @@ describe("deferred tool schemas (full profile)", () => {
     expect(resident.some((t) => t.name === "marina_look")).toBe(false);
     const loader = resident.find((t) => t.name === TOOL_SEARCH_NAME)!;
     const result = await loader.execute("1", { names: ["marina_look"] });
-    expect(result.addedToolNames).toEqual(["marina_look"]);
+    expect((result.details as { loaded: string[] }).loaded).toEqual(["marina_look"]);
     expect(result.content[0]).toMatchObject({ type: "text" });
     const look = live.find((t) => t.name === "marina_look")!;
     expect(look).toBeTruthy();
@@ -104,7 +104,7 @@ describe("deferred tool schemas (full profile)", () => {
     const loader = resident.find((t) => t.name === TOOL_SEARCH_NAME)!;
     const result = await loader.execute("1", { query: "canvas" });
     expect(live.some((t) => t.name === "marina_canvas")).toBe(true);
-    expect(result.addedToolNames?.length).toBeGreaterThan(0);
+    expect((result.details as { loaded: string[] }).loaded.length).toBeGreaterThan(0);
     await expect(loader.execute("2", { names: ["marina_nope"] })).rejects.toThrow(
       /unknown: marina_nope/,
     );
