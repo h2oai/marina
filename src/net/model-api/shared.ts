@@ -8,6 +8,7 @@
 
 import { getInternalModelToken } from "../../agent/agent-runtime";
 import { secretsEqual } from "../../auth/secret-compare";
+import { isOpenApiMode } from "../../engine/trust-profile";
 import { buildAliasMap } from "../compat-profiles";
 import { corsHeaders } from "../cors";
 import { MEMORY_RECEIPT_HEADER } from "../memory-receipt";
@@ -76,10 +77,6 @@ export function forwardPassthruHeaders(
 // When MODEL_API_KEYS is set, only requests with a valid Bearer token are accepted.
 // When MARINA_OPEN_API=true, the API accepts unauthenticated requests (development mode).
 // When neither is set, the API returns 401.
-
-function isOpenApiMode(): boolean {
-  return process.env.MARINA_OPEN_API === "true";
-}
 
 /**
  * Result of authenticating a model-API request. The integrator constructs this

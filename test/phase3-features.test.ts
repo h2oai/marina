@@ -3,13 +3,13 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { RateLimiter } from "../src/auth/rate-limiter";
-import { verifyLinkCode } from "../src/engine/commands/link";
+import { redeemLinkCode, verifyLinkCode } from "../src/engine/commands/link";
 import { Engine } from "../src/engine/engine";
 import { RoomSandbox } from "../src/engine/room-sandbox";
 import { MarinaDB } from "../src/persistence/database";
 import type { CommandInput, EntityId, RoomContext, RoomId, RoomModule } from "../src/types";
 import { roomId } from "../src/types";
-import { cleanupDb, grantAllGates, MockConnection, makeTestRoom } from "./helpers";
+import { cleanupDb, grantAllGates, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
 
 // ─── RoomSandbox ─────────────────────────────────────────────────────────────
 
@@ -264,6 +264,28 @@ describe("Link Command", () => {
     conn.clear();
     engine.processCommand(entityId, "link unlink telegram");
     expect(conn.lastText()).toContain("No telegram account is linked");
+  });
+
+  it("an adapter redeems a code once, binding the external account to the user", () => {
+    conn.clear();
+    engine.processCommand(entityId, "link");
+    const code = stripAnsi(conn.lastText()).match(/Your code: ([A-Z0-9]{6})/)?.[1];
+    expect(code).toBeDefined();
+
+    // Not a code, or an unknown one: the adapter falls through to a normal login.
+    expect(redeemLinkCode(db, "telegram", "4242", "LinkTester")).toBeNull();
+    expect(redeemLinkCode(db, "telegram", "4242", "ZZZZZZ")).toBeNull();
+
+    expect(redeemLinkCode(db, "telegram", "4242", ` ${code!.toLowerCase()} `)).toEqual({
+      entityName: "LinkTester",
+    });
+    expect(db.getLinkedUser("telegram", "4242")?.user_id).toBe(db.getUserByName("LinkTester")!.id);
+    // Single use.
+    expect(redeemLinkCode(db, "telegram", "9999", code!)).toBeNull();
+
+    conn.clear();
+    engine.processCommand(entityId, "link status");
+    expect(conn.lastText()).toContain("4242");
   });
 });
 

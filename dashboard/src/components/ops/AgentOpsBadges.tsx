@@ -3,7 +3,7 @@
 
 /**
  * Per-agent-row cost + pause badges shared by EntityRoster and
- * AgentLaunchPanel, fed by the same `AgentOperatorRow` the Admin → Ops table
+ * AgentLaunchContent, fed by the same `AgentOperatorRow` the Admin → Ops table
  * shows. Renders nothing until the ops overview has loaded (or when the row
  * is outside the caller's scope), so the rows never flash placeholders.
  */

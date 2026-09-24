@@ -4,6 +4,9 @@
 import type { Database } from "bun:sqlite";
 import * as tasksDb from "./db-tasks";
 
+const average = (values: number[]) =>
+  values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+
 // ─── Productivity sessions and primitive usage ─────────────────────────────
 
 export function startProductivitySession(
@@ -90,34 +93,23 @@ export function finishProductivitySession(
   );
 }
 
-export function getProductivitySummary(db: Database, entityName?: string): ProductivitySummary {
-  const rows = (
-    entityName
-      ? db
-          .query(
-            "SELECT * FROM productivity_sessions WHERE completed_at IS NOT NULL AND entity_name=? ORDER BY completed_at",
-          )
-          .all(entityName)
-      : db
-          .query(
-            "SELECT * FROM productivity_sessions WHERE completed_at IS NOT NULL ORDER BY completed_at",
-          )
-          .all()
-  ) as Array<{
-    outcome: string;
-    quality: number;
-    started_at: number;
-    completed_at: number;
-    start_tool_calls: number;
-    end_tool_calls: number | null;
-    handoffs: number;
-  }>;
+interface ProductivityRow {
+  outcome: string;
+  started_at: number;
+  completed_at: number;
+  start_tool_calls: number;
+  end_tool_calls: number | null;
+  handoffs: number;
+}
+
+function computeProductivitySummary(
+  rows: ProductivityRow[],
+  entityName?: string,
+): ProductivitySummary {
   const durations = rows
     .map((r) => Math.max(0, r.completed_at - r.started_at))
     .sort((a, b) => a - b);
   const successes = rows.filter((r) => r.outcome === "approved").length;
-  const average = (values: number[]) =>
-    values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
   return {
     entityName: entityName ?? null,
     outcomes: rows.length,
@@ -138,12 +130,41 @@ export function getProductivitySummary(db: Database, entityName?: string): Produ
   };
 }
 
+export function getProductivitySummary(db: Database, entityName?: string): ProductivitySummary {
+  const rows = (
+    entityName
+      ? db
+          .query(
+            "SELECT outcome, started_at, completed_at, start_tool_calls, end_tool_calls, handoffs FROM productivity_sessions WHERE completed_at IS NOT NULL AND entity_name=? ORDER BY completed_at",
+          )
+          .all(entityName)
+      : db
+          .query(
+            "SELECT outcome, started_at, completed_at, start_tool_calls, end_tool_calls, handoffs FROM productivity_sessions WHERE completed_at IS NOT NULL ORDER BY completed_at",
+          )
+          .all()
+  ) as ProductivityRow[];
+  return computeProductivitySummary(rows, entityName);
+}
+
 export function getProductivityLeaderboard(db: Database, limit = 20): ProductivitySummary[] {
-  const names = db
-    .query("SELECT DISTINCT entity_name FROM productivity_sessions WHERE completed_at IS NOT NULL")
-    .all() as { entity_name: string }[];
-  return names
-    .map((row) => getProductivitySummary(db, row.entity_name))
+  const rows = db
+    .query(
+      "SELECT entity_name, outcome, started_at, completed_at, start_tool_calls, end_tool_calls, handoffs FROM productivity_sessions WHERE completed_at IS NOT NULL ORDER BY entity_name, completed_at",
+    )
+    .all() as Array<ProductivityRow & { entity_name: string }>;
+  const byEntity = new Map<string, ProductivityRow[]>();
+  for (const row of rows) {
+    const { entity_name: name, ...rest } = row;
+    const list = byEntity.get(name) ?? [];
+    list.push(rest);
+    byEntity.set(name, list);
+  }
+  const summaries: ProductivitySummary[] = [];
+  for (const [name, group] of byEntity) {
+    summaries.push(computeProductivitySummary(group, name));
+  }
+  return summaries
     .sort((a, b) => b.successes - a.successes || a.averageDurationMs - b.averageDurationMs)
     .slice(0, limit);
 }
@@ -177,8 +198,6 @@ export function getProductivityTrend(
     const date = new Date(row.completed_at).toISOString().slice(0, 10);
     groups.set(date, [...(groups.get(date) ?? []), row]);
   }
-  const average = (values: number[]) =>
-    values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
   return [...groups.entries()].map(([date, entries]) => ({
     date,
     outcomes: entries.length,
@@ -333,8 +352,6 @@ export function getPrimitiveUsageSummary(
          GROUP BY ps.id`,
     )
     .all(...args) as Array<{ outcome: string; meaningful: number }>;
-  const average = (values: number[]) =>
-    values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
   return {
     entityName: entityName ?? null,
     commands,
@@ -418,11 +435,95 @@ export function getPromptOutcomeSummaries(db: Database, days = 30): PromptOutcom
 }
 
 export function getPrimitiveUsageLeaderboard(db: Database, limit = 20): PrimitiveUsageSummary[] {
-  const names = db
-    .query("SELECT DISTINCT actor_name FROM primitive_usage WHERE actor_kind='agent'")
-    .all() as Array<{ actor_name: string }>;
-  return names
-    .map((row) => getPrimitiveUsageSummary(db, row.actor_name))
+  const since = Date.now() - 7 * 86_400_000;
+  const mainRows = db
+    .query(
+      `SELECT actor_name,
+          SUM(CASE WHEN source='command' THEN 1 ELSE 0 END) commands,
+          SUM(CASE WHEN source='command' AND meaningful=1 THEN 1 ELSE 0 END) meaningful_actions,
+          SUM(CASE WHEN source='command' AND world_action=1 THEN 1 ELSE 0 END) world_actions,
+          SUM(CASE WHEN source='command' AND communication=1 THEN 1 ELSE 0 END) communications,
+          COUNT(DISTINCT CASE WHEN source='command' AND meaningful=1 THEN primitive END) diversity,
+          SUM(CASE WHEN source='agent_tool' THEN 1 ELSE 0 END) tool_calls,
+          SUM(CASE WHEN source='agent_tool' AND tool_name LIKE 'marina_%' THEN 1 ELSE 0 END) marina_tools,
+          SUM(CASE WHEN source='agent_tool' AND tool_name='think' THEN 1 ELSE 0 END) reasoning_only,
+          SUM(CASE WHEN source='agent_tool' AND risk_class='consequential' THEN 1 ELSE 0 END) consequential_tools,
+          SUM(CASE WHEN source='agent_tool' AND trust_sources IS NOT NULL THEN 1 ELSE 0 END) untrusted_tools
+         FROM primitive_usage WHERE actor_kind='agent' AND created_at>=?
+         GROUP BY actor_name`,
+    )
+    .all(since) as Array<{
+    actor_name: string;
+    commands: number | null;
+    meaningful_actions: number | null;
+    world_actions: number | null;
+    communications: number | null;
+    diversity: number | null;
+    tool_calls: number | null;
+    marina_tools: number | null;
+    reasoning_only: number | null;
+    consequential_tools: number | null;
+    untrusted_tools: number | null;
+  }>;
+  const topRows = db
+    .query(
+      `SELECT actor_name, primitive, COUNT(*) as count
+         FROM primitive_usage
+         WHERE actor_kind='agent' AND created_at>=? AND source='command' AND meaningful=1
+         GROUP BY actor_name, primitive
+         ORDER BY actor_name, count DESC, primitive`,
+    )
+    .all(since) as Array<{ actor_name: string; primitive: string; count: number }>;
+  const versionRows = db
+    .query(
+      `SELECT DISTINCT actor_name, prompt_version
+         FROM primitive_usage
+         WHERE actor_kind='agent' AND created_at>=? AND prompt_version IS NOT NULL
+         ORDER BY actor_name, prompt_version`,
+    )
+    .all(since) as Array<{ actor_name: string; prompt_version: string }>;
+  const topMap = new Map<string, Array<{ primitive: string; count: number }>>();
+  for (const row of topRows) {
+    const list = topMap.get(row.actor_name) ?? [];
+    if (list.length < 8) {
+      list.push({ primitive: row.primitive, count: row.count });
+      topMap.set(row.actor_name, list);
+    }
+  }
+  const versionMap = new Map<string, string[]>();
+  for (const row of versionRows) {
+    const list = versionMap.get(row.actor_name) ?? [];
+    list.push(row.prompt_version);
+    versionMap.set(row.actor_name, list);
+  }
+  const summaries: PrimitiveUsageSummary[] = [];
+  for (const row of mainRows) {
+    const commands = row.commands ?? 0;
+    const meaningfulActions = row.meaningful_actions ?? 0;
+    summaries.push({
+      entityName: row.actor_name,
+      commands,
+      meaningfulActions,
+      meaningfulRate: commands ? meaningfulActions / commands : 0,
+      worldActions: row.world_actions ?? 0,
+      communications: row.communications ?? 0,
+      primitiveDiversity: row.diversity ?? 0,
+      activeParticipants: 0,
+      activeAgents: 0,
+      toolCalls: row.tool_calls ?? 0,
+      marinaToolCalls: row.marina_tools ?? 0,
+      reasoningOnlyCalls: row.reasoning_only ?? 0,
+      consequentialToolCalls: row.consequential_tools ?? 0,
+      untrustedToolCalls: row.untrusted_tools ?? 0,
+      lastActionAt: null,
+      outcomeSessions: 0,
+      approvedMeaningfulAverage: 0,
+      failedMeaningfulAverage: 0,
+      topPrimitives: topMap.get(row.actor_name) ?? [],
+      promptVersions: versionMap.get(row.actor_name) ?? [],
+    });
+  }
+  return summaries
     .sort(
       (a, b) =>
         b.meaningfulActions - a.meaningfulActions ||

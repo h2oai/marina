@@ -10,7 +10,7 @@ Standalone artifacts that show what's possible to build _on top of_ Marina, rath
 
 These aren't under `examples/` but solve adjacent problems:
 
-- **`scripts/`** — short, runnable CLI helpers: `acp.ts` (Agent Client Protocol bridge for Zed / VS Code), `connect.ts` (the `marina` CLI binary — REPL, one-shot, pipe modes), `init.ts` (project bootstrap), `generate-grid-rooms.ts` (programmatic room creation).
+- **`scripts/`** — short, runnable CLI helpers: `acp.ts` (Agent Client Protocol bridge for Zed / VS Code), `connect.ts` (the `marina` CLI binary — REPL, one-shot, pipe modes), `init.ts` (project bootstrap).
 - **`skills/`** — Markdown-with-frontmatter skill packages, Claude-Code-compatible (`marina-claude`). Loaded into worlds via `seedSkills(db, dir)` so agents `skill search` and `skill import` them.
 - **`worlds/`** — Each world definition is itself a worked example of how to compose rooms, projects, traits, roles, and orchestration patterns. Useful templates: `default.ts` (broad launchpad), `markets.ts` (prediction-market world), `craft.ts` (spec-driven dev), `personal.ts` (single-agent self-improvement).
 

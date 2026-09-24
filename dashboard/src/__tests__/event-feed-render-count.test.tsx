@@ -7,8 +7,8 @@
  * `useWorldState((s) => s.eventFeed)`, so every WebSocket event (the store
  * replaces the 200-item array each time) re-rendered the ~2,900- and
  * ~3,250-line components. Now they read the feed through non-reactive
- * `getState()` + `subscribe` bridges (unified/hooks/use-event-feed-bridge.ts,
- * command-bar/EventsTab.tsx) — the pattern WorldMap.tsx documents.
+ * `getState()` + `subscribe` bridges (unified/hooks/use-event-feed-bridge.ts)
+ * — the pattern WorldMap.tsx documents.
  *
  * Two fences:
  *  1. Render counting with React.Profiler — the OLD pattern (reactive selector)
@@ -28,7 +28,6 @@ import {
 } from "../unified/hooks/use-event-feed-bridge";
 // Source text of the two giants for the static fence (Vite `?raw` import).
 import commandBarSource from "../unified/panels/CommandBar.tsx?raw";
-import { useBatchedEventFeed } from "../unified/panels/command-bar/EventsTab";
 import unifiedCanvasSource from "../unified/UnifiedCanvas.tsx?raw";
 import { resetWorldState } from "./test-utils";
 
@@ -152,31 +151,6 @@ describe("eventFeed updates and re-renders", () => {
     // A second unrelated event after the pill: still no extra render.
     act(() => useWorldState.getState().pushEvent({ ...ev(101), timestamp: Date.now() + 1 }));
     expect(count.renders - base).toBe(1);
-  });
-
-  it("EventsTab's batched feed collapses a burst into one state update", () => {
-    let renders = 0;
-    function Harness() {
-      renders += 1;
-      const feed = useBatchedEventFeed();
-      return <div>{feed.length}</div>;
-    }
-    // Defer rAF so the burst lands before the flush.
-    const queued: FrameRequestCallback[] = [];
-    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
-      queued.push(cb);
-      return queued.length;
-    });
-    render(<Harness />);
-    const base = renders;
-    act(() => {
-      for (let i = 0; i < 30; i++) useWorldState.getState().pushEvent(ev(i));
-    });
-    expect(renders - base).toBe(0);
-    act(() => {
-      for (const cb of queued.splice(0)) cb(0);
-    });
-    expect(renders - base).toBe(1);
   });
 
   it("neither giant component subscribes to eventFeed reactively (static fence)", () => {

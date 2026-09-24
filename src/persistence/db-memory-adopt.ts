@@ -436,4 +436,3 @@ export function memoryAdoptRepository(db: Database) {
     },
   };
 }
-export type MemoryAdoptRepository = ReturnType<typeof memoryAdoptRepository>;

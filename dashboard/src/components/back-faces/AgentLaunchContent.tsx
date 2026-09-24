@@ -3,7 +3,7 @@
 
 import { Bot, Play, Send, Square } from "lucide-react";
 import { useMemo, useState } from "react";
-import { useAgents, useKeys, useModels, useRoles } from "../../hooks/use-api";
+import { useAgents, useKeys, useModels, useOpsOverview, useRoles } from "../../hooks/use-api";
 import { postApi } from "../../lib/api";
 import {
   DEFAULT_FALLBACK_MODEL,
@@ -12,12 +12,16 @@ import {
   providerLabel,
   totalModelCount,
 } from "../../lib/model-catalog";
+import type { AgentOperatorRow } from "../../lib/ops-types";
 import type { AgentStatusFull, ProviderGroup } from "../../lib/types";
 import { cn } from "../../lib/utils";
+import { AgentOpsBadges, opsRowsByName } from "../ops/AgentOpsBadges";
 
 /** Agent launch + running agents — used as back-face content inside EntityRoster. */
 export function AgentLaunchContent() {
   const { data: agents } = useAgents();
+  const { data: ops } = useOpsOverview();
+  const opsRows = opsRowsByName(ops?.agents);
   const running = agents?.filter((a) => a.state !== "stopped" && a.state !== "error") ?? [];
 
   return (
@@ -29,7 +33,7 @@ export function AgentLaunchContent() {
             Running ({running.length})
           </div>
           {running.map((a) => (
-            <RunningAgent key={a.name} agent={a} />
+            <RunningAgent key={a.name} agent={a} ops={opsRows[a.name]} />
           ))}
         </div>
       )}
@@ -240,7 +244,7 @@ function fmtTokens(n: number | undefined): string {
   return `${k >= 10 ? Math.round(k) : k.toFixed(1)}k`;
 }
 
-function RunningAgent({ agent }: { agent: AgentStatusFull }) {
+function RunningAgent({ agent, ops }: { agent: AgentStatusFull; ops?: AgentOperatorRow }) {
   const [attention, setAttention] = useState("");
   const [sending, setSending] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -288,6 +292,7 @@ function RunningAgent({ agent }: { agent: AgentStatusFull }) {
         </span>
         <span className="text-text-dim">{modelShort}</span>
         {agent.role && <span className="text-accent">{agent.role}</span>}
+        <AgentOpsBadges row={ops} />
         <span className="flex-1" />
         <span className={cn("text-[9px]", stateColor[agent.state] ?? "text-text-dim")}>
           {agent.state}
@@ -301,6 +306,7 @@ function RunningAgent({ agent }: { agent: AgentStatusFull }) {
           }}
           className="text-text-dim hover:text-red-400 transition-colors"
           title="Stop"
+          aria-label={`Stop ${agent.name}`}
         >
           <Square size={9} />
         </button>

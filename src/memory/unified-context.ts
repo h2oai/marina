@@ -177,8 +177,6 @@ export function relevantToQuery(
   return overlap >= minOverlap(terms.length) && distinct;
 }
 
-/** Durable-only tiers — `scope: "evidence"` renders just these. */
-const DURABLE_TIERS: readonly UnifiedTier[] = ["evidence", "proposal"];
 const LEGACY_TIERS: readonly UnifiedTier[] = ["skill", "trusted", "unverified"];
 
 export interface UnifiedContextItem {
@@ -860,10 +858,6 @@ export function unifiedLegacyNoteIds(result: UnifiedContextResult): number[] {
     }
   }
   return ids;
-}
-
-export function isDurableTier(tier: UnifiedTier): boolean {
-  return DURABLE_TIERS.includes(tier);
 }
 
 /**

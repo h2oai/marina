@@ -60,7 +60,7 @@ import type {
 } from "../sdk/memory-assistance";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
 import type { EngineEvent, EntityId } from "../types";
-import { FACT_LIKE_TIERS, NOTE_IMPORTANCE_INTERVAL } from "./constants";
+import { FACT_LIKE_TIERS } from "./constants";
 import type { Engine } from "./engine";
 import { tryLogAsync } from "./errors";
 import { isLocalProfile } from "./trust-profile";
@@ -532,11 +532,6 @@ async function accumulationForEntity(
     { tier: "process", noteType: "observation", importance: 3 },
   );
   return { ...report, jobId, dispatched: true };
-}
-
-/** True on the tick the hourly accumulation pass should run. */
-export function isMemoryAccumulationTick(tickCount: number): boolean {
-  return tickCount % NOTE_IMPORTANCE_INTERVAL === MEMORY_ACCUMULATION_PHASE;
 }
 
 // ─── Trigger (c): low-standing shared write → evaluator ──────────────────

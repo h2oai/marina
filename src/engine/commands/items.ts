@@ -8,6 +8,8 @@ import { splitOn } from "../parse-input";
 export function getCommand(deps: {
   getEntity: (id: EntityId) => Entity | undefined;
   findObjectInRoom: (name: string, room: RoomId) => Entity | undefined;
+  /** Relocate through the entity manager so its room index stays in sync. */
+  moveEntity: (id: EntityId, room: RoomId) => void;
 }): CommandDef {
   return {
     name: "get",
@@ -37,7 +39,7 @@ export function getCommand(deps: {
 
       // Move object from room to inventory
       entity.inventory.push(obj.id);
-      obj.room = "inventory" as RoomId;
+      deps.moveEntity(obj.id, "inventory" as RoomId);
       obj.properties._owner = entity.id;
 
       ctx.send(input.entity, `You pick up ${fmtEntity(obj.name)}.`);
@@ -53,6 +55,8 @@ export function getCommand(deps: {
 export function dropCommand(deps: {
   getEntity: (id: EntityId) => Entity | undefined;
   getEntityById: (id: EntityId) => Entity | undefined;
+  /** Relocate through the entity manager so its room index stays in sync. */
+  moveEntity: (id: EntityId, room: RoomId) => void;
 }): CommandDef {
   return {
     name: "drop",
@@ -88,7 +92,7 @@ export function dropCommand(deps: {
 
       // Move object from inventory to room
       entity.inventory.splice(foundIdx, 1);
-      found.room = entity.room;
+      deps.moveEntity(found.id, entity.room);
       found.properties._owner = undefined;
 
       ctx.send(input.entity, `You drop ${fmtEntity(found.name)}.`);

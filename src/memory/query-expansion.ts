@@ -257,12 +257,6 @@ export function expansionForEntityCached(
   return expansionFromVocabulary(query, entry.vocabulary);
 }
 
-/** Await any in-flight vocabulary refreshes (tests) and optionally clear the cache. */
-export async function settleVocabularyCache(clear = false): Promise<void> {
-  await Promise.allSettled([...vocabularyCache.values()].map((e) => e.refreshing));
-  if (clear) vocabularyCache.clear();
-}
-
 export function expansionFromVocabulary(
   query: string,
   vocabulary: MemoryVocabulary,

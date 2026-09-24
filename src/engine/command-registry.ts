@@ -299,12 +299,14 @@ export function registerBuiltinCommands(engine: Engine): void {
         const lower = name.toLowerCase();
         return inRoom.find((e) => e.kind === "object" && e.name.toLowerCase().startsWith(lower));
       },
+      moveEntity: (id, room) => engine.entities.move(id, room),
     }),
   );
   engine.commands.registerBuiltin(
     dropCommand({
       getEntity: (id) => engine.entities.get(id),
       getEntityById: (id) => engine.entities.get(id),
+      moveEntity: (id, room) => engine.entities.move(id, room),
     }),
   );
   engine.commands.registerBuiltin(

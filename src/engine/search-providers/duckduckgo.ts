@@ -13,6 +13,7 @@
  */
 
 import type { ConnectorRuntime } from "../connector-runtime";
+import { decodeEntities } from "../html-text";
 import type { SearchOpts, SearchProvider, SearchResult } from "./index";
 
 export function duckDuckGoProvider(): SearchProvider {
@@ -207,12 +208,5 @@ async function ddgInstantAnswers(
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function stripTags(html: string): string {
-  return html
-    .replace(/<[^>]+>/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, " ");
+  return decodeEntities(html.replace(/<[^>]+>/g, ""));
 }

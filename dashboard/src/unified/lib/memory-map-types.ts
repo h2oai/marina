@@ -140,11 +140,6 @@ export function memoryFlowNodeId(nodeId: string): string {
   return `mem-${nodeId}`;
 }
 
-/** Inverse of `memoryFlowNodeId` for `mem-*` ids; null for anything else. */
-export function memoryNodeIdFromFlowId(flowId: string): string | null {
-  return flowId.startsWith("mem-") ? flowId.slice(4) : null;
-}
-
 // ── Visual vocabulary ───────────────────────────────────────────────────────
 
 /** Job ring colors by state (pending amber, running cyan, answered emerald, abstained slate, cancelled rose). */

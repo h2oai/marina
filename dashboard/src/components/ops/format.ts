@@ -3,7 +3,7 @@
 
 /**
  * Pure helpers shared by the Admin → Ops tab, the header spend chip and the
- * agent rows in EntityRoster / AgentLaunchPanel. No React, no fetch —
+ * agent rows in EntityRoster / AgentLaunchContent. No React, no fetch —
  * everything here is unit-testable in isolation.
  */
 
@@ -206,7 +206,9 @@ export const PROVIDER_VERDICT_CLASS: Record<ReturnType<typeof providerVerdict>, 
 
 // ── Security ────────────────────────────────────────────────────────────────
 
-export function trustProfileClass(profile: OpsOverview["security"]["trustProfile"]): string {
+export function trustProfileClass(
+  profile: OpsOverview["security"]["trustProfile"] | (string & {}),
+): string {
   switch (profile) {
     case "local":
       return "border-emerald-400/60 bg-emerald-400/10 text-emerald-400";
@@ -214,6 +216,8 @@ export function trustProfileClass(profile: OpsOverview["security"]["trustProfile
       return "border-amber-400/60 bg-amber-400/10 text-amber-300";
     case "public":
       return "border-red-400/60 bg-red-400/10 text-red-300";
+    default:
+      return "border-border text-text";
   }
 }
 

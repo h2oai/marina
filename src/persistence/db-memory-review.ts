@@ -46,8 +46,6 @@ const pending = PENDING_MEMBER("r.id");
  * definition `review kind:competing` uses.
  */
 export const COMPETING_RECORD_PREDICATE = competes;
-/** SQL predicate: the record is a `pending` member of an open `await_confirmation` resolution. */
-export const PENDING_RECORD_PREDICATE = pending;
 export const REVIEW_KINDS = ["all", "stale", "competing", "pending"] as const;
 
 export function reviewMemory(

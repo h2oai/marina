@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Bot } from "grammy";
+import { redeemLinkCode } from "../engine/commands/link";
 import { Logger } from "../engine/logger";
 import type { Connection, Perception } from "../types";
 import type { Adapter, AdapterContext } from "./adapter";
@@ -82,8 +83,15 @@ export class TelegramAdapter implements Adapter {
         if (text.startsWith("/")) return;
 
         const existingConnId = chatConns.get(chatId);
+        // A `link` code binds this chat to the code's account (see link.ts).
+        const linked = redeemLinkCode(this.ctx.db, "telegram", String(chatId), text);
+        if (linked && existingConnId) {
+          await ctx.reply(`Linked this chat to ${linked.entityName}.`).catch(() => {});
+          return;
+        }
 
         if (!existingConnId) {
+          const loginName = linked?.entityName ?? text.trim();
           // Not connected — treat as login
           const connId = `telegram_${++this.connIdCounter}`;
 
@@ -105,7 +113,7 @@ export class TelegramAdapter implements Adapter {
           chatConns.set(chatId, connId);
 
           // Try to login
-          const result = engine.login(connId, text.trim());
+          const result = engine.login(connId, loginName);
           if ("error" in result) {
             await ctx.reply(result.error).catch(() => {});
             engine.removeConnection(connId);
@@ -113,8 +121,12 @@ export class TelegramAdapter implements Adapter {
             return;
           }
 
-          this.persistMapping(chatId, text.trim());
-          await ctx.reply(`Logged in as ${text.trim()}. Type commands to play!`).catch(() => {});
+          this.persistMapping(chatId, loginName);
+          await ctx
+            .reply(
+              `${linked ? "Linked and logged in" : "Logged in"} as ${loginName}. Type commands to play!`,
+            )
+            .catch(() => {});
           return;
         }
 

@@ -1325,8 +1325,3 @@ export function pollMemoryEvents(
   }
   return emitted;
 }
-
-/** Test seam: forget the poller cursor so the next call re-primes at the head. */
-export function resetMemoryObservabilityPoller(engine: Engine): void {
-  pollers.delete(engine);
-}

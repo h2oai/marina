@@ -207,30 +207,3 @@ export function searchWorld(query: string, state: SearchableWorldState): SearchR
 
   return scored.map((s) => s.result).slice(0, 20);
 }
-
-/**
- * Check whether a raw command string is a search command.
- * Returns the query string if it is, or null if not.
- */
-export function parseSearchCommand(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("?")) {
-    const q = trimmed.slice(1).trim();
-    return q || null;
-  }
-  const match = trimmed.match(/^(?:search|find)\s+(.+)/i);
-  return match?.[1]?.trim() ?? null;
-}
-
-/**
- * Format search results as displayable text lines.
- */
-export function formatSearchResults(results: SearchResult[]): string[] {
-  if (results.length === 0) return ["No results found."];
-  const lines: string[] = [`Found ${results.length} result(s):`];
-  for (const r of results) {
-    const badge = r.category.toUpperCase().padEnd(7);
-    lines.push(`  [${badge}] ${r.label} -- ${r.detail}`);
-  }
-  return lines;
-}

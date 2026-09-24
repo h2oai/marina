@@ -222,41 +222,12 @@ function validatePlaceOrder(req: PlaceOrderRequest): string | null {
 
 // ─── Low-level HTTP ─────────────────────────────────────────────────────────
 
-async function jsonGet<T>(url: string, opts: KalshiClientOpts): Promise<KalshiResult<T>> {
-  const urlErr = await validateFetchUrl(url);
-  if (urlErr) return { ok: false, error: `Kalshi endpoint rejected: ${urlErr}` };
-
-  const controller = new AbortController();
-  const timeoutMs = opts.timeoutMs ?? CONNECTOR_HTTP_TIMEOUT_MS;
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const headers = await authHeaders("GET", urlPath(url), opts);
-    const res = await guardedFetch(url, { method: "GET", headers, signal: controller.signal });
-    clearTimeout(timer);
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      return {
-        ok: false,
-        error: `Kalshi ${res.status} ${res.statusText}${text ? `: ${text.slice(0, 200)}` : ""}`,
-      };
-    }
-    const json = (await res.json()) as T;
-    return { ok: true, paper: false, response: json };
-  } catch (err) {
-    clearTimeout(timer);
-    if ((err as Error).name === "AbortError") {
-      return { ok: false, error: `Kalshi request timed out after ${timeoutMs}ms.` };
-    }
-    return { ok: false, error: `Kalshi request failed: ${(err as Error).message}` };
-  }
-}
-
-async function jsonPost<T>(
+/** One signed, SSRF-guarded, timeout-bounded JSON request. `body` is sent as JSON. */
+async function jsonRequest<T>(
+  method: "GET" | "POST" | "DELETE",
   url: string,
-  body: unknown,
   opts: KalshiClientOpts,
+  body?: unknown,
 ): Promise<KalshiResult<T>> {
   const urlErr = await validateFetchUrl(url);
   if (urlErr) return { ok: false, error: `Kalshi endpoint rejected: ${urlErr}` };
@@ -265,15 +236,15 @@ async function jsonPost<T>(
   const timeoutMs = opts.timeoutMs ?? CONNECTOR_HTTP_TIMEOUT_MS;
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  const bodyStr = JSON.stringify(body);
+  const bodyStr = body === undefined ? undefined : JSON.stringify(body);
 
   try {
-    const headers = await authHeaders("POST", urlPath(url), opts);
-    headers["Content-Type"] = "application/json";
+    const headers = await authHeaders(method, urlPath(url), opts);
+    if (bodyStr !== undefined) headers["Content-Type"] = "application/json";
     const res = await guardedFetch(url, {
-      method: "POST",
+      method,
       headers,
-      body: bodyStr,
+      ...(bodyStr !== undefined ? { body: bodyStr } : {}),
       signal: controller.signal,
     });
     clearTimeout(timer);
@@ -296,35 +267,16 @@ async function jsonPost<T>(
   }
 }
 
-async function jsonDelete<T>(url: string, opts: KalshiClientOpts): Promise<KalshiResult<T>> {
-  const urlErr = await validateFetchUrl(url);
-  if (urlErr) return { ok: false, error: `Kalshi endpoint rejected: ${urlErr}` };
+function jsonGet<T>(url: string, opts: KalshiClientOpts): Promise<KalshiResult<T>> {
+  return jsonRequest<T>("GET", url, opts);
+}
 
-  const controller = new AbortController();
-  const timeoutMs = opts.timeoutMs ?? CONNECTOR_HTTP_TIMEOUT_MS;
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+function jsonPost<T>(url: string, body: unknown, opts: KalshiClientOpts): Promise<KalshiResult<T>> {
+  return jsonRequest<T>("POST", url, opts, body);
+}
 
-  try {
-    const headers = await authHeaders("DELETE", urlPath(url), opts);
-    const res = await guardedFetch(url, { method: "DELETE", headers, signal: controller.signal });
-    clearTimeout(timer);
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      return {
-        ok: false,
-        error: `Kalshi ${res.status} ${res.statusText}${text ? `: ${text.slice(0, 200)}` : ""}`,
-      };
-    }
-    const json = (await res.json()) as T;
-    return { ok: true, paper: false, response: json };
-  } catch (err) {
-    clearTimeout(timer);
-    if ((err as Error).name === "AbortError") {
-      return { ok: false, error: `Kalshi request timed out after ${timeoutMs}ms.` };
-    }
-    return { ok: false, error: `Kalshi request failed: ${(err as Error).message}` };
-  }
+function jsonDelete<T>(url: string, opts: KalshiClientOpts): Promise<KalshiResult<T>> {
+  return jsonRequest<T>("DELETE", url, opts);
 }
 
 // ─── Auth ───────────────────────────────────────────────────────────────────

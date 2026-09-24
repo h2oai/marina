@@ -44,7 +44,6 @@ import type { MemoryOperationRequest } from "../sdk/memory-operations";
 import type { MemoryReviewResult } from "../sdk/memory-types";
 import type { EntityId } from "../types";
 import { auditKnowledgeNotes } from "./commands/knowledge-hygiene";
-import { NOTE_IMPORTANCE_INTERVAL } from "./constants";
 import type { Engine } from "./engine";
 import { tryLog } from "./errors";
 import {
@@ -262,11 +261,6 @@ async function reviewCount(
     });
     return 0;
   }
-}
-
-/** True on the tick the hourly hygiene job should run. */
-export function isMemoryHygieneTick(tickCount: number): boolean {
-  return tickCount % NOTE_IMPORTANCE_INTERVAL === MEMORY_HYGIENE_PHASE;
 }
 
 /** Engine adapter — builds the deps from the live engine and runs one pass. */

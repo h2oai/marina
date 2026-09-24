@@ -9,6 +9,7 @@
 
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
+import { isOpenApiMode } from "../../engine/trust-profile";
 import type { MarinaDB } from "../../persistence/database";
 import type { WorldVariantRow } from "../../persistence/db-world-variants";
 import { isKeyEncryptionEnabled } from "../../persistence/key-crypto";
@@ -398,7 +399,7 @@ export async function handleSystemRoutes(
     const audit = db ? db.auditEncryptedKeys() : { encrypted: 0, unreadable: 0 };
     return json({
       authRequired: !!engine.config.authRequired,
-      openApi: process.env.MARINA_OPEN_API === "true",
+      openApi: isOpenApiMode(),
       // Key-at-rest encryption: stored API keys are plaintext unless this is on.
       keyEncryption: isKeyEncryptionEnabled(),
       dbKeyCount: db ? db.getAllApiKeys().length : 0,

@@ -18,6 +18,7 @@ export default defineConfig({
   build: {
     outDir: resolve(import.meta.dirname, "../dist/dashboard"),
     emptyOutDir: true,
+    chunkSizeWarningLimit: 600,
     rollupOptions: {
       output: {
         // Function form (not the object sugar): Vite 8's rolldown bundler
@@ -28,6 +29,7 @@ export default defineConfig({
           if (id.includes("node_modules/@xyflow/react")) return "vendor-xyflow";
           if (id.includes("node_modules/@tiptap/")) return "vendor-tiptap";
           if (id.includes("node_modules/react-grid-layout")) return "vendor-grid";
+          if (id.includes("node_modules/motion")) return "vendor-motion";
         },
       },
     },

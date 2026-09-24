@@ -17,14 +17,6 @@ import { getErrorMessage } from "./errors";
  * Uses dynamic import so the system degrades gracefully if mcporter is not installed.
  */
 
-export interface ConnectorInfo {
-  name: string;
-  transport: "http" | "stdio";
-  url?: string;
-  command?: string;
-  status: "active" | "disabled" | "error";
-}
-
 export interface ToolInfo {
   name: string;
   description?: string;
@@ -201,11 +193,32 @@ export class ConnectorRuntime {
   }
 
   /** HTTP GET with rate limiting. */
-  async httpGet(
+  httpGet(
     url: string,
     entityId?: string,
   ): Promise<{ status: number; body: string } | { error: string }> {
-    // SSRF protection
+    return this.httpRequest(url, { method: "GET" }, entityId);
+  }
+
+  /** HTTP POST with rate limiting. */
+  httpPost(
+    url: string,
+    body: string,
+    entityId?: string,
+  ): Promise<{ status: number; body: string } | { error: string }> {
+    return this.httpRequest(
+      url,
+      { method: "POST", body, headers: { "Content-Type": "application/json" } },
+      entityId,
+    );
+  }
+
+  /** SSRF check → per-entity rate limit → timeout-bounded fetch → size-capped body. */
+  private async httpRequest(
+    url: string,
+    init: RequestInit,
+    entityId?: string,
+  ): Promise<{ status: number; body: string } | { error: string }> {
     const urlError = await validateFetchUrl(url);
     if (urlError) return { error: urlError };
 
@@ -219,10 +232,10 @@ export class ConnectorRuntime {
       this.fetchLastCall.set(key, now);
     }
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), CONNECTOR_HTTP_TIMEOUT_MS);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), CONNECTOR_HTTP_TIMEOUT_MS);
-      const response = await guardedFetch(url, { method: "GET", signal: controller.signal });
+      const response = await guardedFetch(url, { ...init, signal: controller.signal });
       clearTimeout(timeout);
       const body = await response.text();
       return {
@@ -232,49 +245,8 @@ export class ConnectorRuntime {
       };
     } catch (err) {
       return { error: `Fetch failed: ${getErrorMessage(err)}` };
-    }
-  }
-
-  /** HTTP POST with rate limiting. */
-  async httpPost(
-    url: string,
-    body: string,
-    entityId?: string,
-  ): Promise<{ status: number; body: string } | { error: string }> {
-    // SSRF protection
-    const urlError = await validateFetchUrl(url);
-    if (urlError) return { error: urlError };
-
-    if (entityId) {
-      const key = `http:${entityId}`;
-      const now = Date.now();
-      const last = this.fetchLastCall.get(key) ?? 0;
-      if (now - last < CONNECTOR_HTTP_RATE_MS) {
-        return { error: "Rate limited. Wait before fetching again." };
-      }
-      this.fetchLastCall.set(key, now);
-    }
-
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), CONNECTOR_HTTP_TIMEOUT_MS);
-      const response = await guardedFetch(url, {
-        method: "POST",
-        body,
-        headers: { "Content-Type": "application/json" },
-        signal: controller.signal,
-      });
+    } finally {
       clearTimeout(timeout);
-      const respBody = await response.text();
-      return {
-        status: response.status,
-        body:
-          respBody.length > CONNECTOR_MAX_BODY_BYTES
-            ? respBody.slice(0, CONNECTOR_MAX_BODY_BYTES)
-            : respBody,
-      };
-    } catch (err) {
-      return { error: `Fetch failed: ${getErrorMessage(err)}` };
     }
   }
 

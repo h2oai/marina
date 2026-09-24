@@ -5,10 +5,7 @@ import { join } from "node:path";
 import { AgentRuntime } from "../agent/agent-runtime";
 import { applyRankProgression } from "../agent/rank-progression";
 import { isSeedDisabled } from "../agent/seed-registry";
-import {
-  recomputeAll as recomputeStanding,
-  recordFromEvent as recordStandingEvent,
-} from "../agent/standing";
+import { recordFromEvent as recordStandingEvent } from "../agent/standing";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { secretsEqual } from "../auth/secret-compare";
 import { SessionManager } from "../auth/session-manager";
@@ -22,8 +19,6 @@ import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywh
 import { memoryAccess } from "../memory/access";
 import type { AdapterManager } from "../net/adapter-manager";
 import { connects, disconnects } from "../net/ansi";
-import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory-observability";
-import { cleanupStaleConversationChannels } from "../net/model-api";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import type { MarinaDB } from "../persistence/database";
 import { writeSample } from "../resolvers/sample-writer";
@@ -56,19 +51,12 @@ import { registerBuiltinCommands } from "./command-registry";
 import { CommandRouter } from "./command-router";
 import { isLoopbackConnection } from "./commands/code";
 import { isIgnoring } from "./commands/ignore";
-import { syncOperationalAlerts } from "./commands/ops";
 import { trackQuestProgress } from "./commands/quest";
 import { ConnectionManager } from "./connection-manager";
 import { ConnectorRuntime } from "./connector-runtime";
 import {
-  AGENT_CLEANUP_INTERVAL,
-  BOARD_ARCHIVE_AGE_DAYS,
-  BOARD_ARCHIVE_INTERVAL,
-  CHANNEL_PRUNE_INTERVAL,
-  CONVERSATION_CLEANUP_INTERVAL,
   MAX_COMMAND_QUEUE_SIZE,
   MAX_COMMANDS_PER_TICK,
-  NOTE_IMPORTANCE_INTERVAL,
   positiveNumberFromEnv,
   ROOM_FETCH_RATE_MS,
   ROOM_FETCH_TIMEOUT_MS,
@@ -79,15 +67,9 @@ import { EventLog } from "./event-log";
 import { GatewayRuntime } from "./gateway-runtime";
 import { Logger } from "./logger";
 import { MediaManager } from "./media/manager";
-import {
-  engineSharedWriteHook,
-  MEMORY_ACCUMULATION_PHASE,
-  runEngineAccumulationDispatch,
-} from "./memory-dispatch";
-import { MEMORY_HYGIENE_PHASE, runEngineMemoryHygiene } from "./memory-hygiene";
+import { engineSharedWriteHook } from "./memory-dispatch";
 import { getRank, rankName, setRank } from "./permissions";
 import { computeReadiness } from "./readiness";
-import { formatRetentionSummary, RETENTION_TICK_PHASE, runRetentionPass } from "./retention";
 import { RoomSandbox } from "./room-sandbox";
 import { checkGateForExecution, grantGatesForRank, recordGateExecution } from "./safety-gates";
 import { compileCommandModule, compileRoomModule } from "./sandbox";

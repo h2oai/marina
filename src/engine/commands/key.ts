@@ -244,7 +244,8 @@ Providers: anthropic, openai, google, groq, openrouter, cerebras, xai, mistral, 
   };
 }
 
-function maskKey(value: string): string {
+/** Never show more than the last four characters of a stored secret. */
+export function maskKey(value: string): string {
   if (value.length <= 8) return "****";
   return `****${value.slice(-4)}`;
 }

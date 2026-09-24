@@ -367,12 +367,3 @@ export function listMarinaDescendants(db: Database, limit = 200): MarinaDescenda
     .query("SELECT * FROM marina_descendants ORDER BY created_at DESC,id LIMIT ?")
     .all(Math.max(1, Math.min(limit, 1000))) as MarinaDescendantRow[];
 }
-
-export function verifySignedJson(document: Record<string, unknown>, signatureJson: string | null) {
-  if (!signatureJson) return { valid: false, keyId: null, error: "Record is unsigned" };
-  try {
-    return verifyFederationDocument({ ...document, signature: JSON.parse(signatureJson) });
-  } catch {
-    return { valid: false, keyId: null, error: "Malformed signed record" };
-  }
-}

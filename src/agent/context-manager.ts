@@ -442,27 +442,6 @@ export function stripOrphanedToolResults(messages: AgentMessage[]): AgentMessage
   return result;
 }
 
-/**
- * Last-resort history shrink for the overflow-recovery path. The normal
- * transform is budget-driven and can still leave a too-large history when the
- * server's real window is smaller than we believe; this one is unconditional —
- * keep the first message (identity/bootstrap), drop the middle behind a notice,
- * and keep the last `keepRecent`. Always strips orphaned tool results so the
- * retry can't 400 on a split toolCall/toolResult pair.
- */
-export function hardTrimMessages(messages: AgentMessage[], keepRecent: number): AgentMessage[] {
-  if (messages.length <= keepRecent + 1) return stripOrphanedToolResults(messages);
-  const first = messages[0]!;
-  const recent = messages.slice(-keepRecent);
-  const droppedCount = messages.length - recent.length - 1;
-  const notice: AgentMessage = {
-    role: "user",
-    content: `[${droppedCount} earlier messages dropped — context-overflow recovery]`,
-    timestamp: Date.now(),
-  } as AgentMessage;
-  return stripOrphanedToolResults([first, notice, ...recent]);
-}
-
 // ─── Token Estimation for Messages ──────────────────────────────────────────
 
 export function estimateMessageTokens(msg: AgentMessage): number {

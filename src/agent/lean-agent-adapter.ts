@@ -2010,8 +2010,9 @@ export class LeanAgentAdapter implements AgentHandle {
 
           // Context overflow is a SHRINK-don't-wait error: backing off and
           // retrying the same oversized history loops forever. Recover by
-          // hard-trimming the conversation and lowering the effective window so
-          // future turns compact earlier — then retry promptly, not on the long
+          // lowering the effective window so the next context transform
+          // archives and compacts harder (live history is never discarded —
+          // continuity contract) — then retry promptly, not on the long
           // error backoff. This self-calibrates to a smaller-than-advertised
           // server (the classic local-model failure mode).
           if (isContextOverflowError(errorMessage)) {
@@ -2036,13 +2037,11 @@ export class LeanAgentAdapter implements AgentHandle {
               consecutiveErrors = await this.afterUpstreamError(consecutiveErrors, backoff);
               continue;
             }
-            this.noteError(
-              `context overflow [${model}] — trimmed, window→${this.effectiveContextWindow}`,
-            );
+            this.noteError(`context overflow [${model}] — window→${this.effectiveContextWindow}`);
             this.log.warn(
               LEAN_AGENT_LOG_CATEGORY,
               `context overflow [${model}]: ${errorMessage}. ` +
-                `Hard-trimmed history, effective window → ${this.effectiveContextWindow}.`,
+                `Shrank effective window → ${this.effectiveContextWindow}.`,
               { agent: this.name },
             );
             this.emitEvent({
@@ -2119,13 +2118,11 @@ export class LeanAgentAdapter implements AgentHandle {
             consecutiveErrors = await this.afterUpstreamError(consecutiveErrors, backoff);
             continue;
           }
-          this.noteError(
-            `context overflow (thrown) — trimmed, window→${this.effectiveContextWindow}`,
-          );
+          this.noteError(`context overflow (thrown) — window→${this.effectiveContextWindow}`);
           this.log.warn(
             LEAN_AGENT_LOG_CATEGORY,
             `context overflow (thrown): ${msg}. ` +
-              `Hard-trimmed history, effective window → ${this.effectiveContextWindow}.`,
+              `Shrank effective window → ${this.effectiveContextWindow}.`,
             { agent: this.name },
           );
           await this.sleep(1000);

@@ -15,13 +15,9 @@
 
 import type { Node } from "@xyflow/react";
 import { animate } from "motion/react";
+import { prefersReducedMotion } from "../../lib/motion-prefs";
 
 type SetNodes = React.Dispatch<React.SetStateAction<Node[]>>;
-
-function prefersReducedMotion(): boolean {
-  if (typeof window === "undefined") return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
 
 /**
  * Animate nodes from their current positions to target positions.

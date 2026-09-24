@@ -122,18 +122,6 @@ const VALID_EDGE_RELATIONSHIPS = new Set([
   "part_of",
 ]);
 
-function _findCanvasForNodes(
-  db: MarinaDB,
-  sourceId: string,
-  targetId: string,
-): { canvasId: string } | undefined {
-  const source = db.getNode(sourceId);
-  const target = db.getNode(targetId);
-  if (!source || !target) return undefined;
-  if (source.canvas_id !== target.canvas_id) return undefined;
-  return { canvasId: source.canvas_id };
-}
-
 function handleConnect(
   ctx: RoomContext,
   eid: EntityId,

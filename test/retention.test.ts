@@ -9,11 +9,11 @@ import {
   formatKeepWindow,
   formatRetentionSummary,
   getLastRetentionReport,
-  isRetentionTick,
   parseRetentionOverrides,
   parseRetentionValue,
   RETENTION_DEFAULTS,
   RETENTION_POLICIES,
+  RETENTION_TICK_PHASE,
   type RetentionPolicy,
   resetRetentionReportForTests,
   runRetentionPass,
@@ -83,10 +83,9 @@ describe("retention overrides", () => {
   });
 
   it("runs on its own hourly phase", () => {
-    expect(isRetentionTick(2100, 3600)).toBe(true);
-    expect(isRetentionTick(5700, 3600)).toBe(true);
-    expect(isRetentionTick(2700, 3600)).toBe(false);
-    expect(isRetentionTick(3300, 3600)).toBe(false);
+    // The scheduler fires it (tick % every === phase); test/tick-scheduler.test.ts
+    // pins the registered schedule and the distinct-phase invariant.
+    expect(RETENTION_TICK_PHASE).toBe(2100);
   });
 });
 

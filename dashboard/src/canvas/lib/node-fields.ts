@@ -1,8 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CanvasNodeData } from "./types";
-
 /**
  * Single source of truth for "who created this node."
  *
@@ -57,9 +55,4 @@ export function resolveTitle(data: Record<string, unknown>, type?: string): stri
   const f = data.filename;
   if (typeof f === "string" && f) return f;
   return type ?? "";
-}
-
-/** Convenience for code paths that already have a typed CanvasNodeData. */
-export function resolveAuthorFromNode(node: CanvasNodeData): string {
-  return resolveAuthor({ ...node.data, creator_name: node.creator_name });
 }
