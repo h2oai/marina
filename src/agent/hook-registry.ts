@@ -1,7 +1,11 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Logger } from "../engine/logger";
 import type { Perception } from "../types";
+
+/** Module logger. */
+const logger = new Logger();
 
 // ─── Hook Types ─────────────────────────────────────────────────────────────
 
@@ -94,7 +98,7 @@ export class HookRegistry {
       try {
         (fn as (...a: unknown[]) => void)(...args);
       } catch (err) {
-        console.warn(`[hooks] ${type} hook error:`, err);
+        logger.warn("hooks", `${type} hook error`, { error: err });
       }
     }
   }

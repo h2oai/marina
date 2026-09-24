@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Network surfaces log through the structured `Logger`, never `console.*`.
+ * Server code logs through the structured `Logger`, never `console.*`.
  *
  * `console.*` bypasses every sink the operator configured — the structured-log
  * table behind `/api/logs` and the log viewer, the OTLP log exporter, and the
  * redaction pass in `redactLogData` — so a startup line or an adapter failure
  * written with `console` is invisible to everything but a terminal that happened
- * to be attached. This is a static fence over `src/net/**` and
- * `src/integrations/**`, plus a check that each converted module actually
+ * to be attached. This is a static fence over all of `src/**` (the external
+ * SDK package excepted), plus a check that each converted module actually
  * declares a module logger.
  */
 
@@ -19,28 +19,28 @@ import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
 
-/** Roots the fence covers. */
-const FENCED_ROOTS = ["src/net", "src/integrations"];
+/** Roots the fence covers. Started as `src/net` + `src/integrations`; widened
+ * to all of `src/` once the engine/agent/persistence stragglers were converted. */
+const FENCED_ROOTS = ["src"];
 
 /**
- * Paths excluded from the fence.
+ * Paths excluded from the fence. Anything added here needs a reason.
  *
- * Empty: the fence covers ALL of `src/net/**` and `src/integrations/**`,
- * including the `src/net/dashboard-api/` route-group modules. (An exclusion
- * lived here while that split was in flight; it landed clean, so the fence now
- * runs over everything.) Anything added here needs a reason and an expiry.
+ * `src/sdk/` is the separately published `@marina/agent-sdk` package: it runs
+ * in the CLIENT's process, has no access to the server `Logger`, and its
+ * examples print to the terminal on purpose.
  */
-const EXCLUDED_PREFIXES: string[] = [];
+const EXCLUDED_PREFIXES: string[] = ["src/sdk/"];
 
 /**
  * Deliberate `console.*` survivors, by path. Each entry needs a reason.
- *
- * Empty for the fenced roots: every startup line, adapter failure and broadcast
- * error under `src/net/**` now goes through `Logger`. The one banner Marina
- * still prints directly lives in `src/main.ts` (outside these roots) and is
- * pinned by its own assertion below.
  */
-const CONSOLE_ALLOWLIST: Record<string, string> = {};
+const CONSOLE_ALLOWLIST: Record<string, string> = {
+  "src/engine/logger.ts": "the Logger's own stdout/stderr text and JSON sinks",
+  "src/memory/import-process.ts":
+    "child process whose stdout IS the result channel (one JSON line read by the parent)",
+  "src/main.ts": "the multi-line boot banner, pinned to exactly one call by its own test below",
+};
 
 const CONSOLE_CALL = /\bconsole\.(log|warn|error|info|debug|trace|dir|table)\(/;
 
@@ -60,12 +60,19 @@ function fencedFiles(): string[] {
 describe("network-surface logging", () => {
   it("scans a meaningful number of files (fence sanity)", () => {
     const files = fencedFiles();
-    expect(files.length).toBeGreaterThan(50);
+    expect(files.length).toBeGreaterThan(400);
+    for (const root of ["src/engine", "src/agent", "src/persistence", "src/net"]) {
+      expect(
+        files.some((f) => f.startsWith(`${root}/`)),
+        root,
+      ).toBe(true);
+    }
+    expect(files.some((f) => f.startsWith("src/sdk/"))).toBe(false);
     // The fence must actually reach the split dashboard-api route groups.
     expect(files.filter((f) => f.startsWith("src/net/dashboard-api")).length).toBeGreaterThan(5);
   });
 
-  it("has no direct console.* calls under src/net or src/integrations", () => {
+  it("has no direct console.* calls in server code", () => {
     const hits: string[] = [];
     for (const path of fencedFiles()) {
       if (path in CONSOLE_ALLOWLIST) continue;
@@ -74,7 +81,7 @@ describe("network-surface logging", () => {
         if (CONSOLE_CALL.test(line)) hits.push(`${path}:${i + 1}: ${line.trim()}`);
       });
     }
-    expect(hits, `console.* found on a network surface:\n${hits.join("\n")}`).toEqual([]);
+    expect(hits, `console.* found in server code:\n${hits.join("\n")}`).toEqual([]);
   });
 
   it("keeps the console allowlist honest", () => {
@@ -85,7 +92,7 @@ describe("network-surface logging", () => {
     }
   });
 
-  it("declares a module logger in every converted network module", () => {
+  it("declares a module logger in every converted module", () => {
     // These modules used to write startup/runtime lines with `console.*`.
     const converted: Array<[string, string]> = [
       ["src/net/websocket-server.ts", "ws"],
@@ -101,6 +108,13 @@ describe("network-surface logging", () => {
       ["src/net/probe-api.ts", "probe"],
       ["src/net/model-api/upstream.ts", "model-api"],
       ["src/net/dashboard-api/shared.ts", "dashboard-api"],
+      ["src/agent/agent-runtime.ts", "agents"],
+      ["src/engine/gateway-runtime.ts", "gateway"],
+      ["src/engine/connector-runtime.ts", "connectors"],
+      ["src/persistence/db-channels.ts", "db"],
+      ["src/persistence/db-notes.ts", "db"],
+      ["src/resolvers/calibration.ts", "calibration"],
+      ["src/world/room-loader.ts", "rooms"],
     ];
     const missingLogger: string[] = [];
     const missingCategory: string[] = [];
@@ -115,7 +129,7 @@ describe("network-surface logging", () => {
   });
 
   it("keeps exactly one deliberate console line in src/main.ts (the boot banner)", () => {
-    // main.ts is outside the fenced roots: the multi-line boot banner is
+    // main.ts is allowlisted for exactly this: the multi-line boot banner is
     // intentionally plain stdout because Logger's text sink stamps every entry
     // with `[iso] LEVEL [category]`, which would mangle a banner. Everything
     // else in main.ts — fatal boot errors, trims, port conflicts, crash

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getErrorMessage } from "../engine/errors";
+import { Logger } from "../engine/logger";
 import { type MemoryNoteResult, readMemoryResult } from "../memory/command-result";
 import { isUnifiedContextResult, type UnifiedContextResult } from "../memory/unified-context";
 import { stripAnsi } from "../net/ansi";
@@ -10,6 +11,9 @@ import type { MemoryOperationResult } from "../sdk/memory-operations";
 import type { MemorySourceRange } from "../sdk/memory-types";
 import type { Perception } from "../types";
 import { DurableResidentMemory } from "./durable-memory";
+
+/** Module logger. */
+const logger = new Logger();
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
@@ -304,12 +308,11 @@ export class PlatformMemoryBackend {
           compactionPool,
           3,
         );
-        if (!shared.success) console.warn("[memory] Optional compaction summary sharing failed");
+        if (!shared.success) logger.warn("memory", "Optional compaction summary sharing failed");
       } catch (error) {
-        console.warn(
-          "[memory] Optional compaction summary sharing failed:",
-          getErrorMessage(error),
-        );
+        logger.warn("memory", "Optional compaction summary sharing failed", {
+          error: getErrorMessage(error),
+        });
       }
     }
   }

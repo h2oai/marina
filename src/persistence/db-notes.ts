@@ -17,7 +17,11 @@ import {
   PROCESS_TIER_QUOTA,
   SIMILAR_NOTE_RELEVANCE_THRESHOLD,
 } from "../engine/constants";
+import { Logger } from "../engine/logger";
 import { buildFtsQuery } from "./fts";
+
+/** Module logger. */
+const logger = new Logger();
 
 // ─── Tier inference ────────────────────────────────────────────────────
 //
@@ -121,11 +125,13 @@ function findDuplicateForWrite(
            AND pool_id IS NULL
            AND note_type = ?
            AND ${factLikeClause("notes")}
+           AND substr(content, 1, 64) = substr(?, 1, 64)
            AND content = ?
            AND verification_status != 'superseded'
          LIMIT 1`,
       )
-      .get(entityName, noteType, content) as NoteRow | null;
+      // The substr predicate lets SQLite use idx_notes_dedup (migration 122).
+      .get(entityName, noteType, content, content) as NoteRow | null;
     return row ?? undefined;
   } catch {
     return undefined;
@@ -270,7 +276,7 @@ export function searchAllNotes(db: Database, query: string, limit = 20): NoteRow
       )
       .all(ftsQuery, limit) as NoteRow[];
   } catch (err) {
-    console.warn("[db] searchAllNotes FTS5 query failed:", (err as Error).message);
+    logger.warn("db", "searchAllNotes FTS5 query failed", { error: (err as Error).message });
     return [];
   }
 }
@@ -906,7 +912,7 @@ export function findSimilarNotes(
       .all(entityName, ftsQuery) as (NoteRow & { relevance: number })[];
     return rows.filter((r) => r.id !== excludeId && r.relevance > SIMILAR_NOTE_RELEVANCE_THRESHOLD);
   } catch (err) {
-    console.warn("[db] findSimilarNotes FTS5 query failed:", (err as Error).message);
+    logger.warn("db", "findSimilarNotes FTS5 query failed", { error: (err as Error).message });
     return [];
   }
 }
@@ -930,7 +936,7 @@ export function countMatchingNotes(
       .get(entityName, ftsQuery) as { total: number; fading: number } | null;
     return { total: row?.total ?? 0, fading: row?.fading ?? 0 };
   } catch (err) {
-    console.warn("[db] countMatchingNotes FTS5 query failed:", (err as Error).message);
+    logger.warn("db", "countMatchingNotes FTS5 query failed", { error: (err as Error).message });
     return { total: 0, fading: 0 };
   }
 }

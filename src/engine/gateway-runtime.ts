@@ -7,7 +7,11 @@ import { validateFetchUrl, validateOperatorLanUrl } from "../net/url-guard";
 import type { MarinaDB } from "../persistence/database";
 import { MarinaClient, type Perception } from "../sdk/client";
 import { getErrorMessage } from "./errors";
+import { Logger } from "./logger";
 import { isLocalProfile } from "./trust-profile";
+
+/** Module logger. */
+const logger = new Logger();
 
 // ─── Peer URL validation ─────────────────────────────────────────────────────
 
@@ -284,7 +288,7 @@ export class GatewayRuntime {
     // (or a loopback peer on a shared instance) must never be dialed.
     const urlError = await validateGatewayUrl(url);
     if (urlError) {
-      console.warn(`[gateway] Refusing to connect "${name}" to ${url}: ${urlError}`);
+      logger.warn("gateway", `Refusing to connect "${name}" to ${url}: ${urlError}`);
       throw new Error(`Refused gateway URL for "${name}": ${urlError}`);
     }
 
@@ -331,7 +335,7 @@ export class GatewayRuntime {
       clearTimeout(timeoutId!);
       conn.status = "connected";
       conn.connectedAt = Date.now();
-      console.log(`[gateway] "${name}" connected (protocol v${GATEWAY_PROTOCOL_VERSION})`);
+      logger.info("gateway", `"${name}" connected (protocol v${GATEWAY_PROTOCOL_VERSION})`);
 
       // Register relay listener (store reference for cleanup)
       const handler = (p: Perception) => this.handleRemotePerception(conn, p);
@@ -444,12 +448,14 @@ export class GatewayRuntime {
         }
         loaded++;
       } catch (err) {
-        console.error(`[gateway] Failed to restore gateway "${gw.name}":`, getErrorMessage(err));
+        logger.error("gateway", `Failed to restore gateway "${gw.name}"`, {
+          error: getErrorMessage(err),
+        });
         this.db.updateGatewayStatus(gw.id, "error");
       }
     }
     if (loaded > 0) {
-      console.log(`[gateway] Restored ${loaded} gateways from database.`);
+      logger.info("gateway", `Restored ${loaded} gateways from database.`);
     }
     return loaded;
   }
@@ -493,14 +499,16 @@ export class GatewayRuntime {
       // back around. Cannot be spoofed by "[from " in user content — that only
       // affects the legacy fallback count, never `origin`/`hops`.
       if (meta.origin && meta.origin === this.localWorldName) {
-        console.warn(
-          `[gateway] "${conn.name}" dropped channel relay looped back to origin "${this.localWorldName}"`,
+        logger.warn(
+          "gateway",
+          `"${conn.name}" dropped channel relay looped back to origin "${this.localWorldName}"`,
         );
         return;
       }
       if (meta.hops >= MAX_RELAY_HOPS) {
-        console.warn(
-          `[gateway] "${conn.name}" dropped over-hopped channel relay (${meta.hops} >= ${MAX_RELAY_HOPS} hops)`,
+        logger.warn(
+          "gateway",
+          `"${conn.name}" dropped over-hopped channel relay (${meta.hops} >= ${MAX_RELAY_HOPS} hops)`,
         );
         return;
       }
@@ -531,14 +539,16 @@ export class GatewayRuntime {
 
       const { meta, body } = parseRelayEnvelope(tellPayload.message);
       if (meta.origin && meta.origin === this.localWorldName) {
-        console.warn(
-          `[gateway] "${conn.name}" dropped tell relay looped back to origin "${this.localWorldName}"`,
+        logger.warn(
+          "gateway",
+          `"${conn.name}" dropped tell relay looped back to origin "${this.localWorldName}"`,
         );
         return;
       }
       if (meta.hops >= MAX_RELAY_HOPS) {
-        console.warn(
-          `[gateway] "${conn.name}" dropped over-hopped tell relay (${meta.hops} >= ${MAX_RELAY_HOPS} hops)`,
+        logger.warn(
+          "gateway",
+          `"${conn.name}" dropped over-hopped tell relay (${meta.hops} >= ${MAX_RELAY_HOPS} hops)`,
         );
         return;
       }

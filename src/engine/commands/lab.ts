@@ -9,7 +9,11 @@ import type {
 } from "../../persistence/database";
 import type { CommandDef, Entity } from "../../types";
 import { getErrorMessage } from "../errors";
+import { Logger } from "../logger";
 import { notFound } from "./command-messages";
+
+/** Module logger. */
+const logger = new Logger();
 
 const MODES = ["live", "recorded", "synthetic", "hybrid", "long-duration"] as const;
 const LEVELS = [
@@ -94,7 +98,9 @@ export function labCommand(deps: {
         } catch (cause) {
           // Non-critical (the run row exists; the marker is decorative) — but a
           // real DB failure here likely precedes bigger ones, so surface it.
-          console.warn(`[lab] started marker failed for ${row.id}:`, getErrorMessage(cause));
+          logger.warn("lab", `started marker failed for ${row.id}`, {
+            error: getErrorMessage(cause),
+          });
         }
         ctx.send(
           input.entity,

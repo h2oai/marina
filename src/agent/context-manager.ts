@@ -17,8 +17,12 @@ import type {
   UserMessage,
 } from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
+import { Logger } from "../engine/logger";
 
 import { withMemoryAbort } from "../sdk/memory-abort";
+
+/** Module logger. */
+const logger = new Logger();
 
 // ─── Token Estimation ───────────────────────────────────────────────────────
 
@@ -393,7 +397,7 @@ export function createContextManager(options: ContextManagerOptions) {
     } catch (error) {
       signal?.throwIfAborted();
       if (error instanceof ContextPersistenceError) throw error;
-      console.error("[context-manager] Error during context transform, passing through:", error);
+      logger.error("agents", "Error during context transform, passing through", { error });
       // Even on the error path, don't pass through a corrupted history.
       return await finish(stripOrphanedToolResults(messages));
     }

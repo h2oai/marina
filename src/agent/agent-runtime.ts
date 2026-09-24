@@ -15,6 +15,7 @@ import {
   positiveNumberFromEnv,
   reflectorIdleStopMs,
 } from "../engine/constants";
+import { Logger } from "../engine/logger";
 import {
   inferModelCapabilities,
   isLocalProvider,
@@ -42,6 +43,9 @@ import {
 import { assertMarinaRemoteTargetAllowed, detectModelLimits } from "./model-probe";
 import { getRolePrompt, inferTaskCategory } from "./roles";
 import { isSeedDisabled } from "./seed-registry";
+
+/** Module logger. */
+const logger = new Logger();
 
 const KNOWN_PROVIDERS = new Set<string>([...MODEL_DISCOVERY_PROVIDERS, "marina"]);
 const DEFAULT_SUPPORTS: AgentSupports = { text: true };
@@ -420,10 +424,9 @@ export class AgentRuntime {
         }
         return true;
       } catch (error) {
-        console.warn(
-          `[agents] Failed to respawn agent "${config.name}":`,
-          error instanceof Error ? error.message : error,
-        );
+        logger.warn("agents", `Failed to respawn agent "${config.name}"`, {
+          error: error instanceof Error ? error.message : error,
+        });
         return false;
       }
     });
@@ -432,7 +435,7 @@ export class AgentRuntime {
     const spawned = results.filter(Boolean).length;
 
     if (spawned > 0) {
-      console.log(`[agents] Respawned ${spawned} agent(s) from saved configs.`);
+      logger.info("agents", `Respawned ${spawned} agent(s) from saved configs.`);
     }
 
     // Start periodic uptime enforcement
@@ -512,8 +515,9 @@ export class AgentRuntime {
         const limits = await detectModelLimits(resolvedModel).catch(() => null);
         if (limits?.contextWindow) {
           detectedContextWindow = limits.contextWindow;
-          console.log(
-            `[agent-runtime] Autodetected context window ${limits.contextWindow} for "${config.name}" (${resolvedModel}, ${limits.source}).`,
+          logger.info(
+            "agents",
+            `Autodetected context window ${limits.contextWindow} for "${config.name}" (${resolvedModel}, ${limits.source}).`,
           );
         }
       }
@@ -559,8 +563,9 @@ export class AgentRuntime {
       // Remote Marina target with no resolvable key: allowed (the remote may run
       // MARINA_OPEN_API), but warn so a 401 later isn't a surprise.
       if (provider === "marina" && modelStr.includes("@") && !apiKeyAtSpawn) {
-        console.warn(
-          `[agent-runtime] Spawning "${config.name}" against remote Marina "${modelStr}" with no key. ` +
+        logger.warn(
+          "agents",
+          `Spawning "${config.name}" against remote Marina "${modelStr}" with no key. ` +
             `This works only if the remote runs MARINA_OPEN_API=true; otherwise add a token via Admin > Keys and pass \`key <name>\`.`,
         );
       }
@@ -580,8 +585,9 @@ export class AgentRuntime {
           );
         }
         if (resolution === "synthesized") {
-          console.warn(
-            `[agent-runtime] Spawning "${config.name}" with model "${modelStr}": id not in the bundled registry ` +
+          logger.warn(
+            "agents",
+            `Spawning "${config.name}" with model "${modelStr}": id not in the bundled registry ` +
               `for "${provider}". Routing to ${provider} with default params — verify the id is valid for that provider if it errors.`,
           );
         }
@@ -714,10 +720,9 @@ export class AgentRuntime {
           const nested = await this.stopWithReport(child, { keepConfig: opts?.keepConfig });
           stoppedChildren.push(...nested.stoppedChildren, child);
         } catch (error) {
-          console.warn(
-            `[agents] Failed to cascade-stop "${child}" (spawned by "${key}"):`,
-            error instanceof Error ? error.message : error,
-          );
+          logger.warn("agents", `Failed to cascade-stop "${child}" (spawned by "${key}")`, {
+            error: error instanceof Error ? error.message : error,
+          });
         }
       }
     }
@@ -1006,11 +1011,12 @@ export class AgentRuntime {
     for (const [name, agent] of this.agents) {
       const status = agent.getStatus();
       if (status.uptime > MAX_AGENT_UPTIME_MS) {
-        console.log(
-          `[agents] Agent "${name}" exceeded max uptime (${Math.round(MAX_AGENT_UPTIME_MS / 3600000)}h), stopping.`,
+        logger.info(
+          "agents",
+          `Agent "${name}" exceeded max uptime (${Math.round(MAX_AGENT_UPTIME_MS / 3600000)}h), stopping.`,
         );
         this.stop(name).catch((e) =>
-          console.warn(`[agents] Failed to stop overdue agent "${name}":`, e),
+          logger.warn("agents", `Failed to stop overdue agent "${name}"`, { error: e }),
         );
       }
     }
@@ -1048,17 +1054,17 @@ export class AgentRuntime {
         })
       )
         continue;
-      console.log(
-        `[agents] memory-reflector "${name}" idle for ${Math.round(windowMs / 60000)} min (no assigned job) — stopping.`,
+      logger.info(
+        "agents",
+        `memory-reflector "${name}" idle for ${Math.round(windowMs / 60000)} min (no assigned job) — stopping.`,
       );
       try {
         await this.stop(name);
         stopped.push(name);
       } catch (error) {
-        console.warn(
-          `[agents] Failed to stop idle memory-reflector "${name}":`,
-          error instanceof Error ? error.message : error,
-        );
+        logger.warn("agents", `Failed to stop idle memory-reflector "${name}"`, {
+          error: error instanceof Error ? error.message : error,
+        });
       }
     }
     return stopped;

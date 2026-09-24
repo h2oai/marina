@@ -1,9 +1,13 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Logger } from "../engine/logger";
 import { channel as fmtChannel } from "../net/ansi";
 import type { ChannelRow, MarinaDB } from "../persistence/database";
 import type { EntityId } from "../types";
+
+/** Module logger. */
+const logger = new Logger();
 
 export interface Channel {
   id: string;
@@ -171,7 +175,7 @@ export class ChannelManager {
       try {
         listener(channelId, senderId, senderName, content);
       } catch (err) {
-        console.warn("[channels] message listener threw:", (err as Error).message);
+        logger.warn("channels", "message listener threw", { error: (err as Error).message });
       }
     }
   }

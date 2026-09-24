@@ -6,35 +6,50 @@ import { describe, expect, it, vi } from "vitest";
 import { WorkDrawer } from "../components/WorkDrawer";
 
 const refetch = vi.fn(async () => undefined);
+const hookCalls = vi.fn();
+function tracked<T>(name: string, value: T): T {
+  hookCalls(name);
+  return value;
+}
 
 vi.mock("../hooks/use-api", () => ({
-  useTasks: () => ({
-    data: [
-      { id: 7, title: "Verify release", status: "open" },
-      { id: 8, title: "Already done", status: "completed" },
-    ],
-    isLoading: false,
-    isError: false,
-    refetch,
-  }),
-  useProjects: () => ({
-    data: [{ id: "project-1", name: "Launch", status: "active" }],
-    isLoading: false,
-    isError: false,
-    refetch,
-  }),
+  useTasks: () =>
+    tracked("tasks", {
+      data: [
+        { id: 7, title: "Verify release", status: "open" },
+        { id: 8, title: "Already done", status: "completed" },
+      ],
+      isLoading: false,
+      isError: false,
+      refetch,
+    }),
+  useProjects: () =>
+    tracked("projects", {
+      data: [{ id: "project-1", name: "Launch", status: "active" }],
+      isLoading: false,
+      isError: false,
+      refetch,
+    }),
 }));
 
 vi.mock("../hooks/use-coding", () => ({
-  useCodingSessionsSnapshot: () => ({
-    data: { items: [{ id: "code-1", title: "Fix onboarding", status: "active" }] },
-    isLoading: false,
-    isError: false,
-    refetch,
-  }),
+  useCodingSessionsSnapshot: () =>
+    tracked("coding", {
+      data: { items: [{ id: "code-1", title: "Fix onboarding", status: "active" }] },
+      isLoading: false,
+      isError: false,
+      refetch,
+    }),
 }));
 
 describe("WorkDrawer", () => {
+  it("runs no queries while closed", () => {
+    hookCalls.mockClear();
+    const { container } = render(<WorkDrawer open={false} onClose={() => {}} />);
+    expect(container).toBeEmptyDOMElement();
+    expect(hookCalls).not.toHaveBeenCalled();
+  });
+
   it("projects active work into clickable canonical destinations", () => {
     const close = vi.fn();
     const opened: string[] = [];
