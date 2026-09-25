@@ -3566,4 +3566,25 @@ CREATE INDEX idx_routing_channel_receipts_retention ON routing_channel_receipts(
     version: 125,
     sql: `CREATE INDEX idx_routing_events_kind ON routing_events(session_id, kind, sequence);`,
   },
+  // Migration 126: Social Simulation Arena signed submissions (src/arena, db-arena.ts).
+  {
+    version: 126,
+    sql: `
+CREATE TABLE arena_submissions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entrant TEXT NOT NULL,
+  round_id TEXT NOT NULL,
+  request_id TEXT NOT NULL UNIQUE,
+  url TEXT NOT NULL,
+  meta TEXT NOT NULL,
+  body TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('prepared', 'accepted', 'rejected', 'error')),
+  http_status INTEGER,
+  response TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_arena_submissions_round ON arena_submissions(entrant, round_id, id);
+`,
+  },
 ];

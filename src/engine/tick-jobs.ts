@@ -3,6 +3,7 @@
 
 import type { AgentRuntime } from "../agent/agent-runtime";
 import { recomputeAll as recomputeStanding } from "../agent/standing";
+import { runArenaAutopilot } from "../arena/service";
 import type { BoardManager } from "../coordination/board-manager";
 import type { ChannelManager } from "../coordination/channel-manager";
 import type { TaskManager } from "../coordination/task-manager";
@@ -93,6 +94,20 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
   });
 
   // Hourly: clean up stale model conversation channels
+  // Hourly: file due Social Simulation Arena rounds (MARINA_ARENA_AUTOPILOT=on;
+  // a no-op otherwise). Fire-and-forget — network and signing never touch the tick.
+  s.register({
+    name: "arena-autopilot",
+    every: CONVERSATION_CLEANUP_INTERVAL,
+    phase: 1500,
+    failureMessage: "Arena autopilot failed",
+    run: () => {
+      const db = host.db;
+      if (!db) return;
+      return runArenaAutopilot(db).then(() => undefined);
+    },
+  });
+
   s.register({
     name: "conversation-cleanup",
     every: CONVERSATION_CLEANUP_INTERVAL,

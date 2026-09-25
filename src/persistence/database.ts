@@ -22,6 +22,7 @@ import type { EngineEvent, Entity, EntityId, RoomId } from "../types";
 import type { TraitCapabilities } from "./db-agents";
 import * as agentsDb from "./db-agents";
 import * as alertsDb from "./db-alerts";
+import * as arenaDb from "./db-arena";
 import * as assetsDb from "./db-assets";
 import * as associationsDb from "./db-associations";
 import * as benchmarksDb from "./db-benchmarks";
@@ -2084,6 +2085,29 @@ export class MarinaDB implements MarinaStores {
 
   trimFeedEvents(keepMs: number): number {
     return feedDb.trimFeedEvents(this.db, keepMs);
+  }
+
+  // ─── Social Simulation Arena (delegated to db-arena.ts) ─────────────────
+
+  insertArenaSubmission(row: arenaDb.InsertArenaSubmission): number {
+    return arenaDb.insertArenaSubmission(this.db, row);
+  }
+
+  updateArenaSubmission(
+    id: number,
+    update: { status: arenaDb.ArenaSubmissionStatus; httpStatus?: number; response?: string },
+  ): void {
+    arenaDb.updateArenaSubmission(this.db, id, update);
+  }
+
+  latestArenaSubmission(entrant: string, roundId: string): arenaDb.ArenaSubmissionRow | undefined {
+    return arenaDb.latestArenaSubmission(this.reader, entrant, roundId);
+  }
+
+  listArenaSubmissions(
+    opts: { entrant?: string; limit?: number } = {},
+  ): arenaDb.ArenaSubmissionRow[] {
+    return arenaDb.listArenaSubmissions(this.reader, opts);
   }
 
   // ─── Chronicle (delegated to db-chronicle.ts) ──────────────────────────

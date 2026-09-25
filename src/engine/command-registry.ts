@@ -19,6 +19,7 @@ import { collectiveManager } from "../world/world-collective-manager";
 import { adapterCommand } from "./commands/adapter";
 import { adminCommand } from "./commands/admin";
 import { agentCommand } from "./commands/agent";
+import { arenaCommand } from "./commands/arena";
 import { askCommand } from "./commands/ask";
 import { associationCommand } from "./commands/association";
 import { bankrollCommand } from "./commands/bankroll";
@@ -863,6 +864,13 @@ export function registerBuiltinCommands(engine: Engine): void {
     );
     return true;
   });
+  engine.commands.registerBuiltin(
+    arenaCommand({
+      get store() {
+        return engine.db;
+      },
+    }),
+  );
   const resolveCitedEvidence = (actor: { name: string; id: string }, text: string) =>
     engine.db ? resolveEvidence(engine.db, actor, text) : [];
   engine.commands.registerBuiltin(

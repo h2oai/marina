@@ -1,0 +1,120 @@
+# Social Simulation Arena
+
+Marina can enter the [Social Simulation Arena](https://social-simulation-arena.com), a live
+forecasting benchmark run by Social Atoms at MIT. Every week about a dozen questions open:
+presidential approval (Economist/YouGov, Civiqs, Morning Consult), consumer sentiment (UMich,
+NY Fed, AAII), Google Trends shares and the Wikipedia weekly top 10. An entrant forecasts each
+one before the number is published. Forecasts are sealed until the round locks, then scored in
+public against a **persistence** reference (repeat the last value): skill 0 ties it, above 0 beats it.
+
+Marina enters as a *participant* through the arena's signed route: it signs each forecast with its
+own Ed25519 key and posts it itself. Nothing is exposed to the internet and no credential is shared —
+the registration carries only the public key.
+
+## What Marina files
+
+`src/arena/forecast.ts` is the baseline every round gets. It keeps persistence's mean. The arena's
+own persistence uses a fixed `sd = 1.5` whatever the series' scale, so Marina replaces the spread
+with one calibrated to how the series actually moves — **but only for a series whose own history
+says that wins by 5 % or more**. Everywhere else it files exact persistence, which ties the
+reference and cannot blow up. Held-out backtests on the live rounds put it at about +0.07 skill.
+
+| Round shape | Marina's answer |
+|---|---|
+| Number (`continuous_normal`) | persistence mean ± calibrated or 1.5 spread |
+| Profile (`profile_energy`) | the same, per cell |
+| Ranking (`ranking_list`) | last-7-day Wikipedia pageview totals, Main_Page and non-articles excluded |
+
+`arena show <round_id>` prints exactly what would be filed and which spread rule each series used.
+
+## Enter Marina (one time)
+
+1. **Choose the entrant id** — lower-case, permanent (for example `h2oai-marina`) — and the
+   GitHub account that will own it. Only that account can change the registration later.
+2. **Generate the signing key** on the server that will file:
+
+   ```bash
+   bun run arena keygen /srv/marina/arena-key.pem   # writes mode 0600, never overwrites
+   ```
+
+3. **Configure** (`.env`):
+
+   ```bash
+   MARINA_ARENA_ENTRANT=h2oai-marina
+   MARINA_ARENA_KEY_FILE=/srv/marina/arena-key.pem
+   ```
+
+4. **Write the registration** and open the pull request from the owning account:
+
+   ```bash
+   bun run arena registration --name "Marina" --org "H2O.ai" --github <login> \
+     --out entrants/h2oai-marina.json
+   ```
+
+   Add the file to a fork of
+   [Social-Atoms/social-sim-arena](https://github.com/Social-Atoms/social-sim-arena) and open the
+   PR. The arena's CI validates it; a maintainer approves a signing key.
+5. **Rehearse** — `bun run arena submit due --dry-run` shows every forecast inside the window
+   without signing or sending anything.
+6. **Turn on the autopilot** once the registration is merged:
+
+   ```bash
+   MARINA_ARENA_AUTOPILOT=on
+   ```
+
+   Every hour Marina files each round whose lock is within 24 hours (the arena's own call window,
+   so its inputs are as fresh as every other entrant's) and that has no accepted forecast yet.
+
+## Operate
+
+| Command | Where | What it does |
+|---|---|---|
+| `arena` / `arena status` | in-world, rank 0 | entrant, key readiness, autopilot, filed counts |
+| `arena rounds [n]` | in-world | open rounds, soonest lock first, with Marina's filing status |
+| `arena show <round_id>` | in-world | the question and exactly what Marina would file |
+| `arena submissions` | in-world | the signed record of what was filed |
+| `arena backtest [n]` | in-world | baseline skill vs the arena's persistence, per family |
+| `bun run arena submit <round_id\|due> [--dry-run]` | operator CLI | sign and file now |
+| `bun run arena keygen <path>` / `registration` | operator CLI | key and registration file |
+
+Filing is deliberately an operator act (CLI or env-set autopilot), never an in-world one: it
+speaks for the organization in public. The in-world command is read-only so every agent and
+person in the world can see the questions, Marina's reasoning and its record.
+
+`readiness` reports an `arena` check once `MARINA_ARENA_ENTRANT` is set, and warns when the key
+is missing or readable by other users.
+
+## Guarantees
+
+- **One forecast per round.** A round with an accepted forecast is never filed again; the
+  ledger (`arena_submissions`, append-only) records every signed request.
+- **Safe retries.** A send that failed in transit is re-sent with the *same* signed request
+  within four minutes (the arena deduplicates by request id); after that a fresh request is
+  signed. A 4xx is final and never retried as-is.
+- **Refuses rather than guesses.** A round without the inputs to forecast from, or an answer
+  that would break the arena's contract (missing profile cell, sd ≤ 0, wrong ranking length), is
+  skipped with a reason.
+- **Key custody.** The key file must be mode 0600 or it is refused; only its public half is
+  ever printed or published. Rotate by adding a new key id to the registration.
+- **No redirects.** The signed POST goes to the configured origin only; outbound reads use the
+  SSRF guard.
+
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MARINA_ARENA_ENTRANT` | unset (off) | the registered entrant id |
+| `MARINA_ARENA_KEY_FILE` | — | PKCS#8 PEM (or raw 32-byte seed), mode 0600 |
+| `MARINA_ARENA_KEY_ID` | `k1` | the key's id in the registration |
+| `MARINA_ARENA_AUTOPILOT` | off | `on` files due rounds hourly |
+| `MARINA_ARENA_WINDOW_HOURS` | `24` | how close to its lock a round is filed |
+| `MARINA_ARENA_URL` / `MARINA_ARENA_AUDIENCE` | production | a rehearsal fork's intake |
+| `MARINA_ARENA_DATA_URL` | the arena repo on GitHub | where rounds, locks and resolutions are read |
+
+## Beyond the baseline
+
+The baseline is the floor, not the ceiling. The arena rewards consistency: on any single
+question 20–50 % of forecasts beat persistence, yet almost nobody does on average. The next step
+is a forecasting crew — researchers, respondent simulators and an aggregator that shrinks toward
+the baseline unless evidence is grounded — promoted family by family only after it beats the
+baseline in shadow mode.

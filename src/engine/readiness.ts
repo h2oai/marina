@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { arenaStatus } from "../arena/service";
 import { decisionConfigFromEnv, decisionGateEnabled } from "../decisions/config";
 import { decisionHealth } from "../decisions/health";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
@@ -353,6 +354,27 @@ export function computeReadiness(engine: Engine): ReadinessReport {
           : ""),
     });
   }
+
+  // ── Social Simulation Arena — Marina as a public forecasting entrant ─────
+  const arena = arenaStatus(env);
+  if (arena.configError || (arena.configured && arena.keyError)) {
+    checks.push({
+      id: "arena",
+      label: "Social Simulation Arena",
+      status: "degraded",
+      detail: arena.configError ?? `entrant ${arena.entrant}: ${arena.keyError}`,
+      remediation:
+        "Generate a key with `bun run arena keygen <path>`, chmod 600 it, set MARINA_ARENA_KEY_FILE — see docs/guides/arena.md.",
+    });
+  } else if (arena.configured) {
+    checks.push({
+      id: "arena",
+      label: "Social Simulation Arena",
+      status: "ok",
+      detail: `entrant ${arena.entrant} (key ${arena.keyId}); autopilot ${arena.autopilot ? "on" : "off"}`,
+    });
+  }
+  // Not entered: no check at all — the arena is opt-in, not a missing capability.
 
   // ── Demo pulse — measured participation, activity, and request latency ───
   const demoNames = ["Host", "Builder", "Critic", "Chronicler"].filter((name) =>
