@@ -14,7 +14,7 @@
  *   bun run arena submit <round_id|due> [--dry-run]
  *                                               sign + file (due = every round inside the window)
  *   bun run arena backtest                      baseline skill vs the arena's persistence
- *   bun run arena evaluate [--forecaster model:<provider/model>] [--limit N] [--tracker T] [--out FILE]
+ *   bun run arena evaluate [--forecaster model:<m>|crew:<m>[,<m>,<m>]] [--no-learn] [--limit N] [--tracker T] [--out FILE]
  *                                               score forecasters on already-resolved rounds (files nothing)
  *
  * `--forecaster baseline|model:<provider/model>` overrides MARINA_ARENA_FORECASTER for show/submit.
@@ -24,10 +24,12 @@
  * ledger and never double-file.
  */
 
-import { closeSync, openSync, writeSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, writeSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { parseForecasterSpec } from "../src/arena/config";
-import { evaluateResolved, type Forecaster } from "../src/arena/evaluate";
+import { evaluateResolved, type Forecaster, type Learner } from "../src/arena/evaluate";
 import { backtestSeries } from "../src/arena/forecast";
 import { generateArenaKey } from "../src/arena/protocol";
 import {
@@ -53,6 +55,7 @@ const { positionals, values } = parseArgs({
     limit: { type: "string" },
     tracker: { type: "string" },
     weight: { type: "string" },
+    "no-learn": { type: "boolean" },
   },
 });
 const [cmd = "status", arg] = positionals;
@@ -210,8 +213,21 @@ async function main(): Promise<number> {
         baseline: (await forecasterFor("baseline")).forecaster,
       };
       const usage: { calls: number; costUsd: number }[] = [];
-      if (values.forecaster && values.forecaster !== "baseline") {
-        const spec = parseForecasterSpec(values.forecaster);
+      const learners: Record<string, Learner> = {};
+      let scratch: MarinaDB | undefined;
+      const specArg = values.forecaster ? parseForecasterSpec(values.forecaster) : "baseline";
+      if (specArg.startsWith("crew:")) {
+        // The crew's lesson memory lives in a throwaway Marina DB: evaluation
+        // never writes the world's notes.
+        const dir = mkdtempSync(join(tmpdir(), "arena-eval-"));
+        scratch = new MarinaDB(join(dir, "eval.db"));
+        const crew = await forecasterFor(specArg, { notes: scratch });
+        const label = `crew ${specArg.slice(5).replace(/openrouter\//g, "")}`;
+        forecasters[label] = crew.forecaster;
+        if (crew.learner && !values["no-learn"]) learners[label] = crew.learner;
+        usage.push(crew.usage!);
+      } else if (specArg !== "baseline") {
+        const spec = specArg;
         const model = spec.replace(/^model:/, "");
         const blended = await forecasterFor(spec, { weight: weightFlag() });
         const raw = await forecasterFor(spec, { raw: true });
@@ -223,7 +239,10 @@ async function main(): Promise<number> {
         ...(values.limit ? { limit: Number(values.limit) } : {}),
         ...(values.tracker ? { tracker: values.tracker } : {}),
         concurrency: 4,
+        learners,
       });
+      const lessons = scratch?.getNotesByType("arena-crew", "lesson", 1000).length;
+      scratch?.close();
       const names = Object.keys(forecasters);
       const fmt = (x: number) => (Number.isNaN(x) ? "n/a" : `${x >= 0 ? "+" : ""}${x.toFixed(3)}`);
       console.log(
@@ -239,12 +258,14 @@ async function main(): Promise<number> {
       console.log(["ALL".padEnd(18), String(report.rounds.length).padEnd(4), ...all].join(" "));
       if (usage.length) {
         const kept = report.rounds.filter((r) =>
-          Object.entries(r.results).some(([n, x]) => n.includes("blend") && x.note),
+          Object.entries(r.results).some(
+            ([n, x]) => n !== "baseline" && !n.endsWith("raw") && x.note,
+          ),
         ).length;
         const cost = usage.reduce((s, u) => s + u.costUsd, 0);
         const calls = usage.reduce((s, u) => s + u.calls, 0);
         console.log(
-          `model calls ${calls} · cost $${cost.toFixed(4)} · blend kept the baseline on ${kept} round(s)`,
+          `model calls ${calls} · cost $${cost.toFixed(4)} · kept the baseline on ${kept} round(s)${lessons === undefined ? "" : ` · lessons written ${lessons}${values["no-learn"] ? " (learning off)" : ""}`}`,
         );
       }
       console.log("skill: 0 = the arena's persistence (last value, sd 1.5); above 0 beats it.");

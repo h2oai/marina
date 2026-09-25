@@ -51,6 +51,37 @@ Pro blended at 0.25 +0.045, raw −0.07 to −0.12 — no better than the baseli
 better on AAII sentiment. Run-to-run model noise is about ±0.05 at this sample size. A model whose
 training data covers a round's release could know its answer; weigh rounds after its cutoff.
 
+### The crew
+
+`MARINA_ARENA_FORECASTER=crew:<model>` — or `crew:<statistician>,<analyst>,<skeptic>` to give each
+role its own vendor — runs three roles per numeric round over the baseline (`src/arena/crew.ts`):
+
+| Role | Sees | Does |
+|---|---|---|
+| statistician | the series | proposes a distribution from its shape |
+| analyst | the question, recent values, the crew's **lessons** for this series | proposes from pollster behaviour and past misses |
+| skeptic | the baseline and both proposals | decides how much of their move to trust (0 = stay on the baseline) |
+
+Aggregation is deterministic code: the proposals' mean move, scaled by the skeptic's trust, with
+wild or broken proposals dropped — the skeptic can shrink a move, never enlarge it. After a filed
+round resolves, the autopilot writes a **lesson** note (outcome, the crew's error next to
+persistence's, which way it leaned) that the analyst recalls for that series next time; lessons
+only ever describe rounds already published. `arena evaluate --forecaster crew:…` replays the
+resolved rounds in lock order with the same learning, in a throwaway database (`--no-learn` to
+compare).
+
+First crew results (2026-09-25, 58 resolved rounds, DeepSeek V4 Pro in every role, ~$0.07 a run):
++0.022 with learning, +0.036 without, vs the baseline's +0.046. The crew beats persistence on far
+more rounds (31 vs 12) but a few larger misses cost more than those wins earn — the leaderboard
+averages per-round skill, which punishes misses when persistence happens to land close. Too few
+lessons per series yet to show learning.
+
+Multi-vendor crew — DeepSeek V4 Pro (statistician), Claude Sonnet 5 (analyst), GPT-6 Luna
+(skeptic), ~$0.13 a run — two runs: **+0.059 and +0.053**, beating persistence on 34 and 32 of 58
+rounds; the first forecaster above the baseline, though the margin (~0.01) is within run-to-run
+noise. Its family pattern repeated in both runs: better on AAII, Trends, Wikipedia and Morning
+Consult; worse on Economist/YouGov (−0.08 both), where the baseline should keep filing.
+
 ## Enter Marina (one time)
 
 1. **Choose the entrant id** — lower-case, permanent (for example `h2oai-marina`) — and the
@@ -135,7 +166,7 @@ is missing or readable by other users.
 | `MARINA_ARENA_WINDOW_HOURS` | `24` | how close to its lock a round is filed |
 | `MARINA_ARENA_URL` / `MARINA_ARENA_AUDIENCE` | production | a rehearsal fork's intake |
 | `MARINA_ARENA_DATA_URL` | the arena repo on GitHub | where rounds, locks and resolutions are read |
-| `MARINA_ARENA_FORECASTER` | `baseline` | or `model:<provider/model>` on top of the baseline |
+| `MARINA_ARENA_FORECASTER` | `baseline` | or `model:<provider/model>`, or `crew:<model>[,<model>,<model>]` |
 | `MARINA_ARENA_MODEL_WEIGHT` | `0.5` | share of the model's move from the baseline that is kept |
 
 ## Beyond the baseline
