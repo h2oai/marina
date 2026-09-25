@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { join } from "node:path";
-import { AgentRuntime } from "../agent/agent-runtime";
+import { AgentRuntime, getInternalModelToken } from "../agent/agent-runtime";
 import { applyRankProgression } from "../agent/rank-progression";
 import { isSeedDisabled } from "../agent/seed-registry";
 import { recordFromEvent as recordStandingEvent } from "../agent/standing";
@@ -262,7 +262,14 @@ export class Engine {
       this.crewManager.loadFromDb();
 
       // Benchmark runner — spawns the harness subprocess + persists runs
-      this.benchmarkRunner = new BenchmarkRunner(this.db, (event) => this.logEvent(event));
+      this.benchmarkRunner = new BenchmarkRunner(
+        this.db,
+        (event) => this.logEvent(event),
+        () => ({
+          endpoint: `http://localhost:${Number(process.env.WS_PORT) || 3300}`,
+          apiKey: getInternalModelToken(),
+        }),
+      );
 
       // Initialize gateway runtime (must be after channelManager)
       const channelMgr = this.channelManager;

@@ -624,6 +624,16 @@ export function anthropicThinking(
   return { type: "enabled", budget_tokens: budget };
 }
 
+/**
+ * The Claude 5 family rejects `top_p` and any `temperature` other than 1
+ * ("… is deprecated for this model"). OpenAI clients send both routinely, so
+ * the translated path drops them rather than fail every call.
+ */
+export function omitsSamplingParams(model: string): boolean {
+  const gen = /^(?:[\w.-]+\/)?claude-(?:[a-z]+-)?(\d+)/.exec(model)?.[1];
+  return gen !== undefined && Number(gen) >= 5;
+}
+
 export function buildAnthropicRequest(
   body: Record<string, unknown>,
   model: string,
@@ -689,6 +699,7 @@ export function buildAnthropicRequest(
   // Only a cap the CLIENT set clamps the thinking budget; the 4096 default is
   // raised to fit the requested depth instead.
   const thinking = anthropicThinking(body, explicitMaxTokens);
+  const sampling = !thinking && !omitsSamplingParams(model);
 
   return {
     model,
@@ -701,9 +712,10 @@ export function buildAnthropicRequest(
     stream,
     ...(thinking ? { thinking } : {}),
     // Claude rejects sampling overrides while thinking is enabled
-    // ("temperature may only be set to 1", top_p likewise) — omit both.
-    ...(!thinking && typeof body.temperature === "number" ? { temperature: body.temperature } : {}),
-    ...(!thinking && typeof body.top_p === "number" ? { top_p: body.top_p } : {}),
+    // ("temperature may only be set to 1", top_p likewise), and the Claude 5
+    // family rejects them outright — omit both.
+    ...(sampling && typeof body.temperature === "number" ? { temperature: body.temperature } : {}),
+    ...(sampling && typeof body.top_p === "number" ? { top_p: body.top_p } : {}),
     ...(stops ? { stop_sequences: stops } : {}),
     ...(typeof body.user === "string" && body.user ? { metadata: { user_id: body.user } } : {}),
     ...(Array.isArray(system) && system.length > 0 ? { system } : {}),

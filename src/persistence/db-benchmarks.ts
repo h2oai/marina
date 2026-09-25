@@ -96,9 +96,11 @@ export function leaderboardBenchmark(
   benchmark: string,
   limit = 20,
 ): BenchmarkRunRow[] {
+  // answered > 0: runs recorded before the runner treated an all-error harness
+  // run as a failure are "completed" at 0% — they measured nothing.
   return reader
     .query(
-      "SELECT * FROM benchmark_runs WHERE benchmark = ? AND status = 'completed' AND score IS NOT NULL ORDER BY score DESC, started_at DESC LIMIT ?",
+      "SELECT * FROM benchmark_runs WHERE benchmark = ? AND status = 'completed' AND score IS NOT NULL AND answered > 0 ORDER BY score DESC, started_at DESC LIMIT ?",
     )
     .all(benchmark, Math.min(limit, 100)) as BenchmarkRunRow[];
 }

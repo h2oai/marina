@@ -70,6 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- In-world `benchmark run` measured nothing: the runner never told the harness this instance's
+  endpoint or key, so every call failed (wrong port, or 401), and an all-error run was still
+  recorded as a completed 0% score on the leaderboard. The harness now targets `WS_PORT` with the
+  internal model token (passed in the environment, not argv), an all-error run is `failed` with
+  the first error, and the leaderboard skips runs that answered nothing.
+- Passthru to the Claude 5 family dropped no sampling parameters, so any OpenAI client sending
+  `temperature` (other than 1) or `top_p` got a 400. The translated path now omits both.
 - Crew dispatches are directed work: `[crew-task]` messages score 90 in the
   social scorer (above the channel-reply cooldown cutoff, below tells) instead
   of 40 as ambient chatter, so idle crews now pick up project tasks.
