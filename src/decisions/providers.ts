@@ -86,6 +86,7 @@ export function decisionsApiProvider(opts: ProviderOptions): DecisionProvider {
   return {
     kind: "decisions-api",
     model: opts.model,
+    calibrated: true,
     async ask(request: DecisionRequest, signal?: AbortSignal): Promise<DecisionResult> {
       const started = performance.now();
       const body = (await post(
@@ -180,6 +181,7 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
   return {
     kind: "chat-classifier",
     model: opts.model,
+    calibrated: false,
     async ask(request: DecisionRequest, signal?: AbortSignal): Promise<DecisionResult> {
       const started = performance.now();
       // No `response_format`: many OpenAI-compatible servers (and Marina's own

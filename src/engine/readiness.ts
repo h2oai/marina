@@ -326,7 +326,11 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       id: "decisions",
       label: "Decisions (route / gate / verify)",
       status: "ok",
-      detail: `${decisions.kind} → ${decisions.model}; agent tool gate ${decisionGateEnabled(env) ? "on" : "off"} (MARINA_DECISION_GATE)`,
+      detail:
+        `${decisions.kind} → ${decisions.model}; agent tool gate ${decisionGateEnabled(env) ? "on" : "off"} (MARINA_DECISION_GATE)` +
+        (decisions.kind === "chat-classifier"
+          ? " — scores are uncalibrated: the gate uses one threshold (0.5) and asks a person; a decisions-api / typesafe backend gives graded probabilities"
+          : ""),
     });
   }
 

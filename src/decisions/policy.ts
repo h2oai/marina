@@ -81,6 +81,18 @@ export interface GatePolicy {
 
 export const DEFAULT_GATE_POLICY: GatePolicy = { blockAt: 0.88, askAt: 0.65 };
 
+/**
+ * For an UNCALIBRATED backend (a chat model as classifier) the three-band gate
+ * is meaningless — its scores saturate (measured: gpt-4o-mini answers 0 or 1) —
+ * so it collapses to one cut at 0.5, and a positive goes to a person rather
+ * than an outright block: "1.0" from an uncalibrated judge is no stronger than
+ * "0.6". With no approvable owner the hold still fails closed.
+ */
+export const UNCALIBRATED_GATE_POLICY: GatePolicy = {
+  blockAt: Number.POSITIVE_INFINITY,
+  askAt: 0.5,
+};
+
 export type GateAction = "allow" | "ask" | "block";
 
 export interface GateVerdict {

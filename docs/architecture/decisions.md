@@ -40,6 +40,8 @@ Pure functions — same numbers, same verdict, testable without a model. Thresho
 | **Router** (`decideRoute`) | `tier` (choice fast/powerful) + `complexity` (score 0–2) | complexity ≥ 1.0 → powerful; tier confidence < 0.6 → fallback; else the pick | **Fallback tier** (fail open: costs money only) |
 | **Verifier** (`decideVerify`) | `quality` (score 0–2) + `grounded` (noul) | quality ≥ 1.5 and grounded ≥ 0.5 → accept; else retry, at most 2 attempts in total; an unsure judge accepts | **Accept** (advisory; never loop on an outage) |
 
+**Calibration.** A purpose-built decision model's probabilities are calibrated; a chat model's are not (measured: gpt-4o-mini answers 0 or 1 where jev-1.13 gives 0.71), so providers declare `calibrated` (`decisions-api` true, `chat-classifier` false). With an uncalibrated backend the gate uses `UNCALIBRATED_GATE_POLICY`: one cut at 0.5, and a positive goes to the owner (`ask`) rather than an outright block — a saturated "1.0" is no stronger than "0.6". No approvable owner ⇒ still blocked. HTTP replies carry `calibrated`, and `readiness` says so for a chat-classifier backend.
+
 Route once per request (a task claim, job, `model_request` or session start), never mid-run: switching models discards the provider's prompt cache for the whole transcript.
 
 ## Where it runs

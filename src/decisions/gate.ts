@@ -10,6 +10,7 @@ import {
   GATE_QUESTIONS_WITH_AUTHORIZATION,
   type GatePolicy,
   type GateVerdict,
+  UNCALIBRATED_GATE_POLICY,
 } from "./policy";
 import type { DecisionProvider } from "./types";
 
@@ -86,6 +87,8 @@ export function redactToolCall(
 }
 
 export interface GateDecision extends GateVerdict {
+  /** False when the verdict came from an uncalibrated backend (one-threshold policy). */
+  calibrated?: boolean;
   model?: string;
   provider?: string;
   latencyMs?: number;
@@ -99,18 +102,24 @@ export async function gateToolCall(
   provider: DecisionProvider,
   toolName: string,
   args: Record<string, unknown>,
-  policy: GatePolicy = DEFAULT_GATE_POLICY,
+  policy?: GatePolicy,
   description?: string,
   intent?: GateIntent,
 ): Promise<GateDecision> {
   const questions = intent ? GATE_QUESTIONS_WITH_AUTHORIZATION : GATE_QUESTIONS;
+  const calibrated = provider.calibrated !== false;
+  const effective = policy ?? (calibrated ? DEFAULT_GATE_POLICY : UNCALIBRATED_GATE_POLICY);
   try {
     const result = await provider.ask({
       state: redactToolCall(toolName, args, description, intent),
       questions,
     });
+    const verdict = decideGate(result.answers, effective, questions);
     return {
-      ...decideGate(result.answers, policy, questions),
+      ...verdict,
+      ...(calibrated
+        ? {}
+        : { calibrated: false, reason: `${verdict.reason} (uncalibrated backend: one threshold)` }),
       model: result.model,
       provider: result.provider,
       latencyMs: result.latencyMs,
@@ -118,7 +127,7 @@ export async function gateToolCall(
     };
   } catch (err) {
     return {
-      ...decideGate(undefined, policy, questions),
+      ...decideGate(undefined, effective, questions),
       provider: provider.kind,
       model: provider.model,
       error: getErrorMessage(err),
