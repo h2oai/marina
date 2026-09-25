@@ -21,6 +21,14 @@ import type { ArenaLock, ArenaRound } from "./types";
 
 export type Forecaster = (round: ArenaRound, lock: ArenaLock) => Promise<RoundForecast>;
 
+/** Called once a round's number is public, with what the forecaster filed for it. */
+export type Learner = (
+  round: ArenaRound,
+  lock: ArenaLock,
+  filed: { mean: number; sd: number },
+  outcome: number,
+) => void;
+
 export interface RoundScore {
   roundId: string;
   tracker: string;
@@ -41,7 +49,17 @@ export interface FamilySummary {
 export async function evaluateResolved(
   data: ArenaData,
   forecasters: Record<string, Forecaster>,
-  opts: { limit?: number; concurrency?: number; tracker?: string } = {},
+  opts: {
+    limit?: number;
+    concurrency?: number;
+    tracker?: string;
+    /**
+     * Forecasters that learn: rounds then run one at a time in lock order, and
+     * a round's outcome reaches its learner only when it was published before
+     * the lock of the round being forecast — never earlier than it could live.
+     */
+    learners?: Record<string, Learner>;
+  } = {},
 ): Promise<{ rounds: RoundScore[]; families: FamilySummary[]; overall: Record<string, number> }> {
   const resolved = await data.resolutions();
   const candidates = (await data.rounds())
@@ -56,8 +74,29 @@ export async function evaluateResolved(
 
   const scores: RoundScore[] = [];
   const queue = [...candidates];
+  const learners = opts.learners ?? {};
+  const learning = Object.keys(learners).length > 0;
+  const pending: Array<{
+    round: ArenaRound;
+    lock: ArenaLock;
+    outcome: number;
+    filed: Record<string, { mean: number; sd: number }>;
+  }> = [];
+  const reveal = (before: number) => {
+    for (let i = 0; i < pending.length; ) {
+      const p = pending[i]!;
+      if (Date.parse(p.round.release_at) < before) {
+        for (const [name, learn] of Object.entries(learners)) {
+          const filed = p.filed[name];
+          if (filed) learn(p.round, p.lock, filed, p.outcome);
+        }
+        pending.splice(i, 1);
+      } else i++;
+    }
+  };
   const worker = async () => {
     for (let round = queue.shift(); round; round = queue.shift()) {
+      if (learning) reveal(Date.parse(round.lock_at));
       const lock = await data.lock(round.round_id).catch(() => undefined);
       const history = lock?.answer_history ?? lock?.history ?? [];
       if (!lock || history.length === 0) continue;
@@ -88,9 +127,16 @@ export async function evaluateResolved(
         persistenceCrps,
         results,
       });
+      if (learning) {
+        const filed = Object.fromEntries(
+          Object.entries(results).map(([n, r]) => [n, { mean: r.mean, sd: r.sd }]),
+        );
+        pending.push({ round, lock, outcome, filed });
+      }
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, opts.concurrency ?? 4) }, worker));
+  const workers = learning ? 1 : Math.max(1, opts.concurrency ?? 4);
+  await Promise.all(Array.from({ length: workers }, worker));
   scores.sort((a, b) => a.roundId.localeCompare(b.roundId));
 
   const names = Object.keys(forecasters);

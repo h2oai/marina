@@ -9,10 +9,12 @@
 
 import { Logger } from "../engine/logger";
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
+import type { NotesStore } from "../persistence/interfaces/notes-store";
 import { type ArenaConfig, arenaConfigFromEnv, loadArenaKey } from "./config";
 import { ArenaData, DEFAULT_ARENA_DATA_URL } from "./data";
-import type { Forecaster } from "./evaluate";
+import type { Forecaster, Learner } from "./evaluate";
 import { forecastRound } from "./forecast";
+import type { Usage } from "./model-backend";
 import { publicKeyBase64 } from "./protocol";
 import {
   baselineForecaster,
@@ -77,9 +79,49 @@ export function arenaStatus(env: NodeJS.ProcessEnv = process.env): ArenaStatus {
  */
 export async function forecasterFor(
   spec: string,
-  opts: { weight?: number; raw?: boolean; env?: NodeJS.ProcessEnv } = {},
-): Promise<{ forecaster: Forecaster; usage?: import("./model-backend").Usage }> {
+  opts: { weight?: number; raw?: boolean; env?: NodeJS.ProcessEnv; notes?: NotesStore } = {},
+): Promise<{ forecaster: Forecaster; usage?: Usage; learner?: Learner }> {
   if (spec === "baseline") return { forecaster: baselineForecaster };
+  if (spec.startsWith("crew:")) {
+    const specs = spec.slice("crew:".length).split(",");
+    const [stat, analyst = stat, skeptic = analyst] = specs as [string, string?, string?];
+    const [{ modelComplete }, crew] = await Promise.all([
+      import("./model-backend"),
+      import("./crew"),
+    ]);
+    const env = opts.env ?? process.env;
+    const made = [stat, analyst!, skeptic!].map((m) => modelComplete(m, env));
+    const usage: Usage = {
+      get calls() {
+        return made.reduce((s, m) => s + m.usage.calls, 0);
+      },
+      get inputTokens() {
+        return made.reduce((s, m) => s + m.usage.inputTokens, 0);
+      },
+      get outputTokens() {
+        return made.reduce((s, m) => s + m.usage.outputTokens, 0);
+      },
+      get costUsd() {
+        return made.reduce((s, m) => s + m.usage.costUsd, 0);
+      },
+    };
+    const members = {
+      statistician: made[0]!.complete,
+      analyst: made[1]!.complete,
+      skeptic: made[2]!.complete,
+    };
+    const notes = opts.notes;
+    return {
+      usage,
+      forecaster: (round, lock) => crew.crewForecastRound(round, lock, members, notes),
+      ...(notes
+        ? {
+            learner: (round, lock, filed, outcome) =>
+              crew.learn(notes, round, lock, filed, outcome),
+          }
+        : {}),
+    };
+  }
   const modelSpec = spec.replace(/^model:/, "");
   const [{ modelComplete }, { DEFAULT_MODEL_OPTIONS, modelForecastRound }] = await Promise.all([
     import("./model-backend"),
@@ -127,7 +169,9 @@ export async function arenaDepsWithForecaster(
   try {
     const spec = override ?? deps.config.forecaster;
     const weight = weightOverride ?? deps.config.modelWeight;
-    const { forecaster } = await forecasterFor(spec, { weight, env });
+    // The world's notes are the crew's memory when the store carries them.
+    const notes = "getNotesByType" in store ? (store as unknown as NotesStore) : undefined;
+    const { forecaster } = await forecasterFor(spec, { weight, env, ...(notes ? { notes } : {}) });
     return { ...deps, forecaster };
   } catch (err) {
     return { error: `Forecaster: ${(err as Error).message}` };
@@ -165,6 +209,9 @@ export async function runArenaAutopilot(
   running = true;
   const outcomes: SubmitOutcome[] = [];
   try {
+    if (deps.config.forecaster.startsWith("crew:") && "getNotesByType" in store) {
+      await learnFromResolutions(store as unknown as ArenaStore & NotesStore, deps);
+    }
     for (const round of await dueRounds(deps)) {
       const outcome = await submitRound(deps, round.round_id);
       outcomes.push(outcome);
@@ -179,4 +226,34 @@ export async function runArenaAutopilot(
     running = false;
   }
   return outcomes;
+}
+
+/**
+ * Close the crew's loop live: for every round Marina filed that the arena has
+ * since resolved, write the lesson once (a lesson names its round, so a second
+ * pass finds it and skips).
+ */
+export async function learnFromResolutions(
+  store: ArenaStore & NotesStore,
+  deps: Pick<SubmitDeps, "config" | "data">,
+): Promise<number> {
+  const { learn, CREW_ENTITY } = await import("./crew");
+  const resolved = await deps.data.resolutions();
+  const known = new Set(
+    store
+      .getNotesByType(CREW_ENTITY, "lesson", 1000)
+      .map((n) => n.content.split(" ")[1]?.replace(/:$/, "")),
+  );
+  let written = 0;
+  for (const row of store.listArenaSubmissions({ entrant: deps.config.entrant, limit: 500 })) {
+    const value = resolved[row.round_id]?.value;
+    if (row.status !== "accepted" || typeof value !== "number" || known.has(row.round_id)) continue;
+    const body = JSON.parse(row.body) as { topline?: { mean: number; sd: number } };
+    const round = await deps.data.round(row.round_id);
+    if (!body.topline || !round) continue;
+    learn(store, round, await deps.data.lock(row.round_id), body.topline, value);
+    known.add(row.round_id);
+    written++;
+  }
+  return written;
 }

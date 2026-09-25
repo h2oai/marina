@@ -37,11 +37,22 @@ export interface ArenaConfig {
   modelWeight: number;
 }
 
-/** `baseline` or `model:<provider/model>` (validated; the model id itself is resolved at use). */
+const MODEL_ID = "[a-z0-9-]+\\/[\\w.:/-]+";
+const FORECASTER_SPEC = new RegExp(
+  `^(baseline|model:${MODEL_ID}|crew:${MODEL_ID}(,${MODEL_ID}){0,2})$`,
+  "i",
+);
+
+/**
+ * `baseline`, `model:<provider/model>`, or `crew:<model>` / `crew:<statistician>,<analyst>,<skeptic>`
+ * (one vendor per role). Validated here; model ids are resolved at use.
+ */
 export function parseForecasterSpec(raw: string | undefined): string {
   const spec = raw?.trim() || "baseline";
-  if (spec === "baseline" || /^model:[a-z0-9-]+\/[\w.:/-]+$/i.test(spec)) return spec;
-  throw new Error(`MARINA_ARENA_FORECASTER "${spec}" must be baseline or model:<provider/model>`);
+  if (FORECASTER_SPEC.test(spec)) return spec;
+  throw new Error(
+    `MARINA_ARENA_FORECASTER "${spec}" must be baseline, model:<provider/model> or crew:<model>[,<model>,<model>]`,
+  );
 }
 
 export function arenaConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ArenaConfig | undefined {
