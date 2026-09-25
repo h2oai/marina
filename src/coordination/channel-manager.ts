@@ -150,7 +150,16 @@ export class ChannelManager {
     content: string,
     extraMeta?: Record<string, unknown>,
   ): void {
-    this.db.addChannelMessage(channelId, senderId, senderName, content);
+    const id = this.db.addChannelMessage(channelId, senderId, senderName, content);
+    this.deliverStored(
+      { id, channelId, senderId, senderName, content, createdAt: Date.now() },
+      extraMeta,
+    );
+  }
+
+  /** Deliver an already committed canonical channel message without recording it twice. */
+  deliverStored(message: ChannelMessage, extraMeta?: Record<string, unknown>): void {
+    const { channelId, senderId, senderName, content } = message;
 
     // Deliver to online members
     const members = this.db.getChannelMembers(channelId);

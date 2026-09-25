@@ -69,6 +69,16 @@ export function buildConnectManifest(req: Request, engine: Engine): Response {
       },
     },
     protocols: {
+      routing: {
+        version: 1,
+        url: `http://${bare}:${wsPort}/api/routing`,
+        auth: "Existing Marina world-account Bearer token",
+        description:
+          "Generic participant sessions, replayable output, directed inboxes and native channel communication",
+        sessions: "/api/routing/sessions",
+        dashboard: "/dashboard?view=streams",
+        processControl: false,
+      },
       mcp: {
         url: `http://${bare}:${mcpPort}/mcp`,
         description: "Native tool-calling for Claude and MCP-compatible agents",

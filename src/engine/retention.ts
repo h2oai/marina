@@ -94,6 +94,26 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
     note: "observability + watch cursors; a watch idle > 30 d re-primes from the live seq",
   },
   {
+    table: "routing_events",
+    timeColumn: "created_at",
+    kind: "telemetry",
+    keepMs: 30 * DAY_MS,
+    note: "participant output; replay reports pruned cursor gaps, dedup lasts while retained",
+  },
+  {
+    table: "routing_channel_receipts",
+    timeColumn: "created_at",
+    kind: "ledger",
+    note: "dedup receipts for messages in native Marina channels",
+  },
+  {
+    table: "routing_messages",
+    timeColumn: "acknowledged_at",
+    kind: "ledger",
+    where: "status = 'acknowledged'",
+    note: "settled routing receipts; unacknowledged inbox messages never age out",
+  },
+  {
     table: "coding_events",
     timeColumn: "created_at",
     kind: "telemetry",

@@ -6,11 +6,15 @@
   "main": "index.ts",
   "types": "index.ts",
   "exports": {
-    ".": "./index.ts"
+    ".": "./index.ts",
+    "./routing": "./routing-client.ts"
   },
   "files": [
     "index.ts",
     "client.ts",
+    "routing-client.ts",
+    "routing-types.ts",
+    "routing-runtime-types.ts",
     "examples/",
     "LICENSE",
     "NOTICE"

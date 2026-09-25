@@ -39,6 +39,8 @@ export type Dispatch =
       dangerouslyAllowAll?: boolean;
     }
   | { kind: "connect"; rest: string[] }
+  | { kind: "route"; rest: string[] }
+  | { kind: "supervise"; rest: string[] }
   | { kind: "start" };
 
 /** Default directory probe for `parseDispatch` — an existing directory on disk. */
@@ -72,6 +74,8 @@ export function parseDispatch(
   if (first === "--version" || first === "-v" || first === "version") return { kind: "version" };
   if (first === "init") return { kind: "init" };
   if (first === "status") return { kind: "status" };
+  if (first === "supervise") return { kind: "supervise", rest: argv.slice(1) };
+  if (first === "route") return { kind: "route", rest: argv.slice(1) };
   if (first === "connect") return { kind: "connect", rest: argv.slice(1) };
   if (first === "start") return { kind: "start" };
   // Coding flow: [dir] plus optional --fresh, -p/--print "<task>", and the
@@ -124,6 +128,8 @@ Usage:
   marina [dir]                 code in a folder (defaults to the current directory)
   marina -p "<task>" [dir]     one-shot: run a task, print the diff + summary, exit
   marina connect <name> [...]  connect to a running Marina (-c "cmd" for one-shot)
+  marina supervise [...]       manage local coding agents from the dashboard
+  marina route [...]           join, publish, and exchange participant messages
   marina start                 run the full server in the foreground
   marina status                health + capability readiness of the running Marina
   marina init                  interactive setup (writes .env)
@@ -332,6 +338,16 @@ if (import.meta.main) {
     case "status":
       process.exit(await runStatus());
       break;
+    case "supervise": {
+      const { runSupervisor } = await import("./supervise");
+      process.exit(await runSupervisor(dispatch.rest));
+      break;
+    }
+    case "route": {
+      const { runRoute } = await import("./route");
+      process.exit(await runRoute(dispatch.rest));
+      break;
+    }
     case "connect":
       // connect.ts reads process.argv.slice(2) at module load — rewrite argv so
       // the delegated flow sees exactly its own arguments.

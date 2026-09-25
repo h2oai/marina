@@ -112,10 +112,14 @@ export default function App() {
         url.pathname.startsWith("/canvas") || url.searchParams.get("view") === "canvas";
       useWorkspaceState.setState({ fullscreen: url.pathname.startsWith("/canvas") });
       if (canvas) openView("canvas");
-      else if (["work", "map", "observe", "admin"].includes(url.searchParams.get("view") ?? ""))
+      else if (
+        ["work", "map", "observe", "admin", "streams"].includes(url.searchParams.get("view") ?? "")
+      )
         useWorkspaceState
           .getState()
-          .setView(url.searchParams.get("view") as "work" | "map" | "observe" | "admin");
+          .setView(
+            url.searchParams.get("view") as "work" | "map" | "observe" | "admin" | "streams",
+          );
     };
     const navigate = (event: MouseEvent) => {
       if (

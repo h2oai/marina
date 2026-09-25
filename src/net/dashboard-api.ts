@@ -21,6 +21,7 @@ import {
 } from "./dashboard-api/memory";
 import { handleOpsRoutes } from "./dashboard-api/ops";
 import { handleProductivityRoute, handleReadinessRoutes } from "./dashboard-api/readiness";
+import { handleRoutingRoutes } from "./dashboard-api/routing";
 import type { DashboardApiOptions, DashboardRouteContext } from "./dashboard-api/shared";
 import { extractIp, json } from "./dashboard-api/shared";
 import { handleSystemRoutes } from "./dashboard-api/system";
@@ -100,6 +101,7 @@ export async function handleDashboardApi(
     (await handleAgentRoutes(ctx)) ??
     (await handleKeyRoutes(ctx)) ??
     (await handleWorldCatalogRoutes(ctx)) ??
+    (await handleRoutingRoutes(ctx)) ??
     (url.pathname.startsWith("/api/") ? json({ error: "Not found" }, 404) : undefined)
   );
 }

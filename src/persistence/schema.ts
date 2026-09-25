@@ -3500,4 +3500,70 @@ CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
 CREATE INDEX IF NOT EXISTS idx_notes_dedup ON notes(entity_name, note_type, substr(content, 1, 64));
 `,
   },
+  // Migration 123: external participant routing, independent of world connections.
+  {
+    version: 123,
+    sql: `
+CREATE TABLE routing_sessions (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  client_key TEXT NOT NULL,
+  label TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  group_id TEXT,
+  capabilities TEXT NOT NULL DEFAULT '[]',
+  state TEXT NOT NULL CHECK (state IN ('active', 'left')),
+  created_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  last_sequence INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(owner_id, client_key)
+);
+CREATE INDEX idx_routing_sessions_group ON routing_sessions(group_id, id);
+CREATE TABLE routing_events (
+  session_id TEXT NOT NULL REFERENCES routing_sessions(id) ON DELETE CASCADE,
+  event_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(session_id, sequence),
+  UNIQUE(session_id, event_id)
+);
+CREATE INDEX idx_routing_events_retention ON routing_events(created_at);
+CREATE TABLE routing_messages (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL REFERENCES routing_sessions(id) ON DELETE CASCADE,
+  target_id TEXT NOT NULL REFERENCES routing_sessions(id) ON DELETE CASCADE,
+  client_message_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('queued', 'acknowledged')),
+  created_at INTEGER NOT NULL,
+  acknowledged_at INTEGER,
+  UNIQUE(source_id, client_message_id)
+);
+CREATE INDEX idx_routing_messages_inbox ON routing_messages(target_id, status, created_at, id);
+CREATE INDEX idx_routing_messages_retention ON routing_messages(status, acknowledged_at);
+`,
+  },
+  // Migration 124: transport receipts reference canonical Marina channel messages.
+  {
+    version: 124,
+    sql: `
+CREATE TABLE routing_channel_receipts (
+  session_id TEXT NOT NULL REFERENCES routing_sessions(id) ON DELETE CASCADE,
+  client_message_id TEXT NOT NULL,
+  message_id INTEGER NOT NULL,
+  content_hash TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY(session_id, client_message_id)
+);
+CREATE INDEX idx_routing_channel_receipts_retention ON routing_channel_receipts(created_at);
+`,
+  },
+  // Migration 125: select the latest runtime evidence without scanning output history.
+  {
+    version: 125,
+    sql: `CREATE INDEX idx_routing_events_kind ON routing_events(session_id, kind, sequence);`,
+  },
 ];

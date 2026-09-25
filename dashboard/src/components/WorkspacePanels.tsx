@@ -15,6 +15,7 @@ import { EntityRoster } from "./EntityRoster";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
 import { MyInventory } from "./MyInventory";
 import { NarrativePlayback } from "./NarrativePlayback";
+import { ParticipantStreams } from "./ParticipantStreams";
 import { RoomDetail } from "./RoomDetail";
 import { WorkOverview } from "./WorkDrawer";
 import { WorldMap } from "./WorldMap";
@@ -25,6 +26,7 @@ const VIEWS: Array<[WorkspaceView, string]> = [
   ["canvas", "Canvas"],
   ["map", "Map"],
   ["observe", "Observe"],
+  ["streams", "Streams"],
   ["admin", "Admin"],
 ];
 export function WorkspacePanel(props: PanelFocusProps) {
@@ -129,6 +131,7 @@ export function WorkspacePanel(props: PanelFocusProps) {
                 <ConversationInsights />
               </div>
             )}
+            {id === "streams" && <ParticipantStreams active={view === "streams"} />}
             {id === "admin" && <AdminPanel />}
           </div>
         ))}

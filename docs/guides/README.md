@@ -11,8 +11,10 @@ and operate the environment. Start with one path below; the full catalog follows
 |---|---|---|
 | Run Marina and see one useful result | [Getting Started](getting-started.md) | [Dashboard](dashboard.md) |
 | Use the packaged desktop app | [Getting Started: packaged desktop](getting-started.md#packaged-desktop-app) | [Dashboard](dashboard.md) |
-| Connect Claude or another MCP client | [MCP Integration](mcp-integration.md) | [Connecting](connecting.md) |
+| Connect Claude or another MCP client | [MCP Integration](mcp-integration.md) | [Participant routing](participant-routing.md) | Generic clients, durable output, directed receipts, native channels and dashboard observability |
+| [Connecting](connecting.md) |
 | Point an OpenAI-compatible client at Marina | [Model API](model-api.md) | [Execution Traces](observability.md) |
+| Connect external participants and inspect their output | [Participant routing](participant-routing.md) | [Dashboard](dashboard.md) |
 | Build a long-running agent | [Agent Development](agent-development.md) | [Memory](memory.md) |
 | Use Marina only as an external agent's memory | [Symbolic memory interfaces](memory-interfaces.md) | TypeScript SDK, MCP for coding agents, portable skill, resident and human access without embeddings |
 | Ask agents to help with memory | [Memory assistance](memory-assistance.md) | Librarians, reflectors, evaluators, and recursive delegation through Marina's model router |

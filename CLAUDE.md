@@ -162,6 +162,7 @@ Compat profiles (`src/net/compat-profiles.ts`) are self-contained — they only 
 - `src/engine/commands/watch.ts` — declarative observation requests (create/list/due/retire), specs stored in the `watches` pool
 - `src/engine/commands/position.ts` — Kelly-sized Kalshi/Polymarket positions, no-self-hedge invariant, auto-spawned resolving watch on open
 - `src/net/probe-api.ts` — `/api/probe` HTTP route (GET lists kinds, POST invokes)
+- `src/routing/service.ts`, `src/persistence/db-routing.ts`, `src/net/dashboard-api/routing.ts` — generic participant sessions, output replay and delivery receipts; native conversation sends reuse channel history and ChannelManager. Private output never goes into the public activity feed. CLI: `scripts/route.ts`; opt-in native agent supervisor: `scripts/supervise.ts`, `src/routing/supervisor.ts` and `agent-adapters.ts` (Claude SDK, Codex app-server, pi RPC; local journal in `db-routing-runner.ts`). Runtime controls use existing `code.exec`/`agent.spawn` gates; generic envelopes never execute as controls. SDK: `src/sdk/routing-client.ts`; UI: Workspace → Streams. See [participant routing](docs/guides/participant-routing.md).
 - `src/sdk/client.ts` — `MarinaClient` / `MarinaAgent` external SDK; `tellAndAwait()` synchronous-reply primitive
 - `src/agent/execution-trace.ts` — `AgentExecutionTracer`, `traceParentFromPerception`, `unambiguousTraceParent` (causal trace propagation into agent events)
 - `src/engine/commands/trace.ts` — rank-0 `trace` command (list/show/stats/compare/dataset/advise/eval/judge/judgments)

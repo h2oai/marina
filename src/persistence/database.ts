@@ -6,6 +6,18 @@ import type { AgentSupports, AgentThinkingLevel } from "../agent/agent-types";
 import type { Session } from "../auth/session-manager";
 import { DURABLE_KEY_CACHE_MAX, type NoteTier } from "../engine/constants";
 import type { MemoryStorageAmounts } from "../sdk/memory-types";
+import type {
+  RoutingChannelPage,
+  RoutingChannelReceipt,
+  RoutingEvent,
+  RoutingEventInput,
+  RoutingEventPage,
+  RoutingJoin,
+  RoutingMessage,
+  RoutingSend,
+  RoutingSession,
+  RoutingSessionPage,
+} from "../sdk/routing-types";
 import type { EngineEvent, Entity, EntityId, RoomId } from "../types";
 import type { TraitCapabilities } from "./db-agents";
 import * as agentsDb from "./db-agents";
@@ -49,6 +61,7 @@ import * as notesDb from "./db-notes";
 import * as principalsDb from "./db-principals";
 import * as reproductionDb from "./db-reproduction";
 import * as roomsDb from "./db-rooms";
+import * as routingDb from "./db-routing";
 import * as shellDb from "./db-shell";
 import * as simulationsDb from "./db-simulations";
 import * as standingDb from "./db-standing";
@@ -3705,5 +3718,69 @@ export class MarinaDB implements MarinaStores {
     } catch {
       /* already closed */
     }
+  }
+  // External routing participants (durable account ids; independent of world sessions).
+  joinRoutingSession(ownerId: string, input: RoutingJoin): RoutingSession {
+    return routingDb.joinRoutingSession(this.db, ownerId, input);
+  }
+  getRoutingSession(id: string): RoutingSession | null {
+    return routingDb.getRoutingSession(this.db, id);
+  }
+  listRoutingSessions(ownerId: string, after: string, limit: number): RoutingSessionPage {
+    return routingDb.listRoutingSessions(this.db, ownerId, after, limit);
+  }
+  setRoutingSessionState(id: string, state: "active" | "left"): RoutingSession {
+    return routingDb.setRoutingSessionState(this.db, id, state);
+  }
+  appendRoutingEvents(sessionId: string, events: RoutingEventInput[]): RoutingEvent[] {
+    return routingDb.appendRoutingEvents(this.db, sessionId, events);
+  }
+  listRoutingEvents(sessionId: string, after: number, limit: number): RoutingEventPage {
+    return routingDb.listRoutingEvents(this.db, sessionId, after, limit);
+  }
+  sendRoutingMessage(sourceId: string, input: RoutingSend): RoutingMessage {
+    return routingDb.sendRoutingMessage(this.db, sourceId, input);
+  }
+  listRoutingInbox(sessionId: string, limit: number, controlsFirst = false): RoutingMessage[] {
+    return routingDb.listRoutingInbox(this.db, sessionId, limit, controlsFirst);
+  }
+  getRoutingMessage(id: string): RoutingMessage | null {
+    return routingDb.getRoutingMessage(this.db, id);
+  }
+  acknowledgeRoutingMessage(sessionId: string, id: string): RoutingMessage | null {
+    return routingDb.acknowledgeRoutingMessage(this.db, sessionId, id);
+  }
+  getRoutingChannelAccess(
+    ownerId: string,
+    channelId: string,
+  ): { canRead: boolean; canWrite: boolean } {
+    return routingDb.getRoutingChannelAccess(this.db, ownerId, channelId);
+  }
+  listRoutingChannelMessages(channelId: string, after: number, limit: number): RoutingChannelPage {
+    return routingDb.listRoutingChannelMessages(this.db, channelId, after, limit);
+  }
+  publishRoutingChannelMessage(
+    sessionId: string,
+    clientMessageId: string,
+    channelId: string,
+    senderId: string,
+    senderName: string,
+    content: string,
+  ): RoutingChannelReceipt {
+    return routingDb.publishRoutingChannelMessage(
+      this.db,
+      sessionId,
+      clientMessageId,
+      channelId,
+      senderId,
+      senderName,
+      content,
+    );
+  }
+  listRoutingDeliveries(sessionId: string, limit: number): RoutingMessage[] {
+    return routingDb.listRoutingDeliveries(this.db, sessionId, limit);
+  }
+  getRoutingRuntimeState(sessionId: string): unknown | null {
+    return routingDb.getRoutingRuntimeState(this.db, sessionId);
   }
 }

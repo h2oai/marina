@@ -21,3 +21,6 @@ export type {
 } from "../types";
 export type { ClientOptions, RoomView, SessionInfo } from "./client";
 export { MarinaAgent, MarinaClient } from "./client";
+export type { RoutingClientOptions } from "./routing-client";
+export { MarinaRoutingClient, RoutingApiError } from "./routing-client";
+export type * from "./routing-types";

@@ -4,7 +4,7 @@
 import { create } from "zustand";
 import type { DetailView } from "../components/CoordinationCard";
 
-export type WorkspaceView = "work" | "canvas" | "map" | "observe" | "admin";
+export type WorkspaceView = "work" | "canvas" | "map" | "observe" | "admin" | "streams";
 export type WorkspacePane = "webchat" | "workspace" | "context";
 export type CanvasReference =
   | { kind: "task" | "note"; id: string }
