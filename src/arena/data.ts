@@ -87,6 +87,70 @@ export class ArenaData {
     }
   }
 
+  /**
+   * The arena's published site data (`site/data.json`): for resolved profile and
+   * ranking rounds, the outcome and the persistence null's recorded loss —
+   * resolutions/resolved.json carries scalar rounds only.
+   */
+  async siteRounds(): Promise<
+    Array<{
+      round_id: string;
+      status: string;
+      target_type: string;
+      resolution?: { outcome?: unknown };
+      scores?: Record<string, { energy?: number; loss?: number; skill?: number }>;
+    }>
+  > {
+    const site = await this.json<{ rounds: Awaited<ReturnType<ArenaData["siteRounds"]>> }>(
+      "site/data.json",
+    );
+    return site.rounds;
+  }
+
+  /** One archived Wikipedia daily top list (`wikitop/<project>.<access>/<day>.json`), or undefined. */
+  async wikitopDay(
+    dir: string,
+    day: string,
+  ): Promise<{ day: string; fetched_at?: string; articles: Record<string, number> } | undefined> {
+    if (!/^[A-Za-z0-9_.-]+$/.test(dir) || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      throw new Error("bad wikitop path");
+    }
+    try {
+      return await this.json(`wikitop/${dir}/${day}.json`);
+    } catch (err) {
+      if (err instanceof Error && /HTTP 404/.test(err.message)) return undefined;
+      throw err;
+    }
+  }
+
+  /** Google Trends basket archive directories (the arena runs one basket today). */
+  async trendsBasketDirs(): Promise<string[]> {
+    return ["basket.Tesla-iPhone-Samsung-Netflix-Disney.geo-US"];
+  }
+
+  /** One archived Google Trends comparison snapshot, or undefined. */
+  async trendsSnapshot(
+    dir: string,
+    day: string,
+  ): Promise<
+    | {
+        fetched_at?: string;
+        queries: string[];
+        points: Array<[string, string, number[], boolean]>;
+      }
+    | undefined
+  > {
+    if (!/^[A-Za-z0-9_.-]+$/.test(dir) || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      throw new Error("bad trends path");
+    }
+    try {
+      return await this.json(`trends/${dir}/${day}.json`);
+    } catch (err) {
+      if (err instanceof Error && /HTTP 404/.test(err.message)) return undefined;
+      throw err;
+    }
+  }
+
   /** Rounds still accepting forecasts (lock in the future), soonest first. */
   async openRounds(at = this.now()): Promise<ArenaRound[]> {
     return (await this.rounds())

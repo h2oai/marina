@@ -34,6 +34,7 @@ import { parseArgs } from "node:util";
 import { parseForecasterSpec } from "../src/arena/config";
 import {
   evaluateResolved,
+  evaluateShapes,
   type Forecaster,
   type Learner,
   scoreShadow,
@@ -284,6 +285,21 @@ async function main(): Promise<number> {
         );
       }
       console.log("skill: 0 = the arena's persistence (last value, sd 1.5); above 0 beats it.");
+      // Profile and ranking rounds, scored as the leaderboard scores them.
+      const shapes = await evaluateShapes(arenaData(), forecasters);
+      if (shapes.rounds.length) {
+        console.log(
+          `\nprofile & ranking rounds (${shapes.rounds.length}), skill vs the arena's persistence:`,
+        );
+        for (const r of shapes.rounds) {
+          console.log(
+            `  ${r.roundId.padEnd(26)} ${names.map((n) => `${n.slice(0, 18)} ${r.results[n] ? fmt(r.results[n]!.skill) : "n/a"}`).join("  ")}`,
+          );
+        }
+        console.log(
+          `  ALL ${names.map((n) => `${n.slice(0, 18)} ${fmt(shapes.overall[n]!)}`).join("  ")}`,
+        );
+      }
       if (values.out) {
         await Bun.write(
           values.out,

@@ -123,27 +123,61 @@ export function forecastScalar(points: ArenaPoint[], releaseAt: string): ScalarF
   };
 }
 
-const NON_ARTICLE =
-  /^(Special|Wikipedia|Portal|Help|File|Template|Category|Draft|User|Talk|[A-Za-z]+_talk):/;
+/** The arena's `main_page_and_namespaces_v1` rule (`ssa/adapters/wikipedia.py`). */
+const EXCLUDED_TITLES = new Set(["Main_Page"]);
+const NAMESPACE_PREFIXES = [
+  "Special:",
+  "Wikipedia:",
+  "Portal:",
+  "Help:",
+  "File:",
+  "Template:",
+  "Category:",
+  "Draft:",
+  "User:",
+  "Talk:",
+  "Wikipedia_talk:",
+  "Portal_talk:",
+  "Help_talk:",
+  "File_talk:",
+  "Template_talk:",
+  "Category_talk:",
+  "Draft_talk:",
+  "User_talk:",
+];
+export function isExcludedTitle(title: string): boolean {
+  return EXCLUDED_TITLES.has(title) || NAMESPACE_PREFIXES.some((p) => title.startsWith(p));
+}
 
-/** Wikipedia top-N from the recent daily lists: views summed, ties by title. */
+/** Recency half-life for ranking views (days). Backtested over 7 archived weeks: h=3 → +0.069 vs the arena's persistence; a flat 7-day sum +0.045. */
+export const RANKING_HALF_LIFE_DAYS = 3;
+
+/**
+ * Top-N from recent daily lists, views weighted by recency (half-life
+ * `RANKING_HALF_LIFE_DAYS`, counted back from the newest list): a spike fades,
+ * a sustained article keeps its place. Ties by title, as the arena breaks them.
+ */
 export function forecastRanking(lock: ArenaLock, length: number, allowed?: string[]): string[] {
-  const obs = [...(lock.answer_obs ?? [])].sort((a, b) => a.date.localeCompare(b.date)).slice(-7);
+  const obs = [...(lock.answer_obs ?? [])].sort((a, b) => a.date.localeCompare(b.date));
   if (obs.length === 0) throw new Error("no ranking observations to forecast from");
+  const newest = Date.parse(obs.at(-1)!.date);
   const totals = new Map<string, number>();
   for (const day of obs) {
+    const age = (newest - Date.parse(day.date)) / DAY_MS;
+    const w = 0.5 ** (age / RANKING_HALF_LIFE_DAYS);
     day.items.forEach((item, i) => {
       const views = day.views?.[item] ?? day.items.length - i;
-      totals.set(item, (totals.get(item) ?? 0) + views);
+      totals.set(item, (totals.get(item) ?? 0) + w * views);
     });
   }
   const allow = allowed ? new Set(allowed) : undefined;
   const ranked = [...totals.entries()]
-    .filter(([t]) => t !== "Main_Page" && !NON_ARTICLE.test(t) && (!allow || allow.has(t)))
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .filter(([t]) => !isExcludedTitle(t) && (!allow || allow.has(t)))
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
     .map(([t]) => t);
-  if (ranked.length < length)
+  if (ranked.length < length) {
     throw new Error(`only ${ranked.length} candidates for a top-${length}`);
+  }
   return ranked.slice(0, length);
 }
 
@@ -183,7 +217,7 @@ export function forecastRound(round: ArenaRound, lock: ArenaLock): RoundForecast
   return {
     ranking: forecastRanking(lock, length, round.ranking?.items),
     rules: {},
-    note: "marina-baseline v1: last-7-day pageview totals, ties by title",
+    note: `marina-baseline v2: recency-weighted pageviews (half-life ${RANKING_HALF_LIFE_DAYS} d), ties by title`,
   };
 }
 
