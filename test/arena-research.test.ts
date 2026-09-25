@@ -103,14 +103,14 @@ describe("citation verification", () => {
 
   it("tags lines verified, unverified or unreachable against the cited pages", async () => {
     const report = [
-      "- YouGov: **39%** approve ([yougov](https://today.yougov.com/poll))",
+      "- YouGov: **39%** approve ([yougov](https://pollster.example/poll))",
       "- Echelon: **36%** approve, 64% disapprove ([echelon](https://echelon.example/sept))",
       "- Ipsos: **32%** ([ipsos](https://paywall.example/x))",
       "- An uncited 41% claim",
       "Nothing numeric here ([a](https://echelon.example/sept))",
     ].join("\n");
     const pages: Record<string, string | undefined> = {
-      "https://today.yougov.com/poll": "Approve 35% Disapprove 63% among 1,401 registered voters",
+      "https://pollster.example/poll": "Approve 35% Disapprove 63% among 1,401 registered voters",
       "https://echelon.example/sept": "Trump approval: 36% approve / 64% disapprove",
     };
     const v = await verifyDossier(report, async (u) => pages[u]);
@@ -118,6 +118,22 @@ describe("citation verification", () => {
     expect(v.annotated).toContain("[unverified: 39 not on the cited page]");
     expect(v.verifiedText).toContain("Echelon");
     expect(v.verifiedText).not.toContain("YouGov");
+  });
+});
+
+describe("source terms", () => {
+  it("never fetches publishers whose terms bar bots or forwarding", async () => {
+    const fetched: string[] = [];
+    const v = await verifyDossier(
+      "- YouGov: 35% ([y](https://today.yougov.com/topics/x))\n- AAII: 12.5% spread ([a](https://www.aaii.com/sentiment))",
+      async (u) => {
+        fetched.push(u);
+        return "35% 12.5%";
+      },
+    );
+    expect(fetched).toEqual([]);
+    expect(v.stats.unreachable).toBe(2);
+    expect(v.verifiedText).toBe("");
   });
 });
 

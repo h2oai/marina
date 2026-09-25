@@ -22,6 +22,29 @@ import { guardedFetch } from "../../net/url-guard";
 
 export type LineStatus = "verified" | "unverified" | "unreachable" | "uncited";
 
+/**
+ * Publishers whose terms bar automated access or passing content on (the
+ * arena's own rights review, `ssa/inventory.py` / docs/sources.md): YouGov
+ * (CC BY-NC with a bar on bots), AAII ("may not be forwarded"), Conference
+ * Board and Penta-CivicScience (database extraction / scraping barred).
+ * Citation verification never fetches them; their lines stay unverified.
+ */
+export const NO_FETCH_DOMAINS = [
+  "yougov.com",
+  "aaii.com",
+  "conference-board.org",
+  "civicscience.com",
+];
+
+export function fetchAllowed(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return !NO_FETCH_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+  } catch {
+    return false;
+  }
+}
+
 export interface VerifiedLine {
   text: string;
   status: LineStatus;
@@ -96,7 +119,10 @@ export async function verifyDossier(report: string, pageText: PageText): Promise
   for (const line of rawLines) for (const m of line.matchAll(LINK)) urls.add(m[2]!);
   const pages = new Map<string, string | undefined>();
   await Promise.all(
-    [...urls].slice(0, MAX_PAGES).map(async (u) => pages.set(u, await pageText(u))),
+    [...urls]
+      .filter(fetchAllowed)
+      .slice(0, MAX_PAGES)
+      .map(async (u) => pages.set(u, await pageText(u))),
   );
 
   const lines: VerifiedLine[] = [];
