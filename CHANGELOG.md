@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Forecast any question (#130): `forecast <question>` (alias `predict`), `bun run forecast`, and
+  `POST /v1/forecast` return a probability or a number with an interval, the sources, which cited
+  figures verified, what each analyst said, and the cost. See `docs/guides/forecasting.md`.
+- Social Simulation Arena entrant (#123–#131): signed Route-B submissions, `arena` in-world
+  command and `bun run arena` operator CLI, baseline / Civiqs nowcast / model / multi-vendor crew /
+  research-agent forecasters, profile and ranking scoring as the leaderboard scores them, a
+  forward shadow ledger, leakage exclusions and source-terms rules, and a signal-discovery loop
+  that promotes a signal only when it wins on held-out rounds. See `docs/guides/arena.md`.
+- Local API key (#131): on the local profile Marina creates `MARINA_LOCAL_API_KEY` once, stores it
+  next to the database (mode 600) and prints an `OPENAI_BASE_URL` / `OPENAI_API_KEY` line at
+  startup, so an OpenAI client works with no configuration.
+- CLI `--port` / `--url` (#130); auxiliary ports derive from `WS_PORT` (+1 MCP, +2 logs).
+- Harness decisions (#106–#120): `decision check` / `decision choose`, the pi tool gate with owner
+  approval, calibration, a route table, the Ops decisions view, a qualification harness, and
+  `POST /v1/decisions` (TypeSafe-compatible `/v1/systemone`). See `docs/architecture/decisions.md`.
+- Hugging Face Inference Providers as a first-class provider (#117); pi-ai 0.87 (#116); model
+  defaults moved off gpt-4o-mini / Haiku 4.5 (#118).
+- Dashboard macro chips, decisions health and a lazy WorkDrawer (#122); native coding agents run
+  from the Marina terminal, with durable task attempts and review evidence.
+
 - Formation runtime formalized: `CREW_BRIEFS` give every crew formation a
   compact, structure-light runtime brief (led by a protocol-priority preamble
   so answering a `model_request` always outranks process), and

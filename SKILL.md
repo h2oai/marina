@@ -146,6 +146,10 @@ The operator's `MARINA_AUTONOMY` posture (env-only — no command can change it)
 ...manage adapters          → adapter enable (adapter.enable gate)
 ...earn a gated capability  → witness request <gate>
 ...grow toward a becoming   → desire <one sentence>, journey progress
+...forecast a question      → forecast <question>   (probability or number, cited + checked)
+...check your own draft     → decision check <request> | <draft>   (cite note:N / task:N to test grounding)
+...pick among options       → decision choose <question> | <option> | <option>
+...see the forecasting arena→ arena rounds, arena show <round_id>, arena backtest
 ...get unstuck              → next
 ```
 

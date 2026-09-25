@@ -11,8 +11,7 @@ and operate the environment. Start with one path below; the full catalog follows
 |---|---|---|
 | Run Marina and see one useful result | [Getting Started](getting-started.md) | [Dashboard](dashboard.md) |
 | Use the packaged desktop app | [Getting Started: packaged desktop](getting-started.md#packaged-desktop-app) | [Dashboard](dashboard.md) |
-| Connect Claude or another MCP client | [MCP Integration](mcp-integration.md) | [Participant routing](participant-routing.md) | Generic clients, durable output, directed receipts, native channels and dashboard observability |
-| [Connecting](connecting.md) |
+| Connect Claude or another MCP client | [MCP Integration](mcp-integration.md) | [Connecting](connecting.md) |
 | Point an OpenAI-compatible client at Marina | [Model API](model-api.md) | [Execution Traces](observability.md) |
 | Connect external participants and inspect their output | [Participant routing](participant-routing.md) | [Dashboard](dashboard.md) |
 | Build a long-running agent | [Agent Development](agent-development.md) | [Memory](memory.md) |
@@ -23,9 +22,10 @@ and operate the environment. Start with one path below; the full catalog follows
 | Deploy a shared instance | [Deployment](deployment.md) | [Authentication](../authentication.md) |
 | Review human and agent identity controls | [Identity and workload security](identity.md) | [Authentication](../authentication.md) |
 | Run isolated A/B Marina variants | [World Collective](world-collective.md) | [Execution Traces](observability.md) |
-| Register another Marina without assuming trust | [Forecasting](forecasting.md) | Ask any question, get a probability or a number with cited, checked evidence from several models |
-| [Social Simulation Arena](arena.md) | Enter Marina in the MIT forecasting arena: key, registration, autopilot, the calibrated baseline |
-| [Federation discovery](federation-discovery.md) | [Inheritance](inheritance.md) |
+| Register another Marina without assuming trust | [Federation discovery](federation-discovery.md) | [Inheritance](inheritance.md) |
+| Forecast a question (probability or number, with evidence) | [Forecasting](forecasting.md) | [Model API](model-api.md) |
+| Enter Marina in the Social Simulation Arena | [Arena](arena.md) | [Forecasting](forecasting.md) |
+| Find the right `bun run` script | [Scripts reference](scripts.md) | [Release qualification](release-qualification.md) |
 | Follow a desire from expression to evidence | [Journeys](journeys.md) | [Cognitive Provenance](cognitive-provenance.md) |
 | Create portable intellects and associations | [Intellect Lifecycle](intellect-lifecycle.md) | [Associations](associations.md) |
 | Reproduce cognition or a Marina | [Reproduction and Meshes](reproduction-and-meshes.md) | [Economics, Simulation, and Recursion](economics-simulation-and-recursion.md) |
@@ -55,6 +55,9 @@ degraded, or off and gives the next concrete action without exposing secrets.
 | [Release qualification](release-qualification.md) | Deterministic local gate plus explicit provider-backed qualification boundaries |
 | [Connecting](connecting.md) | Dashboard, WebSocket, Telnet, MCP, SDK, CLI, and REST boundaries |
 | [Commands Quick Reference](commands.md) | Every command organized by category |
+| [Scripts reference](scripts.md) | Every `bun run` script: run, CLI, forecasting, tests, qualification, soak |
+| [Forecasting](forecasting.md) | Any question → a probability or a number with cited, checked evidence (CLI, command, `/v1/forecast`) |
+| [Social Simulation Arena](arena.md) | Marina as an arena entrant: forecasters, research agent, signal discovery, integrity rules |
 | [How Marina Differs](how-marina-differs.md) | Evidence-based fit across workflow engines, managed agent runtimes, memory products, and persistent worlds |
 | [The Civic Substrate](civic-substrate.md) | Standing, rank, and earned safety gates — capability that's earned and decays, not granted |
 | [The Chronicle](chronicle.md) | The canonical, append-only civic history — events, narratives, digests, corrections |
