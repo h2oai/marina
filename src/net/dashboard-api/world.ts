@@ -18,6 +18,7 @@ import { evolutionBudgetState, parseEvolutionProtocol } from "../../engine/evolu
 import type { MarinaDB, MediaJobRow } from "../../persistence/database";
 import type { EntityId, RoomId } from "../../types";
 import { ORCHESTRATION_PATTERNS } from "../../world/templates/orchestration";
+import { isSentinelPrincipal } from "../auth-middleware";
 import { buildCanvasPrincipal, resolveCanvasHttpPrincipal } from "../canvas-principal";
 import { authorizeCanvasSubscription } from "../canvas-ws";
 import type { memoryObserver } from "../memory-visibility";
@@ -762,13 +763,17 @@ export async function handleCoordinationListRoutes(
 export async function handleWorldCatalogRoutes(
   ctx: DashboardRouteContext,
 ): Promise<Response | undefined> {
-  const { db, engine, method, req, url } = ctx;
+  const { callerId, db, engine, method, req, url } = ctx;
   // ─── Room Templates, Macros, Experiments, Markets, Benchmarks ──────────
   if (url.pathname === "/api/room-templates" && method === "GET" && db) {
     return json(db.getAllRoomTemplates());
   }
   if (url.pathname === "/api/macros" && method === "GET" && db) {
-    return json(db.listMacros());
+    // Macros are per-author: the caller's own plus the shared `system` ones the
+    // engine also falls back to. Scoped server-side — never by a client-named
+    // entity — and a sentinel caller has no macros of its own.
+    const own = isSentinelPrincipal(callerId) ? [] : db.listMacros(callerId);
+    return json([...own, ...db.listMacros("system")]);
   }
   if (url.pathname === "/api/experiments" && method === "GET" && db) {
     return json(db.listExperiments());

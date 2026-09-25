@@ -217,6 +217,8 @@ export type OpsDecisions = {
   counts: Record<string, Record<string, number>>;
   /** Newest first, capped. */
   recent: OpsDecisionRow[];
+  /** Backend health from recent decision failures (15 min, across all agents). */
+  health: { status: "ok" | "degraded"; total: number; errors: number; lastError?: string };
 };
 
 export type OpsOverview = {

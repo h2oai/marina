@@ -170,6 +170,7 @@ const overview = (overrides: Partial<OpsOverview> = {}): OpsOverview => ({
     windowMs: 86_400_000,
     counts: {},
     recent: [],
+    health: { status: "ok", total: 0, errors: 0 },
   },
   security: {
     trustProfile: "shared",

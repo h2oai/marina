@@ -1,5 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { CommandFavorites, FavoriteCommandButton } from "../components/CommandFavorites";
@@ -7,6 +8,15 @@ import { CommandFields } from "../components/CommandFields";
 import { useChatState } from "../hooks/use-chat-state";
 import { useWorldState } from "../hooks/use-world-state";
 import { commandForms, composeCommand, parseCommandForm } from "../lib/command-forms";
+
+vi.mock("../lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/api")>()),
+  fetchApi: vi.fn(async () => []),
+}));
+
+const withQuery = (ui: React.ReactNode) => (
+  <QueryClientProvider client={new QueryClient()}>{ui}</QueryClientProvider>
+);
 
 describe("guided command composition", () => {
   it("builds a crew invitation with an optional role and no raw command syntax", () => {
@@ -125,10 +135,12 @@ it("pins a command per resident and drafts it without execution", () => {
   const drafted = vi.fn();
   window.addEventListener("marina:draft-command", drafted);
   const view = render(
-    <>
-      <FavoriteCommandButton command="agent status builder" />
-      <CommandFavorites />
-    </>,
+    withQuery(
+      <>
+        <FavoriteCommandButton command="agent status builder" />
+        <CommandFavorites />
+      </>,
+    ),
   );
   fireEvent.click(screen.getByRole("button", { name: "Pin command" }));
   expect(localStorage.getItem("marina-command-favorites-v1")).toContain("agent status builder");
@@ -136,7 +148,7 @@ it("pins a command per resident and drafts it without execution", () => {
   expect((drafted.mock.calls[0]![0] as CustomEvent).detail.command).toBe("agent status builder");
   expect(send).not.toHaveBeenCalled();
   view.unmount();
-  render(<CommandFavorites />);
+  render(withQuery(<CommandFavorites />));
   expect(screen.getByRole("navigation", { name: "Favorite commands" })).toBeInTheDocument();
   window.removeEventListener("marina:draft-command", drafted);
 });

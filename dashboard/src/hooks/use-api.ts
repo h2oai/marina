@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { fetchApi } from "../lib/api";
 import type { OpsOverview } from "../lib/ops-types";
 import type {
@@ -29,6 +30,7 @@ import type {
   GroupEntry,
   KeyStatus,
   LogsResponse,
+  MacroEntry,
   MarketEntry,
   McpInfo,
   MediaJob,
@@ -55,6 +57,7 @@ import type {
   WorldData,
   WorldVariantsResponse,
 } from "../lib/types";
+import { MACROS_CHANGED_EVENT, useChatState } from "./use-chat-state";
 
 export function useSetupStatus() {
   return useQuery({
@@ -617,4 +620,21 @@ export function useRecipes() {
     queryFn: () => fetchApi<RecipeEntry[]>("/api/recipes"),
     staleTime: 60_000,
   });
+}
+
+/** The chat entity's own macros plus the shared `system` ones (scoped server-side). */
+export function useMacros() {
+  const entityName = useChatState((s) => s.entityName);
+  const query = useQuery({
+    queryKey: ["macros", entityName],
+    queryFn: () => fetchApi<MacroEntry[]>("/api/macros"),
+    staleTime: 30_000,
+  });
+  const { refetch } = query;
+  useEffect(() => {
+    const onChange = () => void refetch();
+    window.addEventListener(MACROS_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(MACROS_CHANGED_EVENT, onChange);
+  }, [refetch]);
+  return query;
 }

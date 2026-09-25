@@ -29,6 +29,7 @@ import {
 } from "../agent/tools";
 import { RateLimiter } from "../auth/rate-limiter";
 import { decisionConfigFromEnv, decisionGateEnabled } from "../decisions/config";
+import { decisionHealth } from "../decisions/health";
 import { decisionVerifyEnabled } from "../decisions/verify";
 import { getAutonomyPosture } from "../engine/autonomy";
 import { CONTINUATION_PROMPT_BUDGET_BYTES } from "../engine/constants";
@@ -529,6 +530,19 @@ export function decisionsOverview(
     windowMs: DECISIONS_WINDOW_MS,
     counts,
     recent: rows.slice(0, DECISIONS_RECENT_MAX),
+    health: decisionsHealthFor(engine, scope, now),
+  };
+}
+
+/** Backend health is world-wide (one backend serves everyone); the failure TEXT
+ * may quote upstream error bodies, so only a privileged observer sees it. */
+function decisionsHealthFor(engine: Engine, scope: OpsObserverScope, now: number) {
+  const { status, total, errors, lastError } = decisionHealth(engine.getEventLog(), now);
+  return {
+    status,
+    total,
+    errors,
+    ...(scope.privileged && lastError ? { lastError } : {}),
   };
 }
 
