@@ -10,6 +10,7 @@ import {
 } from "../agent/prompts/support-prompts";
 import { parseExecUnrestricted } from "../coding/exec-approver";
 import { setApprovalNotifier } from "../decisions/approvals";
+import { resolveEvidence } from "../decisions/evidence";
 import { worldMemoryService } from "../memory/world-service";
 import { probeConfiguredProviders } from "../net/model-api";
 import { registerBuiltinResolvers } from "../resolvers";
@@ -862,7 +863,15 @@ export function registerBuiltinCommands(engine: Engine): void {
     );
     return true;
   });
-  engine.commands.registerBuiltin(decisionCommand({ getEntity: (id) => engine.entities.get(id) }));
+  const resolveCitedEvidence = (actor: { name: string; id: string }, text: string) =>
+    engine.db ? resolveEvidence(engine.db, actor, text) : [];
+  engine.commands.registerBuiltin(
+    decisionCommand({
+      getEntity: (id) => engine.entities.get(id),
+      resolveEvidence: resolveCitedEvidence,
+      logEvent: (event) => engine.logEvent(event),
+    }),
+  );
 
   if (engine.taskManager) {
     engine.commands.registerBuiltin(
@@ -871,6 +880,7 @@ export function registerBuiltinCommands(engine: Engine): void {
         (name) => engine.findEntityGlobal(name),
         (event) => engine.logEvent(event),
         (eid, rank) => engine.maybePromote(eid, rank),
+        resolveCitedEvidence,
       ),
     );
   }

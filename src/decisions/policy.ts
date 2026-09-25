@@ -262,33 +262,46 @@ export interface VerifyVerdict {
 
 /**
  * `attempt` is 1-based. Never retries past `maxAttempts`, on an unsure judge, or
- * on an outage. `supportKey` names the yes/no support question (`grounded` for
- * answers checked against evidence, `delivered` for task submissions).
+ * on an outage. `supportKey` names the yes/no support question(s) that must
+ * each clear `minGrounded` (`grounded` for answers checked against evidence,
+ * `delivered` for task submissions, both for a submission that cites evidence;
+ * `[]` scores quality alone).
  */
 export function decideVerify(
   answers: Record<string, DecisionAnswer> | undefined,
   attempt: number,
   policy: VerifyPolicy = DEFAULT_VERIFY_POLICY,
-  supportKey = "grounded",
+  supportKey: string | string[] = "grounded",
 ): VerifyVerdict {
+  const keys = typeof supportKey === "string" ? [supportKey] : supportKey;
   const quality = answers?.quality;
-  const grounded = noulOf(answers, supportKey);
-  if (quality?.type !== "score" || grounded === undefined) {
+  const support = keys.map((key) => [key, noulOf(answers, key)] as const);
+  if (quality?.type !== "score" || support.some(([, p]) => p === undefined)) {
     return { action: "accept", reason: "Verifier unavailable; accepting (advisory).", signals: {} };
   }
-  const signals: Record<string, number> = { quality: quality.score, [supportKey]: grounded };
+  const signals: Record<string, number> = { quality: quality.score };
+  for (const [key, p] of support) signals[key] = p as number;
   if (quality.confidence !== undefined) signals.confidence = quality.confidence;
-  const passes = quality.score >= policy.acceptQuality && grounded >= policy.minGrounded;
-  if (passes) return { action: "accept", reason: `passes quality and ${supportKey}`, signals };
+  const weak = support.filter(([, p]) => (p as number) < policy.minGrounded).map(([k]) => k);
+  const label = keys.length ? `quality and ${keys.join(" and ")}` : "quality";
+  if (quality.score >= policy.acceptQuality && weak.length === 0) {
+    return { action: "accept", reason: `passes ${label}`, signals };
+  }
   if (attempt >= policy.maxAttempts) {
     return { action: "accept", reason: `below bar but out of attempts (${attempt})`, signals };
   }
-  if (quality.confidence !== undefined && quality.confidence < policy.minJudgeConfidence) {
+  // The confidence is the QUALITY score's; it can waive a weak quality score,
+  // never a support question that failed on its own (e.g. grounded 0.02).
+  if (
+    weak.length === 0 &&
+    quality.confidence !== undefined &&
+    quality.confidence < policy.minJudgeConfidence
+  ) {
     return { action: "accept", reason: "below bar but the judge is unsure", signals };
   }
-  return {
-    action: "retry",
-    reason: `quality ${quality.score.toFixed(2)} / ${supportKey} ${grounded.toFixed(2)} below the bar`,
-    signals,
-  };
+  const detail = [
+    `quality ${quality.score.toFixed(2)}`,
+    ...support.map(([k, p]) => `${k} ${(p as number).toFixed(2)}`),
+  ];
+  return { action: "retry", reason: `${detail.join(" / ")} below the bar`, signals };
 }

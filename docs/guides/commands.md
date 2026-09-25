@@ -675,7 +675,14 @@ Recruitment is availability- and evidence-aware:
 Matching weighs role/goal/focus overlap, standing, approved task outcomes, current availability, errors,
 and silent turns. Recruitment remains explicit: recommendations never pull an agent away from live work.
 
-## Decision Approvals
+## Decisions
+
+When the world has a decision backend (`MARINA_DECISIONS`, see [docs/architecture/decisions.md](../architecture/decisions.md)), any entity can use cheap judgement calls as tools. They only inform: nothing is blocked or recorded on your behalf.
+
+| Command | Description |
+|---------|-------------|
+| `decision check [<request> \|] <draft>` | Score your own draft before you use it: quality (0–2), and grounding against any `note:N`, `task:N` or `chronicle:N` you cite (only records you can read are sent) |
+| `decision choose <question> \| <option> \| <option> [\| …]` | Pick among up to 8 options; returns the pick and its confidence |
 
 When the decision gate (`MARINA_DECISION_GATE=on`, see [docs/architecture/decisions.md](../architecture/decisions.md)) scores an agent's tool call in the "ask a person" band, the call waits and the agent's **owner** — whoever spawned it — gets a notice with a token. Only the owner can settle it, an agent can never approve its own call, and no answer before the deadline blocks the call.
 
