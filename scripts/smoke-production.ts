@@ -25,6 +25,10 @@ export interface SmokeCheck {
   ok: boolean;
   status?: number;
   error?: string;
+  /** Model probe only: the start of what came back, and the id `trace show` takes. */
+  excerpt?: string;
+  requestId?: string;
+  attempts?: number;
 }
 
 /** Exercise the running process. No world login, agent spawn, or memory writes. */
@@ -63,29 +67,60 @@ export async function checkProductionHttp(
   return checks;
 }
 
-export async function checkProductionModel(url: string, token?: string): Promise<SmokeCheck> {
-  const nonce = `probe-${crypto.randomUUID().slice(0, 8)}`;
-  try {
-    const response = await fetch(new URL("/v1/chat/completions", url), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(buildProviderProbeBody(nonce)),
-      redirect: "error",
-      signal: AbortSignal.timeout(60_000),
-    });
-    const body = (await response.json()) as { choices?: { message?: { content?: string } }[] };
-    const verdict = evaluateProviderProbe(body.choices?.[0]?.message?.content ?? "", nonce);
-    return {
-      name: "live-model-endpoint",
-      ok: response.ok && verdict.textOk && verdict.systemHonored,
-      status: response.status,
-    };
-  } catch {
-    return { name: "live-model-endpoint", ok: false, error: "request-or-response-failed" };
+/**
+ * One live model round trip through the deployed endpoint. It failed
+ * intermittently in production (HTTP 200, reply without the check word) while
+ * never reproducing locally, and reported nothing but `ok: false` — so it now
+ * keeps the start of the reply and the request id (for `trace show` on the
+ * host), and tries twice before failing a deploy: one bad model reply is a
+ * model's bad day; two in a row is a broken endpoint.
+ */
+export async function checkProductionModel(
+  url: string,
+  token?: string,
+  fetcher: typeof fetch = fetch,
+  attempts = 2,
+): Promise<SmokeCheck> {
+  let last: SmokeCheck = { name: "live-model-endpoint", ok: false, error: "not attempted" };
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const nonce = `probe-${crypto.randomUUID().slice(0, 8)}`;
+    try {
+      const response = await fetcher(new URL("/v1/chat/completions", url), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(buildProviderProbeBody(nonce)),
+        redirect: "error",
+        signal: AbortSignal.timeout(60_000),
+      });
+      const requestId = response.headers.get("x-request-id") ?? undefined;
+      const body = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+      const content = body.choices?.[0]?.message?.content ?? "";
+      const verdict = evaluateProviderProbe(content, nonce);
+      last = {
+        name: "live-model-endpoint",
+        ok: response.ok && verdict.textOk && verdict.systemHonored,
+        status: response.status,
+        attempts: attempt,
+        ...(requestId ? { requestId } : {}),
+        // The probe asks only for a random check word — safe to show.
+        ...(content || !response.ok
+          ? { excerpt: content.slice(0, 80) }
+          : { excerpt: "(empty reply)" }),
+      };
+    } catch {
+      last = {
+        name: "live-model-endpoint",
+        ok: false,
+        error: "request-or-response-failed",
+        attempts: attempt,
+      };
+    }
+    if (last.ok) return last;
   }
+  return last;
 }
 
 /** Copy only routing settings and keys into the private probe DB. Never migrate or write the
