@@ -23,9 +23,9 @@
   ],
   "route": {
     "routes": {
-      "cheap": { "model": "openai/gpt-4o-mini", "criteria": "Direct lookups, extraction and localized changes." },
-      "coder": { "model": "anthropic/claude-sonnet-4-6", "criteria": "Writing or reviewing code across several files." },
-      "powerful": { "model": "anthropic/claude-opus-4-6", "criteria": "Architecture, unclear failures and high-stakes decisions." }
+      "cheap": { "model": "openai/gpt-6-luna", "criteria": "Direct lookups, extraction and localized changes." },
+      "coder": { "model": "anthropic/claude-sonnet-5", "criteria": "Writing or reviewing code across several files." },
+      "powerful": { "model": "anthropic/claude-opus-5-5", "criteria": "Architecture, unclear failures and high-stakes decisions." }
     },
     "cases": [
       { "id": "readme", "goal": "Read the README and list the commands it mentions", "expect": "cheap" },

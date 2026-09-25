@@ -1472,9 +1472,9 @@ export function seedAnswererCrew(
   // to sweep heterogeneous model choices per role. The crew serves
   // marina:answerer by joining the model-answerer channel, independent of
   // what model each agent uses to think.
-  const answererModel = opts.answererModel ?? "anthropic/claude-sonnet-4-5-20250929";
-  const mathModel = opts.mathModel ?? "anthropic/claude-sonnet-4-5-20250929";
-  const reflectorModel = opts.reflectorModel ?? "anthropic/claude-sonnet-4-5-20250929";
+  const answererModel = opts.answererModel ?? "anthropic/claude-sonnet-5";
+  const mathModel = opts.mathModel ?? "anthropic/claude-sonnet-5";
+  const reflectorModel = opts.reflectorModel ?? "anthropic/claude-sonnet-5";
   const answererCount = Math.max(1, opts.answererCount ?? 1);
 
   // ── Channels (the crew's coordination surfaces) ──────────────────────────
@@ -1943,7 +1943,7 @@ export function seedOrchestrationCrews(
   const seedAgentConfigs = opts.seedAgentConfigs ?? true;
   // Default specialist model: real provider, direct. Overrideable per-agent
   // via opts.models for sweeping heterogeneous combinations.
-  const m = (name: string): string => opts.models?.[name] ?? "anthropic/claude-sonnet-4-5-20250929";
+  const m = (name: string): string => opts.models?.[name] ?? "anthropic/claude-sonnet-5";
 
   // ── Specialist channels + role prompts (shared across orchestrations) ───
   seedChannel(db, "model-council");
