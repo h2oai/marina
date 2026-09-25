@@ -51,6 +51,12 @@ export const TRUST_SOURCE_MEANING: Record<string, string> = {
 
 const MAX_INTENT_CHARS = 400;
 
+/** Mask emails and key-shaped strings and cap the length — for any text sent to a judge. */
+export function maskSensitiveText(value: string, maxChars: number): string {
+  const masked = value.replace(EMAIL, "<email>").replace(SECRET, "<secret>");
+  return masked.length > maxChars ? `${masked.slice(0, maxChars)}…` : masked;
+}
+
 export function redactToolCall(
   toolName: string,
   args: Record<string, unknown>,
@@ -58,10 +64,7 @@ export function redactToolCall(
   intent?: GateIntent,
 ): Record<string, unknown> {
   const mask = (value: unknown): unknown => {
-    if (typeof value === "string") {
-      const masked = value.replace(EMAIL, "<email>").replace(SECRET, "<secret>");
-      return masked.length > MAX_ARG_CHARS ? `${masked.slice(0, MAX_ARG_CHARS)}…` : masked;
-    }
+    if (typeof value === "string") return maskSensitiveText(value, MAX_ARG_CHARS);
     if (Array.isArray(value)) return value.map(mask);
     if (value && typeof value === "object") {
       return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, mask(v)]));

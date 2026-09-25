@@ -4,6 +4,7 @@
 import type { TaskManager } from "../../coordination/task-manager";
 import { parseTaskNodeType, TASK_NODE_TYPE_MEANING } from "../../coordination/task-node-type";
 import { getDecisionProvider } from "../../decisions/config";
+import type { Evidence } from "../../decisions/evidence";
 import {
   clearSubmissionAttempts,
   decisionVerifyEnabled,
@@ -66,6 +67,7 @@ export function taskCommand(
   findEntity: (name: string) => Entity | undefined,
   logEvent?: (event: EngineEvent) => void,
   promote?: (entityId: EntityId, rank: EntityRank) => void,
+  resolveEvidence?: (actor: { name: string; id: string }, text: string) => Evidence[],
 ): CommandDef {
   return {
     name: "task",
@@ -439,7 +441,8 @@ export function taskCommand(
             return;
           }
           const attempt = nextSubmissionAttempt(id, input.entity);
-          return verifySubmission(provider, task, text, attempt).then((verdict) => {
+          const evidence = resolveEvidence?.({ name: self.name, id: self.id }, text) ?? [];
+          return verifySubmission(provider, task, text, attempt, evidence).then((verdict) => {
             logEvent?.({
               type: "agent_decision",
               name: self.name,
@@ -462,7 +465,7 @@ export function taskCommand(
             ctx.send(
               input.entity,
               `Not submitted yet — the verifier scored this below the bar (${verdict.reason}). ` +
-                `Report the work actually done (results, evidence, artifacts) and run \`task submit ${id} …\` again; ` +
+                `Report the work actually done (results, evidence, artifacts${evidence.length ? "" : "; cite note:N, task:N or chronicle:N so claims can be checked"}) and run \`task submit ${id} …\` again; ` +
                 "the next submission is recorded as is.",
             );
           });

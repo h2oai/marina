@@ -103,6 +103,17 @@ export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
       "toward what you want to become. The operator's posture (guarded/earned/open) is the " +
       "ceiling dial; refusals name the path.",
   },
+  {
+    type: "skill",
+    importance: 7,
+    content:
+      "decision check / choose — cheap second opinions, when the world has a decision backend. " +
+      "Before you submit or publish, `decision check <request> | <draft>` scores your draft's " +
+      "quality; cite evidence as note:N, task:N or chronicle:N and it also checks the claims are " +
+      "grounded in it. `decision choose <question> | <option> | <option>` picks among options. " +
+      "Advisory only — you decide what to do with the numbers. Cited evidence also counts at " +
+      "`task submit`.",
+  },
 ];
 
 /**
