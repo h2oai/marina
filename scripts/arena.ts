@@ -14,6 +14,10 @@
  *   bun run arena submit <round_id|due> [--dry-run]
  *                                               sign + file (due = every round inside the window)
  *   bun run arena backtest                      baseline skill vs the arena's persistence
+ *   bun run arena evaluate [--forecaster model:<provider/model>] [--limit N] [--tracker T] [--out FILE]
+ *                                               score forecasters on already-resolved rounds (files nothing)
+ *
+ * `--forecaster baseline|model:<provider/model>` overrides MARINA_ARENA_FORECASTER for show/submit.
  *
  * Reads MARINA_ARENA_* from the environment (.env). Submissions are recorded in
  * the world database (DB_PATH) so the server's autopilot and this CLI share one
@@ -22,9 +26,16 @@
 
 import { closeSync, openSync, writeSync } from "node:fs";
 import { parseArgs } from "node:util";
+import { parseForecasterSpec } from "../src/arena/config";
+import { evaluateResolved, type Forecaster } from "../src/arena/evaluate";
 import { backtestSeries } from "../src/arena/forecast";
 import { generateArenaKey } from "../src/arena/protocol";
-import { arenaData, arenaDeps, arenaStatus } from "../src/arena/service";
+import {
+  arenaData,
+  arenaDepsWithForecaster,
+  arenaStatus,
+  forecasterFor,
+} from "../src/arena/service";
 import { buildForecastBody, dueRounds, submitRound } from "../src/arena/submit";
 import { MarinaDB } from "../src/persistence/database";
 
@@ -38,9 +49,20 @@ const { positionals, values } = parseArgs({
     homepage: { type: "string" },
     out: { type: "string" },
     "dry-run": { type: "boolean" },
+    forecaster: { type: "string" },
+    limit: { type: "string" },
+    tracker: { type: "string" },
+    weight: { type: "string" },
   },
 });
 const [cmd = "status", arg] = positionals;
+
+function weightFlag(): number | undefined {
+  if (values.weight === undefined) return undefined;
+  const w = Number(values.weight);
+  if (!Number.isFinite(w) || w < 0 || w > 1) throw new Error("--weight must be between 0 and 1");
+  return w;
+}
 
 function openDb(): MarinaDB {
   return new MarinaDB(process.env.DB_PATH || "marina.db");
@@ -112,7 +134,14 @@ async function main(): Promise<number> {
       const data = arenaData();
       const round = await data.round(arg);
       if (!round) throw new Error(`no round ${arg}`);
-      const body = await buildForecastBody(data, arenaStatus().entrant ?? "marina-preview", round);
+      const spec = parseForecasterSpec(values.forecaster ?? process.env.MARINA_ARENA_FORECASTER);
+      const { forecaster } = await forecasterFor(spec, { weight: weightFlag() });
+      const body = await buildForecastBody(
+        data,
+        arenaStatus().entrant ?? "marina-preview",
+        round,
+        forecaster,
+      );
       console.log(
         JSON.stringify({ question: round.question, lock_at: round.lock_at, body }, null, 2),
       );
@@ -122,7 +151,12 @@ async function main(): Promise<number> {
       if (!arg) throw new Error("usage: bun run arena submit <round_id|due> [--dry-run]");
       const db = openDb();
       try {
-        const deps = arenaDeps(db);
+        const deps = await arenaDepsWithForecaster(
+          db,
+          process.env,
+          values.forecaster ? parseForecasterSpec(values.forecaster) : undefined,
+          weightFlag(),
+        );
         if ("error" in deps) throw new Error(deps.error);
         const ids = arg === "due" ? (await dueRounds(deps)).map((r) => r.round_id) : [arg];
         if (ids.length === 0) console.log("Nothing due.");
@@ -171,9 +205,61 @@ async function main(): Promise<number> {
       console.log(`mean skill over ${count} series: ${count ? (total / count).toFixed(3) : "n/a"}`);
       return 0;
     }
+    case "evaluate": {
+      const forecasters: Record<string, Forecaster> = {
+        baseline: (await forecasterFor("baseline")).forecaster,
+      };
+      const usage: { calls: number; costUsd: number }[] = [];
+      if (values.forecaster && values.forecaster !== "baseline") {
+        const spec = parseForecasterSpec(values.forecaster);
+        const model = spec.replace(/^model:/, "");
+        const blended = await forecasterFor(spec, { weight: weightFlag() });
+        const raw = await forecasterFor(spec, { raw: true });
+        forecasters[`${model} blend ${weightFlag() ?? 0.5}`] = blended.forecaster;
+        forecasters[`${model} raw`] = raw.forecaster;
+        usage.push(blended.usage!, raw.usage!);
+      }
+      const report = await evaluateResolved(arenaData(), forecasters, {
+        ...(values.limit ? { limit: Number(values.limit) } : {}),
+        ...(values.tracker ? { tracker: values.tracker } : {}),
+        concurrency: 4,
+      });
+      const names = Object.keys(forecasters);
+      const fmt = (x: number) => (Number.isNaN(x) ? "n/a" : `${x >= 0 ? "+" : ""}${x.toFixed(3)}`);
+      console.log(
+        ["family".padEnd(18), "n".padEnd(4), ...names.map((n) => n.padEnd(34))].join(" "),
+      );
+      for (const f of report.families) {
+        const cells = names.map((n) =>
+          `${fmt(f.skill[n]!)} (${f.wins[n]}/${f.rounds} beat)`.padEnd(34),
+        );
+        console.log([f.tracker.padEnd(18), String(f.rounds).padEnd(4), ...cells].join(" "));
+      }
+      const all = names.map((n) => fmt(report.overall[n]!).padEnd(34));
+      console.log(["ALL".padEnd(18), String(report.rounds.length).padEnd(4), ...all].join(" "));
+      if (usage.length) {
+        const kept = report.rounds.filter((r) =>
+          Object.entries(r.results).some(([n, x]) => n.includes("blend") && x.note),
+        ).length;
+        const cost = usage.reduce((s, u) => s + u.costUsd, 0);
+        const calls = usage.reduce((s, u) => s + u.calls, 0);
+        console.log(
+          `model calls ${calls} · cost $${cost.toFixed(4)} · blend kept the baseline on ${kept} round(s)`,
+        );
+      }
+      console.log("skill: 0 = the arena's persistence (last value, sd 1.5); above 0 beats it.");
+      if (values.out) {
+        await Bun.write(
+          values.out,
+          `${JSON.stringify({ generatedAt: new Date().toISOString(), ...report }, null, 2)}\n`,
+        );
+        console.error(`report → ${values.out}`);
+      }
+      return 0;
+    }
     default:
       throw new Error(
-        `unknown command ${cmd} (keygen, registration, status, rounds, show, submit, backtest)`,
+        `unknown command ${cmd} (keygen, registration, status, rounds, show, submit, backtest, evaluate)`,
       );
   }
 }

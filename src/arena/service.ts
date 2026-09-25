@@ -11,8 +11,16 @@ import { Logger } from "../engine/logger";
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
 import { type ArenaConfig, arenaConfigFromEnv, loadArenaKey } from "./config";
 import { ArenaData, DEFAULT_ARENA_DATA_URL } from "./data";
+import type { Forecaster } from "./evaluate";
+import { forecastRound } from "./forecast";
 import { publicKeyBase64 } from "./protocol";
-import { dueRounds, type SubmitDeps, type SubmitOutcome, submitRound } from "./submit";
+import {
+  baselineForecaster,
+  dueRounds,
+  type SubmitDeps,
+  type SubmitOutcome,
+  submitRound,
+} from "./submit";
 
 const logger = new Logger();
 
@@ -62,6 +70,31 @@ export function arenaStatus(env: NodeJS.ProcessEnv = process.env): ArenaStatus {
   }
 }
 
+/**
+ * The forecaster a spec names: the calibrated baseline, or a model shrunk toward
+ * it. The model stack is imported only when a model is actually asked for.
+ * `raw: true` returns the model's own answer (for shadow scoring), not the blend.
+ */
+export async function forecasterFor(
+  spec: string,
+  opts: { weight?: number; raw?: boolean; env?: NodeJS.ProcessEnv } = {},
+): Promise<{ forecaster: Forecaster; usage?: import("./model-backend").Usage }> {
+  if (spec === "baseline") return { forecaster: baselineForecaster };
+  const modelSpec = spec.replace(/^model:/, "");
+  const [{ modelComplete }, { DEFAULT_MODEL_OPTIONS, modelForecastRound }] = await Promise.all([
+    import("./model-backend"),
+    import("./model-forecaster"),
+  ]);
+  const { complete, usage } = modelComplete(modelSpec, opts.env ?? process.env);
+  const options = { ...DEFAULT_MODEL_OPTIONS, weight: opts.raw ? 1 : (opts.weight ?? 0.5) };
+  if (opts.raw) options.maxSdMove = Number.POSITIVE_INFINITY;
+  return {
+    usage,
+    forecaster: (round, lock) =>
+      modelForecastRound(round, lock, forecastRound(round, lock), complete, options, modelSpec),
+  };
+}
+
 /** Everything a submission needs, or the reason it can't happen. */
 export function arenaDeps(
   store: ArenaStore,
@@ -79,6 +112,25 @@ export function arenaDeps(
     return { config, data: dataFor(config), store, key: loadArenaKey(config.keyFile) };
   } catch (err) {
     return { error: `Signing key: ${(err as Error).message}` };
+  }
+}
+
+/** `arenaDeps` plus the configured forecaster (baseline unless MARINA_ARENA_FORECASTER names a model). */
+export async function arenaDepsWithForecaster(
+  store: ArenaStore,
+  env: NodeJS.ProcessEnv = process.env,
+  override?: string,
+  weightOverride?: number,
+): Promise<SubmitDeps | { error: string }> {
+  const deps = arenaDeps(store, env);
+  if ("error" in deps) return deps;
+  try {
+    const spec = override ?? deps.config.forecaster;
+    const weight = weightOverride ?? deps.config.modelWeight;
+    const { forecaster } = await forecasterFor(spec, { weight, env });
+    return { ...deps, forecaster };
+  } catch (err) {
+    return { error: `Forecaster: ${(err as Error).message}` };
   }
 }
 
@@ -105,7 +157,7 @@ export async function runArenaAutopilot(
 ): Promise<SubmitOutcome[]> {
   const status = arenaStatus(env);
   if (!status.autopilot || running) return [];
-  const deps = arenaDeps(store, env);
+  const deps = await arenaDepsWithForecaster(store, env);
   if ("error" in deps) {
     logger.warn("arena", "autopilot skipped", { error: deps.error });
     return [];

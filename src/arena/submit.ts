@@ -14,6 +14,7 @@ import type { ArenaSubmissionRow } from "../persistence/db-arena";
 import type { ArenaStore } from "../persistence/interfaces/arena-store";
 import type { ArenaConfig } from "./config";
 import type { ArenaData } from "./data";
+import type { Forecaster } from "./evaluate";
 import { forecastRound } from "./forecast";
 import {
   arenaTimestamp,
@@ -72,7 +73,11 @@ export interface SubmitDeps {
   key: ReturnType<typeof loadPrivateKey>;
   post?: (url: string, init: RequestInit) => Promise<Response>;
   now?: () => number;
+  /** What produces the answer; the calibrated baseline when omitted. */
+  forecaster?: Forecaster;
 }
+
+export const baselineForecaster: Forecaster = async (round, lock) => forecastRound(round, lock);
 
 export type SubmitOutcome =
   | { kind: "accepted"; roundId: string; row: ArenaSubmissionRow; already?: boolean }
@@ -85,9 +90,10 @@ export async function buildForecastBody(
   data: ArenaData,
   entrant: string,
   round: ArenaRound,
+  forecaster: Forecaster = baselineForecaster,
 ): Promise<ArenaForecastBody> {
   const lock = await data.lock(round.round_id);
-  const f = forecastRound(round, lock);
+  const f = await forecaster(round, lock);
   const body: ArenaForecastBody = {
     round_id: round.round_id,
     entrant,
@@ -129,7 +135,7 @@ export async function submitRound(
   } else {
     let body: ArenaForecastBody;
     try {
-      body = await buildForecastBody(deps.data, config.entrant, round);
+      body = await buildForecastBody(deps.data, config.entrant, round, deps.forecaster);
     } catch (err) {
       return { kind: "skipped", roundId, reason: err instanceof Error ? err.message : String(err) };
     }

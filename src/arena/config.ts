@@ -31,6 +31,17 @@ export interface ArenaConfig {
   autopilot: boolean;
   /** `MARINA_ARENA_WINDOW_HOURS` — file when a round's lock is this close (default 24, the arena's call window). */
   windowHours: number;
+  /** `MARINA_ARENA_FORECASTER` — `baseline` (default) or `model:<provider/model>`. */
+  forecaster: string;
+  /** `MARINA_ARENA_MODEL_WEIGHT` — share of a model's move from the baseline kept (default 0.5). */
+  modelWeight: number;
+}
+
+/** `baseline` or `model:<provider/model>` (validated; the model id itself is resolved at use). */
+export function parseForecasterSpec(raw: string | undefined): string {
+  const spec = raw?.trim() || "baseline";
+  if (spec === "baseline" || /^model:[a-z0-9-]+\/[\w.:/-]+$/i.test(spec)) return spec;
+  throw new Error(`MARINA_ARENA_FORECASTER "${spec}" must be baseline or model:<provider/model>`);
 }
 
 export function arenaConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ArenaConfig | undefined {
@@ -51,6 +62,8 @@ export function arenaConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ArenaC
     dataUrl: env.MARINA_ARENA_DATA_URL?.trim() || DEFAULT_ARENA_DATA_URL,
     autopilot: /^(1|on|true)$/i.test(env.MARINA_ARENA_AUTOPILOT ?? ""),
     windowHours: Number.isFinite(hours) && hours > 0 && hours <= 168 ? hours : 24,
+    forecaster: parseForecasterSpec(env.MARINA_ARENA_FORECASTER),
+    modelWeight: clampWeight(env.MARINA_ARENA_MODEL_WEIGHT),
   };
 }
 
@@ -63,4 +76,9 @@ export function loadArenaKey(path: string) {
     );
   }
   return loadPrivateKey(readFileSync(path));
+}
+
+function clampWeight(raw: string | undefined): number {
+  const w = Number(raw ?? 0.5);
+  return Number.isFinite(w) ? Math.min(Math.max(w, 0), 1) : 0.5;
 }
