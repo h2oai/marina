@@ -3566,4 +3566,16 @@ CREATE INDEX idx_routing_channel_receipts_retention ON routing_channel_receipts(
     version: 125,
     sql: `CREATE INDEX idx_routing_events_kind ON routing_events(session_id, kind, sequence);`,
   },
+  // Migration 126: one active task attempt per coding session and worker.
+  {
+    version: 126,
+    sql: `
+CREATE INDEX idx_coding_run_lookup ON coding_artifacts(session_id, kind, status);
+CREATE INDEX idx_coding_run_evidence ON coding_artifacts(json_extract(metadata_json, '$.runId'));
+CREATE UNIQUE INDEX idx_coding_run_session_active ON coding_artifacts(session_id)
+  WHERE kind = 'task_run' AND status = 'active';
+CREATE UNIQUE INDEX idx_coding_run_worker_active ON coding_artifacts(json_extract(metadata_json, '$.workerKey'))
+  WHERE kind = 'task_run' AND status = 'active';
+`,
+  },
 ];

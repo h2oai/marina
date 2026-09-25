@@ -3,6 +3,7 @@
 
 import { basename } from "node:path";
 import { clearSessionExecState } from "../../../coding/exec-approver";
+import { codingRunMetadata } from "../../../coding/task-run";
 import { bold, dim, header, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
@@ -30,6 +31,7 @@ import {
   updateCodeContext,
 } from "./shared";
 import { stopCodeStreamsFor } from "./stream";
+import { submitSessionRun } from "./task-run";
 import {
   cleanupSessionWorktree,
   getSelectedWorkspace,
@@ -529,6 +531,8 @@ export function status(
     (artifact) => artifact.kind === "patch" && artifact.status === "pending",
   );
   updateCodeContext(entity, deps.db, session);
+  const run = deps.db.listCodingRuns({ sessionId: session.id, limit: 1 })[0];
+  const runMeta = run ? codingRunMetadata(run) : undefined;
   const lines = [
     header("Coding Session"),
     separator(),
@@ -536,6 +540,13 @@ export function status(
     `Title: ${session.title}`,
     `Status: ${session.status}`,
     `Mode: ${session.mode}`,
+    ...(run && runMeta
+      ? [
+          `Task: #${runMeta.taskId} | Attempt: ${run.id} (${run.status})`,
+          `Task review: ${deps.db.getTask(runMeta.taskId)?.status ?? "unknown"}`,
+          `Recorded verification: ${runMeta.verification ?? "not yet submitted"}`,
+        ]
+      : []),
     `Execution target: ${session.execution_target}`,
     `Model target: ${modelTarget}`,
     `Workspace: ${session.workspace_root}`,
@@ -550,7 +561,12 @@ export function status(
     }
   }
   sendCode(ctx, eid, lines.join("\n"), {
-    commands: ["code history", "code artifacts", "code patches"],
+    commands: [
+      "code history",
+      "code artifacts",
+      "code patches",
+      ...(runMeta ? [`task info ${runMeta.taskId}`] : []),
+    ],
     event: "session_status",
     events: events.slice(-5).map((ev) => ({
       actor: ev.actor,
@@ -707,6 +723,13 @@ export async function completeSession(
 ): Promise<void> {
   const session = resolveSession(ctx, eid, entity, deps.db);
   if (!session) return;
+  if (deps.db.listCodingRuns({ sessionId: session.id, status: "active", limit: 1 }).length) {
+    ctx.send(
+      eid,
+      "The session has an active task. Submit its summary or use code stop before closing it.",
+    );
+    return;
+  }
   const text = summary.trim() || "Session completed.";
   const artifact = deps.db.createCodingArtifact({
     sessionId: session.id,
@@ -862,7 +885,11 @@ export function recordCodingNote(
   });
   // A summary is the durable session takeaway — deposit it into the bound
   // project pool (when present) and a personal note. Degrades silently.
-  if (noteKind === "summary") depositSessionSummary(deps, entity, session, text);
+  if (noteKind === "summary") {
+    // The artifact is durable before this can produce a terminal event.
+    submitSessionRun(deps, session.id, entity, artifact);
+    depositSessionSummary(deps, entity, session, text);
+  }
   updateCodeContext(entity, deps.db, deps.db.getCodingSession(session.id) ?? session);
   // `code handoff <notes> to <agent>` transfers the write lock alongside the
   // handoff artifact. Re-read the row so reassignWriter sees the freshest writer.

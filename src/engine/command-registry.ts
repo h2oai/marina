@@ -9,6 +9,7 @@ import {
   formatUntrustedContext,
 } from "../agent/prompts/support-prompts";
 import { parseExecUnrestricted } from "../coding/exec-approver";
+import { recoverCodingRuns } from "../coding/task-run";
 import { setApprovalNotifier } from "../decisions/approvals";
 import { resolveEvidence } from "../decisions/evidence";
 import { worldMemoryService } from "../memory/world-service";
@@ -997,8 +998,10 @@ export function registerBuiltinCommands(engine: Engine): void {
       logEvent: (event) => engine.logEvent(event),
     }),
   );
+  if (engine.db) recoverCodingRuns(engine.db);
   engine.commands.registerBuiltin(
     codeCommand({
+      logEvent: (event) => engine.logEvent(event),
       agentRuntime: engine.agentRuntime,
       answerPrompt: answerCodeViaLocalModel,
       channelManager: engine.channelManager,

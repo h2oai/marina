@@ -396,6 +396,7 @@ const CODING_ROLE_PATTERN = /cod|implement|engineer/i;
 export function recruitCodingAgent(
   deps: CodeDeps & { db: MarinaDB },
   taken: Set<string>,
+  model?: string,
 ): { name: string; id: EntityId } | undefined {
   const candidates = deps.listAgents?.() ?? [];
   for (const candidate of candidates) {
@@ -404,6 +405,7 @@ export function recruitCodingAgent(
     // Config names may differ from the login-sanitized entity name — retry.
     const agent = deps.findAgentByName?.(name) ?? deps.findAgentByName?.(sanitizeEntityName(name));
     if (!agent) continue;
+    if (model && getAgentHandle(deps, name)?.getStatus().model !== model) continue;
     const role =
       getAgentHandle(deps, name)?.getStatus().role ??
       (candidate as { role?: string }).role ??

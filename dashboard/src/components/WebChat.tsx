@@ -1812,6 +1812,17 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
           renderSessionTaskChip(cardMeta, code.title)
         ) : (
           <>
+            {artifactKind === "task_run" ? (
+              <div className="mb-2">
+                {renderSessionTaskChip(cardMeta, code.title)}
+                <p className="mt-1 text-xs text-text-dim">
+                  Recorded verification:{" "}
+                  {typeof cardMeta.verification === "string"
+                    ? cardMeta.verification
+                    : "not yet submitted"}
+                </p>
+              </div>
+            ) : null}
             {type === "lifecycle" ? renderLifecycle(code.phase) : null}
             {type === "tree" ? renderCodeTree(code.tree) : null}
             {renderCodeChecks(code.checks)}

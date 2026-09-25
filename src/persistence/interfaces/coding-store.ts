@@ -1,7 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CodingArtifactRow, CodingEventRow, CodingSessionRow } from "../db-coding";
+import type {
+  CodingArtifactRow,
+  CodingEventRow,
+  CodingRunQuery,
+  CodingSessionRow,
+} from "../db-coding";
 import type { ExactKeys } from "./exact-keys";
 
 /** Coding sessions, events and artifacts (`db-coding.ts`). */
@@ -48,6 +53,8 @@ export interface CodingStore {
     metadata?: unknown;
     createdBy: string;
   }): CodingArtifactRow;
+  listCodingRuns(query?: CodingRunQuery): CodingArtifactRow[];
+  listCodingRunArtifacts(runId: string): CodingArtifactRow[];
   getCodingArtifact(id: string): CodingArtifactRow | null;
   listCodingArtifacts(sessionId: string, limit?: number): CodingArtifactRow[];
   updateCodingArtifact(
@@ -71,6 +78,8 @@ export const CODING_STORE_METHODS = [
   "listCodingEvents",
   "createCodingArtifact",
   "getCodingArtifact",
+  "listCodingRuns",
+  "listCodingRunArtifacts",
   "listCodingArtifacts",
   "updateCodingArtifact",
 ] as const satisfies readonly (keyof CodingStore)[];

@@ -9,7 +9,9 @@
 // subcommand inside Code Mode is a natural-language task routed to `doCode`.
 
 import { CodeSessionDriver } from "../../coding/code-session-driver";
+import { codingRunMetadata } from "../../coding/task-run";
 import { error as fmtError } from "../../net/ansi";
+import { codingRunContext } from "../../persistence/coding-run-context";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { checkGateForExecution, recordGateExecution } from "../safety-gates";
@@ -84,6 +86,7 @@ import {
   TELNET_HOST_EXEC_DENY,
 } from "./code/shared";
 import { spawnRequest } from "./code/spawn";
+import { observeCodingRun, publishCodingRun, reviewCodingRun } from "./code/task-run";
 import { doctor, getWorkspaceRegistry, handleWorkspace, handleWorktree } from "./code/workspace";
 import { requiresPersistence } from "./command-messages";
 
@@ -207,6 +210,7 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
   writer: (c) => {
     writerCommand(c.ctx, c.eid, c.entity, c.deps, c.args);
   },
+  review: (c) => reviewCodingRun(c.ctx, c.eid, c.entity, c.deps, c.args),
   task: (c) => {
     sessionTask(c.ctx, c.eid, c.entity, c.deps, c.rawAfterSub);
   },
@@ -335,7 +339,7 @@ const SUBCOMMANDS: Record<string, SubcommandHandler> = {
 };
 
 export function codeCommand(deps: CodeDeps): CommandDef {
-  return {
+  const command: CommandDef = {
     name: "code",
     aliases: [],
     category: "Agents",
@@ -360,6 +364,8 @@ export function codeCommand(deps: CodeDeps): CommandDef {
         answerPrompt: deps.answerPrompt,
         db: deps.db,
         getEntity: deps.getEntity,
+        onRun: (run, handle) => observeCodingRun(depsWithDb, run, handle),
+        onRunEnd: (run) => publishCodingRun(depsWithDb, run),
       });
 
       const sub = input.tokens[0]?.toLowerCase();
@@ -478,6 +484,21 @@ export function codeCommand(deps: CodeDeps): CommandDef {
       } catch (err) {
         ctx.send(input.entity, fmtError(err instanceof Error ? err.message : String(err)));
       }
+    },
+  };
+  return {
+    ...command,
+    handler: (ctx, input) => {
+      const sessionId = deps.getEntity(input.entity)?.properties.coding_session_id as
+        | string
+        | undefined;
+      const run = sessionId
+        ? deps.db?.listCodingRuns({ sessionId, status: "active", limit: 1 })[0]
+        : undefined;
+      return codingRunContext.run(
+        { sessionId, runId: run?.id, taskId: run ? codingRunMetadata(run).taskId : undefined },
+        () => command.handler(ctx, input),
+      );
     },
   };
 }

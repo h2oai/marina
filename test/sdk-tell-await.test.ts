@@ -367,3 +367,43 @@ describe("tellAndAwait — live engine", () => {
     bob.disconnect();
   });
 });
+
+describe("machine request cancellation and exact correlation", () => {
+  it("isolates simultaneous requests to the same participant", async () => {
+    const f = fakeClient();
+    const first = f.client.tellAndAwait("Bob", "first", 1000, { strictCorrelation: true });
+    const firstTag = f.lastTag()!;
+    const second = f.client.tellAndAwait("Bob", "second", 1000, { strictCorrelation: true });
+    const secondTag = f.lastTag()!;
+    f.inbound("Bob", "unrelated untagged reply");
+    f.inbound("Bob", `second result [re:${secondTag}]`);
+    f.inbound("Bob", `first result [re:${firstTag}]`);
+    expect(await first).toBe("first result");
+    expect(await second).toBe("second result");
+  });
+
+  it("removes a cancelled waiter and leaves a later request usable", async () => {
+    const f = fakeClient();
+    const controller = new AbortController();
+    const first = f.client.tellAndAwait("Bob", "first", 60_000, {
+      signal: controller.signal,
+      strictCorrelation: true,
+    });
+    const oldTag = f.lastTag()!;
+    controller.abort();
+    await expect(first).rejects.toThrow("aborted");
+    const second = f.client.tellAndAwait("Bob", "second", 1000, { strictCorrelation: true });
+    const tag = f.lastTag()!;
+    f.inbound("Bob", `old result [re:${oldTag}]`);
+    f.inbound("Bob", `new result [re:${tag}]`);
+    expect(await second).toBe("new result");
+  });
+
+  it("does not send a pre-cancelled request", async () => {
+    const f = fakeClient();
+    await expect(
+      f.client.tellAndAwait("Bob", "first", 1000, { signal: AbortSignal.abort() }),
+    ).rejects.toThrow();
+    expect(f.sent).toHaveLength(0);
+  });
+});

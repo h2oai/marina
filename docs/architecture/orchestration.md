@@ -13,3 +13,25 @@
 - **Crew runtime layer** (`src/coordination/crew-formations.ts`): `CREW_BRIEFS` — compact purpose-built runtime brief per formation, posted with a protocol-priority preamble on activation/formation change (replaces concatenated pool-note prose; sweep-measured: process-heavy briefs displaced the crew's actual replies). `FORMATION_MEDIATORS` — deterministic event-driven nudges (Phase 4): crew-manager calls `onDispatch`/`onStageCompleted`/`onArtifact`, posting at most one `[formation-mediator]` line per event (pipeline handoffs, mapreduce fan-out/merge, foundry merge-gate, debate sealed-positions, deliberation one-round, blackboard no-fork). Engine-side liveness is separate: pending `model_request` reminders in `src/net/model-api.ts` re-post unanswered requests at 25%/60% of timeout (`MODEL_REQUEST_REMINDERS=0` disables).
 
 See also: `docs/guides/coordination.md`, `docs/guides/emergent-organization.md`.
+
+## Executable Scores
+
+`src/coordination/score-executor.ts` snapshots a validated Score and dispatches ready steps with
+bounded concurrency (default 4). A successor can start as soon as its own dependencies finish;
+it does not wait for unrelated branches. `DispatchContext.signal` carries cancellation to the
+worker transport. Failure, caller cancellation or an optional overall deadline stops admission
+and signals active dispatches. A dispatcher that ignores cancellation may still have external
+side effects; late results are discarded and the executor never retries them automatically.
+
+`runScore` and `MarinaAgent.conduct` accept `signal`, `concurrency` and `runTimeoutMs`, alongside
+the per-step reply timeout. Use `strictCorrelation: true` for machine workflows whose workers echo reply tags.
+Existing Score and `tellAndAwait` defaults remain compatible with untagged human/legacy replies.
+`marina_conduct` forwards its tool cancellation signal and accepts a concurrency limit.
+Cancelling a tell waiter does not retract a delivered message or forcibly stop a remote
+agent; a dispatcher with execution control must propagate the signal to that runtime.
+
+Coding attempts use the existing task and coding-artifact stores (`src/coding/task-run.ts`).
+The command-ingress async context retains the attempt ID across long-running checks, preventing
+late results from being attached to a newer attempt. Migration 126 adds lookup indexes and
+unique active-attempt constraints per session and durable worker. Submission and task approval
+are distinct. See [the coding guide](../guides/coding.md) for the complete operator flow.

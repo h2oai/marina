@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { AgentHandle } from "../agent/agent-types";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../persistence/database";
 import type { Entity } from "../types";
+import { beginCodingRun, codingRunMetadata, endCodingRun } from "./task-run";
 
 const ACTIVE_SESSION_KEY = "coding_session_id";
 const ACTIVE_MODAL_KEY = "active_modal";
@@ -47,6 +48,8 @@ export interface CodeSessionDriverDeps {
   agentRuntime?: CodingAgentRuntime;
   db: MarinaDB;
   getEntity?: (id: string) => Entity | undefined;
+  onRun?: (run: CodingArtifactRow, handle: AgentHandle) => void;
+  onRunEnd?: (run: CodingArtifactRow) => void;
 }
 
 export class CodeSessionDriver {
@@ -144,6 +147,7 @@ export class CodeSessionDriver {
   async assignAgent(opts: {
     actor: string;
     agentName: string;
+    actorEntity?: Entity;
     modelTarget?: string;
     profile: string;
     prompt: string;
@@ -157,6 +161,21 @@ export class CodeSessionDriver {
 
     const agent = this.deps.agentRuntime.get(opts.agentName);
     if (!agent) throw new Error(`Agent "${opts.agentName}" is not running.`);
+    const workerId = agent.getStatus().entityId;
+    const worker = workerId ? this.deps.getEntity?.(workerId) : undefined;
+    const run =
+      opts.actorEntity && worker
+        ? beginCodingRun(this.deps.db, {
+            session: opts.session,
+            owner: opts.actorEntity,
+            worker,
+            prompt,
+            profile: opts.profile,
+            modelTarget: opts.modelTarget,
+            runtimeName: agent.name,
+          })
+        : undefined;
+    if (run) this.deps.onRun?.(run, agent);
     const boundEntity = this.bindAgentEntity(agent, opts.session, opts.profile, prompt);
     // Task mode: the adapter suppresses its low-value cognitive sections and
     // restates this task every cycle until code.ts clears it (stop/summary).
@@ -165,6 +184,9 @@ export class CodeSessionDriver {
     const attention = [
       `You have been assigned to Marina coding session ${opts.session.id}.`,
       `Requester: ${opts.actor}`,
+      run
+        ? `Task #${codingRunMetadata(run).taskId}; attempt artifact:${run.id}. Record a summary only after finishing checks. A stored summary submits the task for the requester to review.`
+        : undefined,
       `Profile: ${opts.profile}`,
       `Execution target: ${opts.session.execution_target}`,
       opts.modelTarget ? `Model target: ${opts.modelTarget}` : undefined,
@@ -191,7 +213,7 @@ export class CodeSessionDriver {
       .filter((line): line is string => typeof line === "string")
       .join("\n");
 
-    this.deps.db.updateCodingSession(opts.session.id, { mode: "agent" });
+    this.deps.db.updateCodingSession(opts.session.id, { mode: "agent", agent: agent.name });
     this.deps.db.createCodingEvent({
       sessionId: opts.session.id,
       actor: opts.actor,
@@ -204,7 +226,20 @@ export class CodeSessionDriver {
         prompt,
       },
     });
-    await agent.sendAttention(attention);
+    try {
+      await agent.sendAttention(attention);
+    } catch (error) {
+      if (run) {
+        const ended = endCodingRun(
+          this.deps.db,
+          run.id,
+          "failed",
+          "Task delivery failed; inspect before retrying.",
+        );
+        if (ended) this.deps.onRunEnd?.(ended);
+      }
+      throw error;
+    }
 
     return this.deps.db.createCodingArtifact({
       sessionId: opts.session.id,

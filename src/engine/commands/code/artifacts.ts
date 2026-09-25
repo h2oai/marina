@@ -162,11 +162,14 @@ export function showArtifact(
     {
       artifactId: artifact.id,
       artifactKind: artifact.kind,
+      metadata: parseJsonObject(artifact.metadata_json),
       command: meta.command.length > 0 ? meta.command : undefined,
       commands:
         artifact.kind === "patch" && artifact.status === "pending"
           ? [`code apply ${artifact.id}`, `code reject ${artifact.id}`]
-          : [`code show ${artifact.id}`],
+          : artifact.kind === "task_run"
+            ? [`code review ${artifact.id}`]
+            : [`code show ${artifact.id}`],
       content: artifact.content_text,
       durationMs: meta.durationMs,
       event: "artifact_shown",

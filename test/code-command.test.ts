@@ -2815,13 +2815,18 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
     db.saveEntity(coderEntity);
     // Holder (not a `let`) so the captured handler keeps its function type after
     // the dispatch call — a bare reassigned local narrows to `null` under tsc.
-    const sub: { fn: ((ev: AgentEvent) => void) | null } = { fn: null };
+    const listeners = new Set<(ev: AgentEvent) => void>();
+    const sub = {
+      fn: (event: AgentEvent) => {
+        for (const listener of listeners) listener(event);
+      },
+    };
     const handle: AgentHandle = {
       ...fakeAgent("Coder", [], "agent_coder" as EntityId),
       subscribe: (h) => {
-        sub.fn = h;
+        listeners.add(h);
         return () => {
-          sub.fn = null;
+          listeners.delete(h);
         };
       },
     };
@@ -2874,14 +2879,14 @@ describe("code mode — agentic dispatch (single-agent driver)", () => {
     expect(notifications.map((item) => (item.code as { phase?: string })?.phase)).toEqual([
       "inspecting",
       "verifying",
-      "completed",
+      "submitting",
     ]);
     const sessionId = alice.properties.coding_session_id as string;
     const lifecycle = db
       .listCodingEvents(sessionId, 50)
       .filter((event) => event.kind === "code_lifecycle");
     expect(new Set(lifecycle.map((event) => JSON.parse(event.payload_json).phase))).toEqual(
-      new Set(["received", "inspecting", "verifying", "completed"]),
+      new Set(["received", "inspecting", "verifying", "submitting"]),
     );
   });
 
