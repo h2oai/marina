@@ -226,7 +226,10 @@ export function createContextManager(options: ContextManagerOptions) {
     summarizeWithLLM,
   } = options;
 
-  return async (messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> => {
+  const transformConversation = async (
+    messages: AgentMessage[],
+    signal?: AbortSignal,
+  ): Promise<AgentMessage[]> => {
     signal?.throwIfAborted();
     const finish = async (result: AgentMessage[]) => {
       signal?.throwIfAborted();
@@ -401,6 +404,22 @@ export function createContextManager(options: ContextManagerOptions) {
       // Even on the error path, don't pass through a corrupted history.
       return await finish(stripOrphanedToolResults(messages));
     }
+  };
+
+  // pi-agent-core ≥ 0.86 carries the system prompt and tool declarations as
+  // `system` messages INSIDE the transcript. They are never compacted,
+  // summarized, archived or dropped: only the conversation is transformed, and
+  // the system messages lead the result. When nothing changed the original
+  // array (and message order) is returned untouched, so the request prefix stays
+  // byte-stable for the provider's prompt cache.
+  return async (messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> => {
+    if (!messages.some((m) => m.role === "system")) return transformConversation(messages, signal);
+    const system = messages.filter((m) => m.role === "system");
+    const conversation = messages.filter((m) => m.role !== "system");
+    const result = await transformConversation(conversation, signal);
+    const unchanged =
+      result.length === conversation.length && result.every((m, i) => m === conversation[i]);
+    return unchanged ? messages : [...system, ...result];
   };
 }
 
