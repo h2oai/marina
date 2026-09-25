@@ -15,6 +15,9 @@ const LazyUnifiedCanvas = lazy(() =>
 );
 
 const LazyWhoPage = lazy(() => import("./who/WhoPage").then((m) => ({ default: m.WhoPage })));
+const LazyTerminalWorkspace = lazy(() =>
+  import("./components/TerminalWorkspace").then((m) => ({ default: m.TerminalWorkspace })),
+);
 
 // Apply saved theme before first render
 initTheme();
@@ -73,6 +76,15 @@ function UnifiedSurface() {
 }
 
 function RootContent() {
+  if (window.location.pathname === "/terminal") {
+    return (
+      <ErrorBoundary fallbackTitle="Terminal workspace crashed">
+        <Suspense fallback={<RouteFallback label="terminal workspace" />}>
+          <LazyTerminalWorkspace />
+        </Suspense>
+      </ErrorBoundary>
+    );
+  }
   // Public per-entity pages are read-only and never gated.
   if (isWho) {
     return (

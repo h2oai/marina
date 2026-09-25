@@ -272,6 +272,14 @@ describe("Engine", () => {
   });
 
   describe("modal routing bypass", () => {
+    it("lets explicit slash commands reach the world without leaving Code Mode", async () => {
+      const entity = engine.spawnEntity("c1", "TestAgent")!;
+      entity.properties.active_modal = "code";
+      conn.clear();
+      await engine.processCommand(entity.id, "/look");
+      expect(stripAnsi(conn.lastText())).toContain("Starting Room");
+      expect(entity.properties.active_modal).toBe("code");
+    });
     it("routes commands through the active modal by default", async () => {
       const entity = engine.spawnEntity("c1", "TestAgent")!;
       entity.properties.active_modal = "code";

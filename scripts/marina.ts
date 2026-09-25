@@ -37,6 +37,10 @@ export type Dispatch =
       print?: string;
       allowExec?: boolean;
       dangerouslyAllowAll?: boolean;
+      agent?: string;
+      model?: string;
+      profile?: string;
+      harness?: string;
     }
   | { kind: "connect"; rest: string[] }
   | { kind: "route"; rest: string[] }
@@ -85,8 +89,15 @@ export function parseDispatch(
   let print: string | undefined;
   let allowExec: boolean | undefined;
   let dangerouslyAllowAll: boolean | undefined;
+  const selection: { agent?: string; model?: string; profile?: string; harness?: string } = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
+    if (["--agent", "--model", "--profile", "--harness"].includes(arg)) {
+      const value = argv[++i];
+      if (!value || value.startsWith("-")) return { kind: "usage-error", arg };
+      selection[arg.slice(2) as keyof typeof selection] = value;
+      continue;
+    }
     if (arg === "--fresh") {
       fresh = true;
       continue;
@@ -115,6 +126,7 @@ export function parseDispatch(
   return {
     kind: "code",
     dir,
+    ...selection,
     ...(fresh !== undefined ? { fresh } : {}),
     ...(print !== undefined ? { print } : {}),
     ...(allowExec !== undefined ? { allowExec } : {}),
@@ -137,6 +149,11 @@ Usage:
   marina --help                show this help
 
 Options:
+  --agent <runtime>           marina (default), claude, codex, or pi
+  --model <id>                model for the selected runtime
+  --profile <dialect>         Marina command dialect: marina, claude, codex, pi
+  --harness <name-or-path>    saved harness or explicit portable JSON file
+                              /harness save <name> remembers a folder's default
   -p, --print <task>           dispatch one coding task, await completion, then exit
   --fresh                      throwaway database (deleted on exit) instead of the
                                per-folder default at ~/.marina/projects/<slug>/marina.db
@@ -369,6 +386,13 @@ if (import.meta.main) {
         print: dispatch.print,
         allowExec: dispatch.allowExec,
         dangerouslyAllowAll: dispatch.dangerouslyAllowAll,
+        agent: dispatch.agent,
+        model: dispatch.model,
+        profile: dispatch.profile,
+        harness: dispatch.harness,
+      }).catch((error: unknown) => {
+        console.error(error instanceof Error ? error.message : String(error));
+        process.exitCode = 1;
       });
       break;
     }

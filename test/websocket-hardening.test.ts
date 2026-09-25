@@ -197,7 +197,15 @@ describe("HTTP surface hardening (headers, body cap, public-read throttle)", () 
   });
 
   it("serves HTML documents with nosniff, SAMEORIGIN framing and the document CSP", async () => {
-    for (const path of ["/chat", "/ask", "/dashboard", "/canvas", "/who/Someone", "/who"]) {
+    for (const path of [
+      "/chat",
+      "/ask",
+      "/dashboard",
+      "/canvas",
+      "/who/Someone",
+      "/who",
+      "/terminal",
+    ]) {
       const resp = await fetch(`http://localhost:${HARDEN_PORT}${path}`);
       expect(resp.headers.get("Content-Type")).toContain("text/html");
       expect(resp.headers.get("X-Content-Type-Options")).toBe("nosniff");

@@ -152,7 +152,13 @@ function StreamOutput({
   );
 }
 
-function Streams({ token }: { token: string }) {
+export function ParticipantStreamWorkspace({
+  token,
+  autoSelect = false,
+}: {
+  token: string;
+  autoSelect?: boolean;
+}) {
   const [client] = useState(() => new MarinaRoutingClient({ url: window.location.origin, token }));
   const [page, setPage] = useState<RoutingSessionPage>();
   const [after, setAfter] = useState("");
@@ -186,7 +192,14 @@ function Streams({ token }: { token: string }) {
       clearTimeout(timer);
     };
   }, [client, after, retry]);
-  const chosen = page?.sessions.find((session) => session.id === selected);
+  const selectedId =
+    selected ??
+    (autoSelect
+      ? page?.sessions
+          .filter((session) => session.kind !== "supervisor")
+          .sort((a, b) => b.createdAt - a.createdAt)[0]?.id
+      : undefined);
+  const chosen = page?.sessions.find((session) => session.id === selectedId);
   return (
     <div className="flex h-full min-h-0 flex-col sm:flex-row">
       <aside
@@ -229,9 +242,9 @@ function Streams({ token }: { token: string }) {
             <button
               key={s.id}
               type="button"
-              aria-pressed={selected === s.id}
+              aria-pressed={selectedId === s.id}
               onClick={() => setSelected(s.id)}
-              className={`mb-1 block w-full rounded p-2 text-left text-sm ${selected === s.id ? "bg-primary/15 text-primary" : "hover:bg-surface"}`}
+              className={`mb-1 block w-full rounded p-2 text-left text-sm ${selectedId === s.id ? "bg-primary/15 text-primary" : "hover:bg-surface"}`}
             >
               <span className="block truncate">{s.label}</span>
               <span className="text-xs text-text-dim">
@@ -280,5 +293,5 @@ export function ParticipantStreams({ active }: { active: boolean }) {
   if (!active) return null;
   if (!loggedIn || !token)
     return <p className="p-4 text-sm">Log in through Chat to view participant streams.</p>;
-  return <Streams key={token} token={token} />;
+  return <ParticipantStreamWorkspace key={token} token={token} />;
 }

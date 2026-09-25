@@ -46,7 +46,7 @@ async function codex(options: AgentOptions): Promise<ManagedAgent> {
     onExit: (error) =>
       options.state({
         status: stopping ? "stopped" : "failed",
-        error: error ?? (stopping ? undefined : "Native process exited"),
+        error: stopping ? undefined : (error ?? "Native process exited"),
       }),
     onMessage: (message) => {
       const method = String(message.method ?? "");
@@ -170,7 +170,7 @@ async function pi(options: AgentOptions): Promise<ManagedAgent> {
     onExit: (error) =>
       options.state({
         status: stopping ? "stopped" : "failed",
-        error: error ?? (stopping ? undefined : "Native process exited"),
+        error: stopping ? undefined : (error ?? "Native process exited"),
       }),
     onMessage: (message) => {
       const type = String(message.type ?? "notification");

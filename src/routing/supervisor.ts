@@ -37,6 +37,8 @@ export interface SupervisorOptions {
   /** Exact credential strings stripped from published native events. */
   secrets?: string[];
   instructions?: string;
+  /** Local presentation after durable journaling and credential redaction. */
+  onEvent?: (session: RoutingSession, event: RoutingEventInput) => void;
 }
 
 /** Explicit local process owner. Never embedded in the world server or generic routing client. */
@@ -135,10 +137,11 @@ export class MarinaSupervisor {
     for (const secret of this.options.secrets ?? [])
       if (secret) json = json.replaceAll(secret, "[redacted]");
     const bytes = Buffer.byteLength(json);
+    const eventId = crypto.randomUUID();
     try {
       if (bytes <= 30_000)
         this.journal.enqueue(sessionId, {
-          id: crypto.randomUUID(),
+          id: eventId,
           kind: kind.slice(0, 64),
           payload: JSON.parse(json),
         });
@@ -171,6 +174,19 @@ export class MarinaSupervisor {
         }),
       );
       this.stopped = true;
+      return;
+    }
+    const session = this.runs.get(sessionId)?.session;
+    if (session && this.options.onEvent) {
+      try {
+        this.options.onEvent(structuredClone(session), {
+          id: eventId,
+          kind,
+          payload: JSON.parse(json),
+        });
+      } catch (error) {
+        log.warn("routing", "Local runtime observer failed", { error: getErrorMessage(error) });
+      }
     }
   }
   private state(run: Run, patch: Partial<RuntimeState>) {
@@ -288,8 +304,17 @@ export class MarinaSupervisor {
     if (typeof text !== "string" || !text.trim() || text.length > 16000)
       throw new Error("Prompt must contain 1–16000 characters");
     this.emit(run.session.id, "input", { text, deliveryId: id });
-    await run.agent.prompt(`${this.options.instructions ?? ""}\n\n${text}`, id);
+    // A fast adapter may finish during prompt(). Never overwrite its terminal state.
     this.state(run, { status: "running", error: undefined });
+    try {
+      await run.agent.prompt(`${this.options.instructions ?? ""}\n\n${text}`, id);
+    } catch (error) {
+      this.state(run, {
+        status: "failed",
+        error: `Prompt acceptance is unknown: ${getErrorMessage(error)}`,
+      });
+      throw error;
+    }
   }
   private async control(run: Run, control: RuntimeControl, id: string) {
     if (!control || typeof control !== "object") throw new Error("Invalid runtime control");

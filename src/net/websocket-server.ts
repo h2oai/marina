@@ -632,6 +632,8 @@ export class WebSocketServer {
         if (url.pathname === "/who" || url.pathname.startsWith("/who/")) {
           return serveDashboardIndex();
         }
+        // Terminal companion uses authenticated HTTP without taking over Chat's connection.
+        if (url.pathname === "/terminal") return serveDashboardIndex();
 
         // The dashboard is the primary human entry point. Keep the compact
         // web chat available at an explicit route for low-bandwidth use.

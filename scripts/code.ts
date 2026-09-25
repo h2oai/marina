@@ -25,15 +25,18 @@
  */
 
 import { createHash } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir, hostname, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { createInterface, type Interface } from "node:readline";
 import { formatAge } from "../src/engine/commands/format-duration";
 import { formatPerception } from "../src/net/formatter";
 import { MarinaAgent, type Perception } from "../src/sdk/client";
+import { CodeConsole } from "./code-console";
+import { HarnessStore, validateHarness } from "./code-harness";
 import { inferCodeDefaultModel, PROVIDER_KEY_ENV_VARS } from "./code-model";
+import { installedCodingAdapters } from "./code-native";
+import { terminalText } from "./code-terminal";
 
 const REPO_ROOT = resolve(import.meta.dir, "..");
 const STDERR_TAIL_LINES = 40;
@@ -42,6 +45,10 @@ const DEFAULT_TASK_TIMEOUT_MS = 600_000;
 export interface CodeSessionOptions {
   /** Ephemeral tmp DB, deleted on exit (the pre-persistence behavior). */
   fresh?: boolean;
+  agent?: string;
+  model?: string;
+  profile?: string;
+  harness?: string;
   /** One-shot task: dispatch it, stream output, await completion, exit 0/1/2. */
   print?: string;
   /** Prompt (y/N/a) for each non-allowlisted host command (`--allow-exec`). */
@@ -202,11 +209,29 @@ export async function runCodeSession(
   opts: CodeSessionOptions = {},
 ): Promise<void> {
   const dir = resolve(targetDir);
+  if (!statSync(dir).isDirectory()) throw new Error(`Not a project directory: ${dir}`);
   const fresh = opts.fresh ?? /^(1|true|on)$/i.test(process.env.MARINA_CODE_FRESH ?? "");
   // Host-exec approval posture. Neither flag → "off" (allowlist-only, no
   // exec-mode sent). Either flag demands an owned TTY; a pipe is never consent.
   const execResolution = resolveExecMode(opts, process.stdin.isTTY === true);
   const execMode = execResolution.mode;
+  const projectDirectory = join(homedir(), ".marina", "projects", projectSlug(dir));
+  const harnessStore = new HarnessStore(projectDirectory);
+  const savedHarness = opts.harness
+    ? harnessStore.load(opts.harness)
+    : opts.agent
+      ? undefined
+      : harnessStore.load();
+  const harness = validateHarness({
+    version: 1,
+    agent: "marina",
+    ...savedHarness,
+    ...(opts.agent ? { agent: opts.agent } : {}),
+    ...(opts.model ? { model: opts.model } : {}),
+    ...(opts.profile ? { profile: opts.profile } : {}),
+  });
+  if (harness.agent !== "marina" && !installedCodingAdapters().some((a) => a.id === harness.agent))
+    throw new Error(`${harness.agent} is not installed in PATH. Install it or use --agent marina.`);
   const port = await freePort();
   let dbPath: string;
   if (fresh) {
@@ -218,18 +243,26 @@ export async function runCodeSession(
     mkdirSync(dbDir, { recursive: true });
     dbPath = join(dbDir, "marina.db");
   }
-  const defaultModel = inferCodeDefaultModel(process.env);
+  const defaultModel =
+    harness.agent === "marina" && harness.model
+      ? harness.model
+      : inferCodeDefaultModel(process.env);
+  if (harness.agent === "marina" && defaultModel) harness.model = defaultModel;
 
   console.error(`Marina · ${dir}`);
   console.error("Booting a folder-scoped session…");
   console.error(fresh ? "DB · ephemeral (deleted on exit)" : `DB · ${dbPath}`);
-  if (defaultModel) {
+  if (harness.agent !== "marina") {
+    console.error(`Runtime · ${harness.agent} · ${harness.model ?? "native default model"}`);
+  } else if (defaultModel) {
     console.error(`Model · ${defaultModel}`);
   } else {
     // The world still boots without a provider key — agents just can't think.
     console.error("Warning · no LLM provider key found; the coding agent won't be able to think.");
     console.error(`  Checked: MARINA_DEFAULT_MODEL, ${PROVIDER_KEY_ENV_VARS.join(", ")}`);
-    console.error("  Set one (e.g. ANTHROPIC_API_KEY) and restart to enable task execution.");
+    console.error(
+      "  Configure a provider, or use /use claude, /use codex, or /use pi for an installed native agent.",
+    );
   }
 
   if (execResolution.refusal) {
@@ -261,6 +294,7 @@ export async function runCodeSession(
     env: {
       ...process.env,
       WS_PORT: String(port),
+      WS_HOST: "127.0.0.1",
       // Port 0 disables the listener (src/main.ts) — otherwise a second Marina
       // on the machine dies EADDRINUSE on telnet 4000 / MCP 3301 / log 3302.
       TELNET_PORT: "0",
@@ -297,6 +331,7 @@ export async function runCodeSession(
     // stream closed with the child — the tail keeps whatever arrived
   });
 
+  let sessionConsole: CodeConsole | undefined;
   let cleanedUp = false;
   function cleanup(code = 0): never {
     if (!cleanedUp) {
@@ -331,73 +366,41 @@ export async function runCodeSession(
   agent.onPerception((p) => {
     if (!echoPerceptions) return;
     const text = formatPerception(p, "plaintext");
-    if (text) process.stdout.write(`${text}\n`);
+    if (text) {
+      if (sessionConsole) sessionConsole.write(text);
+      else process.stdout.write(`${terminalText(text)}\n`);
+    }
+    if (terminalCodeLifecycle(p)) sessionConsole?.completed();
+    sessionConsole?.observe(p);
   });
 
-  let rl: Interface | undefined;
-  let taskInFlight = false;
-  let stopRequested = false;
   let lastSigintAt = 0;
-
-  // Interactive host-exec approval. Only wired in "prompt" mode; in "auto" the
-  // server approves without a prompt and we just stream, in "off" no request is
-  // ever sent. The prompt reuses the REPL readline (via a scoped question) so it
-  // never deadlocks the main line loop, and Ctrl-C still interrupts.
-  function promptApproval(rendered: string): Promise<boolean> {
-    return new Promise((resolveAnswer) => {
-      const query = `Run: ${rendered}  [y/N/a] `;
-      const decide = (answer: string): void => {
-        const a = answer.trim().toLowerCase();
-        // 'a' ("allow this argv for the session") is just a yes here — the
-        // server enforces the session-scope allow-set, so the launcher only
-        // needs to relay approve/deny.
-        resolveAnswer(a === "y" || a === "a");
-      };
-      if (rl) {
-        rl.question(query, decide);
-      } else {
-        // No REPL yet (e.g. before the prompt loop is reached) — scoped reader.
-        const tmp = createInterface({ input: process.stdin, output: process.stderr });
-        tmp.question(query, (answer) => {
-          tmp.close();
-          decide(answer);
-        });
-      }
-    });
-  }
   if (execMode === "prompt") {
     agent.onPerception((p) => {
       const req = execApprovalRequest(p);
       if (!req) return;
-      promptApproval(req.rendered)
-        .then((ok) =>
-          agent.command(ok ? `code exec-approve ${req.token}` : `code exec-deny ${req.token}`),
-        )
-        .catch(() => {
-          /* best-effort — a missed reply times out server-side into a deny */
-        });
+      void (async () => {
+        const answer = await sessionConsole?.ask(`Run: ${req.rendered} [y/N]: `);
+        await agent.command(
+          /^y(es)?$/i.test(answer?.trim() ?? "")
+            ? `code exec-approve ${req.token}`
+            : `code exec-deny ${req.token}`,
+        );
+      })().catch((error) => console.error(`Approval could not be delivered: ${String(error)}`));
     });
   }
-
-  function handleSigint(): void {
-    // One Ctrl-C can arrive via both the process SIGINT signal and readline's
-    // "SIGINT" event — debounce so a single keypress counts once.
+  const handleSigint = () => {
     const now = Date.now();
     if (now - lastSigintAt < 200) return;
     lastSigintAt = now;
-    if (taskInFlight && !stopRequested) {
-      stopRequested = true;
-      agent.command("code stop").catch(() => {
-        /* best-effort — the second Ctrl-C still exits */
-      });
-      console.error("\nStopped. Ctrl-C again to exit.");
-      rl?.prompt();
-      return;
-    }
-    cleanup(0);
-  }
+    if (sessionConsole) void sessionConsole.interrupt();
+    else cleanup(0);
+  };
   process.on("SIGINT", handleSigint);
-  process.on("SIGTERM", () => cleanup(0));
+  process.on("SIGTERM", () => {
+    if (sessionConsole) void sessionConsole.close(0);
+    else cleanup(0);
+  });
 
   if (!(await waitForReady(port))) {
     console.error("Server did not come up in time. Is the repo built and a provider key set?");
@@ -406,8 +409,9 @@ export async function runCodeSession(
       for (const line of stderrTail) console.error(`  ${line}`);
     }
     if (!fresh) {
-      console.error(`Hint: a stale project database from an older Marina version can block boot —`);
-      console.error(`  remove ${dbPath} (and its -wal/-shm siblings), or relaunch with --fresh.`);
+      console.error(
+        "Try --fresh to diagnose startup with a disposable database; your saved project remains intact.",
+      );
     }
     cleanup(1);
   }
@@ -459,13 +463,50 @@ export async function runCodeSession(
     });
   }
 
+  sessionConsole = new CodeConsole({
+    agent,
+    url: `http://localhost:${port}`,
+    root: dir,
+    directory: fresh ? `${dbPath}.runner` : join(projectDirectory, "terminal-runner"),
+    harness,
+    store: harnessStore,
+    finish: (code) => {
+      agent.disconnect();
+      cleanup(code);
+    },
+  });
+  try {
+    await sessionConsole.start(opts.print === undefined);
+  } catch (error) {
+    console.error(`Could not start coding console: ${String(error)}`);
+    await sessionConsole.close(1);
+    return;
+  }
+  if (opts.print !== undefined && harness.agent !== "marina") {
+    const timeout =
+      Number.parseInt(process.env.MARINA_CODE_TASK_TIMEOUT_MS ?? "", 10) || DEFAULT_TASK_TIMEOUT_MS;
+    let code = 0;
+    try {
+      await sessionConsole.task(opts.print, true, timeout);
+      console.error(
+        "Native turn finished. Review its output and workspace changes; task approval is separate.",
+      );
+    } catch (error) {
+      console.error(String(error));
+      code = /timed out/i.test(String(error)) ? 2 : 1;
+    }
+    await sessionConsole.close(code);
+    return;
+  }
+
   // One-shot mode (`marina -p "<task>"`): dispatch, stream, await the terminal
   // lifecycle signal, then exit — 0 completed, 1 failed, 2 timeout.
   if (opts.print !== undefined) {
     const task = opts.print.trim();
     if (!task) {
       console.error("Empty task — nothing to do.");
-      cleanup(1);
+      await sessionConsole.close(1);
+      return;
     }
     const timeoutMs =
       Number.parseInt(process.env.MARINA_CODE_TASK_TIMEOUT_MS ?? "", 10) || DEFAULT_TASK_TIMEOUT_MS;
@@ -474,8 +515,13 @@ export async function runCodeSession(
     outcome.catch(() => {
       /* handled below — avoid unhandled-rejection noise */
     });
-    taskInFlight = true;
-    await agent.command(`code do ${task}`);
+    try {
+      await sessionConsole.task(task);
+    } catch (error) {
+      console.error(String(error));
+      await sessionConsole.close(1);
+      return;
+    }
     let terminal: ReturnType<typeof terminalCodeLifecycle>;
     try {
       terminal = terminalCodeLifecycle(await outcome);
@@ -485,47 +531,19 @@ export async function runCodeSession(
       await agent.command("code stop").catch(() => {
         /* best-effort */
       });
-      cleanup(2);
+      await sessionConsole.close(2);
+      return;
     }
-    taskInFlight = false;
     if (!terminal || terminal.phase === "failed") {
       console.error("Task failed.");
-      cleanup(1);
+      await sessionConsole.close(1);
+      return;
     }
     // Completed: show the session diff, then the durable summary text.
     await agent.command("code diff"); // output streams through the perception echo
     if (terminal.summary) process.stdout.write(`\n${terminal.summary}\n`);
-    cleanup(0);
+    await sessionConsole.close(0);
   }
-
-  rl = createInterface({ input: process.stdin, output: process.stderr, prompt: "» " });
-  rl.on("SIGINT", handleSigint);
-  rl.prompt();
-  rl.on("line", async (line) => {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      rl?.prompt();
-      return;
-    }
-    if (trimmed === "exit" || trimmed === "quit") {
-      rl?.close();
-      return;
-    }
-    taskInFlight = true;
-    stopRequested = false;
-    try {
-      await agent.command(trimmed);
-    } catch (err) {
-      console.error(`Command failed: ${(err as Error).message}`);
-    } finally {
-      taskInFlight = false;
-    }
-    rl?.prompt();
-  });
-  rl.on("close", () => {
-    agent.disconnect();
-    cleanup(0);
-  });
 }
 
 if (import.meta.main) {
