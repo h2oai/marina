@@ -187,3 +187,52 @@ export async function evaluateResolved(
     .map(([tracker, rows]) => ({ tracker, rounds: rows.length, ...summarize(rows) }));
   return { rounds: scores, families, overall: summarize(scores).skill };
 }
+
+export interface ShadowScore {
+  roundId: string;
+  tracker: string;
+  forecaster: string;
+  outcome: number;
+  /** vs the arena's persistence (the leaderboard's skill). */
+  skill: number;
+  /** The calibrated baseline's skill on the same round, for the head-to-head. */
+  baselineSkill: number;
+  costUsd: number;
+}
+
+/**
+ * Score recorded shadow forecasts whose rounds have resolved (numeric rounds):
+ * each against the arena's persistence and against the baseline Marina would
+ * have filed from the same frozen inputs — the evidence a candidate is
+ * promoted on.
+ */
+export async function scoreShadow(
+  data: ArenaData,
+  rows: Array<{ round_id: string; forecaster: string; forecast: string; cost_usd: number }>,
+): Promise<ShadowScore[]> {
+  const { forecastRound } = await import("./forecast");
+  const resolved = await data.resolutions();
+  const out: ShadowScore[] = [];
+  for (const row of rows) {
+    const outcome = resolved[row.round_id]?.value;
+    if (typeof outcome !== "number") continue;
+    const round = await data.round(row.round_id);
+    const lock = round && (await data.lock(row.round_id).catch(() => undefined));
+    const history = lock?.answer_history ?? lock?.history ?? [];
+    const topline = (JSON.parse(row.forecast) as { topline?: { mean: number; sd: number } })
+      .topline;
+    if (!round || !lock || !topline || history.length === 0) continue;
+    const persistence = crpsNormal(history.at(-1)!.value, PERSISTENCE_SD, outcome);
+    const base = forecastRound(round, lock).topline!;
+    out.push({
+      roundId: row.round_id,
+      tracker: round.tracker,
+      forecaster: row.forecaster,
+      outcome,
+      skill: skill(crpsNormal(topline.mean, topline.sd, outcome), persistence),
+      baselineSkill: skill(crpsNormal(base.mean, base.sd, outcome), persistence),
+      costUsd: row.cost_usd,
+    });
+  }
+  return out;
+}

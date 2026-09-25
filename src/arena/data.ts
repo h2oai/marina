@@ -59,6 +59,34 @@ export class ArenaData {
     return this.json<Record<string, ArenaResolution>>("resolutions/resolved.json");
   }
 
+  /**
+   * One archived Civiqs snapshot (`civiqs/<dir>/<YYYY-MM-DD>.json`) — undefined
+   * when the arena took none that day. Snapshots are immutable once written.
+   */
+  async civiqsSnapshot(
+    dir: string,
+    day: string,
+  ): Promise<
+    | {
+        choices: string[];
+        display_net?: { minuend?: string[] | string; subtrahend?: string[] | string };
+        end_date?: string;
+        fetched_at?: string;
+        points: Array<[string, ...number[]]>;
+      }
+    | undefined
+  > {
+    if (!/^[A-Za-z0-9_.-]+$/.test(dir) || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      throw new Error("bad civiqs snapshot path");
+    }
+    try {
+      return await this.json(`civiqs/${dir}/${day}.json`);
+    } catch (err) {
+      if (err instanceof Error && /HTTP 404/.test(err.message)) return undefined;
+      throw err;
+    }
+  }
+
   /** Rounds still accepting forecasts (lock in the future), soonest first. */
   async openRounds(at = this.now()): Promise<ArenaRound[]> {
     return (await this.rounds())

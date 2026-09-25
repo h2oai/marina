@@ -14,6 +14,9 @@
  *   bun run arena submit <round_id|due> [--dry-run]
  *                                               sign + file (due = every round inside the window)
  *   bun run arena backtest                      baseline skill vs the arena's persistence
+ *   bun run arena research <round_id>           run the research agent once; print dossier + forecast
+ *   bun run arena shadow run <round_id|due> | list | score
+ *                                               record / list / score shadow forecasts (never filed)
  *   bun run arena evaluate [--forecaster model:<m>|crew:<m>[,<m>,<m>]] [--no-learn] [--limit N] [--tracker T] [--out FILE]
  *                                               score forecasters on already-resolved rounds (files nothing)
  *
@@ -29,7 +32,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { parseForecasterSpec } from "../src/arena/config";
-import { evaluateResolved, type Forecaster, type Learner } from "../src/arena/evaluate";
+import {
+  evaluateResolved,
+  type Forecaster,
+  type Learner,
+  scoreShadow,
+} from "../src/arena/evaluate";
 import { backtestSeries } from "../src/arena/forecast";
 import { generateArenaKey } from "../src/arena/protocol";
 import {
@@ -37,6 +45,7 @@ import {
   arenaDepsWithForecaster,
   arenaStatus,
   forecasterFor,
+  recordShadow,
 } from "../src/arena/service";
 import { buildForecastBody, dueRounds, submitRound } from "../src/arena/submit";
 import { MarinaDB } from "../src/persistence/database";
@@ -59,6 +68,10 @@ const { positionals, values } = parseArgs({
   },
 });
 const [cmd = "status", arg] = positionals;
+
+/** The default research crew: one analyst per vendor. */
+const DEFAULT_RESEARCH =
+  "research:openrouter/deepseek/deepseek-v4-pro,openrouter/anthropic/claude-sonnet-5,openrouter/openai/gpt-6-luna";
 
 function weightFlag(): number | undefined {
   if (values.weight === undefined) return undefined;
@@ -226,6 +239,8 @@ async function main(): Promise<number> {
         forecasters[label] = crew.forecaster;
         if (crew.learner && !values["no-learn"]) learners[label] = crew.learner;
         usage.push(crew.usage!);
+      } else if (specArg === "nowcast") {
+        forecasters.nowcast = (await forecasterFor("nowcast")).forecaster;
       } else if (specArg !== "baseline") {
         const spec = specArg;
         const model = spec.replace(/^model:/, "");
@@ -278,9 +293,90 @@ async function main(): Promise<number> {
       }
       return 0;
     }
+    case "research": {
+      if (!arg)
+        throw new Error(
+          "usage: bun run arena research <round_id> [--forecaster research:<m>[,<m>,<m>]]",
+        );
+      const spec = parseForecasterSpec(values.forecaster ?? DEFAULT_RESEARCH);
+      if (!spec.startsWith("research:")) throw new Error("--forecaster must be research:<models>");
+      const data = arenaData();
+      const round = await data.round(arg);
+      if (!round) throw new Error(`no round ${arg}`);
+      const { forecaster, usage } = await forecasterFor(spec);
+      const f = (await forecaster(round, await data.lock(arg))) as unknown as Record<
+        string,
+        unknown
+      >;
+      console.log(JSON.stringify({ question: round.question, ...f }, null, 2));
+      console.error(`cost $${(usage?.costUsd ?? 0).toFixed(4)}`);
+      return 0;
+    }
+    case "shadow": {
+      const db = openDb();
+      try {
+        const action = arg ?? "list";
+        if (action === "run") {
+          const target = positionals[2];
+          if (!target)
+            throw new Error("usage: bun run arena shadow run <round_id|due> [--forecaster …]");
+          const spec = parseForecasterSpec(values.forecaster ?? DEFAULT_RESEARCH);
+          const data = arenaData();
+          const hours = Number(process.env.MARINA_ARENA_WINDOW_HOURS ?? 24);
+          const ids =
+            target === "due"
+              ? (await data.openRounds())
+                  .filter((r) => Date.parse(r.lock_at) <= Date.now() + hours * 3_600_000)
+                  .map((r) => r.round_id)
+              : [target];
+          const results = await recordShadow(db, data, spec, ids);
+          for (const r of results)
+            console.log(`${r.roundId}: ${r.recorded ? "recorded" : r.error}`);
+          const rows = db.listArenaShadow({ forecaster: spec, limit: 2_000 });
+          const cost = rows
+            .filter((r) => ids.includes(r.round_id))
+            .reduce((t, r) => t + r.cost_usd, 0);
+          console.log(
+            `${spec}: ${results.filter((r) => r.recorded).length} recorded · cost $${cost.toFixed(4)}`,
+          );
+          return 0;
+        }
+        if (action === "list") {
+          for (const r of db.listArenaShadow({ limit: 200 })) {
+            const t = (JSON.parse(r.forecast) as { topline?: { mean: number; sd: number } })
+              .topline;
+            const d = JSON.parse(r.detail) as { trust?: number; fallback?: string };
+            console.log(
+              `${new Date(r.created_at).toISOString().slice(0, 16)} ${r.round_id.padEnd(34)} ${t ? `${t.mean}±${t.sd}` : "(non-numeric)"} trust ${d.trust?.toFixed(2) ?? "-"} ${d.fallback ?? ""} ${r.forecaster}`,
+            );
+          }
+          return 0;
+        }
+        if (action === "score") {
+          const scores = await scoreShadow(arenaData(), db.listArenaShadow({ limit: 2_000 }));
+          if (scores.length === 0) {
+            console.log("No recorded shadow forecast has resolved yet.");
+            return 0;
+          }
+          const by = new Map<string, typeof scores>();
+          for (const x of scores) by.set(x.forecaster, [...(by.get(x.forecaster) ?? []), x]);
+          for (const [name, list] of by) {
+            const mean = (f: (x: (typeof list)[number]) => number) =>
+              list.reduce((t, x) => t + f(x), 0) / list.length;
+            console.log(
+              `${name}: n=${list.length} skill ${mean((x) => x.skill).toFixed(3)} vs baseline ${mean((x) => x.baselineSkill).toFixed(3)} · beat persistence ${list.filter((x) => x.skill > 0).length} · beat baseline ${list.filter((x) => x.skill > x.baselineSkill).length} · cost $${list.reduce((t, x) => t + x.costUsd, 0).toFixed(3)}`,
+            );
+          }
+          return 0;
+        }
+        throw new Error("usage: bun run arena shadow run|list|score");
+      } finally {
+        db.close();
+      }
+    }
     default:
       throw new Error(
-        `unknown command ${cmd} (keygen, registration, status, rounds, show, submit, backtest, evaluate)`,
+        `unknown command ${cmd} (keygen, registration, status, rounds, show, submit, backtest, evaluate, research, shadow)`,
       );
   }
 }

@@ -13,6 +13,14 @@ export interface ArenaStore {
   ): void;
   latestArenaSubmission(entrant: string, roundId: string): arenaDb.ArenaSubmissionRow | undefined;
   listArenaSubmissions(opts?: { entrant?: string; limit?: number }): arenaDb.ArenaSubmissionRow[];
+  recordArenaShadow(row: {
+    roundId: string;
+    forecaster: string;
+    forecast: string;
+    detail: string;
+    costUsd: number;
+  }): boolean;
+  listArenaShadow(opts?: { forecaster?: string; limit?: number }): arenaDb.ArenaShadowRow[];
 }
 
 /** Runtime mirror of `ArenaStore`'s method names — the drift test compares it to the facade. */
@@ -21,6 +29,8 @@ export const ARENA_STORE_METHODS = [
   "updateArenaSubmission",
   "latestArenaSubmission",
   "listArenaSubmissions",
+  "recordArenaShadow",
+  "listArenaShadow",
 ] as const satisfies readonly (keyof ArenaStore)[];
 
 export const ARENA_STORE_COMPLETE: ExactKeys<ArenaStore, typeof ARENA_STORE_METHODS> = true;
