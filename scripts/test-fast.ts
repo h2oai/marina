@@ -79,7 +79,6 @@ export const FAST_FILES: string[] = [
   "test/cors-origin.test.ts",
   "test/database.test.ts",
   "test/deployment-gate.test.ts",
-  "test/docs-contract.test.ts",
   "test/durable-keys.test.ts",
   "test/embedding-config.test.ts",
   "test/env-hygiene.test.ts",
