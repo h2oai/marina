@@ -26,12 +26,12 @@ const MIN_HISTORY = 12;
 const MIN_SD = 0.05;
 const DAY_MS = 86_400_000;
 
-export type SpreadRule = "persistence" | "calibrated";
+export type SpreadRule = "persistence" | "calibrated" | "robust";
 
 export interface ScalarForecast extends Distribution {
   rule: SpreadRule;
-  /** Mean in-sample CRPS of each rule — the evidence behind `rule`. */
-  evidence?: { persistence: number; calibrated: number; points: number };
+  /** Mean in-sample per-round skill of each candidate spread — the evidence behind `rule`. */
+  evidence?: { skill: Record<string, number>; points: number };
   steps: number;
 }
 
@@ -55,42 +55,71 @@ export function horizonSteps(points: ArenaPoint[], releaseAt: string): number {
   return Math.max(1, Math.round(days / spacingDays(points)));
 }
 
-/** RMS of the series' `steps`-ahead changes over the recent window. */
-function calibratedSd(values: number[], steps: number): number | undefined {
+function recentChanges(values: number[], steps: number): number[] | undefined {
   const diffs: number[] = [];
   for (let i = Math.max(steps, values.length - SD_WINDOW); i < values.length; i++) {
     diffs.push(values[i]! - values[i - steps]!);
   }
-  if (diffs.length < 6) return undefined;
-  const rms = Math.sqrt(diffs.reduce((s, d) => s + d * d, 0) / diffs.length);
-  return Math.max(rms, MIN_SD);
+  return diffs.length < 6 ? undefined : diffs;
 }
 
-/** Persistence mean; spread chosen by this series' own rolling-origin record. */
+/**
+ * Candidate spreads from the series' own recent `steps`-ahead changes: RMS
+ * (`calibrated`) and a spike-resistant median-based one (`robust`, 1.4826 ×
+ * median |change| — the normal-consistent MAD), for series such as pageviews
+ * where a few spikes would otherwise make every forecast needlessly wide.
+ */
+function candidateSpreads(values: number[], steps: number): Partial<Record<SpreadRule, number>> {
+  const diffs = recentChanges(values, steps);
+  if (!diffs) return {};
+  const rms = Math.sqrt(diffs.reduce((s, d) => s + d * d, 0) / diffs.length);
+  const abs = diffs.map(Math.abs).sort((a, b) => a - b);
+  const median = abs[Math.floor(abs.length / 2)]!;
+  return { calibrated: Math.max(rms, MIN_SD), robust: Math.max(1.4826 * median, MIN_SD) };
+}
+
+/**
+ * Persistence mean; the spread chosen by this series' own rolling-origin record,
+ * scored the way the leaderboard scores: the MEAN of per-round skill
+ * (1 − CRPS ÷ persistence CRPS), not the ratio of total CRPS. The two differ
+ * sharply on spiky series — a wide spread wins on the spikes' total but loses
+ * nearly every ordinary week, and the leaderboard counts weeks.
+ */
 export function forecastScalar(points: ArenaPoint[], releaseAt: string): ScalarForecast {
   const values = points.map((p) => p.value).filter((v) => Number.isFinite(v));
   if (values.length === 0) throw new Error("no history to forecast from");
   const steps = horizonSteps(points, releaseAt);
   const mean = round(values.at(-1)!);
-  let pers = 0;
-  let cal = 0;
+  const sums: Record<string, number> = { calibrated: 0, robust: 0 };
   let n = 0;
   for (let t = Math.max(MIN_HISTORY, steps); t < values.length; t++) {
-    const s = calibratedSd(values.slice(0, t - steps + 1), steps);
-    if (s === undefined) continue;
+    const spreads = candidateSpreads(values.slice(0, t - steps + 1), steps);
+    if (spreads.calibrated === undefined || spreads.robust === undefined) continue;
     const origin = values[t - steps]!;
-    pers += crpsNormal(origin, PERSISTENCE_SD, values[t]!);
-    cal += crpsNormal(origin, s, values[t]!);
+    const pers = crpsNormal(origin, PERSISTENCE_SD, values[t]!);
+    if (pers <= 0) continue;
+    for (const rule of ["calibrated", "robust"] as const) {
+      sums[rule]! += 1 - crpsNormal(origin, spreads[rule]!, values[t]!) / pers;
+    }
     n++;
   }
-  const current = calibratedSd(values, steps);
-  const wins = n >= 6 && current !== undefined && cal < pers * (1 - CALIBRATION_MARGIN);
+  const skillOf = (rule: string) => (n ? sums[rule]! / n : Number.NEGATIVE_INFINITY);
+  const current = candidateSpreads(values, steps);
+  const best: SpreadRule = skillOf("robust") > skillOf("calibrated") ? "robust" : "calibrated";
+  const wins = n >= 6 && current[best] !== undefined && skillOf(best) >= CALIBRATION_MARGIN;
   return {
     mean,
-    sd: wins ? round(current!) : PERSISTENCE_SD,
-    rule: wins ? "calibrated" : "persistence",
+    sd: wins ? round(current[best]!) : PERSISTENCE_SD,
+    rule: wins ? best : "persistence",
     steps,
-    ...(n > 0 ? { evidence: { persistence: pers / n, calibrated: cal / n, points: n } } : {}),
+    ...(n > 0
+      ? {
+          evidence: {
+            skill: { calibrated: skillOf("calibrated"), robust: skillOf("robust") },
+            points: n,
+          },
+        }
+      : {}),
   };
 }
 
@@ -189,18 +218,20 @@ export function backtestSeries(points: ArenaPoint[], steps = 1): BacktestResult 
       Date.parse(points[half - 1]!.date) + steps * spacingDays(points) * DAY_MS,
     ).toISOString(),
   ).rule;
-  let ours = 0;
-  let pers = 0;
+  let total = 0;
   let n = 0;
   for (let t = half; t < values.length; t++) {
     const origin = values[t - steps]!;
     const sd =
-      pick === "calibrated" ? calibratedSd(values.slice(0, t - steps + 1), steps) : PERSISTENCE_SD;
+      pick === "persistence"
+        ? PERSISTENCE_SD
+        : candidateSpreads(values.slice(0, t - steps + 1), steps)[pick];
     if (sd === undefined) continue;
-    ours += crpsNormal(origin, sd, values[t]!);
-    pers += crpsNormal(origin, PERSISTENCE_SD, values[t]!);
+    const pers = crpsNormal(origin, PERSISTENCE_SD, values[t]!);
+    if (pers <= 0) continue;
+    total += 1 - crpsNormal(origin, sd, values[t]!) / pers;
     n++;
   }
-  if (n === 0 || pers === 0) return undefined;
-  return { skill: 1 - ours / pers, points: n, rule: pick };
+  if (n === 0) return undefined;
+  return { skill: total / n, points: n, rule: pick };
 }

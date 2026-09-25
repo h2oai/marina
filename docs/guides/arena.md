@@ -15,9 +15,12 @@ the registration carries only the public key.
 
 `src/arena/forecast.ts` is the baseline every round gets. It keeps persistence's mean. The arena's
 own persistence uses a fixed `sd = 1.5` whatever the series' scale, so Marina replaces the spread
-with one calibrated to how the series actually moves — **but only for a series whose own history
-says that wins by 5 % or more**. Everywhere else it files exact persistence, which ties the
-reference and cannot blow up. Held-out backtests on the live rounds put it at about +0.07 skill.
+with one sized to how the series actually moves — **but only for a series whose own history says
+that wins by 5 % or more on the leaderboard's own metric**, the mean of per-round skill. (Choosing
+by total CRPS instead is a trap: on spiky series such as pageviews a wide spread wins the spikes
+and loses nearly every ordinary week, and the leaderboard counts weeks.) Everywhere else it files
+exact persistence, which ties the reference and cannot blow up. On the 58 rounds the arena had
+resolved by 2026-09-25 it scores **+0.046**, with no family below −0.01.
 
 | Round shape | Marina's answer |
 |---|---|
@@ -26,6 +29,27 @@ reference and cannot blow up. Held-out backtests on the live rounds put it at ab
 | Ranking (`ranking_list`) | last-7-day Wikipedia pageview totals, Main_Page and non-articles excluded |
 
 `arena show <round_id>` prints exactly what would be filed and which spread rule each series used.
+
+### Model backends
+
+`MARINA_ARENA_FORECASTER=model:<provider/model>` puts a model on top of the baseline — any model
+Marina can route (`openrouter/deepseek/deepseek-v4-pro`, `anthropic/claude-sonnet-5`, …), with the
+provider's usual key. The model sees the question, the frozen history and the baseline, answers a
+distribution, and that answer is **shrunk toward the baseline** (`MARINA_ARENA_MODEL_WEIGHT`,
+default 0.5); a malformed answer, a failed call or a jump beyond four baseline sds keeps the
+baseline. Closed-book: no web.
+
+Measure before you switch — nothing is filed:
+
+```bash
+bun run arena evaluate --forecaster model:openrouter/deepseek/deepseek-v4-pro --weight 0.25
+```
+
+prints skill per family for the baseline, the blend and the raw model on every resolved round,
+with the model's cost. First result (2026-09-25, 58 rounds, $0.05): baseline +0.046, DeepSeek V4
+Pro blended at 0.25 +0.045, raw −0.07 to −0.12 — no better than the baseline overall, consistently
+better on AAII sentiment. Run-to-run model noise is about ±0.05 at this sample size. A model whose
+training data covers a round's release could know its answer; weigh rounds after its cutoff.
 
 ## Enter Marina (one time)
 
@@ -74,7 +98,8 @@ reference and cannot blow up. Held-out backtests on the live rounds put it at ab
 | `arena show <round_id>` | in-world | the question and exactly what Marina would file |
 | `arena submissions` | in-world | the signed record of what was filed |
 | `arena backtest [n]` | in-world | baseline skill vs the arena's persistence, per family |
-| `bun run arena submit <round_id\|due> [--dry-run]` | operator CLI | sign and file now |
+| `bun run arena submit <round_id\|due> [--dry-run] [--forecaster …] [--weight w]` | operator CLI | sign and file now |
+| `bun run arena evaluate [--forecaster …] [--weight w] [--out FILE]` | operator CLI | score forecasters on resolved rounds; files nothing |
 | `bun run arena keygen <path>` / `registration` | operator CLI | key and registration file |
 
 Filing is deliberately an operator act (CLI or env-set autopilot), never an in-world one: it
@@ -110,6 +135,8 @@ is missing or readable by other users.
 | `MARINA_ARENA_WINDOW_HOURS` | `24` | how close to its lock a round is filed |
 | `MARINA_ARENA_URL` / `MARINA_ARENA_AUDIENCE` | production | a rehearsal fork's intake |
 | `MARINA_ARENA_DATA_URL` | the arena repo on GitHub | where rounds, locks and resolutions are read |
+| `MARINA_ARENA_FORECASTER` | `baseline` | or `model:<provider/model>` on top of the baseline |
+| `MARINA_ARENA_MODEL_WEIGHT` | `0.5` | share of the model's move from the baseline that is kept |
 
 ## Beyond the baseline
 
