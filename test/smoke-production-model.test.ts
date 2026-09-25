@@ -18,14 +18,16 @@ function nonceOf(init: RequestInit | undefined): string {
 
 describe("production model smoke check", () => {
   it("passes on a correct reply and reports the request id", async () => {
-    const check = await checkProductionModel("https://x.example", "t", (async (_u, init) =>
-      reply(nonceOf(init))) as typeof fetch);
+    const check = await checkProductionModel("https://x.example", "t", (async (
+      _u: unknown,
+      init?: RequestInit,
+    ) => reply(nonceOf(init))) as unknown as typeof fetch);
     expect(check).toMatchObject({ ok: true, attempts: 1, requestId: "req-abc" });
   });
 
   it("retries once, and keeps what a failing reply said", async () => {
     let calls = 0;
-    const flaky = (async (_u, init) => {
+    const flaky = (async (_u: unknown, init?: RequestInit) => {
       calls++;
       return reply(calls === 1 ? "" : nonceOf(init));
     }) as unknown as typeof fetch;
