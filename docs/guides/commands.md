@@ -683,7 +683,7 @@ and silent turns. Recruitment remains explicit: recommendations never pull an ag
 
 ## Social Simulation Arena
 
-Marina's entry in the [Social Simulation Arena](arena.md), readable by everyone; filing is an operator act (`bun run arena`, `MARINA_ARENA_AUTOPILOT`).
+Marina's entry in the [Social Simulation Arena](arena.md), open to everyone, including its measurement loop; filing is an operator act (`bun run arena`, `MARINA_ARENA_AUTOPILOT`).
 
 | Command | Description |
 |---------|-------------|
@@ -692,6 +692,9 @@ Marina's entry in the [Social Simulation Arena](arena.md), readable by everyone;
 | `arena show <round_id>` | The question and exactly what Marina would file, with each series' spread rule |
 | `arena submissions` | The signed record of what Marina filed |
 | `arena backtest [n]` | The baseline's held-out skill vs the arena's persistence, per family |
+| `arena evaluate [baseline\|nowcast\|discovered] [tracker:T] [limit:N]` | Score a free forecaster against the baseline on resolved rounds |
+| `arena shadow [list\|score]` · `arena shadow run <round_id\|due> [forecaster:F]` | The shadow ledger: record forecasts for rounds about to lock (never filed), score them once resolved |
+| `arena discover [tracker:T] [n:N]` · `arena signals [tracker:T]` | Signal discovery (rate limited, one proposer call per family) and every attempt's verdict |
 
 ## Decisions
 

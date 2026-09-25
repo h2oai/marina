@@ -384,7 +384,10 @@ export async function recordShadow(
   roundIds: string[],
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<Array<{ roundId: string; recorded: boolean; error?: string }>> {
-  const { forecaster, usage } = await forecasterFor(spec, { env });
+  // As in arenaDepsWithForecaster: the world's notes hold the promoted signals
+  // `discovered` reads — without them it silently degrades to the nowcast.
+  const notes = "getNotesByType" in store ? (store as unknown as NotesStore) : undefined;
+  const { forecaster, usage } = await forecasterFor(spec, { env, ...(notes ? { notes } : {}) });
   const existing = new Set(
     store.listArenaShadow({ forecaster: spec, limit: 2_000 }).map((r) => r.round_id),
   );

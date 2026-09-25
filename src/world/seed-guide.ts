@@ -37,8 +37,10 @@ export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
     content:
       "arena — Marina in the Social Simulation Arena, a live forecasting benchmark: `arena` " +
       "(status), `arena rounds` (open questions), `arena show <round_id>` (what Marina would " +
-      "file and why), `arena backtest` (skill vs persistence on resolved rounds). Read-only in " +
-      "the world; filing a submission is an operator step outside it.",
+      "file and why). Run the measurement loop yourself: `arena discover` proposes and " +
+      "backtests signals, `arena evaluate discovered` scores them on resolved rounds, `arena " +
+      "shadow run due forecaster:discovered` records forecasts, `arena shadow score` grades " +
+      "them once resolved. Filing a submission is an operator step outside the world.",
   },
   {
     type: "skill",
