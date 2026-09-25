@@ -1141,7 +1141,7 @@ describe("Model API", () => {
           },
         );
         expect(forwarded[0]).toMatchObject({
-          model: "gpt-5.6-luna",
+          model: "gpt-6-luna",
           max_completion_tokens: 500,
           reasoning_effort: "none",
         });
@@ -1268,7 +1268,7 @@ describe("Model API", () => {
       expect(lifecycle.at(-1)).toMatchObject({
         phase: "failed",
         routeKind: "passthru",
-        target: "openai/gpt-5.6-luna",
+        target: "openai/gpt-6-luna",
         errorKind: "rate_limit",
       });
       expect(resp.headers.get("x-request-id")).toBe(lifecycle.at(-1)?.traceId ?? null);
@@ -1821,6 +1821,20 @@ describe("prepareUpstreamBody (cloud fallback prep)", () => {
     expect(
       prepareUpstreamBody({ model: openrouter.model }, "openrouter", true).reasoning_effort,
     ).toBe("none");
+    // The whole Luna family, current generation and -pro included.
+    for (const model of ["gpt-6-luna", "gpt-6-luna-pro"]) {
+      expect(prepareUpstreamBody({ model, max_tokens: 100 }, "openai", true)).toMatchObject({
+        max_completion_tokens: 100,
+        reasoning_effort: "none",
+      });
+    }
+    expect(
+      prepareUpstreamBody({ model: "openai/gpt-6-luna" }, "openrouter", true).reasoning_effort,
+    ).toBe("none");
+    // Not Luna: untouched.
+    expect(
+      prepareUpstreamBody({ model: "gpt-6-sol", max_tokens: 100 }, "openai", true),
+    ).not.toHaveProperty("max_completion_tokens");
   });
 
   it("clamps completion budgets when falling back to OpenAI", () => {

@@ -35,8 +35,19 @@ describe("pickDefaultModel", () => {
     expect(pickDefaultModel([])).toBeUndefined();
   });
 
-  it("matches gpt-4o when no claude is present", () => {
-    const groups = [group("openrouter", ["openrouter/zzz/last", "openrouter/openai/gpt-4o"])];
-    expect(pickDefaultModel(groups)).toBe("openrouter/openai/gpt-4o");
+  it("prefers the current cheap generation when no claude is present", () => {
+    const groups = [
+      group("openai", ["openai/gpt-4o", "openai/gpt-6-luna", "openai/gpt-6-sol"]),
+      group("google", ["google/gemini-3.1-flash-lite"]),
+    ];
+    expect(pickDefaultModel(groups)).toBe("openai/gpt-6-luna");
+  });
+
+  it("falls back to an older family only when nothing current is keyed", () => {
+    const groups = [
+      group("openai", ["openai/gpt-3.5-turbo", "openai/text-embedding-3-small"]),
+      group("groq", ["groq/openai/gpt-oss-120b"]),
+    ];
+    expect(pickDefaultModel(groups)).toBe("groq/openai/gpt-oss-120b");
   });
 });

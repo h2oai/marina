@@ -15,11 +15,12 @@ describe("folder-scoped code launcher model selection", () => {
   });
 
   it("selects a model compatible with the configured provider", () => {
-    expect(inferCodeDefaultModel({ ANTHROPIC_API_KEY: "key" })).toBe(
-      "anthropic/claude-sonnet-4-5-20250929",
+    expect(inferCodeDefaultModel({ ANTHROPIC_API_KEY: "key" })).toBe("anthropic/claude-sonnet-5");
+    expect(inferCodeDefaultModel({ OPENAI_API_KEY: "key" })).toBe("openai/gpt-6-luna");
+    expect(inferCodeDefaultModel({ GEMINI_API_KEY: "key" })).toBe("google/gemini-3.1-flash-lite");
+    expect(inferCodeDefaultModel({ HUGGINGFACE_API_KEY: "key" })).toBe(
+      "huggingface/zai-org/GLM-5.3-Flash",
     );
-    expect(inferCodeDefaultModel({ OPENAI_API_KEY: "key" })).toBe("openai/gpt-4o");
-    expect(inferCodeDefaultModel({ GEMINI_API_KEY: "key" })).toBe("google/gemini-2.0-flash");
   });
 
   it("honors provider-specific model overrides", () => {

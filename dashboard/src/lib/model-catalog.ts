@@ -14,19 +14,14 @@ export const FALLBACK_GROUPS: ProviderGroup[] = [
     keySource: null,
     models: [
       {
-        value: "anthropic/claude-opus-4-6",
-        label: "Claude Opus 4.6",
-        capabilities: { text: true },
+        value: "anthropic/claude-sonnet-5",
+        label: "Claude Sonnet 5",
+        capabilities: { text: true, image: true },
       },
       {
-        value: "anthropic/claude-sonnet-4-6",
-        label: "Claude Sonnet 4.6",
-        capabilities: { text: true },
-      },
-      {
-        value: "anthropic/claude-haiku-4-5-20251001",
-        label: "Claude Haiku 4.5",
-        capabilities: { text: true },
+        value: "anthropic/claude-opus-5-5",
+        label: "Claude Opus 5.5",
+        capabilities: { text: true, image: true },
       },
     ],
   },
@@ -36,8 +31,13 @@ export const FALLBACK_GROUPS: ProviderGroup[] = [
     keySource: null,
     models: [
       {
-        value: "openai/gpt-4o",
-        label: "GPT-4o",
+        value: "openai/gpt-6-luna",
+        label: "GPT-6 Luna",
+        capabilities: { text: true, image: true },
+      },
+      {
+        value: "openai/gpt-6-sol",
+        label: "GPT-6 Sol",
         capabilities: { text: true, image: true },
       },
     ],
@@ -127,13 +127,12 @@ export function mediaCapability(
  * `ai21/jamba-large`) most accounts can't serve, so the agent 404s on first call.
  */
 const PREFERRED_MODEL_SUBSTRINGS = [
+  "claude-sonnet-5",
+  "gpt-6-luna",
+  "gemini-3.1-flash-lite",
+  "glm-5.3-flash",
   "claude-sonnet",
-  "claude-3-7-sonnet",
-  "gpt-4o",
-  "gpt-4.1",
-  "gemini-2.0-flash",
-  "gemini-1.5-pro",
-  "llama-3.3",
+  "gpt-oss-120b",
 ];
 
 /**
