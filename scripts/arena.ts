@@ -285,6 +285,11 @@ async function main(): Promise<number> {
         );
       }
       console.log("skill: 0 = the arena's persistence (last value, sd 1.5); above 0 beats it.");
+      if (report.excluded.length) {
+        console.log(
+          `excluded ${report.excluded.length} round(s) whose outcome was already public at lock: ${report.excluded.join(", ")}`,
+        );
+      }
       // Profile and ranking rounds, scored as the leaderboard scores them.
       const shapes = await evaluateShapes(arenaData(), forecasters);
       if (shapes.rounds.length) {

@@ -89,9 +89,9 @@ ends at last Friday while, by its Wednesday lock, several newer daily readings a
 arena archives every snapshot it fetches (`civiqs/` in its repo); `MARINA_ARENA_FORECASTER=nowcast`
 moves each Civiqs mean — topline or profile cell — to the freshest daily reading in a snapshot
 **fetched before the lock**, keeping the baseline's spread; every other round is the baseline.
-Deterministic and leakage-free, so it backtests: on the 58 resolved rounds (2026-09-25) it scores
-**+0.143** overall and **+0.266 on Civiqs (20 of 25 rounds beat persistence)**, vs the baseline's
-+0.046. Structured sources like this beat web search wherever they exist.
+Deterministic and leakage-free, so it backtests: on the 53 resolved rounds whose answer was not
+already public at lock (2026-09-25) it scores **+0.111** overall and **+0.213 on Civiqs (15 of 20
+rounds beat persistence)**, vs the baseline's +0.046 — see *Integrity* below. Structured sources like this beat web search wherever they exist.
 
 ### Profile and ranking rounds
 
@@ -140,6 +140,33 @@ with the whole dossier and judged proposals), `shadow score` scores resolved one
 persistence and the baseline, `shadow list` shows the record, `bun run arena research <round>`
 runs it once and prints everything. `MARINA_ARENA_SHADOW=<spec>` records hourly from the tick
 job — no entrant or key needed.
+
+## Integrity: what the backtest numbers can and cannot claim
+
+Audited 2026-09-25 (`src/arena/evaluate.ts`, `test/arena-*.test.ts`):
+
+- **No outcome reaches a forecaster.** Only the evaluator and the live lesson writer read
+  resolutions; every forecaster sees only a round's lock file and archives filtered to what existed
+  before the lock (Civiqs snapshots *fetched* before it; Wikipedia lists *published* before it).
+- **Rounds whose answer was already public are excluded** for every forecaster
+  (`outcomePublicBeforeLock`). Found live: the five Civiqs week-38 rounds resolved on the 11 Sep
+  reading but locked on 16 Sep, because their frozen history stopped at 4 Sep — a daily tracker's
+  reading is public the next day. With them removed: nowcast **+0.111** overall, **+0.213** on
+  Civiqs (15/20), vs the baseline's +0.046.
+- **Model memorisation.** Probed closed-book, DeepSeek V4 Pro, Claude Sonnet 5 and GPT-6 Luna
+  claimed to know none of five resolved values. The baseline and the nowcast use no model at all.
+- **In-sample design choices.** The spread-selection metric, the Wikipedia half-life and the
+  Trends partial-week default were chosen after looking at the resolved rounds; the Civiqs nowcast
+  has no fitted parameter. Treat backtest numbers as optimistic. The honest test is forward:
+  `arena shadow run due --forecaster <spec>` records predictions before the lock (for the nowcast,
+  within a day of it), and `arena shadow score` scores them only once the arena resolves them.
+- **Source terms.** Civiqs, Wikipedia and Google Trends are rights-approved in the arena's own
+  review; Marina reads the arena's public archive of them. The research agent's citation check
+  never fetches publishers whose terms bar bots or forwarding (YouGov, AAII, Conference Board,
+  CivicScience — `NO_FETCH_DOMAINS`).
+- **The ranking is hypothetical.** Leaderboard entrants forecast live; Marina's numbers are
+  simulations on the same frozen inputs plus public archives available at each lock. Only filed
+  forecasts count.
 
 ## Enter Marina (one time)
 

@@ -29,6 +29,24 @@ export type Learner = (
   outcome: number,
 ) => void;
 
+/**
+ * Was this round's outcome already PUBLIC when it locked? Then no score on it
+ * means anything — a forecaster could simply have read the answer. The arena's
+ * `observed_date` is a field/period date for weekly and monthly sources (their
+ * release is after the lock by construction), but for daily trackers (Civiqs)
+ * it is the publication day: a reading dated d is public by d + 1. Seen live:
+ * the five Civiqs week-38 rounds resolved on the 11 Sep reading and locked on
+ * 16 Sep, because their frozen history had stopped at 4 Sep.
+ */
+export function outcomePublicBeforeLock(
+  round: ArenaRound,
+  observedDate: string | undefined,
+): boolean {
+  if (!observedDate || round.tracker !== "civiqs") return false;
+  const publishedBy = Date.parse(observedDate) + 2 * 86_400_000; // end of d + 1
+  return publishedBy <= Date.parse(round.lock_at);
+}
+
 export interface RoundScore {
   roundId: string;
   tracker: string;
@@ -69,15 +87,35 @@ export async function evaluateResolved(
      * the lock of the round being forecast — never earlier than it could live.
      */
     learners?: Record<string, Learner>;
+    /** Keep rounds whose outcome was public before the lock (excluded by default). */
+    includeLeaked?: boolean;
   } = {},
-): Promise<{ rounds: RoundScore[]; families: FamilySummary[]; overall: Record<string, number> }> {
+): Promise<{
+  rounds: RoundScore[];
+  families: FamilySummary[];
+  overall: Record<string, number>;
+  /** Rounds left out because their outcome was public before the lock. */
+  excluded: string[];
+}> {
   const resolved = await data.resolutions();
-  const candidates = (await data.rounds())
+  const allRounds = await data.rounds();
+  const excluded = opts.includeLeaked
+    ? []
+    : allRounds
+        .filter(
+          (r) =>
+            r.target_type === "continuous_normal" &&
+            typeof resolved[r.round_id]?.value === "number" &&
+            outcomePublicBeforeLock(r, resolved[r.round_id]?.observed_date),
+        )
+        .map((r) => r.round_id);
+  const candidates = allRounds
     .filter(
       (r) =>
         r.target_type === "continuous_normal" &&
         typeof resolved[r.round_id]?.value === "number" &&
-        (!opts.tracker || r.tracker === opts.tracker),
+        (!opts.tracker || r.tracker === opts.tracker) &&
+        (opts.includeLeaked || !outcomePublicBeforeLock(r, resolved[r.round_id]?.observed_date)),
     )
     .sort((a, b) => a.lock_at.localeCompare(b.lock_at))
     .slice(-(opts.limit ?? 1000));
@@ -185,7 +223,7 @@ export async function evaluateResolved(
   const families = [...byTracker.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([tracker, rows]) => ({ tracker, rounds: rows.length, ...summarize(rows) }));
-  return { rounds: scores, families, overall: summarize(scores).skill };
+  return { rounds: scores, families, overall: summarize(scores).skill, excluded };
 }
 
 export interface ShadowScore {
