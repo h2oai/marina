@@ -39,7 +39,7 @@ export interface ArenaConfig {
 
 const MODEL_ID = "[a-z0-9-]+\\/[\\w.:/-]+";
 const FORECASTER_SPEC = new RegExp(
-  `^(baseline|nowcast|model:${MODEL_ID}|(crew|research):${MODEL_ID}(,${MODEL_ID}){0,2})$`,
+  `^(baseline|nowcast|discovered|model:${MODEL_ID}|(crew|research):${MODEL_ID}(,${MODEL_ID}){0,2})$`,
   "i",
 );
 

@@ -120,13 +120,14 @@ export function askCommand(deps: {
         }
       }
 
-      if (sections > 0) {
+      if (sections > 0 && !answered) {
+        // Context only, no model answer: say where it came from and what to try next.
         lines.push(
           dim(
-            "This is a command-native context answer. The word can evolve through macros, dynamic commands, skills, rooms, and agents.",
+            "From this world's notes and commands — try `recall <topic>` or `web search <query>` for more.",
           ),
         );
-      } else if (!answered) {
+      } else if (sections === 0 && !answered) {
         lines.push("No matching world context found yet.");
         lines.push(dim("Try: web search <query>, note what you learn, or ask again later."));
       }

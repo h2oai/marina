@@ -278,7 +278,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
   );
 
   // ── Model API (/v1) — Marina-as-an-LLM for external clients ───────────────
-  const apiAuth = !!env.MODEL_API_KEYS || isOpenApiMode(env);
+  const apiAuth = !!env.MODEL_API_KEYS || !!env.MARINA_LOCAL_API_KEY || isOpenApiMode(env);
   if (apiAuth && hasKey) {
     checks.push({
       id: "model-api",

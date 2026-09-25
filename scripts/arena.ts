@@ -15,6 +15,9 @@
  *                                               sign + file (due = every round inside the window)
  *   bun run arena backtest                      baseline skill vs the arena's persistence
  *   bun run arena research <round_id>           run the research agent once; print dossier + forecast
+ *   bun run arena discover [--tracker T] [--proposer provider/model] [--n N]
+ *                                               propose → backtest (time-split) → promote signals
+ *   bun run arena signals [--tracker T]         every discovery attempt and its verdict
  *   bun run arena shadow run <round_id|due> | list | score
  *                                               record / list / score shadow forecasts (never filed)
  *   bun run arena evaluate [--forecaster model:<m>|crew:<m>[,<m>,<m>]] [--no-learn] [--limit N] [--tracker T] [--out FILE]
@@ -66,6 +69,8 @@ const { positionals, values } = parseArgs({
     tracker: { type: "string" },
     weight: { type: "string" },
     "no-learn": { type: "boolean" },
+    proposer: { type: "string" },
+    n: { type: "string" },
   },
 });
 const [cmd = "status", arg] = positionals;
@@ -242,6 +247,10 @@ async function main(): Promise<number> {
         usage.push(crew.usage!);
       } else if (specArg === "nowcast") {
         forecasters.nowcast = (await forecasterFor("nowcast")).forecaster;
+      } else if (specArg === "discovered") {
+        scratch = openDb();
+        forecasters.nowcast = (await forecasterFor("nowcast")).forecaster;
+        forecasters.discovered = (await forecasterFor("discovered", { notes: scratch })).forecaster;
       } else if (specArg !== "baseline") {
         const spec = specArg;
         const model = spec.replace(/^model:/, "");
@@ -395,9 +404,83 @@ async function main(): Promise<number> {
         db.close();
       }
     }
+    case "discover": {
+      const db = openDb();
+      try {
+        const [{ discover }, { modelComplete }] = await Promise.all([
+          import("../src/arena/discovery/loop"),
+          import("../src/arena/model-backend"),
+        ]);
+        const proposerModel = values.proposer ?? "openrouter/anthropic/claude-sonnet-5";
+        const { complete, usage } = modelComplete(proposerModel);
+        const trackers = values.tracker
+          ? [values.tracker]
+          : ["civiqs", "economist_yougov", "morning_consult", "aaii"];
+        for (const tracker of trackers) {
+          const out = await discover({
+            data: arenaData(),
+            notes: db,
+            tracker,
+            n: values.n ? Number(values.n) : 5,
+            propose: (prompt) =>
+              complete("You design forecasting signals. Reply with one JSON object only.", prompt),
+          });
+          console.log(`\n== ${tracker}`);
+          if (out.note) console.log(`  ${out.note}`);
+          for (const r of out.records) {
+            const d = r.discovery ? `disc ${r.discovery.skill.toFixed(3)}` : "";
+            const h = r.holdout ? `hold ${r.holdout.skill.toFixed(3)}` : "";
+            console.log(
+              `  ${r.verdict.padEnd(9)} centre ${r.spec.centre.padEnd(18)} spread ${r.spec.spread.padEnd(10)} ${d} ${h}  ${r.reason}`,
+            );
+          }
+          const inc = out.records.find((r) => r.incumbent)?.incumbent;
+          if (inc)
+            console.log(
+              `  incumbent (nowcast/baseline): disc ${inc.discovery.skill.toFixed(3)} hold ${inc.holdout.skill.toFixed(3)}`,
+            );
+        }
+        console.log(
+          `\nproposer ${proposerModel} · ${usage.calls} call(s) · $${usage.costUsd.toFixed(4)}`,
+        );
+        return 0;
+      } finally {
+        db.close();
+      }
+    }
+    case "signals": {
+      const db = openDb();
+      try {
+        const { pastAttempts } = await import("../src/arena/discovery/loop");
+        const trackers = values.tracker
+          ? [values.tracker]
+          : [
+              "civiqs",
+              "economist_yougov",
+              "morning_consult",
+              "aaii",
+              "umich_sentiment",
+              "google_trends",
+              "wikipedia",
+            ];
+        for (const t of trackers) {
+          const list = pastAttempts(db, t);
+          if (!list.length) continue;
+          console.log(`== ${t}`);
+          for (const r of list) {
+            console.log(
+              `  ${new Date(r.at).toISOString().slice(0, 10)} ${r.verdict.padEnd(9)} ${r.spec.centre}/${r.spec.spread}  disc ${r.discovery?.skill.toFixed(3)} hold ${r.holdout?.skill.toFixed(3)}  ${r.rationale ?? ""}`,
+            );
+          }
+        }
+        return 0;
+      } finally {
+        db.close();
+      }
+    }
     default:
       throw new Error(
-        `unknown command ${cmd} (keygen, registration, status, rounds, show, submit, backtest, evaluate, research, shadow)`,
+        `unknown command ${cmd} (keygen, registration, status, rounds, show, submit, backtest, evaluate, research, shadow, discover, signals)`,
       );
   }
 }

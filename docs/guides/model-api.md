@@ -31,6 +31,17 @@ for current capabilities and pricing.
 bun run start
 ```
 
+On a local install (the default `local` trust profile) with no `MODEL_API_KEYS` set, Marina
+creates a key once, keeps it next to the database (`marina.db.local-api-key`, mode 600) and prints
+a ready-to-paste line at startup:
+
+```
+  Use Marina from any OpenAI client:  OPENAI_BASE_URL=http://localhost:3300/v1 OPENAI_API_KEY=mk_local_…
+```
+
+Requests still need that bearer token; the loopback MCP transport is unaffected. Shared and public
+deployments never get a generated key — configure `MODEL_API_KEYS` there.
+
 ### 2. Connect a Provider Agent
 
 The provider agent bridges requests to an external LLM. This is an alternative to direct upstream
@@ -69,7 +80,7 @@ OPENAI_API_BASE=http://localhost:3300/v1 OPENAI_API_KEY=sk-any aider --model ope
 Add a custom model provider in your IDE settings:
 
 - **Base URL**: `http://localhost:3300/v1`
-- **API Key**: any value (or a real key if you've set `MODEL_API_KEYS`)
+- **API Key**: the local key Marina printed at startup (or a key from `MODEL_API_KEYS`)
 - **Model**: `marina`
 
 ### LiteLLM (Python)
