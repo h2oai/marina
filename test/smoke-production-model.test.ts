@@ -28,18 +28,18 @@ describe("production model smoke check", () => {
     const flaky = (async (_u, init) => {
       calls++;
       return reply(calls === 1 ? "" : nonceOf(init));
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     expect(await checkProductionModel("https://x.example", "t", flaky)).toMatchObject({
       ok: true,
       attempts: 2,
     });
-    const broken = (async () => reply("I cannot help with that")) as typeof fetch;
+    const broken = (async () => reply("I cannot help with that")) as unknown as typeof fetch;
     expect(await checkProductionModel("https://x.example", "t", broken)).toMatchObject({
       ok: false,
       attempts: 2,
       excerpt: "I cannot help with that",
     });
-    const empty = (async () => reply("")) as typeof fetch;
+    const empty = (async () => reply("")) as unknown as typeof fetch;
     expect((await checkProductionModel("https://x.example", "t", empty)).excerpt).toBe(
       "(empty reply)",
     );
