@@ -15,6 +15,7 @@ import {
   anthropicUsageToOpenai,
   applyAutoCache,
   buildAnthropicRequest,
+  omitsSamplingParams,
   openaiMessagesToAnthropic,
   openaiToolChoiceToAnthropic,
   openaiToolsToAnthropic,
@@ -233,11 +234,11 @@ describe("buildAnthropicRequest", () => {
         temperature: 0.2,
         top_p: 0.9,
       },
-      "claude-sonnet-5",
+      "claude-sonnet-4-5",
       false,
     );
     expect(req).toMatchObject({
-      model: "claude-sonnet-5",
+      model: "claude-sonnet-4-5",
       max_tokens: 77,
       stream: false,
       temperature: 0.2,
@@ -251,6 +252,29 @@ describe("buildAnthropicRequest", () => {
     });
     expect(req).not.toHaveProperty("stop");
     expect(req).not.toHaveProperty("response_format");
+  });
+
+  test("Claude 5 drops temperature and top_p, which it rejects; older models keep them", () => {
+    for (const model of [
+      "claude-sonnet-5",
+      "claude-opus-5-5",
+      "claude-fable-5-1",
+      "anthropic/claude-sonnet-5",
+    ]) {
+      const req = buildAnthropicRequest({ ...base, temperature: 0, top_p: 0.9 }, model, false);
+      expect(req).not.toHaveProperty("temperature");
+      expect(req).not.toHaveProperty("top_p");
+    }
+    for (const model of [
+      "claude-sonnet-4-5",
+      "claude-haiku-4-5-20251001",
+      "claude-3-5-sonnet-latest",
+    ]) {
+      const req = buildAnthropicRequest({ ...base, temperature: 0, top_p: 0.9 }, model, false);
+      expect(req.temperature).toBe(0);
+      expect(req.top_p).toBe(0.9);
+    }
+    expect(omitsSamplingParams("gpt-6-luna")).toBe(false);
   });
 
   test("string stop and default max_tokens", () => {

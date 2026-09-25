@@ -11,6 +11,7 @@ import {
   referenceScoresForBenchmark,
   referenceScoresForModel,
 } from "../benchmarks/reference-scores";
+import { harnessFailure, harnessInvocation } from "../src/engine/benchmark-runner";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
@@ -96,10 +97,11 @@ describe("benchmark command (rank-gated in-world primitive)", () => {
 
   it("leaderboardBenchmark orders by score DESC", () => {
     const base = Date.now() - 60_000;
-    for (const [id, score] of [
-      ["br_lb_001", 0.5],
-      ["br_lb_002", 0.9],
-      ["br_lb_003", 0.7],
+    for (const [id, score, answered] of [
+      ["br_lb_001", 0.5, 50],
+      ["br_lb_002", 0.9, 50],
+      ["br_lb_003", 0.7, 50],
+      ["br_lb_004", 0, 0], // every item errored: measured nothing
     ] as const) {
       db.insertBenchmarkRun({
         id,
@@ -112,7 +114,7 @@ describe("benchmark command (rank-gated in-world primitive)", () => {
       db.completeBenchmarkRun(id, {
         score,
         breakdown_json: null,
-        answered: 50,
+        answered,
         total: 50,
         status: "completed",
         completed_at: base + 1000,
@@ -214,5 +216,31 @@ describe("benchmark reference scores", () => {
 
   it("lookupReferenceScore returns undefined for unknown pair", () => {
     expect(lookupReferenceScore("no-such/model", "no-such-bench")).toBeUndefined();
+  });
+});
+
+describe("benchmark runner → harness", () => {
+  const config = { limit: 3, seed: 42, model: "marina", concurrency: 5 };
+
+  it("targets this instance's endpoint and passes the key in the environment, not argv", () => {
+    const { args, env } = harnessInvocation("gsm8k", config, {
+      endpoint: "http://localhost:3410",
+      apiKey: "marina-internal-secret",
+    });
+    expect(args).toContain("--endpoint");
+    expect(args[args.indexOf("--endpoint") + 1]).toBe("http://localhost:3410");
+    expect(args.join(" ")).not.toContain("marina-internal-secret");
+    expect(env.MARINA_BENCH_API_KEY).toBe("marina-internal-secret");
+  });
+
+  it("a run where every item errored is a failure, not a 0% score", () => {
+    const err = harnessFailure({
+      metadata: { total: 3, answered: 0 },
+      items: [{ actual: "ERROR: API error 401: unauthorized" }, { actual: "ERROR: x" }],
+    });
+    expect(err).toContain("every item errored");
+    expect(err).toContain("401");
+    expect(harnessFailure({ metadata: { total: 0, answered: 0 }, items: [] })).toBeDefined();
+    expect(harnessFailure({ metadata: { total: 3, answered: 1 } })).toBeUndefined();
   });
 });

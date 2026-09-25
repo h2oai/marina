@@ -120,7 +120,7 @@ describe("buildAnthropicRequest with thinking", () => {
   test("thinking off keeps temperature and the plain body", () => {
     const req = buildAnthropicRequest(
       { ...base, reasoning_effort: "none", temperature: 0.4 },
-      "claude-sonnet-5",
+      "claude-sonnet-4-5",
       false,
     );
     expect(req).not.toHaveProperty("thinking");

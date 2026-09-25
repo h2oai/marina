@@ -574,7 +574,9 @@ Options:
     mode,
     model: args.model ?? "marina",
     endpoint: args.endpoint ?? "http://localhost:3300",
-    apiKey: args["api-key"],
+    // MARINA_BENCH_API_KEY: how an in-world `benchmark run` hands over its key
+    // without putting it on the command line.
+    apiKey: args["api-key"] ?? process.env.MARINA_BENCH_API_KEY,
     concurrency: Number.parseInt(args.concurrency ?? "5", 10),
     limit: args.limit ? Number.parseInt(args.limit, 10) : undefined,
     seed: args.seed ? Number.parseInt(args.seed, 10) : undefined,

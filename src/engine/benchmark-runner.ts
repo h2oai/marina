@@ -137,12 +137,67 @@ function hashConfig(config: unknown): string {
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
+/** Where the harness sends its model calls: this instance's own /v1, authenticated. */
+export interface HarnessTarget {
+  endpoint: string;
+  apiKey?: string;
+}
+
+/** The harness child's argv and environment. The key travels in the environment,
+ * never argv, so it is not visible in the process list. */
+export function harnessInvocation(
+  benchmark: string,
+  config: { limit: number; seed: number; model: string; judgeModel?: string; concurrency: number },
+  target: HarnessTarget,
+): { args: string[]; env: Record<string, string> } {
+  const args = [
+    "run",
+    "benchmarks/harness.ts",
+    "--benchmark",
+    benchmark,
+    "--limit",
+    String(config.limit),
+    "--seed",
+    String(config.seed),
+    "--mode",
+    "passthrough",
+    "--concurrency",
+    String(config.concurrency),
+    "--model",
+    config.model,
+    "--endpoint",
+    target.endpoint,
+  ];
+  if (config.judgeModel) args.push("--judge-model", config.judgeModel);
+  const env: Record<string, string> = {};
+  if (target.apiKey) env.MARINA_BENCH_API_KEY = target.apiKey;
+  return { args, env };
+}
+
+/**
+ * A harness that exits 0 can still have failed every item (unreachable endpoint,
+ * auth, an upstream 400). Such a run must not land on the leaderboard as a 0% score.
+ */
+export function harnessFailure(result: {
+  metadata?: { total?: number; answered?: number };
+  items?: ResultItemRaw[];
+}): string | undefined {
+  const total = result.metadata?.total ?? result.items?.length ?? 0;
+  if (total === 0) return "harness answered no items";
+  if ((result.metadata?.answered ?? 0) > 0) return undefined;
+  const firstError = result.items?.find((i) => i.actual?.startsWith("ERROR:"))?.actual;
+  return `every item errored${firstError ? ` — ${firstError.slice(0, 300)}` : ""}`;
+}
+
 export class BenchmarkRunner {
   private active = new Map<string, Promise<unknown>>();
 
   constructor(
     private db: MarinaDB,
     private emitFeed: BenchmarkFeedEmitter,
+    private target: () => HarnessTarget = () => ({
+      endpoint: `http://localhost:${Number(process.env.WS_PORT) || 3300}`,
+    }),
   ) {}
 
   list(): BenchmarkSpec[] {
@@ -225,25 +280,7 @@ export class BenchmarkRunner {
     },
     started: number,
   ): Promise<void> {
-    const args = [
-      "run",
-      "benchmarks/harness.ts",
-      "--benchmark",
-      opts.benchmark,
-      "--limit",
-      String(config.limit),
-      "--seed",
-      String(config.seed),
-      "--mode",
-      "passthrough",
-      "--concurrency",
-      String(config.concurrency),
-      "--model",
-      config.model,
-    ];
-    if (config.judgeModel) {
-      args.push("--judge-model", config.judgeModel);
-    }
+    const { args, env } = harnessInvocation(opts.benchmark, config, this.target());
 
     let score: number | null = null;
     let breakdownJson: string | null = null;
@@ -256,6 +293,7 @@ export class BenchmarkRunner {
     try {
       const proc = Bun.spawn(["bun", ...args], {
         cwd: process.cwd(),
+        env: { ...process.env, ...env },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -269,6 +307,8 @@ export class BenchmarkRunner {
       if (!result) {
         throw new Error("harness completed but no result file found");
       }
+      const failure = harnessFailure(result);
+      if (failure) throw new Error(failure);
       score = result.scores?.overall ?? null;
       breakdownJson = JSON.stringify(result.scores?.breakdown ?? {});
       answered = result.metadata?.answered ?? 0;
