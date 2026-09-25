@@ -675,6 +675,12 @@ Recruitment is availability- and evidence-aware:
 Matching weighs role/goal/focus overlap, standing, approved task outcomes, current availability, errors,
 and silent turns. Recruitment remains explicit: recommendations never pull an agent away from live work.
 
+## Forecasting
+
+| Command | Description |
+|---------|-------------|
+| `forecast <question>` | A probability or a number for any question, with cited and checked evidence from several models ([guide](forecasting.md)). Alias: `predict`. Rate-limited per entity (each call costs money). |
+
 ## Social Simulation Arena
 
 Marina's entry in the [Social Simulation Arena](arena.md), readable by everyone; filing is an operator act (`bun run arena`, `MARINA_ARENA_AUTOPILOT`).

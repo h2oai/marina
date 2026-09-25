@@ -578,7 +578,7 @@ async function handleSpawn(
   if (!deps.agentRuntime.isAvailable()) {
     ctx.send(
       eid,
-      "No LLM API keys configured. Set ANTHROPIC_API_KEY, GEMINI_API_KEY, or another provider key.",
+      "No LLM API keys configured. Set any one of OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY or HUGGINGFACE_API_KEY (or run Ollama locally).",
     );
     return;
   }

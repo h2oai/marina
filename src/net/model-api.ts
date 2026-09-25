@@ -11,6 +11,7 @@ import type { RateLimiter } from "../auth/rate-limiter";
 import type { Engine } from "../engine/engine";
 import { handleAnthropicMessages } from "./anthropic-inbound";
 import { handleDecisions } from "./decisions-api";
+import { handleForecast } from "./forecast-api";
 import { handleMediaApi } from "./media-api";
 import { handleOpenaiChat, runOpenaiChat } from "./model-api/chat-completions";
 import { listModels, openaiModelList } from "./model-api/models";
@@ -119,6 +120,11 @@ export async function handleModelApi(
 
   if (url.pathname.startsWith("/v1/media")) {
     return await handleMediaApi(url, method, req, engine, server);
+  }
+
+  // Forecast any question (research → verified evidence → analysts → judge) — src/forecast.
+  if (url.pathname === "/v1/forecast" && method === "POST") {
+    return await handleForecast(req);
   }
 
   // Decisions API (noul / choice / score) for any harness — src/net/decisions-api.ts.

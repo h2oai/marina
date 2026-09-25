@@ -25,7 +25,9 @@ export type OpenAIErrorCode =
   | "upstream_error"
   | "server_error"
   // POST /v1/decisions while MARINA_DECISIONS is off (src/net/decisions-api.ts).
-  | "decisions_disabled";
+  | "decisions_disabled"
+  // POST /v1/forecast without the keys forecasting needs (src/net/forecast-api.ts).
+  | "forecast_unavailable";
 
 export type OpenAIErrorType =
   | "invalid_request_error"

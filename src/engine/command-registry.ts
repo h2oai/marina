@@ -49,6 +49,7 @@ import { evolveCommand } from "./commands/evolve";
 import { experimentCommand } from "./commands/experiment";
 import { exportCommand } from "./commands/export-cmd";
 import { feedCommand } from "./commands/feed";
+import { forecastCommand } from "./commands/forecast";
 import { gatewayCommand } from "./commands/gateway";
 import { genomeCommand } from "./commands/genome";
 import { gotoCommand } from "./commands/goto";
@@ -865,6 +866,7 @@ export function registerBuiltinCommands(engine: Engine): void {
     );
     return true;
   });
+  engine.commands.registerBuiltin(forecastCommand());
   engine.commands.registerBuiltin(
     arenaCommand({
       get store() {

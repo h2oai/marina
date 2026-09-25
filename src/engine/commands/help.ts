@@ -44,6 +44,7 @@ export const COMMAND_CATEGORIES: Record<string, string[]> = {
     "probe",
     "watch",
     "arena",
+    "forecast",
   ],
   Experiments: ["experiment", "observe", "lab"],
   Coordination: [
