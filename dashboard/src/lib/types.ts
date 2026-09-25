@@ -1006,6 +1006,16 @@ export interface RoomTemplateEntry {
   created_at: number;
 }
 
+/** A named command (or `;`-separated sequence) — the caller's own or a shared `system` one. */
+export interface MacroEntry {
+  id: number;
+  name: string;
+  author_id: string;
+  command: string;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface ExperimentEntry {
   id: number;
   name: string;

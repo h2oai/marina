@@ -21,6 +21,7 @@ const base: OpsDecisions = {
   windowMs: 86_400_000,
   counts: {},
   recent: [],
+  health: { status: "ok", total: 0, errors: 0 },
 };
 
 describe("Ops → Decisions", () => {

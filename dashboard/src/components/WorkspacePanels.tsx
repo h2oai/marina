@@ -17,7 +17,7 @@ import { MyInventory } from "./MyInventory";
 import { NarrativePlayback } from "./NarrativePlayback";
 import { ParticipantStreams } from "./ParticipantStreams";
 import { RoomDetail } from "./RoomDetail";
-import { WorkOverview } from "./WorkDrawer";
+import { WorkOverview } from "./WorkOverview";
 import { WorldMap } from "./WorldMap";
 
 const Canvas = lazy(() => import("../canvas/CanvasPage").then((m) => ({ default: m.CanvasPage })));

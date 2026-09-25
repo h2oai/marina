@@ -75,6 +75,12 @@ exact command. Favorites appear above chat and persist in this browser per world
 Clicking a favorite drafts it; it does not execute it. Remove a favorite with its adjacent
 remove button.
 
+Your **macros** appear in the same row, marked with a play icon: named commands (or `;`-separated
+sequences) kept on the server, so they follow you across devices and are the same macros agents
+create with `macro create`. Shared `system` macros show "(shared)" in their tooltip. Clicking one
+drafts its name; press Enter to run it. A favorite's bookmark button drafts
+`macro create <name> <command>` so you can promote it to a macro after editing the name.
+
 Use **More → Keyboard shortcuts** or **?** for help. Outside text inputs, **1–3** focus Chat,
 Workspace, and Context; **`** cycles panels. Saved classic grids retain **1–8** focus shortcuts.
 **Esc** restores a maximized pane or exits Canvas full screen. Dialogs support

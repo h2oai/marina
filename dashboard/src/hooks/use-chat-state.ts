@@ -3,6 +3,9 @@
 
 import { create } from "zustand";
 
+/** Fired after this client creates or deletes a macro. */
+export const MACROS_CHANGED_EVENT = "marina:macros-changed";
+
 export interface StoredPerception {
   kind: string;
   timestamp?: number;
@@ -56,6 +59,11 @@ export const useChatState = create<ChatState>((set) => ({
     const ws = getChatWs();
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     ws.send(JSON.stringify({ type: "command", command: trimmed }));
+    // Macros live server-side; tell their views to refetch once the engine has
+    // processed the change (it replies in-tick).
+    if (/^macro\s+(create|delete)\b/i.test(trimmed)) {
+      setTimeout(() => window.dispatchEvent(new Event(MACROS_CHANGED_EVENT)), 750);
+    }
     if (recordHistory) {
       set((s) => ({
         commandHistory: [trimmed, ...s.commandHistory.filter((c) => c !== trimmed).slice(0, 99)],

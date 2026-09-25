@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { decisionConfigFromEnv, decisionGateEnabled } from "../decisions/config";
+import { decisionHealth } from "../decisions/health";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
 import { getTrustProfile, isLocalUngated, isOpenApiMode, type TrustProfile } from "./trust-profile";
@@ -306,6 +307,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
 
   // ── Decisions — cheap per-step judgement calls (src/decisions) ───────────
   const decisions = decisionConfigFromEnv(env);
+  const decisionHealthNow = decisionHealth(engine.getEventLog());
   if (!decisions) {
     checks.push({
       id: "decisions",
@@ -322,6 +324,22 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       status: "degraded",
       detail: `${decisions.kind} → ${decisions.model} at ${decisions.baseUrl}, but no API key`,
       remediation: "Set MARINA_DECISION_API_KEY (or OPENROUTER_API_KEY for openrouter.ai).",
+    });
+  } else if (decisionHealthNow.status === "degraded") {
+    checks.push({
+      id: "decisions",
+      label: "Decisions (route / gate / verify)",
+      status: "degraded",
+      detail:
+        `${decisions.kind} → ${decisions.model}: ${decisionHealthNow.errors} of the last ${decisionHealthNow.total} decisions failed in ${Math.round(decisionHealthNow.windowMs / 60_000)} min` +
+        (decisionHealthNow.lastError
+          ? ` (latest: ${decisionHealthNow.lastError.slice(0, 160)})`
+          : "") +
+        (decisionGateEnabled(env)
+          ? " — the gate fails closed, so mutating agent calls are being blocked"
+          : ""),
+      remediation:
+        "Check the decision backend's reachability and key (MARINA_DECISION_BASE_URL / MARINA_DECISION_API_KEY), or raise MARINA_DECISION_TIMEOUT_MS; Admin → Ops → Decisions shows the failures.",
     });
   } else {
     checks.push({

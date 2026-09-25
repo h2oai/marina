@@ -39,8 +39,24 @@ export function DecisionsSection({ decisions }: { decisions: OpsDecisions }) {
   const total = (stage: string) =>
     Object.values(decisions.counts[stage] ?? {}).reduce((sum, n) => sum + n, 0);
   const held = (decisions.counts.gate?.ask ?? 0) + (decisions.counts.gate?.block ?? 0);
+  const health = decisions.health;
   return (
     <div className="space-y-2">
+      {health?.status === "degraded" && (
+        <div
+          role="alert"
+          className="rounded border border-warning/50 bg-warning/10 p-2 text-warning"
+        >
+          Backend failing: {health.errors} of the last {health.total} decisions errored in 15 min
+          {decisions.gate
+            ? " — the gate fails closed, so mutating agent calls are being blocked"
+            : ""}
+          .
+          {health.lastError ? (
+            <span className="block text-text-dim">{health.lastError}</span>
+          ) : null}
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-1.5 md:grid-cols-4">
         <Metric
           label="Backend"
