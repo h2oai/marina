@@ -23,7 +23,8 @@ and operate the environment. Start with one path below; the full catalog follows
 | Deploy a shared instance | [Deployment](deployment.md) | [Authentication](../authentication.md) |
 | Review human and agent identity controls | [Identity and workload security](identity.md) | [Authentication](../authentication.md) |
 | Run isolated A/B Marina variants | [World Collective](world-collective.md) | [Execution Traces](observability.md) |
-| Register another Marina without assuming trust | [Federation discovery](federation-discovery.md) | [Inheritance](inheritance.md) |
+| Register another Marina without assuming trust | [Social Simulation Arena](arena.md) | Enter Marina in the MIT forecasting arena: key, registration, autopilot, the calibrated baseline |
+| [Federation discovery](federation-discovery.md) | [Inheritance](inheritance.md) |
 | Follow a desire from expression to evidence | [Journeys](journeys.md) | [Cognitive Provenance](cognitive-provenance.md) |
 | Create portable intellects and associations | [Intellect Lifecycle](intellect-lifecycle.md) | [Associations](associations.md) |
 | Reproduce cognition or a Marina | [Reproduction and Meshes](reproduction-and-meshes.md) | [Economics, Simulation, and Recursion](economics-simulation-and-recursion.md) |

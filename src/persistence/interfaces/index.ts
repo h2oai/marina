@@ -9,6 +9,7 @@
 
 export type { AgentsStore } from "./agents-store";
 export type { AlertsStore } from "./alerts-store";
+export type { ArenaStore } from "./arena-store";
 export type { AssetsStore } from "./assets-store";
 export type { AssociationsStore } from "./associations-store";
 export type { BenchmarksStore } from "./benchmarks-store";
@@ -61,6 +62,8 @@ import type { AgentsStore } from "./agents-store";
 import { AGENTS_STORE_METHODS } from "./agents-store";
 import type { AlertsStore } from "./alerts-store";
 import { ALERTS_STORE_METHODS } from "./alerts-store";
+import type { ArenaStore } from "./arena-store";
+import { ARENA_STORE_METHODS } from "./arena-store";
 import type { AssetsStore } from "./assets-store";
 import { ASSETS_STORE_METHODS } from "./assets-store";
 import type { AssociationsStore } from "./associations-store";
@@ -159,6 +162,7 @@ import { WORLD_VARIANTS_STORE_METHODS } from "./world-variants-store";
 export interface MarinaStores
   extends AgentsStore,
     AlertsStore,
+    ArenaStore,
     AssetsStore,
     AssociationsStore,
     BenchmarksStore,
@@ -211,6 +215,7 @@ export interface MarinaStores
 export const STORE_METHOD_MANIFEST: Readonly<Record<string, readonly string[]>> = {
   AgentsStore: AGENTS_STORE_METHODS,
   AlertsStore: ALERTS_STORE_METHODS,
+  ArenaStore: ARENA_STORE_METHODS,
   AssetsStore: ASSETS_STORE_METHODS,
   AssociationsStore: ASSOCIATIONS_STORE_METHODS,
   BenchmarksStore: BENCHMARKS_STORE_METHODS,

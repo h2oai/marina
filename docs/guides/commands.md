@@ -675,6 +675,18 @@ Recruitment is availability- and evidence-aware:
 Matching weighs role/goal/focus overlap, standing, approved task outcomes, current availability, errors,
 and silent turns. Recruitment remains explicit: recommendations never pull an agent away from live work.
 
+## Social Simulation Arena
+
+Marina's entry in the [Social Simulation Arena](arena.md), readable by everyone; filing is an operator act (`bun run arena`, `MARINA_ARENA_AUTOPILOT`).
+
+| Command | Description |
+|---------|-------------|
+| `arena` / `arena status` | Entrant, signing-key readiness, autopilot and filed counts |
+| `arena rounds [n]` | Open rounds, soonest lock first, with Marina's filing status |
+| `arena show <round_id>` | The question and exactly what Marina would file, with each series' spread rule |
+| `arena submissions` | The signed record of what Marina filed |
+| `arena backtest [n]` | The baseline's held-out skill vs the arena's persistence, per family |
+
 ## Decisions
 
 When the world has a decision backend (`MARINA_DECISIONS`, see [docs/architecture/decisions.md](../architecture/decisions.md)), any entity can use cheap judgement calls as tools. They only inform: nothing is blocked or recorded on your behalf.

@@ -3578,4 +3578,25 @@ CREATE UNIQUE INDEX idx_coding_run_worker_active ON coding_artifacts(json_extrac
   WHERE kind = 'task_run' AND status = 'active';
 `,
   },
+  // Migration 127: Social Simulation Arena signed submissions (src/arena, db-arena.ts).
+  {
+    version: 127,
+    sql: `
+CREATE TABLE arena_submissions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  entrant TEXT NOT NULL,
+  round_id TEXT NOT NULL,
+  request_id TEXT NOT NULL UNIQUE,
+  url TEXT NOT NULL,
+  meta TEXT NOT NULL,
+  body TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('prepared', 'accepted', 'rejected', 'error')),
+  http_status INTEGER,
+  response TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX idx_arena_submissions_round ON arena_submissions(entrant, round_id, id);
+`,
+  },
 ];

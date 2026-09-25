@@ -49,6 +49,7 @@ export const EXPORT_TABLES = [
   "mesh_translations",
   "economic_contracts",
   "economic_events",
+  "arena_submissions",
   "economic_adapters",
   "simulation_manifests",
   "simulation_runs",

@@ -36,7 +36,15 @@ export const COMMAND_CATEGORIES: Record<string, string[]> = {
     "mesh",
     "economy",
   ],
-  "Markets & Forecasting": ["market", "scenario", "bankroll", "position", "probe", "watch"],
+  "Markets & Forecasting": [
+    "market",
+    "scenario",
+    "bankroll",
+    "position",
+    "probe",
+    "watch",
+    "arena",
+  ],
   Experiments: ["experiment", "observe", "lab"],
   Coordination: [
     "channel",

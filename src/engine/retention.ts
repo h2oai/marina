@@ -194,6 +194,11 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
   { table: "entity_standing", kind: "append-only", note: "reputation ledger (decay is computed)" },
   { table: "memory_resolutions", kind: "append-only", note: "contradiction-resolution audit" },
   {
+    table: "arena_submissions",
+    kind: "append-only",
+    note: "signed public forecasts; the audit record behind the arena's reveal",
+  },
+  {
     table: "economic_events",
     kind: "append-only",
     note: "contract / settlement ledger — financial history is not aged out by default",
