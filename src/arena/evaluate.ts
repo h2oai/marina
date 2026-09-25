@@ -35,7 +35,17 @@ export interface RoundScore {
   outcome: number;
   persistenceCrps: number;
   /** forecaster name → { mean, sd, crps, skill } */
-  results: Record<string, { mean: number; sd: number; crps: number; skill: number; note?: string }>;
+  results: Record<
+    string,
+    {
+      mean: number;
+      sd: number;
+      crps: number;
+      skill: number;
+      note?: string;
+      detail?: Record<string, unknown>;
+    }
+  >;
 }
 
 export interface FamilySummary {
@@ -108,13 +118,31 @@ export async function evaluateResolved(
           const f = await forecast(round, lock);
           if (!f.topline) continue;
           const crps = crpsNormal(f.topline.mean, f.topline.sd, outcome);
-          const fallback = (f as { fallback?: string }).fallback;
+          const extra = f as {
+            fallback?: string;
+            proposals?: unknown;
+            trust?: number;
+            critique?: string;
+            lessonsUsed?: number;
+            reason?: string;
+            raw?: unknown;
+            roles?: unknown;
+          };
+          const fallback = extra.fallback;
+          // Keep what the forecaster did, not just what it filed — the diagnostics
+          // that say whether the roles and memory are actually doing their jobs.
+          const detail = Object.fromEntries(
+            (["proposals", "trust", "critique", "lessonsUsed", "reason", "raw", "roles"] as const)
+              .filter((k) => extra[k] !== undefined)
+              .map((k) => [k, extra[k]]),
+          );
           results[name] = {
             mean: f.topline.mean,
             sd: f.topline.sd,
             crps,
             skill: skill(crps, persistenceCrps),
             ...(fallback ? { note: fallback } : {}),
+            ...(Object.keys(detail).length ? { detail } : {}),
           };
         } catch {
           // A forecaster that cannot answer a round simply has no score for it.

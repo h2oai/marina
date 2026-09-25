@@ -50,6 +50,8 @@ export interface CrewForecast extends RoundForecast {
   critique?: string;
   lessonsUsed?: number;
   fallback?: string;
+  /** Per role: ok, or why it dropped out (invalid reply, error, a move too wild). */
+  roles?: Record<string, string>;
 }
 
 const ROLE_SYSTEM = {
@@ -141,21 +143,27 @@ export async function crewForecastRound(
     .slice(-30)
     .map((p) => `${p.date} ${p.value}`)
     .join("\n");
-  const ask = async (c: Complete, system: string, user: string) => {
+  const roles: Record<string, string> = {};
+  const ask = async (role: string, c: Complete, system: string, user: string) => {
     try {
-      return parseReply(await c(system, user));
-    } catch {
+      const reply = parseReply(await c(system, user));
+      roles[role] = reply ? "ok" : "invalid reply (no JSON object)";
+      return reply;
+    } catch (err) {
+      roles[role] = `error: ${(err instanceof Error ? err.message : String(err)).slice(0, 120)}`;
       return undefined;
     }
   };
 
   const [stat, analyst] = await Promise.all([
     ask(
+      "statistician",
       members.statistician,
       ROLE_SYSTEM.statistician,
       `${head}\n\nHistory (date value), oldest first:\n${hist}\n\nBaseline: ${JSON.stringify(base)}`,
     ),
     ask(
+      "analyst",
       members.analyst,
       ROLE_SYSTEM.analyst,
       `${head}\n\nLast 8 values: ${history
@@ -172,16 +180,22 @@ export async function crewForecastRound(
     ["analyst", analyst],
   ] as const) {
     const p = asProposal(reply);
-    if (p && Math.abs(p.mean - base.mean) <= MAX_SD_MOVE * base.sd) proposals[name] = p;
+    if (!p) {
+      if (roles[name] === "ok") roles[name] = "invalid reply (no valid mean/sd)";
+    } else if (Math.abs(p.mean - base.mean) > MAX_SD_MOVE * base.sd) {
+      roles[name] =
+        `dropped: move ${Math.round((p.mean - base.mean) * 100) / 100} beyond ${MAX_SD_MOVE} baseline sd`;
+    } else proposals[name] = p;
   }
   const usable = Object.values(proposals);
   if (usable.length === 0) {
-    return { ...baseline, lessonsUsed: lessons.length, fallback: "no usable proposal" };
+    return { ...baseline, lessonsUsed: lessons.length, roles, fallback: "no usable proposal" };
   }
   const moveMean = usable.reduce((s, p) => s + p.mean, 0) / usable.length - base.mean;
   const moveSd = usable.reduce((s, p) => s + p.sd, 0) / usable.length;
 
   const verdict = await ask(
+    "skeptic",
     members.skeptic,
     ROLE_SYSTEM.skeptic,
     `${head}\n\nLast 8 values: ${history
@@ -206,6 +220,7 @@ export async function crewForecastRound(
     trust,
     ...(typeof verdict?.critique === "string" ? { critique: verdict.critique.slice(0, 300) } : {}),
     lessonsUsed: lessons.length,
+    roles,
     note: `marina crew (statistician, analyst, skeptic; ${lessons.length} lessons recalled) over the calibrated baseline`,
   };
 }
