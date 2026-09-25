@@ -420,6 +420,8 @@ curl http://localhost:3300/v1/chat/completions \
 | `GET` / `DELETE` | `/v1/responses/:id` | Read / delete a stored response |
 | `POST` | `/v1/messages` | Anthropic Messages (Claude Code, Anthropic SDKs) |
 | `GET` | `/v1/health` | Liveness |
+| `POST` | `/v1/forecast` | Forecast any question: `{question, kind?, resolveBy?, unit?}` → probability or number with analysts, grounding, sources ([guide](forecasting.md)) |
+| `POST` | `/v1/decisions`, `/v1/systemone` | Decision questions (`noul` / `choice` / `score`) for any harness; TypeSafe-compatible ([decisions](../architecture/decisions.md)) |
 | `POST` | `/v1/embeddings`, `/v1/completions` | **Not served** — explicit 404 `{ error: { code: "not_found" } }` |
 
 ### Ollama-compatible

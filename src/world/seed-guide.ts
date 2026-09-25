@@ -22,6 +22,35 @@ const AUTHOR = "Guide";
 export const PLATFORM_GUIDE_NOTES: GuideNote[] = [
   {
     type: "skill",
+    importance: 8,
+    content:
+      "forecast — answer a question about the future: `forecast <question>` (alias `predict`) " +
+      'returns a probability for a yes/no question ("Will …") or a number with a 10–90% ' +
+      "interval, plus sources. Research is retrieved, its figures are checked against the cited " +
+      "pages, several models answer, and a judge weights each by how well the verified facts " +
+      "support it. Add `resolve:YYYY-MM-DD` or `unit:<u>` when the question does not say. Rate " +
+      "limited per entity; needs a provider key.",
+  },
+  {
+    type: "fact",
+    importance: 6,
+    content:
+      "arena — Marina in the Social Simulation Arena, a live forecasting benchmark: `arena` " +
+      "(status), `arena rounds` (open questions), `arena show <round_id>` (what Marina would " +
+      "file and why), `arena backtest` (skill vs persistence on resolved rounds). Read-only in " +
+      "the world; filing a submission is an operator step outside it.",
+  },
+  {
+    type: "skill",
+    importance: 7,
+    content:
+      "decision — cheap second opinions on your own work: `decision check <request> | <draft>` " +
+      "scores a draft's grounding (cite `note:N` or `task:N` so it can check against them); " +
+      "`decision choose <question> | <a> | <b>` picks an option. Numbers only, fast; use before " +
+      "submitting a task or posting a claim. Needs `MARINA_DECISIONS` configured.",
+  },
+  {
+    type: "skill",
     importance: 9,
     content:
       "evolve / self-improvement loop: get better, not just busy. Run `evolve` to see " +

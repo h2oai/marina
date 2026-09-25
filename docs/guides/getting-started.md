@@ -183,24 +183,34 @@ bun run scripts/connect.ts Operator
 bun run scripts/connect.ts Operator -c "readiness"
 ```
 
-The CLI uses `ws://localhost:3300` by default. Set `MARINA_URL` for another instance.
+The CLI uses `ws://localhost:3300` by default. For another instance pass `--port 3400` (or
+`--url ws://host:3400`, a trailing `/ws` is fine) or set `MARINA_URL`. Each instance uses three
+ports: `WS_PORT`, `WS_PORT+1` (MCP) and `WS_PORT+2` (logs), so space instances at least 3 apart.
+
+A first useful result from the terminal, with a provider key (OpenRouter covers everything):
+
+```bash
+bun run forecast "Will the Fed cut rates at its next meeting?"   # no server needed
+bun run scripts/connect.ts Operator -c "forecast Will it rain in Boston tomorrow?"
+```
 
 ## Use Marina in front of a model client
 
-Marina exposes OpenAI-compatible endpoints, but a useful response still requires either eligible
-Marina model-serving agents or a configured upstream fallback. Authentication is also required
-unless the explicit local-development bypass is enabled.
+Marina exposes OpenAI-compatible endpoints; a useful response needs a provider key (or eligible
+Marina model-serving agents). On a local install Marina prints a key at startup — use it:
 
 ```bash
-MARINA_OPEN_API=true bun run start
+bun run start
+#   Use Marina from any OpenAI client:  OPENAI_BASE_URL=http://localhost:3300/v1 OPENAI_API_KEY=mk_local_…
 
 curl http://localhost:3300/v1/chat/completions \
-  -H "Authorization: Bearer local-development" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"marina","messages":[{"role":"user","content":"hello"}]}'
 ```
 
-`MARINA_OPEN_API=true` is a development convenience, not a production authentication policy. See
+The key lives next to the database (`marina.db.local-api-key`, mode 600) and is reused across
+restarts. Shared and public deployments never get one — set `MODEL_API_KEYS` there. See
 [Model API](model-api.md) and [Deployment](deployment.md) before exposing an instance.
 
 ## Observe what happened
