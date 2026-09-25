@@ -100,7 +100,9 @@ export function decisionConfigFromEnv(
     ? env.OPENROUTER_API_KEY
     : /^https:\/\/api\.typesafe\.ai(\/|$)/.test(baseUrl)
       ? env.TYPESAFE_API_KEY
-      : undefined;
+      : /^https:\/\/router\.huggingface\.co(\/|$)/.test(baseUrl)
+        ? env.HUGGINGFACE_API_KEY || env.HF_TOKEN
+        : undefined;
   const apiKey = env.MARINA_DECISION_API_KEY?.trim() || vendorKey?.trim() || undefined;
   return {
     kind,

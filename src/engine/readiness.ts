@@ -97,6 +97,8 @@ const PROVIDER_ENV = [
   "XAI_API_KEY",
   "MISTRAL_API_KEY",
   "DEEPSEEK_API_KEY",
+  "HUGGINGFACE_API_KEY",
+  "HF_TOKEN",
 ];
 
 export function computeReadiness(engine: Engine): ReadinessReport {

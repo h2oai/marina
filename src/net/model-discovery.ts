@@ -49,6 +49,8 @@ interface ProviderSpec {
   provider: string;
   url: string;
   envKey: string;
+  /** Other env vars that also hold this provider's key (e.g. Hugging Face's `HF_TOKEN`). */
+  altEnvKeys?: string[];
   authStyle: "bearer" | "anthropic" | "query" | "none";
 }
 
@@ -239,6 +241,16 @@ const PROVIDERS: ProviderSpec[] = [
     authStyle: "bearer",
   },
   {
+    // Hugging Face Inference Providers: one OpenAI-compatible router in front of
+    // many serving providers. The model list is public; the key is forwarded
+    // when present. `HF_TOKEN` is the Hugging Face ecosystem's own variable.
+    provider: "huggingface",
+    url: "https://router.huggingface.co/v1/models",
+    envKey: "HUGGINGFACE_API_KEY",
+    altEnvKeys: ["HF_TOKEN"],
+    authStyle: "none",
+  },
+  {
     provider: "cerebras",
     url: "https://api.cerebras.ai/v1/models",
     envKey: "CEREBRAS_API_KEY",
@@ -382,8 +394,10 @@ function resolveKey(
     const rows = db.getApiKeysByProvider(spec.provider);
     if (rows.length > 0) return { key: rows[0]!.encrypted_value, source: "db" };
   }
-  const envVal = process.env[spec.envKey];
-  if (envVal) return { key: envVal, source: "env" };
+  for (const name of [spec.envKey, ...(spec.altEnvKeys ?? [])]) {
+    const envVal = process.env[name];
+    if (envVal) return { key: envVal, source: "env" };
+  }
   return { key: null, source: null };
 }
 
@@ -480,7 +494,7 @@ export function parseProviderResponse(provider: string, body: unknown): ModelEnt
     return out;
   }
 
-  // OpenAI-compatible: { data: [{ id }] } — openai, groq, mistral, xai, cerebras, deepseek
+  // OpenAI-compatible: { data: [{ id }] } — openai, groq, mistral, xai, cerebras, deepseek, huggingface
   const data = (body as { data?: unknown[] }).data;
   if (!Array.isArray(data)) return [];
   const out: ModelEntry[] = [];
@@ -539,3 +553,6 @@ export async function discoverModels(
 }
 
 export const MODEL_DISCOVERY_PROVIDERS = PROVIDERS.map((p) => p.provider);
+
+/** Env vars holding a Hugging Face token, in precedence order. */
+export const HUGGINGFACE_ENV_KEYS = ["HUGGINGFACE_API_KEY", "HF_TOKEN"] as const;

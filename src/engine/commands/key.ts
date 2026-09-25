@@ -262,6 +262,8 @@ function detectEnvKeys(): Array<{ provider: string; envVar: string }> {
     { envVar: "XAI_API_KEY", provider: "xai" },
     { envVar: "MISTRAL_API_KEY", provider: "mistral" },
     { envVar: "DEEPSEEK_API_KEY", provider: "deepseek" },
+    { envVar: "HUGGINGFACE_API_KEY", provider: "huggingface" },
+    { envVar: "HF_TOKEN", provider: "huggingface" },
   ];
 
   return mapping.filter((m) => !!process.env[m.envVar]);
