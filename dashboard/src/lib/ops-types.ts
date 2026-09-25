@@ -20,6 +20,8 @@ export type {
   AgentOperatorRow,
   OpsAgentPauseKind,
   OpsAgentStopResponse,
+  OpsDecisionRow,
+  OpsDecisions,
   OpsLimiter,
   OpsOverview,
   OpsPrompt,

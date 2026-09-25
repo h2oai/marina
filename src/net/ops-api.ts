@@ -28,6 +28,8 @@ import {
   type ToolProfile,
 } from "../agent/tools";
 import { RateLimiter } from "../auth/rate-limiter";
+import { decisionConfigFromEnv, decisionGateEnabled } from "../decisions/config";
+import { decisionVerifyEnabled } from "../decisions/verify";
 import { getAutonomyPosture } from "../engine/autonomy";
 import { CONTINUATION_PROMPT_BUDGET_BYTES } from "../engine/constants";
 import type { Engine } from "../engine/engine";
@@ -47,6 +49,8 @@ import { getLastProviderProbe } from "./model-api";
 import type {
   AgentOperatorRow,
   OpsAgentStopResponse,
+  OpsDecisionRow,
+  OpsDecisions,
   OpsLimiter,
   OpsOverview,
   OpsPrompt,
@@ -483,6 +487,51 @@ export function securityPosture(engine: Engine): OpsSecurity {
 
 // ─── Overview ───────────────────────────────────────────────────────────────
 
+/** Window and cap for the Decisions section. */
+export const DECISIONS_WINDOW_MS = 24 * 3_600_000;
+export const DECISIONS_RECENT_MAX = 50;
+
+/**
+ * Harness decisions in scope: every agent for a privileged observer, else the
+ * resident's own agents and the resident itself (a `verify` decision is filed
+ * under the submitting entity). Read from the in-memory event log — this is a
+ * recent-activity view, not an archive.
+ */
+export function decisionsOverview(
+  engine: Engine,
+  scope: OpsObserverScope,
+  visibleAgents: readonly string[],
+  now = Date.now(),
+  env: NodeJS.ProcessEnv = process.env,
+): OpsDecisions {
+  const config = decisionConfigFromEnv(env);
+  const allowed = new Set(visibleAgents);
+  if (scope.entityName) allowed.add(scope.entityName);
+  const since = now - DECISIONS_WINDOW_MS;
+  const counts: Record<string, Record<string, number>> = {};
+  const rows: OpsDecisionRow[] = [];
+  for (const event of engine.getEventLog()) {
+    if (event.type !== "agent_decision" || event.timestamp < since) continue;
+    if (!scope.privileged && !allowed.has(event.name)) continue;
+    const byVerdict = (counts[event.stage] ??= {});
+    byVerdict[event.verdict] = (byVerdict[event.verdict] ?? 0) + 1;
+    const { type: _type, ...row } = event;
+    rows.push(row);
+  }
+  rows.sort((a, b) => b.timestamp - a.timestamp);
+  return {
+    configured: !!config,
+    backend: config?.kind ?? null,
+    model: config?.model ?? null,
+    calibrated: config ? config.kind !== "chat-classifier" : null,
+    gate: decisionGateEnabled(env),
+    verify: decisionVerifyEnabled(env),
+    windowMs: DECISIONS_WINDOW_MS,
+    counts,
+    recent: rows.slice(0, DECISIONS_RECENT_MAX),
+  };
+}
+
 export function buildOpsOverview(engine: Engine, scope: OpsObserverScope): OpsOverview {
   const agents = listAgentRows(engine, scope);
   return {
@@ -501,6 +550,11 @@ export function buildOpsOverview(engine: Engine, scope: OpsObserverScope): OpsOv
     },
     providers: scope.privileged ? providerProbeSummary() : null,
     security: securityPosture(engine),
+    decisions: decisionsOverview(
+      engine,
+      scope,
+      agents.map((row) => row.name),
+    ),
   };
 }
 
