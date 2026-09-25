@@ -259,12 +259,15 @@ export class LocalWorkspace implements WorkspaceRuntime {
     if (!stat.isDirectory()) {
       return [entryFor(this.root, target, stat)];
     }
+    // An entry can vanish between readdir and stat (a SQLite -shm/-wal file,
+    // an editor swap file); skip it rather than failing the whole listing.
     return readdirSync(target)
       .sort((a, b) => a.localeCompare(b))
       .slice(0, limit)
-      .map((name) => {
+      .flatMap((name) => {
         const path = join(target, name);
-        return entryFor(this.root, path, statSync(path));
+        const entry = statSync(path, { throwIfNoEntry: false });
+        return entry ? [entryFor(this.root, path, entry)] : [];
       });
   }
 
@@ -530,7 +533,8 @@ export class LocalWorkspace implements WorkspaceRuntime {
     for (const name of readdirSync(dir)) {
       if (SKIP_DIRS.has(name)) continue;
       const path = join(dir, name);
-      const stat = statSync(path);
+      const stat = statSync(path, { throwIfNoEntry: false });
+      if (!stat) continue; // removed mid-walk
       if (stat.isDirectory()) {
         await this.walkTextFiles(path, visit);
       } else if (stat.isFile() && stat.size <= DEFAULT_MAX_READ_BYTES && looksTextual(name)) {
