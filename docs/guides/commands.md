@@ -661,7 +661,7 @@ Replayed terminal events do not retrain twice. Directly addressed events always 
 > agent config Scout key my-key               Reconfigure agent API key
 ```
 
-Models use `provider/model` format. Supported providers: anthropic, openai, google, groq, openrouter, cerebras, xai, mistral, deepseek.
+Models use `provider/model` format. Supported providers: anthropic, openai, google, groq, openrouter, huggingface, cerebras, xai, mistral, deepseek. Hugging Face models are addressed by Hub id — `huggingface/zai-org/GLM-5.3-Flash`, optionally with a serving suffix (`:fastest`, `:cheapest`, `:<provider>`); set `HUGGINGFACE_API_KEY` or `HF_TOKEN`.
 
 Recruitment is availability- and evidence-aware:
 
@@ -733,7 +733,7 @@ Gated operations (shell, agent spawn, keys, adapters, gateways, admin, code exec
 > key test my-key                             Test key connectivity
 ```
 
-Providers: anthropic, openai, google, groq, openrouter, cerebras, xai, mistral, deepseek. Falls back to environment variables when no database keys exist.
+Providers: anthropic, openai, google, groq, openrouter, huggingface, cerebras, xai, mistral, deepseek. Falls back to environment variables when no database keys exist.
 
 ## Platform Adapters (`adapter.enable` Gate)
 

@@ -18,6 +18,7 @@ import {
 } from "../engine/constants";
 import { Logger } from "../engine/logger";
 import {
+  HUGGINGFACE_ENV_KEYS,
   inferModelCapabilities,
   isLocalProvider,
   LOCAL_PROVIDERS,
@@ -1148,6 +1149,7 @@ export class AgentRuntime {
       xai: ["XAI_API_KEY"],
       mistral: ["MISTRAL_API_KEY"],
       deepseek: ["DEEPSEEK_API_KEY"],
+      huggingface: [...HUGGINGFACE_ENV_KEYS],
       // Media generation. Stability/Runway/Flux/Luma have their own keys; Google
       // Imagen + Veo reuse the google entry above.
       stability: ["STABILITY_API_KEY"],
@@ -1190,6 +1192,7 @@ export class AgentRuntime {
       "XAI_API_KEY",
       "MISTRAL_API_KEY",
       "DEEPSEEK_API_KEY",
+      ...HUGGINGFACE_ENV_KEYS,
     ];
     if (keyVars.some((v) => !!process.env[v])) return true;
     // A local-only operator (no cloud keys) opts in by configuring a self-hosted

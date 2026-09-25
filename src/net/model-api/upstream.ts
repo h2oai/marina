@@ -67,6 +67,7 @@ const BUILTIN_DEFAULT_MODELS: Record<string, string> = {
   GEMINI_API_KEY: "gemini-2.0-flash",
   OPENROUTER_API_KEY: "openai/gpt-5.6-luna",
   GROQ_API_KEY: "llama-3.3-70b-versatile",
+  HUGGINGFACE_API_KEY: "zai-org/GLM-5.3-Flash",
   LLAMA_API_KEY: LOCAL_PROVIDERS.llama!.defaultModel,
   OLLAMA_API_KEY: LOCAL_PROVIDERS.ollama!.defaultModel,
 };
@@ -96,6 +97,13 @@ const PROVIDER_UPSTREAM: Record<string, { url: string; envKeys: string[]; anthro
   openrouter: {
     url: "https://openrouter.ai/api/v1/chat/completions",
     envKeys: ["OPENROUTER_API_KEY"],
+  },
+  // Hugging Face Inference Providers router (OpenAI-compatible). Model ids are
+  // Hub ids, optionally suffixed with a serving policy or provider
+  // (`org/model:fastest`, `org/model:cheapest`, `org/model:<provider>`).
+  huggingface: {
+    url: "https://router.huggingface.co/v1/chat/completions",
+    envKeys: ["HUGGINGFACE_API_KEY", "HF_TOKEN"],
   },
   // Self-hosted local runtimes, OpenAI-compatible (/chat/completions). Base URL
   // defaults to localhost (native install); override with LLAMA_BASE_URL /
@@ -129,6 +137,7 @@ const FALLBACK_PRIORITY = [
   "openai",
   "google",
   "groq",
+  "huggingface",
   "openrouter",
 ];
 

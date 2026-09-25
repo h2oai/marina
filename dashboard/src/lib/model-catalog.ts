@@ -157,6 +157,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
   google: "Google",
   openrouter: "OpenRouter",
+  huggingface: "Hugging Face",
   groq: "Groq",
   mistral: "Mistral",
   xai: "xAI",
