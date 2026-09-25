@@ -82,6 +82,45 @@ rounds; the first forecaster above the baseline, though the margin (~0.01) is wi
 noise. Its family pattern repeated in both runs: better on AAII, Trends, Wikipedia and Morning
 Consult; worse on Economist/YouGov (−0.08 both), where the baseline should keep filing.
 
+### The Civiqs nowcast (`nowcast`)
+
+Civiqs publishes **daily** trackers but the arena samples them on Fridays, so a round's history
+ends at last Friday while, by its Wednesday lock, several newer daily readings are public. The
+arena archives every snapshot it fetches (`civiqs/` in its repo); `MARINA_ARENA_FORECASTER=nowcast`
+moves each Civiqs mean — topline or profile cell — to the freshest daily reading in a snapshot
+**fetched before the lock**, keeping the baseline's spread; every other round is the baseline.
+Deterministic and leakage-free, so it backtests: on the 58 resolved rounds (2026-09-25) it scores
+**+0.143** overall and **+0.266 on Civiqs (20 of 25 rounds beat persistence)**, vs the baseline's
++0.046. Structured sources like this beat web search wherever they exist.
+
+### The research agent (`research:`)
+
+`research:<analyst>[,<analyst>,<analyst>]` — one analyst per vendor — runs the full pipeline
+(`src/arena/research/`):
+
+1. **Brief** — a playbook per family (other pollsters' readings *with their previous reading*,
+   S&P moves for AAII, prices and inflation prints for consumer surveys, scheduled events for
+   attention), bounded to facts after the series' last value, which is stated as already known.
+2. **Retrieve** — `MARINA_ARENA_RESEARCH_RETRIEVER` (default `openrouter-web:openai/gpt-6-luna`,
+   OpenRouter's web search with URL citations; ~$0.03 per round).
+3. **Verify citations** — every dossier line that cites a page has its figures looked up in that
+   page (fetched through the SSRF guard) and is tagged `[verified]`, `[unverified]` or
+   `[unreachable]`. It caught, live, a researcher reporting a poll "at 39%" whose source said 35%.
+4. **Analysts** — forecast from history + the nowcast-adjusted baseline + the tagged dossier, told
+   that the benchmark's own history is authoritative for its dates and to use other sources for
+   **changes**, never levels (pollsters differ in population and house effect).
+5. **Judge** — `MARINA_ARENA_RESEARCH_JUDGE` (default `jev`: jev-1.13 via OpenRouter's Decisions
+   API) scores each rationale's quality and grounding in the *verified* lines only; ungrounded ⇒
+   no weight.
+6. **Aggregate** — judge-weighted mean move × confidence × `MARINA_ARENA_RESEARCH_TRUST` (0.5).
+
+Web research cannot be backtested (a search run later finds the answer), so it is measured in
+**shadow**: `bun run arena shadow run due` records what it would file (first record per round,
+with the whole dossier and judged proposals), `shadow score` scores resolved ones against
+persistence and the baseline, `shadow list` shows the record, `bun run arena research <round>`
+runs it once and prints everything. `MARINA_ARENA_SHADOW=<spec>` records hourly from the tick
+job — no entrant or key needed.
+
 ## Enter Marina (one time)
 
 1. **Choose the entrant id** — lower-case, permanent (for example `h2oai-marina`) — and the
@@ -166,8 +205,12 @@ is missing or readable by other users.
 | `MARINA_ARENA_WINDOW_HOURS` | `24` | how close to its lock a round is filed |
 | `MARINA_ARENA_URL` / `MARINA_ARENA_AUDIENCE` | production | a rehearsal fork's intake |
 | `MARINA_ARENA_DATA_URL` | the arena repo on GitHub | where rounds, locks and resolutions are read |
-| `MARINA_ARENA_FORECASTER` | `baseline` | or `model:<provider/model>`, or `crew:<model>[,<model>,<model>]` |
+| `MARINA_ARENA_FORECASTER` | `baseline` | or `nowcast`, `model:<m>`, `crew:<m>[,<m>,<m>]`, `research:<m>[,<m>,<m>]` |
 | `MARINA_ARENA_MODEL_WEIGHT` | `0.5` | share of the model's move from the baseline that is kept |
+| `MARINA_ARENA_SHADOW` | unset | a forecaster spec to record hourly in shadow (never filed) |
+| `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:openai/gpt-6-luna` | the research agent's search backend |
+| `MARINA_ARENA_RESEARCH_JUDGE` | `jev` (with an OpenRouter key) | `jev` or `none` |
+| `MARINA_ARENA_RESEARCH_TRUST` | `0.5` | most of the judged move the research agent takes |
 
 ## Beyond the baseline
 

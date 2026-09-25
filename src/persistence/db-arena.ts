@@ -96,3 +96,47 @@ export function listArenaSubmissions(
       : db.query("SELECT * FROM arena_submissions ORDER BY id DESC LIMIT ?").all(limit)
   ) as ArenaSubmissionRow[];
 }
+
+// ─── Shadow forecasts (migration 128) ────────────────────────────────────────
+// What a candidate forecaster WOULD have filed, recorded before the round locks
+// and scored once it resolves — how forecasters that cannot be backtested (web
+// research finds published answers) earn their way onto the real entry.
+
+export interface ArenaShadowRow {
+  id: number;
+  round_id: string;
+  forecaster: string;
+  /** JSON: { topline? | profile? | ranking? } as it would have been filed. */
+  forecast: string;
+  /** JSON: the forecaster's working (dossier, proposals, judge scores, fallbacks). */
+  detail: string;
+  cost_usd: number;
+  created_at: number;
+}
+
+/** First record per (round, forecaster) wins — a shadow forecast is never revised. */
+export function recordArenaShadow(
+  db: Database,
+  row: { roundId: string; forecaster: string; forecast: string; detail: string; costUsd: number },
+): boolean {
+  const result = db.run(
+    `INSERT OR IGNORE INTO arena_shadow (round_id, forecaster, forecast, detail, cost_usd, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [row.roundId, row.forecaster, row.forecast, row.detail, row.costUsd, Date.now()],
+  );
+  return result.changes > 0;
+}
+
+export function listArenaShadow(
+  db: Database,
+  opts: { forecaster?: string; limit?: number } = {},
+): ArenaShadowRow[] {
+  const limit = Math.min(Math.max(opts.limit ?? 200, 1), 2_000);
+  return (
+    opts.forecaster
+      ? db
+          .query("SELECT * FROM arena_shadow WHERE forecaster = ? ORDER BY id DESC LIMIT ?")
+          .all(opts.forecaster, limit)
+      : db.query("SELECT * FROM arena_shadow ORDER BY id DESC LIMIT ?").all(limit)
+  ) as ArenaShadowRow[];
+}

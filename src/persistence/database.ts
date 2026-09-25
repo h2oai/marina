@@ -2110,6 +2110,20 @@ export class MarinaDB implements MarinaStores {
     return arenaDb.listArenaSubmissions(this.reader, opts);
   }
 
+  recordArenaShadow(row: {
+    roundId: string;
+    forecaster: string;
+    forecast: string;
+    detail: string;
+    costUsd: number;
+  }): boolean {
+    return arenaDb.recordArenaShadow(this.db, row);
+  }
+
+  listArenaShadow(opts: { forecaster?: string; limit?: number } = {}): arenaDb.ArenaShadowRow[] {
+    return arenaDb.listArenaShadow(this.reader, opts);
+  }
+
   // ─── Chronicle (delegated to db-chronicle.ts) ──────────────────────────
   // The canonical, append-only record of the Marina. See docs/chronicle.md.
 

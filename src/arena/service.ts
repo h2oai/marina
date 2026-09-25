@@ -82,6 +82,13 @@ export async function forecasterFor(
   opts: { weight?: number; raw?: boolean; env?: NodeJS.ProcessEnv; notes?: NotesStore } = {},
 ): Promise<{ forecaster: Forecaster; usage?: Usage; learner?: Learner }> {
   if (spec === "baseline") return { forecaster: baselineForecaster };
+  if (spec === "nowcast") {
+    const { nowcastForecaster } = await import("./research/civiqs-nowcast");
+    return { forecaster: nowcastForecaster(arenaData(opts.env ?? process.env), forecastRound) };
+  }
+  if (spec.startsWith("research:")) {
+    return researchForecasterFor(spec, opts.env ?? process.env);
+  }
   if (spec.startsWith("crew:")) {
     const specs = spec.slice("crew:".length).split(",");
     const [stat, analyst = stat, skeptic = analyst] = specs as [string, string?, string?];
@@ -256,4 +263,169 @@ export async function learnFromResolutions(
     written++;
   }
   return written;
+}
+
+// ─── Research agent + shadow mode ────────────────────────────────────────────
+
+/**
+ * `research:<analyst>[,<analyst>,<analyst>]`. Retrieval is
+ * `MARINA_ARENA_RESEARCH_RETRIEVER` (default `openrouter-web:openai/gpt-6-luna`),
+ * the judge `MARINA_ARENA_RESEARCH_JUDGE` (`jev` — jev-1.13 through OpenRouter's
+ * Decisions API — by default when an OpenRouter key is set; `none` for equal
+ * weights), the cap on the move taken `MARINA_ARENA_RESEARCH_TRUST` (0.5).
+ */
+async function researchForecasterFor(
+  spec: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ forecaster: Forecaster; usage?: Usage }> {
+  const [{ modelComplete }, research, retrieve, decisions] = await Promise.all([
+    import("./model-backend"),
+    import("./research/forecaster"),
+    import("./research/retrieve"),
+    import("../decisions/config"),
+  ]);
+  const orKey = env.OPENROUTER_API_KEY;
+  const retrieverSpec =
+    env.MARINA_ARENA_RESEARCH_RETRIEVER?.trim() || "openrouter-web:openai/gpt-6-luna";
+  if (!retrieverSpec.startsWith("openrouter-web:")) {
+    throw new Error(`unknown MARINA_ARENA_RESEARCH_RETRIEVER ${retrieverSpec}`);
+  }
+  if (!orKey) throw new Error("the openrouter-web retriever needs OPENROUTER_API_KEY");
+  const retriever = retrieve.openRouterWebRetriever({
+    model: retrieverSpec.slice("openrouter-web:".length),
+    apiKey: orKey,
+  });
+  const models = spec.slice("research:".length).split(",");
+  const made = models.map((m) => ({
+    name: m.replace(/^openrouter\//, ""),
+    ...modelComplete(m, env),
+  }));
+  const judgeSpec = (
+    env.MARINA_ARENA_RESEARCH_JUDGE?.trim() || (orKey ? "jev" : "none")
+  ).toLowerCase();
+  const judge =
+    judgeSpec === "jev" && orKey
+      ? decisions.providerFromConfig({
+          kind: "decisions-api",
+          baseUrl: "https://openrouter.ai/api/alpha",
+          path: "/decisions",
+          model: "typesafe/jev-1.13",
+          apiKey: orKey,
+          timeoutMs: 10_000,
+        })
+      : undefined;
+  const trustCap = Number(env.MARINA_ARENA_RESEARCH_TRUST ?? 0.5);
+  const { defaultPageText } = await import("./research/verify");
+  const pageText = defaultPageText();
+  // Structured evidence first: the research agent starts from the Civiqs nowcast.
+  const { nowcastForecaster } = await import("./research/civiqs-nowcast");
+  const nowcast = nowcastForecaster(arenaData(env), forecastRound);
+  let researchCost = 0;
+  const usage: Usage = {
+    get calls() {
+      return made.reduce((s, m) => s + m.usage.calls, 0);
+    },
+    get inputTokens() {
+      return made.reduce((s, m) => s + m.usage.inputTokens, 0);
+    },
+    get outputTokens() {
+      return made.reduce((s, m) => s + m.usage.outputTokens, 0);
+    },
+    get costUsd() {
+      return researchCost + made.reduce((s, m) => s + m.usage.costUsd, 0);
+    },
+  };
+  return {
+    usage,
+    forecaster: async (round, lock) => {
+      const f = await research.researchForecastRound(round, lock, {
+        retriever,
+        analysts: made.map((m) => ({ name: m.name, complete: m.complete })),
+        ...(judge ? { judge } : {}),
+        trustCap: Number.isFinite(trustCap) ? trustCap : 0.5,
+        pageText,
+        base: nowcast,
+      });
+      researchCost += f.dossier?.costUsd ?? 0;
+      return f;
+    },
+  };
+}
+
+/** Record what `spec` would file for each round (first record per round wins). */
+export async function recordShadow(
+  store: ArenaStore,
+  data: ArenaData,
+  spec: string,
+  roundIds: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<Array<{ roundId: string; recorded: boolean; error?: string }>> {
+  const { forecaster, usage } = await forecasterFor(spec, { env });
+  const existing = new Set(
+    store.listArenaShadow({ forecaster: spec, limit: 2_000 }).map((r) => r.round_id),
+  );
+  const out: Array<{ roundId: string; recorded: boolean; error?: string }> = [];
+  for (const roundId of roundIds) {
+    if (existing.has(roundId)) {
+      out.push({ roundId, recorded: false, error: "already recorded" });
+      continue;
+    }
+    try {
+      const round = await data.round(roundId);
+      if (!round) throw new Error("no such round");
+      if (Date.parse(round.lock_at) <= Date.now()) throw new Error("already locked");
+      const before = usage?.costUsd ?? 0;
+      const f = (await forecaster(round, await data.lock(roundId))) as unknown as Record<
+        string,
+        unknown
+      >;
+      const { topline, profile, ranking, rules: _rules, note: _note, ...detail } = f;
+      const recorded = store.recordArenaShadow({
+        roundId,
+        forecaster: spec,
+        forecast: JSON.stringify({ topline, profile, ranking }),
+        detail: JSON.stringify(detail),
+        costUsd: (usage?.costUsd ?? 0) - before,
+      });
+      out.push({ roundId, recorded });
+    } catch (err) {
+      out.push({ roundId, recorded: false, error: (err as Error).message });
+    }
+  }
+  return out;
+}
+
+let shadowRunning = false;
+
+/**
+ * Hourly (`MARINA_ARENA_SHADOW=<spec>`): record a shadow forecast for every
+ * round inside the filing window. Needs no entrant or key — shadow runs
+ * collect evidence before (and independently of) a registration.
+ */
+export async function runArenaShadow(
+  store: ArenaStore,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<number> {
+  const raw = env.MARINA_ARENA_SHADOW?.trim();
+  if (!raw || shadowRunning) return 0;
+  shadowRunning = true;
+  try {
+    const { parseForecasterSpec } = await import("./config");
+    const spec = parseForecasterSpec(raw);
+    const data = arenaData(env);
+    const hours = Number(env.MARINA_ARENA_WINDOW_HOURS ?? 24);
+    const horizon = Date.now() + (Number.isFinite(hours) && hours > 0 ? hours : 24) * 3_600_000;
+    const due = (await data.openRounds())
+      .filter((r) => Date.parse(r.lock_at) <= horizon)
+      .map((r) => r.round_id);
+    const results = await recordShadow(store, data, spec, due, env);
+    const recorded = results.filter((r) => r.recorded).length;
+    if (recorded) logger.info("arena", `shadow ${spec}: recorded ${recorded} round(s)`);
+    return recorded;
+  } catch (err) {
+    logger.warn("arena", "shadow run failed", { error: (err as Error).message });
+    return 0;
+  } finally {
+    shadowRunning = false;
+  }
 }

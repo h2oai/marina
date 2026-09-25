@@ -3,7 +3,7 @@
 
 import type { AgentRuntime } from "../agent/agent-runtime";
 import { recomputeAll as recomputeStanding } from "../agent/standing";
-import { runArenaAutopilot } from "../arena/service";
+import { runArenaAutopilot, runArenaShadow } from "../arena/service";
 import type { BoardManager } from "../coordination/board-manager";
 import type { ChannelManager } from "../coordination/channel-manager";
 import type { TaskManager } from "../coordination/task-manager";
@@ -104,7 +104,7 @@ export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
     run: () => {
       const db = host.db;
       if (!db) return;
-      return runArenaAutopilot(db).then(() => undefined);
+      return Promise.all([runArenaAutopilot(db), runArenaShadow(db)]).then(() => undefined);
     },
   });
 

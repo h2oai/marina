@@ -39,7 +39,7 @@ export interface ArenaConfig {
 
 const MODEL_ID = "[a-z0-9-]+\\/[\\w.:/-]+";
 const FORECASTER_SPEC = new RegExp(
-  `^(baseline|model:${MODEL_ID}|crew:${MODEL_ID}(,${MODEL_ID}){0,2})$`,
+  `^(baseline|nowcast|model:${MODEL_ID}|(crew|research):${MODEL_ID}(,${MODEL_ID}){0,2})$`,
   "i",
 );
 
@@ -51,7 +51,7 @@ export function parseForecasterSpec(raw: string | undefined): string {
   const spec = raw?.trim() || "baseline";
   if (FORECASTER_SPEC.test(spec)) return spec;
   throw new Error(
-    `MARINA_ARENA_FORECASTER "${spec}" must be baseline, model:<provider/model> or crew:<model>[,<model>,<model>]`,
+    `MARINA_ARENA_FORECASTER "${spec}" must be baseline, model:<provider/model>, crew:<model>[,…] or research:<model>[,…]`,
   );
 }
 

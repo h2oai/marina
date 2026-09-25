@@ -3599,4 +3599,20 @@ CREATE TABLE arena_submissions (
 CREATE INDEX idx_arena_submissions_round ON arena_submissions(entrant, round_id, id);
 `,
   },
+  // Migration 128: arena shadow forecasts — candidates scored live before they file (db-arena.ts).
+  {
+    version: 128,
+    sql: `
+CREATE TABLE arena_shadow (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  round_id TEXT NOT NULL,
+  forecaster TEXT NOT NULL,
+  forecast TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  UNIQUE(round_id, forecaster)
+);
+`,
+  },
 ];
