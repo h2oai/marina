@@ -6,12 +6,14 @@
  * Qualify decision backends on labeled gate + route cases
  * (scripts/fixtures/decision-cases.json) and print a comparison.
  *
- *   bun run qualify:decisions -- --backend jev --backend chat:openai/gpt-4o-mini
+ *   bun run qualify:decisions -- --backend jev --backend chat:openai/gpt-6-luna
+ *   bun run qualify:decisions -- --backend hf:zai-org/GLM-5.3-Flash
  *   bun run qualify:decisions -- --backend typesafe --out /path/outside/repo/report.json
  *
  * Backends: `jev[:<model>]` (Decisions API on OpenRouter, OPENROUTER_API_KEY),
  * `typesafe[:<model>]` (TYPESAFE_API_KEY), `chat:<provider/model>` (any chat
- * model on OpenRouter as a classifier), `openjev:<baseUrl>:<model>` (a
+ * model on OpenRouter as a classifier), `hf:<hub model>` (any chat model on the
+ * Hugging Face router, HUGGINGFACE_API_KEY or HF_TOKEN), `openjev:<baseUrl>:<model>` (a
  * self-hosted Decisions-API server). Makes real, billed calls (fractions of a
  * cent for the default case set). Reports belong in the internal repository —
  * pass --out with a path outside this repo.
@@ -55,6 +57,15 @@ function backendFor(spec: string): DecisionProvider {
         apiKey: process.env.OPENROUTER_API_KEY,
         timeoutMs: 30_000,
       });
+    case "hf":
+      if (!tail) throw new Error("hf:<hub model> needs a model");
+      return providerFromConfig({
+        kind: "chat-classifier",
+        baseUrl: "https://router.huggingface.co/v1",
+        model: tail,
+        apiKey: process.env.HUGGINGFACE_API_KEY ?? process.env.HF_TOKEN,
+        timeoutMs: 30_000,
+      });
     case "openjev": {
       const at = tail.lastIndexOf(":");
       if (at <= 0) throw new Error("openjev:<baseUrl>:<model>");
@@ -95,7 +106,7 @@ async function main() {
   });
   const casesPath = resolve(values.cases ?? `${import.meta.dir}/fixtures/decision-cases.json`);
   const cases = parseDecisionCases(JSON.parse(readFileSync(casesPath, "utf8")));
-  const specs = values.backend?.length ? values.backend : ["jev", "chat:openai/gpt-4o-mini"];
+  const specs = values.backend?.length ? values.backend : ["jev", "chat:openai/gpt-6-luna"];
   const reports: BackendReport[] = [];
   for (const spec of specs) {
     const provider = backendFor(spec);

@@ -627,7 +627,7 @@ export async function handleKeyRoutes(ctx: DashboardRouteContext): Promise<Respo
     if (!model) return json({ error: "model is required" }, 400);
     if (!/^[\w.-]+\/[\w./:-]+$/.test(model)) {
       return json(
-        { error: 'model must be "provider/model-id" (e.g. openrouter/openai/gpt-4o)' },
+        { error: 'model must be "provider/model-id" (e.g. openrouter/openai/gpt-6-luna)' },
         400,
       );
     }

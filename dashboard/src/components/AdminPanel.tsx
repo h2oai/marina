@@ -47,6 +47,7 @@ const SUPPORTED_PROVIDERS = [
   "google",
   "groq",
   "openrouter",
+  "huggingface",
   "cerebras",
   "xai",
   "mistral",
