@@ -76,6 +76,12 @@ more rounds (31 vs 12) but a few larger misses cost more than those wins earn �
 averages per-round skill, which punishes misses when persistence happens to land close. Too few
 lessons per series yet to show learning.
 
+Multi-vendor crew — DeepSeek V4 Pro (statistician), Claude Sonnet 5 (analyst), GPT-6 Luna
+(skeptic), ~$0.13 a run — two runs: **+0.059 and +0.053**, beating persistence on 34 and 32 of 58
+rounds; the first forecaster above the baseline, though the margin (~0.01) is within run-to-run
+noise. Its family pattern repeated in both runs: better on AAII, Trends, Wikipedia and Morning
+Consult; worse on Economist/YouGov (−0.08 both), where the baseline should keep filing.
+
 ## Enter Marina (one time)
 
 1. **Choose the entrant id** — lower-case, permanent (for example `h2oai-marina`) — and the
