@@ -47,7 +47,7 @@ try {
     env: {
       ...process.env,
       MARINA_URL: baseUrl,
-      MARINA_TRIAL_MODEL: process.env.MARINA_TRIAL_MODEL ?? "openai/gpt-4o-mini",
+      MARINA_TRIAL_MODEL: process.env.MARINA_TRIAL_MODEL ?? "openai/gpt-6-luna",
       MARINA_TRIAL_TIMEOUT_MS: process.env.MARINA_TRIAL_TIMEOUT_MS ?? "180000",
     },
     stdout: "inherit",

@@ -83,14 +83,14 @@ const PROVIDERS: { name: string; env: string; url: string; model: string; authHe
     name: "openai",
     env: "OPENAI_API_KEY",
     url: "https://api.openai.com/v1/chat/completions",
-    model: "gpt-4o-mini",
+    model: "gpt-6-luna",
     authHeader: "Bearer",
   },
   {
     name: "google",
     env: "GEMINI_API_KEY",
     url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-    model: "gemini-2.0-flash",
+    model: "gemini-3.1-flash-lite",
     authHeader: "Bearer",
   },
   {
@@ -104,7 +104,7 @@ const PROVIDERS: { name: string; env: string; url: string; model: string; authHe
     name: "openrouter",
     env: "OPENROUTER_API_KEY",
     url: "https://openrouter.ai/api/v1/chat/completions",
-    model: "openai/gpt-4o-mini",
+    model: "openai/gpt-6-luna",
     authHeader: "Bearer",
   },
 ];

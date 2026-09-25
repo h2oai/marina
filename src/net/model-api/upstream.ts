@@ -62,15 +62,18 @@ const logger = new Logger();
  * `MARINA_DEFAULT_<PROVIDER>_MODEL` (see `.env.example`).
  */
 const BUILTIN_DEFAULT_MODELS: Record<string, string> = {
-  ANTHROPIC_API_KEY: "claude-sonnet-4-5-20250929",
-  OPENAI_API_KEY: "gpt-5.6-luna",
-  GEMINI_API_KEY: "gemini-2.0-flash",
-  OPENROUTER_API_KEY: "openai/gpt-5.6-luna",
-  GROQ_API_KEY: "llama-3.3-70b-versatile",
+  ANTHROPIC_API_KEY: "claude-sonnet-5",
+  OPENAI_API_KEY: "gpt-6-luna",
+  GEMINI_API_KEY: "gemini-3.1-flash-lite",
+  OPENROUTER_API_KEY: "openai/gpt-6-luna",
+  GROQ_API_KEY: "openai/gpt-oss-120b",
   HUGGINGFACE_API_KEY: "zai-org/GLM-5.3-Flash",
   LLAMA_API_KEY: LOCAL_PROVIDERS.llama!.defaultModel,
   OLLAMA_API_KEY: LOCAL_PROVIDERS.ollama!.defaultModel,
 };
+
+/** OpenAI's Luna tier, current and previous generation (optionally `-pro`). */
+const LUNA_MODEL = /^gpt-(?:5\.6|6)-luna(?:-pro)?$/;
 
 function getDefaultUpstreamModel(envKey: string): string {
   // Per-provider override: e.g. ANTHROPIC_API_KEY → MARINA_DEFAULT_ANTHROPIC_MODEL.
@@ -78,7 +81,7 @@ function getDefaultUpstreamModel(envKey: string): string {
   const overrideKey = `MARINA_DEFAULT_${providerName}_MODEL`;
   const override = process.env[overrideKey];
   if (override && override.trim().length > 0) return override.trim();
-  return BUILTIN_DEFAULT_MODELS[envKey] ?? "gpt-5.6-luna";
+  return BUILTIN_DEFAULT_MODELS[envKey] ?? "gpt-6-luna";
 }
 
 /** provider → upstream endpoint. `anthropic` uses a non-OpenAI request format. */
@@ -850,9 +853,12 @@ export function prepareUpstreamBody(
     provider === "anthropic" ? body : stripCacheControl(body),
     provider,
   );
+  // The Luna family (gpt-5.6-luna, gpt-6-luna, their -pro variants): accepts
+  // reasoning_effort "none" and rejects legacy max_tokens (verified live
+  // 2026-09-24 for gpt-6-luna on OpenAI and OpenRouter).
   const luna =
-    (provider === "openai" && body.model === "gpt-5.6-luna") ||
-    (provider === "openrouter" && body.model === "openai/gpt-5.6-luna");
+    (provider === "openai" && LUNA_MODEL.test(String(body.model))) ||
+    (provider === "openrouter" && LUNA_MODEL.test(String(body.model).replace(/^openai\//, "")));
   // Preserve the former non-reasoning default's latency/cost role. Explicit
   // effort settings and direct model requests retain the caller's choices.
   if (luna && defaultRoute && body.reasoning_effort === undefined && body.reasoning === undefined)

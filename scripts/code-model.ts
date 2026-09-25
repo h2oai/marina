@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const PROVIDER_DEFAULTS = [
-  ["ANTHROPIC_API_KEY", "anthropic", "claude-sonnet-4-5-20250929"],
-  ["OPENAI_API_KEY", "openai", "gpt-4o"],
-  ["GEMINI_API_KEY", "google", "gemini-2.0-flash"],
-  ["OPENROUTER_API_KEY", "openrouter", "openai/gpt-4o-mini"],
-  ["GROQ_API_KEY", "groq", "llama-3.3-70b-versatile"],
+  ["ANTHROPIC_API_KEY", "anthropic", "claude-sonnet-5"],
+  ["OPENAI_API_KEY", "openai", "gpt-6-luna"],
+  ["GEMINI_API_KEY", "google", "gemini-3.1-flash-lite"],
+  ["OPENROUTER_API_KEY", "openrouter", "openai/gpt-6-luna"],
+  ["GROQ_API_KEY", "groq", "openai/gpt-oss-120b"],
+  ["HUGGINGFACE_API_KEY", "huggingface", "zai-org/GLM-5.3-Flash"],
 ] as const;
 
 /** Provider key env vars consulted by inferCodeDefaultModel, in precedence order. */

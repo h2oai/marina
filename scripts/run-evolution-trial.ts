@@ -9,7 +9,7 @@ const baseUrl = (process.argv[2] ?? process.env.MARINA_URL ?? "http://localhost:
   "",
 );
 const wsUrl = baseUrl.replace(/^http/, "ws");
-const model = process.env.MARINA_TRIAL_MODEL ?? "openai/gpt-4o-mini";
+const model = process.env.MARINA_TRIAL_MODEL ?? "openai/gpt-6-luna";
 const timeoutMs = Number(process.env.MARINA_TRIAL_TIMEOUT_MS) || 180_000;
 const stamp = Date.now().toString(36);
 const experiment = `LiveEvolution_${stamp}`;

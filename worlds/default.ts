@@ -20,8 +20,10 @@ const WORKBENCH_AGENTS = ["Host", "Builder", "Critic", "Chronicler"] as const;
 function workbenchModel(): string {
   if (process.env.MARINA_WORKBENCH_MODEL) return process.env.MARINA_WORKBENCH_MODEL;
   if (process.env.MARINA_CREW_MODEL) return process.env.MARINA_CREW_MODEL;
-  if (process.env.OPENAI_API_KEY) return "openai/gpt-4o-mini";
-  if (process.env.OPENROUTER_API_KEY) return "openrouter/openai/gpt-4o-mini";
+  if (process.env.OPENAI_API_KEY) return "openai/gpt-6-luna";
+  if (process.env.OPENROUTER_API_KEY) return "openrouter/openai/gpt-6-luna";
+  if (process.env.HUGGINGFACE_API_KEY || process.env.HF_TOKEN)
+    return "huggingface/zai-org/GLM-5.3-Flash";
   return "marina/default";
 }
 
