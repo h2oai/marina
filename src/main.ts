@@ -28,6 +28,7 @@ import { AdapterManager } from "./net/adapter-manager";
 import { DashboardBroadcaster } from "./net/dashboard-ws";
 import { FeedPublisher } from "./net/feed-publisher";
 import { formatPerception } from "./net/formatter";
+import { loadOrCreateLocalApiKey, localApiKeyPath } from "./net/local-api-key";
 import { LogServer } from "./net/log-server";
 import { McpServerAdapter } from "./net/mcp-server";
 import { describeDefaultUpstream } from "./net/model-api";
@@ -621,7 +622,21 @@ if (isOpenApiMode()) {
     "MARINA_OPEN_API=true — API endpoints accept unauthenticated requests (development mode)",
   );
 }
-if (!process.env.MODEL_API_KEYS && !isOpenApiMode()) {
+// Local profile: a generated, persisted key instead of a closed API (see local-api-key.ts).
+let LOCAL_API_KEY: string | undefined;
+if (!process.env.MODEL_API_KEYS && !isOpenApiMode() && TRUST.profile === "local") {
+  const { key, created } = loadOrCreateLocalApiKey(localApiKeyPath(DB_PATH));
+  // Deliberately NOT MODEL_API_KEYS: that would also switch on bearer auth for
+  // the loopback MCP transport and lock local MCP clients out. The model API
+  // alone reads MARINA_LOCAL_API_KEY.
+  process.env.MARINA_LOCAL_API_KEY = key;
+  LOCAL_API_KEY = key;
+  logger.info(
+    "security",
+    `${created ? "Created" : "Using"} the local model-API key (${localApiKeyPath(DB_PATH)}, mode 600)`,
+  );
+}
+if (!process.env.MODEL_API_KEYS && !LOCAL_API_KEY && !isOpenApiMode()) {
   logger.warn(
     "security",
     "MODEL_API_KEYS is not set — model API endpoints will reject requests. Set MODEL_API_KEYS or MARINA_OPEN_API=true",
@@ -715,16 +730,24 @@ if (
   // (possibly self-referential) configured default-model string.
   const defaultModel = describeDefaultUpstream(engine) ?? "(no upstream provider yet)";
   const hasUpstream = engine.agentRuntime.isAvailable();
-  const authMode = process.env.MODEL_API_KEYS
-    ? "Bearer <token from MODEL_API_KEYS>"
-    : isOpenApiMode()
-      ? "none (MARINA_OPEN_API=true, dev only)"
-      : "NOT CONFIGURED — set MODEL_API_KEYS or MARINA_OPEN_API=true";
+  const authMode = LOCAL_API_KEY
+    ? "Bearer <the local key below>"
+    : process.env.MODEL_API_KEYS
+      ? "Bearer <token from MODEL_API_KEYS>"
+      : isOpenApiMode()
+        ? "none (MARINA_OPEN_API=true, dev only)"
+        : "NOT CONFIGURED — set MODEL_API_KEYS or MARINA_OPEN_API=true";
   logger.info(
     "model-api",
     `OpenAI-compatible LLM endpoint: baseURL http://localhost:${boundWsPort}/v1 · model "marina" → ${defaultModel}` +
       `${hasUpstream ? "" : " · NO upstream key yet (returns 503 until a provider key is set)"} · auth: ${authMode}`,
   );
+  if (LOCAL_API_KEY) {
+    // Printed once per boot for the local operator: paste into any OpenAI-compatible client.
+    process.stdout.write(
+      `  Use Marina from any OpenAI client:  OPENAI_BASE_URL=http://localhost:${boundWsPort}/v1 OPENAI_API_KEY=${LOCAL_API_KEY}\n`,
+    );
+  }
   logger.info(
     "model-api",
     `Wire an agent to this instance: \`agent spawn <name> model marina\`. ` +

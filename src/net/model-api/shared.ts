@@ -131,7 +131,10 @@ function parseKeyEntry(entry: string): KeyEntry {
 }
 
 function getApiKeyEntries(): KeyEntry[] | null {
-  const raw = process.env.MODEL_API_KEYS;
+  // MARINA_LOCAL_API_KEY: the local profile's generated key (src/net/local-api-key.ts).
+  const raw = [process.env.MODEL_API_KEYS, process.env.MARINA_LOCAL_API_KEY]
+    .filter(Boolean)
+    .join(",");
   if (!raw) return null;
   const entries = raw
     .split(",")

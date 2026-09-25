@@ -82,6 +82,30 @@ export async function forecasterFor(
   opts: { weight?: number; raw?: boolean; env?: NodeJS.ProcessEnv; notes?: NotesStore } = {},
 ): Promise<{ forecaster: Forecaster; usage?: Usage; learner?: Learner }> {
   if (spec === "baseline") return { forecaster: baselineForecaster };
+  if (spec === "discovered") {
+    // Each family's best PROMOTED signal (arena discover), else the nowcast.
+    const [{ nowcastForecaster }, loop, signals] = await Promise.all([
+      import("./research/civiqs-nowcast"),
+      import("./discovery/loop"),
+      import("./discovery/signals"),
+    ]);
+    const data = arenaData(opts.env ?? process.env);
+    const fallback = nowcastForecaster(data, forecastRound);
+    const promoted = opts.notes ? loop.promotedSignals(opts.notes) : new Map();
+    return {
+      forecaster: async (round, lock) => {
+        const hit = promoted.get(round.tracker);
+        if (!hit || round.target_type !== "continuous_normal") return fallback(round, lock);
+        const f = forecastRound(round, lock);
+        const topline = await signals.applySignal(hit.spec, round, lock, data);
+        return {
+          ...f,
+          topline,
+          note: `marina discovered signal ${hit.key} (holdout ${hit.holdout?.skill.toFixed(3)})`,
+        };
+      },
+    };
+  }
   if (spec === "nowcast") {
     const { nowcastForecaster } = await import("./research/civiqs-nowcast");
     return { forecaster: nowcastForecaster(arenaData(opts.env ?? process.env), forecastRound) };

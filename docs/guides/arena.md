@@ -141,6 +141,30 @@ persistence and the baseline, `shadow list` shows the record, `bun run arena res
 runs it once and prints everything. `MARINA_ARENA_SHADOW=<spec>` records hourly from the tick
 job — no entrant or key needed.
 
+## Signal discovery — Marina searching for its own edge
+
+`bun run arena discover [--tracker T] [--proposer provider/model] [--n N]` runs the loop that found
+the Civiqs nowcast, automatically (`src/arena/discovery/`):
+
+1. A family's clean resolved rounds are split **by time**: the older 60 % are *discovery*, the rest
+   *holdout*.
+2. A proposer model sees the family, a sample of its history, the **signal language** (a menu of
+   centres — `last`, `nowcast`, `ewma:α`, `mean:k`, `median:k`, `trend:k`, `nowcast-shrink:w` — and
+   spreads — `arena`, `baseline`, `rms:w`, `mad:w`, `scale:k`), and the incumbent's and every earlier
+   attempt's **discovery** score. It never sees a holdout score. Signals are data, never code.
+3. Each new proposal is scored on both halves. It is **promoted** only if it beats the incumbent
+   (the nowcast over the calibrated baseline) on the holdout by a margin that grows with the number
+   of signals tried for the family (0.02 + 0.01·log₂(1 + tried)) and does not lose on discovery.
+4. Every scored attempt is kept as a note (`arena-discovery`, type `signal`); `bun run arena
+   signals` lists them, and the next discovery round is told not to repeat them.
+
+`MARINA_ARENA_FORECASTER=discovered` uses each family's best promoted signal and the nowcast
+elsewhere. Promotion is necessary, not sufficient — record a promoted signal in shadow before it
+files. First run (2026-09-26, Claude Sonnet 5 proposing, $0.02): 18 proposals across Civiqs, YouGov
+and Morning Consult, **none promoted** — the closest (`nowcast-shrink:0.5` on Civiqs) beat the
+incumbent's holdout 0.212 vs 0.181 but not the margin, and lost on discovery; every smoothing idea
+lost on the holdout. AAII has too few clean rounds to split yet.
+
 ## Integrity: what the backtest numbers can and cannot claim
 
 Audited 2026-09-25 (`src/arena/evaluate.ts`, `test/arena-*.test.ts`):
