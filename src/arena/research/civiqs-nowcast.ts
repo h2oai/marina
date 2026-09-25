@@ -175,6 +175,23 @@ export function nowcastForecaster(
   ) => import("../forecast").RoundForecast,
 ) {
   return async (round: ArenaRound, lock: import("../types").ArenaLock) => {
+    if (round.target_type === "ranking_list" && round.tracker === "wikipedia") {
+      // Fuller, fresher inputs than the lock carries: the archived daily lists
+      // fetched before the lock, three weeks back.
+      const obs = await wikitopObservations(data, round);
+      if (obs.length) return base(round, { ...lock, answer_obs: obs });
+    }
+    // Trends re-normalises its index per snapshot, so the lock's own frozen
+    // history (what the persistence null reads) wins; the archive only fills in
+    // for a lock that carries none.
+    if (
+      round.tracker === "google_trends" &&
+      round.target_type === "profile_energy" &&
+      !lock.answer_history_by_cell
+    ) {
+      const byCell = await trendsBasketHistory(data, round, TRENDS_INCLUDE_PARTIAL);
+      if (byCell) return base(round, { ...lock, answer_history_by_cell: byCell });
+    }
     const f = base(round, lock);
     if (round.tracker !== "civiqs") return f;
     const fresher = async (seriesId: string, lastDate: string | undefined) => {
@@ -211,4 +228,81 @@ export function nowcastForecaster(
     }
     return f;
   };
+}
+
+/**
+ * Daily top lists from the arena's `wikitop/` archive that were PUBLISHED
+ * before the lock. Unlike Civiqs (revised nightly, so only snapshots fetched
+ * before the lock count), a day's pageview list is final once Wikimedia
+ * publishes it about a day later — and the archive was partly backfilled, so
+ * its fetch times say when the arena looked, not when the data existed. The
+ * rule is therefore publication: days at least `WIKITOP_PUBLICATION_LAG_DAYS`
+ * before the lock day, which matches what the arena's own lock files carry.
+ */
+export const WIKITOP_PUBLICATION_LAG_DAYS = 2;
+
+/** Whether a Trends basket's current partial week counts as its latest reading. */
+export const TRENDS_INCLUDE_PARTIAL = process.env.MARINA_ARENA_TRENDS_PARTIAL === "on";
+
+export async function wikitopObservations(
+  data: ArenaData,
+  round: ArenaRound,
+  daysBack = 21,
+): Promise<Array<{ date: string; items: string[]; views: Record<string, number> }>> {
+  const spec = round.ranking as { project?: string; access?: string } | undefined;
+  const dir = `${spec?.project ?? "en.wikipedia"}.${spec?.access ?? "all-access"}`;
+  const lockDay = Date.parse(round.lock_at.slice(0, 10));
+  const days = Array.from({ length: daysBack }, (_, k) =>
+    new Date(lockDay - (k + WIKITOP_PUBLICATION_LAG_DAYS) * 86_400_000).toISOString().slice(0, 10),
+  );
+  const got = await Promise.all(days.map((d) => data.wikitopDay(dir, d).catch(() => undefined)));
+  return got
+    .filter((d): d is NonNullable<typeof d> => !!d)
+    .map((d) => {
+      const items = Object.entries(d.articles)
+        .sort((a, b) => b[1] - a[1])
+        .map(([t]) => t);
+      return { date: d.day, items, views: d.articles };
+    });
+}
+
+/**
+ * Per-brand share history for a Google Trends basket round, from the arena's
+ * `trends/basket.<queries>.geo-US/` snapshots: the newest one FETCHED before
+ * the lock (Trends rescales its index, so fetch time is the honest rule).
+ * Each week's five values become shares of their sum, in percent — the
+ * quantity the round resolves on. `includePartial` adds the current,
+ * incomplete week as the latest point.
+ */
+export async function trendsBasketHistory(
+  data: ArenaData,
+  round: ArenaRound,
+  includePartial: boolean,
+  maxLookbackDays = 6,
+): Promise<Record<string, Array<{ date: string; value: number }>> | undefined> {
+  const cells = round.cells ?? [];
+  if (round.tracker !== "google_trends" || cells.length < 2) return undefined;
+  const lock = Date.parse(round.lock_at);
+  for (let back = 0; back <= maxLookbackDays; back++) {
+    const day = new Date(lock - back * 86_400_000).toISOString().slice(0, 10);
+    for (const dir of await data.trendsBasketDirs()) {
+      const snap = await data.trendsSnapshot(dir, day).catch(() => undefined);
+      if (!snap || (snap.fetched_at && Date.parse(snap.fetched_at) > lock)) continue;
+      const order = snap.queries.map((q) => `trends_share_${q.toLowerCase()}`);
+      if (!cells.every((c) => order.includes(c))) continue;
+      const out: Record<string, Array<{ date: string; value: number }>> = Object.fromEntries(
+        cells.map((c) => [c, []]),
+      );
+      for (const [, end, values, partial] of snap.points) {
+        if (partial && !includePartial) continue;
+        const total = values.reduce((a, b) => a + b, 0);
+        if (total <= 0) continue;
+        order.forEach((cell, i) => {
+          out[cell]?.push({ date: end, value: Math.round((10_000 * values[i]!) / total) / 100 });
+        });
+      }
+      return out;
+    }
+  }
+  return undefined;
 }

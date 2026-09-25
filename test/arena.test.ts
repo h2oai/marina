@@ -158,7 +158,7 @@ describe("baseline forecaster", () => {
     expect(backtestSeries(weekly([1, 2, 3]))).toBeUndefined();
   });
 
-  it("ranks Wikipedia by last-7-day views, skipping Main_Page and non-articles", () => {
+  it("ranks Wikipedia by recency-weighted views, skipping Main_Page and non-articles", () => {
     const day = (date: string, views: Record<string, number>) => ({
       date,
       items: Object.keys(views),
@@ -174,7 +174,8 @@ describe("baseline forecaster", () => {
       },
       3,
     );
-    expect(ranking).toEqual(["B", "A", "C"]); // A 350 < B 400; C ties D at 50 → title order
+    // Recency-weighted (half-life 3 d): B 300×0.79+100 > A 100×0.79+250; D (newest day) > C.
+    expect(ranking).toEqual(["B", "A", "D"]);
   });
 
   it("scores like the arena", () => {

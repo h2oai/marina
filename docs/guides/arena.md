@@ -93,6 +93,26 @@ Deterministic and leakage-free, so it backtests: on the 58 resolved rounds (2026
 **+0.143** overall and **+0.266 on Civiqs (20 of 25 rounds beat persistence)**, vs the baseline's
 +0.046. Structured sources like this beat web search wherever they exist.
 
+### Profile and ranking rounds
+
+About a third of the rounds are not single numbers. `arena evaluate` scores them exactly as the
+leaderboard does — the energy score over the arena's deterministic point set for profiles, 1 − RBO
+for rankings (`src/arena/score-shapes.ts`, matching the arena's published scores to 1e-4) —
+against the arena's recorded persistence loss for each round.
+
+- **Civiqs profiles**: the nowcast moves every cell to its freshest daily reading (+0.443 on the
+  one scoreable resolved round).
+- **Wikipedia top 10**: views are weighted by recency (half-life 3 days) over three weeks of the
+  arena's `wikitop/` archive, using days published before the lock (a two-day lag; daily lists are
+  final once published, and the archive was partly backfilled). Over 7 archived weeks: +0.069 vs
+  the arena's persistence (a flat 7-day sum: +0.045); on the 3 resolved rounds +0.186 / +0.053 /
+  −0.032.
+- **Google Trends baskets**: Trends re-normalises its index in every snapshot, so the lock's own
+  frozen per-cell history — what the persistence null reads — is used; the `trends/` archive only
+  fills in for a lock without one, complete weeks only (`MARINA_ARENA_TRENDS_PARTIAL=on` adds the
+  partial week; mixed in the backtest).
+- **YouGov crosstab profiles**: no structured source yet; the baseline ties persistence.
+
 ### The research agent (`research:`)
 
 `research:<analyst>[,<analyst>,<analyst>]` — one analyst per vendor — runs the full pipeline
@@ -208,6 +228,7 @@ is missing or readable by other users.
 | `MARINA_ARENA_FORECASTER` | `baseline` | or `nowcast`, `model:<m>`, `crew:<m>[,<m>,<m>]`, `research:<m>[,<m>,<m>]` |
 | `MARINA_ARENA_MODEL_WEIGHT` | `0.5` | share of the model's move from the baseline that is kept |
 | `MARINA_ARENA_SHADOW` | unset | a forecaster spec to record hourly in shadow (never filed) |
+| `MARINA_ARENA_TRENDS_PARTIAL` | off | `on` counts a Trends basket's partial current week |
 | `MARINA_ARENA_RESEARCH_RETRIEVER` | `openrouter-web:openai/gpt-6-luna` | the research agent's search backend |
 | `MARINA_ARENA_RESEARCH_JUDGE` | `jev` (with an OpenRouter key) | `jev` or `none` |
 | `MARINA_ARENA_RESEARCH_TRUST` | `0.5` | most of the judged move the research agent takes |

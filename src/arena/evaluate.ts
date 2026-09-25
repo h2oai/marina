@@ -236,3 +236,81 @@ export async function scoreShadow(
   }
   return out;
 }
+
+export interface ShapeScore {
+  roundId: string;
+  shape: "profile_energy" | "ranking_list";
+  tracker: string;
+  /** The arena's own persistence loss for the round (energy, or 1 − RBO). */
+  persistenceLoss: number;
+  results: Record<string, { loss: number; skill: number; note?: string }>;
+}
+
+/**
+ * Profile and ranking rounds the arena has resolved, scored exactly as the
+ * leaderboard scores them (energy score / RBO loss, `score-shapes.ts`) against
+ * the arena's recorded persistence loss for the same round.
+ */
+export async function evaluateShapes(
+  data: ArenaData,
+  forecasters: Record<string, Forecaster>,
+): Promise<{ rounds: ShapeScore[]; overall: Record<string, number> }> {
+  const { profileEnergy, rboLoss } = await import("./score-shapes");
+  const site = await data.siteRounds();
+  const out: ShapeScore[] = [];
+  for (const s of site) {
+    if (
+      s.status !== "resolved" ||
+      (s.target_type !== "profile_energy" && s.target_type !== "ranking_list")
+    ) {
+      continue;
+    }
+    const round = await data.round(s.round_id);
+    // Resolved ranking rounds may have no lock file left; archive-backed
+    // forecasters rebuild their inputs, lock-only ones simply cannot answer.
+    const lock =
+      round &&
+      (await data
+        .lock(s.round_id)
+        .catch(() => (s.target_type === "ranking_list" ? { round_id: s.round_id } : undefined)));
+    const pers = s.scores?.persistence;
+    const persistenceLoss = s.target_type === "profile_energy" ? pers?.energy : pers?.loss;
+    const outcome = s.resolution?.outcome;
+    if (!round || !lock || persistenceLoss === undefined || outcome === undefined) continue;
+    const results: ShapeScore["results"] = {};
+    for (const [name, forecast] of Object.entries(forecasters)) {
+      try {
+        const f = await forecast(round, lock);
+        let loss: number | undefined;
+        if (s.target_type === "profile_energy" && f.profile && round.cells) {
+          loss = profileEnergy(f.profile, outcome as Record<string, number>, round.cells);
+        } else if (s.target_type === "ranking_list" && f.ranking) {
+          const spec = round.ranking as { length: number; rbo_p?: number } | undefined;
+          loss = rboLoss(f.ranking, outcome as string[], spec?.rbo_p ?? 0.9, spec?.length);
+        }
+        if (loss === undefined) continue;
+        const fallback = (f as { fallback?: string }).fallback;
+        results[name] = {
+          loss,
+          skill: persistenceLoss === 0 ? 0 : 1 - loss / persistenceLoss,
+          ...(fallback ? { note: fallback } : {}),
+        };
+      } catch {
+        // No score for a forecaster that cannot answer the round.
+      }
+    }
+    out.push({
+      roundId: s.round_id,
+      shape: s.target_type,
+      tracker: round.tracker,
+      persistenceLoss,
+      results,
+    });
+  }
+  const overall: Record<string, number> = {};
+  for (const name of Object.keys(forecasters)) {
+    const sk = out.map((r) => r.results[name]?.skill).filter((x): x is number => x !== undefined);
+    overall[name] = sk.length ? sk.reduce((a, b) => a + b, 0) / sk.length : Number.NaN;
+  }
+  return { rounds: out, overall };
+}
