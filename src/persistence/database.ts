@@ -3264,6 +3264,14 @@ export class MarinaDB implements MarinaStores {
     return codingDb.createCodingArtifact(this.db, artifact);
   }
 
+  listCodingRuns(query: codingDb.CodingRunQuery = {}): CodingArtifactRow[] {
+    return codingDb.listCodingRuns(this.db, query);
+  }
+
+  listCodingRunArtifacts(runId: string): CodingArtifactRow[] {
+    return codingDb.listCodingRunArtifacts(this.db, runId);
+  }
+
   getCodingArtifact(id: string): CodingArtifactRow | null {
     return codingDb.getCodingArtifact(this.db, id);
   }

@@ -43,10 +43,7 @@ export function streamSessionAgent(
     if (phase === currentPhase && phase !== "failed") return;
     const previous = currentPhase;
     currentPhase = phase;
-    // Summary-artifact completion heuristic: the agent recorded a durable
-    // summary, so its assigned task is done — drop task mode so the normal
-    // cognitive loop resumes until the next `code do`.
-    if (phase === "completed") clearCodingTask(deps, handle.name);
+    // Submission is emitted by the command handler after storing its summary.
     // `terminal: true` marks end-of-task lifecycle events (completed, agent
     // death, stop-interrupt) so machine consumers (one-shot `marina -p`) can
     // distinguish them from recoverable mid-run "failed" tool errors.
@@ -88,14 +85,6 @@ export function streamSessionAgent(
           const lifecycle = lifecycleForToolCall(ev.toolName, ev.args);
           if (lifecycle) {
             const extra: Record<string, unknown> = { tool: ev.toolName };
-            if (lifecycle.phase === "completed") {
-              // Carry the durable summary text so one-shot callers can print
-              // it without a second artifact query.
-              const summary = ev.args.text ?? ev.args.notes ?? ev.args.summary;
-              if (typeof summary === "string" && summary.trim()) {
-                extra.summary = summary.slice(0, 4000);
-              }
-            }
             emitLifecycle(lifecycle.phase, lifecycle.detail, extra);
           }
         }
@@ -122,7 +111,11 @@ export function streamSessionAgent(
         // don't wait forever, then stop forwarding the dead handle.
         if (ev.status.state === "stopped" || ev.status.state === "error") {
           flush();
-          if (currentPhase !== "completed" && agentHasActiveCodingTask(deps, handle.name)) {
+          if (
+            currentPhase !== "completed" &&
+            agentHasActiveCodingTask(deps, handle.name) &&
+            !deps.db?.listCodingRuns({ sessionId, limit: 1 }).length
+          ) {
             emitLifecycle("failed", `${handle.name} stopped before completing the task`, {
               reason: "agent_died",
               terminal: true,
@@ -163,7 +156,7 @@ function lifecycleForToolCall(
     return { phase: "verifying", detail: "Running workspace verification" };
   }
   if (action === "summary") {
-    return { phase: "completed", detail: "Work completed with a durable summary" };
+    return { phase: "submitting", detail: "Recording a summary for task review" };
   }
   return undefined;
 }
@@ -172,7 +165,7 @@ function lifecycleForToolCall(
  * End the bound coder's task mode: clear the persisted `coding_task` entity
  * property and the adapter's in-memory task (which un-suppresses the normal
  * cognitive sections). Called on `code stop` and when the summary-artifact
- * completion heuristic fires. Best-effort — a missing handle/entity is fine.
+ * submission succeeds. Best-effort — a missing handle/entity is fine.
  */
 export function clearCodingTask(deps: CodeDeps, agentName: string): void {
   const handle = getAgentHandle(deps, agentName);

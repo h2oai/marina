@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Social Simulation Arena submissions (migration 126): every signed request
+ * Social Simulation Arena submissions (migration 127): every signed request
  * Marina sends, kept with its exact bytes and signature so a retry re-sends the
  * SAME request (the arena's idempotency is per request id) and the record can
  * be audited against the arena's public reveal. Append-only by policy — a row's

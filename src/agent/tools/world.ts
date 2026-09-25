@@ -165,6 +165,18 @@ const feedSchema = Type.Object({
 });
 
 const conductSchema = Type.Object({
+  strictCorrelation: Type.Optional(
+    Type.Boolean({
+      description: "Require matching reply tags; enable when workers support exact correlation.",
+    }),
+  ),
+  concurrency: Type.Optional(
+    Type.Integer({
+      minimum: 1,
+      maximum: 32,
+      description: "Maximum simultaneous steps (default 4).",
+    }),
+  ),
   name: Type.Optional(
     Type.String({ description: "Name of a stored Score to run (see `conduct list`)." }),
   ),
@@ -321,7 +333,13 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
         "Run a Score (a workflow plan) over real agents: each step's instruction plus its accessed prior outputs is sent to the assigned worker, and the reply feeds forward. Pass a stored `name` (see `conduct list`) or inline `score` JSON. Returns the per-step trace and the final result.",
       parameters: conductSchema,
       execute: async (_id: string, params: unknown, signal?: AbortSignal) => {
-        const p = params as { name?: string; score?: string; timeoutMs?: number };
+        const p = params as {
+          name?: string;
+          score?: string;
+          timeoutMs?: number;
+          concurrency?: number;
+          strictCorrelation?: boolean;
+        };
         if (signal?.aborted) throw new Error("Command aborted");
 
         // Obtain the Score — inline JSON or stored by name.
@@ -378,7 +396,11 @@ export function createWorldTools(ctx: ToolContext): AgentTool[] {
         const trace: string[] = [];
         try {
           const run = await runScore(score, {
-            tellAndAwait: (target, message, ms) => ctx.client.tellAndAwait(target, message, ms),
+            tellAndAwait: (target, message, ms, options) =>
+              ctx.client.tellAndAwait(target, message, ms, options),
+            signal,
+            concurrency: p.concurrency,
+            strictCorrelation: p.strictCorrelation,
             resolveAssignee,
             timeoutMs: p.timeoutMs ?? 60_000,
             onStep: (ev) => {

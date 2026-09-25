@@ -125,6 +125,9 @@ export function stripCorrelationTag(text: string, id: string): string {
 }
 
 export interface TellAndAwaitOptions {
+  signal?: AbortSignal;
+  /** Refuse untagged replies; required to isolate concurrent machine requests. */
+  strictCorrelation?: boolean;
   /**
    * Append a ` [re:<6-char id>]` tag to the outgoing message and prefer a reply
    * that echoes it. Default true. Responders that do not echo the tag still
@@ -615,7 +618,8 @@ export class MarinaClient {
   ): Promise<string> {
     if (!this.session) throw new Error("Not connected. Call connect() first.");
 
-    const correlate = opts.correlate ?? true;
+    opts.signal?.throwIfAborted();
+    const correlate = opts.strictCorrelation === true || (opts.correlate ?? true);
     const graceMs = Math.max(0, opts.graceMs ?? TELL_AWAIT_GRACE_MS);
     const ignoreNotices = opts.ignoreNotices ?? true;
     const correlationId = correlate ? newCorrelationId() : null;
@@ -642,6 +646,7 @@ export class MarinaClient {
       clearTimeout(timer);
       if (graceTimer) clearTimeout(graceTimer);
       this.offPerception(handler);
+      opts.signal?.removeEventListener("abort", onAbort);
     };
     const finish = (text: string): void => {
       if (settled) return;
@@ -678,7 +683,7 @@ export class MarinaClient {
         finish(text);
         return;
       }
-      if (candidate !== null) return;
+      if (opts.strictCorrelation || candidate !== null) return;
       candidate = text;
       const remaining = Math.max(0, deadline - Date.now());
       graceTimer = setTimeout(
@@ -699,7 +704,14 @@ export class MarinaClient {
       rejectReply(new Error(`tellAndAwait: no reply from "${target}" within ${timeoutMs}ms`));
     }, timeoutMs);
 
+    const onAbort = () => {
+      if (settled) return;
+      cleanup();
+      rejectReply(new Error("tellAndAwait aborted"));
+    };
     this.onPerception(handler);
+    opts.signal?.addEventListener("abort", onAbort, { once: true });
+    if (opts.signal?.aborted) onAbort();
 
     // Fire the tell. command() resolves on perception drain — if the engine
     // refuses (e.g. target offline) the immediate ack carries the error
@@ -707,8 +719,14 @@ export class MarinaClient {
     // explanatory message above. Don't fail-fast on the ack here because
     // an `Online (...)` notification from elsewhere can race the actual
     // tell error and we'd false-negative.
-    await this.command(`tell ${target} ${outgoing}`);
-
+    if (!settled) {
+      // Do not await the command drain before returning the cancellable waiter.
+      void this.command(`tell ${target} ${outgoing}`).catch((error) => {
+        if (settled) return;
+        cleanup();
+        rejectReply(error instanceof Error ? error : new Error(String(error)));
+      });
+    }
     return replyPromise;
   }
 }
@@ -939,7 +957,8 @@ export class MarinaAgent extends MarinaClient {
   async conduct(score: Score, opts: Omit<RunScoreDeps, "tellAndAwait"> = {}): Promise<ScoreRun> {
     return runScore(score, {
       ...opts,
-      tellAndAwait: (target, message, timeoutMs) => this.tellAndAwait(target, message, timeoutMs),
+      tellAndAwait: (target, message, timeoutMs, options) =>
+        this.tellAndAwait(target, message, timeoutMs, options),
     });
   }
 

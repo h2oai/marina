@@ -21,10 +21,16 @@ import {
   type ScoreRun,
   type ScoreStepEvent,
 } from "../coordination/score-executor";
+import type { TellAndAwaitOptions } from "./client";
 
 export interface RunScoreDeps {
   /** Dispatch one worker request and await its reply (one round trip). */
-  tellAndAwait: (target: string, message: string, timeoutMs?: number) => Promise<string>;
+  tellAndAwait: (
+    target: string,
+    message: string,
+    timeoutMs?: number,
+    options?: TellAndAwaitOptions,
+  ) => Promise<string>;
   /**
    * Resolve a `role:`/`model:` assignee to a concrete target name. Entity
    * assignees resolve to their value automatically. Return null to fall back to
@@ -36,6 +42,11 @@ export interface RunScoreDeps {
   /** Recursion cap for conduct steps. */
   maxDepth?: number;
   onStep?: (ev: ScoreStepEvent) => void;
+  signal?: AbortSignal;
+  concurrency?: number;
+  runTimeoutMs?: number;
+  /** Require exact reply tags for machine workflows (opt-in; preserves legacy replies). */
+  strictCorrelation?: boolean;
 }
 
 /** Compose the message handed to a worker: instruction + threaded inputs. */
@@ -69,7 +80,16 @@ export async function runScore(score: Score, deps: RunScoreDeps): Promise<ScoreR
         `Cannot resolve assignee "${ctx.step.assignee}" for step "${ctx.step.id}" — supply a resolver for role:/model: workers.`,
       );
     }
-    return deps.tellAndAwait(target, composeStepMessage(ctx), deps.timeoutMs);
+    return deps.tellAndAwait(target, composeStepMessage(ctx), deps.timeoutMs, {
+      signal: ctx.signal,
+      strictCorrelation: deps.strictCorrelation ?? false,
+    });
   };
-  return executeScore(score, dispatch, { onStep: deps.onStep, maxDepth: deps.maxDepth });
+  return executeScore(score, dispatch, {
+    onStep: deps.onStep,
+    maxDepth: deps.maxDepth,
+    signal: deps.signal,
+    concurrency: deps.concurrency,
+    timeoutMs: deps.runTimeoutMs,
+  });
 }

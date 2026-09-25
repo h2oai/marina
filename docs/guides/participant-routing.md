@@ -11,6 +11,15 @@ dashboard. The generic routing API remains available to arbitrary clients. Regis
 alone does not capture or take over an existing terminal. Marina's existing agents, chat, commands,
 tasks, memory, and Canvas continue to operate normally.
 
+## Work from the terminal
+
+Run `marina --agent claude`, `marina --agent codex`, or `marina --agent pi` in a project
+to use the local supervisor from the normal coding terminal. `/spawn` adds a worker,
+`/use` switches targets, and `/dashboard` opens the authenticated Streams workspace.
+See [the coding guide](coding.md#start-in-your-project-folder) for workspace isolation,
+saved harnesses and shutdown behavior. The standalone `marina supervise` and generic
+`marina route` interfaces below remain available.
+
 ## Work from the dashboard
 
 Install and authenticate the native agent CLIs you want to use, then start Marina and authenticate a

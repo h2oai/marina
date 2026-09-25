@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Database } from "bun:sqlite";
+import { codingRunContext } from "./coding-run-context";
 
 // ─── Coding sessions, events and artifacts ─────────────────────────────────
 
@@ -138,7 +139,7 @@ export function createCodingEvent(
     session_id: event.sessionId,
     actor: event.actor,
     kind: event.kind,
-    payload_json: JSON.stringify(event.payload ?? {}),
+    payload_json: JSON.stringify(withCodingRun(db, event.sessionId, event.payload ?? {})),
     created_at: Date.now(),
   };
   db.run(
@@ -151,6 +152,18 @@ export function createCodingEvent(
     row.created_at,
     row.session_id,
   ]);
+  if (
+    ["patch_applied", "file_edited", "file_written", "checkpoint_reverted", "command_ran"].includes(
+      event.kind,
+    )
+  ) {
+    const payload = JSON.parse(row.payload_json) as { runId?: string };
+    const run = payload.runId ? getCodingArtifact(db, payload.runId) : null;
+    if (run?.kind === "task_run")
+      updateCodingArtifact(db, run.id, {
+        metadata: { ...JSON.parse(run.metadata_json), workspaceEventId: row.id },
+      });
+  }
   return row;
 }
 
@@ -190,7 +203,11 @@ export function createCodingArtifact(
     title: artifact.title,
     status: artifact.status ?? "pending",
     content_text: artifact.contentText,
-    metadata_json: JSON.stringify(artifact.metadata ?? {}),
+    metadata_json: JSON.stringify(
+      artifact.kind === "task_run"
+        ? (artifact.metadata ?? {})
+        : withCodingRun(db, artifact.sessionId, artifact.metadata ?? {}),
+    ),
     created_by: artifact.createdBy,
     applied_by: null,
     created_at: now,
@@ -320,4 +337,70 @@ export interface CodingArtifactRow {
   created_at: number;
   updated_at: number;
   applied_at: number | null;
+}
+
+/** Task attempts reuse coding artifacts; no parallel task or transcript store. */
+export interface CodingRunQuery {
+  sessionId?: string;
+  workerKey?: string;
+  status?: string;
+  limit?: number;
+}
+
+export function listCodingRuns(db: Database, query: CodingRunQuery = {}): CodingArtifactRow[] {
+  const conditions = ["kind = 'task_run'"];
+  const values: (string | number)[] = [];
+  if (query.sessionId !== undefined) {
+    conditions.push("session_id = ?");
+    values.push(query.sessionId);
+  }
+  if (query.workerKey !== undefined) {
+    conditions.push("json_extract(metadata_json, '$.workerKey') = ?");
+    values.push(query.workerKey);
+  }
+  if (query.status !== undefined) {
+    conditions.push("status = ?");
+    values.push(query.status);
+  }
+  values.push(query.limit ?? 100);
+  return db
+    .query(
+      `SELECT * FROM coding_artifacts WHERE ${conditions.join(" AND ")} ORDER BY rowid DESC LIMIT ?`,
+    )
+    .all(...values) as CodingArtifactRow[];
+}
+
+export function listCodingRunArtifacts(db: Database, runId: string): CodingArtifactRow[] {
+  return db
+    .query(
+      "SELECT * FROM coding_artifacts WHERE json_extract(metadata_json, '$.runId') = ? ORDER BY rowid DESC LIMIT 500",
+    )
+    .all(runId) as CodingArtifactRow[];
+}
+
+function withCodingRun(db: Database, sessionId: string, value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const existing = value as Record<string, unknown>;
+  if (existing.runId !== undefined) return value;
+  const context = codingRunContext.getStore();
+  if (context) {
+    if (context.sessionId !== sessionId || !context.runId) return value;
+    const run = getCodingArtifact(db, context.runId);
+    const meta = run ? JSON.parse(run.metadata_json) : {};
+    return {
+      ...existing,
+      runId: context.runId,
+      taskId: context.taskId,
+      workspaceEventId: meta.workspaceEventId,
+    };
+  }
+  const run = listCodingRuns(db, { sessionId, status: "active", limit: 1 })[0];
+  if (!run) return value;
+  const meta = JSON.parse(run.metadata_json) as { taskId: number; workspaceEventId?: string };
+  return {
+    ...existing,
+    runId: run.id,
+    taskId: meta.taskId,
+    workspaceEventId: meta.workspaceEventId,
+  };
 }

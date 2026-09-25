@@ -1081,6 +1081,9 @@ export class Engine {
 
     const trimmed = raw.trim();
     if (!trimmed) return raw;
+    // Explicit world command while preserving the current modal and its streams.
+    // Normal command permissions still run after routing.
+    if (trimmed.startsWith("/") && trimmed.length > 1) return trimmed.slice(1).trim();
 
     const verb = trimmed.split(/\s+/, 1)[0]?.toLowerCase();
     if (!verb || verb === "code") return raw;

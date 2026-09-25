@@ -9,7 +9,14 @@ import type { ChannelManager } from "../../../coordination/channel-manager";
 import type { CrewManager } from "../../../coordination/crew-manager";
 import type { FlywheelToolBackend } from "../../../integrations/flywheel-manager";
 import type { CodingArtifactRow, CodingSessionRow, MarinaDB } from "../../../persistence/database";
-import type { Connection, ConnectionProtocol, Entity, EntityId, RoomContext } from "../../../types";
+import type {
+  Connection,
+  ConnectionProtocol,
+  EngineEvent,
+  Entity,
+  EntityId,
+  RoomContext,
+} from "../../../types";
 import { sanitizeEntityName } from "../../entity-name";
 
 export const ACTIVE_SESSION_KEY = "coding_session_id";
@@ -117,6 +124,9 @@ interface CodeContextSnapshot {
   sessionTitle?: string;
   workspace?: string;
   writer?: string;
+  taskId?: number;
+  runId?: string;
+  runStatus?: string;
 }
 
 export interface CodeTreeNode {
@@ -366,6 +376,7 @@ export function refuseTelnetDispatch(ctx: RoomContext, eid: EntityId, deps: Code
 }
 
 export interface CodeDeps {
+  logEvent?: (event: EngineEvent) => void;
   agentRuntime?: CodingAgentRuntime;
   answerPrompt?: CodePromptAnswerer;
   channelManager?: ChannelManager;
@@ -604,7 +615,12 @@ export function updateCodeContext(entity: Entity, db: MarinaDB, session?: Coding
     typeof entity.properties[CODE_WORKSPACE_KEY] === "string"
       ? entity.properties[CODE_WORKSPACE_KEY]
       : undefined;
+  const run = session ? db.listCodingRuns({ sessionId: session.id, limit: 1 })[0] : undefined;
+  const runMeta = run ? parseJsonObject(run.metadata_json) : {};
   const snapshot: CodeContextSnapshot = {
+    taskId: typeof runMeta.taskId === "number" ? runMeta.taskId : undefined,
+    runId: run?.id,
+    runStatus: run?.status,
     assignedAgent,
     latestArtifactId: latestArtifact?.id,
     latestArtifactKind: latestArtifact?.kind,

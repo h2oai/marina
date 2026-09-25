@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { CodeSessionDriver } from "../../../coding/code-session-driver";
+import { codingRunMetadata, endCodingRun } from "../../../coding/task-run";
 import { bold, dim, error as fmtError, separator, success } from "../../../net/ansi";
 import type { CodingSessionRow, MarinaDB } from "../../../persistence/database";
 import type { Entity, EntityId, RoomContext } from "../../../types";
@@ -93,8 +94,11 @@ export async function assignCode(
   const prompt = args.slice(1).join(" ");
   const profile = getCodeProfile(entity);
   const modelTarget = getSessionModelTarget(deps.db, session.id);
+  const handle = agentName ? getAgentHandle(deps, agentName) : undefined;
+  if (handle) streamSessionAgent(deps, eid, handle, session.id);
   const artifact = await driver.assignAgent({
     actor: entity.name,
+    actorEntity: entity,
     agentName: agentName ?? "",
     modelTarget,
     profile: profile.name,
@@ -231,6 +235,18 @@ export async function doCode(
     return;
   }
 
+  const previousRun = deps.db.listCodingRuns({
+    sessionId: session.id,
+    status: "active",
+    limit: 1,
+  })[0];
+  if (previousRun && (!session.agent || !getAgentHandle(deps, session.agent))) {
+    ctx.send(
+      eid,
+      "The previous task's worker is unavailable. Inspect code review, then use code stop before retrying.",
+    );
+    return;
+  }
   // Single-agent driver (default): ensure one bound coder, hand it the task.
   const agentName = await ensureSessionAgent(ctx, eid, entity, deps, session);
   if (!agentName) return; // ensureSessionAgent already explained why
@@ -251,18 +267,17 @@ export async function doCode(
       title: "Task received",
       type: "lifecycle",
     });
+    const handle = getAgentHandle(deps, agentName);
+    if (handle) streamSessionAgent(deps, eid, handle, session.id);
     await driver.assignAgent({
       actor: entity.name,
+      actorEntity: entity,
       agentName,
       modelTarget: getSessionModelTarget(deps.db, session.id),
       profile: profile.name,
       prompt: task,
       session,
     });
-    // Stream the bound agent's live work back to this human so Code Mode shows
-    // it working (reads, edits, test runs, prose) rather than going quiet.
-    const handle = getAgentHandle(deps, agentName);
-    if (handle) streamSessionAgent(deps, eid, handle, session.id);
     ctx.send(
       eid,
       [
@@ -291,15 +306,23 @@ async function ensureSessionAgent(
   deps: CodeDeps & { db: MarinaDB },
   session: CodingSessionRow,
 ): Promise<string | null> {
+  const modelTarget = modelTargetForAgentSpawn(getSessionModelTarget(deps.db, session.id));
   // 1) Reuse the already-bound agent if it's still running.
   const boundHandle = session.agent ? getAgentHandle(deps, session.agent) : undefined;
   if (session.agent && boundHandle) {
+    if (modelTarget && boundHandle.getStatus().model !== modelTarget) {
+      if (deps.db.listCodingRuns({ sessionId: session.id, status: "active", limit: 1 }).length) {
+        ctx.send(eid, "Finish or stop the active task before switching its worker's model.");
+        return null;
+      }
+      await boundHandle.reconfigure({ model: modelTarget });
+    }
     bindSessionWriter(deps, session, entity.name, boundHandle.name ?? session.agent);
     return boundHandle.name ?? session.agent;
   }
 
   // 2) Recruit an idle coding agent already in the world.
-  const recruited = recruitCodingAgent(deps, new Set());
+  const recruited = recruitCodingAgent(deps, new Set(), modelTarget);
   if (recruited) {
     grant(deps.db, recruited.id, "code.exec");
     deps.db.updateCodingSession(session.id, { agent: recruited.name, driver: "single" });
@@ -326,7 +349,6 @@ async function ensureSessionAgent(
   }
   recordGateExecution(deps.db, eid, "agent.spawn", gate, "code session coder");
   const name = uniqueSpawnAgentName(deps.agentRuntime.list?.() ?? [], "coder", session.id);
-  const modelTarget = modelTargetForAgentSpawn(getSessionModelTarget(deps.db, session.id));
   try {
     const handle = await deps.agentRuntime.spawn({
       goal: [
@@ -422,6 +444,18 @@ export async function stopSessionAgent(
   // An interrupt of an in-flight task is a *terminal failure* for machine
   // consumers (one-shot `marina -p`); a stop with nothing assigned is benign.
   const interruptedTask = agentHasActiveCodingTask(deps, agentName);
+  const activeRun = deps.db.listCodingRuns({
+    sessionId: session.id,
+    status: "active",
+    limit: 1,
+  })[0];
+  if (activeRun)
+    endCodingRun(
+      deps.db,
+      activeRun.id,
+      "cancelled",
+      "Stopped by the operator; changes and evidence are retained.",
+    );
   clearCodingTask(deps, agentName); // task mode ends with the run
   const handle = getAgentHandle(deps, agentName);
   let aborted = false;
@@ -473,6 +507,8 @@ export async function stopSessionAgent(
     {
       event: "code_lifecycle",
       metadata: {
+        runId: activeRun?.id,
+        taskId: activeRun ? codingRunMetadata(activeRun).taskId : undefined,
         agent: agentName,
         aborted,
         phase,

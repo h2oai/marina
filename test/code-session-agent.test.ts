@@ -199,6 +199,44 @@ describe("code single-agent binding (writer lock + role-aware recruit)", () => {
     });
   });
 
+  it("applies an explicit model to the bound worker between tasks, never during a live task", async () => {
+    const alice = makeAgentEntity("u_model_owner", "ModelOwner");
+    const coder = makeAgentEntity("agent_model", "ModelCoder");
+    db.saveEntity(alice);
+    db.saveEntity(coder);
+    grant(db, alice.id, "code.exec");
+    const fixture = fakeHandle("ModelCoder", coder.id);
+    let model = "provider/first";
+    fixture.handle.getStatus = () => ({ entityId: coder.id, role: "coder", model }) as never;
+    fixture.handle.reconfigure = async (options) => {
+      if (options.model) model = options.model;
+    };
+    const sent: string[] = [];
+    const command = codeCommand({
+      db,
+      workspace: new LocalWorkspace(),
+      getEntity: (id) => (id === alice.id ? alice : id === coder.id ? coder : undefined),
+      listAgents: () => [{ name: coder.name }],
+      findAgentByName: () => coder,
+      agentRuntime: {
+        get: () => fixture.handle,
+        isAvailable: () => true,
+        list: () => [{ name: coder.name }],
+      },
+    });
+    const ctx = testRoomContext(sent);
+    await command.handler(ctx, inputFor(alice, "code do first task"));
+    await command.handler(ctx, inputFor(alice, "code model set provider/second"));
+    await command.handler(ctx, inputFor(alice, "code do steer the task"));
+    expect(model).toBe("provider/first");
+    expect(sent.at(-1)).toContain("Finish or stop");
+    expect(fixture.attention).toHaveLength(1);
+    await command.handler(ctx, inputFor(alice, "code stop"));
+    await command.handler(ctx, inputFor(alice, "code do second task"));
+    expect(model).toBe("provider/second");
+    expect(fixture.attention.at(-1)).toContain("second task");
+  });
+
   it("FINDING 7: an ungated dispatcher cannot drive a recruited coder to host exec", async () => {
     // Dave has NO code.exec — a standing-0 caller must not reach host execution
     // through a plain Code Mode task by having a coder recruited on his behalf.
@@ -630,7 +668,7 @@ describe("coding task mode (set on assign, cleared on stop/completion)", () => {
     expect(db.loadEntity("agent_coder" as EntityId)?.properties.coding_task).toBeUndefined();
   });
 
-  it("the summary-artifact completion heuristic clears the task without an explicit stop", async () => {
+  it("only a stored summary submits and clears the task without an explicit stop", async () => {
     const notifications: string[] = [];
     const { coder, fake, command, ctx, alice } = makeBoundSetup(notifications);
 
@@ -647,6 +685,15 @@ describe("coding task mode (set on assign, cleared on stop/completion)", () => {
       toolName: "marina_code",
       args: { action: "summary", notes: "done" },
     });
+    expect(coder.properties.coding_task).toBe("add a health endpoint");
+    fake.emit({
+      type: "tool_result",
+      toolName: "marina_code",
+      result: "storage failed",
+      isError: true,
+    });
+    expect(coder.properties.coding_task).toBe("add a health endpoint");
+    await command.handler(ctx, inputFor(coder, "code summary done"));
     expect(coder.properties.coding_task).toBeUndefined();
     expect(fake.codingTasks.at(-1)).toBeNull();
   });
@@ -717,7 +764,7 @@ describe("structured completion signal (machine-readable lifecycle metadata)", (
   }
 
   it("the summary completion notification carries terminal machine-readable metadata", async () => {
-    const { alice, fake, notifications, command, ctx } = makeStructuredSetup();
+    const { alice, coder, fake, notifications, command, ctx } = makeStructuredSetup();
 
     await command.handler(ctx, inputFor(alice, "code do add a health endpoint"));
     const sid = alice.properties.coding_session_id as string;
@@ -728,13 +775,18 @@ describe("structured completion signal (machine-readable lifecycle metadata)", (
       args: { action: "summary", text: "Added /health in server.ts; bun test passes." },
     });
 
+    expect(notifications.some((n) => codeMeta(n.metadata)?.phase === "completed")).toBe(false);
+    await command.handler(
+      ctx,
+      inputFor(coder, "code summary Added /health in server.ts; bun test passes."),
+    );
     const completed = notifications
       .map((n) => codeMeta(n.metadata))
       .find((code) => code?.phase === "completed");
     expect(completed).toBeDefined();
     expect(completed!.event).toBe("code_lifecycle");
     expect(completed!.sessionId).toBe(sid);
-    expect(completed!.status).toBe("complete");
+    expect(completed!.status).toBe("submitted");
     const payload = completed!.metadata as Record<string, unknown>;
     expect(payload.terminal).toBe(true);
     expect(payload.summary).toBe("Added /health in server.ts; bun test passes.");
@@ -776,7 +828,7 @@ describe("structured completion signal (machine-readable lifecycle metadata)", (
   });
 
   it("agent death after completion emits no spurious failure", async () => {
-    const { alice, fake, notifications, command, ctx } = makeStructuredSetup();
+    const { alice, coder, fake, notifications, command, ctx } = makeStructuredSetup();
 
     await command.handler(ctx, inputFor(alice, "code do add a health endpoint"));
     fake.emit({
@@ -784,6 +836,7 @@ describe("structured completion signal (machine-readable lifecycle metadata)", (
       toolName: "marina_code",
       args: { action: "summary", text: "done" },
     });
+    await command.handler(ctx, inputFor(coder, "code summary done"));
     fake.emit({ type: "status_change", status: { state: "stopped" } as never });
 
     const failed = notifications

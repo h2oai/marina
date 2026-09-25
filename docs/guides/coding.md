@@ -8,6 +8,87 @@ becomes shared memory the next session can build on.
 This guide gets you from zero to a working coding session in about five minutes, then shows the
 parts that make it more than a CLI.
 
+## Start in your project folder
+
+Run `marina` in a project and describe a task. The default runtime is Marina's coding
+agent, using your configured provider. You can also use an installed coding tool and
+its existing credentials through the same terminal:
+
+```bash
+marina --agent claude
+marina --agent codex
+marina --agent pi
+marina --agent marina --model openrouter/<model-id> --profile claude
+```
+
+Runtime and command dialect are independent: `--agent claude` runs Claude Code's native
+tools; `--agent marina --profile claude` uses Marina's tools with its Claude-style command
+aliases. `--model` selects a model understood by the chosen runtime. Native agents keep
+their own configuration and permission systems; Marina's `--allow-exec` flags apply
+only to Marina's own Code Mode commands. There is no automatic provider failover.
+
+Inside the terminal, `/help` shows the controls; Tab completes their names. Streaming
+output redraws the current input, and permission questions use the same input owner.
+End a line with `\` to continue a task on another line.
+
+```text
+/agents
+/spawn codex reviewer
+/use reviewer
+Review the current implementation; send your findings to the other participant through Marina.
+/use claude
+/world task list
+/dashboard
+```
+
+`/use` switches to a launched agent or starts an installed runtime. The first native
+worker uses your project folder. Additional workers use isolated Git worktrees starting
+at committed HEAD; uncommitted source edits are **not copied**. `/spawn` always requests
+a worktree and reports an error if it cannot create one. Agent output is labeled in the
+terminal and recorded through Marina's existing participant routing. There is no fixed
+three-agent limit. `/agents` lists this terminal's managed roster; independently joined
+participants remain discoverable through `marina route` and the browser Streams view.
+
+`/dashboard` opens an authenticated Streams workspace with output replay, agent controls,
+permissions and delivery history, without reconnecting the terminal's chat session.
+The browser consumes the credential from the URL fragment into tab storage and removes
+the fragment immediately. “Disconnect this view” clears that tab's credential. The
+normal dashboard remains available at the printed Dashboard URL.
+
+Use `/stop` or Ctrl+C to interrupt the selected worker. A second Ctrl+C or `/quit` stops
+all native processes owned by this terminal and closes its local Marina. Worktrees and
+the output journal remain available for inspection. Restarting preserves history but
+does **not** replay uncertain work or resume a native process automatically.
+
+### Remember and share a harness
+
+```text
+/harness save daily
+/harness list
+/harness export
+```
+
+Saving makes this runtime/model/dialect selection the default for subsequent bare
+`marina` launches in the same folder. Preferences live beside the folder's database in
+`~/.marina/projects/<slug>/harnesses.json`. Explicit `--agent` overrides the saved default.
+Export prints a portable, versioned JSON definition, for example:
+
+```json
+{"version":1,"agent":"marina","model":"openrouter/<model-id>","profile":"claude"}
+```
+
+Save that JSON to a file and use `marina --harness ./daily.json`, or select a personal
+definition with `marina --harness daily`. `/harness use <name-or-path>` selects one inside
+the terminal. Files in a repository are never loaded implicitly. These definitions
+select a runtime, model and dialect; they do not yet package teams, Scores, roles,
+credentials or approval policies. Changing a bound Marina worker's model takes effect
+between tasks; stop or finish active work first.
+
+Native runtimes also support `marina --agent codex -p "<task>"`. Exit 0 means the native
+turn finished without a reported error, not that Marina verified or approved its work.
+Missing terminal input denies native permission requests. Marina-native tasks retain
+the canonical task/submission/review workflow described below.
+
 ## First autonomous fix (copy and paste)
 
 This path uses a disposable, intentionally broken TypeScript project included with Marina. It is
@@ -186,10 +267,35 @@ runs the test/lint chain, and iterates — streaming its progress back. Type aga
 steer it; `code status` to watch. This is the **single-agent driver** (the default).
 
 The default coding agent follows an observable operating contract: **received → inspect → plan →
-patch → apply → verify → complete**. Each transition is persisted on the coding session and pushed
-to WebChat immediately, where a causal progress rail stays synchronized with the durable artifact
-view. Completion requires a summary that cites changed paths and successful checks; the agent is
-instructed not to expand scope, install dependencies, or launch applications without a decision.
+patch → apply → verify → submit → review**. Dispatch through the single-agent driver or `code assign`
+creates a canonical Marina task and a durable attempt artifact. Follow-up instructions steer the
+same active attempt. Its tool events, changes, checks and summary carry the attempt and task IDs.
+A worker can hold one active coding attempt at a time.
+
+`code summary` submits the worker's task after storing its summary. Calling the tool or writing
+an operator note does not complete the task. Verification is reported as passed, failed, missing
+or stale; a recorded workspace mutation after a successful check makes that check stale. These
+are observed checks, not a claim to detect edits made outside Marina. Only task review marks the
+canonical task completed:
+
+```text
+code review                  # inspect the latest attempt, summary and verification
+code review approve          # accept its submitted task (task creator only)
+code review reject           # return its task to open work
+code review <attempt-id>      # inspect an older attempt
+```
+
+The dashboard renders the same task/evidence links and review actions. Ordinary `task info`,
+`task approve` and `task reject` still operate on the same task. A one-shot exit `0` means the
+worker stored and submitted its result; it does not mean the operator approved it or that every
+check passed. Check the reported verification and review evidence before accepting changes.
+
+`code stop` retains changes and ends the attempt as cancelled. Worker death records failure.
+On server restart, unfinished attempts become interrupted and their claims are released;
+Marina does not replay uncertain host actions. Inspect `code review` and artifacts before retrying.
+Closing a coding session with `code done` requires its active task to be submitted or stopped.
+The existing crew driver remains available; this task-attempt lifecycle currently covers the
+single Marina worker and explicit assignment paths.
 
 Want a team instead of one agent? `code driver crew` (or `code crew <goal>`) fans the
 work out to an implementer / reviewer / tester. The driver is a seam — single today,

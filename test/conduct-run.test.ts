@@ -44,6 +44,7 @@ describe("runScore — live dispatch over tellAndAwait", () => {
       assignee: { kind: "entity", value: "x" },
       inputs: [{ fromStepId: "a", output: "prior result" }],
       depth: 0,
+      signal: new AbortController().signal,
     });
     expect(msg).toContain("do the thing");
     expect(msg).toContain("Context from prior steps:");

@@ -501,6 +501,7 @@ Usage:
   code run allowlist          Show host-local allowed commands
   code run app [script]       Show managed Flywheel service guidance (host mode is disabled)
   code observe <note>         Store an app/workspace observation
+  code review [approve|reject] Review the latest coding task and its evidence
   code verify                 Run detected typecheck/lint/test/build chain
   code test|lint|typecheck    Run a common verification command
   code patch [title]\\n<diff>  Propose a unified-diff patch
