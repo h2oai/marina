@@ -3,7 +3,13 @@
 
 import { afterEach, describe, expect, it } from "bun:test";
 import { AgentRuntime } from "../src/agent/agent-runtime";
-import { isRouteModel, routeModelForGoal, routeTiersFromEnv } from "../src/decisions/route";
+import {
+  isRouteModel,
+  routeModelForGoal,
+  routeModelWithTable,
+  routeTableFromEnv,
+  routeTiersFromEnv,
+} from "../src/decisions/route";
 import type { DecisionAnswer, DecisionProvider } from "../src/decisions/types";
 import { MarinaDB } from "../src/persistence/database";
 import type { EngineEvent } from "../src/types";
@@ -128,5 +134,115 @@ describe("AgentRuntime.spawn with model:route", () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe("route table (MARINA_ROUTES)", () => {
+  const ROUTES = JSON.stringify({
+    cheap: {
+      model: "openai/gpt-4o-mini",
+      criteria: "Direct lookups, extraction and localized changes.",
+    },
+    coder: {
+      model: "anthropic/claude-sonnet-4-6",
+      criteria: "Writing or reviewing code across several files.",
+    },
+    powerful: {
+      model: "anthropic/claude-opus-4-6",
+      criteria: "Architecture and high-stakes decisions.",
+    },
+  });
+
+  it("parses a table, defaults instructions and the fallback, and rejects malformed tables", () => {
+    const table = routeTableFromEnv({ MARINA_ROUTES: ROUTES })!;
+    expect(Object.keys(table.routes)).toEqual(["cheap", "coder", "powerful"]);
+    expect(table.fallback).toBe("powerful");
+    expect(table.instructions).toContain("least costly");
+    expect(
+      routeTableFromEnv({ MARINA_ROUTES: ROUTES, MARINA_ROUTE_FALLBACK: "coder" })!.fallback,
+    ).toBe("coder");
+    expect(routeTableFromEnv({})).toBeUndefined();
+    expect(() => routeTableFromEnv({ MARINA_ROUTES: "fast=a/b" })).toThrow(/must be JSON/);
+    expect(() =>
+      routeTableFromEnv({
+        MARINA_ROUTES: JSON.stringify({ only: { model: "a/b", criteria: "c" } }),
+      }),
+    ).toThrow(/at least two/);
+    expect(() =>
+      routeTableFromEnv({ MARINA_ROUTES: ROUTES, MARINA_ROUTE_FALLBACK: "missing" }),
+    ).toThrow(/not a route/);
+    expect(() =>
+      routeTableFromEnv({
+        MARINA_ROUTES: JSON.stringify({ a: { model: "x/y" }, b: { model: "x/z", criteria: "c" } }),
+      }),
+    ).toThrow(/model and criteria/);
+  });
+
+  it("asks one choice over the routes' criteria and keeps the distribution", async () => {
+    const table = routeTableFromEnv({ MARINA_ROUTES: ROUTES })!;
+    const seen: unknown[] = [];
+    const provider: DecisionProvider = {
+      kind: "stub",
+      model: "stub-jev",
+      async ask(req) {
+        seen.push(req.questions);
+        return {
+          answers: {
+            route: {
+              type: "choice",
+              choice: "coder",
+              confidence: 0.81,
+              probabilities: { cheap: 0.07, coder: 0.81, powerful: 0.12 },
+            },
+          },
+          model: "stub-jev",
+          provider: "stub",
+          latencyMs: 2,
+        };
+      },
+    };
+    const routed = await routeModelWithTable(
+      "refactor the scheduler tests",
+      "coder",
+      table,
+      provider,
+    );
+    expect(routed).toMatchObject({ model: "anthropic/claude-sonnet-4-6", tier: "coder" });
+    expect(routed.verdict.signals).toMatchObject({
+      route: "coder",
+      confidence: 0.81,
+      p_powerful: 0.12,
+    });
+    expect((seen[0] as { route: { criteria: Record<string, string> } }).route.criteria).toEqual({
+      cheap: "Direct lookups, extraction and localized changes.",
+      coder: "Writing or reviewing code across several files.",
+      powerful: "Architecture and high-stakes decisions.",
+    });
+  });
+
+  it("uses the fallback route on low confidence, no backend, no goal or an error", async () => {
+    const table = routeTableFromEnv({ MARINA_ROUTES: ROUTES, MARINA_ROUTE_FALLBACK: "coder" })!;
+    const unsure: DecisionProvider = {
+      kind: "stub",
+      model: "s",
+      ask: async () => ({
+        answers: { route: { type: "choice", choice: "cheap", confidence: 0.4 } },
+        model: "s",
+        provider: "stub",
+        latencyMs: 1,
+      }),
+    };
+    expect((await routeModelWithTable("x", undefined, table, unsure)).tier).toBe("coder");
+    expect((await routeModelWithTable("x", undefined, table, undefined)).tier).toBe("coder");
+    expect((await routeModelWithTable(" ", undefined, table, unsure)).tier).toBe("coder");
+    const down: DecisionProvider = {
+      kind: "stub",
+      model: "s",
+      ask: async () => {
+        throw new Error("503");
+      },
+    };
+    const failed = await routeModelWithTable("x", undefined, table, down);
+    expect(failed).toMatchObject({ tier: "coder", error: "503" });
   });
 });

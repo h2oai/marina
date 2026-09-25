@@ -10,7 +10,7 @@
  * own agents and no provider probe.
  */
 
-import { Bot, Coins, Cpu, Database, Plug, ShieldCheck } from "lucide-react";
+import { Bot, Coins, Cpu, Database, Plug, Scale, ShieldCheck } from "lucide-react";
 import { useCallback } from "react";
 import { OPS_OVERVIEW_KEY, useOpsOverview } from "../../hooks/use-api";
 import { useInvalidateOnEvent } from "../../hooks/use-realtime";
@@ -18,6 +18,7 @@ import { describeApiError } from "../../lib/api";
 import type { DashboardEvent } from "../../lib/types";
 import { FetchErrorNotice } from "../FetchErrorNotice";
 import { AgentsSection } from "./AgentsSection";
+import { DecisionsSection } from "./DecisionsSection";
 import { formatAgo } from "./format";
 import { PromptBudgetSection } from "./PromptBudgetSection";
 import { ProvidersSection } from "./ProvidersSection";
@@ -119,6 +120,10 @@ export function OpsTab({ confirm }: { confirm?: (text: string) => boolean } = {}
         ) : (
           <Placeholder />
         )}
+      </Section>
+
+      <Section title="Decisions" icon={<Scale size={12} />}>
+        {data ? <DecisionsSection decisions={data.decisions} /> : <Placeholder />}
       </Section>
 
       <Section title="Security posture" icon={<ShieldCheck size={12} />}>

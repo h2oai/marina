@@ -139,6 +139,11 @@ export function getDecisionProvider(
   return cached.provider;
 }
 
+/** Send the agent's intent + trust labels with gate calls (default on; `off` sends the call only). */
+export function decisionGateContextEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.MARINA_DECISION_GATE_CONTEXT?.trim().toLowerCase() !== "off";
+}
+
 export function decisionGateEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.MARINA_DECISION_GATE?.trim().toLowerCase() === "on" && !!decisionConfigFromEnv(env);
 }

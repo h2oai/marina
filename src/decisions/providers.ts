@@ -86,6 +86,7 @@ export function decisionsApiProvider(opts: ProviderOptions): DecisionProvider {
   return {
     kind: "decisions-api",
     model: opts.model,
+    calibrated: true,
     async ask(request: DecisionRequest, signal?: AbortSignal): Promise<DecisionResult> {
       const started = performance.now();
       const body = (await post(
@@ -175,11 +176,17 @@ export function extractJsonObject(text: string): unknown {
   throw new DecisionError("classifier reply has malformed JSON", "invalid_response");
 }
 
+/** Output cap for a classifier reply (answers are ~100 tokens; the rest is thinking room). */
+export const CLASSIFIER_MAX_TOKENS = 2_000;
+
+const isOpenRouter = (baseUrl: string) => /^https:\/\/openrouter\.ai\//.test(baseUrl);
+
 /** Any OpenAI-compatible chat model as a decision classifier. */
 export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider {
   return {
     kind: "chat-classifier",
     model: opts.model,
+    calibrated: false,
     async ask(request: DecisionRequest, signal?: AbortSignal): Promise<DecisionResult> {
       const started = performance.now();
       // No `response_format`: many OpenAI-compatible servers (and Marina's own
@@ -190,7 +197,11 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
         {
           model: opts.model,
           temperature: 0,
-          max_tokens: 400,
+          // Reasoning models spend output tokens thinking before they answer;
+          // 400 left several (qwen3.7-flash, glm-5.3-flash, deepseek-v4-flash)
+          // with an empty reply. OpenRouter also accepts a reasoning budget.
+          max_tokens: CLASSIFIER_MAX_TOKENS,
+          ...(isOpenRouter(opts.baseUrl) ? { reasoning: { effort: "low", exclude: true } } : {}),
           messages: [
             { role: "system", content: CLASSIFIER_SYSTEM },
             { role: "user", content: classifierPrompt(request.state, request.questions) },

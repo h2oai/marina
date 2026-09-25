@@ -27,8 +27,12 @@ import {
   type TextContent,
 } from "@earendil-works/pi-ai";
 import { DEFAULT_APPROVAL_TIMEOUT_MS, requestApproval } from "../decisions/approvals";
-import { decisionGateEnabled, getDecisionProvider } from "../decisions/config";
-import { gateToolCall, redactToolCall } from "../decisions/gate";
+import {
+  decisionGateContextEnabled,
+  decisionGateEnabled,
+  getDecisionProvider,
+} from "../decisions/config";
+import { type GateIntent, gateToolCall, redactToolCall } from "../decisions/gate";
 import {
   ACTIVE_CODING_TASK_MAX_CHARS,
   CONTEXT_PRUNE_TARGET,
@@ -1494,7 +1498,16 @@ export class LeanAgentAdapter implements AgentHandle {
     if (!decisionGateEnabled()) return undefined;
     const provider = getDecisionProvider();
     if (!provider) return undefined;
-    const decision = await gateToolCall(provider, toolName, args, undefined, description);
+    const intent: GateIntent | undefined = decisionGateContextEnabled()
+      ? {
+          ...(this.config.goal ? { goal: this.config.goal } : {}),
+          ...(this.config.role ? { role: this.config.role } : {}),
+          ...(this.focus?.description ? { focus: this.focus.description } : {}),
+          ...(this.activeCodingTask ? { task: this.activeCodingTask } : {}),
+          sources: [...this.currentTrustSources],
+        }
+      : undefined;
+    const decision = await gateToolCall(provider, toolName, args, undefined, description, intent);
     this.emitEvent({
       type: "decision",
       stage: "gate",

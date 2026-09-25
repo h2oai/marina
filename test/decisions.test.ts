@@ -411,6 +411,7 @@ describe("pi adapter decision gate", () => {
             destructive: { type: "noul", noul: 0.95 },
             irreversible: { type: "noul", noul: 0.9 },
             outsideScope: { type: "noul", noul: 0.1 },
+            unauthorized: { type: "noul", noul: 0.1 },
           },
         });
       },

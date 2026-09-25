@@ -185,6 +185,40 @@ export type OpsSecurity = {
   limiters: OpsLimiter[];
 };
 
+/** One harness decision (`agent_decision` event) — numbers and names, never tool arguments. */
+export type OpsDecisionRow = {
+  /** Agent (gate / route) or submitting entity (verify). */
+  name: string;
+  stage: "gate" | "route" | "verify";
+  verdict: string;
+  /** Tool name (gate), chosen model (route) or `task #<id>` (verify). */
+  subject: string;
+  reason: string;
+  signals: Record<string, number | string>;
+  model?: string;
+  latencyMs?: number;
+  costUsd?: number;
+  error?: string;
+  timestamp: number;
+};
+
+/** Harness decisions (src/decisions) in scope over the recent window. */
+export type OpsDecisions = {
+  /** A decision backend is configured (MARINA_DECISIONS). */
+  configured: boolean;
+  backend: string | null;
+  model: string | null;
+  /** False for a chat model used as a classifier. */
+  calibrated: boolean | null;
+  gate: boolean;
+  verify: boolean;
+  windowMs: number;
+  /** stage → verdict → count, over the window. */
+  counts: Record<string, Record<string, number>>;
+  /** Newest first, capped. */
+  recent: OpsDecisionRow[];
+};
+
 export type OpsOverview = {
   generatedAt: number;
   /** `privileged` = every agent; `resident` = only the caller's own agents. */
@@ -196,6 +230,7 @@ export type OpsOverview = {
   /** Last provider probe; null when never run OR for a resident scope. */
   providers: ProviderProbeSummary[] | null;
   security: OpsSecurity;
+  decisions: OpsDecisions;
 };
 
 /** `POST /api/ops/agents/:name/stop` response. */
