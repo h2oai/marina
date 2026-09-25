@@ -27,9 +27,26 @@ import { sanitizeEntityName } from "../src/engine/entity-name";
 import { formatPerception } from "../src/net/formatter";
 import { MarinaAgent } from "../src/sdk/client";
 
-const URL = process.env.MARINA_URL ?? "ws://localhost:3300";
-
 const args = process.argv.slice(2);
+
+/**
+ * The server address: `--url`, then `--port`, then MARINA_URL, then WS_PORT.
+ * The boot banner prints `ws://host:port/ws` (the browser endpoint); the CLI
+ * speaks on the root path, so a pasted `/ws` is accepted and trimmed.
+ */
+function serverUrl(): string {
+  const flag = (name: string) => {
+    const i = args.indexOf(name);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const port = flag("--port") ?? (process.env.MARINA_URL ? undefined : process.env.WS_PORT);
+  const raw =
+    flag("--url") ??
+    (port ? `ws://localhost:${port}` : process.env.MARINA_URL) ??
+    "ws://localhost:3300";
+  return raw.replace(/\/ws\/?$/, "");
+}
+const URL = serverUrl();
 
 if (args.includes("-h") || args.includes("--help")) {
   console.log(`Marina Connect — bridge a terminal (or script) into a Marina instance.
@@ -45,6 +62,8 @@ Flags:
   --wait <sec>     max seconds to linger for asynchronous output (model-backed
                    commands like \`ask\` answer after the ack) in one-shot/pipe
                    mode. Default 20; 0 exits as soon as the command is acked.
+  --port <n>       server port on localhost (default: WS_PORT or 3300)
+  --url <ws-url>   full server URL (a trailing /ws is accepted)
   -h, --help       show this help
 
 Environment:
@@ -53,6 +72,13 @@ Environment:
 }
 
 const consumed = new Set<number>();
+for (const flag of ["--port", "--url"]) {
+  const i = args.indexOf(flag);
+  if (i >= 0) {
+    consumed.add(i);
+    consumed.add(i + 1);
+  }
+}
 const dashC = args.indexOf("-c");
 let oneShot: string | undefined;
 if (dashC !== -1) {

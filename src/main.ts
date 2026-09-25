@@ -60,8 +60,10 @@ const WS_PORT = Math.max(0, parsePort("WS_PORT", 3300));
 // Telnet is plaintext and unauthenticated — off by default. Set TELNET_PORT
 // explicitly (e.g. 4000) to enable it, and only on a trusted network.
 const TELNET_PORT = parsePort("TELNET_PORT", 0);
-const MCP_PORT = parsePort("MCP_PORT", 3301);
-const LOG_PORT = parsePort("LOG_PORT", 3302);
+// The auxiliary listeners follow WS_PORT unless set explicitly, so a second
+// instance started with only WS_PORT=3400 does not collide on 3301/3302.
+const MCP_PORT = parsePort("MCP_PORT", WS_PORT > 0 ? WS_PORT + 1 : 3301);
+const LOG_PORT = parsePort("LOG_PORT", WS_PORT > 0 ? WS_PORT + 2 : 3302);
 const TICK_MS = Number(process.env.TICK_MS) || 1000;
 const DB_PATH = process.env.DB_PATH || "marina.db";
 
@@ -433,8 +435,19 @@ const logServer =
       })
     : undefined;
 if (logServer) {
-  engine.addEventListener((event) => logServer.handleEvent(event));
-  logServer.start();
+  try {
+    logServer.start();
+    engine.addEventListener((event) => logServer.handleEvent(event));
+  } catch (err) {
+    // The live log view is auxiliary: a taken port disables it, it never takes
+    // the whole server down (it used to, before the WebSocket even bound).
+    const e = err as NodeJS.ErrnoException;
+    if (e?.code !== "EADDRINUSE" && !/EADDRINUSE|in use/i.test(e?.message ?? "")) throw err;
+    logger.warn(
+      "main",
+      `Log server disabled: port ${LOG_PORT} is in use (set LOG_PORT to move it)`,
+    );
+  }
 } else {
   logger.info("engine", "Log server disabled (LOG_PORT <= 0)");
 }
@@ -549,7 +562,7 @@ function startListener(label: string, envVar: string, port: number, start: () =>
     if (!inUse) throw err;
     logger.error(
       "main",
-      `Port ${port} is in use (${label}). Try ${envVar}=${port + 1} bun run start, or lsof -i :${port}`,
+      `Port ${port} is in use (${label}). Each instance uses WS_PORT, WS_PORT+1 (MCP) and WS_PORT+2 (logs) — try ${envVar}=${port + 3} bun run start, or lsof -i :${port}`,
       { port, label, envVar },
     );
     process.exit(1);
@@ -654,7 +667,7 @@ if (engine.agentRuntime.isAvailable()) {
 } else {
   logger.warn(
     "agents",
-    "No LLM API keys configured — agents cannot be spawned. Set ANTHROPIC_API_KEY or use 'key add' in-world.",
+    "No LLM API keys configured — agents cannot be spawned. Set any one of OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, HUGGINGFACE_API_KEY (or run Ollama locally), or use 'key add' in-world.",
   );
 }
 if (

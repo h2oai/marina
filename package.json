@@ -62,6 +62,7 @@
     "src/sdk"
   ],
   "scripts": {
+    "forecast": "bun run scripts/forecast.ts",
     "arena": "bun run scripts/arena.ts",
     "start": "bun run src/main.ts",
     "code": "bun run scripts/code.ts",
