@@ -103,6 +103,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Concurrent benchmark runs could read each other's results: the runner took "the newest result
+  file for this dataset" from a folder shared by every run (and by child worlds, which share the
+  working directory). Each run now names its own file (`MARINA_BENCH_RESULT_FILE`, keyed by run
+  id) and reads exactly that.
 - `arena shadow run … --forecaster discovered` (CLI and `MARINA_ARENA_SHADOW`) never saw the
   world's promoted signals and silently recorded the nowcast instead.
 - In-world `benchmark run` measured nothing: the runner never told the harness this instance's

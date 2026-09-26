@@ -13,7 +13,7 @@
  * we read the newest matching file once the subprocess exits.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { MarinaDB } from "../persistence/database";
 import type { EngineEvent, EntityId } from "../types";
@@ -170,6 +170,7 @@ export function harnessInvocation(
   benchmark: string,
   config: { limit: number; seed: number; model: string; judgeModel?: string; concurrency: number },
   target: HarnessTarget,
+  resultFile?: string,
 ): { args: string[]; env: Record<string, string> } {
   const args = [
     "run",
@@ -192,6 +193,7 @@ export function harnessInvocation(
   if (config.judgeModel) args.push("--judge-model", config.judgeModel);
   const env: Record<string, string> = {};
   if (target.apiKey) env.MARINA_BENCH_API_KEY = target.apiKey;
+  if (resultFile) env.MARINA_BENCH_RESULT_FILE = resultFile;
   return { args, env };
 }
 
@@ -302,7 +304,8 @@ export class BenchmarkRunner {
     },
     started: number,
   ): Promise<void> {
-    const { args, env } = harnessInvocation(opts.benchmark, config, this.target());
+    const resultFile = join(process.cwd(), RESULTS_DIR, `${id}.json`);
+    const { args, env } = harnessInvocation(opts.benchmark, config, this.target(), resultFile);
 
     let score: number | null = null;
     let breakdownJson: string | null = null;
@@ -325,7 +328,7 @@ export class BenchmarkRunner {
         throw new Error(`harness exited ${exitCode}: ${err.slice(0, 500)}`);
       }
 
-      const result = this.readLatestResult(opts.benchmark, started);
+      const result = this.readResult(resultFile);
       if (!result) {
         throw new Error("harness completed but no result file found");
       }
@@ -453,39 +456,19 @@ export class BenchmarkRunner {
   }
 
   /**
-   * The harness writes results as benchmarks/results/<bench>-passthrough-<ts>.json.
-   * Pick the newest one whose mtime is >= this run's start timestamp.
+   * The harness wrote this run's result to the file the runner named for it
+   * (`MARINA_BENCH_RESULT_FILE`). Reading an exact path — not "the newest
+   * file for this dataset" — keeps concurrent runs, in this world or in child
+   * worlds sharing the working directory, from reading each other's results.
    */
-  private readLatestResult(
-    benchmark: string,
-    startedAfter: number,
-  ): {
+  private readResult(path: string): {
     scores?: { overall?: number; breakdown?: Record<string, number> };
     metadata?: { total?: number; answered?: number };
     items?: ResultItemRaw[];
   } | null {
-    const dir = join(process.cwd(), RESULTS_DIR);
-    if (!existsSync(dir)) return null;
-    // The harness saves as <dataset>-<mode>-<ts>.json. For some benchmarks the
-    // dataset basename differs from the benchmark key (e.g. aime → aime-2024,
-    // simple-qa → simpleqa). Derive the prefix from BENCHMARKS[key].datasetFile
-    // so the lookup works for every registered benchmark.
-    const spec = BENCHMARKS[benchmark];
-    const datasetBase = spec ? spec.datasetFile.replace(/\.json$/, "") : benchmark;
-    const prefix = `${datasetBase}-passthrough-`;
-    const files = readdirSync(dir)
-      .filter((f) => f.startsWith(prefix) && f.endsWith(".json"))
-      .map((f) => {
-        const full = join(dir, f);
-        return { path: full, mtime: statSync(full).mtimeMs };
-      })
-      .filter((f) => f.mtime >= startedAfter - 5000) // 5s fudge for clock skew
-      .sort((a, b) => b.mtime - a.mtime);
-    if (files.length === 0) return null;
-    const first = files[0];
-    if (!first) return null;
+    if (!existsSync(path)) return null;
     try {
-      return JSON.parse(readFileSync(first.path, "utf-8"));
+      return JSON.parse(readFileSync(path, "utf-8"));
     } catch {
       return null;
     }
