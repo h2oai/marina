@@ -12,6 +12,7 @@ import { localOutputBudget } from "../../engine/constants";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
+import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
 import type { EngineEvent, EntityId } from "../../types";
 import {
   encodeMemoryReceiptAttribute,
@@ -25,7 +26,7 @@ import {
   localProviderBaseUrl,
   localProviderContextWindow,
 } from "../model-discovery";
-import { UnsupportedParameterError } from "../openai-errors";
+import { openaiErrorBody, UnsupportedParameterError } from "../openai-errors";
 import type { InjectionFormat } from "../passthru-context";
 import {
   normalizeTextualToolCalls,
@@ -906,6 +907,17 @@ export async function proxyToUpstream(
     injectedSystemTail?: boolean;
   },
 ): Promise<Response> {
+  // The world's daily budget is checked before any upstream call is made.
+  const capped = dailyCapRefusal();
+  if (capped) {
+    return new Response(
+      JSON.stringify(openaiErrorBody(429, capped, { code: "spend_cap_reached" })),
+      {
+        status: 429,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }
   const wantStream = body.stream === true;
   let attemptedUpstream = false;
   let lastTarget: string | undefined;
@@ -1173,6 +1185,7 @@ async function traceProxyResponse(
   ) => {
     if (terminal) return;
     terminal = true;
+    if (phase === "completed") recordSpend("model_api", metrics.costUsd);
     engine.logEvent({
       type: "model_request_lifecycle",
       phase,

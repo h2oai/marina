@@ -24,6 +24,14 @@ world autonomy continue without it. Promotion does not replace, merge, or restar
 and does not silently copy memory between databases. A running preferred candidate remains running;
 a stopped one remains stopped. This separation avoids confusing rollout state with process liveness.
 
+## Spend
+
+Every child world starts with its own daily spend cap — $50 unless the parent sets
+`MARINA_CHILD_DAILY_SPEND_CAP_USD` — enforced inside the child on everything it pays upstream
+(model calls, benchmark runs, decisions, forecasts). The child's `readiness` shows today's spend;
+at the cap its model calls are refused until 00:00 UTC. The parent's own budget
+(`MARINA_DAILY_SPEND_CAP_USD`) is separate.
+
 ## Boundaries
 
 - Source launch is available when Marina is running from a checkout containing `src/main.ts`. Packaged

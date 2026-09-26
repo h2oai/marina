@@ -7,6 +7,7 @@
  * per-IP limit like every /v1 route.
  */
 
+import { dailyCapRefusal } from "../engine/spend-ledger";
 import type { ForecastKind } from "../forecast/question";
 import { errorJson, json } from "./model-api/shared";
 
@@ -32,6 +33,8 @@ export async function handleForecast(req: Request): Promise<Response> {
     import("../forecast/question"),
     import("../forecast/service"),
   ]);
+  const capped = dailyCapRefusal();
+  if (capped) return errorJson(429, capped, { code: "spend_cap_reached" });
   const made = forecastDeps();
   if ("error" in made) return errorJson(503, made.error, { code: "forecast_unavailable" });
   const answer = await forecastQuestion(

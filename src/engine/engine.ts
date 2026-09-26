@@ -74,6 +74,7 @@ import { RoomSandbox } from "./room-sandbox";
 import { checkGateForExecution, grantGatesForRank, recordGateExecution } from "./safety-gates";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
 import { ShellRuntime } from "./shell-runtime";
+import { attachSpendLedger } from "./spend-ledger";
 import { registerTickJobs } from "./tick-jobs";
 import { type TickJobStatus, TickScheduler } from "./tick-scheduler";
 import { isLocalProfile, isLocalUngated } from "./trust-profile";
@@ -260,6 +261,17 @@ export class Engine {
       });
       // Reattach persisted crews from previous boot. Idempotent.
       this.crewManager.loadFromDb();
+
+      // Daily spend ledger: this world's upstream dollars, persisted by day, so
+      // MARINA_DAILY_SPEND_CAP_USD survives a restart (src/engine/spend-ledger.ts).
+      const spendDb = this.db;
+      attachSpendLedger({
+        add: (day, source, usd) =>
+          tryLog(this.logger, "spend", "Daily spend not recorded", () => {
+            spendDb.addDailySpend(day, source, usd);
+          }),
+        totalFor: (day) => spendDb.getDailySpend(day).reduce((sum, row) => sum + row.cost_usd, 0),
+      });
 
       // Benchmark runner — spawns the harness subprocess + persists runs
       this.benchmarkRunner = new BenchmarkRunner(

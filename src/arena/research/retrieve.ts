@@ -9,6 +9,7 @@
  * API) plug in behind the same interface.
  */
 
+import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
 import { guardedFetch } from "../../net/url-guard";
 import type { ResearchBrief } from "./briefs";
 
@@ -50,6 +51,8 @@ export function openRouterWebRetriever(opts: OpenRouterWebOptions): Retriever {
         { maxHops: 0 },
       ));
   return async (brief) => {
+    const capped = dailyCapRefusal();
+    if (capped) throw new Error(capped);
     const res = await fetcher("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${opts.apiKey}`, "Content-Type": "application/json" },
@@ -87,6 +90,7 @@ export function openRouterWebRetriever(opts: OpenRouterWebOptions): Retriever {
       seen.add(url);
       sources.push({ url, ...(a.url_citation?.title ? { title: a.url_citation.title } : {}) });
     }
+    recordSpend("forecast", data.usage?.cost);
     return {
       report,
       sources,

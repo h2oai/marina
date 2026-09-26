@@ -3654,4 +3654,19 @@ CREATE TABLE autonomy_pulse (
 CREATE INDEX idx_autonomy_pulse_at ON autonomy_pulse(at);
 `,
   },
+  // Migration 131: per-world daily spend — every upstream dollar, by source,
+  // behind MARINA_DAILY_SPEND_CAP_USD (src/engine/spend-ledger.ts, db-telemetry.ts).
+  {
+    version: 131,
+    sql: `
+CREATE TABLE spend_daily (
+  day TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('model_api', 'agent', 'decision', 'forecast')),
+  cost_usd REAL NOT NULL DEFAULT 0,
+  calls INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (day, source)
+);
+`,
+  },
 ];

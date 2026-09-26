@@ -4,6 +4,7 @@
 import type {
   AutonomyPulseInput,
   AutonomyPulseRow,
+  DailySpendRow,
   PrimitiveUsageSummary,
   ProductivitySummary,
   ProductivityTrendPoint,
@@ -63,6 +64,8 @@ export interface TelemetryStore {
   getPrimitiveUsageLeaderboard(limit?: number): PrimitiveUsageSummary[];
   recordAutonomyPulse(pulse: AutonomyPulseInput): void;
   listAutonomyPulse(sinceMs: number): AutonomyPulseRow[];
+  addDailySpend(day: string, source: string, usd: number): void;
+  getDailySpend(day: string): DailySpendRow[];
 }
 
 /** Runtime mirror of `TelemetryStore`'s method names — the drift test compares it to the facade. */
@@ -79,6 +82,8 @@ export const TELEMETRY_STORE_METHODS = [
   "getPrimitiveUsageLeaderboard",
   "recordAutonomyPulse",
   "listAutonomyPulse",
+  "addDailySpend",
+  "getDailySpend",
 ] as const satisfies readonly (keyof TelemetryStore)[];
 
 export const TELEMETRY_STORE_COMPLETE: ExactKeys<TelemetryStore, typeof TELEMETRY_STORE_METHODS> =

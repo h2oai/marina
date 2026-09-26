@@ -6,6 +6,7 @@ import { decisionConfigFromEnv, decisionGateEnabled } from "../decisions/config"
 import { decisionHealth } from "../decisions/health";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
+import { dailySpend, formatSpendUsd } from "./spend-ledger";
 import { getTrustProfile, isLocalUngated, isOpenApiMode, type TrustProfile } from "./trust-profile";
 
 /**
@@ -289,6 +290,24 @@ export function computeReadiness(engine: Engine): ReadinessReport {
           remediation: "Set TABH2O_API_KEY to enable tabular forecasting.",
         },
   );
+
+  // ── Daily spend — the world's upstream dollars today vs its cap ────────────
+  const spend = dailySpend(env);
+  if (spend.capUsd !== undefined) {
+    const share = spend.spentUsd / spend.capUsd;
+    checks.push({
+      id: "daily-spend",
+      label: "Daily spend",
+      status: spend.reached ? "off" : share >= 0.8 ? "degraded" : "ok",
+      detail: `${formatSpendUsd(spend.spentUsd)} of ${formatSpendUsd(spend.capUsd)} today (UTC)${spend.reached ? " — model calls, decisions and forecasts are refused; agents paused" : ""}`,
+      ...(spend.reached || share >= 0.8
+        ? {
+            remediation:
+              "Wait for 00:00 UTC, or raise MARINA_DAILY_SPEND_CAP_USD (operator env) if the spend is intended.",
+          }
+        : {}),
+    });
+  }
 
   // ── Model API (/v1) — Marina-as-an-LLM for external clients ───────────────
   const apiAuth = !!env.MODEL_API_KEYS || !!env.MARINA_LOCAL_API_KEY || isOpenApiMode(env);

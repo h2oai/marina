@@ -5,6 +5,7 @@ import { RateLimiter } from "../../auth/rate-limiter";
 import type { ForecastAnswer } from "../../forecast/question";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, RoomContext } from "../../types";
+import { dailyCapRefusal } from "../spend-ledger";
 
 const USAGE = "Usage: forecast <question>   e.g. forecast Will the Fed cut rates in October 2026?";
 /** Each forecast spends real money (web research + several models): a small per-entity budget. */
@@ -25,6 +26,11 @@ export function forecastCommand(): CommandDef {
     handler: (ctx: RoomContext, input) => {
       const question = input.args.trim();
       if (!question) return ctx.send(input.entity, USAGE);
+      const capped = dailyCapRefusal();
+      if (capped) {
+        ctx.send(input.entity, `Not forecasting: ${capped}.`);
+        return;
+      }
       if (!limiter.consume(input.entity)) {
         return ctx.send(
           input.entity,

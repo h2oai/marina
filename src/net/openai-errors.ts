@@ -27,7 +27,9 @@ export type OpenAIErrorCode =
   // POST /v1/decisions while MARINA_DECISIONS is off (src/net/decisions-api.ts).
   | "decisions_disabled"
   // POST /v1/forecast without the keys forecasting needs (src/net/forecast-api.ts).
-  | "forecast_unavailable";
+  | "forecast_unavailable"
+  // The world's MARINA_DAILY_SPEND_CAP_USD is spent (src/engine/spend-ledger.ts).
+  | "spend_cap_reached";
 
 export type OpenAIErrorType =
   | "invalid_request_error"

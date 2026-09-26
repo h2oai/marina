@@ -11,6 +11,7 @@
 import type { Message, TextContent } from "@earendil-works/pi-ai";
 import { resolveModel } from "../agent/lean-agent-adapter";
 import { piModels } from "../agent/pi-models";
+import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import { HUGGINGFACE_ENV_KEYS } from "../net/model-discovery";
 import type { Complete } from "./model-forecaster";
 
@@ -49,6 +50,8 @@ export function modelComplete(
   const model = resolveModel(spec);
   const usage: Usage = { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
   const complete: Complete = async (system, user) => {
+    const capped = dailyCapRefusal(env);
+    if (capped) throw new Error(capped);
     const messages = [{ role: "user", content: user, timestamp: Date.now() }] as Message[];
     const result = await piModels.completeSimple(
       model,
@@ -63,6 +66,7 @@ export function modelComplete(
     usage.inputTokens += result.usage?.input ?? 0;
     usage.outputTokens += result.usage?.output ?? 0;
     usage.costUsd += result.usage?.cost?.total ?? 0;
+    recordSpend("forecast", result.usage?.cost?.total);
     if (result.stopReason === "error") throw new Error(result.errorMessage ?? "model error");
     return (Array.isArray(result.content) ? result.content : [])
       .filter((b): b is TextContent => b.type === "text")

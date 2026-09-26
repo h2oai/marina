@@ -110,7 +110,8 @@ export class DecisionError extends Error {
       | "timeout"
       | "upstream_error"
       | "invalid_response"
-      | "invalid_request",
+      | "invalid_request"
+      | "spend_cap",
     readonly status = 502,
   ) {
     super(message);
