@@ -3615,4 +3615,25 @@ CREATE TABLE arena_shadow (
 );
 `,
   },
+  // Migration 129: judge observations — a decision backend's opinion of a task
+  // submission, kept to measure it against the creator's verdict (db-decisions.ts).
+  {
+    version: 129,
+    sql: `
+CREATE TABLE judge_observations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL,
+  claimant_name TEXT NOT NULL,
+  evaluator TEXT NOT NULL,
+  calibrated INTEGER NOT NULL DEFAULT 1,
+  mode TEXT NOT NULL CHECK (mode IN ('observe', 'on')),
+  opinion TEXT NOT NULL CHECK (opinion IN ('pass', 'fail', 'none')),
+  signals TEXT NOT NULL,
+  error TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX idx_judge_observations_claim ON judge_observations(task_id, claimant_name);
+CREATE INDEX idx_judge_observations_evaluator ON judge_observations(evaluator, id);
+`,
+  },
 ];

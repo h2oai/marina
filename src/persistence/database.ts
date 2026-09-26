@@ -35,6 +35,7 @@ import * as commandsDb from "./db-commands";
 import * as competenceDb from "./db-competence";
 import * as connectorsDb from "./db-connectors";
 import * as crewsDb from "./db-crews";
+import * as decisionsDb from "./db-decisions";
 import * as directMessagesDb from "./db-direct-messages";
 import * as economicsDb from "./db-economics";
 import * as entitiesDb from "./db-entities";
@@ -2085,6 +2086,18 @@ export class MarinaDB implements MarinaStores {
 
   trimFeedEvents(keepMs: number): number {
     return feedDb.trimFeedEvents(this.db, keepMs);
+  }
+
+  // ─── Judge observations (delegated to db-decisions.ts) ──────────────────
+
+  recordJudgeObservation(row: decisionsDb.JudgeObservationInput): number {
+    return decisionsDb.recordJudgeObservation(this.db, row);
+  }
+
+  listJudgeObservations(
+    opts: { evaluator?: string; limit?: number } = {},
+  ): decisionsDb.JudgeObservationRow[] {
+    return decisionsDb.listJudgeObservations(this.reader, opts);
   }
 
   // ─── Social Simulation Arena (delegated to db-arena.ts) ─────────────────

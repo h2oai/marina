@@ -59,7 +59,7 @@ export async function verifySubmission(
   attempt: number,
   evidence: Evidence[] = [],
 ): Promise<SubmissionVerdict> {
-  const keys = evidence.length ? ["delivered", "grounded"] : ["delivered"];
+  const keys = submissionSupportKeys(evidence.length);
   try {
     const result = await provider.ask({
       state: {
@@ -190,5 +190,21 @@ export function clearSubmissionAttempts(taskId: number, entityId: string): void 
 }
 
 export function decisionVerifyEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.MARINA_DECISION_VERIFY?.trim().toLowerCase() === "on";
+  return decisionVerifyMode(env) === "on";
+}
+
+/**
+ * `MARINA_DECISION_VERIFY`: `off` (default); `on` — the verifier may bounce a
+ * weak submission once; `observe` — score every submission and record the
+ * judge's opinion, never act on it, so its agreement with the creators'
+ * verdicts can be measured (`decision agreement`) before anyone trusts it.
+ */
+export function decisionVerifyMode(env: NodeJS.ProcessEnv = process.env): "off" | "on" | "observe" {
+  const v = env.MARINA_DECISION_VERIFY?.trim().toLowerCase();
+  return v === "on" || v === "observe" ? v : "off";
+}
+
+/** The support questions a submission is judged on (grounded only when evidence was cited). */
+export function submissionSupportKeys(evidenceCount: number): string[] {
+  return evidenceCount ? ["delivered", "grounded"] : ["delivered"];
 }

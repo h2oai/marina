@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { RateLimiter } from "../../auth/rate-limiter";
+import { judgeAgreement } from "../../decisions/agreement";
 import { listApprovals, settleApproval } from "../../decisions/approvals";
 import { getDecisionProvider } from "../../decisions/config";
 import type { Evidence } from "../../decisions/evidence";
@@ -9,6 +10,7 @@ import { loadDecisionCases, qualifyBackend, renderBackendReport } from "../../de
 import type { DecisionProvider } from "../../decisions/types";
 import { checkDraft, chooseOption } from "../../decisions/verify";
 import { bold, dim, header, separator } from "../../net/ansi";
+import type { DecisionsStore } from "../../persistence/interfaces/decisions-store";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
 
@@ -17,6 +19,7 @@ const USAGE = [
   "       decision choose <question> | <option> | <option> [| …]",
   "       decision list | decision approve <token> | decision deny <token> [reason]",
   "       decision qualify   — run the labeled gate + route cases against this world's backend",
+  "       decision agreement — how often each judge agreed with task creators' verdicts",
 ].join("\n");
 
 /** Judge calls cost money: a per-entity budget (burst 10, then one every 6 s). */
@@ -51,6 +54,8 @@ export function decisionCommand(deps: {
   logEvent?: (event: EngineEvent) => void;
   /** Default: the world's configured backend (`MARINA_DECISIONS`). */
   provider?: () => DecisionProvider | undefined;
+  /** Recorded judge opinions (`MARINA_DECISION_VERIFY=observe|on`) for `decision agreement`. */
+  store?: DecisionsStore;
 }): CommandDef {
   const providerOf = deps.provider ?? (() => getDecisionProvider());
   return {
@@ -69,7 +74,52 @@ export function decisionCommand(deps: {
         "check",
         "choose",
         "qualify",
+        "agreement",
       ]);
+
+      if (sub === "agreement") {
+        const configured = providerOf();
+        const now = configured
+          ? `This world judges with ${configured.kind}:${configured.model}${configured.calibrated === false ? " (uncalibrated)" : ""}.`
+          : "No decision backend is configured on this world (MARINA_DECISIONS).";
+        const rows = deps.store?.listJudgeObservations({ limit: 5_000 }) ?? [];
+        const stats = judgeAgreement(rows);
+        if (stats.length === 0) {
+          ctx.send(
+            input.entity,
+            [
+              header("Judge agreement"),
+              separator(),
+              now,
+              "No judged submissions recorded yet. Any backend works — Jev on OpenRouter, a local",
+              "OpenJev (MARINA_DECISIONS=decisions-api + MARINA_DECISION_BASE_URL), TypeSafe, or a",
+              "chat model (chat-classifier). Set MARINA_DECISION_VERIFY=observe to score every",
+              "submission without acting on it; agreement appears as creators approve or reject.",
+            ].join("\n"),
+          );
+          return;
+        }
+        const pct = (n: number, d: number) => (d ? `${Math.round((100 * n) / d)}%` : "n/a");
+        ctx.send(
+          input.entity,
+          [
+            header("Judge agreement with task creators"),
+            separator(),
+            dim(now),
+            ...stats.map(
+              (a) =>
+                `  ${bold(a.evaluator)}${a.calibrated ? "" : dim(" (uncalibrated)")}  agreed ${pct(a.agreed, a.compared)} of ${a.compared}` +
+                dim(
+                  ` · passed-but-rejected ${a.falsePass} · failed-but-approved ${a.falseFail} · no opinion ${a.noOpinion} · awaiting verdict ${a.awaitingVerdict}`,
+                ),
+            ),
+            dim(
+              "Each judge is measured on its own record; one backend's number never vouches for another.",
+            ),
+          ].join("\n"),
+        );
+        return;
+      }
 
       if (sub === "qualify") {
         // Only the world's own backend: naming arbitrary models here would let

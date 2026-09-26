@@ -23,6 +23,7 @@ export type { CompetenceStore } from "./competence-store";
 export type { ConnectorsStore } from "./connectors-store";
 export type { CoreStore } from "./core-store";
 export type { CrewsStore } from "./crews-store";
+export type { DecisionsStore } from "./decisions-store";
 export type { DirectMessagesStore } from "./direct-messages-store";
 export type { EconomicsStore } from "./economics-store";
 export type { EntitiesStore } from "./entities-store";
@@ -90,6 +91,8 @@ import type { CoreStore } from "./core-store";
 import { CORE_STORE_METHODS } from "./core-store";
 import type { CrewsStore } from "./crews-store";
 import { CREWS_STORE_METHODS } from "./crews-store";
+import type { DecisionsStore } from "./decisions-store";
+import { DECISIONS_STORE_METHODS } from "./decisions-store";
 import type { DirectMessagesStore } from "./direct-messages-store";
 import { DIRECT_MESSAGES_STORE_METHODS } from "./direct-messages-store";
 import type { EconomicsStore } from "./economics-store";
@@ -163,6 +166,7 @@ export interface MarinaStores
   extends AgentsStore,
     AlertsStore,
     ArenaStore,
+    DecisionsStore,
     AssetsStore,
     AssociationsStore,
     BenchmarksStore,
@@ -216,6 +220,7 @@ export const STORE_METHOD_MANIFEST: Readonly<Record<string, readonly string[]>> 
   AgentsStore: AGENTS_STORE_METHODS,
   AlertsStore: ALERTS_STORE_METHODS,
   ArenaStore: ARENA_STORE_METHODS,
+  DecisionsStore: DECISIONS_STORE_METHODS,
   AssetsStore: ASSETS_STORE_METHODS,
   AssociationsStore: ASSOCIATIONS_STORE_METHODS,
   BenchmarksStore: BENCHMARKS_STORE_METHODS,
