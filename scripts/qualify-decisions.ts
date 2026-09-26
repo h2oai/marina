@@ -4,7 +4,8 @@
 
 /**
  * Qualify decision backends on labeled gate + route cases
- * (scripts/fixtures/decision-cases.json) and print a comparison.
+ * (src/decisions/decision-cases.json) and print a comparison. In the world,
+ * `decision qualify` runs the same cases against the world's own backend.
  *
  *   bun run qualify:decisions -- --backend jev --backend chat:openai/gpt-6-luna
  *   bun run qualify:decisions -- --backend hf:zai-org/GLM-5.3-Flash
@@ -19,11 +20,17 @@
  * pass --out with a path outside this repo.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { providerFromConfig } from "../src/decisions/config";
-import { type BackendReport, parseDecisionCases, qualifyBackend } from "../src/decisions/qualify";
+import {
+  type BackendReport,
+  DECISION_CASES_PATH,
+  loadDecisionCases,
+  qualifyBackend,
+  renderBackendReport,
+} from "../src/decisions/qualify";
 import type { DecisionProvider } from "../src/decisions/types";
 
 function backendFor(spec: string): DecisionProvider {
@@ -81,21 +88,6 @@ function backendFor(spec: string): DecisionProvider {
   }
 }
 
-const pct = (n: number) => `${(n * 100).toFixed(0)}%`;
-
-function summary(r: BackendReport): string {
-  const missed = r.gate.results.filter((g) => !g.correct).map((g) => `${g.id}→${g.action}`);
-  const misrouted = r.route.results.filter((x) => !x.correct).map((x) => `${x.id}→${x.route}`);
-  return [
-    `${r.model} (${r.backend}${r.calibrated ? "" : ", uncalibrated"})`,
-    `  gate   accuracy ${pct(r.gate.accuracy)} · hold recall ${pct(r.gate.holdRecall)} · false holds ${pct(r.gate.falseHoldRate)} · errors ${r.gate.errors}`,
-    missed.length ? `         wrong: ${missed.join(", ")}` : "         wrong: none",
-    `  route  accuracy ${pct(r.route.accuracy)} · errors ${r.route.errors}`,
-    misrouted.length ? `         wrong: ${misrouted.join(", ")}` : "         wrong: none",
-    `  latency p50 ${r.latencyMs.p50}ms · p95 ${r.latencyMs.p95}ms · cost $${r.costUsd.toFixed(6)}`,
-  ].join("\n");
-}
-
 async function main() {
   const { values } = parseArgs({
     options: {
@@ -104,8 +96,8 @@ async function main() {
       out: { type: "string" },
     },
   });
-  const casesPath = resolve(values.cases ?? `${import.meta.dir}/fixtures/decision-cases.json`);
-  const cases = parseDecisionCases(JSON.parse(readFileSync(casesPath, "utf8")));
+  const casesPath = resolve(values.cases ?? DECISION_CASES_PATH);
+  const cases = loadDecisionCases(casesPath);
   const specs = values.backend?.length ? values.backend : ["jev", "chat:openai/gpt-6-luna"];
   const reports: BackendReport[] = [];
   for (const spec of specs) {
@@ -115,7 +107,7 @@ async function main() {
     );
     reports.push(await qualifyBackend(provider, cases));
   }
-  console.log(reports.map(summary).join("\n\n"));
+  console.log(reports.map(renderBackendReport).join("\n\n"));
   if (values.out) {
     writeFileSync(
       values.out,

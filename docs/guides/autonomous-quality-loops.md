@@ -113,7 +113,8 @@ world qualifies when at least two agents perform three meaningful actions, commu
 once, make at least two Marina tool calls, and observed median model latency remains below 30
 seconds. The evidence window is five minutes, so stale or non-participating demos are visible.
 
-For a repeatable pass/fail probe against a running instance:
+In the world, `readiness autonomy` shows each requirement against what was observed. For a
+repeatable pass/fail probe against a running instance:
 
 ```text
 bun run qualify:autonomy
@@ -122,7 +123,7 @@ bun run qualify:autonomy http://marina.example:3300
 
 The probe polls for up to two minutes by default and exits non-zero with the missing evidence.
 Native evolution has a separate read-only evidence gate; run `bun run qualify:evolution` after a
-controlled protocol trial. See `docs/guides/native-evolution.md` for its exact checks and soak mode.
+controlled protocol trial (`evolve qualify` shows the same verdict in the world). See `docs/guides/native-evolution.md` for its exact checks and soak mode.
 
 ## Opportunistic Agent Negotiation
 

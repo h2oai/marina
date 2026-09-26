@@ -87,6 +87,19 @@ export interface ReadinessReport {
   };
 }
 
+/**
+ * What "autonomy qualified" means, over the last 5 minutes: agents acting on
+ * their own, talking to each other and using Marina's tools, fast enough to
+ * watch. One source for readiness, `readiness autonomy` and `qualify:autonomy`.
+ */
+export const AUTONOMY_REQUIREMENTS = {
+  activeAgents: 2,
+  recentPrimitiveActions: 3,
+  recentCommunications: 1,
+  marinaToolCalls: 2,
+  maximumMedianResponseMs: 30_000,
+} as const;
+
 /** Upstream LLM provider env vars (NOT MODEL_API_KEYS — that's caller auth). */
 const PROVIDER_ENV = [
   "ANTHROPIC_API_KEY",
@@ -436,12 +449,13 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       ? responseDurations[Math.floor(responseDurations.length / 2)]
       : undefined;
   const warmRatio = expectedNames.length > 0 ? warmAgents / expectedNames.length : 0;
+  const req = AUTONOMY_REQUIREMENTS;
   const autonomyQualified =
-    recentPrimitiveActions >= 3 &&
-    activeAgents >= 2 &&
-    recentCommunications >= 1 &&
-    marinaToolCalls >= 2 &&
-    (medianResponseMs === undefined || medianResponseMs < 30_000);
+    recentPrimitiveActions >= req.recentPrimitiveActions &&
+    activeAgents >= req.activeAgents &&
+    recentCommunications >= req.recentCommunications &&
+    marinaToolCalls >= req.marinaToolCalls &&
+    (medianResponseMs === undefined || medianResponseMs < req.maximumMedianResponseMs);
   const score = Math.round(
     (hasKey ? 20 : 0) +
       (env.AGENT_AUTORESPAWN === "true" ? 10 : 0) +

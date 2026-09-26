@@ -3,7 +3,12 @@
 
 import type { ProviderProbeResult } from "../../net/model-api";
 import type { CommandContext, CommandDef } from "../../types";
-import type { ReadinessReport, ReadinessStatus, ReadinessTrustProfile } from "../readiness";
+import {
+  AUTONOMY_REQUIREMENTS,
+  type ReadinessReport,
+  type ReadinessStatus,
+  type ReadinessTrustProfile,
+} from "../readiness";
 import { isLocalUngated } from "../trust-profile";
 
 const ICON: Record<ReadinessStatus, string> = { ok: "✓", degraded: "⚠", off: "✗" };
@@ -70,6 +75,58 @@ export function renderToolCallCheck(r: Pick<ProviderProbeResult, "toolCallOk">):
   return r.toolCallOk ? "tool call ok" : "TOOL CALL DROPPED";
 }
 
+/**
+ * `readiness autonomy`: the evidence `qualify:autonomy` waits for, each
+ * requirement against what was observed in the last 5 minutes.
+ */
+export function renderAutonomy(report: ReadinessReport): string[] {
+  const d = report.demo;
+  const req = AUTONOMY_REQUIREMENTS;
+  const row = (ok: boolean, label: string, have: string, need: string) =>
+    `  ${ok ? "✓" : "✗"} ${label.padEnd(26)} ${have.padStart(6)}  (need ${need})`;
+  const median = d.medianResponseMs;
+  return [
+    `Autonomy (last 5 min): ${d.autonomyQualified ? "QUALIFIED" : "not yet"}`,
+    row(
+      d.activeAgents >= req.activeAgents,
+      "active agents",
+      String(d.activeAgents),
+      `≥ ${req.activeAgents}`,
+    ),
+    row(
+      d.recentPrimitiveActions >= req.recentPrimitiveActions,
+      "meaningful world actions",
+      String(d.recentPrimitiveActions),
+      `≥ ${req.recentPrimitiveActions}`,
+    ),
+    row(
+      d.recentCommunications >= req.recentCommunications,
+      "agent communications",
+      String(d.recentCommunications),
+      `≥ ${req.recentCommunications}`,
+    ),
+    row(
+      d.marinaToolCalls >= req.marinaToolCalls,
+      "Marina tool calls",
+      String(d.marinaToolCalls),
+      `≥ ${req.marinaToolCalls}`,
+    ),
+    row(
+      median === undefined || median < req.maximumMedianResponseMs,
+      "median response",
+      median === undefined ? "n/a" : `${Math.round(median / 1000)}s`,
+      `< ${req.maximumMedianResponseMs / 1000}s`,
+    ),
+    ...(d.autonomyQualified
+      ? []
+      : [
+          "",
+          "  → Run a multi-agent task with at least two agents, a targeted handoff and two Marina tool",
+          "    calls; watch it with `productivity primitives`. From outside: bun run qualify:autonomy",
+        ]),
+  ];
+}
+
 export function readinessCommand(deps: {
   readiness: () => ReadinessReport;
   probeProviders?: (providers?: string[]) => Promise<ProviderProbeResult[]>;
@@ -77,7 +134,7 @@ export function readinessCommand(deps: {
   return {
     name: "readiness",
     aliases: ["doctor", "health"],
-    help: "Show which Marina capabilities are active, degraded, or off — with fixes. `readiness providers [name]` sends one tiny request per configured LLM provider and checks the reply shape.",
+    help: "Show which Marina capabilities are active, degraded, or off — with fixes. `readiness providers [name]` sends one tiny request per configured LLM provider and checks the reply shape. `readiness autonomy` shows whether agents are acting on their own right now, requirement by requirement.",
     handler: async (ctx, input) => {
       const sub = input.tokens[0]?.toLowerCase();
       if (sub === "providers" || sub === "probe") {
@@ -97,6 +154,10 @@ export function readinessCommand(deps: {
         const only = input.tokens.slice(1).map((a) => a.toLowerCase());
         const results = await deps.probeProviders(only.length > 0 ? only : undefined);
         ctx.send(input.entity, renderProviderProbe(results).join("\n"));
+        return;
+      }
+      if (sub === "autonomy") {
+        ctx.send(input.entity, renderAutonomy(deps.readiness()).join("\n"));
         return;
       }
       const report = deps.readiness();

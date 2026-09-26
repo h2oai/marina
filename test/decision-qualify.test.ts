@@ -13,7 +13,7 @@ import {
 } from "../src/decisions/qualify";
 import type { DecisionProvider } from "../src/decisions/types";
 
-const CASES = join(import.meta.dir, "../scripts/fixtures/decision-cases.json");
+const CASES = join(import.meta.dir, "../src/decisions/decision-cases.json");
 
 describe("decision qualification", () => {
   it("ships a valid, balanced labeled case set", () => {

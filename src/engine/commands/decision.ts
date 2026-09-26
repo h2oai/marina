@@ -5,6 +5,8 @@ import { RateLimiter } from "../../auth/rate-limiter";
 import { listApprovals, settleApproval } from "../../decisions/approvals";
 import { getDecisionProvider } from "../../decisions/config";
 import type { Evidence } from "../../decisions/evidence";
+import { loadDecisionCases, qualifyBackend, renderBackendReport } from "../../decisions/qualify";
+import type { DecisionProvider } from "../../decisions/types";
 import { checkDraft, chooseOption } from "../../decisions/verify";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
@@ -14,11 +16,25 @@ const USAGE = [
   "Usage: decision check [<request> |] <draft>   — score your own draft before you use it",
   "       decision choose <question> | <option> | <option> [| …]",
   "       decision list | decision approve <token> | decision deny <token> [reason]",
+  "       decision qualify   — run the labeled gate + route cases against this world's backend",
 ].join("\n");
 
 /** Judge calls cost money: a per-entity budget (burst 10, then one every 6 s). */
 const judgeLimiter = new RateLimiter({ maxTokens: 10, refillRate: 1, refillInterval: 6_000 });
 const MAX_OPTIONS = 8;
+/** A qualification is ~20 billed calls: two per entity, then one every 30 min, one at a time. */
+const qualifyLimiter = new RateLimiter({
+  maxTokens: 2,
+  refillRate: 1,
+  refillInterval: 30 * 60_000,
+});
+let qualifying = false;
+
+/** Test hook: the qualify limiter and latch are module state. */
+export function resetDecisionQualifyForTests(entities: string[]): void {
+  for (const e of entities) qualifyLimiter.reset(e);
+  qualifying = false;
+}
 
 /**
  * `decision` — the harness-decision primitive as a TOOL any entity can reach
@@ -33,7 +49,10 @@ export function decisionCommand(deps: {
   /** Resolve `note:N` / `task:N` / `chronicle:N` refs the caller may read. */
   resolveEvidence?: (actor: { name: string; id: string }, text: string) => Evidence[];
   logEvent?: (event: EngineEvent) => void;
+  /** Default: the world's configured backend (`MARINA_DECISIONS`). */
+  provider?: () => DecisionProvider | undefined;
 }): CommandDef {
+  const providerOf = deps.provider ?? (() => getDecisionProvider());
   return {
     name: "decision",
     aliases: ["decisions"],
@@ -49,10 +68,70 @@ export function decisionCommand(deps: {
         "deny",
         "check",
         "choose",
+        "qualify",
       ]);
 
+      if (sub === "qualify") {
+        // Only the world's own backend: naming arbitrary models here would let
+        // anyone spend the operator's keys. Comparing backends stays an
+        // operator step (`bun run qualify:decisions --backend …`).
+        const provider = providerOf();
+        if (!provider) {
+          ctx.send(
+            input.entity,
+            "No decision backend is configured on this world (the operator sets MARINA_DECISIONS).",
+          );
+          return;
+        }
+        if (qualifying) {
+          ctx.send(
+            input.entity,
+            "A qualification is already running — try again when it finishes.",
+          );
+          return;
+        }
+        if (!qualifyLimiter.consume(input.entity)) {
+          ctx.send(
+            input.entity,
+            "Qualification is rate limited (each run makes ~20 billed calls) — try again later.",
+          );
+          return;
+        }
+        const cases = loadDecisionCases();
+        qualifying = true;
+        ctx.send(
+          input.entity,
+          dim(
+            `Qualifying ${provider.model} on ${cases.gate.length} gate + ${cases.route.cases.length} route cases…`,
+          ),
+        );
+        return qualifyBackend(provider, cases)
+          .then((report) =>
+            ctx.send(
+              input.entity,
+              [
+                header("Decision backend qualification"),
+                separator(),
+                renderBackendReport(report),
+                dim(
+                  "Hold recall = dangerous calls held; false holds = benign calls held. Compare backends: bun run qualify:decisions",
+                ),
+              ].join("\n"),
+            ),
+          )
+          .catch((err) =>
+            ctx.send(
+              input.entity,
+              `Qualification failed: ${err instanceof Error ? err.message : String(err)}`,
+            ),
+          )
+          .finally(() => {
+            qualifying = false;
+          });
+      }
+
       if (sub === "check" || sub === "choose") {
-        const provider = getDecisionProvider();
+        const provider = providerOf();
         if (!provider) {
           ctx.send(
             input.entity,

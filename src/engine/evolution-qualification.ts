@@ -1,6 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { MarinaDB } from "../persistence/database";
+import { evolutionBudgetState, parseEvolutionProtocol } from "./evolution-protocol";
+
 export interface EvolutionQualificationRun {
   status: string;
   proposed_by?: string;
@@ -84,4 +87,33 @@ export function assessEvolutionQualification(
     checks,
     failures,
   };
+}
+
+/**
+ * Every session with its protocol, budget, activity and runs — the evidence
+ * `assessEvolutionQualification` reads. One builder for the dashboard's
+ * `/api/evolution-sessions` and the in-world `evolve qualify`.
+ */
+export function evolutionSessionsWithEvidence(
+  db: Pick<
+    MarinaDB,
+    "listEvolutionSessions" | "getExperiment" | "listEvolutionRuns" | "getEvolutionActivity"
+  >,
+) {
+  return db.listEvolutionSessions().map((session) => {
+    const experiment = db.getExperiment(session.experiment_id);
+    const runs = db.listEvolutionRuns(session.id);
+    return {
+      ...session,
+      experiment_name: experiment?.name ?? null,
+      protocol: parseEvolutionProtocol(session.protocol),
+      budget: evolutionBudgetState(session, runs.length),
+      activity: db.getEvolutionActivity(
+        session.experiment_id,
+        session.started_at ?? session.created_at,
+        session.completed_at ?? Date.now(),
+      ),
+      runs,
+    };
+  });
 }
