@@ -14,6 +14,21 @@ describe("agent tool reference monitor", () => {
     );
   });
 
+  it("treats changing an existing role or trait as consequential, creating one as a plain mutation", () => {
+    for (const command of [
+      "role edit scout tone terse",
+      "role delete scout",
+      "role reload scout",
+      "trait delete curious",
+      "agent config Ada role scout-v2",
+    ]) {
+      expect(classifyToolRisk("marina_command", { command })).toBe("consequential");
+    }
+    expect(
+      classifyToolRisk("marina_command", { command: "role create scout-v2 traits curious" }),
+    ).toBe("mutate");
+  });
+
   it("blocks policy manipulation carried by untrusted context", () => {
     const decision = mediateToolCall(
       "marina_command",

@@ -5,6 +5,7 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB, TraitCapabilities, TraitRow } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getRank } from "../permissions";
+import { boundRoleOf, checkRoleEdit, successorHint } from "../role-guard";
 import { requiresPersistence } from "./command-messages";
 import {
   hasTraitCapabilities,
@@ -137,9 +138,20 @@ function formatCapabilities(caps: TraitCapabilities): string[] {
   return lines;
 }
 
+/** A role's trait list (stored as a JSON array string). */
+function parseTraitList(raw: string): string[] {
+  try {
+    const list = JSON.parse(raw) as unknown;
+    return Array.isArray(list) ? list.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function traitCommand(deps: {
   db?: MarinaDB;
   getEntity?: (id: EntityId) => Entity | undefined;
+  listAgents?: () => { name: string; role: string }[];
 }): CommandDef {
   return {
     name: "trait",
@@ -321,7 +333,29 @@ export function traitCommand(deps: {
             ctx.send(input.entity, `Trait "${name}" not found.`);
             return;
           }
+          // Deleting a trait changes every role built from it. Never the
+          // caller's own role; otherwise behind `role.edit`. (Creating a trait
+          // is free: nothing uses it until a new role does.)
+          let record = () => {};
+          if (entity) {
+            const mine = boundRoleOf(entity, deps.listAgents?.() ?? []);
+            const myRole = mine ? db.getRole(mine) : undefined;
+            if (mine && myRole && parseTraitList(myRole.traits).includes(name)) {
+              ctx.send(
+                input.entity,
+                `Trait "${name}" is part of your role "${mine}" — no one changes the role they are running on. ${successorHint(mine)}`,
+              );
+              return;
+            }
+            const gate = checkRoleEdit(db, entity, `trait delete ${name}`);
+            if ("reason" in gate) {
+              ctx.send(input.entity, gate.reason);
+              return;
+            }
+            record = gate.record;
+          }
           db.deleteTrait(name);
+          record();
           ctx.send(input.entity, `Trait "${name}" deleted.`);
           return;
         }

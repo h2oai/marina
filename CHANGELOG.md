@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Self-improvement by succession: an agent never changes the role it runs on (`role edit|delete|
+  reload`, `trait delete` inside it, `agent config <self> role` — refused in every profile); it
+  creates a new role and spawns an improved iteration. A new `role.edit` safety gate (standing 40,
+  3 witnessed demonstrations, granted with rank 5) covers changing an existing role or trait, and
+  those commands are now `consequential` for the decision gate. On shared and public instances a
+  rank-3 agent's first edits of existing roles now need a witness.
 - In-world qualification views: `decision qualify` (the labeled gate and route cases against the
   world's own decision backend; rate limited), `readiness autonomy` (each autonomy requirement vs
   what was observed in the last 5 minutes) and `evolve qualify` (the `qualify:evolution` verdict,

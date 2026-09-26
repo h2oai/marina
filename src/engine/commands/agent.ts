@@ -15,8 +15,10 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, EntityId, RoomContext } from "../../types";
 import { MARINA_DEFAULT_MODEL, MAX_SPAWN_DEPTH, STANDING_PER_SPAWNED_CHILD } from "../constants";
+import { sanitizeEntityName } from "../entity-name";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
 import { getRank } from "../permissions";
+import { successorHint } from "../role-guard";
 import { checkGateForExecution, recordGateExecution, SAFETY_GATES } from "../safety-gates";
 
 const REQUIRES_BUILDER_RANK =
@@ -303,6 +305,19 @@ Usage:
         case "config": {
           if (rank < 4) {
             ctx.send(input.entity, REQUIRES_BUILDER_RANK);
+            return;
+          }
+          // Never rebind yourself to another role: improve by spawning an
+          // improved iteration instead (src/engine/role-guard.ts).
+          if (
+            tokens[2]?.toLowerCase() === "role" &&
+            tokens[1] &&
+            sanitizeEntityName(tokens[1]) === sanitizeEntityName(entity.name)
+          ) {
+            ctx.send(
+              input.entity,
+              `No one changes the role they are running on. ${successorHint(tokens.slice(3).join(" ") || "<role>")}`,
+            );
             return;
           }
           return handleConfig(ctx, input.entity, tokens.slice(1), deps);

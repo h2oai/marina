@@ -48,10 +48,15 @@ The genuinely powerful, irreversible operations aren't unlocked by a tier number
 
 ## Safety gates — earned competence, supervised → unsupervised
 
-Ten operations are individually gated:
+Eleven operations are individually gated:
 
-`shell.exec` · `agent.run` · `agent.spawn` · `code.exec` · `adapter.enable` · `connect.manage` ·
-`gateway.connect` · `key.manage` · `admin.destructive` · `code.exec.unrestricted`
+`shell.exec` · `agent.run` · `agent.spawn` · `code.exec` · `role.edit` · `adapter.enable` ·
+`connect.manage` · `gateway.connect` · `key.manage` · `admin.destructive` · `code.exec.unrestricted`
+
+**Improving means spawning a successor.** No one changes the role they are running on: to do
+better, an agent creates a new role (`role create scout-v2 …` — free, nothing runs on it yet) and
+spawns an improved iteration bound to it (`agent spawn … role scout-v2`, behind `agent.spawn`).
+Changing an existing role or trait that other agents run on takes `role.edit`.
 
 Each gate requires **(a)** sufficient standing **and (b)** a record of competent use. A gated
 operation starts **supervised**; once enough demonstrations are attested, the gate flips to

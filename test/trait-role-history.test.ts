@@ -6,6 +6,7 @@ import { roleCommand } from "../src/engine/commands/role";
 import { systemPromptCommand } from "../src/engine/commands/system-prompt";
 import { traitCommand } from "../src/engine/commands/trait";
 import { Engine } from "../src/engine/engine";
+import { grant } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
@@ -249,7 +250,9 @@ describe("Trait/role edit history (audit trail)", () => {
 
   describe("role reload (propagate-on-edit)", () => {
     // biome-ignore lint/suspicious/noExplicitAny: test stub
-    const rank3 = () => ({ properties: { rank: 3 } }) as any;
+    const rank3 = () => ({ id: "e1", name: "Ops", properties: { rank: 3 } }) as any;
+    // An operator-granted `role.edit` holder: reloading changes live behavior.
+    beforeEach(() => grant(db, "e1", "role.edit"));
 
     it("reconfigures only running agents bound to the role", async () => {
       db.saveRole({ name: "scout", traits: [], createdBy: "ada" });

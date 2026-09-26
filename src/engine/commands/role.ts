@@ -13,6 +13,7 @@ import type { MarinaDB, RoleRow, TraitCapabilities, TraitRow } from "../../persi
 import type { EditHistoryRow } from "../../persistence/db-agents";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 import { getRank } from "../permissions";
+import { checkRoleEdit, refuseOwnRole } from "../role-guard";
 import { requiresPersistence } from "./command-messages";
 
 interface RoleInspectionMetadata {
@@ -154,6 +155,27 @@ export function roleCommand(deps: {
         ctx.send(input.entity, requiresPersistence("roles"));
         return;
       }
+      const guardDb = deps.db;
+      /**
+       * An existing role: never the caller's own, and behind `role.edit`.
+       * Returns the callback that records the gated execution once the change
+       * is made, or undefined after replying with the refusal.
+       */
+      const guardExistingRole = (name: string, action: string): (() => void) | undefined => {
+        const caller = deps.getEntity?.(input.entity);
+        if (!caller) return () => {};
+        const own = refuseOwnRole(caller, name, deps.listAgents?.() ?? []);
+        if (own) {
+          ctx.send(input.entity, own);
+          return undefined;
+        }
+        const gate = checkRoleEdit(guardDb, caller, `role ${action} ${name}`);
+        if ("reason" in gate) {
+          ctx.send(input.entity, gate.reason);
+          return undefined;
+        }
+        return gate.record;
+      };
       const db = deps.db;
       const tokens = input.tokens;
       const sub = tokens[0]?.toLowerCase();
@@ -310,6 +332,8 @@ export function roleCommand(deps: {
             ctx.send(input.entity, `Role "${name}" not found.`);
             return;
           }
+          const reloadGate = guardExistingRole(name, "reload");
+          if (!reloadGate) return;
           if (!deps.listAgents || !deps.reconfigureAgent) {
             ctx.send(input.entity, "Agent runtime unavailable — cannot reload running agents.");
             return;
@@ -330,6 +354,7 @@ export function roleCommand(deps: {
               failed.push(a.name);
             }
           }
+          if (reloaded.length > 0) reloadGate();
           let msg = `Reloaded role "${name}" into ${reloaded.length} running agent(s)${
             reloaded.length > 0 ? `: ${reloaded.join(", ")}` : ""
           }.`;
@@ -362,6 +387,10 @@ export function roleCommand(deps: {
             ctx.send(input.entity, `Role "${name}" not found. Use "role create" to define it.`);
             return;
           }
+          // Creating is free (nothing runs on a new role until an agent is
+          // spawned on it); editing an existing role changes live behavior.
+          const editGate = sub === "edit" ? guardExistingRole(name, "edit") : () => {};
+          if (!editGate) return;
 
           const opts = parseRoleArgs(tokens.slice(2));
           db.saveRole({
@@ -374,6 +403,7 @@ export function roleCommand(deps: {
             origin: opts.origin,
             createdBy: deps.getEntity?.(input.entity)?.name ?? "unknown",
           });
+          editGate();
           ctx.send(input.entity, `Role "${name}" ${sub === "create" ? "created" : "updated"}.`);
           return;
         }
@@ -393,7 +423,10 @@ export function roleCommand(deps: {
             ctx.send(input.entity, `Role "${name}" not found.`);
             return;
           }
+          const deleteGate = guardExistingRole(name, "delete");
+          if (!deleteGate) return;
           db.deleteRole(name);
+          deleteGate();
           ctx.send(input.entity, `Role "${name}" deleted.`);
           return;
         }
