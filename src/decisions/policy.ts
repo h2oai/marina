@@ -267,6 +267,24 @@ export interface VerifyVerdict {
  * `delivered` for task submissions, both for a submission that cites evidence;
  * `[]` scores quality alone).
  */
+/**
+ * The judge's own opinion of the work against the verify bar — independent of
+ * attempts, confidence waivers or outages, which only shape what the POLICY
+ * does. `none` when the judge gave no usable numbers: an outage is never a pass.
+ */
+export function judgeOpinion(
+  signals: Record<string, number>,
+  supportKeys: readonly string[],
+  policy: VerifyPolicy = DEFAULT_VERIFY_POLICY,
+): "pass" | "fail" | "none" {
+  if (typeof signals.quality !== "number") return "none";
+  if (supportKeys.some((k) => typeof signals[k] !== "number")) return "none";
+  const ok =
+    signals.quality >= policy.acceptQuality &&
+    supportKeys.every((k) => (signals[k] as number) >= policy.minGrounded);
+  return ok ? "pass" : "fail";
+}
+
 export function decideVerify(
   answers: Record<string, DecisionAnswer> | undefined,
   attempt: number,

@@ -5,10 +5,12 @@ import type { TaskManager } from "../../coordination/task-manager";
 import { parseTaskNodeType, TASK_NODE_TYPE_MEANING } from "../../coordination/task-node-type";
 import { getDecisionProvider } from "../../decisions/config";
 import type { Evidence } from "../../decisions/evidence";
+import { judgeOpinion } from "../../decisions/policy";
 import {
   clearSubmissionAttempts,
-  decisionVerifyEnabled,
+  decisionVerifyMode,
   nextSubmissionAttempt,
+  submissionSupportKeys,
   verifySubmission,
 } from "../../decisions/verify";
 import {
@@ -21,6 +23,7 @@ import {
   progressBar,
   separator,
 } from "../../net/ansi";
+import type { JudgeObservationInput } from "../../persistence/db-decisions";
 import type {
   CommandDef,
   EngineEvent,
@@ -68,6 +71,8 @@ export function taskCommand(
   logEvent?: (event: EngineEvent) => void,
   promote?: (entityId: EntityId, rank: EntityRank) => void,
   resolveEvidence?: (actor: { name: string; id: string }, text: string) => Evidence[],
+  /** Durable judge opinions for `decision agreement` (db-decisions.ts). */
+  recordObservation?: (row: JudgeObservationInput) => void,
 ): CommandDef {
   return {
     name: "task",
@@ -434,20 +439,39 @@ export function taskCommand(
             });
           };
           // Verifier (opt-in, src/decisions/verify.ts): only for a live claim,
-          // so a doomed submit never costs a judge call. One bounce at most.
-          const provider = decisionVerifyEnabled() ? getDecisionProvider() : undefined;
+          // so a doomed submit never costs a judge call. `on`: one bounce at
+          // most. `observe`: submit at once, score in the background, record
+          // the judge's opinion and never act on it (`decision agreement`).
+          const mode = decisionVerifyMode();
+          const provider = mode === "off" ? undefined : getDecisionProvider();
           if (!provider || !task || tasks.getClaim(id, input.entity)?.status !== "claimed") {
             record();
             return;
           }
-          const attempt = nextSubmissionAttempt(id, input.entity);
           const evidence = resolveEvidence?.({ name: self.name, id: self.id }, text) ?? [];
-          return verifySubmission(provider, task, text, attempt, evidence).then((verdict) => {
+          const observe = (verdict: Awaited<ReturnType<typeof verifySubmission>>) => {
+            recordObservation?.({
+              taskId: id,
+              claimantName: self.name,
+              evaluator: `${verdict.provider ?? provider.kind}:${verdict.model ?? provider.model}`,
+              calibrated: provider.calibrated !== false,
+              mode: mode === "observe" ? "observe" : "on",
+              opinion: verdict.error
+                ? "none"
+                : judgeOpinion(verdict.signals, submissionSupportKeys(evidence.length)),
+              signals: verdict.signals,
+              ...(verdict.error ? { error: verdict.error.slice(0, 300) } : {}),
+            });
+          };
+          const logVerify = (
+            verdict: Awaited<ReturnType<typeof verifySubmission>>,
+            action: string = verdict.action,
+          ) =>
             logEvent?.({
               type: "agent_decision",
               name: self.name,
               stage: "verify",
-              verdict: verdict.action,
+              verdict: action,
               subject: `task #${id}`,
               reason: verdict.reason,
               signals: verdict.signals,
@@ -458,6 +482,20 @@ export function taskCommand(
               ...(verdict.error ? { error: verdict.error } : {}),
               timestamp: Date.now(),
             });
+          if (mode === "observe") {
+            record();
+            void verifySubmission(provider, task, text, 1, evidence)
+              .then((verdict) => {
+                logVerify(verdict, "observed");
+                observe(verdict);
+              })
+              .catch(() => undefined);
+            return;
+          }
+          const attempt = nextSubmissionAttempt(id, input.entity);
+          return verifySubmission(provider, task, text, attempt, evidence).then((verdict) => {
+            logVerify(verdict);
+            observe(verdict);
             if (verdict.action === "accept") {
               record();
               return;

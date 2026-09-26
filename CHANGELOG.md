@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Judge agreement: `MARINA_DECISION_VERIFY=observe` scores every task submission with the
+  configured decision backend and records the judge's opinion without acting on it
+  (`judge_observations`, migration 129); `decision agreement` compares those opinions with the
+  task creators' approve/reject, per backend (`<kind>:<model>`, calibrated or not). Works with Jev
+  on OpenRouter, a local OpenJev, TypeSafe or a chat classifier, and says so plainly when none is
+  configured.
 - Self-improvement by succession: an agent never changes the role it runs on (`role edit|delete|
   reload`, `trait delete` inside it, `agent config <self> role` — refused in every profile); it
   creates a new role and spawns an improved iteration. A new `role.edit` safety gate (standing 40,

@@ -123,6 +123,7 @@ import { whoCommand } from "./commands/who";
 import { witnessCommand } from "./commands/witness";
 import { workCommand } from "./commands/work";
 import type { Engine } from "./engine";
+import { tryLog } from "./errors";
 import { computeReadiness } from "./readiness";
 
 export function registerBuiltinCommands(engine: Engine): void {
@@ -884,6 +885,9 @@ export function registerBuiltinCommands(engine: Engine): void {
       getEntity: (id) => engine.entities.get(id),
       resolveEvidence: resolveCitedEvidence,
       logEvent: (event) => engine.logEvent(event),
+      get store() {
+        return engine.db;
+      },
     }),
   );
 
@@ -895,6 +899,10 @@ export function registerBuiltinCommands(engine: Engine): void {
         (event) => engine.logEvent(event),
         (eid, rank) => engine.maybePromote(eid, rank),
         resolveCitedEvidence,
+        (row) =>
+          tryLog(engine.logger, "decisions", "Judge observation not recorded", () => {
+            engine.db?.recordJudgeObservation(row);
+          }),
       ),
     );
   }

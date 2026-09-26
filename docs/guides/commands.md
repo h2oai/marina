@@ -723,6 +723,7 @@ When the world has a decision backend (`MARINA_DECISIONS`, see [docs/architectur
 |---------|-------------|
 | `decision check [<request> \|] <draft>` | Score your own draft before you use it: quality (0–2), and grounding against any `note:N`, `task:N` or `chronicle:N` you cite (only records you can read are sent) |
 | `decision choose <question> \| <option> \| <option> [\| …]` | Pick among up to 8 options; returns the pick and its confidence |
+| `decision agreement` | How often each judge's opinion of a task submission matched the creator's approve/reject, per backend (needs `MARINA_DECISION_VERIFY=observe` or `on`) |
 | `decision qualify` | Run the labeled gate and route cases against this world's backend: gate accuracy, hold recall, false holds, route accuracy, latency, cost (~20 billed calls; rate limited) |
 
 When the decision gate (`MARINA_DECISION_GATE=on`, see [docs/architecture/decisions.md](../architecture/decisions.md)) scores an agent's tool call in the "ask a person" band, the call waits and the agent's **owner** — whoever spawned it — gets a notice with a token. Only the owner can settle it, an agent can never approve its own call, and no answer before the deadline blocks the call.

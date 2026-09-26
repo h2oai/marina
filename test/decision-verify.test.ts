@@ -35,6 +35,7 @@ describe("task submit verifier", () => {
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   let backend: ReturnType<typeof Bun.serve>;
   let quality = 0.5;
+  let failing = false;
   const asked: Array<{ state: { submission: string }; questions: Record<string, unknown> }> = [];
   let db: MarinaDB;
   let engine: Engine;
@@ -47,6 +48,7 @@ describe("task submit verifier", () => {
       port: 0,
       async fetch(req) {
         asked.push((await req.json()) as (typeof asked)[number]);
+        if (failing) return new Response("backend down", { status: 503 });
         return Response.json({
           answers: {
             quality: { type: "score", score: quality, confidence: 0.9 },
@@ -63,6 +65,7 @@ describe("task submit verifier", () => {
     process.env.MARINA_DECISION_MODEL = "stub-jev";
     process.env.MARINA_DECISION_BASE_URL = `http://localhost:${backend.port}`;
     process.env.MARINA_DECISION_VERIFY = "on";
+    failing = false;
     asked.length = 0;
     db = new MarinaDB(DB);
     events = [];
@@ -138,5 +141,56 @@ describe("task submit verifier", () => {
     engine.processCommand(bob.entity!, `task submit ${id} I will start tomorrow`);
     expect(claimStatus(id)).toBe("submitted");
     expect(asked).toHaveLength(0);
+  });
+
+  // `observe`: a local Decisions API stands in for any backend (a local OpenJev,
+  // Jev on OpenRouter, TypeSafe) — the judge's opinion is recorded, never acted on.
+  it("observe records the judge's opinion without bouncing, and agreement follows the creator's verdict", async () => {
+    process.env.MARINA_DECISION_VERIFY = "observe";
+    const judged = () => db.listJudgeObservations().length;
+
+    quality = 0.5; // the judge will say "fail"…
+    const weak = claimTask();
+    engine.processCommand(bob.entity!, `task submit ${weak} Rough notes for the east sectors`);
+    expect(claimStatus(weak)).toBe("submitted"); // …but nothing is bounced
+    await until(() => judged() === 1);
+
+    quality = 1.9; // "pass"
+    const good = claimTask();
+    engine.processCommand(bob.entity!, `task submit ${good} Mapped all 25 sectors`);
+    await until(() => judged() === 2);
+
+    failing = true; // an outage is "no opinion", never a pass
+    const down = claimTask();
+    engine.processCommand(bob.entity!, `task submit ${down} Mapped the north wing`);
+    await until(() => judged() === 3);
+
+    const [rowDown] = db.listJudgeObservations();
+    expect(rowDown).toMatchObject({
+      opinion: "none",
+      evaluator: "decisions-api:stub-jev",
+      mode: "observe",
+    });
+
+    // The creator approves both real submissions: one agreement, one false fail.
+    engine.processCommand(alice.entity!, `task approve ${weak} Bob`);
+    engine.processCommand(alice.entity!, `task approve ${good} Bob`);
+    alice.clear();
+    engine.processCommand(alice.entity!, "decision agreement");
+    const text = stripAnsi(alice.lastText());
+    expect(text).toContain("decisions-api:stub-jev");
+    expect(text).toContain("agreed 50% of 2");
+    expect(text).toContain("failed-but-approved 1");
+    expect(text).toContain("no opinion 1");
+    expect(events.some((e) => e.type === "agent_decision" && e.verdict === "observed")).toBe(true);
+  });
+
+  it("agreement says plainly when there is no backend and no data", () => {
+    delete process.env.MARINA_DECISIONS;
+    engine.processCommand(alice.entity!, "decision agreement");
+    const text = stripAnsi(alice.lastText());
+    expect(text).toContain("No decision backend is configured");
+    expect(text).toContain("OpenJev");
+    expect(text).toContain("MARINA_DECISION_VERIFY=observe");
   });
 });
