@@ -1,27 +1,56 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ArenaData } from "../../arena/data";
 import { backtestSeries, forecastRound } from "../../arena/forecast";
 import { arenaData, arenaStatus } from "../../arena/service";
 import { buildForecastBody } from "../../arena/submit";
 import type { ArenaRound } from "../../arena/types";
 import { bold, dim, header, separator } from "../../net/ansi";
 import type { ArenaStore } from "../../persistence/interfaces/arena-store";
+import type { NotesStore } from "../../persistence/interfaces/notes-store";
 import type { CommandDef, RoomContext } from "../../types";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
+import {
+  type ArenaLabDeps,
+  arenaDiscover,
+  arenaEvaluate,
+  arenaShadow,
+  arenaSignals,
+} from "./arena-lab";
 
-const USAGE =
-  "Usage: arena [status] | arena rounds [n] | arena show <round_id> | arena submissions | arena backtest [n]";
-const SUBS = ["status", "rounds", "show", "submissions", "backtest"];
+const USAGE = [
+  "Usage: arena [status] | arena rounds [n] | arena show <round_id> | arena submissions | arena backtest [n]",
+  "       arena evaluate [baseline|nowcast|discovered] [tracker:T] [limit:N]   — score on resolved rounds",
+  "       arena shadow [list] | arena shadow score | arena shadow run <round_id|due> [forecaster:F]",
+  "       arena discover [tracker:T] [n:N] | arena signals [tracker:T]         — find new signals",
+].join("\n");
+const SUBS = [
+  "status",
+  "rounds",
+  "show",
+  "submissions",
+  "backtest",
+  "evaluate",
+  "shadow",
+  "discover",
+  "signals",
+];
 
 /**
- * `arena` — Marina's seat in the Social Simulation Arena (src/arena), readable
- * by everyone in the world: the open questions, what Marina would file and
- * why, and the signed record of what it did file. Read-only by design — filing
- * under the organization's name and holding its key are operator acts
- * (`bun run arena`, `MARINA_ARENA_AUTOPILOT`), never in-world ones.
+ * `arena` — Marina's seat in the Social Simulation Arena (src/arena), open to
+ * everyone in the world: the open questions, what Marina would file and why,
+ * the signed record of what it did file, and the measurement loop — evaluate,
+ * shadow, discover (`arena-lab.ts`; free forecasters only). Filing under the
+ * organization's name and holding its key are operator acts (`bun run arena`,
+ * `MARINA_ARENA_AUTOPILOT`), never in-world ones.
  */
-export function arenaCommand(deps: { store?: ArenaStore }): CommandDef {
+export function arenaCommand(deps: {
+  store?: ArenaStore;
+  notes?: NotesStore;
+  data?: () => ArenaData;
+  propose?: ArenaLabDeps["propose"];
+}): CommandDef {
   return {
     name: "arena",
     aliases: [],
@@ -37,6 +66,18 @@ export function arenaCommand(deps: { store?: ArenaStore }): CommandDef {
         deps.store && arenaStatus().entrant
           ? deps.store.latestArenaSubmission(arenaStatus().entrant!, roundId)?.status
           : undefined;
+
+      const lab: ArenaLabDeps = {
+        store: deps.store,
+        notes: deps.notes,
+        data: deps.data ?? (() => arenaData()),
+        ...(deps.propose ? { propose: deps.propose } : {}),
+      };
+      const rest = input.tokens.slice(1);
+      if (sub === "evaluate") return arenaEvaluate(lab, input.entity, rest, reply).catch(fail);
+      if (sub === "shadow") return arenaShadow(lab, rest, reply).catch(fail);
+      if (sub === "discover") return arenaDiscover(lab, input.entity, rest, reply).catch(fail);
+      if (sub === "signals") return arenaSignals(lab, rest, reply);
 
       if (sub === "status") {
         const s = arenaStatus();
@@ -67,7 +108,8 @@ export function arenaCommand(deps: { store?: ArenaStore }): CommandDef {
 
       if (sub === "rounds") {
         const n = Math.min(Math.max(Number(input.tokens[1]) || 15, 1), 80);
-        return arenaData()
+        return lab
+          .data()
           .openRounds()
           .then((rounds) => {
             if (rounds.length === 0) return reply("No open rounds.");
@@ -90,7 +132,7 @@ export function arenaCommand(deps: { store?: ArenaStore }): CommandDef {
       if (sub === "show") {
         const id = input.tokens[1];
         if (!id) return reply("Usage: arena show <round_id>");
-        const data = arenaData();
+        const data = lab.data();
         return data
           .round(id)
           .then(async (round) => {
@@ -141,7 +183,7 @@ export function arenaCommand(deps: { store?: ArenaStore }): CommandDef {
 
       if (sub === "backtest") {
         const n = Math.min(Math.max(Number(input.tokens[1]) || 20, 1), 60);
-        const data = arenaData();
+        const data = lab.data();
         return data
           .openRounds()
           .then(async (rounds) => {

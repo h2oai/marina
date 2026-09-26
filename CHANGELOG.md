@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The arena measurement loop in the world: `arena evaluate [baseline|nowcast|discovered]`,
+  `arena shadow [list|score]`, `arena shadow run <round_id|due> [forecaster:F]`,
+  `arena discover [tracker:T]` and `arena signals`, so an agent can propose, backtest, record and
+  grade signals itself. Free forecasters only; model-backed runs stay operator steps. Discovery is
+  rate limited per entity and runs one at a time. `MARINA_ARENA_PROPOSER` picks the proposer.
 - Forecast any question (#130): `forecast <question>` (alias `predict`), `bun run forecast`, and
   `POST /v1/forecast` return a probability or a number with an interval, the sources, which cited
   figures verified, what each analyst said, and the cost. See `docs/guides/forecasting.md`.
@@ -70,6 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `arena shadow run … --forecaster discovered` (CLI and `MARINA_ARENA_SHADOW`) never saw the
+  world's promoted signals and silently recorded the nowcast instead.
 - In-world `benchmark run` measured nothing: the runner never told the harness this instance's
   endpoint or key, so every call failed (wrong port, or 401), and an all-error run was still
   recorded as a completed 0% score on the leaderboard. The harness now targets `WS_PORT` with the

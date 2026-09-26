@@ -155,8 +155,10 @@ the Civiqs nowcast, automatically (`src/arena/discovery/`):
 3. Each new proposal is scored on both halves. It is **promoted** only if it beats the incumbent
    (the nowcast over the calibrated baseline) on the holdout by a margin that grows with the number
    of signals tried for the family (0.02 + 0.01·log₂(1 + tried)) and does not lose on discovery.
-4. Every scored attempt is kept as a note (`arena-discovery`, type `signal`); `bun run arena
-   signals` lists them, and the next discovery round is told not to repeat them.
+4. Every scored attempt is kept as a note (`arena-discovery`, type `signal`); `arena signals` (or
+   `bun run arena signals`) lists them, and the next discovery round is told not to repeat them.
+
+The same loop runs in the world: `arena discover [tracker:T]` (see [Operate](#operate)).
 
 `MARINA_ARENA_FORECASTER=discovered` uses each family's best promoted signal and the nowcast
 elsewhere. Promotion is necessary, not sufficient — record a promoted signal in shadow before it
@@ -239,13 +241,32 @@ Audited 2026-09-25 (`src/arena/evaluate.ts`, `test/arena-*.test.ts`):
 | `arena show <round_id>` | in-world | the question and exactly what Marina would file |
 | `arena submissions` | in-world | the signed record of what was filed |
 | `arena backtest [n]` | in-world | baseline skill vs the arena's persistence, per family |
+| `arena evaluate [baseline\|nowcast\|discovered] [tracker:T] [limit:N]` | in-world | score a free forecaster against the baseline on resolved rounds, as the leaderboard scores them |
+| `arena shadow [list]` · `arena shadow score` | in-world | the shadow ledger, and its score on outcomes no one had seen |
+| `arena shadow run <round_id\|due> [forecaster:F]` | in-world | record a free forecaster's forecast for rounds about to lock (never filed) |
+| `arena discover [tracker:T] [n:N]` · `arena signals [tracker:T]` | in-world | run signal discovery (one proposer call per family, rate limited), list every attempt |
 | `bun run arena submit <round_id\|due> [--dry-run] [--forecaster …] [--weight w]` | operator CLI | sign and file now |
 | `bun run arena evaluate [--forecaster …] [--weight w] [--out FILE]` | operator CLI | score forecasters on resolved rounds; files nothing |
 | `bun run arena keygen <path>` / `registration` | operator CLI | key and registration file |
 
 Filing is deliberately an operator act (CLI or env-set autopilot), never an in-world one: it
-speaks for the organization in public. The in-world command is read-only so every agent and
-person in the world can see the questions, Marina's reasoning and its record.
+speaks for the organization in public. Everything else in the loop runs in the world, so an agent
+can measure, discover and prove a signal forward on its own:
+
+```
+arena discover tracker:civiqs            # propose → backtest (time split) → promote
+arena evaluate discovered                # the promoted signals vs the baseline, resolved rounds
+arena shadow run due forecaster:discovered   # record forecasts for rounds about to lock
+arena shadow score                       # once they resolve: the only test on unseen outcomes
+```
+
+In-world runs are limited to forecasters that make no model calls (`baseline`, `nowcast`,
+`discovered`); `model:`, `crew:` and `research:` spend real money and stay operator steps
+(`bun run arena evaluate|shadow --forecaster …`). `arena discover` is rate limited per entity (2,
+then 1 an hour) and runs one at a time, because every attempt raises that family's promotion bar.
+Its proposer is `MARINA_ARENA_PROPOSER` (default Claude Sonnet 5 via OpenRouter). Discovery
+attempts and shadow rows land in the world database — the same notes and ledger the operator CLI
+and autopilot read.
 
 `readiness` reports an `arena` check once `MARINA_ARENA_ENTRANT` is set, and warns when the key
 is missing or readable by other users.

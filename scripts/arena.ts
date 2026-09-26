@@ -407,23 +407,20 @@ async function main(): Promise<number> {
     case "discover": {
       const db = openDb();
       try {
-        const [{ discover }, { modelComplete }] = await Promise.all([
+        const [loop, { modelComplete }] = await Promise.all([
           import("../src/arena/discovery/loop"),
           import("../src/arena/model-backend"),
         ]);
-        const proposerModel = values.proposer ?? "openrouter/anthropic/claude-sonnet-5";
-        const { complete, usage } = modelComplete(proposerModel);
-        const trackers = values.tracker
-          ? [values.tracker]
-          : ["civiqs", "economist_yougov", "morning_consult", "aaii"];
+        const proposer = values.proposer ?? loop.proposerModel();
+        const { complete, usage } = modelComplete(proposer);
+        const trackers = values.tracker ? [values.tracker] : loop.DISCOVERY_TRACKERS;
         for (const tracker of trackers) {
-          const out = await discover({
+          const out = await loop.discover({
             data: arenaData(),
             notes: db,
             tracker,
             n: values.n ? Number(values.n) : 5,
-            propose: (prompt) =>
-              complete("You design forecasting signals. Reply with one JSON object only.", prompt),
+            propose: (prompt) => complete(loop.PROPOSER_SYSTEM, prompt),
           });
           console.log(`\n== ${tracker}`);
           if (out.note) console.log(`  ${out.note}`);
@@ -441,7 +438,7 @@ async function main(): Promise<number> {
             );
         }
         console.log(
-          `\nproposer ${proposerModel} · ${usage.calls} call(s) · $${usage.costUsd.toFixed(4)}`,
+          `\nproposer ${proposer} · ${usage.calls} call(s) · $${usage.costUsd.toFixed(4)}`,
         );
         return 0;
       } finally {
@@ -451,18 +448,8 @@ async function main(): Promise<number> {
     case "signals": {
       const db = openDb();
       try {
-        const { pastAttempts } = await import("../src/arena/discovery/loop");
-        const trackers = values.tracker
-          ? [values.tracker]
-          : [
-              "civiqs",
-              "economist_yougov",
-              "morning_consult",
-              "aaii",
-              "umich_sentiment",
-              "google_trends",
-              "wikipedia",
-            ];
+        const { pastAttempts, SIGNAL_TRACKERS } = await import("../src/arena/discovery/loop");
+        const trackers = values.tracker ? [values.tracker] : SIGNAL_TRACKERS;
         for (const t of trackers) {
           const list = pastAttempts(db, t);
           if (!list.length) continue;

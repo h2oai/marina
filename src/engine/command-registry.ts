@@ -872,6 +872,9 @@ export function registerBuiltinCommands(engine: Engine): void {
       get store() {
         return engine.db;
       },
+      get notes() {
+        return engine.db;
+      },
     }),
   );
   const resolveCitedEvidence = (actor: { name: string; id: string }, text: string) =>

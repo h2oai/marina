@@ -32,6 +32,22 @@ import type { ArenaRound } from "../types";
 import { applySignal, type SignalSpec, signalKey, validateSignal } from "./signals";
 
 export const DISCOVERY_ENTITY = "arena-discovery";
+/** Families with enough weekly numeric history to split into discovery and holdout. */
+export const DISCOVERY_TRACKERS = ["civiqs", "economist_yougov", "morning_consult", "aaii"];
+/** Every family a signal may have been tried on (for listing). */
+export const SIGNAL_TRACKERS = [
+  ...DISCOVERY_TRACKERS,
+  "umich_sentiment",
+  "google_trends",
+  "wikipedia",
+];
+
+/** The proposer model: `MARINA_ARENA_PROPOSER`, else Claude Sonnet 5 via OpenRouter. */
+export function proposerModel(env: NodeJS.ProcessEnv = process.env): string {
+  return env.MARINA_ARENA_PROPOSER?.trim() || "openrouter/anthropic/claude-sonnet-5";
+}
+
+export const PROPOSER_SYSTEM = "You design forecasting signals. Reply with one JSON object only.";
 const NOTE_TYPE = "signal";
 const DISCOVERY_SHARE = 0.6;
 const MIN_HOLDOUT = 3;
