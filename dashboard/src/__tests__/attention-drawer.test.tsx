@@ -71,3 +71,6 @@ describe("AttentionDrawer", () => {
     expect(refetch).toHaveBeenCalled();
   });
 });
+vi.mock("../hooks/use-routing-overview", () => ({
+  useRoutingOverview: () => ({ enabled: false }),
+}));

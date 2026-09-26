@@ -226,6 +226,10 @@ export class RoutingService {
     this.read(id);
     return this.db.getRoutingRuntimeState(id);
   }
+  overview(after = "", limit = 100, attention = false) {
+    if (after.length > 200) throw new RoutingError(400, "invalid_input", "Invalid overview cursor");
+    return this.db.listRoutingOverview(this.ownerId, after, routingLimit(limit), attention);
+  }
   control(id: string, value: unknown) {
     const source = this.own(id, true);
     const input = object(value);

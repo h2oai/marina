@@ -15,6 +15,7 @@ import type {
   RoutingEventPage,
   RoutingJoin,
   RoutingMessage,
+  RoutingOverview,
   RoutingSend,
   RoutingSession,
   RoutingSessionPage,
@@ -88,6 +89,13 @@ export class MarinaRoutingClient {
   discover(after = "", limit = 100, signal?: AbortSignal) {
     return this.request<RoutingSessionPage>(
       `/sessions?after=${encodeURIComponent(after)}&limit=${limit}`,
+      undefined,
+      signal,
+    );
+  }
+  overview(after = "", attention = false, signal?: AbortSignal) {
+    return this.request<RoutingOverview>(
+      `/overview?after=${encodeURIComponent(after)}&limit=100&attention=${attention}`,
       undefined,
       signal,
     );

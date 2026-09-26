@@ -8,7 +8,13 @@ export type WorkspaceView = "work" | "canvas" | "map" | "observe" | "admin" | "s
 export type WorkspacePane = "webchat" | "workspace" | "context";
 export type CanvasReference =
   | { kind: "task" | "note"; id: string }
+  | { kind: "memory"; id: string; spaceId: string }
   | { kind: "artifact"; id: string; sessionId: string };
+export interface MemoryDestination {
+  query?: string;
+  recordId?: string;
+  spaceId?: string;
+}
 export type InspectorSelection =
   | NonNullable<DetailView>
   | { type: "entity"; name: string }
@@ -28,6 +34,8 @@ interface WorkspaceState {
   fullscreen: boolean;
   attachment: ChatAttachment | null;
   pendingPin: CanvasReference | null;
+  participantId: string | null;
+  canvasOrigin: { view: WorkspaceView; selection: InspectorSelection | null; url: string } | null;
   setView: (view: WorkspaceView) => void;
   inspect: (selection: InspectorSelection | null) => void;
   attach: (attachment: ChatAttachment | null) => void;
@@ -43,12 +51,43 @@ export const useWorkspaceState = create<WorkspaceState>((set) => ({
   selection: null,
   attachment: null,
   pendingPin: null,
+  canvasOrigin: null,
+  participantId: new URLSearchParams(window.location.search).get("participant"),
   setView: (view) => set({ view, pane: "workspace" }),
   inspect: (selection) => set({ selection, pane: "context" }),
   attach: (attachment) => set({ attachment, pane: "webchat" }),
 }));
 
+export function openParticipant(id: string) {
+  const url = new URL(window.location.href);
+  url.pathname = "/dashboard";
+  url.search = new URLSearchParams({ view: "streams", participant: id }).toString();
+  window.history.pushState(null, "", url);
+  useWorkspaceState.setState({
+    participantId: id,
+    view: "streams",
+    pane: "workspace",
+    fullscreen: false,
+  });
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+export function openMemory(query = "", recordId?: string, spaceId?: string) {
+  window.dispatchEvent(
+    new CustomEvent("marina:open-memory", { detail: { query, recordId, spaceId } }),
+  );
+}
+
 export function openCanvas(canvasId?: string, nodeId?: string, fullscreen = false) {
+  const current = useWorkspaceState.getState();
+  if (current.view !== "canvas")
+    useWorkspaceState.setState({
+      canvasOrigin: {
+        view: current.view,
+        selection: current.selection,
+        url: window.location.href,
+      },
+    });
   const url = new URL(window.location.href);
   url.pathname = fullscreen ? "/canvas" : "/dashboard";
   url.searchParams.set("view", "canvas");
@@ -59,6 +98,20 @@ export function openCanvas(canvasId?: string, nodeId?: string, fullscreen = fals
   window.history.pushState(null, "", url);
   useWorkspaceState.setState({ view: "canvas", pane: "workspace", fullscreen });
   window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+export function returnFromCanvas() {
+  const origin = useWorkspaceState.getState().canvasOrigin;
+  if (!origin) return;
+  window.history.pushState(null, "", origin.url);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+  useWorkspaceState.setState({
+    view: origin.view,
+    selection: origin.selection,
+    pane: origin.selection ? "context" : "workspace",
+    fullscreen: false,
+    canvasOrigin: null,
+  });
 }
 
 /** Explicit world commands; attaching context never sends anything. */

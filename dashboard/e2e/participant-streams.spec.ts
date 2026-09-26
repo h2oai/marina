@@ -18,20 +18,35 @@ test("participant output and delivery receipts remain visible alongside native c
   await expect(input).toBeVisible();
   const token = await page.evaluate(() => localStorage.getItem("marina_chat_token"));
   const headers = { Authorization: `Bearer ${token}` };
-  const register = async (clientKey: string, label: string) => {
+  const register = async (clientKey: string, label: string, kind = "service") => {
     const response = await request.post("/api/routing/sessions", {
       headers,
-      data: { clientKey, label, kind: "service" },
+      data: { clientKey, label, kind },
     });
     expect(response.ok()).toBe(true);
     return response.json();
   };
-  const a = await register("build", "Build worker");
+  const a = await register("build", "Build worker", "codex");
   const b = await register("review", "Review worker");
   const publish = await request.post(`/api/routing/sessions/${a.id}/events`, {
     headers,
     data: {
-      events: [{ id: "build-1", kind: "output", payload: { text: "Build and checks succeeded." } }],
+      events: [
+        {
+          id: "build-1",
+          kind: "output",
+          payload: {
+            text: "Build and checks ",
+            method: "item/agentMessage/delta",
+            itemId: "build",
+          },
+        },
+        {
+          id: "build-2",
+          kind: "output",
+          payload: { text: "succeeded.", method: "item/agentMessage/delta", itemId: "build" },
+        },
+      ],
     },
   });
   expect(publish.ok()).toBe(true);
@@ -52,6 +67,9 @@ test("participant output and delivery receipts remain visible alongside native c
   );
   await page.getByRole("button", { name: /Build worker/ }).click();
   await expect(page.getByText("Build and checks succeeded.", { exact: true })).toBeVisible();
+  await page.getByText("Inspect source events (2)", { exact: true }).click();
+  await expect(page.getByText(/"id": "build-2"/)).toBeVisible();
+  await page.getByText("Inspect source events (2)", { exact: true }).click();
   await page.getByRole("button", { name: "Inspect deliveries and conversations" }).click();
   const log = page.getByRole("region", { name: "Participant delivery log" });
   await expect(log).toContainText("Sent · queued · note");
@@ -66,7 +84,10 @@ test("participant output and delivery receipts remain visible alongside native c
   await page.getByRole("tab", { name: "Canvas", exact: true }).click();
   await expect(input).toHaveValue("Draft survives stream inspection");
   await page.getByRole("tab", { name: "Streams", exact: true }).click();
-  await page.getByRole("button", { name: /Build worker/ }).click();
+  await expect(page.getByRole("button", { name: /Build worker/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   await expect(page.getByText("Build and checks succeeded.", { exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await page
@@ -161,6 +182,12 @@ test("operator can launch and answer native approvals through participant contro
   });
   await page.getByRole("button", { name: /^Reviewer/ }).click();
   await expect(page.getByText("Run review tests?", { exact: true })).toBeVisible();
+  await page.getByLabel("Message agent").fill("Keep this draft while I inspect Canvas");
+  await page.getByRole("tab", { name: "Canvas", exact: true }).click();
+  await page.getByRole("tab", { name: "Streams", exact: true }).click();
+  await expect(page.getByLabel("Message agent")).toHaveValue(
+    "Keep this draft while I inspect Canvas",
+  );
   await page.screenshot({ path: "/tmp/marina-agent-approval.png" });
   await page.getByRole("button", { name: "Decline", exact: true }).click();
   await expect(page.getByText(/Queued ·/)).toBeVisible();

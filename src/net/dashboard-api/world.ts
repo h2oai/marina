@@ -286,6 +286,8 @@ function getTaskDetail(db: MarinaDB, taskId: number): Response {
     creator_name: task.creator_name,
     parent_task_id: task.parent_task_id,
     created_at: task.created_at,
+    codingRuns: db.listCodingRuns({ taskId, limit: 25 }),
+    claims: db.getTaskClaims(taskId),
     children: children.length > 0 ? children : undefined,
   });
 }
@@ -418,6 +420,12 @@ export async function handleCoordinationRoutes(
   }
 
   // ─── Coding snapshot API ───────────────────────────────────────────────
+  const runMatch = url.pathname.match(/^\/api\/coding\/runs\/([^/]+)$/);
+  if (runMatch && method === "GET" && db) {
+    const run = db.getCodingArtifact(decodeURIComponent(runMatch[1]!));
+    if (run?.kind !== "task_run") return json({ error: "Coding attempt not found" }, 404);
+    return json({ run, artifacts: db.listCodingRunArtifacts(run.id) });
+  }
   // Read-only snapshots of coding sessions/events/artifacts, mirroring the
   // /api/coordination/* shape. The live transcript flows over WS; these back
   // the StatusOverlay "navigate state that scrolled off" views. The coding

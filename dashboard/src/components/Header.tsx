@@ -4,6 +4,7 @@ import { Bell, Edit3, Save, Search, Trash2 } from "lucide-react";
 import { useContradictions, useEntityBrief, useOperationalAlerts } from "../hooks/use-api";
 import { useChatState } from "../hooks/use-chat-state";
 import type { LayoutPreset } from "../hooks/use-layout-presets";
+import { useRoutingOverview } from "../hooks/use-routing-overview";
 import { useWorldState } from "../hooks/use-world-state";
 import { formatUptime } from "../lib/utils";
 import { AnimatedNumber } from "./AnimatedNumber";
@@ -49,6 +50,8 @@ export function Header({
   onOpenTraces,
 }: HeaderProps) {
   const entityName = useChatState((s) => s.entityName);
+  const participantAttention = useRoutingOverview(true);
+  const participantCount = participantAttention.data?.total ?? 0;
   const { data: brief } = useEntityBrief(entityName);
   const { data: contradictions = [] } = useContradictions();
   const entities = useWorldState((s) => s.entities);
@@ -86,19 +89,19 @@ export function Header({
         className={`relative flex items-center gap-1.5 rounded border px-2 py-0.5 transition-colors ${
           criticalAlerts
             ? "border-danger/50 bg-danger/10 text-danger"
-            : activeAlerts.length
+            : activeAlerts.length + participantCount
               ? "border-warning/40 bg-warning/10 text-warning"
               : "border-success/30 bg-success/5 text-success"
         }`}
         title={
-          activeAlerts.length
-            ? `${activeAlerts.length} actionable alert${activeAlerts.length === 1 ? "" : "s"}`
+          activeAlerts.length + participantCount
+            ? `${activeAlerts.length} operational alerts · ${participantCount} participants need attention`
             : "Operations clear"
         }
       >
         <Bell size={11} className={criticalAlerts ? "animate-pulse" : ""} />
-        <AnimatedNumber value={activeAlerts.length} className="tabular-nums" />
-        <span className="hidden xl:inline">alerts</span>
+        <AnimatedNumber value={activeAlerts.length + participantCount} className="tabular-nums" />
+        <span className="hidden xl:inline">attention</span>
         {criticalAlerts > 0 && (
           <>
             <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-danger shadow-[0_0_8px_var(--color-danger)]" />

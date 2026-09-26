@@ -59,6 +59,19 @@ export interface RoutingSessionPage {
   nextCursor: string | null;
 }
 
+/** Account-scoped observer projection; runtime data is reported by the participant. */
+export interface RoutingOverviewItem {
+  session: RoutingSession;
+  runtime: unknown | null;
+  lastDelivery: RoutingEvent | null;
+  owned: boolean;
+}
+export interface RoutingOverview {
+  items: RoutingOverviewItem[];
+  total: number;
+  nextCursor: string | null;
+}
+
 /** References to Marina's existing channel_messages; this is not a second conversation log. */
 export interface RoutingChannelMessage {
   id: number;

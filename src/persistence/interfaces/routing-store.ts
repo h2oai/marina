@@ -9,6 +9,7 @@ import type {
   RoutingEventPage,
   RoutingJoin,
   RoutingMessage,
+  RoutingOverview,
   RoutingSend,
   RoutingSession,
   RoutingSessionPage,
@@ -16,6 +17,12 @@ import type {
 import type { ExactKeys } from "./exact-keys";
 
 export interface RoutingStore {
+  listRoutingOverview(
+    ownerId: string,
+    after: string,
+    limit: number,
+    attention: boolean,
+  ): RoutingOverview;
   getRoutingRuntimeState(sessionId: string): unknown | null;
   listRoutingDeliveries(sessionId: string, limit: number): RoutingMessage[];
   getRoutingChannelAccess(
@@ -45,6 +52,7 @@ export interface RoutingStore {
 }
 
 export const ROUTING_STORE_METHODS = [
+  "listRoutingOverview",
   "getRoutingRuntimeState",
   "listRoutingDeliveries",
   "getRoutingChannelAccess",

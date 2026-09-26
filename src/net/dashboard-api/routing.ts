@@ -66,6 +66,14 @@ export async function handleRoutingRoutes(
     return reply({ error: "Log in to use participant streams", code: "account_required" }, 403);
   try {
     const router = new RoutingService(db, db.durableEntityKey(callerId));
+    if (url.pathname === "/api/routing/overview" && method === "GET")
+      return reply(
+        router.overview(
+          url.searchParams.get("after") ?? "",
+          routingLimit(url.searchParams.get("limit")),
+          url.searchParams.get("attention") === "true",
+        ),
+      );
     if (url.pathname === "/api/routing/sync" && method === "POST")
       return reply(router.sync(await body(req)));
     const channelMatch = url.pathname.match(

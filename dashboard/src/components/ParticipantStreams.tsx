@@ -1,15 +1,14 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MarinaRoutingClient, RoutingApiError } from "../../../src/sdk/routing-client";
-import type {
-  RoutingEvent,
-  RoutingSession,
-  RoutingSessionPage,
-} from "../../../src/sdk/routing-types";
+import type { RoutingSession, RoutingSessionPage } from "../../../src/sdk/routing-types";
 import { useChatState } from "../hooks/use-chat-state";
+import { useParticipantOutput } from "../hooks/use-participant-output";
+import { useWorkspaceState } from "../hooks/use-workspace-state";
 import { getToken } from "../lib/api";
+import { ParticipantActivity } from "./ParticipantActivity";
 import { ParticipantDeliveryLog } from "./ParticipantDeliveryLog";
 import { ParticipantRuntimeControls } from "./ParticipantRuntimeControls";
 
@@ -18,63 +17,29 @@ function errorText(error: unknown): string {
     return "Log in to view streams shared with your Marina account.";
   return error instanceof Error ? error.message : "Could not load participant streams.";
 }
-function output(event: RoutingEvent): string {
-  if (typeof event.payload === "string") return event.payload;
-  if (
-    event.payload &&
-    typeof event.payload === "object" &&
-    "text" in event.payload &&
-    typeof event.payload.text === "string"
-  )
-    return event.payload.text;
-  return JSON.stringify(event.payload, null, 2);
-}
-
 function StreamOutput({
   client,
   session,
+  active,
 }: {
   client: MarinaRoutingClient;
   session: RoutingSession;
+  active: boolean;
 }) {
-  const [initialCursor] = useState(() => Math.max(0, session.lastSequence - 100));
-  const [events, setEvents] = useState<RoutingEvent[]>([]);
-  const [gap, setGap] = useState(false);
-  const [error, setError] = useState("");
-  const [restart, setRestart] = useState(0);
-  const [loaded, setLoaded] = useState(false);
+  const { events, gap, error, loaded, catchingUp, replay } = useParticipantOutput(
+    client,
+    session.id,
+    session.lastSequence,
+    active,
+  );
   const [showDeliveries, setShowDeliveries] = useState(false);
+  const [following, setFollowing] = useState(true);
+  const viewport = useRef<HTMLElement>(null);
+  const sequence = events.at(-1)?.sequence;
   useEffect(() => {
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    let cursor = restart ? 0 : initialCursor;
-    setEvents([]);
-    setGap(false);
-    setLoaded(false);
-    setError("");
-    const poll = async () => {
-      try {
-        const page = await client.events(session.id, cursor, 100, controller.signal);
-        if (controller.signal.aborted) return;
-        cursor = page.nextCursor;
-        setEvents((previous) => [...previous, ...page.events].slice(-500));
-        setGap((previous) => previous || page.gap);
-        setError("");
-        setLoaded(true);
-        timer = setTimeout(poll, 2000);
-      } catch (err) {
-        if (controller.signal.aborted) return;
-        setError(errorText(err));
-        // Hide previously fetched content when access is lost. Retry is explicit.
-      }
-    };
-    void poll();
-    return () => {
-      controller.abort();
-      clearTimeout(timer);
-    };
-    // A roster refresh must not reset the selected stream's cursor.
-  }, [client, session.id, restart, initialCursor]);
+    if (active && following && sequence !== undefined && viewport.current)
+      viewport.current.scrollTop = viewport.current.scrollHeight;
+  }, [active, following, sequence]);
   return (
     <section
       aria-label={`${session.label} output`}
@@ -89,26 +54,35 @@ function StreamOutput({
         <p className="break-all text-xs text-text-dim">
           {session.id} · {session.groupId ? `Group ${session.groupId}` : "Private"}
         </p>
-        <button
-          type="button"
-          className="mt-2 text-xs text-primary"
-          onClick={() => setRestart((n) => n + 1)}
-        >
-          Replay retained history
-        </button>
+        <div className="mt-2 flex flex-wrap gap-3 text-xs text-primary">
+          <button type="button" onClick={replay}>
+            Replay retained history
+          </button>
+          <button type="button" aria-pressed={following} onClick={() => setFollowing(!following)}>
+            {following ? "Pause following" : "Follow latest"}
+          </button>
+        </div>
       </div>
       {session.capabilities.includes("runtime.control") && (
-        <ParticipantRuntimeControls client={client} sessionId={session.id} />
+        <ParticipantRuntimeControls client={client} sessionId={session.id} active={active} />
       )}
       {error ? (
         <div role="alert" className="p-3 text-sm">
           {error}{" "}
-          <button type="button" onClick={() => setRestart((n) => n + 1)} className="text-primary">
+          <button type="button" onClick={replay} className="text-primary">
             Retry
           </button>
         </div>
       ) : (
-        <section className="min-h-0 flex-1 overflow-auto p-3" aria-label="Published output">
+        <section
+          ref={viewport}
+          className="min-h-0 flex-1 overflow-auto p-3"
+          aria-label="Published output"
+          onScroll={(event) => {
+            const node = event.currentTarget;
+            if (node.scrollHeight - node.scrollTop - node.clientHeight > 40) setFollowing(false);
+          }}
+        >
           {gap && (
             <p role="status" className="mb-2 text-sm text-warning">
               Some earlier output has expired. This history is incomplete.
@@ -125,16 +99,12 @@ function StreamOutput({
           {events.length >= 500 && (
             <p className="text-xs text-text-dim">Showing the latest 500 loaded events.</p>
           )}
-          {events.map((event) => (
-            <article key={event.sequence} className="mb-3">
-              <p className="text-xs text-text-dim">
-                #{event.sequence} · {event.kind} · {new Date(event.createdAt).toLocaleTimeString()}
-              </p>
-              <pre className="whitespace-pre-wrap break-words font-mono text-xs">
-                {output(event)}
-              </pre>
-            </article>
-          ))}
+          {catchingUp && (
+            <p role="status" className="text-xs text-text-dim">
+              Loading retained activity…
+            </p>
+          )}
+          {loaded && <ParticipantActivity events={events} adapter={session.kind} />}
         </section>
       )}
       <div className="shrink-0 border-t border-border p-2 text-xs">
@@ -147,7 +117,9 @@ function StreamOutput({
           {showDeliveries ? "Hide delivery log" : "Inspect deliveries and conversations"}
         </button>
       </div>
-      {showDeliveries && <ParticipantDeliveryLog client={client} sessionId={session.id} />}
+      {showDeliveries && (
+        <ParticipantDeliveryLog client={client} sessionId={session.id} active={active} />
+      )}
     </section>
   );
 }
@@ -155,9 +127,11 @@ function StreamOutput({
 export function ParticipantStreamWorkspace({
   token,
   autoSelect = false,
+  active = true,
 }: {
   token: string;
   autoSelect?: boolean;
+  active?: boolean;
 }) {
   const [client] = useState(() => new MarinaRoutingClient({ url: window.location.origin, token }));
   const [page, setPage] = useState<RoutingSessionPage>();
@@ -166,11 +140,49 @@ export function ParticipantStreamWorkspace({
   const [selected, setSelected] = useState<string>();
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: retry explicitly restarts a failed request.
+  const requested = useWorkspaceState((state) => state.participantId);
+  const [direct, setDirect] = useState<RoutingSession>();
+  const [directError, setDirectError] = useState("");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retry explicitly repeats a failed direct lookup.
   useEffect(() => {
+    if (!active || !requested) return;
+    setSelected(requested);
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
-    setPage(undefined);
+    const poll = () =>
+      void client
+        .session(requested, controller.signal)
+        .then((session) => {
+          if (!controller.signal.aborted) {
+            setDirect(session);
+            setDirectError("");
+            timer = setTimeout(poll, 5000);
+          }
+        })
+        .catch((cause) => {
+          if (!controller.signal.aborted) {
+            setDirect(undefined);
+            setDirectError(errorText(cause));
+          }
+        });
+    poll();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [active, client, requested, retry]);
+  useEffect(() => {
+    if (!autoSelect || selected !== undefined) return;
+    const newest = page?.sessions
+      .filter((session) => session.kind !== "supervisor")
+      .sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (newest) setSelected(newest.id);
+  }, [autoSelect, page, selected]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: retry explicitly restarts a failed request.
+  useEffect(() => {
+    if (!active) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
     setError("");
     const poll = async () => {
       try {
@@ -182,6 +194,7 @@ export function ParticipantStreamWorkspace({
       } catch (err) {
         if (!controller.signal.aborted) {
           setPage(undefined);
+          setDirect(undefined);
           setError(errorText(err));
         }
       }
@@ -191,7 +204,7 @@ export function ParticipantStreamWorkspace({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [client, after, retry]);
+  }, [client, after, retry, active]);
   const selectedId =
     selected ??
     (autoSelect
@@ -199,9 +212,19 @@ export function ParticipantStreamWorkspace({
           .filter((session) => session.kind !== "supervisor")
           .sort((a, b) => b.createdAt - a.createdAt)[0]?.id
       : undefined);
-  const chosen = page?.sessions.find((session) => session.id === selectedId);
+  const chosen =
+    error || (requested && directError)
+      ? undefined
+      : (page?.sessions.find((session) => session.id === selectedId) ??
+        (direct?.id === selectedId ? direct : undefined));
+  const visible = page?.sessions.filter((session) =>
+    `${session.label} ${session.kind}`.toLowerCase().includes(filter.toLowerCase()),
+  );
   return (
-    <div className="flex h-full min-h-0 flex-col sm:flex-row">
+    <div
+      hidden={!active}
+      className={active ? "flex h-full min-h-0 flex-col sm:flex-row" : "hidden"}
+    >
       <aside
         aria-label="Participants"
         className="max-h-[40%] shrink-0 overflow-auto border-b border-border p-3 sm:max-h-full sm:w-56 sm:border-b-0 sm:border-r"
@@ -217,9 +240,9 @@ export function ParticipantStreamWorkspace({
           onChange={(e) => setFilter(e.target.value)}
           className="mb-2 w-full rounded border border-border bg-surface px-2 py-1 text-sm"
         />
-        {error && (
+        {(error || (requested && directError)) && (
           <div role="alert" className="text-sm">
-            {error}{" "}
+            {error || directError}{" "}
             <button type="button" className="text-primary" onClick={() => setRetry((n) => n + 1)}>
               Retry
             </button>
@@ -236,29 +259,39 @@ export function ParticipantStreamWorkspace({
             the routing SDK or HTTP API.
           </p>
         )}
-        {page?.sessions
-          .filter((s) => `${s.label} ${s.kind}`.toLowerCase().includes(filter.toLowerCase()))
-          .map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              aria-pressed={selectedId === s.id}
-              onClick={() => setSelected(s.id)}
-              className={`mb-1 block w-full rounded p-2 text-left text-sm ${selectedId === s.id ? "bg-primary/15 text-primary" : "hover:bg-surface"}`}
-            >
-              <span className="block truncate">{s.label}</span>
-              <span className="text-xs text-text-dim">
-                {s.kind} · {s.state === "left" ? "Left" : "Registered"}
-              </span>
-            </button>
-          ))}
+        {page && page.sessions.length > 0 && visible?.length === 0 && (
+          <p role="status" className="mb-2 text-sm text-text-dim">
+            No participants match on this page.
+          </p>
+        )}
+        {visible?.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            aria-pressed={selectedId === s.id}
+            onClick={() => {
+              setSelected(s.id);
+              useWorkspaceState.setState({ participantId: null });
+              setDirect(undefined);
+            }}
+            className={`mb-1 block w-full rounded p-2 text-left text-sm ${selectedId === s.id ? "bg-primary/15 text-primary" : "hover:bg-surface"}`}
+          >
+            <span className="block truncate">{s.label}</span>
+            <span className="text-xs text-text-dim">
+              {s.kind} · {s.state === "left" ? "Left" : "Registered"}
+            </span>
+          </button>
+        ))}
         <div className="flex gap-3 text-xs text-primary">
           {after && (
             <button
               type="button"
               onClick={() => {
                 setAfter("");
+                setPage(undefined);
                 setSelected(undefined);
+                useWorkspaceState.setState({ participantId: null });
+                setDirect(undefined);
               }}
             >
               First page
@@ -269,7 +302,10 @@ export function ParticipantStreamWorkspace({
               type="button"
               onClick={() => {
                 setAfter(page.nextCursor!);
+                setPage(undefined);
                 setSelected(undefined);
+                useWorkspaceState.setState({ participantId: null });
+                setDirect(undefined);
               }}
             >
               Next page
@@ -278,7 +314,7 @@ export function ParticipantStreamWorkspace({
         </div>
       </aside>
       {chosen ? (
-        <StreamOutput key={chosen.id} client={client} session={chosen} />
+        <StreamOutput key={chosen.id} client={client} session={chosen} active={active} />
       ) : (
         <p className="p-4 text-sm text-text-dim">Select a participant to follow its output.</p>
       )}
@@ -290,8 +326,9 @@ export function ParticipantStreams({ active }: { active: boolean }) {
   // Subscribe to login/logout transitions so private output is unmounted immediately.
   const loggedIn = useChatState((s) => s.loggedIn);
   const token = getToken();
-  if (!active) return null;
   if (!loggedIn || !token)
-    return <p className="p-4 text-sm">Log in through Chat to view participant streams.</p>;
-  return <ParticipantStreamWorkspace key={token} token={token} />;
+    return active ? (
+      <p className="p-4 text-sm">Log in through Chat to view participant streams.</p>
+    ) : null;
+  return <ParticipantStreamWorkspace key={token} token={token} active={active} />;
 }

@@ -38,6 +38,7 @@ import { dashboardInspectionFromSearch } from "../lib/marina-reference";
 import type { DashboardEvent } from "../lib/types";
 import { cn, formatTime } from "../lib/utils";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
+import { TaskEvidence } from "./TaskEvidence";
 
 type Section =
   | "projects"
@@ -320,7 +321,7 @@ function TaskDetailView({
   id: number;
   onNavigate: (view: DetailView) => void;
 }) {
-  const { data, isLoading } = useTaskDetail(id);
+  const { data, isLoading, isError, refetch } = useTaskDetail(id);
   useInvalidateOnEvent(
     ["taskDetail", id],
     useCallback(
@@ -335,17 +336,28 @@ function TaskDetailView({
   );
 
   if (isLoading) return <LoadingState />;
+  if (isError)
+    return (
+      <p role="alert" className="p-3 text-danger">
+        Could not load task.{" "}
+        <button type="button" className="text-primary underline" onClick={() => void refetch()}>
+          Retry task
+        </button>
+      </p>
+    );
   if (!data) return <EmptyState text="Task not found" />;
 
   return (
     <div className="flex flex-col gap-2">
-      <button
-        type="button"
-        onClick={() => draftCommand(`task claim ${id}`)}
-        className="self-start rounded border border-border px-2 py-1 text-xs text-primary"
-      >
-        Claim task
-      </button>
+      {data.status === "open" && (
+        <button
+          type="button"
+          onClick={() => draftCommand(`task claim ${id}`)}
+          className="self-start rounded border border-border px-2 py-1 text-xs text-primary"
+        >
+          Claim task
+        </button>
+      )}
       <div>
         <div className="text-text-bright font-semibold text-xs">
           #{data.id} {data.title}
@@ -360,6 +372,7 @@ function TaskDetailView({
       )}
       <DetailRow label="Creator" value={data.creator_name} />
       {data.assignee_name && <DetailRow label="Assignee" value={data.assignee_name} />}
+      <TaskEvidence task={data} />
       {data.parent_task_id && (
         <DetailRow label="Parent task">
           <button

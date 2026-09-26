@@ -38,7 +38,11 @@ import { useChatState } from "./hooks/use-chat-state";
 import { useLayoutPresets } from "./hooks/use-layout-presets";
 import { useGlobalRealtimeInvalidations } from "./hooks/use-realtime-invalidations";
 import { useDashboardWebSocket } from "./hooks/use-websocket";
-import { useWorkspaceState, type WorkspacePane } from "./hooks/use-workspace-state";
+import {
+  type MemoryDestination,
+  useWorkspaceState,
+  type WorkspacePane,
+} from "./hooks/use-workspace-state";
 import { useWorldState } from "./hooks/use-world-state";
 import { isEditing } from "./lib/command-discovery";
 import { dashboardInspectionFromSearch } from "./lib/marina-reference";
@@ -57,6 +61,7 @@ export default function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [drawer, setDrawer] = useState<"attention" | "pulse" | "memory" | null>(null);
+  const [memoryDestination, setMemoryDestination] = useState<MemoryDestination>({});
   const preset = useLayoutPresets(WORKSPACE_LAYOUTS, BUILTIN_PRESETS);
   const [layouts, setLayouts] = useState<ResponsiveLayouts<Bp>>(
     () => preset.presets.find((p) => p.id === preset.activeId)?.layouts ?? WORKSPACE_LAYOUTS,
@@ -105,7 +110,10 @@ export default function App() {
   // Preserve ordinary anchors for new tabs, but navigate within this mounted shell.
   useEffect(() => {
     const restore = () => {
+      setDrawer(null);
       const url = new URL(window.location.href);
+      if (url.searchParams.get("view") === "streams")
+        useWorkspaceState.setState({ participantId: url.searchParams.get("participant") });
       const inspection = dashboardInspectionFromSearch(url.search);
       if (inspection) useWorkspaceState.getState().inspect(inspection);
       const canvas =
@@ -170,6 +178,10 @@ export default function App() {
   );
   useEffect(() => {
     const admin = () => openView("admin");
+    const memory = (event: Event) => {
+      setMemoryDestination((event as CustomEvent<MemoryDestination>).detail ?? {});
+      setDrawer("memory");
+    };
     const chat = () => {
       useWorkspaceState.setState({ pane: "webchat", fullscreen: false });
     };
@@ -178,6 +190,7 @@ export default function App() {
     window.addEventListener("marina:open-operations", admin);
     window.addEventListener("marina:open-keys", admin);
     window.addEventListener("marina:open-coding", chat);
+    window.addEventListener("marina:open-memory", memory);
     window.addEventListener("marina:draft-command", chat);
     return () => {
       window.removeEventListener("marina:open-traces", admin);
@@ -185,6 +198,7 @@ export default function App() {
       window.removeEventListener("marina:open-operations", admin);
       window.removeEventListener("marina:open-keys", admin);
       window.removeEventListener("marina:open-coding", chat);
+      window.removeEventListener("marina:open-memory", memory);
       window.removeEventListener("marina:draft-command", chat);
     };
   }, [openView]);
@@ -344,7 +358,10 @@ export default function App() {
         }}
         onOpenAttention={() => setDrawer(drawer === "attention" ? null : "attention")}
         onOpenPulse={() => setDrawer(drawer === "pulse" ? null : "pulse")}
-        onOpenMemory={() => setDrawer(drawer === "memory" ? null : "memory")}
+        onOpenMemory={() => {
+          setMemoryDestination({});
+          setDrawer(drawer === "memory" ? null : "memory");
+        }}
         onOpenWork={() => {
           setDrawer(null);
           openView("work");
@@ -363,7 +380,11 @@ export default function App() {
         <PulseDrawer open={drawer === "pulse"} onClose={() => setDrawer(null)} />
       </DeferredDrawer>
       <DeferredDrawer open={drawer === "memory"}>
-        <MemoryWorkspace open={drawer === "memory"} onClose={() => setDrawer(null)} />
+        <MemoryWorkspace
+          open={drawer === "memory"}
+          onClose={() => setDrawer(null)}
+          destination={memoryDestination}
+        />
       </DeferredDrawer>
       <FirstRunGuide
         onFocusChat={() => {

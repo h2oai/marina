@@ -12,6 +12,7 @@ import type {
   RoutingEventPage,
   RoutingJoin,
   RoutingMessage,
+  RoutingOverview,
   RoutingSend,
   RoutingSession,
   RoutingSessionPage,
@@ -366,4 +367,53 @@ export function getRoutingRuntimeState(db: Database, sessionId: string): unknown
     AND kind = 'runtime.state' ORDER BY sequence DESC LIMIT 1`)
     .get(sessionId) as { payload: string } | null;
   return row ? JSON.parse(row.payload) : null;
+}
+
+/** Aggregate observer reads use the same membership fence as discovery, before pagination. */
+export function listRoutingOverview(
+  db: Database,
+  ownerId: string,
+  after: string,
+  limit: number,
+  attention: boolean,
+): RoutingOverview {
+  const projection = `WITH visible AS (
+    SELECT ${SESSION_COLUMNS},
+      (SELECT payload FROM routing_events WHERE session_id = s.id AND kind = 'runtime.state'
+        ORDER BY sequence DESC LIMIT 1) AS runtime_json,
+      (SELECT json_object('id', event_id, 'sessionId', session_id, 'sequence', sequence,
+        'kind', kind, 'payload', json(payload), 'createdAt', created_at)
+       FROM routing_events WHERE session_id = s.id AND kind IN ('delivery.accepted', 'delivery.error')
+       ORDER BY sequence DESC LIMIT 1) AS delivery_json
+    FROM routing_sessions s WHERE owner_id = ? OR EXISTS
+      (SELECT 1 FROM group_members m WHERE m.group_id = s.group_id AND m.entity_id = ?)
+  ), selected AS (SELECT * FROM visible ${
+    attention
+      ? `WHERE
+    (json_extract(runtime_json, '$.version') = 1 AND
+      (json_type(runtime_json, '$.request') = 'object' OR json_extract(runtime_json, '$.status') = 'failed'
+       OR length(json_extract(runtime_json, '$.error')) > 0))
+    OR json_extract(delivery_json, '$.kind') = 'delivery.error'`
+      : ""
+  })`;
+  const total = (
+    db.query(`${projection} SELECT count(*) AS n FROM selected`).get(ownerId, ownerId) as {
+      n: number;
+    }
+  ).n;
+  const rows = db
+    .query(`${projection} SELECT * FROM selected WHERE id > ? ORDER BY id LIMIT ?`)
+    .all(ownerId, ownerId, after, limit + 1) as Array<
+    RoutingSession & {
+      runtime_json: string | null;
+      delivery_json: string | null;
+    }
+  >;
+  const items = rows.slice(0, limit).map(({ runtime_json, delivery_json, ...row }) => ({
+    session: session(row),
+    runtime: runtime_json ? JSON.parse(runtime_json) : null,
+    lastDelivery: delivery_json ? JSON.parse(delivery_json) : null,
+    owned: row.ownerId === ownerId,
+  }));
+  return { items, total, nextCursor: rows.length > limit ? items.at(-1)!.session.id : null };
 }

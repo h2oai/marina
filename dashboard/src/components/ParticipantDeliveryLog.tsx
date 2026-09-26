@@ -10,9 +10,11 @@ import { useWorkspaceState } from "../hooks/use-workspace-state";
 export function ParticipantDeliveryLog({
   client,
   sessionId,
+  active = true,
 }: {
   client: MarinaRoutingClient;
   sessionId: string;
+  active?: boolean;
 }) {
   const [messages, setMessages] = useState<RoutingMessage[]>([]);
   const [channels, setChannels] = useState<{ id: string; name: string }[]>([]);
@@ -20,6 +22,7 @@ export function ParticipantDeliveryLog({
   const [retry, setRetry] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: retry explicitly restarts failed polling.
   useEffect(() => {
+    if (!active) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -49,7 +52,7 @@ export function ParticipantDeliveryLog({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [client, sessionId, retry]);
+  }, [client, sessionId, retry, active]);
   return (
     <section
       aria-label="Participant delivery log"

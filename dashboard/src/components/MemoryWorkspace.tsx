@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Brain } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import type { MemoryOperationRequest } from "../../../src/sdk/memory-operations";
@@ -14,7 +15,9 @@ import type {
   MemorySpace,
 } from "../../../src/sdk/memory-types";
 import { useChatState } from "../hooks/use-chat-state";
+import type { MemoryDestination } from "../hooks/use-workspace-state";
 import { requestResidentMemory } from "../lib/memory-service";
+import { PinToCanvas } from "./CanvasReference";
 
 const button =
   "rounded border border-border px-2 py-1 text-text hover:border-primary disabled:opacity-40";
@@ -22,7 +25,15 @@ const field =
   "w-full rounded border border-border bg-bg p-2 text-text outline-none focus:border-primary";
 type Tab = "Memories" | "Sources" | "Review" | "Transfers";
 
-export function MemoryWorkspace({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function MemoryWorkspace({
+  open,
+  onClose,
+  destination = {},
+}: {
+  open: boolean;
+  onClose: () => void;
+  destination?: MemoryDestination;
+}) {
   const identity = useChatState((s) => s.entityName);
   const loggedIn = useChatState((s) => s.loggedIn);
   return (
@@ -36,6 +47,9 @@ export function MemoryWorkspace({ open, onClose }: { open: boolean; onClose: () 
           className="fixed inset-x-2 bottom-2 top-12 z-[100] flex flex-col overflow-hidden rounded-lg border border-border bg-bg-card shadow-2xl md:left-auto md:w-[min(900px,95vw)]"
         >
           <div className="flex items-center gap-3 border-b border-border p-3">
+            <span className="mission-icon">
+              <Brain size={20} />
+            </span>
             <h2 className="font-semibold text-text-bright">Memory</h2>
             <span className="text-text-dim">{loggedIn ? identity : "Sign in to world chat"}</span>
             <button type="button" className={`${button} ml-auto`} onClick={onClose}>
@@ -43,7 +57,10 @@ export function MemoryWorkspace({ open, onClose }: { open: boolean; onClose: () 
             </button>
           </div>
           {loggedIn && identity ? (
-            <Workspace key={identity} />
+            <Workspace
+              key={`${identity}:${JSON.stringify(destination)}`}
+              destination={destination}
+            />
           ) : (
             <p className="p-5 text-text-dim">
               Sign in to world chat to search and review your durable memory.
@@ -55,9 +72,9 @@ export function MemoryWorkspace({ open, onClose }: { open: boolean; onClose: () 
   );
 }
 
-function Workspace() {
+function Workspace({ destination }: { destination: MemoryDestination }) {
   const [spaces, setSpaces] = useState<MemorySpace[]>([]);
-  const [space, setSpace] = useState("");
+  const [space, setSpace] = useState(destination.spaceId ?? "");
   useEffect(() => {
     const controller = new AbortController();
     void requestResidentMemory<{ spaces: MemorySpace[] }>(
@@ -81,13 +98,26 @@ function Workspace() {
           ))}
         </select>
       </label>
-      <MemoryContents key={space} space={space || undefined} />
+      <MemoryContents
+        key={space}
+        space={space || undefined}
+        initialQuery={destination.query}
+        initialRecord={space === (destination.spaceId ?? "") ? destination.recordId : undefined}
+      />
     </>
   );
 }
-function MemoryContents({ space }: { space?: string }) {
+function MemoryContents({
+  space,
+  initialQuery = "",
+  initialRecord,
+}: {
+  space?: string;
+  initialQuery?: string;
+  initialRecord?: string;
+}) {
   const [tab, setTab] = useState<Tab>("Memories");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [records, setRecords] = useState<MemoryRecord[]>([]);
@@ -126,6 +156,29 @@ function MemoryContents({ space }: { space?: string }) {
     controller.current = new AbortController();
     return () => controller.current.abort();
   }, []);
+  useEffect(() => {
+    if (!initialRecord) return;
+    const abort = new AbortController();
+    setBusy(true);
+    void requestResidentMemory<MemoryRecord>(
+      { operation: "get", id: initialRecord, space_id: space },
+      abort.signal,
+    )
+      .then((record) => {
+        if (!abort.signal.aborted) {
+          setSelected(record);
+          setHeadVersion(record.version);
+        }
+      })
+      .catch((cause) => {
+        if (!abort.signal.aborted)
+          setError(cause instanceof Error ? cause.message : "Memory is unavailable.");
+      })
+      .finally(() => {
+        if (!abort.signal.aborted) setBusy(false);
+      });
+    return () => abort.abort();
+  }, [initialRecord, space]);
   const inspect = async (id: string, version?: number) => {
     const record = await request<MemoryRecord>({
       operation: "get",
@@ -371,6 +424,9 @@ function MemoryContents({ space }: { space?: string }) {
                 {selected.id} · {selected.freshness} · {selected.type}
               </p>
               <pre className="whitespace-pre-wrap break-words font-sans">{selected.content}</pre>
+              <PinToCanvas
+                reference={{ kind: "memory", id: selected.id, spaceId: selected.space_id }}
+              />
               {previous && (
                 <details>
                   <summary>Compare with revision {previous.version}</summary>

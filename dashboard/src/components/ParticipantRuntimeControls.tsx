@@ -1,9 +1,11 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, useState } from "react";
-import { type MarinaRoutingClient, RoutingApiError } from "../../../src/sdk/routing-client";
+import { useEffect, useState } from "react";
+import type { MarinaRoutingClient } from "../../../src/sdk/routing-client";
 import type { RuntimeControl, RuntimeState } from "../../../src/sdk/routing-runtime-types";
+import { runtimeState } from "../hooks/use-routing-overview";
+import { useRuntimeCommand } from "../hooks/use-runtime-command";
 
 const field = "min-w-0 rounded border border-border bg-surface px-2 py-1 text-xs";
 const button = "rounded border border-border px-2 py-1 text-xs text-primary disabled:opacity-40";
@@ -11,14 +13,17 @@ const button = "rounded border border-border px-2 py-1 text-xs text-primary disa
 export function ParticipantRuntimeControls({
   client,
   sessionId,
+  active = true,
 }: {
   client: MarinaRoutingClient;
   sessionId: string;
+  active?: boolean;
 }) {
   const [runtime, setRuntime] = useState<RuntimeState | null>(null);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [readError, setError] = useState("");
+  const command = useRuntimeCommand(client, sessionId);
+  const { busy, notice } = command;
+  const error = command.error || readError;
   const [refresh, setRefresh] = useState(0);
   const [adapter, setAdapter] = useState("");
   const [label, setLabel] = useState("");
@@ -27,23 +32,19 @@ export function ParticipantRuntimeControls({
   const [workspace, setWorkspace] = useState<"worktree" | "shared">("worktree");
   const [prompt, setPrompt] = useState("");
   const [answer, setAnswer] = useState("");
-  const pending = useRef<{ id: string; control: RuntimeControl } | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: refresh explicitly retries failed reads.
   useEffect(() => {
+    if (!active) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
       try {
         const { state } = await client.runtime(sessionId, controller.signal);
         if (controller.signal.aborted) return;
-        if (
-          state &&
-          (state.version !== 1 ||
-            typeof state.updatedAt !== "number" ||
-            !["agent", "supervisor", "attachment"].includes(state.role))
-        )
-          throw new Error("Unsupported participant runtime state");
-        setRuntime(state);
+        const parsed = runtimeState(state);
+        if (state && !parsed) throw new Error("Unsupported participant runtime state");
+        setRuntime(parsed);
+        setError("");
         timer = setTimeout(poll, 5000);
       } catch (err) {
         if (!controller.signal.aborted) {
@@ -57,41 +58,21 @@ export function ParticipantRuntimeControls({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [client, sessionId, refresh]);
+  }, [client, sessionId, refresh, active]);
   async function send(control: RuntimeControl) {
-    const previous = pending.current;
-    if (previous && JSON.stringify(previous.control) !== JSON.stringify(control)) {
-      setError("Retry the pending request first so its delivery is known.");
-      return;
-    }
-    const request = previous ?? { id: crypto.randomUUID(), control };
-    pending.current = request;
-    setBusy(true);
     setError("");
-    setNotice("");
-    try {
-      const message = await client.control(
-        sessionId,
-        sessionId,
-        request.id,
-        request.control,
-        AbortSignal.timeout(15_000),
-      );
-      pending.current = null;
-      setNotice(`Queued · ${message.id}. Delivery and execution appear in the stream below.`);
-      if (control.action === "prompt" || control.action === "launch") setPrompt("");
-      if (control.action === "respond") setAnswer("");
+    if (await command.send(control)) {
+      if (control.action === "prompt" || control.action === "launch") {
+        const sent = control.action === "prompt" ? control.text : control.prompt;
+        setPrompt((current) => (current === sent ? "" : current));
+      }
+      if (control.action === "respond")
+        setAnswer((current) => (current === control.answer ? "" : current));
       setRefresh((n) => n + 1);
-    } catch (err) {
-      if (err instanceof RoutingApiError && [400, 401, 403, 404, 413].includes(err.status))
-        pending.current = null;
-      setError(err instanceof Error ? err.message : "Control request failed");
-    } finally {
-      setBusy(false);
     }
   }
   const stale = !runtime || Date.now() - runtime.updatedAt > 45_000;
-  const disabled = busy || stale;
+  const disabled = !active || busy || stale;
   const adapters = Array.isArray(runtime?.adapters) ? runtime.adapters : [];
   const selectedAdapter = adapter || adapters[0]?.id || "";
   return (
@@ -119,7 +100,7 @@ export function ParticipantRuntimeControls({
             className="text-primary"
             disabled={busy}
             onClick={() => {
-              if (pending.current) void send(pending.current.control);
+              if (command.pending) void send(command.pending.control);
               else {
                 setError("");
                 setRefresh((n) => n + 1);

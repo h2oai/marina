@@ -8,7 +8,7 @@ The dashboard is a real-time web UI for monitoring everything happening in Marin
 
 The default **Operate** preset fits three panes to the available viewport: **Chat** (30%),
 **Workspace** (45%), and **Context** (25%). Chat stays available while you work. The workspace
-has **Work**, **Canvas**, **Map**, **Observe**, and **Admin** tabs. Selecting an agent, room,
+has **Work**, **Canvas**, **Map**, **Observe**, **Streams**, and **Admin** tabs. Selecting an agent, room,
 task, or node opens the shared inspector in Context. On narrow screens, **Chat / Workspace /
 Context** buttons switch between the same mounted panes.
 
@@ -28,6 +28,63 @@ maximize button enlarges it; **Esc** restores its size.
 The compact recent-activity strip shows the newest curated entries. **More → Pulse** is the
 live event stream; map heat shows local activity, while **Observe** holds narrative and
 conversation history.
+
+### Start work and review the result
+
+**Work → Start something** brings the first request into the workspace. Choose **Marina** for
+the current coding session, **Crew** for Marina's existing collaborative coding flow, or
+**Native agent** to launch an installed coding tool through one of your connected supervisors.
+Selecting an optional project includes its name and description in the request; it does not
+assign project membership. Nothing executes until you click **Start work**.
+
+Native launches offer the supervisor's registered runtimes, a project directory, optional model,
+and a choice of an isolated Git worktree or a shared folder. The supervisor must be connected;
+start one with `marina supervise --root /path/to/project`. Worktrees start from committed HEAD.
+**Remember harness** saves these launch preferences in this browser for this resident and instance.
+Marina and Crew continue to use the configured coding workspace and models.
+
+After a native launch, Streams opens the supervisor's delivery and activity view. If the HTTP
+response is lost, **Retry same request** reuses its original identifier and payload. A queued
+instruction is not a completed launch or task.
+
+Select a task to open **Evidence & review** in Context. Linked coding attempts show their worker,
+workspace, recorded verification, artifacts, diffs and provenance. Task owners can **Approve
+submission** or **Request changes** on submitted attempts through the existing Code Mode commands.
+These actions resume the attempt's coding session; server permissions and task ownership still
+apply. Chat reports refusals, and task status remains authoritative. Recorded checks can become
+stale after later edits. Native output without a linked coding attempt is not shown as verified.
+
+**Find related memory** prefills a durable-memory search with the task title; click **Load** to
+search the selected memory space. **Shape the idea** opens Canvas, whose **Back to work** action
+restores the prior task selection.
+
+### Participant streams
+
+Open **Workspace → Streams** after signing in through Chat to follow output from native coding
+agents and other connected clients. Select a participant from the paginated list; the filter
+searches the current page. Registration alone does not establish that its process is running.
+
+Activity cards show output, tool activity, runtime changes, and requests. Consecutive text
+deltas from the built-in Claude, Codex, and pi adapters appear together. **Inspect source event**
+expands the original payload and its identifiers, sequence, and timestamp. Unknown event types
+retain their original payloads. **Search loaded activity** searches both the readable cards
+and source data. Message snapshots can repeat earlier streamed text; they are separately
+recorded evidence.
+
+**Pause following** lets you read older activity while new output continues to load; scrolling
+away from the bottom also pauses following. **Follow latest** returns to new activity.
+**Replay retained history** loads from the start of the retained stream. The view keeps at most
+500 events and labels expired history. A native turn ending or an instruction being accepted
+does not establish that a Marina task was submitted or approved.
+
+Participants advertising runtime controls expose their supported launch, prompt, interrupt,
+and approval actions. **Inspect deliveries and conversations** shows transport receipts and
+related channels without acknowledging messages. Switching workspace tabs preserves the
+selected participant, its loaded activity, and unsent control drafts while pausing hidden-view
+requests. Signing out removes the private workspace.
+
+When running the Marina coding CLI, `/dashboard` opens the same participant workspace at
+`/terminal` using HTTP, so the terminal's Chat connection stays active.
 
 ---
 
@@ -119,7 +176,11 @@ Work and Attention stay in the header; Pulse is available under More:
 - **Work** projects active tasks, projects, and coding sessions from their existing canonical
   stores in the Work tab. Every item opens its canonical detail surface.
 - **Attention** shows durable attributed alerts, actions, deadlines, snooze, acknowledgement, and
-  resolution failures. Critical counts use an assertive screen-reader announcement. Desktop
+  resolution failures, plus participant questions, permission requests, runtime failures, and
+  the latest failed instruction delivery. Participant totals cover all accessible sessions,
+  with paginated results and current group membership checks. Open a request to inspect and
+  answer it in Streams; opening the inbox never acknowledges messages or grants permission.
+  Shared participants are labeled view only. Critical counts use an assertive screen-reader announcement. Desktop
   notifications are opt-in and requested only after a click.
 - **Pulse** shows the newest live WebSocket events, currently thinking agents, and observed failures.
   Rows link to exact traces, tasks, Canvas nodes, or entity profiles when those references exist. It
@@ -449,12 +510,13 @@ read discussions in Context. **Discuss this node** attaches a reply target to ch
 agent** attaches its reference and requires a recipient. The attachment stays visible until
 you send or remove it. Neither action sends a message automatically; exit Code Mode first.
 
-**Pin to canvas** is available in task and note inspectors, expanded entity notes, and coding
-artifact details. Choose a destination, then pin. These cards store only a source reference;
-they fetch the current task status or note/artifact content with the viewer's permissions.
+**Pin to canvas** is available in task and note inspectors, expanded entity notes, coding
+artifact details, and selected durable memories. Choose a destination, then pin. These cards
+store only a source reference; they fetch current content with the viewer's permissions.
 A missing or inaccessible source shows an unavailable state and Retry. Pinning does not copy
 private note or artifact content into a shared board. Canvas reference cards do not introduce
-another memory store; durable service records remain in the Memory workspace.
+another memory store; durable service records resolve through the viewer's resident connection.
+**Open in memory** returns to the referenced record and space for revision and provenance review.
 
 ### What You'll See
 

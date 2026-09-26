@@ -50,6 +50,63 @@ afterEach(() => {
 });
 
 describe("generic participant routing", () => {
+  it("aggregates attention before pagination, respects current visibility, and never consumes requests", () => {
+    const privateSession = alice.join(spec("private-attention"));
+    const shared = alice.join(spec("shared-attention", "team"));
+    const publishState = (id: string, key: string, request?: object) =>
+      alice.publish(id, [
+        {
+          id: key,
+          kind: "runtime.state",
+          payload: { version: 1, role: "agent", status: "waiting", updatedAt: 1, request },
+        },
+      ]);
+    publishState(privateSession.id, "private-state", { title: "Secret question" });
+    publishState(shared.id, "shared-state", { title: "Review?" });
+    const pending = alice.send(shared.id, {
+      clientMessageId: "unchanged",
+      targetId: shared.id,
+      kind: "note",
+      payload: "hello",
+    });
+    for (let i = 0; i < 105; i++) {
+      const participant = alice.join(spec(`att-${i}`));
+      publishState(participant.id, "state", { title: "Question" });
+    }
+    const first = alice.overview("", 100, true);
+    expect(first.total).toBe(107);
+    expect(first.items).toHaveLength(100);
+    const second = alice.overview(first.nextCursor!, 100, true);
+    expect(second.total).toBe(107);
+    expect(second.items).toHaveLength(7);
+    expect(new Set([...first.items, ...second.items].map((item) => item.session.id)).size).toBe(
+      107,
+    );
+    expect(bob.overview("", 100, true).items).toEqual([
+      expect.objectContaining({
+        session: expect.objectContaining({ id: shared.id }),
+        owned: false,
+        runtime: expect.objectContaining({ request: { title: "Review?" } }),
+      }),
+    ]);
+    expect(alice.inbox(shared.id)).toEqual([pending]);
+    publishState(shared.id, "resolved");
+    expect(bob.overview("", 100, true).total).toBe(0);
+    alice.publish(shared.id, [
+      { id: "failed", kind: "delivery.error", payload: { messageId: pending.id } },
+    ]);
+    expect(bob.overview("", 100, true).items[0]?.lastDelivery).toMatchObject({
+      kind: "delivery.error",
+      payload: { messageId: pending.id },
+    });
+    alice.publish(shared.id, [
+      { id: "accepted", kind: "delivery.accepted", payload: { messageId: pending.id } },
+    ]);
+    expect(bob.overview("", 100, true).total).toBe(0);
+    db.removeGroupMember("team", "bob");
+    expect(bob.overview().items).toEqual([]);
+    expect(alice.overview().items.every((item) => item.owned)).toBe(true);
+  });
   it("joins 125 independent clients under one account and paginates without creating world connections", () => {
     for (let i = 0; i < 125; i++) alice.join(spec(`client-${i}`));
     const page = alice.list("", 100);
@@ -318,6 +375,8 @@ describe("routing HTTP and portable SDK", () => {
     const { client, engine, requests, login } = fixture();
     const a = await client.join(spec("cli-a"));
     const b = await client.join(spec("cli-b"));
+    expect((await client.overview()).total).toBe(2);
+    expect((await client.overview("", true)).total).toBe(0);
     expect(engine.getConnections().size).toBe(1);
     const published = await client.publish(a.id, [event("x")]);
     expect((await client.events(a.id)).events).toEqual(published);
@@ -347,6 +406,10 @@ describe("routing HTTP and portable SDK", () => {
         headers: { Authorization: "Bearer invalid" },
       });
       expect(response.status).toBe(403);
+      const overview = await fetcher("http://localhost:3300/api/routing/overview", {
+        headers: { Authorization: "Bearer invalid" },
+      });
+      expect(overview.status).toBe(403);
     } finally {
       if (previous === undefined) delete process.env.MARINA_OPEN_API;
       else process.env.MARINA_OPEN_API = previous;

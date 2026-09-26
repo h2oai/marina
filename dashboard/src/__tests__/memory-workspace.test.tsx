@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, expect, it, vi } from "vitest";
 import { MemoryWorkspace } from "../components/MemoryWorkspace";
 import { useChatState } from "../hooks/use-chat-state";
+import { useWorkspaceState } from "../hooks/use-workspace-state";
 import { requestResidentMemory } from "../lib/memory-service";
 
 vi.mock("../lib/memory-service", () => ({ requestResidentMemory: vi.fn() }));
@@ -67,6 +68,26 @@ it("renders authored history and original source ranges", async () => {
   expect(await screen.findByText("Compare with revision 1")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "source-1" }));
   expect(await screen.findByText("raw 🙂 source")).toBeVisible();
+});
+it("opens the referenced memory space and pins only its identity", async () => {
+  render(
+    <MemoryWorkspace
+      open
+      onClose={() => {}}
+      destination={{ recordId: "record-1", spaceId: "space", query: "navigation" }}
+    />,
+  );
+  expect(await screen.findByText("Revision 2 of 2")).toBeVisible();
+  expect(request).toHaveBeenCalledWith(
+    { operation: "get", id: "record-1", space_id: "space" },
+    expect.any(AbortSignal),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Pin to canvas" }));
+  expect(useWorkspaceState.getState().pendingPin).toEqual({
+    kind: "memory",
+    id: "record-1",
+    spaceId: "space",
+  });
 });
 it("lists sources and exposes competing assertions for explicit review", async () => {
   render(<MemoryWorkspace open onClose={() => {}} />);

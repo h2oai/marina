@@ -5,7 +5,9 @@ import { BriefcaseBusiness, Code2, FolderKanban, RefreshCw, SquareCheckBig, X } 
 import { motion } from "motion/react";
 import { useProjects, useTasks } from "../hooks/use-api";
 import { useCodingSessionsSnapshot } from "../hooks/use-coding";
+import { openCanvas, openMemory } from "../hooks/use-workspace-state";
 import { draftCommand } from "../lib/command-discovery";
+import { WorkLauncher } from "./WorkLauncher";
 
 const TERMINAL_TASKS = new Set(["completed", "cancelled", "failed"]);
 const TERMINAL_PROJECTS = new Set(["completed", "archived", "cancelled"]);
@@ -16,9 +18,11 @@ const TERMINAL_CODING = new Set(["completed", "closed", "cancelled", "failed"]);
 export function WorkOverview({
   onClose = () => {},
   embedded = false,
+  active = true,
 }: {
   onClose?: () => void;
   embedded?: boolean;
+  active?: boolean;
 }) {
   const tasks = useTasks();
   const projects = useProjects();
@@ -76,6 +80,27 @@ export function WorkOverview({
         </button>
       </div>
       <div className="overflow-y-auto p-3 text-sm">
+        {embedded && <WorkLauncher active={active} />}
+        {embedded && (
+          <div className="mb-4 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              className="mission-card p-3 text-left"
+              onClick={() => openCanvas()}
+            >
+              <span className="block text-primary">◇ Shape the idea</span>
+              <span className="text-xs text-text-dim">Open Canvas</span>
+            </button>
+            <button
+              type="button"
+              className="mission-card p-3 text-left"
+              onClick={() => openMemory()}
+            >
+              <span className="block text-primary">✦ Build on what you know</span>
+              <span className="text-xs text-text-dim">Explore memory</span>
+            </button>
+          </div>
+        )}
         {loading && <div className="p-4 text-center text-text-dim">Loading work…</div>}
         {failed && (
           <div role="alert" className="p-4 text-center text-danger">
@@ -100,14 +125,16 @@ export function WorkOverview({
                   <span className="min-w-0 truncate text-text">{task.title}</span>
                   <span className="shrink-0 text-primary">{task.status}</span>
                 </a>
-                <button
-                  type="button"
-                  onClick={() => draftCommand(`task claim ${task.id}`)}
-                  className="shrink-0 text-xs text-primary"
-                  title={`Draft task claim ${task.id}`}
-                >
-                  Claim
-                </button>
+                {task.status === "open" && (
+                  <button
+                    type="button"
+                    onClick={() => draftCommand(`task claim ${task.id}`)}
+                    className="shrink-0 text-xs text-primary"
+                    title={`Draft task claim ${task.id}`}
+                  >
+                    Claim
+                  </button>
+                )}
               </div>
             ))}
           </section>

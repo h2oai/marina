@@ -341,6 +341,7 @@ export interface CodingArtifactRow {
 
 /** Task attempts reuse coding artifacts; no parallel task or transcript store. */
 export interface CodingRunQuery {
+  taskId?: number;
   sessionId?: string;
   workerKey?: string;
   status?: string;
@@ -350,6 +351,10 @@ export interface CodingRunQuery {
 export function listCodingRuns(db: Database, query: CodingRunQuery = {}): CodingArtifactRow[] {
   const conditions = ["kind = 'task_run'"];
   const values: (string | number)[] = [];
+  if (query.taskId !== undefined) {
+    conditions.push("json_extract(metadata_json, '$.taskId') = ?");
+    values.push(query.taskId);
+  }
   if (query.sessionId !== undefined) {
     conditions.push("session_id = ?");
     values.push(query.sessionId);

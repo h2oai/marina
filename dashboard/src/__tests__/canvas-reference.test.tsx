@@ -6,9 +6,13 @@ import {
   PinToCanvasDialog,
   parseCanvasReference,
   ReferenceContent,
+  resolveCanvasReference,
 } from "../components/CanvasReference";
 import { attachedCommand, useWorkspaceState } from "../hooks/use-workspace-state";
+import { requestResidentMemory } from "../lib/memory-service";
 import { renderWithProviders } from "./test-utils";
+
+vi.mock("../lib/memory-service", () => ({ requestResidentMemory: vi.fn() }));
 
 beforeEach(() => {
   useWorkspaceState.setState({ pendingPin: null, selection: null, attachment: null });
@@ -53,6 +57,30 @@ describe("live canvas references", () => {
   it("rejects arbitrary reference paths", () => {
     expect(parseCanvasReference({ kind: "note", id: "../secrets" })).toBeNull();
     expect(parseCanvasReference({ kind: "artifact", id: "a" })).toBeNull();
+  });
+  it("resolves a memory reference through the viewer's resident identity and respects refusal", async () => {
+    const reference = parseCanvasReference({
+      kind: "memory",
+      id: "record",
+      spaceId: "team",
+      content: "Must not copy",
+    });
+    expect(reference).toEqual({ kind: "memory", id: "record", spaceId: "team" });
+    const request = vi.mocked(requestResidentMemory);
+    request.mockResolvedValueOnce({
+      content: "Current evidence",
+      version: 3,
+      id: "record",
+      subject: "Design",
+    });
+    expect(await resolveCanvasReference(reference!)).toMatchObject({
+      content: "Current evidence",
+      status: "current · revision 3",
+    });
+    expect(request).toHaveBeenCalledWith({ operation: "get", id: "record", space_id: "team" });
+    request.mockRejectedValueOnce(new Error("forbidden"));
+    await expect(resolveCanvasReference(reference!)).rejects.toThrow("forbidden");
+    expect(parseCanvasReference({ kind: "memory", id: "record", spaceId: "" })).toBeNull();
   });
 });
 describe("explicit chat context", () => {

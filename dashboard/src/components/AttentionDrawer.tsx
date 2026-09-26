@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useOperationalAlerts } from "../hooks/use-api";
 import { describeApiError, postApi } from "../lib/api";
+import { ParticipantAttention } from "./ParticipantAttention";
 
 function desktopAttentionEnabled(): boolean {
   try {
@@ -102,7 +103,9 @@ export function AttentionDrawer({ open, onClose }: { open: boolean; onClose: () 
           <div className="flex items-center gap-2 border-b border-border px-3 py-2">
             <Bell size={14} className="text-warning" />
             <h2 className="font-semibold text-text-bright">Needs attention</h2>
-            <span className="rounded bg-warning/10 px-1.5 text-warning">{items.length}</span>
+            <span className="mission-count" title="Operational alerts">
+              {items.length} ops
+            </span>
             <button
               type="button"
               onClick={() => query.refetch()}
@@ -133,6 +136,7 @@ export function AttentionDrawer({ open, onClose }: { open: boolean; onClose: () 
             </div>
           )}
           <div className="overflow-y-auto p-2">
+            <ParticipantAttention active={open} onNavigate={onClose} />
             {query.isLoading && (
               <div className="p-4 text-center text-text-dim">Loading attention…</div>
             )}
@@ -142,13 +146,10 @@ export function AttentionDrawer({ open, onClose }: { open: boolean; onClose: () 
               </div>
             )}
             {!query.isLoading && !query.isError && items.length === 0 && (
-              <div className="p-5 text-center text-success">Nothing needs your attention.</div>
+              <div className="p-5 text-center text-success">No operational alerts.</div>
             )}
             {items.map((item) => (
-              <article
-                key={item.id}
-                className="mb-2 rounded border border-border bg-bg/70 p-2 text-[11px]"
-              >
+              <article key={item.id} className="mission-card mb-2 p-3 text-xs">
                 <div className="flex items-start justify-between gap-2">
                   <strong className="text-text-bright">{item.title}</strong>
                   <span

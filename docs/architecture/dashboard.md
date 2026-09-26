@@ -31,6 +31,28 @@ lazy Canvas editor; the shared Context inspector is the portal target for Canvas
 `use-workspace-state.ts` stores UI selection, active view, mobile pane, fullscreen state and an
 explicit unsent chat attachment. It contains no canonical task or memory data.
 
+`ParticipantStreams` keeps its account-keyed workspace mounted across tab changes, passing an
+`active` flag through output, runtime controls and delivery polling. Hidden views cancel pending
+reads and timers while retaining selection and drafts; logout unmounts the private workspace.
+`use-participant-output.ts` owns cursor/replay handling and a deduplicated 500-event display
+window. `participant-activity.ts` projects recorded events into readable cards without changing
+their source records or inferring task completion. Native text grouping requires consecutive
+sequence numbers and matching output method/item; generic consumer messages stay separate.
+
+`WorkLauncher` sends the existing `code do` / `code crew` commands or the supervisor's existing
+runtime launch control. Browser preferences contain harness settings only, scoped per origin and
+resident. `use-runtime-command` owns explicit idempotent retries shared with stream controls.
+`GET /api/routing/overview?attention=true&after=…&limit=100` projects the latest runtime and
+delivery evidence per visible session, counts matches before pagination, and applies the same
+owner/current-group fence as session discovery. It does not acknowledge or mutate delivery state.
+The header and attention drawer share a query; the UI does not poll every participant individually.
+
+Task detail includes up to 25 linked coding attempts and canonical claims. The authenticated
+`GET /api/coding/runs/:id` resolves a task-run artifact plus its existing bounded artifact list,
+under the same read policy as the coding-session snapshots. `TaskEvidence` displays recorded
+verification separately from task approval. Review requests use ordered resident commands
+(`code resume`, then `code review`); they never optimistically complete a task.
+
 Built-ins (Operate, Explore, Create, Observe) carry a version in `workspace-layouts.ts`.
 `use-layout-presets.ts` refreshes their definitions while preserving custom layouts and
 archiving the previous auto-saved grid. The default uses a 20-column 6/9/5 split and derives
@@ -42,8 +64,9 @@ history, leaving chat mounted. Modified clicks retain browser behavior. The expe
 `?unified` surface keeps its existing server opt-in gate.
 
 `CanvasReference.tsx` writes an `embed` node whose data contains only a validated reference
-(`task`, legacy `note`, or coding `artifact` plus session id). `ReferenceNode` resolves existing
-REST records per viewer and refreshes them while mounted. It never snapshots private source
+(`task`, legacy `note`, coding `artifact` plus session id, or durable `memory` plus space id).
+`ReferenceNode` resolves existing REST records per viewer; durable records use the resident
+memory connection and its space authorization. References refresh while mounted. It never snapshots private source
 content into Canvas metadata. Node discussions use the existing `canvas post on:<id>
 reply:<node-id>` command after explicit Send; `canvas post` resolves both ids and names.
 The editor cancels obsolete snapshot requests, retains viewport state, surfaces failed writes,

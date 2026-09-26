@@ -78,6 +78,53 @@ describe("dashboard-api HTTP authorization hardening", () => {
 
   // ─── Finding 4: pre-auth ingress must not mint a usable token ──────────────
 
+  it("links a task only to its coding attempts and resolves their recorded evidence", async () => {
+    const token = loginToken("EvidenceOwner");
+    const taskId = db.createTask({
+      title: "Review change",
+      creatorId: "owner",
+      creatorName: "EvidenceOwner",
+    });
+    const otherTask = db.createTask({
+      title: "Other work",
+      creatorId: "owner",
+      creatorName: "EvidenceOwner",
+    });
+    db.createCodingSession({
+      id: "session",
+      title: "Workspace",
+      workspaceRoot: "/workspace",
+      createdBy: "EvidenceOwner",
+    });
+    const create = (id: string, kind: string, metadata: unknown) =>
+      db.createCodingArtifact({
+        id,
+        sessionId: "session",
+        kind,
+        title: id,
+        contentText: "recorded evidence",
+        metadata,
+        createdBy: "Worker",
+      });
+    create("run", "task_run", { version: 1, taskId });
+    create("other-run", "task_run", { version: 1, taskId: otherTask });
+    create("patch", "patch", { runId: "run" });
+    create("other-patch", "patch", { runId: "other-run" });
+    const get = (path: string, auth = token) => {
+      const [req, url, method] = jsonReq(path, "GET", { token: auth });
+      return handleDashboardApi(req, url, method, engine, db);
+    };
+    const detail = await (await get(`/api/coordination/tasks/${taskId}`))!.json();
+    expect(detail.codingRuns.map((run: { id: string }) => run.id)).toEqual(["run"]);
+    expect(detail.claims).toEqual([]);
+    const evidence = await (await get("/api/coding/runs/run"))!.json();
+    expect(evidence.run.id).toBe("run");
+    expect(evidence.artifacts.map((artifact: { id: string }) => artifact.id)).toEqual(["patch"]);
+    expect((await get("/api/coding/runs/patch"))?.status).toBe(404);
+    expect((await get("/api/coding/runs/missing"))?.status).toBe(404);
+    expect((await get("/api/coding/runs/run", "invalid"))?.status).toBe(401);
+  });
+
   it("does not return a session token from the unauthenticated /api/command ingress", async () => {
     const [req, url, method] = jsonReq("/api/command", "POST", {
       body: { name: "Ingressor", command: "look" },

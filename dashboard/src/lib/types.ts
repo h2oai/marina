@@ -153,6 +153,13 @@ export interface DynamicCommandEntry {
 }
 
 export interface TaskDetail extends TaskEntry {
+  codingRuns?: CodingArtifactEntry[];
+  claims?: {
+    entity_id: string;
+    entity_name: string;
+    status: string;
+    submission_text: string | null;
+  }[];
   description: string;
   parent_task_id: number | null;
   assignee_name?: string;

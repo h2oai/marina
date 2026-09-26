@@ -3858,4 +3858,8 @@ export class MarinaDB implements MarinaStores {
   getRoutingRuntimeState(sessionId: string): unknown | null {
     return routingDb.getRoutingRuntimeState(this.db, sessionId);
   }
+
+  listRoutingOverview(ownerId: string, after: string, limit: number, attention: boolean) {
+    return routingDb.listRoutingOverview(this.db, ownerId, after, limit, attention);
+  }
 }

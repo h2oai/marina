@@ -4,10 +4,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { Pin } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import type { MemoryRecord } from "../../../src/sdk/memory-types";
 import { fetchCanvases } from "../canvas/hooks/use-canvas";
 import { useChatState } from "../hooks/use-chat-state";
-import { type CanvasReference, openCanvas, useWorkspaceState } from "../hooks/use-workspace-state";
+import {
+  type CanvasReference,
+  openCanvas,
+  openMemory,
+  useWorkspaceState,
+} from "../hooks/use-workspace-state";
 import { fetchApi, getToken, postApi } from "../lib/api";
+import { requestResidentMemory } from "../lib/memory-service";
 
 export function parseCanvasReference(value: unknown): CanvasReference | null {
   if (!value || typeof value !== "object") return null;
@@ -15,6 +22,13 @@ export function parseCanvasReference(value: unknown): CanvasReference | null {
   if (typeof r.id !== "string" || !r.id || r.id.length > 200) return null;
   if ((r.kind === "task" || r.kind === "note") && /^\d+$/.test(r.id))
     return { kind: r.kind, id: r.id };
+  if (
+    r.kind === "memory" &&
+    typeof r.spaceId === "string" &&
+    r.spaceId.length > 0 &&
+    r.spaceId.length <= 200
+  )
+    return { kind: r.kind, id: r.id, spaceId: r.spaceId };
   if (r.kind === "artifact" && typeof r.sessionId === "string" && r.sessionId.length <= 200)
     return { kind: r.kind, id: r.id, sessionId: r.sessionId };
   return null;
@@ -29,6 +43,18 @@ interface SourceRecord {
   description?: string;
 }
 export async function resolveCanvasReference(reference: CanvasReference): Promise<SourceRecord> {
+  if (reference.kind === "memory") {
+    const record = await requestResidentMemory<MemoryRecord>({
+      operation: "get",
+      id: reference.id,
+      space_id: reference.spaceId,
+    });
+    return {
+      title: record.subject ?? `Memory ${record.id}`,
+      content: record.content,
+      status: `${record.freshness ?? "current"} · revision ${record.version}`,
+    };
+  }
   if (reference.kind === "artifact") {
     const result = await fetchApi<{ artifacts: Array<SourceRecord & { id: string }> }>(
       `/api/coding/session/${encodeURIComponent(reference.sessionId)}`,
@@ -50,7 +76,7 @@ export function PinToCanvas({ reference }: { reference: CanvasReference }) {
     <button
       type="button"
       onClick={() => useWorkspaceState.setState({ pendingPin: reference })}
-      className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-primary"
+      className="mission-secondary text-xs"
       title="Pin a live reference to canvas"
     >
       <Pin size={12} /> Pin to canvas
@@ -105,6 +131,15 @@ export function ReferenceContent({
         </button>
       ) : (
         <PinToCanvas reference={reference} />
+      )}
+      {reference.kind === "memory" && !compact && (
+        <button
+          type="button"
+          className="mission-secondary"
+          onClick={() => openMemory("", reference.id, reference.spaceId)}
+        >
+          Open in memory
+        </button>
       )}
     </div>
   );

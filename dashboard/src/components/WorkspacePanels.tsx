@@ -3,11 +3,16 @@
 
 import { lazy, Suspense, useState } from "react";
 import { useWorld } from "../hooks/use-api";
-import { openCanvas, useWorkspaceState, type WorkspaceView } from "../hooks/use-workspace-state";
+import {
+  openCanvas,
+  returnFromCanvas,
+  useWorkspaceState,
+  type WorkspaceView,
+} from "../hooks/use-workspace-state";
 import { useWorldState } from "../hooks/use-world-state";
 import { AdminPanel } from "./AdminPanel";
 import { WorldMapHeatmap } from "./back-faces/WorldMapHeatmap";
-import { PinToCanvas, ReferenceContent } from "./CanvasReference";
+import { ReferenceContent } from "./CanvasReference";
 import { ConversationInsights } from "./ConversationInsights";
 import { CoordinationCard, DetailPanel } from "./CoordinationCard";
 import { EntityInspector } from "./EntityInspector";
@@ -32,6 +37,7 @@ const VIEWS: Array<[WorkspaceView, string]> = [
 export function WorkspacePanel(props: PanelFocusProps) {
   const view = useWorkspaceState((s) => s.view);
   const fullscreen = useWorkspaceState((s) => s.fullscreen);
+  const origin = useWorkspaceState((s) => s.canvasOrigin);
   const [visited, setVisited] = useState<Set<WorkspaceView>>(() => new Set([view, "admin"]));
   if (!visited.has(view)) setVisited(new Set([...visited, view]));
   const { data: worldData } = useWorld();
@@ -42,13 +48,20 @@ export function WorkspacePanel(props: PanelFocusProps) {
       bodyScroll={false}
       headerExtra={
         view === "canvas" && (
-          <button
-            type="button"
-            className="text-xs text-primary"
-            onClick={() => openCanvas(undefined, undefined, !fullscreen)}
-          >
-            {fullscreen ? "Exit full screen" : "Full screen"}
-          </button>
+          <div className="flex gap-3">
+            {origin && (
+              <button type="button" className="text-xs text-primary" onClick={returnFromCanvas}>
+                ← Back to {origin.view}
+              </button>
+            )}
+            <button
+              type="button"
+              className="text-xs text-primary"
+              onClick={() => openCanvas(undefined, undefined, !fullscreen)}
+            >
+              {fullscreen ? "Exit full screen" : "Full screen"}
+            </button>
+          </div>
         )
       }
     >
@@ -68,9 +81,9 @@ export function WorkspacePanel(props: PanelFocusProps) {
               id={`tab-${id}`}
               className={`rounded px-3 py-2 text-sm ${view === id ? "bg-primary/15 text-primary" : "text-text-dim hover:text-text"}`}
               onClick={() => {
-                useWorkspaceState.getState().setView(id);
                 if (id === "canvas") openCanvas();
                 else {
+                  useWorkspaceState.getState().setView(id);
                   const url = new URL(window.location.href);
                   url.pathname = "/dashboard";
                   url.searchParams.set("view", id);
@@ -95,7 +108,7 @@ export function WorkspacePanel(props: PanelFocusProps) {
             {id === "work" && (
               <div className="flex h-full flex-col">
                 <div className="min-h-0 flex-1">
-                  <WorkOverview embedded />
+                  <WorkOverview embedded active={view === "work"} />
                 </div>
                 <details className="max-h-[50%] shrink-0 overflow-auto border-t border-border p-2 text-sm">
                   <summary className="cursor-pointer text-primary">
@@ -180,9 +193,6 @@ export function ContextPanel(props: PanelFocusProps) {
           )}
           {selection && !["entity", "room", "node", "reference"].includes(selection.type) && (
             <div className="p-2">
-              {selection.type === "task" && (
-                <PinToCanvas reference={{ kind: "task", id: String(selection.id) }} />
-              )}
               <DetailPanel
                 detail={selection as Parameters<typeof DetailPanel>[0]["detail"]}
                 onBack={() => useWorkspaceState.getState().inspect(null)}

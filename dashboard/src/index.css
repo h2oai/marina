@@ -391,6 +391,51 @@ select optgroup {
   }
 }
 
+/* Shared work surfaces: theme colors carry the energy, content stays quiet. */
+.mission-launch {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 20px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 28%, var(--color-border));
+  border-radius: 18px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 9%, var(--color-bg-card)), var(--color-bg-card) 55%, color-mix(in srgb, var(--color-secondary) 6%, var(--color-bg-card)));
+}
+.mission-launch::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: -100px;
+  right: -70px;
+  width: 240px;
+  height: 240px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 14%, transparent);
+  box-shadow: 0 0 0 26px color-mix(in srgb, var(--color-primary) 3%, transparent), 0 0 0 52px color-mix(in srgb, var(--color-primary) 2%, transparent);
+  pointer-events: none;
+}
+.mission-eyebrow { color: var(--color-primary); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }
+.mission-icon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 34px; height: 34px; border-radius: 11px; color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 12%, transparent); }
+.mission-icon-large { width: 44px; height: 44px; border: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent); }
+.mission-card { min-width: 0; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-bg-card); }
+button.mission-card { transition: border-color 150ms ease, background 150ms ease; }
+button.mission-card:hover { border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border)); background: var(--color-bg-hover); }
+.mission-choice { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px; padding: 10px 6px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-bg-card); color: var(--color-text); font-size: 12px; transition: border-color 150ms ease, background 150ms ease; }
+.mission-choice:hover, .mission-choice-active { color: var(--color-primary); border-color: color-mix(in srgb, var(--color-primary) 60%, var(--color-border)); background: color-mix(in srgb, var(--color-primary) 9%, var(--color-bg-card)); }
+.mission-field { width: 100%; min-width: 0; border: 1px solid var(--color-border); border-radius: 9px; padding: 8px 10px; color: var(--color-text-bright); background-color: var(--color-bg); font-size: 13px; }
+select.mission-field { padding-right: 24px; }
+.mission-field::placeholder { color: var(--color-text-dim); opacity: 1; }
+.mission-primary, .mission-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 9px; padding: 8px 11px; font-size: 12px; transition: filter 150ms ease, border-color 150ms ease; }
+.mission-primary { color: var(--color-bg); background: var(--color-primary); border: 1px solid var(--color-primary); font-weight: 700; }
+.mission-primary:hover:not(:disabled) { filter: brightness(1.1); }
+.mission-secondary { border: 1px solid var(--color-border); color: var(--color-text); background: var(--color-bg-card); }
+.mission-secondary:hover:not(:disabled) { border-color: var(--color-primary); color: var(--color-primary); }
+:is(.mission-primary, .mission-secondary, .mission-choice, .mission-field):disabled { opacity: 0.45; cursor: not-allowed; }
+.mission-count { display: inline-flex; border-radius: 999px; padding: 2px 8px; color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 12%, transparent); font-size: 11px; }
+.mission-skeleton { border-radius: 10px; background: linear-gradient(100deg, var(--color-bg-hover), var(--color-bg-card), var(--color-bg-hover)); color: var(--color-text-dim); }
+.mission-launch .text-text-dim, .mission-card .text-text-dim { color: color-mix(in srgb, var(--color-text-dim) 60%, var(--color-text)); }
+@media (max-width: 799px) { .mission-launch { padding: 14px; } .mission-field { font-size: 16px; } }
+
 /* ── Reduced motion ──────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *,
