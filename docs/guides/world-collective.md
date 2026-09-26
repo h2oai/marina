@@ -44,6 +44,10 @@ world autonomy continue without it. Promotion does not replace, merge, or restar
 and does not silently copy memory between databases. A running preferred candidate remains running;
 a stopped one remains stopped. This separation avoids confusing rollout state with process liveness.
 
+A child that fails to start says why: its last stderr lines are kept in the variant's last error,
+a missing variant directory is recreated, and first boot may take up to
+`MARINA_COLLECTIVE_START_TIMEOUT_MS` (default 30 s) while every migration applies.
+
 ## Spend
 
 Every child world starts with its own daily spend cap — $50 unless the parent sets

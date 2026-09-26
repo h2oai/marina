@@ -22,6 +22,7 @@
  * outcomes no one had seen.
  */
 
+import { promotionMargin } from "../../engine/fishing-margin";
 import type { NotesStore } from "../../persistence/interfaces/notes-store";
 import type { ArenaData } from "../data";
 import { outcomePublicBeforeLock } from "../evaluate";
@@ -154,9 +155,7 @@ export function promotedSignals(notes: NotesStore): Map<string, SignalRecord> {
 }
 
 /** The margin a new signal must clear: fishing through more candidates raises the bar. */
-export function promotionMargin(triedBefore: number): number {
-  return 0.02 + 0.01 * Math.log2(1 + triedBefore);
-}
+export { promotionMargin };
 
 export function buildProposal(
   tracker: string,

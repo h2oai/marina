@@ -1,9 +1,11 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { getStanding } from "../../agent/standing";
 import { bold, category, dim, header, separator, status, stripAnsi } from "../../net/ansi";
 import type { EvolutionSessionRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { sanitizeEntityName } from "../entity-name";
 import { tryLog } from "../errors";
 import { analyzeEvolutionEvidence } from "../evolution-analysis";
 import { resolveEvolutionEvidence } from "../evolution-evidence";
@@ -18,10 +20,13 @@ import {
   evolutionSessionsWithEvidence,
 } from "../evolution-qualification";
 import { runTrial, type TrialArm, type TrialDeps, type TrialResult } from "../evolution-trial";
+import { promotionMargin } from "../fishing-margin";
 import { Logger } from "../logger";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
 import { getRank } from "../permissions";
-import { checkGateForExecution, recordGateExecution } from "../safety-gates";
+import { checkGateForExecution, recordGateExecution, SAFETY_GATES } from "../safety-gates";
+import { dailyCapRefusal } from "../spend-ledger";
+import { spawnBudget } from "./agent";
 import { requiresPersistence } from "./command-messages";
 
 /**
@@ -88,6 +93,8 @@ export function evolveCommand(deps: {
   db?: MarinaDB;
   /** Runtime parts for `evolve trial` (agents, channels, benchmarks); absent ⇒ trials unavailable. */
   trialDeps?: (opts: TrialOptions) => TrialDeps | undefined;
+  /** Runtime parts for `evolve replicate` (spawning copies, live counts). */
+  replicateDeps?: () => ReplicateDeps | undefined;
   notifyEvolutionState?: (
     entityNames: string[],
     state: { sessionId: number; experimentName: string; active: boolean },
@@ -112,6 +119,7 @@ export function evolveCommand(deps: {
           "sessions",
           "qualify",
           "trial",
+          "replicate",
           "create",
           "start",
           "status",
@@ -124,8 +132,9 @@ export function evolveCommand(deps: {
           "complete",
         ].includes(arg)
       ) {
-        handleEvolutionProtocol(ctx, input, entity, deps, arg);
-        return;
+        // Returned so a bounded async step (replicate) completes before the
+        // command does — its reply must reach a short-lived bridge connection.
+        return handleEvolutionProtocol(ctx, input, entity, deps, arg);
       }
 
       const db = deps.db;
@@ -205,9 +214,10 @@ function handleEvolutionProtocol(
       state: { sessionId: number; experimentName: string; active: boolean },
     ) => void;
     trialDeps?: (opts: TrialOptions) => TrialDeps | undefined;
+    replicateDeps?: () => ReplicateDeps | undefined;
   },
   sub: string,
-): void {
+): void | Promise<void> {
   const db = deps.db;
   if (!evolutionProtocolsEnabled()) {
     ctx.send(
@@ -484,6 +494,10 @@ function handleEvolutionProtocol(
     return;
   }
 
+  if (sub === "replicate") {
+    return handleReplicate(ctx, input, entity, deps, db, session.id, run);
+  }
+
   if (sub === "evaluate") {
     if (run.status !== "proposed") {
       ctx.send(input.entity, `Run ${run.id} is already ${run.status}.`);
@@ -610,6 +624,8 @@ function protocolUsage(sub: string): string {
       "Usage: evolve propose <experiment> | <hypothesis> | <candidate-reference> [| parent=<run-id>]",
     evaluate: "Usage: evolve evaluate <experiment> <run-id> | <evidence>",
     decide: "Usage: evolve decide <experiment> <run-id> <accept|reject|inconclusive>",
+    replicate:
+      "Usage: evolve replicate <experiment> <run-id> [n:1] [budget:200] [model:<m>] — spawn copies of an accepted candidate that won its trial",
     trial:
       "Usage: evolve trial <experiment> <run-id> [incumbent:<role>] [benchmark:smoke] [limit:N] [seed:N] [model:<m>] [timeout:30m] | evolve trial <experiment> <run-id> result",
   };
@@ -681,6 +697,40 @@ const TRIAL_MODS: ModifierSpec = {
 };
 let trialRunning = false;
 const TRIAL_NOTE_TYPE = "evolve_trial";
+/** World-level owner of trial and replication records. */
+export const TRIAL_OWNER = "evolve-trials";
+const REPLICA_NOTE_TYPE = "evolve_replica";
+
+interface StoredTrial {
+  run: number;
+  by: string;
+  result: TrialResult;
+  at: number;
+}
+
+const trialTag = (runId: number) => `[evolve_trial run=${runId}]`;
+
+/** The latest stored trial for a run: its record and its rendered text. */
+function storedTrial(
+  db: MarinaDB,
+  runId: number,
+): { record: StoredTrial; text: string } | undefined {
+  const tag = trialTag(runId);
+  const note = db
+    .getNotesByType(TRIAL_OWNER, TRIAL_NOTE_TYPE, 500)
+    .find((n) => n.content.startsWith(`${tag} `));
+  if (!note) return undefined;
+  const body = note.content.slice(tag.length + 1);
+  const nl = body.indexOf("\n");
+  try {
+    return {
+      record: JSON.parse(nl >= 0 ? body.slice(0, nl) : body) as StoredTrial,
+      text: nl >= 0 ? body.slice(nl + 1) : "",
+    };
+  } catch {
+    return undefined;
+  }
+}
 
 /** Test hook: trials are single-flight per world. */
 export function resetEvolveTrialForTests(): void {
@@ -706,15 +756,8 @@ function handleTrial(
   // `… result`: the latest stored outcome. A trial started over `world run`
   // outlives the bridge's short connection, so results are kept, not only sent.
   if (input.tokens[3]?.toLowerCase() === "result") {
-    const tag = `[evolve_trial run=${run.id}]`;
-    const note = db
-      .getNotesByType(entity.name, TRIAL_NOTE_TYPE, 50)
-      .find((n) => n.content.startsWith(tag));
-    say(
-      note
-        ? note.content.slice(tag.length).trim()
-        : `No finished trial recorded for run ${run.id} yet.`,
-    );
+    const stored = storedTrial(db, run.id);
+    say(stored ? stored.text : `No finished trial recorded for run ${run.id} yet.`);
     return;
   }
   if (process.env.MARINA_COLLECTIVE_CHILD !== "1" && process.env.MARINA_EVOLVE_TRIALS !== "here") {
@@ -784,11 +827,15 @@ function handleTrial(
     .then((result) => {
       const text = renderTrial(run.id, result);
       tryLog(new Logger(), "evolve", "Trial result not stored", () => {
-        db.createNote(entity.name, `[evolve_trial run=${run.id}] ${stripAnsi(text)}`, undefined, {
-          noteType: TRIAL_NOTE_TYPE,
-          tier: "process",
-          skipDedup: true,
-        });
+        // Structured (for `evolve replicate`) + rendered (for `… result`), under
+        // one world-level owner: whoever replicates need not be who ran the trial.
+        const record: StoredTrial = { run: run.id, by: entity.name, result, at: Date.now() };
+        db.createNote(
+          TRIAL_OWNER,
+          `${trialTag(run.id)} ${JSON.stringify(record)}\n${stripAnsi(text)}`,
+          undefined,
+          { noteType: TRIAL_NOTE_TYPE, tier: "process", skipDedup: true },
+        );
       });
       say(text);
     })
@@ -826,4 +873,174 @@ export function renderTrial(runId: number, result: TrialResult): string {
     );
   }
   return lines.join("\n");
+}
+
+// ─── evolve replicate ────────────────────────────────────────────────────────
+
+export interface ReplicateDeps {
+  spawn(opts: {
+    name: string;
+    role: string;
+    model: string;
+    budgetCalls: number;
+    spawnedBy: string;
+  }): Promise<void>;
+  /** Live agents this spawner already keeps alive. */
+  liveChildren(spawnerName: string): number;
+  /** Agents the runtime can still start (MAX_AGENTS − running). */
+  agentsLeft(): number;
+}
+
+/** A run can seed at most this many copies in total, however often it is asked. */
+export const MAX_REPLICAS_PER_RUN = 5;
+
+const REPLICATE_MODS: ModifierSpec = {
+  n: { type: "int" },
+  budget: { type: "int" },
+  model: { type: "string" },
+};
+
+/**
+ * Earned replication: an accepted candidate that WON its trial may spawn
+ * copies of itself. Winning means both arms completed and the candidate beat
+ * the incumbent by the fishing margin (it grows with every candidate this
+ * session has trialed). Copies count against the caller's spawn budget,
+ * MAX_AGENTS, the world's daily cap and a per-run ceiling, and each records
+ * its lineage. Child or parallel world only, like trials.
+ */
+async function handleReplicate(
+  ctx: RoomContext,
+  input: { entity: string; tokens: string[] },
+  entity: Entity,
+  deps: { replicateDeps?: () => ReplicateDeps | undefined },
+  db: MarinaDB,
+  sessionId: number,
+  run: { id: number; status: string; candidate_ref: string | null },
+): Promise<void> {
+  const say = (text: string) => ctx.send(input.entity as never, text);
+  if (process.env.MARINA_COLLECTIVE_CHILD !== "1" && process.env.MARINA_EVOLVE_TRIALS !== "here") {
+    say(
+      "Replication runs in a child or parallel world, never this one: `world run <child> evolve replicate …`.",
+    );
+    return;
+  }
+  if (getRank(entity) < 4) {
+    say("evolve replicate needs rank 4 (builder): copies are agents that spend real tokens.");
+    return;
+  }
+  if (run.status !== "accepted") {
+    say(
+      `Run ${run.id} is ${run.status}; only an accepted run (decided by an independent reviewer) may replicate.`,
+    );
+    return;
+  }
+  const role = /^role:([A-Za-z0-9][A-Za-z0-9_.-]*)$/.exec(run.candidate_ref ?? "")?.[1];
+  if (!role || !db.getRole(role)) {
+    say(`Run ${run.id}'s candidate "${run.candidate_ref ?? ""}" is not a role that exists here.`);
+    return;
+  }
+  const trial = storedTrial(db, run.id)?.record;
+  const cand = trial?.result.arms.find((a) => a.label === "candidate");
+  const inc = trial?.result.arms.find((a) => a.label === "incumbent");
+  if (
+    !trial ||
+    cand?.status !== "completed" ||
+    inc?.status !== "completed" ||
+    trial.result.delta === undefined
+  ) {
+    say(
+      `Run ${run.id} has no completed two-arm trial. Run one first: evolve trial <experiment> ${run.id} incumbent:<role>`,
+    );
+    return;
+  }
+  for (const arm of [cand, inc]) {
+    const row = arm.runId ? db.getBenchmarkRun(arm.runId) : undefined;
+    if (row?.status !== "completed" || row.answered <= 0) {
+      say(`Trial evidence benchmark:${arm.runId ?? "?"} no longer resolves; re-run the trial.`);
+      return;
+    }
+  }
+  const triedBefore = db
+    .listEvolutionRuns(sessionId)
+    .filter((r) => r.id !== run.id && storedTrial(db, r.id)).length;
+  const margin = promotionMargin(triedBefore);
+  if (trial.result.delta < margin) {
+    say(
+      `Not earned: the candidate beat the incumbent by ${(trial.result.delta * 100).toFixed(1)} points; this session needs ${(margin * 100).toFixed(1)} (${triedBefore} other candidate(s) trialed — every try raises the bar).`,
+    );
+    return;
+  }
+  const replicaTag = `[evolve_replica run=${run.id}]`;
+  const already = db
+    .getNotesByType(TRIAL_OWNER, REPLICA_NOTE_TYPE, 500)
+    .filter((n) => n.content.startsWith(replicaTag)).length;
+  const r = deps.replicateDeps?.();
+  if (!r) {
+    say("Replication needs the agent runtime, which this world does not have.");
+    return;
+  }
+  const capped = dailyCapRefusal();
+  if (capped) {
+    say(`Not replicating: ${capped}.`);
+    return;
+  }
+  const gate = checkGateForExecution(db, entity.id, "agent.spawn");
+  if (!gate.ok) {
+    say(gate.reason ?? "agent.spawn refused");
+    return;
+  }
+  const standing = getStanding(db, entity.id);
+  const granted =
+    db.getCompetence(entity.id, "agent.spawn")?.supervised_only === 0 &&
+    standing < SAFETY_GATES["agent.spawn"]!.minStanding;
+  const budgetLeft = spawnBudget(standing, granted) - r.liveChildren(entity.name);
+  const mods = parseModifiers(input.tokens.slice(3), REPLICATE_MODS);
+  const wanted = Math.max(1, (mods.values.n as number | undefined) ?? 1);
+  const n = Math.min(wanted, MAX_REPLICAS_PER_RUN - already, budgetLeft, r.agentsLeft());
+  if (n <= 0) {
+    say(
+      `No room to replicate: ${already}/${MAX_REPLICAS_PER_RUN} copies of run ${run.id} exist, your spawn budget has ${Math.max(0, budgetLeft)} left, the runtime ${r.agentsLeft()}.`,
+    );
+    return;
+  }
+  const model = (mods.values.model as string | undefined) ?? "marina/default";
+  const budgetCalls = Math.min(
+    Math.max((mods.values.budget as number | undefined) ?? 200, 10),
+    2_000,
+  );
+  const made: string[] = [];
+  const failed: string[] = [];
+  for (let k = already + 1; k <= already + n; k++) {
+    const name = sanitizeEntityName(`${role.replace(/[^A-Za-z0-9]/g, "")}r${run.id}n${k}`);
+    try {
+      if (made.length > 0) await new Promise((res) => setTimeout(res, 1_100)); // spawn cooldown
+      await r.spawn({ name, role, model, budgetCalls, spawnedBy: entity.name });
+      recordGateExecution(db, entity.id, "agent.spawn", gate, `evolve replicate run ${run.id}`);
+      db.createNote(
+        TRIAL_OWNER,
+        `${replicaTag} ${JSON.stringify({ run: run.id, role, agent: name, parent: entity.name, delta: trial.result.delta, margin, at: Date.now() })}`,
+        undefined,
+        { noteType: REPLICA_NOTE_TYPE, tier: "process", skipDedup: true },
+      );
+      made.push(name);
+    } catch (err) {
+      failed.push(`${name} (${err instanceof Error ? err.message : String(err)})`);
+    }
+  }
+  say(
+    [
+      header(`Replicated run ${run.id}: ${role}`),
+      separator(),
+      `  earned: +${(trial.result.delta * 100).toFixed(1)} points over ${inc.role} (bar ${(margin * 100).toFixed(1)})`,
+      ...(made.length
+        ? [
+            `  spawned ${made.join(", ")} (budget ${budgetCalls} calls each, lineage: spawned by ${entity.name})`,
+          ]
+        : []),
+      ...(failed.length ? [`  failed: ${failed.join("; ")}`] : []),
+      dim(
+        `  copies of this run: ${already + made.length}/${MAX_REPLICAS_PER_RUN}. Nothing in the parent world changed.`,
+      ),
+    ].join("\n"),
+  );
 }
