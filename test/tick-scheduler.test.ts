@@ -210,6 +210,8 @@ describe("Engine tick schedule", () => {
       .map(({ name, every, phase }) => ({ name, every, phase }));
 
     expect(schedule).toEqual([
+      // ~5 min of wall clock at this engine's 60 s tick; phase 1 keeps it off phase-0 slots.
+      { name: "autonomy-pulse", every: 5, phase: 1 },
       { name: "board-archive", every: 3600, phase: 300 },
       { name: "channel-prune", every: 1800, phase: 0 },
       { name: "arena-autopilot", every: 3600, phase: 1500 },

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ProviderProbeResult } from "../../net/model-api";
+import type { AutonomyPulseRow } from "../../persistence/db-telemetry";
 import type { CommandContext, CommandDef } from "../../types";
 import {
   AUTONOMY_REQUIREMENTS,
@@ -79,6 +80,22 @@ export function renderToolCallCheck(r: Pick<ProviderProbeResult, "toolCallOk">):
  * `readiness autonomy`: the evidence `qualify:autonomy` waits for, each
  * requirement against what was observed in the last 5 minutes.
  */
+/** The 24 h trend of 5-minute autonomy snapshots (plan goal: qualified in ≥ 70% of them). */
+export const AUTONOMY_TREND_GOAL = 0.7;
+
+export function renderAutonomyTrend(pulses: readonly AutonomyPulseRow[]): string[] {
+  if (pulses.length === 0) {
+    return ["Last 24 h: no snapshots yet (one is taken every 5 minutes while Marina runs)."];
+  }
+  const qualified = pulses.filter((p) => p.qualified === 1).length;
+  const share = qualified / pulses.length;
+  const agents = pulses.map((p) => p.active_agents).sort((a, b) => a - b);
+  const median = agents[Math.floor(agents.length / 2)] ?? 0;
+  return [
+    `Last 24 h: qualified in ${qualified} of ${pulses.length} snapshots (${Math.round(share * 100)}%) — goal ≥ ${Math.round(AUTONOMY_TREND_GOAL * 100)}% ${share >= AUTONOMY_TREND_GOAL ? "✓" : "✗"} · median active agents ${median}`,
+  ];
+}
+
 export function renderAutonomy(report: ReadinessReport): string[] {
   const d = report.demo;
   const req = AUTONOMY_REQUIREMENTS;
@@ -130,6 +147,8 @@ export function renderAutonomy(report: ReadinessReport): string[] {
 export function readinessCommand(deps: {
   readiness: () => ReadinessReport;
   probeProviders?: (providers?: string[]) => Promise<ProviderProbeResult[]>;
+  /** 5-minute autonomy snapshots since a time (the `autonomy-pulse` tick job). */
+  pulseHistory?: (sinceMs: number) => AutonomyPulseRow[];
 }): CommandDef {
   return {
     name: "readiness",
@@ -157,7 +176,14 @@ export function readinessCommand(deps: {
         return;
       }
       if (sub === "autonomy") {
-        ctx.send(input.entity, renderAutonomy(deps.readiness()).join("\n"));
+        const history = deps.pulseHistory?.(Date.now() - 24 * 3_600_000);
+        ctx.send(
+          input.entity,
+          [
+            ...renderAutonomy(deps.readiness()),
+            ...(history ? ["", ...renderAutonomyTrend(history)] : []),
+          ].join("\n"),
+        );
         return;
       }
       const report = deps.readiness();

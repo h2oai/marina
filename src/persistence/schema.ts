@@ -3636,4 +3636,22 @@ CREATE INDEX idx_judge_observations_claim ON judge_observations(task_id, claiman
 CREATE INDEX idx_judge_observations_evaluator ON judge_observations(evaluator, id);
 `,
   },
+  // Migration 130: autonomy pulse history — the readiness autonomy numbers every
+  // 5 minutes, so "are agents acting on their own?" has a trend (db-telemetry.ts).
+  {
+    version: 130,
+    sql: `
+CREATE TABLE autonomy_pulse (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at INTEGER NOT NULL,
+  active_agents INTEGER NOT NULL,
+  primitive_actions INTEGER NOT NULL,
+  communications INTEGER NOT NULL,
+  tool_calls INTEGER NOT NULL,
+  median_response_ms INTEGER,
+  qualified INTEGER NOT NULL
+);
+CREATE INDEX idx_autonomy_pulse_at ON autonomy_pulse(at);
+`,
+  },
 ];

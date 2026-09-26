@@ -194,6 +194,13 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
   { table: "entity_standing", kind: "append-only", note: "reputation ledger (decay is computed)" },
   { table: "memory_resolutions", kind: "append-only", note: "contradiction-resolution audit" },
   {
+    table: "autonomy_pulse",
+    timeColumn: "at",
+    kind: "telemetry",
+    keepMs: 30 * DAY_MS,
+    note: "5-minute autonomy snapshots behind `readiness autonomy`'s 24 h trend",
+  },
+  {
     table: "judge_observations",
     timeColumn: "created_at",
     kind: "ledger",

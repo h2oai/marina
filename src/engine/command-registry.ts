@@ -1097,6 +1097,7 @@ export function registerBuiltinCommands(engine: Engine): void {
     readinessCommand({
       readiness: () => computeReadiness(engine),
       probeProviders: (providers) => probeConfiguredProviders(engine, { providers }),
+      pulseHistory: (sinceMs) => engine.db?.listAutonomyPulse(sinceMs) ?? [],
     }),
   );
   if (engine.db && engine.taskManager) {

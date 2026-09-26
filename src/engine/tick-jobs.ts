@@ -28,6 +28,12 @@ import { MEMORY_HYGIENE_PHASE, runEngineMemoryHygiene } from "./memory-hygiene";
 import { formatRetentionSummary, RETENTION_TICK_PHASE, runRetentionPass } from "./retention";
 import type { TickScheduler } from "./tick-scheduler";
 
+/** The autonomy pulse cadence (5 minutes, matching readiness's evidence window) in ticks. */
+export const AUTONOMY_PULSE_MS = 5 * 60_000;
+export function autonomyPulseTicks(tickIntervalMs: number): number {
+  return Math.max(1, Math.round(AUTONOMY_PULSE_MS / Math.max(1, tickIntervalMs)));
+}
+
 /**
  * What the periodic jobs need from the engine. Every field is a getter on the
  * engine's side: `registerTickJobs` runs in the constructor, but collaborators
@@ -65,6 +71,31 @@ export interface TickJobHost {
  * (`db`, managers) are checked when the job runs, not when it is declared.
  */
 export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
+  // Every ~5 minutes of wall clock: snapshot the autonomy numbers so
+  // `readiness autonomy` can report a trend, not only the current window.
+  const pulseEvery = autonomyPulseTicks(host.config.tickInterval);
+  s.register({
+    name: "autonomy-pulse",
+    every: pulseEvery,
+    // Phase 1, never 0: an equal interval must not collide with the phase-0
+    // jobs (register() refuses a shared slot, which would fail boot).
+    phase: pulseEvery > 1 ? 1 : 0,
+    failureMessage: "Autonomy pulse snapshot failed",
+    run: () => {
+      if (!host.db) return;
+      const d = host.readiness().demo;
+      host.db.recordAutonomyPulse({
+        at: Date.now(),
+        activeAgents: d.activeAgents,
+        primitiveActions: d.recentPrimitiveActions,
+        communications: d.recentCommunications,
+        toolCalls: d.marinaToolCalls,
+        ...(d.medianResponseMs === undefined ? {} : { medianResponseMs: d.medianResponseMs }),
+        qualified: d.autonomyQualified,
+      });
+    },
+  });
+
   s.register({
     name: "board-archive",
     every: BOARD_ARCHIVE_INTERVAL,
