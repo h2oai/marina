@@ -8,6 +8,7 @@
 
 import { getInternalModelToken } from "../../agent/agent-runtime";
 import { secretsEqual } from "../../auth/secret-compare";
+import type { Engine } from "../../engine/engine";
 import { isOpenApiMode } from "../../engine/trust-profile";
 import { buildAliasMap } from "../compat-profiles";
 import { corsHeaders } from "../cors";
@@ -339,6 +340,35 @@ export function extractStrategy(req: Request): "round-robin" | "least-busy" | "a
  * refuse their `tools`. Found on a fresh install (default mode `agents`): the
  * first turn of every spawned agent failed with `400 unsupported_parameter`.
  */
+/**
+ * An explicit `marina:<name>` / `marina/<name>` that names a LIVE agent channel
+ * (`model-<name>` with an online member) — an orchestration, e.g. a crew or an
+ * `evolve trial` arm. Such a request goes to those agents in every endpoint
+ * mode and from any caller: the id names them, and passing it upstream can only
+ * 404. `marina`, `marina/default` (Marina's own agents' proxy model),
+ * conversation channels and ids with no live channel keep their usual route.
+ * A caller that is itself a member of the channel is not routed back into it.
+ */
+export function liveOrchestrationChannel(
+  engine: Engine,
+  model: string,
+  callerAgentName?: string,
+): { id: string; name: string } | undefined {
+  if (!/^marina[:/]./.test(model)) return undefined;
+  const name = modelToChannelName(model);
+  if (name === "model" || name === "model-default" || name.startsWith("model-conv-")) {
+    return undefined;
+  }
+  const cm = engine.channelManager;
+  const ch = cm?.getChannelByName(name);
+  if (!cm || !ch) return undefined;
+  const members = new Set(cm.getMembers(ch.id).map(String));
+  const online = engine.getOnlineAgents().filter((e) => members.has(e.id));
+  if (online.length === 0) return undefined;
+  if (callerAgentName && online.some((e) => e.name === callerAgentName)) return undefined;
+  return { id: ch.id, name: ch.name };
+}
+
 export function isInternalCaller(auth: PassthruAuthResult | undefined): boolean {
   return auth?.internal === true;
 }

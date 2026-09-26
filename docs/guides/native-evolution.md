@@ -45,6 +45,33 @@ evolve decide PromptTrial 1 accept
 An accepted run remains inactive. Promotion or activation must happen separately through the
 ordinary command and review path for that candidate type.
 
+### Trials: a candidate against the incumbent, side by side
+
+`evolve trial <experiment> <run> incumbent:<role> [benchmark:smoke] [limit:N] [seed:N] [model:<m>]
+[timeout:30m]` measures a `role:<name>` candidate without adopting it. It runs **only in a child or
+parallel world** (World Collective; or `MARINA_EVOLVE_TRIALS=here` for a dedicated parallel world),
+where that world's daily spend cap bounds the cost. It spawns a temporary agent on each role (same
+model, same budget), joins each to its own model channel in code, runs the same benchmark on both,
+waits with a deadline, then tears agents and channels down. Nothing is activated. Rank 4 plus the
+`agent.spawn` gate; one trial at a time.
+
+```text
+# from the parent — the trial runs inside the child world
+world seed-role trial2 scout            # incumbent
+world seed-role trial2 scout-v2         # candidate
+world run trial2 evolve propose ScoutTrial | a precise tone answers better | role:scout-v2
+world run trial2 evolve trial ScoutTrial 1 incumbent:scout benchmark:smoke timeout:15m
+world run trial2 evolve trial ScoutTrial 1 result
+#   candidate scout-v2  completed 100.0% (15/15) benchmark:br_…
+#   incumbent scout     completed  93.3% (14/15) benchmark:br_…
+#   candidate − incumbent: +6.7 points
+```
+
+The result is kept (a trial started over `world run` outlives the bridge's connection) and names both
+runs, which an evaluator other than the proposer cites with `evolve evaluate`. Small benchmarks are
+noisy: 15 items cannot separate one missed answer from a real difference — use a larger set
+(`benchmark:arc-challenge limit:100 seed:…`) before drawing conclusions.
+
 ### Evidence you can check
 
 Cite a benchmark run by its id and `evolve evaluate` checks it: the run must exist, be completed and
