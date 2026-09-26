@@ -5,6 +5,7 @@ import { bold, category, dim, header, separator, status } from "../../net/ansi";
 import type { EvolutionSessionRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
 import { analyzeEvolutionEvidence } from "../evolution-analysis";
+import { resolveEvolutionEvidence } from "../evolution-evidence";
 import {
   createEvolutionProtocol,
   evolutionBudgetState,
@@ -486,10 +487,25 @@ function handleEvolutionProtocol(
       ctx.send(input.entity, protocolUsage(sub));
       return;
     }
-    db.evaluateEvolutionRun(run.id, entity.name, evidence);
+    // Cited benchmark runs must resolve; their verified scores are kept with it.
+    const refs = resolveEvolutionEvidence(db, evidence);
+    if (refs.missing.length > 0) {
+      ctx.send(
+        input.entity,
+        `Not recorded — cited evidence does not resolve: ${refs.missing.join("; ")}. Cite a completed run (\`benchmark runs\`).`,
+      );
+      return;
+    }
+    const stored = refs.verified.length
+      ? `${evidence}\n[verified] ${refs.verified.join("\n[verified] ")}`
+      : evidence;
+    db.evaluateEvolutionRun(run.id, entity.name, stored);
     ctx.send(
       input.entity,
-      `Evidence recorded for run ${run.id}; it remains advisory and inactive.`,
+      [
+        `Evidence recorded for run ${run.id}; it remains advisory and inactive.`,
+        ...refs.verified.map((v) => `  verified ${v}`),
+      ].join("\n"),
     );
     return;
   }

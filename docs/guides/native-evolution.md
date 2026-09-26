@@ -45,6 +45,22 @@ evolve decide PromptTrial 1 accept
 An accepted run remains inactive. Promotion or activation must happen separately through the
 ordinary command and review path for that candidate type.
 
+### Evidence you can check
+
+Cite a benchmark run by its id and `evolve evaluate` checks it: the run must exist, be completed and
+have answered something, or the evaluation is refused. Its verified score is stored with the
+evidence, together with what it measured — for a `marina:<name>` target, the agents serving it,
+their role and the hash of the exact system prompt in force:
+
+```text
+benchmark run smoke --model marina:scout-v2          # → br_…
+evolve evaluate ScoutTrial 1 | sharper answers on the smoke set benchmark:br_da6d8043_muhobbx8
+#   verified benchmark:br_da6d8043_muhobbx8 smoke 93.3% (15/15) · marina:scout-v2 · Scout2 role scout-v2 prompt ab12cd34ef56
+```
+
+Free-text labels (`benchmark:prompt-trial-2026-08-04`) are still accepted as notes; only run ids
+(`br_…`) are resolved.
+
 Use `parent=<run-id>` to preserve experimental lineage:
 
 ```text

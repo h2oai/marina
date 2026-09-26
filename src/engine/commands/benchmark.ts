@@ -10,7 +10,7 @@ import {
 import { bold, category, dim, status as fmtStatus, header, separator } from "../../net/ansi";
 import type { BenchmarkRunRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
-import { BENCHMARKS, type BenchmarkRunner } from "../benchmark-runner";
+import { BENCHMARKS, type BenchmarkRunner, type BenchmarkSubject } from "../benchmark-runner";
 import { extractModifiers, resolveMultiWordName } from "../parse-input";
 import { formatAge } from "./format-duration";
 
@@ -84,6 +84,8 @@ export function benchmarkCommand(deps: {
    */
   listOrchestrations: () => string[];
   logEvent?: (event: EngineEvent) => void;
+  /** The agents behind a `marina:<name>` target (role, prompt version), recorded with the run. */
+  describeTarget?: (model: string) => BenchmarkSubject[];
 }): CommandDef {
   const { db, runner, listOrchestrations } = deps;
   return {
@@ -209,6 +211,7 @@ export function benchmarkCommand(deps: {
                   limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
                   seed: Number.isFinite(seed) ? seed : undefined,
                   model: orch,
+                  subjects: deps.describeTarget?.(orch) ?? [],
                   judgeModel: modifiers.judge ?? modifiers["judge-model"],
                   concurrency:
                     Number.isFinite(concurrency) && concurrency > 0 ? concurrency : undefined,
@@ -295,6 +298,9 @@ export function benchmarkCommand(deps: {
               limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
               seed: Number.isFinite(seed) ? seed : undefined,
               model: modifiers.model,
+              ...(modifiers.model
+                ? { subjects: deps.describeTarget?.(modifiers.model) ?? [] }
+                : {}),
               judgeModel: modifiers.judge ?? modifiers["judge-model"],
               concurrency:
                 Number.isFinite(concurrency) && concurrency > 0 ? concurrency : undefined,
@@ -345,8 +351,21 @@ export function benchmarkCommand(deps: {
           if (row.config_json) {
             try {
               const config = JSON.parse(row.config_json) as Record<string, unknown>;
+              const subjects = Array.isArray(config.subjects)
+                ? (config.subjects as BenchmarkSubject[])
+                : [];
+              if (subjects.length > 0) {
+                lines.push(
+                  `  ${bold("measured")}:    ${subjects
+                    .map(
+                      (s) =>
+                        `${s.agent}${s.role ? ` (role ${s.role}` : " ("}${s.promptVersion ? `, prompt ${s.promptVersion}` : ""})`,
+                    )
+                    .join(", ")}`,
+                );
+              }
               const entries = Object.entries(config)
-                .filter(([, v]) => v !== undefined && v !== null)
+                .filter(([k, v]) => k !== "subjects" && v !== undefined && v !== null)
                 .map(([k, v]) => `    ${dim(k)}=${typeof v === "string" ? v : JSON.stringify(v)}`);
               if (entries.length > 0) {
                 lines.push(`  ${bold("config")}:`);
