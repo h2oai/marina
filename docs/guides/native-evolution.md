@@ -72,6 +72,30 @@ runs, which an evaluator other than the proposer cites with `evolve evaluate`. S
 noisy: 15 items cannot separate one missed answer from a real difference — use a larger set
 (`benchmark:arc-challenge limit:100 seed:…`) before drawing conclusions.
 
+### Earned replication: a winner spawns copies of itself
+
+`evolve replicate <experiment> <run> [n:1] [budget:200] [model:<m>]` lets a candidate that WON spawn
+copies of itself — in the same child or parallel world, never the parent. It refuses unless:
+
+- the run is **accepted** (recorded by `evolve decide`, with the protocol's independent review);
+- its **trial** completed on both arms and both cited benchmark runs still resolve;
+- the candidate beat the incumbent by the **fishing margin** — `0.02 + 0.01·log₂(1 + candidates
+  already trialed in this session)`, the same rule arena signal discovery uses, so every try raises
+  the bar;
+- there is room: at most 5 copies per run ever, the caller's standing-scaled spawn budget,
+  `MAX_AGENTS`, and the world's daily spend cap.
+
+Each copy runs the candidate role with its own call budget, is `spawned_by` the caller, and gets a
+lineage record (`evolve-trials` / `evolve_replica`: run, role, agent, parent, delta, margin). Nothing in
+the parent world changes; bringing a role back is a separate, reviewed step.
+
+```text
+world run trial2 evolve replicate ScoutTrial 1
+#   Not earned: the candidate beat the incumbent by 0.0 points; this session needs 2.0
+world run trial2 evolve replicate ScoutTrial 2 n:2
+#   earned: +100.0 points over hasty (bar 3.0) · spawned scoutv2r2n1, scoutv2r2n2
+```
+
 ### Evidence you can check
 
 Cite a benchmark run by its id and `evolve evaluate` checks it: the run must exist, be completed and

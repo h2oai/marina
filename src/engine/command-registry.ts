@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getInternalModelToken } from "../agent/agent-runtime";
+import { getInternalModelToken, MAX_AGENTS } from "../agent/agent-runtime";
 import { seedMemoryHelperRoles } from "../agent/memory-helper-roles";
 import {
   ASK_SYSTEM_PROMPT,
@@ -684,6 +684,21 @@ export function registerBuiltinCommands(engine: Engine): void {
     evolveCommand({
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
+      replicateDeps: () => {
+        const rt = engine.agentRuntime;
+        const db = engine.db;
+        if (!rt?.isAvailable() || !db) return undefined;
+        return {
+          spawn: async (o) => {
+            await rt.spawn(o);
+          },
+          liveChildren: (spawner) => {
+            const live = new Set(rt.list().map((a) => a.name));
+            return db.getAgentConfigsBySpawnedBy(spawner).filter((c) => live.has(c.name)).length;
+          },
+          agentsLeft: () => Math.max(0, MAX_AGENTS - rt.list().length),
+        };
+      },
       trialDeps: (opts) => {
         const rt = engine.agentRuntime;
         const cm = engine.channelManager;

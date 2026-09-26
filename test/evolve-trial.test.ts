@@ -243,3 +243,135 @@ describe("liveOrchestrationChannel — explicit agent routes reach their agents"
     expect(liveOrchestrationChannel(engine, "anthropic/claude-sonnet-5")).toBeUndefined();
   });
 });
+
+describe("evolve replicate — earned replication", () => {
+  let dir: string;
+  let db: MarinaDB;
+  let out: string[];
+  const spawned: Array<{ name: string; role: string; spawnedBy: string }> = [];
+  const prior = {
+    child: process.env.MARINA_COLLECTIVE_CHILD,
+    protocols: process.env.MARINA_EVOLUTION_PROTOCOLS,
+  };
+  const ctx = { send: (_e: string, t: string) => out.push(stripAnsi(t)) } as unknown as RoomContext;
+  const input = (line: string) => {
+    const tokens = line.split(/\s+/).slice(1);
+    return { entity: "e_op" as EntityId, tokens, args: tokens.join(" "), raw: line } as never;
+  };
+  const op = { id: "e_op", name: "Operator", properties: { rank: 9 } } as unknown as Entity;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "replicate-"));
+    db = new MarinaDB(join(dir, "w.db"));
+    process.env.MARINA_EVOLUTION_PROTOCOLS = "true";
+    process.env.MARINA_COLLECTIVE_CHILD = "1";
+    resetEvolveTrialForTests();
+    const expId = db.createExperiment({
+      name: "scout",
+      creatorName: "Operator",
+      requiredAgents: 1,
+    });
+    db.addParticipant(expId, "Operator");
+    db.saveRole({ name: "scout", traits: [], createdBy: "seed" });
+    db.saveRole({ name: "scout-v2", traits: [], createdBy: "seed" });
+    grant(db, "e_op", "agent.spawn");
+    spawned.length = 0;
+    out = [];
+  });
+  afterEach(() => {
+    for (const [k, v] of [
+      ["MARINA_COLLECTIVE_CHILD", prior.child],
+      ["MARINA_EVOLUTION_PROTOCOLS", prior.protocols],
+    ] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** A session with one proposed run, trialed with the given scores (fake runtime). */
+  async function trialed(scores: { cand: number; inc: number }) {
+    const f = fakeDeps({
+      runMs: 0,
+      scores: { "marina:trial-1-cand": scores.cand, "marina:trial-1-inc": scores.inc },
+    });
+    // The fake runs report as completed; mirror them into benchmark_runs so the
+    // evidence re-check resolves.
+    const startBenchmark = f.deps.startBenchmark;
+    f.deps.startBenchmark = (model, subjects) => {
+      const id = startBenchmark(model, subjects);
+      const score = model.endsWith("cand") ? scores.cand : scores.inc;
+      db.insertBenchmarkRun({
+        id,
+        benchmark: "smoke",
+        config_hash: id,
+        config_json: "{}",
+        status: "running",
+        started_at: 0,
+      });
+      db.completeBenchmarkRun(id, {
+        score,
+        breakdown_json: null,
+        answered: 15,
+        total: 15,
+        status: "completed",
+        completed_at: 1,
+        duration_ms: 1,
+      });
+      return id;
+    };
+    const cmd = evolveCommand({
+      getEntity: () => op,
+      db,
+      trialDeps: () => f.deps,
+      replicateDeps: () => ({
+        spawn: async (o) => {
+          spawned.push({ name: o.name, role: o.role, spawnedBy: o.spawnedBy });
+        },
+        liveChildren: () => spawned.length,
+        agentsLeft: () => 30,
+      }),
+    });
+    cmd.handler(ctx, input("evolve create scout | a sharper scout"));
+    cmd.handler(ctx, input("evolve start scout"));
+    cmd.handler(ctx, input("evolve propose scout | tighter guidelines | role:scout-v2"));
+    cmd.handler(ctx, input("evolve trial scout 1 incumbent:scout"));
+    await until(() => out.some((t) => t.includes("Trial for run 1")));
+    out = [];
+    return cmd;
+  }
+
+  const replicate = async (cmd: ReturnType<typeof evolveCommand>, line: string) => {
+    out = [];
+    await cmd.handler(ctx, input(line));
+    await until(() => out.length > 0);
+    return out.join("\n");
+  };
+
+  it("refuses until the run is accepted, then spawns copies that record their lineage, within the per-run cap", async () => {
+    const cmd = await trialed({ cand: 0.9, inc: 0.7 });
+    expect(await replicate(cmd, "evolve replicate scout 1 n:2")).toContain("only an accepted run");
+    cmd.handler(ctx, input("evolve evaluate scout 1 | won its trial"));
+    cmd.handler(ctx, input("evolve decide scout 1 accept"));
+    const text = await replicate(cmd, "evolve replicate scout 1 n:2");
+    expect(text).toContain("earned: +20.0 points over scout");
+    expect(spawned.map((s) => [s.name, s.role, s.spawnedBy])).toEqual([
+      ["scoutv2r1n1", "scout-v2", "Operator"],
+      ["scoutv2r1n2", "scout-v2", "Operator"],
+    ]);
+    expect(db.getNotesByType("evolve-trials", "evolve_replica", 10)).toHaveLength(2);
+    // The per-run ceiling holds however often it is asked.
+    await replicate(cmd, "evolve replicate scout 1 n:10");
+    expect(spawned).toHaveLength(5);
+    expect(await replicate(cmd, "evolve replicate scout 1")).toContain("No room to replicate");
+  });
+
+  it("refuses a win smaller than the fishing margin", async () => {
+    const cmd = await trialed({ cand: 0.71, inc: 0.7 });
+    cmd.handler(ctx, input("evolve evaluate scout 1 | barely"));
+    cmd.handler(ctx, input("evolve decide scout 1 accept"));
+    expect(await replicate(cmd, "evolve replicate scout 1")).toContain("Not earned");
+    expect(spawned).toHaveLength(0);
+  });
+});

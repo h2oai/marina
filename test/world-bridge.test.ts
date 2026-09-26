@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -144,5 +144,24 @@ describe("world — run commands and seed roles in a child world", () => {
     await cmd.handler(ctx, input("world seed-role trial1 scout-v2"));
     expect(out.join("\n")).toContain('Imported role "scout-v2"');
     expect(child.getRole("scout-v2")).toBeDefined();
+  });
+});
+
+describe("child world start — says why it failed", () => {
+  it("recreates a missing variant directory and keeps the child's stderr in last_error", async () => {
+    const root = join(dir, "stubroot");
+    mkdirSync(join(root, "src"), { recursive: true });
+    // A child that fails the way a broken boot does: an error on stderr, then exit 3.
+    writeFileSync(
+      join(root, "src", "main.ts"),
+      'console.error("boom: bad config"); process.exit(3);\n',
+    );
+    const manager = new WorldCollectiveManager(parent, root);
+    const v = manager.create({ name: "crashy", worldTemplate: "empty", createdBy: "e_op" });
+    rmSync(join(root, "data"), { recursive: true, force: true }); // a cleaned checkout
+    const row = await manager.start(v.id);
+    expect(row.status).toBe("failed");
+    expect(row.last_error).toContain("boom: bad config");
+    expect(existsSync(join(root, "data", "collective", "crashy", "assets"))).toBe(true);
   });
 });

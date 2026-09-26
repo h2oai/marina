@@ -26,6 +26,16 @@ export function collectiveManager(db: MarinaDB, sourceRoot = PROJECT_ROOT): Worl
   return manager;
 }
 
+/**
+ * How long a child may take to answer its setup-status endpoint. A fresh child
+ * applies every migration on first boot, which a slow host can stretch;
+ * `MARINA_COLLECTIVE_START_TIMEOUT_MS` (default 30 s).
+ */
+function startTimeoutMs(): number {
+  const ms = Number(process.env.MARINA_COLLECTIVE_START_TIMEOUT_MS);
+  return Number.isFinite(ms) && ms >= 1_000 ? ms : 30_000;
+}
+
 export class WorldCollectiveManager {
   private readonly processes = new Map<string, Bun.Subprocess>();
   readonly sourceRoot: string;
@@ -97,6 +107,9 @@ export class WorldCollectiveManager {
     if (!this.sourceAvailable()) throw new Error("Marina source is not available.");
     this.db.updateWorldVariant(id, { status: "starting", pid: null, lastError: null });
     const assetsDir = join(dirname(variant.db_path), "assets");
+    // The variant's directory can be gone (a cleaned checkout); the child
+    // cannot open its database without it, so recreate it rather than crash.
+    mkdirSync(assetsDir, { recursive: true });
     const child = Bun.spawn([process.execPath, "run", "src/main.ts"], {
       cwd: variant.source_root,
       env: {
@@ -119,8 +132,21 @@ export class WorldCollectiveManager {
         AGENT_AUTORESPAWN: "false",
       },
       stdout: "ignore",
-      stderr: "ignore",
+      stderr: "pipe",
     });
+    // Keep the tail of the child's stderr (drained continuously so a chatty
+    // child never blocks on a full pipe) — a failed start says WHY.
+    let stderrTail = "";
+    void (async () => {
+      const decoder = new TextDecoder();
+      for await (const chunk of child.stderr as ReadableStream<Uint8Array>) {
+        stderrTail = (stderrTail + decoder.decode(chunk, { stream: true })).slice(-2_000);
+      }
+    })().catch(() => undefined);
+    const why = (base: string) => {
+      const tail = stderrTail.trim().split("\n").slice(-3).join(" | ").slice(-400);
+      return tail ? `${base} Last output: ${tail}` : base;
+    };
     this.processes.set(id, child);
     this.db.updateWorldVariant(id, { status: "starting", pid: child.pid, lastError: null });
     void child.exited.then((exitCode) => {
@@ -130,7 +156,7 @@ export class WorldCollectiveManager {
         this.db.updateWorldVariant(id, {
           status: exitCode === 0 ? "stopped" : "failed",
           pid: null,
-          lastError: exitCode === 0 ? null : `Child exited with code ${exitCode}.`,
+          lastError: exitCode === 0 ? null : why(`Child exited with code ${exitCode}.`),
         });
       }
     });
@@ -141,7 +167,9 @@ export class WorldCollectiveManager {
       return this.db.updateWorldVariant(id, {
         status: "failed",
         pid: null,
-        lastError: "Child did not become ready within 10 seconds.",
+        lastError: why(
+          `Child did not become ready within ${Math.round(startTimeoutMs() / 1000)} seconds.`,
+        ),
       })!;
     }
     return this.db.updateWorldVariant(id, { status: "running", pid: child.pid, lastError: null })!;
@@ -193,7 +221,7 @@ export class WorldCollectiveManager {
   }
 
   private async waitForReady(port: number, child: Bun.Subprocess): Promise<boolean> {
-    const deadline = Date.now() + 10_000;
+    const deadline = Date.now() + startTimeoutMs();
     while (Date.now() < deadline) {
       if (child.exitCode !== null) return false;
       try {

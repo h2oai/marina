@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Earned replication: `evolve replicate <exp> <run> [n] [budget] [model]` — an accepted candidate that
+  won its trial by the fishing margin (shared with arena discovery, `src/engine/fishing-margin.ts`)
+  spawns copies of itself in its child or parallel world, within a per-run ceiling (5), the
+  caller's spawn budget, `MAX_AGENTS` and the daily cap; each copy gets a lineage record. Trial
+  results are stored structured under the world-level `evolve-trials` owner.
 - `evolve trial <exp> <run> incumbent:<role>`: a candidate role against the incumbent, side by
   side, in a child or parallel world only — temporary agents on each role, their own model
   channels, the same benchmark, a deadline, teardown, and a stored result naming both runs for
@@ -117,6 +122,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A child world whose directory was gone crashed at start and reported only "did not become ready
+  within 10 seconds": `start()` now recreates the directory, keeps the child's last stderr lines
+  in the variant's error, and waits up to `MARINA_COLLECTIVE_START_TIMEOUT_MS` (default 30 s).
 - A `marina:<name>` model id naming a live agent channel was proxied upstream (404) in the default
   `passthru` endpoint mode and for Marina's internal callers, so in-world `benchmark run --model
   marina:<crew>` and `benchmark sweep` never reached the agents. Explicit live orchestrations now
