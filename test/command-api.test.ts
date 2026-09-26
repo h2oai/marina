@@ -3,6 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
+import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
@@ -58,6 +59,32 @@ describe("Command API", () => {
     engine.removeConnection(conn.id);
     return login.token;
   }
+
+  it("recognizes a loopback caller by its REAL socket peer, like a loopback WebSocket login", async () => {
+    const rankOf = (name: string) => {
+      const e = [...engine.entities.all()].find((x) => x.name === name);
+      return (e?.properties as { rank?: number } | undefined)?.rank ?? 0;
+    };
+    const call = async (name: string, peerIp?: string) => {
+      const [url, method, req] = makeRequest("/api/command", { name, command: "look" });
+      const resp = await handleDashboardApi(req, url, method, engine, db, peerIp);
+      expect(resp?.status).toBe(200);
+    };
+    try {
+      setTrustProfile("local");
+      await call("LoopOperator", "127.0.0.1"); // a parent world driving its child
+      expect(rankOf("LoopOperator")).toBe(9);
+      await call("RemoteCaller", "203.0.113.5");
+      expect(rankOf("RemoteCaller")).toBe(0);
+      await call("UnknownPeer"); // no peer known ⇒ fails closed
+      expect(rankOf("UnknownPeer")).toBe(0);
+      setTrustProfile("shared"); // loopback alone is not operator on a shared world
+      await call("SharedLoop", "127.0.0.1");
+      expect(rankOf("SharedLoop")).toBe(0);
+    } finally {
+      resetTrustProfileForTests();
+    }
+  });
 
   it("executes a command through a name-based short-lived session", async () => {
     const [url, method, req] = makeRequest("/api/command", {

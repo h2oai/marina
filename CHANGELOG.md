@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Parent ↔ child worlds from inside the world: `world create|start|stop|list`, `world run <child>
+  <command>` (runs one command inside a running child as the caller, over its loopback command
+  endpoint) and `world seed-role <child> <role>`. `role export` / `role import` move a role and
+  its traits between worlds losslessly; import only creates.
 - Per-world daily spend cap: `MARINA_DAILY_SPEND_CAP_USD` caps everything a world pays upstream
   in a UTC day — `/v1` passthru (so in-world benchmark runs), agent turns priced by their own
   provider, decision backends and forecasts — each dollar recorded once, where it leaves Marina,

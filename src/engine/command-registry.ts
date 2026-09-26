@@ -122,6 +122,7 @@ import { webCommand } from "./commands/web";
 import { whoCommand } from "./commands/who";
 import { witnessCommand } from "./commands/witness";
 import { workCommand } from "./commands/work";
+import { worldCommand } from "./commands/world";
 import type { Engine } from "./engine";
 import { tryLog } from "./errors";
 import { computeReadiness } from "./readiness";
@@ -382,6 +383,13 @@ export function registerBuiltinCommands(engine: Engine): void {
     );
     engine.commands.registerBuiltin(
       marinaDescendCommand({
+        db: engine.db,
+        manager: () => collectiveManager(engine.db!),
+        getEntity: (id) => engine.entities.get(id as EntityId),
+      }),
+    );
+    engine.commands.registerBuiltin(
+      worldCommand({
         db: engine.db,
         manager: () => collectiveManager(engine.db!),
         getEntity: (id) => engine.entities.get(id as EntityId),

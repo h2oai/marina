@@ -10,6 +10,26 @@ endpoint responds. Exit codes and readiness timeouts become visible failure stat
 restarts, it marks previously recorded children failed rather than assuming an untracked process is
 healthy.
 
+## From inside the world
+
+Operators (rank 5 with `admin.destructive`) can do the same without the dashboard, and use a child
+once it runs:
+
+```text
+world create trial1 empty | does scout-v2 answer better than scout?
+world start trial1
+world seed-role trial1 scout-v2      # the role and its traits, losslessly (role export → role import)
+world run trial1 benchmark list      # any world command, run inside the child as you
+world run trial1 readiness           # includes the child's own Daily spend ($50 cap)
+world stop trial1
+```
+
+`world run` posts to the child's command endpoint on loopback under your name, so the child's audit
+trail names who acted. A child resolves its own trust profile: on a single-operator machine it is
+`local` and your commands run ungated there; on a shared profile you need rank in the child too.
+`role export <name>` / `role import <bundle>` also move roles between any two Marinas; import only
+creates — an existing role, or a same-named trait with different content, is refused.
+
 ## Reproducible comparison
 
 Create a baseline and candidate from the same world template. Change one independent variable through

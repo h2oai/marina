@@ -2,6 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  decodeRoleBundle,
+  encodeRoleBundle,
+  exportRoleBundle,
+  importRoleBundle,
+  missingTraits,
+} from "../../agent/role-bundle";
+import {
   composeRolePrompt,
   inferTaskCategory,
   isTraitActiveForCategory,
@@ -149,7 +156,7 @@ export function roleCommand(deps: {
     name: "role",
     aliases: [],
     minRank: 0,
-    help: "Manage composable agent roles.\nUsage: role list | role view <name> [goal <text>] | role lint <name> | role diff <a> <b> | role history <name> | role create <name> [traits <t1,t2,...>] [guidelines <g1|g2|...>] [focus <f1,f2,...>] [tone <tone>] | role edit <name> ... | role reload <name> | role delete <name>\n\nRoles are compositions of traits plus guidelines, focus areas, and tone.\n`role view <name> goal <text>` previews the PRISM-gated prompt an agent with that goal actually receives. `role lint <name>` reports pragmatic prompt-shaping warnings without changing the role. `role history <name>` shows the audited edit trail. `role reload <name>` propagates the current definition into running agents bound to it.",
+    help: "Manage composable agent roles.\nUsage: role list | role view <name> [goal <text>] | role lint <name> | role diff <a> <b> | role history <name> | role create <name> [traits <t1,t2,...>] [guidelines <g1|g2|...>] [focus <f1,f2,...>] [tone <tone>] | role edit <name> ... | role reload <name> | role delete <name>\n\nRoles are compositions of traits plus guidelines, focus areas, and tone.\n`role view <name> goal <text>` previews the PRISM-gated prompt an agent with that goal actually receives. `role lint <name>` reports pragmatic prompt-shaping warnings without changing the role. `role history <name>` shows the audited edit trail. `role reload <name>` propagates the current definition into running agents bound to it. `role export <name>` / `role import <bundle>` move a role and its traits between worlds losslessly (import only creates).",
     handler: async (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, requiresPersistence("roles"));
@@ -314,6 +321,52 @@ export function roleCommand(deps: {
           return;
         }
 
+        case "export": {
+          // Read-only, like `role view`: a portable bundle of the role and its traits.
+          const name = tokens[1];
+          const bundle = name ? exportRoleBundle(db, name) : undefined;
+          if (!bundle) {
+            ctx.send(
+              input.entity,
+              name ? `Role "${name}" not found.` : "Usage: role export <name>",
+            );
+            return;
+          }
+          ctx.send(
+            input.entity,
+            `${encodeRoleBundle(bundle)}\n${dim(`role ${bundle.role.name} + ${bundle.traits.length} trait(s)${missingTraits(bundle).length ? ` (missing here, not included: ${missingTraits(bundle).join(", ")})` : ""} — load it elsewhere with: role import <bundle>`)}`,
+          );
+          return;
+        }
+
+        case "import": {
+          // Creating is free (Phase 0): import only ever creates — an existing
+          // role, or a same-named trait with different content, is refused.
+          const entity = deps.getEntity?.(input.entity);
+          if (entity && getRank(entity) < 3) {
+            ctx.send(input.entity, "Requires organizer rank (3) or higher.");
+            return;
+          }
+          const bundle = decodeRoleBundle(tokens[1] ?? "");
+          if ("error" in bundle) {
+            ctx.send(
+              input.entity,
+              `Usage: role import <bundle from role export> — ${bundle.error}`,
+            );
+            return;
+          }
+          const result = importRoleBundle(db, bundle, entity?.name ?? "unknown");
+          if (!result.ok) {
+            ctx.send(input.entity, `Not imported: ${result.reason}.`);
+            return;
+          }
+          ctx.send(
+            input.entity,
+            `Imported role "${result.role}"${result.traitsCreated.length ? ` with new trait(s) ${result.traitsCreated.join(", ")}` : ""}${result.traitsShared.length ? `; reused identical ${result.traitsShared.join(", ")}` : ""}.`,
+          );
+          return;
+        }
+
         case "reload": {
           // Propagate an edited role into agents already running it — reuses the
           // agent reconfigure path, which re-derives the system prompt from the
@@ -434,7 +487,7 @@ export function roleCommand(deps: {
         default:
           ctx.send(
             input.entity,
-            "Usage: role list | role view <name> [goal <text>] | role lint <name> | role diff <a> <b> | role history <name> | role create <name> ... | role edit <name> ... | role reload <name> | role delete <name>",
+            "Usage: role list | role view <name> [goal <text>] | role lint <name> | role diff <a> <b> | role history <name> | role create <name> ... | role edit <name> ... | role reload <name> | role delete <name> | role export <name> | role import <bundle>",
           );
       }
     },
