@@ -40,6 +40,7 @@ import {
   HttpError,
   isInternalCaller,
   json,
+  liveOrchestrationChannel,
   MODEL_CORS,
   modelToChannelName,
   openaiCompletion,
@@ -158,7 +159,14 @@ export async function runOpenaiChat(
     // Marina's OWN agents (internal model token) take this branch in EVERY
     // endpoint mode — see `isInternalCaller`. Their lifecycle events keep
     // `routeKind: "passthru"` and add `routeReason: "internal"`.
-    if (ec.mode === "passthru" || isInternalCaller(authResult)) {
+    // An explicit id naming a live agent channel goes to those agents even in
+    // passthru mode or from an internal caller (see liveOrchestrationChannel).
+    const orchestration = liveOrchestrationChannel(
+      engine,
+      model,
+      req.headers.get("X-Marina-Agent")?.split(":")[0]?.trim() || undefined,
+    );
+    if ((ec.mode === "passthru" || isInternalCaller(authResult)) && !orchestration) {
       // Also the `/v1/messages` path: the Anthropic bridge translates its body
       // to this shape first, so the addendum lands in the OpenAI system message
       // here and `proxyToAnthropic` moves it into the native `system` field.
@@ -259,7 +267,7 @@ export async function runOpenaiChat(
 
     try {
       // Agents mode streams natively (one coordinator, incremental deltas).
-      if (wantStream && ec.mode === "agents") {
+      if (wantStream && (ec.mode === "agents" || orchestration)) {
         const {
           stream,
           conversationId: convId,
@@ -277,7 +285,9 @@ export async function runOpenaiChat(
       }
 
       let result: RouteResult;
-      if (ec.mode === "open") {
+      if (orchestration) {
+        result = await routeToChannel(engine, model, userText, opts);
+      } else if (ec.mode === "open") {
         result = await routeOpen(engine, model, userText, opts);
       } else if (ec.mode === "panel") {
         result = await routePanel(engine, model, userText, opts, ec.panelSize, ec.panelSynthesis);

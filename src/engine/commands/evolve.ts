@@ -1,9 +1,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { bold, category, dim, header, separator, status } from "../../net/ansi";
+import { bold, category, dim, header, separator, status, stripAnsi } from "../../net/ansi";
 import type { EvolutionSessionRow, MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, RoomContext } from "../../types";
+import { tryLog } from "../errors";
 import { analyzeEvolutionEvidence } from "../evolution-analysis";
 import { resolveEvolutionEvidence } from "../evolution-evidence";
 import {
@@ -16,6 +17,11 @@ import {
   type EvolutionQualificationSession,
   evolutionSessionsWithEvidence,
 } from "../evolution-qualification";
+import { runTrial, type TrialArm, type TrialDeps, type TrialResult } from "../evolution-trial";
+import { Logger } from "../logger";
+import { type ModifierSpec, parseModifiers } from "../parse-input";
+import { getRank } from "../permissions";
+import { checkGateForExecution, recordGateExecution } from "../safety-gates";
 import { requiresPersistence } from "./command-messages";
 
 /**
@@ -80,6 +86,8 @@ const BENCH_SCORE_KEYS: [string, string][] = [
 export function evolveCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
   db?: MarinaDB;
+  /** Runtime parts for `evolve trial` (agents, channels, benchmarks); absent ⇒ trials unavailable. */
+  trialDeps?: (opts: TrialOptions) => TrialDeps | undefined;
   notifyEvolutionState?: (
     entityNames: string[],
     state: { sessionId: number; experimentName: string; active: boolean },
@@ -103,6 +111,7 @@ export function evolveCommand(deps: {
         [
           "sessions",
           "qualify",
+          "trial",
           "create",
           "start",
           "status",
@@ -195,6 +204,7 @@ function handleEvolutionProtocol(
       entityNames: string[],
       state: { sessionId: number; experimentName: string; active: boolean },
     ) => void;
+    trialDeps?: (opts: TrialOptions) => TrialDeps | undefined;
   },
   sub: string,
 ): void {
@@ -469,6 +479,11 @@ function handleEvolutionProtocol(
     return;
   }
 
+  if (sub === "trial") {
+    handleTrial(ctx, input, entity, deps, db, run);
+    return;
+  }
+
   if (sub === "evaluate") {
     if (run.status !== "proposed") {
       ctx.send(input.entity, `Run ${run.id} is already ${run.status}.`);
@@ -595,6 +610,8 @@ function protocolUsage(sub: string): string {
       "Usage: evolve propose <experiment> | <hypothesis> | <candidate-reference> [| parent=<run-id>]",
     evaluate: "Usage: evolve evaluate <experiment> <run-id> | <evidence>",
     decide: "Usage: evolve decide <experiment> <run-id> <accept|reject|inconclusive>",
+    trial:
+      "Usage: evolve trial <experiment> <run-id> [incumbent:<role>] [benchmark:smoke] [limit:N] [seed:N] [model:<m>] [timeout:30m] | evolve trial <experiment> <run-id> result",
   };
   return usages[sub] ?? `Usage: evolve ${sub} <experiment>`;
 }
@@ -642,4 +659,171 @@ function nextStep(
     return `consolidate what you learned ${arrow} ${bold("reflect")}`;
   }
   return `change one approach, then re-measure ${arrow} re-run a benchmark and compare, or ${bold("evolve loop")} for the full cycle`;
+}
+
+// ─── evolve trial ────────────────────────────────────────────────────────────
+
+export interface TrialOptions {
+  benchmark: string;
+  limit?: number;
+  seed?: number;
+  agentModel: string;
+  callerId: string;
+}
+
+const TRIAL_MODS: ModifierSpec = {
+  incumbent: { type: "string" },
+  benchmark: { type: "string" },
+  limit: { type: "int" },
+  seed: { type: "int" },
+  model: { type: "string" },
+  timeout: { type: "duration" },
+};
+let trialRunning = false;
+const TRIAL_NOTE_TYPE = "evolve_trial";
+
+/** Test hook: trials are single-flight per world. */
+export function resetEvolveTrialForTests(): void {
+  trialRunning = false;
+}
+
+/**
+ * Measure a proposed candidate role against the incumbent in THIS world —
+ * which must be a child or parallel world — without adopting anything
+ * (src/engine/evolution-trial.ts). Replies at once and posts the result when
+ * both arms finish: a trial takes minutes, and awaiting it would stall the
+ * caller's command queue.
+ */
+function handleTrial(
+  ctx: RoomContext,
+  input: { entity: string; tokens: string[] },
+  entity: Entity,
+  deps: { trialDeps?: (opts: TrialOptions) => TrialDeps | undefined },
+  db: MarinaDB,
+  run: { id: number; status: string; candidate_ref: string | null },
+): void {
+  const say = (text: string) => ctx.send(input.entity as never, text);
+  // `… result`: the latest stored outcome. A trial started over `world run`
+  // outlives the bridge's short connection, so results are kept, not only sent.
+  if (input.tokens[3]?.toLowerCase() === "result") {
+    const tag = `[evolve_trial run=${run.id}]`;
+    const note = db
+      .getNotesByType(entity.name, TRIAL_NOTE_TYPE, 50)
+      .find((n) => n.content.startsWith(tag));
+    say(
+      note
+        ? note.content.slice(tag.length).trim()
+        : `No finished trial recorded for run ${run.id} yet.`,
+    );
+    return;
+  }
+  if (process.env.MARINA_COLLECTIVE_CHILD !== "1" && process.env.MARINA_EVOLVE_TRIALS !== "here") {
+    say(
+      "Trials run in a child or parallel world, never this one. From here: `world run <child> evolve trial …` (seed the roles first with `world seed-role`). A dedicated parallel world can opt in with MARINA_EVOLVE_TRIALS=here.",
+    );
+    return;
+  }
+  if (getRank(entity) < 4) {
+    say(
+      "evolve trial needs rank 4 (builder): it spawns agents and runs benchmarks, which cost real tokens.",
+    );
+    return;
+  }
+  if (run.status !== "proposed") {
+    say(`Run ${run.id} is ${run.status}; trials measure a proposal before it is evaluated.`);
+    return;
+  }
+  const candidate = /^role:([A-Za-z0-9][A-Za-z0-9_.-]*)$/.exec(run.candidate_ref ?? "")?.[1];
+  if (!candidate) {
+    say(`Run ${run.id}'s candidate is "${run.candidate_ref ?? ""}"; a trial needs role:<name>.`);
+    return;
+  }
+  const mods = parseModifiers(input.tokens.slice(3), TRIAL_MODS);
+  const incumbent = mods.values.incumbent as string | undefined;
+  for (const role of [candidate, incumbent].filter((r): r is string => !!r)) {
+    if (!db.getRole(role)) {
+      say(
+        `Role "${role}" does not exist in this world — seed it first (\`world seed-role\` from the parent).`,
+      );
+      return;
+    }
+  }
+  const benchmark = (mods.values.benchmark as string | undefined) ?? "smoke";
+  const opts: TrialOptions = {
+    benchmark,
+    ...(mods.values.limit ? { limit: mods.values.limit as number } : {}),
+    ...(mods.values.seed !== undefined ? { seed: mods.values.seed as number } : {}),
+    agentModel: (mods.values.model as string | undefined) ?? "marina/default",
+    callerId: entity.id,
+  };
+  const trialDeps = deps.trialDeps?.(opts);
+  if (!trialDeps) {
+    say("Trials need the agent runtime and the benchmark runner, which this world does not have.");
+    return;
+  }
+  const gate = checkGateForExecution(db, entity.id, "agent.spawn");
+  if (!gate.ok) {
+    say(gate.reason ?? "agent.spawn refused");
+    return;
+  }
+  if (trialRunning) {
+    say("A trial is already running in this world — one at a time.");
+    return;
+  }
+  trialRunning = true;
+  recordGateExecution(db, entity.id, "agent.spawn", gate, `evolve trial run ${run.id}`);
+  const arms: TrialArm[] = [
+    { label: "candidate", role: candidate },
+    ...(incumbent ? [{ label: "incumbent" as const, role: incumbent }] : []),
+  ];
+  const timeoutMs = (mods.values.timeout as number | undefined) ?? 30 * 60_000;
+  say(
+    `Trial started for run ${run.id}: ${candidate}${incumbent ? ` vs ${incumbent}` : " (no incumbent: one arm)"} on ${benchmark}${opts.limit ? ` (${opts.limit} items)` : ""}, deadline ${Math.round(timeoutMs / 60_000)} min. Nothing is adopted; results follow here.`,
+  );
+  void runTrial(trialDeps, { runId: run.id, arms, timeoutMs })
+    .then((result) => {
+      const text = renderTrial(run.id, result);
+      tryLog(new Logger(), "evolve", "Trial result not stored", () => {
+        db.createNote(entity.name, `[evolve_trial run=${run.id}] ${stripAnsi(text)}`, undefined, {
+          noteType: TRIAL_NOTE_TYPE,
+          tier: "process",
+          skipDedup: true,
+        });
+      });
+      say(text);
+    })
+    .catch((err) =>
+      say(`Trial for run ${run.id} failed: ${err instanceof Error ? err.message : String(err)}`),
+    )
+    .finally(() => {
+      trialRunning = false;
+    });
+}
+
+export function renderTrial(runId: number, result: TrialResult): string {
+  const pct = (x?: number) => (x === undefined ? "—" : `${(x * 100).toFixed(1)}%`);
+  const lines = [
+    header(`Trial for run ${runId}`),
+    separator(),
+    ...result.arms.map(
+      (a) =>
+        `  ${bold(a.label.padEnd(9))} ${a.role.padEnd(18)} ${a.status.padEnd(9)} ${pct(a.score)}${a.total ? dim(` (${a.answered}/${a.total})`) : ""}${a.runId ? dim(` benchmark:${a.runId}`) : ""}${a.error ? dim(` — ${a.error}`) : ""}`,
+    ),
+  ];
+  if (result.delta !== undefined) {
+    lines.push(
+      `  candidate − incumbent: ${result.delta >= 0 ? "+" : ""}${(result.delta * 100).toFixed(1)} points`,
+    );
+  }
+  const cited = result.arms
+    .filter((a) => a.status === "completed" && a.runId)
+    .map((a) => `benchmark:${a.runId}`);
+  if (cited.length) {
+    lines.push(
+      dim(
+        `Someone other than the proposer can now record it: evolve evaluate <experiment> ${runId} | <what you saw> ${cited.join(" ")}`,
+      ),
+    );
+  }
+  return lines.join("\n");
 }

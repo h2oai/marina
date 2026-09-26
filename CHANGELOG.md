@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `evolve trial <exp> <run> incumbent:<role>`: a candidate role against the incumbent, side by
+  side, in a child or parallel world only — temporary agents on each role, their own model
+  channels, the same benchmark, a deadline, teardown, and a stored result naming both runs for
+  `evolve evaluate`. Nothing is adopted. `evolve trial <exp> <run> result` reads it back.
 - Parent ↔ child worlds from inside the world: `world create|start|stop|list`, `world run <child>
   <command>` (runs one command inside a running child as the caller, over its loopback command
   endpoint) and `world seed-role <child> <role>`. `role export` / `role import` move a role and
@@ -113,6 +117,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `marina:<name>` model id naming a live agent channel was proxied upstream (404) in the default
+  `passthru` endpoint mode and for Marina's internal callers, so in-world `benchmark run --model
+  marina:<crew>` and `benchmark sweep` never reached the agents. Explicit live orchestrations now
+  route to their channel in every mode; a caller in that channel is never routed back into it.
 - Concurrent benchmark runs could read each other's results: the runner took "the newest result
   file for this dataset" from a folder shared by every run (and by child worlds, which share the
   working directory). Each run now names its own file (`MARINA_BENCH_RESULT_FILE`, keyed by run
