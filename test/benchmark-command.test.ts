@@ -11,7 +11,7 @@ import {
   referenceScoresForBenchmark,
   referenceScoresForModel,
 } from "../benchmarks/reference-scores";
-import { harnessFailure, harnessInvocation } from "../src/engine/benchmark-runner";
+import { BenchmarkRunner, harnessFailure, harnessInvocation } from "../src/engine/benchmark-runner";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
@@ -242,5 +242,17 @@ describe("benchmark runner → harness", () => {
     expect(err).toContain("401");
     expect(harnessFailure({ metadata: { total: 0, answered: 0 }, items: [] })).toBeDefined();
     expect(harnessFailure({ metadata: { total: 3, answered: 1 } })).toBeUndefined();
+  });
+});
+
+describe("smoke — the prompt A/B set as a benchmark", () => {
+  it("is always ready (tracked, not downloaded) and loads the same items eval-prompt scores", async () => {
+    const { loadSmoke, loadSmokeItems } = await import("../benchmarks/adapters/checks");
+    const runner = new BenchmarkRunner({} as MarinaDB, () => {});
+    expect(runner.datasetReady("smoke")).toBe(true);
+    const items = await loadSmoke("unused");
+    expect(items.map((i) => i.id)).toEqual(loadSmokeItems().map((i) => i.id));
+    expect(items).toHaveLength(15);
+    expect(items[0]!.metadata?.check).toBeDefined();
   });
 });

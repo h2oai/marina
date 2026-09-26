@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `benchmark run smoke`: the frozen 15-item prompt A/B set (`benchmarks/smoke-eval.json`) as an
+  in-world benchmark with its own leaderboard — the same items and scoring as `bun run eval-prompt`
+  (a shared `checks` harness adapter), always ready since the dataset is tracked.
 - The arena measurement loop in the world: `arena evaluate [baseline|nowcast|discovered]`,
   `arena shadow [list|score]`, `arena shadow run <round_id|due> [forecaster:F]`,
   `arena discover [tracker:T]` and `arena signals`, so an agent can propose, backtest, record and

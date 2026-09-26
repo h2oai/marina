@@ -4,7 +4,14 @@
 export interface BenchmarkConfig {
   name: string;
   dataset: string;
-  adapter: "multiple-choice" | "code-gen" | "ifeval" | "free-form" | "numeric" | "short-answer";
+  adapter:
+    | "multiple-choice"
+    | "code-gen"
+    | "ifeval"
+    | "free-form"
+    | "numeric"
+    | "short-answer"
+    | "checks";
   scoring: "accuracy" | "pass-at-k" | "ifeval" | "judge" | "numeric-match" | "normalized-match";
   mode: "passthrough" | "memory";
   model: string;

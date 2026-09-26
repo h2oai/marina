@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { loadSmoke, runChecks } from "./adapters/checks";
 import { runCodeGen } from "./adapters/code-gen";
 import { runFreeForm } from "./adapters/free-form";
 import { runIFEval } from "./adapters/ifeval";
@@ -45,6 +46,15 @@ import type {
 // --- Benchmark Registry ---
 
 const BENCHMARKS: Record<string, BenchmarkDefinition> = {
+  smoke: {
+    name: "Smoke (prompt A/B)",
+    dataset: "smoke-eval",
+    adapter: "checks",
+    scoring: "accuracy",
+    description: "Frozen 15-item prompt A/B set (benchmarks/smoke-eval.json) — same set as eval-prompt",
+    phase: "A",
+    download: loadSmoke,
+  },
   "mmlu-pro": {
     name: "MMLU-Pro",
     dataset: "mmlu-pro",
@@ -425,6 +435,9 @@ async function runAdapter(items: DatasetItem[], config: BenchmarkConfig): Promis
       break;
     case "short-answer":
       results = await runShortAnswer(items, config, progressFn);
+      break;
+    case "checks":
+      results = await runChecks(items, config, progressFn);
       break;
     default:
       throw new Error(`Unknown adapter: ${config.adapter}`);

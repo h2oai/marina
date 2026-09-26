@@ -56,7 +56,7 @@ budget flag. Write their reports outside the public checkout.
 | Script | What it does |
 |---|---|
 | `bench` / `bench:ui` | Academic benchmark harness; web UI on port 3303. See [Benchmarks](../../benchmarks/README.md). |
-| `eval-prompt` / `qualify:prompt` | Fast 15-item prompt A/B against a running model endpoint; `qualify:prompt` gates the answerer at ≥ 13. See [Prompt architecture](agent-prompt-architecture.md). |
+| `eval-prompt` / `qualify:prompt` | Fast 15-item prompt A/B against a running model endpoint; `qualify:prompt` gates the answerer at ≥ 13. In-world: `benchmark run smoke`. See [Prompt architecture](agent-prompt-architecture.md). |
 | `qualify:decisions` | Compare decision backends on labeled gate and route cases. See [decisions](../architecture/decisions.md). |
 | `qualify:autonomy` / `qualify:evolution` | Autonomy and native-evolution qualification from readiness evidence. See [Autonomous quality loops](autonomous-quality-loops.md). |
 | `trial:evolution` / `trial:evolution:local` | Run an evolution trial against a server, or against a disposable local one. See [Native evolution](native-evolution.md). |
