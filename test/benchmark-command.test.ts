@@ -255,6 +255,23 @@ describe("benchmark runner → harness", () => {
     expect(env.MARINA_BENCH_API_KEY).toBe("marina-internal-secret");
   });
 
+  it("names each run's own result file, so concurrent runs never read each other's", () => {
+    const a = harnessInvocation(
+      "smoke",
+      config,
+      { endpoint: "http://localhost:3410" },
+      "/r/br_a.json",
+    );
+    const b = harnessInvocation(
+      "smoke",
+      config,
+      { endpoint: "http://localhost:3410" },
+      "/r/br_b.json",
+    );
+    expect(a.env.MARINA_BENCH_RESULT_FILE).toBe("/r/br_a.json");
+    expect(b.env.MARINA_BENCH_RESULT_FILE).toBe("/r/br_b.json");
+  });
+
   it("a run where every item errored is a failure, not a 0% score", () => {
     const err = harnessFailure({
       metadata: { total: 3, answered: 0 },

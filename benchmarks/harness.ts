@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { loadSmoke, runChecks } from "./adapters/checks";
 import { runCodeGen } from "./adapters/code-gen";
@@ -330,9 +330,13 @@ function printComparison(baseline: BenchmarkResult, memory: BenchmarkResult): vo
 const RESULTS_DIR = join(import.meta.dir, "results");
 
 function saveResult(result: BenchmarkResult): string {
-  if (!existsSync(RESULTS_DIR)) mkdirSync(RESULTS_DIR, { recursive: true });
+  // MARINA_BENCH_RESULT_FILE: the in-world runner names each run's file, so
+  // concurrent runs never read each other's results.
+  const explicit = process.env.MARINA_BENCH_RESULT_FILE;
+  if (explicit) mkdirSync(dirname(explicit), { recursive: true });
+  else if (!existsSync(RESULTS_DIR)) mkdirSync(RESULTS_DIR, { recursive: true });
   const filename = `${result.config.dataset}-${result.config.mode}-${result.timestamp}.json`;
-  const path = join(RESULTS_DIR, filename);
+  const path = explicit ?? join(RESULTS_DIR, filename);
   writeFileSync(path, JSON.stringify(result, null, 2));
   return path;
 }
