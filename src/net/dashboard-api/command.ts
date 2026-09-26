@@ -82,6 +82,10 @@ async function handleCommandIngress(
     protocol: "websocket",
     entity: null,
     connectedAt: Date.now(),
+    // The REAL socket peer (never a forwarded header), so a loopback caller is
+    // recognized exactly as a loopback WebSocket login is — e.g. a parent
+    // world driving its child over `world run` — and a remote one is not.
+    ...(peerIp ? { peerIp } : {}),
     send(perception: Perception) {
       perceptions.push(perception);
     },

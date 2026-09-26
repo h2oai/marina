@@ -152,6 +152,11 @@ Trace views are read-only and omit prompts, outputs, thinking text, and tool arg
 > reproduce intellect <parents> | <name> | <purpose> | <components JSON> | <contributors>
 > genome create <world-template> | <components> | <compatibility> | <notes>
 > marina-descend create <genome> | <name> | <parents> | <mode> | <hypothesis>
+> world create <name> [template] [| hypothesis]  A child world: own process, DB and $50/day cap
+> world start|stop <name> · world list
+> world run <name> <command …>              Run one command inside a running child, as you
+> world seed-role <name> <role>             Copy a role and its traits into the child
+> role export <name> · role import <bundle> Move a role + traits between worlds (import only creates)
 > mesh create <id> | <name> | <charter-ref> | <protocol>
 > mesh publish <id> | <kind> | <payload JSON>  Append a portable mesh event
 > mesh export <id> <event>                    Export an exact event token
