@@ -126,7 +126,8 @@ The design follows several converging primary sources:
 Prompt changes must pass structural tests for hierarchy, provider neutrality, prompt size, dynamic
 context labeling, plan-preserving compaction, and human-agent symmetry. They must also pass agent,
 context-manager, role, tool-profile, model-resolution, and autonomy regression suites. For behavioral
-A/B work, use the frozen smoke set with `bun run eval-prompt`; compare task success, required evidence,
+A/B work, use the frozen smoke set — `bun run eval-prompt`, or in the world `benchmark run smoke
+--model marina:answerer`, which records the run on the `smoke` leaderboard; compare task success, required evidence,
 meaningful primitive use, total tokens, latency, calls, retries, and outcome quality. Fewer calls or
 tokens count as improvements only when the outcome still passes.
 

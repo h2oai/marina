@@ -40,8 +40,9 @@ Usage:
                                                      (interleaves reference-model scores)
   benchmark reference [model|benchmark]            — show published reference scores
 
-Benchmarks: mmlu-pro, truthfulqa, arc-challenge, hellaswag, musr, bbh, gsm8k,
-  math, simple-qa, humaneval, ifeval, frames, aime  (run "benchmark list" for status)
+Benchmarks: smoke (15-item prompt A/B, always ready), mmlu-pro, truthfulqa, arc-challenge,
+  hellaswag, musr, bbh, gsm8k, math, simple-qa, humaneval, ifeval, frames, aime
+  (run "benchmark list" for status)
 
 --model M format: "marina" = the default local endpoint; "marina:<name>" = a named
   orchestration (a model-* channel with a live agent). See "benchmark orchestrations".

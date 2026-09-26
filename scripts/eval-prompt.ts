@@ -25,38 +25,9 @@
  *
  * Exit code is 0 unless --min-score is set and missed.
  */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { type EvalItem, loadSmokeItems, score } from "../benchmarks/adapters/checks";
 
-export type Check =
-  | { type: "contains" | "not_contains" | "regex" | "exact"; value: string }
-  | { type: "numeric"; value: number };
-export interface EvalItem {
-  id: string;
-  category: string;
-  prompt: string;
-  check: Check;
-}
-
-/** Score a single model output against an item's check. Pure — unit-tested. */
-export function score(check: Check, out: string): boolean {
-  const lower = out.toLowerCase();
-  switch (check.type) {
-    case "contains":
-      return lower.includes(check.value.toLowerCase());
-    case "not_contains":
-      return !lower.includes(check.value.toLowerCase());
-    case "regex":
-      return new RegExp(check.value, "i").test(out);
-    case "exact":
-      return out.trim() === check.value;
-    case "numeric": {
-      // Accept the target number anywhere in the output (tolerates "= 391.").
-      const nums = out.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/g) ?? [];
-      return nums.some((n) => Number(n) === check.value);
-    }
-  }
-}
+export { type Check, type EvalItem, score } from "../benchmarks/adapters/checks";
 
 if (import.meta.main) {
   const args = process.argv.slice(2);
@@ -78,10 +49,7 @@ if (import.meta.main) {
   const timeoutMs = Number(process.env.EVAL_TIMEOUT_MS) || 120_000;
   const minScore = flags.get("min-score") ? Number(flags.get("min-score")) : 0;
 
-  const fixture = JSON.parse(
-    readFileSync(join(import.meta.dir, "..", "benchmarks", "smoke-eval.json"), "utf8"),
-  ) as { items: EvalItem[] };
-  const items = fixture.items.slice(0, limit);
+  const items: EvalItem[] = loadSmokeItems().slice(0, limit);
 
   const ask = async (prompt: string): Promise<{ content: string; error?: string }> => {
     try {

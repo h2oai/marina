@@ -681,6 +681,23 @@ and silent turns. Recruitment remains explicit: recommendations never pull an ag
 |---------|-------------|
 | `forecast <question>` | A probability or a number for any question, with cited and checked evidence from several models ([guide](forecasting.md)). Alias: `predict`. Rate-limited per entity (each call costs money). |
 
+## Benchmarks
+
+Run, track and rank evaluations from inside the world. `run` and `sweep` need rank 4 (they spend
+real tokens); everything else is rank 0. Runs call this instance's own `/v1` with the internal key.
+
+| Command | Description |
+|---------|-------------|
+| `benchmark list` | Available benchmarks and whether their datasets are cached |
+| `benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M]` | Start one run; `--model marina:<name>` targets a named orchestration |
+| `benchmark run smoke --model marina:answerer` | The frozen 15-item prompt A/B set (the same items as `bun run eval-prompt`) — run before and after a prompt, role or crew change and compare on the leaderboard |
+| `benchmark sweep <name\|all>` | Fan one benchmark out across every live orchestration |
+| `benchmark result <id>` · `benchmark runs` | One run's score and breakdown; recent runs |
+| `benchmark leaderboard <benchmark>` | Top runs, interleaved with published reference scores; runs that answered nothing are left out |
+| `benchmark reference [model\|benchmark]` · `benchmark orchestrations` | Published reference scores; live `marina:<name>` endpoints |
+
+A run where every item errored is recorded as `failed` with the first error, never as a 0% score.
+
 ## Social Simulation Arena
 
 Marina's entry in the [Social Simulation Arena](arena.md), open to everyone, including its measurement loop; filing is an operator act (`bun run arena`, `MARINA_ARENA_AUTOPILOT`).

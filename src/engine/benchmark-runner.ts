@@ -22,6 +22,8 @@ interface BenchmarkSpec {
   name: string;
   description: string;
   datasetFile: string;
+  /** Repo-relative path when the dataset is tracked rather than downloaded. */
+  datasetPath?: string;
 }
 
 /** Shape of a per-item entry in the harness result JSON. Kept intentionally
@@ -43,6 +45,12 @@ const RESULTS_DIR = "benchmarks/results";
 // in-world agents. (Reading the harness at runtime would couple the engine
 // to harness module-load behavior; we prefer the static list.)
 export const BENCHMARKS: Record<string, BenchmarkSpec> = {
+  smoke: {
+    name: "smoke",
+    description: "Frozen 15-item prompt A/B set — measure a prompt or crew change in seconds",
+    datasetFile: "smoke-eval.json",
+    datasetPath: "benchmarks/smoke-eval.json",
+  },
   "mmlu-pro": {
     name: "mmlu-pro",
     description: "12K 10-choice MC questions across 57 subjects",
@@ -207,7 +215,7 @@ export class BenchmarkRunner {
   datasetReady(name: string): boolean {
     const spec = BENCHMARKS[name];
     if (!spec) return false;
-    const path = join(process.cwd(), DATASETS_DIR, spec.datasetFile);
+    const path = join(process.cwd(), spec.datasetPath ?? join(DATASETS_DIR, spec.datasetFile));
     return existsSync(path);
   }
 
