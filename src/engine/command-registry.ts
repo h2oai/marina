@@ -605,6 +605,23 @@ export function registerBuiltinCommands(engine: Engine): void {
           return orchs;
         },
         logEvent: (event) => engine.logEvent(event),
+        describeTarget: (model) => {
+          // `marina:<name>` → the online agents on its model-<name> channel.
+          const cm = engine.channelManager;
+          const name = /^marina:(.+)$/.exec(model)?.[1];
+          if (!cm || !name) return [];
+          const channel = cm.getAllChannels().find((c) => c.name === `model-${name}`);
+          if (!channel) return [];
+          const members = new Set(cm.getMembers(channel.id).map(String));
+          return engine.agentRuntime
+            .list()
+            .filter((a) => a.entityId && members.has(a.entityId))
+            .map((a) => ({
+              agent: a.name,
+              ...(a.role ? { role: a.role } : {}),
+              ...(a.promptVersion ? { promptVersion: a.promptVersion } : {}),
+            }));
+        },
       }),
     );
   }

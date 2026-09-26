@@ -126,6 +126,19 @@ export interface BenchmarkRunOptions {
   judgeModel?: string;
   concurrency?: number;
   agentId?: string;
+  /**
+   * What was measured behind a `marina:<name>` endpoint: the agents serving
+   * it, their role and the hash of the exact system prompt in force. Part of
+   * the config (and its hash), so a changed prompt is a different config and
+   * `evolve evaluate benchmark:<id>` can tie a score to a candidate role.
+   */
+  subjects?: BenchmarkSubject[];
+}
+
+export interface BenchmarkSubject {
+  agent: string;
+  role?: string;
+  promptVersion?: string;
 }
 
 export interface BenchmarkRunHandle {
@@ -244,6 +257,7 @@ export class BenchmarkRunner {
       model: opts.model ?? "marina",
       judgeModel: opts.judgeModel,
       concurrency: opts.concurrency ?? 5,
+      ...(opts.subjects?.length ? { subjects: opts.subjects } : {}),
     };
     const configHash = hashConfig(config);
     const id = `br_${configHash}_${Date.now().toString(36)}`;

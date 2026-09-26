@@ -131,6 +131,55 @@ describe("native evolution protocols", () => {
     cleanupDb(dbPath);
   });
 
+  it("verifies cited benchmark runs and stores what they measured; refuses ones that don't resolve", () => {
+    process.env.MARINA_EVOLUTION_PROTOCOLS = "true";
+    db.insertBenchmarkRun({
+      id: "br_cand_1",
+      benchmark: "smoke",
+      config_hash: "c1",
+      config_json: JSON.stringify({
+        model: "marina:scout-v2",
+        subjects: [{ agent: "Scout2", role: "scout-v2", promptVersion: "ab12cd34ef56" }],
+      }),
+      status: "running",
+      started_at: Date.now(),
+    });
+    db.completeBenchmarkRun("br_cand_1", {
+      score: 14 / 15,
+      breakdown_json: null,
+      answered: 15,
+      total: 15,
+      status: "completed",
+      completed_at: Date.now(),
+      duration_ms: 9000,
+    });
+    engine.processCommand(alice.entity!, "evolve create native-loop | improve retrieval");
+    engine.processCommand(alice.entity!, "evolve start native-loop");
+    engine.processCommand(
+      bob.entity!,
+      "evolve propose native-loop | a sharper scout | role:scout-v2",
+    );
+    const session = db.listEvolutionSessions()[0]!;
+    const run = db.listEvolutionRuns(session.id)[0]!;
+
+    alice.clear();
+    engine.processCommand(
+      alice.entity!,
+      `evolve evaluate native-loop ${run.id} | smoke benchmark:br_nope`,
+    );
+    expect(stripAnsi(alice.lastText())).toContain("benchmark:br_nope (no such run)");
+    expect(db.getEvolutionRun(run.id)!.status).toBe("proposed");
+
+    engine.processCommand(
+      alice.entity!,
+      `evolve evaluate native-loop ${run.id} | smoke benchmark:br_cand_1`,
+    );
+    const evaluated = db.getEvolutionRun(run.id)!;
+    expect(evaluated.status).toBe("evaluated");
+    expect(evaluated.evidence).toContain("[verified] benchmark:br_cand_1 smoke 93.3% (15/15)");
+    expect(evaluated.evidence).toContain("Scout2 role scout-v2 prompt ab12cd34ef56");
+  });
+
   it("is disabled by default without changing the existing coach", () => {
     delete process.env.MARINA_EVOLUTION_PROTOCOLS;
     engine.processCommand(alice.entity!, "evolve create native-loop | improve retrieval");

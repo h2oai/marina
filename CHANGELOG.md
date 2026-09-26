@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Evidence you can check: `evolve evaluate` resolves cited `benchmark:<br_id>` runs — a missing,
+  running or all-error run refuses the evaluation — and stores the verified score with the
+  evidence. Benchmark runs against `marina:<name>` record what they measured (agents, role, system
+  prompt hash) in their config, shown by `benchmark result` as `measured:`.
 - Autonomy pulse history: the `autonomy-pulse` tick job stores the readiness autonomy numbers every
   5 minutes (`autonomy_pulse`, migration 130, kept 30 days), and `readiness autonomy` reports the
   last 24 hours against the 70% goal. No model involved.
