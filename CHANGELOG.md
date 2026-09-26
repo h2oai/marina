@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Per-world daily spend cap: `MARINA_DAILY_SPEND_CAP_USD` caps everything a world pays upstream
+  in a UTC day — `/v1` passthru (so in-world benchmark runs), agent turns priced by their own
+  provider, decision backends and forecasts — each dollar recorded once, where it leaves Marina,
+  in `spend_daily` (migration 131) so a restart does not reset it. At the cap `/v1` returns 429
+  `spend_cap_reached`, decisions and forecasts are refused and agents pause. Child worlds start
+  with $50 (`MARINA_CHILD_DAILY_SPEND_CAP_USD`); `readiness` reports "Daily spend".
 - Evidence you can check: `evolve evaluate` resolves cited `benchmark:<br_id>` runs — a missing,
   running or all-error run refuses the evaluation — and stores the verified score with the
   evidence. Benchmark runs against `marina:<name>` record what they measured (agents, role, system

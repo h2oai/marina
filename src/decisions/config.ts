@@ -23,8 +23,9 @@
  */
 
 import { positiveNumberFromEnv } from "../engine/constants";
+import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import { chatClassifierProvider, decisionsApiProvider } from "./providers";
-import type { DecisionProvider } from "./types";
+import { DecisionError, type DecisionProvider } from "./types";
 
 export type DecisionBackendKind = "decisions-api" | "chat-classifier";
 
@@ -122,9 +123,25 @@ export function providerFromConfig(config: DecisionConfig): DecisionProvider {
     timeoutMs: config.timeoutMs,
     ...(config.path ? { path: config.path } : {}),
   };
-  return config.kind === "decisions-api"
-    ? decisionsApiProvider(opts)
-    : chatClassifierProvider(opts);
+  return metered(
+    config.kind === "decisions-api" ? decisionsApiProvider(opts) : chatClassifierProvider(opts),
+  );
+}
+
+/** Refuse at the world's daily cap; record what each answered call cost. */
+function metered(provider: DecisionProvider): DecisionProvider {
+  return {
+    kind: provider.kind,
+    model: provider.model,
+    ...(provider.calibrated === undefined ? {} : { calibrated: provider.calibrated }),
+    async ask(request, signal) {
+      const capped = dailyCapRefusal();
+      if (capped) throw new DecisionError(capped, "spend_cap", 429);
+      const result = await provider.ask(request, signal);
+      recordSpend("decision", result.costUsd);
+      return result;
+    },
+  };
 }
 
 let cached: { key: string; provider: DecisionProvider | undefined } | undefined;

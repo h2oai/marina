@@ -55,6 +55,7 @@ import {
 } from "../engine/constants";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
+import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import { isLocalProfile } from "../engine/trust-profile";
 import {
   renderUnifiedContext,
@@ -3705,6 +3706,9 @@ The goal is a smaller, sharper memory — not more notes.`;
   private recordTurnUsage(usage: TurnUsageMetrics, endedAt: number): TurnUsageMetrics {
     const proxy = this.pendingProxyMeta;
     this.pendingProxyMeta = null;
+    // The daily ledger counts a turn only when its own provider priced it; a
+    // cost from the proxy header was already recorded by the passthru.
+    recordSpend("agent", usage.costUsd, endedAt);
     const merged: TurnUsageMetrics = { ...usage };
     if (proxy) {
       if (merged.cacheWriteTokens === undefined && proxy.cacheWriteTokens !== undefined)
@@ -3957,6 +3961,8 @@ The goal is a smaller, sharper memory — not more notes.`;
 
   /** Per-agent then runtime-wide rolling-hour cap check; the breach text or null. */
   private checkSpendCaps(): string | null {
+    const daily = dailyCapRefusal();
+    if (daily) return daily;
     const perAgent = this.spendGuard.perAgentUsdPerHour;
     if (perAgent && perAgent > 0) {
       const own = this.spend.total();

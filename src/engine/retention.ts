@@ -194,6 +194,12 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
   { table: "entity_standing", kind: "append-only", note: "reputation ledger (decay is computed)" },
   { table: "memory_resolutions", kind: "append-only", note: "contradiction-resolution audit" },
   {
+    table: "spend_daily",
+    timeColumn: "updated_at",
+    kind: "ledger",
+    note: "per-world daily upstream spend by source, behind MARINA_DAILY_SPEND_CAP_USD",
+  },
+  {
     table: "autonomy_pulse",
     timeColumn: "at",
     kind: "telemetry",

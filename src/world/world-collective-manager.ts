@@ -104,6 +104,9 @@ export class WorldCollectiveManager {
         MARINA_NAME: variant.name,
         MARINA_WORLD: variant.world_template,
         MARINA_COLLECTIVE_CHILD: "1",
+        // A child world spends against its own daily budget ($50 unless the
+        // parent sets MARINA_CHILD_DAILY_SPEND_CAP_USD), never the parent's.
+        MARINA_DAILY_SPEND_CAP_USD: process.env.MARINA_CHILD_DAILY_SPEND_CAP_USD?.trim() || "50",
         DB_PATH: variant.db_path,
         ASSETS_DIR: assetsDir,
         WS_PORT: String(variant.ws_port),

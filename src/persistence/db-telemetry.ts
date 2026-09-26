@@ -644,3 +644,26 @@ export function listAutonomyPulse(db: Database, sinceMs: number): AutonomyPulseR
     )
     .all(sinceMs) as AutonomyPulseRow[];
 }
+
+// ─── Daily spend (migration 131) ────────────────────────────────────────────
+
+export interface DailySpendRow {
+  day: string;
+  source: string;
+  cost_usd: number;
+  calls: number;
+}
+
+export function addDailySpend(db: Database, day: string, source: string, usd: number): void {
+  db.query(
+    `INSERT INTO spend_daily (day, source, cost_usd, calls, updated_at) VALUES (?, ?, ?, 1, ?)
+     ON CONFLICT(day, source) DO UPDATE SET
+       cost_usd = cost_usd + excluded.cost_usd, calls = calls + 1, updated_at = excluded.updated_at`,
+  ).run(day, source, usd, Date.now());
+}
+
+export function getDailySpend(db: Database, day: string): DailySpendRow[] {
+  return db
+    .query("SELECT day, source, cost_usd, calls FROM spend_daily WHERE day = ? ORDER BY source")
+    .all(day) as DailySpendRow[];
+}
