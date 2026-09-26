@@ -98,6 +98,19 @@ export const SAFETY_GATES: Record<string, GateDef> = {
     demoThreshold: 3,
     description: "spawn new agents",
   },
+  "role.edit": {
+    id: "role.edit",
+    // Changing an EXISTING role or trait changes how every agent running on it
+    // behaves (`role edit/delete/reload`, `trait delete`). Creating a new role
+    // is not gated: nothing runs on it until `agent spawn` (its own gate)
+    // binds an agent to it — that is how an agent improves: by spawning an
+    // improved iteration, never by rewriting the role it runs on (refused
+    // outright, src/engine/role-guard.ts). Same bar as organizer rank 3; the
+    // first edits are witnessed.
+    minStanding: 40,
+    demoThreshold: 3,
+    description: "change an existing role or trait that agents run on",
+  },
   "adapter.enable": {
     id: "adapter.enable",
     minStanding: 150,
@@ -550,7 +563,7 @@ export function getGateProgress(db: MarinaDB, entityId: string, now = Date.now()
  * of the historical rank ladder without the runtime short-circuit.
  */
 const RANK_GATES: Record<number, string[]> = {
-  5: ["shell.exec", "agent.spawn", "code.exec"],
+  5: ["shell.exec", "agent.spawn", "code.exec", "role.edit"],
   6: ["agent.run"],
   7: ["adapter.enable", "connect.manage", "gateway.connect"],
   8: ["key.manage"],

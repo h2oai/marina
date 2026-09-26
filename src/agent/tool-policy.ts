@@ -4,7 +4,7 @@
 export type ToolRisk = "read" | "communicate" | "mutate" | "consequential";
 
 const CONSEQUENTIAL_COMMAND =
-  /^(admin|rank|grant|ban|kick|destroy|connect\s+(add|auth|remove)|gateway\s+(add|remove|bridge)|build\s+(destroy|unlink)|code\s+(approve|deny|revert)|agent\s+(stop|key|reconfigure))\b/i;
+  /^(admin|rank|grant|ban|kick|destroy|connect\s+(add|auth|remove)|gateway\s+(add|remove|bridge)|build\s+(destroy|unlink)|code\s+(approve|deny|revert)|agent\s+(stop|key|reconfigure|config)|role\s+(edit|delete|reload)|trait\s+delete)\b/i;
 const READ_COMMAND =
   /^(look|l|who|examine|inventory|brief|help|recall|search|status|readiness|productivity|crew\s+(info|invitations)|task\s+(list|info)|channel\s+(list|history)|board\s+(list|read|search))\b/i;
 const COMMUNICATION_COMMAND = /^(say|tell|shout|emote|channel\s+send|board\s+(post|reply))\b/i;

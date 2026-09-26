@@ -1144,6 +1144,7 @@ export function registerBuiltinCommands(engine: Engine): void {
     traitCommand({
       db: engine.db,
       getEntity: (id) => engine.entities.get(id as EntityId),
+      listAgents: () => engine.agentRuntime.list(),
     }),
   );
   engine.commands.registerBuiltin(systemPromptCommand({ db: engine.db }));
