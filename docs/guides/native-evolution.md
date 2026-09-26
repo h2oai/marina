@@ -66,7 +66,9 @@ otherwise change the session. The creator decides what happens next.
 
 ## Qualification and transport equivalence
 
-After participants complete a controlled trial, verify its durable evidence outside the agent loop:
+After participants complete a controlled trial, verify its durable evidence outside the agent loop
+(participants can preview the same verdict in the world with `evolve qualify`; the gate is the
+external probe, which reads the evidence over HTTP rather than through the loop being judged):
 
 ```text
 bun run qualify:evolution

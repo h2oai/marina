@@ -14,7 +14,7 @@ import { getStanding } from "../../agent/standing";
 import { listWorkItems } from "../../coordination/work-loop";
 import { allRecipeNames, getRecipe } from "../../engine/commands/usecase";
 import type { Engine } from "../../engine/engine";
-import { evolutionBudgetState, parseEvolutionProtocol } from "../../engine/evolution-protocol";
+import { evolutionSessionsWithEvidence } from "../../engine/evolution-qualification";
 import type { MarinaDB, MediaJobRow } from "../../persistence/database";
 import type { EntityId, RoomId } from "../../types";
 import { ORCHESTRATION_PATTERNS } from "../../world/templates/orchestration";
@@ -782,24 +782,7 @@ export async function handleWorldCatalogRoutes(
     if (!/^(1|true|on)$/i.test(process.env.MARINA_EVOLUTION_PROTOCOLS ?? "")) {
       return json([]);
     }
-    return json(
-      db.listEvolutionSessions().map((session) => {
-        const experiment = db.getExperiment(session.experiment_id);
-        const runs = db.listEvolutionRuns(session.id);
-        return {
-          ...session,
-          experiment_name: experiment?.name ?? null,
-          protocol: parseEvolutionProtocol(session.protocol),
-          budget: evolutionBudgetState(session, runs.length),
-          activity: db.getEvolutionActivity(
-            session.experiment_id,
-            session.started_at ?? session.created_at,
-            session.completed_at ?? Date.now(),
-          ),
-          runs,
-        };
-      }),
-    );
+    return json(evolutionSessionsWithEvidence(db));
   }
   if (url.pathname === "/api/markets" && method === "GET" && db) {
     return json(db.listMarkets());

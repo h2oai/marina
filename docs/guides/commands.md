@@ -90,6 +90,7 @@ Implementation: `parseDuration` in `src/engine/commands/format-duration.ts`.
 > brief watch 60          Auto-brief every 60 ticks
 > brief unwatch           Stop auto-brief
 > readiness               Capability health — active/degraded/off, with fixes (alias: health)
+> readiness autonomy      Are agents acting on their own right now? Each requirement vs what was observed
 > trace                   List recent execution traces
 > trace find status=failed model=qwen limit=20
 > trace stats             Summarize observed model/tool mechanics
@@ -442,6 +443,7 @@ run or promote candidates automatically. See [Native Evolution Protocols](native
 > evolve pause Trial
 > evolve resume Trial
 > evolve complete Trial
+> evolve qualify                     The qualify:evolution verdict, read-only: which checks pass, what is missing
 > observe Trial baseline accuracy 0.72 Ran on the clean fixture
                                              Record one observation for an experiment arm
 ```
@@ -721,6 +723,7 @@ When the world has a decision backend (`MARINA_DECISIONS`, see [docs/architectur
 |---------|-------------|
 | `decision check [<request> \|] <draft>` | Score your own draft before you use it: quality (0–2), and grounding against any `note:N`, `task:N` or `chronicle:N` you cite (only records you can read are sent) |
 | `decision choose <question> \| <option> \| <option> [\| …]` | Pick among up to 8 options; returns the pick and its confidence |
+| `decision qualify` | Run the labeled gate and route cases against this world's backend: gate accuracy, hold recall, false holds, route accuracy, latency, cost (~20 billed calls; rate limited) |
 
 When the decision gate (`MARINA_DECISION_GATE=on`, see [docs/architecture/decisions.md](../architecture/decisions.md)) scores an agent's tool call in the "ask a person" band, the call waits and the agent's **owner** — whoever spawned it — gets a notice with a token. Only the owner can settle it, an agent can never approve its own call, and no answer before the deadline blocks the call.
 

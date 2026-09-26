@@ -10,6 +10,11 @@ import {
   evolutionBudgetState,
   parseEvolutionProtocol,
 } from "../evolution-protocol";
+import {
+  assessEvolutionQualification,
+  type EvolutionQualificationSession,
+  evolutionSessionsWithEvidence,
+} from "../evolution-qualification";
 import { requiresPersistence } from "./command-messages";
 
 /**
@@ -96,6 +101,7 @@ export function evolveCommand(deps: {
       if (
         [
           "sessions",
+          "qualify",
           "create",
           "start",
           "status",
@@ -201,6 +207,30 @@ function handleEvolutionProtocol(
   }
   if (!db) {
     ctx.send(input.entity, requiresPersistence("evolution protocols"));
+    return;
+  }
+
+  if (sub === "qualify") {
+    // The same verdict `bun run qualify:evolution` polls for, read-only: it
+    // never continues, decides or promotes a session.
+    const report = assessEvolutionQualification(
+      evolutionSessionsWithEvidence(db) as EvolutionQualificationSession[],
+    );
+    const words = (key: string) => key.replace(/([A-Z])/g, " $1").toLowerCase();
+    const passing = Object.entries(report.checks)
+      .filter(([, ok]) => ok)
+      .map(([key]) => words(key));
+    ctx.send(
+      input.entity,
+      [
+        header(`Evolution qualification: ${report.qualified ? "QUALIFIED" : "not yet"}`),
+        separator(),
+        `  ${report.sessions} session(s) · ${report.runs} run(s) · ${report.decidedRuns} decided`,
+        ...report.failures.map((f) => `  ✗ ${f}`),
+        ...(passing.length ? [dim(`  ✓ ${passing.join(" · ")}`)] : []),
+        dim("The release gate reads the same evidence from outside: bun run qualify:evolution"),
+      ].join("\n"),
+    );
     return;
   }
 

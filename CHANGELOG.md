@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- In-world qualification views: `decision qualify` (the labeled gate and route cases against the
+  world's own decision backend; rate limited), `readiness autonomy` (each autonomy requirement vs
+  what was observed in the last 5 minutes) and `evolve qualify` (the `qualify:evolution` verdict,
+  read-only). The scripts share the same code: `AUTONOMY_REQUIREMENTS`,
+  `evolutionSessionsWithEvidence`, `loadDecisionCases` / `renderBackendReport`. The decision
+  case set moved to `src/decisions/decision-cases.json`.
 - `benchmark run smoke`: the frozen 15-item prompt A/B set (`benchmarks/smoke-eval.json`) as an
   in-world benchmark with its own leaderboard — the same items and scoring as `bun run eval-prompt`
   (a shared `checks` harness adapter), always ready since the dataset is tracked.

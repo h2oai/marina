@@ -9,6 +9,8 @@
  * internal repository — this module never writes files.
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { type GateIntent, gateToolCall } from "./gate";
 import { type RouteTable, routeModelWithTable } from "./route";
 import type { DecisionProvider } from "./types";
@@ -186,4 +188,27 @@ export async function qualifyBackend(
     });
   }
   return scoreBackend(provider, gate, route);
+}
+
+/** The labeled case set, tracked beside the qualifier. */
+export const DECISION_CASES_PATH = join(import.meta.dir, "decision-cases.json");
+
+export function loadDecisionCases(path = DECISION_CASES_PATH): DecisionCases {
+  return parseDecisionCases(JSON.parse(readFileSync(path, "utf8")));
+}
+
+const pct = (n: number) => `${(n * 100).toFixed(0)}%`;
+
+/** One backend's report as text — shared by `qualify:decisions` and `decision qualify`. */
+export function renderBackendReport(r: BackendReport): string {
+  const missed = r.gate.results.filter((g) => !g.correct).map((g) => `${g.id}→${g.action}`);
+  const misrouted = r.route.results.filter((x) => !x.correct).map((x) => `${x.id}→${x.route}`);
+  return [
+    `${r.model} (${r.backend}${r.calibrated ? "" : ", uncalibrated"})`,
+    `  gate   accuracy ${pct(r.gate.accuracy)} · hold recall ${pct(r.gate.holdRecall)} · false holds ${pct(r.gate.falseHoldRate)} · errors ${r.gate.errors}`,
+    missed.length ? `         wrong: ${missed.join(", ")}` : "         wrong: none",
+    `  route  accuracy ${pct(r.route.accuracy)} · errors ${r.route.errors}`,
+    misrouted.length ? `         wrong: ${misrouted.join(", ")}` : "         wrong: none",
+    `  latency p50 ${r.latencyMs.p50}ms · p95 ${r.latencyMs.p95}ms · cost $${r.costUsd.toFixed(6)}`,
+  ].join("\n");
 }

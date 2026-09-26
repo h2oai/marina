@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { AUTONOMY_REQUIREMENTS } from "../src/engine/readiness";
+
 interface ReadinessResponse {
   generatedAt: number;
   demo: {
@@ -33,7 +35,9 @@ while (Date.now() <= deadline) {
     }
   } catch (error) {
     if (Date.now() + pollMs > deadline) {
-      console.error(`Qualification probe failed: ${error instanceof Error ? error.message : error}`);
+      console.error(
+        `Qualification probe failed: ${error instanceof Error ? error.message : error}`,
+      );
       process.exit(2);
     }
   }
@@ -47,13 +51,7 @@ console.error(
       url: baseUrl,
       timeoutMs,
       evidence: last?.demo ?? null,
-      required: {
-        activeAgents: 2,
-        recentPrimitiveActions: 3,
-        recentCommunications: 1,
-        marinaToolCalls: 2,
-        maximumMedianResponseMs: 30_000,
-      },
+      required: AUTONOMY_REQUIREMENTS,
     },
     null,
     2,
