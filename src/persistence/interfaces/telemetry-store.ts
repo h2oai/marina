@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  AutonomyPulseInput,
+  AutonomyPulseRow,
   PrimitiveUsageSummary,
   ProductivitySummary,
   ProductivityTrendPoint,
@@ -59,6 +61,8 @@ export interface TelemetryStore {
   getPrimitiveUsageSummary(entityName?: string, days?: number): PrimitiveUsageSummary;
   getPromptOutcomeSummaries(days?: number): PromptOutcomeSummary[];
   getPrimitiveUsageLeaderboard(limit?: number): PrimitiveUsageSummary[];
+  recordAutonomyPulse(pulse: AutonomyPulseInput): void;
+  listAutonomyPulse(sinceMs: number): AutonomyPulseRow[];
 }
 
 /** Runtime mirror of `TelemetryStore`'s method names — the drift test compares it to the facade. */
@@ -73,6 +77,8 @@ export const TELEMETRY_STORE_METHODS = [
   "getPrimitiveUsageSummary",
   "getPromptOutcomeSummaries",
   "getPrimitiveUsageLeaderboard",
+  "recordAutonomyPulse",
+  "listAutonomyPulse",
 ] as const satisfies readonly (keyof TelemetryStore)[];
 
 export const TELEMETRY_STORE_COMPLETE: ExactKeys<TelemetryStore, typeof TELEMETRY_STORE_METHODS> =

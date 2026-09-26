@@ -595,3 +595,52 @@ export interface PromptOutcomeSummary {
   averageCostUsd: number;
   meaningfulActions: number;
 }
+
+// ─── Autonomy pulse history (migration 130) ─────────────────────────────────
+
+export interface AutonomyPulseInput {
+  at: number;
+  activeAgents: number;
+  primitiveActions: number;
+  communications: number;
+  toolCalls: number;
+  medianResponseMs?: number;
+  qualified: boolean;
+}
+
+export interface AutonomyPulseRow {
+  at: number;
+  active_agents: number;
+  primitive_actions: number;
+  communications: number;
+  tool_calls: number;
+  median_response_ms: number | null;
+  qualified: number;
+}
+
+export function recordAutonomyPulse(db: Database, p: AutonomyPulseInput): void {
+  db.query(
+    `INSERT INTO autonomy_pulse
+       (at, active_agents, primitive_actions, communications, tool_calls, median_response_ms, qualified)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    p.at,
+    p.activeAgents,
+    p.primitiveActions,
+    p.communications,
+    p.toolCalls,
+    p.medianResponseMs ?? null,
+    p.qualified ? 1 : 0,
+  );
+}
+
+/** Pulses since `sinceMs`, oldest first. */
+export function listAutonomyPulse(db: Database, sinceMs: number): AutonomyPulseRow[] {
+  return db
+    .query(
+      `SELECT at, active_agents, primitive_actions, communications, tool_calls,
+              median_response_ms, qualified
+         FROM autonomy_pulse WHERE at >= ? ORDER BY at ASC LIMIT 10000`,
+    )
+    .all(sinceMs) as AutonomyPulseRow[];
+}

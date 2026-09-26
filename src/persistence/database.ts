@@ -1944,6 +1944,14 @@ export class MarinaDB implements MarinaStores {
     return telemetryDb.getPromptOutcomeSummaries(this.db, days);
   }
 
+  recordAutonomyPulse(pulse: telemetryDb.AutonomyPulseInput): void {
+    telemetryDb.recordAutonomyPulse(this.db, pulse);
+  }
+
+  listAutonomyPulse(sinceMs: number): telemetryDb.AutonomyPulseRow[] {
+    return telemetryDb.listAutonomyPulse(this.reader, sinceMs);
+  }
+
   getPrimitiveUsageLeaderboard(limit = 20): PrimitiveUsageSummary[] {
     return telemetryDb.getPrimitiveUsageLeaderboard(this.db, limit);
   }

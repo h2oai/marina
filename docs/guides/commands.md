@@ -90,7 +90,8 @@ Implementation: `parseDuration` in `src/engine/commands/format-duration.ts`.
 > brief watch 60          Auto-brief every 60 ticks
 > brief unwatch           Stop auto-brief
 > readiness               Capability health — active/degraded/off, with fixes (alias: health)
-> readiness autonomy      Are agents acting on their own right now? Each requirement vs what was observed
+> readiness autonomy      Are agents acting on their own right now? Each requirement vs what was observed,
+                          and the share of 5-minute snapshots that qualified over the last 24 h
 > trace                   List recent execution traces
 > trace find status=failed model=qwen limit=20
 > trace stats             Summarize observed model/tool mechanics

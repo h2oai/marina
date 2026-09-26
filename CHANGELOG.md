@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Autonomy pulse history: the `autonomy-pulse` tick job stores the readiness autonomy numbers every
+  5 minutes (`autonomy_pulse`, migration 130, kept 30 days), and `readiness autonomy` reports the
+  last 24 hours against the 70% goal. No model involved.
 - Judge agreement: `MARINA_DECISION_VERIFY=observe` scores every task submission with the
   configured decision backend and records the judge's opinion without acting on it
   (`judge_observations`, migration 129); `decision agreement` compares those opinions with the

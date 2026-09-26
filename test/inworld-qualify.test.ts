@@ -5,8 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { DecisionProvider } from "../src/decisions/types";
 import { decisionCommand, resetDecisionQualifyForTests } from "../src/engine/commands/decision";
 import { evolveCommand } from "../src/engine/commands/evolve";
-import { renderAutonomy } from "../src/engine/commands/readiness";
+import { renderAutonomy, renderAutonomyTrend } from "../src/engine/commands/readiness";
 import type { ReadinessReport } from "../src/engine/readiness";
+import { autonomyPulseTicks } from "../src/engine/tick-jobs";
 import { MarinaDB } from "../src/persistence/database";
 import type { Entity, EntityId, RoomContext } from "../src/types";
 import { cleanupDb, stripAnsi } from "./helpers";
@@ -131,5 +132,51 @@ describe("evolve qualify — the qualify:evolution verdict, read-only", () => {
     out = [];
     evolveCommand({ getEntity: () => me, db }).handler(ctx, input("evolve qualify"));
     expect(out.join("\n")).toContain("MARINA_EVOLUTION_PROTOCOLS");
+  });
+});
+
+describe("autonomy pulse history", () => {
+  const DB = `test_autonomy_pulse_${process.pid}.db`;
+  let db: MarinaDB;
+  beforeEach(() => {
+    db = new MarinaDB(DB);
+  });
+  afterEach(() => {
+    db.close();
+    cleanupDb(DB);
+  });
+
+  it("stores snapshots and reports the 24 h share against the 70% goal", () => {
+    const now = Date.now();
+    for (let i = 0; i < 10; i++) {
+      db.recordAutonomyPulse({
+        at: now - i * 300_000,
+        activeAgents: i < 8 ? 3 : 1,
+        primitiveActions: 5,
+        communications: 2,
+        toolCalls: 3,
+        qualified: i < 8,
+      });
+    }
+    db.recordAutonomyPulse({
+      at: now - 2 * 86_400_000,
+      activeAgents: 0,
+      primitiveActions: 0,
+      communications: 0,
+      toolCalls: 0,
+      qualified: false,
+    });
+    const rows = db.listAutonomyPulse(now - 86_400_000);
+    expect(rows).toHaveLength(10);
+    const line = renderAutonomyTrend(rows).join("\n");
+    expect(line).toContain("qualified in 8 of 10 snapshots (80%)");
+    expect(line).toContain("✓");
+    expect(renderAutonomyTrend([]).join("")).toContain("no snapshots yet");
+  });
+
+  it("the tick cadence is ~5 minutes of wall clock at any tick interval", () => {
+    expect(autonomyPulseTicks(1_000)).toBe(300);
+    expect(autonomyPulseTicks(60_000)).toBe(5);
+    expect(autonomyPulseTicks(600_000)).toBe(1);
   });
 });

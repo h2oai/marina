@@ -113,7 +113,9 @@ world qualifies when at least two agents perform three meaningful actions, commu
 once, make at least two Marina tool calls, and observed median model latency remains below 30
 seconds. The evidence window is five minutes, so stale or non-participating demos are visible.
 
-In the world, `readiness autonomy` shows each requirement against what was observed. For a
+In the world, `readiness autonomy` shows each requirement against what was observed, plus the
+last 24 hours: a snapshot is stored every 5 minutes (`autonomy_pulse`, kept 30 days), and a live
+world should qualify in at least 70% of them. For a
 repeatable pass/fail probe against a running instance:
 
 ```text
