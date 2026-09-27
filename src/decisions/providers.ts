@@ -37,43 +37,99 @@ export interface ProviderOptions {
   timeoutMs: number;
   /** Decisions API path under `baseUrl`: `/decisions` (OpenRouter), `/v1/systemone` (TypeSafe). */
   path?: string;
+  /**
+   * USD per million input tokens, used when the backend reports tokens but no
+   * `usage.cost` (TypeSafe's own API; OpenRouter reports cost itself). Output
+   * tokens are free on the Decisions API.
+   */
+  inputUsdPerMTok?: number;
   /** Test seam. */
   fetch?: FetchLike;
 }
 
+/** Upstream statuses worth one retry: rate limited, unavailable, TypeSafe's 529 overloaded. */
+const RETRYABLE = new Set([429, 503, 529]);
+/** Leave at least this much of the call's budget for the retried attempt itself. */
+const RETRY_MIN_REMAINING_MS = 250;
+
+function retryDelayMs(res: Response): number {
+  const after = Number(res.headers.get("retry-after"));
+  if (Number.isFinite(after) && after >= 0) return after * 1000;
+  return 100 + Math.random() * 200;
+}
+
+function waitFor(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+function statusError(status: number, text: string): DecisionError {
+  const message = `decision backend ${status}${text ? `: ${text.slice(0, 200)}` : ""}`;
+  if (status === 429) return new DecisionError(message, "rate_limited", 429);
+  if (status === 503 || status === 529) return new DecisionError(message, "overloaded", status);
+  if (status === 400 || status === 422) return new DecisionError(message, "upstream_rejected", 422);
+  return new DecisionError(message, "upstream_error");
+}
+
+/**
+ * POST once, and retry ONCE on 429 / 503 / 529 when the call's own timeout
+ * still has room (the Decisions API answers in ~150 ms, so a jittered retry
+ * fits inside a 2 s budget). Never retries past the budget: a gate that fails
+ * closed must not wait longer than its operator allowed.
+ */
 async function post(
   opts: ProviderOptions,
   path: string,
   body: unknown,
   signal?: AbortSignal,
 ): Promise<unknown> {
+  const deadline = performance.now() + opts.timeoutMs;
   const timeout = AbortSignal.timeout(opts.timeoutMs);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+  const url = `${opts.baseUrl.replace(/\/+$/, "")}${path}`;
+  const init: RequestInit = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(opts.apiKey ? { Authorization: `Bearer ${opts.apiKey}` } : {}),
+    },
+    body: JSON.stringify(body),
+    signal: combined,
+  };
   let res: Response;
-  try {
-    res = await (opts.fetch ?? fetch)(`${opts.baseUrl.replace(/\/+$/, "")}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(opts.apiKey ? { Authorization: `Bearer ${opts.apiKey}` } : {}),
-      },
-      body: JSON.stringify(body),
-      signal: combined,
-    });
-  } catch (err) {
-    const name = (err as Error)?.name;
-    if (name === "TimeoutError" || name === "AbortError") {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      res = await (opts.fetch ?? fetch)(url, init);
+    } catch (err) {
+      const name = (err as Error)?.name;
+      if (name === "TimeoutError" || name === "AbortError") {
+        throw new DecisionError(
+          `decision call timed out after ${opts.timeoutMs}ms`,
+          "timeout",
+          504,
+        );
+      }
+      throw new DecisionError(`decision call failed: ${(err as Error).message}`, "upstream_error");
+    }
+    if (res.ok || attempt > 1 || !RETRYABLE.has(res.status)) break;
+    const delay = retryDelayMs(res);
+    if (deadline - performance.now() - delay < RETRY_MIN_REMAINING_MS) break;
+    await res.body?.cancel().catch(() => undefined);
+    await waitFor(delay, combined);
+    if (combined.aborted) {
       throw new DecisionError(`decision call timed out after ${opts.timeoutMs}ms`, "timeout", 504);
     }
-    throw new DecisionError(`decision call failed: ${(err as Error).message}`, "upstream_error");
   }
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new DecisionError(
-      `decision backend ${res.status}${text ? `: ${text.slice(0, 200)}` : ""}`,
-      "upstream_error",
-    );
-  }
+  if (!res.ok) throw statusError(res.status, await res.text().catch(() => ""));
   try {
     return await res.json();
   } catch {
@@ -99,9 +155,14 @@ export function decisionsApiProvider(opts: ProviderOptions): DecisionProvider {
         model?: unknown;
         usage?: { cost?: unknown; input_tokens?: unknown; output_tokens?: unknown };
       };
-      const cost = typeof body?.usage?.cost === "number" ? body.usage.cost : undefined;
       const inputTokens =
         typeof body?.usage?.input_tokens === "number" ? body.usage.input_tokens : undefined;
+      const cost =
+        typeof body?.usage?.cost === "number"
+          ? body.usage.cost
+          : inputTokens !== undefined && opts.inputUsdPerMTok !== undefined
+            ? (inputTokens * opts.inputUsdPerMTok) / 1_000_000
+            : undefined;
       const outputTokens =
         typeof body?.usage?.output_tokens === "number" ? body.usage.output_tokens : undefined;
       return {
@@ -142,7 +203,9 @@ function classifierPrompt(state: unknown, questions: DecisionQuestions): string 
     if (q.type === "noul" && q.criteria) {
       lines.push(`    yes means: ${q.criteria.true}`, `    no means: ${q.criteria.false}`);
     } else if (q.type === "choice") {
-      for (const [key, desc] of Object.entries(q.criteria)) lines.push(`    "${key}": ${desc}`);
+      for (const [key, desc] of Object.entries(q.criteria)) {
+        lines.push(desc === null ? `    "${key}"` : `    "${key}": ${desc}`);
+      }
     } else if (q.type === "score") {
       q.criteria.forEach((desc, i) => {
         lines.push(`    level ${i}: ${desc}`);

@@ -38,7 +38,7 @@ when the evidence was thin.
 | `OPENROUTER_API_KEY` | required | retrieval and the Jev judge run through OpenRouter |
 | `MARINA_FORECAST_ANALYSTS` | three vendors via OpenRouter | comma-separated `provider/model` ids |
 | `MARINA_FORECAST_RETRIEVER` | `openrouter-web:openai/gpt-6-luna` | the research model |
-| `MARINA_FORECAST_JUDGE` | `jev` | `jev` or `none` (equal weights) |
+| `MARINA_FORECAST_JUDGE` | `jev` | `jev`, `decisions` (the configured `MARINA_DECISIONS` backend — OpenJev, TypeSafe, a chat classifier; falls back to `jev` when none is set) or `none` (equal weights) |
 
 ## How good is it?
 

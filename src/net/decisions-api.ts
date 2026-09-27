@@ -95,12 +95,28 @@ export async function handleDecisions(req: Request): Promise<Response> {
       latency_ms: result.latencyMs,
     });
   } catch (err) {
-    if (err instanceof DecisionError) {
-      if (err.code === "invalid_request") {
-        return errorJson(400, err.message, { code: "invalid_request_error", param: "questions" });
-      }
-      return errorJson(err.status, err.message, { code: "upstream_error" });
-    }
+    if (err instanceof DecisionError) return decisionErrorResponse(err);
     throw err;
+  }
+}
+
+/**
+ * Map a backend failure onto the status a Decisions API client expects, so
+ * TypeSafe clients' own handling works through Marina: 422 for a request the
+ * backend refused, 429 / 529 (and 503) for the ones they back off and retry.
+ */
+function decisionErrorResponse(err: DecisionError): Response {
+  switch (err.code) {
+    case "invalid_request":
+      return errorJson(400, err.message, { code: "invalid_request_error", param: "questions" });
+    case "upstream_rejected":
+      return errorJson(422, err.message, { code: "invalid_request_error" });
+    case "rate_limited":
+      return errorJson(429, err.message, { code: "rate_limit_exceeded" });
+    case "spend_cap":
+      return errorJson(429, err.message, { code: "spend_cap_reached" });
+    default:
+      // overloaded keeps its 503 / 529 so clients back off; the rest are 502 / 504.
+      return errorJson(err.status, err.message, { code: "upstream_error" });
   }
 }

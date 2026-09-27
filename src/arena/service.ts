@@ -295,8 +295,8 @@ export async function learnFromResolutions(
  * `research:<analyst>[,<analyst>,<analyst>]`. Retrieval is
  * `MARINA_ARENA_RESEARCH_RETRIEVER` (default `openrouter-web:openai/gpt-6-luna`),
  * the judge `MARINA_ARENA_RESEARCH_JUDGE` (`jev` — jev-1.13 through OpenRouter's
- * Decisions API — by default when an OpenRouter key is set; `none` for equal
- * weights), the cap on the move taken `MARINA_ARENA_RESEARCH_TRUST` (0.5).
+ * Decisions API — by default when an OpenRouter key is set; `decisions` for the
+ * world's configured backend, falling back to `jev`; `none` for equal weights), the cap on the move taken `MARINA_ARENA_RESEARCH_TRUST` (0.5).
  */
 async function researchForecasterFor(
   spec: string,
@@ -324,20 +324,11 @@ async function researchForecasterFor(
     name: m.replace(/^openrouter\//, ""),
     ...modelComplete(m, env),
   }));
-  const judgeSpec = (
-    env.MARINA_ARENA_RESEARCH_JUDGE?.trim() || (orKey ? "jev" : "none")
-  ).toLowerCase();
-  const judge =
-    judgeSpec === "jev" && orKey
-      ? decisions.providerFromConfig({
-          kind: "decisions-api",
-          baseUrl: "https://openrouter.ai/api/alpha",
-          path: "/decisions",
-          model: "typesafe/jev-1.13",
-          apiKey: orKey,
-          timeoutMs: 10_000,
-        })
-      : undefined;
+  const judge = decisions.researchJudge(
+    env.MARINA_ARENA_RESEARCH_JUDGE?.trim() || (orKey ? "jev" : "none"),
+    env,
+    orKey,
+  );
   const trustCap = Number(env.MARINA_ARENA_RESEARCH_TRUST ?? 0.5);
   const { defaultPageText } = await import("./research/verify");
   const pageText = defaultPageText();
