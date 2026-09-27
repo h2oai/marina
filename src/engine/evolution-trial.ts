@@ -84,6 +84,16 @@ export function differenceInterval(
 
 const JOIN_TIMEOUT_MS = 60_000;
 
+/**
+ * Model calls a trial agent may spend. An agent takes several turns per item
+ * (read the request, think, reply, sometimes a tool), so a fixed budget runs
+ * dry on a large set and every later item times out — measuring the budget,
+ * not the role. Live: 300 calls lasted ~70 of 100 ARC items.
+ */
+export function trialCallBudget(items: number): number {
+  return 60 + 8 * Math.max(1, items);
+}
+
 export async function runTrial(
   deps: TrialDeps,
   spec: { runId: number; arms: TrialArm[]; timeoutMs: number },
