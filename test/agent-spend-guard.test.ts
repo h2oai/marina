@@ -21,6 +21,7 @@ import {
   upstreamErrorBackoffMs,
   upstreamErrorPauseMsFromEnv,
 } from "../src/engine/constants";
+import { settleProxyCall } from "../src/engine/proxy-settlement";
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 
 // ─── Rolling window ───────────────────────────────────────────────────────────
@@ -407,6 +408,32 @@ describe("LeanAgentAdapter proxy cost headers", () => {
     }
     expect(internals.metrics.totalCostUsd).toBeCloseTo(0.0246);
     expect(internals.checkSpendCaps()).not.toBeNull();
+  });
+
+  it("a streamed reply (request id, no cost header) is priced from the proxy's settlement", async () => {
+    const { internals } = makeProxyAdapter(
+      { perAgentUsdPerHour: 0.03 },
+      {
+        "content-type": "text/event-stream",
+        "x-request-id": "req-stream-1",
+      },
+    );
+    const options = internals.providerStreamOptions(internals.model, undefined);
+    await options.fetch!("http://localhost:3300/v1/chat/completions", { method: "POST" });
+    settleProxyCall("req-stream-1", { costUsd: 0.02, cacheReadTokens: 64 });
+    const merged = internals.recordTurnUsage(
+      { inputTokens: 900, outputTokens: 40, costUsd: 0 },
+      Date.now(),
+    );
+    expect(merged.costUsd).toBeCloseTo(0.02);
+    expect(merged.cacheReadTokens).toBe(64);
+    expect(internals.metrics.totalCostUsd).toBeCloseTo(0.02);
+    expect(internals.checkSpendCaps()).toBeNull();
+    // A second streamed turn crosses the per-agent cap — which used to never see proxy spend.
+    await options.fetch!("http://localhost:3300/v1/chat/completions", { method: "POST" });
+    settleProxyCall("req-stream-1", { costUsd: 0.02 });
+    internals.recordTurnUsage({ inputTokens: 10, outputTokens: 1 }, Date.now());
+    expect(internals.checkSpendCaps()).toContain("spend cap reached");
   });
 
   it("a priced usage block wins over the header — never double-charged", () => {

@@ -12,6 +12,7 @@ import { localOutputBudget } from "../../engine/constants";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
 import { Logger } from "../../engine/logger";
+import { settleProxyCall } from "../../engine/proxy-settlement";
 import { dailyCapRefusal, recordSpend } from "../../engine/spend-ledger";
 import type { EngineEvent, EntityId } from "../../types";
 import {
@@ -1185,7 +1186,22 @@ async function traceProxyResponse(
   ) => {
     if (terminal) return;
     terminal = true;
-    if (phase === "completed") recordSpend("model_api", metrics.costUsd);
+    if (phase === "completed") {
+      recordSpend("model_api", metrics.costUsd);
+      // Streaming replies cannot carry the cost header; settle it for the
+      // in-process agent that made the call (src/engine/proxy-settlement.ts).
+      if (metrics.costUsd !== undefined) {
+        settleProxyCall(trace.requestId, {
+          costUsd: metrics.costUsd,
+          ...(metrics.cacheReadTokens === undefined
+            ? {}
+            : { cacheReadTokens: metrics.cacheReadTokens }),
+          ...(metrics.cacheWriteTokens === undefined
+            ? {}
+            : { cacheWriteTokens: metrics.cacheWriteTokens }),
+        });
+      }
+    }
     engine.logEvent({
       type: "model_request_lifecycle",
       phase,

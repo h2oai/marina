@@ -15,6 +15,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
+import { takeSettledProxyCall } from "../src/engine/proxy-settlement";
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import { anthropicAutoCacheEnabled, handleModelApi } from "../src/net/model-api";
 import { setEndpointConfig } from "../src/net/model-endpoint";
@@ -241,6 +242,32 @@ describe("Anthropic passthru: tool calling", () => {
     };
     expect(data.choices[0]!.message.content).toBe("18C in Paris, 22C in Rome.");
     expect(data.choices[0]!.finish_reason).toBe("stop");
+  });
+
+  it("a streamed reply cannot carry the cost header, so it settles the cost by request id", async () => {
+    const events = [
+      { type: "message_start", message: { id: "msg_c", usage: { input_tokens: 2_000 } } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } },
+      { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 500 } },
+      { type: "message_stop" },
+    ];
+    reply = () =>
+      new Response(events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join(""), {
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    const resp = await post("/v1/chat/completions", {
+      model: "marina",
+      stream: true,
+      messages: [{ role: "user", content: "hi" }],
+    });
+    const requestId = resp.headers.get("x-request-id")!;
+    expect(requestId).toBeTruthy();
+    expect(resp.headers.get("x-marina-cost-usd")).toBeNull(); // headers left before usage was known
+    await readSse(resp); // the stream completes → the passthru settles the call
+    const settled = takeSettledProxyCall(requestId);
+    expect(settled?.costUsd).toBeGreaterThan(0);
+    expect(takeSettledProxyCall(requestId)).toBeUndefined(); // counted once
   });
 
   it("streams tool_use as delta.tool_calls chunks and finishes with tool_calls", async () => {

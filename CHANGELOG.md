@@ -133,6 +133,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Agents on `marina/default` (and any proxied `marina/*` model) showed $0 spend, so the per-agent and
+  runtime-wide hourly caps never saw their cost: the proxy reports cost in a response header, and a
+  STREAMING reply's headers leave before usage is known. The passthru now settles each completed
+  call's cost by request id (`src/engine/proxy-settlement.ts`) and the agent reads it at turn end by
+  the `x-request-id` it already receives. The daily ledger was always correct and is unchanged.
 - A 100-item `evolve trial` ran its agents out of calls (a fixed 300-call budget lasted ~70 items),
   after which every item timed out — measuring the budget, not the role. Trial agents now get
   `trialCallBudget(items)` = 60 + 8 per item.
