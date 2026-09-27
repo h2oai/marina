@@ -133,6 +133,8 @@ export interface BenchmarkRunOptions {
    * `evolve evaluate benchmark:<id>` can tie a score to a candidate role.
    */
   subjects?: BenchmarkSubject[];
+  /** Judge on the fixed `holdout` split, iterate on `tune` (benchmarks/partition.ts). */
+  partition?: "holdout" | "tune";
 }
 
 export interface BenchmarkSubject {
@@ -168,7 +170,14 @@ export interface HarnessTarget {
  * never argv, so it is not visible in the process list. */
 export function harnessInvocation(
   benchmark: string,
-  config: { limit: number; seed: number; model: string; judgeModel?: string; concurrency: number },
+  config: {
+    limit: number;
+    seed: number;
+    model: string;
+    judgeModel?: string;
+    concurrency: number;
+    partition?: string;
+  },
   target: HarnessTarget,
   resultFile?: string,
 ): { args: string[]; env: Record<string, string> } {
@@ -191,6 +200,7 @@ export function harnessInvocation(
     target.endpoint,
   ];
   if (config.judgeModel) args.push("--judge-model", config.judgeModel);
+  if (config.partition) args.push("--partition", config.partition);
   const env: Record<string, string> = {};
   if (target.apiKey) env.MARINA_BENCH_API_KEY = target.apiKey;
   if (resultFile) env.MARINA_BENCH_RESULT_FILE = resultFile;
@@ -260,6 +270,7 @@ export class BenchmarkRunner {
       judgeModel: opts.judgeModel,
       concurrency: opts.concurrency ?? 5,
       ...(opts.subjects?.length ? { subjects: opts.subjects } : {}),
+      ...(opts.partition ? { partition: opts.partition } : {}),
     };
     const configHash = hashConfig(config);
     const id = `br_${configHash}_${Date.now().toString(36)}`;

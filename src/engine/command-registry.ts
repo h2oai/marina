@@ -684,6 +684,7 @@ export function registerBuiltinCommands(engine: Engine): void {
     evolveCommand({
       getEntity: (id) => engine.entities.get(id as EntityId),
       db: engine.db,
+      benchmarkReady: (name) => engine.benchmarkRunner?.datasetReady(name) ?? false,
       replicateDeps: () => {
         const rt = engine.agentRuntime;
         const db = engine.db;
@@ -747,6 +748,7 @@ export function registerBuiltinCommands(engine: Engine): void {
               subjects,
               ...(opts.limit ? { limit: opts.limit } : {}),
               ...(opts.seed !== undefined ? { seed: opts.seed } : {}),
+              ...(opts.partition ? { partition: opts.partition } : {}),
               agentId: opts.callerId,
             }).id,
           runStatus: (id) => {

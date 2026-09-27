@@ -68,9 +68,16 @@ world run trial2 evolve trial ScoutTrial 1 result
 ```
 
 The result is kept (a trial started over `world run` outlives the bridge's connection) and names both
-runs, which an evaluator other than the proposer cites with `evolve evaluate`. Small benchmarks are
-noisy: 15 items cannot separate one missed answer from a real difference — use a larger set
-(`benchmark:arc-challenge limit:100 seed:…`) before drawing conclusions.
+runs, which an evaluator other than the proposer cites with `evolve evaluate`.
+
+**Held out by default.** Every benchmark's items are split once, by a hash of the item id, into a
+`holdout` fifth and a `tune` rest (`benchmarks/partition.ts`) — disjoint and stable, unlike reseeding.
+A trial judges on 100 items of ARC-Challenge's holdout split (227 items) when that dataset is cached,
+else on smoke with a warning; iterate on `benchmark run <name> --partition tune`, never on holdout.
+The trial reports a 95% interval on the difference (Agresti–Caffo — honest at small n and at 0% /
+100%): on smoke, 15/15 vs 14/15 is +6.7 points with an interval that includes zero, i.e. noise.
+`evolve replicate` requires the interval to sit above zero as well as the fishing margin. A 100-item
+trial runs ~200 agent answers — roughly $10 on Claude Sonnet 5, inside a child's $50 day.
 
 ### Earned replication: a winner spawns copies of itself
 
@@ -79,6 +86,7 @@ copies of itself — in the same child or parallel world, never the parent. It r
 
 - the run is **accepted** (recorded by `evolve decide`, with the protocol's independent review);
 - its **trial** completed on both arms and both cited benchmark runs still resolve;
+- the difference's **95% interval is above zero** — not distinguishable from noise is not a win;
 - the candidate beat the incumbent by the **fishing margin** — `0.02 + 0.01·log₂(1 + candidates
   already trialed in this session)`, the same rule arena signal discovery uses, so every try raises
   the bar;

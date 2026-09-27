@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { parsePartition } from "../../../benchmarks/partition";
 import {
   knownReferenceModels,
   REFERENCE_SCORES,
@@ -30,7 +31,7 @@ const HELP = `Run, track, and rank benchmark evaluations from inside the world.
 Usage:
   benchmark list                                   — show available benchmarks + cache status
   benchmark orchestrations                         — show live marina:<name> endpoints
-  benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N]
+  benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune]
                                                    — kick off one run
   benchmark sweep <name|all> [--limit N] [--seed N] [--judge M]
                                                    — fan out across every live orchestration
@@ -259,7 +260,7 @@ export function benchmarkCommand(deps: {
           if (!tokens[1]) {
             ctx.send(
               input.entity,
-              "Usage: benchmark run <name> [--limit N] [--seed N] [--model M]",
+              "Usage: benchmark run <name> [--limit N] [--seed N] [--model M] [--partition holdout|tune]",
             );
             return;
           }
@@ -288,6 +289,7 @@ export function benchmarkCommand(deps: {
             "model",
             "judge",
             "concurrency",
+            "partition",
           ]);
           const limit = Number.parseInt(modifiers.limit ?? "", 10);
           const seed = Number.parseInt(modifiers.seed ?? "", 10);
@@ -298,6 +300,9 @@ export function benchmarkCommand(deps: {
               limit: Number.isFinite(limit) && limit > 0 ? limit : undefined,
               seed: Number.isFinite(seed) ? seed : undefined,
               model: modifiers.model,
+              ...(parsePartition(modifiers.partition)
+                ? { partition: parsePartition(modifiers.partition) }
+                : {}),
               ...(modifiers.model
                 ? { subjects: deps.describeTarget?.(modifiers.model) ?? [] }
                 : {}),

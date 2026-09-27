@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Held-out trials: a fixed, disjoint `holdout` / `tune` split of every benchmark by item-id hash
+  (`benchmarks/partition.ts`, `benchmark run … --partition holdout|tune`); `evolve trial` judges on
+  100 held-out ARC-Challenge items by default, reports a 95% interval on the difference
+  (Agresti–Caffo), and `evolve replicate` requires that interval to exclude zero.
 - Earned replication: `evolve replicate <exp> <run> [n] [budget] [model]` — an accepted candidate that
   won its trial by the fishing margin (shared with arena discovery, `src/engine/fishing-margin.ts`)
   spawns copies of itself in its child or parallel world, within a per-run ceiling (5), the

@@ -1,6 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { parsePartition } from "../../../benchmarks/partition";
 import { getStanding } from "../../agent/standing";
 import { bold, category, dim, header, separator, status, stripAnsi } from "../../net/ansi";
 import type { EvolutionSessionRow, MarinaDB } from "../../persistence/database";
@@ -95,6 +96,8 @@ export function evolveCommand(deps: {
   trialDeps?: (opts: TrialOptions) => TrialDeps | undefined;
   /** Runtime parts for `evolve replicate` (spawning copies, live counts). */
   replicateDeps?: () => ReplicateDeps | undefined;
+  /** Whether a benchmark's dataset is available (picks the default trial benchmark). */
+  benchmarkReady?: (name: string) => boolean;
   notifyEvolutionState?: (
     entityNames: string[],
     state: { sessionId: number; experimentName: string; active: boolean },
@@ -215,6 +218,7 @@ function handleEvolutionProtocol(
     ) => void;
     trialDeps?: (opts: TrialOptions) => TrialDeps | undefined;
     replicateDeps?: () => ReplicateDeps | undefined;
+    benchmarkReady?: (name: string) => boolean;
   },
   sub: string,
 ): void | Promise<void> {
@@ -681,15 +685,20 @@ function nextStep(
 
 export interface TrialOptions {
   benchmark: string;
+  partition?: "holdout" | "tune";
   limit?: number;
   seed?: number;
   agentModel: string;
   callerId: string;
 }
 
+/** Where trials judge by default (its fixed holdout split, 100 items). */
+export const DEFAULT_TRIAL_BENCHMARK = "arc-challenge";
+
 const TRIAL_MODS: ModifierSpec = {
   incumbent: { type: "string" },
   benchmark: { type: "string" },
+  partition: { type: "string" },
   limit: { type: "int" },
   seed: { type: "int" },
   model: { type: "string" },
@@ -748,7 +757,10 @@ function handleTrial(
   ctx: RoomContext,
   input: { entity: string; tokens: string[] },
   entity: Entity,
-  deps: { trialDeps?: (opts: TrialOptions) => TrialDeps | undefined },
+  deps: {
+    trialDeps?: (opts: TrialOptions) => TrialDeps | undefined;
+    benchmarkReady?: (name: string) => boolean;
+  },
   db: MarinaDB,
   run: { id: number; status: string; candidate_ref: string | null },
 ): void {
@@ -791,14 +803,27 @@ function handleTrial(
       return;
     }
   }
-  const benchmark = (mods.values.benchmark as string | undefined) ?? "smoke";
+  // Judge on a held-out sample large enough to mean something: 100 items from
+  // the fixed holdout split of ARC-Challenge when it is cached, else smoke.
+  const benchmark =
+    (mods.values.benchmark as string | undefined) ??
+    (deps.benchmarkReady?.(DEFAULT_TRIAL_BENCHMARK) ? DEFAULT_TRIAL_BENCHMARK : "smoke");
+  const partition =
+    benchmark === "smoke" ? undefined : (parsePartition(mods.values.partition) ?? "holdout");
+  const limit =
+    (mods.values.limit as number | undefined) ?? (benchmark === "smoke" ? undefined : 100);
   const opts: TrialOptions = {
     benchmark,
-    ...(mods.values.limit ? { limit: mods.values.limit as number } : {}),
+    ...(partition ? { partition } : {}),
+    ...(limit ? { limit } : {}),
     ...(mods.values.seed !== undefined ? { seed: mods.values.seed as number } : {}),
     agentModel: (mods.values.model as string | undefined) ?? "marina/default",
     callerId: entity.id,
   };
+  const smokeWarning =
+    benchmark === "smoke"
+      ? " Note: smoke has 15 items — too few to separate a small gain from noise; cache arc-challenge for held-out trials."
+      : "";
   const trialDeps = deps.trialDeps?.(opts);
   if (!trialDeps) {
     say("Trials need the agent runtime and the benchmark runner, which this world does not have.");
@@ -821,7 +846,7 @@ function handleTrial(
   ];
   const timeoutMs = (mods.values.timeout as number | undefined) ?? 30 * 60_000;
   say(
-    `Trial started for run ${run.id}: ${candidate}${incumbent ? ` vs ${incumbent}` : " (no incumbent: one arm)"} on ${benchmark}${opts.limit ? ` (${opts.limit} items)` : ""}, deadline ${Math.round(timeoutMs / 60_000)} min. Nothing is adopted; results follow here.`,
+    `Trial started for run ${run.id}: ${candidate}${incumbent ? ` vs ${incumbent}` : " (no incumbent: one arm)"} on ${benchmark}${opts.limit ? ` (${opts.limit} items` : ""}${partition ? `, ${partition} split` : ""}${opts.limit ? ")" : ""}, deadline ${Math.round(timeoutMs / 60_000)} min. Nothing is adopted; results follow here.${smokeWarning}`,
   );
   void runTrial(trialDeps, { runId: run.id, arms, timeoutMs })
     .then((result) => {
@@ -858,8 +883,11 @@ export function renderTrial(runId: number, result: TrialResult): string {
     ),
   ];
   if (result.delta !== undefined) {
+    const ci = result.deltaCi
+      ? ` (95% interval ${(result.deltaCi[0] * 100).toFixed(1)} to ${(result.deltaCi[1] * 100).toFixed(1)}${result.deltaCi[0] > 0 ? " — above zero" : " — includes zero: not distinguishable from noise"})`
+      : "";
     lines.push(
-      `  candidate − incumbent: ${result.delta >= 0 ? "+" : ""}${(result.delta * 100).toFixed(1)} points`,
+      `  candidate − incumbent: ${result.delta >= 0 ? "+" : ""}${(result.delta * 100).toFixed(1)} points${ci}`,
     );
   }
   const cited = result.arms
@@ -964,6 +992,13 @@ async function handleReplicate(
     .listEvolutionRuns(sessionId)
     .filter((r) => r.id !== run.id && storedTrial(db, r.id)).length;
   const margin = promotionMargin(triedBefore);
+  const lower = trial.result.deltaCi?.[0];
+  if (lower === undefined || lower <= 0) {
+    say(
+      `Not earned: +${(trial.result.delta * 100).toFixed(1)} points, but the 95% interval ${lower === undefined ? "is unknown" : `starts at ${(lower * 100).toFixed(1)}`} — the win is not distinguishable from noise. Trial on more held-out items (limit:N).`,
+    );
+    return;
+  }
   if (trial.result.delta < margin) {
     say(
       `Not earned: the candidate beat the incumbent by ${(trial.result.delta * 100).toFixed(1)} points; this session needs ${(margin * 100).toFixed(1)} (${triedBefore} other candidate(s) trialed — every try raises the bar).`,

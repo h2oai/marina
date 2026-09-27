@@ -58,6 +58,27 @@ export interface TrialResult {
   arms: TrialArmResult[];
   /** candidate − incumbent score, when both completed. */
   delta?: number;
+  /** 95% interval on the difference (Agresti–Caffo), when both completed. */
+  deltaCi?: [number, number];
+}
+
+/**
+ * 95% interval on p1 − p2 for two independent proportions (Agresti–Caffo: add
+ * one success and one failure to each arm). Well-behaved for small n and for
+ * scores of 0% or 100%, where the plain Wald interval collapses to zero width
+ * and would call a 15-item tie-break "certain".
+ */
+export function differenceInterval(
+  p1: number,
+  n1: number,
+  p2: number,
+  n2: number,
+): [number, number] {
+  const a1 = (p1 * n1 + 1) / (n1 + 2);
+  const a2 = (p2 * n2 + 1) / (n2 + 2);
+  const se = Math.sqrt((a1 * (1 - a1)) / (n1 + 2) + (a2 * (1 - a2)) / (n2 + 2));
+  const d = a1 - a2;
+  return [d - 1.96 * se, d + 1.96 * se];
 }
 
 const JOIN_TIMEOUT_MS = 60_000;
@@ -124,8 +145,10 @@ export async function runTrial(
   const cand = results.find((r) => r.label === "candidate");
   const inc = results.find((r) => r.label === "incumbent");
   const done = (r?: TrialArmResult) => r?.status === "completed" && typeof r.score === "number";
+  if (!done(cand) || !done(inc)) return { arms: results };
   return {
     arms: results,
-    ...(done(cand) && done(inc) ? { delta: cand!.score! - inc!.score! } : {}),
+    delta: cand!.score! - inc!.score!,
+    deltaCi: differenceInterval(cand!.score!, cand!.total || 1, inc!.score!, inc!.total || 1),
   };
 }
