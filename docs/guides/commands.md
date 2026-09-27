@@ -748,7 +748,7 @@ When the decision gate (`MARINA_DECISION_GATE=on`, see [docs/architecture/decisi
 > role view researcher goal investigate logs  Preview goal-conditional trait gating
 > role lint researcher                        Check role shaping risks
 > role diff researcher analyst                 Compare two roles (traits, focus, guidelines, tone)
-> role create analyst traits careful,logical guidelines Be precise|Cite sources focus data,metrics tone professional
+> role create analyst traits careful,logical guidelines Be precise | Cite your sources focus data,metrics tone professional
 > role edit analyst tone concise               Edit role properties
 > system-prompt                               Show the assembled system prompt (alias `sysprompt`)
 > system-prompt role researcher goal audit    Preview the prompt an agent with that role and goal receives

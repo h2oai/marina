@@ -76,7 +76,10 @@ A trial judges on 100 items of ARC-Challenge's holdout split (227 items) when th
 else on smoke with a warning; iterate on `benchmark run <name> --partition tune`, never on holdout.
 The trial reports a 95% interval on the difference (Agresti–Caffo — honest at small n and at 0% /
 100%): on smoke, 15/15 vs 14/15 is +6.7 points with an interval that includes zero, i.e. noise.
-`evolve replicate` requires the interval to sit above zero as well as the fishing margin. A 100-item
+`evolve replicate` requires the interval to sit above zero as well as the fishing margin.
+Each arm also shows its answer rate and its accuracy on answered items, with a `split:` line — the
+overall score counts an unanswered item as wrong, so it mixes answer quality with reliability.
+The first real held-out trial read +6.0 overall: +0.2 points of quality, +6 answered items. A 100-item
 trial runs ~200 agent answers — roughly $10 on Claude Sonnet 5, inside a child's $50 day.
 
 ### Earned replication: a winner spawns copies of itself

@@ -63,6 +63,32 @@ export interface TrialResult {
 }
 
 /**
+ * One arm's score, split: how often it answered, and how good the answers
+ * were. The overall score counts an unanswered item as wrong (a role that does
+ * not answer IS worse), but a reviewer needs to see which of the two moved.
+ */
+export function armBreakdown(a: { score?: number; answered?: number; total?: number }):
+  | {
+      correct: number;
+      answered: number;
+      total: number;
+      answerRate: number;
+      answeredAccuracy: number;
+    }
+  | undefined {
+  if (a.score === undefined || !a.total) return undefined;
+  const answered = a.answered ?? a.total;
+  const correct = Math.round(a.score * a.total);
+  return {
+    correct,
+    answered,
+    total: a.total,
+    answerRate: answered / a.total,
+    answeredAccuracy: answered > 0 ? correct / answered : 0,
+  };
+}
+
+/**
  * 95% interval on p1 − p2 for two independent proportions (Agresti–Caffo: add
  * one success and one failure to each arm). Well-behaved for small n and for
  * scores of 0% or 100%, where the plain Wald interval collapses to zero width

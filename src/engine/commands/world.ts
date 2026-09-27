@@ -18,7 +18,7 @@ import { type ChildFetch, runInChild } from "../../world/child-bridge";
 import type { WorldCollectiveManager } from "../../world/world-collective-manager";
 import { getErrorMessage } from "../errors";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
-import { judgedOn } from "./evolve";
+import { evidenceSplit, judgedOn } from "./evolve";
 
 const USAGE = [
   "Usage: world list",
@@ -225,6 +225,7 @@ async function handleAdopt(
       separator(),
       `  from ${v.name}: run ${e.run} (${e.experiment}) accepted — evaluated by ${e.evaluator ?? "?"}, decided by ${e.reviewer ?? "?"}`,
       `  ${e.candidateRole} ${pct(e.candidateScore)}% vs ${e.incumbentRole} ${pct(e.incumbentScore)}% on ${judgedOn(e)}: +${pct(e.delta)} (95% ${pct(e.interval[0])} to ${pct(e.interval[1])})`,
+      ...(evidenceSplit(e) ? [`  ${evidenceSplit(e)}`] : []),
       dim(
         `  Someone other than ${actor.name} applies it: world adopt approve ${rec.id} — or world adopt reject ${rec.id} <reason>${into ? `. Replacing "${into}" needs role.edit.` : ""}`,
       ),
