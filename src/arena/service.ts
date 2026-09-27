@@ -377,6 +377,9 @@ async function researchForecasterFor(
 }
 
 /** Record what `spec` would file for each round (first record per round wins). */
+/** A shadow record younger than this is not re-recorded (the latest before lock is scored). */
+export const SHADOW_RERECORD_MS = 6 * 3_600_000;
+
 export async function recordShadow(
   store: ArenaStore,
   data: ArenaData,
@@ -388,13 +391,23 @@ export async function recordShadow(
   // `discovered` reads — without them it silently degrades to the nowcast.
   const notes = "getNotesByType" in store ? (store as unknown as NotesStore) : undefined;
   const { forecaster, usage } = await forecasterFor(spec, { env, ...(notes ? { notes } : {}) });
-  const existing = new Set(
-    store.listArenaShadow({ forecaster: spec, limit: 2_000 }).map((r) => r.round_id),
-  );
+  // Re-recording is how a forecast stays current until lock (the one that
+  // counts is the last before lock, like a filing); a record from the last
+  // few hours is fresh enough, so hourly runs don't pile up duplicates.
+  const latest = new Map<string, number>();
+  for (const r of store.listArenaShadow({ forecaster: spec, limit: 2_000 })) {
+    latest.set(r.round_id, Math.max(latest.get(r.round_id) ?? 0, r.created_at));
+  }
+  const now = Date.now();
   const out: Array<{ roundId: string; recorded: boolean; error?: string }> = [];
   for (const roundId of roundIds) {
-    if (existing.has(roundId)) {
-      out.push({ roundId, recorded: false, error: "already recorded" });
+    const last = latest.get(roundId);
+    if (last !== undefined && now - last < SHADOW_RERECORD_MS) {
+      out.push({
+        roundId,
+        recorded: false,
+        error: `recorded ${Math.round((now - last) / 60_000)} min ago; the latest record before lock is the one scored`,
+      });
       continue;
     }
     try {

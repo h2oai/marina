@@ -226,18 +226,19 @@ describe("shadow ledger", () => {
     cleanupDb(DB);
   });
 
-  it("records the first forecast per round and forecaster, and scores resolved ones", async () => {
-    const forecast = JSON.stringify({ topline: { mean: history.at(-1)!.value + 1, sd: 1 } });
+  it("keeps every recording and scores the LAST one before lock, as a filing would be", async () => {
+    const good = JSON.stringify({ topline: { mean: history.at(-1)!.value + 1, sd: 1 } });
+    const stale = JSON.stringify({ topline: { mean: history.at(-1)!.value - 5, sd: 1 } });
     const row = {
       roundId: round.round_id,
       forecaster: "research:x",
-      forecast,
+      forecast: stale,
       detail: "{}",
       costUsd: 0.05,
     };
     expect(db.recordArenaShadow(row)).toBe(true);
-    expect(db.recordArenaShadow({ ...row, forecast: "{}" })).toBe(false);
-    expect(db.listArenaShadow({ forecaster: "research:x" })).toHaveLength(1);
+    expect(db.recordArenaShadow({ ...row, forecast: good })).toBe(true);
+    expect(db.listArenaShadow({ forecaster: "research:x" })).toHaveLength(2); // append-only history
 
     const files: Record<string, unknown> = {
       "questions/season0.json": { rounds: [round] },
@@ -248,9 +249,15 @@ describe("shadow ledger", () => {
       const path = url.replace("https://example.test/", "");
       return path in files ? Response.json(files[path]) : new Response("", { status: 404 });
     });
-    const scores = await scoreShadow(data, db.listArenaShadow());
+    const lockAt = Date.parse(round.lock_at);
+    const base = { round_id: round.round_id, forecaster: "research:x", cost_usd: 0.05 };
+    const scores = await scoreShadow(data, [
+      { ...base, forecast: stale, created_at: lockAt - 5 * 86_400_000 }, // days early
+      { ...base, forecast: good, created_at: lockAt - 3_600_000 }, // the last before lock
+      { ...base, forecast: stale, created_at: lockAt + 60_000 }, // after lock: never counts
+    ]);
     expect(scores).toHaveLength(1);
-    expect(scores[0]!.skill).toBeGreaterThan(scores[0]!.baselineSkill);
+    expect(scores[0]!.skill).toBeGreaterThan(scores[0]!.baselineSkill); // the good one was scored
     expect(scores[0]!.costUsd).toBe(0.05);
   });
 });

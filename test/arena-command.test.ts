@@ -113,8 +113,8 @@ describe("arena — the measurement loop in-world", () => {
     const mean = (JSON.parse(row!.forecast) as { topline: { mean: number } }).topline.mean;
     expect(mean).toBeGreaterThan(29);
     expect(await run("arena shadow list")).toContain("demo-2026-w20");
-    // Idempotent per round and forecaster.
-    expect(await run("arena shadow run due forecaster:discovered")).toContain("already recorded");
+    // A fresh record is not duplicated; the latest before lock is the one scored.
+    expect(await run("arena shadow run due forecaster:discovered")).toContain("min ago");
   });
 
   it("refuses paid forecasters and points at the operator step", async () => {

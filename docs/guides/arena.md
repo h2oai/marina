@@ -135,8 +135,10 @@ against the arena's recorded persistence loss for each round.
 6. **Aggregate** — judge-weighted mean move × confidence × `MARINA_ARENA_RESEARCH_TRUST` (0.5).
 
 Web research cannot be backtested (a search run later finds the answer), so it is measured in
-**shadow**: `bun run arena shadow run due` records what it would file (first record per round,
-with the whole dossier and judged proposals), `shadow score` scores resolved ones against
+**shadow**: `bun run arena shadow run due` records what it would file (with the whole dossier and
+judged proposals); re-running it re-records, and the forecast scored is the **last one recorded
+before lock**, as a filing would be — every recording stays in the append-only ledger, and a record
+younger than 6 h is not duplicated), `shadow score` scores resolved ones against
 persistence and the baseline, `shadow list` shows the record, `bun run arena research <round>`
 runs it once and prints everything. `MARINA_ARENA_SHADOW=<spec>` records hourly from the tick
 job — no entrant or key needed.
