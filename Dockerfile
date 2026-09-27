@@ -33,6 +33,23 @@ RUN bun install --frozen-lockfile --filter "marina" --filter "marina-dashboard"
 COPY . .
 RUN bun run dashboard:build
 
+# ── prod-deps: the server's runtime dependencies only ───────────────────────
+# The runtime must not carry devDependencies: the TypeScript 7 native compiler
+# (@typescript/typescript-linux-x64, a Go binary) ships its own Go stdlib and
+# Trivy flags its CVEs; biome is the same kind of build-only tool. Nothing at
+# runtime imports either (the server runs from source under bun).
+FROM docker.io/oven/bun:1.4.2 AS prod-deps
+WORKDIR /app
+COPY package.json bun.lock ./
+COPY dashboard/package.json ./dashboard/
+COPY site/package.json ./site/
+COPY marina-desktop/package.json ./marina-desktop/
+COPY examples/usecase-ui/package.json ./examples/usecase-ui/
+COPY examples/coding-agent-demo/package.json ./examples/coding-agent-demo/
+COPY src/sdk/package.json ./src/sdk/
+COPY marina-desktop/patches ./marina-desktop/patches
+RUN bun install --frozen-lockfile --production --filter "marina"
+
 # ── runtime: lean image that runs the server from source ────────────────────
 FROM docker.io/oven/bun:1.4.2 AS runtime
 WORKDIR /app
@@ -52,12 +69,14 @@ RUN apt-get update \
   && apt-get upgrade -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
-# Bring the built app over, then drop the dashboard's build-only node_modules.
+# Bring the built app over, then swap in production-only node_modules (the
+# builder's tree holds the dashboard's and the root's build-only tools).
 # Copying the whole tree (vs. an allow-list of dirs) keeps the image correct
 # as the codebase grows — worlds/, benchmarks/, seeds/, rooms/ are all needed
 # at runtime and easy to forget in an enumerated COPY.
 COPY --from=builder /app /app
-RUN rm -rf dashboard/node_modules
+RUN rm -rf node_modules dashboard/node_modules
+COPY --from=prod-deps /app/node_modules /app/node_modules
 
 # Persistent state lives under /app/data (mount a volume here). The volume is
 # owned by the unprivileged `bun` user so the server can write the DB + assets.

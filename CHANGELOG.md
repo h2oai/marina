@@ -138,6 +138,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The container image shipped devDependencies, including the TypeScript 7 native compiler (a Go
+  binary with its own Go stdlib), so the Trivy image scan failed on 10 HIGH Go CVEs on every PR.
+  The runtime stage now takes `node_modules` from a production-only install (`prod-deps` stage);
+  nothing at runtime imports typescript or biome. Local scan: 0 fixable CRITICAL/HIGH.
 - The arena shadow ledger kept the FIRST forecast per round and refused later ones, so a forecast
   recorded days before lock (before the freshest reading existed — the 9/25 Civiqs nowcasts were
   identical to the baseline) could never be replaced by the one that would actually be filed.
