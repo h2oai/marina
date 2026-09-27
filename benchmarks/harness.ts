@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { loadSmoke, runChecks } from "./adapters/checks";
+import { inPartition, parsePartition } from "./partition";
 import { runCodeGen } from "./adapters/code-gen";
 import { runFreeForm } from "./adapters/free-form";
 import { runIFEval } from "./adapters/ifeval";
@@ -239,6 +240,7 @@ function parseCliArgs() {
       "judge-endpoint": { type: "string" },
       concurrency: { type: "string", short: "c", default: "5" },
       seed: { type: "string", short: "s" },
+      partition: { type: "string" },
       compare: { type: "string" },
       list: { type: "boolean" },
       results: { type: "boolean" },
@@ -597,6 +599,7 @@ Options:
     concurrency: Number.parseInt(args.concurrency ?? "5", 10),
     limit: args.limit ? Number.parseInt(args.limit, 10) : undefined,
     seed: args.seed ? Number.parseInt(args.seed, 10) : undefined,
+    partition: parsePartition(args.partition),
     judge: {
       model: args["judge-model"] ?? args.model ?? "marina",
       endpoint: args["judge-endpoint"] ?? args.endpoint ?? "http://localhost:3300",
@@ -612,7 +615,13 @@ Options:
   // Download/load dataset
   console.log("\n  Loading dataset...");
   const datasetDir = join(import.meta.dir, "datasets");
-  let items = await benchDef.download(datasetDir, config.limit);
+  // With a partition, load everything and split first: limiting before the
+  // split would only ever split the first N items.
+  let items = await benchDef.download(datasetDir, config.partition ? undefined : config.limit);
+  if (config.partition) {
+    items = inPartition(benchDef.dataset, items, config.partition);
+    console.log(`  Partition: ${config.partition} (${items.length} items)`);
+  }
 
   if (config.seed !== undefined) {
     const { seededShuffle } = await import("./download");

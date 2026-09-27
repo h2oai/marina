@@ -5,9 +5,13 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { evolveCommand, resetEvolveTrialForTests } from "../src/engine/commands/evolve";
+import {
+  evolveCommand,
+  renderTrial,
+  resetEvolveTrialForTests,
+} from "../src/engine/commands/evolve";
 import { Engine } from "../src/engine/engine";
-import { runTrial, type TrialDeps } from "../src/engine/evolution-trial";
+import { differenceInterval, runTrial, type TrialDeps } from "../src/engine/evolution-trial";
 import { grant } from "../src/engine/safety-gates";
 import { liveOrchestrationChannel } from "../src/net/model-api/shared";
 import { MarinaDB } from "../src/persistence/database";
@@ -17,7 +21,12 @@ import { MockConnection, makeTestRoom, stripAnsi, until } from "./helpers";
 
 /** A fake runtime: agents come online after `joinMs`, runs finish after `runMs`. */
 function fakeDeps(
-  over: { neverOnline?: string; runMs?: number; scores?: Record<string, number> } = {},
+  over: {
+    neverOnline?: string;
+    runMs?: number;
+    scores?: Record<string, number>;
+    total?: number;
+  } = {},
 ) {
   let clock = 0;
   const log: string[] = [];
@@ -48,10 +57,10 @@ function fakeDeps(
     runStatus: (id) => {
       const r = runs.get(id)!;
       if (clock - r.startedAt < (over.runMs ?? 10_000)) {
-        return { status: "running", score: null, answered: 0, total: 15 };
+        return { status: "running", score: null, answered: 0, total: over.total ?? 15 };
       }
       const score = over.scores?.[r.model] ?? 0.5;
-      return { status: "completed", score, answered: 15, total: 15 };
+      return { status: "completed", score, answered: over.total ?? 15, total: over.total ?? 15 };
     },
     stop: async (name) => {
       log.push(`stop ${name}`);
@@ -294,6 +303,7 @@ describe("evolve replicate — earned replication", () => {
   async function trialed(scores: { cand: number; inc: number }) {
     const f = fakeDeps({
       runMs: 0,
+      total: 100,
       scores: { "marina:trial-1-cand": scores.cand, "marina:trial-1-inc": scores.inc },
     });
     // The fake runs report as completed; mirror them into benchmark_runs so the
@@ -373,5 +383,46 @@ describe("evolve replicate — earned replication", () => {
     cmd.handler(ctx, input("evolve decide scout 1 accept"));
     expect(await replicate(cmd, "evolve replicate scout 1")).toContain("Not earned");
     expect(spawned).toHaveLength(0);
+  });
+});
+
+describe("held-out trials: a fixed split and an honest interval", () => {
+  it("splits items disjointly and stably, about one in five held out", async () => {
+    const { inPartition, partitionOf } = await import("../benchmarks/partition");
+    const items = Array.from({ length: 2_000 }, (_, i) => ({ id: `q${i}` }));
+    const hold = inPartition("arc-challenge", items, "holdout");
+    const tune = inPartition("arc-challenge", items, "tune");
+    expect(hold.length + tune.length).toBe(items.length);
+    expect(hold.some((h) => tune.includes(h))).toBe(false);
+    expect(hold.length / items.length).toBeGreaterThan(0.15);
+    expect(hold.length / items.length).toBeLessThan(0.25);
+    expect(partitionOf("arc-challenge", "q7")).toBe(partitionOf("arc-challenge", "q7"));
+  });
+
+  it("calls a 15-item tie-break noise and a real 100-item gap real", () => {
+    const [lo15] = differenceInterval(1.0, 15, 14 / 15, 15);
+    expect(lo15).toBeLessThan(0); // +6.7 points on 15 items: includes zero
+    const [lo100] = differenceInterval(0.85, 100, 0.7, 100);
+    expect(lo100).toBeGreaterThan(0);
+    const [loTie, hiTie] = differenceInterval(1, 15, 1, 15);
+    expect(loTie).toBeLessThan(0); // two perfect scores never "prove" anything
+    expect(hiTie).toBeGreaterThan(0);
+  });
+
+  it("refuses to replicate a win whose interval includes zero", async () => {
+    const f = fakeDeps({
+      runMs: 0,
+      scores: { "marina:trial-3-cand": 1.0, "marina:trial-3-inc": 14 / 15 },
+    });
+    const r = await runTrial(f.deps, {
+      runId: 3,
+      arms: [
+        { label: "candidate", role: "a" },
+        { label: "incumbent", role: "b" },
+      ],
+      timeoutMs: 60_000,
+    });
+    expect(r.deltaCi![0]).toBeLessThan(0);
+    expect(renderTrial(3, r)).toContain("not distinguishable from noise");
   });
 });

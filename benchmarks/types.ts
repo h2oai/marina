@@ -20,6 +20,8 @@ export interface BenchmarkConfig {
   concurrency: number;
   limit?: number;
   seed?: number;
+  /** Fixed disjoint split of the items (benchmarks/partition.ts). */
+  partition?: "holdout" | "tune";
   judge?: { model: string; endpoint: string };
 }
 
