@@ -10,8 +10,8 @@
  *   bun run qualify:decisions -- --backend jev --backend chat:openai/gpt-6-luna
  *   bun run qualify:decisions -- --backend hf:zai-org/GLM-5.3-Flash
  *   bun run qualify:decisions -- --backend typesafe --out /path/outside/repo/report.json
- *   bun run qualify:decisions -- --backend jev --backend chat:openai/gpt-4.1-mini --method auto --conformance
- *   bun run qualify:decisions -- --backend marina:http://localhost:3300:marina/classifier:openai/gpt-4.1-mini
+ *   bun run qualify:decisions -- --backend jev --backend chat:z-ai/glm-5.3-flash --method auto --conformance
+ *   bun run qualify:decisions -- --backend marina:http://localhost:3300:marina/classifier:z-ai/glm-5.3-flash
  *
  * Backends: `jev[:<model>]` (Decisions API on OpenRouter, OPENROUTER_API_KEY),
  * `typesafe[:<model>]` (TYPESAFE_API_KEY), `chat:<provider/model>` (any chat

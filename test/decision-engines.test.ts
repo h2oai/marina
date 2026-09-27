@@ -11,6 +11,7 @@ import {
   distributionsFromLogprobs,
   labelQuestions,
 } from "../src/decisions/classifier-methods";
+import { providerFromConfig } from "../src/decisions/config";
 import { CONFORMANCE_REQUESTS, runConformance, wireViolations } from "../src/decisions/conformance";
 import { listEngines, resolveEngine } from "../src/decisions/engines";
 import {
@@ -19,6 +20,7 @@ import {
   resetClassifierCapabilitiesForTests,
 } from "../src/decisions/providers";
 import { parseQuestions } from "../src/decisions/questions";
+import { resetSpendLedgerForTests, spentTodayUsd } from "../src/engine/spend-ledger";
 import { handleDecisionModels, handleDecisions } from "../src/net/decisions-api";
 
 // ─── A fake OpenAI-compatible upstream ───────────────────────────────────────
@@ -37,6 +39,11 @@ interface FakeOptions {
   logprobs?: boolean;
   /** Reject `response_format` with a 400 (a server without structured output). */
   rejectSchema?: boolean;
+  /**
+   * Reject logprobs with a 400: `reasoning` like OpenAI's reasoning models, `cap5`
+   * like a provider that only allows `top_logprobs` ≤ 5.
+   */
+  rejectLogprobs?: "reasoning" | "cap5";
   /** Label picked for every labeled answer (default: the first). */
   pick?: (labels: string[], call: number) => string;
   /** Served model name. */
@@ -54,6 +61,18 @@ function fakeUpstream(opts: FakeOptions = {}) {
     urls.push(url);
     auth.push(new Headers(init.headers).get("Authorization"));
     const call = calls++;
+    if (body.logprobs && opts.rejectLogprobs === "reasoning") {
+      return new Response(
+        JSON.stringify({ error: { message: "logprobs are not supported with reasoning models." } }),
+        { status: 400 },
+      );
+    }
+    if (body.logprobs && opts.rejectLogprobs === "cap5" && Number(body.top_logprobs) > 5) {
+      return new Response(
+        JSON.stringify({ error: { message: "Range of top_logprobs should be [0, 5]" } }),
+        { status: 400 },
+      );
+    }
     if (body.response_format && opts.rejectSchema) {
       return new Response(JSON.stringify({ error: { message: "response_format not supported" } }), {
         status: 400,
@@ -135,7 +154,8 @@ function reply(content: string, logprobs: unknown, model: string) {
     JSON.stringify({
       model,
       choices: [{ message: { role: "assistant", content }, ...(logprobs ? { logprobs } : {}) }],
-      usage: { prompt_tokens: 100, completion_tokens: 10 },
+      // OpenRouter reports what the call cost.
+      usage: { prompt_tokens: 100, completion_tokens: 10, cost: 0.0001 },
     }),
     { status: 200 },
   );
@@ -155,7 +175,7 @@ const classifier = (
 ) =>
   chatClassifierProvider({
     baseUrl: "http://localhost:3300/v1",
-    model: "openai/gpt-4.1-mini",
+    model: "z-ai/glm-5.3-flash",
     timeoutMs: 2000,
     method,
     structured: true,
@@ -253,6 +273,32 @@ describe("chat classifier methods", () => {
     expect(up.bodies[2]!.logprobs).toBeUndefined();
   });
 
+  it("a provider that rejects logprobs (reasoning models) is answered verbalized, never refused", async () => {
+    for (const method of ["auto", "logprobs"] as const) {
+      resetClassifierCapabilitiesForTests();
+      const up = fakeUpstream({ logprobs: true, rejectLogprobs: "reasoning" });
+      const provider = classifier(up.fetch, method);
+      const first = await provider.ask({ state: "s", questions: Q });
+      expect(first.method).toBe("verbalized");
+      // The rejection is not mistaken for a schema problem: the verbalized call keeps its schema.
+      expect(up.count()).toBe(2);
+      expect(up.bodies[1]!.response_format).toBeDefined();
+      await provider.ask({ state: "s", questions: Q });
+      expect(up.count()).toBe(3);
+      expect(up.bodies[2]!.logprobs).toBeUndefined();
+    }
+  });
+
+  it("a provider that caps top_logprobs is asked again at 5, and remembered", async () => {
+    const up = fakeUpstream({ logprobs: true, rejectLogprobs: "cap5" });
+    const provider = classifier(up.fetch, "auto");
+    const first = await provider.ask({ state: "s", questions: Q });
+    expect(first.method).toBe("logprobs");
+    expect(up.bodies.map((b) => b.top_logprobs)).toEqual([20, 5]);
+    await provider.ask({ state: "s", questions: Q });
+    expect(up.bodies.map((b) => b.top_logprobs)).toEqual([20, 5, 5]);
+  });
+
   it("sampled: k calls, answer frequencies", async () => {
     const up = fakeUpstream({ pick: (labels, call) => labels[call % 4 === 0 ? 0 : 1]! });
     const result = await classifier(up.fetch, "sampled", 4).ask({ state: "s", questions: Q });
@@ -261,6 +307,7 @@ describe("chat classifier methods", () => {
     expect((result.answers.urgent as { noul: number }).noul).toBeCloseTo(0.25);
     expect(result.answers.team).toMatchObject({ choice: "tech", confidence: 0.75 });
     expect(result.usage).toEqual({ inputTokens: 400, outputTokens: 40 });
+    expect(result.costUsd).toBeCloseTo(0.0004);
   });
 
   it("drops response_format for a server that rejects it, once", async () => {
@@ -285,6 +332,43 @@ describe("chat classifier methods", () => {
     expect(up.bodies[0]!.response_format).toBeUndefined();
     expect(up.bodies[0]!.logprobs).toBeUndefined();
     expect(result.method).toBe("verbalized");
+  });
+});
+
+describe("classifier spend", () => {
+  beforeEach(() => resetSpendLedgerForTests());
+  afterEach(() => resetSpendLedgerForTests());
+
+  it("a direct chat-classifier backend records what each call cost", async () => {
+    const up = fakeUpstream();
+    const provider = providerFromConfig({
+      kind: "chat-classifier",
+      baseUrl: "https://openrouter.ai/api/v1",
+      model: "z-ai/glm-5.3-flash",
+      timeoutMs: 1000,
+    });
+    const orig = globalThis.fetch;
+    globalThis.fetch = up.fetch as typeof fetch;
+    try {
+      const result = await provider.ask({ state: "s", questions: Q });
+      expect(result.costUsd).toBeCloseTo(0.0001);
+      expect(spentTodayUsd()).toBeCloseTo(0.0001);
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+
+  it("a marina/classifier engine reports its cost but leaves recording to the passthru", async () => {
+    const up = fakeUpstream({ logprobs: true });
+    const r = resolveEngine(
+      "marina/classifier:m",
+      { MARINA_DECISION_ENGINES: "m" },
+      { token: async () => "t", fetch: up.fetch },
+    );
+    if (!("provider" in r)) throw new Error("no engine");
+    const result = await r.provider.ask({ state: "s", questions: Q });
+    expect(result.costUsd).toBeCloseTo(0.0001);
+    expect(spentTodayUsd()).toBe(0);
   });
 });
 
@@ -315,20 +399,20 @@ describe("engines", () => {
   });
 
   it("serves only the listed chat models, or any with `*`", () => {
-    const env = { MARINA_DECISION_ENGINES: "openai/gpt-4.1-mini, anthropic/claude-haiku-4-5" };
-    expect("provider" in resolveEngine("marina/classifier:openai/gpt-4.1-mini", env)).toBe(true);
+    const env = { MARINA_DECISION_ENGINES: "z-ai/glm-5.3-flash, anthropic/claude-haiku-4-5" };
+    expect("provider" in resolveEngine("marina/classifier:z-ai/glm-5.3-flash", env)).toBe(true);
     expect(resolveEngine("marina/classifier:openai/o9", env)).toMatchObject({
       error: { status: 400, code: "unsupported_parameter" },
     });
     expect(resolveEngine("typesafe/jev-1.13", env)).toMatchObject({ error: { status: 400 } });
     const bare = resolveEngine(undefined, env);
-    expect("provider" in bare && bare.provider.model).toBe("marina/classifier:openai/gpt-4.1-mini");
+    expect("provider" in bare && bare.provider.model).toBe("marina/classifier:z-ai/glm-5.3-flash");
     const any = resolveEngine("marina/classifier:openai/o9", { MARINA_DECISION_ENGINES: "*" });
     expect("provider" in any && any.provider.model).toBe("marina/classifier:openai/o9");
     const dflt = resolveEngine("marina/classifier", { MARINA_DECISION_ENGINES: "*" });
     expect("provider" in dflt && dflt.provider.model).toBe("marina/classifier:marina/default");
     expect(listEngines(env).map((e) => e.id)).toEqual([
-      "marina/classifier:openai/gpt-4.1-mini",
+      "marina/classifier:z-ai/glm-5.3-flash",
       "marina/classifier:anthropic/claude-haiku-4-5",
     ]);
   });
@@ -337,24 +421,24 @@ describe("engines", () => {
     const env = {
       MARINA_DECISIONS: "jev",
       OPENROUTER_API_KEY: "k",
-      MARINA_DECISION_ENGINES: "openai/gpt-4.1-mini",
+      MARINA_DECISION_ENGINES: "z-ai/glm-5.3-flash",
     };
     const d = resolveEngine(undefined, env);
     expect("provider" in d && d.provider.model).toBe("typesafe/jev-1.13");
     const latest = resolveEngine("jev-latest", env);
     expect("provider" in latest && latest.provider.model).toBe("typesafe/jev-1.13");
-    const c = resolveEngine("marina/classifier:openai/gpt-4.1-mini", env);
+    const c = resolveEngine("marina/classifier:z-ai/glm-5.3-flash", env);
     expect("provider" in c && c.provider.calibrated).toBe(false);
     expect(listEngines(env).map((e) => [e.id, e.calibrated])).toEqual([
       ["typesafe/jev-1.13", true],
-      ["marina/classifier:openai/gpt-4.1-mini", false],
+      ["marina/classifier:z-ai/glm-5.3-flash", false],
     ]);
   });
 
   it("answers through Marina's own /v1 with the internal token and names who answered", async () => {
-    const up = fakeUpstream({ logprobs: true, served: "gpt-4.1-mini-2026-04-14" });
+    const up = fakeUpstream({ logprobs: true, served: "glm-5.3-flash-0914" });
     const r = resolveEngine(
-      "marina/classifier:openai/gpt-4.1-mini",
+      "marina/classifier:z-ai/glm-5.3-flash",
       { MARINA_DECISION_ENGINES: "*", WS_PORT: "4555" },
       {
         token: async () => "marina-internal-test",
@@ -365,21 +449,21 @@ describe("engines", () => {
     const result = await r.provider.ask({ state: "s", questions: Q });
     expect(up.urls[0]).toBe("http://localhost:4555/v1/chat/completions");
     expect(up.auth[0]).toBe("Bearer marina-internal-test");
-    expect(up.bodies[0]!.model).toBe("openai/gpt-4.1-mini");
-    expect(result.model).toBe("marina/classifier:gpt-4.1-mini-2026-04-14");
+    expect(up.bodies[0]!.model).toBe("z-ai/glm-5.3-flash");
+    expect(result.model).toBe("marina/classifier:glm-5.3-flash-0914");
     expect(result.provider).toBe("marina-classifier");
     expect(result.method).toBe("logprobs");
   });
 
   it("POST /v1/systemone answers with an engine even when MARINA_DECISIONS is off", async () => {
     delete process.env.MARINA_DECISIONS;
-    process.env.MARINA_DECISION_ENGINES = "openai/gpt-4.1-mini";
+    process.env.MARINA_DECISION_ENGINES = "z-ai/glm-5.3-flash";
     const up = fakeUpstream({ logprobs: true });
     const res = await handleDecisions(
       new Request("http://marina.test/v1/systemone", {
         method: "POST",
         body: JSON.stringify({
-          model: "marina/classifier:openai/gpt-4.1-mini",
+          model: "marina/classifier:z-ai/glm-5.3-flash",
           state: "My card was charged twice.",
           questions: {
             team: {
@@ -402,7 +486,7 @@ describe("engines", () => {
     expect(body.method).toBe("logprobs");
     expect(body.answers.team).toMatchObject({ type: "choice", choice: "billing" });
     const models = (await handleDecisionModels().json()) as { data: Array<{ id: string }> };
-    expect(models.data.map((m) => m.id)).toEqual(["marina/classifier:openai/gpt-4.1-mini"]);
+    expect(models.data.map((m) => m.id)).toEqual(["marina/classifier:z-ai/glm-5.3-flash"]);
   });
 
   it("still 404s with nothing configured, before looking at the body", async () => {
@@ -480,14 +564,16 @@ describe("conformance kit", () => {
     expect(await runConformance(jev)).toEqual({ passed: 4, total: 4, failures: [] });
   });
 
-  for (const [method, logprobs] of [
-    ["logprobs", true],
-    ["auto", false],
-    ["sampled", false],
-    ["verbalized", false],
+  for (const [method, logprobs, rejectLogprobs] of [
+    ["logprobs", true, undefined],
+    ["auto", false, undefined],
+    ["auto", true, "reasoning"],
+    ["auto", true, "cap5"],
+    ["sampled", false, undefined],
+    ["verbalized", false, undefined],
   ] as const) {
-    it(`a marina/classifier engine conforms (${method}${logprobs ? "" : ", no logprobs"})`, async () => {
-      const up = fakeUpstream({ logprobs });
+    it(`a marina/classifier engine conforms (${method}${logprobs ? "" : ", no logprobs"}${rejectLogprobs ? `, ${rejectLogprobs}` : ""})`, async () => {
+      const up = fakeUpstream({ logprobs, ...(rejectLogprobs ? { rejectLogprobs } : {}) });
       const r = resolveEngine(
         "marina/classifier:m",
         { MARINA_DECISION_ENGINES: "m", MARINA_DECISION_METHOD: method },

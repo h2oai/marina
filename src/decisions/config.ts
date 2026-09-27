@@ -173,7 +173,7 @@ export function providerFromConfig(config: DecisionConfig): DecisionProvider {
 }
 
 /** Refuse at the world's daily cap; record what each answered call cost. */
-export function metered(provider: DecisionProvider): DecisionProvider {
+function metered(provider: DecisionProvider): DecisionProvider {
   return {
     kind: provider.kind,
     model: provider.model,

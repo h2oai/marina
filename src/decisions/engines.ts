@@ -22,10 +22,11 @@
  * every reply names the model that actually answered.
  */
 
-import { classifierTuning, getDecisionProvider, metered } from "./config";
+import { dailyCapRefusal } from "../engine/spend-ledger";
+import { classifierTuning, getDecisionProvider } from "./config";
 import { acceptsRequestedModel } from "./model-ids";
 import { chatClassifierProvider } from "./providers";
-import type { DecisionProvider } from "./types";
+import { DecisionError, type DecisionProvider } from "./types";
 
 /** Engine id prefix for chat models answering through Marina's passthru. */
 export const CLASSIFIER_ENGINE = "marina/classifier";
@@ -105,8 +106,16 @@ function classifierEngine(
       };
     },
   };
-  // The upstream call is metered by the passthru itself; this adds the cap check.
-  return metered(provider);
+  // The passthru hop records the upstream spend itself, so this checks the cap
+  // but never records the reported cost a second time.
+  return {
+    ...provider,
+    async ask(request, signal) {
+      const capped = dailyCapRefusal();
+      if (capped) throw new DecisionError(capped, "spend_cap", 429);
+      return provider.ask(request, signal);
+    },
+  };
 }
 
 export type EngineResolution =

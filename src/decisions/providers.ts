@@ -232,7 +232,19 @@ export const CLASSIFIER_MAX_TOKENS = 2_000;
 const isOpenRouter = (baseUrl: string) => /^https:\/\/openrouter\.ai\//.test(baseUrl);
 
 /** Per (server, model): what it turned out not to support, so it is not asked again. */
-const unsupported = new Map<string, { logprobs?: boolean; schema?: boolean }>();
+interface LearnedLimits {
+  /** Returns no logprobs, or rejects the parameter (reasoning models do). */
+  logprobs?: boolean;
+  /** Rejects a JSON-schema `response_format`. */
+  schema?: boolean;
+  /** Largest `top_logprobs` it accepts, when below the default. */
+  topLogprobs?: number;
+}
+const unsupported = new Map<string, LearnedLimits>();
+
+/** Alternatives asked for per label token (OpenAI allows 20; some providers cap it at 5). */
+const TOP_LOGPROBS = 20;
+const TOP_LOGPROBS_FLOOR = 5;
 
 /** Test seam: forget learned server capabilities. */
 export function resetClassifierCapabilitiesForTests(): void {
@@ -244,6 +256,8 @@ interface ChatReply {
   model?: string;
   logprobs?: unknown;
   usage?: { inputTokens?: number; outputTokens?: number };
+  /** USD, when the server reports it (OpenRouter's `usage.cost`). */
+  costUsd?: number;
 }
 
 /**
@@ -258,8 +272,7 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
   const samples = Math.max(2, Math.min(15, Math.round(opts.samples ?? 5)));
   const capKey = `${opts.baseUrl}|${opts.model}`;
   const caps = () => unsupported.get(capKey) ?? {};
-  const learn = (c: { logprobs?: boolean; schema?: boolean }) =>
-    unsupported.set(capKey, { ...caps(), ...c });
+  const learn = (c: LearnedLimits) => unsupported.set(capKey, { ...caps(), ...c });
 
   async function chat(
     system: string,
@@ -292,7 +305,13 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
       );
     } catch (err) {
       // A server that rejects structured output: remember, and ask plainly.
-      if (!useSchema || !(err instanceof DecisionError) || err.code !== "upstream_rejected") {
+      // (A rejected logprobs parameter is the caller's to handle, not a schema problem.)
+      if (
+        !useSchema ||
+        !(err instanceof DecisionError) ||
+        err.code !== "upstream_rejected" ||
+        /logprob/i.test(err.message)
+      ) {
         throw err;
       }
       body = await post(opts, "/chat/completions", base, signal);
@@ -301,7 +320,7 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
     const b = body as {
       choices?: Array<{ message?: { content?: unknown }; logprobs?: { content?: unknown } }>;
       model?: unknown;
-      usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
+      usage?: { prompt_tokens?: unknown; completion_tokens?: unknown; cost?: unknown };
     };
     const content = b?.choices?.[0]?.message?.content;
     if (typeof content !== "string") {
@@ -311,8 +330,10 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
       typeof b.usage?.prompt_tokens === "number" ? b.usage.prompt_tokens : undefined;
     const outputTokens =
       typeof b.usage?.completion_tokens === "number" ? b.usage.completion_tokens : undefined;
+    const costUsd = typeof b.usage?.cost === "number" ? b.usage.cost : undefined;
     return {
       content,
+      ...(costUsd === undefined ? {} : { costUsd }),
       ...(typeof b.model === "string" ? { model: b.model } : {}),
       ...(b.choices?.[0]?.logprobs?.content !== undefined
         ? { logprobs: b.choices[0].logprobs.content }
@@ -346,19 +367,43 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
     };
   }
 
-  /** One labeled call with logprobs; undefined when the provider returned none. */
+  /**
+   * One labeled call with logprobs; undefined when the provider has none — it
+   * returned none, or rejected the parameter (reasoning models do: "logprobs
+   * are not supported with reasoning models"). Either way that is remembered
+   * and the caller answers verbalized: asking for logprobs never costs an
+   * answer. A provider that caps `top_logprobs` is asked once more at 5.
+   */
   async function withLogprobs(
     request: DecisionRequest,
     labels: Record<string, QuestionLabels>,
     signal?: AbortSignal,
   ) {
-    const reply = await chat(
-      LABELED_SYSTEM,
-      labeledPrompt(request.state, request.questions, labels),
-      { temperature: 0, logprobs: true, top_logprobs: 20 },
-      answerResponseFormat(request.questions, labels),
-      signal,
-    );
+    const ask = (top: number) =>
+      chat(
+        LABELED_SYSTEM,
+        labeledPrompt(request.state, request.questions, labels),
+        { temperature: 0, logprobs: true, top_logprobs: top },
+        answerResponseFormat(request.questions, labels),
+        signal,
+      );
+    const rejected = (err: unknown) =>
+      err instanceof DecisionError && err.code === "upstream_rejected";
+    let reply: ChatReply;
+    try {
+      reply = await ask(caps().topLogprobs ?? TOP_LOGPROBS);
+    } catch (err) {
+      if (!rejected(err)) throw err;
+      try {
+        if (!/top_logprobs/i.test((err as Error).message) || caps().topLogprobs) throw err;
+        reply = await ask(TOP_LOGPROBS_FLOOR);
+        learn({ topLogprobs: TOP_LOGPROBS_FLOOR });
+      } catch (retryErr) {
+        if (!rejected(retryErr)) throw retryErr;
+        learn({ logprobs: true });
+        return undefined;
+      }
+    }
     const dists = distributionsFromLogprobs(reply.logprobs, labels);
     if (Object.keys(dists).length === 0) {
       learn({ logprobs: true });
@@ -427,8 +472,13 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
       }),
       { inputTokens: 0, outputTokens: 0 },
     );
+    const costs = ok.flatMap((s) => (s.reply.costUsd === undefined ? [] : [s.reply.costUsd]));
     return {
-      reply: { ...ok[0]!.reply, usage },
+      reply: {
+        ...ok[0]!.reply,
+        usage,
+        ...(costs.length > 0 ? { costUsd: costs.reduce((a, b) => a + b, 0) } : {}),
+      },
       answers: normalizeAnswers(request.questions, answers),
       used: "sampled" as const,
     };
@@ -448,7 +498,7 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
         | Awaited<ReturnType<typeof sampled>>;
       if (!labels) result = await verbalized(request, signal);
       else if (method === "sampled") result = await sampled(request, labels, signal);
-      else if (method === "logprobs" || (method === "auto" && !caps().logprobs)) {
+      else if ((method === "logprobs" || method === "auto") && !caps().logprobs) {
         result =
           (await withLogprobs(request, labels, signal)) ?? (await verbalized(request, signal));
       } else result = await verbalized(request, signal);
@@ -460,6 +510,7 @@ export function chatClassifierProvider(opts: ProviderOptions): DecisionProvider 
         method: used,
         latencyMs: Math.round(performance.now() - started),
         ...(reply.usage ? { usage: reply.usage } : {}),
+        ...(reply.costUsd === undefined ? {} : { costUsd: reply.costUsd }),
       };
     },
   };
