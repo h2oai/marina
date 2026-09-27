@@ -120,7 +120,7 @@ export function recordArenaShadow(
   row: { roundId: string; forecaster: string; forecast: string; detail: string; costUsd: number },
 ): boolean {
   const result = db.run(
-    `INSERT OR IGNORE INTO arena_shadow (round_id, forecaster, forecast, detail, cost_usd, created_at)
+    `INSERT INTO arena_shadow (round_id, forecaster, forecast, detail, cost_usd, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
     [row.roundId, row.forecaster, row.forecast, row.detail, row.costUsd, Date.now()],
   );

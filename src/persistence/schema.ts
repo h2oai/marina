@@ -3820,4 +3820,26 @@ BEGIN
 END;
 `,
   },
+  // Migration 137: arena shadow keeps EVERY recording (append-only) instead of
+  // one row per (round, forecaster) — the forecast that counts is the last one
+  // recorded before lock, as a filing would be; the first could be days stale.
+  {
+    version: 137,
+    sql: `
+CREATE TABLE arena_shadow_v2 (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  round_id TEXT NOT NULL,
+  forecaster TEXT NOT NULL,
+  forecast TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+INSERT INTO arena_shadow_v2 (id, round_id, forecaster, forecast, detail, cost_usd, created_at)
+  SELECT id, round_id, forecaster, forecast, detail, cost_usd, created_at FROM arena_shadow;
+DROP TABLE arena_shadow;
+ALTER TABLE arena_shadow_v2 RENAME TO arena_shadow;
+CREATE INDEX idx_arena_shadow_round ON arena_shadow(round_id, forecaster, created_at);
+`,
+  },
 ];
