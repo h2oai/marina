@@ -37,7 +37,16 @@ export interface DecisionConfig {
   path?: string;
   apiKey?: string;
   timeoutMs: number;
+  /** USD per million input tokens when the backend reports tokens but no cost. */
+  inputUsdPerMTok?: number;
 }
+
+/**
+ * Jev's list price (USD per million input tokens, output free). Applied only
+ * to TypeSafe's own host, which reports tokens but not cost; OpenRouter reports
+ * `usage.cost` itself, and a self-hosted OpenJev costs nothing upstream.
+ */
+export const TYPESAFE_INPUT_USD_PER_MTOK = 0.042;
 
 type Preset = "openrouter" | "typesafe" | "chat-classifier";
 
@@ -105,6 +114,7 @@ export function decisionConfigFromEnv(
         ? env.HUGGINGFACE_API_KEY || env.HF_TOKEN
         : undefined;
   const apiKey = env.MARINA_DECISION_API_KEY?.trim() || vendorKey?.trim() || undefined;
+  const typesafeHost = /^https:\/\/api\.typesafe\.ai(\/|$)/.test(baseUrl);
   return {
     kind,
     model,
@@ -112,6 +122,9 @@ export function decisionConfigFromEnv(
     ...(path ? { path } : {}),
     ...(apiKey ? { apiKey } : {}),
     timeoutMs: positiveNumberFromEnv("MARINA_DECISION_TIMEOUT_MS", env) ?? d.timeoutMs,
+    ...(kind === "decisions-api" && typesafeHost
+      ? { inputUsdPerMTok: TYPESAFE_INPUT_USD_PER_MTOK }
+      : {}),
   };
 }
 
@@ -122,6 +135,7 @@ export function providerFromConfig(config: DecisionConfig): DecisionProvider {
     apiKey: config.apiKey,
     timeoutMs: config.timeoutMs,
     ...(config.path ? { path: config.path } : {}),
+    ...(config.inputUsdPerMTok === undefined ? {} : { inputUsdPerMTok: config.inputUsdPerMTok }),
   };
   return metered(
     config.kind === "decisions-api" ? decisionsApiProvider(opts) : chatClassifierProvider(opts),
@@ -163,4 +177,45 @@ export function decisionGateContextEnabled(env: NodeJS.ProcessEnv = process.env)
 
 export function decisionGateEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.MARINA_DECISION_GATE?.trim().toLowerCase() === "on" && !!decisionConfigFromEnv(env);
+}
+
+/** The judge the research pipelines (forecast, arena) use unless told otherwise. */
+export const DEFAULT_JUDGE_MODEL = "typesafe/jev-1.13";
+
+/**
+ * The judge for a research pipeline (`MARINA_FORECAST_JUDGE`,
+ * `MARINA_ARENA_RESEARCH_JUDGE`):
+ *   jev        jev-1.13 through OpenRouter's Decisions API (needs `openRouterKey`)
+ *   decisions  the world's configured backend (`MARINA_DECISIONS`) — OpenJev,
+ *              TypeSafe, a chat classifier, Marina's own `/v1`. Opt-in, and it
+ *              never removes the judge: with no backend configured it falls
+ *              back to `jev`.
+ *   none       no judge (equal weights)
+ * Judging a whole research brief takes longer than a gate call, so the
+ * timeout is at least `minTimeoutMs`.
+ */
+export function researchJudge(
+  spec: string,
+  env: NodeJS.ProcessEnv,
+  openRouterKey: string | undefined,
+  minTimeoutMs = 10_000,
+): DecisionProvider | undefined {
+  const name = spec.trim().toLowerCase();
+  if (name === "decisions") {
+    const config = decisionConfigFromEnv(env);
+    if (config) {
+      return providerFromConfig({ ...config, timeoutMs: Math.max(config.timeoutMs, minTimeoutMs) });
+    }
+  } else if (name !== "jev") {
+    return undefined;
+  }
+  if (!openRouterKey) return undefined;
+  return providerFromConfig({
+    kind: "decisions-api",
+    baseUrl: "https://openrouter.ai/api/alpha",
+    path: "/decisions",
+    model: DEFAULT_JUDGE_MODEL,
+    apiKey: openRouterKey,
+    timeoutMs: minTimeoutMs,
+  });
 }

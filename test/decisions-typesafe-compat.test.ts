@@ -119,6 +119,7 @@ describe("typesafe preset", () => {
         path: "/v1/systemone",
         apiKey: "ts",
         timeoutMs: 2000,
+        inputUsdPerMTok: 0.042,
       },
     );
     // The TypeSafe key never follows a base-URL override to another host.

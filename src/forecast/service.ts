@@ -7,7 +7,9 @@
  *   MARINA_FORECAST_ANALYSTS   comma-separated provider/model ids, one per vendor
  *                              (default: DeepSeek V4 Pro, Claude Sonnet 5, GPT-6 Luna via OpenRouter)
  *   MARINA_FORECAST_RETRIEVER  openrouter-web:<model> (default openai/gpt-6-luna)
- *   MARINA_FORECAST_JUDGE      jev (default when an OpenRouter key is set) | none
+ *   MARINA_FORECAST_JUDGE      jev (default when an OpenRouter key is set) |
+ *                              decisions (the configured MARINA_DECISIONS backend,
+ *                              falling back to jev) | none
  *
  * Retrieval and the Jev judge go through OpenRouter today, so OPENROUTER_API_KEY
  * is required; analysts may be any model Marina routes.
@@ -16,7 +18,7 @@
 import { modelComplete } from "../arena/model-backend";
 import { openRouterWebRetriever } from "../arena/research/retrieve";
 import { defaultPageText } from "../arena/research/verify";
-import { providerFromConfig } from "../decisions/config";
+import { researchJudge } from "../decisions/config";
 import type { ForecastDeps } from "./question";
 
 export const DEFAULT_ANALYSTS = [
@@ -54,18 +56,7 @@ export function forecastDeps(
   } catch (err) {
     return { error: (err as Error).message };
   }
-  const judgeSpec = (env.MARINA_FORECAST_JUDGE?.trim() || "jev").toLowerCase();
-  const judge =
-    judgeSpec === "jev"
-      ? providerFromConfig({
-          kind: "decisions-api",
-          baseUrl: "https://openrouter.ai/api/alpha",
-          path: "/decisions",
-          model: "typesafe/jev-1.13",
-          apiKey: key,
-          timeoutMs: 10_000,
-        })
-      : undefined;
+  const judge = researchJudge(env.MARINA_FORECAST_JUDGE?.trim() || "jev", env, key);
   return {
     deps: {
       retriever: async (brief) => {

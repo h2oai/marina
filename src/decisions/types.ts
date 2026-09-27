@@ -23,11 +23,14 @@ export interface NoulQuestion {
   criteria?: { true: string; false: string };
 }
 
-/** Pick one option. `criteria` maps each option key to its description. */
+/**
+ * Pick one option. `criteria` maps each option key to its description, or to
+ * `null` when the key needs no extra detail (TypeSafe's contract).
+ */
 export interface ChoiceQuestion {
   type: "choice";
   instructions: string;
-  criteria: Record<string, string>;
+  criteria: Record<string, string | null>;
 }
 
 /** Place on an ordered scale. `criteria[i]` describes level `i` (low → high). */
@@ -109,6 +112,11 @@ export class DecisionError extends Error {
       | "decisions_disabled"
       | "timeout"
       | "upstream_error"
+      /** The backend refused the request as invalid (TypeSafe 422). */
+      | "upstream_rejected"
+      /** The backend is rate limiting (429) or overloaded (503 / TypeSafe 529). */
+      | "rate_limited"
+      | "overloaded"
       | "invalid_response"
       | "invalid_request"
       | "spend_cap",

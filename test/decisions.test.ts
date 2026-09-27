@@ -153,7 +153,7 @@ describe("providers", () => {
       baseUrl: "https://example.test",
       model: "m",
       timeoutMs: 1000,
-      fetch: mockFetch({ error: "nope" }, [], 503),
+      fetch: mockFetch({ error: "nope" }, [], 500),
     });
     await expect(failing.ask({ state: "s", questions: { d: noul("?") } })).rejects.toMatchObject({
       code: "upstream_error",
