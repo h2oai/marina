@@ -55,6 +55,7 @@ import {
 } from "../engine/constants";
 import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
+import { takeSettledProxyCall } from "../engine/proxy-settlement";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
 import { isLocalProfile } from "../engine/trust-profile";
 import {
@@ -223,6 +224,8 @@ export function extractTurnUsage(message: unknown): TurnUsageMetrics {
  */
 export interface ProxyResponseMeta {
   costUsd?: number;
+  /** `x-request-id`: the key to the call's settled cost when headers could not carry it. */
+  requestId?: string;
   upstreamModel?: string;
   cacheWriteTokens?: number;
   cacheReadTokens?: number;
@@ -254,6 +257,8 @@ export function readProxyResponseHeaders(
     return Number.isFinite(n) && n >= 0 ? n : undefined;
   };
   const meta: ProxyResponseMeta = {};
+  const requestId = get("x-request-id")?.trim();
+  if (requestId) meta.requestId = requestId;
   const cost = nonNegative(get(PROXY_HEADER_COST_USD));
   if (cost !== undefined) meta.costUsd = cost;
   const model = get(PROXY_HEADER_UPSTREAM_MODEL)?.trim();
@@ -3716,6 +3721,16 @@ The goal is a smaller, sharper memory — not more notes.`;
       if (merged.cacheReadTokens === undefined && proxy.cacheReadTokens !== undefined)
         merged.cacheReadTokens = proxy.cacheReadTokens;
       if (!merged.costUsd && proxy.costUsd) merged.costUsd = proxy.costUsd;
+      // A streamed reply's headers left before the cost was known; the proxy
+      // settled it by request id instead.
+      if (!merged.costUsd && proxy.requestId) {
+        const settled = takeSettledProxyCall(proxy.requestId);
+        if (settled?.costUsd) merged.costUsd = settled.costUsd;
+        if (merged.cacheReadTokens === undefined && settled?.cacheReadTokens !== undefined)
+          merged.cacheReadTokens = settled.cacheReadTokens;
+        if (merged.cacheWriteTokens === undefined && settled?.cacheWriteTokens !== undefined)
+          merged.cacheWriteTokens = settled.cacheWriteTokens;
+      }
     }
     // Input total stays anchored on the provider's own usage: an OpenAI-style
     // prompt_tokens already includes cached tokens, so a header-only cache-read
