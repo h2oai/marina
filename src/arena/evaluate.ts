@@ -246,12 +246,30 @@ export interface ShadowScore {
  */
 export async function scoreShadow(
   data: ArenaData,
-  rows: Array<{ round_id: string; forecaster: string; forecast: string; cost_usd: number }>,
+  rows: Array<{
+    round_id: string;
+    forecaster: string;
+    forecast: string;
+    cost_usd: number;
+    created_at?: number;
+  }>,
 ): Promise<ShadowScore[]> {
   const { forecastRound } = await import("./forecast");
   const resolved = await data.resolutions();
-  const out: ShadowScore[] = [];
+  // The forecast that counts is the LAST one recorded before the round locked,
+  // as a filing would be; earlier records are history, not the forecast.
+  const counted = new Map<string, (typeof rows)[number]>();
   for (const row of rows) {
+    const round = await data.round(row.round_id);
+    const lockAt = round ? Date.parse(round.lock_at) : Number.POSITIVE_INFINITY;
+    const at = row.created_at ?? 0;
+    if (at >= lockAt) continue;
+    const key = `${row.forecaster}\u0000${row.round_id}`;
+    const prior = counted.get(key);
+    if (!prior || at > (prior.created_at ?? 0)) counted.set(key, row);
+  }
+  const out: ShadowScore[] = [];
+  for (const row of counted.values()) {
     const outcome = resolved[row.round_id]?.value;
     if (typeof outcome !== "number") continue;
     const round = await data.round(row.round_id);

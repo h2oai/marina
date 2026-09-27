@@ -138,6 +138,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The arena shadow ledger kept the FIRST forecast per round and refused later ones, so a forecast
+  recorded days before lock (before the freshest reading existed — the 9/25 Civiqs nowcasts were
+  identical to the baseline) could never be replaced by the one that would actually be filed.
+  Migration 132 keeps every recording (append-only); `shadow score` scores the last one before
+  lock; a record younger than 6 h is not duplicated.
 - `role create|edit … guidelines` took a single token, so a guideline could not contain spaces
   (the documented `guidelines Be precise|Cite sources` kept only "Be"). Every field's value now runs
   to the next field name; a field name starts a field only in lowercase, so "Tone" inside a sentence
