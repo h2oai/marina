@@ -3,7 +3,7 @@
 
 import type { TaskManager } from "../../coordination/task-manager";
 import { parseTaskNodeType, TASK_NODE_TYPE_MEANING } from "../../coordination/task-node-type";
-import { getDecisionProvider } from "../../decisions/config";
+import { harnessDecisionProvider } from "../../decisions/engines";
 import type { Evidence } from "../../decisions/evidence";
 import { judgeOpinion } from "../../decisions/policy";
 import {
@@ -465,7 +465,7 @@ export function taskCommand(
           // most. `observe`: submit at once, score in the background, record
           // the judge's opinion and never act on it (`decision agreement`).
           const mode = decisionVerifyMode();
-          const provider = mode === "off" ? undefined : getDecisionProvider();
+          const provider = mode === "off" ? undefined : harnessDecisionProvider();
           if (!provider || !task || tasks.getClaim(id, input.entity)?.status !== "claimed") {
             record();
             return;

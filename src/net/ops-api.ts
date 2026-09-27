@@ -28,7 +28,8 @@ import {
   type ToolProfile,
 } from "../agent/tools";
 import { RateLimiter } from "../auth/rate-limiter";
-import { decisionConfigFromEnv, decisionGateEnabled } from "../decisions/config";
+import { decisionConfigFromEnv } from "../decisions/config";
+import { harnessGateEnabled } from "../decisions/engines";
 import { decisionHealth } from "../decisions/health";
 import { decisionVerifyEnabled } from "../decisions/verify";
 import { getAutonomyPosture } from "../engine/autonomy";
@@ -525,7 +526,7 @@ export function decisionsOverview(
     backend: config?.kind ?? null,
     model: config?.model ?? null,
     calibrated: config ? config.kind !== "chat-classifier" : null,
-    gate: decisionGateEnabled(env),
+    gate: harnessGateEnabled(env),
     verify: decisionVerifyEnabled(env),
     windowMs: DECISIONS_WINDOW_MS,
     counts,

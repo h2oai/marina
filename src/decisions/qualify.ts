@@ -13,7 +13,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MARINA_ROOT } from "../runtime-paths";
 import { type CalibrationEntry, type CalibrationPoint, fitGateCalibration } from "./calibrate";
-import { type GateIntent, gateToolCall } from "./gate";
+import { type GateCallOptions, type GateIntent, gateToolCall } from "./gate";
+import { BASELINE_QUESTIONS_HASH } from "./gate-questions";
 import { type RouteTable, routeModelWithTable } from "./route";
 import type { DecisionProvider } from "./types";
 
@@ -148,8 +149,8 @@ export async function qualifyBackend(
   provider: DecisionProvider,
   cases: DecisionCases,
   instructions?: string,
-  /** `null`: score the backend's raw probabilities (for fitting a calibration). */
-  calibration?: CalibrationEntry | null,
+  /** `calibration: null` scores raw probabilities (for fitting); `questions` picks the wording. */
+  gateOptions: GateCallOptions = {},
 ): Promise<BackendReport> {
   const gate: GateResult[] = [];
   for (const c of cases.gate) {
@@ -160,7 +161,7 @@ export async function qualifyBackend(
       undefined,
       "Run a Marina world command.",
       c.intent,
-      calibration,
+      gateOptions,
     );
     gate.push({
       id: c.id,
@@ -234,9 +235,11 @@ export function gateCalibrationPoints(report: BackendReport): CalibrationPoint[]
 export function calibrateFromReport(
   report: BackendReport,
   classifierMethod?: string,
+  questionsHash: string = BASELINE_QUESTIONS_HASH,
 ): CalibrationEntry {
   return fitGateCalibration(gateCalibrationPoints(report), {
     ...(classifierMethod ? { classifierMethod } : {}),
     nativelyCalibrated: report.calibrated,
+    questions: questionsHash,
   });
 }

@@ -2,7 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { arenaStatus } from "../arena/service";
-import { decisionConfigFromEnv, decisionGateEnabled } from "../decisions/config";
+import { earnedGateCalibration, loadCalibration } from "../decisions/calibrate";
+import { decisionConfigFromEnv } from "../decisions/config";
+import {
+  classifierEngineModels,
+  ensembleMembers,
+  harnessGateEnabled,
+  listEngines,
+  resolveEngine,
+} from "../decisions/engines";
+import { activeGateQuestions, BASELINE_GATE_QUESTIONS } from "../decisions/gate-questions";
 import { decisionHealth } from "../decisions/health";
 import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
@@ -322,7 +331,9 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       id: "decisions",
       label: "Decisions (route / gate / verify)",
       status: "off",
-      detail: "MARINA_DECISIONS unset — no decision backend; /v1/decisions returns 404",
+      detail: classifierEngineModels(env)
+        ? "MARINA_DECISIONS unset — no configured backend; Marina's own engines still answer /v1/systemone (see decision-engines)"
+        : "MARINA_DECISIONS unset — no decision backend; /v1/decisions returns 404",
       remediation:
         "Set MARINA_DECISIONS=decisions-api (Jev family / OpenJev) or chat-classifier (any chat model) — see .env.example.",
     });
@@ -344,7 +355,7 @@ export function computeReadiness(engine: Engine): ReadinessReport {
         (decisionHealthNow.lastError
           ? ` (latest: ${decisionHealthNow.lastError.slice(0, 160)})`
           : "") +
-        (decisionGateEnabled(env)
+        (harnessGateEnabled(env)
           ? " — the gate fails closed, so mutating agent calls are being blocked"
           : ""),
       remediation:
@@ -356,11 +367,78 @@ export function computeReadiness(engine: Engine): ReadinessReport {
       label: "Decisions (route / gate / verify)",
       status: "ok",
       detail:
-        `${decisions.kind} → ${decisions.model}; agent tool gate ${decisionGateEnabled(env) ? "on" : "off"} (MARINA_DECISION_GATE)` +
+        `${decisions.kind} → ${decisions.model}; agent tool gate ${harnessGateEnabled(env) ? "on" : "off"} (MARINA_DECISION_GATE)` +
         (decisions.kind === "chat-classifier"
           ? " — scores are uncalibrated: the gate uses one threshold (0.5) and asks a person; a decisions-api / typesafe backend gives graded probabilities"
           : ""),
     });
+  }
+
+  // ── Decision engines — Marina as a Jev-compatible endpoint + its own harness ──
+  {
+    const engineId = env.MARINA_DECISION_ENGINE?.trim();
+    const calibrationPath = env.MARINA_DECISION_CALIBRATION?.trim();
+    const problems: string[] = [];
+    if (engineId) {
+      const r = resolveEngine(engineId, env);
+      if ("error" in r) problems.push(`MARINA_DECISION_ENGINE=${engineId}: ${r.error.message}`);
+    }
+    if (env.MARINA_DECISION_ENSEMBLE?.trim()) {
+      const r = ensembleMembers(env) ? resolveEngine("marina/ensemble", env) : undefined;
+      if (!r || "error" in r) {
+        problems.push(
+          `MARINA_DECISION_ENSEMBLE: ${r && "error" in r ? r.error.message : "needs at least two distinct engines"}`,
+        );
+      }
+    }
+    const calibration = calibrationPath ? loadCalibration(env) : undefined;
+    if (calibrationPath && !calibration) {
+      problems.push(
+        `MARINA_DECISION_CALIBRATION=${calibrationPath} is unreadable, invalid, or writable by group/others`,
+      );
+    }
+    const questionsPath = env.MARINA_DECISION_GATE_QUESTIONS?.trim();
+    const questions = activeGateQuestions(env);
+    if (questionsPath && questions === BASELINE_GATE_QUESTIONS) {
+      problems.push(
+        `MARINA_DECISION_GATE_QUESTIONS=${questionsPath} was refused (unreadable, invalid, not earned, or writable by group/others)`,
+      );
+    }
+    const engines = listEngines(env);
+    const earned = calibration
+      ? Object.keys(calibration.engines).filter((m) => earnedGateCalibration(m, env))
+      : [];
+    if (problems.length > 0) {
+      checks.push({
+        id: "decision-engines",
+        label: "Decision engines (/v1/systemone, harness)",
+        status: "degraded",
+        detail: `${problems.join("; ")} — falling back to the configured backend / no calibration`,
+        remediation:
+          "Fix the engine id (GET /v1/decisions/models lists them), the ensemble members, or regenerate the calibration file with `bun run qualify:decisions -- --calibrate <file>` and chmod 644 it.",
+      });
+    } else if (engines.length === 0) {
+      checks.push({
+        id: "decision-engines",
+        label: "Decision engines (/v1/systemone, harness)",
+        status: "off",
+        detail: "no decision engines — nothing answers /v1/systemone",
+        remediation:
+          "Set MARINA_DECISIONS (Jev) and/or MARINA_DECISION_ENGINES (any model Marina routes) — see .env.example.",
+      });
+    } else {
+      checks.push({
+        id: "decision-engines",
+        label: "Decision engines (/v1/systemone, harness)",
+        status: "ok",
+        detail:
+          `serving ${engines.map((e) => e.id).join(", ")}; harness uses ${engineId ?? "the configured backend"}` +
+          (calibrationPath
+            ? `; gate calibration earned for ${earned.length ? earned.join(", ") : "no model"}`
+            : "") +
+          (questionsPath ? `; gate questions: ${questions.name} (adopted)` : ""),
+      });
+    }
   }
 
   // ── Social Simulation Arena — Marina as a public forecasting entrant ─────

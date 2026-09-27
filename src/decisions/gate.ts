@@ -11,10 +11,14 @@ import {
   gateActionWithFit,
 } from "./calibrate";
 import {
+  activeGateQuestions,
+  type GateQuestionSet,
+  questionSetHash,
+  questionsFor,
+} from "./gate-questions";
+import {
   DEFAULT_GATE_POLICY,
   decideGate,
-  GATE_QUESTIONS,
-  GATE_QUESTIONS_WITH_AUTHORIZATION,
   type GatePolicy,
   type GateVerdict,
   UNCALIBRATED_GATE_POLICY,
@@ -123,20 +127,26 @@ function calibrateAnswers(
 }
 
 /** The policy `gateActionWithFit` describes, for `decideGate` on fitted answers. */
-function fittedGatePolicy(raw: GateVerdict, provider: DecisionProvider): GatePolicy {
-  const nativeBlock =
-    provider.calibrated !== false && gateActionWithFit(raw.worst ?? 0, 1, true) === "block";
+function fittedGatePolicy(raw: GateVerdict, native: boolean): GatePolicy {
+  const nativeBlock = native && gateActionWithFit(raw.worst ?? 0, 1, true) === "block";
   return {
     askAt: FITTED_HOLD_AT,
     blockAt: nativeBlock ? FITTED_HOLD_AT : Number.POSITIVE_INFINITY,
   };
 }
 
-/**
- * Score one tool call. Never throws: a backend failure is a fail-closed `block`.
- * `calibration`: the earned fit for this backend (default: looked up from
- * `MARINA_DECISION_CALIBRATION`); `null` scores the backend's raw probabilities.
- */
+export interface GateCallOptions {
+  /**
+   * The earned fit for this backend (default: looked up from
+   * `MARINA_DECISION_CALIBRATION` for this question set); `null` scores the
+   * backend's raw probabilities.
+   */
+  calibration?: CalibrationEntry | null;
+  /** The question wording (default: the adopted set, else the baseline). */
+  questions?: GateQuestionSet;
+}
+
+/** Score one tool call. Never throws: a backend failure is a fail-closed `block`. */
 export async function gateToolCall(
   provider: DecisionProvider,
   toolName: string,
@@ -144,26 +154,34 @@ export async function gateToolCall(
   policy?: GatePolicy,
   description?: string,
   intent?: GateIntent,
-  calibration?: CalibrationEntry | null,
+  opts: GateCallOptions = {},
 ): Promise<GateDecision> {
-  const questions = intent ? GATE_QUESTIONS_WITH_AUTHORIZATION : GATE_QUESTIONS;
+  const set = opts.questions ?? activeGateQuestions();
+  const questions = questionsFor(set, !!intent);
   const fit =
-    calibration === undefined ? earnedGateCalibration(provider.model) : (calibration ?? undefined);
-  // A native decision model is calibrated; any backend may EARN it (never lose it).
-  const calibrated = provider.calibrated !== false || !!fit;
-  const effective = policy ?? (calibrated ? DEFAULT_GATE_POLICY : UNCALIBRATED_GATE_POLICY);
+    opts.calibration === undefined
+      ? earnedGateCalibration(provider.model, process.env, questionSetHash(set))
+      : (opts.calibration ?? undefined);
+  const policyFor = (native: boolean) =>
+    policy ?? (native || fit ? DEFAULT_GATE_POLICY : UNCALIBRATED_GATE_POLICY);
   try {
     const result = await provider.ask({
       state: redactToolCall(toolName, args, description, intent),
       questions,
     });
+    // What ANSWERED decides the policy: a composite engine (`marina/auto`) is
+    // calibrated when Jev answered alone, not when a chat classifier joined in.
+    // A native decision model is calibrated; any backend may EARN it (never lose it).
+    const native = (result.calibrated ?? provider.calibrated) !== false;
+    const calibrated = native || !!fit;
+    const effective = policyFor(native);
     const answers = fit ? calibrateAnswers(result.answers, fit) : result.answers;
     // With an earned fit (and no explicit policy): allow vs hold on the fitted
     // P(hold); a hold is a block only when a native decision model's own raw
     // number says so (see `gateActionWithFit`).
     const rule =
       fit && !policy
-        ? fittedGatePolicy(decideGate(result.answers, effective, questions), provider)
+        ? fittedGatePolicy(decideGate(result.answers, effective, questions), native)
         : effective;
     const verdict = decideGate(answers, rule, questions);
     return {
@@ -181,7 +199,7 @@ export async function gateToolCall(
     };
   } catch (err) {
     return {
-      ...decideGate(undefined, effective, questions),
+      ...decideGate(undefined, policyFor(provider.calibrated !== false), questions),
       provider: provider.kind,
       model: provider.model,
       error: getErrorMessage(err),

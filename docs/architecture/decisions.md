@@ -72,6 +72,20 @@ A chat classifier is uncalibrated by declaration, so the gate gives it the one-c
 
 Scope is deliberately narrow: the fit is of the gate's decision variable on gate cases, so it is applied to the gate only — never to the verifier, research judges or `/v1/systemone` callers, whose questions it was not measured on. It never downgrades a backend (a native decision model stays calibrated with or without an entry), and a missing, unreadable, malformed or unearned entry leaves the gate exactly as before. An explicit `policy` passed to `gateToolCall` still wins. The deterministic layer still runs first, so a fitted gate can at most allow what that layer already allows.
 
+## Marina's own harness on an engine (`harnessDecisionProvider`)
+
+The tool gate, spawn-time routing, the task verifier and the `decision` commands use the configured backend by default. `MARINA_DECISION_ENGINE=<engine id>` puts them on an engine instead — typically `marina/auto`: Jev answers the easy calls alone (its speed, price and graded policy), an unsure Jev gets a second opinion, and **a Jev outage is judged by the fallback instead of blocking every mutating call**. That relaxes "outage ⇒ block" by explicit operator choice: a chat-classifier fallback uses the one-cut policy (anything it holds goes to a person), and both failing still blocks. The gate picks its policy from what ANSWERED (`result.calibrated`), so a composite never downgrades Jev's own replies. An engine id that does not resolve is logged once and the configured backend is used. `harnessGateEnabled` lets the gate run on an engine alone (no `MARINA_DECISIONS`). `readiness` reports it under `decision-engines`: what is served, what the harness uses, which models have an earned calibration, the adopted gate questions — degraded when any of them was requested and does not resolve.
+
+## Evolving the gate's questions (`src/decisions/question-trial.ts`, `gate-questions.ts`)
+
+The gate's wording is data (`GateQuestionSet`), improved by succession like roles: a variant rewords any of `destructive`, `irreversible`, `outsideScope`, `unauthorized` (never adds, removes or renames one; the prompt-injection clause is appended if a variant drops it) and is trialed against the incumbent — the adopted set, else the baseline:
+
+- **Split**: cases split by a stable hash of their id into *discovery* (read these while writing variants) and *holdout* (the only cases that decide).
+- **Earned** on the held-out cases: the 95% Agresti–Caffo interval on the accuracy difference is above zero, the gain clears `promotionMargin(tried before)` (every variant tried raises the bar — the same line `evolve replicate` and arena discovery hold), and — a safety gate — it misses no more holds and errors no more often. Raw probabilities throughout (a fit of one wording says nothing about another's).
+- **Adoption** is an operator act: `bun run qualify:decisions -- --backend jev --backend chat:<model> --variants <file> --adopt <out>` writes an adoption file only for a variant that earned its win on EVERY backend trialed; `MARINA_DECISION_GATE_QUESTIONS=<out>` (0644 or stricter; a file whose trial did not earn is refused) makes it the gate's wording. Calibrations record the question-set hash they were measured with (`questions`), and a fit is applied only under that wording.
+
+With 50 tracked cases about 25 are held out, so only a large effect can earn; the harness says so rather than promoting noise. Grow the case set — ideally with labels written by someone other than the variant's author — before expecting adoptions.
+
 ## Policies (`src/decisions/policy.ts`)
 
 Pure functions — same numbers, same verdict, testable without a model. Thresholds live here and nowhere else.

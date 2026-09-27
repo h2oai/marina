@@ -33,6 +33,7 @@
 
 import { readFileSync, statSync } from "node:fs";
 import { Logger } from "../engine/logger";
+import { BASELINE_QUESTIONS_HASH } from "./gate-questions";
 import { DEFAULT_GATE_POLICY, type GatePolicy, UNCALIBRATED_GATE_POLICY } from "./policy";
 
 const logger = new Logger();
@@ -193,6 +194,8 @@ export interface CalibrationEntry {
   reasons: string[];
   /** How a chat classifier obtained its probabilities when this was measured. */
   classifierMethod?: string;
+  /** `questionSetHash` of the gate questions it was measured with (absent ⇒ baseline). */
+  questions?: string;
   /** Gate DECISIONS on the cases, today's policy vs the fitted rule (leave-one-out). */
   decisions?: { today: GateTally; fitted: GateTally };
 }
@@ -245,7 +248,7 @@ function tally(actions: readonly string[], labels: readonly (0 | 1)[]): GateTall
 /** Fit, score out of sample, and decide whether the calibration is earned. */
 export function fitGateCalibration(
   points: readonly CalibrationPoint[],
-  opts: { classifierMethod?: string; nativelyCalibrated?: boolean } = {},
+  opts: { classifierMethod?: string; nativelyCalibrated?: boolean; questions?: string } = {},
 ): CalibrationEntry {
   const { classifierMethod, nativelyCalibrated = false } = opts;
   const labels = points.map((pt) => pt.y);
@@ -311,6 +314,7 @@ export function fitGateCalibration(
     earned: reasons.length === 0,
     reasons,
     ...(classifierMethod ? { classifierMethod } : {}),
+    ...(opts.questions ? { questions: opts.questions } : {}),
     decisions,
   };
 }
@@ -392,11 +396,17 @@ export function resetCalibrationCacheForTests(): void {
   cache = undefined;
 }
 
-/** The EARNED gate calibration for a backend model, if any. */
+/**
+ * The EARNED gate calibration for a backend model, if any — and only for the
+ * question wording it was measured with: a fit of one question set says
+ * nothing about another's probabilities.
+ */
 export function earnedGateCalibration(
   model: string,
   env: NodeJS.ProcessEnv = process.env,
+  questionsHash: string = BASELINE_QUESTIONS_HASH,
 ): CalibrationEntry | undefined {
   const entry = loadCalibration(env)?.engines[model];
-  return entry?.earned ? entry : undefined;
+  if (!entry?.earned) return undefined;
+  return (entry.questions ?? BASELINE_QUESTIONS_HASH) === questionsHash ? entry : undefined;
 }

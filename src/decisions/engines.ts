@@ -29,12 +29,15 @@
  * every reply names the model that actually answered.
  */
 
+import { Logger } from "../engine/logger";
 import { dailyCapRefusal } from "../engine/spend-ledger";
 import { combineAnswers, unsureAnswers } from "./combine";
 import { classifierTuning, getDecisionProvider } from "./config";
 import { acceptsRequestedModel } from "./model-ids";
 import { chatClassifierProvider } from "./providers";
 import { DecisionError, type DecisionProvider, type DecisionResult } from "./types";
+
+const logger = new Logger();
 
 /** Engine id prefix for chat models answering through Marina's passthru. */
 export const CLASSIFIER_ENGINE = "marina/classifier";
@@ -419,4 +422,49 @@ export function listEngines(env: NodeJS.ProcessEnv = process.env): EngineInfo[] 
     });
   }
   return out;
+}
+
+// ─── Marina's own harness ────────────────────────────────────────────────────
+
+let warnedEngine: string | undefined;
+
+/**
+ * The decision provider Marina's OWN harness uses — the tool gate, spawn-time
+ * routing, the task verifier and the `decision` commands. By default the
+ * configured backend (`MARINA_DECISIONS`), exactly as before.
+ * `MARINA_DECISION_ENGINE=<engine id>` opts the harness into an engine, e.g.
+ * `marina/auto` (Jev first, a second opinion only when it is unsure or down).
+ *
+ * Operator note: with `marina/auto` a primary OUTAGE is answered by the
+ * fallback instead of failing — for the gate, "outage ⇒ block" becomes
+ * "outage ⇒ the fallback judges" (a chat classifier: one cut, holds go to a
+ * person). Both failing still blocks. An engine id that does not resolve is
+ * logged once and the configured backend is used, never nothing.
+ */
+export function harnessDecisionProvider(
+  env: NodeJS.ProcessEnv = process.env,
+  deps: EngineDeps = {},
+): DecisionProvider | undefined {
+  const configured = getDecisionProvider(env);
+  const id = env.MARINA_DECISION_ENGINE?.trim();
+  if (!id) return configured;
+  const r = resolveEngine(id, env, deps);
+  if ("provider" in r) return r.provider;
+  if (warnedEngine !== id) {
+    warnedEngine = id;
+    logger.warn(
+      "decisions",
+      "MARINA_DECISION_ENGINE does not resolve; using the configured backend",
+      {
+        engine: id,
+        error: r.error.message,
+      },
+    );
+  }
+  return configured;
+}
+
+/** The agent tool gate is on: `MARINA_DECISION_GATE=on` and a harness provider exists. */
+export function harnessGateEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.MARINA_DECISION_GATE?.trim().toLowerCase() === "on" && !!harnessDecisionProvider(env);
 }
