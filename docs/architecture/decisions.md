@@ -34,6 +34,30 @@ These are TypeSafe's published limits (docs.typesafe.ai/api): a `null` option de
 
 Configuration is env-only (`.env.example` → *Harness Decisions*): the backend receives tool names and redacted arguments, so sending them to a third party is an operator decision, never an in-world one. Endpoints are operator configuration and are fetched directly (like provider upstreams), so a localhost classifier works. `MARINA_DECISION_API_KEY` falls back to `OPENROUTER_API_KEY` only for `openrouter.ai` URLs. `readiness` reports the `decisions` capability.
 
+## Marina as a Jev-compatible engine (`src/decisions/engines.ts`)
+
+`/v1/systemone` (and `/v1/decisions`) choose an **engine** by the request's `model`, so any harness that speaks Jev can get Jev-shaped answers from Marina — from real Jev, or from any model Marina routes:
+
+| `model` | Engine | Enabled by |
+|---|---|---|
+| omitted, the configured id, or its `-latest` alias | the configured backend (above) | `MARINA_DECISIONS` |
+| `marina/classifier:<chat model>` (bare `marina/classifier` = the first listed, else `marina/default`) | that chat model answering **through Marina's own passthru** — the internal token, so every provider and key Marina routes, provider fallback, the spend ledger and traces apply | `MARINA_DECISION_ENGINES` (comma list, or `*`) |
+
+`GET /v1/decisions/models` (alias `/v1/systemone/models`) lists them. Optional by construction: with neither variable set there are no engines (`404 decisions_disabled`), and nothing else in Marina depends on one existing; engines never replace the configured backend, which stays the default. An unknown `model` is refused (`400 unsupported_parameter`), never answered by something else, and every reply names the model that actually answered (`marina/classifier:<served model>`, after any passthru fallback) with `calibrated: false` and the `method` used.
+
+**How a chat model approximates a decision model** (`src/decisions/classifier-methods.ts`, `MARINA_DECISION_METHOD`):
+
+| Method | How | Cost |
+|---|---|---|
+| `logprobs` | Each question is answered with ONE label token — `A`–`Z` per choice option, `0`–`9` per score level (TypeSafe's 10-level cap makes this always fit), `Y`/`N` for a noul — and the provider's `top_logprobs` at that token become the distribution: the closest a chat model gets to Jev reading probabilities from the model's internals. Score = probability-weighted level, choice = argmax, like Jev. | 1 call |
+| `sampled` | The same labeled question asked `MARINA_DECISION_SAMPLES` times (default 5); the distribution is the answer frequencies. Works on every provider (Anthropic returns no logprobs). | k calls |
+| `verbalized` | The model writes its probability / confidence (the original classifier). | 1 call |
+| `auto` (engine default) | `logprobs`; a provider that returns none is remembered per (server, model) and answered verbalized from then on. | 1 call (2 the first time) |
+
+A choice with more than 26 options cannot be labeled, so that request is answered verbalized. Replies are pinned with a strict JSON-schema `response_format` (options/labels as enums; the passthru translates it for Anthropic); a server that rejects it is remembered and asked plainly. A `MARINA_DECISIONS=chat-classifier` backend keeps its original verbalized request unless `MARINA_DECISION_METHOD` is set. None of the methods is calibrated by construction; fitting and earning calibration is the next step, measured with the qualification cases.
+
+**Conformance** (`src/decisions/conformance.ts`): fixed requests (noul with criteria, a choice with `null` descriptions, a 10-level score with structured instructions, several questions at once) checked against TypeSafe's response shape — every question answered with its type, probabilities over exactly the listed options/levels summing to 1, confidence in 0..1, a score legend. The same kit runs offline over every engine (`test/decision-engines.test.ts`) and live via `bun run qualify:decisions -- --conformance`, including real Jev and a running Marina (`--backend marina:http://localhost:3300:marina/classifier:<model>`); `--method` picks the chat backends' method.
+
 ## Policies (`src/decisions/policy.ts`)
 
 Pure functions — same numbers, same verdict, testable without a model. Thresholds live here and nowhere else.

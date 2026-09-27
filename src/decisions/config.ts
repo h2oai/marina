@@ -20,10 +20,21 @@
  *   MARINA_DECISION_TIMEOUT_MS per call; default 2000 (decisions-api) / 8000
  *   MARINA_DECISION_GATE       on | off (default off) — score mutating agent
  *                              tool calls before they run (fail-closed)
+ *   MARINA_DECISION_METHOD     chat classifiers: auto | logprobs | sampled |
+ *                              verbalized (see classifier-methods.ts). Unset:
+ *                              the configured chat-classifier backend keeps its
+ *                              original verbalized answers; `marina/classifier`
+ *                              engines use auto.
+ *   MARINA_DECISION_SAMPLES    calls per decision for `sampled` (default 5)
+ *   MARINA_DECISION_ENGINES    chat models `/v1/systemone` may answer with as
+ *                              `marina/classifier:<model>` through Marina's own
+ *                              passthru (comma list, or `*` for any model Marina
+ *                              routes). Unset: none (see engines.ts).
  */
 
 import { positiveNumberFromEnv } from "../engine/constants";
 import { dailyCapRefusal, recordSpend } from "../engine/spend-ledger";
+import { type ClassifierMethod, parseClassifierMethod } from "./classifier-methods";
 import { chatClassifierProvider, decisionsApiProvider } from "./providers";
 import { DecisionError, type DecisionProvider } from "./types";
 
@@ -39,6 +50,9 @@ export interface DecisionConfig {
   timeoutMs: number;
   /** USD per million input tokens when the backend reports tokens but no cost. */
   inputUsdPerMTok?: number;
+  /** chat-classifier: how probabilities are obtained; set ⇒ structured output too. */
+  method?: ClassifierMethod;
+  samples?: number;
 }
 
 /**
@@ -125,6 +139,20 @@ export function decisionConfigFromEnv(
     ...(kind === "decisions-api" && typesafeHost
       ? { inputUsdPerMTok: TYPESAFE_INPUT_USD_PER_MTOK }
       : {}),
+    ...(kind === "chat-classifier" ? classifierTuning(env) : {}),
+  };
+}
+
+/** `MARINA_DECISION_METHOD` / `MARINA_DECISION_SAMPLES`, when set. */
+export function classifierTuning(env: NodeJS.ProcessEnv = process.env): {
+  method?: ClassifierMethod;
+  samples?: number;
+} {
+  const method = parseClassifierMethod(env.MARINA_DECISION_METHOD);
+  const samples = positiveNumberFromEnv("MARINA_DECISION_SAMPLES", env);
+  return {
+    ...(method ? { method } : {}),
+    ...(samples === undefined ? {} : { samples }),
   };
 }
 
@@ -136,6 +164,8 @@ export function providerFromConfig(config: DecisionConfig): DecisionProvider {
     timeoutMs: config.timeoutMs,
     ...(config.path ? { path: config.path } : {}),
     ...(config.inputUsdPerMTok === undefined ? {} : { inputUsdPerMTok: config.inputUsdPerMTok }),
+    ...(config.method ? { method: config.method, structured: true } : {}),
+    ...(config.samples === undefined ? {} : { samples: config.samples }),
   };
   return metered(
     config.kind === "decisions-api" ? decisionsApiProvider(opts) : chatClassifierProvider(opts),
@@ -143,7 +173,7 @@ export function providerFromConfig(config: DecisionConfig): DecisionProvider {
 }
 
 /** Refuse at the world's daily cap; record what each answered call cost. */
-function metered(provider: DecisionProvider): DecisionProvider {
+export function metered(provider: DecisionProvider): DecisionProvider {
   return {
     kind: provider.kind,
     model: provider.model,

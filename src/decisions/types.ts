@@ -81,6 +81,11 @@ export interface DecisionResult {
   model: string;
   /** Which provider kind answered (`decisions-api`, `chat-classifier`, …). */
   provider: string;
+  /**
+   * How a chat classifier obtained its probabilities (`logprobs`, `sampled`,
+   * `verbalized`); absent for a purpose-built decision model.
+   */
+  method?: "logprobs" | "sampled" | "verbalized";
   latencyMs: number;
   /** USD, when the backend reports it. */
   costUsd?: number;
