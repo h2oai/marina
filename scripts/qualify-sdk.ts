@@ -35,7 +35,7 @@ try {
   );
   writeFileSync(join(directory, "package.json"), '{"type":"module"}');
   const consumer = `
-import { MarinaAgent, MarinaClient } from "@marina/agent-sdk";
+import { MarinaAgent, MarinaClient, compileCommandForms, composeCommand, commandInputSchema } from "@marina/agent-sdk";
 import { MarinaMemoryClient } from "@marina/agent-sdk/memory";
 import { MarinaRoutingClient } from "@marina/agent-sdk/routing";
 const memory = new MarinaMemoryClient("http://fixture.invalid", "fixture-token", 1000, async (req) => {
@@ -45,6 +45,11 @@ const memory = new MarinaMemoryClient("http://fixture.invalid", "fixture-token",
 const record = await memory.get("space-1", "record-1");
 if (record.content !== "portable") throw new Error("Memory response mismatch");
 if (![MarinaAgent, MarinaClient, MarinaRoutingClient].every(x => typeof x === "function")) throw new Error("Missing exports");
+const [form] = compileCommandForms([{ syntax: "sample <count>", fields: { count: { kind: "number", min: 1, max: 4 } } }]);
+if (!form) throw new Error("Missing command form");
+if (JSON.stringify(form.inputSchema) !== JSON.stringify(commandInputSchema(form))) throw new Error("Schema drift");
+if (composeCommand(form, { "field-0": "3" }, {}).command !== "sample 3") throw new Error("Portable composition failed");
+if (!composeCommand(form, { "field-0": "5" }, {}).errors["field-0"]) throw new Error("Missing input validation");
 console.log("Packed SDK consumer passed");
 `;
   writeFileSync(join(directory, "consumer.mjs"), consumer);

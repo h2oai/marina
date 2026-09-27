@@ -1,7 +1,7 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { RateLimiter } from "../src/auth/rate-limiter";
 import { Engine } from "../src/engine/engine";
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
@@ -20,7 +20,7 @@ import {
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
 import { FIXTURE_QUERY, seedUnifiedFixture, tierIds } from "./fixtures/unified-memory-fixture";
-import { cleanupDb, makeTestRoom } from "./helpers";
+import { cleanupDb, makeTestRoom, until } from "./helpers";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -305,6 +305,116 @@ describe("MCP Server", () => {
   });
 
   describe("shared participation", () => {
+    it("preserves a completed action when automatic goal retrieval fails", async () => {
+      const sid = await initSession(url);
+      await toolCall(url, sid, "login", { name: "ContextFaultBot" });
+      let executions = 0;
+      engine.commands.registerOwned("context-fault", {
+        name: "context-fault",
+        help: "Commit a test action",
+        handler: (ctx, input) => {
+          executions++;
+          ctx.send(input.entity, "Action committed");
+        },
+      });
+      const goal = spyOn(db, "getCoreMemory").mockImplementation(() => {
+        throw new Error("Injected goal read failure");
+      });
+      try {
+        const result = await toolCallRaw(url, sid, "command", { input: "context-fault" });
+        expect(result.isError).not.toBe(true);
+        expect(result.text).toContain("Action committed");
+        expect(result.text).toContain("Optional task context unavailable");
+        expect(executions).toBe(1);
+      } finally {
+        goal.mockRestore();
+      }
+    });
+
+    it("automatically follows the resident's saved goal and stops when it is cleared", async () => {
+      db.setCoreMemory("GoalBot", "goal", "quartz");
+      db.createNote("GoalBot", "quartz private plan", roomId("test/start"));
+      db.createNote("GoalBot", "onyx current plan", roomId("test/start"));
+      db.createNote("OtherBot", "quartz foreign secret", roomId("test/start"));
+      const sid = await initSession(url);
+      const login = await toolCall(url, sid, "login", { name: "GoalBot" });
+      expect(login).toContain("quartz private plan");
+      expect(login).not.toContain("foreign secret");
+      expect(await toolCall(url, sid, "look", {})).toContain("quartz private plan");
+      const changed = await toolCallRaw(url, sid, "memory", {
+        action: "set",
+        key: "goal",
+        value: "onyx",
+      });
+      expect(changed.structuredContent).toBeDefined();
+      expect(changed.text).toContain("onyx current plan");
+      expect(changed.text).not.toContain("quartz private plan");
+      await toolCall(url, sid, "memory", { action: "delete", key: "goal" });
+      expect(await toolCall(url, sid, "look", {})).not.toContain("Task memory context");
+    });
+
+    it("keeps automatic context off when login explicitly selects manual or off", async () => {
+      for (const mode of ["manual", "off"]) {
+        const name = `Mode${mode}`;
+        db.createNote(name, "quartz scoped context", roomId("test/start"));
+        const sid = await initSession(url);
+        const login = await toolCall(url, sid, "login", {
+          name,
+          task: "quartz",
+          contextMode: mode,
+        });
+        if (mode === "manual") expect(login).toContain("quartz scoped context");
+        else expect(login).not.toContain("quartz scoped context");
+        expect(await toolCall(url, sid, "look", {})).not.toContain("Task memory context");
+      }
+    });
+
+    it("validates queued structured input after preceding commands finish", async () => {
+      const sid = await initSession(url);
+      await toolCall(url, sid, "login", { name: "QueuedBot" });
+      let executions = 0;
+      engine.commands.registerOwned("queued", {
+        name: "queued-check",
+        help: "Check a queued value",
+        usage: ["queued-check <value>"],
+        handler: () => {
+          executions++;
+        },
+      });
+      const session = (
+        adapter as unknown as { sessions: Map<string, { commandTail: Promise<unknown> }> }
+      ).sessions.get(sid)!;
+      let release!: () => void;
+      const barrier = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      session.commandTail = barrier;
+      const pending = toolCallRaw(url, sid, "invoke", {
+        command: "queued-check",
+        syntax: "queued-check <value>",
+        values: { "field-0": "old" },
+      });
+      try {
+        await until(() => session.commandTail !== barrier);
+        engine.commands.registerOwned(
+          "queued",
+          {
+            name: "queued-check",
+            help: "New form",
+            usage: ["queued-check <new-field>"],
+            handler: () => {
+              executions++;
+            },
+          },
+          true,
+        );
+      } finally {
+        release();
+      }
+      expect((await pending).isError).toBe(true);
+      expect(executions).toBe(0);
+    });
+
     it("delivers initial task context and keeps inspection independent of room overrides", async () => {
       db.createNote("InitialBot", "quartz initial context", roomId("test/start"));
       const sid = await initSession(url);
@@ -364,6 +474,28 @@ describe("MCP Server", () => {
       }>;
       expect(commands).toHaveLength(1);
       const syntax = commands[0]!.forms[0]!.syntax;
+      expect(commands[0]!.forms[0]).toMatchObject({
+        inputSchema: {
+          properties: {
+            values: { properties: { "field-0": { type: "number", minimum: 1, maximum: 4 } } },
+          },
+        },
+      });
+      const exposed = await toolCallRaw(url, sid, "capabilities", {
+        command: "runtime-check",
+        syntax,
+        expose: true,
+      });
+      const name = exposed.structuredContent?.tool as string;
+      expect(name).toMatch(/^world_runtime-check_/);
+      const published = (await toolList(url, sid)).find((tool) => tool.name === name)!;
+      expect(published.inputSchema).toMatchObject({
+        properties: {
+          values: { properties: { "field-0": { type: "number", minimum: 1, maximum: 4 } } },
+        },
+      });
+      expect((await toolCallRaw(url, sid, name, { values: { "field-0": 9 } })).isError).toBe(true);
+      expect(await toolCall(url, sid, name, { values: { "field-0": 3 } })).toContain("count=3");
       expect(
         (
           await toolCallRaw(url, sid, "invoke", {
@@ -381,6 +513,7 @@ describe("MCP Server", () => {
         }),
       ).toContain("count=2");
       engine.commands.removeOwner("runtime-test");
+      expect((await toolCallRaw(url, sid, name, { values: { "field-0": 3 } })).isError).toBe(true);
       expect(
         (
           await toolCallRaw(url, sid, "invoke", {
@@ -390,6 +523,65 @@ describe("MCP Server", () => {
           })
         ).isError,
       ).toBe(true);
+    });
+    it("bounds focused tools per session and rejects stale schemas after an extension update", async () => {
+      const sid = await initSession(url);
+      await toolCall(url, sid, "login", { name: "FocusBot" });
+      let executions = 0;
+      const usage = Array.from({ length: 13 }, (_, i) => ({
+        syntax: `focus-check action${i} <count>`,
+        fields: { count: { kind: "number" as const, min: 1, max: 4 } },
+      }));
+      const definition = {
+        name: "focus-check",
+        help: "Check focused tool lifecycle",
+        usage,
+        handler: () => {
+          executions++;
+        },
+      };
+      engine.commands.registerOwned("focus-test", definition);
+      const names: string[] = [];
+      for (const form of usage) {
+        const result = await toolCallRaw(url, sid, "capabilities", {
+          command: "focus-check",
+          syntax: form.syntax,
+          expose: true,
+        });
+        names.push(result.structuredContent?.tool as string);
+      }
+      const tools = (await toolList(url, sid)).map((tool) => tool.name);
+      expect(tools.filter((name) => name.startsWith("world_"))).toHaveLength(12);
+      expect(tools).not.toContain(names[0]!);
+      expect(tools).toContain(names[12]!);
+      const other = await initSession(url);
+      expect((await toolList(url, other)).some((tool) => tool.name.startsWith("world_"))).toBe(
+        false,
+      );
+      engine.commands.registerOwned(
+        "focus-test",
+        {
+          ...definition,
+          usage: usage.map((form) => ({
+            ...form,
+            fields: { count: { kind: "number", min: 1, max: 2 } },
+          })),
+        },
+        true,
+      );
+      const stale = await toolCallRaw(url, sid, names[12]!, { values: { "field-0": 1 } });
+      expect(stale.isError).toBe(true);
+      expect(stale.text).toContain("changed form");
+      expect(executions).toBe(0);
+      await toolCallRaw(url, sid, "capabilities", {
+        command: "focus-check",
+        syntax: usage[12]!.syntax,
+        expose: true,
+      });
+      expect(
+        (await toolCallRaw(url, sid, names[12]!, { values: { "field-0": 1 } })).isError,
+      ).not.toBe(true);
+      expect(executions).toBe(1);
     });
     it("negotiates task context, refreshes after deletion, and preserves manual/off modes", async () => {
       const sid = await initSession(url);

@@ -600,18 +600,31 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
   const outputRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
+  const historyIdxRef = useRef(-1);
+  const cmdValueRef = useRef("");
+  const applyDraft = useCallback(
+    (command: string) => {
+      if (!loggedIn || !inputRef.current) return false;
+      // Enter must see the prepared text immediately, before the next animation frame.
+      inputRef.current.value = command;
+      inputRef.current.rows = Math.min(6, command.split("\n").length);
+      cmdValueRef.current = command;
+      historyIdxRef.current = -1;
+      inputRef.current.focus();
+      return true;
+    },
+    [loggedIn],
+  );
   useEffect(() => {
     const draft = (event: Event) => {
       const command = (event as CustomEvent<{ command: string }>).detail?.command;
       if (typeof command !== "string") return;
       setOverlay(null);
-      setExternalDraft(command);
+      setExternalDraft(applyDraft(command) ? null : command);
     };
     window.addEventListener("marina:draft-command", draft);
     return () => window.removeEventListener("marina:draft-command", draft);
-  }, []);
-  const historyIdxRef = useRef(-1);
-  const cmdValueRef = useRef("");
+  }, [applyDraft]);
 
   useEffect(() => {
     if (externalDraft === null) return;
@@ -620,16 +633,10 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
         nameRef.current?.focus();
         return;
       }
-      if (inputRef.current) {
-        inputRef.current.value = externalDraft;
-        inputRef.current.rows = Math.min(6, externalDraft.split("\n").length);
-        cmdValueRef.current = externalDraft;
-        inputRef.current.focus();
-        setExternalDraft(null);
-      }
+      if (applyDraft(externalDraft)) setExternalDraft(null);
     });
     return () => cancelAnimationFrame(frame);
-  }, [externalDraft, loggedIn]);
+  }, [externalDraft, loggedIn, applyDraft]);
 
   // Transient "copied" feedback keyed by message index, or "all" for copy-all.
   const [copied, setCopied] = useState<number | "all" | null>(null);
@@ -782,7 +789,8 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
   }, [overlay]);
 
   const doSend = useCallback(() => {
-    const text = cmdValueRef.current.trim();
+    const raw = cmdValueRef.current.trim();
+    const text = !codePrompt && raw.startsWith("/") ? raw.slice(1).trimStart() : raw;
     if (!text || (attachment && codePrompt)) return;
     const cmd = attachment ? attachedCommand(attachment, text, attachmentAgent) : text;
     if (!cmd) return;

@@ -560,6 +560,23 @@ These definitions supply help forms, dashboard builders, autocomplete and MCP
 `capabilities`/`invoke`. They describe inputs; the command router still enforces authority.
 Commands without declared usage retain their plain text interface.
 
+Every compiled form includes an `inputSchema` for a portable JSON invocation, derived
+from those same fields, choices, numeric bounds and optional groups. MCP clients can
+call `capabilities` with `command`, one exact `syntax`, and `expose: true` to publish a
+focused typed tool. The response's `tool` names it; refresh the MCP tool list to obtain
+its generated parameter schema. At most twelve focused tools are retained per session.
+The generic `invoke` remains available without publishing a tool. Existing named tools
+preserve their compatibility contracts; new commands need no handwritten MCP adapter.
+Both invocation paths validate the live form when their queued action executes, then
+use the normal command router. Changed or removed forms require rediscovery.
+
+MCP `login` and `auth` default to automatic task context. Supply `task` explicitly or
+set your resident's own memory goal; a saved goal is reread for each subsequent result,
+so changes and deletion take effect immediately. Each retrieval rechecks access rather
+than reusing a stale memory snapshot. With neither a task nor a goal, no automatic
+retrieval runs. `contextMode: "manual"` delivers initial context without subsequent enrichment;
+`"off"` disables delivery. The `context` tool can change these preferences later.
+
 Model API clients can request a compact world-command reference with
 `X-Marina-Capabilities: on` when authenticated context injection is enabled. The reference
 uses the existing injection budget. It does not give the proxy a new command-execution

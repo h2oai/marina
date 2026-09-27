@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { type RefObject, useEffect, useState } from "react";
 import type { CapabilityManifest, CommandCatalogEntry } from "../../../src/sdk/capabilities";
+import { commandFormPrefix, matchCommandForm } from "../../../src/sdk/command-forms";
+import { ORIENTATION_COMMANDS } from "../../../src/sdk/onboarding";
 import { useChatState } from "../hooks/use-chat-state";
 import { draftCommand, matchCommands } from "../lib/command-discovery";
 import { requestParticipant } from "../lib/memory-service";
@@ -22,6 +24,24 @@ export function CommandInputAssistance({
   const [error, setError] = useState("");
   const identity = useChatState((s) => s.entityName);
   const history = useChatState((s) => s.commandHistory);
+  const query = value.replace(/^\//, "").trimStart();
+  const current = codeMode
+    ? undefined
+    : catalog.find(
+        (c) => c.name === query.split(/\s/)[0] || c.aliases.includes(query.split(/\s/)[0]!),
+      );
+  const canonical = current ? current.name + query.slice(query.split(/\s/)[0]!.length) : query;
+  const matchingForm = current ? matchCommandForm(current.forms ?? [], canonical) : undefined;
+  const actionOptions =
+    current?.forms
+      ?.map((form) => ({ name: commandFormPrefix(form), help: form.description ?? form.syntax }))
+      .filter(
+        (option, i, all) =>
+          option.name.length > canonical.trimEnd().length &&
+          option.name.startsWith(canonical) &&
+          all.findIndex((other) => other.name === option.name) === i,
+      ) ?? [];
+  const starters = [...ORIENTATION_COMMANDS, "memory", "context", "help"];
   const options =
     codeMode || dismissed || !value || value.includes("\n")
       ? []
@@ -29,25 +49,28 @@ export function CommandInputAssistance({
         ? [...new Set(history)]
             .slice(0, 6)
             .map((command) => ({ name: command, help: "Recent command" }))
-        : !value.includes(" ")
-          ? matchCommands(catalog, value).slice(0, 6)
-          : [];
-  const current = codeMode
-    ? undefined
-    : catalog.find(
-        (c) => c.name === value.split(" ")[0] || c.aliases.includes(value.split(" ")[0]!),
-      );
+        : query.includes(" ")
+          ? actionOptions.slice(0, 6)
+          : query.length >= 2 || value.startsWith("/")
+            ? (query
+                ? matchCommands(catalog, query)
+                : starters.flatMap((name) => catalog.filter((entry) => entry.name === name))
+              ).slice(0, 6)
+            : [];
   const insert = (command: string) => {
     draftCommand(`${command} `);
     setValue(`${command} `);
     setSelected(-1);
   };
   useEffect(() => {
+    setCatalog([]);
+    setError("");
     if (!identity) return;
     const controller = new AbortController();
     const refresh = () => {
       void requestParticipant<CapabilityManifest>("capabilities", {}, controller.signal)
         .then((result) => {
+          if (controller.signal.aborted) return;
           setCatalog(result.commands);
           setError("");
         })
@@ -110,7 +133,7 @@ export function CommandInputAssistance({
   return (
     <div className="space-y-1 text-xs">
       <div className="flex justify-between gap-2 text-text-dim">
-        <span>{codeMode ? "Code Mode input" : "Tab completes · ? recent commands"}</span>
+        <span>{codeMode ? "Code Mode input" : "/ commands · Tab completes · ? recent"}</span>
         <button
           type="button"
           className="text-primary"
@@ -147,15 +170,20 @@ export function CommandInputAssistance({
           ))}
         </div>
       )}
-      {current && value.includes(" ") && (
-        <details>
+      {current && query.includes(" ") && (
+        <details
+          key={`${current.name}:${matchingForm?.syntax}`}
+          className="max-h-[40vh] overflow-auto"
+          open={!!matchingForm && commandFormPrefix(matchingForm).includes(" ")}
+        >
           <summary className="cursor-pointer text-text-dim">
-            {current.forms?.[0]?.syntax ?? `help ${current.name}`} · Parameter helper
+            {matchingForm?.syntax ?? `help ${current.name}`} · Parameter helper
           </summary>
           <CommandFields
             name={current.name}
             help={current.help}
             forms={current.forms}
+            initialSyntax={matchingForm?.syntax}
             onCompose={(args) => insert(`${current.name} ${args}`)}
           />
         </details>

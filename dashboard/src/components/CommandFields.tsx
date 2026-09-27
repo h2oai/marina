@@ -13,11 +13,13 @@ export function CommandFields({
   name,
   help = "",
   forms: descriptors,
+  initialSyntax,
   onCompose,
 }: {
   name: string;
   help?: string;
   forms?: CommandForm[];
+  initialSyntax?: string;
   onCompose: (args: string) => void;
 }) {
   const forms = useMemo(
@@ -27,6 +29,7 @@ export function CommandFields({
   const [chosen, setChosen] = useState("");
   const selected =
     forms.find((f) => f.syntax === chosen) ??
+    forms.find((f) => f.syntax === initialSyntax) ??
     forms.find((f) => f.syntax.startsWith(STARTERS[name] ?? "\0")) ??
     forms[0];
   if (!selected) return null;

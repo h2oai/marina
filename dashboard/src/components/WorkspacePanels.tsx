@@ -20,6 +20,7 @@ import { CoordinationCard, DetailPanel } from "./CoordinationCard";
 import { EntityInspector } from "./EntityInspector";
 import { EntityRoster } from "./EntityRoster";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
+import { MemoryContextCard } from "./MemoryContextCard";
 import { MyInventory } from "./MyInventory";
 import { NarrativePlayback } from "./NarrativePlayback";
 import { ParticipantStreams } from "./ParticipantStreams";
@@ -164,6 +165,7 @@ export function ContextPanel(props: PanelFocusProps) {
     <GlassPanel title="Context" {...props} bodyScroll={false}>
       <div className="flex h-full min-h-0 flex-col">
         <MyInventory />
+        <MemoryContextCard />
         <ExtensionWidgets slot="sidebar" />
         <TrustedDashboardPanels slot="sidebar" />
         <div className={selection ? "h-[30%] min-h-24 shrink-0" : "min-h-0 flex-1"}>

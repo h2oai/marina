@@ -842,12 +842,18 @@ structured parameter forms, owning extension, revision, and execution requiremen
 The dashboard command palette, inline chat suggestions, and interactive CLI completion
 use this registry. Selection fills a draft; execution still checks current permissions.
 Commands without declared forms remain available through ordinary text input.
+In world chat, type `/` for starter commands or two characters for suggestions, then
+press Tab to complete. Action prefixes such as `note cl` complete to `note claim` and
+open that action's parameter helper. **Fill command** prepares a draft for review;
+Enter sends it. Code Mode keeps its own input behavior.
 
 `context <query>` previews your own memory context in the same provenance tiers used for
 agent retrieval. It does not award recall credit. In the dashboard, choose **Memory context**
 beside the chat input, or **Memory → Context preview**. Specify a query, scope, and content
 budget, then refresh. This is a current preview, not another participant's private memory
 or a historical model prompt. Correct records through the existing Memories view.
+The workspace sidebar also offers **My memory context**, with the same query, tiers,
+source details, and correction links. Its contents clear when you sign out.
 
 MCP clients can use `capabilities` (optionally select a command), `invoke` (compose a declared
 form), and `context`. Existing named tools remain supported. Set `context` mode to `auto`
@@ -855,5 +861,9 @@ with an explicit task query to receive fresh task context alongside subsequent r
 `manual` retrieves on demand and `off` disables automatic delivery. Context delivered after
 an action can inform the next decision. It cannot explain an earlier action.
 You can also supply `task` and `contextMode` to MCP `login` or `auth` to receive initial
-task context before the first decision. Structured inspection remains read-only even
+task context before the first decision. Login and auth default to `auto`: an explicit
+task takes precedence; otherwise your own saved `memory set goal` supplies the query.
+Changing or deleting that goal updates or stops subsequent delivery. With no task or
+saved goal, Marina does not invent a query. Choose `manual` or `off` to control delivery.
+Structured inspection remains read-only even
 inside a room that overrides an ordinary `help` or `context` command.

@@ -1,7 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { createHash } from "node:crypto";
+import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import { version as MARINA_VERSION } from "../../package.json";
@@ -38,6 +39,7 @@ import {
 } from "./connect-api";
 import { isTrustedBrowserOrigin } from "./cors";
 import { consumeHttpRate, rateLimitedResponse, securityHeaders } from "./http-utils";
+import { mcpCommandSchema } from "./mcp-command-schema";
 import { registerMemoryResources } from "./memory-mcp-resources";
 import { receiptForUnifiedContext } from "./memory-receipt";
 import { RequestDrain } from "./request-drain";
@@ -60,6 +62,7 @@ interface McpSession {
   context?: {
     mode: "auto" | "manual" | "off";
     query: string;
+    querySource?: "explicit" | "goal";
     scope: "all" | "evidence";
     budgetBytes: number;
   };
@@ -277,6 +280,7 @@ async function cmdTool(
   rateLimiter?: RateLimiter,
   contextUpdate?: McpSession["context"],
   inspection?: "capabilities" | "context",
+  prepare?: (id: EntityId) => string | McpResult,
 ): Promise<McpResult> {
   const resolved = withSession(sessions, extra);
   if ("error" in resolved) return { ...resolved.error, isError: true };
@@ -291,6 +295,13 @@ async function cmdTool(
       !engine.entities.get(resolved.entityId)
     )
       return errorText("Session expired. Reconnect before using world tools.");
+    // Resolve the form after earlier commands finish: a queued move or extension
+    // reload must not execute a schema from the participant's previous room.
+    if (prepare) {
+      const prepared = prepare(resolved.entityId);
+      if (typeof prepared !== "string") return prepared;
+      cmd = prepared;
+    }
     if (contextUpdate) session.context = contextUpdate;
     if (inspection === "context" && contextUpdate?.mode === "off") {
       session.perceptionBuffer.push({
@@ -375,17 +386,17 @@ async function cmdTool(
     )
       result.isError = true;
     const options = session.context;
-    if (
-      options?.mode === "auto" &&
-      options.query &&
-      !cmd.startsWith("context ") &&
-      !result.isError
-    ) {
+    if (options?.mode === "auto" && !cmd.startsWith("context ") && !result.isError) {
       try {
         const entity = engine.entities.get(resolved.entityId);
         if (entity && engine.db && engine.getConnectionEntity(session.connId) === entity.id) {
+          const query =
+            options.querySource === "goal"
+              ? engine.db.getCoreMemory(entity.name, "goal")?.value?.trim().slice(0, 4000)
+              : options.query;
+          if (!query) return result;
           // Deliberately rebuild: time-based caches alone cannot honor revocation, edits and erasure.
-          const context = await buildUnifiedContext(engine.db, entity.name, options.query, {
+          const context = await buildUnifiedContext(engine.db, entity.name, query, {
             ...options,
             creditReflections: false,
           });
@@ -712,8 +723,48 @@ export class McpServerAdapter {
       command: string,
       context?: McpSession["context"],
       inspection?: "capabilities" | "context",
+      prepare?: (id: EntityId) => string | McpResult,
     ): Promise<McpResult> {
-      return cmdTool(engine, sessions, extra, command, rateLimiter, context, inspection);
+      return cmdTool(engine, sessions, extra, command, rateLimiter, context, inspection, prepare);
+    }
+
+    async function initializeContext(
+      extra: { sessionId?: string },
+      session: McpSession,
+      task: string | undefined,
+      mode: "auto" | "manual" | "off",
+    ): Promise<McpResult | undefined> {
+      const entity = session.entityId ? engine.entities.get(session.entityId) : undefined;
+      if (!entity) return undefined;
+      const preferences: NonNullable<McpSession["context"]> = {
+        mode,
+        query: task ?? "",
+        querySource: task ? "explicit" : "goal",
+        scope: "all",
+        budgetBytes: 2048,
+      };
+      session.context = preferences;
+      if (mode === "off") return undefined;
+      try {
+        preferences.query =
+          task ?? engine.db?.getCoreMemory(entity.name, "goal")?.value?.trim().slice(0, 4000) ?? "";
+      } catch (error) {
+        logger.warn("mcp", `Initial task context unavailable: ${getErrorMessage(error)}`);
+        return text("Optional task context unavailable. Your world login succeeded.");
+      }
+      const query = preferences.query;
+      if (!query)
+        return mode === "auto"
+          ? text(
+              "Automatic task context is ready. Set your own goal with memory set goal, or use context with an explicit query. Manual and off modes remain available.",
+            )
+          : undefined;
+      return runCmd(
+        extra,
+        `context api ${JSON.stringify({ query, budgetBytes: 2048 })}`,
+        preferences,
+        "context",
+      );
     }
 
     registerMemoryTools(mcp, async (request, extra) => {
@@ -723,21 +774,105 @@ export class McpServerAdapter {
       return result.structuredContent ? result : { ...result, isError: true };
     });
 
+    const generatedTools = new Map<string, RegisteredTool>();
+    function invokeForm(
+      extra: { sessionId?: string },
+      command: string,
+      syntax: string,
+      values: Record<string, unknown> = {},
+      enabled: string[] = [],
+      fingerprint?: string,
+    ): Promise<McpResult> {
+      return runCmd(extra, "", undefined, undefined, (id) => {
+        const entity = engine.entities.get(id)!;
+        const entry = commandManifest(engine.commands, {
+          roomCommands: engine.getEntityRoom(entity.id)?.module.commands,
+        }).find((def) => def.name === command);
+        const form = entry?.forms?.find((candidate) => candidate.syntax === syntax);
+        if (!form || (fingerprint && JSON.stringify(form) !== fingerprint))
+          return errorText(
+            "Unknown or changed form. Refresh capabilities; room overrides may require plain command input.",
+          );
+        if (
+          Object.keys(values).some((key) => !form.fields.some((field) => field.id === key)) ||
+          enabled.some((key) => !form.groups.some((group) => group.id === key))
+        )
+          return errorText("Unknown field or optional group.");
+        const composed = composeCommand(
+          form,
+          Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])),
+          Object.fromEntries(enabled.map((id) => [id, true])),
+        );
+        if (Object.keys(composed.errors).length) return errorText(JSON.stringify(composed.errors));
+        if (
+          enabled.some((id) => {
+            const parent = form.groups.find((group) => group.id === id)?.parent;
+            return parent && !enabled.includes(parent);
+          })
+        )
+          return errorText("Enable the parent group before its nested options.");
+        return composed.command;
+      });
+    }
+
     // Canonical discovery and structured execution work for builtins and live extensions.
     // Existing named tools remain compatibility adapters over runCmd.
     mcp.tool(
       "capabilities",
-      "Discover live commands and their typed forms, aliases, scope, rank and gate requirements. Request one command to keep the response compact.",
-      { command: z.string().optional() },
-      async ({ command }, extra) => {
+      "Discover live commands, JSON invocation schemas, aliases, scope, rank and gates. Request a command for its forms; set expose with one exact syntax to generate a focused typed MCP tool. Existing named tools are compatibility adapters.",
+      {
+        command: z.string().optional(),
+        syntax: z.string().optional(),
+        expose: z
+          .boolean()
+          .default(false)
+          .describe(
+            "Publish one selected syntax as a typed MCP tool, generated from its live manifest. At most 12 focused tools are retained per session.",
+          ),
+      },
+      async ({ command, syntax, expose }, extra) => {
         const result = await runCmd(extra, "help catalog", undefined, "capabilities");
         const manifest = result.structuredContent;
         if (!manifest || !Array.isArray(manifest.commands)) return result;
         const commands = manifest.commands.filter(
           (entry) => !command || entry.name === command || entry.aliases.includes(command),
         );
+        let toolName: string | undefined;
+        if (expose) {
+          const entry = commands.length === 1 && command ? commands[0] : undefined;
+          const form = entry?.forms?.find(
+            (candidate: { syntax: string }) => candidate.syntax === syntax,
+          );
+          if (!entry || !form)
+            return errorText("Select a current command and exact syntax before exposing its tool.");
+          const hash = createHash("sha256").update(form.syntax).digest("hex").slice(0, 10);
+          toolName = `world_${entry.name.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 32)}_${hash}`;
+          generatedTools.get(toolName)?.remove();
+          generatedTools.delete(toolName);
+          if (generatedTools.size >= 12) {
+            const oldest = generatedTools.keys().next().value!;
+            generatedTools.get(oldest)!.remove();
+            generatedTools.delete(oldest);
+          }
+          const fingerprint = JSON.stringify(form);
+          generatedTools.set(
+            toolName,
+            mcp.registerTool(
+              toolName,
+              {
+                title: form.syntax,
+                description: form.description ?? entry.description ?? entry.help,
+                inputSchema: mcpCommandSchema(form),
+                annotations: { readOnlyHint: form.effect === "read" },
+              },
+              async ({ values, enabled }, call) =>
+                invokeForm(call, entry.name, form.syntax, values, enabled, fingerprint),
+            ),
+          );
+        }
         const value = {
           ...manifest,
+          ...(toolName ? { tool: toolName } : {}),
           commands: command
             ? commands
             : commands.map(({ forms, ...entry }) => ({
@@ -760,34 +895,10 @@ export class McpServerAdapter {
         values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
         enabled: z.array(z.string()).optional(),
       },
-      async ({ command, syntax, values = {}, enabled = [] }, extra) => {
-        const resolved = withSession(sessions, extra);
-        if ("error" in resolved) return { ...resolved.error, isError: true };
-        const entity = engine.entities.get(resolved.entityId);
-        if (!entity || engine.getConnectionEntity(resolved.session.connId) !== entity.id)
-          return errorText("Session expired.");
-        const entry = commandManifest(engine.commands, {
-          roomCommands: engine.getEntityRoom(entity.id)?.module.commands,
-        }).find((def) => def.name === command);
-        const form = entry?.forms?.find((candidate) => candidate.syntax === syntax);
-        if (!form)
-          return errorText(
-            "Unknown or changed form. Refresh capabilities; room overrides may require plain command input.",
-          );
-        if (
-          Object.keys(values).some((key) => !form.fields.some((field) => field.id === key)) ||
-          enabled.some((key) => !form.groups.some((group) => group.id === key))
-        )
-          return errorText("Unknown field or optional group.");
-        const composed = composeCommand(
-          form,
-          Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])),
-          Object.fromEntries(enabled.map((id) => [id, true])),
-        );
-        if (Object.keys(composed.errors).length) return errorText(JSON.stringify(composed.errors));
-        return runCmd(extra, composed.command);
-      },
+      async ({ command, syntax, values = {}, enabled = [] }, extra) =>
+        invokeForm(extra, command, syntax, values, enabled),
     );
+
     mcp.tool(
       "context",
       "Preview your own unified memory context for an explicit task/query. mode auto appends freshly authorized task context to later tool responses; manual retrieves only here; off disables automatic context. Call before a decision to inform it.",
@@ -825,7 +936,7 @@ export class McpServerAdapter {
           .max(4000)
           .optional()
           .describe("Explicit task query for initial memory context"),
-        contextMode: z.enum(["manual", "auto", "off"]).default("manual"),
+        contextMode: z.enum(["manual", "auto", "off"]).default("auto"),
       },
       async ({ name, task, contextMode }, extra) => {
         const session = getSession(extra);
@@ -847,15 +958,8 @@ export class McpServerAdapter {
             onboarding: participantOrientation(engine, result.entityId, "mcp", false),
           },
         };
-        if (task && contextMode !== "off") {
-          const context = await runCmd(
-            extra,
-            `context api ${JSON.stringify({ query: task, budgetBytes: 2048 })}`,
-            { mode: contextMode, query: task, scope: "all", budgetBytes: 2048 },
-            "context",
-          );
-          response.content.push(...context.content);
-        }
+        const initial = await initializeContext(extra, session, task, contextMode);
+        if (initial) response.content.push(...initial.content);
         return response;
       },
     );
@@ -866,7 +970,7 @@ export class McpServerAdapter {
       {
         token: z.string().describe("Session token from a previous login"),
         task: z.string().trim().min(1).max(4000).optional(),
-        contextMode: z.enum(["manual", "auto", "off"]).default("manual"),
+        contextMode: z.enum(["manual", "auto", "off"]).default("auto"),
       },
       async ({ token, task, contextMode }, extra) => {
         const session = getSession(extra);
@@ -887,15 +991,8 @@ export class McpServerAdapter {
             onboarding: participantOrientation(engine, result.entityId, "mcp", true),
           },
         };
-        if (task && contextMode !== "off") {
-          const context = await runCmd(
-            extra,
-            `context api ${JSON.stringify({ query: task, budgetBytes: 2048 })}`,
-            { mode: contextMode, query: task, scope: "all", budgetBytes: 2048 },
-            "context",
-          );
-          response.content.push(...context.content);
-        }
+        const initial = await initializeContext(extra, session, task, contextMode);
+        if (initial) response.content.push(...initial.content);
         return response;
       },
     );

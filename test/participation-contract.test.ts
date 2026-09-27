@@ -10,7 +10,7 @@ import { onboardParticipant } from "../src/engine/onboarding";
 import { buildUnifiedContext } from "../src/memory/unified-context";
 import { MarinaDB } from "../src/persistence/database";
 import { renderCapabilityRoster } from "../src/sdk/capabilities";
-import { composeCommand } from "../src/sdk/command-forms";
+import { composeCommand, matchCommandForm } from "../src/sdk/command-forms";
 import type { UnifiedContextResult } from "../src/sdk/memory-context";
 import { roomId } from "../src/types";
 import { cleanupDb, MockConnection, makeTestRoom } from "./helpers";
@@ -91,6 +91,38 @@ describe("shared participation contracts", () => {
       structured: false,
       forms: [],
     });
+  });
+  it("uses the typed note action and composes arguments the actual handler accepts", async () => {
+    const forms = commandManifest(engine.commands).find((entry) => entry.name === "note")!.forms!;
+    const claim = matchCommandForm(forms, "note claim ")!;
+    expect(claim.syntax).toContain("observed");
+    expect(claim.fields.find((field) => field.label === "confidence")).toMatchObject({
+      min: 0,
+      max: 1,
+    });
+    const id = db.createNote("Alice", "quartz measured observation", roomId("test/participation"));
+    const verify = matchCommandForm(forms, `note verify ${id}`)!;
+    const verified = forms.find((form) => form.syntax.includes(" verified "))!;
+    expect(verify).toBeDefined();
+    const values = Object.fromEntries(
+      verified.fields.map((field) => [
+        field.id,
+        field.label === "your-note-id"
+          ? String(id)
+          : field.label === "confidence"
+            ? "0.9"
+            : "Checked primary source",
+      ]),
+    );
+    const input = composeCommand(
+      verified,
+      values,
+      Object.fromEntries(verified.groups.map((group) => [group.id, true])),
+    );
+    expect(input.errors).toEqual({});
+    await engine.processCommand(alice.entity!, input.command);
+    expect(db.getNote(id)?.verification_status).toBe("verified");
+    expect(db.getNote(id)?.confidence).toBe(0.9);
   });
   it("keeps the live prompt bounded while retaining autonomy and provenance", () => {
     const prompt = getLeanSystemPrompt(null, commandManifest(engine.commands));

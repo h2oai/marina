@@ -2,6 +2,47 @@
 // SPDX-License-Identifier: Apache-2.0
 import { expect, test } from "@playwright/test";
 
+test("slash discovery and note-claim helpers work inline, with context visible in the sidebar", async ({
+  page,
+}) => {
+  const commands: string[] = [];
+  page.on("websocket", (socket) =>
+    socket.on("framesent", (frame) => {
+      const message = JSON.parse(String(frame.payload));
+      if (message.type === "command") commands.push(message.command);
+    }),
+  );
+  await page.goto("/dashboard");
+  await page.getByRole("button", { name: "Dismiss getting-started guide" }).click();
+  await page.getByPlaceholder("Enter your name...").fill("InlineAuditBrowser");
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  const input = page.locator("#marina-command-input");
+  await input.fill("/mem");
+  await expect(page.getByRole("listbox", { name: "Command suggestions" })).toContainText("memory");
+  await input.press("Tab");
+  await expect(input).toHaveValue("memory ");
+  await input.fill("note claim ");
+  await expect(page.getByLabel("Command action")).toHaveValue(/note claim .*observed/);
+  await page.getByLabel("Text", { exact: true }).fill("opal inline observation");
+  await page.getByLabel("Include confidence:0..1").check();
+  await page.getByLabel("Confidence", { exact: true }).fill("0.8");
+  await page.getByRole("button", { name: "Fill command", exact: true }).click();
+  expect(commands).toEqual([]);
+  await input.press("Enter");
+  await expect.poll(() => commands).toEqual(["note claim opal inline observation confidence:0.8"]);
+  await expect(input).toHaveValue("");
+  const sidebar = page.getByRole("region", { name: "My memory context", exact: true });
+  await sidebar.getByText("My memory context", { exact: true }).click();
+  await sidebar.getByLabel("Query", { exact: true }).fill("opal");
+  await sidebar.getByRole("button", { name: "Refresh context" }).click();
+  await sidebar.getByText(/\[unverified\] 1 items/).click();
+  await expect(sidebar.getByText("opal inline observation", { exact: true })).toBeVisible();
+  await page.screenshot({ path: "/tmp/marina-sidebar-context.png", fullPage: true });
+  await input.fill("/look");
+  await input.press("Enter");
+  await expect.poll(() => commands.at(-1)).toBe("look");
+});
+
 test("inline completion drafts a command and the resident previews, corrects and refreshes memory", async ({
   page,
 }) => {

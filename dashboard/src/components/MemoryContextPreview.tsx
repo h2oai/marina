@@ -5,7 +5,13 @@ import type { UnifiedContextResult } from "../../../src/sdk/memory-context";
 import { openMemory } from "../hooks/use-workspace-state";
 import { requestParticipant } from "../lib/memory-service";
 
-export function MemoryContextPreview({ initialQuery = "" }: { initialQuery?: string }) {
+export function MemoryContextPreview({
+  initialQuery = "",
+  compact = false,
+}: {
+  initialQuery?: string;
+  compact?: boolean;
+}) {
   const [query, setQuery] = useState(initialQuery);
   const [scope, setScope] = useState("all");
   const [budget, setBudget] = useState(4096);
@@ -38,12 +44,21 @@ export function MemoryContextPreview({ initialQuery = "" }: { initialQuery?: str
     }
   }
   return (
-    <section aria-label="Your memory context" className="overflow-auto space-y-4 p-4">
-      <h3 className="font-semibold">Your memory context preview</h3>
+    <section
+      aria-label="Your memory context"
+      className={`overflow-auto space-y-4 ${compact ? "p-2" : "p-4"}`}
+    >
+      {!compact && <h3 className="font-semibold">Your memory context preview</h3>}
       <p className="text-sm text-text-dim">
-        Inspect what your own memory contributes for a query. This uses the same retrieval builder
-        as agent context. It is not another participant’s private context or a record of an earlier
-        model prompt. Previewing does not award recall credit.
+        {compact ? (
+          "Your own query-specific memory, using the same retrieval as agents. This is a current preview; other participants’ private memories remain private."
+        ) : (
+          <>
+            Inspect what your own memory contributes for a query. This uses the same retrieval
+            builder as agent context. It is not another participant’s private context or a record of
+            an earlier model prompt. Previewing does not award recall credit.
+          </>
+        )}
       </p>
       <form
         className="space-y-3"

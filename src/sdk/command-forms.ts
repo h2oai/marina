@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { commandInputSchema } from "./command-schema";
+
 export interface CommandField {
   id: string;
   label: string;
@@ -21,6 +23,8 @@ interface Part {
   children?: Part[];
 }
 export interface CommandForm {
+  /** Input for MCP invoke and any client that consumes JSON Schema. */
+  inputSchema?: Record<string, unknown>;
   effect?: "read" | "write" | "delete" | "execute" | "unknown";
   description?: string;
   examples?: string[];
@@ -249,8 +253,37 @@ export function compileCommandForms(usage: readonly CommandUsage[]): CommandForm
       ...spec.fields?.[field.label],
       id: field.id,
     }));
+    form.inputSchema = commandInputSchema(form);
     return form;
   });
+}
+
+/** Literal command/action prefix, stopping before any value or optional group. */
+export function commandFormPrefix(form: CommandForm): string {
+  const words: string[] = [];
+  for (const part of form.parts) {
+    if (!part.literal?.trim()) break;
+    words.push(part.literal);
+  }
+  return words.join(" ");
+}
+
+/** Prefer the typed action, then its least restrictive complete form. */
+export function matchCommandForm(forms: CommandForm[], input: string): CommandForm | undefined {
+  const query = input.trimStart();
+  const required = (form: CommandForm) =>
+    form.fields.filter((field) => !field.optionalGroup && field.default === undefined).length;
+  return forms
+    .filter((form) => {
+      const prefix = commandFormPrefix(form);
+      return query === prefix || query.startsWith(`${prefix} `);
+    })
+    .sort(
+      (a, b) =>
+        commandFormPrefix(b).length - commandFormPrefix(a).length ||
+        required(a) - required(b) ||
+        b.groups.length - a.groups.length,
+    )[0];
 }
 
 export function composeCommand(
