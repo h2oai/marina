@@ -156,7 +156,7 @@ export function roleCommand(deps: {
     name: "role",
     aliases: [],
     minRank: 0,
-    help: "Manage composable agent roles.\nUsage: role list | role view <name> [goal <text>] | role lint <name> | role diff <a> <b> | role history <name> | role create <name> [traits <t1,t2,...>] [guidelines <g1|g2|...>] [focus <f1,f2,...>] [tone <tone>] | role edit <name> ... | role reload <name> | role delete <name>\n\nRoles are compositions of traits plus guidelines, focus areas, and tone.\n`role view <name> goal <text>` previews the PRISM-gated prompt an agent with that goal actually receives. `role lint <name>` reports pragmatic prompt-shaping warnings without changing the role. `role history <name>` shows the audited edit trail. `role reload <name>` propagates the current definition into running agents bound to it. `role export <name>` / `role import <bundle>` move a role and its traits between worlds losslessly (import only creates).",
+    help: "Manage composable agent roles.\nUsage: role list | role view <name> [goal <text>] | role lint <name> | role diff <a> <b> | role history <name> | role create <name> [traits <t1,t2,...>] [guidelines <g1> | <g2> ...] [focus <f1,f2,...>] [tone <tone>] | role edit <name> ... | role reload <name> | role delete <name>\n\nRoles are compositions of traits plus guidelines, focus areas, and tone.\n`role view <name> goal <text>` previews the PRISM-gated prompt an agent with that goal actually receives. `role lint <name>` reports pragmatic prompt-shaping warnings without changing the role. `role history <name>` shows the audited edit trail. `role reload <name>` propagates the current definition into running agents bound to it. `role export <name>` / `role import <bundle>` move a role and its traits between worlds losslessly (import only creates).",
     handler: async (ctx: RoomContext, input) => {
       if (!deps.db) {
         ctx.send(input.entity, requiresPersistence("roles"));
@@ -427,7 +427,7 @@ export function roleCommand(deps: {
           if (!name) {
             ctx.send(
               input.entity,
-              `Usage: role ${sub} <name> [traits <t1,t2,...>] [guidelines <g1|g2|...>] [focus <f1,f2,...>] [tone <text>]`,
+              `Usage: role ${sub} <name> [traits <t1,t2,...>] [guidelines <g1> | <g2> ...] [focus <f1,f2,...>] [tone <text>]`,
             );
             return;
           }
@@ -739,11 +739,17 @@ export function renderEditHistory(label: string, rows: EditHistoryRow[]): string
   return lines.join("\n");
 }
 
+const ROLE_FIELDS = ["description", "traits", "guidelines", "focus", "tone", "origin"] as const;
+type RoleField = (typeof ROLE_FIELDS)[number];
+
 /**
- * Parse role arguments from tokens after the role name.
- * Supports: traits <t1,t2,...> guidelines <g1|g2|...> focus <f1,f2,...> tone <text> origin <text> description <text>
+ * `role create|edit <name> [traits a,b] [guidelines g1 | g2] [focus f] [tone t] [description d] [origin o]`.
+ * Every field's value runs to the next field name, so a guideline may contain
+ * spaces (`guidelines Cite your sources | Say what you did not check`). A
+ * token starts a field only in lowercase (or as the very first token), so
+ * "Tone" or "Focus" inside a sentence stays text. `guidelines a|b` still parses.
  */
-function parseRoleArgs(tokens: string[]): {
+export function parseRoleArgs(tokens: string[]): {
   description?: string;
   traits?: string[];
   guidelines?: string[];
@@ -751,77 +757,47 @@ function parseRoleArgs(tokens: string[]): {
   tone?: string;
   origin?: string;
 } {
-  const result: {
-    description?: string;
-    traits?: string[];
-    guidelines?: string[];
-    focus?: string[];
-    tone?: string;
-    origin?: string;
-  } = {};
-
+  const isField = (t: string | undefined, first: boolean): t is string =>
+    !!t &&
+    (ROLE_FIELDS as readonly string[]).includes(t.toLowerCase()) &&
+    (first || t === t.toLowerCase());
+  const values = new Map<RoleField, string>();
   let i = 0;
   while (i < tokens.length) {
-    const key = tokens[i]?.toLowerCase();
-    i++;
-
-    switch (key) {
-      case "traits": {
-        const val = tokens[i];
-        if (val)
-          result.traits = val
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean);
-        i++;
-        break;
-      }
-      case "guidelines": {
-        const val = tokens[i];
-        if (val)
-          result.guidelines = val
-            .split("|")
-            .map((s) => s.trim())
-            .filter(Boolean);
-        i++;
-        break;
-      }
-      case "focus": {
-        const val = tokens[i];
-        if (val)
-          result.focus = val
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean);
-        i++;
-        break;
-      }
-      case "tone": {
-        const remaining = tokens.slice(i);
-        const endIdx = remaining.findIndex((t) =>
-          ["traits", "guidelines", "focus", "origin", "description"].includes(t.toLowerCase()),
-        );
-        result.tone = (endIdx === -1 ? remaining : remaining.slice(0, endIdx)).join(" ");
-        i += endIdx === -1 ? remaining.length : endIdx;
-        break;
-      }
-      case "origin": {
-        const val = tokens[i];
-        if (val) result.origin = val;
-        i++;
-        break;
-      }
-      case "description": {
-        const remaining = tokens.slice(i);
-        const endIdx = remaining.findIndex((t) =>
-          ["traits", "guidelines", "focus", "tone", "origin"].includes(t.toLowerCase()),
-        );
-        result.description = (endIdx === -1 ? remaining : remaining.slice(0, endIdx)).join(" ");
-        i += endIdx === -1 ? remaining.length : endIdx;
-        break;
-      }
+    const token = tokens[i];
+    if (!isField(token, i === 0)) {
+      i++;
+      continue;
     }
+    const key = token.toLowerCase() as RoleField;
+    let j = i + 1;
+    while (j < tokens.length && !isField(tokens[j], false)) j++;
+    values.set(
+      key,
+      tokens
+        .slice(i + 1, j)
+        .join(" ")
+        .trim(),
+    );
+    i = j;
   }
-
+  const list = (raw: string | undefined, sep: string) =>
+    raw
+      ?.split(sep)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  const result: ReturnType<typeof parseRoleArgs> = {};
+  const traits = list(values.get("traits"), ",");
+  const guidelines = list(values.get("guidelines"), "|");
+  const focus = list(values.get("focus"), ",");
+  if (traits?.length) result.traits = traits;
+  if (guidelines?.length) result.guidelines = guidelines;
+  if (focus?.length) result.focus = focus;
+  const tone = values.get("tone");
+  if (tone) result.tone = tone;
+  const description = values.get("description");
+  if (description) result.description = description;
+  const origin = values.get("origin");
+  if (origin) result.origin = origin.split(/\s+/)[0];
   return result;
 }

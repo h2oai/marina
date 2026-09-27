@@ -21,7 +21,13 @@ import {
   type EvolutionQualificationSession,
   evolutionSessionsWithEvidence,
 } from "../evolution-qualification";
-import { runTrial, type TrialArm, type TrialDeps, type TrialResult } from "../evolution-trial";
+import {
+  armBreakdown,
+  runTrial,
+  type TrialArm,
+  type TrialDeps,
+  type TrialResult,
+} from "../evolution-trial";
 import { promotionMargin } from "../fishing-margin";
 import { Logger } from "../logger";
 import { type ModifierSpec, parseModifiers } from "../parse-input";
@@ -881,6 +887,25 @@ function handleTrial(
     });
 }
 
+/** "(97/100 answered · 96.9% of answered)" — the two things a score mixes. */
+function splitNote(a: { score?: number; answered?: number; total?: number }): string {
+  const b = armBreakdown(a);
+  if (!b) return "";
+  return dim(
+    ` (${b.answered}/${b.total} answered · ${(b.answeredAccuracy * 100).toFixed(1)}% of answered)`,
+  );
+}
+
+/** Where a difference came from: better answers, or answering more often. */
+export function splitLine(
+  c: NonNullable<ReturnType<typeof armBreakdown>>,
+  i: NonNullable<ReturnType<typeof armBreakdown>>,
+): string {
+  const q = (c.answeredAccuracy - i.answeredAccuracy) * 100;
+  const r = c.answered - i.answered;
+  return `split: quality on answered items ${q >= 0 ? "+" : ""}${q.toFixed(1)} points (${(c.answeredAccuracy * 100).toFixed(1)}% vs ${(i.answeredAccuracy * 100).toFixed(1)}%) · answered ${r >= 0 ? "+" : ""}${r} (${c.answered} vs ${i.answered} of ${c.total})`;
+}
+
 export function renderTrial(runId: number, result: TrialResult): string {
   const pct = (x?: number) => (x === undefined ? "—" : `${(x * 100).toFixed(1)}%`);
   const lines = [
@@ -888,7 +913,7 @@ export function renderTrial(runId: number, result: TrialResult): string {
     separator(),
     ...result.arms.map(
       (a) =>
-        `  ${bold(a.label.padEnd(9))} ${a.role.padEnd(18)} ${a.status.padEnd(9)} ${pct(a.score)}${a.total ? dim(` (${a.answered}/${a.total})`) : ""}${a.runId ? dim(` benchmark:${a.runId}`) : ""}${a.error ? dim(` — ${a.error}`) : ""}`,
+        `  ${bold(a.label.padEnd(9))} ${a.role.padEnd(18)} ${a.status.padEnd(9)} ${pct(a.score)}${splitNote(a)}${a.runId ? dim(` benchmark:${a.runId}`) : ""}${a.error ? dim(` — ${a.error}`) : ""}`,
     ),
   ];
   if (result.delta !== undefined) {
@@ -898,6 +923,9 @@ export function renderTrial(runId: number, result: TrialResult): string {
     lines.push(
       `  candidate − incumbent: ${result.delta >= 0 ? "+" : ""}${(result.delta * 100).toFixed(1)} points${ci}`,
     );
+    const c = armBreakdown(result.arms.find((a) => a.label === "candidate") ?? {});
+    const i = armBreakdown(result.arms.find((a) => a.label === "incumbent") ?? {});
+    if (c && i) lines.push(`  ${splitLine(c, i)}`);
   }
   const cited = result.arms
     .filter((a) => a.status === "completed" && a.runId)
@@ -1138,6 +1166,8 @@ export interface AdoptionOffer {
     candidateScore: number;
     incumbentScore: number;
     items: number;
+    candidateAnswered?: number;
+    incumbentAnswered?: number;
     benchmark?: string;
     /** `holdout` when judged on the fixed held-out split; absent otherwise. */
     partition?: string;
@@ -1190,6 +1220,8 @@ export function adoptionOffer(db: MarinaDB, roleName: string): AdoptionOffer | {
           candidateScore: win.cand.score!,
           incumbentScore: win.inc.score!,
           items: win.cand.total ?? 0,
+          ...(win.cand.answered === undefined ? {} : { candidateAnswered: win.cand.answered }),
+          ...(win.inc.answered === undefined ? {} : { incumbentAnswered: win.inc.answered }),
           ...(judged.benchmark ? { benchmark: judged.benchmark } : {}),
           ...(judged.partition ? { partition: judged.partition } : {}),
           evaluator: run.evaluator_name ?? null,
@@ -1199,6 +1231,21 @@ export function adoptionOffer(db: MarinaDB, roleName: string): AdoptionOffer | {
     }
   }
   return { reason: lastReason };
+}
+
+/** The quality / answered split behind an adoption offer's scores. */
+export function evidenceSplit(e: AdoptionOffer["evidence"]): string | undefined {
+  const c = armBreakdown({
+    score: e.candidateScore,
+    answered: e.candidateAnswered,
+    total: e.items,
+  });
+  const i = armBreakdown({
+    score: e.incumbentScore,
+    answered: e.incumbentAnswered,
+    total: e.items,
+  });
+  return c && i ? splitLine(c, i) : undefined;
 }
 
 /** "100 held-out arc-challenge items" — "held-out" only when the holdout split judged it. */
@@ -1216,6 +1263,7 @@ function renderAdoption(db: MarinaDB, roleName: string): string {
     separator(),
     `  run ${e.run} (${e.experiment}) accepted — evaluated by ${e.evaluator ?? "?"}, decided by ${e.reviewer ?? "?"}`,
     `  ${e.candidateRole} ${pct(e.candidateScore)}% vs ${e.incumbentRole} ${pct(e.incumbentScore)}% on ${judgedOn(e)}: +${pct(e.delta)} points (95% ${pct(e.interval[0])} to ${pct(e.interval[1])}, bar ${pct(e.margin)})`,
+    ...(evidenceSplit(e) ? [`  ${evidenceSplit(e)}`] : []),
     `  evidence benchmark:${e.candidateRun} benchmark:${e.incumbentRun}`,
     `${ADOPTION_MARKER}${Buffer.from(JSON.stringify(offer), "utf8").toString("base64url")}`,
   ].join("\n");

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Trial score split: each arm now shows its answer rate and its accuracy on answered items, and a
+  `split:` line says whether a difference came from better answers or from answering more often
+  (also in `evolve adoption` offers and `world adopt` requests). The gates still judge the overall
+  score — a role that does not answer is worse. Read on the first real held-out trial, scout-v2's
+  +6.0 was +0.2 points of quality and +6 answered items.
 - Bringing a winner home (Phase 4): `evolve adoption <role>` in a child offers a role only with an
   accepted run whose trial EARNED its win (the same `earnedWin` test as replication);
   `world adopt <child> <role> [into:<existing>]` records a pending request with that evidence,
@@ -133,6 +138,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `role create|edit … guidelines` took a single token, so a guideline could not contain spaces
+  (the documented `guidelines Be precise|Cite sources` kept only "Be"). Every field's value now runs
+  to the next field name; a field name starts a field only in lowercase, so "Tone" inside a sentence
+  stays text. `guidelines a|b` still parses.
 - Agents on `marina/default` (and any proxied `marina/*` model) showed $0 spend, so the per-agent and
   runtime-wide hourly caps never saw their cost: the proxy reports cost in a response header, and a
   STREAMING reply's headers leave before usage is known. The passthru now settles each completed

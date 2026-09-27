@@ -435,3 +435,49 @@ describe("trialCallBudget", () => {
     expect(trialCallBudget(100)).toBeGreaterThan(100 * 3);
   });
 });
+
+describe("trial score split — quality vs answering", () => {
+  it("shows the first real held-out trial's +6.0 came from answering, not from better answers", async () => {
+    const { armBreakdown } = await import("../src/engine/evolution-trial");
+    // heldout2, 2026-09-27: scout-v2 94.0% (97/100 answered), scout 88.0% (91/100 answered).
+    const c = armBreakdown({ score: 0.94, answered: 97, total: 100 })!;
+    const i = armBreakdown({ score: 0.88, answered: 91, total: 100 })!;
+    expect(c.answeredAccuracy).toBeCloseTo(94 / 97);
+    expect(i.answeredAccuracy).toBeCloseTo(88 / 91);
+    const result = {
+      arms: [
+        {
+          label: "candidate" as const,
+          role: "scout-v2",
+          agent: "a",
+          status: "completed",
+          score: 0.94,
+          answered: 97,
+          total: 100,
+          runId: "br_c",
+        },
+        {
+          label: "incumbent" as const,
+          role: "scout",
+          agent: "b",
+          status: "completed",
+          score: 0.88,
+          answered: 91,
+          total: 100,
+          runId: "br_i",
+        },
+      ],
+      delta: 0.06,
+      deltaCi: [-0.022, 0.14] as [number, number],
+    };
+    const text = stripAnsi(renderTrial(1, result));
+    expect(text).toContain("(97/100 answered · 96.9% of answered)");
+    expect(text).toContain("quality on answered items +0.2 points (96.9% vs 96.7%)");
+    expect(text).toContain("answered +6 (97 vs 91 of 100)");
+  });
+
+  it("has no split without a total", async () => {
+    const { armBreakdown } = await import("../src/engine/evolution-trial");
+    expect(armBreakdown({ score: 0.5 })).toBeUndefined();
+  });
+});
