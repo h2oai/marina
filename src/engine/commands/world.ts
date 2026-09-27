@@ -6,10 +6,19 @@ import { bold, dim, header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { WorldVariantRow } from "../../persistence/db-world-variants";
 import type { CommandDef, Entity } from "../../types";
+import {
+  adoptionLog,
+  approveAdoption,
+  parseAdoptionReply,
+  rejectAdoption,
+  requestAdoption,
+  rollbackAdoption,
+} from "../../world/adoption";
 import { type ChildFetch, runInChild } from "../../world/child-bridge";
 import type { WorldCollectiveManager } from "../../world/world-collective-manager";
 import { getErrorMessage } from "../errors";
 import { canonicalSub, unknownSubcommand } from "../parse-input";
+import { judgedOn } from "./evolve";
 
 const USAGE = [
   "Usage: world list",
@@ -17,8 +26,10 @@ const USAGE = [
   "       world start <name> | world stop <name>",
   "       world run <name> <command …>                     — run one command inside a running child",
   "       world seed-role <name> <role>                    — copy a role and its traits into the child",
+  "       world adopt <child> <role> [into:<existing>]      — request bringing a role that EARNED its win home",
+  "       world adopt approve|reject <id> [reason] · world adopt rollback <id> · world adopt list",
 ].join("\n");
-const SUBS = ["list", "create", "start", "stop", "run", "seed-role"];
+const SUBS = ["list", "create", "start", "stop", "run", "seed-role", "adopt"];
 const MAX_REPLY = 6_000;
 
 /**
@@ -32,6 +43,8 @@ export function worldCommand(deps: {
   manager: () => WorldCollectiveManager;
   getEntity: (id: string) => Entity | undefined;
   fetcher?: ChildFetch;
+  /** Live agent → role bindings (adoption never changes the role its approver runs on). */
+  listAgents?: () => { name: string; role: string }[];
 }): CommandDef {
   return {
     name: "world",
@@ -61,6 +74,10 @@ export function worldCommand(deps: {
             ),
           ].join("\n"),
         );
+      }
+
+      if (sub === "adopt") {
+        return handleAdopt(deps, actor, input.tokens.slice(1), reply);
       }
 
       if (sub === "create") {
@@ -135,4 +152,82 @@ export function worldCommand(deps: {
       reply(unknownSubcommand("world", input.tokens[0] ?? "", USAGE));
     },
   };
+}
+
+async function handleAdopt(
+  deps: {
+    db: MarinaDB;
+    fetcher?: ChildFetch;
+    listAgents?: () => { name: string; role: string }[];
+  },
+  actor: Entity,
+  tokens: string[],
+  reply: (text: string) => void,
+): Promise<void> {
+  const action = tokens[0]?.toLowerCase();
+  const agents = deps.listAgents?.() ?? [];
+  const pct = (x: number) => (x * 100).toFixed(1);
+  if (!action || action === "list") {
+    const log = adoptionLog(deps.db);
+    if (log.length === 0) return reply("No adoptions yet.");
+    return reply(
+      [
+        header("Adoptions"),
+        separator(),
+        ...log.map(
+          (r) =>
+            `  #${r.id} ${bold(r.status)} ${r.role}${r.into ? ` → ${r.into}` : ""} from ${r.child} ${dim(`requested by ${r.requestedBy}${r.approvedBy ? `, approved by ${r.approvedBy}` : ""} · +${pct(r.offer.evidence.delta)} (95% ${pct(r.offer.evidence.interval[0])}–${pct(r.offer.evidence.interval[1])})`)}`,
+        ),
+      ].join("\n"),
+    );
+  }
+  if (action === "approve" || action === "reject" || action === "rollback") {
+    const id = Number(tokens[1]);
+    if (!Number.isInteger(id)) return reply(`Usage: world adopt ${action} <id>`);
+    const r =
+      action === "approve"
+        ? approveAdoption(deps.db, id, actor, agents)
+        : action === "reject"
+          ? rejectAdoption(deps.db, id, actor, tokens.slice(2).join(" ") || "no reason given")
+          : rollbackAdoption(deps.db, id, actor, agents);
+    if ("reason" in r) return reply(`Not done: ${r.reason}`);
+    const target = r.into ?? r.role;
+    return reply(
+      r.status === "applied"
+        ? `Adoption #${r.id} applied: role "${target}" now holds ${r.role} from ${r.child}. Running agents are unchanged until \`role reload ${target}\`; undo with \`world adopt rollback ${r.id}\`.`
+        : `Adoption #${r.id} ${r.status}.`,
+    );
+  }
+  // world adopt <child> <role> [into:<existing>]
+  const [childRef, role, ...rest] = tokens;
+  const into = rest.find((t) => t.startsWith("into:"))?.slice("into:".length);
+  const v = deps.db.listWorldVariants().find((x) => x.name === childRef || x.id === childRef);
+  if (!v || !role) return reply(USAGE);
+  if (v.status !== "running") return reply(`Child world ${v.name} is ${v.status}; start it first.`);
+  const res = await runInChild(v.ws_port, actor.name, `evolve adoption ${role}`, {
+    fetcher: deps.fetcher,
+  });
+  if (!res.ok) return reply(`${v.name}: ${res.error}`);
+  const offer = parseAdoptionReply(res.text);
+  if ("reason" in offer) return reply(`${v.name}: ${offer.reason}`);
+  const rec = requestAdoption(deps.db, {
+    child: v.name,
+    role,
+    ...(into ? { into } : {}),
+    requestedBy: actor.name,
+    offer,
+  });
+  if ("reason" in rec) return reply(`Not requested: ${rec.reason}`);
+  const e = offer.evidence;
+  return reply(
+    [
+      header(`Adoption #${rec.id} requested: ${role}${into ? ` → ${into}` : ""}`),
+      separator(),
+      `  from ${v.name}: run ${e.run} (${e.experiment}) accepted — evaluated by ${e.evaluator ?? "?"}, decided by ${e.reviewer ?? "?"}`,
+      `  ${e.candidateRole} ${pct(e.candidateScore)}% vs ${e.incumbentRole} ${pct(e.incumbentScore)}% on ${judgedOn(e)}: +${pct(e.delta)} (95% ${pct(e.interval[0])} to ${pct(e.interval[1])})`,
+      dim(
+        `  Someone other than ${actor.name} applies it: world adopt approve ${rec.id} — or world adopt reject ${rec.id} <reason>${into ? `. Replacing "${into}" needs role.edit.` : ""}`,
+      ),
+    ].join("\n"),
+  );
 }

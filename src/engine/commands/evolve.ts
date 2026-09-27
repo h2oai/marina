@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { parsePartition } from "../../../benchmarks/partition";
+import { encodeRoleBundle, exportRoleBundle } from "../../agent/role-bundle";
 import { getStanding } from "../../agent/standing";
 import { bold, category, dim, header, separator, status, stripAnsi } from "../../net/ansi";
 import type { EvolutionSessionRow, MarinaDB } from "../../persistence/database";
@@ -112,6 +113,14 @@ export function evolveCommand(deps: {
       if (!entity) return;
 
       const arg = (input.tokens[0] ?? "").toLowerCase();
+      if (arg === "adoption") {
+        if (!deps.db) {
+          ctx.send(input.entity, requiresPersistence("evolution protocols"));
+          return;
+        }
+        ctx.send(input.entity, renderAdoption(deps.db, input.tokens[1] ?? ""));
+        return;
+      }
       if (arg === "loop" || arg === "help" || arg === "how") {
         ctx.send(input.entity, LOOP_TEXT);
         return;
@@ -846,7 +855,7 @@ function handleTrial(
   ];
   const timeoutMs = (mods.values.timeout as number | undefined) ?? 30 * 60_000;
   say(
-    `Trial started for run ${run.id}: ${candidate}${incumbent ? ` vs ${incumbent}` : " (no incumbent: one arm)"} on ${benchmark}${opts.limit ? ` (${opts.limit} items` : ""}${partition ? `, ${partition} split` : ""}${opts.limit ? ")" : ""}, deadline ${Math.round(timeoutMs / 60_000)} min. Nothing is adopted; results follow here.${smokeWarning}`,
+    `Trial started for run ${run.id}: ${candidate}${incumbent ? ` vs ${incumbent}` : " (no incumbent: one arm)"} on ${benchmark}${opts.limit && benchmark !== "smoke" ? ` (${opts.limit} items${partition ? `, ${partition} split` : ""})` : ""}, deadline ${Math.round(timeoutMs / 60_000)} min. Nothing is adopted; results follow here.${smokeWarning}`,
   );
   void runTrial(trialDeps, { runId: run.id, arms, timeoutMs })
     .then((result) => {
@@ -967,44 +976,12 @@ async function handleReplicate(
     say(`Run ${run.id}'s candidate "${run.candidate_ref ?? ""}" is not a role that exists here.`);
     return;
   }
-  const trial = storedTrial(db, run.id)?.record;
-  const cand = trial?.result.arms.find((a) => a.label === "candidate");
-  const inc = trial?.result.arms.find((a) => a.label === "incumbent");
-  if (
-    !trial ||
-    cand?.status !== "completed" ||
-    inc?.status !== "completed" ||
-    trial.result.delta === undefined
-  ) {
-    say(
-      `Run ${run.id} has no completed two-arm trial. Run one first: evolve trial <experiment> ${run.id} incumbent:<role>`,
-    );
+  const win = earnedWin(db, sessionId, run.id);
+  if (!win.ok) {
+    say(win.reason);
     return;
   }
-  for (const arm of [cand, inc]) {
-    const row = arm.runId ? db.getBenchmarkRun(arm.runId) : undefined;
-    if (row?.status !== "completed" || row.answered <= 0) {
-      say(`Trial evidence benchmark:${arm.runId ?? "?"} no longer resolves; re-run the trial.`);
-      return;
-    }
-  }
-  const triedBefore = db
-    .listEvolutionRuns(sessionId)
-    .filter((r) => r.id !== run.id && storedTrial(db, r.id)).length;
-  const margin = promotionMargin(triedBefore);
-  const lower = trial.result.deltaCi?.[0];
-  if (lower === undefined || lower <= 0) {
-    say(
-      `Not earned: +${(trial.result.delta * 100).toFixed(1)} points, but the 95% interval ${lower === undefined ? "is unknown" : `starts at ${(lower * 100).toFixed(1)}`} — the win is not distinguishable from noise. Trial on more held-out items (limit:N).`,
-    );
-    return;
-  }
-  if (trial.result.delta < margin) {
-    say(
-      `Not earned: the candidate beat the incumbent by ${(trial.result.delta * 100).toFixed(1)} points; this session needs ${(margin * 100).toFixed(1)} (${triedBefore} other candidate(s) trialed — every try raises the bar).`,
-    );
-    return;
-  }
+  const { inc, margin, delta } = win;
   const replicaTag = `[evolve_replica run=${run.id}]`;
   const already = db
     .getNotesByType(TRIAL_OWNER, REPLICA_NOTE_TYPE, 500)
@@ -1053,7 +1030,7 @@ async function handleReplicate(
       recordGateExecution(db, entity.id, "agent.spawn", gate, `evolve replicate run ${run.id}`);
       db.createNote(
         TRIAL_OWNER,
-        `${replicaTag} ${JSON.stringify({ run: run.id, role, agent: name, parent: entity.name, delta: trial.result.delta, margin, at: Date.now() })}`,
+        `${replicaTag} ${JSON.stringify({ run: run.id, role, agent: name, parent: entity.name, delta, margin, at: Date.now() })}`,
         undefined,
         { noteType: REPLICA_NOTE_TYPE, tier: "process", skipDedup: true },
       );
@@ -1066,7 +1043,7 @@ async function handleReplicate(
     [
       header(`Replicated run ${run.id}: ${role}`),
       separator(),
-      `  earned: +${(trial.result.delta * 100).toFixed(1)} points over ${inc.role} (bar ${(margin * 100).toFixed(1)})`,
+      `  earned: +${(delta * 100).toFixed(1)} points over ${inc.role} (bar ${(margin * 100).toFixed(1)})`,
       ...(made.length
         ? [
             `  spawned ${made.join(", ")} (budget ${budgetCalls} calls each, lineage: spawned by ${entity.name})`,
@@ -1078,4 +1055,168 @@ async function handleReplicate(
       ),
     ].join("\n"),
   );
+}
+
+export type EarnedWin =
+  | {
+      ok: true;
+      trial: StoredTrial;
+      cand: TrialResult["arms"][number];
+      inc: TrialResult["arms"][number];
+      margin: number;
+      lower: number;
+      delta: number;
+    }
+  | { ok: false; reason: string };
+
+/**
+ * Did run `runId`'s candidate EARN its win? Both trial arms completed, both
+ * cited runs still resolve, the 95% interval on the difference is above zero,
+ * and the difference clears the fishing margin for its session. The one test
+ * behind `evolve replicate` and adoption into a parent world.
+ */
+export function earnedWin(db: MarinaDB, sessionId: number, runId: number): EarnedWin {
+  const trial = storedTrial(db, runId)?.record;
+  const cand = trial?.result.arms.find((a) => a.label === "candidate");
+  const inc = trial?.result.arms.find((a) => a.label === "incumbent");
+  if (
+    !trial ||
+    cand?.status !== "completed" ||
+    inc?.status !== "completed" ||
+    trial.result.delta === undefined
+  ) {
+    return {
+      ok: false,
+      reason: `Run ${runId} has no completed two-arm trial. Run one first: evolve trial <experiment> ${runId} incumbent:<role>`,
+    };
+  }
+  for (const arm of [cand, inc]) {
+    const row = arm.runId ? db.getBenchmarkRun(arm.runId) : undefined;
+    if (row?.status !== "completed" || row.answered <= 0) {
+      return {
+        ok: false,
+        reason: `Trial evidence benchmark:${arm.runId ?? "?"} no longer resolves; re-run the trial.`,
+      };
+    }
+  }
+  const triedBefore = db
+    .listEvolutionRuns(sessionId)
+    .filter((r) => r.id !== runId && storedTrial(db, r.id)).length;
+  const margin = promotionMargin(triedBefore);
+  const lower = trial.result.deltaCi?.[0];
+  if (lower === undefined || lower <= 0) {
+    return {
+      ok: false,
+      reason: `Not earned: +${(trial.result.delta * 100).toFixed(1)} points, but the 95% interval ${lower === undefined ? "is unknown" : `starts at ${(lower * 100).toFixed(1)}`} — the win is not distinguishable from noise. Trial on more held-out items (limit:N).`,
+    };
+  }
+  if (trial.result.delta < margin) {
+    return {
+      ok: false,
+      reason: `Not earned: the candidate beat the incumbent by ${(trial.result.delta * 100).toFixed(1)} points; this session needs ${(margin * 100).toFixed(1)} (${triedBefore} other candidate(s) trialed — every try raises the bar).`,
+    };
+  }
+  return { ok: true, trial, cand, inc, margin, lower, delta: trial.result.delta };
+}
+
+// ─── evolve adoption (read by a parent world) ────────────────────────────────
+
+export interface AdoptionOffer {
+  v: 1;
+  bundle: string;
+  evidence: {
+    world?: string;
+    experiment: string;
+    run: number;
+    candidateRole: string;
+    incumbentRole: string;
+    delta: number;
+    interval: [number, number];
+    margin: number;
+    candidateRun: string;
+    incumbentRun: string;
+    candidateScore: number;
+    incumbentScore: number;
+    items: number;
+    benchmark?: string;
+    /** `holdout` when judged on the fixed held-out split; absent otherwise. */
+    partition?: string;
+    evaluator: string | null;
+    reviewer: string | null;
+  };
+}
+
+export const ADOPTION_MARKER = "ADOPTION:";
+
+/** The latest ACCEPTED run of `role:<name>` whose trial earned its win, as an offer. */
+export function adoptionOffer(db: MarinaDB, roleName: string): AdoptionOffer | { reason: string } {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(roleName))
+    return { reason: "Usage: evolve adoption <role>" };
+  const bundle = exportRoleBundle(db, roleName);
+  if (!bundle) return { reason: `Role "${roleName}" does not exist in this world.` };
+  let lastReason = `No accepted run proposes role:${roleName}.`;
+  for (const session of [...db.listEvolutionSessions()].reverse()) {
+    const runs = db
+      .listEvolutionRuns(session.id)
+      .filter((r) => r.status === "accepted" && r.candidate_ref === `role:${roleName}`)
+      .reverse();
+    for (const run of runs) {
+      const win = earnedWin(db, session.id, run.id);
+      if (!win.ok) {
+        lastReason = win.reason;
+        continue;
+      }
+      let judged: { benchmark?: string; partition?: string } = {};
+      try {
+        judged = JSON.parse(db.getBenchmarkRun(win.cand.runId!)?.config_json ?? "{}");
+      } catch {
+        // The score stands; only the label is unknown.
+      }
+      return {
+        v: 1,
+        bundle: encodeRoleBundle(bundle),
+        evidence: {
+          ...(process.env.MARINA_NAME ? { world: process.env.MARINA_NAME } : {}),
+          experiment:
+            db.getExperiment(session.experiment_id)?.name ?? `experiment:${session.experiment_id}`,
+          run: run.id,
+          candidateRole: roleName,
+          incumbentRole: win.inc.role,
+          delta: win.delta,
+          interval: win.trial.result.deltaCi!,
+          margin: win.margin,
+          candidateRun: win.cand.runId!,
+          incumbentRun: win.inc.runId!,
+          candidateScore: win.cand.score!,
+          incumbentScore: win.inc.score!,
+          items: win.cand.total ?? 0,
+          ...(judged.benchmark ? { benchmark: judged.benchmark } : {}),
+          ...(judged.partition ? { partition: judged.partition } : {}),
+          evaluator: run.evaluator_name ?? null,
+          reviewer: run.reviewer_name ?? null,
+        },
+      };
+    }
+  }
+  return { reason: lastReason };
+}
+
+/** "100 held-out arc-challenge items" — "held-out" only when the holdout split judged it. */
+export function judgedOn(e: AdoptionOffer["evidence"]): string {
+  return `${e.items}${e.partition === "holdout" ? " held-out" : ""} ${e.benchmark ?? "benchmark"} items`;
+}
+
+function renderAdoption(db: MarinaDB, roleName: string): string {
+  const offer = adoptionOffer(db, roleName);
+  if ("reason" in offer) return `Not adoptable: ${offer.reason}`;
+  const e = offer.evidence;
+  const pct = (x: number) => `${(x * 100).toFixed(1)}`;
+  return [
+    header(`Adoptable: ${e.candidateRole}`),
+    separator(),
+    `  run ${e.run} (${e.experiment}) accepted — evaluated by ${e.evaluator ?? "?"}, decided by ${e.reviewer ?? "?"}`,
+    `  ${e.candidateRole} ${pct(e.candidateScore)}% vs ${e.incumbentRole} ${pct(e.incumbentScore)}% on ${judgedOn(e)}: +${pct(e.delta)} points (95% ${pct(e.interval[0])} to ${pct(e.interval[1])}, bar ${pct(e.margin)})`,
+    `  evidence benchmark:${e.candidateRun} benchmark:${e.incumbentRun}`,
+    `${ADOPTION_MARKER}${Buffer.from(JSON.stringify(offer), "utf8").toString("base64url")}`,
+  ].join("\n");
 }

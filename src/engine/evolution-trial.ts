@@ -78,7 +78,8 @@ export function differenceInterval(
   const a2 = (p2 * n2 + 1) / (n2 + 2);
   const se = Math.sqrt((a1 * (1 - a1)) / (n1 + 2) + (a2 * (1 - a2)) / (n2 + 2));
   const d = a1 - a2;
-  return [d - 1.96 * se, d + 1.96 * se];
+  // A difference of two proportions lives in [-1, 1].
+  return [Math.max(-1, d - 1.96 * se), Math.min(1, d + 1.96 * se)];
 }
 
 const JOIN_TIMEOUT_MS = 60_000;

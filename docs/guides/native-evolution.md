@@ -104,6 +104,9 @@ world run trial2 evolve replicate ScoutTrial 2 n:2
 #   earned: +100.0 points over hasty (bar 3.0) · spawned scoutv2r2n1, scoutv2r2n2
 ```
 
+Adopting a winner into the parent world is a separate, reviewed step — see
+[World Collective → Bringing a winner home](world-collective.md#bringing-a-winner-home).
+
 ### Evidence you can check
 
 Cite a benchmark run by its id and `evolve evaluate` checks it: the run must exist, be completed and

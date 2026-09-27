@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bringing a winner home (Phase 4): `evolve adoption <role>` in a child offers a role only with an
+  accepted run whose trial EARNED its win (the same `earnedWin` test as replication);
+  `world adopt <child> <role> [into:<existing>]` records a pending request with that evidence,
+  `world adopt approve` by someone other than the requester applies it (replacing an existing role
+  needs `role.edit`, never the approver's own role, previous definition saved), `world adopt
+  rollback` restores it, `world adopt list|reject`. Nothing changes running agents until
+  `role reload`.
 - Held-out trials: a fixed, disjoint `holdout` / `tune` split of every benchmark by item-id hash
   (`benchmarks/partition.ts`, `benchmark run … --partition holdout|tune`); `evolve trial` judges on
   100 held-out ARC-Challenge items by default, reports a 95% interval on the difference
