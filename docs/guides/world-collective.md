@@ -24,6 +24,25 @@ world run trial1 readiness           # includes the child's own Daily spend ($50
 world stop trial1
 ```
 
+### Bringing a winner home
+
+A role that **earned** its win in a child — an accepted run whose held-out trial interval sits above
+zero and clears the fishing margin — can come back to the parent, through two people:
+
+```text
+world run trial3 evolve adoption scout-v2          # the child's offer: evidence + bundle (read-only)
+world adopt trial3 scout-v2 into:scout             # records a PENDING request with that evidence
+world adopt approve 1                              # someone OTHER than the requester applies it
+world adopt rollback 1                             # restores the saved previous definition
+world adopt list | world adopt reject 1 <reason>
+```
+
+Adopting as a new role only creates. Adopting `into:` an existing role changes every agent running on
+it, so the approver needs `role.edit`, may not approve for the role they run on, and the previous
+definition is saved for rollback. Nothing changes running agents until an explicit `role reload`.
+The log is append-only (`world-adoptions` notes); `world adopt list` shows every request, approval,
+rejection and rollback.
+
 `world run` posts to the child's command endpoint on loopback under your name, so the child's audit
 trail names who acted. A child resolves its own trust profile: on a single-operator machine it is
 `local` and your commands run ungated there; on a shared profile you need rank in the child too.
