@@ -48,7 +48,7 @@ describe("getLeanSystemPrompt", () => {
   it("includes the tool-roster prose by default", () => {
     const p = getLeanSystemPrompt(null);
     expect(p).toContain("# TOOL ROUTING");
-    expect(p).toContain("Recall is intent-aware");
+    expect(p).toContain("help catalog");
   });
 
   it("frames autonomy as an outcome loop rather than mandatory activity", () => {

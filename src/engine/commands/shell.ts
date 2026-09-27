@@ -29,6 +29,24 @@ export interface ShellDeps {
 
 export function shellCommand(deps: ShellDeps): CommandDef {
   return {
+    category: "System",
+    usage: [
+      "shell allow <binary>",
+      "shell deny <binary>",
+      "shell history [n]",
+      "shell list",
+      "shell log [entity] [n]",
+      "shell save board <board_name> [title]",
+      "shell save board <board> <title>",
+      "shell save canvas <canvas>",
+      "shell save memory <key>",
+      "shell save note [importance] [type]",
+      "shell scratch cat <file>",
+      "shell scratch cat <filename>",
+      "shell scratch ls",
+      "shell scratch rm <file>",
+      "shell scratch rm <filename>",
+    ],
     name: "shell",
     aliases: ["sh"],
     help: HELP,

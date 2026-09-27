@@ -154,6 +154,17 @@ export function traitCommand(deps: {
   listAgents?: () => { name: string; role: string }[];
 }): CommandDef {
   return {
+    category: "Identity & Access",
+    usage: [
+      "trait create <name> <category> <prompt text> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2]",
+      "trait create <name> <category> <prompt> [strengths s1,s2] [preferences p1,p2] [avoids a1,a2] [domains d1,d2] [behaviors b1,b2] [antiBehaviors a1,a2] [activation a1,a2] [successSignals s1,s2] [riskSignals r1,r2] [applicableTasks t1,t2]",
+      "trait delete <name>",
+      "trait diff <a> <b>",
+      "trait history <name>",
+      "trait lint <name>",
+      "trait list",
+      "trait view <name>",
+    ],
     name: "trait",
     aliases: [],
     minRank: 0,

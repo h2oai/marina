@@ -20,6 +20,21 @@ export function boardCommand(
   logEvent?: (event: EngineEvent) => void,
 ): CommandDef {
   return {
+    category: "Coordination",
+    usage: [
+      "board archive <postId>",
+      "board create <name>",
+      "board list",
+      "board list [args]",
+      "board pin <postId>",
+      "board post <board> <title> | <body>",
+      "board read <board> [postId]",
+      "board reply <postId> <body>",
+      "board scores <postId>",
+      "board search <board> <query>",
+      "board vote <postId> down [score 1-10]",
+      "board vote <postId> up [score 1-10]",
+    ],
     name: "board",
     aliases: [],
     help: "Manage boards for async discussion.\nUsage: board list|read|post|reply|search|vote|scores|pin|archive|create\n\nExamples:\n  board post general Relay Results | Average accuracy was 73%\n  board reply 5 Was that with the training run?\n  board vote 5 up 8\n  board search general relay",

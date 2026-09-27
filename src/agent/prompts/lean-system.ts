@@ -3,6 +3,7 @@
 
 import { getAutonomyPosture } from "../../engine/autonomy";
 import { isLocalUngated } from "../../engine/trust-profile";
+import { type CommandCatalogEntry, renderCapabilityRoster } from "../../sdk/capabilities";
 
 /** Stable identity and operating contract for Marina's autonomous agents. */
 export function getPromptVersion(prompt: string): string {
@@ -25,31 +26,19 @@ export const LEAN_SYSTEM_PROMPT_BYTE_CAP = 6300;
  * see it once and the `marina_command` tool description stays one sentence.
  * Command help supplies the full syntax.
  */
-export const COMMAND_ROSTER = `Common world commands:
-World: look [target], goto <room>, examine <thing>, who, inventory.
-Talk: say <msg>, tell <name> <msg>, channel send <name> <msg>, channel list.
-Memory: memory guide (workflow examples), memory start <goal>, memory resume <task ID>, memory retrieve <task> (citable evidence; check diagnostics), note <text>, recall <query> [evidence|all], reflect [topic], reflect adopt <job>, memory api <JSON>, memory assist <librarian|reflector|evaluator> <helper> <task>, memory jobs, pool <name> add|recall <…>, skill store|search <…>, note correct <id> <text> (supersede, don't delete), orient (memory health).
-Self: brief, brief full, focus set <desc>, focus clear, task goal <title> | <desc>, task progress <id> +N, novelty stats, novelty suggest.
-Becoming: standing (your ledger + every gate's path), witness (earn gated capabilities through supervised demonstrations), desire <one sentence> (begin an evidence-linked journey), journey progress.
-Coordination: project list, canvas intent list, canvas intent claim <id>, canvas intent complete <id> <result>, feed list [--kind X --since 30m].
-Code: code status, code files [path], code read <path>, code search <query>, code diff, code verify, code recipe list/run/save, code checkpoint, code revert <id>, code approvals, code approval request <kind> <desc>, code model set <target>, code skill list/add/use, code crew <goal>, code external link <system> <id>, code observe <note>, code patch <title>, code artifacts.
-Web: web search <query>, web fetch <url>.
-Probe / watch (resolvers): probe <kind> <args>, watch list, watch create <kind> <args>.
-Bettor / markets: market list, market info <id>, market forecast <id>, position open <leg>, position confirm <id>.
-Discover more: \`help all\` lists every command, \`help <command>\` explains one, \`novelty suggest\` names unexplored activity.
-Recall is intent-aware: "how to X" weights relevance, "when did X" weights recency.`;
+export const COMMAND_ROSTER =
+  "Discover the live command surface with `help` and `help catalog`; use `help <command>` for syntax and gates.";
 
 /** Extra roster lines surfaced when the operator has opened the ceiling —
  *  under `earned`/`open` postures agents are TOLD about the open-ended layer
  *  so emergence gets the chance the ledgers were built for. */
-export const ECOLOGY_ROSTER = `Open-ended (this world's autonomy posture invites you to use these):
-association create/join/relate (open relationships across anything), mesh list/join/publish (transparent cross-Marina federation), intellect declare (portable identity), lab manifest/run (declared experiments), economy contract (asset-neutral claims), reproduce intellect (attributable descendants).`;
+export const ECOLOGY_ROSTER =
+  "This world's autonomy posture invites exploration of its open-ended capabilities; inspect the live manifest and respect each execution gate.";
 
 /** The roster as the system prompt renders it: posture-aware, one copy. */
-export function getCommandRoster(): string {
-  return getAutonomyPosture() === "guarded"
-    ? COMMAND_ROSTER
-    : `${COMMAND_ROSTER}\n${ECOLOGY_ROSTER}`;
+export function getCommandRoster(entries?: CommandCatalogEntry[]): string {
+  const roster = entries ? renderCapabilityRoster(entries) : COMMAND_ROSTER;
+  return getAutonomyPosture() === "guarded" ? roster : `${roster}\n${ECOLOGY_ROSTER}`;
 }
 
 /**
@@ -77,7 +66,10 @@ export function getMemoryContract(): string {
 - \`orient\` shows memory health.${gated}`;
 }
 
-export function getLeanSystemPrompt(rolePrompt: string | null): string {
+export function getLeanSystemPrompt(
+  rolePrompt: string | null,
+  entries?: CommandCatalogEntry[],
+): string {
   const roleSection = rolePrompt ?? "You are a versatile, general-purpose agent.";
   const toolsSection = process.env.MARINA_SYSTEM_TOOLS_PROSE === "off" ? "" : `\n${TOOLS_PROSE}\n`;
   const memorySection = getMemoryContract();
@@ -104,7 +96,7 @@ ${memorySection}
 
 # COMMANDS
 
-${getCommandRoster()}
+${getCommandRoster(entries)}
 
 # OPERATING LOOP
 

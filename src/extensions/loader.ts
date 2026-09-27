@@ -96,9 +96,10 @@ export async function loadExtensions(
             name: command.name,
             aliases: command.aliases,
             help: command.help,
+            usage: command.usage,
             minRank: command.minRank,
             gate: command.gate,
-            category: "Extensions",
+            category: command.category ?? "Extensions",
             handler: async (room, input) => {
               const entity = room.getEntity(input.entity);
               if (!entity) return;

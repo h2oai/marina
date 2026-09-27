@@ -38,6 +38,8 @@ export function probeCommand(deps: {
   logEvent?: (event: EngineEvent) => void;
 }): CommandDef {
   return {
+    category: "Markets & Forecasting",
+    usage: ["probe", "probe <kind> <key>:<value> [<additional key:value pairs>]"],
     name: "probe",
     aliases: [],
     minRank: 0,

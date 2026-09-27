@@ -23,6 +23,8 @@ export function shareCommand(deps: {
   logEvent?: (event: EngineEvent) => void;
 }): CommandDef {
   return {
+    category: "Coordination",
+    usage: ["share <pool> <content>"],
     name: "share",
     aliases: [],
     help: "Drop a note into a shared pool. Usage: share <pool> <content>",

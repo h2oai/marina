@@ -1,5 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+import type { CommandUsage } from "./command-forms";
 import type { DurableMemoryAPI } from "./memory-operations";
 import type { EntityId, EntityRank, RoomId } from "./protocol";
 
@@ -15,6 +16,8 @@ export interface ExtensionCommand {
   name: string;
   aliases?: string[];
   help: string;
+  usage?: CommandUsage[];
+  category?: string;
   minRank: EntityRank;
   gate?: string;
   run(context: ExtensionCommandContext, args: string): void | Promise<void>;

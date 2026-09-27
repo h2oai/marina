@@ -37,6 +37,17 @@ export function journeyCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
 }): CommandDef {
   return {
+    usage: [
+      "journey changes <id|latest>",
+      "journey create <desire>",
+      "journey link <id|latest> <kind> <ref> [relationship]",
+      "journey list [all]",
+      "journey progress <id|latest>",
+      "journey record <id|latest> <event> | <summary> [| <ref-kind>:<ref>]",
+      "journey result <id|latest>",
+      "journey show <id|latest>",
+      "journey steer <id|latest> <context or correction>",
+    ],
     name: "journey",
     aliases: ["journeys"],
     category: "Cognition",

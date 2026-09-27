@@ -113,6 +113,18 @@ export function poolCommand(deps: {
   resolveEntityIdByName?: (name: string) => EntityId | undefined;
 }): CommandDef {
   return {
+    category: "Memory",
+    usage: [
+      "pool <name> add",
+      "pool <name> add <text> [importance:N]",
+      "pool <name> audit",
+      "pool <name> list",
+      "pool <name> ratify",
+      "pool <name> recall",
+      "pool <name> status",
+      "pool create <name> [group <groupName>]",
+      "pool list",
+    ],
     name: "pool",
     aliases: [],
     help: "Shared memory pools for collaborative knowledge.\nUsage: pool create <name> [group <groupName>] | pool <name> add <text> [importance:N] | pool <name> recall|list|status|audit|ratify | pool list\n  (importance also as trailing `importance N` or `!N`; `ls` = list)\n\nExamples:\n  pool create findings\n  pool create crew-notes group project:Beta   (members-only pool; you must belong to the group)\n  pool findings add The decode room responds to binary input importance:7\n  pool findings recall binary\n  pool findings list\n  pool findings status\n  pool findings audit\n  pool guide ratify 42 importance 8 verified against the command registry\n\nInstitutional pools (guide, orchestration:*, tradition:*): on a shared instance `add` files a proposal (importance capped at 4, unverified) until someone with standing >= 15 (rank 2), a sovereign, or the local operator runs `pool <name> ratify <noteId> [importance N] [rationale]` — which lifts the cap, marks it verified, and mirrors it into the institutional durable space.",

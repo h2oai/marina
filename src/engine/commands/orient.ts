@@ -36,6 +36,8 @@ export function orientCommand(deps: {
   getTotalRoomCount?: () => number;
 }): CommandDef {
   return {
+    category: "Memory",
+    usage: ["orient"],
     name: "orient",
     aliases: ["status", "briefing"],
     help: "Memory health dashboard — core memory, notes, activity coverage, and knowledge gaps.\nUsage: orient",

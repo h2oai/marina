@@ -111,6 +111,15 @@ export function bankrollCommand(deps: {
   const { db } = deps;
 
   return {
+    category: "Markets & Forecasting",
+    usage: [
+      "bankroll cap <usd>",
+      "bankroll floor <usd>",
+      "bankroll kelly <fraction>",
+      "bankroll reset",
+      "bankroll set <usd>",
+      "bankroll show",
+    ],
     name: "bankroll",
     aliases: [],
     minRank: 2, // anyone past tutorial can read; mutations gated inline

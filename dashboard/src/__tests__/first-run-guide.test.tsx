@@ -15,6 +15,7 @@ beforeEach(() => {
     entityName: null,
     connected: true,
     commandHistory: [],
+    orientation: null,
   });
 });
 
@@ -35,9 +36,9 @@ describe("FirstRunGuide", () => {
     const openKeys = vi.fn();
     render(<FirstRunGuide onFocusChat={() => {}} onOpenKeys={openKeys} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /look around/i }));
-    fireEvent.click(screen.getByRole("button", { name: /read your brief/i }));
-    fireEvent.click(screen.getByRole("button", { name: /find the next action/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^look$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^brief$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
 
     expect(sendCommand).toHaveBeenNthCalledWith(1, "look");
     expect(sendCommand).toHaveBeenNthCalledWith(2, "brief");

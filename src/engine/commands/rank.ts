@@ -14,6 +14,8 @@ interface RankDeps {
 
 export function rankCommand(deps: RankDeps): CommandDef {
   return {
+    category: "Identity & Access",
+    usage: ["rank", "rank <entity>", "rank <entity> <level>"],
     name: "rank",
     aliases: [],
     help: "Check your rank or set another entity's rank. Usage: rank [entity [level]]",

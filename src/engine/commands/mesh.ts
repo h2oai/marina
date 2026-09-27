@@ -24,6 +24,18 @@ export function meshCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
 }): CommandDef {
   return {
+    usage: [
+      "mesh create <stable-id> | <name> | <charter-ref> | <protocol>",
+      "mesh export <mesh> <event-id>",
+      "mesh join <mesh> [| disclosure JSON]",
+      "mesh leave <mesh> | <reason>",
+      "mesh list",
+      "mesh publish <mesh> | <kind> | <payload JSON or text> [| parent event ids csv]",
+      "mesh replicate <mesh> <event-token>",
+      "mesh show <mesh>",
+      "mesh translate <source> | <target> | <translator-ref> | <protocol-map JSON>",
+      "mesh witness <mesh> <event-id> <witnessed|replicated|disputed|unavailable>",
+    ],
     name: "mesh",
     aliases: ["meshes"],
     category: "Lineage",

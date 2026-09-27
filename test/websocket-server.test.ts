@@ -487,7 +487,7 @@ describe("WebSocket Server", () => {
     await waitFor((m) => m.length >= 4);
 
     ws.send(JSON.stringify({ type: "command", command: "north" }));
-    await waitFor((m) => m.length >= 5);
+    await waitFor((m) => m.some((raw) => String(parse(raw).data?.text).includes("Corridor")));
 
     const allText = messages.map((m) => parse(m).data?.text ?? "").join("\n");
     expect(allText).toContain("Corridor");

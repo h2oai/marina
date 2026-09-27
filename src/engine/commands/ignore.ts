@@ -9,6 +9,8 @@ export function ignoreCommand(deps: {
   findEntityGlobal: (name: string) => Entity | undefined;
 }): CommandDef {
   return {
+    category: "Identity & Access",
+    usage: ["ignore <name>", "ignore list", "ignore remove <name>"],
     name: "ignore",
     aliases: ["block"],
     help: "Ignore an entity. Usage: ignore <name> | ignore list | ignore remove <name>",

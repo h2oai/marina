@@ -15,6 +15,11 @@ export function genomeCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
 }): CommandDef {
   return {
+    usage: [
+      "genome create <world-template> | <components csv> | <compatibility csv> [| notes]",
+      "genome list",
+      "genome show <sha256:hash>",
+    ],
     name: "genome",
     aliases: ["genomes"],
     category: "Lineage",

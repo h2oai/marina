@@ -11,6 +11,20 @@ export function groupCommand(
   logEvent?: (event: EngineEvent) => void,
 ): CommandDef {
   return {
+    category: "Coordination",
+    usage: [
+      "group create <id> <name>",
+      "group demote <entity> <group>",
+      "group disband <name>",
+      "group info <name>",
+      "group invite <entity> <group>",
+      "group join <name>",
+      "group kick <entity> <group>",
+      "group leave <name>",
+      "group list",
+      "group list [args]",
+      "group promote <entity> <group>",
+    ],
     name: "group",
     aliases: ["team"],
     help: "Manage groups (auto-creates channel + board).\nUsage: group list|info|create|join|leave|invite|kick|promote|demote|disband\n\nExamples:\n  group create explorers Exploration Team\n  group join explorers\n  group invite Alice explorers\n  group info explorers",

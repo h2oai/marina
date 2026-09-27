@@ -1,6 +1,25 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type {
+  UnifiedContextItem,
+  UnifiedContextOptions,
+  UnifiedContextResult,
+  UnifiedDegraded,
+  UnifiedTier,
+  UnifiedTierResult,
+} from "../sdk/memory-context";
+
+export type {
+  UnifiedContextItem,
+  UnifiedContextOptions,
+  UnifiedContextResult,
+  UnifiedDegraded,
+  UnifiedScope,
+  UnifiedTier,
+  UnifiedTierResult,
+} from "../sdk/memory-context";
+
 /**
  * Unified memory context — ONE retrieval surface shared by every consumer.
  *
@@ -47,8 +66,6 @@ import { expandMemoryRecall } from "./retrieval";
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export const UNIFIED_CONTEXT_SCHEMA = "marina.memory.context.v1" as const;
-
-export type UnifiedTier = "skill" | "trusted" | "evidence" | "proposal" | "unverified";
 
 /** Fixed render order — trusted and durable evidence before own unverified notes. */
 export const UNIFIED_TIER_ORDER: readonly UnifiedTier[] = [
@@ -179,70 +196,6 @@ export function relevantToQuery(
 }
 
 const LEGACY_TIERS: readonly UnifiedTier[] = ["skill", "trusted", "unverified"];
-
-export interface UnifiedContextItem {
-  tier: UnifiedTier;
-  /** Legacy note id (`"12"`), durable record/source id, or assistance job id. */
-  id: string;
-  /** Rendered content — already truncated (with a visible marker) when `truncated`. */
-  content: string;
-  /** Human-readable origin: `#12 imp=6 verified`, `record r_1 v1`, `source s_1 sha256:…`. */
-  provenance: string;
-  /** UTF-8 bytes of `content` after truncation — what counted against the budget. */
-  bytes: number;
-  /** Ranking key within the tier (score desc, then id asc). */
-  score: number;
-  truncated?: boolean;
-  /** Structured origin details for machine consumers (record version, hash, citations…). */
-  meta?: Record<string, unknown>;
-}
-
-export interface UnifiedTierResult {
-  tier: UnifiedTier;
-  label: string;
-  items: UnifiedContextItem[];
-  /** Items that matched but were dropped for budget — the header still renders. */
-  omitted: number;
-}
-
-export interface UnifiedDegraded {
-  tier: UnifiedTier;
-  code: string;
-  message: string;
-}
-
-export interface UnifiedContextResult {
-  schema: typeof UNIFIED_CONTEXT_SCHEMA;
-  entity: string;
-  query: string;
-  scope: UnifiedScope;
-  budgetBytes: number;
-  usedBytes: number;
-  /** True when any item was cut or dropped for budget. Headers are never dropped silently. */
-  truncated: boolean;
-  /** All five tiers, in render order; empty tiers have `items: []`. */
-  tiers: UnifiedTierResult[];
-  degraded: UnifiedDegraded[];
-}
-
-export type UnifiedScope = "all" | "evidence" | "legacy";
-
-export interface UnifiedContextOptions {
-  /** Total content-byte budget across tiers. Default 2048 (prompt use). */
-  budgetBytes?: number;
-  /** Per-item cap before the global budget applies. Default 600. */
-  itemMaxBytes?: number;
-  /** `all` (default) · `evidence` (durable tiers only) · `legacy` (notes only). */
-  scope?: UnifiedScope;
-  /** Max items fetched per tier before budgeting. */
-  perTier?: Partial<Record<UnifiedTier, number>>;
-  /** Legacy recall weights (the `recall` command passes its intent-detected weights). */
-  weights?: { weightImportance: number; weightRecency: number; weightRelevance: number };
-  /** Restrict legacy note tiers to one note_type (mirrors `recall … type <t>`). */
-  noteType?: string;
-  /** Pay authors of cross-author reflection hits in the legacy tiers (default true). */
-  creditReflections?: boolean;
-}
 
 export const DEFAULT_UNIFIED_BUDGET_BYTES = 2048;
 const DEFAULT_ITEM_MAX_BYTES = 600;
@@ -762,9 +715,9 @@ function applyBudget(
 
 /**
  * Build the unified, budgeted memory context for `entityName` and `query`.
- * Legacy tiers are read straight from the DB (owner-scoped, pool-less, no
- * service-memory rows); durable tiers go through `residentMemoryOperation`
- * so identity binding is the server's, never the caller's claim.
+ * Compatibility note views retain their owner and tier semantics; native records
+ * use `residentMemoryOperation`. Both read canonical memory, with server-bound
+ * identity rather than a caller-supplied owner.
  */
 export async function buildUnifiedContext(
   db: MarinaDB,
@@ -796,7 +749,15 @@ export async function buildUnifiedContext(
       for (const tier of LEGACY_TIERS)
         for (const item of fetched[tier] ?? []) {
           const record = findDurableTwin(db, Number(item.id));
-          if (record) represented.add(record.recordId);
+          if (record) {
+            represented.add(record.recordId);
+            item.meta = {
+              ...item.meta,
+              record_id: record.recordId,
+              space_id: record.spaceId,
+              version: record.version,
+            };
+          }
         }
       const durable = await fetchDurable(
         db,

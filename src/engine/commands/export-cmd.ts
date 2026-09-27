@@ -9,6 +9,8 @@ export function exportCommand(
   getEntity: (id: string) => Entity | undefined,
 ): CommandDef {
   return {
+    category: "Knowledge",
+    usage: ["export <board> [json]"],
     name: "export",
     aliases: [],
     help: "Export board posts. Usage: export <board> [json]",

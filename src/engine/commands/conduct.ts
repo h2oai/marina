@@ -72,6 +72,20 @@ function fmtScore(name: string, score: Score): string {
 
 export function conductCommand(deps: ConductCommandDeps): CommandDef {
   return {
+    category: "Coordination",
+    usage: [
+      "conduct create <name> -- <json>",
+      "conduct fork <name> <newname>",
+      "conduct json <name>",
+      "conduct learned [category]",
+      "conduct list",
+      "conduct outcome <name> <0..1> [category=<c>] [-- <label>]",
+      "conduct ran <name> -- <summary>",
+      "conduct resolve <assignee>",
+      "conduct show <name>",
+      "conduct track <name> <sampleId> predict=<0..1> [category=<c>]",
+      "conduct validate -- <json>",
+    ],
     name: "conduct",
     aliases: [],
     minRank: 0,

@@ -20,6 +20,12 @@ export function marinaDescendCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
 }): CommandDef {
   return {
+    usage: [
+      "marina-descend create <genome-hash> | <name> | <parents csv> | <mode> | <hypothesis> [| mutations csv]",
+      "marina-descend list",
+      "marina-descend start <descendant-id>",
+      "marina-descend stop <descendant-id>",
+    ],
     name: "marina-descend",
     aliases: [],
     category: "Lineage",

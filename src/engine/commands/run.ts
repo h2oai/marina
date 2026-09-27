@@ -26,6 +26,8 @@ export interface RunDeps {
 
 export function runCommand(deps: RunDeps): CommandDef {
   return {
+    category: "Agents",
+    usage: ["run <binary> [args...]", "run quiet <binary> [args...]", "run raw <command string>"],
     name: "run",
     aliases: [],
     help: HELP,

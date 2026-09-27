@@ -105,7 +105,9 @@ export async function preparePassthru(
   const internal = isInternalCaller(authResult);
   const identity = maybePassthruIdentity(engine, req, authResult);
   if (!identity?.contextOptIn) return { identity, addendum: null, requestId, surface, internal };
-  const built = await buildInjectedContext(engine, identity.entityId, messages);
+  const built = await buildInjectedContext(engine, identity.entityId, messages, {
+    capabilities: req.headers.get("X-Marina-Capabilities") === "on",
+  });
   return {
     identity,
     addendum: built.systemAddendum,

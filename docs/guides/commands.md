@@ -834,3 +834,26 @@ and provenance. Promote a snapshot to the new default by restarting with
 > export channel ops                 Export channel data
 > quit                               Disconnect
 ```
+
+### Shared command discovery and context
+
+`help catalog` returns the current capability manifest, including aliases, categories,
+structured parameter forms, owning extension, revision, and execution requirements.
+The dashboard command palette, inline chat suggestions, and interactive CLI completion
+use this registry. Selection fills a draft; execution still checks current permissions.
+Commands without declared forms remain available through ordinary text input.
+
+`context <query>` previews your own memory context in the same provenance tiers used for
+agent retrieval. It does not award recall credit. In the dashboard, choose **Memory context**
+beside the chat input, or **Memory → Context preview**. Specify a query, scope, and content
+budget, then refresh. This is a current preview, not another participant's private memory
+or a historical model prompt. Correct records through the existing Memories view.
+
+MCP clients can use `capabilities` (optionally select a command), `invoke` (compose a declared
+form), and `context`. Existing named tools remain supported. Set `context` mode to `auto`
+with an explicit task query to receive fresh task context alongside subsequent results;
+`manual` retrieves on demand and `off` disables automatic delivery. Context delivered after
+an action can inform the next decision. It cannot explain an earlier action.
+You can also supply `task` and `contextMode` to MCP `login` or `auth` to receive initial
+task context before the first decision. Structured inspection remains read-only even
+inside a room that overrides an ordinary `help` or `context` command.

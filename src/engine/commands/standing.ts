@@ -24,6 +24,7 @@ function fmtAge(ms: number): string {
 
 export function standingCommand(deps: StandingDeps): CommandDef {
   return {
+    usage: ["standing", "standing show <name>", "standing top [N]"],
     name: "standing",
     aliases: [],
     category: "Civic",

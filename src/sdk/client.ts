@@ -1,8 +1,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { CapabilityManifest } from "./capabilities";
 import { type RunScoreDeps, runScore } from "./conduct";
 import { MemoryClientError } from "./memory-client";
+import type { UnifiedContextResult } from "./memory-context";
 import type { MemoryOperationRequest, MemoryOperationResult } from "./memory-operations";
 import type { EntityId, Perception, RoomId } from "./protocol";
 import type { Score } from "./score";
@@ -317,6 +319,107 @@ export class MarinaClient {
     });
   }
 
+  private capabilityCache?: { entityId: EntityId; manifest: CapabilityManifest };
+  /** Query the authenticated live command registry, including room overrides. */
+  capabilities(timeoutMs = 5000): Promise<CapabilityManifest> {
+    if (!this.session) return Promise.reject(new Error("Not connected."));
+    const entityId = this.session.entityId;
+    const request_id = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.removeInternalHandler(receive);
+        this.off("disconnect", disconnected);
+      };
+      const disconnected = () => {
+        cleanup();
+        reject(new Error("Disconnected during capability discovery."));
+      };
+      const receive = (p: Perception) => {
+        const result = p.data?.capabilities as
+          | (CapabilityManifest & { unchanged?: boolean; error?: string })
+          | undefined;
+        if (result?.request_id !== request_id) return;
+        cleanup();
+        if (this.session?.entityId !== entityId) reject(new Error("Participant changed."));
+        else if (result.error) reject(new Error(result.error));
+        else if (result.unchanged && this.capabilityCache?.entityId === entityId)
+          resolve(this.capabilityCache.manifest);
+        else {
+          this.capabilityCache = { entityId, manifest: result };
+          resolve(result);
+        }
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Capability discovery timed out."));
+      }, timeoutMs);
+      this.addInternalHandler(receive);
+      this.on("disconnect", disconnected);
+      try {
+        this.send({
+          type: "capabilities",
+          request_id,
+          capability_key:
+            this.capabilityCache?.entityId === entityId
+              ? this.capabilityCache.manifest.key
+              : undefined,
+        });
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    });
+  }
+
+  contextPreview(
+    query: string,
+    budgetBytes = 2048,
+    signal?: AbortSignal,
+  ): Promise<{ context: UnifiedContextResult; createdAt: number }> {
+    if (!this.session) return Promise.reject(new Error("Not connected."));
+    if (signal?.aborted) return Promise.reject(signal.reason);
+    const entityId = this.session.entityId;
+    const request_id = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.removeInternalHandler(receive);
+        this.off("disconnect", disconnected);
+        signal?.removeEventListener("abort", disconnected);
+      };
+      const disconnected = () => {
+        cleanup();
+        reject(new Error("Context inspection cancelled or disconnected."));
+      };
+      const receive = (p: Perception) => {
+        const result = p.data?.context_preview as
+          | {
+              request_id?: string;
+              error?: string;
+              context: UnifiedContextResult;
+              createdAt: number;
+            }
+          | undefined;
+        if (result?.request_id !== request_id) return;
+        cleanup();
+        if (this.session?.entityId !== entityId) reject(new Error("Participant changed."));
+        else if (result.error) reject(new Error(result.error));
+        else resolve(result);
+      };
+      const timer = setTimeout(disconnected, 15000);
+      this.addInternalHandler(receive);
+      this.on("disconnect", disconnected);
+      signal?.addEventListener("abort", disconnected, { once: true });
+      try {
+        this.send({ type: "context_preview", request_id, options: { query, budgetBytes } });
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    });
+  }
+
   /** Correlated service reply; independent of the short command perception-drain window. */
   memoryService(
     request: MemoryOperationRequest,
@@ -530,6 +633,12 @@ export class MarinaClient {
     for (const h of [...this.internalHandlers]) {
       h(p);
     }
+
+    if (
+      p.data?.capabilities ||
+      (p.data?.context_preview as { request_id?: string } | undefined)?.request_id
+    )
+      return;
 
     // Command resolvers (buffer perceptions for command responses)
     for (const resolver of this.commandResolvers) {

@@ -134,7 +134,7 @@ Compat profiles (`src/net/compat-profiles.ts`) are self-contained — they only 
 - `src/persistence/db-tasks.ts` — task CRUD, claims, bundles, standing, projects
 - `src/persistence/db-channels.ts` — channel management, boards, groups, global search
 - `src/persistence/db-agents.ts` — traits, roles, agent configs, API keys, adapters
-- `src/net/mcp-server.ts` — MCP server with 30 tools, rate-limited via `runCmd()` wrapper
+- `src/net/mcp-server.ts` — MCP compatibility tools plus live `capabilities`/`invoke` and task-aware `context`, rate-limited via `runCmd()` wrapper
 - `src/net/model-api.ts` — model-API entry: auth, rate limit, path dispatch + stable re-exports; surfaces live in `src/net/model-api/` behind a strict import DAG rooted at `shared.ts` (`upstream`, `anthropic-bridge`, `routing`, `passthru`, `responses-sse`, `chat-completions`, `responses`, `ollama`, `models`) — see docs/architecture/passthru.md → "Source layout"
 - `src/net/dashboard-api.ts` — dashboard REST entry: auth gate, per-principal limiter, ordered route dispatch, stable re-exports. Route groups live in `src/net/dashboard-api/*` (`shared` DAG root, `command` pre-auth ingress, `system`, `traces`, `readiness`, `ops`, `memory`, `agents`, `keys`, `world`) — dispatch ORDER is load-bearing; see docs/architecture/dashboard.md → "Dashboard API source layout"
 - `src/agent/tools/index.ts` — agent tool entry: re-exports only. Tools live in `src/agent/tools/*` (`shared` DAG root, `command`, `world`, `code`, `media`, `memory`, `memory-service`, `memory-assistance`, `think`, `evolution`, `profiles`); `profiles.ts` owns the resident/deferred split, `marina_tool_search`, execution modes and strict schemas. Schema bytes per profile are byte-identical to the pre-split monolith.

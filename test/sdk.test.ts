@@ -44,11 +44,41 @@ describe("MarinaClient SDK", () => {
   });
 
   afterEach(async () => {
-    wsServer.stop();
-    await Bun.sleep(50); // Let WS close events drain
+    await wsServer.stop();
     engine.stop();
     db.close();
     cleanupDb(dbPath);
+  });
+
+  it("refreshes live capabilities and inspects context without polluting world perceptions", async () => {
+    const client = new MarinaClient(TEST_URL, { autoReconnect: false });
+    await client.connect("ManifestSDK");
+    const observed: unknown[] = [];
+    client.onPerception((p) => {
+      if (p.data?.capabilities || p.data?.context_preview) observed.push(p);
+    });
+    const before = await client.capabilities();
+    expect(before.commands.some((command) => command.name === "context")).toBe(true);
+    expect(await client.capabilities()).toBe(before);
+    engine.commands.registerOwned("sdk-test", {
+      name: "fresh-command",
+      help: "New command",
+      category: "Extensions",
+      handler: () => {},
+    });
+    expect(
+      (await client.capabilities()).commands.some((command) => command.name === "fresh-command"),
+    ).toBe(true);
+    engine.commands.removeOwner("sdk-test");
+    expect(
+      (await client.capabilities()).commands.some((command) => command.name === "fresh-command"),
+    ).toBe(false);
+    db.createNote("ManifestSDK", "quartz SDK evidence", roomId("test/start"));
+    const preview = await client.contextPreview("quartz");
+    expect(preview.context.entity).toBe("ManifestSDK");
+    expect(JSON.stringify(preview.context)).toContain("quartz SDK evidence");
+    expect(observed).toEqual([]);
+    client.disconnect();
   });
 
   it("should connect and login", async () => {
@@ -169,9 +199,9 @@ describe("MarinaAgent SDK", () => {
     engine.start();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await wsServer.stop();
     engine.stop();
-    wsServer.stop();
     db.close();
     cleanupDb(dbPath);
   });

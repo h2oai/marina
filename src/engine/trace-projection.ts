@@ -153,6 +153,7 @@ export function projectTraces(events: readonly EngineEvent[]): TraceView[] {
                 // Prompt-budget metrics of the turn (sizes only, never text).
                 // `promptSections` is compact JSON — attributes are scalar —
                 // parsed back by `promptTurnSampleFromSpan` (trace-analytics).
+                ...(event.memoryReceipt ? { memoryReceipt: event.memoryReceipt } : {}),
                 ...(event.promptBytes === undefined ? {} : { promptBytes: event.promptBytes }),
                 ...(event.systemPromptBytes === undefined
                   ? {}

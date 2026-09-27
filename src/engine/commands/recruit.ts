@@ -104,6 +104,13 @@ export function scoreRecruitCandidate(
 
 export function recruitCommand(deps: RecruitCommandDeps): CommandDef {
   return {
+    category: "Coordination",
+    usage: [
+      "recruit <a,b,c> into <crew> [role=<r>]",
+      "recruit available [role=<r>]",
+      "recruit best into <crew> for <goal> [count=N]",
+      "recruit match <goal> [limit=N]",
+    ],
     name: "recruit",
     aliases: [],
     minRank: 0,

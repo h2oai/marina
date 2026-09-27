@@ -27,6 +27,8 @@ export function feedCommand(deps: {
   db?: MarinaDB;
 }): CommandDef {
   return {
+    category: "Knowledge",
+    usage: ["feed", "feed kinds", "feed list [kind:X] [entity:Y] [since:30m|1h|2d] [limit:20]"],
     name: "feed",
     aliases: [],
     help: HELP,

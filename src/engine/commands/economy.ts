@@ -22,6 +22,13 @@ export function economyCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
 }): CommandDef {
   return {
+    usage: [
+      "economy adapter <id> | <kind> | <network> | <reference|observe|submit> [| endpoint-ref] [| configuration-ref]",
+      "economy contract <goal-ref> | <terms JSON> | <verification method> | <dispute method> [| adapter] [| asset-ref]",
+      "economy event <contract> <kind> | <actor-ref> | <subject-ref> | <amount> | <asset-ref> | <external-tx-ref> | <causal refs csv> | <data JSON>",
+      "economy list",
+      "economy show <contract>",
+    ],
     name: "economy",
     aliases: [],
     category: "Lineage",

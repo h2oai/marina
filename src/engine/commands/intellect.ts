@@ -26,6 +26,14 @@ export function intellectCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
 }): CommandDef {
   return {
+    usage: [
+      "intellect create <name> | <purpose> [| contributor-ids]",
+      "intellect descend <parent> <name> | <purpose>",
+      "intellect event <intellect> <kind> | <detail>",
+      "intellect instance <intellect> | <principal-id> | <model-ref> | <harness-ref> | <environment-ref>",
+      "intellect list",
+      "intellect show <id>",
+    ],
     name: "intellect",
     aliases: ["intellects"],
     category: "Lineage",

@@ -19,6 +19,13 @@ export function mutationCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
 }): CommandDef {
   return {
+    usage: [
+      "mutation genome <parent-genome-hash> | <summary> | <patch JSON> [| evidence refs csv]",
+      "mutation lineage <domain> <target-ref>",
+      "mutation list [domain]",
+      "mutation record <domain> <target-ref> | <disposition> | <summary> | <patch JSON> [| parent mutation ids csv] [| evidence refs csv] [| descendant-ref]",
+      "mutation show <id>",
+    ],
     name: "mutation",
     aliases: ["mutations"],
     category: "Lineage",

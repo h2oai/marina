@@ -7,6 +7,11 @@ import { sendMediaJobStatus } from "./image";
 
 export function videoCommand(_engine: Engine): CommandDef {
   return {
+    category: "Canvas & Media",
+    usage: [
+      "video generate <prompt...>",
+      "video generate <prompt...> [--model provider/model] [--duration <s>] [--fps <frames>] [--reference <asset>] [--canvas <name>]",
+    ],
     name: "video",
     help: "Generate videos. Usage: video generate <prompt...> [--model provider/model] [--duration <s>] [--fps <frames>] [--reference <asset>] [--canvas <name>]",
     handler: async (ctx, input) => {

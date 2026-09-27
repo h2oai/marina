@@ -9,6 +9,8 @@ export function shoutCommand(deps: {
   broadcastAll: (senderId: EntityId, message: string, tag?: string) => void;
 }): CommandDef {
   return {
+    category: "Communication",
+    usage: ["shout <message>"],
     name: "shout",
     aliases: ["yell"],
     help: "Shout a message to all entities on the server. Usage: shout <message>",

@@ -33,6 +33,8 @@ export function guideCommand(deps: {
   getCommandNames?: () => string[];
 }): CommandDef {
   return {
+    category: "Information",
+    usage: ["guide", "guide <topic>", "guide audit", "guide list", "guide recall <topic>"],
     name: "guide",
     aliases: [],
     minRank: 0,

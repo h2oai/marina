@@ -127,6 +127,26 @@ function fmtCrewLine(crew: Crew): string {
 
 export function crewCommand(deps: CrewCommandDeps): CommandDef {
   return {
+    category: "Coordination",
+    usage: [
+      "crew artifact <name> <kind> -- <ref>",
+      "crew artifact <name> <map|reduce|synthesis|draft> -- <ref>",
+      "crew complete <name> -- <summary>",
+      "crew create <name> ..",
+      "crew create <name> <a,b,c> [formation:<f>] [persist] -- <goal>",
+      "crew decline <name>",
+      "crew dispatch <name> <message>",
+      "crew dissolve <name> [reason]",
+      "crew formation <name> <formation>",
+      "crew info <name>",
+      "crew invitations",
+      "crew invite <name> <agent> [role:<r>]",
+      "crew join <name>",
+      "crew leave <name>",
+      "crew persist <name>",
+      "crew stage <name> <stage>",
+      "crew stall <name> <agent> [reason]",
+    ],
     name: "crew",
     aliases: [],
     minRank: 0,

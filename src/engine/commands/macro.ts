@@ -8,6 +8,8 @@ import type { CommandRouter } from "../command-router";
 
 export function macroCommand(macros: MacroManager, router: CommandRouter): CommandDef {
   return {
+    category: "Coordination",
+    usage: ["macro create <name> <command>", "macro delete <name>", "macro list"],
     name: "macro",
     aliases: [],
     help: "Manage macros. Usage: macro list | macro create <name> <command> | macro delete <name>",

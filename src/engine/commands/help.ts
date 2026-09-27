@@ -2,105 +2,49 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { bold, category, dim, rank as fmtRank, header, separator } from "../../net/ansi";
+import type { CommandCatalogEntry } from "../../net/discovery-types";
 import type { CommandDef, EntityId, RoomContext } from "../../types";
+import { describeCommand } from "../command-manifest";
 
-// Name→category map for `help` grouping. A command's own `category` field
-// (CommandDef.category) wins over this map; this is the fallback for the
-// built-ins that don't set one. EVERY registered command must resolve to a
-// real category here or via its field — the help-coverage test
-// (test/help-coverage.test.ts) fails on any command that lands in "Other",
-// so adding a new primitive forces a categorization decision.
-//
-// Object insertion order is the display order in the rendered list.
-export const COMMAND_CATEGORIES: Record<string, string[]> = {
-  Navigation: ["look", "move", "ls", "goto", "map"],
-  Communication: ["say", "shout", "tell", "re", "emote"],
-  Objects: ["get", "drop", "give", "inventory"],
-  Information: ["who", "score", "help", "brief", "next", "web", "guide"],
-  "Identity & Access": ["ignore", "rank", "quest", "link", "role", "trait", "system-prompt"],
-  // One Memory category — the same six verbs the system prompt's MEMORY
-  // contract and the COMMAND_ROSTER teach (note/recall/reflect/memory/pool/
-  // skill) plus the health and session-close views. Keep the three surfaces
-  // in step (test/memory-contract.test.ts).
-  Memory: ["note", "recall", "reflect", "memory", "pool", "skill", "orient", "debrief", "recap"],
-  Knowledge: ["feed", "chronicle", "search", "bookmark", "export"],
-  Cognition: ["novelty", "ask", "dig"],
-  Growth: ["evolve", "benchmark"],
-  Lineage: [
-    "genome",
-    "intellect",
-    "mutation",
-    "reproduce",
-    "marina-descend",
-    "association",
-    "mesh",
-    "economy",
-  ],
-  "Markets & Forecasting": [
-    "market",
-    "scenario",
-    "bankroll",
-    "position",
-    "probe",
-    "watch",
-    "arena",
-    "forecast",
-  ],
-  Experiments: ["experiment", "observe", "lab"],
-  Coordination: [
-    "channel",
-    "board",
-    "group",
-    "task",
-    "macro",
-    "project",
-    "crew",
-    "recruit",
-    "conduct",
-    "share",
-    "usecase",
-  ],
-  Civic: ["witness", "standing"],
-  "Canvas & Media": ["canvas", "image", "video"],
-  Agents: ["agent", "run", "decision"],
-  Building: ["build", "connect"],
-  Federation: ["gateway"],
-  "Admin & Security": ["admin", "key", "adapter"],
-  System: [
-    "readiness",
-    "demo",
-    "ops",
-    "calc",
-    "time",
-    "uptime",
-    "source",
-    "quit",
-    "batch",
-    "shell",
-  ],
-};
+export const CATEGORY_ORDER = [
+  "Navigation",
+  "Communication",
+  "Information",
+  "Canvas & Media",
+  "Objects",
+  "System",
+  "Identity & Access",
+  "Memory",
+  "Knowledge",
+  "Lineage",
+  "Experiments",
+  "Cognition",
+  "Markets & Forecasting",
+  "Growth",
+  "Coordination",
+  "Civic",
+  "Agents",
+  "Building",
+  "Federation",
+  "Admin & Security",
+];
 
 /** `help <cmd>` shows at most this many lines when the text has no `Usage:` marker. */
 export const HELP_PREVIEW_LINES = 25;
 
 /**
  * Resolve a command's display category. Prefers the command's own `category`
- * field, then the name→category map, then "Other" (which the coverage test
+ * field, then "Other" (which the coverage test
  * forbids for any registered command).
  */
 export function categorizeCommand(cmd: CommandDef): string {
-  if (cmd.category) return cmd.category;
-  for (const [cat, names] of Object.entries(COMMAND_CATEGORIES)) {
-    if (names.includes(cmd.name)) return cat;
-  }
-  return "Other";
+  return cmd.category ?? "Other";
 }
 
 /**
  * Resolve a user token to a category name: exact case-insensitive match first,
  * then a UNIQUE case-insensitive prefix ("nav" → Navigation; "c" is ambiguous
- * and resolves to nothing). `categories` defaults to the known map plus any
- * categories the given commands declared via their own `category` field.
+ * and resolves to nothing). Callers supply the live commands' categories.
  */
 export function resolveCategory(token: string, categories: string[]): string | undefined {
   const t = token.trim().toLowerCase();
@@ -138,13 +82,27 @@ export function usageExcerpt(help: string): { text: string; truncated: boolean }
 export function helpCommand(
   getAllCommands: () => CommandDef[],
   getEntityRank: (id: string) => number,
+  getCatalog?: (id: EntityId) => CommandCatalogEntry[],
 ): CommandDef {
   return {
+    category: "Information",
+    usage: ["help", "help <category>", "help <command> [full]", "help all", "help catalog"],
     name: "help",
     aliases: ["?", "commands"],
     help: "Show available commands. Usage: help [<command> [full] | <category> | all]",
     handler: (ctx: RoomContext, input) => {
       const all = getAllCommands();
+      if (input.tokens[0] === "catalog") {
+        const commands = getCatalog?.(input.entity) ?? all.map(describeCommand);
+        const capabilities = {
+          schema: "marina.capabilities.v1",
+          revision: commands[0]?.revision ?? 0,
+          commands,
+          request_id: input.tokens[1],
+        };
+        ctx.send(input.entity, JSON.stringify(capabilities), "capabilities", { capabilities });
+        return;
+      }
       const entityRank = getEntityRank(input.entity);
       const visible = all.filter((cmd) => (cmd.minRank ?? 0) <= entityRank);
 
@@ -188,7 +146,7 @@ export function helpCommand(
 
 /** Known categories (map order) plus any a command declared itself, sorted. */
 function allCategories(cmds: CommandDef[]): string[] {
-  const known = Object.keys(COMMAND_CATEGORIES);
+  const known = CATEGORY_ORDER;
   const extra = [...new Set(cmds.map(categorizeCommand))]
     .filter((c) => c !== "Other" && !known.includes(c))
     .sort();
@@ -207,7 +165,7 @@ function groupByCategory(cmds: CommandDef[]): Map<string, CommandDef[]> {
 
 /** Display order: known categories first, self-declared extras, "Other" last. */
 function categoryOrder(grouped: Map<string, CommandDef[]>): string[] {
-  const known = Object.keys(COMMAND_CATEGORIES);
+  const known = CATEGORY_ORDER;
   const extra = [...grouped.keys()].filter((c) => c !== "Other" && !known.includes(c)).sort();
   return [...known, ...extra, "Other"];
 }
@@ -277,6 +235,15 @@ function renderCommandDetail(
     const { text, truncated } = usageExcerpt(cmd.help);
     lines.push(text);
     if (truncated) lines.push(dim(`Type "help ${cmd.name} full" for the complete text.`));
+  }
+  const forms = describeCommand(cmd).forms ?? [];
+  if (forms.length) {
+    lines.push(
+      "Forms:",
+      ...forms.slice(0, full ? forms.length : 8).map((form) => `  ${form.syntax}`),
+    );
+    if (!full && forms.length > 8)
+      lines.push(dim(`Type "help ${cmd.name} full" for all ${forms.length} forms.`));
   }
   // The token also named a category (e.g. `memory`): the command wins, but say so.
   if (sameNamedCategory) {

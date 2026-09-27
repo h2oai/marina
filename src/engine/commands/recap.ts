@@ -53,6 +53,8 @@ export function recapCommand(deps: {
   db?: MarinaDB;
 }): CommandDef {
   return {
+    category: "Memory",
+    usage: ["recap <topic>", "recap chronicle", "recap chronicle day", "recap chronicle week"],
     name: "recap",
     aliases: [],
     help: HELP,

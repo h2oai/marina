@@ -3,7 +3,7 @@
 
 /**
  * The continuation prompt's §4 "Relevant Memory" section renders the unified
- * context the server returns for `recall <focus> all` — skills as <example>
+ * context the server returns for the participant context preview — skills as <example>
  * blocks, then `[trusted]`, `[evidence]`, `[proposal]`, and `[unverified — own
  * notes, verify before relying]`, in that order, budgeted server-side.
  *
@@ -20,6 +20,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   LeanAgentAdapter,
+  PromptSections,
   RELEVANT_NOTES_TRUSTED_LABEL,
   RELEVANT_NOTES_UNVERIFIED_LABEL,
   renderRelevantNoteTiers,
@@ -41,11 +42,11 @@ const FOCUS = "deploy the pipeline";
 
 type AdapterInternals = {
   buildContinuationPrompt(): Promise<string>;
+  finishPrompt(parts: PromptSections): string;
+  pendingPromptMetrics?: { memoryReceipt?: string };
   focus: { description: string; startedAt: number } | null;
   platformMemory: PlatformMemoryBackend;
   currentTrustSources: Set<string>;
-  lastNotesQuery: string;
-  notesCacheAge: number;
 };
 
 function note(id: string, content: string, importance = 5): PlatformNoteResult {
@@ -91,7 +92,7 @@ function unified(
  * Adapter with focus set and the memory backend stubbed. `context` is what
  * `unifiedContext` returns (null → legacy fallback path using `search` /
  * `searchSkills`). Records every call so tests can assert which path ran and
- * that the cache short-circuits re-queries.
+ * that each build reauthorizes retrieval.
  */
 function makeFocusedAdapter(
   name: string,
@@ -165,6 +166,29 @@ describe("renderRelevantNoteTiers (legacy fallback renderer)", () => {
 });
 
 describe("continuation prompt — unified Relevant Memory (§4)", () => {
+  it("records delivered references, but does not issue a receipt for deferred memory", async () => {
+    const payload = unified([
+      {
+        tier: "evidence",
+        id: "record_42",
+        content: "deploy using release branch",
+        meta: { version: 3 },
+      },
+    ]);
+    const { internals } = makeFocusedAdapter("receipt-admission", payload);
+    const prompt = await internals.buildContinuationPrompt();
+    expect(prompt).toContain("deploy using release branch");
+    const receipt = JSON.parse(internals.pendingPromptMetrics!.memoryReceipt!);
+    expect(receipt).toMatchObject({ budgetScope: "content", entity: "tester" });
+    expect(receipt.tiers.find((tier: { tier: string }) => tier.tier === "evidence").ids).toEqual([
+      { id: "record_42", version: 3 },
+    ]);
+    const overflow = new PromptSections();
+    overflow.push("oversized memory ".repeat(10000), 70, "relevant_notes");
+    expect(internals.finishPrompt(overflow)).not.toContain("oversized memory");
+    expect(internals.pendingPromptMetrics?.memoryReceipt).toBeUndefined();
+  });
+
   it("renders all five tier labels, in order, from the server payload — without legacy recalls", async () => {
     const payload = unified([
       {
@@ -252,15 +276,13 @@ describe("continuation prompt — unified Relevant Memory (§4)", () => {
     expect(prompt).not.toContain(RELEVANT_NOTES_TRUSTED_LABEL);
   });
 
-  it("caches per focus query — a second build with the same focus does not re-query", async () => {
+  it("reauthorizes context on every build, including an unchanged focus", async () => {
     const payload = unified([{ tier: "unverified", id: "41", content: "plain" }]);
     const { internals, unifiedCalls } = makeFocusedAdapter("relevant-cache", payload);
     await internals.buildContinuationPrompt();
     expect(unifiedCalls).toHaveLength(1);
     await internals.buildContinuationPrompt();
-    expect(unifiedCalls).toHaveLength(1);
-    expect(internals.lastNotesQuery).toBe(FOCUS);
-    expect(internals.notesCacheAge).toBe(1);
+    expect(unifiedCalls).toHaveLength(2);
   });
 
   it("omits the section entirely when the unified payload has nothing to show", async () => {

@@ -176,6 +176,10 @@ export class PlatformMemoryBackend {
     query: string,
     budgetBytes?: number,
   ): Promise<{ success: boolean; text: string; context: UnifiedContextResult | null }> {
+    if (typeof this.client.contextPreview === "function") {
+      const result = await this.client.contextPreview(query, budgetBytes);
+      return { success: true, text: "", context: result.context };
+    }
     let cmd = `recall ${query} all`;
     if (budgetBytes && Number.isFinite(budgetBytes)) cmd += ` budget ${Math.floor(budgetBytes)}`;
     const perceptions = await this.client.command(cmd);

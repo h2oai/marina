@@ -114,9 +114,19 @@ describe("WebSocket Integration", () => {
   it("should process commands via WebSocket", async () => {
     const { ws, messages } = collect(`ws://localhost:${WS_PORT}/ws`, "CmdBot");
     // Now send a command (after system + look + brief messages)
-    await until(() => messages.length >= 4, { timeoutMs: 2000 });
+    await until(() => messages.some((raw) => JSON.parse(raw).data?.onboarding), {
+      timeoutMs: 2000,
+    });
     ws.send(JSON.stringify({ type: "command", command: "who" }));
-    await until(() => messages.length >= 5, { timeoutMs: 2000 });
+    await until(
+      () =>
+        messages.some(
+          (raw) =>
+            String(JSON.parse(raw).data?.text).includes("CmdBot") &&
+            !String(JSON.parse(raw).data?.text).startsWith("Logged in"),
+        ),
+      { timeoutMs: 2000 },
+    );
 
     expect(messages.length).toBeGreaterThanOrEqual(5);
     const whoMsg = JSON.parse(messages[messages.length - 1]!);
@@ -128,9 +138,14 @@ describe("WebSocket Integration", () => {
 
   it("should handle movement via WebSocket", async () => {
     const { ws, messages } = collect(`ws://localhost:${WS_PORT}/ws`, "MoveBot");
-    await until(() => messages.length >= 4, { timeoutMs: 2000 });
+    await until(() => messages.some((raw) => JSON.parse(raw).data?.onboarding), {
+      timeoutMs: 2000,
+    });
     ws.send(JSON.stringify({ type: "command", command: "north" }));
-    await until(() => messages.length >= 5, { timeoutMs: 2000 });
+    await until(
+      () => messages.some((raw) => String(JSON.parse(raw).data?.text).includes("Northern Room")),
+      { timeoutMs: 2000 },
+    );
 
     // After moving north, should receive the northern room description
     const allText = messages.map((m) => JSON.parse(m).data?.text ?? "").join("\n");

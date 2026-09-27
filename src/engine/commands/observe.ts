@@ -15,6 +15,8 @@ export function observeCommand(deps: {
   getEventLog: () => { type: string; entity?: EntityId; input?: string; timestamp: number }[];
 }): CommandDef {
   return {
+    category: "Experiments",
+    usage: ["observe <entity>", "observe log <entity>", "observe stats"],
     name: "observe",
     aliases: [],
     help: "Observe agents. Usage: observe <entity> (rank 3+) | observe stats (rank 2+) | observe log <entity> (rank 7+)",

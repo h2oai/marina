@@ -255,6 +255,15 @@ export function reflectCommand(deps: {
   spawnHelper?: (role: string, requestedBy: string) => Promise<SpawnedHelper | undefined>;
 }): CommandDef {
   return {
+    category: "Memory",
+    usage: [
+      "reflect --template [topic] [--share <pool>]",
+      "reflect [topic] [--share <pool>] [--no-spawn]",
+      "reflect adopt <job-id>",
+      "reflect failure <description> [--share <pool>]",
+      "reflect jobs",
+      "reflect via <helper> [topic] [--share <pool>]",
+    ],
     name: "reflect",
     aliases: [],
     help: "Reflect on your notes. Usage: reflect [topic] (files a cited job with a memory-reflector when one is available, else the deterministic template) | reflect via <helper> [topic] | reflect --template [topic] | reflect adopt <job> | reflect jobs | reflect failure <description>. Add --share <pool> to also deposit the lesson into a shared pool as a reflection (authors earn standing when others recall it). Add --no-spawn to use a running helper if there is one but never spawn a new one (session-end reflections).",

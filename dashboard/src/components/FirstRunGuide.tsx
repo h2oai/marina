@@ -4,12 +4,12 @@
 import { Check, ChevronRight, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
+import { ORIENTATION_COMMANDS } from "../../../src/sdk/onboarding";
 import { useChatState } from "../hooks/use-chat-state";
 
 import { QuestProgressCard } from "./QuestProgressCard";
 
 const STORAGE_KEY = "marina:first-run-guide:v2";
-const ORIENTATION_COMMANDS = ["look", "brief", "next"] as const;
 
 function readDismissed(): boolean {
   try {
@@ -25,6 +25,7 @@ export interface FirstRunGuideProps {
 }
 
 export function FirstRunGuide({ onFocusChat, onOpenKeys }: FirstRunGuideProps) {
+  const orientation = useChatState((state) => state.orientation);
   const loggedIn = useChatState((state) => state.loggedIn);
   const entityName = useChatState((state) => state.entityName);
   const commandHistory = useChatState((state) => state.commandHistory);
@@ -41,11 +42,6 @@ export function FirstRunGuide({ onFocusChat, onOpenKeys }: FirstRunGuideProps) {
       // Storage can be unavailable in private browsing; closing still works.
     }
     setOpen(false);
-  };
-
-  const run = (command: (typeof ORIENTATION_COMMANDS)[number]) => {
-    onFocusChat();
-    sendCommand(command);
   };
 
   const beginJourney = () => {
@@ -133,24 +129,24 @@ export function FirstRunGuide({ onFocusChat, onOpenKeys }: FirstRunGuideProps) {
                   EXPLORE MARINA
                 </div>
                 <div className="grid gap-1.5">
-                  <GuideButton
-                    label="Look around"
-                    detail="See your room, neighbors, and exits"
-                    sent={commandsSent.includes("look")}
-                    onClick={() => run("look")}
-                  />
-                  <GuideButton
-                    label="Read your brief"
-                    detail="See current context and available work"
-                    sent={commandsSent.includes("brief")}
-                    onClick={() => run("brief")}
-                  />
-                  <GuideButton
-                    label="Find the next action"
-                    detail="Ask Marina for one concrete next step"
-                    sent={commandsSent.includes("next")}
-                    onClick={() => run("next")}
-                  />
+                  {(
+                    orientation?.actions ??
+                    ORIENTATION_COMMANDS.map((command) => ({
+                      command,
+                      description: `Run ${command} for orientation`,
+                    }))
+                  ).map((action) => (
+                    <GuideButton
+                      key={action.command}
+                      label={action.command}
+                      detail={action.description}
+                      sent={commandHistory.includes(action.command)}
+                      onClick={() => {
+                        onFocusChat();
+                        sendCommand(action.command);
+                      }}
+                    />
+                  ))}
                   <GuideButton
                     label="Connect an AI provider"
                     detail="Open Admin → Keys, choose a provider, and paste a key"
@@ -190,6 +186,8 @@ function GuideButton({
   return (
     <button
       type="button"
+      aria-label={label}
+      aria-description={detail}
       onClick={onClick}
       className="flex w-full items-center gap-2 rounded border border-primary/30 bg-primary/5 px-2.5 py-2 text-left hover:border-primary/70 hover:bg-primary/10"
     >

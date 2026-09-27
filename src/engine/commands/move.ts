@@ -14,6 +14,8 @@ export function moveCommand(deps: {
   sendLook: (entity: EntityId) => void;
 }): CommandDef {
   return {
+    category: "Navigation",
+    usage: ["move <direction>"],
     name: "move",
     aliases: [
       "go",

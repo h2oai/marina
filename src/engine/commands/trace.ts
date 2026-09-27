@@ -60,6 +60,22 @@ export function traceCommand(deps: {
   };
 
   return {
+    usage: [
+      "trace [list] [limit]",
+      "trace advise <models|routes|autonomous|tools> [limit]",
+      "trace choose <models|routes|autonomous|tools> <eligible-candidate...>",
+      "trace choose <models|routes|autonomous|tools> <eligible...>",
+      "trace compare <models|routes> [limit]",
+      "trace dataset [limit]",
+      "trace dataset verify [limit]",
+      "trace eval <id>",
+      "trace find [status=...] [model=...] [agent=...] [tool=...] [q=...] [since=...] [until=...] [limit=20] [cursor=...]",
+      "trace judge <id> <passed|failed|inconclusive> <criterion> | <rationale>",
+      "trace judgments <id>",
+      "trace otel",
+      "trace show <id>",
+      "trace stats [limit]",
+    ],
     name: "trace",
     aliases: ["traces"],
     category: "Information",

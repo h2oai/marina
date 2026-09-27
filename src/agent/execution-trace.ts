@@ -33,6 +33,8 @@ export interface PromptSectionMetric {
  * so cost can be split between the stable prefix and the volatile sections.
  */
 export interface PromptMetrics {
+  /** Actual newly admitted memory references; never reconstructed from a later query. */
+  memoryReceipt?: string;
   promptBytes: number;
   promptSections: PromptSectionMetric[];
   systemPromptBytes?: number;
@@ -122,6 +124,7 @@ export class AgentExecutionTracer {
 function promptMetricFields(prompt: PromptMetrics): PromptMetrics {
   return {
     promptBytes: prompt.promptBytes,
+    ...(prompt.memoryReceipt ? { memoryReceipt: prompt.memoryReceipt } : {}),
     promptSections: prompt.promptSections.map((s) => ({ ...s })),
     ...(prompt.systemPromptBytes === undefined
       ? {}

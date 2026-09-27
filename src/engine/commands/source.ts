@@ -26,6 +26,8 @@ function numberLines(source: string): string {
 
 export function sourceCommand(deps: SourceDeps): CommandDef {
   return {
+    category: "System",
+    usage: ["source [here|room/id]", "source command <name>", "source connector <name>"],
     name: "source",
     aliases: [],
     help: "View source code. Usage: source [here|room/id] | source command <name> | source connector <name>",

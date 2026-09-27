@@ -84,6 +84,20 @@ export function experimentCommand(deps: {
   db?: MarinaDB;
 }): CommandDef {
   return {
+    category: "Experiments",
+    usage: [
+      "experiment",
+      "experiment complete <name>",
+      "experiment create <name> [arms A,B,...] [metric <name>] [goal higher|lower]",
+      "experiment create <name> [arms A,B,...] [metric <name>] [goal higher|lower] [agents] [time]",
+      "experiment join <name>",
+      "experiment list",
+      "experiment record <name> <arm> <metric> <value>",
+      "experiment record <name> <metric> <value>",
+      "experiment results <name>",
+      "experiment start <name>",
+      "experiment status <name>",
+    ],
     name: "experiment",
     aliases: ["exp"],
     help: `Run a controlled A/B comparison — define arms, record metrics per arm, get a ranked winner.

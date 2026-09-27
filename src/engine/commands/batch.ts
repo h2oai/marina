@@ -13,6 +13,8 @@ export function batchCommand(deps: {
   checkRateLimit?: (entityId: EntityId) => boolean;
 }): CommandDef {
   return {
+    category: "System",
+    usage: ["batch <commands>"],
     name: "batch",
     aliases: [],
     help: "Execute multiple commands in sequence, separated by semicolons.\nUsage: batch look ; north ; look ; note Found something\n\nUp to 20 commands per batch. Each subcommand consumes one rate-limit token.",

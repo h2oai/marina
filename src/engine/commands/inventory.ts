@@ -6,6 +6,8 @@ import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
 
 export function inventoryCommand(getEntity: (id: EntityId) => Entity | undefined): CommandDef {
   return {
+    category: "Objects",
+    usage: ["inventory"],
     name: "inventory",
     aliases: ["i", "inv"],
     help: "View what you are carrying.",

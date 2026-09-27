@@ -103,7 +103,8 @@
   <button id="login-btn" type="button">Connect</button>
 </div>
 <div id="input-area" style="display: none;">
-  <input id="input" type="text" placeholder="Type a command..." >
+  <datalist id="command-options"></datalist>
+  <input id="input" list="command-options" aria-label="World command" type="text" placeholder="Type a command..." >
   <button id="send" type="button">Send</button>
 </div>
 
@@ -147,6 +148,14 @@
   }
 
   function handlePerception(p) {
+    if (p.data?.capabilities) {
+      const list = document.getElementById('command-options');
+      list.replaceChildren(...p.data.capabilities.commands.flatMap((command) => [command.name, ...command.aliases].map((name) => {
+        const option = document.createElement('option'); option.value = name;
+        option.label = command.description || command.help.split('\n')[0]; return option;
+      })));
+      return;
+    }
     if (p.data?.token) {
       token = p.data.token;
       localStorage.setItem('marina_token', token);
@@ -156,6 +165,7 @@
       loginArea.style.display = 'none';
       inputArea.style.display = 'flex';
       input.focus();
+      ws.send(JSON.stringify({type: 'capabilities'}));
     }
 
     const kind = p.kind || 'message';
@@ -258,6 +268,7 @@
   loginBtn.onclick = doLogin;
   nameInput.onkeydown = (e) => { if (e.key === 'Enter') doLogin(); };
   sendBtn.onclick = sendCommand;
+  input.onfocus = () => {if (ws?.readyState === WebSocket.OPEN && loginArea.style.display === 'none') ws.send(JSON.stringify({type: 'capabilities'}));};
   input.onkeydown = (e) => {
     if (e.key === 'Enter') sendCommand();
     if (e.key === 'ArrowUp') {

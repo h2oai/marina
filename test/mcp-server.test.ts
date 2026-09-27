@@ -164,7 +164,9 @@ async function toolList(
 /** Extract text from a tool call response. */
 function extractText(response: unknown): string {
   return (
-    (response as { result?: { content?: { text: string }[] } })?.result?.content?.[0]?.text ?? ""
+    (response as { result?: { content?: { text: string }[] } })?.result?.content
+      ?.map((block) => block.text)
+      .join("\n\n") ?? ""
   );
 }
 
@@ -302,13 +304,121 @@ describe("MCP Server", () => {
     });
   });
 
+  describe("shared participation", () => {
+    it("delivers initial task context and keeps inspection independent of room overrides", async () => {
+      db.createNote("InitialBot", "quartz initial context", roomId("test/start"));
+      const sid = await initSession(url);
+      const login = await toolCallRaw(url, sid, "login", {
+        name: "InitialBot",
+        task: "quartz",
+        contextMode: "auto",
+      });
+      expect(login.structuredContent?.onboarding).toMatchObject({ schema: "marina.onboarding.v1" });
+      expect(login.text).toContain("quartz initial context");
+      const entity = engine.entities.findAgentByName("InitialBot")!;
+      let overrideCalls = 0;
+      engine.getEntityRoom(entity.id)!.module.commands = {
+        help: () => {
+          overrideCalls++;
+        },
+        context: () => {
+          overrideCalls++;
+        },
+      };
+      const catalog = await toolCallRaw(url, sid, "capabilities", { command: "say" });
+      expect(catalog.structuredContent?.commands).toHaveLength(1);
+      const preview = await toolCallRaw(url, sid, "context", { query: "quartz", mode: "auto" });
+      expect(preview.text).toContain("quartz initial context");
+      expect(await toolCall(url, sid, "context", { mode: "off" })).toContain(
+        "Automatic task context is off",
+      );
+      expect(overrideCalls).toBe(0);
+      await toolCall(url, sid, "command", { input: "context quartz" });
+      expect(overrideCalls).toBe(1);
+      engine.removeConnection(engine.getConnectionForEntity(entity.id)!.id, "explicit");
+      const expired = await toolCallRaw(url, sid, "look", {});
+      expect(expired.isError).toBe(true);
+      expect(expired.text).not.toContain("quartz initial context");
+    });
+
+    it("discovers and invokes a runtime form without a separate MCP registration", async () => {
+      const sid = await initSession(url);
+      await toolCall(url, sid, "login", { name: "ManifestBot" });
+      engine.commands.registerOwned("runtime-test", {
+        name: "runtime-check",
+        aliases: ["rtc"],
+        category: "Extensions",
+        help: "Check a bounded value.",
+        usage: [
+          {
+            syntax: "runtime-check <count>",
+            effect: "read",
+            fields: { count: { kind: "number", min: 1, max: 4 } },
+          },
+        ],
+        handler: (ctx, input) => ctx.send(input.entity, `count=${input.args}`),
+      });
+      const discovery = await toolCallRaw(url, sid, "capabilities", { command: "runtime-check" });
+      const commands = discovery.structuredContent?.commands as Array<{
+        forms: Array<{ syntax: string }>;
+      }>;
+      expect(commands).toHaveLength(1);
+      const syntax = commands[0]!.forms[0]!.syntax;
+      expect(
+        (
+          await toolCallRaw(url, sid, "invoke", {
+            command: "runtime-check",
+            syntax,
+            values: { "field-0": 9 },
+          })
+        ).isError,
+      ).toBe(true);
+      expect(
+        await toolCall(url, sid, "invoke", {
+          command: "runtime-check",
+          syntax,
+          values: { "field-0": 2 },
+        }),
+      ).toContain("count=2");
+      engine.commands.removeOwner("runtime-test");
+      expect(
+        (
+          await toolCallRaw(url, sid, "invoke", {
+            command: "runtime-check",
+            syntax,
+            values: { "field-0": 2 },
+          })
+        ).isError,
+      ).toBe(true);
+    });
+    it("negotiates task context, refreshes after deletion, and preserves manual/off modes", async () => {
+      const sid = await initSession(url);
+      await toolCall(url, sid, "login", { name: "ContextBot" });
+      const own = db.createNote("ContextBot", "quartz personal evidence", roomId("test/start"));
+      db.createNote("SomeoneElse", "quartz foreign secret", roomId("test/start"));
+      const preview = await toolCallRaw(url, sid, "context", { query: "quartz", mode: "auto" });
+      expect(preview.structuredContent?.context).toBeDefined();
+      expect(preview.text).toContain("personal evidence");
+      expect(preview.text).not.toContain("foreign secret");
+      const enriched = await toolCall(url, sid, "look", {});
+      expect(enriched).toContain("Task memory context for your next decision");
+      expect(enriched).toContain("marina.memory.receipt.v1");
+      expect(enriched).toContain("personal evidence");
+      db.deleteNote(own, "ContextBot");
+      const refreshed = await toolCall(url, sid, "look", {});
+      expect(refreshed).not.toContain("personal evidence");
+      await toolCall(url, sid, "context", { mode: "off" });
+      expect(await toolCall(url, sid, "look", {})).not.toContain("Task memory context");
+    });
+  });
+
   // ── Tool Registration ───────────────────────────────────────────────────
 
   describe("tool registration", () => {
-    it("should register all 38 tools", async () => {
+    it("registers compatibility tools plus shared capabilities, invocation and context", async () => {
       const sid = await initSession(url);
       const tools = await toolList(url, sid);
-      expect(tools.length).toBe(39);
+      expect(tools.length).toBe(42);
     });
 
     it("should include all expected tool names", async () => {
@@ -325,6 +435,9 @@ describe("MCP Server", () => {
         "canvas",
         "channel",
         "command",
+        "capabilities",
+        "invoke",
+        "context",
         "crew",
         "evolve",
         "examine",
@@ -514,7 +627,7 @@ describe("MCP Server", () => {
       expect(text).toContain("memory");
       expect(text).toContain("next");
       expect(text).toContain("brief");
-      expect(text).toContain("canvas");
+      expect(text).toContain("context <query>");
     });
   });
 

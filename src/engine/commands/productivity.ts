@@ -39,6 +39,14 @@ function renderParticipation(summary: PrimitiveUsageSummary): string {
 
 export function productivityCommand(db: MarinaDB): CommandDef {
   return {
+    usage: [
+      "productivity",
+      "productivity agent <name>",
+      "productivity leaderboard",
+      "productivity primitives [name]",
+      "productivity prompts",
+      "productivity trend",
+    ],
     name: "productivity",
     aliases: ["impact"],
     category: "Coordination",

@@ -4,6 +4,14 @@
 import type { CommandDef, CommandHandler, CommandInput, EntityId, RoomId } from "../types";
 
 export class CommandRouter {
+  readonly epoch = crypto.randomUUID();
+  private registryRevision = 0;
+  get revision(): number {
+    return this.registryRevision;
+  }
+  ownerOf(name: string): string | undefined {
+    return this.owners.get(name);
+  }
   private builtins = new Map<string, CommandDef>();
   private owners = new Map<string, string>();
 
@@ -36,8 +44,22 @@ export class CommandRouter {
       if (existing && !(replace && this.owners.get(name) === owner && existing.name === def.name))
         throw new Error(`Command name or alias already registered: ${name}`);
     }
+    const usage = def.usage ? structuredClone(def.usage) : undefined;
+    if (
+      usage &&
+      (!Array.isArray(usage) ||
+        usage.some((entry) => {
+          const syntax = typeof entry === "string" ? entry : entry?.syntax;
+          return (
+            typeof syntax !== "string" ||
+            !(syntax === def.name || syntax.startsWith(`${def.name} `))
+          );
+        }))
+    )
+      throw new Error("Command usage must start with its registered name");
+    const owned = { ...def, usage, aliases: def.aliases ? [...def.aliases] : undefined };
     if (previous) this.unregisterOwned(owner, previous.name);
-    const owned = { ...def, aliases: def.aliases ? [...def.aliases] : undefined };
+    this.registryRevision++;
     for (const name of names) {
       this.builtins.set(name, owned);
       this.owners.set(name, owner);
@@ -51,6 +73,7 @@ export class CommandRouter {
       this.builtins.delete(key);
       this.owners.delete(key);
     }
+    this.registryRevision++;
     return true;
   }
 

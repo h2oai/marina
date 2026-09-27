@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "bun:test";
 import { commandForms, composeCommand } from "../dashboard/src/lib/command-forms";
+import { describeCommand } from "../src/engine/command-manifest";
 import { Engine } from "../src/engine/engine";
 import { MarinaDB } from "../src/persistence/database";
 import { roomId } from "../src/types";
@@ -16,7 +17,7 @@ describe("dashboard command form coverage", () => {
       const catalog = engine.commands.allBuiltins();
       expect(catalog.length).toBeGreaterThan(100);
       for (const command of catalog) {
-        const forms = commandForms(command);
+        const forms = commandForms(describeCommand(command));
         expect(forms.length, command.name).toBeGreaterThan(0);
         for (const form of forms) {
           const values = Object.fromEntries(

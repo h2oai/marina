@@ -22,6 +22,20 @@ export function skillCommand(deps: {
   getCommandNames?: () => string[];
 }): CommandDef {
   return {
+    category: "Memory",
+    usage: [
+      "skill audit",
+      "skill compose <id1> <id2> ..",
+      "skill compose <id1> <id2> [id3] ..",
+      "skill import <path-to-markdown-file>",
+      "skill import <path>",
+      "skill list",
+      "skill search <query>",
+      "skill share <id> <pool>",
+      "skill store <name> | <desc> | <actions>",
+      "skill store <name> | <description> | <action_sequence>",
+      "skill verify <id>",
+    ],
     name: "skill",
     aliases: [],
     help: "Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd). Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.",

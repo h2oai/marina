@@ -119,6 +119,8 @@ function evalExpression(source: string): EvalResult {
 
 export function calcCommand(deps: { getEntity: (id: string) => Entity | undefined }): CommandDef {
   return {
+    category: "System",
+    usage: ["calc <expression-or-statements>", "calc <expression>"],
     name: "calc",
     aliases: [],
     minRank: 0,

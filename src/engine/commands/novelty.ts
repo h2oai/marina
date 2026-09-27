@@ -34,6 +34,8 @@ export function noveltyCommand(deps: {
   getAllCommands?: () => Array<{ name: string; minRank?: number }>;
 }): CommandDef {
   return {
+    category: "Cognition",
+    usage: ["novelty", "novelty stats", "novelty suggest"],
     name: "novelty",
     aliases: [],
     help: "Activity proficiency and exploration coverage. Shows command success rates, coverage gaps, and suggestions for underused capabilities. Usage: novelty | novelty suggest | novelty stats",

@@ -1154,6 +1154,13 @@ export interface UseCaseCommandDeps {
 
 export function usecaseCommand(deps: UseCaseCommandDeps): CommandDef {
   return {
+    category: "Coordination",
+    usage: [
+      "usecase <natural language>",
+      "usecase <recipe> <topic>",
+      "usecase info <recipe>",
+      "usecase list",
+    ],
     name: "usecase",
     aliases: ["uc"],
     help: `Launch a pre-built use case that auto-creates project, tasks, and agents.
@@ -1474,6 +1481,7 @@ export function universalIntentCommands(deps: UseCaseCommandDeps): CommandDef[] 
   const usecase = usecaseCommand(deps);
   return UNIVERSAL_INTENTS.map((intent) => ({
     name: intent,
+    usage: [`${intent} <goal>`],
     aliases: [],
     category: "Coordination",
     help: `${intent} <goal> — launch an observable ${intent} project with tasks, shared memory, a fitting orchestration pattern, and an agent.`,

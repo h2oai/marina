@@ -28,6 +28,8 @@ export function digCommand(deps: {
   answerQuestion?: (query: string, context: string) => Promise<string | undefined>;
 }): CommandDef {
   return {
+    category: "Cognition",
+    usage: ["dig <topic>"],
     name: "dig",
     aliases: [],
     help: "Investigate a topic — internal notes + web evidence + synthesis. Usage: dig <topic>",

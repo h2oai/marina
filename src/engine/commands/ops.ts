@@ -149,6 +149,8 @@ export function syncOperationalAlerts(deps: OpsDependencies): void {
 
 export function opsCommand(deps: OpsDependencies): CommandDef {
   return {
+    category: "System",
+    usage: ["ops ack <id>", "ops history", "ops inbox", "ops recover", "ops resolve <id>"],
     name: "ops",
     aliases: ["alerts"],
     minRank: 0,

@@ -15,6 +15,8 @@ export function mapCommand(deps: {
   getRoomShort: (id: RoomId) => string | undefined;
 }): CommandDef {
   return {
+    category: "Navigation",
+    usage: ["map"],
     name: "map",
     aliases: [],
     help: "Show a map of nearby spaces.",

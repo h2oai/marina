@@ -151,6 +151,8 @@ export function readinessCommand(deps: {
   pulseHistory?: (sinceMs: number) => AutonomyPulseRow[];
 }): CommandDef {
   return {
+    category: "System",
+    usage: ["readiness", "readiness providers [name]"],
     name: "readiness",
     aliases: ["doctor", "health"],
     help: "Show which Marina capabilities are active, degraded, or off — with fixes. `readiness providers [name]` sends one tiny request per configured LLM provider and checks the reply shape. `readiness autonomy` shows whether agents are acting on their own right now, requirement by requirement.",

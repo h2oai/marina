@@ -14,6 +14,8 @@ export function bookmarkCommand(deps: {
   getRoomShort: (id: RoomId) => string | undefined;
 }): CommandDef {
   return {
+    category: "Knowledge",
+    usage: ["bookmark", "bookmark delete <#>", "bookmark list", "bookmark note <#> <text>"],
     name: "bookmark",
     aliases: ["bm"],
     help: "Save space bookmarks. Usage: bookmark | bookmark list | bookmark note <#> <text> | bookmark delete <#>",

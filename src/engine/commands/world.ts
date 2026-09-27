@@ -47,6 +47,17 @@ export function worldCommand(deps: {
   listAgents?: () => { name: string; role: string }[];
 }): CommandDef {
   return {
+    usage: [
+      "world adopt <child> <role> [into:<existing>]",
+      "world adopt approve <id> [reason] · world adopt rollback <id> · world adopt list",
+      "world adopt reject <id> [reason] · world adopt rollback <id> · world adopt list",
+      "world create <name> [template] [| <hypothesis>]",
+      "world list",
+      "world run <name> <command …>",
+      "world seed-role <name> <role>",
+      "world start <name>",
+      "world stop <name>",
+    ],
     name: "world",
     aliases: ["worlds"],
     category: "Lineage",

@@ -104,6 +104,8 @@ export function questCommand(deps: {
   const ALL_QUESTS = deps.quests ?? [];
 
   return {
+    category: "Identity & Access",
+    usage: ["quest abandon", "quest complete", "quest list", "quest start <name>", "quest status"],
     name: "quest",
     aliases: ["checklist", "onboarding"],
     help: "Guided objectives and onboarding checklists. Structured step-by-step workflows that track your progress. Usage: quest [start|status|list|complete|abandon]",
