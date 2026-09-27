@@ -1842,6 +1842,19 @@ describe("prepareUpstreamBody (cloud fallback prep)", () => {
     expect(
       prepareUpstreamBody({ max_completion_tokens: 32_000 }, "openai").max_completion_tokens,
     ).toBe(16_384);
+    expect(prepareUpstreamBody({ model: "gpt-4o", max_tokens: 32_000 }, "openai").max_tokens).toBe(
+      16_384,
+    );
+  });
+
+  it("clamps to the model's own output limit, not gpt-4o's", () => {
+    // gpt-6-luna (Marina's default OpenAI model) accepts 128k output tokens.
+    const luna = prepareUpstreamBody({ model: "gpt-6-luna", max_tokens: 64_000 }, "openai");
+    expect(luna.max_completion_tokens).toBe(64_000);
+    expect(
+      prepareUpstreamBody({ model: "gpt-6-luna", max_completion_tokens: 500_000 }, "openai")
+        .max_completion_tokens,
+    ).toBe(128_000);
   });
 
   it("preserves valid OpenAI and non-OpenAI budgets", () => {

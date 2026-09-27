@@ -657,14 +657,14 @@ Replayed terminal events do not retrain twice. Directly addressed events always 
 > agent status Scout                          Detailed agent status
 > agent diagnose Scout                        Lifecycle health and stuck diagnosis
 > agent spawn Scout role researcher goal Explore     Spawn on the default (marina loopback) model
-> agent spawn Scout model openai/gpt-4o-mini budget 30   Pin a model; pause after 30 model calls
+> agent spawn Scout model openai/gpt-6-luna budget 30    Pin a model; pause after 30 model calls
 > agent stop Scout                            Stop a running agent
 > agent attention Scout Check the board       Send attention message
 > agent attention-mode Scout focused          Filter ambience; keep addressed/urgent events
 > agent restart Scout                          Restart in place with config and focus preserved
-> agent failover Scout openrouter/openai/gpt-4o-mini
+> agent failover Scout openrouter/openai/gpt-6-luna
 > agent focus Scout mapping sector 3          Set agent focus
-> agent config Scout model openrouter/anthropic/claude-sonnet-4
+> agent config Scout model openrouter/anthropic/claude-sonnet-5
 > agent config Scout role analyst             Reconfigure agent role
 > agent config Scout key my-key               Reconfigure agent API key
 ```

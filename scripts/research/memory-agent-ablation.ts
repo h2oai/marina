@@ -32,7 +32,7 @@ if (!cache || !output)
   );
 const directory = mkdtempSync(join(tmpdir(), "marina-ablation-"));
 const routerDb = new MarinaDB(join(directory, "router.db"));
-routerDb.setSetting("default_model", process.env.MARINA_EVAL_UPSTREAM ?? "openai/gpt-4o-mini");
+routerDb.setSetting("default_model", process.env.MARINA_EVAL_UPSTREAM ?? "openai/gpt-5.6-luna");
 setEndpointConfig(routerDb, { mode: "passthru", passthruModel: routerDb.getDefaultModel() });
 const engine = new Engine({
   startRoom: roomId("evaluation/start"),

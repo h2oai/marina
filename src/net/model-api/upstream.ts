@@ -790,7 +790,8 @@ export function prepareLlamaBody(
 
 /** Keep a caller's provider-specific completion budget from poisoning a
  * fallback request. For example, Gemini-oriented agents may request 32k output
- * while gpt-4o accepts at most 16,384 and otherwise rejects the whole turn. */
+ * while gpt-4o accepts at most 16,384 and otherwise rejects the whole turn; the
+ * cap is per model (`openaiOutputCap`), so gpt-6-luna keeps its 128k. */
 /**
  * Remove Anthropic-only `cache_control` markers before an OpenAI-compatible
  * upstream sees the body. Marina's own agents send them (pi-ai with
@@ -873,11 +874,30 @@ export function prepareUpstreamBody(
     bounded.max_completion_tokens = bounded.max_tokens;
     delete bounded.max_tokens;
   }
+  const cap = openaiOutputCap(String(bounded.model ?? ""));
   for (const field of ["max_tokens", "max_completion_tokens"] as const) {
     const value = bounded[field];
-    if (typeof value === "number" && value > 16_384) bounded[field] = 16_384;
+    if (typeof value === "number" && value > cap) bounded[field] = cap;
   }
   return bounded;
+}
+
+/** Output cap for a model the catalog does not know (gpt-4o's, the smallest current limit). */
+const UNKNOWN_OPENAI_OUTPUT_CAP = 16_384;
+
+/**
+ * The most output tokens an OpenAI model accepts, from pi-ai's catalog
+ * (gpt-6-luna: 128,000; gpt-4o: 16,384), so a fallback request is clamped to
+ * what THIS model allows rather than to gpt-4o's limit for every model.
+ */
+function openaiOutputCap(model: string): number {
+  try {
+    costCatalog ??= builtinModels();
+    const max = costCatalog.getModel("openai", model)?.maxTokens;
+    return typeof max === "number" && max > 0 ? max : UNKNOWN_OPENAI_OUTPUT_CAP;
+  } catch {
+    return UNKNOWN_OPENAI_OUTPUT_CAP;
+  }
 }
 
 export async function proxyToUpstream(

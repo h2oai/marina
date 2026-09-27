@@ -575,12 +575,12 @@ agent spawn Scout budget <n-calls>      cap the agent's lifetime model calls
 agent stop Scout                        stop a running agent
 agent diagnose Scout                    lifecycle health and remediation
 agent restart Scout                     restart in place, preserving config/focus
-agent failover Scout openai/gpt-4o      restart on a fallback provider/model
+agent failover Scout openai/gpt-6-luna  restart on a fallback provider/model
 agent attention Scout Check the archives urgent attention message
 agent attention-mode Scout focused       durable focused/balanced/open policy
 agent attention-feedback Scout useful    explicit operator calibration
 agent focus Scout Navigation research   set agent focus
-agent config Scout model openai/gpt-4o  reconfigure a running agent
+agent config Scout model openai/gpt-6-luna reconfigure a running agent
 ```
 
 Direct `agent spawn` requires the `agent.spawn` safety gate — earn it through the witness ladder (`witness request agent.spawn`), or receive an operator grant. Under the `earned` and `open` autonomy postures, gate-carrying commands defer their `minRank` to the gate, so holding the gate is what matters, not the rank number. Agents auto-join the world as entities and begin acting autonomously based on their role and goal.
