@@ -41,7 +41,7 @@ async function main() {
   console.log("Spawning research agent...");
   const agent = await spawnAgent(
     "researcher-1",
-    "anthropic/claude-sonnet-4-20250514",
+    "anthropic/claude-sonnet-5",
     "researcher",
     "Investigate recent advances in multi-agent coordination",
   );

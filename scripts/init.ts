@@ -78,7 +78,7 @@ const PROVIDERS: { name: string; env: string; url: string; model: string; authHe
     name: "anthropic",
     env: "ANTHROPIC_API_KEY",
     url: "https://api.anthropic.com/v1/messages",
-    model: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-5",
     authHeader: "x-api-key",
   },
   {
@@ -99,7 +99,7 @@ const PROVIDERS: { name: string; env: string; url: string; model: string; authHe
     name: "groq",
     env: "GROQ_API_KEY",
     url: "https://api.groq.com/openai/v1/chat/completions",
-    model: "llama-3.3-70b-versatile",
+    model: "openai/gpt-oss-120b",
     authHeader: "Bearer",
   },
   {
@@ -137,9 +137,12 @@ async function testKey(provider: (typeof PROVIDERS)[number], key: string): Promi
   } else {
     headers.Authorization = `Bearer ${key}`;
   }
+  // OpenAI's current models reject the legacy `max_tokens` field
+  // ("Use 'max_completion_tokens' instead"); every other probe keeps it.
+  const tokenField = provider.name === "openai" ? "max_completion_tokens" : "max_tokens";
   const body = JSON.stringify({
     model: provider.model,
-    max_tokens: 5,
+    [tokenField]: 16,
     messages: [{ role: "user", content: "Say OK" }],
   });
   try {
@@ -297,9 +300,9 @@ export async function runInit(args: string[] = []): Promise<void> {
   for (let i = 0; i < PROVIDERS.length; i++) {
     const labels = [
       "Claude (Opus, Sonnet, Haiku)",
-      "GPT-4o, GPT-4o Mini",
-      "Gemini 2.0 Flash",
-      "Llama 3.3 70B (fast)",
+      "GPT-6 Luna, Sol, Astra",
+      "Gemini 3.1",
+      "gpt-oss-120b (fast)",
       "Multi-provider routing",
     ];
     console.log(`  ${i + 1}. ${PROVIDERS[i]!.name.padEnd(14)}— ${labels[i]}`);
