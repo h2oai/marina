@@ -18,7 +18,8 @@ const outputPath = positional[1] ?? `marina-export-${timestamp}.json`;
 
 const skipEventLog = flags.includes("--skip-events");
 // Secrets (api_keys, mem_api_keys, users, connectors, gateways) omitted by
-// default so the snapshot is safe to share; pass --include-secrets for a full backup.
+// default. Private content remains; this is not a public/redacted export or a
+// complete recovery backup. --include-secrets adds the optional credential tables.
 const includeSecrets = flags.includes("--include-secrets");
 
 console.log(`Exporting from: ${dbPath}`);

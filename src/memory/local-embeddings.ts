@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { MARINA_ROOT } from "../runtime-paths";
 import type { EmbeddingProvider } from "./embeddings";
 
 /** The extension owns its dependencies. Keep its URL dynamic for core typechecking. */
@@ -9,7 +12,7 @@ export async function localEmbeddings(
   cacheDirectory: string,
   localOnly = false,
 ): Promise<EmbeddingProvider> {
-  const extension = new URL("../../extensions/local-embeddings/", import.meta.url);
+  const extension = pathToFileURL(`${join(MARINA_ROOT, "extensions/local-embeddings")}/`);
   for (const name of ["@huggingface/tokenizers", "onnxruntime-node"])
     if (!existsSync(new URL(`node_modules/${name}/package.json`, extension)))
       throw new Error(

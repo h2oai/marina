@@ -18,6 +18,7 @@ import {
   SIMILAR_NOTE_RELEVANCE_THRESHOLD,
 } from "../engine/constants";
 import { Logger } from "../engine/logger";
+import { enqueueLegacyBridge } from "./db-legacy-bridge";
 import { buildFtsQuery } from "./fts";
 
 /** Module logger. */
@@ -332,7 +333,7 @@ export function getNotes(db: Database, ids: number[]): NoteRow[] {
   return rows;
 }
 
-function normalizeClaim(content: string): string {
+export function normalizeClaim(content: string): string {
   return content
     .toLowerCase()
     .replace(/\b(not|never|no)\b/g, "")
@@ -425,18 +426,29 @@ export function recordNoteVerification(
   confidence: number,
   rationale?: string,
   evidenceSourceId?: number,
+  caseId?: number,
 ): number {
   const bounded = Math.max(0, Math.min(1, confidence));
-  const result = db.run(
-    `INSERT INTO note_verifications (note_id,verifier,status,confidence,rationale,evidence_source_id,created_at)
+  return db.transaction(() => {
+    const result = db.run(
+      `INSERT INTO note_verifications (note_id,verifier,status,confidence,rationale,evidence_source_id,created_at)
      VALUES (?,?,?,?,?,?,?)`,
-    [noteId, verifier, status, bounded, rationale ?? null, evidenceSourceId ?? null, Date.now()],
-  );
-  db.run(
-    "UPDATE notes SET confidence=?,verification_status=? WHERE id=? AND verification_status!='superseded'",
-    [bounded, status, noteId],
-  );
-  return Number(result.lastInsertRowid);
+      [noteId, verifier, status, bounded, rationale ?? null, evidenceSourceId ?? null, Date.now()],
+    );
+    db.run(
+      "UPDATE notes SET confidence=?,verification_status=? WHERE id=? AND verification_status!='superseded'",
+      [bounded, status, noteId],
+    );
+    // Bind the review to its authored text; a later durable correction must
+    // never inherit a queued verdict about an earlier assertion.
+    db.run(
+      `UPDATE legacy_memory_outbox SET args=json_set(args,
+      '$[3].expectedContent',(SELECT content FROM notes WHERE id=?), '$[3].caseId',?)
+      WHERE operation='bridgeLegacyVerification' AND json_extract(args,'$[3].key')=?`,
+      [noteId, caseId ?? null, `legacy-note-${noteId}-verify-${result.lastInsertRowid}`],
+    );
+    return Number(result.lastInsertRowid);
+  })();
 }
 
 export function getNoteVerifications(db: Database, noteId: number): NoteVerificationRow[] {
@@ -717,6 +729,8 @@ export function resolveContradictionCase(
         "verified",
         Math.max(0.75, accepted.confidence ?? 0.5),
         rationale,
+        undefined,
+        id,
       );
     for (const loser of losers)
       recordNoteVerification(
@@ -726,6 +740,8 @@ export function resolveContradictionCase(
         "disputed",
         Math.min(0.25, loser.confidence ?? 0.5),
         rationale,
+        undefined,
+        id,
       );
     db.run(
       "INSERT OR IGNORE INTO note_links (source_id,target_id,relationship,created_at) VALUES (?,?,'contradicts',?)",
@@ -766,6 +782,11 @@ export function consolidateNotes(
         "INSERT OR IGNORE INTO note_links (source_id, target_id, relationship, created_at) VALUES (?, ?, 'supersedes', ?)",
         [keeperId, id, Date.now()],
       );
+      if (
+        !entityName.startsWith("memory:") &&
+        db.query("SELECT 1 FROM users WHERE name=?").get(entityName)
+      )
+        enqueueLegacyBridge(db, "bridgeLegacyConsolidation", [entityName, keeperId, [id]]);
       changed++;
     }
   })();

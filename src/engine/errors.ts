@@ -3,12 +3,10 @@
 
 // ─── Error Utilities ─────────────────────────────────────────────────────────
 
+import { getErrorMessage } from "../sdk/errors";
 import type { Logger } from "./logger";
 
-/** Extract a human-readable message from an unknown thrown value. */
-export function getErrorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+export { getErrorMessage } from "../sdk/errors";
 
 /**
  * Execute a function, catching and logging any error.

@@ -4,6 +4,7 @@
 import { arenaStatus } from "../arena/service";
 import { decisionConfigFromEnv, decisionGateEnabled } from "../decisions/config";
 import { decisionHealth } from "../decisions/health";
+import { describeDefaultUpstream } from "../net/model-api/upstream";
 import { type AutonomyPosture, getAutonomyPosture } from "./autonomy";
 import type { Engine } from "./engine";
 import { dailySpend, formatSpendUsd } from "./spend-ledger";
@@ -101,35 +102,10 @@ export const AUTONOMY_REQUIREMENTS = {
   maximumMedianResponseMs: 30_000,
 } as const;
 
-/** Upstream LLM provider env vars (NOT MODEL_API_KEYS — that's caller auth). */
-const PROVIDER_ENV = [
-  "ANTHROPIC_API_KEY",
-  "OPENAI_API_KEY",
-  "GEMINI_API_KEY",
-  "GOOGLE_API_KEY",
-  "GROQ_API_KEY",
-  "OPENROUTER_API_KEY",
-  "CEREBRAS_API_KEY",
-  "XAI_API_KEY",
-  "MISTRAL_API_KEY",
-  "DEEPSEEK_API_KEY",
-  "HUGGINGFACE_API_KEY",
-  "HF_TOKEN",
-];
-
 export function computeReadiness(engine: Engine): ReadinessReport {
   const env = process.env;
-  // True "can agents call a model?" signal. agentRuntime.isAvailable() conflates
-  // this with MODEL_API_KEYS (the caller token) and MARINA_OPEN_API, so it
-  // over-reports — an agent could spawn yet 503 on its first turn. Check for an
-  // actual upstream provider key (env or DB) instead.
-  let dbKeyCount = 0;
-  try {
-    dbKeyCount = engine.db?.getAllApiKeys().length ?? 0;
-  } catch {
-    /* db may be closed */
-  }
-  const hasKey = PROVIDER_ENV.some((v) => !!env[v]) || dbKeyCount > 0;
+  const upstream = describeDefaultUpstream(engine);
+  const hasKey = upstream !== undefined;
   const agents = engine.agentRuntime.list();
   const activeAgent = (name: string) =>
     agents.find((agent) => agent.name === name && agent.state !== "stopped");
@@ -138,22 +114,36 @@ export function computeReadiness(engine: Engine): ReadinessReport {
 
   const checks: ReadinessCheck[] = [];
 
+  const bridgePending = engine.db?.pendingLegacyBridges(101) ?? [];
+  checks.push({
+    id: "memory-compatibility",
+    label: "Legacy memory synchronization",
+    status: bridgePending.some((job) => job.attempts > 0) ? "degraded" : "ok",
+    detail: `${bridgePending.length}${bridgePending.length === 101 ? "+" : ""} durable bridge intents pending`,
+    ...(bridgePending.length
+      ? {
+          remediation:
+            "Retries run automatically. Inspect legacy-bridge logs and verify that the author's durable world account is active.",
+        }
+      : {}),
+  });
+
   // ── LLM provider key — gates ALL agent spawning ──────────────────────────
   checks.push(
     hasKey
       ? {
           id: "llm-key",
-          label: "LLM provider key",
+          label: "LLM provider configuration",
           status: "ok",
-          detail: "a provider key is configured — agents can run",
+          detail: `upstream ${upstream} is configured; run readiness providers to verify connectivity`,
         }
       : {
           id: "llm-key",
-          label: "LLM provider key",
+          label: "LLM provider configuration",
           status: "off",
-          detail: "no provider key — agents cannot be spawned",
+          detail: "no supported provider key or local runtime is configured",
           remediation:
-            "Set ANTHROPIC_API_KEY (or OPENAI_API_KEY / GEMINI_API_KEY / …), or add a key in Admin → Keys.",
+            "Set a supported provider key, add one in Admin → Keys, or configure LLAMA_BASE_URL for a local runtime.",
         },
   );
 

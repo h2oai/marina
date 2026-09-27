@@ -4,11 +4,12 @@
 import { join } from "node:path";
 import { getLeanSystemPrompt, getPromptVersion } from "../agent/prompts/lean-system";
 import type { Engine } from "../engine/engine";
+import { MARINA_ROOT } from "../runtime-paths";
 import { corsHeaders } from "./cors";
 
 const CONNECT_CORS = corsHeaders(null, { methods: "GET, OPTIONS" });
 
-const SKILL_PATH = join(import.meta.dir, "../../SKILL.md");
+const SKILL_PATH = join(MARINA_ROOT, "SKILL.md");
 const REQUIRED_LAYERS = ["identity", "world", "communication"] as const;
 const OPTIONAL_LAYERS = ["memory", "coordination", "building", "media", "federation"] as const;
 

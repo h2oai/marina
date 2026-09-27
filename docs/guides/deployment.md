@@ -6,7 +6,7 @@ This guide takes Marina from a local `bun run start` to a running deployment on 
 
 **Marina is a single process backed by a single SQLite file.** There is one writer. You scale it **vertically** (a bigger box), not **horizontally** (more replicas). Do not run two instances against the same database file — you will corrupt it.
 
-This is a deliberate design choice: the first target is a personal computer, and a single SQLite file makes the whole world trivially portable, backupable, and forkable. For the vast majority of deployments — a team, a demo, a research instance, even a public endpoint — one well-provisioned instance is the right answer. If you genuinely outgrow it, the path is [federation](federation.md) (many independent instances bridged together), not a shared database.
+This is a deliberate design choice: the first target is a personal computer, and SQLite makes the world database portable; complete recovery also requires the instance files and optional auth database. For the vast majority of deployments — a team, a demo, a research instance, even a public endpoint — one well-provisioned instance is the right answer. If you genuinely outgrow it, the path is [federation](federation.md) (many independent instances bridged together), not a shared database.
 
 Everything below follows from this: pick a single durable volume, put the database on it, run one container, and back it up.
 
@@ -148,14 +148,18 @@ Caddy proxies WebSockets transparently. The equivalent nginx `location /` needs 
 
 ## Persistence & backups
 
-The database is one file. Backing it up is one command — but use SQLite's online backup, not `cp`, because WAL mode means a raw copy can be mid-write:
+The world database, optional auth database, assets, workspaces and configuration form the recoverable instance. A database-only online snapshot is useful independently:
 
 ```bash
-# Consistent, WAL-safe backup (sqlite3 is installed in the image)
+# Consistent, WAL-safe and verified database snapshot
 docker compose exec marina ./scripts/backup.sh /app/data/marina.db /app/data/backups
 ```
 
-`scripts/backup.sh` uses `sqlite3 .backup` (falling back to a checkpointed copy). `scripts/restore.sh` reverses it. For moving a whole world between hosts (DB + assets), use `scripts/export.sh` / `scripts/import.sh`.
+`scripts/backup.sh` uses the verified SQLite snapshot implementation (`VACUUM INTO`,
+integrity/foreign-key checks, hash, restricted permissions). `scripts/restore.sh BACKUP NEW_DB`
+refuses existing destinations. For complete instance recovery use the [offline recovery bundle](recovery.md).
+The JSON export/import scripts move selected logical tables; they do not include binary assets,
+workspaces or all credentials, and their output can still contain private content.
 
 Recommended: a cron/systemd timer (or an ECS scheduled task) that runs the backup and ships the result to S3. Snapshotting the underlying volume (EBS/EFS snapshot) also works as long as you snapshot the whole `/app/data` directory.
 

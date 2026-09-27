@@ -596,7 +596,8 @@ describe("Export/Import", () => {
       const snapshot = exportState(SRC_DB);
       expect(snapshot.format).toBe("marina-snapshot");
       // Migration 23 seeds 12 default shell_allowlist entries
-      expect(Object.keys(snapshot.tables).length).toBe(1);
+      expect(snapshot.tables.notes).toEqual([]);
+      expect(snapshot.tables.entities).toEqual([]);
       expect(snapshot.tables.shell_allowlist).toBeDefined();
     });
 

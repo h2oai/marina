@@ -13,6 +13,8 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 8_000 },
   fullyParallel: false,
+  // These journeys share one fixture server; bound browser contention on shared runners.
+  workers: 2,
   reporter: process.env.CI ? "github" : "list",
   use: {
     baseURL: "http://127.0.0.1:14620",

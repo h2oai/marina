@@ -95,6 +95,31 @@ describe("production deployment qualification", () => {
     expect(workflow.jobs.deploy!.steps[0]!.with?.ref).toBe("${{ needs.qualify.outputs.sha }}");
   });
 
+  it("qualifies packages, browsers, recovery and the image on the selected revision before deployment", () => {
+    const steps = workflow.jobs.qualify!.steps;
+    expect(steps.find((step) => step.uses?.startsWith("actions/checkout"))?.with?.ref).toBe(
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal GitHub Actions expression
+      "${{ steps.target.outputs.sha }}",
+    );
+    expect(steps.some((step) => step.run === "bun run qualify:release")).toBe(true);
+    expect(steps.some((step) => step.run === "bun run qualify:image marina-qualification")).toBe(
+      true,
+    );
+    expect(
+      steps.some(
+        (step) =>
+          step.uses?.startsWith("aquasecurity/trivy-action") && step.with?.["exit-code"] === "1",
+      ),
+    ).toBe(true);
+    expect(steps.some((step) => step.uses?.startsWith("aws-actions/"))).toBe(false);
+    const deploy = workflow.jobs.deploy!.steps;
+    expect(deploy.some((step) => step.uses?.startsWith("docker/build-push-action"))).toBe(false);
+    expect(
+      deploy.some((step) => step.run?.includes("docker load --input qualified-image.tar")),
+    ).toBe(true);
+    expect(deploy.some((step) => step.run?.includes("Missing image digest"))).toBe(true);
+  });
+
   it.each([
     { conclusion: "failure" },
     { conclusion: "cancelled" },

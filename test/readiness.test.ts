@@ -34,6 +34,12 @@ const OTHER_VARS = [
   "MARINA_OPEN_API",
   "MARINA_PROFILE",
   "MARINA_AUTONOMY",
+  "LLAMA_BASE_URL",
+  "OLLAMA_BASE_URL",
+  "LLAMA_API_KEY",
+  "OLLAMA_API_KEY",
+  "HUGGINGFACE_API_KEY",
+  "HF_TOKEN",
 ];
 
 describe("computeReadiness", () => {
@@ -97,6 +103,20 @@ describe("computeReadiness", () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     expect(find("llm-key").status).toBe("ok");
     expect(find("room-agents").status).toBe("ok");
+  });
+
+  it("uses actual provider selection for keyless local runtimes and ignores unrelated credentials", () => {
+    process.env.LLAMA_BASE_URL = "http://127.0.0.1:8080/v1";
+    expect(find("llm-key").status).toBe("ok");
+    expect(find("llm-key").detail).toContain("verify connectivity");
+    delete process.env.LLAMA_BASE_URL;
+    db.saveApiKey({
+      name: "unrelated",
+      provider: "unrelated",
+      encryptedValue: "fixture-only",
+      setBy: "test",
+    });
+    expect(find("llm-key").status).toBe("off");
   });
 
   it("auto-respawn turns ok when AGENT_AUTORESPAWN=true", () => {

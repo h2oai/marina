@@ -555,8 +555,8 @@ it("rebuilds accounting on snapshot merge and backfills populated schema 104 dat
   const snapshot = exportState(path);
   const destination = join(directory, "imported.db");
   new MarinaDB(destination).close();
-  importState(destination, snapshot, { merge: true });
-  importState(destination, snapshot, { merge: true });
+  expect(importState(destination, snapshot, { merge: true }).errors).toEqual([]);
+  expect(importState(destination, snapshot, { merge: true }).errors).toEqual([]);
   const imported = new MarinaDB(destination);
   try {
     const actor = imported.verifyMemoryCredential(imported.issueMemoryCredential(owner).token)!;
@@ -584,9 +584,23 @@ it("rebuilds accounting on snapshot merge and backfills populated schema 104 dat
     legacy.exec(migration.sql);
     legacy.run("INSERT INTO schema_version VALUES (?)", [migration.version]);
   }
-  // Import canonical rows into the old schema before upgrading; projections are absent there.
+  // Materialize the schema-104 shape; relabeling a current snapshot would hide a
+  // downgrade and silently discard columns that did not exist in that version.
+  const historicalTables: Record<string, unknown[]> = {};
+  for (const [table, rows] of Object.entries(snapshot.tables)) {
+    const columns = legacy.query(`PRAGMA table_info("${table}")`).all() as { name: string }[];
+    if (!columns.length) continue;
+    const names = new Set(columns.map((column) => column.name));
+    historicalTables[table] = rows.map((row) =>
+      Object.fromEntries(
+        Object.entries(row as Record<string, unknown>).filter(([key]) => names.has(key)),
+      ),
+    );
+  }
   legacy.close();
-  importState(legacyPath, { ...snapshot, schema_version: 104 });
+  expect(
+    importState(legacyPath, { ...snapshot, tables: historicalTables, schema_version: 104 }).errors,
+  ).toEqual([]);
   const upgraded = new MarinaDB(legacyPath, { memoryLimits: { sources: 1 } });
   try {
     const actor = upgraded.verifyMemoryCredential(upgraded.issueMemoryCredential(owner).token)!;

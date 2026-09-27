@@ -3669,4 +3669,155 @@ CREATE TABLE spend_daily (
 );
 `,
   },
+  // Migration 132: durable work intents for legacy compatibility mutations.
+  // This is an outbox, not a third memory store. Note lifecycle intents share
+  // the originating SQLite transaction; deletion captures identity before CASCADE.
+  {
+    version: 132,
+    sql: `
+CREATE TABLE legacy_memory_outbox (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  operation TEXT NOT NULL,
+  args TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+  UNIQUE(operation, args)
+);
+CREATE TRIGGER legacy_memory_created AFTER INSERT ON notes
+WHEN NEW.entity_name NOT LIKE 'memory:%'
+ AND EXISTS (SELECT 1 FROM users WHERE name = NEW.entity_name)
+BEGIN
+  INSERT OR IGNORE INTO legacy_memory_outbox(operation, args)
+  VALUES (
+    CASE WHEN NEW.supersedes_id IS NOT NULL THEN 'bridgeLegacyRevision'
+         WHEN NEW.pool_id IS NOT NULL THEN 'bridgeLegacyPoolNote'
+         ELSE 'bridgeLegacyNote' END,
+    CASE WHEN NEW.supersedes_id IS NOT NULL THEN json_array(NEW.entity_name, NEW.supersedes_id, NEW.id)
+         WHEN NEW.pool_id IS NOT NULL THEN json_array(NEW.entity_name, NEW.id,
+           (SELECT name FROM memory_pools WHERE id = NEW.pool_id))
+         ELSE json_array(NEW.entity_name, NEW.id) END
+  );
+END;
+CREATE TRIGGER legacy_memory_deleted BEFORE DELETE ON notes
+WHEN OLD.entity_name NOT LIKE 'memory:%'
+BEGIN
+  INSERT OR IGNORE INTO legacy_memory_outbox(operation, args)
+  SELECT 'retireDurableTwin', json_array(OLD.entity_name, OLD.id,
+    json_object('url', url, 'recordId', substr(url, 24)))
+  FROM note_sources WHERE note_id = OLD.id AND url LIKE 'marina-memory://record/%';
+END;
+`,
+  },
+  // Migration 133: explicit compatibility projections. This stores identity only;
+  // durable revisions own content and update existing numeric notes atomically.
+  {
+    version: 133,
+    sql: `
+CREATE TABLE memory_note_projections (
+  note_id INTEGER PRIMARY KEY REFERENCES notes(id) ON DELETE CASCADE,
+  record_id TEXT NOT NULL REFERENCES memory_records(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_memory_note_projections_record ON memory_note_projections(record_id);
+INSERT OR IGNORE INTO memory_note_projections(note_id,record_id)
+SELECT n.id,r.id FROM notes n JOIN users u ON u.name=n.entity_name
+JOIN note_sources ns ON ns.note_id=n.id
+JOIN memory_records r ON r.id=json_extract(ns.metadata,'$.record_id')
+JOIN memory_spaces s ON s.id=r.space_id AND s.owner_id=u.id AND s.name='resident'
+WHERE n.entity_name NOT LIKE 'memory:%' AND json_valid(ns.metadata)
+  AND json_extract(ns.metadata,'$.kind')='durable-twin'
+  AND coalesce(json_extract(ns.metadata,'$.mirror'),'')!='institutional'
+  AND ns.url='marina-memory://record/' || r.id
+  AND (json_extract(r.metadata,'$.legacy_note_id')=n.id OR n.verification_status='superseded');
+`,
+  },
+  // Migration 134: provenance, verification and graph writes commit their
+  // compatibility work with the originating write, across all entry points.
+  {
+    version: 134,
+    sql: `
+CREATE TRIGGER legacy_memory_source_created AFTER INSERT ON note_sources
+WHEN NEW.url NOT LIKE 'marina-memory://%'
+BEGIN
+  INSERT OR IGNORE INTO legacy_memory_outbox(operation,args)
+  SELECT 'bridgeLegacySource',json_array(n.entity_name,n.id,json_object(
+    'url',NEW.url,'sourceType',NEW.source_type,'credibility',NEW.credibility,
+    'observedAt',NEW.observed_at,'sourceNoteId',NEW.source_note_id))
+  FROM notes n JOIN users u ON u.name=n.entity_name
+  WHERE n.id=NEW.note_id AND n.entity_name NOT LIKE 'memory:%'
+    AND (NEW.captured_by IS NULL OR NEW.captured_by=n.entity_name);
+END;
+CREATE TRIGGER legacy_memory_source_updated AFTER UPDATE ON note_sources
+WHEN NEW.url NOT LIKE 'marina-memory://%'
+BEGIN
+  INSERT OR IGNORE INTO legacy_memory_outbox(operation,args)
+  SELECT 'bridgeLegacySource',json_array(n.entity_name,n.id,json_object(
+    'url',NEW.url,'sourceType',NEW.source_type,'credibility',NEW.credibility,
+    'observedAt',NEW.observed_at,'sourceNoteId',NEW.source_note_id))
+  FROM notes n JOIN users u ON u.name=n.entity_name
+  WHERE n.id=NEW.note_id AND n.entity_name NOT LIKE 'memory:%'
+    AND (NEW.captured_by IS NULL OR NEW.captured_by=n.entity_name);
+END;
+CREATE TRIGGER legacy_memory_verified AFTER INSERT ON note_verifications
+BEGIN
+  INSERT OR IGNORE INTO legacy_memory_outbox(operation,args)
+  SELECT 'bridgeLegacyVerification',json_array(n.entity_name,n.id,NEW.status,json_object(
+    'key','legacy-note-' || n.id || '-verify-' || NEW.id,
+    'confidence',NEW.confidence,'rationale',NEW.rationale))
+  FROM notes n JOIN users u ON u.name=n.entity_name
+  WHERE n.id=NEW.note_id AND NEW.verifier=n.entity_name AND n.entity_name NOT LIKE 'memory:%';
+END;
+CREATE TRIGGER legacy_memory_link_created AFTER INSERT ON note_links
+BEGIN
+  INSERT OR IGNORE INTO legacy_memory_outbox(operation,args)
+  SELECT 'bridgeLegacyLink',json_array(n.entity_name,NEW.source_id,NEW.target_id,NEW.relationship)
+  FROM notes n JOIN users u ON u.name=n.entity_name
+  JOIN notes target ON target.id=NEW.target_id AND target.entity_name NOT LIKE 'memory:%'
+  WHERE n.id=NEW.source_id AND n.entity_name NOT LIKE 'memory:%';
+END;
+CREATE TRIGGER legacy_memory_link_deleted BEFORE DELETE ON note_links
+BEGIN
+  INSERT OR IGNORE INTO legacy_memory_outbox(operation,args)
+  SELECT 'bridgeLegacyUnlink',json_array(n.entity_name,OLD.source_id,OLD.target_id,OLD.relationship)
+  FROM notes n JOIN users u ON u.name=n.entity_name
+  JOIN notes target ON target.id=OLD.target_id AND target.entity_name NOT LIKE 'memory:%'
+  WHERE n.id=OLD.source_id AND n.entity_name NOT LIKE 'memory:%';
+END;
+`,
+  },
+  // Migration 135: preexisting adopted reflections and owned non-resident
+  // spaces also carry legitimate twins, without legacy_note_id metadata.
+  {
+    version: 135,
+    sql: `
+INSERT OR IGNORE INTO memory_note_projections(note_id,record_id)
+SELECT n.id,r.id FROM notes n JOIN users u ON u.name=n.entity_name
+JOIN note_sources ns ON ns.note_id=n.id
+JOIN memory_records r ON r.id=json_extract(CASE WHEN json_valid(ns.metadata) THEN ns.metadata ELSE '{}' END,'$.record_id')
+JOIN memory_spaces s ON s.id=r.space_id AND s.owner_id=u.id
+JOIN notes canonical ON canonical.id=r.current_note_id AND canonical.content=n.content
+WHERE n.entity_name NOT LIKE 'memory:%' AND ns.captured_by=n.entity_name
+  AND json_extract(ns.metadata,'$.kind')='durable-twin'
+  AND coalesce(json_extract(ns.metadata,'$.mirror'),'')!='institutional'
+  AND ns.url='marina-memory://record/' || r.id AND ns.credibility=0
+  AND r.status='active' AND s.status='active';
+`,
+  },
+  // Migration 136: retirement follows authoritative identity, never a URL
+  // supplied with `note source`. Institutional publications are independent.
+  {
+    version: 136,
+    sql: `
+DROP TRIGGER legacy_memory_deleted;
+CREATE TRIGGER legacy_memory_deleted BEFORE DELETE ON notes
+WHEN OLD.entity_name NOT LIKE 'memory:%'
+BEGIN
+  INSERT OR IGNORE INTO legacy_memory_outbox(operation,args)
+  SELECT 'retireDurableTwin',json_array(OLD.entity_name,OLD.id,
+    json_object('recordId',p.record_id))
+  FROM memory_note_projections p JOIN memory_records r ON r.id=p.record_id
+  WHERE p.note_id=OLD.id AND r.status='active';
+END;
+`,
+  },
 ];

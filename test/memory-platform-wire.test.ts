@@ -7,11 +7,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PlatformMemoryBackend } from "../src/agent/memory-platform";
 import { Engine } from "../src/engine/engine";
+import { awaitPendingBridges } from "../src/memory/legacy-bridge";
+import { closeWorldMemoryService } from "../src/memory/world-service";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
 import { MarinaClient } from "../src/sdk/client";
-import { roomId } from "../src/types";
-import { makeTestRoom } from "./helpers";
+import { type Perception, roomId } from "../src/types";
+import { makeTestRoom, until } from "./helpers";
 
 it("carries full memory over the real SDK/WebSocket path across a clean server restart", async () => {
   const directory = mkdtempSync(join(tmpdir(), "marina-memory-wire-"));
@@ -32,10 +34,15 @@ it("carries full memory over the real SDK/WebSocket path across a clean server r
     return { db, engine, server, client, memory: new PlatformMemoryBackend(client) };
   }
   async function stop(runtime: ReturnType<typeof start>) {
+    runtime.server.beginDrain();
     runtime.client.disconnect();
-    runtime.server.stop();
-    await Bun.sleep(30); // Drain socket close handlers before closing persistence.
+    await runtime.server.drainRequests();
+    await runtime.server.stop();
     runtime.engine.stop();
+    await runtime.engine.drainCommands();
+    await awaitPendingBridges();
+    await runtime.engine.shutdown();
+    await closeWorldMemoryService(runtime.db);
     runtime.db.close();
   }
   let runtime: ReturnType<typeof start> | undefined;
@@ -65,9 +72,20 @@ it("carries full memory over the real SDK/WebSocket path across a clean server r
       { role: "user", content: `originalwire ${"unabridged α ".repeat(3000)}END` },
     ];
     await runtime.memory.archiveContext(originals, "Archived complete wire evidence", "shared");
-    const sharedArchive = (await runtime.client.command("pool shared list"))
-      .map((perception) => perception.data?.text ?? "")
-      .join("\n");
+    // This checks delivery, not the SDK's short best-effort drain window.
+    // Under parallel load a valid wire reply may arrive after that window.
+    const text: string[] = [];
+    const receive = (perception: Perception) => {
+      if (typeof perception.data?.text === "string") text.push(perception.data.text);
+    };
+    runtime.client.onPerception(receive);
+    try {
+      await runtime.client.command("pool shared list");
+      await until(() => text.join("\n").includes("[compaction] Archived complete wire evidence"));
+    } finally {
+      runtime.client.offPerception(receive);
+    }
+    const sharedArchive = text.join("\n");
     expect(sharedArchive).toContain("[compaction] Archived complete wire evidence");
     expect(sharedArchive).not.toContain("originalwire");
     const completed = { role: "assistant", content: "completed after compaction" };

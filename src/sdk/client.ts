@@ -1,12 +1,12 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Score } from "../coordination/score";
-import type { ScoreRun } from "../coordination/score-executor";
-import type { EntityId, Perception, RoomId } from "../types";
 import { type RunScoreDeps, runScore } from "./conduct";
 import { MemoryClientError } from "./memory-client";
 import type { MemoryOperationRequest, MemoryOperationResult } from "./memory-operations";
+import type { EntityId, Perception, RoomId } from "./protocol";
+import type { Score } from "./score";
+import type { ScoreRun } from "./score-executor";
 
 export type { Perception };
 
@@ -166,7 +166,7 @@ export class MarinaClient {
   private eventListeners = new Map<ClientEventName, Array<(...args: unknown[]) => void>>();
 
   constructor(url: string, options?: ClientOptions) {
-    this.url = url.replace(/\/$/, "");
+    this.url = url.replace(/\/$/, "").replace(/\/ws$/, "");
     this.options = {
       autoReconnect: options?.autoReconnect ?? true,
       reconnectDelay: options?.reconnectDelay ?? 3000,

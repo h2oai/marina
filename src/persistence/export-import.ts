@@ -5,6 +5,7 @@ import { Database } from "bun:sqlite";
 import { getErrorMessage } from "../engine/errors";
 import { tableExists } from "./db-maintenance";
 import { rebuildMemoryStorage } from "./db-memory-storage";
+import { MIGRATIONS } from "./schema";
 
 // ─── Export Format ──────────────────────────────────────────────────────────
 
@@ -88,6 +89,7 @@ export const EXPORT_TABLES = [
   "room_templates",
   "notes",
   "note_sources",
+  "legacy_memory_outbox",
   "note_verifications",
   "contradiction_cases",
   "productivity_sessions",
@@ -142,6 +144,7 @@ export const EXPORT_TABLES = [
   "memory_grants",
   "memory_records",
   "memory_record_versions",
+  "memory_note_projections",
   "memory_sources",
   "memory_derivations",
   "memory_dependencies",
@@ -180,8 +183,9 @@ export const EXPORT_TABLES = [
 
 /**
  * Tables that hold credentials / PII. Omitted from exports unless
- * `ExportOptions.includeSecrets` is explicitly set, so a snapshot is safe to
- * share by default. (`mem_api_keys.secret` is a plaintext Bearer token;
+ * `ExportOptions.includeSecrets` is explicitly set. Exports still contain private
+ * notes, messages and source content; they are not public/redacted snapshots.
+ * (`mem_api_keys.secret` is a plaintext Bearer token;
  * `api_keys` is encrypted provider keys; `connectors` / `gateways` may carry
  * auth material.) Note: the `users` table is just the name→rank registry (no
  * credentials — better-auth stores those separately), so it is NOT secret and
@@ -225,8 +229,9 @@ export interface ExportOptions {
   skipEventLog?: boolean;
   /**
    * Include secret-bearing tables (SECRET_TABLES: api_keys, mem_api_keys,
-   * connectors, gateways, gateway_bridges). Default: false — snapshots are safe
-   * to share by default; pass true only for a full operational backup.
+   * connectors, gateways, gateway_bridges). Default: false. Private content is
+   * still included. This logical export does not include binary assets or credentials
+   * deliberately excluded by isExcludedFromExport; use a recovery bundle for backups.
    */
   includeSecrets?: boolean;
   /** World name to include in the snapshot (informational). */
@@ -237,33 +242,36 @@ export function exportState(dbPath: string, opts?: ExportOptions): MarinaSnapsho
   const db = new Database(dbPath, { readonly: true });
   db.exec("PRAGMA journal_mode=WAL");
 
-  const schemaVersion = getSchemaVersion(db);
-  const tables: Record<string, unknown[]> = {};
+  try {
+    return db.transaction(() => {
+      const schemaVersion = getSchemaVersion(db);
+      const tables: Record<string, unknown[]> = {};
+      for (const table of new Set(EXPORT_TABLES)) {
+        if (opts?.skipEventLog && table === "event_log") continue;
+        // Secret-bearing tables are omitted unless explicitly requested.
+        if (!opts?.includeSecrets && SECRET_TABLES.has(table)) continue;
 
-  for (const table of EXPORT_TABLES) {
-    if (opts?.skipEventLog && table === "event_log") continue;
-    // Secret-bearing tables are omitted unless explicitly requested.
-    if (!opts?.includeSecrets && SECRET_TABLES.has(table)) continue;
+        // Only export tables that exist (older schemas may lack some)
+        if (!tableExists(db, table)) continue;
 
-    // Only export tables that exist (older schemas may lack some)
-    if (!tableExists(db, table)) continue;
-
-    const rows = db.query(`SELECT * FROM "${table}"`).all();
-    if (rows.length > 0) {
-      tables[table] = rows;
-    }
+        const rows = db.query(`SELECT * FROM "${table}"`).all();
+        // Presence is the replacement scope. Empty tables must remain explicit so
+        // restoring an empty source clears corresponding target rows. Omitted tables
+        // (secrets, --skip-events, historical snapshots) are preserved.
+        tables[table] = rows;
+      }
+      return {
+        format: "marina-snapshot" as const,
+        version: 1 as const,
+        schema_version: schemaVersion,
+        exported_at: new Date().toISOString(),
+        ...(opts?.worldName ? { world_name: opts.worldName } : {}),
+        tables,
+      };
+    })();
+  } finally {
+    db.close();
   }
-
-  db.close();
-
-  return {
-    format: "marina-snapshot",
-    version: 1,
-    schema_version: schemaVersion,
-    exported_at: new Date().toISOString(),
-    ...(opts?.worldName ? { world_name: opts.worldName } : {}),
-    tables,
-  };
 }
 
 // ─── Import ─────────────────────────────────────────────────────────────────
@@ -298,6 +306,21 @@ export function importState(
   }
 
   const db = new Database(dbPath);
+  const targetVersion = getSchemaVersion(db);
+  if (
+    snapshot.schema_version > targetVersion ||
+    snapshot.schema_version > MIGRATIONS.at(-1)!.version
+  ) {
+    db.close();
+    return {
+      tablesImported: 0,
+      rowsImported: 0,
+      tablesSkipped: [],
+      errors: [
+        `Snapshot schema ${snapshot.schema_version} is newer than target schema ${targetVersion}. Upgrade the target before importing.`,
+      ],
+    };
+  }
   db.exec("PRAGMA journal_mode=WAL");
   db.exec("PRAGMA synchronous=NORMAL");
   db.exec("PRAGMA foreign_keys=OFF"); // Disable during bulk import
@@ -313,18 +336,27 @@ export function importState(
     db.transaction(() => {
       // Foreign-key cascades are disabled during restore. Close existing work
       // before replacing its premises, including when merging a snapshot.
-      if (tableExists(db, "memory_assistance_actions"))
-        db.run("DELETE FROM memory_assistance_actions");
-      if (tableExists(db, "memory_assistance_jobs")) db.run("DELETE FROM memory_assistance_jobs");
+      const replacesMemory = Object.keys(snapshot.tables).some(
+        (table) =>
+          table === "notes" ||
+          table === "principals" ||
+          table === "users" ||
+          table.startsWith("memory_"),
+      );
+      if (replacesMemory) {
+        if (tableExists(db, "memory_assistance_actions"))
+          db.run("DELETE FROM memory_assistance_actions");
+        if (tableExists(db, "memory_assistance_jobs")) db.run("DELETE FROM memory_assistance_jobs");
+      }
       // This projection is regenerated from canonical source rows. Foreign-key
       // cascades are disabled during restore, so clear it explicitly first.
       if (tableExists(db, "memory_source_text")) db.run("DELETE FROM memory_source_text");
       // Process tables in FK-safe order
-      for (const table of EXPORT_TABLES) {
+      for (const table of new Set(EXPORT_TABLES)) {
         if (opts?.skipEventLog && table === "event_log") continue;
 
         const rows = snapshot.tables[table];
-        if (!rows || rows.length === 0) continue;
+        if (!rows) continue;
 
         if (!tableExists(db, table)) {
           result.tablesSkipped.push(table);
@@ -335,6 +367,7 @@ export function importState(
         if (!opts?.merge) {
           db.run(`DELETE FROM "${table}"`);
         }
+        if (rows.length === 0) continue;
 
         // Get column names from first row
         const firstRow = rows[0] as Record<string, unknown>;
@@ -342,10 +375,14 @@ export function importState(
 
         // Verify columns exist in target table
         const tableColumns = getTableColumns(db, table);
-        const validColumns = columns.filter((c) => tableColumns.includes(c));
-        if (validColumns.length === 0) {
-          result.tablesSkipped.push(table);
-          continue;
+        const unknownColumns = columns.filter((column) => !tableColumns.includes(column));
+        if (!columns.length || unknownColumns.length)
+          throw new Error(`${table}: unknown or empty column set`);
+        const validColumns = columns;
+        for (const row of rows) {
+          const keys = Object.keys(row as Record<string, unknown>);
+          if (keys.length !== columns.length || keys.some((key) => !columns.includes(key)))
+            throw new Error(`${table}: rows must have the same columns`);
         }
 
         const placeholders = validColumns.map(() => "?").join(", ");
@@ -362,7 +399,7 @@ export function importState(
             if (v === undefined || v === null) return null;
             if (typeof v === "string" || typeof v === "number" || typeof v === "bigint") return v;
             if (typeof v === "boolean") return v ? 1 : 0;
-            return String(v);
+            throw new Error(`${table}.${c}: expected a scalar SQL value`);
           });
           try {
             stmt.run(...(values as (string | number | bigint | null)[]));
@@ -409,10 +446,8 @@ export function importState(
           `Foreign-key violation in ${first.table} row ${first.rowid ?? "unknown"} referencing ${first.parent}`,
         );
       }
+      rebuildFtsIndexes(db, result);
     })();
-
-    // Rebuild FTS indexes outside the transaction
-    rebuildFtsIndexes(db, result);
   } catch (err) {
     result.errors.push(`Transaction failed: ${getErrorMessage(err)}`);
     result.tablesImported = 0;
@@ -493,20 +528,11 @@ function getTableColumns(db: Database, table: string): string[] {
 function rebuildFtsIndexes(db: Database, result: ImportResult): void {
   // Rebuild board_posts_fts if board_posts were imported
   if (result.tablesImported > 0) {
-    try {
-      if (tableExists(db, "board_posts_fts")) {
-        db.run("INSERT INTO board_posts_fts(board_posts_fts) VALUES('rebuild')");
-      }
-    } catch (err) {
-      result.errors.push(`FTS rebuild (board_posts): ${getErrorMessage(err)}`);
+    if (tableExists(db, "board_posts_fts")) {
+      db.run("INSERT INTO board_posts_fts(board_posts_fts) VALUES('rebuild')");
     }
-
-    try {
-      if (tableExists(db, "notes_fts")) {
-        db.run("INSERT INTO notes_fts(notes_fts) VALUES('rebuild')");
-      }
-    } catch (err) {
-      result.errors.push(`FTS rebuild (notes): ${getErrorMessage(err)}`);
+    if (tableExists(db, "notes_fts")) {
+      db.run("INSERT INTO notes_fts(notes_fts) VALUES('rebuild')");
     }
   }
 }

@@ -1,7 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import * as environment from "../src/config/environment";
 import { Engine } from "../src/engine/engine";
 import { handleDashboardApi, projectEnvValueForRead } from "../src/net/dashboard-api";
 import { resetHttpRateLimitersForTests } from "../src/net/http-utils";
@@ -18,7 +19,12 @@ describe("dashboard-api HTTP authorization hardening", () => {
   const prevDesktopToken = process.env.MARINA_DESKTOP_API_TOKEN;
   const prevAnthropic = process.env.ANTHROPIC_API_KEY;
 
+  let restoreEnvironmentWrite: () => void;
   beforeEach(() => {
+    const writer = spyOn(environment, "writeEnvironment").mockImplementation(() => {
+      throw new Error("Authorization fixtures must never write the operator environment");
+    });
+    restoreEnvironmentWrite = () => writer.mockRestore();
     delete process.env.MARINA_OPEN_API;
     delete process.env.MARINA_DESKTOP_API_TOKEN;
     db = new MarinaDB(TEST_DB);
@@ -27,6 +33,7 @@ describe("dashboard-api HTTP authorization hardening", () => {
   });
 
   afterEach(() => {
+    restoreEnvironmentWrite();
     const restore = (k: string, v: string | undefined) => {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
@@ -255,17 +262,22 @@ describe("dashboard-api HTTP authorization hardening", () => {
     expect(resp?.status).toBe(403);
   });
 
-  it("rejects editing security-relevant keys even for the desktop operator", async () => {
+  it.each([
+    "MARINA_ADMINS",
+    "MARINA_PROFILE",
+    "MARINA_ALLOW_INSECURE_PUBLIC",
+    "BETTER_AUTH_SECRET",
+  ])("rejects editing %s even for the desktop operator", async (key) => {
     const desktopToken = "desktop-capability-token-at-least-32-chars";
     process.env.MARINA_DESKTOP_API_TOKEN = desktopToken;
     const [req, url, method] = jsonReq("/api/env", "PUT", {
       desktopToken,
-      body: { vars: { MARINA_ADMINS: "attacker" } },
+      body: { vars: { [key]: "attacker" } },
     });
     const resp = await handleDashboardApi(req, url, method, engine, db);
     expect(resp?.status).toBe(403);
     // Never applied to the live process.
-    expect(process.env.MARINA_ADMINS).not.toBe("attacker");
+    expect(process.env[key]).not.toBe("attacker");
   });
 
   it("denies /api/env GET under the dev-open bypass (privileged, not read-open)", async () => {

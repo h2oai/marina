@@ -37,7 +37,7 @@ services:
       - MARINA_CODE_DEFAULT_ROOT=/app/data/workspace
       - LOG_FORMAT=json
       # World to load: default | commons | research | personal | evolve | craft | markets | demos | empty
-      - MARINA_WORLD=default
+      - MARINA_WORLD=${MARINA_WORLD:-default}
 
       # The image binds 0.0.0.0 INSIDE the container (WS_HOST in the Dockerfile
       # — required for published ports to work). Marina's startup gate refuses a
@@ -81,9 +81,8 @@ services:
 
       # ── LLM providers (needed for agent spawning / room agents) ──
       # Set the key for your provider HERE (or in .env). `marina/default` agents
-      # — including room agents — proxy upstream using ONLY these env vars; an
-      # Admin-panel key is NOT used on that path, so a missing env var yields
-      # "No upstream LLM providers configured". Env keys also survive DB/volume
+      # — including room agents — use env keys first, then Admin-panel provider
+      # keys. Env keys also survive DB/volume
       # resets, unlike Admin-panel keys. External providers are reached over
       # OUTBOUND HTTPS (443) — no published port is required for this.
       # - ANTHROPIC_API_KEY=sk-ant-...

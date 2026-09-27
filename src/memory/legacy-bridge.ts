@@ -2,24 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Legacy-note ↔ durable-record bridge (memory roadmap Phase 1.2).
+ * Durable worker for the numeric-note compatibility projection.
  *
  * The legacy `note` verbs keep writing to the `notes` table exactly as before;
  * this module makes every such write ALSO land in the caller's durable resident
  * space as a versioned record with a captured source, and records the pairing
  * ("twin") on the legacy side as a `note_sources` row whose url is
- * `marina-memory://record/<recordId>`. No migration: the existing
- * `note_sources` table is the twin registry.
+ * `marina-memory://record/<recordId>`. The authoritative identity mapping is
+ * `memory_note_projections`; source rows retain inspectable provenance.
  *
- * Bridging is best-effort and never fatal for the legacy path — an entity with
- * no durable world account (`world_identity_required`) is silently skipped,
- * any other failure is logged and swallowed.
+ * Mutations enqueue durably in their originating SQLite transaction. The worker
+ * retains failed jobs for retry; identityless namespaces remain legacy-only.
  */
 
 import { createHash } from "node:crypto";
-import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
 import type { MarinaDB, NoteRow } from "../persistence/database";
+import { committedLegacyReview, legacyRetirementSpace } from "../persistence/db-legacy-bridge";
+import { bindMemoryNote, boundMemoryRecordId } from "../persistence/db-memory-projections";
 import { MemoryClientError } from "../sdk/memory-client";
 import type { MemoryOperationRequest } from "../sdk/memory-operations";
 import { retryMemoryOperation } from "../sdk/memory-retry";
@@ -99,11 +99,14 @@ function parseMetadata(raw: string | null): Record<string, unknown> {
  * sole twin.
  */
 export function findDurableTwin(db: MarinaDB, noteId: number): DurableTwin | undefined {
+  const bound = boundMemoryRecordId(db.memoryRepository().raw, noteId);
   let mirror: DurableTwin | undefined;
   for (const source of db.getNoteSources(noteId)) {
     const recordId = parseDurableTwinUrl(source.url);
     if (!recordId) continue;
     const meta = parseMetadata(source.metadata);
+    if (bound ? recordId !== bound : meta.kind !== "durable-twin" || meta.record_id !== recordId)
+      continue;
     const twin: DurableTwin = {
       recordId,
       url: source.url,
@@ -165,27 +168,31 @@ export function recordDurableTwin(
   /** Extra twin-row metadata, e.g. `{ mirror: "institutional" }` for a ratified copy. */
   extra?: Record<string, unknown>,
 ): void {
-  db.addNoteSource(noteId, {
-    url: durableTwinUrl(twin.recordId),
-    // `source_type` has no DB-level check; the TS union in db-notes is not
-    // extended here (not owned by this slice), so the twin is identified by
-    // its url scheme + metadata.kind rather than by a new source type.
-    sourceType: "artifact",
-    title: "durable twin",
-    capturedBy,
-    // A twin mirrors the note itself; it is provenance, not evidence. Zero
-    // credibility keeps it below every trust threshold (`recall … trusted`
-    // promotes on sources with credibility >= 0.6) and out of corroboration.
-    credibility: 0,
-    metadata: {
-      ...extra,
-      kind: "durable-twin",
-      record_id: twin.recordId,
-      version: twin.version,
-      source_id: twin.sourceId,
-      space_id: twin.spaceId,
-    },
-  });
+  db.memoryRepository().raw.transaction(() => {
+    if (extra?.mirror !== "institutional")
+      bindMemoryNote(db.memoryRepository().raw, noteId, twin.recordId);
+    db.addNoteSource(noteId, {
+      url: durableTwinUrl(twin.recordId),
+      // `source_type` has no DB-level check; the TS union in db-notes is not
+      // extended here (not owned by this slice), so the twin is identified by
+      // its url scheme + metadata.kind rather than by a new source type.
+      sourceType: "artifact",
+      title: "durable twin",
+      capturedBy,
+      // A twin mirrors the note itself; it is provenance, not evidence. Zero
+      // credibility keeps it below every trust threshold (`recall … trusted`
+      // promotes on sources with credibility >= 0.6) and out of corroboration.
+      credibility: 0,
+      metadata: {
+        ...extra,
+        kind: "durable-twin",
+        record_id: twin.recordId,
+        version: twin.version,
+        source_id: twin.sourceId,
+        space_id: twin.spaceId,
+      },
+    });
+  })();
 }
 
 const DURABLE_TYPES = new Set(["fact", "observation", "decision", "inference", "skill", "episode"]);
@@ -235,8 +242,7 @@ async function captureNoteText(
 /**
  * Twin a freshly created legacy note: capture its text as a durable source and
  * `remember` a record citing that source. Idempotent per note via the
- * `legacy-note-<id>-v1` key. Throws on failure — callers wanting the non-fatal
- * behaviour use `bridgeLegacyNoteQuietly`.
+ * `legacy-note-<id>-v1` key. The shared worker retains failures for retry.
  */
 export async function bridgeLegacyNote(
   db: MarinaDB,
@@ -244,7 +250,8 @@ export async function bridgeLegacyNote(
   noteId: number,
 ): Promise<BridgeResult | undefined> {
   const note = db.getNote(noteId);
-  if (!note || note.entity_name !== entityName || note.pool_id) return undefined;
+  if (!note || note.entity_name !== entityName || note.pool_id || !DURABLE_TIERS.has(note.tier))
+    return undefined;
   return twinLegacyNote(db, entityName, note, {});
 }
 
@@ -262,7 +269,8 @@ export async function bridgeLegacyPoolNote(
   poolName: string,
 ): Promise<BridgeResult | undefined> {
   const note = db.getNote(noteId);
-  if (!note || note.entity_name !== entityName || !note.pool_id) return undefined;
+  if (!note || note.entity_name !== entityName || !note.pool_id || !DURABLE_TIERS.has(note.tier))
+    return undefined;
   return twinLegacyNote(db, entityName, note, {
     pool_id: note.pool_id,
     pool: poolName,
@@ -299,12 +307,46 @@ async function twinLegacyNote(
   });
   const receipt = remembered.result as MemoryReceipt;
   const version = receipt.version ?? 1;
-  recordDurableTwin(db, note.id, { recordId: receipt.id, version, sourceId, spaceId }, entityName);
+  if (!db.getNote(note.id)) {
+    await retireDurableTwin(db, entityName, note.id, {
+      recordId: receipt.id,
+      version,
+      sourceId,
+      spaceId,
+      url: durableTwinUrl(receipt.id),
+    });
+  } else
+    recordDurableTwin(
+      db,
+      note.id,
+      { recordId: receipt.id, version, sourceId, spaceId },
+      entityName,
+    );
   return { recordId: receipt.id, version, sourceId, spaceId };
 }
 
 async function getRecord(db: MarinaDB, entityName: string, recordId: string) {
   return (await durable(db, entityName, { operation: "get", id: recordId })).result as MemoryRecord;
+}
+
+/** A failed earlier create must not turn later provenance/graph intents into
+ * successful no-ops. Re-establish prerequisites using their original keys. */
+async function ensureNoteTwin(db: MarinaDB, entityName: string, noteId: number) {
+  const note = db.getNote(noteId);
+  if (!note || note.entity_name !== entityName || !DURABLE_TIERS.has(note.tier)) return undefined;
+  const existing = findDurableTwin(db, noteId);
+  if (existing) return existing;
+  if (note.supersedes_id) {
+    await bridgeLegacyRevision(db, entityName, note.supersedes_id, noteId);
+  } else if (note.pool_id) {
+    await bridgeLegacyPoolNote(
+      db,
+      entityName,
+      noteId,
+      db.getMemoryPoolById(note.pool_id)?.name ?? note.pool_id,
+    );
+  } else await bridgeLegacyNote(db, entityName, noteId);
+  return findDurableTwin(db, noteId);
 }
 
 /** The legacy note id a retired twin was retired for, if it was retired. */
@@ -343,8 +385,8 @@ function receiptResult(receipt: MemoryReceipt, fallbackVersion: number, spaceId?
  * Propagate a legacy supersession (`note correct` / `note evolve`) to the
  * durable twin: revise the predecessor's record (CAS on its current version)
  * with the successor's content, and point the successor legacy note at the
- * same record's new version. A predecessor without a twin gets a fresh twin
- * created for the successor instead, so the pair still ends up in both silos.
+ * same record's new version. A pending predecessor is materialized first so
+ * its history survives. If it was deleted, the successor gets a fresh record.
  */
 export async function bridgeLegacyRevision(
   db: MarinaDB,
@@ -353,13 +395,35 @@ export async function bridgeLegacyRevision(
   successorId: number,
 ): Promise<BridgeResult | undefined> {
   const successor = db.getNote(successorId);
-  if (!successor || successor.entity_name !== entityName || successor.pool_id) return undefined;
+  if (!successor || successor.entity_name !== entityName || !DURABLE_TIERS.has(successor.tier))
+    return undefined;
   const already = findDurableTwin(db, successorId);
   if (already) return asResult(already);
-  const twin = findDurableTwin(db, predecessorId);
-  if (!twin) return bridgeLegacyNote(db, entityName, successorId);
+  const predecessor = db.getNote(predecessorId);
+  const poolName = successor.pool_id
+    ? (db.getMemoryPoolById(successor.pool_id)?.name ?? successor.pool_id)
+    : undefined;
+  const twin =
+    findDurableTwin(db, predecessorId) ??
+    (predecessor?.pool_id
+      ? await bridgeLegacyPoolNote(db, entityName, predecessorId, poolName ?? predecessor.pool_id)
+      : await bridgeLegacyNote(db, entityName, predecessorId));
+  if (!twin)
+    return poolName
+      ? bridgeLegacyPoolNote(db, entityName, successorId, poolName)
+      : bridgeLegacyNote(db, entityName, successorId);
   const current = (await durable(db, entityName, { operation: "get", id: twin.recordId }))
     .result as MemoryRecord;
+  if (current.metadata.legacy_note_id === successorId && current.content === successor.content) {
+    const recovered = {
+      recordId: current.id,
+      version: current.version,
+      sourceId: current.source_ids[0],
+      spaceId: current.space_id,
+    };
+    recordDurableTwin(db, successorId, recovered, entityName);
+    return recovered;
+  }
   const nextVersion = current.version + 1;
   const { sourceId, spaceId } = await captureNoteText(db, entityName, successor, nextVersion);
   const revised = await durable(db, entityName, {
@@ -376,6 +440,7 @@ export async function bridgeLegacyRevision(
         note_type: successor.note_type,
         importance: successor.importance,
         supersedes_legacy_note_id: predecessorId,
+        ...(successor.pool_id ? { pool_id: successor.pool_id, pool: poolName, shared: true } : {}),
       },
       source_ids: [sourceId],
     },
@@ -432,7 +497,11 @@ export async function retireDurableTwin(
   opts: RetireTwinOptions = {},
 ): Promise<BridgeResult | undefined> {
   const reason = opts.reason ?? "deleted";
-  const current = await getRecord(db, entityName, twin.recordId);
+  const space = legacyRetirementSpace(db.memoryRepository().raw, entityName, twin.recordId);
+  if (!space) return undefined;
+  const current = (
+    await durable(db, entityName, { operation: "get", space_id: space, id: twin.recordId })
+  ).result as MemoryRecord;
   const meta = current.metadata ?? {};
   if (retiredFor(meta) !== undefined) {
     return { recordId: current.id, version: current.version, spaceId: current.space_id };
@@ -445,6 +514,7 @@ export async function retireDurableTwin(
       : undefined;
   const revised = await durable(db, entityName, {
     operation: "revise",
+    space_id: space,
     id: twin.recordId,
     input: {
       expected_version: current.version,
@@ -507,6 +577,7 @@ export interface VerificationBridgeOptions {
   confidence?: number;
   rationale?: string;
   caseId?: number;
+  expectedContent?: string;
 }
 
 /**
@@ -536,10 +607,21 @@ export async function bridgeLegacyVerification(
 ): Promise<BridgeResult | undefined> {
   const note = db.getNote(noteId);
   if (!note || note.entity_name !== entityName) return undefined;
-  const twin = findDurableTwin(db, noteId);
+  if (opts.expectedContent !== undefined && note.content !== opts.expectedContent) return undefined;
+  const twin = await ensureNoteTwin(db, entityName, noteId);
   if (!twin) return undefined;
   const current = await ownedCurrent(db, entityName, noteId, twin);
   if (!current) return undefined;
+  if (
+    committedLegacyReview(
+      db.memoryRepository().raw,
+      entityName,
+      current.space_id,
+      opts.key,
+      current.id,
+    )
+  )
+    return { recordId: current.id, version: current.version, spaceId: current.space_id };
   const meta = current.metadata ?? {};
   const now = Date.now();
   const closedByLegacyDispute =
@@ -690,8 +772,8 @@ export async function bridgeLegacyLink(
 ): Promise<BridgeResult | undefined> {
   const source = db.getNote(sourceNoteId);
   if (!source || source.entity_name !== entityName) return undefined;
-  const twinA = findDurableTwin(db, sourceNoteId);
-  const twinB = findDurableTwin(db, targetNoteId);
+  const twinA = await ensureNoteTwin(db, entityName, sourceNoteId);
+  const twinB = await ensureNoteTwin(db, entityName, targetNoteId);
   if (!twinA || !twinB) return undefined;
   const existing = await findDurableRelation(
     db,
@@ -823,7 +905,7 @@ export async function bridgeLegacySource(
   // A twin row is provenance of the bridge itself, never a source to mirror.
   if (parseDurableTwinUrl(source.url) || source.url.startsWith(ASSISTANCE_ADOPTION_URL_PREFIX))
     return undefined;
-  const twin = findDurableTwin(db, noteId) ?? (await bridgeLegacyNote(db, entityName, noteId));
+  const twin = await ensureNoteTwin(db, entityName, noteId);
   if (!twin) return undefined;
   const current = await ownedCurrent(db, entityName, noteId, {
     recordId: twin.recordId,
@@ -831,7 +913,7 @@ export async function bridgeLegacySource(
   });
   if (!current) return undefined;
   const selfDerived =
-    source.sourceNoteId !== undefined ||
+    typeof source.sourceNoteId === "number" ||
     source.url.startsWith("note:") ||
     source.url.startsWith("marina-memory://");
   const digest = sourceDigest(source.url);
@@ -844,15 +926,26 @@ export async function bridgeLegacySource(
     key: `legacy-note-${noteId}-source-${digest}`,
   });
   const sourceId = (captured.result as MemoryReceipt).id;
-  if (current.source_ids.includes(sourceId)) {
-    return { recordId: current.id, version: current.version, spaceId: current.space_id };
-  }
-  if (current.source_ids.length >= MAX_RECORD_SOURCES) {
-    logger.warn("legacy-bridge", `twin for note #${noteId} is at the source cap; url not mirrored`);
-    return { recordId: current.id, version: current.version, spaceId: current.space_id };
-  }
+  const attached = current.source_ids.includes(sourceId);
+  if (!attached && current.source_ids.length >= MAX_RECORD_SOURCES)
+    throw new MemoryClientError(409, "source_capacity", "Compatibility source limit reached");
   const meta = current.metadata ?? {};
   const previous = Array.isArray(meta.legacy_sources) ? meta.legacy_sources : [];
+  const reference = {
+    url: source.url,
+    source_id: sourceId,
+    source_type: source.sourceType ?? "url",
+    credibility: source.credibility ?? 0.5,
+    observed_at: source.observedAt ?? null,
+    source_note_id: source.sourceNoteId ?? null,
+  };
+  const existing = previous.find((item) => item?.url === source.url);
+  if (
+    attached &&
+    existing &&
+    Object.entries(reference).every(([key, value]) => existing[key] === value)
+  )
+    return { recordId: current.id, version: current.version, spaceId: current.space_id };
   const revised = await durable(db, entityName, {
     operation: "revise",
     id: twin.recordId,
@@ -860,40 +953,15 @@ export async function bridgeLegacySource(
       expected_version: current.version,
       content: current.content,
       importance: current.importance,
-      source_ids: [...current.source_ids, sourceId],
+      source_ids: [...new Set([...current.source_ids, sourceId])],
       metadata: {
         ...meta,
-        legacy_sources: [
-          ...previous,
-          {
-            url: source.url,
-            source_id: sourceId,
-            source_type: source.sourceType,
-            credibility: source.credibility,
-            observed_at: source.observedAt,
-            source_note_id: source.sourceNoteId,
-          },
-        ],
+        legacy_sources: [...previous.filter((item) => item?.url !== source.url), reference],
       },
     },
     key: `legacy-note-${noteId}-source-${digest}-v${current.version + 1}`,
   });
   return receiptResult(revised.result as MemoryReceipt, current.version + 1, revised.space_id);
-}
-
-/** Swallow bridge failures: identity-less entities are skipped silently, the
- * rest is logged. The legacy write has already succeeded by the time this runs. */
-async function quietly<T>(what: string, fn: () => Promise<T>): Promise<T | undefined> {
-  try {
-    return await fn();
-  } catch (error) {
-    if (error instanceof MemoryClientError && error.code === "world_identity_required") {
-      logger.debug("legacy-bridge", `${what} skipped: no durable world account`);
-      return undefined;
-    }
-    logger.warn("legacy-bridge", `${what} failed`, { error: getErrorMessage(error) });
-    return undefined;
-  }
 }
 
 /**
@@ -905,7 +973,10 @@ async function quietly<T>(what: string, fn: () => Promise<T>): Promise<T | undef
 const inflight = new Set<Promise<unknown>>();
 
 function track<T>(p: Promise<T>): Promise<T> {
-  const tracked: Promise<unknown> = p.finally(() => inflight.delete(tracked));
+  const tracked: Promise<unknown> = p.then(
+    () => inflight.delete(tracked),
+    () => inflight.delete(tracked),
+  );
   inflight.add(tracked);
   return p;
 }
@@ -915,132 +986,64 @@ export async function awaitPendingBridges(): Promise<void> {
   while (inflight.size > 0) await Promise.allSettled([...inflight]);
 }
 
-export function bridgeLegacyNoteQuietly(
-  db: MarinaDB,
-  entityName: string,
-  noteId: number,
-): Promise<BridgeResult | undefined> {
-  return track(quietly(`twin for note #${noteId}`, () => bridgeLegacyNote(db, entityName, noteId)));
-}
-
-export function bridgeLegacyRevisionQuietly(
-  db: MarinaDB,
-  entityName: string,
-  predecessorId: number,
-  successorId: number,
-): Promise<BridgeResult | undefined> {
-  return track(
-    quietly(`twin revision #${predecessorId} → #${successorId}`, () =>
-      bridgeLegacyRevision(db, entityName, predecessorId, successorId),
-    ),
+const serial = new WeakMap<MarinaDB, Promise<unknown>>();
+function serialize<T>(db: MarinaDB, run: () => Promise<T>): Promise<T> {
+  const next = (serial.get(db) ?? Promise.resolve()).then(run, run);
+  serial.set(
+    db,
+    next.catch(() => undefined),
   );
+  return next;
 }
 
-/** Fire-and-forget twin retirement for a deleted legacy note; `twin` must
- * have been resolved before the legacy row was deleted. */
-export function retireDurableTwinQuietly(
-  db: MarinaDB,
-  entityName: string,
-  noteId: number,
-  twin: DurableTwin,
-): Promise<BridgeResult | undefined> {
-  return track(
-    quietly(`twin retirement for deleted note #${noteId}`, () =>
-      retireDurableTwin(db, entityName, noteId, twin),
-    ),
-  );
-}
+const bridgeHandlers = {
+  bridgeLegacyNote,
+  bridgeLegacyRevision,
+  retireDurableTwin,
+  bridgeLegacyPoolNote,
+  bridgeLegacyConsolidation,
+  bridgeLegacyVerification,
+  bridgeLegacyResolution,
+  bridgeLegacyLink,
+  bridgeLegacyUnlink,
+  bridgeLegacySource,
+};
 
-export function bridgeLegacyPoolNoteQuietly(
-  db: MarinaDB,
-  entityName: string,
-  noteId: number,
-  poolName: string,
-): Promise<BridgeResult | undefined> {
+/** Bounded, serial replay; failed intents remain observable and survive restart. */
+export function replayPendingBridges(db: MarinaDB, limit = 100): Promise<void> {
   return track(
-    quietly(`twin for pool note #${noteId}`, () =>
-      bridgeLegacyPoolNote(db, entityName, noteId, poolName),
-    ),
-  );
-}
-
-export function bridgeLegacyConsolidationQuietly(
-  db: MarinaDB,
-  entityName: string,
-  keeperId: number,
-  supersededIds: number[],
-): Promise<BridgeResult[] | undefined> {
-  return track(
-    quietly(`twin retirement for notes consolidated into #${keeperId}`, () =>
-      bridgeLegacyConsolidation(db, entityName, keeperId, supersededIds),
-    ),
-  );
-}
-
-export function bridgeLegacyVerificationQuietly(
-  db: MarinaDB,
-  entityName: string,
-  noteId: number,
-  verdict: LegacyVerdict,
-  opts: VerificationBridgeOptions,
-): Promise<BridgeResult | undefined> {
-  return track(
-    quietly(`twin verification (${verdict}) for note #${noteId}`, () =>
-      bridgeLegacyVerification(db, entityName, noteId, verdict, opts),
-    ),
-  );
-}
-
-export function bridgeLegacyResolutionQuietly(
-  db: MarinaDB,
-  entityName: string,
-  caseId: number,
-  outcome: { winners: number[]; losers: number[]; rationale?: string },
-): Promise<BridgeResult[] | undefined> {
-  return track(
-    quietly(`twin verdicts for contradiction case #${caseId}`, () =>
-      bridgeLegacyResolution(db, entityName, caseId, outcome),
-    ),
-  );
-}
-
-export function bridgeLegacyLinkQuietly(
-  db: MarinaDB,
-  entityName: string,
-  sourceNoteId: number,
-  targetNoteId: number,
-  relationship: string,
-): Promise<BridgeResult | undefined> {
-  return track(
-    quietly(`durable relation #${sourceNoteId} ${relationship} #${targetNoteId}`, () =>
-      bridgeLegacyLink(db, entityName, sourceNoteId, targetNoteId, relationship),
-    ),
-  );
-}
-
-export function bridgeLegacyUnlinkQuietly(
-  db: MarinaDB,
-  entityName: string,
-  sourceNoteId: number,
-  targetNoteId: number,
-  relationship: string,
-): Promise<BridgeResult | undefined> {
-  return track(
-    quietly(`durable relation close #${sourceNoteId} ${relationship} #${targetNoteId}`, () =>
-      bridgeLegacyUnlink(db, entityName, sourceNoteId, targetNoteId, relationship),
-    ),
-  );
-}
-
-export function bridgeLegacySourceQuietly(
-  db: MarinaDB,
-  entityName: string,
-  noteId: number,
-  source: LegacySourceRef,
-): Promise<BridgeResult | undefined> {
-  return track(
-    quietly(`twin source for note #${noteId}`, () =>
-      bridgeLegacySource(db, entityName, noteId, source),
-    ),
+    serialize(db, async () => {
+      for (const job of db.pendingLegacyBridges(limit)) {
+        try {
+          if (!Object.hasOwn(bridgeHandlers, job.operation))
+            throw new Error("Unknown bridge operation");
+          const args: unknown = JSON.parse(job.args);
+          if (!Array.isArray(args) || typeof args[0] !== "string")
+            throw new Error("Invalid bridge intent");
+          if (job.operation === "retireDurableTwin") {
+            const twin = args[2] as DurableTwin;
+            // Older outbox rows encoded identity in a provenance URL. New
+            // rows carry the exact ID from the authoritative mapping.
+            if (typeof twin.url === "string")
+              twin.recordId = parseDurableTwinUrl(twin.url) ?? twin.recordId;
+          }
+          await Reflect.apply(
+            bridgeHandlers[job.operation as keyof typeof bridgeHandlers],
+            undefined,
+            [db, ...args],
+          );
+          db.completeLegacyBridge(job.id);
+        } catch (error) {
+          db.failLegacyBridge(
+            job.id,
+            error instanceof MemoryClientError ? error.code : "bridge_failed",
+          );
+          logger.warn("legacy-bridge", "Durable bridge intent remains pending", {
+            id: job.id,
+            operation: job.operation,
+          });
+        }
+      }
+    }),
   );
 }

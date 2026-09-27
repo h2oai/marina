@@ -4,6 +4,7 @@
 import { resolve } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
 import { Logger } from "../engine/logger";
+import { MARINA_ROOT } from "../runtime-paths";
 import type { EngineEvent, EntityId } from "../types";
 
 /**
@@ -51,7 +52,7 @@ export class LogServer {
   }
 
   start(): void {
-    const htmlPath = resolve(import.meta.dir, "log.html");
+    const htmlPath = resolve(MARINA_ROOT, "src/net/log.html");
 
     this.server = Bun.serve<LogWSData>({
       port: this.port,

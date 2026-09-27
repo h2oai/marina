@@ -1,7 +1,8 @@
+import { workspacePanels } from "./components/workspace-panels-registry";
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type Layout,
   ResponsiveGridLayout,
@@ -11,30 +12,22 @@ import {
 } from "react-grid-layout";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
-import { AdminPanel } from "./components/AdminPanel";
 import { AttentionDrawer } from "./components/AttentionDrawer";
 import { PinToCanvasDialog } from "./components/CanvasReference";
-import { ConversationInsights } from "./components/ConversationInsights";
-import { CoordinationCard } from "./components/CoordinationCard";
 import { DiscoveryPalette } from "./components/DiscoveryPalette";
 import { EntityPreviewTooltip } from "./components/EntityPreviewTooltip";
-import { EntityRoster } from "./components/EntityRoster";
 import { FirstRunGuide } from "./components/FirstRunGuide";
 import { Header } from "./components/Header";
 import { DeferredDrawer, MemoryWorkspace, PulseDrawer } from "./components/lazy-tabs";
-import { NarrativePlayback } from "./components/NarrativePlayback";
 import {
   ApiFeedback,
   ConnectionBanner,
   RecentActivity,
   ShortcutHelp,
 } from "./components/OperatorFeedback";
-import { RoomDetail } from "./components/RoomDetail";
-import { WebChat } from "./components/WebChat";
-import { ContextPanel, WorkspacePanel } from "./components/WorkspacePanels";
-import { WorldMap } from "./components/WorldMap";
 import { useSystem, useWorld } from "./hooks/use-api";
 import { useChatState } from "./hooks/use-chat-state";
+import { useDashboardNavigation } from "./hooks/use-dashboard-navigation";
 import { useLayoutPresets } from "./hooks/use-layout-presets";
 import { useGlobalRealtimeInvalidations } from "./hooks/use-realtime-invalidations";
 import { useDashboardWebSocket } from "./hooks/use-websocket";
@@ -43,10 +36,7 @@ import {
   useWorkspaceState,
   type WorkspacePane,
 } from "./hooks/use-workspace-state";
-import { useWorldState } from "./hooks/use-world-state";
 import { isEditing } from "./lib/command-discovery";
-import { dashboardInspectionFromSearch } from "./lib/marina-reference";
-import { traceIdFromSearch } from "./lib/trace-links";
 import { BUILTIN_PRESETS, WORKSPACE_LAYOUTS } from "./lib/workspace-layouts";
 
 type Bp = "lg" | "md";
@@ -107,110 +97,7 @@ export default function App() {
     [legacy, preset.applyPreset],
   );
 
-  // Preserve ordinary anchors for new tabs, but navigate within this mounted shell.
-  useEffect(() => {
-    const restore = () => {
-      setDrawer(null);
-      const url = new URL(window.location.href);
-      if (url.searchParams.get("view") === "streams")
-        useWorkspaceState.setState({ participantId: url.searchParams.get("participant") });
-      const inspection = dashboardInspectionFromSearch(url.search);
-      if (inspection) useWorkspaceState.getState().inspect(inspection);
-      const canvas =
-        url.pathname.startsWith("/canvas") || url.searchParams.get("view") === "canvas";
-      useWorkspaceState.setState({ fullscreen: url.pathname.startsWith("/canvas") });
-      if (canvas) openView("canvas");
-      else if (
-        ["work", "map", "observe", "admin", "streams"].includes(url.searchParams.get("view") ?? "")
-      )
-        useWorkspaceState
-          .getState()
-          .setView(
-            url.searchParams.get("view") as "work" | "map" | "observe" | "admin" | "streams",
-          );
-    };
-    const navigate = (event: MouseEvent) => {
-      if (
-        event.defaultPrevented ||
-        event.button !== 0 ||
-        event.metaKey ||
-        event.ctrlKey ||
-        event.shiftKey ||
-        event.altKey
-      )
-        return;
-      const anchor = (event.target as Element).closest<HTMLAnchorElement>("a[href]");
-      if (!anchor || anchor.target === "_blank" || anchor.hasAttribute("download")) return;
-      const url = new URL(anchor.href, window.location.href);
-      if (
-        url.origin !== window.location.origin ||
-        !["/dashboard", "/canvas"].includes(url.pathname)
-      )
-        return;
-      if (
-        !url.pathname.startsWith("/canvas") &&
-        !dashboardInspectionFromSearch(url.search) &&
-        !url.searchParams.has("view")
-      )
-        return;
-      event.preventDefault();
-      window.history.pushState(null, "", url);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    };
-    restore();
-    document.addEventListener("click", navigate);
-    window.addEventListener("popstate", restore);
-    return () => {
-      document.removeEventListener("click", navigate);
-      window.removeEventListener("popstate", restore);
-    };
-  }, [openView]);
-
-  useEffect(
-    () =>
-      useWorldState.subscribe((state, prev) => {
-        if (state.selectedEntity && state.selectedEntity !== prev.selectedEntity)
-          useWorkspaceState.getState().inspect({ type: "entity", name: state.selectedEntity });
-        if (state.selectedRoom && state.selectedRoom !== prev.selectedRoom)
-          useWorkspaceState.getState().inspect({ type: "room", id: state.selectedRoom });
-      }),
-    [],
-  );
-  useEffect(() => {
-    const admin = () => openView("admin");
-    const memory = (event: Event) => {
-      setMemoryDestination((event as CustomEvent<MemoryDestination>).detail ?? {});
-      setDrawer("memory");
-    };
-    const chat = () => {
-      useWorkspaceState.setState({ pane: "webchat", fullscreen: false });
-    };
-    window.addEventListener("marina:open-traces", admin);
-    window.addEventListener("marina:open-admin", admin);
-    window.addEventListener("marina:open-operations", admin);
-    window.addEventListener("marina:open-keys", admin);
-    window.addEventListener("marina:open-coding", chat);
-    window.addEventListener("marina:open-memory", memory);
-    window.addEventListener("marina:draft-command", chat);
-    return () => {
-      window.removeEventListener("marina:open-traces", admin);
-      window.removeEventListener("marina:open-admin", admin);
-      window.removeEventListener("marina:open-operations", admin);
-      window.removeEventListener("marina:open-keys", admin);
-      window.removeEventListener("marina:open-coding", chat);
-      window.removeEventListener("marina:open-memory", memory);
-      window.removeEventListener("marina:draft-command", chat);
-    };
-  }, [openView]);
-  useEffect(() => {
-    const traceId = traceIdFromSearch(window.location.search);
-    if (!traceId) return;
-    const timer = window.setTimeout(
-      () => window.dispatchEvent(new CustomEvent("marina:open-traces", { detail: { traceId } })),
-      0,
-    );
-    return () => window.clearTimeout(timer);
-  }, []);
+  useDashboardNavigation(openView, setDrawer, setMemoryDestination);
 
   useEffect(() => {
     const keys = legacy ? (layouts.lg ?? []).map((l) => l.i) : PANES;
@@ -306,26 +193,7 @@ export default function App() {
     isFocused: focused === key,
     onToggleFocus: () => focus(key),
   });
-  const panels: Array<[string, ReactNode]> = [
-    ["webchat", <WebChat key="webchat" {...panelProps("webchat")} />],
-    ...(legacy
-      ? ([
-          ["insights", <ConversationInsights key="insights" {...panelProps("insights")} />],
-          [
-            "worldmap",
-            <WorldMap key="worldmap" worldData={worldData} {...panelProps("worldmap")} />,
-          ],
-          ["coordination", <CoordinationCard key="coordination" {...panelProps("coordination")} />],
-          ["entities", <EntityRoster key="entities" {...panelProps("entities")} />],
-          ["playback", <NarrativePlayback key="playback" {...panelProps("playback")} />],
-          ["room", <RoomDetail key="room" {...panelProps("room")} />],
-          ["admin", <AdminPanel key="admin" {...panelProps("admin")} />],
-        ] as Array<[string, ReactNode]>)
-      : ([
-          ["workspace", <WorkspacePanel key="workspace" {...panelProps("workspace")} />],
-          ["context", <ContextPanel key="context" {...panelProps("context")} />],
-        ] as Array<[string, ReactNode]>)),
-  ];
+  const panels = workspacePanels(legacy, panelProps, worldData);
 
   return (
     <div

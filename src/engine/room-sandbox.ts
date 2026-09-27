@@ -142,6 +142,7 @@ export class RoomSandbox {
         onError,
       );
     }
+    return result;
   }
 
   private recordViolation(
@@ -179,9 +180,8 @@ export class RoomSandbox {
 
     if (module.onTick) {
       const original = module.onTick;
-      wrapped.onTick = (ctx: RoomContext) => {
+      wrapped.onTick = (ctx: RoomContext) =>
         this.execHandler(roomId, "onTick", () => original(ctx), onError);
-      };
     }
 
     if (module.onEnter) {

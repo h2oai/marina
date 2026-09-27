@@ -5,15 +5,57 @@ import type { CommandDef, CommandHandler, CommandInput, EntityId, RoomId } from 
 
 export class CommandRouter {
   private builtins = new Map<string, CommandDef>();
+  private owners = new Map<string, string>();
 
   /** Register a built-in command (available in every room) */
   registerBuiltin(def: CommandDef): void {
-    this.builtins.set(def.name, def);
-    if (def.aliases) {
-      for (const alias of def.aliases) {
-        this.builtins.set(alias, def);
-      }
+    this.registerOwned("builtin", def, true);
+  }
+
+  /** Validate the complete name/alias set before changing any live registration. */
+  registerOwned(owner: string, def: CommandDef, replace = false): void {
+    if (typeof def.name !== "string" || (def.aliases !== undefined && !Array.isArray(def.aliases)))
+      throw new Error("Invalid command name or aliases");
+    const names = [def.name, ...(def.aliases ?? [])];
+    if (
+      !owner ||
+      typeof def.handler !== "function" ||
+      typeof def.help !== "string" ||
+      !def.help.trim() ||
+      new Set(names).size !== names.length ||
+      names.some(
+        (name) =>
+          typeof name !== "string" ||
+          (!/^[a-z][a-z0-9_-]*$/.test(name) && !(owner === "builtin" && name === "?")),
+      )
+    )
+      throw new Error("Invalid command definition or duplicate aliases");
+    const previous = this.builtins.get(def.name);
+    for (const name of names) {
+      const existing = this.builtins.get(name);
+      if (existing && !(replace && this.owners.get(name) === owner && existing.name === def.name))
+        throw new Error(`Command name or alias already registered: ${name}`);
     }
+    if (previous) this.unregisterOwned(owner, previous.name);
+    const owned = { ...def, aliases: def.aliases ? [...def.aliases] : undefined };
+    for (const name of names) {
+      this.builtins.set(name, owned);
+      this.owners.set(name, owner);
+    }
+  }
+
+  unregisterOwned(owner: string, name: string): boolean {
+    if (this.owners.get(name) !== owner) return false;
+    const def = this.builtins.get(name)!;
+    for (const key of [def.name, ...(def.aliases ?? [])]) {
+      this.builtins.delete(key);
+      this.owners.delete(key);
+    }
+    return true;
+  }
+
+  removeOwner(owner: string): void {
+    for (const [name, value] of this.owners) if (value === owner) this.unregisterOwned(owner, name);
   }
 
   /** Prefix aliases like ' for say — 'hello becomes say hello */
@@ -62,15 +104,7 @@ export class CommandRouter {
 
   /** Unregister a command by name (removes name + its aliases) */
   unregisterBuiltin(name: string): boolean {
-    const def = this.builtins.get(name);
-    if (!def) return false;
-    this.builtins.delete(def.name);
-    if (def.aliases) {
-      for (const alias of def.aliases) {
-        this.builtins.delete(alias);
-      }
-    }
-    return true;
+    return this.unregisterOwned("builtin", name);
   }
 
   /** Get all built-in command definitions (deduplicated, no aliases) */

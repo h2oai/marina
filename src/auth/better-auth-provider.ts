@@ -32,6 +32,7 @@ export interface IdentitySession {
 export interface MarinaAuthProvider {
   /** Sign-in methods enabled, surfaced to the client login screen. */
   readonly methods: string[];
+  close?(): void;
   /** Social provider ids enabled (e.g. ["google","github"]). */
   readonly socialProviders: string[];
   /** Handle a better-auth HTTP request (/api/auth/*). */
@@ -173,6 +174,7 @@ export function createBetterAuthProvider(): MarinaAuthProvider {
   const methods = ["email", ...Object.keys(socialProviders)];
 
   return {
+    close: () => db.close(),
     methods,
     socialProviders: Object.keys(socialProviders),
     handler: (req: Request) => auth.handler(req),

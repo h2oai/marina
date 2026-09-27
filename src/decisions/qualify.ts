@@ -11,6 +11,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { MARINA_ROOT } from "../runtime-paths";
 import { type GateIntent, gateToolCall } from "./gate";
 import { type RouteTable, routeModelWithTable } from "./route";
 import type { DecisionProvider } from "./types";
@@ -191,7 +192,7 @@ export async function qualifyBackend(
 }
 
 /** The labeled case set, tracked beside the qualifier. */
-export const DECISION_CASES_PATH = join(import.meta.dir, "decision-cases.json");
+export const DECISION_CASES_PATH = join(MARINA_ROOT, "src/decisions/decision-cases.json");
 
 export function loadDecisionCases(path = DECISION_CASES_PATH): DecisionCases {
   return parseDecisionCases(JSON.parse(readFileSync(path, "utf8")));

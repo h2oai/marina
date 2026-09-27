@@ -6,6 +6,7 @@
  * Marina State Import
  * Usage: bun scripts/state-import.ts <snapshot_path> [db_path] [--merge] [--skip-events]
  */
+import { acquireDatabaseLease } from "../src/persistence/database-lease";
 import { importState, validateSnapshot } from "../src/persistence/export-import";
 
 const args = process.argv.slice(2);
@@ -13,13 +14,17 @@ const flags = args.filter((a) => a.startsWith("--"));
 const positional = args.filter((a) => !a.startsWith("--"));
 
 if (positional.length < 1) {
-  console.log("Usage: bun scripts/state-import.ts <snapshot.json> [db_path] [--merge] [--skip-events]");
+  console.log(
+    "Usage: bun scripts/state-import.ts <snapshot.json> [db_path] [--merge] [--skip-events]",
+  );
   console.log("");
   console.log("Options:");
   console.log("  --merge         Merge data instead of replacing (INSERT OR REPLACE)");
   console.log("  --skip-events   Skip importing event_log (can be very large)");
   console.log("");
-  console.log("WARNING: Without --merge, all existing data in the target DB will be replaced.");
+  console.log(
+    "WARNING: Without --merge, tables present in the snapshot replace their target contents; omitted tables are preserved.",
+  );
   process.exit(1);
 }
 
@@ -53,7 +58,9 @@ console.log(`Target: ${dbPath}`);
 console.log("");
 
 // Import
+const releaseLease = acquireDatabaseLease(dbPath);
 const result = importState(dbPath, snapshot, { merge, skipEventLog });
+releaseLease();
 
 console.log(`Imported ${result.rowsImported} rows across ${result.tablesImported} tables`);
 
@@ -69,6 +76,7 @@ if (result.errors.length > 0) {
   if (result.errors.length > 20) {
     console.log(`  ... and ${result.errors.length - 20} more`);
   }
+  process.exit(1);
 }
 
 console.log("\nRestart the Marina server to use the imported data.");

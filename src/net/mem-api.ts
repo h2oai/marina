@@ -17,6 +17,8 @@ import type { RateLimiter } from "../auth/rate-limiter";
 import { sanitizeEntityName } from "../engine/entity-name";
 import { isOpenApiMode } from "../engine/trust-profile";
 import { memoryAccess } from "../memory/access";
+import { flushMemoryCompatibility } from "../memory/compatibility";
+import { findDurableTwin } from "../memory/legacy-bridge";
 import { expandMemoryRecall } from "../memory/retrieval";
 import { buildUnifiedContext, type UnifiedScope } from "../memory/unified-context";
 import type { MarinaDB } from "../persistence/database";
@@ -387,8 +389,20 @@ export async function handleMemApi(
     }
     const id = db.createNoteWithLinks(agent, content, { importance, noteType }, links);
 
+    await flushMemoryCompatibility(db);
     const note = db.getNote(id);
-    return json({ id, note }, 201);
+    return json(
+      {
+        id,
+        note,
+        durable: findDurableTwin(db, id)
+          ? "synced"
+          : db.getUserByName(agent)
+            ? "pending"
+            : "world_identity_required",
+      },
+      201,
+    );
   }
 
   // GET /mem/notes — list notes
@@ -515,6 +529,7 @@ export async function handleMemApi(
       const note = db.getNote(noteId);
       if (!access.write(note)) return error(404, "Note not found");
       db.deleteNote(noteId, agent);
+      await flushMemoryCompatibility(db);
       return json({ ok: true, id: noteId });
     }
   }
@@ -545,6 +560,7 @@ export async function handleMemApi(
     }
 
     const linkId = db.createNoteLink(sourceId, targetId, relationship);
+    await flushMemoryCompatibility(db);
     return json({ id: linkId, source: sourceId, target: targetId, relationship }, 201);
   }
 
@@ -648,6 +664,7 @@ export async function handleMemApi(
       if (parsed instanceof Response) return parsed;
       const { content, importance, noteType } = parsed;
       const id = db.addPoolNote(pool.id, agent, content, importance, noteType);
+      await flushMemoryCompatibility(db);
       return json({ id, pool: poolName }, 201);
     }
 

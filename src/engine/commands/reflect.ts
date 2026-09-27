@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { memoryAccess } from "../../memory/access";
+import { withMemoryCompatibility } from "../../memory/compatibility";
 import {
   assistanceAdoptionUrl,
-  bridgeLegacyNoteQuietly,
   findAdoptionNotes,
   findDurableTwin,
   findLegacyNotesForRecord,
@@ -260,7 +260,7 @@ export function reflectCommand(deps: {
     name: "reflect",
     aliases: [],
     help: "Reflect on your notes. Usage: reflect [topic] (files a cited job with a memory-reflector when one is available, else the deterministic template) | reflect via <helper> [topic] | reflect --template [topic] | reflect adopt <job> | reflect jobs | reflect failure <description>. Add --share <pool> to also deposit the lesson into a shared pool as a reflection (authors earn standing when others recall it). Add --no-spawn to use a running helper if there is one but never spawn a new one (session-end reflections).",
-    handler: (ctx: RoomContext, input) => {
+    handler: withMemoryCompatibility(deps.db, (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
@@ -439,8 +439,6 @@ export function reflectCommand(deps: {
             : dim("No related notes found."),
         ];
         ctx.send(input.entity, lines.join("\n"));
-        // Twin like a plain `note`: fire-and-forget, sequenced by awaitPendingBridges().
-        void bridgeLegacyNoteQuietly(db, entity.name, reflectionId);
         return;
       }
 
@@ -540,9 +538,6 @@ export function reflectCommand(deps: {
           `Insight: ${dim(content.slice(0, 150))}${content.length > 150 ? dim("...") : ""}`,
         ].filter(Boolean);
         ctx.send(input.entity, lines.join("\n") + tail);
-        // Template reflections get a durable twin too (same idempotency key
-        // scheme, credibility 0). Fire-and-forget keeps this path synchronous.
-        void bridgeLegacyNoteQuietly(db, entity.name, reflectionId);
       };
 
       if (sub === "template" || sub === "--template") {
@@ -901,6 +896,6 @@ export function reflectCommand(deps: {
         );
         await requestReflection(spawned.name, topic);
       }
-    },
+    }),
   };
 }

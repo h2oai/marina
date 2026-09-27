@@ -6,7 +6,7 @@
 # Usage: ./scripts/import.sh <snapshot.json> [db_path] [--merge] [--skip-events]
 #
 # Imports an Marina state snapshot into a database.
-# Without --merge, all existing data is replaced.
+# Without --merge, tables present in the snapshot replace the corresponding target tables.
 # Stop the server before importing.
 
 set -euo pipefail

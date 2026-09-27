@@ -43,3 +43,11 @@ Precedence for a seeded agent's model is: its own specific override, then
 model API to whatever upstream is configured). Changing one of these takes
 effect on the next boot; a world's `seed()` runs once, so a model change does
 not re-seed an existing database.
+
+## Operator-selected external worlds
+
+`loadWorld` in `src/world/world-loader.ts` accepts builtin slugs, explicit files or
+directories, and preinstalled `npm:` package names. It validates the exported world
+shape and resolves a relative `roomsDir` beside the entry module. Startup never installs
+packages. World modules and `MARINA_PLUGINS` extensions are operator-trusted host code;
+see [extension authoring](../guides/extending.md) for the versioned command/widget API.

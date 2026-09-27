@@ -14,14 +14,14 @@
  * fake `tellAndAwait`. See the conductor design (private archive: marina-internal design/conductor-design.md), Phase 4.
  */
 
-import type { ParsedAssignee, Score } from "../coordination/score";
+import type { TellAndAwaitOptions } from "./client";
+import type { ParsedAssignee, Score } from "./score";
 import {
   type DispatchContext,
   executeScore,
   type ScoreRun,
   type ScoreStepEvent,
-} from "../coordination/score-executor";
-import type { TellAndAwaitOptions } from "./client";
+} from "./score-executor";
 
 export interface RunScoreDeps {
   /** Dispatch one worker request and await its reply (one round trip). */

@@ -4,6 +4,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Server, ServerWebSocket } from "bun";
+import { getInternalModelToken } from "../agent/agent-runtime";
 import type { MarinaAuthProvider } from "../auth/better-auth-provider";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { secretsEqual } from "../auth/secret-compare";
@@ -18,6 +19,7 @@ import { isOpenApiMode } from "../engine/trust-profile";
 import type { MemoryService } from "../memory/service";
 import { worldMemoryService } from "../memory/world-service";
 import type { MarinaDB } from "../persistence/database";
+import { MARINA_ROOT } from "../runtime-paths";
 import type { StorageProvider } from "../storage/provider";
 import type { Connection, Perception } from "../types";
 import { handleAssetApi, handleAssetServing } from "./asset-api";
@@ -56,13 +58,14 @@ import { handleMemoryServiceApi } from "./memory-service-api";
 import { handleModelApi, isModelApiPath } from "./model-api";
 import { handleOrchestrationApi } from "./orchestration-api";
 import { handleProbeApi } from "./probe-api";
+import { RequestDrain } from "./request-drain";
 
 /** Module logger: network-surface lifecycle and request-path failures. */
 const logger = new Logger();
 
-const WEBCHAT_PATH = join(import.meta.dir, "webchat.html");
-const ASK_PATH = join(import.meta.dir, "ask.html");
-const DASHBOARD_DIST = join(import.meta.dir, "../../dist/dashboard");
+const WEBCHAT_PATH = join(MARINA_ROOT, "src/net/webchat.html");
+const ASK_PATH = join(MARINA_ROOT, "src/net/ask.html");
+const DASHBOARD_DIST = join(MARINA_ROOT, "dist/dashboard");
 const DASHBOARD_INDEX = join(DASHBOARD_DIST, "index.html");
 
 const DASHBOARD_NOT_BUILT_HTML = `<!doctype html>
@@ -175,6 +178,14 @@ export function isLoopbackHostname(host: string): boolean {
 }
 
 export class WebSocketServer {
+  private draining = false;
+  private readonly requestDrain = new RequestDrain();
+  drainRequests(): Promise<void> {
+    return this.requestDrain.wait();
+  }
+  beginDrain(): void {
+    this.draining = true;
+  }
   private server: Server<WSData> | null = null;
   private sockets = new Map<string, ServerWebSocket<WSData>>();
   private ipConnections = new Map<string, number>();
@@ -334,325 +345,344 @@ export class WebSocketServer {
       },
 
       async fetch(req, server) {
-        const url = new URL(req.url);
+        const leave = self.requestDrain.enter();
+        try {
+          if (
+            self.draining &&
+            req.headers.get("Authorization") !== `Bearer ${getInternalModelToken()}`
+          )
+            return Response.json(
+              { error: "Instance is draining", retryable: true },
+              { status: 503, headers: { "Retry-After": "5" } },
+            );
+          const url = new URL(req.url);
 
-        // CORS preflight
-        if (req.method === "OPTIONS") {
-          return new Response(null, {
-            headers: corsHeaders(req.headers.get("Origin"), {
-              headers: "Content-Type, Authorization, X-Conversation-Id, X-Load-Balance",
-              expose: "X-Conversation-Id, x-request-id",
-            }),
-          });
-        }
-
-        // ─── WebSocket upgrade paths (with connection limits) ────────────
-        const isWsUpgrade =
-          url.pathname === "/dashboard-ws" ||
-          url.pathname === "/ws" ||
-          url.pathname === "/canvas-ws";
-
-        if (isWsUpgrade) {
-          // Browser Origin gate (all three upgrade paths). A page on another site
-          // must not be able to open ws://127.0.0.1:<port>/ws and log in as a
-          // loopback principal (sovereign under the `local` profile). Non-browser
-          // clients send no Origin and pass; see `isTrustedBrowserOrigin`.
-          const origin = req.headers.get("Origin");
-          if (!isTrustedBrowserOrigin(origin, req.headers.get("Host"), { loopbackBind })) {
-            logger.warn("ws", `Rejected ${url.pathname} upgrade from untrusted origin ${origin}`, {
-              path: url.pathname,
-              origin,
-            });
-            return new Response("Forbidden origin", { status: 403 });
-          }
-
-          // Real, unspoofable TCP peer address — the ONLY value usable as an exec/loopback
-          // trust anchor. Never mix header values into this.
-          const peerIp = server.requestIP(req)?.address;
-          // Header-derived display/rate-limiting IP — SPOOFABLE (client controls the headers).
-          // Never use this as a trust anchor; see `peerIp` above.
-          const fwd = req.headers.get("x-forwarded-for");
-          const ip =
-            (fwd ? fwd.split(",")[0]!.trim() : null) ??
-            req.headers.get("x-real-ip") ??
-            peerIp ??
-            "unknown";
-
-          // Enforce total connection cap (all types: game + dashboard + canvas)
-          if (self.totalConnections >= WS_MAX_TOTAL_CONNECTIONS) {
-            return new Response("Too many connections", { status: 503 });
-          }
-
-          // Enforce per-IP connection cap
-          const ipCount = self.ipConnections.get(ip) ?? 0;
-          if (ipCount >= WS_MAX_CONNECTIONS_PER_IP) {
-            return new Response("Too many connections from this IP", { status: 429 });
-          }
-
-          // Dashboard WebSocket upgrade — require an authenticated principal.
-          if (url.pathname === "/dashboard-ws") {
-            const principal = self.resolveUpgradePrincipal(req, url, peerIp);
-            if (principal === null) {
-              return new Response("Unauthorized", { status: 401 });
-            }
-            const connId = `dash_${++wsIdCounter}`;
-            const upgraded = server.upgrade(req, {
-              data: { connId, isDashboard: true, ip, peerIp, principal },
-            });
-            if (!upgraded) {
-              return new Response("WebSocket upgrade failed", { status: 400 });
-            }
-            return undefined;
-          }
-
-          // Game WebSocket upgrade
-          if (url.pathname === "/ws") {
-            const connId = `ws_${++wsIdCounter}`;
-            const upgraded = server.upgrade(req, { data: { connId, ip, peerIp } });
-            if (!upgraded) {
-              return new Response("WebSocket upgrade failed", { status: 400 });
-            }
-            return undefined;
-          }
-
-          // Canvas WebSocket upgrade — require an authenticated principal.
-          if (url.pathname === "/canvas-ws") {
-            const canvasId = url.searchParams.get("canvas");
-            if (!canvasId) {
-              return new Response("Missing canvas query param", { status: 400 });
-            }
-            const principal = self.resolveUpgradePrincipal(req, url, peerIp);
-            if (principal === null) {
-              return new Response("Unauthorized", { status: 401 });
-            }
-            const connId = `canvas_${++wsIdCounter}`;
-            const upgraded = server.upgrade(req, {
-              data: { connId, isCanvas: true, canvasId, ip, peerIp, principal },
-            });
-            if (!upgraded) {
-              return new Response("WebSocket upgrade failed", { status: 400 });
-            }
-            return undefined;
-          }
-        }
-
-        // Asset binary serving: GET /assets/*
-        if (url.pathname.startsWith("/assets/") && self.storage) {
-          return handleAssetServing(url, self.storage, self.db);
-        }
-
-        // Asset API routes: /api/assets*
-        if (url.pathname.startsWith("/api/assets") && self.db && self.storage) {
-          return handleAssetApi(url, req.method, req, self.db, self.storage, engine);
-        }
-
-        // Canvas API routes: /api/canvases*
-        if (url.pathname.startsWith("/api/canvases") && self.db) {
-          // Real, unspoofable TCP peer address — the loopback trust anchor for
-          // the zero-config desktop reader (never header-derived).
-          const canvasPeerIp = server.requestIP(req)?.address;
-          return handleCanvasApi(
-            url,
-            req.method,
-            req,
-            self.db,
-            self.storage,
-            self.canvasBroadcaster,
-            engine,
-            self.onNodeCreated,
-            canvasPeerIp,
-          );
-        }
-
-        // Connect manifest
-        if (url.pathname === "/api/connect") {
-          return buildConnectManifest(req, engine);
-        }
-        if (url.pathname === "/api/connect/negotiate") {
-          return negotiateConnectCapabilities(req);
-        }
-
-        // Skill document
-        if (url.pathname === "/api/skill") {
-          return handleSkillRequest();
-        }
-
-        // Memory API routes: /mem and /mem/*
-        if ((url.pathname === "/mem" || url.pathname.startsWith("/mem/")) && self.db) {
-          const memResp = await handleMemApi(url, req.method, req, self.db, self.memRateLimiter);
-          if (memResp) return memResp;
-        }
-
-        // Probe API — external resolver dispatch. Same auth + rate limit as
-        // /mem; emits engine events (feed_event, calibration follow-ups)
-        // through the engine's logEvent fan-out.
-        if (url.pathname === "/api/probe" && self.db) {
-          const probeResp = await handleProbeApi(
-            url,
-            req.method,
-            req,
-            self.db,
-            (event) => engine.logEvent(event),
-            self.memRateLimiter,
-          );
-          if (probeResp) return probeResp;
-        }
-
-        // Entity profile API — public per-entity view (the /who pages' data
-        // source). Read-only, no auth. Cached briefly. See entity-api.ts.
-        if (url.pathname.startsWith("/api/entity/") && self.db) {
-          const entityResp = await handleEntityApi(
-            url,
-            req.method,
-            self.db,
-            engine,
-            clientIp(req, server),
-          );
-          if (entityResp) return entityResp;
-        }
-
-        if (url.pathname.startsWith("/v1/memory") && self.memoryService)
-          return handleMemoryServiceApi(req, self.memoryService);
-
-        // Model API routes (OpenAI + Ollama compatible)
-        if (url.pathname.startsWith("/v1/")) {
-          const modelResp = await handleModelApi(
-            url,
-            req.method,
-            req,
-            engine,
-            self.modelRateLimiter,
-            server,
-          );
-          if (modelResp) return modelResp;
-        }
-        if (isModelApiPath(url.pathname)) {
-          const modelResp = await handleModelApi(
-            url,
-            req.method,
-            req,
-            engine,
-            self.modelRateLimiter,
-            server,
-          );
-          if (modelResp) return modelResp;
-        }
-
-        // Auth API (optional better-auth bridge). /api/auth-status always
-        // answers (required:false when off); /api/auth/* + /api/auth-session
-        // only when a provider is configured.
-        if (url.pathname.startsWith("/api/auth")) {
-          const authResp = await handleAuthApi(
-            req,
-            url,
-            req.method,
-            engine,
-            self.db,
-            self.authProvider,
-          );
-          if (authResp) return authResp;
-        }
-
-        // Orchestration pattern catalogue — authenticated like the dashboard
-        // REST surface (same session-token gate, same per-principal budget).
-        if (url.pathname.startsWith("/api/orchestration/")) {
-          const origin = req.headers.get("Origin");
+          // CORS preflight
           if (req.method === "OPTIONS") {
-            return new Response(null, { status: 204, headers: corsHeaders(origin) });
+            return new Response(null, {
+              headers: corsHeaders(req.headers.get("Origin"), {
+                headers: "Content-Type, Authorization, X-Conversation-Id, X-Load-Balance",
+                expose: "X-Conversation-Id, x-request-id",
+              }),
+            });
           }
-          const auth = authenticateRequest(req, engine);
-          if ("error" in auth) return auth.error;
-          const rateKey = isSentinelPrincipal(auth.entityId)
-            ? `${auth.entityId}@${clientIp(req, server)}`
-            : auth.entityId;
-          if (!consumeHttpRate("dashboard", rateKey)) return rateLimitedResponse(origin);
-          const orchestrationResp = handleOrchestrationApi(req, url);
-          if (orchestrationResp) return orchestrationResp;
-          return Response.json(
-            { error: "not_found" },
-            { status: 404, headers: { ...corsHeaders(origin), ...securityHeaders("api") } },
-          );
-        }
 
-        // API routes
-        if (url.pathname.startsWith("/api/")) {
-          // Real, unspoofable TCP peer address — the loopback trust anchor for
-          // the zero-config desktop reader on per-entity canvas routes (never
-          // header-derived). Mirrors the canvas API above.
-          const dashPeerIp = server.requestIP(req)?.address;
-          return handleDashboardApi(req, url, req.method, engine, self.db, dashPeerIp, {
-            loopbackBind,
-          });
-        }
+          // ─── WebSocket upgrade paths (with connection limits) ────────────
+          const isWsUpgrade =
+            url.pathname === "/dashboard-ws" ||
+            url.pathname === "/ws" ||
+            url.pathname === "/canvas-ws";
 
-        // Health check
-        if (url.pathname === "/health") {
-          return Response.json({
-            status: "ok",
-            uptime: engine.getUptime(),
-            connections: sockets.size,
-            rooms: engine.rooms.size,
-            entities: engine.entities.size,
-            agents: engine.getOnlineAgents().length,
-          });
-        }
+          if (isWsUpgrade) {
+            // Browser Origin gate (all three upgrade paths). A page on another site
+            // must not be able to open ws://127.0.0.1:<port>/ws and log in as a
+            // loopback principal (sovereign under the `local` profile). Non-browser
+            // clients send no Origin and pass; see `isTrustedBrowserOrigin`.
+            const origin = req.headers.get("Origin");
+            if (!isTrustedBrowserOrigin(origin, req.headers.get("Host"), { loopbackBind })) {
+              logger.warn(
+                "ws",
+                `Rejected ${url.pathname} upgrade from untrusted origin ${origin}`,
+                {
+                  path: url.pathname,
+                  origin,
+                },
+              );
+              return new Response("Forbidden origin", { status: 403 });
+            }
 
-        // Dashboard SPA — serve static files from dist/dashboard/
-        if (url.pathname === "/dashboard" || url.pathname.startsWith("/dashboard/")) {
-          const subPath =
-            url.pathname === "/dashboard" ? "index.html" : url.pathname.replace("/dashboard/", "");
+            // Real, unspoofable TCP peer address — the ONLY value usable as an exec/loopback
+            // trust anchor. Never mix header values into this.
+            const peerIp = server.requestIP(req)?.address;
+            // Header-derived display/rate-limiting IP — SPOOFABLE (client controls the headers).
+            // Never use this as a trust anchor; see `peerIp` above.
+            const fwd = req.headers.get("x-forwarded-for");
+            const ip =
+              (fwd ? fwd.split(",")[0]!.trim() : null) ??
+              req.headers.get("x-real-ip") ??
+              peerIp ??
+              "unknown";
 
-          const filePath = join(DASHBOARD_DIST, subPath);
-          const file = Bun.file(filePath);
+            // Enforce total connection cap (all types: game + dashboard + canvas)
+            if (self.totalConnections >= WS_MAX_TOTAL_CONNECTIONS) {
+              return new Response("Too many connections", { status: 503 });
+            }
 
-          // SPA fallback: if file doesn't match a known extension, serve index.html
-          return file
-            .exists()
-            .then((exists) => {
-              if (exists) {
-                return withSecurityHeaders(
-                  new Response(file),
-                  subPath === "index.html" ? "html" : "static",
-                );
+            // Enforce per-IP connection cap
+            const ipCount = self.ipConnections.get(ip) ?? 0;
+            if (ipCount >= WS_MAX_CONNECTIONS_PER_IP) {
+              return new Response("Too many connections from this IP", { status: 429 });
+            }
+
+            // Dashboard WebSocket upgrade — require an authenticated principal.
+            if (url.pathname === "/dashboard-ws") {
+              const principal = self.resolveUpgradePrincipal(req, url, peerIp);
+              if (principal === null) {
+                return new Response("Unauthorized", { status: 401 });
               }
-              // SPA fallback
-              return serveDashboardIndex();
-            })
-            .catch(() => serveDashboardIndex());
-        }
+              const connId = `dash_${++wsIdCounter}`;
+              const upgraded = server.upgrade(req, {
+                data: { connId, isDashboard: true, ip, peerIp, principal },
+              });
+              if (!upgraded) {
+                return new Response("WebSocket upgrade failed", { status: 400 });
+              }
+              return undefined;
+            }
 
-        // Canvas SPA — serve from same dist/dashboard/ (same SPA, path-based routing)
-        if (url.pathname === "/canvas" || url.pathname.startsWith("/canvas/")) {
-          return serveDashboardIndex();
-        }
+            // Game WebSocket upgrade
+            if (url.pathname === "/ws") {
+              const connId = `ws_${++wsIdCounter}`;
+              const upgraded = server.upgrade(req, { data: { connId, ip, peerIp } });
+              if (!upgraded) {
+                return new Response("WebSocket upgrade failed", { status: 400 });
+              }
+              return undefined;
+            }
 
-        // /who/<name> — public per-entity profile pages. Served from the same
-        // SPA bundle; main.tsx routes to the WhoPage component based on the
-        // pathname. No auth required (this is the chronicle's public face).
-        if (url.pathname === "/who" || url.pathname.startsWith("/who/")) {
-          return serveDashboardIndex();
-        }
-        // Terminal companion uses authenticated HTTP without taking over Chat's connection.
-        if (url.pathname === "/terminal") return serveDashboardIndex();
+            // Canvas WebSocket upgrade — require an authenticated principal.
+            if (url.pathname === "/canvas-ws") {
+              const canvasId = url.searchParams.get("canvas");
+              if (!canvasId) {
+                return new Response("Missing canvas query param", { status: 400 });
+              }
+              const principal = self.resolveUpgradePrincipal(req, url, peerIp);
+              if (principal === null) {
+                return new Response("Unauthorized", { status: 401 });
+              }
+              const connId = `canvas_${++wsIdCounter}`;
+              const upgraded = server.upgrade(req, {
+                data: { connId, isCanvas: true, canvasId, ip, peerIp, principal },
+              });
+              if (!upgraded) {
+                return new Response("WebSocket upgrade failed", { status: 400 });
+              }
+              return undefined;
+            }
+          }
 
-        // The dashboard is the primary human entry point. Keep the compact
-        // web chat available at an explicit route for low-bandwidth use.
-        if (url.pathname === "/") {
-          return new Response(null, { status: 302, headers: { Location: "/dashboard" } });
-        }
+          // Asset binary serving: GET /assets/*
+          if (url.pathname.startsWith("/assets/") && self.storage) {
+            return await handleAssetServing(url, self.storage, self.db);
+          }
 
-        if (url.pathname === "/chat") {
-          return serveStaticPage(WEBCHAT_PATH);
-        }
+          // Asset API routes: /api/assets*
+          if (url.pathname.startsWith("/api/assets") && self.db && self.storage) {
+            return await handleAssetApi(url, req.method, req, self.db, self.storage, engine);
+          }
 
-        if (url.pathname === "/ask") {
-          return serveStaticPage(ASK_PATH);
-        }
+          // Canvas API routes: /api/canvases*
+          if (url.pathname.startsWith("/api/canvases") && self.db) {
+            // Real, unspoofable TCP peer address — the loopback trust anchor for
+            // the zero-config desktop reader (never header-derived).
+            const canvasPeerIp = server.requestIP(req)?.address;
+            return await handleCanvasApi(
+              url,
+              req.method,
+              req,
+              self.db,
+              self.storage,
+              self.canvasBroadcaster,
+              engine,
+              self.onNodeCreated,
+              canvasPeerIp,
+            );
+          }
 
-        return new Response("Marina — connect via WebSocket at /ws", {
-          status: 200,
-          headers: securityHeaders("api"),
-        });
+          // Connect manifest
+          if (url.pathname === "/api/connect") {
+            return buildConnectManifest(req, engine);
+          }
+          if (url.pathname === "/api/connect/negotiate") {
+            return negotiateConnectCapabilities(req);
+          }
+
+          // Skill document
+          if (url.pathname === "/api/skill") {
+            return await handleSkillRequest();
+          }
+
+          // Memory API routes: /mem and /mem/*
+          if ((url.pathname === "/mem" || url.pathname.startsWith("/mem/")) && self.db) {
+            const memResp = await handleMemApi(url, req.method, req, self.db, self.memRateLimiter);
+            if (memResp) return memResp;
+          }
+
+          // Probe API — external resolver dispatch. Same auth + rate limit as
+          // /mem; emits engine events (feed_event, calibration follow-ups)
+          // through the engine's logEvent fan-out.
+          if (url.pathname === "/api/probe" && self.db) {
+            const probeResp = await handleProbeApi(
+              url,
+              req.method,
+              req,
+              self.db,
+              (event) => engine.logEvent(event),
+              self.memRateLimiter,
+            );
+            if (probeResp) return probeResp;
+          }
+
+          // Entity profile API — public per-entity view (the /who pages' data
+          // source). Read-only, no auth. Cached briefly. See entity-api.ts.
+          if (url.pathname.startsWith("/api/entity/") && self.db) {
+            const entityResp = await handleEntityApi(
+              url,
+              req.method,
+              self.db,
+              engine,
+              clientIp(req, server),
+            );
+            if (entityResp) return entityResp;
+          }
+
+          if (url.pathname.startsWith("/v1/memory") && self.memoryService)
+            return await handleMemoryServiceApi(req, self.memoryService);
+
+          // Model API routes (OpenAI + Ollama compatible)
+          if (url.pathname.startsWith("/v1/")) {
+            const modelResp = await handleModelApi(
+              url,
+              req.method,
+              req,
+              engine,
+              self.modelRateLimiter,
+              server,
+            );
+            if (modelResp) return modelResp;
+          }
+          if (isModelApiPath(url.pathname)) {
+            const modelResp = await handleModelApi(
+              url,
+              req.method,
+              req,
+              engine,
+              self.modelRateLimiter,
+              server,
+            );
+            if (modelResp) return modelResp;
+          }
+
+          // Auth API (optional better-auth bridge). /api/auth-status always
+          // answers (required:false when off); /api/auth/* + /api/auth-session
+          // only when a provider is configured.
+          if (url.pathname.startsWith("/api/auth")) {
+            const authResp = await handleAuthApi(
+              req,
+              url,
+              req.method,
+              engine,
+              self.db,
+              self.authProvider,
+            );
+            if (authResp) return authResp;
+          }
+
+          // Orchestration pattern catalogue — authenticated like the dashboard
+          // REST surface (same session-token gate, same per-principal budget).
+          if (url.pathname.startsWith("/api/orchestration/")) {
+            const origin = req.headers.get("Origin");
+            if (req.method === "OPTIONS") {
+              return new Response(null, { status: 204, headers: corsHeaders(origin) });
+            }
+            const auth = authenticateRequest(req, engine);
+            if ("error" in auth) return auth.error;
+            const rateKey = isSentinelPrincipal(auth.entityId)
+              ? `${auth.entityId}@${clientIp(req, server)}`
+              : auth.entityId;
+            if (!consumeHttpRate("dashboard", rateKey)) return rateLimitedResponse(origin);
+            const orchestrationResp = handleOrchestrationApi(req, url);
+            if (orchestrationResp) return orchestrationResp;
+            return Response.json(
+              { error: "not_found" },
+              { status: 404, headers: { ...corsHeaders(origin), ...securityHeaders("api") } },
+            );
+          }
+
+          // API routes
+          if (url.pathname.startsWith("/api/")) {
+            // Real, unspoofable TCP peer address — the loopback trust anchor for
+            // the zero-config desktop reader on per-entity canvas routes (never
+            // header-derived). Mirrors the canvas API above.
+            const dashPeerIp = server.requestIP(req)?.address;
+            return await handleDashboardApi(req, url, req.method, engine, self.db, dashPeerIp, {
+              loopbackBind,
+            });
+          }
+
+          // Health check
+          if (url.pathname === "/health") {
+            return Response.json({
+              status: "ok",
+              uptime: engine.getUptime(),
+              connections: sockets.size,
+              rooms: engine.rooms.size,
+              entities: engine.entities.size,
+              agents: engine.getOnlineAgents().length,
+            });
+          }
+
+          // Dashboard SPA — serve static files from dist/dashboard/
+          if (url.pathname === "/dashboard" || url.pathname.startsWith("/dashboard/")) {
+            const subPath =
+              url.pathname === "/dashboard"
+                ? "index.html"
+                : url.pathname.replace("/dashboard/", "");
+
+            const filePath = join(DASHBOARD_DIST, subPath);
+            const file = Bun.file(filePath);
+
+            // SPA fallback: if file doesn't match a known extension, serve index.html
+            return file
+              .exists()
+              .then((exists) => {
+                if (exists) {
+                  return withSecurityHeaders(
+                    new Response(file),
+                    subPath === "index.html" ? "html" : "static",
+                  );
+                }
+                // SPA fallback
+                return serveDashboardIndex();
+              })
+              .catch(() => serveDashboardIndex());
+          }
+
+          // Canvas SPA — serve from same dist/dashboard/ (same SPA, path-based routing)
+          if (url.pathname === "/canvas" || url.pathname.startsWith("/canvas/")) {
+            return serveDashboardIndex();
+          }
+
+          // /who/<name> — public per-entity profile pages. Served from the same
+          // SPA bundle; main.tsx routes to the WhoPage component based on the
+          // pathname. No auth required (this is the chronicle's public face).
+          if (url.pathname === "/who" || url.pathname.startsWith("/who/")) {
+            return serveDashboardIndex();
+          }
+          // Terminal companion uses authenticated HTTP without taking over Chat's connection.
+          if (url.pathname === "/terminal") return serveDashboardIndex();
+
+          // The dashboard is the primary human entry point. Keep the compact
+          // web chat available at an explicit route for low-bandwidth use.
+          if (url.pathname === "/") {
+            return new Response(null, { status: 302, headers: { Location: "/dashboard" } });
+          }
+
+          if (url.pathname === "/chat") {
+            return serveStaticPage(WEBCHAT_PATH);
+          }
+
+          if (url.pathname === "/ask") {
+            return serveStaticPage(ASK_PATH);
+          }
+
+          return new Response("Marina — connect via WebSocket at /ws", {
+            status: 200,
+            headers: securityHeaders("api"),
+          });
+        } finally {
+          leave();
+        }
       },
 
       websocket: {
@@ -731,6 +761,16 @@ export class WebSocketServer {
         },
 
         message(ws, message) {
+          if (self.draining && !engine.getConnections().get(ws.data.connId)?.internal) {
+            ws.send(
+              JSON.stringify({
+                kind: "error",
+                timestamp: Date.now(),
+                data: { text: "Instance is draining; reconnect shortly." },
+              }),
+            );
+            return;
+          }
           // Dashboard WS clients don't send game commands
           if (ws.data.isDashboard) return;
 
@@ -955,10 +995,11 @@ export class WebSocketServer {
     return this.server?.hostname;
   }
 
-  stop(): void {
-    if (this.server) {
-      this.server.stop();
-      this.server = null;
-    }
+  async stop(): Promise<void> {
+    this.draining = true;
+    const server = this.server;
+    this.server = null;
+    if (server) await server.stop(true);
+    this.authProvider?.close?.();
   }
 }

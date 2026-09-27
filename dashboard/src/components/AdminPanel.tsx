@@ -1,3 +1,4 @@
+import { ExtensionWidgets } from "./ExtensionWidgets";
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -70,7 +71,8 @@ type Tab =
   | "ops"
   | "memory"
   | "traces"
-  | "logs";
+  | "logs"
+  | "extensions";
 
 const ADMIN_TABS: Tab[] = [
   "keys",
@@ -87,6 +89,7 @@ const ADMIN_TABS: Tab[] = [
   "memory",
   "traces",
   "logs",
+  "extensions",
 ];
 
 /**
@@ -170,6 +173,7 @@ export function AdminPanel({
         ))}
       </div>
       <div className="flex-1 overflow-auto p-2">
+        {tab === "extensions" && <ExtensionWidgets slot="admin-tab" />}
         {tab === "keys" && <KeysTab />}
         {tab === "endpoint" && <EndpointTab />}
         {tab === "adapters" && <AdaptersTab />}

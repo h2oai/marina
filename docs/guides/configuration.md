@@ -1,10 +1,27 @@
 # Configuration
 
-Marina is configured with environment variables. Copy `.env.example` to `.env` and customize.
+Marina reads process environment values first, then Bun's `.env` files in the instance's
+working directory. `.env.example` is the annotated catalog used by both the dashboard
+and CLI tooling; copying every optional setting is unnecessary.
 
 ```bash
-cp .env.example .env
+bun run init --yes --preset minimal --directory /path/to/instance
+bun run init --check --directory /path/to/instance
 ```
+
+`minimal` starts the empty world without background agents or auxiliary listeners.
+`workbench` selects the default world. `shared-team` selects Commons with sign-in and
+persistent auth storage, generating a private auth secret when absent. All presets bind
+loopback initially. Configure your public URL, TLS proxy, verified admins and deliberate
+bind policy before exposing a shared instance. Capability presets and trust profiles are
+separate choices.
+
+Existing settings and comments are preserved; existing values override preset defaults.
+`--print` previews a preset with secrets redacted. `--check` validates without writing.
+Files are written atomically with mode 0600. Run `marina start` from that instance directory
+when using the installed CLI. Process environment overrides remain effective at startup.
+Use `readiness` for actual capability configuration and `readiness providers` for live
+connectivity checks (the latter may spend provider tokens).
 
 ---
 

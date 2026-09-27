@@ -1,20 +1,11 @@
 name: Trivy Image Scan
 
 on:
-#  pull_request:
-#    branches: [main]
-#    paths:
-#      - "Dockerfile"
-#      - "package.json"
-#      - "bun.lock"
-#      - "dashboard/package.json"
-#      - "src/**"
-#      - "worlds/**"
-#      - ".github/workflows/trivy-scan.yml"
-  # schedule:
-    # Re-scan weekly so newly-disclosed CVEs in the base image surface even
-    # when the code hasn't changed. Mondays 06:00 UTC.
-    # - cron: "0 6 * * 1"
+  pull_request:
+    branches: [main]
+    paths: [Dockerfile, package.json, bun.lock, "src/**", ".github/workflows/trivy-scan.yml"]
+  schedule:
+    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -43,11 +34,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Visibility scan: print fixable CRITICAL/HIGH as a table in the logs.
-      # Non-blocking (continue-on-error) — the scan reports, but never fails the
-      # build. Flip continue-on-error to false to turn this back into a gate.
+      # Fixable CRITICAL/HIGH findings fail qualification.
       - name: Trivy scan (CRITICAL/HIGH table)
-        continue-on-error: true
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.IMAGE }}

@@ -8,7 +8,7 @@ import {
 } from "../../agent/skill-import";
 import { memoryAccess } from "../../memory/access";
 import { memoryNoteResults, memoryResult } from "../../memory/command-result";
-import { bridgeLegacyNoteQuietly } from "../../memory/legacy-bridge";
+import { withMemoryCompatibility } from "../../memory/compatibility";
 import { header, separator } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, EngineEvent, Entity, RoomContext } from "../../types";
@@ -26,7 +26,7 @@ export function skillCommand(deps: {
     name: "skill",
     aliases: [],
     help: "Skill library — bank what works so it outlives you. Usage: skill store <name> | <desc> | <actions> | skill search <query> | skill verify <id> | skill list | skill audit | skill share <id> <pool> | skill compose <id1> <id2> ... | skill import <path> (rank 3+; path under the server cwd). Example: skill store pool-recall-fanout | find a fact when one keyword misses | recall <topic> ; pool bench-facts recall <synonym> ; note the hit. See also: evolve.",
-    handler: (ctx: RoomContext, input) => {
+    handler: withMemoryCompatibility(deps.db, (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
@@ -85,9 +85,6 @@ export function skillCommand(deps: {
             timestamp: Date.now(),
           });
           ctx.send(input.entity, `Skill #${id} "${name}" stored.`);
-          // Durable twin (skill tier, tagged in metadata) like a plain `note`.
-          // Fire-and-forget; sequencing callers use awaitPendingBridges().
-          void bridgeLegacyNoteQuietly(db, entity.name, id);
           return;
         }
 
@@ -408,6 +405,6 @@ export function skillCommand(deps: {
           );
         }
       }
-    },
+    }),
   };
 }

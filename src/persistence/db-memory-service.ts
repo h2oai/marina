@@ -38,6 +38,11 @@ import {
 } from "./db-memory-dependencies";
 import { memoryKnowledgeGraph } from "./db-memory-knowledge-graph";
 import { memoryDatabaseHealth } from "./db-memory-maintenance";
+import {
+  forgetMemoryNotes,
+  projectMemoryRevision,
+  requireCurrentMemoryProjection,
+} from "./db-memory-projections";
 import { rankMemoryVectors } from "./db-memory-ranking";
 import { resolveMemory } from "./db-memory-resolve";
 import { acknowledgeMemoryRequests } from "./db-memory-retention";
@@ -670,6 +675,7 @@ export function reviseRecord(
     const previous = row(db, space, id);
     if (previous.version !== expected)
       throw new MemoryError(409, "version_conflict", "Expected version is stale");
+    requireCurrentMemoryProjection(db, id, input);
     const previousAttributes = hydrate(db, previous);
     const dependencyIds = input.depends_on ?? previousAttributes.depends_on;
     const rebinding = input.depends_on !== undefined || input.dependency_versions !== undefined;
@@ -758,6 +764,7 @@ export function reviseRecord(
       "UPDATE memory_index_jobs SET state='cancelled',lease_token=NULL WHERE record_id=? AND state IN ('pending','running')",
       [id],
     );
+    projectMemoryRevision(db, id, input);
     return {
       id,
       version,
@@ -1175,6 +1182,7 @@ export function forgetMemory(
         ids.add(item.record_id);
     }
     for (const id of ids) {
+      forgetMemoryNotes(db, id);
       const versions = db
         .query("SELECT note_id FROM memory_record_versions WHERE record_id=?")
         .all(id) as { note_id: number }[];

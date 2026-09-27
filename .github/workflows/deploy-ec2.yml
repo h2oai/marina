@@ -36,6 +36,7 @@ jobs:
        github.event.workflow_run.head_repository.full_name == github.repository) ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     outputs:
       sha: ${{ steps.target.outputs.sha }}
       rollback: ${{ steps.target.outputs.rollback }}
@@ -81,6 +82,60 @@ jobs:
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "rollback=$rollback" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/checkout@v7.0.1
+        if: steps.target.outputs.sha != ''
+        with:
+          ref: ${{ steps.target.outputs.sha }}
+      - uses: oven-sh/setup-bun@v2.2.0
+        if: steps.target.outputs.sha != ''
+        with:
+          bun-version-file: .bun-version
+      - name: Install exact-revision dependencies
+        if: steps.target.outputs.sha != ''
+        run: bun install --frozen-lockfile
+      - name: Install qualification browser
+        if: steps.target.outputs.sha != ''
+        working-directory: dashboard
+        run: |
+          bunx playwright install --with-deps chromium
+          bun -e 'import { chromium } from "@playwright/test"; console.log("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=" + chromium.executablePath())' >> "$GITHUB_ENV"
+      - name: Qualify release from selected revision before deployment credentials
+        if: steps.target.outputs.sha != ''
+        run: bun run qualify:release
+      - name: Build selected revision image for qualification
+        if: steps.target.outputs.sha != ''
+        env:
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: docker build --label "org.opencontainers.image.revision=$TARGET_SHA" -t marina-qualification .
+      - name: Qualify packaged image
+        if: steps.target.outputs.sha != ''
+        run: bun run qualify:image marina-qualification
+      - name: Reject fixable high and critical image vulnerabilities
+        if: steps.target.outputs.sha != ''
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: marina-qualification
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          vuln-type: os,library
+
+      - name: Preserve the qualified image and its identity
+        if: steps.target.outputs.sha != '' && steps.target.outputs.rollback != 'true'
+        run: |
+          docker image inspect --format '{{.Id}}' marina-qualification > qualified-image.id
+          docker save --output qualified-image.tar marina-qualification
+      - uses: actions/upload-artifact@v7.0.1
+        if: steps.target.outputs.sha != '' && steps.target.outputs.rollback != 'true'
+        with:
+          name: qualified-image-${{ steps.target.outputs.sha }}
+          path: |
+            qualified-image.tar
+            qualified-image.id
+          compression-level: 1
+          retention-days: 7
+
   deploy:
     needs: qualify
     if: needs.qualify.outputs.sha != ''
@@ -95,6 +150,20 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ needs.qualify.outputs.sha }}
+
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/download-artifact@v8.0.1
+        if: needs.qualify.outputs.rollback != 'true'
+        with:
+          name: qualified-image-${{ needs.qualify.outputs.sha }}
+      - name: Load the exact qualified image
+        if: needs.qualify.outputs.rollback != 'true'
+        run: |
+          set -euo pipefail
+          docker load --input qualified-image.tar
+          test "$(docker image inspect --format '{{.Id}}' marina-qualification)" = "$(cat qualified-image.id)"
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6.2.4
@@ -141,33 +210,47 @@ jobs:
         with:
           registries: ${{ env.ECR_ACCOUNT_ID }}
 
-      - name: Set up Docker Buildx
-        if: steps.target.outputs.rollback != 'true'
-        uses: docker/setup-buildx-action@v4.3.0
-
-      - name: Docker image metadata (tags + labels)
-        id: meta
-        if: steps.target.outputs.rollback != 'true'
-        uses: docker/metadata-action@v6.2.0
+      - name: Pull the existing rollback artifact
+        if: steps.target.outputs.rollback == 'true'
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:sha-${{ steps.target.outputs.sha }}
+        run: |
+          docker pull "$IMAGE"
+          docker tag "$IMAGE" marina-qualification
+      - name: Qualify the actual rollback artifact
+        if: steps.target.outputs.rollback == 'true'
+        run: bun run qualify:image marina-qualification
+      - name: Scan the actual rollback artifact
+        if: steps.target.outputs.rollback == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
-          images: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
-          tags: |
-            type=raw,value=sha-${{ needs.qualify.outputs.sha }}
-            type=raw,value=latest,enable={{is_default_branch}}
-          labels: |
-            org.opencontainers.image.revision=${{ needs.qualify.outputs.sha }}
-
-      - name: Build and push image to ECR
-        id: build
+          image-ref: marina-qualification
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          vuln-type: os,library
+      - name: Push the qualified image without rebuilding
         if: steps.target.outputs.rollback != 'true'
-        uses: docker/build-push-action@v7.3.0
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          set -euo pipefail
+          docker tag marina-qualification "$IMAGE:sha-$TARGET_SHA"
+          docker push "$IMAGE:sha-$TARGET_SHA"
+          docker tag marina-qualification "$IMAGE:latest"
+          docker push "$IMAGE:latest"
+      - name: Record the immutable deployed artifact
+        id: image
+        env:
+          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:sha-${{ steps.target.outputs.sha }}
+        run: |
+          set -euo pipefail
+          digest=$(docker image inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
+          [[ "$digest" == *@sha256:* ]] || { echo "::error::Missing image digest"; exit 1; }
+          echo "ref=$digest" >> "$GITHUB_OUTPUT"
+          echo "Qualified deployment artifact: $digest" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Recheck main before changing production
         id: current
@@ -193,7 +276,7 @@ jobs:
           INSTANCE_ID: ${{ vars.MARINA_INSTANCE_ID }}
           APP_DIR: ${{ vars.MARINA_APP_DIR }}
           REGION: ${{ vars.AWS_REGION }}
-          IMAGE: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:sha-${{ steps.target.outputs.sha }}
+          IMAGE: ${{ steps.image.outputs.ref }}
           GIT_REF: ${{ steps.target.outputs.sha }}
           REF_NAME: main
         run: |

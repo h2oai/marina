@@ -8,6 +8,13 @@
 // every write is behind `key.manage`, `adapter.enable` or `admin.destructive`.
 
 import { join } from "node:path";
+import {
+  encodeEnvironmentValue,
+  environmentCatalog,
+  isSecretKey,
+  parseEnvironment,
+  writeEnvironment,
+} from "../../config/environment";
 import { testKeyConnectivity } from "../../engine/commands/key";
 import type { Engine } from "../../engine/engine";
 import type { MarinaDB } from "../../persistence/database";
@@ -243,19 +250,6 @@ async function handleKeyTest(name: string, db: MarinaDB): Promise<Response> {
 
 // ─── Env Config Handlers ───────────────────────────────────────────────────
 
-const SECRET_PATTERNS = [
-  "API_KEY",
-  "TOKEN",
-  "PASSWORD",
-  "SECRET",
-  "MEM_API_KEYS",
-  "MODEL_API_KEYS",
-];
-
-function isSecretKey(key: string): boolean {
-  return SECRET_PATTERNS.some((p) => key.includes(p));
-}
-
 /**
  * Security-relevant env keys that must never be edited through this route, even
  * by an operator: they control who is an admin, the dashboard password, the API
@@ -267,6 +261,11 @@ const PROTECTED_ENV_KEYS = new Set([
   "MARINA_ADMINS",
   "MARINA_AUTH",
   "MARINA_AUTH_ADMIN_EMAILS",
+  "MARINA_PROFILE",
+  "MARINA_PUBLIC",
+  "MARINA_ALLOW_INSECURE_PUBLIC",
+  "MARINA_TRUST_PROXY",
+  "BETTER_AUTH_SECRET",
   "MARINA_OPEN_API",
   "DASHBOARD_PASSWORD",
   "MARINA_DESKTOP_API_TOKEN",
@@ -330,50 +329,11 @@ function parseEnvExample(): Array<{ key: string; description: string; category: 
     return [];
   }
 
-  const result: Array<{ key: string; description: string; category: string }> = [];
-  let currentCategory = "General";
-  let pendingComments: string[] = [];
-
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-
-    // Section headers: # ─── Category ───
-    const sectionMatch = trimmed.match(/^#\s*─+\s*(.+?)\s*─+$/);
-    if (sectionMatch) {
-      currentCategory = sectionMatch[1]!.trim();
-      pendingComments = [];
-      continue;
-    }
-
-    // Comment lines (accumulate as description for next var)
-    if (trimmed.startsWith("#") && !sectionMatch) {
-      pendingComments.push(trimmed.replace(/^#\s?/, ""));
-      continue;
-    }
-
-    // Env var lines (KEY=value or # KEY=value for commented-out defaults)
-    const varMatch = trimmed.match(/^#?\s*([A-Z_][A-Z0-9_]*)=/);
-    if (varMatch) {
-      result.push({
-        key: varMatch[1]!,
-        description: pendingComments.join(" ").trim(),
-        category: currentCategory,
-      });
-      pendingComments = [];
-      continue;
-    }
-
-    // Blank lines reset pending comments
-    if (!trimmed) {
-      pendingComments = [];
-    }
-  }
-
-  return result;
+  return environmentCatalog(content);
 }
 
 function parseEnvFile(): Map<string, string> {
-  const envPath = join(PROJECT_ROOT, ".env");
+  const envPath = join(process.cwd(), ".env");
   let content: string;
   try {
     content = require("node:fs").readFileSync(envPath, "utf-8");
@@ -381,24 +341,7 @@ function parseEnvFile(): Map<string, string> {
     return new Map();
   }
 
-  const vars = new Map<string, string>();
-  for (const line of content.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eqIdx = trimmed.indexOf("=");
-    if (eqIdx < 0) continue;
-    const key = trimmed.slice(0, eqIdx).trim();
-    let value = trimmed.slice(eqIdx + 1).trim();
-    // Strip surrounding quotes
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    vars.set(key, value);
-  }
-  return vars;
+  return new Map(Object.entries(parseEnvironment(content)));
 }
 
 function handleEnvGet(): Response {
@@ -466,8 +409,17 @@ const HOT_RELOADABLE_VARS = new Set([
 
 async function handleEnvPut(req: Request): Promise<Response> {
   const body = (await req.json()) as { vars?: Record<string, string> };
-  if (!body.vars || typeof body.vars !== "object") {
+  if (!body.vars || typeof body.vars !== "object" || Array.isArray(body.vars)) {
     return json({ error: "vars object is required" }, 400);
+  }
+
+  for (const [key, value] of Object.entries(body.vars)) {
+    if (typeof value !== "string") return json({ error: `Expected a string for ${key}` }, 400);
+    try {
+      encodeEnvironmentValue(value);
+    } catch {
+      return json({ error: `Invalid single-line environment value for ${key}` }, 400);
+    }
   }
 
   // Reject security-relevant keys outright — even for a privileged caller, and
@@ -500,7 +452,7 @@ async function handleEnvPut(req: Request): Promise<Response> {
   const restartRequired: string[] = [];
 
   // Merge: if value contains only mask characters, keep existing value
-  const merged = new Map(currentVars);
+  const changes: Record<string, string | null> = {};
   for (const [key, value] of Object.entries(body.vars)) {
     // Skip vars set in the live environment but not in our .env file: writing
     // .env would be shadowed by the external value, so accepting the edit would
@@ -522,51 +474,25 @@ async function handleEnvPut(req: Request): Promise<Response> {
     const oldValue = currentVars.get(key) ?? "";
     if (value === oldValue) continue; // No change
 
-    if (value === "") {
-      merged.delete(key);
-    } else {
-      merged.set(key, value);
-    }
-
-    // Apply to process.env if hot-reloadable
+    changes[key] = value === "" ? null : value;
     if (HOT_RELOADABLE_VARS.has(key)) {
-      if (value === "") {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
       reloaded.push(key);
     } else {
       restartRequired.push(key);
     }
   }
 
-  // Write atomically
-  const envPath = join(PROJECT_ROOT, ".env");
-  const tmpPath = join(PROJECT_ROOT, ".env.tmp");
-  const lines: string[] = [];
-
-  // Preserve structure from .env.example
-  for (const entry of schema) {
-    const val = merged.get(entry.key);
-    if (val !== undefined) {
-      lines.push(`${entry.key}=${val}`);
-    }
-  }
-
-  // Append any vars in current .env that aren't in schema (preserve custom vars)
-  for (const [key, value] of merged) {
-    if (!allowedKeys.has(key)) {
-      lines.push(`${key}=${value}`);
-    }
-  }
-
-  const fs = require("node:fs");
+  // Persist only requested changes. Unrelated interpolation and comments stay intact.
   try {
-    fs.writeFileSync(tmpPath, `${lines.join("\n")}\n`, "utf-8");
-    fs.renameSync(tmpPath, envPath);
-  } catch (err) {
-    return json({ error: `Failed to write .env: ${err}` }, 500);
+    if (Object.keys(changes).length) writeEnvironment(join(process.cwd(), ".env"), changes);
+  } catch {
+    return json({ error: "Failed to write instance .env" }, 500);
+  }
+  // Live configuration changes become visible only after the durable write succeeds.
+  for (const key of reloaded) {
+    const value = changes[key];
+    if (value === null) delete process.env[key];
+    else process.env[key] = value;
   }
 
   return json({ ok: true, reloaded, restartRequired });

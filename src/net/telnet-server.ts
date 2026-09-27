@@ -20,6 +20,10 @@ let telnetIdCounter = 0;
 
 /** Simple line-buffered telnet server using Bun.listen (raw TCP) */
 export class TelnetServer {
+  private draining = false;
+  beginDrain(): void {
+    this.draining = true;
+  }
   // biome-ignore lint: Bun overloads Bun.listen return type
   private server: any = null;
   private sockets = new Map<string, Socket<TelnetData>>();
@@ -31,6 +35,7 @@ export class TelnetServer {
   ) {}
 
   start(): void {
+    const self = this;
     const engine = this.engine;
     const sockets = this.sockets;
     const rateLimiter = this.rateLimiter;
@@ -45,6 +50,10 @@ export class TelnetServer {
         open(socket) {
           const connId = `telnet_${++telnetIdCounter}`;
           socket.data = { connId, buffer: "", entity: null, name: null };
+          if (self.draining) {
+            socket.end();
+            return;
+          }
           sockets.set(connId, socket);
 
           const conn: Connection = {
@@ -76,6 +85,10 @@ export class TelnetServer {
         },
 
         data(socket, data) {
+          if (self.draining) {
+            socket.write("Instance is draining.\r\n");
+            return;
+          }
           const raw = typeof data === "string" ? data : new TextDecoder().decode(data);
           socket.data.buffer += raw;
 
@@ -170,6 +183,8 @@ export class TelnetServer {
   }
 
   stop(): void {
+    this.draining = true;
+    for (const socket of this.sockets.values()) socket.end();
     if (this.server) {
       this.server.stop();
       this.server = null;

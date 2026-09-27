@@ -3,8 +3,8 @@
 # Single-process server: WebSocket + web chat + dashboard SPA + OpenAI/Ollama
 # compat API on WS_PORT, plus MCP and the log server. Telnet is plaintext and
 # unauthenticated, so it is OFF by default (set TELNET_PORT to enable it on a
-# trusted network only). All persistent state is a single SQLite file (WAL
-# mode) under /app/data — mount a volume there. See docs/guides/deployment.md.
+# trusted network only). Persistent database and asset state lives under /app/data — mount a volume
+# there; include auth state, workspace roots and secrets in recovery backups. See docs/guides/deployment.md.
 
 # ── builder: install deps and build the dashboard SPA into dist/dashboard ───
 FROM docker.io/oven/bun:1.4.2 AS builder

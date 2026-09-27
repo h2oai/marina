@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Marina State Export
-# Usage: ./scripts/export.sh [db_path] [output_path] [--skip-events] [--skip-connectors]
+# Usage: ./scripts/export.sh [db_path] [output_path] [--skip-events] [--include-secrets]
 #
-# Exports the entire Marina instance state to a portable JSON file.
-# This file can be imported into any other Marina instance.
+# Exports logical tables to a private portable JSON file (no binary assets/workspaces).
+# Import into a compatible schema. Credential omission does not make content public.
 
 set -euo pipefail
 

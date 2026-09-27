@@ -28,3 +28,8 @@ export function listResolvers(): Resolver<unknown>[] {
 export function clearResolvers(): void {
   REGISTRY.clear();
 }
+
+/** Remove only the exact registration held by an extension during teardown. */
+export function unregisterResolver(resolver: Resolver<unknown>): void {
+  if (REGISTRY.get(resolver.kind) === resolver) REGISTRY.delete(resolver.kind);
+}

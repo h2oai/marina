@@ -69,6 +69,10 @@ collaborators, `canvas intent claim <node>` to take posted work, and `crew dispa
 to activate a crew. Close the loop by saving the result as a task submission, completed intent,
 pool note, skill, crew artifact, or Chronicle entry so the next participant can inherit it.
 
+For a focused entry, choose [minimal setup](docs/guides/configuration.md),
+[durable memory](docs/guides/memory-workflows.md), or [extension authoring](docs/guides/extending.md).
+Supported runtimes and upgrade rules are in the [compatibility guide](docs/guides/compatibility.md).
+
 ## Quick Start
 
 For a source checkout, install [Bun](https://bun.sh) ≥ 1.4.2:

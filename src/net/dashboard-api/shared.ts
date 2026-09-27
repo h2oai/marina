@@ -6,7 +6,7 @@
 // parameter/format utilities every route module needs. Nothing in this file
 // imports another `./dashboard-api/*` module.
 
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import type { Engine } from "../../engine/engine";
 import { Logger } from "../../engine/logger";
 import { getRank } from "../../engine/permissions";
@@ -16,6 +16,7 @@ import {
   recordGateExecution,
 } from "../../engine/safety-gates";
 import type { MarinaDB } from "../../persistence/database";
+import { MARINA_ROOT } from "../../runtime-paths";
 import type { EntityId } from "../../types";
 import { isOperatorPrincipal, isSentinelPrincipal } from "../auth-middleware";
 import { corsHeaders, isTrustedBrowserOrigin } from "../cors";
@@ -25,8 +26,8 @@ import type { memoryObserver } from "../memory-visibility";
 /** Module logger: dashboard HTTP routes — rejected-origin and request failures. */
 const logger = new Logger();
 
-export const ROOMS_DIR = join(import.meta.dir, "../../../rooms");
-export const PROJECT_ROOT = resolve(import.meta.dir, "../../..");
+export const ROOMS_DIR = join(MARINA_ROOT, "rooms");
+export const PROJECT_ROOT = MARINA_ROOT;
 
 /**
  * Rate-limit key for a request: the real socket peer (`peerIp` from

@@ -44,3 +44,6 @@ dashboard/playwright-report/
 
 # Coverage reports (bun test --coverage; see docs/guides/testing.md)
 coverage/
+
+# Cooperative runtime/offline-maintenance leases
+*.instance-lock*

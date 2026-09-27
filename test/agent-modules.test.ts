@@ -1680,11 +1680,18 @@ describe("InterruptibleWaiter", () => {
     // before the cycle-delay deadline. Without this, every handshake
     // pays up to loopCycleDelay (default 2s) of dead wall-clock time.
     const w = new InterruptibleWaiter();
-    const start = performance.now();
-    setTimeout(() => w.wake(), 10);
-    await w.sleep(2000);
-    const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(150);
+    let completed = false;
+    const sleeping = w.sleep(2000).then(() => {
+      completed = true;
+    });
+    expect(completed).toBe(false);
+    expect(w.isArmed()).toBe(true);
+    w.wake();
+    // Resolution must precede the next timer turn. Wall-clock thresholds also
+    // measure OS scheduling contention and become flaky during image builds.
+    await Promise.resolve();
+    expect(completed).toBe(true);
+    await sleeping;
     expect(w.isArmed()).toBe(false);
   });
 

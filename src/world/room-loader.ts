@@ -6,12 +6,13 @@ import { join, relative } from "node:path";
 import { Glob } from "bun";
 import type { Engine } from "../engine/engine";
 import { Logger } from "../engine/logger";
+import { MARINA_ROOT } from "../runtime-paths";
 import type { RoomId, RoomModule } from "../types";
 
 /** Module logger. */
 const logger = new Logger();
 
-const DEFAULT_ROOMS_DIR = join(import.meta.dir, "../../rooms");
+const DEFAULT_ROOMS_DIR = join(MARINA_ROOT, "rooms");
 
 /**
  * Scan a rooms directory and import each .ts file as a RoomModule.

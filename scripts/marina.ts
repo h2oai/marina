@@ -349,7 +349,7 @@ if (import.meta.main) {
       break;
     case "init": {
       const { runInit } = await import("./init");
-      await runInit();
+      await runInit(process.argv.slice(3));
       break;
     }
     case "status":

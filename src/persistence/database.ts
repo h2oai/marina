@@ -48,6 +48,7 @@ import * as flywheelDb from "./db-flywheel";
 import * as gatewaysDb from "./db-gateways";
 import * as intellectsDb from "./db-intellects";
 import * as journeysDb from "./db-journeys";
+import * as legacyBridgeDb from "./db-legacy-bridge";
 import * as logsDb from "./db-logs";
 import * as macrosDb from "./db-macros";
 import * as maintenanceDb from "./db-maintenance";
@@ -375,6 +376,10 @@ export class MarinaDB implements MarinaStores {
 
   private runMigrations(): void {
     const currentVersion = this.getSchemaVersion();
+    if (currentVersion > MIGRATIONS.at(-1)!.version)
+      throw new Error(
+        `Database schema ${currentVersion} is newer than this binary supports; restore a compatible backup or use the newer binary.`,
+      );
     const pending = MIGRATIONS.filter((m) => m.version > currentVersion);
     if (pending.length === 0) return;
 
@@ -1690,6 +1695,23 @@ export class MarinaDB implements MarinaStores {
     },
   ): number {
     return notesDb.createNote(this.db, entityName, content, roomId, opts);
+  }
+
+  queueLegacyBridgeBackfill(owner?: string, afterId = 0, limit = 500) {
+    return legacyBridgeDb.queueLegacyBridgeBackfill(this.db, owner, afterId, limit);
+  }
+
+  enqueueLegacyBridge(operation: string, args: unknown[]): number {
+    return legacyBridgeDb.enqueueLegacyBridge(this.db, operation, args);
+  }
+  pendingLegacyBridges(limit = 100): legacyBridgeDb.LegacyBridgeIntent[] {
+    return legacyBridgeDb.pendingLegacyBridges(this.db, limit);
+  }
+  completeLegacyBridge(id: number): void {
+    legacyBridgeDb.completeLegacyBridge(this.db, id);
+  }
+  failLegacyBridge(id: number, code: string): void {
+    legacyBridgeDb.failLegacyBridge(this.db, id, code);
   }
 
   getNotesByEntity(entityName: string, limit = 50): NoteRow[] {

@@ -4,17 +4,14 @@
 import { creditRecalledReflections } from "../../agent/standing";
 import { memoryAccess } from "../../memory/access";
 import { memoryNoteResults, memoryResult } from "../../memory/command-result";
+import { withMemoryCompatibility } from "../../memory/compatibility";
 import {
   INSTITUTIONAL_PROPOSAL_IMPORTANCE_CAP,
   institutionalCapsApply,
   isInstitutionalPoolName,
   ratifyPoolNote,
 } from "../../memory/institutional";
-import {
-  bridgeLegacyPoolNoteQuietly,
-  durableTwinRecordIds,
-  recordDurableTwin,
-} from "../../memory/legacy-bridge";
+import { durableTwinRecordIds, recordDurableTwin } from "../../memory/legacy-bridge";
 import { depositPoolNote } from "../../memory/pool-deposit";
 import {
   bold,
@@ -120,7 +117,7 @@ export function poolCommand(deps: {
     name: "pool",
     aliases: [],
     help: "Shared memory pools for collaborative knowledge.\nUsage: pool create <name> [group <groupName>] | pool <name> add <text> [importance:N] | pool <name> recall|list|status|audit|ratify | pool list\n  (importance also as trailing `importance N` or `!N`; `ls` = list)\n\nExamples:\n  pool create findings\n  pool create crew-notes group project:Beta   (members-only pool; you must belong to the group)\n  pool findings add The decode room responds to binary input importance:7\n  pool findings recall binary\n  pool findings list\n  pool findings status\n  pool findings audit\n  pool guide ratify 42 importance 8 verified against the command registry\n\nInstitutional pools (guide, orchestration:*, tradition:*): on a shared instance `add` files a proposal (importance capped at 4, unverified) until someone with standing >= 15 (rank 2), a sovereign, or the local operator runs `pool <name> ratify <noteId> [importance N] [rationale]` — which lifts the cap, marks it verified, and mirrors it into the institutional durable space.",
-    handler: (ctx: RoomContext, input) => {
+    handler: withMemoryCompatibility(deps.db, (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
@@ -377,10 +374,6 @@ export function poolCommand(deps: {
                   `It becomes canon when someone with standing ≥ 15 runs ${bold(`pool ${poolName} ratify ${noteId}`)}.`
               : `Added note #${noteId} to pool "${poolName}".`,
           );
-          // Durable twin in the AUTHOR's resident space, tagged with the pool
-          // (institutional canon is the separate `ratify` mirror). Fire-and-
-          // forget so the reply lands in-tick; sequenced by awaitPendingBridges().
-          void bridgeLegacyPoolNoteQuietly(db, entity.name, noteId, poolName);
           return;
         }
 
@@ -498,6 +491,6 @@ export function poolCommand(deps: {
             ),
           );
       }
-    },
+    }),
   };
 }

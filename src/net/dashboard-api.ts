@@ -8,6 +8,7 @@
 // stable public re-exports. Importers never need to know about the layout.
 
 import type { Engine } from "../engine/engine";
+import { extensionWidgets } from "../extensions/loader";
 import type { MarinaDB } from "../persistence/database";
 import { authenticateRequest, isSentinelPrincipal } from "./auth-middleware";
 import { handleAgentRoutes } from "./dashboard-api/agents";
@@ -80,6 +81,13 @@ export async function handleDashboardApi(
     !memory.privilegedRead
   )
     return json({ error: "Operator read capability required" }, 403);
+
+  if (url.pathname === "/api/extensions/widgets" && method === "GET")
+    return json({
+      widgets: extensionWidgets(engine).filter(
+        (widget) => widget.slot !== "admin-tab" || memory.privilegedRead,
+      ),
+    });
 
   const ctx: DashboardRouteContext = { req, url, method, engine, db, peerIp, callerId, memory };
 

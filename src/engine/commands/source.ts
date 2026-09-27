@@ -3,11 +3,12 @@
 
 import { join } from "node:path";
 import type { MarinaDB } from "../../persistence/database";
+import { MARINA_ROOT } from "../../runtime-paths";
 import type { CommandDef, Entity, EntityId, RoomContext, RoomId, RoomModule } from "../../types";
 import type { LoadedRoom } from "../../world/room-manager";
 import { requireRank } from "../permissions";
 
-const ROOMS_DIR = join(import.meta.dir, "../../../rooms");
+const ROOMS_DIR = join(MARINA_ROOT, "rooms");
 
 export interface SourceDeps {
   getEntity: (id: string) => Entity | undefined;

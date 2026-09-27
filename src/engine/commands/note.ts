@@ -2,18 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { memoryAccess } from "../../memory/access";
-import {
-  bridgeLegacyConsolidationQuietly,
-  bridgeLegacyLinkQuietly,
-  bridgeLegacyNoteQuietly,
-  bridgeLegacyResolutionQuietly,
-  bridgeLegacyRevisionQuietly,
-  bridgeLegacySourceQuietly,
-  bridgeLegacyUnlinkQuietly,
-  bridgeLegacyVerificationQuietly,
-  findDurableTwin,
-  retireDurableTwinQuietly,
-} from "../../memory/legacy-bridge";
+import { withMemoryCompatibility } from "../../memory/compatibility";
 import {
   bold,
   category,
@@ -212,7 +201,7 @@ export function noteCommand(deps: {
     name: "note",
     aliases: [],
     help: "Evidence-aware memory. Usage: note <text> | note claim <text> [confidence:0..1] [source:URL] (also trailing `confidence 0.9 source URL`) | note explain|verify|source|contradictions|consolidate ... | note list (ls) | note delete <id> (rm/remove)",
-    handler: (ctx: RoomContext, input) => {
+    handler: withMemoryCompatibility(deps.db, (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
@@ -293,18 +282,6 @@ export function noteCommand(deps: {
             input.entity,
             `Claim #${id} saved (confidence=${confidence.toFixed(2)}, ${modifiers.source ? "sourced, unverified" : "unverified"}).`,
           );
-          // Same twin scheme as a plain `note`: fire-and-forget so the reply
-          // lands in-tick; sequencing callers use awaitPendingBridges(). With a
-          // source the bridge twins the note first, then mirrors the url.
-          if (modifiers.source) {
-            const observedAt = modifiers.observed ? Date.parse(modifiers.observed) : undefined;
-            void bridgeLegacySourceQuietly(db, entity.name, id, {
-              url: modifiers.source,
-              observedAt: Number.isFinite(observedAt) ? observedAt : undefined,
-            });
-          } else {
-            void bridgeLegacyNoteQuietly(db, entity.name, id);
-          }
           return;
         }
 
@@ -363,15 +340,6 @@ export function noteCommand(deps: {
             observedAt: Number.isFinite(observedAt) ? observedAt : undefined,
           });
           ctx.send(input.entity, `Source attached to note #${id}.`);
-          // Mirror the reference onto the durable twin's sources (capture +
-          // revise). Fire-and-forget; sequencing callers use awaitPendingBridges().
-          void bridgeLegacySourceQuietly(db, entity.name, id, {
-            url: reference,
-            sourceType,
-            sourceNoteId,
-            credibility,
-            observedAt: Number.isFinite(observedAt) ? observedAt : undefined,
-          });
           return;
         }
 
@@ -401,14 +369,6 @@ export function noteCommand(deps: {
           ctx.send(input.entity, `Note #${id} now records derivation from #${sourceId}.`);
           // Durable side: the source note's twin becomes a (self-derived)
           // source of this note's twin, and a `derived_from` relation is asserted.
-          void bridgeLegacySourceQuietly(db, entity.name, id, {
-            url: `note:${sourceId}`,
-            sourceType: "note",
-            sourceNoteId: sourceId,
-            credibility: source.confidence ?? 0.5,
-            excerpt: source.content.slice(0, 240),
-          });
-          void bridgeLegacyLinkQuietly(db, entity.name, id, sourceId, "derived_from");
           return;
         }
 
@@ -432,25 +392,11 @@ export function noteCommand(deps: {
           }
           const rationale = tokens.slice(4).join(" ") || undefined;
           const verdict = verification as "unverified" | "verified" | "disputed";
-          const verificationId = db.recordNoteVerification(
-            id,
-            entity.name,
-            verdict,
-            confidence,
-            rationale,
-          );
+          db.recordNoteVerification(id, entity.name, verdict, confidence, rationale);
           ctx.send(
             input.entity,
             `Note #${id} marked ${verification} (confidence=${Math.max(0, Math.min(1, confidence)).toFixed(2)}).`,
           );
-          // Durable twin follows the verdict: `disputed` closes its validity
-          // (dropped from the [evidence] tier), `verified` reaffirms / reopens.
-          // Fire-and-forget; sequencing callers use awaitPendingBridges().
-          void bridgeLegacyVerificationQuietly(db, entity.name, id, verdict, {
-            key: `legacy-note-${id}-verify-${verificationId}`,
-            confidence: Math.max(0, Math.min(1, confidence)),
-            rationale,
-          });
           return;
         }
 
@@ -574,33 +520,6 @@ export function noteCommand(deps: {
               ? `Contradiction case #${caseId} resolved as ${resolution}; verification history was updated.`
               : `Open contradiction case #${caseId} not found.`,
           );
-          if (ok && conflict) {
-            // Mirror the legacy verdicts onto the twins: winners reaffirmed,
-            // losers closed as disputed (`neither` disputes both, like the
-            // legacy side). Fire-and-forget; sequenced by awaitPendingBridges().
-            const { left_note_id: left, right_note_id: right } = conflict;
-            const winners =
-              resolution === "left"
-                ? [left]
-                : resolution === "right"
-                  ? [right]
-                  : resolution === "both"
-                    ? [left, right]
-                    : [];
-            const losers =
-              resolution === "left"
-                ? [right]
-                : resolution === "right"
-                  ? [left]
-                  : resolution === "neither"
-                    ? [left, right]
-                    : [];
-            void bridgeLegacyResolutionQuietly(db, entity.name, caseId, {
-              winners,
-              losers,
-              rationale,
-            });
-          }
           return;
         }
 
@@ -618,24 +537,11 @@ export function noteCommand(deps: {
             ctx.send(input.entity, "One or more notes not found or not yours.");
             return;
           }
-          // Snapshot which duplicates are still current: only the ones this
-          // call flips to `superseded` get their durable twin retired.
-          const wasCurrent = duplicates.filter(
-            (dupId) => db.getNote(dupId)?.verification_status !== "superseded",
-          );
           const changed = db.consolidateNotes(entity.name, keeper, duplicates);
           ctx.send(
             input.entity,
             `${changed} memory record(s) safely superseded by #${keeper}; provenance was retained.`,
           );
-          const superseded = wasCurrent.filter(
-            (dupId) => db.getNote(dupId)?.verification_status === "superseded",
-          );
-          // Losers' twins become tombstones pointing at the keeper (same
-          // retirement as `note delete`); the keeper's twin is untouched.
-          // Fire-and-forget; sequencing callers use awaitPendingBridges().
-          if (superseded.length > 0)
-            void bridgeLegacyConsolidationQuietly(db, entity.name, keeper, superseded);
           return;
         }
 
@@ -713,8 +619,6 @@ export function noteCommand(deps: {
             return;
           }
           const target = db.getNote(id);
-          // Resolve the twin BEFORE the row goes: note_sources cascades on delete.
-          const twin = access.write(target) ? findDurableTwin(db, id) : undefined;
           const deleted = access.write(target) && db.deleteNote(id, entity.name);
           if (deleted) {
             deps.logEvent?.({
@@ -724,9 +628,6 @@ export function noteCommand(deps: {
               timestamp: Date.now(),
             });
             ctx.send(input.entity, `Note #${id} deleted.`);
-            // Retire the durable twin (tombstone revise, never a cascading
-            // forget). Fire-and-forget like every other bridge.
-            if (twin) void retireDurableTwinQuietly(db, entity.name, id, twin);
           } else {
             ctx.send(input.entity, `Note #${id} not found or not yours.`);
           }
@@ -765,9 +666,6 @@ export function noteCommand(deps: {
               timestamp: Date.now(),
             });
             ctx.send(input.entity, `Linked note #${id1} -> #${id2} (${rel}).`);
-            // Durable `relate` between the two twins (skipped when either note
-            // has none). Fire-and-forget; sequenced by awaitPendingBridges().
-            void bridgeLegacyLinkQuietly(db, entity.name, id1, id2, rel);
           } catch {
             ctx.send(input.entity, "Link already exists.");
           }
@@ -799,9 +697,6 @@ export function noteCommand(deps: {
             timestamp: Date.now(),
           });
           ctx.send(input.entity, `Unlinked note #${id1} -> #${id2} (${rel}).`);
-          // Close the durable relation's validity (the service has no
-          // destructive un-relate short of `forget`). Fire-and-forget.
-          void bridgeLegacyUnlinkQuietly(db, entity.name, id1, id2, rel);
           return;
         }
 
@@ -855,10 +750,6 @@ export function noteCommand(deps: {
             timestamp: Date.now(),
           });
           ctx.send(input.entity, `Note #${newId} created, superseding #${id}.`);
-          // Durable twin follows the supersession (revise, CAS on current version).
-          // Fire-and-forget: the reply (and quest progress) must land in this
-          // tick; sequencing callers use awaitPendingBridges().
-          void bridgeLegacyRevisionQuietly(db, entity.name, id, newId);
           return;
         }
 
@@ -991,9 +882,6 @@ export function noteCommand(deps: {
             input.entity,
             `Note #${newId} evolved from #${id} (importance=${newImportance}, ${linkedCount} linked notes incorporated).`,
           );
-          // Fire-and-forget: the reply (and quest progress) must land in this
-          // tick; sequencing callers use awaitPendingBridges().
-          void bridgeLegacyRevisionQuietly(db, entity.name, id, newId);
           return;
         }
 
@@ -1129,15 +1017,9 @@ export function noteCommand(deps: {
               ? ` Auto-linked to notes ${autoLinked.map((i) => `#${i}`).join(", ")} (related_to).`
               : "";
           ctx.send(input.entity, `Note #${id} saved${suffix}.${linkInfo}`);
-          // Legacy reply is already on the wire; the durable twin (capture +
-          // remember + note_sources row) lands asynchronously and never fails
-          // the legacy write. Returned so `await processCommand` sequences it.
-          // Fire-and-forget: the reply (and quest progress) must land in this
-          // tick; sequencing callers use awaitPendingBridges().
-          void bridgeLegacyNoteQuietly(db, entity.name, id);
           return;
         }
       }
-    },
+    }),
   };
 }

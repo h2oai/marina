@@ -23,7 +23,10 @@ import {
   resolveTrustProfile,
   setTrustProfile,
 } from "./engine/trust-profile";
+import { loadExtensions } from "./extensions/loader";
 import { parseEmbeddingEnv } from "./memory/embedding-config";
+import { awaitPendingBridges, replayPendingBridges } from "./memory/legacy-bridge";
+import { closeWorldMemoryService } from "./memory/world-service";
 import { AdapterManager } from "./net/adapter-manager";
 import { DashboardBroadcaster } from "./net/dashboard-ws";
 import { FeedPublisher } from "./net/feed-publisher";
@@ -36,6 +39,7 @@ import { detectLocalContextWindow } from "./net/model-discovery";
 import { TelnetServer } from "./net/telnet-server";
 import { isLoopbackHostname, resolveWsBindHostname, WebSocketServer } from "./net/websocket-server";
 import { MarinaDB } from "./persistence/database";
+import { acquireDatabaseLease } from "./persistence/database-lease";
 import { isKeyEncryptionEnabled } from "./persistence/key-crypto";
 import { LocalStorageProvider } from "./storage/local-provider";
 import { loadOtlpExporterConfig, MarinaOtlpExporter } from "./telemetry/otlp-exporter";
@@ -44,6 +48,7 @@ import type { RoomId } from "./types";
 import { loadRooms } from "./world/room-loader";
 import { seedGuidePool } from "./world/seed-guide";
 import type { WorldDefinition } from "./world/world-definition";
+import { loadWorld } from "./world/world-loader";
 
 // Port semantics: unset/empty/non-numeric env keeps the default; an explicit 0
 // (or negative) DISABLES that listener so multiple instances can share a host.
@@ -92,8 +97,7 @@ function listAvailableWorlds(): string[] {
 // Name the problem and list what IS loadable instead.
 let world: WorldDefinition;
 try {
-  const worldModule = await import(`../worlds/${WORLD_NAME}`);
-  world = worldModule.default;
+  world = await loadWorld(WORLD_NAME);
   if (!world || typeof world !== "object" || !("rooms" in world) || !("startRoom" in world)) {
     throw new Error(`worlds/${WORLD_NAME}.ts has no default WorldDefinition export`);
   }
@@ -227,7 +231,9 @@ const durability =
   process.env.MARINA_DB_DURABILITY ?? (TRUST.profile === "local" ? "normal" : "full");
 if (durability !== "full" && durability !== "normal")
   throw new Error("MARINA_DB_DURABILITY must be full or normal");
+const releaseDatabaseLease = acquireDatabaseLease(DB_PATH);
 const db = new MarinaDB(DB_PATH, { durability });
+await replayPendingBridges(db);
 const structuredLogRetention = Math.max(
   100,
   Math.min(Number(process.env.MARINA_LOG_RETENTION) || 10_000, 1_000_000),
@@ -349,6 +355,13 @@ await engine.loadDynamicRooms();
 
 // Load dynamic commands from DB
 await engine.loadDynamicCommands();
+const stopExtensions = await loadExtensions(
+  engine,
+  (process.env.MARINA_PLUGINS ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean),
+);
 
 // Initialize MCP connector runtime
 await engine.initConnectors();
@@ -466,6 +479,7 @@ wsServer.setMemRateLimiter(memRateLimiter);
 if (AUTH_ENABLED) {
   try {
     const { createBetterAuthProvider } = await import("./auth/better-auth-provider");
+    acquireDatabaseLease(process.env.BETTER_AUTH_DB_PATH ?? "marina-auth.db");
     const authProvider = createBetterAuthProvider();
     wsServer.setAuthProvider(authProvider);
     logger.info(
@@ -765,13 +779,20 @@ async function shutdown(code = 0) {
 
   // Hard watchdog: if graceful cleanup stalls (a hung upstream during an
   // agent's checkpoint flush, say), force-exit so a restart isn't blocked.
-  const watchdog = setTimeout(() => process.exit(code), 10_000);
+  const watchdog = setTimeout(() => {
+    logger.error("engine", "Shutdown deadline exceeded; forcing exit with recovery work retained");
+    process.exit(1);
+  }, 30_000);
   watchdog.unref?.();
 
   clearInterval(stateInterval);
   clearInterval(sessionCleanupInterval);
-  await otlpExporter?.stop().catch(() => {});
-  await otlpLogExporter?.stop().catch(() => {});
+  // External admission closes first; authenticated internal checkpoints may finish.
+  stopExtensions.beginDrain();
+  wsServer.beginDrain();
+  mcpServer?.beginDrain();
+  telnetServer?.beginDrain();
+  engine.stop();
 
   // Stop external adapters first
   await adapterManager.stopAll().catch(() => {});
@@ -780,12 +801,21 @@ async function shutdown(code = 0) {
   // each agent's saved config so they respawn on the next boot.
   await engine.agentRuntime.stopAll().catch(() => {});
 
-  engine.shutdown(); // saves state + stops tick loop
-  logServer?.stop();
-  wsServer.stop();
+  await Promise.all([wsServer.drainRequests(), mcpServer?.drainRequests()]);
+  await engine.drainCommands();
+  await awaitPendingBridges();
+  await replayPendingBridges(db);
+  await stopExtensions();
+  await engine.shutdown();
+  await Promise.all([wsServer.stop(), mcpServer?.stop()]);
   telnetServer?.stop();
-  mcpServer?.stop();
+  await awaitPendingBridges();
+  await closeWorldMemoryService(db);
+  await otlpExporter?.stop();
+  await otlpLogExporter?.stop();
+  logServer?.stop();
   db.close();
+  releaseDatabaseLease();
   process.exit(code);
 }
 

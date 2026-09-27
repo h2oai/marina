@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
+import { institutionalOwnerActor } from "../src/memory/institutional";
 import {
   awaitPendingBridges,
   bridgeLegacyConsolidation,
@@ -304,13 +305,23 @@ describe("legacy verbs ↔ durable twin bridge", () => {
     expect(reopened.metadata).toMatchObject({ relinked_at: expect.any(Number) });
     expect(reopened.metadata).not.toHaveProperty("unlinked_at");
 
-    // A link to a note without a twin has nothing durable to point at: skipped, no error.
+    // A pending create is a prerequisite; graph work must not silently disappear.
     const untwinned = db.createNote("Alice", "Untwinned ferry note", undefined, { importance: 5 });
     expect(await run(alice, `note link ${a} ${untwinned} related_to`)).toContain("Linked");
     const all = (
       await durable({ operation: "graph", input: { subject: twinA.recordId, include_stale: true } })
     ).result as MemoryGraphResult;
-    expect(all.edges.map((e) => e.record.id)).toEqual([relation!.id]);
+    expect(all.edges.map((e) => e.record.id)).toContain(relation!.id);
+    expect(all.edges).toHaveLength(2);
+    expect(
+      await findDurableRelation(
+        db,
+        "Alice",
+        twinA.recordId,
+        "related_to",
+        findDurableTwin(db, untwinned)!.recordId,
+      ),
+    ).toBeDefined();
   });
 
   it("`note source` mirrors the reference onto the twin's sources as an EXTERNAL captured source; `note claim … source` does it in one step", async () => {
@@ -341,17 +352,21 @@ describe("legacy verbs ↔ durable twin bridge", () => {
         },
       ],
     });
-    // Idempotent per (note, url): same url again → same source, no new version.
+    // Changed metadata gets a revision; identical retries reuse it and its source.
     await run(alice, `note source ${noteId} https://example.test/lamp credibility 0.9`);
-    expect((await record(twin.recordId)).version).toBe(2);
+    expect((await record(twin.recordId)).version).toBe(3);
     expect(
-      (await bridgeLegacySource(db, "Alice", noteId, { url: "https://example.test/lamp" }))
-        ?.version,
-    ).toBe(2);
+      (
+        await bridgeLegacySource(db, "Alice", noteId, {
+          url: "https://example.test/lamp",
+          credibility: 0.9,
+        })
+      )?.version,
+    ).toBe(3);
     // A second, different url is appended.
     await run(alice, `note source ${noteId} https://example.test/manual`);
     current = await record(twin.recordId);
-    expect(current.version).toBe(3);
+    expect(current.version).toBe(4);
     expect(current.source_ids).toHaveLength(3);
 
     // `note claim … source <url>`: twin + mirrored source in one bridge.
@@ -466,5 +481,12 @@ describe("legacy verbs ↔ durable twin bridge", () => {
     });
     // The resident twin still follows the author's verbs (verification landed on the note).
     expect(db.getNote(noteId)!.verification_status).toBe("verified");
+    const mirrorSpace = JSON.parse(mirrorRow.metadata!).space_id as string;
+    await run(alice, `note delete ${noteId}`);
+    expect(db.pendingLegacyBridges()).toEqual([]);
+    expect((await record(twin.recordId)).content).toContain("[deleted legacy note #");
+    expect(
+      db.memoryRepository().read(institutionalOwnerActor(db), mirrorSpace, mirrorId).content,
+    ).toBe("Prefer tellAndAwait for crew round trips");
   });
 });

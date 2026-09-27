@@ -3,6 +3,10 @@
 
 // ─── Marina SDK ────────────────────────────────────────────────────────────
 
+export type { ClientOptions, RoomView, SessionInfo } from "./client";
+export { MarinaAgent, MarinaClient } from "./client";
+export type * from "./extensions";
+export { EXTENSION_API_VERSION } from "./extensions";
 // Re-export core types
 export type {
   BroadcastPerception,
@@ -18,9 +22,7 @@ export type {
   RoomId,
   RoomPerception,
   SystemPerception,
-} from "../types";
-export type { ClientOptions, RoomView, SessionInfo } from "./client";
-export { MarinaAgent, MarinaClient } from "./client";
+} from "./protocol";
 export type { RoutingClientOptions } from "./routing-client";
 export { MarinaRoutingClient, RoutingApiError } from "./routing-client";
 export type * from "./routing-types";

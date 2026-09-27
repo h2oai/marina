@@ -1,7 +1,9 @@
 # Dependencies + build artifacts (reinstalled / rebuilt inside the image)
 node_modules
+**/node_modules
 dashboard/node_modules
 dist
+**/dist
 dashboard/dist
 
 # Local state + secrets — never bake these into an image
@@ -9,11 +11,15 @@ dashboard/dist
 *.db-wal
 *.db-shm
 *.db-journal
+*.instance-lock*
 data
 marina-data
 backups
 .env
 .env.*
+**/.env
+**/.env.*
+!.env.example
 
 # VCS / CI / editor
 .git

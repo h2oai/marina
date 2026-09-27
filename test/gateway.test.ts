@@ -1,12 +1,13 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { Engine } from "../src/engine/engine";
 import { validateGatewayUrl } from "../src/engine/gateway-runtime";
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import { __setDnsResolverForTest } from "../src/net/url-guard";
 import { MarinaDB } from "../src/persistence/database";
+import { MarinaClient } from "../src/sdk/client";
 import { roomId } from "../src/types";
 import { cleanupDb, grantAllGates, MockConnection, makeTestRoom, stripAnsi } from "./helpers";
 
@@ -17,7 +18,14 @@ describe("Gateway Command", () => {
   let engine: Engine;
   let conn1: MockConnection;
 
+  let dial: ReturnType<typeof spyOn<MarinaClient, "connect">>;
+
   beforeEach(() => {
+    // Command/persistence tests must not dial services on the developer's ports.
+    // Real federation transport behavior is covered by the gateway wire tests.
+    dial = spyOn(MarinaClient.prototype, "connect").mockRejectedValue(
+      new Error("Fixture peer is offline"),
+    );
     // Loopback peers (ws://localhost) are only accepted under the LOCAL trust
     // profile; the in-process default is `shared`, which refuses them.
     setTrustProfile("local");
@@ -37,8 +45,10 @@ describe("Gateway Command", () => {
     conn1.clear();
   });
 
-  afterEach(() => {
-    engine.gatewayRuntime?.close().catch(() => {});
+  afterEach(async () => {
+    await engine.drainCommands();
+    await engine.gatewayRuntime?.close();
+    dial.mockRestore();
     resetTrustProfileForTests();
     __setDnsResolverForTest(null);
     db.close();

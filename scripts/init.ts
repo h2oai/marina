@@ -3,12 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as fs from "node:fs";
+import { join, resolve } from "node:path";
 import * as readline from "node:readline/promises";
 import { Writable } from "node:stream";
+import { parseArgs } from "node:util";
+import { isSecretKey, parseEnvironment, writeEnvironment } from "../src/config/environment";
+import { configurationPreset, validateConfiguration } from "../src/config/presets";
 
 const ROOT = `${import.meta.dirname}/..`;
-const ENV_PATH = `${ROOT}/.env`;
-const EXAMPLE_PATH = `${ROOT}/.env.example`;
 const WORLDS_DIR = `${ROOT}/worlds`;
 
 /** Files in worlds/ that are shared helpers, not loadable world definitions. */
@@ -159,7 +161,55 @@ async function testKey(provider: (typeof PROVIDERS)[number], key: string): Promi
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export async function runInit(): Promise<void> {
+export async function runInit(args: string[] = []): Promise<void> {
+  const { values } = parseArgs({
+    args,
+    options: {
+      directory: { type: "string" },
+      preset: { type: "string" },
+      yes: { type: "boolean" },
+      check: { type: "boolean" },
+      print: { type: "boolean" },
+    },
+  });
+  const directory = resolve(values.directory ?? process.cwd());
+  const ENV_PATH = join(directory, ".env");
+  const existing = fs.existsSync(ENV_PATH)
+    ? parseEnvironment(fs.readFileSync(ENV_PATH, "utf8"))
+    : {};
+  const saveChanges = (cfg: Record<string, string>) =>
+    writeEnvironment(
+      ENV_PATH,
+      Object.fromEntries(Object.entries(cfg).filter(([key, value]) => value !== existing[key])),
+    );
+  if (values.yes || values.check || values.print) {
+    const selected = values.check ? {} : configurationPreset(values.preset ?? "workbench");
+    const cfg = { ...selected, ...existing };
+    if (cfg.MARINA_AUTH === "better-auth" && !cfg.BETTER_AUTH_SECRET && !values.check)
+      cfg.BETTER_AUTH_SECRET =
+        process.env.BETTER_AUTH_SECRET ?? `${crypto.randomUUID()}${crypto.randomUUID()}`;
+    const problems = validateConfiguration(cfg);
+    if (problems.length) throw new Error(problems.join("\n"));
+    if (values.print || values.check) {
+      console.log(
+        JSON.stringify(
+          {
+            valid: true,
+            directory,
+            settings: Object.fromEntries(
+              Object.entries(cfg).map(([key, value]) => [key, isSecretKey(key) ? "[set]" : value]),
+            ),
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      saveChanges(cfg);
+      console.log(`Wrote ${ENV_PATH}. Run marina start from ${directory}.`);
+    }
+    return;
+  }
   const output = new MutableOutput(process.stdout);
   const rl = readline.createInterface({ input: process.stdin, output });
   const cleanup = () => {
@@ -186,7 +236,10 @@ export async function runInit(): Promise<void> {
     }
   }
 
-  const cfg: Record<string, string> = {};
+  const cfg: Record<string, string> = {
+    ...(values.preset ? configurationPreset(values.preset) : {}),
+    ...existing,
+  };
 
   console.log(`
 ╔══════════════════════════════╗
@@ -198,7 +251,7 @@ export async function runInit(): Promise<void> {
     const vals = existing
       .split("\n")
       .filter((l) => l.match(/^\w+=/))
-      .map((l) => `  ${l.split("=")[0]} = ${l.slice(l.indexOf("=") + 1)}`);
+      .map((l) => `  ${l.split("=")[0]} = [set]`);
     if (vals.length) {
       console.log("\nExisting .env found:");
       console.log(vals.join("\n"));
@@ -211,7 +264,7 @@ export async function runInit(): Promise<void> {
   }
 
   // 1. Instance name
-  cfg.MARINA_NAME = await ask("\nName your instance [Marina]: ", "Marina");
+  cfg.MARINA_NAME = await ask("\nName your instance [Marina]: ", cfg.MARINA_NAME ?? "Marina");
 
   // 2. World selection — derived from worlds/*.ts so the menu never goes stale.
   const worlds = worldMenu();
@@ -220,7 +273,7 @@ export async function runInit(): Promise<void> {
   for (let i = 0; i < worlds.length; i++) {
     console.log(`  ${String(i + 1).padStart(2)}. ${worlds[i]![0].padEnd(pad)}— ${worlds[i]![1]}`);
   }
-  const worldInput = await ask(`\nWorld [1]: `, "1");
+  const worldInput = await ask(`\nWorld [${cfg.MARINA_WORLD ?? "1"}]: `, cfg.MARINA_WORLD ?? "1");
   const worldIdx = Number.parseInt(worldInput, 10);
   const worldMatch =
     worldIdx >= 1 && worldIdx <= worlds.length
@@ -234,7 +287,10 @@ export async function runInit(): Promise<void> {
     "\nA local install (loopback bind, no MARINA_AUTH) needs no admin: every loopback login is",
   );
   console.log("sovereign. Set one for shared/public profiles or MARINA_AUTONOMY=guarded.");
-  cfg.MARINA_ADMINS = await ask("Admin name (auto-promoted to rank 9) []: ");
+  cfg.MARINA_ADMINS = await ask(
+    "Admin name (auto-promoted to rank 9) []: ",
+    cfg.MARINA_ADMINS ?? "",
+  );
 
   // 4. LLM provider
   console.log("\n── Optional: Connect an LLM Provider ──\n");
@@ -306,26 +362,11 @@ export async function runInit(): Promise<void> {
   summary.push("└─────────────────────────────────┘");
   console.log(`\n${summary.join("\n")}`);
 
-  // 6. Write .env
-  const example = fs.existsSync(EXAMPLE_PATH) ? fs.readFileSync(EXAMPLE_PATH, "utf-8") : "";
-  const lines = example.split("\n");
-  const set = new Set(Object.keys(cfg).filter((k) => cfg[k]));
-  const out: string[] = [];
-
-  for (const line of lines) {
-    const match = line.match(/^#?\s*([A-Z_]+)=/);
-    if (match && set.has(match[1]!)) {
-      out.push(`${match[1]}=${cfg[match[1]!]}`);
-      set.delete(match[1]!);
-    } else {
-      out.push(line);
-    }
-  }
-  // Append any keys not found in the example template
-  for (const k of set) out.push(`${k}=${cfg[k]}`);
-
-  fs.writeFileSync(ENV_PATH, out.join("\n"), "utf-8");
-  console.log("Writing .env... ✓");
+  // 6. Preserve unrelated configuration; never print or make secrets world-readable.
+  const problems = validateConfiguration(cfg);
+  if (problems.length) throw new Error(problems.join("\n"));
+  saveChanges(cfg);
+  console.log(`Writing ${ENV_PATH}... ✓`);
 
   // 7. Offer to start
   const start = await ask("\nStart Marina now? (Y/n): ", "y");
@@ -333,8 +374,8 @@ export async function runInit(): Promise<void> {
   if (start.toLowerCase() !== "n") {
     console.log("\nStarting Marina...\n");
     try {
-      const proc = Bun.spawn(["bun", "run", "src/main.ts"], {
-        cwd: ROOT,
+      const proc = Bun.spawn(["bun", "run", `${ROOT}/src/main.ts`], {
+        cwd: directory,
         stdio: ["inherit", "inherit", "inherit"],
       });
       process.exitCode = await proc.exited;
@@ -350,5 +391,5 @@ export async function runInit(): Promise<void> {
 }
 
 if (import.meta.main) {
-  await runInit();
+  await runInit(process.argv.slice(2));
 }

@@ -1,3 +1,6 @@
+import { MARINA_ROOT } from "../runtime-paths";
+import { CommandCoordinator } from "./command-coordinator";
+import { RoomTickCoordinator } from "./room-tick-coordinator";
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -54,13 +57,7 @@ import { isIgnoring } from "./commands/ignore";
 import { trackQuestProgress } from "./commands/quest";
 import { ConnectionManager } from "./connection-manager";
 import { ConnectorRuntime } from "./connector-runtime";
-import {
-  MAX_COMMAND_QUEUE_SIZE,
-  MAX_COMMANDS_PER_TICK,
-  positiveNumberFromEnv,
-  ROOM_FETCH_RATE_MS,
-  ROOM_FETCH_TIMEOUT_MS,
-} from "./constants";
+import { positiveNumberFromEnv, ROOM_FETCH_RATE_MS, ROOM_FETCH_TIMEOUT_MS } from "./constants";
 import { sanitizeEntityName } from "./entity-name";
 import { getErrorMessage, tryLog, tryLogAsync } from "./errors";
 import { EventLog } from "./event-log";
@@ -164,14 +161,14 @@ export class Engine {
   get instanceName(): string {
     return this.config.instanceName ?? this.world?.name ?? "Marina";
   }
-  private commandQueue: { entity: EntityId; raw: string }[] = [];
-  /**
-   * Per-entity tail of the in-flight queued commands. `processCommand` is
-   * async, so without this an entity's commands would interleave past their
-   * first `await`; chaining keeps one entity strictly in order while
-   * different entities still interleave (fair share).
-   */
-  private commandChains = new Map<EntityId, Promise<void>>();
+  private readonly commandCoordinator = new CommandCoordinator(
+    (entity, raw) => this.processCommand(entity, raw),
+    (error) => this.recordTickError(error),
+  );
+  private readonly roomTickCoordinator = new RoomTickCoordinator(
+    (id) => this.buildContext(id),
+    (message, fields) => this.logger.warn("tick", message, fields),
+  );
   /** @internal — test seam for the command-phase budget. */
   commandPhaseBudgetMs = COMMAND_PHASE_BUDGET_MS;
   /** @internal */ readonly _eventLog: EventLog;
@@ -887,48 +884,25 @@ export class Engine {
 
   // ─── Command Processing ─────────────────────────────────────────────────
 
-  /** Queue a command from a connected entity */
+  /** Queue a command from a connected entity. */
   queueCommand(entity: EntityId, raw: string): void {
-    // Drop commands if queue is overloaded (DoS prevention)
-    if (this.commandQueue.length >= MAX_COMMAND_QUEUE_SIZE) return;
-    this.commandQueue.push({ entity, raw });
+    this.commandCoordinator.enqueue(entity, raw);
   }
-
-  /**
-   * Run one queued command after the entity's previous queued command has
-   * settled. An idle entity's command starts synchronously (its prefix counts
-   * against the phase budget); a busy entity's command is chained. A rejection
-   * that escapes `processCommand` before the handler's own try/catch (modal
-   * routing, parse, context build) is counted through the tick error path
-   * instead of surfacing as an unhandled rejection.
-   */
-  private dispatchQueued(entity: EntityId, raw: string): void {
-    const previous = this.commandChains.get(entity);
-    const run = (
-      previous
-        ? previous.then(() => this.processCommand(entity, raw))
-        : this.processCommand(entity, raw)
-    ).catch((err) => this.recordTickError(err));
-    this.commandChains.set(entity, run);
-    void run.then(() => {
-      if (this.commandChains.get(entity) === run) this.commandChains.delete(entity);
-    });
-  }
-
-  /** @internal — settle every in-flight queued command (tests, shutdown). */
+  /** Settle queued and directly admitted commands before persistence closes. */
   async drainCommands(): Promise<void> {
-    while (this.commandChains.size > 0) {
-      await Promise.all([...this.commandChains.values()]);
-    }
+    await this.roomTickCoordinator.drain();
+    await this.commandCoordinator.drain();
+  }
+  get queuedCommandCount(): number {
+    return this.commandCoordinator.queuedCount;
   }
 
-  /** @internal — commands still waiting for a tick. */
-  get queuedCommandCount(): number {
-    return this.commandQueue.length;
+  processCommand(entityId: EntityId, raw: string, opts?: { bypassModal?: boolean }): Promise<void> {
+    return this.commandCoordinator.track(this.executeCommand(entityId, raw, opts));
   }
 
   /** Process a single command immediately */
-  async processCommand(
+  private async executeCommand(
     entityId: EntityId,
     raw: string,
     opts?: { bypassModal?: boolean },
@@ -1397,112 +1371,10 @@ export class Engine {
       this.db?.expireDirectMessages();
     });
 
-    // 1. Process queued commands — per-entity round-robin for fairness
-    //    No single entity can monopolize a tick; each gets one command per round.
-    //    Bounded twice: by count (MAX_COMMANDS_PER_TICK) and by wall clock
-    //    (commandPhaseBudgetMs — at least one command always dispatches).
-    if (this.commandQueue.length > 0) {
-      const phaseStart = performance.now();
-      // Group by entity, preserving per-entity FIFO order
-      const byEntity = new Map<EntityId, { entity: EntityId; raw: string }[]>();
-      for (const cmd of this.commandQueue) {
-        let list = byEntity.get(cmd.entity);
-        if (!list) {
-          list = [];
-          byEntity.set(cmd.entity, list);
-        }
-        list.push(cmd);
-      }
+    // Admission/FIFO/budget semantics live behind an independently testable boundary.
+    this.commandCoordinator.runPhase(this.commandPhaseBudgetMs);
 
-      // Round-robin: one command per entity per round, up to tick budget
-      const entityQueues = [...byEntity.values()];
-      const cursors: number[] = entityQueues.map(() => 0);
-      let processed = 0;
-      let anyLeft = true;
-      let overBudget = false;
-      while (processed < MAX_COMMANDS_PER_TICK && anyLeft && !overBudget) {
-        anyLeft = false;
-        for (let i = 0; i < entityQueues.length; i++) {
-          const eq = entityQueues[i]!;
-          const ci = cursors[i]!;
-          if (ci < eq.length) {
-            if (processed > 0 && performance.now() - phaseStart >= this.commandPhaseBudgetMs) {
-              overBudget = true;
-              break;
-            }
-            const cmd = eq[ci]!;
-            this.dispatchQueued(cmd.entity, cmd.raw);
-            cursors[i] = ci + 1;
-            processed++;
-            anyLeft = true;
-            if (processed >= MAX_COMMANDS_PER_TICK) break;
-          }
-        }
-      }
-
-      // Keep unprocessed commands for next tick
-      const leftover: { entity: EntityId; raw: string }[] = [];
-      for (let i = 0; i < entityQueues.length; i++) {
-        const eq = entityQueues[i]!;
-        for (let j = cursors[i]!; j < eq.length; j++) {
-          leftover.push(eq[j]!);
-        }
-      }
-      this.commandQueue = leftover;
-    }
-
-    // 2. Run room ticks (randomized order to prevent positional bias)
-    // Budget: skip remaining rooms if total tick time exceeds limit
-    const TICK_BUDGET_MS = 200;
-    const tickStart = performance.now();
-    const rooms = this.rooms.all();
-    shuffleArray(rooms);
-    let roomsSkipped = 0;
-    const SLOW_ROOM_THRESHOLD_MS = 100;
-    const slowRooms: Array<{ room: string; ms: number }> = [];
-    for (const room of rooms) {
-      if (room.module.onTick) {
-        if (performance.now() - tickStart > TICK_BUDGET_MS) {
-          roomsSkipped++;
-          continue;
-        }
-        const ctx = this.buildContext(room.id);
-        if (ctx) {
-          const roomStart = performance.now();
-          try {
-            const result = room.module.onTick!(ctx);
-            // async onTick: capture post-await rejections so a throw after an
-            // `await` doesn't escape as an unhandled rejection (sync throws are
-            // caught below). Work after the first await isn't counted in roomMs.
-            if (result instanceof Promise) {
-              result.catch((err) =>
-                this.logger.warn("tick", `Async room tick error in ${room.id}`, {
-                  error: getErrorMessage(err),
-                }),
-              );
-            }
-          } catch (err) {
-            this.logger.warn("tick", `Room tick error in ${room.id}`, {
-              error: getErrorMessage(err),
-            });
-          }
-          const roomMs = performance.now() - roomStart;
-          if (roomMs > SLOW_ROOM_THRESHOLD_MS) {
-            slowRooms.push({ room: room.id, ms: Math.round(roomMs) });
-          }
-        }
-      }
-    }
-    if (roomsSkipped > 0) {
-      this.logger.warn("tick", `Tick budget exceeded: skipped ${roomsSkipped} room tick(s)`);
-    }
-    if (slowRooms.length > 0) {
-      // Name-and-log slow rooms so operators can identify offenders.
-      // We don't interrupt — that would leave room state mid-mutation —
-      // but we surface the signal so over-budget handlers don't stay hidden.
-      const detail = slowRooms.map((s) => `${s.room}=${s.ms}ms`).join(", ");
-      this.logger.warn("tick", `Slow room onTick(s): ${detail}`);
-    }
+    this.roomTickCoordinator.run(this.rooms.all());
 
     // 3. Every tick: crew idle GC + dissolved cleanup. Cheap (in-memory map walk).
     if (this.crewManager) {
@@ -1863,7 +1735,7 @@ export class Engine {
     if (!this.rooms.has(id)) {
       return `Room "${roomIdStr}" not found.`;
     }
-    const baseDir = this.world?.roomsDir ?? join(import.meta.dir, "../../rooms");
+    const baseDir = this.world?.roomsDir ?? join(MARINA_ROOT, "rooms");
     const filePath = join(baseDir, `${roomIdStr}.ts`);
     try {
       // Bust the module cache by appending a timestamp query
@@ -2480,7 +2352,7 @@ export class Engine {
       if (!cmd) continue;
       try {
         const compiled = await compileCommandModule(cmd.source);
-        this.commands.registerBuiltin(compiled);
+        this.commands.registerOwned(`dynamic:${name}`, compiled, true);
         loaded++;
       } catch (err) {
         this.logger.error("engine", `Failed to load dynamic command "${name}"`, {
@@ -2651,29 +2523,23 @@ export class Engine {
   }
 
   /** Save world state and stop the engine */
-  shutdown(): void {
-    this.saveWorldState();
+  shutdown(): Promise<void> {
     this.stop();
-    // Close connector and gateway runtimes (fire and forget)
-    this.connectorRuntime?.close().catch(() => {});
-    this.gatewayRuntime?.close().catch(() => {});
+    const finish = () => {
+      this.saveWorldState();
+      return Promise.allSettled([
+        this.connectorRuntime?.close(),
+        this.gatewayRuntime?.close(),
+      ]).then(() => undefined);
+    };
+    return this.roomTickCoordinator.pendingCount
+      ? this.roomTickCoordinator.drain().then(finish)
+      : finish();
   }
 
   // ─── Built-in Command Registration ──────────────────────────────────────
 
   private registerBuiltinCommands(): void {
     registerBuiltinCommands(this);
-  }
-}
-
-// ─── Utilities ─────────────────────────────────────────────────────────────
-
-/** Fisher-Yates shuffle — mutates array in place. */
-function shuffleArray<T>(arr: T[]): void {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    const tmp = arr[i]!;
-    arr[i] = arr[j]!;
-    arr[j] = tmp;
   }
 }

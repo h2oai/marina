@@ -41,3 +41,12 @@ export function worldMemoryService(
   }
   return service;
 }
+
+/** Close only an existing service; shutdown must not instantiate a worker. */
+export async function closeWorldMemoryService(db: MarinaDB): Promise<void> {
+  const service = services.get(db);
+  if (service) {
+    await service.close();
+    services.delete(db);
+  }
+}

@@ -1,6 +1,6 @@
-# Memory Architecture — Two Systems and Their Convergence
+# Memory Architecture — Canonical Records and Compatibility
 
-**When to read this:** you are touching memory code of any kind — legacy notes (`notes`, `recall`, `reflect`, `pool`, `skill`), the durable memory service (`/v1/memory`, `memory …`), the unified retrieval surface, the legacy↔durable bridge, hygiene and dispatch ticks, adoption/ratification, reputation-weighted retrieval, contradiction `resolve`, the passthru gateway with receipts and response cache, retrieval quality and embeddings, or the memory benchmark family. `CLAUDE.md` → "Memory Architecture — Two Systems" carries the must-follow invariants; this page is the complete design history and walkthrough, including phase dates and measured results.
+**When to read this:** you are touching memory code of any kind — legacy notes (`notes`, `recall`, `reflect`, `pool`, `skill`), the durable memory service (`/v1/memory`, `memory …`), the unified retrieval surface, the legacy↔durable bridge, hygiene and dispatch ticks, adoption/ratification, reputation-weighted retrieval, contradiction `resolve`, the passthru gateway with receipts and response cache, retrieval quality and embeddings, or the memory benchmark family. `CLAUDE.md` → "Memory Architecture — Canonical Records and Compatibility" carries the must-follow invariants; this page is the complete design history and walkthrough, including phase dates and measured results.
 
 ## The two systems
 - **Legacy notes** (`notes` table, `src/persistence/db-notes.ts`, commands `note`/`recall`/`reflect`/`pool`/`skill`, REST `/mem/*`): tiered, FTS5-ranked, provenance-aware, owner-scoped via `src/memory/access.ts`. This is what the continuation prompt's "Relevant Notes" section reads (`recall <focus>` in two labeled tiers — `[trusted]` strict hits first, then `[unverified — own notes]`; `PlatformMemoryBackend.searchTiered`). `trusted` is strict everywhere: it never silently falls back.
@@ -9,7 +9,7 @@
 - **Continuity contract** (`src/agent/durable-memory.ts`, `memory-platform.ts`): every completed message is journaled before the loop advances; every lossy context transform archives the original messages (manifest chain, SHA-256) before trimming, and a failed archive aborts compaction (`ContextPersistenceError`) rather than dropping history. The legacy `[compaction]` personal process note is no longer written; only the optional `compactionPool` summary is shared.
 
 ## Silo boundary and convergence (Phase 1)
-- **Silo boundary**: durable records live in `notes` under `entity_name = memory:<principalId>` and are hidden from legacy surfaces (`isServiceMemoryNote`); legacy notes are invisible to the service. Do not add a third store. **Convergence (Phase 1, 2026-09-13)** bridges them:
+- **Storage and access boundary**: durable records live in `notes` under `entity_name = memory:<principalId>` and are hidden from legacy surfaces (`isServiceMemoryNote`); unmapped legacy notes remain invisible to the service. Mapped notes are compatibility projections; durable edits update them atomically. Do not add a third store. **Convergence (Phase 1, 2026-09-13)** bridges them:
   - **One retrieval surface** — `buildUnifiedContext(db, entityName, query, opts)` in `src/memory/unified-context.ts` returns five fixed-order tiers within a byte budget. **Relevance gate (HISTORY §8, 2026-09-16)**: legacy recall runs FTS in OR mode, so one shared common word surfaces an unrelated note, and on free-form simple-qa those notes measurably misled Sonnet 5 (warm −9 / bm25 −14 net items vs bare). Seeds (skills, trusted/unverified) and durable `search` hits must share ≥ `minOverlap(terms)` distinct query terms with the content (1 for ≤ 2-term queries, else max(2, ⌈25 %⌉); word-prefix match so porter forms count) — `relevantToQuery`; graph-expanded neighbours are not gated. The header no longer asserts relevance (`UNIFIED_CONTEXT_HEADER` = "[Memory — retrieved by keyword match; use only items that answer the question, preserve provenance]"). **Validity filter**: lexical durable `search` is not validity-filtered, so a `resolve` loser (closed `valid_time.until`) or a historical version is still reachable by keyword — `servableRecord` drops them from the `[evidence]` tier (the contradiction benchmark measured 48.5 % of conflicted facts reachable via raw `search`). Tiers: skills (`<example>`), `[trusted]` (legacy strict predicate), `[evidence]` (durable `search` records + `source_search` excerpts for the resident space), `[proposal]` (finished assistance jobs), `[unverified — own notes]`. Rendering: `renderUnifiedContext(result, { degraded })` — `true` = full `[degraded]` block (deliberate reads: `recall … all`, REST, MCP), `"compact"` = ONE grouped line (§4 continuation prompt and the benchmark harness; the full block was ~25 % of injected bytes on a one-fact corpus), `false` = none (passthru builds its own lines and puts `degraded` in the receipt). Consumed by the continuation prompt §4, `recall <q> all|evidence [budget N]` (structured `context` payload on `marina.memory.command.v1`), `GET /mem/context?q=`, the world MCP `think{action:"context"}` action, and passthru injection — same fixture ⇒ same tiers on every surface (`test/unified-context.test.ts`). Boot recovery includes the last archive summary from the journal manifest.
   - **Legacy verbs are adapters** (`src/memory/legacy-bridge.ts`): `note` also captures + `remember`s a durable twin (idempotency key `legacy-note-<id>-v1`) and records it as a `note_sources` row with url `marina-memory://record/<id>` (credibility 0; excluded from every source-derived ranking/confidence term — a twin is a mirror, not evidence); `note correct|evolve` → durable `revise`. Bridging is fire-and-forget so `note` replies in-tick (quest tracking, SDK reply window); sequence with `awaitPendingBridges()` in tests.
   - **`reflect` is a reflector job**: files `assist_create` role reflector against the caller's space when a running `memory-reflector` exists (or `reflect via <helper>`), else template + spawn hint; `reflect adopt <job>` writes the cited proposal as a durable record AND a legacy reflection-tier note with `part_of` links to cited twins; `reflect --template` = deterministic; `reflect jobs`.
@@ -35,10 +35,46 @@
 
 ## Workflows, retrieval defaults, durability
 - **Task memory workflows** (`src/memory/workflows.ts`, typed client `client.workflows(space)`): explicit episodes use owner-private `marina.tasks:<corpus>` journals composed of canonical records/sources/checkpoints. Commit intent before reads; use CAS and stable retry keys. Resume rechecks evidence pins; export reauthorizes; import creates attributed observations without certifying prior execution. Recipes are versioned declarative data, explicitly selected, with live/offline evidence selection shared in `sdk/memory-recipes.ts`. Helpers charge each constituent retrieval read against their live root lease. Watches use private checkpoints and the authorized service-event cursor; acknowledge the poll's observed-time watermark, never launch work on notification. `retrieve_cached` requires explicit `valid_at` and live generation/pin validation. Human entrypoint: `memory guide`; API examples: `workflow {action:"help"}`; guide: `docs/guides/memory-workflows.md`.
-- **Retrieval**: both systems are lexical by default. Hybrid (FTS5 + cosine, RRF) exists only in the standalone `scripts/memory.ts serve --embeddings local|ollama`; `worldMemoryService` constructs the service without a provider. MiniLM/ONNX live in `extensions/local-embeddings`, not the standard install. Turning hybrid on is evidence-gated (paraphrase hit@3 vs BM25 on both silos).
+- **Retrieval**: both systems are lexical by default. Hybrid (FTS5 + cosine, RRF) is opt-in in the standalone server and in the world server through `MARINA_MEMORY_EMBEDDINGS`; `worldMemoryService` loads its configured provider lazily. MiniLM/ONNX live in `extensions/local-embeddings`, not the standard install. Turning hybrid on is evidence-gated (paraphrase hit@3 vs BM25 on both silos).
 - **Durability**: `MARINA_DB_DURABILITY=full` (fsync per commit) is the world default; migrations 96–109 are append-only like all others.
 
 ## Memory commands — the agent's KV beliefs
 - **`memory kv`** is the canonical home of the agent's core key-value beliefs (`memory kv get|set|delete|list|history|clear`); the bare `memory set/get/delete/list` forms still work and print `(canonical: memory kv …)`; `memory list` appends a hint distinguishing KV from durable records. The `memory` help leads with the KV block and a 7-line "which verb" table (recall vs `memory query` vs recap vs ask vs dig; `pool add` ≡ `share`; `note verify` vs `memory reaffirm` vs `skill verify`).
 
 See also: `docs/guides/memory.md`, `memory-service.md`, `memory-interfaces.md`, `memory-extensions.md`, `memory-workflows.md`, `memory-assistance.md`; `docs/architecture/passthru.md` (protocol surfaces), `docs/architecture/dashboard.md` (MEMORY layer, Admin → Memory, observability API).
+
+## Compatibility writes and recovery
+
+`/v1/memory` is the canonical durable interface. Legacy commands use
+`withMemoryCompatibility` and REST uses `flushMemoryCompatibility`; adapters no longer
+orchestrate per-verb mirror writes. Migrations 132/134/136 enqueue lifecycle, source,
+verification and graph work in the originating SQLite transaction; consolidation also
+enqueues inside its transaction. The worker in `legacy-bridge.ts` retains failures for
+retry and reconstructs missing prerequisites. Canonical receipts prevent a crash after
+verification commit from replaying the review as another revision. Source metadata
+updates reuse the capture and preserve credibility zero.
+
+Migrations 133/135 add `memory_note_projections`, an identity mapping with no content.
+Only server-established mappings to the author's owned space authorize projection;
+a source URL or submitted `legacy_note_id` does not. Durable revision updates the
+mapped current numeric note and its FTS index in the same transaction. Superseded
+legacy corrections remain historical. Content changes clear the old verification.
+Explicit durable `forget` removes mapped legacy revisions and pending successors;
+legacy `note delete` still retires the durable record instead of cascading erasure.
+A pending legacy correction returns `compatibility_pending` to concurrent durable
+revision; drain the worker and reread the version before retrying. Queued verification
+is bound to its original text. Institutional publications remain separate records. Retirement is selected from the authoritative mapping, never a caller-supplied source URL.
+
+Retries are bounded and serialized per database. Boot and the
+`legacy-memory-retry` tick job replay pending work; readiness reports failures. The
+offline `memory:compatibility backfill` command pages over eligible notes and reconciles
+sources, verification and links, including notes already mirrored as prerequisites.
+Repeated backfill preserves IDs and reuses receipts. Process/core notes are excluded
+from durable fact mirroring. Accountless namespaces remain legacy-only; no header or
+API-key display name gains a world principal automatically.
+
+Shutdown closes external admission, waits for admitted command and HTTP work, drains
+bridges and existing memory workers, and closes persistence last. Numeric references,
+process/core tier semantics, owner/pool filters, source credibility and non-cascading
+twin retirement remain compatibility requirements. See the
+[compatibility guide](../guides/compatibility.md) and [recovery guide](../guides/recovery.md).

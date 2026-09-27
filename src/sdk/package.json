@@ -3,19 +3,28 @@
   "version": "0.7.0",
   "description": "TypeScript SDK for building agents that connect to a Marina server via WebSocket. Agents can also serve as LLM backends via the OpenAI-compatible Model API.",
   "type": "module",
-  "main": "index.ts",
-  "types": "index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./index.ts",
-    "./routing": "./routing-client.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./routing": {
+      "types": "./dist/routing-client.d.ts",
+      "import": "./dist/routing-client.js",
+      "default": "./dist/routing-client.js"
+    },
+    "./memory": {
+      "types": "./dist/memory.d.ts",
+      "import": "./dist/memory.js",
+      "default": "./dist/memory.js"
+    }
   },
   "files": [
-    "index.ts",
-    "client.ts",
-    "routing-client.ts",
-    "routing-types.ts",
-    "routing-runtime-types.ts",
-    "examples/",
+    "dist/",
+    "README.md",
     "LICENSE",
     "NOTICE"
   ],
@@ -27,7 +36,8 @@
     "websocket"
   ],
   "license": "Apache-2.0",
-  "peerDependencies": {
-    "typescript": ">=5.0.0"
+  "scripts": {
+    "build": "bun run ../../scripts/build-sdk.ts",
+    "prepack": "bun run build"
   }
 }

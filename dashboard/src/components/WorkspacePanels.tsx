@@ -1,3 +1,4 @@
+import { ExtensionWidgets } from "./ExtensionWidgets";
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -162,6 +163,7 @@ export function ContextPanel(props: PanelFocusProps) {
     <GlassPanel title="Context" {...props} bodyScroll={false}>
       <div className="flex h-full min-h-0 flex-col">
         <MyInventory />
+        <ExtensionWidgets slot="sidebar" />
         <div className={selection ? "h-[30%] min-h-24 shrink-0" : "min-h-0 flex-1"}>
           <EntityRoster compact />
         </div>

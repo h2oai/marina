@@ -68,7 +68,7 @@
     "code": "bun run scripts/code.ts",
     "dev": "bun run src/main.ts",
     "build": "bun build src/main.ts --outdir dist --target bun && bun build src/memory/import-process.ts --outfile dist/memory-import.js --target bun && bun run build:memory",
-    "test": "bun test --parallel --timeout=15000 --path-ignore-patterns '**/dashboard/**' --path-ignore-patterns '**/examples/coding-agent-demo/**' --path-ignore-patterns '**/marina-desktop/**'",
+    "test": "bun test --parallel=8 --timeout=15000 --path-ignore-patterns '**/dashboard/**' --path-ignore-patterns '**/examples/coding-agent-demo/**' --path-ignore-patterns '**/marina-desktop/**'",
     "test:fast": "bun run scripts/test-fast.ts",
     "test:shard": "bun run scripts/test-shard.ts",
     "test:serial": "bun test --path-ignore-patterns '**/dashboard/**' --path-ignore-patterns '**/examples/coding-agent-demo/**' --path-ignore-patterns '**/marina-desktop/**'",
@@ -94,7 +94,7 @@
     "qualify:prompt": "bun run scripts/eval-prompt.ts marina:answerer --min-score 13",
     "qualify:autonomy": "bun run scripts/qualify-autonomy.ts",
     "qualify:evolution": "bun run scripts/qualify-evolution.ts",
-    "qualify:release": "bun run check:versions && bun run typecheck && bun run lint && bun run test && cd dashboard && bun run test && bun run build && bun run test:browser && cd ../site && bun run build && cd .. && bun audit",
+    "qualify:release": "bun run check:versions && bun run qualify:sdk && bun run typecheck && bun run lint && bun run test && cd dashboard && bun run test && bun run build && cd .. && bun run qualify:server && cd dashboard && bun run test:browser && cd ../site && bun run build && cd .. && bun audit",
     "qualify:flywheel": "bun run scripts/qualify-flywheel-live.ts",
     "trial:evolution": "bun run scripts/run-evolution-trial.ts",
     "trial:evolution:local": "bun run scripts/run-evolution-trial-local.ts",
@@ -118,7 +118,14 @@
     "qualify:memory:workflow": "bun run scripts/research/memory-workflow-qualification.ts",
     "qualify:memory:resident": "bun run scripts/research/memory-resident-qualification.ts",
     "qualify:memory:clients": "bun run scripts/research/memory-coding-client-qualification.ts",
-    "qualify:memory:load": "bun run scripts/qualify-memory-load.ts"
+    "qualify:memory:load": "bun run scripts/qualify-memory-load.ts",
+    "build:sdk": "bun run scripts/build-sdk.ts",
+    "qualify:sdk": "bun run scripts/qualify-sdk.ts",
+    "create:agent": "bun run scripts/create-agent.ts",
+    "recovery": "bun scripts/recovery.ts",
+    "qualify:image": "bun scripts/qualify-image.ts",
+    "memory:compatibility": "bun scripts/memory-compatibility.ts",
+    "qualify:server": "bun scripts/qualify-server.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.13",

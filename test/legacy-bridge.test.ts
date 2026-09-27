@@ -14,7 +14,6 @@ import {
   findDurableTwin,
   findLegacyNotesForRecord,
   parseDurableTwinUrl,
-  recordDurableTwin,
   retireDurableTwin,
 } from "../src/memory/legacy-bridge";
 import { residentMemoryOperation } from "../src/memory/resident-service";
@@ -212,16 +211,22 @@ describe("legacy note ↔ durable twin bridge", () => {
     expect(current.content).toContain("[Evolved from");
   });
 
-  it("correcting a legacy note that never had a twin gives the successor a fresh twin", async () => {
+  it("correcting a pending legacy note preserves the predecessor in durable history", async () => {
     const orphan = db.createNote("Alice", "Untwinned legacy note", undefined, { importance: 6 });
     expect(findDurableTwin(db, orphan)).toBeUndefined();
     await run(alice, `note correct ${orphan} Now twinned`);
     const newId = latestNoteId("Alice");
     const twin = findDurableTwin(db, newId);
     expect(twin).toBeDefined();
-    expect(twin!.version).toBe(1);
+    expect(twin!.version).toBe(2);
     expect((await record(twin!.recordId)).content).toBe("Now twinned");
-    expect(findDurableTwin(db, orphan)).toBeUndefined();
+    expect(findDurableTwin(db, orphan)?.recordId).toBe(twin!.recordId);
+    expect(
+      (
+        (await durable({ operation: "get", id: twin!.recordId, input: { version: 1 } }))
+          .result as MemoryRecord
+      ).content,
+    ).toBe("Untwinned legacy note");
   });
 
   it("`note delete` retires the durable twin as a closed-validity tombstone (never a cascading forget)", async () => {
@@ -313,7 +318,7 @@ describe("legacy note ↔ durable twin bridge", () => {
     // A twin buried under many newer notes is still found (the previous
     // implementation scanned only the owner's 500 most recent notes).
     const old = db.createNote("Alice", "old twinned note", undefined, { skipDedup: true });
-    recordDurableTwin(db, old, { recordId: "rec-old", version: 1 }, "Alice");
+    db.addNoteSource(old, { url: durableTwinUrl("rec-old"), credibility: 0 });
     for (let i = 0; i < 520; i++)
       db.createNote("Alice", `filler ${i}`, undefined, { skipDedup: true });
     expect(findLegacyNotesForRecord(db, "Alice", "rec-old").map((n) => n.id)).toEqual([old]);

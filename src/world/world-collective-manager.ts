@@ -4,10 +4,11 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { MarinaDB } from "../persistence/database";
+import { MARINA_ROOT } from "../runtime-paths";
 
 const SAFE_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_-]{1,47}$/;
 
-const PROJECT_ROOT = resolve(import.meta.dir, "../..");
+const PROJECT_ROOT = MARINA_ROOT;
 const managers = new WeakMap<MarinaDB, WorldCollectiveManager>();
 
 /**
