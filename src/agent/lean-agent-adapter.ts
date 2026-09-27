@@ -27,11 +27,8 @@ import {
   type TextContent,
 } from "@earendil-works/pi-ai";
 import { DEFAULT_APPROVAL_TIMEOUT_MS, requestApproval } from "../decisions/approvals";
-import {
-  decisionGateContextEnabled,
-  decisionGateEnabled,
-  getDecisionProvider,
-} from "../decisions/config";
+import { decisionGateContextEnabled } from "../decisions/config";
+import { harnessDecisionProvider, harnessGateEnabled } from "../decisions/engines";
 import { type GateIntent, gateToolCall, redactToolCall } from "../decisions/gate";
 import {
   ACTIVE_CODING_TASK_MAX_CHARS,
@@ -1501,8 +1498,8 @@ export class LeanAgentAdapter implements AgentHandle {
     args: Record<string, unknown>,
     description?: string,
   ): Promise<string | undefined> {
-    if (!decisionGateEnabled()) return undefined;
-    const provider = getDecisionProvider();
+    if (!harnessGateEnabled()) return undefined;
+    const provider = harnessDecisionProvider();
     if (!provider) return undefined;
     const intent: GateIntent | undefined = decisionGateContextEnabled()
       ? {

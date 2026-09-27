@@ -4,7 +4,7 @@
 import { RateLimiter } from "../../auth/rate-limiter";
 import { judgeAgreement } from "../../decisions/agreement";
 import { listApprovals, settleApproval } from "../../decisions/approvals";
-import { getDecisionProvider } from "../../decisions/config";
+import { harnessDecisionProvider } from "../../decisions/engines";
 import type { Evidence } from "../../decisions/evidence";
 import { loadDecisionCases, qualifyBackend, renderBackendReport } from "../../decisions/qualify";
 import type { DecisionProvider } from "../../decisions/types";
@@ -57,7 +57,7 @@ export function decisionCommand(deps: {
   /** Recorded judge opinions (`MARINA_DECISION_VERIFY=observe|on`) for `decision agreement`. */
   store?: DecisionsStore;
 }): CommandDef {
-  const providerOf = deps.provider ?? (() => getDecisionProvider());
+  const providerOf = deps.provider ?? (() => harnessDecisionProvider());
   return {
     name: "decision",
     aliases: ["decisions"],

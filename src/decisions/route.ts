@@ -22,7 +22,7 @@
  */
 
 import { getErrorMessage } from "../engine/errors";
-import { getDecisionProvider } from "./config";
+import { harnessDecisionProvider } from "./engines";
 import { decideRoute, ROUTER_QUESTIONS, type RouteVerdict } from "./policy";
 import { choice } from "./questions";
 import type { DecisionProvider } from "./types";
@@ -125,7 +125,7 @@ export async function routeModelForGoal(
   goal: string | undefined,
   role: string | undefined,
   tiers: RouteTiers,
-  provider: DecisionProvider | undefined = getDecisionProvider(),
+  provider: DecisionProvider | undefined = harnessDecisionProvider(),
 ): Promise<RoutedModel> {
   const pick = (verdict: RouteVerdict, extra: Partial<RoutedModel> = {}): RoutedModel => ({
     model: tiers[verdict.tier],
@@ -171,7 +171,7 @@ export async function routeModelWithTable(
   goal: string | undefined,
   role: string | undefined,
   table: RouteTable,
-  provider: DecisionProvider | undefined = getDecisionProvider(),
+  provider: DecisionProvider | undefined = harnessDecisionProvider(),
 ): Promise<RoutedModel> {
   const route = (name: string, reason: string, extra: Partial<RoutedModel> = {}): RoutedModel => ({
     model: table.routes[name]!.model,

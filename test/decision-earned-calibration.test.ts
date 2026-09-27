@@ -259,7 +259,7 @@ describe("calibration file", () => {
       undefined,
       undefined,
       undefined,
-      null,
+      { calibration: null },
     );
     expect(again.action).toBe("ask");
   });

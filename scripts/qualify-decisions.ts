@@ -25,18 +25,30 @@
  * `--calibrate <file>` scores the gate on RAW probabilities, fits each
  * backend's gate calibration and writes the file `MARINA_DECISION_CALIBRATION`
  * reads (src/decisions/calibrate.ts) — mode 0644; only EARNED fits are used.
+ * `--variants <file>` (a JSON array of `{ name, questions: { <id>: {
+ * instructions, criteria: { true, false } } } }`) trials gate-question
+ * wordings against the incumbent on HELD-OUT cases (src/decisions/
+ * question-trial.ts); `--adopt <file>` writes the adoption file
+ * `MARINA_DECISION_GATE_QUESTIONS` reads, only for a variant that EARNED its
+ * win on every backend in the run.
  * Makes real, billed calls (fractions of a cent for the default case set).
  * Reports belong in the internal repository — pass --out with a path outside
  * this repo.
  */
 
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import type { CalibrationEntry, CalibrationFile } from "../src/decisions/calibrate";
 import { type ClassifierMethod, parseClassifierMethod } from "../src/decisions/classifier-methods";
 import { providerFromConfig } from "../src/decisions/config";
 import { runConformance } from "../src/decisions/conformance";
+import {
+  type AdoptedGateQuestions,
+  activeGateQuestions,
+  parseGateQuestionVariant,
+  questionSetHash,
+} from "../src/decisions/gate-questions";
 import {
   type BackendReport,
   calibrateFromReport,
@@ -45,6 +57,11 @@ import {
   qualifyBackend,
   renderBackendReport,
 } from "../src/decisions/qualify";
+import {
+  type QuestionTrialReport,
+  renderQuestionTrial,
+  trialGateQuestions,
+} from "../src/decisions/question-trial";
 import type { DecisionProvider } from "../src/decisions/types";
 
 function backendFor(spec: string, method?: ClassifierMethod): DecisionProvider {
@@ -130,6 +147,8 @@ async function main() {
       method: { type: "string" },
       conformance: { type: "boolean" },
       calibrate: { type: "string" },
+      variants: { type: "string" },
+      adopt: { type: "string" },
     },
   });
   const casesPath = resolve(values.cases ?? DECISION_CASES_PATH);
@@ -140,6 +159,13 @@ async function main() {
   const reports: BackendReport[] = [];
   const conformance: Record<string, Awaited<ReturnType<typeof runConformance>>> = {};
   const fits: Record<string, CalibrationEntry> = {};
+  const incumbent = activeGateQuestions();
+  const rawVariants = values.variants
+    ? (JSON.parse(readFileSync(values.variants, "utf8")) as unknown[])
+    : [];
+  if (values.variants && !Array.isArray(rawVariants)) throw new Error("--variants: a JSON array");
+  const variants = rawVariants.map(parseGateQuestionVariant);
+  const trials: QuestionTrialReport[] = [];
   for (const spec of specs) {
     const provider = backendFor(spec, method);
     process.stderr.write(
@@ -158,9 +184,14 @@ async function main() {
       fits[provider.model] = calibrateFromReport(
         report,
         chat ? (method ?? "verbalized") : undefined,
+        questionSetHash(incumbent),
       );
     }
     if (values.conformance) conformance[spec] = await runConformance(provider);
+    if (variants.length > 0) {
+      process.stderr.write(`trialing ${variants.length} question variant(s) on ${spec}…\n`);
+      trials.push(await trialGateQuestions(provider, cases, incumbent, variants));
+    }
   }
   console.log(reports.map(renderBackendReport).join("\n\n"));
   if (values.calibrate) {
@@ -184,6 +215,37 @@ async function main() {
       for (const r of f.reasons) console.log(`  ✗ ${r}`);
     }
     process.stderr.write(`calibration → ${values.calibrate}\n`);
+  }
+  for (const t of trials) console.log(`\n${renderQuestionTrial(t)}`);
+  if (values.adopt) {
+    // Earned on EVERY backend in the run; the best by mean held-out gain.
+    const earnedEverywhere = variants
+      .map((v, i) => ({ v, i, raw: rawVariants[i] as AdoptedGateQuestions["variant"] }))
+      .filter(({ i }) => trials.length > 0 && trials.every((t) => t.variants[i]?.earned))
+      .map((x) => ({
+        ...x,
+        gain: trials.reduce((s, t) => s + (t.variants[x.i]?.delta ?? 0), 0) / trials.length,
+      }))
+      .sort((a, b) => b.gain - a.gain);
+    const best = earnedEverywhere[0];
+    if (!best) {
+      console.log("\nno variant earned a win on every backend — nothing adopted");
+    } else {
+      const file: AdoptedGateQuestions = {
+        version: 1,
+        adoptedAt: new Date().toISOString(),
+        variant: best.raw,
+        trial: {
+          earned: true,
+          backends: trials.map((t) => t.backend),
+          holdoutCases: trials[0]!.holdoutIds.length,
+          summary: `+${(best.gain * 100).toFixed(1)} held-out points over ${incumbent.name}`,
+        },
+      };
+      writeFileSync(values.adopt, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o644 });
+      chmodSync(values.adopt, 0o644);
+      console.log(`\nadopt ${best.v.name}: set MARINA_DECISION_GATE_QUESTIONS=${values.adopt}`);
+    }
   }
   for (const [spec, c] of Object.entries(conformance)) {
     console.log(`\nconformance ${spec}: ${c.passed}/${c.total}`);
