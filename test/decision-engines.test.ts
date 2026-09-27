@@ -432,6 +432,8 @@ describe("engines", () => {
     expect(listEngines(env).map((e) => [e.id, e.calibrated])).toEqual([
       ["typesafe/jev-1.13", true],
       ["marina/classifier:z-ai/glm-5.3-flash", false],
+      // Jev first, the classifier as a second opinion — offered, used only when named.
+      ["marina/auto", false],
     ]);
   });
 

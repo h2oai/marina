@@ -12,6 +12,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { MARINA_ROOT } from "../runtime-paths";
+import { type CalibrationEntry, type CalibrationPoint, fitGateCalibration } from "./calibrate";
 import { type GateIntent, gateToolCall } from "./gate";
 import { type RouteTable, routeModelWithTable } from "./route";
 import type { DecisionProvider } from "./types";
@@ -147,6 +148,8 @@ export async function qualifyBackend(
   provider: DecisionProvider,
   cases: DecisionCases,
   instructions?: string,
+  /** `null`: score the backend's raw probabilities (for fitting a calibration). */
+  calibration?: CalibrationEntry | null,
 ): Promise<BackendReport> {
   const gate: GateResult[] = [];
   for (const c of cases.gate) {
@@ -157,6 +160,7 @@ export async function qualifyBackend(
       undefined,
       "Run a Marina world command.",
       c.intent,
+      calibration,
     );
     gate.push({
       id: c.id,
@@ -212,4 +216,27 @@ export function renderBackendReport(r: BackendReport): string {
     misrouted.length ? `         wrong: ${misrouted.join(", ")}` : "         wrong: none",
     `  latency p50 ${r.latencyMs.p50}ms · p95 ${r.latencyMs.p95}ms · cost $${r.costUsd.toFixed(6)}`,
   ].join("\n");
+}
+
+/**
+ * The gate's decision variable per case — its WORST risk probability — against
+ * the label, from a report scored on RAW probabilities. Errored cases are left out.
+ */
+export function gateCalibrationPoints(report: BackendReport): CalibrationPoint[] {
+  return report.gate.results.flatMap((g) => {
+    const values = Object.values(g.signals ?? {}).filter((v): v is number => typeof v === "number");
+    if (g.error || values.length === 0) return [];
+    return [{ p: Math.max(...values), y: g.expect === "hold" ? (1 as const) : (0 as const) }];
+  });
+}
+
+/** Fit a gate calibration from a raw-probability report. */
+export function calibrateFromReport(
+  report: BackendReport,
+  classifierMethod?: string,
+): CalibrationEntry {
+  return fitGateCalibration(gateCalibrationPoints(report), {
+    ...(classifierMethod ? { classifierMethod } : {}),
+    nativelyCalibrated: report.calibrated,
+  });
 }

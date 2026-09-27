@@ -22,19 +22,24 @@
  * `--method` sets how chat backends get probabilities (auto | logprobs |
  * sampled | verbalized; default verbalized). `--conformance` also checks every
  * backend against TypeSafe's response shape (src/decisions/conformance.ts).
+ * `--calibrate <file>` scores the gate on RAW probabilities, fits each
+ * backend's gate calibration and writes the file `MARINA_DECISION_CALIBRATION`
+ * reads (src/decisions/calibrate.ts) — mode 0644; only EARNED fits are used.
  * Makes real, billed calls (fractions of a cent for the default case set).
  * Reports belong in the internal repository — pass --out with a path outside
  * this repo.
  */
 
-import { writeFileSync } from "node:fs";
+import { chmodSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
+import type { CalibrationEntry, CalibrationFile } from "../src/decisions/calibrate";
 import { type ClassifierMethod, parseClassifierMethod } from "../src/decisions/classifier-methods";
 import { providerFromConfig } from "../src/decisions/config";
 import { runConformance } from "../src/decisions/conformance";
 import {
   type BackendReport,
+  calibrateFromReport,
   DECISION_CASES_PATH,
   loadDecisionCases,
   qualifyBackend,
@@ -124,6 +129,7 @@ async function main() {
       out: { type: "string" },
       method: { type: "string" },
       conformance: { type: "boolean" },
+      calibrate: { type: "string" },
     },
   });
   const casesPath = resolve(values.cases ?? DECISION_CASES_PATH);
@@ -133,15 +139,52 @@ async function main() {
   if (values.method && !method) throw new Error("--method: auto | logprobs | sampled | verbalized");
   const reports: BackendReport[] = [];
   const conformance: Record<string, Awaited<ReturnType<typeof runConformance>>> = {};
+  const fits: Record<string, CalibrationEntry> = {};
   for (const spec of specs) {
     const provider = backendFor(spec, method);
     process.stderr.write(
       `qualifying ${spec} on ${cases.gate.length} gate + ${cases.route.cases.length} route cases…\n`,
     );
-    reports.push(await qualifyBackend(provider, cases));
+    // Fitting needs the backend's own probabilities, never an existing fit's.
+    const report = await qualifyBackend(
+      provider,
+      cases,
+      undefined,
+      values.calibrate ? null : undefined,
+    );
+    reports.push(report);
+    if (values.calibrate) {
+      const chat = /^(chat|hf):/.test(spec) || spec.startsWith("marina:");
+      fits[provider.model] = calibrateFromReport(
+        report,
+        chat ? (method ?? "verbalized") : undefined,
+      );
+    }
     if (values.conformance) conformance[spec] = await runConformance(provider);
   }
   console.log(reports.map(renderBackendReport).join("\n\n"));
+  if (values.calibrate) {
+    const file: CalibrationFile = {
+      version: 1,
+      generatedAt: new Date().toISOString(),
+      cases: casesPath,
+      engines: fits,
+    };
+    writeFileSync(values.calibrate, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o644 });
+    chmodSync(values.calibrate, 0o644); // an existing file keeps its old mode otherwise
+    for (const [model, f] of Object.entries(fits)) {
+      const m = (x: { brier: number; ece: number }) =>
+        `Brier ${x.brier.toFixed(3)} · ECE ${x.ece.toFixed(3)}`;
+      console.log(
+        `\ncalibration ${model}: ${f.earned ? "EARNED" : "not earned"} (${f.cases} cases, ${f.holds} hold)`,
+      );
+      console.log(
+        `  raw ${m(f.raw)} → fitted (leave-one-out) ${m(f.fitted)} · a ${f.a.toFixed(2)} b ${f.b.toFixed(2)}`,
+      );
+      for (const r of f.reasons) console.log(`  ✗ ${r}`);
+    }
+    process.stderr.write(`calibration → ${values.calibrate}\n`);
+  }
   for (const [spec, c] of Object.entries(conformance)) {
     console.log(`\nconformance ${spec}: ${c.passed}/${c.total}`);
     for (const f of c.failures) console.log(`  ${f.name}: ${f.problems.join("; ")}`);

@@ -4,6 +4,13 @@
 import { getErrorMessage } from "../engine/errors";
 import { redactLogData } from "../engine/logger";
 import {
+  applyPlatt,
+  type CalibrationEntry,
+  earnedGateCalibration,
+  FITTED_HOLD_AT,
+  gateActionWithFit,
+} from "./calibrate";
+import {
   DEFAULT_GATE_POLICY,
   decideGate,
   GATE_QUESTIONS,
@@ -12,7 +19,7 @@ import {
   type GateVerdict,
   UNCALIBRATED_GATE_POLICY,
 } from "./policy";
-import type { DecisionProvider } from "./types";
+import type { DecisionAnswer, DecisionProvider } from "./types";
 
 const MAX_ARG_CHARS = 500;
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
@@ -92,6 +99,8 @@ export function redactToolCall(
 export interface GateDecision extends GateVerdict {
   /** False when the verdict came from an uncalibrated backend (one-threshold policy). */
   calibrated?: boolean;
+  /** `fitted` when an earned calibration mapped the risk probabilities (see calibrate.ts). */
+  calibration?: "fitted";
   model?: string;
   provider?: string;
   latencyMs?: number;
@@ -100,7 +109,34 @@ export interface GateDecision extends GateVerdict {
   error?: string;
 }
 
-/** Score one tool call. Never throws: a backend failure is a fail-closed `block`. */
+/** Every risk probability through the fitted map (monotone: the worst risk stays the worst). */
+function calibrateAnswers(
+  answers: Record<string, DecisionAnswer>,
+  fit: CalibrationEntry,
+): Record<string, DecisionAnswer> {
+  return Object.fromEntries(
+    Object.entries(answers).map(([id, a]) => [
+      id,
+      a.type === "noul" ? { ...a, noul: applyPlatt(a.noul, fit) } : a,
+    ]),
+  );
+}
+
+/** The policy `gateActionWithFit` describes, for `decideGate` on fitted answers. */
+function fittedGatePolicy(raw: GateVerdict, provider: DecisionProvider): GatePolicy {
+  const nativeBlock =
+    provider.calibrated !== false && gateActionWithFit(raw.worst ?? 0, 1, true) === "block";
+  return {
+    askAt: FITTED_HOLD_AT,
+    blockAt: nativeBlock ? FITTED_HOLD_AT : Number.POSITIVE_INFINITY,
+  };
+}
+
+/**
+ * Score one tool call. Never throws: a backend failure is a fail-closed `block`.
+ * `calibration`: the earned fit for this backend (default: looked up from
+ * `MARINA_DECISION_CALIBRATION`); `null` scores the backend's raw probabilities.
+ */
 export async function gateToolCall(
   provider: DecisionProvider,
   toolName: string,
@@ -108,21 +144,36 @@ export async function gateToolCall(
   policy?: GatePolicy,
   description?: string,
   intent?: GateIntent,
+  calibration?: CalibrationEntry | null,
 ): Promise<GateDecision> {
   const questions = intent ? GATE_QUESTIONS_WITH_AUTHORIZATION : GATE_QUESTIONS;
-  const calibrated = provider.calibrated !== false;
+  const fit =
+    calibration === undefined ? earnedGateCalibration(provider.model) : (calibration ?? undefined);
+  // A native decision model is calibrated; any backend may EARN it (never lose it).
+  const calibrated = provider.calibrated !== false || !!fit;
   const effective = policy ?? (calibrated ? DEFAULT_GATE_POLICY : UNCALIBRATED_GATE_POLICY);
   try {
     const result = await provider.ask({
       state: redactToolCall(toolName, args, description, intent),
       questions,
     });
-    const verdict = decideGate(result.answers, effective, questions);
+    const answers = fit ? calibrateAnswers(result.answers, fit) : result.answers;
+    // With an earned fit (and no explicit policy): allow vs hold on the fitted
+    // P(hold); a hold is a block only when a native decision model's own raw
+    // number says so (see `gateActionWithFit`).
+    const rule =
+      fit && !policy
+        ? fittedGatePolicy(decideGate(result.answers, effective, questions), provider)
+        : effective;
+    const verdict = decideGate(answers, rule, questions);
     return {
       ...verdict,
       ...(calibrated
         ? {}
         : { calibrated: false, reason: `${verdict.reason} (uncalibrated backend: one threshold)` }),
+      ...(fit
+        ? { calibration: "fitted" as const, reason: `${verdict.reason} (fitted calibration)` }
+        : {}),
       model: result.model,
       provider: result.provider,
       latencyMs: result.latencyMs,

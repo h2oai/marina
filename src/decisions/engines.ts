@@ -15,6 +15,13 @@
  *                            `MARINA_DECISION_METHOD` method (default auto:
  *                            logprobs where the provider returns them).
  *                            Opt-in per model: `MARINA_DECISION_ENGINES`.
+ *   marina/ensemble          the engines listed in `MARINA_DECISION_ENSEMBLE`
+ *                            asked in parallel, answers combined (combine.ts);
+ *                            needs a majority to answer.
+ *   marina/auto              the configured backend first; a second opinion
+ *                            (the ensemble, else the first classifier engine)
+ *                            only when it is unsure or down — Jev's speed and
+ *                            price on the easy calls, resilience on the rest.
  *
  * Optional by construction: with neither configured there are no engines and
  * the endpoint says so; nothing else in Marina depends on an engine existing.
@@ -23,13 +30,16 @@
  */
 
 import { dailyCapRefusal } from "../engine/spend-ledger";
+import { combineAnswers, unsureAnswers } from "./combine";
 import { classifierTuning, getDecisionProvider } from "./config";
 import { acceptsRequestedModel } from "./model-ids";
 import { chatClassifierProvider } from "./providers";
-import { DecisionError, type DecisionProvider } from "./types";
+import { DecisionError, type DecisionProvider, type DecisionResult } from "./types";
 
 /** Engine id prefix for chat models answering through Marina's passthru. */
 export const CLASSIFIER_ENGINE = "marina/classifier";
+export const ENSEMBLE_ENGINE = "marina/ensemble";
+export const AUTO_ENGINE = "marina/auto";
 /** What bare `marina/classifier` uses when no model is listed: Marina's default upstream. */
 const DEFAULT_CLASSIFIER_MODEL = "marina/default";
 /** A classifier through the self-proxy may take several calls (auto, sampled). */
@@ -128,6 +138,165 @@ export type EngineResolution =
       };
     };
 
+type EngineError = Extract<EngineResolution, { error: unknown }>["error"];
+const unknownEngine = (model: string | undefined): EngineError => ({
+  status: 400,
+  message: `No decision engine "${model}" on this instance; GET /v1/decisions/models lists them.`,
+  code: "unsupported_parameter",
+});
+
+/** The configured backend or a classifier engine (never a composite). */
+function resolveBase(
+  model: string | undefined,
+  env: NodeJS.ProcessEnv,
+  deps: EngineDeps,
+): DecisionProvider | undefined {
+  const configured = getDecisionProvider(env);
+  const classifiers = classifierEngineModels(env);
+  if (configured && (!model || acceptsRequestedModel(model, configured.model))) return configured;
+  if (
+    classifiers &&
+    (!model || model === CLASSIFIER_ENGINE || model.startsWith(`${CLASSIFIER_ENGINE}:`))
+  ) {
+    const chat =
+      !model || model === CLASSIFIER_ENGINE
+        ? (classifiers.models[0] ?? DEFAULT_CLASSIFIER_MODEL)
+        : model.slice(CLASSIFIER_ENGINE.length + 1).trim();
+    if (chat && (classifiers.any || classifiers.models.includes(chat))) {
+      return classifierEngine(chat, env, deps);
+    }
+  }
+  return undefined;
+}
+
+/** `MARINA_DECISION_ENSEMBLE`: ≥ 2 distinct member engine ids (never a composite). */
+export function ensembleMembers(env: NodeJS.ProcessEnv = process.env): string[] | undefined {
+  const ids = [
+    ...new Set(
+      (env.MARINA_DECISION_ENSEMBLE ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s && s !== ENSEMBLE_ENGINE && s !== AUTO_ENGINE),
+    ),
+  ];
+  return ids.length >= 2 ? ids : undefined;
+}
+
+const sum = (xs: Array<number | undefined>) => {
+  const known = xs.filter((x): x is number => x !== undefined);
+  return known.length ? known.reduce((a, b) => a + b, 0) : undefined;
+};
+
+/**
+ * Several engines asked in parallel, answers combined. A majority must answer
+ * (else the first failure is thrown). Calibrated only if every member is.
+ * Spend is recorded by each member where it is spent, never here.
+ */
+function ensembleEngine(members: DecisionProvider[]): DecisionProvider {
+  return {
+    kind: "marina-ensemble",
+    model: ENSEMBLE_ENGINE,
+    calibrated: members.every((m) => m.calibrated !== false),
+    async ask(request, signal) {
+      const started = performance.now();
+      const settled = await Promise.allSettled(members.map((m) => m.ask(request, signal)));
+      const answered = settled.flatMap((r, i) =>
+        r.status === "fulfilled" ? [{ result: r.value, provider: members[i]! }] : [],
+      );
+      // A strict majority must answer (two members: both).
+      if (answered.length * 2 <= members.length) {
+        throw (settled.find((r) => r.status === "rejected") as PromiseRejectedResult).reason;
+      }
+      return combined(request.questions, answered, "ensemble", started);
+    },
+  };
+}
+
+interface Answered {
+  result: DecisionResult;
+  provider: DecisionProvider;
+}
+
+function combined(
+  questions: Parameters<typeof combineAnswers>[0],
+  answered: Answered[],
+  method: "ensemble" | "cascade",
+  started: number,
+): DecisionResult {
+  const cost = sum(answered.map((a) => a.result.costUsd));
+  return {
+    answers:
+      answered.length === 1
+        ? answered[0]!.result.answers
+        : combineAnswers(
+            questions,
+            answered.map((a) => a.result.answers),
+          ),
+    model: method === "ensemble" ? ENSEMBLE_ENGINE : AUTO_ENGINE,
+    provider: method === "ensemble" ? "marina-ensemble" : "marina-auto",
+    method,
+    members: answered.map((a) => a.result.model),
+    // Calibrated only if everyone who actually answered is.
+    calibrated: answered.every((a) => (a.result.calibrated ?? a.provider.calibrated) !== false),
+    latencyMs: Math.round(performance.now() - started),
+    ...(cost === undefined ? {} : { costUsd: cost }),
+  };
+}
+
+/**
+ * The configured backend first; the fallback only when the primary is unsure
+ * (see `UNSURE`) or failed. Unsure ⇒ both answers combined; failed ⇒ the
+ * fallback alone. The fallback failing too rethrows the primary's error, so a
+ * caller's own failure rule (the gate fails closed) still applies.
+ */
+function autoEngine(primary: DecisionProvider, fallback: DecisionProvider): DecisionProvider {
+  return {
+    kind: "marina-auto",
+    model: AUTO_ENGINE,
+    calibrated: primary.calibrated !== false && fallback.calibrated !== false,
+    async ask(request, signal) {
+      const started = performance.now();
+      let first: DecisionResult;
+      try {
+        first = await primary.ask(request, signal);
+      } catch (primaryErr) {
+        try {
+          const second = await fallback.ask(request, signal);
+          return combined(
+            request.questions,
+            [{ result: second, provider: fallback }],
+            "cascade",
+            started,
+          );
+        } catch {
+          throw primaryErr;
+        }
+      }
+      if (unsureAnswers(request.questions, first.answers).length === 0) {
+        return combined(
+          request.questions,
+          [{ result: first, provider: primary }],
+          "cascade",
+          started,
+        );
+      }
+      const alone = [{ result: first, provider: primary }];
+      try {
+        const second = await fallback.ask(request, signal);
+        return combined(
+          request.questions,
+          [...alone, { result: second, provider: fallback }],
+          "cascade",
+          started,
+        );
+      } catch {
+        // The second opinion failed: the primary's answer stands.
+        return combined(request.questions, alone, "cascade", started);
+      }
+    },
+  };
+}
+
 /**
  * The engine for a request's `model` (undefined ⇒ the configured backend, else
  * the default classifier engine when one is allowed).
@@ -155,28 +324,46 @@ export function resolveEngine(
     };
   }
   const model = requested?.trim();
-  if (configured && (!model || acceptsRequestedModel(model, configured.model))) {
-    return { provider: configured };
+  if (model === ENSEMBLE_ENGINE) {
+    const ensemble = buildEnsemble(env, deps);
+    return "error" in ensemble ? ensemble : { provider: ensemble.provider };
   }
-  if (
-    classifiers &&
-    (!model || model === CLASSIFIER_ENGINE || model.startsWith(`${CLASSIFIER_ENGINE}:`))
-  ) {
-    const chat =
-      !model || model === CLASSIFIER_ENGINE
-        ? (classifiers.models[0] ?? DEFAULT_CLASSIFIER_MODEL)
-        : model.slice(CLASSIFIER_ENGINE.length + 1).trim();
-    if (chat && (classifiers.any || classifiers.models.includes(chat))) {
-      return { provider: classifierEngine(chat, env, deps) };
+  if (model === AUTO_ENGINE) {
+    const fallback = autoFallback(env, deps);
+    if (!configured || !fallback) return { error: unknownEngine(model) };
+    return { provider: autoEngine(configured, fallback) };
+  }
+  const base = resolveBase(model, env, deps);
+  return base ? { provider: base } : { error: unknownEngine(model) };
+}
+
+function buildEnsemble(env: NodeJS.ProcessEnv, deps: EngineDeps): EngineResolution {
+  const ids = ensembleMembers(env);
+  if (!ids) return { error: unknownEngine(ENSEMBLE_ENGINE) };
+  const members: DecisionProvider[] = [];
+  for (const id of ids) {
+    const member = resolveBase(id, env, deps);
+    if (!member) {
+      return {
+        error: {
+          status: 400,
+          message: `MARINA_DECISION_ENSEMBLE member "${id}" is not an engine on this instance.`,
+          code: "unsupported_parameter",
+        },
+      };
     }
+    members.push(member);
   }
-  return {
-    error: {
-      status: 400,
-      message: `No decision engine "${model}" on this instance; GET /v1/decisions/models lists them.`,
-      code: "unsupported_parameter",
-    },
-  };
+  return { provider: ensembleEngine(members) };
+}
+
+/** `marina/auto`'s second opinion: the ensemble when configured, else the first classifier engine. */
+function autoFallback(env: NodeJS.ProcessEnv, deps: EngineDeps): DecisionProvider | undefined {
+  const ensemble = ensembleMembers(env) ? buildEnsemble(env, deps) : undefined;
+  if (ensemble && "provider" in ensemble) return ensemble.provider;
+  const classifiers = classifierEngineModels(env);
+  if (!classifiers) return undefined;
+  return classifierEngine(classifiers.models[0] ?? DEFAULT_CLASSIFIER_MODEL, env, deps);
 }
 
 /** The engines this instance serves (for `GET /v1/decisions/models`). */
@@ -211,6 +398,25 @@ export function listEngines(env: NodeJS.ProcessEnv = process.env): EngineInfo[] 
         description: `Any model Marina routes, answering through its passthru (method ${method}).`,
       });
     }
+  }
+  const members = ensembleMembers(env);
+  const ensemble = members ? buildEnsemble(env, {}) : undefined;
+  if (ensemble && "provider" in ensemble) {
+    out.push({
+      id: ENSEMBLE_ENGINE,
+      kind: "marina-ensemble",
+      calibrated: ensemble.provider.calibrated !== false,
+      description: `${members!.join(" + ")}, answers combined.`,
+    });
+  }
+  const fallback = autoFallback(env, {});
+  if (configured && fallback) {
+    out.push({
+      id: AUTO_ENGINE,
+      kind: "marina-auto",
+      calibrated: configured.calibrated !== false && fallback.calibrated !== false,
+      description: `${configured.model}; ${fallback.model} as a second opinion when it is unsure or down.`,
+    });
   }
   return out;
 }

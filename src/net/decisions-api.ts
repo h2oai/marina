@@ -86,9 +86,10 @@ export async function handleDecisions(req: Request, deps: EngineDeps = {}): Prom
       ...(Object.keys(usage).length > 0 ? { usage } : {}),
       provider: result.provider,
       ...(result.method ? { method: result.method } : {}),
+      ...(result.members ? { members: result.members } : {}),
       // False for a chat model used as a classifier: read its numbers as
       // rankings, not probabilities (no fine thresholds).
-      calibrated: provider.calibrated !== false,
+      calibrated: (result.calibrated ?? provider.calibrated) !== false,
       latency_ms: result.latencyMs,
     });
   } catch (err) {
