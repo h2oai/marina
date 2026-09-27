@@ -426,3 +426,12 @@ describe("held-out trials: a fixed split and an honest interval", () => {
     expect(renderTrial(3, r)).toContain("not distinguishable from noise");
   });
 });
+
+describe("trialCallBudget", () => {
+  it("scales with the items, so a large held-out set cannot run the agent dry", async () => {
+    const { trialCallBudget } = await import("../src/engine/evolution-trial");
+    expect(trialCallBudget(15)).toBe(180);
+    expect(trialCallBudget(100)).toBe(860); // live: 300 lasted ~70 of 100 ARC items
+    expect(trialCallBudget(100)).toBeGreaterThan(100 * 3);
+  });
+});

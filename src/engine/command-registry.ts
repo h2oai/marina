@@ -125,6 +125,7 @@ import { workCommand } from "./commands/work";
 import { worldCommand } from "./commands/world";
 import type { Engine } from "./engine";
 import { tryLog } from "./errors";
+import { trialCallBudget } from "./evolution-trial";
 import { computeReadiness } from "./readiness";
 
 export function registerBuiltinCommands(engine: Engine): void {
@@ -720,7 +721,7 @@ export function registerBuiltinCommands(engine: Engine): void {
               model: opts.agentModel,
               role,
               spawnedBy: opts.callerId,
-              budgetCalls: 300,
+              budgetCalls: trialCallBudget(opts.limit ?? (opts.benchmark === "smoke" ? 15 : 100)),
             });
           },
           entityIdOf: (name) => rt.get(name)?.getStatus().entityId ?? undefined,

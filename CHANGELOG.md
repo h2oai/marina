@@ -133,6 +133,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A 100-item `evolve trial` ran its agents out of calls (a fixed 300-call budget lasted ~70 items),
+  after which every item timed out — measuring the budget, not the role. Trial agents now get
+  `trialCallBudget(items)` = 60 + 8 per item.
 - A child world whose directory was gone crashed at start and reported only "did not become ready
   within 10 seconds": `start()` now recreates the directory, keeps the child's last stderr lines
   in the variant's error, and waits up to `MARINA_COLLECTIVE_START_TIMEOUT_MS` (default 30 s).
