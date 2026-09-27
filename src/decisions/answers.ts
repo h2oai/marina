@@ -84,6 +84,11 @@ export function normalizeAnswers(
   return out;
 }
 
+/** Every key present, in order; an unreported option or level has probability 0. */
+function complete(probabilities: Record<string, number>, keys: string[]): Record<string, number> {
+  return Object.fromEntries(keys.map((k) => [k, probabilities[k] ?? 0]));
+}
+
 /**
  * The complete wire answer for HTTP callers (`/v1/decisions`, `/v1/systemone`).
  * TypeSafe's clients (e.g. `langchain-typesafe`) require `probabilities` and
@@ -102,7 +107,7 @@ export function toWireAnswer(
   if (answer.type === "noul" || question.type === "noul") return { ...answer };
   if (answer.type === "choice" && question.type === "choice") {
     const options = Object.keys(question.criteria);
-    let probabilities = answer.probabilities;
+    let probabilities = answer.probabilities && complete(answer.probabilities, options);
     if (!probabilities) {
       const top = answer.confidence ?? 1;
       const rest = options.length > 1 ? (1 - top) / (options.length - 1) : 0;
@@ -113,7 +118,8 @@ export function toWireAnswer(
   }
   if (answer.type === "score" && question.type === "score") {
     const legend = Object.fromEntries(question.criteria.map((text, i) => [String(i), text]));
-    let probabilities = answer.probabilities;
+    const levels = question.criteria.map((_, i) => String(i));
+    let probabilities = answer.probabilities && complete(answer.probabilities, levels);
     if (!probabilities) {
       const lo = Math.floor(answer.score);
       const hi = Math.min(question.criteria.length - 1, lo + 1);

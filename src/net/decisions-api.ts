@@ -7,7 +7,9 @@
  * custom loop send `{ state, questions }` in the Decisions API wire format
  * (noul / choice / score) and get typed answers back from whichever backend the
  * operator configured (a Jev-family / OpenJev decision model, or any chat model
- * used as a classifier). Auth and per-IP rate limiting are the model API's
+ * used as a classifier), or — chosen by `model` — a `marina/classifier:<m>`
+ * engine answering through Marina's own passthru (`src/decisions/engines.ts`).
+ * Auth and per-IP rate limiting are the model API's
  * (`handleModelApi`), which fails closed.
  *
  * Request:  { state: string | object | array, questions: { <id>: { type, instructions, criteria } } }
@@ -15,53 +17,47 @@
  */
 
 import { toWireAnswers } from "../decisions/answers";
-import { getDecisionProvider } from "../decisions/config";
+import { type EngineDeps, listEngines, resolveEngine } from "../decisions/engines";
 import { parseQuestions } from "../decisions/questions";
 import { DecisionError } from "../decisions/types";
 import { errorJson, json } from "./model-api/shared";
 
-/**
- * A caller may name the configured model, or that model family's `-latest`
- * alias — what TypeSafe clients send by default (`jev-latest`,
- * `~typesafe/jev-latest`) — so `langchain-typesafe` works unchanged. Any other
- * model is refused rather than silently answered by a different one.
- */
-export function acceptsRequestedModel(requested: unknown, configured: string): boolean {
-  if (typeof requested !== "string") return false;
-  if (requested === configured) return true;
-  const bare = (id: string) => id.trim().replace(/^~/, "").split("/").pop() ?? "";
-  const family = (id: string) => bare(id).replace(/-(latest|\d[\w.]*)$/, "");
-  return bare(requested).endsWith("-latest") && family(requested) === family(configured);
-}
+export { acceptsRequestedModel } from "../decisions/model-ids";
 
 /** Largest serialized `state` accepted (the Jev family's context is 32k tokens). */
 const MAX_STATE_BYTES = 64 * 1024;
 
-export async function handleDecisions(req: Request): Promise<Response> {
-  const provider = getDecisionProvider();
-  if (!provider) {
-    return errorJson(
-      404,
-      "Decisions are disabled on this instance. Set MARINA_DECISIONS (see .env.example).",
-      { code: "decisions_disabled" },
-    );
-  }
-  let body: Record<string, unknown>;
+/** `GET /v1/decisions/models` (alias `/v1/systemone/models`): the engines served here. */
+export function handleDecisionModels(): Response {
+  return json({
+    object: "list",
+    data: listEngines().map((e) => ({ object: "decision_engine", ...e })),
+  });
+}
+
+export async function handleDecisions(req: Request, deps: EngineDeps = {}): Promise<Response> {
+  let body: Record<string, unknown> | undefined;
   try {
     const raw: unknown = await req.json();
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("not an object");
-    body = raw as Record<string, unknown>;
+    if (raw && typeof raw === "object" && !Array.isArray(raw))
+      body = raw as Record<string, unknown>;
   } catch {
+    body = undefined;
+  }
+  // The engine is chosen by `model`; operator configuration decides what exists
+  // (a disabled instance says so before judging the body).
+  const resolved = resolveEngine(body?.model, process.env, deps);
+  if ("error" in resolved && resolved.error.code === "decisions_disabled") {
+    return errorJson(404, resolved.error.message, { code: "decisions_disabled" });
+  }
+  if (!body) {
     return errorJson(400, "Request body must be a JSON object.", { code: "invalid_request_error" });
   }
-  if (body.model !== undefined && !acceptsRequestedModel(body.model, provider.model)) {
-    // The backend model is operator configuration; a caller cannot pick another.
-    return errorJson(
-      400,
-      `This instance answers decisions with "${provider.model}"; omit model or pass that id.`,
-      { code: "unsupported_parameter", param: "model" },
-    );
+  if ("error" in resolved) {
+    const { status, message, code } = resolved.error;
+    return errorJson(status, message, { code, param: "model" });
   }
+  const provider = resolved.provider;
   const state = body.state;
   if (state === undefined || state === null || state === "") {
     return errorJson(400, "state is required.", { code: "invalid_request_error", param: "state" });
@@ -89,6 +85,7 @@ export async function handleDecisions(req: Request): Promise<Response> {
       answers: toWireAnswers(questions, result.answers),
       ...(Object.keys(usage).length > 0 ? { usage } : {}),
       provider: result.provider,
+      ...(result.method ? { method: result.method } : {}),
       // False for a chat model used as a classifier: read its numbers as
       // rankings, not probabilities (no fine thresholds).
       calibrated: provider.calibrated !== false,

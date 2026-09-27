@@ -10,7 +10,7 @@ import { version as MARINA_VERSION } from "../../package.json";
 import type { RateLimiter } from "../auth/rate-limiter";
 import type { Engine } from "../engine/engine";
 import { handleAnthropicMessages } from "./anthropic-inbound";
-import { handleDecisions } from "./decisions-api";
+import { handleDecisionModels, handleDecisions } from "./decisions-api";
 import { handleForecast } from "./forecast-api";
 import { handleMediaApi } from "./media-api";
 import { handleOpenaiChat, runOpenaiChat } from "./model-api/chat-completions";
@@ -131,6 +131,12 @@ export async function handleModelApi(
   // `/v1/systemone` is TypeSafe's path: point `langchain-typesafe` (TYPESAFE_BASE_URL) here.
   if ((url.pathname === "/v1/decisions" || url.pathname === "/v1/systemone") && method === "POST") {
     return await handleDecisions(req);
+  }
+  if (
+    (url.pathname === "/v1/decisions/models" || url.pathname === "/v1/systemone/models") &&
+    method === "GET"
+  ) {
+    return handleDecisionModels();
   }
 
   // OpenAI: GET /v1/models
