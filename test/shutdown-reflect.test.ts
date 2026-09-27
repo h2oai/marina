@@ -27,7 +27,6 @@ import {
 import { MEMORY_REFLECTOR_ROLE, reflectorIdleStopMs } from "../src/engine/constants";
 import { Engine } from "../src/engine/engine";
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
-import { awaitPendingBridges } from "../src/memory/legacy-bridge";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { MarinaDB } from "../src/persistence/database";
 import type { MemoryAssistancePage } from "../src/sdk/memory-assistance";
@@ -99,7 +98,6 @@ describe("reflect --no-spawn and shared auto-spawn", () => {
   const run = async (connection: MockConnection, text: string) => {
     connection.clear();
     await engine.processCommand(connection.entity as EntityId, text);
-    await awaitPendingBridges();
     return stripAnsi(connection.allTextJoined());
   };
   const jobsOf = async (name: string) =>
@@ -208,7 +206,6 @@ describe("reflect --no-spawn and shared auto-spawn", () => {
     await Bun.sleep(20);
     release();
     await Promise.all([first, second]);
-    await awaitPendingBridges();
 
     expect(calls).toHaveLength(1);
     expect(calls[0]).toEqual({ role: REFLECTOR_ROLE, requestedBy: "Alice" });

@@ -40,13 +40,35 @@ must honor that signal or be closed by cleanup.
 Types are exported by `@marina/agent-sdk`: `MarinaExtension`, `ExtensionContext`,
 `ExtensionCommand`, `ExtensionResolver`, and `ExtensionWidget`. Resolver callbacks
 receive arguments and the previous sample, without Engine or database access.
-Commands receive a caller snapshot, room ID and reply callback. Add capabilities
-through an explicit API version change instead of importing private engine modules.
+Commands receive a caller snapshot, room ID, reply callback and `durableMemory.run(request)`.
+The memory API binds the caller to its durable world account; it does not grant another
+owner's records or bypass space ACLs. New fields are additive within API version 1;
+removing or changing existing contracts requires a new version.
 
 Widgets render escaped text from the existing authenticated `world` or `readiness`
 endpoints. Slots are `sidebar` and `admin-tab`; the latter is listed only to operators.
 No remote component path, HTML injection or private event subscription is accepted.
-The internal panel registry is `dashboard/src/components/workspace-panels-registry.tsx`.
+Trusted, locally bundled React panels use `dashboard/src/lib/panel-registry.tsx`.
+The builtin composition in `workspace-panels-registry.tsx` uses that same manifest:
+
+```tsx
+import { dashboardPanels } from "./lib/panel-registry";
+import { HealthPanel } from "./panels/HealthPanel";
+
+const dispose = dashboardPanels.register({
+  id: "team-health", title: "Team health", slot: "sidebar", component: HealthPanel,
+});
+if (import.meta.hot) import.meta.hot.dispose(dispose);
+```
+
+Import this setup from the dashboard entry point and rebuild the dashboard. Slots
+are `sidebar`, `admin-tab`, and `grid` (grid panels also need positions in the host's
+layout presets). `modes` can restrict a grid panel to `workspace` or the deprecated
+`legacy` layout. Components receive focus props and, for grid panels, world data.
+Registration rejects duplicate IDs and string/URL components, returns an owned
+cleanup function, and updates mounted slots. Fetch data through the authenticated
+API helpers; a panel slot is not authorization. Server extension manifests never
+resolve to React components. This requires local source in the dashboard bundle.
 
 Existing `build command` remains available for governed, database-backed command
 creation and reload. Those commands have separate ownership from installed extensions.
@@ -70,11 +92,31 @@ Read the invariants in `CLAUDE.md`, then choose one boundary:
 
 - Command behavior: `src/engine/commands/`, wired through the appropriate domain in
   `src/engine/registrations/`.
-- Durable memory API: `src/memory/` and `src/sdk/memory-client.ts`. Use compatibility
-  bridge entry points for existing numeric notes; preserve owner and pool predicates.
-- Scheduling: `command-coordinator.ts` or `tick-scheduler.ts`, with narrow collaborators.
+- Durable memory API: `src/memory/` and `src/sdk/memory-client.ts`. New writes use
+  `durableMemory.run`; numeric-note authoring is deprecated. Existing adapters
+  preserve owner and pool predicates and commit synchronously with canonical records.
+- Auth/session policy: `auth-coordinator.ts`; command authorization and execution:
+  `command-phase-coordinator.ts`; scheduling: `command-coordinator.ts` or `tick-scheduler.ts`.
 - UI navigation: `use-dashboard-navigation.ts`; panel composition: the panel registry.
 
 Run the affected test files while iterating, then `bun run typecheck`, `bun run lint`
 and the required release checks. A migration count is history, not a requirement to
 memorize old SQL: append a new migration and include a populated upgrade fixture.
+
+
+Canonical extension memory example:
+
+```js
+context.registerCommand({
+  name: "keep-evidence", help: "Save a durable memory", minRank: 0,
+  async run(caller, text) {
+    const saved = await caller.durableMemory.run({
+      operation: "remember", input: { content: text },
+    });
+    caller.reply(`Saved record ${saved.result.id}`);
+  },
+});
+```
+
+The same `durableMemory` interface is available in dynamic `CommandContext`. Unlike
+`ctx.notes.add`, it returns a service receipt asynchronously and writes no legacy copy.

@@ -89,6 +89,12 @@ export type MemoryOperationResult =
       error: { code: string; message: string; status: number; retry_after_ms?: number };
     };
 
+/** Canonical memory access bound by the host to the current caller. Errors reject
+ * with MemoryClientError; credentials and caller identity are never caller inputs. */
+export interface DurableMemoryAPI {
+  run(request: MemoryOperationRequest): Promise<{ ok: true; result: unknown; space_id?: string }>;
+}
+
 /** Shared transport vocabulary. The service validates all operation payloads. */
 export async function runMemoryOperation(
   client: MarinaMemoryClient,

@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
 import { resetTrustProfileForTests } from "../src/engine/trust-profile";
-import { awaitPendingBridges, findDurableTwin } from "../src/memory/legacy-bridge";
+import { findDurableTwin } from "../src/memory/legacy-projection";
 import { MarinaDB } from "../src/persistence/database";
 import { type EntityId, roomId } from "../src/types";
 import { MockConnection, makeTestRoom, stripAnsi } from "./helpers";
@@ -28,7 +28,6 @@ describe("contradiction cases exclude durable twins", () => {
   const run = async (text: string) => {
     alice.clear();
     await engine.processCommand(alice.entity as EntityId, text);
-    await awaitPendingBridges();
     return stripAnsi(alice.allTextJoined());
   };
   const latestNoteId = () => db.getNotesByEntity("Alice", 1)[0]!.id;

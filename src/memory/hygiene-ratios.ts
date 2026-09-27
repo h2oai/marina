@@ -39,7 +39,7 @@ import { SYBIL_STANDING_FLOOR } from "../persistence/db-memory-resolve";
 import { COMPETING_RECORD_PREDICATE } from "../persistence/db-memory-review";
 import { memoryStorageUsage } from "../persistence/db-memory-storage";
 import type { EngineEvent } from "../types";
-import { LEGACY_SOURCE_SESSION } from "./legacy-bridge";
+import { LEGACY_SOURCE_SESSION } from "./legacy-projection";
 
 export const HYGIENE_RATIOS_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const HYGIENE_RATIOS_TTL_MS = 30_000;
@@ -176,13 +176,13 @@ export function computeHygieneRatios(
   );
   const legacyNotes = count(
     raw,
-    `SELECT count(*) AS n FROM notes n WHERE ${LEGACY_NOTE_SCOPE}`,
+    `SELECT count(*) AS n FROM numeric_notes n WHERE ${LEGACY_NOTE_SCOPE}`,
     selfName,
     selfName,
   );
   const legacyNotesWithSource = count(
     raw,
-    `SELECT count(*) AS n FROM notes n WHERE ${LEGACY_NOTE_SCOPE}
+    `SELECT count(*) AS n FROM numeric_notes n WHERE ${LEGACY_NOTE_SCOPE}
        AND EXISTS(SELECT 1 FROM note_sources ns WHERE ns.note_id=n.id AND ns.url NOT LIKE ?)`,
     selfName,
     selfName,
@@ -195,7 +195,7 @@ export function computeHygieneRatios(
   const legacyDuplicates = count(
     raw,
     `SELECT coalesce(sum(c-1),0) AS n FROM (
-       SELECT count(*) AS c FROM notes n WHERE ${LEGACY_NOTE_SCOPE}
+       SELECT count(*) AS c FROM numeric_notes n WHERE ${LEGACY_NOTE_SCOPE}
        GROUP BY n.entity_name, lower(trim(n.content)) HAVING c>1)`,
     selfName,
     selfName,
@@ -215,15 +215,15 @@ export function computeHygieneRatios(
   // an EARLIER reflection.
   const reflectionsInWindow = count(
     raw,
-    `SELECT count(*) AS n FROM notes n WHERE ${LEGACY_NOTE_SCOPE} AND n.tier='reflection' AND n.created_at>=?`,
+    `SELECT count(*) AS n FROM numeric_notes n WHERE ${LEGACY_NOTE_SCOPE} AND n.tier='reflection' AND n.created_at>=?`,
     selfName,
     selfName,
     since,
   );
   const repeatedReflections = count(
     raw,
-    `SELECT count(*) AS n FROM notes n WHERE ${LEGACY_NOTE_SCOPE} AND n.tier='reflection' AND n.created_at>=?
-       AND EXISTS(SELECT 1 FROM notes p WHERE p.entity_name=n.entity_name AND p.tier='reflection'
+    `SELECT count(*) AS n FROM numeric_notes n WHERE ${LEGACY_NOTE_SCOPE} AND n.tier='reflection' AND n.created_at>=?
+       AND EXISTS(SELECT 1 FROM numeric_notes p WHERE p.entity_name=n.entity_name AND p.tier='reflection'
                   AND p.id<n.id AND lower(trim(p.content))=lower(trim(n.content)))`,
     selfName,
     selfName,

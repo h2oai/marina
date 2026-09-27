@@ -21,7 +21,7 @@ import { Engine } from "../src/engine/engine";
 import { HYGIENE_NOTE_PREFIX } from "../src/engine/memory-hygiene";
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import { ensureInstitutionalSpace } from "../src/memory/institutional";
-import { awaitPendingBridges, findDurableTwin } from "../src/memory/legacy-bridge";
+import { findDurableTwin } from "../src/memory/legacy-projection";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { handleDashboardApi } from "../src/net/dashboard-api";
 import {
@@ -127,7 +127,6 @@ async function fileAnsweredJob(task: string): Promise<{
   ownerSpaceId: string;
 }> {
   await engine.processCommand(entityIds[OWNER]!, "note The service listens on port 7419");
-  await awaitPendingBridges();
   const note = db.getNotesByEntity(OWNER, 20).find((n) => n.content.includes("7419"));
   if (!note) throw new Error("note not written");
   const twin = findDurableTwin(db, note.id);
@@ -556,7 +555,6 @@ describe("event poller", () => {
     expect(memoryObservabilityPollTicks(60_000)).toBe(1);
 
     await engine.processCommand(entityIds[OWNER]!, "note The service listens on port 7419");
-    await awaitPendingBridges();
     const note = db.getNotesByEntity(OWNER, 20).find((n) => n.content.includes("7419"))!;
     const twin = findDurableTwin(db, note.id)!;
     const created = await op(OWNER, {

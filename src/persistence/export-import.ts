@@ -5,6 +5,7 @@ import { Database } from "bun:sqlite";
 import { getErrorMessage } from "../engine/errors";
 import { tableExists } from "./db-maintenance";
 import { rebuildMemoryStorage } from "./db-memory-storage";
+import { upgradeNumericMemory } from "./db-memory-upgrade";
 import { MIGRATIONS } from "./schema";
 
 // ─── Export Format ──────────────────────────────────────────────────────────
@@ -88,8 +89,9 @@ export const EXPORT_TABLES = [
   "room_sources",
   "room_templates",
   "notes",
-  "note_sources",
+  // Historical snapshots may still carry uncommitted-to-canonical retirement intents.
   "legacy_memory_outbox",
+  "note_sources",
   "note_verifications",
   "contradiction_cases",
   "productivity_sessions",
@@ -240,7 +242,6 @@ export interface ExportOptions {
 
 export function exportState(dbPath: string, opts?: ExportOptions): MarinaSnapshot {
   const db = new Database(dbPath, { readonly: true });
-  db.exec("PRAGMA journal_mode=WAL");
 
   try {
     return db.transaction(() => {
@@ -432,6 +433,12 @@ export function importState(
         db.run("DELETE FROM memory_source_text");
         db.run(
           "INSERT INTO memory_source_text SELECT seq,CASE WHEN json_type(body)='text' THEN json_extract(body,'$') ELSE body END FROM memory_sources",
+        );
+      }
+      if (targetVersion >= 138 && snapshot.schema_version < 138) {
+        upgradeNumericMemory(
+          db,
+          (snapshot.tables.legacy_memory_outbox ?? []) as { operation: string; args: string }[],
         );
       }
       if (tableExists(db, "memory_storage_items")) rebuildMemoryStorage(db);

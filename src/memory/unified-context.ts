@@ -4,13 +4,10 @@
 /**
  * Unified memory context — ONE retrieval surface shared by every consumer.
  *
- * Marina keeps two memory silos: the legacy notes/pools/skills store and the
- * principal-bound durable service (resident spaces, captured sources,
- * assistance proposals). Before this module, only the legacy silo reached the
- * continuation prompt, passthru injection, `/mem/recall`, and the MCP `think`
- * tool. `buildUnifiedContext` pulls both silos into ordered, labeled tiers
- * within a byte budget so the adapter, the `recall` command, REST, MCP, and
- * passthru all render the same evidence with the same provenance labels.
+ * Numeric compatibility handles and native records share one canonical history.
+ * This module combines world facets, sources and assistance proposals into the
+ * same ordered, labeled tiers for commands, REST, MCP and model injection.
+ * An assertion represented by a numeric tier is not repeated as evidence.
  *
  * Tier order (fixed): skills → [trusted] → [evidence] → [proposal] →
  * [unverified]. Trusted-first is deliberate: a wall of unverified own notes
@@ -39,7 +36,11 @@ import { ftsTerms } from "../persistence/fts";
 import type { MemoryAssistanceJob, MemoryAssistancePage } from "../sdk/memory-assistance";
 import { MemoryClientError } from "../sdk/memory-client";
 import type { MemorySearchResult, MemorySourceSearchResult } from "../sdk/memory-types";
-import { findLegacyNotesForRecord } from "./legacy-bridge";
+import {
+  findDurableTwin,
+  findLegacyNotesForRecord,
+  LEGACY_SOURCE_SESSION,
+} from "./legacy-projection";
 import { residentMemoryOperation } from "./resident-service";
 import { expandMemoryRecall } from "./retrieval";
 
@@ -125,7 +126,7 @@ export function distinctiveTerms(
     const total = (
       raw
         .query(
-          `SELECT count(*) AS n FROM notes WHERE entity_name=? COLLATE NOCASE AND pool_id IS NULL
+          `SELECT count(*) AS n FROM numeric_notes WHERE entity_name=? COLLATE NOCASE AND pool_id IS NULL
            AND tier IN ('fact','reflection','skill')`,
         )
         .get(entityName) as { n: number }
@@ -133,7 +134,7 @@ export function distinctiveTerms(
     if (total === 0) return new Set(terms);
     const cap = Math.max(DISTINCT_TERM_MAX_NOTES, Math.floor(total * DISTINCT_TERM_MAX_SHARE));
     const count = raw.query(
-      `SELECT count(*) AS n FROM notes WHERE entity_name=? COLLATE NOCASE AND pool_id IS NULL
+      `SELECT count(*) AS n FROM numeric_notes WHERE entity_name=? COLLATE NOCASE AND pool_id IS NULL
        AND tier IN ('fact','reflection','skill') AND lower(content) LIKE ? ESCAPE '\\'`,
     );
     for (const term of terms) {
@@ -569,6 +570,7 @@ async function fetchDurable(
   entityName: string,
   query: string,
   limits: { records: number; sources: number; proposals: number },
+  representedRecords: ReadonlySet<string>,
 ): Promise<Fetched> {
   const out: Fetched = { items: { evidence: [], proposal: [] }, degraded: [] };
   let spaceId: string | undefined;
@@ -603,7 +605,10 @@ async function fetchDurable(
   try {
     const search = await residentMemoryOperation(db, entityName, {
       operation: "search",
-      input: { query, limit: limits.records + jobArtifacts.size },
+      input: {
+        query,
+        limit: Math.min(100, limits.records + jobArtifacts.size + representedRecords.size),
+      },
     });
     spaceId = search.space_id;
     const result = search.result as MemorySearchResult;
@@ -612,7 +617,7 @@ async function fetchDurable(
     const distinctive = distinctiveTerms(db, entityName, terms);
     out.items.evidence!.push(
       ...result.results
-        .filter((record) => !jobArtifacts.has(record.id))
+        .filter((record) => !jobArtifacts.has(record.id) && !representedRecords.has(record.id))
         // Lexical `search` is not validity-filtered: a record whose interval a
         // `resolve` closed (a superseded loser) or a historical version is
         // still reachable by keyword. Never serve it as evidence.
@@ -638,7 +643,10 @@ async function fetchDurable(
     spaceId ??= sources.space_id;
     const result = sources.result as MemorySourceSearchResult;
     const hits = result.results.filter(
-      (hit) => !jobArtifacts.has(hit.id) && !hit.session_id?.startsWith("assistance:"),
+      (hit) =>
+        !jobArtifacts.has(hit.id) &&
+        hit.session_id !== LEGACY_SOURCE_SESSION &&
+        !hit.session_id?.startsWith("assistance:"),
     );
     // `source_search` is not validity-filtered either: a retired twin's
     // captured excerpt is still a lexical hit after its record was dropped
@@ -784,11 +792,23 @@ export async function buildUnifiedContext(
       degraded.push(...legacy.degraded);
     }
     if (scope !== "legacy") {
-      const durable = await fetchDurable(db, entityName, trimmed, {
-        records: perTier.evidence,
-        sources: Math.max(1, Math.ceil(perTier.evidence / 2)),
-        proposals: perTier.proposal,
-      });
+      const represented = new Set<string>();
+      for (const tier of LEGACY_TIERS)
+        for (const item of fetched[tier] ?? []) {
+          const record = findDurableTwin(db, Number(item.id));
+          if (record) represented.add(record.recordId);
+        }
+      const durable = await fetchDurable(
+        db,
+        entityName,
+        trimmed,
+        {
+          records: perTier.evidence,
+          sources: Math.max(1, Math.ceil(perTier.evidence / 2)),
+          proposals: perTier.proposal,
+        },
+        represented,
+      );
       Object.assign(fetched, durable.items);
       degraded.push(...durable.degraded);
     }

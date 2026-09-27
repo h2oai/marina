@@ -1,5 +1,7 @@
 import { MARINA_ROOT } from "../runtime-paths";
+import { AuthCoordinator, type LoginIdentity, type LoginResult } from "./auth-coordinator";
 import { CommandCoordinator } from "./command-coordinator";
+import { CommandPhaseCoordinator } from "./command-phase-coordinator";
 import { RoomTickCoordinator } from "./room-tick-coordinator";
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
@@ -10,7 +12,6 @@ import { applyRankProgression } from "../agent/rank-progression";
 import { isSeedDisabled } from "../agent/seed-registry";
 import { recordFromEvent as recordStandingEvent } from "../agent/standing";
 import type { RateLimiter } from "../auth/rate-limiter";
-import { secretsEqual } from "../auth/secret-compare";
 import { SessionManager } from "../auth/session-manager";
 import { BoardManager } from "../coordination/board-manager";
 import { ChannelManager } from "../coordination/channel-manager";
@@ -20,15 +21,16 @@ import { MacroManager } from "../coordination/macro-manager";
 import { TaskManager } from "../coordination/task-manager";
 import { FlywheelManager, type FlywheelToolBackend } from "../integrations/flywheel-manager";
 import { memoryAccess } from "../memory/access";
+import { residentMemoryAPI } from "../memory/resident-service";
 import type { AdapterManager } from "../net/adapter-manager";
-import { connects, disconnects } from "../net/ansi";
+import { connects } from "../net/ansi";
 import { guardedFetch, validateFetchUrl } from "../net/url-guard";
 import type { MarinaDB } from "../persistence/database";
 import { writeSample } from "../resolvers/sample-writer";
 import type { StorageProvider } from "../storage/provider";
 import type { OtlpExporterStatus } from "../telemetry/otlp-exporter";
 import type { OtlpLogExporterStatus } from "../telemetry/otlp-log-exporter";
-import { classifyPrimitive, isMarinaTool } from "../telemetry/primitive-usage";
+import { isMarinaTool } from "../telemetry/primitive-usage";
 import type {
   CommandContext,
   Connection,
@@ -46,15 +48,12 @@ import type {
 import { EntityManager } from "../world/entity-manager";
 import { type LoadedRoom, RoomManager } from "../world/room-manager";
 import type { WorldDefinition } from "../world/world-definition";
-import { getAutonomyPosture } from "./autonomy";
 import { BenchmarkRunner } from "./benchmark-runner";
 import { BriefManager } from "./brief-manager";
 import { recordEngineCognition } from "./cognitive-provenance";
 import { registerBuiltinCommands } from "./command-registry";
 import { CommandRouter } from "./command-router";
-import { isLoopbackConnection } from "./commands/code";
 import { isIgnoring } from "./commands/ignore";
-import { trackQuestProgress } from "./commands/quest";
 import { ConnectionManager } from "./connection-manager";
 import { ConnectorRuntime } from "./connector-runtime";
 import { positiveNumberFromEnv, ROOM_FETCH_RATE_MS, ROOM_FETCH_TIMEOUT_MS } from "./constants";
@@ -68,23 +67,17 @@ import { engineSharedWriteHook } from "./memory-dispatch";
 import { getRank, rankName, setRank } from "./permissions";
 import { computeReadiness } from "./readiness";
 import { RoomSandbox } from "./room-sandbox";
-import { checkGateForExecution, grantGatesForRank, recordGateExecution } from "./safety-gates";
+import { grantGatesForRank } from "./safety-gates";
 import { compileCommandModule, compileRoomModule } from "./sandbox";
 import { ShellRuntime } from "./shell-runtime";
 import { attachSpendLedger } from "./spend-ledger";
 import { registerTickJobs } from "./tick-jobs";
 import { type TickJobStatus, TickScheduler } from "./tick-scheduler";
-import { isLocalProfile, isLocalUngated } from "./trust-profile";
 
 /** Identical tick-failure messages are logged at most once per this interval. */
 const TICK_ERROR_LOG_INTERVAL_MS = 30_000;
 
-/** A verified external identity (from the better-auth bridge) passed to login(). */
-export interface LoginIdentity {
-  subject: string;
-  email: string;
-  emailVerified: boolean;
-}
+export type { LoginIdentity } from "./auth-coordinator";
 
 export interface EngineConfig {
   tickInterval: number; // ms between ticks (default 1000)
@@ -161,6 +154,8 @@ export class Engine {
   get instanceName(): string {
     return this.config.instanceName ?? this.world?.name ?? "Marina";
   }
+  private readonly authCoordinator: AuthCoordinator;
+  private readonly commandPhaseCoordinator: CommandPhaseCoordinator;
   private readonly commandCoordinator = new CommandCoordinator(
     (entity, raw) => this.processCommand(entity, raw),
     (error) => this.recordTickError(error),
@@ -353,6 +348,41 @@ export class Engine {
       });
     }
 
+    const engine = this;
+    this.authCoordinator = new AuthCoordinator({
+      config: this.config,
+      get db() {
+        return engine.db;
+      },
+      sessionManager: this.sessionManager,
+      loginRateLimiter: this.loginRateLimiter,
+      connections: this._connections,
+      entities: this.entities,
+      briefs: this.briefManager,
+      logger: this.logger,
+      world: this.world,
+      spawnEntity: (id, name) => this.spawnEntity(id, name),
+      processCommand: (id, raw) => this.processCommand(id, raw),
+      buildContext: (room) => this.buildContext(room),
+      logEvent: (event) => this.logEvent(event),
+    });
+    this.commandPhaseCoordinator = new CommandPhaseCoordinator({
+      entities: this.entities,
+      rooms: this.rooms,
+      commands: this.commands,
+      get db() {
+        return engine.db;
+      },
+      macroManager: this.macroManager,
+      logger: this.logger,
+      promptVersion: (name) => this.agentRuntime.get(name)?.getStatus().promptVersion,
+      sendToEntity: (id, message) => this.sendToEntity(id, message),
+      processCommand: (id, raw) => this.processCommand(id, raw),
+      buildCommandContext: (room, id) => this.buildCommandContext(room, id),
+      buildContext: (room) => this.buildContext(room),
+      logEvent: (event) => this.logEvent(event),
+    });
+
     this.registerBuiltinCommands();
     this.tickScheduler = new TickScheduler(this.logger);
     this.registerTickJobs();
@@ -391,78 +421,11 @@ export class Engine {
     });
   }
 
-  /** Per-name grace-period timers — entities linger this long after WS
-   * close so a token-bearing reconnect can reclaim the same EntityId. */
-  private entityEvictionTimers = new Map<EntityId, ReturnType<typeof setTimeout>>();
-  private static readonly RECONNECT_GRACE_MS = 60_000;
-
-  /** Cancel a pending grace-period eviction for an entity (it's being rebound). */
-  private cancelEviction(entityId: EntityId): void {
-    const pending = this.entityEvictionTimers.get(entityId);
-    if (pending) {
-      clearTimeout(pending);
-      this.entityEvictionTimers.delete(entityId);
-    }
-  }
-
-  /**
-   * Tear down a connection. With `intent: "transient"` (default) the
-   * entity lingers for RECONNECT_GRACE_MS so a token-bearing reconnect
-   * can reclaim the same EntityId — covers WS hiccups, browser tab
-   * close, and back-to-back CLI invocations. With `intent: "explicit"`
-   * (quit, kick, ban) the entity is removed immediately because the
-   * user/operator stated they're done.
-   */
   removeConnection(connId: string, intent: "transient" | "explicit" = "transient"): void {
-    const conn = this._connections.get(connId);
-    if (!conn) return;
-
-    if (conn.entity) {
-      this.briefManager.unsubscribe(conn.entity);
-      this._connections.unbindEntity(conn.entity);
-      const entity = this.entities.get(conn.entity);
-      if (entity) {
-        const ctx = this.buildContext(entity.room);
-        if (ctx) {
-          ctx.broadcastExcept(conn.entity, disconnects(entity.name), "disconnect");
-        }
-        const entityId = conn.entity;
-        const entityRoom = entity.room;
-        if (intent === "explicit") {
-          // Cancel any pending eviction (this is a hard quit) and remove now.
-          const existing = this.entityEvictionTimers.get(entityId);
-          if (existing) {
-            clearTimeout(existing);
-            this.entityEvictionTimers.delete(entityId);
-          }
-          this.emitEntityLeave(entityId, entityRoom);
-          this.entities.remove(entityId);
-        } else {
-          // Transient close — schedule deferred eviction so reconnect can rebind.
-          const existing = this.entityEvictionTimers.get(entityId);
-          if (existing) clearTimeout(existing);
-          const timer = setTimeout(() => {
-            if (!this._connections.isEntityConnected(entityId)) {
-              this.emitEntityLeave(entityId, entityRoom);
-              this.entities.remove(entityId);
-            }
-            this.entityEvictionTimers.delete(entityId);
-          }, Engine.RECONNECT_GRACE_MS);
-          this.entityEvictionTimers.set(entityId, timer);
-        }
-      }
-    }
-
-    this._connections.remove(connId);
-    this.logEvent({ type: "disconnect", connectionId: connId, timestamp: Date.now() });
+    this.authCoordinator.removeConnection(connId, intent);
   }
 
-  /**
-   * Emit an `entity_leave` event — the symmetric counterpart to the
-   * `entity_enter` fired on fresh spawn. Fires at the moment the entity is
-   * actually removed from the world (not on transient disconnect, since a
-   * grace-window reconnect rebinds the same id without re-emitting enter).
-   */
+  /** World lifecycle uses the same leave event for disconnects and explicit despawns. */
   private emitEntityLeave(entityId: EntityId, room: RoomId): void {
     this.logEvent({ type: "entity_leave", entity: entityId, room, timestamp: Date.now() });
   }
@@ -514,346 +477,21 @@ export class Engine {
 
   // ─── Session-based Auth ─────────────────────────────────────────────────
 
-  private static readonly ERR_LOGIN_RATE_LIMITED =
-    "Too many login attempts. Please slow down and retry shortly.";
-  private static readonly ERR_AT_CAPACITY =
-    "Instance at capacity: too many concurrent logins. Try again later.";
-
-  /** Resolve and tag whether a connection is an internal agent (room/crew
-   * agents pass the process-local internal token). Internal connections are
-   * exempt from the instance login cap and the login rate limit, and don't
-   * consume cap slots. */
-  private resolveInternal(connId: string, internalToken?: string, claimedName?: string): boolean {
-    const expected = this.config.internalAuthToken;
-    const legacy = !!expected && !!internalToken && secretsEqual(internalToken, expected);
-    const workload = internalToken ? this.db?.verifyWorkloadCredential(internalToken) : undefined;
-    const workloadMatches =
-      !!workload &&
-      (!claimedName || workload.display_name.toLowerCase() === claimedName.toLowerCase());
-    const isInternal = legacy || workloadMatches;
-    if (isInternal) {
-      const conn = this._connections.get(connId);
-      if (conn) conn.internal = true;
-    }
-    return isInternal;
-  }
-
-  /** Consume a login-attempt token. Keyed per client IP, falling back to the
-   * connection id when IP is unknown (e.g. MCP sessions). */
-  private checkLoginRate(connId: string, internal: boolean): boolean {
-    if (internal || !this.loginRateLimiter) return true;
-    const conn = this._connections.get(connId);
-    return this.loginRateLimiter.consume(`login:${conn?.ip ?? connId}`);
-  }
-
-  /** True when binding one more external login would exceed MARINA_MAX_LOGINS. */
-  private atLoginCapacity(internal: boolean): boolean {
-    const cap = this.config.maxLogins ?? 0;
-    if (internal || cap <= 0 || isLocalProfile()) return false;
-    return this._connections.boundExternalCount() >= cap;
-  }
-
-  /**
-   * Rank to restore for a passwordless name-login. A bare name is NOT proof of
-   * identity: an untrusted passwordless login must NEVER inherit an elevated rank
-   * from the persisted users row (that would let anyone re-attach to another
-   * user's name and get their rank). Rank is forced to 0 until the login is
-   * genuinely authenticated:
-   *   - `internal` (process-local internal token — room/crew agents),
-   *   - `identity` (better-auth verified subject/email), or
-   *   - a genuine loopback connection (the local desktop operator — the same
-   *     unspoofable trust anchor exec uses).
-   * Token-based `reconnect()` restores rank directly (the token IS the proof), so
-   * the normal desktop CLI/dashboard flow keeps its rank across reconnects. Only
-   * a REMOTE, tokenless name-login is capped at 0.
-   */
-  private restorableRank(
-    storedRank: number,
-    connId: string,
-    internal: boolean,
-    identity?: LoginIdentity,
-  ): EntityRank {
-    if (internal || identity) return storedRank as EntityRank;
-    if (isLoopbackConnection(this._connections.get(connId))) return storedRank as EntityRank;
-    return 0 as EntityRank;
-  }
-
-  private static readonly ERR_AUTH_REQUIRED =
-    "This instance requires sign-in. Authenticate via the dashboard, or connect with a session token.";
-
-  /** Login: create entity + session, returns token. Checks ban list.
-   *  `identity` marks a login already verified by the external auth layer
-   *  (better-auth bridge) — it bypasses the passwordless guard and binds the
-   *  verified subject/email to the named entity. */
   login(
     connId: string,
     name: string,
     internalToken?: string,
     identity?: LoginIdentity,
-  ): { entityId: EntityId; name: string; token: string } | { error: string } {
-    const workloadPrincipal = internalToken
-      ? this.db?.verifyWorkloadCredential(internalToken)
-      : undefined;
-    if (internalToken?.startsWith("marina-agent-") && !workloadPrincipal) {
-      return { error: "Workload credential is expired, revoked, or disabled." };
-    }
-    if (workloadPrincipal && workloadPrincipal.display_name.toLowerCase() !== name.toLowerCase()) {
-      return { error: "Workload credential subject does not match the requested identity." };
-    }
-    const internal = this.resolveInternal(connId, internalToken, name);
-
-    // Login attempts are rate-limited before any other work (success or failure
-    // both consume a token — attempts are what's limited).
-    if (!this.checkLoginRate(connId, internal)) {
-      return { error: Engine.ERR_LOGIN_RATE_LIMITED };
-    }
-
-    // Auth-required mode: reject untrusted passwordless name-login. Internal
-    // agents (internal token) and identity-verified logins are allowed; everyone
-    // else must present a session token via reconnect(). Single choke point for
-    // every surface (WS/telnet/MCP/dashboard-api/adapters).
-    if (this.config.authRequired && !internal && !identity) {
-      return { error: Engine.ERR_AUTH_REQUIRED };
-    }
-
-    // Check ban list
-    if (this.db?.isBanned(name)) {
-      return { error: "You are banned from this server." };
-    }
-
-    // Sanitize name once, then pass through to spawnEntity
-    const cleanName = sanitizeEntityName(name);
-    const principal = this.db?.getPrincipal(internal ? "agent" : "human", cleanName);
-    if (principal && principal.status !== "active") {
-      return { error: `This identity is ${principal.status}. Contact the Marina operator.` };
-    }
-    // If an entity with this name exists but has no live connection, the login is a
-    // re-attach (typical at server restart — `restoreEntities` reinstated the row but
-    // no WebSocket is bound to it yet). Bind the new connection to the existing entity
-    // and proceed; preserves room location, properties, rank, and persistent state
-    // across restarts. If a live connection IS bound, reject — concurrent logins with
-    // the same name would race on entity state. Mirrors the same logic `reconnect()` uses.
-    const existing = this.entities.findAgentByName(cleanName);
-    if (existing && this._connections.isEntityConnected(existing.id)) {
-      return { error: "That name is already in use." };
-    }
-    if (existing) {
-      // Re-attach still consumes a cap slot — this branch is what every user
-      // hits after a server restart, so exempting it would leave the cap
-      // unenforced post-restart.
-      if (this.atLoginCapacity(internal)) {
-        return { error: Engine.ERR_AT_CAPACITY };
-      }
-      // Re-attaching to a still-in-memory entity: cancel any pending grace
-      // eviction so it isn't torn out from under the new connection.
-      this.cancelEviction(existing.id);
-      this._connections.bindEntity(connId, existing.id);
-      if (this.db) {
-        const existingUser = this.db.getUserByName(existing.name);
-        if (existingUser) {
-          this.db.updateUserLastLogin(existingUser.id);
-          // SECURITY: a passwordless re-attach must not inherit a stored rank.
-          existing.properties.rank = this.restorableRank(
-            existingUser.rank,
-            connId,
-            internal,
-            identity,
-          );
-        }
-      }
-      this.applyAdminBootstrap(existing, connId, identity);
-      if (this.sessionManager) {
-        // Bind the granted rank to the token: a remote passwordless re-attach was
-        // capped at rank 0 above, so its token must not later restore an elevated
-        // rank via reconnect().
-        const session = this.sessionManager.create(
-          existing.id,
-          existing.name,
-          (existing.properties.rank as number) ?? 0,
-        );
-        return { entityId: existing.id, name: existing.name, token: session.token };
-      }
-      return { entityId: existing.id, name: existing.name, token: "" };
-    }
-
-    if (this.atLoginCapacity(internal)) {
-      return { error: Engine.ERR_AT_CAPACITY };
-    }
-    const entity = this.spawnEntity(connId, cleanName);
-    if (!entity) {
-      return { error: "Login failed. Name must be 2-20 alphanumeric characters." };
-    }
-
-    // Look up or create user record
-    let isNewUser = true;
-    if (this.db) {
-      const existingUser = this.db.getUserByName(entity.name);
-      if (existingUser) {
-        isNewUser = false;
-        this.db.updateUserLastLogin(existingUser.id);
-        // Apply stored rank to entity — but SECURITY: a passwordless name-login
-        // never inherits an elevated rank (a name is not proof of identity).
-        entity.properties.rank = this.restorableRank(existingUser.rank, connId, internal, identity);
-      } else {
-        // Use a stable UUID for user IDs (entity IDs are transient and reset on restart)
-        const userId = crypto.randomUUID();
-        this.db.createUser({ id: userId, name: entity.name });
-      }
-    }
-
-    this.applyAdminBootstrap(entity, connId, identity);
-
-    // Auto-start quest for new entities (rank 0)
-    const rank = (entity.properties.rank as number) ?? 0;
-    if (rank === 0 && this.world?.autoQuest) {
-      entity.properties.active_quest = this.world.autoQuest;
-    }
-
-    // Auto-bootstrap commands for new entities
-    if (isNewUser && this.world?.autoBootstrap) {
-      for (const cmd of this.world.autoBootstrap) {
-        this.processCommand(entity.id, cmd);
-      }
-    }
-
-    // Auto-subscribe new users to brief compass and set first-login flag
-    if (isNewUser) {
-      this.briefManager.subscribe(entity.id, 120);
-      // Transient flag: consumed by sendCompass() in brief.ts to emit bootstrap packet
-      entity.properties._isFirstLogin = true;
-    }
-
-    if (this.sessionManager) {
-      // Bind the granted rank to the token so a remote passwordless login (capped
-      // at rank 0 above) cannot launder that cap into a full rank restore on
-      // reconnect().
-      const session = this.sessionManager.create(
-        entity.id,
-        entity.name,
-        (entity.properties.rank as number) ?? 0,
-      );
-      return { entityId: entity.id, name: entity.name, token: session.token };
-    }
-
-    return { entityId: entity.id, name: entity.name, token: "" };
+  ): LoginResult {
+    return this.authCoordinator.login(connId, name, internalToken, identity);
   }
 
-  /** Reconnect with a session token. Returns entity ID or error. */
-  reconnect(
-    connId: string,
-    token: string,
-    internalToken?: string,
-  ): { entityId: EntityId; name: string; token: string } | { error: string } {
-    if (
-      internalToken?.startsWith("marina-agent-") &&
-      !this.db?.verifyWorkloadCredential(internalToken)
-    ) {
-      return { error: "Workload credential is expired, revoked, or disabled." };
-    }
-    const internal = this.resolveInternal(connId, internalToken);
-
-    if (!this.checkLoginRate(connId, internal)) {
-      return { error: Engine.ERR_LOGIN_RATE_LIMITED };
-    }
-
-    if (!this.sessionManager) {
-      return { error: "Session management not available." };
-    }
-
-    const session = this.sessionManager.validate(token);
-    if (!session) {
-      return { error: "Invalid or expired session token." };
-    }
-
-    // Check ban list
-    if (this.db?.isBanned(session.name)) {
-      this.sessionManager.revoke(token);
-      return { error: "You are banned from this server." };
-    }
-
-    this.sessionManager.refresh(token);
-
-    // Preserve entity identity across reconnects when the old entity is
-    // still in memory (typical back-to-back CLI case). Previously we
-    // removed and respawned every reconnect, which gave the user a fresh
-    // EntityId — fine for DB-migrated state, but in-memory indexes keyed
-    // by EntityId (CrewManager owner/member, room presence, command-queue
-    // state) lost the binding. Now: if the old entity is alive and
-    // disconnected, just rebind the new connection. Fresh-spawn only when
-    // the entity is truly gone (server restart, eviction).
-    const existing = this.entities.findAgentByName(session.name);
-    let entity: Entity | undefined;
-    if (existing) {
-      if (this._connections.isEntityConnected(existing.id)) {
-        return { error: "That name is already in use." };
-      }
-      // The cap applies to every unbound→bound transition — a grace-window
-      // reconnect that finds the instance full is rejected (hard cap; the
-      // entity was unbound on transient close so it isn't double-counted).
-      if (this.atLoginCapacity(internal)) {
-        return { error: Engine.ERR_AT_CAPACITY };
-      }
-      // Rebind: unbind any stale connection pointer, bind the new one to
-      // the SAME entity id. No removal, no respawn, no migration needed.
-      // Cancel any pending eviction so the grace timer doesn't yank the
-      // entity out from under the freshly bound connection.
-      this.cancelEviction(existing.id);
-      this._connections.unbindEntity(existing.id);
-      this._connections.bindEntity(connId, existing.id);
-      entity = existing;
-    } else {
-      // Old entity gone — create a fresh one.
-      if (this.atLoginCapacity(internal)) {
-        return { error: Engine.ERR_AT_CAPACITY };
-      }
-      entity = this.spawnEntity(connId, session.name);
-      if (!entity) {
-        return { error: "Reconnection failed." };
-      }
-      // Migrate task claims by name as a best-effort recovery for
-      // restarts where the old EntityId is unknowable.
-      if (this.db) {
-        tryLog(this.logger, "reconnect", "Task claim migration failed", () =>
-          this.db!.migrateTaskClaimsByName(session.name, entity!.id),
-        );
-      }
-    }
-
-    // Apply stored rank — but a session token is NOT unconditional proof of
-    // identity. A remote passwordless login is capped at rank 0 at login() yet
-    // still mints a valid token; restoring the persisted (elevated) rank from
-    // that token would launder the login cap into a full rank restore. Restore
-    // at most the rank the minting login was actually granted (session.grantedRank),
-    // UNLESS the reconnecting connection is itself a trusted anchor (loopback
-    // desktop operator or internal room/crew agent) — in which case the current
-    // connection re-establishes identity directly, exactly like login().
-    let restoredRank = 0;
-    if (this.db) {
-      const user = this.db.getUserByName(entity.name);
-      if (user) {
-        const trustedNow = internal || isLoopbackConnection(this._connections.get(connId));
-        const ceiling = trustedNow ? user.rank : (session.grantedRank ?? 0);
-        restoredRank = Math.min(user.rank, ceiling);
-        entity.properties.rank = restoredRank as EntityRank;
-        this.db.updateUserLastLogin(user.id);
-      }
-    }
-
-    // Update the session to point to the new entity, carrying the restored rank
-    // forward as the new token's ceiling so subsequent reconnects stay capped.
-    this.sessionManager.revoke(token);
-    const newSession = this.sessionManager.create(entity.id, entity.name, restoredRank);
-
-    this.applyAdminBootstrap(entity, connId);
-
-    return { entityId: entity.id, name: entity.name, token: newSession.token };
+  reconnect(connId: string, token: string, internalToken?: string): LoginResult {
+    return this.authCoordinator.reconnect(connId, token, internalToken);
   }
 
-  /** Validate a session token. Returns entity ID if valid. */
   authenticate(token: string): EntityId | null {
-    if (!this.sessionManager) return null;
-    const session = this.sessionManager.validate(token);
-    return session?.entityId ?? null;
+    return this.authCoordinator.authenticate(token);
   }
 
   /** Check rate limit for a key. Returns true if allowed. */
@@ -898,286 +536,7 @@ export class Engine {
   }
 
   processCommand(entityId: EntityId, raw: string, opts?: { bypassModal?: boolean }): Promise<void> {
-    return this.commandCoordinator.track(this.executeCommand(entityId, raw, opts));
-  }
-
-  /** Process a single command immediately */
-  private async executeCommand(
-    entityId: EntityId,
-    raw: string,
-    opts?: { bypassModal?: boolean },
-  ): Promise<void> {
-    const commandStartedAt = Date.now();
-    const entity = this.entities.get(entityId);
-    if (!entity) return;
-
-    // Engine-initiated housekeeping (brief heartbeat, login look) must not be
-    // captured by an entity's active modal — inside Code Mode the rewrite
-    // would turn "brief" into the coding task `code brief`.
-    const routedRaw = opts?.bypassModal ? raw : this.routeModalCommand(entity, raw);
-    const input = this.commands.parse(routedRaw, entityId, entity.room);
-
-    if (!input.verb) return;
-    const def = this.commands.getDef(input.verb);
-
-    const recordUsage = (success: boolean) => {
-      if (!this.db) return;
-      const classification = classifyPrimitive(routedRaw, def?.name);
-      const promptVersion =
-        entity.kind === "agent"
-          ? this.agentRuntime.get(entity.name)?.getStatus().promptVersion
-          : undefined;
-      tryLog(this.logger, "telemetry", "Primitive usage recording failed", () => {
-        this.db!.recordPrimitiveUsage({
-          actorId: String(entityId),
-          actorName: entity.name,
-          actorKind: entity.kind,
-          source: "command",
-          ...classification,
-          success,
-          latencyMs: Date.now() - commandStartedAt,
-          createdAt: commandStartedAt,
-          promptVersion,
-        });
-      });
-    };
-
-    const room = this.rooms.get(entity.room);
-    const handler = this.commands.resolve(input.verb, room?.module.commands);
-
-    if (!handler) {
-      // Macro fallback: entity macros first, then system macros
-      if (this.macroManager) {
-        const macro =
-          this.macroManager.getByName(input.verb, entityId as string) ??
-          this.macroManager.getByName(input.verb, "system");
-        if (macro) {
-          const commands = macro.command
-            .split(";")
-            .map((c) => c.trim())
-            .filter(Boolean);
-          for (const cmd of commands) {
-            this.processCommand(entityId, cmd);
-          }
-          return;
-        }
-      }
-      this.sendToEntity(entityId, `Unknown command: ${input.verb}. Type "help" for commands.`);
-      recordUsage(false);
-      return;
-    }
-
-    // Enforce minRank on built-in commands. Under the `earned` / `open`
-    // autonomy postures, a command that declares a safety gate defers its
-    // rank check to the gate — auto-derived rank caps at 4 while gated
-    // commands historically demanded 5, which double-locked the ladder the
-    // gate registry promised. The gate (with its standing floor, witness
-    // path, and destructive-core carve-out) is the real authority; the rank
-    // gate remains for ungated commands and for the default guarded posture.
-    if (def?.minRank && def.minRank > 0) {
-      const rank = getRank(entity);
-      const gateIsAuthority = Boolean(def.gate && this.db && getAutonomyPosture() !== "guarded");
-      // LOCAL profile: rank floors are off for the operator's own instance
-      // (loopback logins are also promoted to sovereign at login).
-      if (rank < def.minRank && !gateIsAuthority && !isLocalUngated()) {
-        this.sendToEntity(
-          entityId,
-          `You must be at least ${rankName(def.minRank)} (rank ${def.minRank}) to use "${def.name}".`,
-        );
-        recordUsage(false);
-        return;
-      }
-    }
-
-    // Enforce safety gate if declared. A gate is a per-operation competence
-    // proof — see src/engine/safety-gates.ts. Self-certification stays closed
-    // (a standing-only holder is refused in guarded posture with no window),
-    // but the ladder is now walkable: `checkGateForExecution` authorizes via
-    // unsupervised competence, an operator-declared open posture (non-core
-    // gates), a live witness-granted supervision window, or — under the
-    // `earned` posture — optimistic supervision whose demonstration counts
-    // only after a qualified witness attests it. `recordGateExecution`
-    // writes the competence consequence of whichever path authorized us.
-    if (def?.gate && this.db) {
-      const result = checkGateForExecution(this.db, entityId, def.gate);
-      if (!result.ok) {
-        this.sendToEntity(entityId, result.reason ?? `Gate "${def.gate}" denied.`);
-        recordUsage(false);
-        return;
-      }
-      recordGateExecution(this.db, entityId, def.gate, result, `command:${def.name}`);
-    }
-
-    const ctx = this.buildCommandContext(entity.room, entityId) ?? this.buildContext(entity.room);
-    if (!ctx) return;
-
-    let handlerThrew = false;
-    try {
-      const result = handler(ctx, input);
-      // Await async handlers so callers that `await processCommand` get
-      // proper sequencing. Non-awaiting callers ignore the returned Promise
-      // and behavior is unchanged for them.
-      if (result instanceof Promise) {
-        try {
-          await result;
-        } catch (err) {
-          handlerThrew = true;
-          const msg = getErrorMessage(err);
-          this.logger.error("command", `Async error in "${input.verb}"`, { error: msg });
-          this.sendToEntity(entityId, `Command error: ${msg}`);
-        }
-      }
-    } catch (err) {
-      const msg = getErrorMessage(err);
-      this.logger.error("command", `Error in "${input.verb}"`, { error: msg });
-      this.sendToEntity(entityId, `Command error: ${msg}`);
-      // Track failed command
-      if (this.db) {
-        const entity = this.entities.get(entityId);
-        if (entity) {
-          tryLog(this.logger, "tick", "Activity tracking failed", () => {
-            this.db!.trackActivity(entity.name, "command", input.verb, false);
-          });
-        }
-      }
-      recordUsage(false);
-      return;
-    }
-
-    // Track quest progress based on command type
-    this.trackQuest(entityId, input.verb, routedRaw);
-
-    // Track activity for novelty scoring (with success)
-    if (this.db) {
-      const entity = this.entities.get(entityId);
-      if (entity) {
-        tryLog(this.logger, "tick", "Activity tracking failed", () => {
-          this.db!.trackActivity(entity.name, "command", input.verb, true);
-          this.db!.trackActivity(entity.name, "room_visit", entity.room);
-        });
-      }
-    }
-
-    // NOTE: no self-reported demonstration recording here. Gated commands are
-    // unattended dangerous ops (see the gate check above) — self-recording a
-    // demonstration on a clean run is exactly the self-certification path that
-    // let a standing-only entity auto-unlock a gate. Competence is earned only
-    // via operator grant / rank promotion / witnessed demonstration.
-    recordUsage(!handlerThrew);
-
-    this.logEvent({ type: "command", entity: entityId, input: routedRaw, timestamp: Date.now() });
-  }
-
-  private routeModalCommand(entity: Entity, raw: string): string {
-    const activeModal = entity.properties.active_modal;
-    if (activeModal !== "code") return raw;
-
-    const trimmed = raw.trim();
-    if (!trimmed) return raw;
-    // Explicit world command while preserving the current modal and its streams.
-    // Normal command permissions still run after routing.
-    if (trimmed.startsWith("/") && trimmed.length > 1) return trimmed.slice(1).trim();
-
-    const verb = trimmed.split(/\s+/, 1)[0]?.toLowerCase();
-    if (!verb || verb === "code") return raw;
-
-    if (verb === "exit" || verb === "back" || verb === "world") {
-      return "code exit";
-    }
-    if (verb === "help" || verb === "?") {
-      return "code help";
-    }
-
-    return `code ${trimmed}`;
-  }
-
-  private trackQuest(entityId: EntityId, verb: string, raw?: string): void {
-    const entity = this.entities.get(entityId);
-    if (!entity?.properties.active_quest) return;
-
-    if (verb === "look" || verb === "l") {
-      trackQuestProgress(entity, "look");
-    } else if (verb === "say" || verb === "'") {
-      trackQuestProgress(entity, "say");
-    } else if (verb === "examine" || verb === "ex" || verb === "x") {
-      trackQuestProgress(entity, "examine");
-    } else if (
-      [
-        "move",
-        "go",
-        "north",
-        "south",
-        "east",
-        "west",
-        "up",
-        "down",
-        "n",
-        "s",
-        "e",
-        "w",
-        "u",
-        "d",
-        "northeast",
-        "northwest",
-        "southeast",
-        "southwest",
-        "ne",
-        "nw",
-        "se",
-        "sw",
-      ].includes(verb)
-    ) {
-      trackQuestProgress(entity, "move", entity.room);
-    } else if (verb === "memory") {
-      const lower = raw?.toLowerCase() ?? "";
-      if (lower.startsWith("memory set ") || lower.startsWith("memory set\t")) {
-        trackQuestProgress(entity, "memory_set");
-      }
-    } else if (verb === "note") {
-      const lower = raw?.toLowerCase().trim() ?? "";
-      const noteSubs = [
-        "list",
-        "search",
-        "space",
-        "delete",
-        "link",
-        "trace",
-        "graph",
-        "correct",
-        "types",
-        "evolve",
-      ];
-      const firstToken = lower.split(/\s+/)[1] ?? "";
-      if (lower !== "note" && !noteSubs.includes(firstToken)) {
-        trackQuestProgress(entity, "note_create");
-      }
-    } else if (verb === "recall") {
-      trackQuestProgress(entity, "recall");
-    } else if (verb === "reflect") {
-      trackQuestProgress(entity, "reflect");
-    } else if (verb === "project") {
-      const lower = raw?.toLowerCase().trim() ?? "";
-      if (lower.includes(" join")) {
-        trackQuestProgress(entity, "project_join");
-      }
-    } else if (verb === "task") {
-      const lower = raw?.toLowerCase().trim() ?? "";
-      if (lower.startsWith("task claim ")) {
-        trackQuestProgress(entity, "task_claim");
-      } else if (lower.startsWith("task submit ")) {
-        trackQuestProgress(entity, "task_submit");
-      }
-    } else if (verb === "pool") {
-      const lower = raw?.toLowerCase().trim() ?? "";
-      if (lower.includes(" add ")) {
-        trackQuestProgress(entity, "pool_add");
-      }
-    } else if (verb === "channel") {
-      const lower = raw?.toLowerCase().trim() ?? "";
-      if (lower.startsWith("channel send ")) {
-        trackQuestProgress(entity, "channel_send");
-      }
-    }
+    return this.commandCoordinator.track(this.commandPhaseCoordinator.execute(entityId, raw, opts));
   }
 
   // ─── Tick Loop ──────────────────────────────────────────────────────────
@@ -1204,19 +563,13 @@ export class Engine {
     // live timers. Tear them down before the running guard so stop() is
     // always a complete teardown.
     this.crewManager?.stop();
+    this.authCoordinator.stop();
     if (!this.running) return;
     this.running = false;
     if (this.tickTimer) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
     }
-    // Cancel any pending grace-period eviction timers so they don't fire
-    // after stop()/shutdown() — important for tests that create/tear down
-    // engines repeatedly, and clean for production restarts.
-    for (const timer of this.entityEvictionTimers.values()) {
-      clearTimeout(timer);
-    }
-    this.entityEvictionTimers.clear();
     this.mediaManager?.stop();
     this.logger.info("engine", "Marina engine stopped.");
   }
@@ -1635,82 +988,6 @@ export class Engine {
     }
 
     return { ok: true, name };
-  }
-
-  /** Promote entity to sovereign if listed in MARINA_ADMINS env var */
-  private applyAdminBootstrap(entity: Entity, connId: string, identity?: LoginIdentity): void {
-    // Auth mode: bind the verified identity to this named entity and grant admin
-    // by VERIFIED EMAIL (MARINA_AUTH_ADMIN_EMAILS) — never by name. This closes
-    // the name-based admin hole that makes name-login unsafe for public hosting.
-    if (identity) {
-      if (this.db) {
-        const user = this.db.getUserByName(entity.name);
-        if (user) this.db.bindAuthSubject(user.id, identity.subject, identity.email);
-      }
-      const adminEmails = new Set(
-        (process.env.MARINA_AUTH_ADMIN_EMAILS ?? "")
-          .split(",")
-          .map((s) => s.trim().toLowerCase())
-          .filter(Boolean),
-      );
-      if (identity.emailVerified && adminEmails.has(identity.email.toLowerCase())) {
-        this.grantSovereign(entity);
-      }
-      return;
-    }
-
-    // Under auth-required mode, name-based admin promotion is disabled entirely
-    // (an unauthenticated name can no longer claim admin).
-    if (this.config.authRequired) return;
-
-    // LOCAL trust profile: this instance is one operator's own machine and
-    // binds loopback only (main.ts refuses `local` on a public bind). Every
-    // loopback login — the human and the agents they run — is the operator,
-    // so it is sovereign without MARINA_ADMINS. Remote connections cannot
-    // exist here by construction; if one does, it gets nothing.
-    if (isLocalUngated()) {
-      if (isLoopbackConnection(this._connections.get(connId))) this.grantSovereign(entity);
-      return;
-    }
-
-    const adminNames = new Set(
-      (process.env.MARINA_ADMINS ?? "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    );
-    if (!adminNames.has(entity.name)) return;
-
-    // SECURITY: MARINA_ADMINS is name-based, and under passwordless login a name
-    // is not proof of identity. Honor it ONLY for a genuine local operator — a
-    // loopback (or in-process/internal) connection, the same unspoofable trust
-    // anchor exec uses. A REMOTE connection claiming an admin name is refused
-    // with a loud log. This keeps the desktop-first flow (local operator on
-    // loopback becomes sovereign, zero config) while closing the public hole.
-    // For a hard, network-safe admin boundary use MARINA_AUTH=better-auth +
-    // MARINA_AUTH_ADMIN_EMAILS instead.
-    if (isLoopbackConnection(this._connections.get(connId))) {
-      this.grantSovereign(entity);
-    } else {
-      this.logger.warn(
-        "security",
-        `Refusing MARINA_ADMINS sovereign promotion for "${entity.name}" — passwordless ` +
-          `name-login from a non-loopback connection is not proof of identity. Enable ` +
-          `MARINA_AUTH=better-auth and use MARINA_AUTH_ADMIN_EMAILS for network admin access.`,
-      );
-    }
-  }
-
-  /** Promote an entity to sovereign (rank 9) + all safety gates (operator bootstrap). */
-  private grantSovereign(entity: Entity): void {
-    setRank(entity, 9);
-    if (this.db) {
-      const user = this.db.getUserByName(entity.name);
-      if (user) this.db.updateUserRank(user.id, 9);
-      // A sovereign needs full capability immediately, not after earning
-      // standing + demonstrations. Gate grants mirror the historical rank ladder.
-      grantGatesForRank(this.db, entity.id, 9);
-    }
   }
 
   /** Promote an entity to a rank if they are below it */
@@ -2447,6 +1724,7 @@ export class Engine {
           return runtime.httpPost(url, body, entityId);
         },
       },
+      durableMemory: residentMemoryAPI(db, () => this.entities.get(entityId)?.name),
       notes: {
         recall: (query) => {
           if (!db) return [];

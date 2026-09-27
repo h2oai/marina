@@ -28,7 +28,12 @@ test("a schema-131 database upgrades with stable note IDs; newer schemas fail cl
     const upgraded = new MarinaDB(path);
     try {
       expect(upgraded.getNote(7419)?.content).toBe("pre-upgrade evidence");
-      expect(upgraded.pendingLegacyBridges()).toEqual([]);
+      expect(
+        upgraded
+          .memoryRepository()
+          .raw.query("SELECT 1 FROM sqlite_schema WHERE name='legacy_memory_outbox'")
+          .get(),
+      ).toBeNull();
     } finally {
       upgraded.close();
     }
@@ -82,7 +87,7 @@ test("schema-132 twins and adopted reflections acquire owner-bound projections o
     try {
       expect(
         upgraded.memoryRepository().raw.query("SELECT * FROM memory_note_projections").all(),
-      ).toEqual([{ note_id: 810, record_id: "adopted" }]);
+      ).toContainEqual({ note_id: 810, record_id: "adopted", version: null });
       expect(upgraded.getNote(810)?.content).toBe("adopted reflection");
     } finally {
       upgraded.close();

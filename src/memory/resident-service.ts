@@ -4,7 +4,11 @@
 import { handleMemoryServiceApi } from "../net/memory-service-api";
 import type { MarinaDB } from "../persistence/database";
 import { MarinaMemoryClient, MemoryClientError } from "../sdk/memory-client";
-import { type MemoryOperationRequest, runMemoryOperation } from "../sdk/memory-operations";
+import {
+  type DurableMemoryAPI,
+  type MemoryOperationRequest,
+  runMemoryOperation,
+} from "../sdk/memory-operations";
 import { worldMemoryService } from "./world-service";
 
 interface Binding {
@@ -82,4 +86,26 @@ export async function residentMemoryOperation(
     space_id: space,
     result: await runMemoryOperation(binding.client, request, space),
   };
+}
+
+/** Shared command/extension binding. Resolve the live caller again for every call,
+ * then use the same authenticated transport and ACL checks as /v1/memory. */
+export function residentMemoryAPI(
+  db: MarinaDB | undefined,
+  resolveName: () => string | undefined,
+): DurableMemoryAPI {
+  return Object.freeze({
+    async run(request: MemoryOperationRequest) {
+      if (!db)
+        throw new MemoryClientError(503, "persistence_unavailable", "Memory requires persistence");
+      const name = resolveName();
+      if (!name)
+        throw new MemoryClientError(
+          401,
+          "world_identity_required",
+          "The calling entity is no longer active",
+        );
+      return residentMemoryOperation(db, name, request);
+    },
+  });
 }

@@ -171,11 +171,18 @@ export function memoryClaim(value: unknown): MemoryClaim {
     object: memoryTerm(claim.object),
   };
 }
-export function recordInput(value: unknown): MemoryRecordInput {
+export function recordInput(
+  value: unknown,
+  preservation?: { historical?: boolean; unchangedContent?: string },
+): MemoryRecordInput {
   const input = object(value);
   const types = ["fact", "observation", "decision", "inference", "skill", "episode"];
   const tiers = ["fact", "reflection", "skill"];
-  const content = textValue(input.content, "content");
+  const content =
+    typeof input.content === "string" &&
+    (preservation?.historical || input.content === preservation?.unchangedContent)
+      ? input.content
+      : textValue(input.content, "content");
   const validTime = memoryValidity(input.valid_time);
   const expectedVocabulary =
     input.expected_vocabulary_version === undefined
@@ -198,7 +205,7 @@ export function recordInput(value: unknown): MemoryRecordInput {
     throw new MemoryError(400, "subject_conflict", "Record and claim subjects must agree");
   if (input.metadata !== undefined) {
     object(input.metadata);
-    if (Buffer.byteLength(JSON.stringify(input.metadata)) > 16384)
+    if (!preservation?.historical && Buffer.byteLength(JSON.stringify(input.metadata)) > 16384)
       throw new MemoryError(400, "invalid_input", "Metadata exceeds 16 KiB");
   }
   for (const key of ["source_ids", "depends_on"] as const) {
@@ -206,7 +213,7 @@ export function recordInput(value: unknown): MemoryRecordInput {
     if (
       ids !== undefined &&
       (!Array.isArray(ids) ||
-        ids.length > 32 ||
+        (!preservation?.historical && ids.length > 32) ||
         ids.some((id) => typeof id !== "string" || !id || id.length > 128))
     )
       throw new MemoryError(400, "invalid_input", `${key} must contain at most 32 identifiers`);

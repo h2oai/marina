@@ -644,54 +644,43 @@ deletion preserves authored sources and other principals' cached results. There 
 source eviction. Include time, locale and external-tool version assumptions in inputs/policy. The cache does not certify a result's truth or memoize
 external side effects. Its pins are local; federated results require fresh remote reads.
 
-## Legacy ↔ durable bridge
+## Numeric compatibility commands
 
-The legacy `note` / `skill` / `pool` verbs keep writing to the `notes` table, and every such
-write is mirrored onto a **durable twin** in the author's resident space (`src/memory/legacy-bridge.ts`).
-The twin is registered on the legacy side as a `note_sources` row whose url is
-`marina-memory://record/<id>` (credibility 0 — a twin is provenance, never evidence). Bridging is
-fire-and-forget so the legacy reply lands in-tick; callers that need sequencing await
-`awaitPendingBridges()`. Every bridge is idempotent (stable keys such as `legacy-note-<id>-v1`,
-`legacy-note-<id>-verify-<n>`, `legacy-link-<a>-<b>-<rel>`) and never fails the legacy command.
+`note`, `recall`, `reflect`, `skill`, pools and `/mem` are compatibility adapters
+into the same durable record history. Their numeric IDs remain supported; new
+integrations should use `/v1/memory` and versioned record IDs.
 
-| Legacy verb | Durable operation on the twin | Notes |
-|---|---|---|
-| `note <text>`, `note claim <text>` | `capture` + `remember` (`legacy-note-<id>-v1`) | Metadata carries `legacy_note_id`, `note_type`, `tier`, `importance`. |
-| `note claim … source <url>` | as above, then the `note source` bridge | One bridge; the twin ends at version 2 with two sources. |
-| `note correct`, `note evolve` | `revise` (CAS on the current version) | Successor legacy note points at the same record's new version. |
-| `note delete` | `revise` to a `[deleted legacy note #<id>]` tombstone, validity closed | Never a cascading `forget`. |
-| `note consolidate <keeper> <dup…>` | `revise` each loser to a `[superseded legacy note #<id>]` tombstone, validity closed; metadata names the keeper note and record | Keeper's twin untouched. |
-| `note verify <id> disputed` | `revise` closing `valid_time.until` at the verification instant; content kept; `metadata.legacy_verification = "disputed"` | Same representation the durable `resolve` gives a losing rival; `servableRecord` drops it from `[evidence]`. |
-| `note verify <id> verified` | `reaffirm` (`dependency_versions: {}`) — or `revise` reopening validity when the twin was closed by a legacy dispute | Reaffirmation also settles an `await_confirmation` set the record belongs to. |
-| `note verify <id> unverified` | `revise` reopening validity if closed by a legacy dispute; otherwise no-op | |
-| `note resolve <case> left\|right\|both\|neither` | winners → the `verified` bridge, losers → the `disputed` bridge | Mirrors the legacy verdicts exactly: `neither` disputes both, `both` verifies both. |
-| `note link <a> <b> <rel>` | `remember` with an entity-object claim (`relate`): `<twinA> <rel> <twinB>` | Needs both twins; content is the two record ids only, so it never matches a natural-language `search`. Reachable with `memory graph <twinA id>`. |
-| `note unlink <a> <b> <rel>` | `revise` closing the relation's validity | The service has no destructive un-relate short of `forget`; a later re-link reopens the same record. |
-| `note source <id> <url>` | `capture` the url (session `legacy-sources`) + `revise` appending to `source_ids`; `metadata.legacy_sources` keeps type / credibility / observation | External urls count as evidence; `note:` refs are captured under `legacy-notes` (self-derived, excluded from `evidence_weighted`). |
-| `note derive <id> <src>` | the `note source` bridge with `note:<src>` + the `note link` bridge for `derived_from` | |
-| `skill store` | same as `note` | Record tier `skill`; `metadata.tier = "skill"`. |
-| `pool <name> add` | same as `note`, in the **author's** resident space | `metadata.pool`, `pool_id`, `shared: true`. Not institutional canon. |
-| `pool <name> ratify` | `remember` into the institutional space (unchanged) | Recorded as a second twin row (`metadata.mirror = "institutional"`); `findDurableTwin` keeps preferring the resident twin. |
-| `reflect adopt`, template / failure reflections | `remember` (existing) | |
-| **Not bridged** | | `note evolve` copies the predecessor's links to the new note without asserting durable relations (the twin record is the same, so existing relations already hold). `skill compose` / `skill import` / `skill share` create notes through paths that do not bridge yet. Legacy verifications recorded directly through the DB (not via `note verify` / `note resolve`) do not bridge. Retiring a twin does not remove its captured source text from `source_search`. |
+| Numeric operation | Canonical behavior |
+| --- | --- |
+| Create, claim, skill store/import/compose, pool add | Commit a record and an empty numeric address in one transaction |
+| Correct/evolve | Revise with CAS; retain the predecessor address as a historical version |
+| Source/derive | Capture provenance and revise the record; self-derived references never become independent evidence |
+| Verify/resolve | Append verification audit and the canonical verdict atomically |
+| Link/unlink | Create or close a typed relation between records |
+| Delete/consolidate | Retire the record with closed validity; preserve history and mark dependents stale |
+| Reflect adopt | Give the adopted record a numeric address without creating a second record |
+| Pool ratify | Publish an independently authorized institutional assertion |
 
-Same-named verbs are different tools: `memory claim/resolve/source/graph` act on durable records;
-`note claim/resolve/source/graph` act on legacy notes and mirror to their twins as above.
+Native edits are immediately visible through numeric references. Explicit durable
+`forget` erases record history and numeric addresses. Failed writes roll back; no
+background bridge, retry queue or backfill is required. Migration 138 converts old
+data and pending intents atomically while preserving existing IDs. Core key-value
+beliefs and process journals keep their separate semantics.
 
 ### Which verb?
 
-Three stores answer to similar words. `memory kv …` is the per-entity key-value belief store
+Related commands address different memory semantics. `memory kv …` is the per-entity key-value belief store
 (`memory kv set pace fast` is the agent tick rate); the bare `memory set/get/delete/list/history`
 spellings still work and `memory list` prints a one-line hint pointing at the durable side.
 
 | You want to… | Verb | Store / cost |
 |---|---|---|
-| find your own notes by keyword | `recall <q>` | legacy notes, FTS-ranked, no model call |
+| find your own notes by keyword | `recall <q>` | numeric record view, FTS-ranked, no model call |
 | filter durable records exactly | `memory query <JSON>` (`{}` lists) | durable service, symbolic |
 | pull everything on a topic, no synthesis | `recap <topic>` | notes + pools + chronicle, no model call |
 | get a synthesised answer | `ask <question>` | model call over notes + guide + pools + world search |
 | add web evidence to what you know | `dig <topic>` | notes + web, optional synthesis |
-| deposit into a shared pool | `share <pool> <text>` ≡ `pool <pool> add <text>` | legacy pool note + durable twin |
+| deposit into a shared pool | `share <pool> <text>` ≡ `pool <pool> add <text>` | canonical record with pool-scoped numeric address |
 | mark something checked | `note verify <id> …` (legacy note) · `memory reaffirm <ID> …` (durable record, re-pins premises) · `skill verify <name>` (skill package) | three different objects |
 
 ## Portable history and compatibility imports

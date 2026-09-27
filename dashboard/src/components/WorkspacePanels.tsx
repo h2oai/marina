@@ -1,3 +1,4 @@
+import { TrustedDashboardPanels } from "../lib/panel-registry";
 import { ExtensionWidgets } from "./ExtensionWidgets";
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
@@ -164,6 +165,7 @@ export function ContextPanel(props: PanelFocusProps) {
       <div className="flex h-full min-h-0 flex-col">
         <MyInventory />
         <ExtensionWidgets slot="sidebar" />
+        <TrustedDashboardPanels slot="sidebar" />
         <div className={selection ? "h-[30%] min-h-24 shrink-0" : "min-h-0 flex-1"}>
           <EntityRoster compact />
         </div>

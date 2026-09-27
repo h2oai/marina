@@ -15,7 +15,7 @@ import {
   institutionalSpaceFor,
   isInstitutionalPoolName,
 } from "../src/memory/institutional";
-import { findDurableTwin } from "../src/memory/legacy-bridge";
+import { findDurableTwin } from "../src/memory/legacy-projection";
 import { MemoryService } from "../src/memory/service";
 import { handleMemoryServiceApi } from "../src/net/memory-service-api";
 import { MarinaDB } from "../src/persistence/database";
@@ -260,9 +260,14 @@ it("`pool guide ratify` lifts the cap, verifies, and mirrors into the institutio
   const twin = findDurableTwin(db, noteId);
   expect(twin).toBeDefined();
   const guide = institutionalSpaceFor(db, "guide")!;
-  expect(twin!.spaceId).toBe(guide.id);
+  expect(twin!.spaceId).not.toBe(guide.id);
+  const publication = db
+    .getNoteSources(noteId)
+    .map((source) => JSON.parse(source.metadata ?? "{}"))
+    .find((meta) => meta.mirror === "institutional");
+  expect(publication.space_id).toBe(guide.id);
   const reader = user("erin");
-  const record = await reader.client.get(guide.id, twin!.recordId);
+  const record = await reader.client.get(guide.id, publication.record_id);
   expect(record.content).toBe("Prefer tellAndAwait for crew round trips");
   expect(record.importance).toBe(8);
   expect(record.metadata).toMatchObject({

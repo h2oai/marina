@@ -17,26 +17,20 @@ import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import { institutionalOwnerActor } from "../src/memory/institutional";
+
 import {
-  awaitPendingBridges,
-  bridgeLegacyConsolidation,
-  bridgeLegacyLink,
-  bridgeLegacySource,
-  bridgeLegacyVerification,
   durableTwinRecordIds,
-  findDurableRelation,
   findDurableTwin,
   LEGACY_EXTERNAL_SOURCE_SESSION,
-  LEGACY_LINK_METADATA_KIND,
   LEGACY_SOURCE_SESSION,
-  SUPERSEDED_TWIN_CONTENT_PREFIX,
-} from "../src/memory/legacy-bridge";
+} from "../src/memory/legacy-projection";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { buildUnifiedContext, servableRecord } from "../src/memory/unified-context";
 import { MarinaDB } from "../src/persistence/database";
 import type { MemoryGraphResult, MemoryRecord, MemorySource } from "../src/sdk/memory-types";
 import { type EntityId, roomId } from "../src/types";
 import { MockConnection, makeTestRoom, stripAnsi } from "./helpers";
+import { findDurableRelation } from "./memory-numeric-helpers";
 
 describe("legacy verbs ↔ durable twin bridge", () => {
   let directory: string;
@@ -51,12 +45,11 @@ describe("legacy verbs ↔ durable twin bridge", () => {
   const run = async (connection: MockConnection, text: string) => {
     connection.clear();
     await engine.processCommand(connection.entity as EntityId, text);
-    await awaitPendingBridges();
     return stripAnsi(connection.allTextJoined());
   };
   const latestNoteId = (name: string) => db.getNotesByEntity(name, 1)[0]!.id;
   const evidenceIds = async (query: string) => {
-    const result = await buildUnifiedContext(db, "Alice", query);
+    const result = await buildUnifiedContext(db, "Alice", query, { scope: "evidence" });
     return result.tiers.find((t) => t.tier === "evidence")?.items.map((i) => i.id) ?? [];
   };
   const sources = async () =>
@@ -101,7 +94,7 @@ describe("legacy verbs ↔ durable twin bridge", () => {
 
     const retired = await record(loserTwin.recordId);
     expect(retired.version).toBe(2);
-    expect(retired.content).toBe(`${SUPERSEDED_TWIN_CONTENT_PREFIX}${loser}]`);
+    expect(retired.content).toBe(`[superseded legacy note #${loser}]`);
     expect(retired.metadata).toMatchObject({
       retired_legacy_note_id: loser,
       retired_reason: "consolidated",
@@ -128,7 +121,7 @@ describe("legacy verbs ↔ durable twin bridge", () => {
     expect(evidence).not.toContain(loserTwin.recordId);
 
     // Idempotent, and a second consolidate call is a no-op on the twin.
-    await bridgeLegacyConsolidation(db, "Alice", keeper, [loser]);
+    expect(db.consolidateNotes("Alice", keeper, [loser])).toBe(0);
     expect((await record(loserTwin.recordId)).version).toBe(2);
     expect(await run(alice, `note consolidate ${keeper} ${loser}`)).toContain("0 memory record(s)");
     expect((await record(loserTwin.recordId)).version).toBe(2);
@@ -164,10 +157,9 @@ describe("legacy verbs ↔ durable twin bridge", () => {
     expect(later.results.map((r) => r.id)).not.toContain(twin.recordId);
 
     // Idempotent: the same verdict again does not touch the twin.
-    const verifications = db.getNoteVerifications(noteId);
-    await bridgeLegacyVerification(db, "Alice", noteId, "disputed", {
-      key: `legacy-note-${noteId}-verify-${verifications[0]!.id}`,
-    });
+    const verification = db.getNoteVerifications(noteId).at(0)!;
+    expect(verification.status).toBe("disputed");
+
     expect((await record(twin.recordId)).version).toBe(2);
 
     // Verified → validity reopens, metadata follows.
@@ -186,9 +178,9 @@ describe("legacy verbs ↔ durable twin bridge", () => {
     expect(current.version).toBe(4);
     expect(current.valid_time?.until ?? null).toBeNull();
 
-    // Unverified on an open twin is the default state → no-op.
+    // Revoking verification is an audited canonical revision.
     await run(alice, `note verify ${noteId} unverified`);
-    expect((await record(twin.recordId)).version).toBe(4);
+    expect((await record(twin.recordId)).version).toBe(5);
   });
 
   it("`note resolve` mirrors the case verdicts: the loser's twin is closed as disputed, the winner's twin reaffirmed", async () => {
@@ -263,7 +255,7 @@ describe("legacy verbs ↔ durable twin bridge", () => {
       object: { kind: "entity", id: twinB.recordId },
     });
     expect(relation!.metadata).toMatchObject({
-      kind: LEGACY_LINK_METADATA_KIND,
+      kind: "legacy-link",
       legacy_source_note_id: a,
       legacy_target_note_id: b,
       relationship: "supports",
@@ -278,7 +270,9 @@ describe("legacy verbs ↔ durable twin bridge", () => {
     ).result as MemoryGraphResult;
     expect(graph.edges.map((e) => e.record.id)).toEqual([relation!.id]);
     // Idempotent.
-    expect((await bridgeLegacyLink(db, "Alice", a, b, "supports"))?.recordId).toBe(relation!.id);
+    expect(
+      (await findDurableRelation(db, "Alice", twinA.recordId, "supports", twinB.recordId))?.id,
+    ).toBe(relation!.id);
     expect((await record(relation!.id)).version).toBe(1);
     // The relation is two record ids, never natural language → not evidence.
     expect(await evidenceIds("supports ferry")).not.toContain(relation!.id);
@@ -328,7 +322,7 @@ describe("legacy verbs ↔ durable twin bridge", () => {
     await run(alice, "note The lighthouse lamp is an LED array type fact");
     const noteId = latestNoteId("Alice");
     const twin = findDurableTwin(db, noteId)!;
-    expect((await record(twin.recordId)).source_ids).toEqual([twin.sourceId!]);
+    expect((await record(twin.recordId)).source_ids).toEqual([]);
 
     const reply = await run(
       alice,
@@ -337,7 +331,7 @@ describe("legacy verbs ↔ durable twin bridge", () => {
     expect(reply).toContain("Source attached");
     let current = await record(twin.recordId);
     expect(current.version).toBe(2);
-    expect(current.source_ids).toHaveLength(2);
+    expect(current.source_ids).toHaveLength(1);
     const added = current.source_ids.find((id) => id !== twin.sourceId)!;
     const captured = (await sources()).find((s) => s.id === added)!;
     expect(captured.body).toBe("https://example.test/lamp");
@@ -355,19 +349,13 @@ describe("legacy verbs ↔ durable twin bridge", () => {
     // Changed metadata gets a revision; identical retries reuse it and its source.
     await run(alice, `note source ${noteId} https://example.test/lamp credibility 0.9`);
     expect((await record(twin.recordId)).version).toBe(3);
-    expect(
-      (
-        await bridgeLegacySource(db, "Alice", noteId, {
-          url: "https://example.test/lamp",
-          credibility: 0.9,
-        })
-      )?.version,
-    ).toBe(3);
+    db.addNoteSource(noteId, { url: "https://example.test/lamp", credibility: 0.9 });
+    expect((await record(twin.recordId)).version).toBe(3);
     // A second, different url is appended.
     await run(alice, `note source ${noteId} https://example.test/manual`);
     current = await record(twin.recordId);
     expect(current.version).toBe(4);
-    expect(current.source_ids).toHaveLength(3);
+    expect(current.source_ids).toHaveLength(2);
 
     // `note claim … source <url>`: twin + mirrored source in one bridge.
     await run(
@@ -378,7 +366,7 @@ describe("legacy verbs ↔ durable twin bridge", () => {
     const claimTwin = findDurableTwin(db, claimId)!;
     const claim = await record(claimTwin.recordId);
     expect(claim.version).toBe(2);
-    expect(claim.source_ids).toHaveLength(2);
+    expect(claim.source_ids).toHaveLength(1);
     expect(claim.metadata).toMatchObject({
       legacy_sources: [{ url: "https://example.test/tides" }],
     });
@@ -394,7 +382,7 @@ describe("legacy verbs ↔ durable twin bridge", () => {
 
     expect(await run(alice, `note derive ${derived} ${source}`)).toContain("records derivation");
     const current = await record(derivedTwin.recordId);
-    expect(current.source_ids).toHaveLength(2);
+    expect(current.source_ids).toHaveLength(1);
     const added = current.source_ids.find((id) => id !== derivedTwin.sourceId)!;
     const captured = (await sources()).find((s) => s.id === added)!;
     expect(captured.body).toBe(`note:${source}`);
@@ -483,7 +471,12 @@ describe("legacy verbs ↔ durable twin bridge", () => {
     expect(db.getNote(noteId)!.verification_status).toBe("verified");
     const mirrorSpace = JSON.parse(mirrorRow.metadata!).space_id as string;
     await run(alice, `note delete ${noteId}`);
-    expect(db.pendingLegacyBridges()).toEqual([]);
+    expect(
+      db
+        .memoryRepository()
+        .raw.query("SELECT 1 FROM sqlite_schema WHERE name='legacy_memory_outbox'")
+        .get(),
+    ).toBeNull();
     expect((await record(twin.recordId)).content).toContain("[deleted legacy note #");
     expect(
       db.memoryRepository().read(institutionalOwnerActor(db), mirrorSpace, mirrorId).content,

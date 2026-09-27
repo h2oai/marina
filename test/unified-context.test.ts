@@ -13,6 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { Engine } from "../src/engine/engine";
+import { findDurableTwin } from "../src/memory/legacy-projection";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import {
   buildUnifiedContext,
@@ -139,7 +140,14 @@ describe("unified memory context", () => {
     const fx = await seedUnifiedFixture(engine, db);
     const evidence = await buildUnifiedContext(db, fx.owner, FIXTURE_QUERY, { scope: "evidence" });
     expect(Object.keys(tierIds(evidence)).sort()).toEqual(["evidence", "proposal"]);
-    expect(sortedIds(tierIds(evidence)).evidence).toEqual([fx.recordId, fx.sourceId].sort());
+    expect(sortedIds(tierIds(evidence)).evidence).toEqual(
+      [
+        fx.recordId,
+        ...[fx.verifiedNoteId, fx.plainNoteId, fx.skillNoteId].map(
+          (id) => findDurableTwin(db, id)!.recordId,
+        ),
+      ].sort(),
+    );
     const legacy = await buildUnifiedContext(db, fx.owner, FIXTURE_QUERY, { scope: "legacy" });
     expect(Object.keys(tierIds(legacy)).sort()).toEqual(["skill", "trusted", "unverified"]);
     expect(legacy.degraded).toEqual([]);
@@ -324,7 +332,7 @@ describe("unified memory context", () => {
       expect(Object.keys(tierIds(context)).every((t) => t === "evidence" || t === "proposal")).toBe(
         true,
       );
-      expect(context.tiers.reduce((n, t) => n + t.items.length + t.omitted, 0)).toBe(3);
+      expect(context.tiers.reduce((n, t) => n + t.items.length + t.omitted, 0)).toBe(5);
       expect(memory?.notes).toEqual([]);
     });
 

@@ -86,7 +86,7 @@ with `memory assist-cancel ID`, and its result is a cited proposal, not a change
 Topic clustering is deterministic and lexical: distinct content terms (lower-cased,
 ≥ 4 chars, stop-words dropped); the term with the highest document frequency names
 the cluster, ties break alphabetically. The task carries legacy note ids; the
-reflector reads the durable twins through `assist_read` by searching the topic terms.
+reflector reads their canonical records through `assist_read` by searching the topic terms.
 The debounce maps are in-process and reset on restart; the durable guards (open-job
 marker, receipt note) do not.
 
@@ -209,7 +209,7 @@ the same record. The helper earns `assistance_adopted` standing (1.0; delegated 
 0.6 root / 0.4 shared among answered contributors); a confirmed abstention earns 0.25; an
 adopted record later superseded by `memory resolve` debits 0.5.
 
-Institutional spaces (the durable twins of `guide`, `orchestration:*`, `tradition:*`; owned
+Institutional spaces (authorized publications from `guide`, `orchestration:*`, `tradition:*`; owned
 by the `guide` system principal, readable by everyone) accept only ratifications: standing
 ≥ 15, a sovereign, or the ungated local operator. Every ratified record carries
 `metadata.ratified_by`, so a shared record always answers "why is this shared?". On a shared

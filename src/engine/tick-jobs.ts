@@ -8,7 +8,6 @@ import type { BoardManager } from "../coordination/board-manager";
 import type { ChannelManager } from "../coordination/channel-manager";
 import type { TaskManager } from "../coordination/task-manager";
 import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
-import { replayPendingBridges } from "../memory/legacy-bridge";
 import { memoryObservabilityPollTicks, pollMemoryEvents } from "../net/memory-observability";
 import { cleanupStaleConversationChannels } from "../net/model-api";
 import type { MarinaDB } from "../persistence/database";
@@ -72,13 +71,6 @@ export interface TickJobHost {
  * (`db`, managers) are checked when the job runs, not when it is declared.
  */
 export function registerTickJobs(host: TickJobHost, s: TickScheduler): void {
-  s.register({
-    name: "legacy-memory-retry",
-    every: 61,
-    phase: 7,
-    failureMessage: "Legacy memory retry failed",
-    run: () => (host.db ? replayPendingBridges(host.db, 25) : undefined),
-  });
   // Every ~5 minutes of wall clock: snapshot the autonomy numbers so
   // `readiness autonomy` can report a trend, not only the current window.
   const pulseEvery = autonomyPulseTicks(host.config.tickInterval);

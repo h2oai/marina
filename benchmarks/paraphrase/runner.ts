@@ -182,7 +182,7 @@ export async function runParaphraseBenchmark(options: ParaphraseRunOptions): Pro
         match
           ? (raw
               .query(
-                `SELECT n.id FROM notes n JOIN ${table} f ON n.id = f.rowid
+                `SELECT n.id FROM numeric_notes n JOIN ${table} f ON n.content_id = f.rowid
                  WHERE n.entity_name = ? AND ${table} MATCH ? ORDER BY f.rank LIMIT 3`,
               )
               .all(LEGACY_ENTITY, match) as { id: number }[])

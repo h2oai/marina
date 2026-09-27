@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { NoteTier } from "../../engine/constants";
-import type { LegacyBridgeIntent } from "../db-legacy-bridge";
+import type { createNumericHandle } from "../db-memory-numeric";
 import type * as notesDb from "../db-notes";
 import type {
   CoreMemoryHistoryRow,
@@ -17,15 +17,9 @@ import type { ExactKeys } from "./exact-keys";
 
 /** Legacy notes, core memory, note links, pools and memory API keys (`db-notes.ts`). */
 export interface NotesStore {
-  queueLegacyBridgeBackfill(
-    owner?: string,
-    afterId?: number,
-    limit?: number,
-  ): { scanned: number; afterId: number };
-  enqueueLegacyBridge(operation: string, args: unknown[]): number;
-  pendingLegacyBridges(limit?: number): LegacyBridgeIntent[];
-  completeLegacyBridge(id: number): void;
-  failLegacyBridge(id: number, code: string): void;
+  createMemoryNoteHandle(
+    ...args: Parameters<typeof createNumericHandle> extends [unknown, ...infer Rest] ? Rest : never
+  ): number;
   createNote(
     entityName: string,
     content: string,
@@ -172,11 +166,7 @@ export interface NotesStore {
 
 /** Runtime mirror of `NotesStore`'s method names — the drift test compares it to the facade. */
 export const NOTES_STORE_METHODS = [
-  "queueLegacyBridgeBackfill",
-  "enqueueLegacyBridge",
-  "pendingLegacyBridges",
-  "completeLegacyBridge",
-  "failLegacyBridge",
+  "createMemoryNoteHandle",
   "createNote",
   "getNotesByEntity",
   "getNotesByType",

@@ -507,7 +507,9 @@ describe("Export/Import", () => {
       expect(snapshot.tables.tasks).toHaveLength(1);
       expect(snapshot.tables.task_claims).toHaveLength(1);
       expect(snapshot.tables.macros).toHaveLength(1);
-      expect(snapshot.tables.notes).toHaveLength(3); // 2 regular + 1 pool note
+      expect(snapshot.tables.memory_note_projections).toHaveLength(3); // 2 personal + 1 pool address
+      expect(snapshot.tables.memory_record_versions).toHaveLength(4); // assertions and their relation
+      expect(snapshot.tables.notes).toHaveLength(7); // 3 empty handles + 4 canonical versions
       expect(snapshot.tables.note_links).toHaveLength(1);
       expect(snapshot.tables.core_memory).toHaveLength(1);
       expect(snapshot.tables.memory_pools).toHaveLength(1);

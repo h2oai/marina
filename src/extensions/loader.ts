@@ -5,6 +5,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Engine } from "../engine/engine";
 import { SAFETY_GATES } from "../engine/safety-gates";
+import { residentMemoryAPI } from "../memory/resident-service";
 import { registerResolver, unregisterResolver } from "../resolvers/registry";
 import type { Resolver } from "../resolvers/types";
 import type { ExtensionContext, ExtensionWidget, MarinaExtension } from "../sdk/extensions";
@@ -109,6 +110,10 @@ export async function loadExtensions(
                     rank: Number(entity.properties.rank ?? 0),
                   }),
                   room: input.room,
+                  durableMemory: residentMemoryAPI(
+                    engine.db,
+                    () => engine.entities.get(input.entity)?.name,
+                  ),
                   reply: (message: string) => room.send(input.entity, message),
                 }),
                 input.args,

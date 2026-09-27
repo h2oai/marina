@@ -68,8 +68,10 @@ export function snapshot(
       return 0;
     }
   };
-  const notes = count("SELECT COUNT(*) as n FROM notes");
-  const pools = count("SELECT COUNT(DISTINCT pool_id) as n FROM notes WHERE pool_id IS NOT NULL");
+  const notes = count("SELECT COUNT(*) as n FROM numeric_notes");
+  const pools = count(
+    "SELECT COUNT(DISTINCT pool_id) as n FROM numeric_notes WHERE pool_id IS NOT NULL",
+  );
   const benchmarkRuns = count("SELECT COUNT(*) as n FROM benchmark_runs");
   const entities = count("SELECT COUNT(*) as n FROM entities");
   let bytes = 0;
@@ -140,7 +142,7 @@ export function snapshotCompacted(
   target.exec("PRAGMA foreign_keys=OFF"); // allow cascades we do manually
 
   const before = {
-    notes: target.query("SELECT COUNT(*) AS n FROM notes").get() as { n: number },
+    notes: target.query("SELECT COUNT(*) AS n FROM numeric_notes").get() as { n: number },
     links: target.query("SELECT COUNT(*) AS n FROM note_links").get() as { n: number },
     activity: target.query("SELECT COUNT(*) AS n FROM entity_activity").get() as { n: number },
     entities: target.query("SELECT COUNT(*) AS n FROM entities").get() as { n: number },
@@ -170,7 +172,7 @@ export function snapshotCompacted(
         : Date.now() + 1; // future → matches everything
     dropped.compactionSummaries = countRows(
       `SELECT COUNT(*) AS n FROM notes
-           WHERE content LIKE '[compaction]%'
+           WHERE content LIKE '[compaction]%' AND tier='process'
              AND created_at < ?
              AND note_type NOT IN ('skill', 'reflection')
              AND importance < 7
@@ -179,7 +181,7 @@ export function snapshotCompacted(
     );
     target.run(
       `DELETE FROM notes
-           WHERE content LIKE '[compaction]%'
+           WHERE content LIKE '[compaction]%' AND tier='process'
              AND created_at < ?
              AND note_type NOT IN ('skill', 'reflection')
              AND importance < 7
@@ -218,7 +220,7 @@ export function snapshotCompacted(
   target.exec("VACUUM");
 
   const after = {
-    notes: target.query("SELECT COUNT(*) AS n FROM notes").get() as { n: number },
+    notes: target.query("SELECT COUNT(*) AS n FROM numeric_notes").get() as { n: number },
     links: target.query("SELECT COUNT(*) AS n FROM note_links").get() as { n: number },
     activity: target.query("SELECT COUNT(*) AS n FROM entity_activity").get() as { n: number },
     entities: target.query("SELECT COUNT(*) AS n FROM entities").get() as { n: number },

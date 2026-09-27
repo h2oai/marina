@@ -6,16 +6,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../src/engine/engine";
+
 import {
-  awaitPendingBridges,
-  bridgeLegacyNote,
-  DELETED_TWIN_CONTENT_PREFIX,
   durableTwinUrl,
   findDurableTwin,
   findLegacyNotesForRecord,
   parseDurableTwinUrl,
-  retireDurableTwin,
-} from "../src/memory/legacy-bridge";
+} from "../src/memory/legacy-projection";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { expandMemoryRecall } from "../src/memory/retrieval";
 import { MarinaDB } from "../src/persistence/database";
@@ -39,7 +36,6 @@ describe("legacy note ↔ durable twin bridge", () => {
     await engine.processCommand(connection.entity as EntityId, text);
     // Commands reply in-tick and bridge the durable twin in the background;
     // sequence on the bridge explicitly so assertions see the twin.
-    await awaitPendingBridges();
     return stripAnsi(connection.allTextJoined());
   };
   const latestNoteId = (name: string) => db.getNotesByEntity(name, 1)[0]!.id;
@@ -84,11 +80,11 @@ describe("legacy note ↔ durable twin bridge", () => {
     const twin = findDurableTwin(db, noteId);
     expect(twin).toBeDefined();
     expect(twin!.version).toBe(1);
-    expect(twin!.sourceId).toBeString();
-    const source = db.getNoteSources(noteId).find((s) => s.url === twin!.url)!;
-    expect(source.source_type).toBe("artifact");
-    expect(source.credibility).toBe(0);
-    expect(JSON.parse(source.metadata!)).toMatchObject({ kind: "durable-twin", version: 1 });
+    expect(twin!.sourceId).toBeUndefined();
+    expect(db.getNoteSources(noteId)).toEqual([]);
+    expect(
+      db.memoryRepository().raw.query("SELECT content FROM notes WHERE id=?").get(noteId),
+    ).toEqual({ content: "" });
 
     // Durable record carries the note verbatim with provenance metadata + captured source.
     const durableRecord = await record(twin!.recordId);
@@ -98,9 +94,8 @@ describe("legacy note ↔ durable twin bridge", () => {
     expect(durableRecord.metadata).toMatchObject({
       legacy_note_id: noteId,
       note_type: "fact",
-      importance: 7,
     });
-    expect(durableRecord.source_ids).toEqual([twin!.sourceId!]);
+    expect(durableRecord.source_ids).toEqual([]);
 
     // Durable retrieval surfaces.
     const search = (await durable({ operation: "search", input: { query: "Amber port" } }))
@@ -131,7 +126,9 @@ describe("legacy note ↔ durable twin bridge", () => {
       noteType: "fact",
       confidence: 0.9,
     });
-    await bridgeLegacyNote(db, "Alice", noteId);
+    expect(
+      db.createNote("Alice", "Confident but unsourced claim", undefined, { noteType: "fact" }),
+    ).toBe(noteId);
     expect(findDurableTwin(db, noteId)).toBeDefined();
     const hits = db.recallNotes("Alice", "confident unsourced claim");
     expect(hits.map((n) => n.id)).toContain(noteId);
@@ -149,9 +146,10 @@ describe("legacy note ↔ durable twin bridge", () => {
     await run(alice, "note The relay needs a key");
     const noteId = latestNoteId("Alice");
     const first = findDurableTwin(db, noteId)!;
-    const again = await bridgeLegacyNote(db, "Alice", noteId);
+    expect(db.createNote("Alice", "The relay needs a key")).toBe(noteId);
+    const again = findDurableTwin(db, noteId);
     expect(again?.recordId).toBe(first.recordId);
-    expect(db.getNoteSources(noteId).filter((s) => parseDurableTwinUrl(s.url))).toHaveLength(1);
+    expect(db.getNoteSources(noteId)).toHaveLength(0);
     expect((await record(first.recordId)).version).toBe(1);
   });
 
@@ -169,7 +167,7 @@ describe("legacy note ↔ durable twin bridge", () => {
     const newTwin = findDurableTwin(db, newId)!;
     expect(newTwin.recordId).toBe(oldTwin.recordId);
     expect(newTwin.version).toBe(2);
-    expect(newTwin.sourceId).not.toBe(oldTwin.sourceId);
+    expect(newTwin.sourceId).toBeUndefined();
     // Predecessor keeps its historical twin row untouched.
     expect(findDurableTwin(db, oldId)).toMatchObject({ recordId: oldTwin.recordId, version: 1 });
 
@@ -180,7 +178,7 @@ describe("legacy note ↔ durable twin bridge", () => {
       legacy_note_id: newId,
       supersedes_legacy_note_id: oldId,
     });
-    expect(current.source_ids).toEqual([newTwin.sourceId!]);
+    expect(current.source_ids).toEqual([]);
     const historical = (
       await durable({ operation: "get", id: oldTwin.recordId, input: { version: 1 } })
     ).result as MemoryRecord;
@@ -213,7 +211,7 @@ describe("legacy note ↔ durable twin bridge", () => {
 
   it("correcting a pending legacy note preserves the predecessor in durable history", async () => {
     const orphan = db.createNote("Alice", "Untwinned legacy note", undefined, { importance: 6 });
-    expect(findDurableTwin(db, orphan)).toBeUndefined();
+    expect(findDurableTwin(db, orphan)).toBeDefined();
     await run(alice, `note correct ${orphan} Now twinned`);
     const newId = latestNoteId("Alice");
     const twin = findDurableTwin(db, newId);
@@ -243,7 +241,7 @@ describe("legacy note ↔ durable twin bridge", () => {
     // The record is retired in place, not forgotten: tombstone content,
     // deletion marker, validity closed at the deletion instant, version +1.
     const current = await record(twin.recordId);
-    expect(current.content).toBe(`${DELETED_TWIN_CONTENT_PREFIX}${noteId}]`);
+    expect(current.content).toBe(`[deleted legacy note #${noteId}]`);
     expect(current.version).toBe(2);
     expect(current.metadata).toMatchObject({ deleted_legacy_note_id: noteId });
     expect(current.valid_time?.until).toBeNumber();
@@ -266,7 +264,7 @@ describe("legacy note ↔ durable twin bridge", () => {
     expect(historical.content).toBe("Ephemeral thought about heron migration");
 
     // Idempotent: retiring again is a no-op.
-    expect((await retireDurableTwin(db, "Alice", noteId, twin))?.version).toBe(2);
+    expect(db.deleteNote(noteId, "Alice")).toBe(false);
     expect((await record(twin.recordId)).version).toBe(2);
   });
 
@@ -293,8 +291,7 @@ describe("legacy note ↔ durable twin bridge", () => {
     const twin = findDurableTwin(db, noteId);
     expect(twin).toBeDefined();
     expect(twin!.version).toBe(1);
-    const source = db.getNoteSources(noteId).find((s) => s.url === twin!.url)!;
-    expect(source.credibility).toBe(0);
+    expect(db.getNoteSources(noteId)).toEqual([]);
     const durableRecord = await record(twin!.recordId);
     expect(durableRecord.content).toBe("The tide table is published weekly");
     expect(durableRecord.type).toBe("fact");
@@ -318,11 +315,11 @@ describe("legacy note ↔ durable twin bridge", () => {
     // A twin buried under many newer notes is still found (the previous
     // implementation scanned only the owner's 500 most recent notes).
     const old = db.createNote("Alice", "old twinned note", undefined, { skipDedup: true });
-    db.addNoteSource(old, { url: durableTwinUrl("rec-old"), credibility: 0 });
+    const oldRecord = findDurableTwin(db, old)!.recordId;
     for (let i = 0; i < 520; i++)
       db.createNote("Alice", `filler ${i}`, undefined, { skipDedup: true });
-    expect(findLegacyNotesForRecord(db, "Alice", "rec-old").map((n) => n.id)).toEqual([old]);
-    expect(findLegacyNotesForRecord(db, "Ghost", "rec-old")).toEqual([]);
+    expect(findLegacyNotesForRecord(db, "Alice", oldRecord).map((n) => n.id)).toEqual([old]);
+    expect(findLegacyNotesForRecord(db, "Ghost", oldRecord)).toEqual([]);
   });
 
   it("keeps legacy behaviour when the author has no durable world account", async () => {
@@ -330,13 +327,13 @@ describe("legacy note ↔ durable twin bridge", () => {
     expect(reply).toContain("saved");
     const noteId = latestNoteId("Ghost");
     expect(db.getNote(noteId)!.content).toBe("Ghost writes without a durable identity");
-    expect(findDurableTwin(db, noteId)).toBeUndefined();
+    expect(findDurableTwin(db, noteId)).toBeDefined();
     await expect(durable({ operation: "query", input: {} }, "Ghost")).rejects.toMatchObject({
       code: "world_identity_required",
     });
 
     const corrected = await run(ghost, `note correct ${noteId} Still no twin`);
     expect(corrected).toContain("superseding");
-    expect(findDurableTwin(db, latestNoteId("Ghost"))).toBeUndefined();
+    expect(findDurableTwin(db, latestNoteId("Ghost"))).toBeDefined();
   });
 });

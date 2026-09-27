@@ -3,7 +3,7 @@
 **When to read this:** you are adding a table or migration, deciding how long rows live, or keying anything by entity id. `CLAUDE.md` → "Architecture Rules" keeps the rules (append-only migrations, `RETENTION_POLICIES`, never-pruned tables, `durableEntityKey()` at the delegate boundary); this page is the full retention policy table and the two durable-key passes.
 
 ## Migrations
-- Migrations: append to `migrations` in `src/persistence/schema.ts` (re-exported as `MIGRATIONS` by `database.ts`), never modify existing migrations. `MARINA_DB_DURABILITY=full` (fsync per commit) is the world default; migrations 96–109 are append-only like all others.
+- Migrations: append to `FORWARD_MIGRATIONS` in `src/persistence/schema.ts` (re-exported as `MIGRATIONS` by `database.ts`), never modify existing migrations. `MARINA_DB_DURABILITY=full` (fsync per commit) is the world default; migrations 96–109 are append-only like all others.
 
 ## Row retention
 - **Row retention** (`src/engine/retention.ts`, hourly tick phase 2100, `runRetentionPass`): declarative `RETENTION_POLICIES` per table class — telemetry 7–30 d (`primitive_usage`, `feed_events`, `memory_service_events`, `coding_events`, `event_log` by row count), ledger 90 d (`direct_messages` acknowledged/expired, `cognitive_events`, `productivity_sessions`, `core_memory_history`, `media_jobs`, `memory_assistance_actions`), audit 365 d (`witness_attestations`, `trace_judgments`, `note_verifications`, `evidence_receipts`, `association_events`, `benchmark_runs`), `shell_log` 90 d; `chronicle`, `entity_standing`, `memory_resolutions`, `economic_events` are `append-only` and are never pruned (an override cannot re-enable it). `MARINA_RETENTION_OVERRIDES="table=30d,table2=0"` (0 = never). Batched deletes ≤ 5,000 rows via `db.deleteBatch` (uses `RETURNING rowid` — bun:sqlite `.changes` counts trigger writes). Missing tables/columns are skipped, not errors. Migration 116 adds the `direct_messages(deadline_at) WHERE status='delivered'` partial index plus `notes(supersedes_id)` and `note_sources(url)`.
@@ -84,3 +84,28 @@ Adding a delegate: put the query in the module, add the one-line delegate to `Ma
 ## Retired sources in `[evidence]`
 
 `servableSourceIds(db, spaceId, sourceIds, now)` in `unified-context.ts` drops `source_search` hits whose every deriving record is retired (superseded tombstone, current note superseded, or `valid_until` past); a source with no deriving record stays (a plain capture), and a fresh record re-deriving it makes it servable again. A query failure keeps all hits — it is a guard, not an access check.
+
+
+## Fresh schema and existing database upgrades
+
+Fresh databases install `schema-baseline.ts` (version 137) in one SQLite transaction,
+then apply any `FORWARD_MIGRATIONS` in `schema.ts`. This avoids replaying historical
+ALTER statements, index rebuilds, data conversions and per-version disk commits on
+an empty database. The baseline marker stays 137; forward migrations advance the database to the
+current version. Consolidation does not reset the schema counter.
+
+`schema-history.ts` retains the original SQL unchanged for populated databases. A
+database with any existing schema takes the historical upgrade path; the baseline
+is never stamped over existing tables. Pending versions still commit individually,
+a failure stops at the previous version, and newer unsupported schemas fail closed.
+
+`bun run schema:check` regenerates the baseline in a disposable in-memory database
+and checks the committed artifact. FTS shadow tables are created by SQLite, not
+copied as independent tables. Indexes, triggers, foreign keys and seeded allowlist
+entries are included; seed timestamps remain installation timestamps. Regression
+tests compare the baseline's schema and seed data with historical replay and test
+populated older databases, FTS writes/deletion, and reopening.
+
+New changes belong in `FORWARD_MIGRATIONS`, after its last version. Migration 138
+converts numeric memory inside the same transaction as its DDL and version marker. Do not edit the baseline
+or archived migrations to implement a new feature.

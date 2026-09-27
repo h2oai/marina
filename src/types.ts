@@ -1,3 +1,4 @@
+import type { DurableMemoryAPI } from "./sdk/memory-operations";
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -169,7 +170,8 @@ export interface NotesAPI {
   recall(query: string): { id: number; content: string; importance: number; score: number }[];
   /** Full-text search of notes */
   search(query: string): { id: number; content: string; importance: number }[];
-  /** Add a note */
+  /** @deprecated New features use durableMemory.run({ operation: "remember", ... }).
+   * Numeric notes remain a compatibility surface. */
   add(content: string, importance?: number, noteType?: string): number;
 }
 
@@ -194,7 +196,9 @@ export interface CommandContext extends RoomContext {
   mcp: McpAPI;
   /** HTTP API (rate-limited GET/POST) */
   http: HttpAPI;
-  /** Notes API (scoped to calling entity) */
+  /** Canonical durable record API, scoped to the calling world account. */
+  durableMemory: DurableMemoryAPI;
+  /** Legacy numeric notes (scoped to calling entity). New features use durableMemory. */
   notes: NotesAPI;
   /** Core memory API (scoped to calling entity) */
   memory: MemoryAPI;

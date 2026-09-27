@@ -15,6 +15,8 @@ describe("Agent Memory Primitives", () => {
   let conn1: MockConnection;
   let conn2: MockConnection;
 
+  const notesById = () => db.getNotesByEntity("Alice").sort((a, b) => a.id - b.id);
+
   beforeEach(() => {
     db = new MarinaDB(TEST_DB);
     engine = new Engine({ startRoom: roomId("test/start"), tickInterval: 60_000, db });
@@ -186,11 +188,11 @@ describe("Agent Memory Primitives", () => {
       conn1.clear();
       engine.processCommand(conn1.entity!, "note correct 1 The door is blue");
       expect(conn1.lastText()).toContain("superseding #1");
-      const newNote = db.getNote(2);
+      const newNote = notesById().at(-1);
       expect(newNote).toBeDefined();
       expect(newNote!.supersedes_id).toBe(1);
       // Check link was created
-      const links = db.getNoteLinks(2);
+      const links = db.getNoteLinks(newNote!.id);
       expect(links.length).toBe(1);
       expect(links[0]!.relationship).toBe("supersedes");
     });
@@ -264,16 +266,27 @@ describe("Agent Memory Primitives", () => {
       engine.processCommand(conn1.entity!, "note Premise A");
       engine.processCommand(conn1.entity!, "note Conclusion B");
       conn1.clear();
-      engine.processCommand(conn1.entity!, "note link 1 2 supports");
-      expect(conn1.lastText()).toContain("Linked note #1 -> #2 (supports)");
+      engine.processCommand(
+        conn1.entity!,
+        `note link ${notesById()[0]!.id} ${notesById()[1]!.id} supports`,
+      );
+      expect(conn1.lastText()).toContain(
+        `Linked note #${notesById()[0]!.id} -> #${notesById()[1]!.id} (supports)`,
+      );
     });
 
     it("should trace the graph from a note", () => {
       engine.processCommand(conn1.entity!, "note Root idea");
       engine.processCommand(conn1.entity!, "note Supporting evidence");
       engine.processCommand(conn1.entity!, "note Related concept");
-      engine.processCommand(conn1.entity!, "note link 1 2 supports");
-      engine.processCommand(conn1.entity!, "note link 2 3 related_to");
+      engine.processCommand(
+        conn1.entity!,
+        `note link ${notesById()[0]!.id} ${notesById()[1]!.id} supports`,
+      );
+      engine.processCommand(
+        conn1.entity!,
+        `note link ${notesById()[1]!.id} ${notesById()[2]!.id} related_to`,
+      );
       conn1.clear();
       engine.processCommand(conn1.entity!, "note trace 1");
       const text = conn1.lastText();
@@ -286,7 +299,10 @@ describe("Agent Memory Primitives", () => {
       engine.processCommand(conn1.entity!, "note Fact one #fact");
       engine.processCommand(conn1.entity!, "note Fact two #fact");
       engine.processCommand(conn1.entity!, "note Decision #decision");
-      engine.processCommand(conn1.entity!, "note link 1 2 supports");
+      engine.processCommand(
+        conn1.entity!,
+        `note link ${notesById()[0]!.id} ${notesById()[1]!.id} supports`,
+      );
       conn1.clear();
       engine.processCommand(conn1.entity!, "note graph");
       const text = stripAnsi(conn1.lastText());
@@ -354,8 +370,8 @@ describe("Agent Memory Primitives", () => {
         engine.processCommand(conn1.entity!, `note High importance item ${i} !8`);
       }
       engine.processCommand(conn1.entity!, "reflect");
-      // The reflection note ID should be 4 (after 3 source notes)
-      const links = db.getNoteLinks(4);
+      const reflection = db.getNotesByType("Alice", "episode")[0]!;
+      const links = db.getNoteLinks(reflection.id);
       const partOfLinks = links.filter((l) => l.relationship === "part_of");
       expect(partOfLinks.length).toBeGreaterThanOrEqual(2);
     });

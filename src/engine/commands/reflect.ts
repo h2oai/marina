@@ -2,14 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { memoryAccess } from "../../memory/access";
-import { withMemoryCompatibility } from "../../memory/compatibility";
 import {
   assistanceAdoptionUrl,
   findAdoptionNotes,
   findDurableTwin,
   findLegacyNotesForRecord,
-  recordDurableTwin,
-} from "../../memory/legacy-bridge";
+} from "../../memory/legacy-projection";
 import { residentMemoryOperation } from "../../memory/resident-service";
 import { type InheritedAuthority, inheritedAuthority } from "../../memory/unified-context";
 import { bold, category, dim, id as fmtId, header, separator, status } from "../../net/ansi";
@@ -260,7 +258,7 @@ export function reflectCommand(deps: {
     name: "reflect",
     aliases: [],
     help: "Reflect on your notes. Usage: reflect [topic] (files a cited job with a memory-reflector when one is available, else the deterministic template) | reflect via <helper> [topic] | reflect --template [topic] | reflect adopt <job> | reflect jobs | reflect failure <description>. Add --share <pool> to also deposit the lesson into a shared pool as a reflection (authors earn standing when others recall it). Add --no-spawn to use a running helper if there is one but never spawn a new one (session-end reflections).",
-    handler: withMemoryCompatibility(deps.db, (ctx: RoomContext, input) => {
+    handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
@@ -312,15 +310,19 @@ export function reflectCommand(deps: {
         content: string,
         importance: number,
         inputs: readonly NoteRow[],
+        recordId?: string,
       ): { id: number; authority: InheritedAuthority } => {
         const authority = inheritedAuthority(inputs);
-        const reflectionId = db.createNote(entity.name, content, input.room, {
+        const options = {
           importance,
           noteType: "episode",
           tier: "reflection",
           ...(authority.confidence !== null ? { confidence: authority.confidence } : {}),
           verificationStatus: authority.verification,
-        });
+        } as const;
+        const reflectionId = recordId
+          ? db.createMemoryNoteHandle(entity.name, recordId, input.room, options)
+          : db.createNote(entity.name, content, input.room, options);
         deps.logEvent?.({
           type: "note_created",
           entity: input.entity,
@@ -750,7 +752,6 @@ export function reflectCommand(deps: {
         }
 
         let receipt: MemoryReceipt;
-        let spaceId: string | undefined;
         try {
           // Durable side: the shared `adopt` operation (Phase 3.3) writes the
           // proposal as a versioned record with pinned same-space citations,
@@ -765,7 +766,6 @@ export function reflectCommand(deps: {
           });
           const result = adopted.result as MemoryAdoptResult;
           receipt = result;
-          spaceId = result.space_id ?? adopted.space_id ?? job.space_id;
         } catch (error) {
           ctx.send(
             input.entity,
@@ -782,18 +782,17 @@ export function reflectCommand(deps: {
         const citedNotes = dependsOn.flatMap((recordId) =>
           findLegacyNotesForRecord(db, entity.name, recordId, { currentOnly: true }),
         );
-        const { id: reflectionId, authority } = createReflectionNote(answer, 8, citedNotes);
+        const { id: reflectionId, authority } = createReflectionNote(
+          answer,
+          8,
+          citedNotes,
+          receipt.id,
+        );
         const linked: number[] = [];
         for (const note of citedNotes) {
           if (note.id !== reflectionId && linkPartOf(note.id, reflectionId)) linked.push(note.id);
         }
         const shared = shareReflection(answer, 8, authority);
-        recordDurableTwin(
-          db,
-          reflectionId,
-          { recordId: receipt.id, version: receipt.version ?? 1, spaceId },
-          entity.name,
-        );
         const helperName = db.getUser(job.worker_id)?.name ?? job.worker_id;
         db.addNoteSource(reflectionId, {
           url: assistanceAdoptionUrl(jobId),
@@ -896,6 +895,6 @@ export function reflectCommand(deps: {
         );
         await requestReflection(spawned.name, topic);
       }
-    }),
+    },
   };
 }

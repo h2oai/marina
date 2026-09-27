@@ -46,7 +46,11 @@ export type {
   MemoryKnowledgeGraph,
 } from "./memory-knowledge-graph";
 export { MEMORY_GRAPH_ACTIONS } from "./memory-knowledge-graph";
-export type { MemoryOperationRequest, MemoryOperationResult } from "./memory-operations";
+export type {
+  DurableMemoryAPI,
+  MemoryOperationRequest,
+  MemoryOperationResult,
+} from "./memory-operations";
 export { MEMORY_OPERATIONS, runMemoryOperation } from "./memory-operations";
 export { canonicalPortableMemory, memoryPortableDigest } from "./memory-portable";
 export type { MemoryRecipe, MemoryRetrievalObservation, MemorySelection } from "./memory-recipes";

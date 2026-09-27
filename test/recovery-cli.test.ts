@@ -37,7 +37,7 @@ test("empty exported tables clear target data while omitted tables preserve thei
     target = fixture();
   const a = new MarinaDB(source.path),
     b = new MarinaDB(target.path);
-  const note = b.createNote("Alice", "remove from replacement");
+  const note = b.createNote("Alice", "remove from replacement", undefined, { tier: "process" });
   b.setCoreMemory("Alice", "retain", "outside selected scope");
   a.close();
   b.close();

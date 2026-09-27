@@ -16,10 +16,9 @@ import { Engine } from "../src/engine/engine";
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import {
   assistanceAdoptionUrl,
-  awaitPendingBridges,
   findDurableTwin,
   findLegacyNotesForRecord,
-} from "../src/memory/legacy-bridge";
+} from "../src/memory/legacy-projection";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { MarinaDB } from "../src/persistence/database";
 import type { MemoryAssistanceJob, MemoryAssistancePage } from "../src/sdk/memory-assistance";
@@ -40,7 +39,6 @@ describe("reflect as a thin verb over the memory-reflector helper", () => {
     connection.clear();
     await engine.processCommand(connection.entity as EntityId, text);
     // `note` bridges its durable twin in the background; sequence on it.
-    await awaitPendingBridges();
     return stripAnsi(connection.allTextJoined());
   };
   const reflectionNotes = (name: string) =>
@@ -434,8 +432,10 @@ describe("reflect as a thin verb over the memory-reflector helper", () => {
       const twin = findDurableTwin(db, reflection.id);
       expect(twin).toBeDefined();
       expect(twin!.version).toBe(1);
-      const source = db.getNoteSources(reflection.id).find((s) => s.url === twin!.url)!;
-      expect(source.credibility).toBe(0);
+      expect(db.getNoteSources(reflection.id).find((s) => s.url === twin!.url)).toBeUndefined();
+      expect(
+        db.memoryRepository().raw.query("SELECT content FROM notes WHERE id=?").get(reflection.id),
+      ).toEqual({ content: "" });
       const durableRecord = (await durable("Alice", { operation: "get", id: twin!.recordId }))
         .result as MemoryRecord;
       expect(durableRecord.content).toBe(reflection.content);

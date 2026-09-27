@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { findDurableTwin } from "../src/memory/legacy-bridge";
+import { findDurableTwin } from "../src/memory/legacy-projection";
 import { MarinaDB } from "../src/persistence/database";
 import { acquireDatabaseLease } from "../src/persistence/database-lease";
 import { MarinaClient } from "../src/sdk/client";
@@ -87,7 +87,12 @@ test("SIGTERM refuses new admission, finishes a slow command and persists pendin
         .find((n) => n.content === "Shutdown persistence evidence")!;
       expect(note).toBeDefined();
       expect(findDurableTwin(db, note.id)).toBeDefined();
-      expect(db.pendingLegacyBridges()).toEqual([]);
+      expect(
+        db
+          .memoryRepository()
+          .raw.query("SELECT 1 FROM sqlite_schema WHERE name='legacy_memory_outbox'")
+          .get(),
+      ).toBeNull();
     } finally {
       db.close();
     }

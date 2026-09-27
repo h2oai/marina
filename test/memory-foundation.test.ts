@@ -11,7 +11,16 @@ import { Engine } from "../src/engine/engine";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { handleMemApi } from "../src/net/mem-api";
 import { MarinaDB } from "../src/persistence/database";
-import { createNote, createNoteLink } from "../src/persistence/db-notes";
+import { createStoredNote as createNote } from "../src/persistence/db-note-storage";
+
+function createNoteLink(db: Database, source: number, target: number, relation: string) {
+  db.run("INSERT INTO note_links(source_id,target_id,relationship,created_at) VALUES (?,?,?,1)", [
+    source,
+    target,
+    relation,
+  ]);
+}
+
 import { BASE_SCHEMA, MIGRATIONS } from "../src/persistence/schema";
 import type { MarinaClient } from "../src/sdk/client";
 import { roomId } from "../src/types";

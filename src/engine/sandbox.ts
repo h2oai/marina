@@ -329,7 +329,8 @@ export const DEFAULT_COMMAND_SOURCE = `/**
  * ctx.despawn(entityId)          — remove NPC from room
  * ctx.caller                     — { id, name, rank } of invoking entity
  * ctx.notes.recall(query)        — scored note retrieval
- * ctx.notes.add(content, importance?) — add a note
+ * ctx.durableMemory.run(request) — canonical records; use remember/query/revise
+ * ctx.notes.add(content, importance?) — deprecated numeric-note compatibility
  * ctx.memory.get(key)/set(key,v) — core memory key-value
  * ctx.pool.recall(pool, query)   — recall from shared memory pool
  * ctx.pool.add(pool, content)    — add to shared memory pool

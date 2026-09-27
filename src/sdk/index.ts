@@ -7,6 +7,7 @@ export type { ClientOptions, RoomView, SessionInfo } from "./client";
 export { MarinaAgent, MarinaClient } from "./client";
 export type * from "./extensions";
 export { EXTENSION_API_VERSION } from "./extensions";
+export type { DurableMemoryAPI, MemoryOperationRequest } from "./memory-operations";
 // Re-export core types
 export type {
   BroadcastPerception,
