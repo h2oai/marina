@@ -32,6 +32,17 @@ export function associationCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
 }): CommandDef {
   return {
+    usage: [
+      "association create <name> | <purpose>",
+      "association event <association> <kind> | <detail>",
+      "association join <association> | <kind>:<ref> | <role or interpretation>",
+      "association leave <association> | <kind>:<ref> | <reason>",
+      "association link <association> | <canonical-kind>:<ref> | <relationship>",
+      "association list",
+      "association relate <association> | <kind>:<ref> | <directed|reciprocal> | <semantics> | <kind>:<ref> [| JSON terms or text]",
+      "association revise <association> | <relation-id> | <kind>:<ref> | <directed|reciprocal> | <semantics> | <kind>:<ref> [| JSON terms or text]",
+      "association show <association>",
+    ],
     name: "association",
     aliases: ["associations"],
     category: "Lineage",

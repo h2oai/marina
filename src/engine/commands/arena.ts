@@ -52,6 +52,20 @@ export function arenaCommand(deps: {
   propose?: ArenaLabDeps["propose"];
 }): CommandDef {
   return {
+    category: "Markets & Forecasting",
+    usage: [
+      "arena [status]",
+      "arena backtest [n]",
+      "arena discover [tracker:T] [n:N]",
+      "arena evaluate [baseline|nowcast|discovered] [tracker:T] [limit:N]",
+      "arena rounds [n]",
+      "arena shadow [list]",
+      "arena shadow run <round_id|due> [forecaster:F]",
+      "arena shadow score",
+      "arena show <round_id>",
+      "arena signals [tracker:T]",
+      "arena submissions",
+    ],
     name: "arena",
     aliases: [],
     help: `Marina in the Social Simulation Arena: open questions, Marina's forecasts, its filed record.\n${USAGE}`,

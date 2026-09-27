@@ -11,6 +11,18 @@ export function channelCommand(
   logEvent?: (event: EngineEvent) => void,
 ): CommandDef {
   return {
+    category: "Coordination",
+    usage: [
+      "channel create <name>",
+      "channel history <name> [count]",
+      "channel join <name>",
+      "channel leave <name>",
+      "channel list",
+      "channel list <name> [args]",
+      "channel listall",
+      "channel listall <name> [args]",
+      "channel send <name> <message>",
+    ],
     name: "channel",
     aliases: ["ch"],
     help: "Real-time messaging channels with persistent history.\nUsage: channel list|listall|join|leave|send|history|create\n\nExamples:\n  channel join research\n  channel send research Found something in the archive\n  channel history research 20\n  channel create alerts",

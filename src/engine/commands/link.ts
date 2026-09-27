@@ -134,6 +134,8 @@ export function linkCommand(deps: {
   db?: MarinaDB;
 }): CommandDef {
   return {
+    category: "Identity & Access",
+    usage: ["link", "link status", "link unlink <adapter>", "link unlink <telegram|discord>"],
     name: "link",
     aliases: [],
     help: "Link an external account (Telegram/Discord). Usage: link | link status | link unlink <adapter>",

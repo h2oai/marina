@@ -84,6 +84,13 @@ export function keyCommand(deps: {
   logEvent: (event: EngineEvent) => void;
 }): CommandDef {
   return {
+    category: "Admin & Security",
+    usage: [
+      "key add <name> <provider> <value>",
+      "key delete <name>",
+      "key list",
+      "key test <name>",
+    ],
     name: "key",
     aliases: [],
     minRank: 8,

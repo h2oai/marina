@@ -120,6 +120,24 @@ export function positionCommand(deps: {
   const { db } = deps;
 
   return {
+    category: "Markets & Forecasting",
+    usage: [
+      "position close <order-id> [count]",
+      "position confirm <id>",
+      "position confirm <proposal-id>",
+      "position list [venue]",
+      "position open <venue> <ticker> <yes|no> <count> [limit-price-cents]",
+      "position open <venue> <ticker> <yes|no> <count> [limit-price]",
+      "position pnl",
+      "position pnl all",
+      "position pnl today",
+      "position pnl week",
+      "position propose <json>",
+      "position reject <id> [reason]",
+      "position reject <proposal-id> [reason]",
+      "position size <venue> <ticker> <yes|no> <our-prob 0-1> <market-price 1-99 cents>",
+      "position size <venue> <ticker> <yes|no> <our-prob> <market-price>",
+    ],
     name: "position",
     aliases: ["pos"],
     minRank: 2, // anyone past tutorial can size/list/pnl; open/close gated inline

@@ -11,6 +11,8 @@ export function searchCommand(deps: {
   getAllRooms: () => { id: RoomId; short: string; long: string }[];
 }): CommandDef {
   return {
+    category: "Knowledge",
+    usage: ["search <query>"],
     name: "search",
     aliases: [],
     help: "Global search across rooms, boards, channels, tasks, markets, open pools, and the chronicle. Usage: search <query>",

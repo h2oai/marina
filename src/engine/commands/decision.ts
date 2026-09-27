@@ -59,6 +59,16 @@ export function decisionCommand(deps: {
 }): CommandDef {
   const providerOf = deps.provider ?? (() => getDecisionProvider());
   return {
+    category: "Agents",
+    usage: [
+      "decision agreement",
+      "decision approve <token>",
+      "decision check [<request> |] <draft>",
+      "decision choose <question> | <option> | <option> [| …]",
+      "decision deny <token> [reason]",
+      "decision list",
+      "decision qualify",
+    ],
     name: "decision",
     aliases: ["decisions"],
     help: `Cheap judgement calls: check your own draft, choose among options, or settle tool calls your agents' decision gate held for you.\n${USAGE}`,

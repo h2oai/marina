@@ -19,6 +19,8 @@ const limiter = new RateLimiter({ maxTokens: 5, refillRate: 1, refillInterval: 1
  */
 export function forecastCommand(): CommandDef {
   return {
+    category: "Markets & Forecasting",
+    usage: ["forecast <question>"],
     name: "forecast",
     aliases: ["predict"],
     help: `Forecast any question with cited, verified evidence and several models.\n${USAGE}`,

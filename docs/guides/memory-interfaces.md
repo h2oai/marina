@@ -193,33 +193,23 @@ replies separate. All service reads/writes retain the shared service's permissio
 
 Use explicit grants to share a space between an external service principal and a world account.
 Read the principal IDs through each interface's `me` operation. Existing `memory set/get`,
-`note`, `recall` and pools retain their legacy interfaces; there is no bulk migration.
+`note`, `recall` and pools retain their numeric interfaces. Schema migration 138
+converts their stored assertions to canonical records automatically.
 
-### Legacy verbs as adapters (durable twins)
+### Numeric verbs as canonical adapters
 
-Every legacy write that creates a personal note — `note <text>`, `note claim`, template
-reflections (`reflect`, `reflect --template`) and `reflect failure` — also captures the text as a
-durable source and `remember`s a **twin** record in the author's resident space, keyed
-`legacy-note-<id>-v1` so retries are idempotent. The pairing is recorded on the legacy side as a
-`note_sources` row with url `marina-memory://record/<record-id>` and credibility 0: a twin is
-provenance, not evidence, and never promotes a note into the trusted tier. `note correct` and
-`note evolve` `revise` the same record (CAS on its current version) and point the successor note
-at the new version. Adopted reflector proposals (`reflect adopt`) are twinned explicitly.
+Numeric commands (`note`, `skill`, `reflect`, pools and `/mem`) are synchronous
+adapters over the canonical repository. A numeric handle keeps its ID and world
+permissions, while its text resolves directly from the current or pinned historical
+record version. All fact-like producers, including skill import/compose and DB-level
+writers, use this path. Adopted reflections reuse their canonical record.
 
-`note delete` **retires** the twin rather than forgetting it: a `revise` to the tombstone
-`[deleted legacy note #<id>]` with metadata `{deleted_legacy_note_id}` and validity closed at the
-deletion instant. The current version stops matching the deleted text, temporal reads
-(`valid_at`) exclude it, records that `depends_on` it go `stale` for `review`, and prior versions
-plus the captured source stay inspectable in lineage. The durable `forget {record_ids}` was
-deliberately not used: it is transitive (every dependent record goes too), deletes every
-version's note, and invalidates all checkpoints and cached results in the space — the resident
-space also holds the continuity journal, so a `note delete` must not carry that blast radius. A
-twin whose record is already owned by a successor note (the deleted note was superseded) is left
-alone. Erasure remains the explicit `forget` operation on the service.
-
-Bridging is fire-and-forget so the legacy reply lands in the same tick; tests and batch callers
-sequence on `awaitPendingBridges()`. Twin lookups in both directions are url-indexed
-(`getNotesBySourceUrl`) over `note_sources`, not a bounded scan of recent notes.
+Create, correction, sources, verification and relationships commit atomically.
+`note delete` retires a record without cascading erasure; explicit durable `forget`
+removes its history and handles. A successful response needs no asynchronous replay.
+Migration 138 converts existing data and pending intents before removing the queue.
+Source URLs remain provenance and cannot establish a write binding. Creating a
+human account never claims an accountless namespace's system-owned durable space.
 
 `reflect` files a reflector job when a `memory-reflector` is running. Under the LOCAL ungated
 trust profile, when none runs and a runtime can serve one (provider keys present), `reflect`

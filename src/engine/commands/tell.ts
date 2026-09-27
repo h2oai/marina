@@ -89,6 +89,8 @@ export function deliverTell(
 
 export function tellCommand(deps: TellDeps): CommandDef {
   return {
+    category: "Communication",
+    usage: ["tell <entity> [ttl:30s] <message>", "tell ack <id>", "tell inbox", "tell status <id>"],
     name: "tell",
     aliases: ["whisper", "msg"],
     help: "Send durable private messages with delivery receipts. Usage: tell <entity> [ttl:30s] <message> | tell inbox | tell status <id> | tell ack <id>\n(ttl also accepts --ttl 30s / --ttl=30s; units 30s, 5m, 2h, 1d)",
@@ -183,6 +185,8 @@ export function tellCommand(deps: TellDeps): CommandDef {
 
 export function replyCommand(deps: TellDeps): CommandDef {
   return {
+    category: "Communication",
+    usage: ["re <message>"],
     name: "re",
     aliases: ["reply"],
     help: "Reply to the last person who sent you a tell. Usage: re <message>",

@@ -12,6 +12,8 @@ export function getCommand(deps: {
   moveEntity: (id: EntityId, room: RoomId) => void;
 }): CommandDef {
   return {
+    category: "Objects",
+    usage: ["get <item>"],
     name: "get",
     aliases: ["take", "pick"],
     help: "Pick up an item. Usage: get <item>",
@@ -59,6 +61,8 @@ export function dropCommand(deps: {
   moveEntity: (id: EntityId, room: RoomId) => void;
 }): CommandDef {
   return {
+    category: "Objects",
+    usage: ["drop <item>"],
     name: "drop",
     aliases: [],
     help: "Drop an item from your inventory. Usage: drop <item>",
@@ -107,6 +111,8 @@ export function giveCommand(deps: {
   findEntityInRoom: (name: string, room: RoomId) => Entity | undefined;
 }): CommandDef {
   return {
+    category: "Objects",
+    usage: ["give <item> to <entity>"],
     name: "give",
     aliases: [],
     help: "Give an item to someone. Usage: give <item> to <entity>",

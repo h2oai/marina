@@ -4,6 +4,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CommandCatalogEntry } from "../../../src/net/discovery-types";
+import { compileCommandForms } from "../../../src/sdk/command-forms";
 import { DiscoveryPalette } from "../components/DiscoveryPalette";
 import { EntityPreviewTooltip } from "../components/EntityPreviewTooltip";
 import { useChatState } from "../hooks/use-chat-state";
@@ -11,9 +12,14 @@ import { useWorldState } from "../hooks/use-world-state";
 import { fuzzyScore, matchCommands } from "../lib/command-discovery";
 import { renderWithProviders } from "./test-utils";
 
+vi.mock("../lib/memory-service", () => ({
+  requestParticipant: vi.fn(async () => ({ commands: catalog })),
+}));
+
 const catalog: CommandCatalogEntry[] = [
   {
     name: "task",
+    forms: compileCommandForms(["task create <title> | <description>"]),
     aliases: ["tasks"],
     help: "Claim and create work. Usage: task create <title> | <description>",
     category: "Coordination",
@@ -29,6 +35,7 @@ const catalog: CommandCatalogEntry[] = [
 ];
 afterEach(() => {
   vi.unstubAllGlobals();
+  useChatState.setState({ loggedIn: false, connected: false, entityName: null });
   useWorldState.setState({ selectedEntity: null });
 });
 

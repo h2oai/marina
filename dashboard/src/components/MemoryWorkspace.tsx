@@ -18,6 +18,8 @@ import { useChatState } from "../hooks/use-chat-state";
 import type { MemoryDestination } from "../hooks/use-workspace-state";
 import { requestResidentMemory } from "../lib/memory-service";
 import { PinToCanvas } from "./CanvasReference";
+import { MemoryContextPreview } from "./MemoryContextPreview";
+import { MemoryCorrection } from "./MemoryCorrection";
 
 const button =
   "rounded border border-border px-2 py-1 text-text hover:border-primary disabled:opacity-40";
@@ -73,6 +75,7 @@ export function MemoryWorkspace({
 }
 
 function Workspace({ destination }: { destination: MemoryDestination }) {
+  const [view, setView] = useState(destination.context ? "context" : "records");
   const [spaces, setSpaces] = useState<MemorySpace[]>([]);
   const [space, setSpace] = useState(destination.spaceId ?? "");
   useEffect(() => {
@@ -87,23 +90,47 @@ function Workspace({ destination }: { destination: MemoryDestination }) {
   }, []);
   return (
     <>
-      <label className="flex items-center gap-2 border-b border-border p-3 text-sm">
-        Space
-        <select className={field} value={space} onChange={(e) => setSpace(e.target.value)}>
-          <option value="">My resident memory</option>
-          {spaces.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <MemoryContents
-        key={space}
-        space={space || undefined}
-        initialQuery={destination.query}
-        initialRecord={space === (destination.spaceId ?? "") ? destination.recordId : undefined}
-      />
+      <nav aria-label="Memory views" className="flex gap-2 border-b border-border p-3">
+        <button
+          type="button"
+          className={button}
+          aria-pressed={view === "records"}
+          onClick={() => setView("records")}
+        >
+          Records and sources
+        </button>
+        <button
+          type="button"
+          className={button}
+          aria-pressed={view === "context"}
+          onClick={() => setView("context")}
+        >
+          Context preview
+        </button>
+      </nav>
+      {view === "context" ? (
+        <MemoryContextPreview initialQuery={destination.query} />
+      ) : (
+        <>
+          <label className="flex items-center gap-2 border-b border-border p-3 text-sm">
+            Space
+            <select className={field} value={space} onChange={(e) => setSpace(e.target.value)}>
+              <option value="">My resident memory</option>
+              {spaces.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <MemoryContents
+            key={space}
+            space={space || undefined}
+            initialQuery={destination.query}
+            initialRecord={space === (destination.spaceId ?? "") ? destination.recordId : undefined}
+          />
+        </>
+      )}
     </>
   );
 }
@@ -424,6 +451,36 @@ function MemoryContents({
                 {selected.id} · {selected.freshness} · {selected.type}
               </p>
               <pre className="whitespace-pre-wrap break-words font-sans">{selected.content}</pre>
+              {selected.version === headVersion && (
+                <MemoryCorrection
+                  key={`${selected.id}:${selected.version}`}
+                  record={selected}
+                  disabled={busy}
+                  save={(content, claim, source_ids) =>
+                    void run(async () => {
+                      await request({
+                        operation: "revise",
+                        id: selected.id,
+                        key: crypto.randomUUID(),
+                        input: {
+                          expected_version: selected.version,
+                          content,
+                          claim,
+                          source_ids,
+                          type: selected.type,
+                          tier: selected.tier,
+                          importance: selected.importance,
+                          ...(selected.subject ? { subject: selected.subject } : {}),
+                          metadata: selected.metadata,
+                          depends_on: selected.depends_on,
+                          valid_time: selected.valid_time,
+                        },
+                      });
+                      await inspect(selected.id);
+                    })
+                  }
+                />
+              )}
               <PinToCanvas
                 reference={{ kind: "memory", id: selected.id, spaceId: selected.space_id }}
               />

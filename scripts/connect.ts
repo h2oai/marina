@@ -25,6 +25,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { sanitizeEntityName } from "../src/engine/entity-name";
 import { formatPerception } from "../src/net/formatter";
+import type { CommandCatalogEntry } from "../src/sdk/capabilities";
 import { MarinaAgent } from "../src/sdk/client";
 
 const args = process.argv.slice(2);
@@ -165,6 +166,7 @@ const scripted = !!oneShot || !process.stdin.isTTY;
 let printEnabled = !scripted;
 let lastOutputAt = Date.now();
 agent.onPerception((p) => {
+  if (p.data?.capabilities) return;
   if (!printEnabled) return;
   const text = formatPerception(p, "plaintext");
   if (text) {
@@ -270,7 +272,34 @@ if (!isTTY) {
 
 // ── REPL mode (interactive TTY) ──────────────────────────────────────────────
 
+let capabilities: CommandCatalogEntry[] = [];
+try {
+  capabilities = (await agent.capabilities()).commands;
+} catch {
+  /* Older servers retain plain command input. */
+}
 const rl = createInterface({
+  completer: (line: string, done: (error: Error | null, result: [string[], string]) => void) => {
+    void agent
+      .capabilities()
+      .then((manifest) => {
+        capabilities = manifest.commands;
+      })
+      .catch(() => {
+        /* Retain last authenticated snapshot while disconnected. */
+      })
+      .finally(() => {
+        const words = line.trimStart();
+        const matches = capabilities
+          .flatMap((entry) => [
+            entry.name,
+            ...entry.aliases,
+            ...(entry.forms ?? []).map((form) => form.syntax.split(/ [<[]/)[0]!),
+          ])
+          .filter((candidate) => candidate.startsWith(words));
+        done(null, [[...new Set(matches)], words]);
+      });
+  },
   input: process.stdin,
   output: process.stderr,
   prompt: "> ",

@@ -153,6 +153,22 @@ export function roleCommand(deps: {
   reconfigureAgent?: (name: string, opts: { role?: string }) => Promise<void>;
 }): CommandDef {
   return {
+    category: "Identity & Access",
+    usage: [
+      "role create <name> ..",
+      "role create <name> [traits <t1,t2,...>] [guidelines <g1> | <g2> ...] [focus <f1,f2,...>] [tone <tone>]",
+      "role create <name> [traits <t1,t2,...>] [guidelines <g1|g2|...>] [focus <f1,f2,...>] [tone <tone>]",
+      "role delete <name>",
+      "role diff <a> <b>",
+      "role edit <name> ..",
+      "role history <name>",
+      "role lint <name>",
+      "role list",
+      "role reload <name>",
+      "role view <name>",
+      "role view <name> [goal <text>]",
+      "role view <name> goal <text>",
+    ],
     name: "role",
     aliases: [],
     minRank: 0,

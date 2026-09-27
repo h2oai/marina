@@ -20,6 +20,8 @@ interface NextDeps {
 
 export function nextCommand(deps: NextDeps): CommandDef {
   return {
+    category: "Information",
+    usage: ["next"],
     name: "next",
     aliases: [],
     help: "Context-aware suggestion — tells you the single best thing to do right now.",

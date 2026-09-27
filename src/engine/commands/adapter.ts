@@ -12,6 +12,15 @@ export function adapterCommand(deps: {
   logEvent: (event: EngineEvent) => void;
 }): CommandDef {
   return {
+    category: "Admin & Security",
+    usage: [
+      "adapter disable <platform>",
+      "adapter enable <platform>",
+      "adapter enable <platform> [config json]",
+      "adapter enable <platform> [config]",
+      "adapter list",
+      "adapter status <platform>",
+    ],
     name: "adapter",
     aliases: [],
     minRank: 7,

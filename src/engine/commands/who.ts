@@ -22,6 +22,8 @@ export function whoCommand(
   const displayKind = (e: Entity): string =>
     e.kind === "agent" && isRuntimeAgent && !isRuntimeAgent(e.name) ? "participant" : e.kind;
   return {
+    category: "Information",
+    usage: ["who"],
     name: "who",
     aliases: [],
     help: "List all connected entities. Agents with no activity in 5m are tagged [silent].",

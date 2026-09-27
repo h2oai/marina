@@ -18,6 +18,8 @@ import { getRoleInspectionMetadata, renderRoleInspectionMetadata } from "./role"
  */
 export function systemPromptCommand(deps: { db?: MarinaDB }): CommandDef {
   return {
+    category: "Identity & Access",
+    usage: ["system-prompt [role <name>] [goal <text>]"],
     name: "system-prompt",
     aliases: ["sysprompt"],
     minRank: 0,

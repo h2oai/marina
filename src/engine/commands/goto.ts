@@ -16,6 +16,8 @@ export function gotoCommand(deps: {
   getEntityRoom: (entity: EntityId) => LoadedRoom | undefined;
 }): CommandDef {
   return {
+    category: "Navigation",
+    usage: ["goto <room-id|entity-name>"],
     name: "goto",
     aliases: ["tp", "teleport"],
     help: "Teleport to a room or entity. Usage: goto <room-id|entity-name>",

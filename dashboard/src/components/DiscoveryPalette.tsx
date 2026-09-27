@@ -5,11 +5,13 @@ import { useQuery } from "@tanstack/react-query";
 import { Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CommandCatalogEntry, DiscoveryResult } from "../../../src/net/discovery-types";
+import type { CapabilityManifest } from "../../../src/sdk/capabilities";
 import { useChatState } from "../hooks/use-chat-state";
 import { useWorkspaceState } from "../hooks/use-workspace-state";
 import { useWorldState } from "../hooks/use-world-state";
 import { describeApiError, fetchApi } from "../lib/api";
 import { draftCommand, matchCommands } from "../lib/command-discovery";
+import { requestParticipant } from "../lib/memory-service";
 
 import { FavoriteCommandButton } from "./CommandFavorites";
 import { CommandFields } from "./CommandFields";
@@ -32,9 +34,13 @@ export function DiscoveryPalette({ onClose }: { onClose: () => void }) {
   );
   const connected = useChatState((s) => s.connected);
   const commands = useQuery({
-    queryKey: ["command-catalog"],
-    queryFn: () => fetchApi<CommandCatalogEntry[]>("/api/command-catalog"),
-    staleTime: 60_000,
+    queryKey: ["command-catalog", entityName, loggedIn, connected, codeMode],
+    queryFn: async ({ signal }) =>
+      loggedIn && connected
+        ? (await requestParticipant<CapabilityManifest>("capabilities", {}, signal)).commands
+        : fetchApi<CommandCatalogEntry[]>("/api/command-catalog"),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
   });
   const results = useQuery({
     queryKey: ["discovery", entityName, debounced],
@@ -133,6 +139,7 @@ export function DiscoveryPalette({ onClose }: { onClose: () => void }) {
             key={selected.name}
             name={selected.name}
             help={selected.help}
+            forms={selected.forms}
             onCompose={setArgs}
           />
           {codeMode && selected.name !== "code" && (

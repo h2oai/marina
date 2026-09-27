@@ -38,6 +38,19 @@ export function marketCommand(deps: {
 }): CommandDef {
   const { db } = deps;
   return {
+    category: "Markets & Forecasting",
+    usage: [
+      "market forecast <id>",
+      "market leaderboard",
+      "market list",
+      "market list open",
+      "market list resolved",
+      "market live <kalshi|polymarket> [duration] [limit]",
+      "market live <venue> [duration] [limit]",
+      "market score [entity]",
+      "market search <query>",
+      "market show <id>",
+    ],
     name: "market",
     aliases: ["mk"],
     help: HELP,

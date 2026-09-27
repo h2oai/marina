@@ -19,6 +19,10 @@ export function desireCommand(deps: {
 }): CommandDef {
   const lastModelPass = new Map<string, number>();
   return {
+    usage: [
+      "desire <one sentence>",
+      "desire <what you want to explore, understand, decide, improve, or create>",
+    ],
     name: "desire",
     aliases: ["pursue"],
     category: "Cognition",

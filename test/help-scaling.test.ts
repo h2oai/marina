@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
-  COMMAND_CATEGORIES,
+  CATEGORY_ORDER,
   HELP_PREVIEW_LINES,
   resolveCategory,
   usageExcerpt,
@@ -60,7 +60,7 @@ describe("usageExcerpt", () => {
 });
 
 describe("resolveCategory", () => {
-  const cats = Object.keys(COMMAND_CATEGORIES);
+  const cats = CATEGORY_ORDER;
 
   it("matches exactly, case-insensitively", () => {
     expect(resolveCategory("memory", cats)).toBe("Memory");
@@ -131,7 +131,10 @@ describe("help command scaling", () => {
   it("help <category> lists exactly that category's commands", () => {
     const text = run("help navigation");
     expect(text).toContain("Navigation");
-    for (const name of COMMAND_CATEGORIES.Navigation!) {
+    for (const name of engine.commands
+      .allBuiltins()
+      .filter((cmd) => cmd.category === "Navigation")
+      .map((cmd) => cmd.name)) {
       expect(text).toMatch(new RegExp(`^\\s+${name}\\b`, "m"));
     }
     expect(text).not.toMatch(/^\s+note\b/m);

@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PlatformMemoryBackend } from "../src/agent/memory-platform";
 import { Engine } from "../src/engine/engine";
-import { awaitPendingBridges } from "../src/memory/legacy-bridge";
 import { closeWorldMemoryService } from "../src/memory/world-service";
 import { WebSocketServer } from "../src/net/websocket-server";
 import { MarinaDB } from "../src/persistence/database";
@@ -40,7 +39,6 @@ it("carries full memory over the real SDK/WebSocket path across a clean server r
     await runtime.server.stop();
     runtime.engine.stop();
     await runtime.engine.drainCommands();
-    await awaitPendingBridges();
     await runtime.engine.shutdown();
     await closeWorldMemoryService(runtime.db);
     runtime.db.close();

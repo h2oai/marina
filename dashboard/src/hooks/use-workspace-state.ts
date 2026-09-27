@@ -11,6 +11,7 @@ export type CanvasReference =
   | { kind: "memory"; id: string; spaceId: string }
   | { kind: "artifact"; id: string; sessionId: string };
 export interface MemoryDestination {
+  context?: boolean;
   query?: string;
   recordId?: string;
   spaceId?: string;

@@ -252,7 +252,7 @@ const GUIDE_NOTES: WorldDefinition["guideNotes"] = [
       "'build command list' shows all dynamic commands. " +
       "'build command destroy mycommand' removes one. " +
       "Dynamic commands can use ctx.mcp to call connectors, ctx.http for HTTP, " +
-      "ctx.notes for recall, ctx.memory for core memory, and ctx.pool for pools.",
+      "ctx.durableMemory.run for canonical records, ctx.memory for core beliefs, and ctx.pool for existing pools.",
     importance: 8,
     type: "skill",
   },

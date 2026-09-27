@@ -83,6 +83,11 @@ export function recallCommand(deps: {
   resolveEntityIdByName?: (name: string) => EntityId | undefined;
 }): CommandDef {
   return {
+    category: "Memory",
+    usage: [
+      "recall <query> [recent | important] [type <type>]",
+      "recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]",
+    ],
     name: "recall",
     aliases: [],
     help: "Scored, provenance-aware retrieval. Usage: recall <query> [recent|important|trusted|explain|evidence|all] [type <type>] [budget <bytes>]\n  all — unified tiers: skills, [trusted], [evidence] (durable records + sources), [proposal] (assistance answers), [unverified]\n  evidence — durable tiers only",

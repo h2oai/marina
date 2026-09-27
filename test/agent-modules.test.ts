@@ -1410,26 +1410,9 @@ describe("tool profiles", () => {
     expect(TOOL_PROFILE_NAMES.full).toEqual([]);
   });
 
-  it("COMMAND_ROSTER mentions the command categories the lean profiles need", () => {
-    // The roster is the natural-language map an agent without typed tool
-    // wrappers reads to know what verbs exist. If a category disappears
-    // here, agents on minimal/crew profiles silently lose access to it.
-    expect(COMMAND_ROSTER).toContain("look");
-    expect(COMMAND_ROSTER).toContain("tell");
-    expect(COMMAND_ROSTER).toContain("recall");
-    expect(COMMAND_ROSTER).toContain("brief");
-    expect(COMMAND_ROSTER).toContain("pool");
-    expect(COMMAND_ROSTER).toContain("code status");
-    expect(COMMAND_ROSTER).toContain("focus");
-    expect(COMMAND_ROSTER).toContain("watch");
-    // Discovery lines the roster must never lose again (the inventory found
-    // agents were never told about their own ledger or the full map):
-    expect(COMMAND_ROSTER).toContain("standing");
-    expect(COMMAND_ROSTER).toContain("witness");
-    expect(COMMAND_ROSTER).toContain("desire");
-    expect(COMMAND_ROSTER).toContain("help all");
-    // Compact: raised 1500 → 2100 (2026-09-01) for the Becoming + full-map
-    // lines. Still negligible next to the prompt; raise deliberately only.
+  it("the offline roster points lean profiles at live command discovery", () => {
+    expect(COMMAND_ROSTER).toContain("help catalog");
+    expect(COMMAND_ROSTER).toContain("help <command>");
     expect(COMMAND_ROSTER.length).toBeLessThan(2100);
   });
 

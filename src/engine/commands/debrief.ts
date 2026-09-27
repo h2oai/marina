@@ -23,6 +23,8 @@ export function debriefCommand(deps: {
   taskManager?: TaskManager;
 }): CommandDef {
   return {
+    category: "Memory",
+    usage: ["debrief"],
     name: "debrief",
     aliases: [],
     help: "Close-out view: recent notes, claimed tasks, current standing. Usage: debrief",

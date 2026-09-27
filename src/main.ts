@@ -25,8 +25,7 @@ import {
 } from "./engine/trust-profile";
 import { loadExtensions } from "./extensions/loader";
 import { parseEmbeddingEnv } from "./memory/embedding-config";
-import { awaitPendingBridges, replayPendingBridges } from "./memory/legacy-bridge";
-import { closeWorldMemoryService } from "./memory/world-service";
+import { closeWorldMemoryService, worldMemoryService } from "./memory/world-service";
 import { AdapterManager } from "./net/adapter-manager";
 import { DashboardBroadcaster } from "./net/dashboard-ws";
 import { FeedPublisher } from "./net/feed-publisher";
@@ -233,7 +232,8 @@ if (durability !== "full" && durability !== "normal")
   throw new Error("MARINA_DB_DURABILITY must be full or normal");
 const releaseDatabaseLease = acquireDatabaseLease(DB_PATH);
 const db = new MarinaDB(DB_PATH, { durability });
-await replayPendingBridges(db);
+// Canonical numeric writes can enqueue embeddings without an HTTP memory request.
+worldMemoryService(db);
 const structuredLogRetention = Math.max(
   100,
   Math.min(Number(process.env.MARINA_LOG_RETENTION) || 10_000, 1_000_000),
@@ -803,13 +803,10 @@ async function shutdown(code = 0) {
 
   await Promise.all([wsServer.drainRequests(), mcpServer?.drainRequests()]);
   await engine.drainCommands();
-  await awaitPendingBridges();
-  await replayPendingBridges(db);
   await stopExtensions();
   await engine.shutdown();
   await Promise.all([wsServer.stop(), mcpServer?.stop()]);
   telnetServer?.stop();
-  await awaitPendingBridges();
   await closeWorldMemoryService(db);
   await otlpExporter?.stop();
   await otlpLogExporter?.stop();

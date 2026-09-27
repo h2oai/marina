@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { COMMAND_CATEGORIES } from "../src/engine/commands/help";
 import { Engine } from "../src/engine/engine";
 import { SAFETY_GATES } from "../src/engine/safety-gates";
 import { MarinaDB } from "../src/persistence/database";
@@ -204,7 +203,12 @@ describe("documentation contract — structure", () => {
 
   it("documents every registered builtin in the command guide or a help category", async () => {
     const guide = await readDoc("docs/guides/commands.md");
-    const categorized = new Set(Object.values(COMMAND_CATEGORIES).flat());
+    const categorized = new Set(
+      engine.commands
+        .allBuiltins()
+        .filter((cmd) => cmd.category && cmd.category !== "Other")
+        .map((cmd) => cmd.name),
+    );
     const names = engine.commands.allBuiltins().map((cmd) => cmd.name);
 
     const undocumented = names.filter(

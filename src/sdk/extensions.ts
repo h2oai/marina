@@ -1,17 +1,23 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
+import type { CommandUsage } from "./command-forms";
+import type { DurableMemoryAPI } from "./memory-operations";
 import type { EntityId, EntityRank, RoomId } from "./protocol";
 
 export const EXTENSION_API_VERSION = 1;
 export interface ExtensionCommandContext {
   readonly caller: Readonly<{ id: EntityId; name: string; rank: number }>;
   readonly room: RoomId;
+  /** Canonical records, scoped to the current caller and service ACLs. */
+  readonly durableMemory: DurableMemoryAPI;
   reply(text: string): void;
 }
 export interface ExtensionCommand {
   name: string;
   aliases?: string[];
   help: string;
+  usage?: CommandUsage[];
+  category?: string;
   minRank: EntityRank;
   gate?: string;
   run(context: ExtensionCommandContext, args: string): void | Promise<void>;

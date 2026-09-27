@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { create } from "zustand";
+import type { ParticipantOrientation } from "../../../src/sdk/onboarding";
 
 /** Fired after this client creates or deletes a macro. */
 export const MACROS_CHANGED_EVENT = "marina:macros-changed";
@@ -27,6 +28,7 @@ export interface ChatMessage {
 const MAX_MESSAGES = 500;
 
 interface ChatState {
+  orientation: ParticipantOrientation | null;
   messages: ChatMessage[];
   loggedIn: boolean;
   connected: boolean;
@@ -41,6 +43,7 @@ interface ChatState {
 }
 
 export const useChatState = create<ChatState>((set) => ({
+  orientation: null,
   messages: [],
   loggedIn: false,
   connected: false,
@@ -49,7 +52,7 @@ export const useChatState = create<ChatState>((set) => ({
 
   appendMessage: (msg) =>
     set((s) => ({ messages: [...s.messages.slice(-(MAX_MESSAGES - 1)), msg] })),
-  setLoggedIn: (v, name) => set({ loggedIn: v, entityName: name ?? null }),
+  setLoggedIn: (v, name) => set({ loggedIn: v, entityName: name ?? null, orientation: null }),
   setConnected: (v) =>
     set((_s) => (v ? { connected: v } : { connected: v, loggedIn: false, entityName: null })),
   pushCommand: (cmd) => set((s) => ({ commandHistory: [cmd, ...s.commandHistory.slice(0, 99)] })),

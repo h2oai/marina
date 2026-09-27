@@ -6,6 +6,7 @@ import type { EntityId } from "../../types";
 import { askCommand } from "../commands/ask";
 import { bankrollCommand } from "../commands/bankroll";
 import { benchmarkCommand } from "../commands/benchmark";
+import { contextCommand } from "../commands/context";
 import { debriefCommand } from "../commands/debrief";
 import { digCommand } from "../commands/dig";
 import { evolveCommand } from "../commands/evolve";
@@ -29,6 +30,9 @@ import { trialCallBudget } from "../evolution-trial";
 import { answerViaLocalModel } from "./model-helpers";
 
 export function registerMemoryCommands(engine: Engine): void {
+  engine.commands.registerBuiltin(
+    contextCommand({ db: engine.db, getEntity: (id) => engine.entities.get(id) }),
+  );
   // Memory commands
   engine.commands.registerBuiltin(
     memoryCommand({

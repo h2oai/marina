@@ -115,6 +115,21 @@ export function chronicleCommand(deps: {
   resolveEntityIdByName?: (name: string) => string | undefined;
 }): CommandDef {
   return {
+    category: "Knowledge",
+    usage: [
+      "chronicle",
+      "chronicle about <name>",
+      "chronicle correct <id> <title> | <body> [refs <ids>]",
+      "chronicle correct <id> <title> | <body> [refs <ids>] [participants <names>]",
+      "chronicle digest day <title> | <body> [refs <ids>] [period <token>]",
+      "chronicle digest week <title> | <body> [refs <ids>] [period <token>]",
+      "chronicle kinds",
+      "chronicle pending [since <dur>]",
+      "chronicle record <title> | <body> [refs <ids>] [participants <names>]",
+      "chronicle record <title> | <body> refs <feed:N,task:N,...> [participants <names>]",
+      "chronicle show <id>",
+      "chronicle since <duration>",
+    ],
     name: "chronicle",
     aliases: [],
     help: HELP,

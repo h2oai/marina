@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { memoryAccess } from "../../memory/access";
-import { withMemoryCompatibility } from "../../memory/compatibility";
 import {
   bold,
   category,
@@ -198,10 +197,47 @@ export function noteCommand(deps: {
   logEvent?: (event: EngineEvent) => void;
 }): CommandDef {
   return {
+    category: "Memory",
+    usage: [
+      "note <text>",
+      "note <text> [importance N] [type T]",
+      "note <text> importance <N> type <type>",
+      "note claim <text> [confidence:0..1] [source:URL]",
+      "note claim <text> [confidence:0..1] [source:URL] [observed:YYYY-MM-DD]",
+      "note consolidate ..",
+      "note consolidate <keeper-id> <duplicate-id> [duplicate-id ...]",
+      "note contradictions ..",
+      "note correct <id> <new text>",
+      "note correct <id> <text>",
+      "note delete <id>",
+      "note derive <your-note-id> <source-note-id>",
+      "note evolve <id>",
+      "note explain ..",
+      "note graph",
+      "note link <id1> <id2> <rel>",
+      "note link <id1> <id2> <relationship>",
+      "note list",
+      "note resolve <case-id> both <evidence-backed rationale>",
+      "note resolve <case-id> left <evidence-backed rationale>",
+      "note resolve <case-id> neither <evidence-backed rationale>",
+      "note resolve <case-id> right <evidence-backed rationale>",
+      "note room",
+      "note search <query>",
+      "note source ..",
+      "note source <your-note-id> <url|note:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]",
+      "note trace <id>",
+      "note types",
+      "note unlink <id1> <id2> <rel>",
+      "note unlink <id1> <id2> <relationship>",
+      "note verify ..",
+      "note verify <your-note-id> disputed [confidence 0..1]",
+      "note verify <your-note-id> unverified [confidence 0..1]",
+      "note verify <your-note-id> verified [confidence 0..1]",
+    ],
     name: "note",
     aliases: [],
-    help: "Evidence-aware memory. Usage: note <text> | note claim <text> [confidence:0..1] [source:URL] (also trailing `confidence 0.9 source URL`) | note explain|verify|source|contradictions|consolidate ... | note list (ls) | note delete <id> (rm/remove)",
-    handler: withMemoryCompatibility(deps.db, (ctx: RoomContext, input) => {
+    help: "Legacy numeric notes (deprecated for new integrations; use memory remember/query). Usage: note <text> | note claim <text> [confidence:0..1] [source:URL] (also trailing `confidence 0.9 source URL`) | note explain|verify|source|contradictions|consolidate ... | note list (ls) | note delete <id> (rm/remove)",
+    handler: (ctx: RoomContext, input) => {
       const entity = deps.getEntity(input.entity);
       if (!entity) return;
       if (!deps.db) {
@@ -222,7 +258,7 @@ export function noteCommand(deps: {
         ctx.send(
           input.entity,
           "Usage: note <text> [importance N] [type T] | note list | note room | note search <query> | note delete <id> | note link <id1> <id2> <rel> | note unlink <id1> <id2> <rel> | note correct <id> <text> | note trace <id> | note graph | note evolve <id> | note types\n" +
-            "(see also: `memory graph <subject>` follows asserted relationships between durable records; `note graph` summarises your legacy notes and links. Every note verb mirrors to your durable twin automatically.)",
+            "(see also: `memory graph <subject>` follows asserted relationships between durable records; `note graph` summarises your legacy notes and links. Fact-like notes share the durable record history.)",
         );
         return;
       }
@@ -254,7 +290,7 @@ export function noteCommand(deps: {
             ctx.send(
               input.entity,
               "Usage: note claim <text> [confidence:0..1] [source:URL] [observed:YYYY-MM-DD]   (also trailing `confidence 0.9 source URL`)\n" +
-                "(see also: `memory claim <subject> <predicate> <JSON scalar>` asserts a typed durable claim; `note claim` records a free-text legacy claim and mirrors it to a durable twin.)",
+                "(see also: `memory claim <subject> <predicate> <JSON scalar>` asserts a typed durable claim; `note claim` records a free-text legacy claim in the same canonical record history.)",
             );
             return;
           }
@@ -293,7 +329,7 @@ export function noteCommand(deps: {
             ctx.send(
               input.entity,
               "Usage: note source <your-note-id> <url|note:id> [type T] [credibility 0..1] [observed YYYY-MM-DD]\n" +
-                "(see also: `memory source <source ID> [start end]` reads a durable original source by byte range; `note source` attaches a reference to a legacy note and mirrors it onto the durable twin's sources.)",
+                "(see also: `memory source <source ID> [start end]` reads a durable original source by byte range; `note source` attaches a reference to a legacy note in the canonical record's sources.)",
             );
             return;
           }
@@ -502,7 +538,7 @@ export function noteCommand(deps: {
             ctx.send(
               input.entity,
               "Usage: note resolve <case-id> left|right|both|neither <evidence-backed rationale>\n" +
-                "(see also: `memory resolve <ID> <policy> <JSON>` settles competing DURABLE assertions by policy; `note resolve` adjudicates a legacy contradiction case and mirrors the verdicts onto the notes' durable twins.)",
+                "(see also: `memory resolve <ID> <policy> <JSON>` settles competing DURABLE assertions by policy; `note resolve` adjudicates a legacy contradiction case and commits the canonical verdicts.)",
             );
             return;
           }
@@ -1020,6 +1056,6 @@ export function noteCommand(deps: {
           return;
         }
       }
-    }),
+    },
   };
 }

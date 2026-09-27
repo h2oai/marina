@@ -101,7 +101,7 @@ describe("system prompt byte budget", () => {
     expect(bytes(p)).toBeLessThanOrEqual(LEAN_SYSTEM_PROMPT_BYTE_CAP);
     expect(LEAN_SYSTEM_PROMPT_BYTE_CAP).toBeLessThanOrEqual(6300);
     // ONE copy of the roster, in the stable prefix.
-    expect(p.split("Common world commands").length - 1).toBe(1);
+    expect(p.split("\n# COMMANDS\n").length - 1).toBe(1);
     expect(p).toContain("# COMMANDS");
     expect(p).toContain(COMMAND_ROSTER);
   });

@@ -72,6 +72,16 @@ export function webCommand(deps: {
   initProvidersSync();
 
   return {
+    category: "Information",
+    usage: [
+      "web fetch <url>",
+      "web multisearch <q1> | <q2>",
+      "web multisearch <query1> | <query2> | <query3>",
+      "web search [engines:<a,b>] [limit:N] <query>",
+      "web search <query>",
+      "web search engines:web,academic <query>",
+      "web search limit:5 <query>",
+    ],
     name: "web",
     aliases: [],
     help: `Search the web or fetch a URL.

@@ -42,7 +42,7 @@ import {
   servedReceiptsFromEvents,
   snapshotHygieneRatios,
 } from "../memory/hygiene-ratios";
-import { DURABLE_TWIN_URL_PREFIX, parseDurableTwinUrl } from "../memory/legacy-bridge";
+import { DURABLE_TWIN_URL_PREFIX, parseDurableTwinUrl } from "../memory/legacy-projection";
 import { residentMemoryOperation } from "../memory/resident-service";
 import type { MarinaDB, NoteRow } from "../persistence/database";
 import type { MemoryAnswer } from "../sdk/memory-answer";
@@ -671,7 +671,7 @@ export function buildMemoryOverview(
   const seenHygiene = new Set<string>();
   const hygieneRows = raw
     .query(
-      `SELECT entity_name,content,created_at FROM notes
+      `SELECT entity_name,content,created_at FROM numeric_notes
        WHERE tier='process' AND pool_id IS NULL AND content LIKE ? AND (? IS NULL OR entity_name=?)
        ORDER BY created_at DESC,id DESC LIMIT 400`,
     )
@@ -887,7 +887,7 @@ function legacyNoteSnapshot(
 ): { notes: NoteRow[]; links: NoteLinkRow[] } {
   const notes = raw
     .query(
-      `SELECT * FROM notes
+      `SELECT * FROM numeric_notes
        WHERE entity_name NOT LIKE 'memory:%' AND (? IS NULL OR entity_name=? COLLATE NOCASE)
        ORDER BY COALESCE(last_accessed, created_at) DESC, id DESC LIMIT ?`,
     )
@@ -992,9 +992,10 @@ export function buildMemoryGraph(
   for (const chunk of chunked([...noteIds])) {
     const rows = raw
       .query(
-        `SELECT note_id,url FROM note_sources WHERE url LIKE ? AND note_id IN (${chunk.map(() => "?").join(",")})`,
+        `SELECT note_id,url FROM note_sources WHERE url LIKE ? AND note_id IN (${chunk.map(() => "?").join(",")})
+         UNION SELECT note_id,'marina-memory://record/' || record_id AS url FROM memory_note_projections WHERE note_id IN (${chunk.map(() => "?").join(",")})`,
       )
-      .all(`${DURABLE_TWIN_URL_PREFIX}%`, ...chunk) as { note_id: number; url: string }[];
+      .all(`${DURABLE_TWIN_URL_PREFIX}%`, ...chunk, ...chunk) as { note_id: number; url: string }[];
     for (const row of rows) {
       const recordId = parseDurableTwinUrl(row.url);
       if (!recordId) continue;
@@ -1073,8 +1074,10 @@ export function buildMemoryGraph(
       // Cited record's legacy twin, when readable and not already on the map.
       if (!twinOfRecord.has(depends_on_id)) {
         const twinRows = raw
-          .query("SELECT note_id FROM note_sources WHERE url=? ORDER BY note_id DESC LIMIT 1")
-          .all(`${DURABLE_TWIN_URL_PREFIX}${depends_on_id}`) as { note_id: number }[];
+          .query(
+            "SELECT note_id FROM memory_note_projections WHERE record_id=? ORDER BY note_id DESC LIMIT 1",
+          )
+          .all(depends_on_id) as { note_id: number }[];
         const twin = twinRows[0] ? db.getNote(twinRows[0].note_id) : undefined;
         if (twin && scope.readNote(twin) && !twin.entity_name.startsWith("memory:")) {
           graph.node({

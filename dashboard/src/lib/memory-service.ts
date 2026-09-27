@@ -69,3 +69,59 @@ export function requestResidentMemory<T>(
     }
   });
 }
+
+/** Read-only participant request using the resident session, independent of dashboard admin auth. */
+export function requestParticipant<T>(
+  kind: "capabilities" | "context_preview",
+  options: Record<string, unknown> = {},
+  signal?: AbortSignal,
+): Promise<T> {
+  const ws = getChatWs();
+  const identity = useChatState.getState();
+  if (!ws || ws.readyState !== WebSocket.OPEN || !identity.loggedIn)
+    return Promise.reject(new Error("Sign in to world chat first."));
+  signal?.throwIfAborted();
+  const request_id = crypto.randomUUID();
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      ws.removeEventListener("message", receive);
+      ws.removeEventListener("close", closed);
+      signal?.removeEventListener("abort", closed);
+    };
+    const closed = () => {
+      cleanup();
+      reject(new Error("Participant request cancelled or disconnected."));
+    };
+    const receive = (event: MessageEvent) => {
+      let value: { data?: Record<string, { request_id?: string; error?: string }> };
+      try {
+        value = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      const result = value.data?.[kind];
+      if (result?.request_id !== request_id) return;
+      const current = useChatState.getState();
+      if (!current.loggedIn || current.entityName !== identity.entityName) return closed();
+      cleanup();
+      if (result.error) reject(new Error(result.error));
+      else resolve(result as T);
+    };
+    const timer = setTimeout(closed, 15000);
+    ws.addEventListener("message", receive);
+    ws.addEventListener("close", closed);
+    signal?.addEventListener("abort", closed, { once: true });
+    try {
+      ws.send(
+        JSON.stringify(
+          kind === "capabilities"
+            ? { type: "capabilities", request_id }
+            : { type: "context_preview", options, request_id },
+        ),
+      );
+    } catch {
+      closed();
+    }
+  });
+}

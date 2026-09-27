@@ -1,6 +1,10 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { receiptForUnifiedContext } from "../net/memory-receipt";
+import type { CommandCatalogEntry } from "../sdk/capabilities";
+import type { UnifiedContextResult as ParticipantContext } from "../sdk/memory-context";
+
 /**
  * Lean Agent Adapter — adapts the lean agent for in-server use.
  *
@@ -977,6 +981,7 @@ export class LeanAgentAdapter implements AgentHandle {
   private gameState: GameStateManager;
   private socialAwareness: SocialAwareness;
   private actionHistory: ActionHistory;
+  private capabilityEntries?: CommandCatalogEntry[];
   private platformMemory: PlatformMemoryBackend;
   private hookRegistry = new HookRegistry();
   private model: Model<Api>;
@@ -1161,7 +1166,7 @@ export class LeanAgentAdapter implements AgentHandle {
   private static readonly SECTION_TTL: Record<string, number> = {
     nearby_context: 20, // cadence 5
     novelty_suggestions: 30, // cadence 5
-    relevant_notes: 60, // matches notes-cache TTL
+    relevant_notes: 60, // suppress repeated delivery, never skip authorization
     memory_health: 60, // cadence 20
     reflection_due: 150, // cadence 75
     current_focus: 30, // every cycle, but content stable
@@ -1170,10 +1175,9 @@ export class LeanAgentAdapter implements AgentHandle {
   };
   private static readonly SECTION_TTL_DEFAULT = 30;
 
-  // ─── Relevant Notes Cache ──────────────────────────────────────────
-  private lastNotesQuery = "";
+  // ─── Current Relevant Notes ──────────────────────────────────────────
   private cachedNotes = "";
-  private notesCacheAge = 0;
+  private retrievedContext?: ParticipantContext;
 
   // ─── Coding Task Mode ──────────────────────────────────────────────
   // Set via AgentHandle.setActiveCodingTask when the code-session driver
@@ -1799,6 +1803,12 @@ export class LeanAgentAdapter implements AgentHandle {
 
     const session = await this.client.connect(this.name);
     this.gameState.setSession(session.entityId, session.name, session.token);
+    try {
+      this.capabilityEntries = (await this.client.capabilities()).commands;
+      this.replaceSystemPrompt(getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries));
+    } catch (error) {
+      this.log.warn("agent", `Live capability discovery unavailable: ${getErrorMessage(error)}`);
+    }
 
     this.emitStatusChange("connected");
 
@@ -2067,6 +2077,15 @@ export class LeanAgentAdapter implements AgentHandle {
           }
         }
 
+        try {
+          const catalog = await this.client.capabilities();
+          if (catalog.commands !== this.capabilityEntries) {
+            this.capabilityEntries = catalog.commands;
+            this.replaceSystemPrompt(getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries));
+          }
+        } catch (error) {
+          this.log.warn("agent", `Capability refresh unavailable: ${getErrorMessage(error)}`);
+        }
         const continuationPrompt = await this.buildContinuationPrompt();
 
         // Hard-bound the prompt so a hung upstream can't wedge the loop.
@@ -2481,6 +2500,7 @@ export class LeanAgentAdapter implements AgentHandle {
     this.currentPromptActionable = false;
     this.currentPromptTraceParent = undefined;
     this.currentTrustSources.clear();
+    this.retrievedContext = undefined;
     const cycle = this.loopIterationCount;
     // Sections carry a priority; `render` fits them to
     // CONTINUATION_PROMPT_BUDGET_BYTES and defers the lowest-priority ones.
@@ -2786,9 +2806,9 @@ export class LeanAgentAdapter implements AgentHandle {
       }
     }
 
-    // ── 4. Relevant memory for current focus (cached, re-query on focus change or 60 cycles) ──
-    // ONE server-side retrieval (`recall <focus> all`) returns the unified,
-    // byte-budgeted context both memory silos feed: skills as <example>
+    // ── 4. Freshly authorized relevant memory for the current focus ──
+    // ONE server-side context preview returns the unified,
+    // byte-budgeted canonical context: skills as <example>
     // blocks (few-shot retrieval convention — worked examples beat bullet
     // recalls on procedural tasks), then `[trusted]` verified/sourced notes,
     // `[evidence]` durable records + captured sources, `[proposal]` finished
@@ -2800,11 +2820,12 @@ export class LeanAgentAdapter implements AgentHandle {
     if (this.focus) {
       try {
         const focusDesc = this.focus.description;
-        this.notesCacheAge++;
-        if (focusDesc !== this.lastNotesQuery || this.notesCacheAge > 60) {
+        // Reauthorize each retrieval; a cycle-count cache cannot honor revoked or erased memory.
+        {
           const unified = await this.platformMemory
             .unifiedContext(focusDesc, RELEVANT_MEMORY_BUDGET_BYTES)
             .catch(() => ({ success: false, text: "", context: null }));
+          this.retrievedContext = unified.context ?? undefined;
           if (unified.context) {
             // Model-facing: keep the agent informed that a tier is missing in
             // ONE compact line; the full [degraded] block (one line per tier
@@ -2830,8 +2851,6 @@ export class LeanAgentAdapter implements AgentHandle {
             const body = blocks.join("\n\n");
             this.cachedNotes = body ? `${UNIFIED_CONTEXT_HEADER}\n${body}` : "";
           }
-          this.lastNotesQuery = focusDesc;
-          this.notesCacheAge = 0;
         }
         if (this.cachedNotes && this.shouldIncludeSection("relevant_notes", this.cachedNotes)) {
           this.currentTrustSources.add("memory");
@@ -3031,6 +3050,14 @@ The goal is a smaller, sharper memory — not more notes.`;
     this.pendingPromptMetrics = {
       promptBytes: assembled.promptBytes,
       promptSections: assembled.sections,
+      ...(this.retrievedContext &&
+      assembled.sections.some((section) => section.name === "relevant_notes" && !section.deferred)
+        ? {
+            memoryReceipt: JSON.stringify(
+              receiptForUnifiedContext(this.retrievedContext, crypto.randomUUID()),
+            ),
+          }
+        : {}),
       systemPromptBytes: Buffer.byteLength(this.agent.state.systemPrompt ?? "", "utf8"),
       residentSchemaBytes: this.residentSchemaBytes(),
     };
@@ -3828,7 +3855,9 @@ The goal is a smaller, sharper memory — not more notes.`;
   }
 
   setSystemPrompt(prompt: string | undefined): void {
-    this.replaceSystemPrompt(prompt || getLeanSystemPrompt(this.rolePrompt));
+    this.replaceSystemPrompt(
+      prompt || getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries),
+    );
   }
 
   /**
@@ -3902,7 +3931,7 @@ The goal is a smaller, sharper memory — not more notes.`;
       this.config.role = opts.role;
       // Update rolePrompt and regenerate system prompt
       this.rolePrompt = opts.rolePrompt ?? null;
-      this.replaceSystemPrompt(getLeanSystemPrompt(this.rolePrompt));
+      this.replaceSystemPrompt(getLeanSystemPrompt(this.rolePrompt, this.capabilityEntries));
       this.log.info(
         LEAN_AGENT_LOG_CATEGORY,
         `role reconfigured to "${opts.role}", system prompt regenerated`,

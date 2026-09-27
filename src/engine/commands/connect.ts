@@ -16,6 +16,18 @@ export function connectCommand(deps: {
   connectorRuntime?: ConnectorRuntime;
 }): CommandDef {
   return {
+    category: "Building",
+    usage: [
+      "connect add <name> <url>",
+      "connect auth <name> bearer <token>",
+      "connect auth <name> header <key> <value>",
+      "connect call <name> <tool> [json]",
+      "connect call <server> <tool> [json-args]",
+      "connect list",
+      "connect list [args]",
+      "connect remove <name>",
+      "connect tools <name>",
+    ],
     name: "connect",
     aliases: ["conn"],
     minRank: 5,

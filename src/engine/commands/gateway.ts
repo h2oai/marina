@@ -16,6 +16,16 @@ export function gatewayCommand(deps: {
   worldName: string;
 }): CommandDef {
   return {
+    category: "Federation",
+    usage: [
+      "gateway add <name> <ws-url>",
+      "gateway bridge <name> <channel>",
+      "gateway list",
+      "gateway remove <name>",
+      "gateway send <name> <entity> <message>",
+      "gateway status <name>",
+      "gateway unbridge <name> <channel>",
+    ],
     name: "gateway",
     aliases: ["gw"],
     minRank: 5,

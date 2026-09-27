@@ -7,6 +7,7 @@ import { worldMemoryService } from "../../memory/world-service";
 import { registerBuiltinResolvers } from "../../resolvers";
 import type { EntityId, RoomId } from "../../types";
 import { collectiveManager } from "../../world/world-collective-manager";
+import { commandManifest } from "../command-manifest";
 import { associationCommand } from "../commands/association";
 import { bookmarkCommand } from "../commands/bookmark";
 import { briefCommand } from "../commands/brief";
@@ -175,6 +176,12 @@ export function registerGeneralCommands(engine: Engine): void {
         const e = engine.entities.get(id as EntityId);
         return e ? ((e.properties.rank as number) ?? 0) : 0;
       },
+      (id) =>
+        commandManifest(engine.commands, {
+          rank: engine.entities.get(id)?.properties.rank,
+          modal: engine.entities.get(id)?.properties.active_modal,
+          roomCommands: engine.getEntityRoom(id)?.module.commands,
+        }),
     ),
   );
   engine.commands.registerBuiltin(imageCommand(engine));
@@ -194,6 +201,7 @@ export function registerGeneralCommands(engine: Engine): void {
   );
   engine.commands.registerBuiltin(
     briefCommand({
+      getCommands: () => engine.commands.allBuiltins(),
       getEntity: (id) => engine.entities.get(id),
       db: engine.db,
       taskManager: engine.taskManager,

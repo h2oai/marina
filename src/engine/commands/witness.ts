@@ -47,6 +47,14 @@ export function witnessCommand(deps: {
   resolveEntityIdByName: (name: string) => EntityId | undefined;
 }): CommandDef {
   return {
+    usage: [
+      "witness",
+      "witness attest <id>",
+      "witness grant <entity> <gate>",
+      "witness queue",
+      "witness reject <id> [reason]",
+      "witness request <gate>",
+    ],
     name: "witness",
     category: "Civic",
     minRank: 0,

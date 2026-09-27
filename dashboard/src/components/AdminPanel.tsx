@@ -1,3 +1,4 @@
+import { TrustedDashboardPanels } from "../lib/panel-registry";
 import { ExtensionWidgets } from "./ExtensionWidgets";
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
@@ -173,7 +174,12 @@ export function AdminPanel({
         ))}
       </div>
       <div className="flex-1 overflow-auto p-2">
-        {tab === "extensions" && <ExtensionWidgets slot="admin-tab" />}
+        {tab === "extensions" && (
+          <>
+            <ExtensionWidgets slot="admin-tab" />
+            <TrustedDashboardPanels slot="admin-tab" />
+          </>
+        )}
         {tab === "keys" && <KeysTab />}
         {tab === "endpoint" && <EndpointTab />}
         {tab === "adapters" && <AdaptersTab />}

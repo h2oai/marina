@@ -111,6 +111,8 @@ export function evolveCommand(deps: {
   ) => void;
 }): CommandDef {
   return {
+    category: "Growth",
+    usage: ["evolve", "evolve loop"],
     name: "evolve",
     aliases: ["coach"],
     help: "Your self-improvement loop: where you stand + the next step. `evolve` for status, `evolve loop` for the how-to.",

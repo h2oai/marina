@@ -16,7 +16,7 @@ import {
   MEMORY_CONTRACT_TOKEN_CAP,
 } from "../src/agent/prompts/lean-system";
 import { COMMAND_ROSTER } from "../src/agent/tools/index";
-import { COMMAND_CATEGORIES, categorizeCommand } from "../src/engine/commands/help";
+import { categorizeCommand } from "../src/engine/commands/help";
 import { Engine } from "../src/engine/engine";
 import { resetTrustProfileForTests, setTrustProfile } from "../src/engine/trust-profile";
 import { MarinaDB } from "../src/persistence/database";
@@ -131,33 +131,9 @@ describe("MEMORY contract in the system prompt", () => {
   });
 });
 
-describe("COMMAND_ROSTER Memory block", () => {
-  const memoryLines = () => COMMAND_ROSTER.split("\n").filter((l) => /^Memory\b/.test(l));
-
-  it("has exactly one Memory block and no split legacy/service lines", () => {
-    expect(memoryLines()).toHaveLength(1);
-    expect(COMMAND_ROSTER).not.toContain("Legacy memory");
-    expect(COMMAND_ROSTER).not.toContain("Memory service:");
-    expect(COMMAND_ROSTER).not.toContain("Memory assistance:");
-  });
-
-  it("lists all six verbs with their syntax plus assistance, supersession and health", () => {
-    const line = memoryLines()[0]!;
-    expect(line).toContain("note <text>");
-    expect(line).toContain("recall <query> [evidence|all]");
-    expect(line).toContain("reflect [topic]");
-    expect(line).toContain("reflect adopt <job>");
-    expect(line).toContain("memory retrieve <task>");
-    expect(line).toContain("pool <name> add|recall");
-    expect(line).toContain("skill store|search");
-    expect(line).toContain("memory assist <librarian|reflector|evaluator> <helper> <task>");
-    expect(line).toContain("note correct <id> <text>");
-    expect(line).toContain("orient");
-    // Same verb set the prompt block and help category teach.
-    for (const verb of SIX_VERBS) expect(line).toContain(verb);
-  });
-
-  it("stays within the existing roster tripwire", () => {
+describe("command discovery fallback", () => {
+  it("points to the live manifest without another manually maintained command roster", () => {
+    expect(COMMAND_ROSTER).toContain("help catalog");
     expect(COMMAND_ROSTER.length).toBeLessThan(2100);
   });
 });
@@ -182,12 +158,6 @@ describe("help Memory category", () => {
   });
 
   it("maps note/recall/reflect/memory/pool/skill/orient/debrief/recap to one Memory category", () => {
-    expect(COMMAND_CATEGORIES.Memory).toEqual(MEMORY_HELP_COMMANDS);
-    // No other category claims any of them.
-    for (const [cat, names] of Object.entries(COMMAND_CATEGORIES)) {
-      if (cat === "Memory") continue;
-      for (const name of MEMORY_HELP_COMMANDS) expect(names).not.toContain(name);
-    }
     // Resolved against the live builtin set, not just the map.
     const builtins = engine.commands.allBuiltins();
     for (const name of MEMORY_HELP_COMMANDS) {
@@ -198,7 +168,6 @@ describe("help Memory category", () => {
   });
 
   it("leaves ask/dig/novelty in Cognition", () => {
-    expect(COMMAND_CATEGORIES.Cognition).toEqual(["novelty", "ask", "dig"]);
     const builtins = engine.commands.allBuiltins();
     for (const name of ["ask", "dig", "novelty"]) {
       const cmd = builtins.find((c) => c.name === name);

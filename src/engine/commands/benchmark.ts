@@ -90,6 +90,20 @@ export function benchmarkCommand(deps: {
 }): CommandDef {
   const { db, runner, listOrchestrations } = deps;
   return {
+    category: "Growth",
+    usage: [
+      "benchmark leaderboard <benchmark> [--limit N]",
+      "benchmark list",
+      "benchmark orchestrations",
+      "benchmark reference",
+      "benchmark reference benchmark",
+      "benchmark reference model",
+      "benchmark result <id>",
+      "benchmark run <name> [--limit N] [--seed N] [--model M]",
+      "benchmark run <name> [--limit N] [--seed N] [--model M] [--judge M] [--concurrency N] [--partition holdout|tune]",
+      "benchmark runs [--benchmark X] [--limit N]",
+      "benchmark sweep <name|all> [--limit N] [--seed N] [--judge M]",
+    ],
     name: "benchmark",
     aliases: ["bench"],
     minRank: 0,

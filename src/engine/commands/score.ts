@@ -19,6 +19,8 @@ export function scoreCommand(deps: {
   getRoomShort: (roomId: string) => string | undefined;
 }): CommandDef {
   return {
+    category: "Information",
+    usage: ["score"],
     name: "score",
     // `status` intentionally omitted: it collides with orient's alias, which
     // registers later and wins, so `status` here was dead. orient owns it.

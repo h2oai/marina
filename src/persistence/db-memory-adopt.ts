@@ -45,6 +45,7 @@ import type {
   MemorySpace,
   MemoryStandingCredit,
 } from "../sdk/memory-types";
+import { setNumericImportance } from "./db-memory-numeric";
 import {
   authorizeMemorySpace,
   event,
@@ -427,12 +428,18 @@ export function memoryAdoptRepository(db: Database) {
     },
     /** Ratification lifts the proposal cap a shared-profile `pool add` applied. */
     setPoolNoteImportance(noteId: number, importance: number): boolean {
-      return (
-        db.run(
-          "UPDATE notes SET importance=? WHERE id=? AND pool_id IS NOT NULL AND verification_status!='superseded'",
-          [Math.max(1, Math.min(10, Math.round(importance))), noteId],
-        ).changes > 0
-      );
+      return db.transaction(() => {
+        if (
+          !db
+            .query(
+              "SELECT 1 FROM numeric_notes WHERE id=? AND pool_id IS NOT NULL AND verification_status!='superseded'",
+            )
+            .get(noteId)
+        )
+          return false;
+        setNumericImportance(db, noteId, Math.max(1, Math.min(10, Math.round(importance))));
+        return true;
+      })();
     },
   };
 }

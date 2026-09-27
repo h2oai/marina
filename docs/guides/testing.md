@@ -130,7 +130,7 @@ live registries and fails when something new lands **undocumented**.
 - every `SAFETY_GATES` id appears in `docs/architecture/civic-substrate.md`
 - every command `registerBuiltinCommands()` registers resolves to a source file
   under `src/engine/commands/`, and appears in `docs/guides/commands.md` or in
-  the in-code `COMMAND_CATEGORIES` help map
+  its own command definition's category and usage metadata
 - migration `version:` numbers are contiguous from 1 with no duplicates, in
   ascending array order (migrations are append-only)
 - every `docs/architecture/*.md` is linked from `docs/architecture/README.md`,

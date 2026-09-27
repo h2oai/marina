@@ -48,7 +48,6 @@ import * as flywheelDb from "./db-flywheel";
 import * as gatewaysDb from "./db-gateways";
 import * as intellectsDb from "./db-intellects";
 import * as journeysDb from "./db-journeys";
-import * as legacyBridgeDb from "./db-legacy-bridge";
 import * as logsDb from "./db-logs";
 import * as macrosDb from "./db-macros";
 import * as maintenanceDb from "./db-maintenance";
@@ -216,8 +215,9 @@ import type {
 
 // Schema + migrations live in ./schema.ts (pure data). Re-exported for the
 // tests and tools that introspect the migration chain.
+import { createNumericHandle } from "./db-memory-numeric";
 import * as memoryServiceDb from "./db-memory-service";
-import { BASE_SCHEMA, MIGRATIONS } from "./schema";
+import { BASE_SCHEMA, MIGRATIONS, SCHEMA_BASELINE, SCHEMA_VERSION } from "./schema";
 
 // Row types for the domains lifted out of this file live in their modules and
 // are re-exported here so importers keep a single path.
@@ -357,7 +357,11 @@ export class MarinaDB implements MarinaStores {
       this.db.exec("PRAGMA temp_store=MEMORY"); // Keep temp tables in memory
       this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); // Flush WAL so read-only connection can open
 
-      this.db.exec(BASE_SCHEMA);
+      const hasSchema = this.db
+        .query("SELECT 1 FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' LIMIT 1")
+        .get();
+      if (hasSchema) this.db.exec(BASE_SCHEMA);
+      else this.db.transaction(() => this.db.exec(SCHEMA_BASELINE))();
       this.runMigrations();
 
       // Checkpoint so the readonly reader can see all schema/migration changes
@@ -376,7 +380,7 @@ export class MarinaDB implements MarinaStores {
 
   private runMigrations(): void {
     const currentVersion = this.getSchemaVersion();
-    if (currentVersion > MIGRATIONS.at(-1)!.version)
+    if (currentVersion > SCHEMA_VERSION)
       throw new Error(
         `Database schema ${currentVersion} is newer than this binary supports; restore a compatible backup or use the newer binary.`,
       );
@@ -387,6 +391,7 @@ export class MarinaDB implements MarinaStores {
       try {
         this.db.transaction(() => {
           this.db.exec(migration.sql);
+          migration.apply?.(this.db);
           this.db.run("INSERT OR REPLACE INTO schema_version (version) VALUES (?)", [
             migration.version,
           ]);
@@ -1697,21 +1702,10 @@ export class MarinaDB implements MarinaStores {
     return notesDb.createNote(this.db, entityName, content, roomId, opts);
   }
 
-  queueLegacyBridgeBackfill(owner?: string, afterId = 0, limit = 500) {
-    return legacyBridgeDb.queueLegacyBridgeBackfill(this.db, owner, afterId, limit);
-  }
-
-  enqueueLegacyBridge(operation: string, args: unknown[]): number {
-    return legacyBridgeDb.enqueueLegacyBridge(this.db, operation, args);
-  }
-  pendingLegacyBridges(limit = 100): legacyBridgeDb.LegacyBridgeIntent[] {
-    return legacyBridgeDb.pendingLegacyBridges(this.db, limit);
-  }
-  completeLegacyBridge(id: number): void {
-    legacyBridgeDb.completeLegacyBridge(this.db, id);
-  }
-  failLegacyBridge(id: number, code: string): void {
-    legacyBridgeDb.failLegacyBridge(this.db, id, code);
+  createMemoryNoteHandle(
+    ...args: Parameters<typeof createNumericHandle> extends [unknown, ...infer Rest] ? Rest : never
+  ): number {
+    return createNumericHandle(this.db, ...args);
   }
 
   getNotesByEntity(entityName: string, limit = 50): NoteRow[] {

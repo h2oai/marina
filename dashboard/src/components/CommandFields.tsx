@@ -1,6 +1,6 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { type CommandForm, commandForms, composeCommand } from "../lib/command-forms";
 
 const STARTERS: Record<string, string> = {
@@ -12,13 +12,18 @@ const STARTERS: Record<string, string> = {
 export function CommandFields({
   name,
   help = "",
+  forms: descriptors,
   onCompose,
 }: {
   name: string;
   help?: string;
+  forms?: CommandForm[];
   onCompose: (args: string) => void;
 }) {
-  const forms = useMemo(() => commandForms({ name, help }), [name, help]);
+  const forms = useMemo(
+    () => commandForms({ name, help, forms: descriptors }),
+    [name, help, descriptors],
+  );
   const [chosen, setChosen] = useState("");
   const selected =
     forms.find((f) => f.syntax === chosen) ??
@@ -59,7 +64,14 @@ function ParameterFields({
   form: CommandForm;
   onCompose: (command: string) => void;
 }) {
-  const [values, setValues] = useState<Record<string, string>>({});
+  const formId = useId();
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      form.fields
+        .filter((field) => field.default !== undefined)
+        .map((field) => [field.id, field.default!]),
+    ),
+  );
   const [enabled, setEnabled] = useState<Record<string, boolean>>({});
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const result = composeCommand(form, values, enabled);
@@ -91,7 +103,7 @@ function ParameterFields({
           .map((field) => {
             const label = field.label.charAt(0).toUpperCase() + field.label.slice(1);
             const props = {
-              id: `composer-${field.id}`,
+              id: `${formId}-${field.id}`,
               value: values[field.id] ?? "",
               onChange: (
                 e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
@@ -105,7 +117,7 @@ function ParameterFields({
             return (
               <label
                 key={field.id}
-                htmlFor={`composer-${field.id}`}
+                htmlFor={`${formId}-${field.id}`}
                 className={`text-sm ${field.multiline ? "sm:col-span-2" : ""}`}
               >
                 {label}
@@ -126,6 +138,8 @@ function ParameterFields({
                   <input
                     {...props}
                     type={field.kind === "number" ? "number" : "text"}
+                    min={field.min}
+                    max={field.max}
                     step={field.kind === "number" ? "any" : undefined}
                     placeholder={field.placeholder}
                   />

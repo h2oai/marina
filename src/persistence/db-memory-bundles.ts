@@ -14,7 +14,7 @@ import {
   mutation,
   readMemoryRecord,
 } from "./db-memory-service";
-import { createNote } from "./db-notes";
+import { createStoredNote as createNote } from "./db-note-storage";
 import type { MemoryActor } from "./db-principals";
 
 const digest = (value: unknown) =>

@@ -8,11 +8,17 @@ import { version as MARINA_VERSION } from "../../package.json";
 import { getInternalModelToken } from "../agent/agent-runtime";
 import { RateLimiter } from "../auth/rate-limiter";
 import { secretsEqual } from "../auth/secret-compare";
+import { commandManifest, describeCommand } from "../engine/command-manifest";
+import { previewParticipantContext } from "../engine/commands/context";
 import { WS_IDLE_TIMEOUT_SECONDS } from "../engine/constants";
 import type { Engine } from "../engine/engine";
+import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
+import { onboardParticipant, participantOrientation } from "../engine/onboarding";
 import type { FlywheelToolBackend } from "../integrations/flywheel-manager";
 import { formatMemoryOperation } from "../memory/human-interface";
+import { buildUnifiedContext, renderUnifiedContext } from "../memory/unified-context";
+import { composeCommand } from "../sdk/command-forms";
 import type { MarinaMemoryClient } from "../sdk/memory-client";
 import { MEMORY_GRAPH_ACTIONS, type MemoryGraphAction } from "../sdk/memory-knowledge-graph";
 import {
@@ -33,6 +39,7 @@ import {
 import { isTrustedBrowserOrigin } from "./cors";
 import { consumeHttpRate, rateLimitedResponse, securityHeaders } from "./http-utils";
 import { registerMemoryResources } from "./memory-mcp-resources";
+import { receiptForUnifiedContext } from "./memory-receipt";
 import { RequestDrain } from "./request-drain";
 import { isLoopbackHostname, resolveWsBindHostname } from "./websocket-server";
 
@@ -50,6 +57,12 @@ interface McpSession {
   throttleKey: string;
   perceptionBuffer: Perception[];
   commandTail: Promise<unknown>;
+  context?: {
+    mode: "auto" | "manual" | "off";
+    query: string;
+    scope: "all" | "evidence";
+    budgetBytes: number;
+  };
   transport: WebStandardStreamableHTTPServerTransport;
   mcp: McpServer;
 }
@@ -61,7 +74,7 @@ import { formatPerception } from "./formatter";
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 type McpResult = {
-  content: [{ type: "text"; text: string }];
+  content: Array<{ type: "text"; text: string }>;
   structuredContent?: Record<string, unknown>;
   isError?: boolean;
 };
@@ -262,6 +275,8 @@ async function cmdTool(
   extra: { sessionId?: string },
   cmd: string,
   rateLimiter?: RateLimiter,
+  contextUpdate?: McpSession["context"],
+  inspection?: "capabilities" | "context",
 ): Promise<McpResult> {
   const resolved = withSession(sessions, extra);
   if ("error" in resolved) return { ...resolved.error, isError: true };
@@ -270,23 +285,128 @@ async function cmdTool(
   }
   const session = resolved.session;
   const pending = session.commandTail.then(async () => {
-    await engine.processCommand(resolved.entityId, cmd);
+    // Revoked/evicted sessions cannot use either command output or context.
+    if (
+      engine.getConnectionEntity(session.connId) !== resolved.entityId ||
+      !engine.entities.get(resolved.entityId)
+    )
+      return errorText("Session expired. Reconnect before using world tools.");
+    if (contextUpdate) session.context = contextUpdate;
+    if (inspection === "context" && contextUpdate?.mode === "off") {
+      session.perceptionBuffer.push({
+        kind: "system",
+        timestamp: Date.now(),
+        data: { text: "Automatic task context is off." },
+      });
+    } else if (inspection) {
+      const entity = engine.entities.get(resolved.entityId)!;
+      try {
+        const data =
+          inspection === "capabilities"
+            ? {
+                capabilities: {
+                  schema: "marina.capabilities.v1",
+                  revision: engine.commands.revision,
+                  commands: commandManifest(engine.commands, {
+                    rank: entity.properties.rank,
+                    modal: entity.properties.active_modal,
+                    roomCommands: engine.getEntityRoom(entity.id)?.module.commands,
+                  }),
+                },
+              }
+            : {
+                context_preview: await previewParticipantContext(
+                  { db: engine.db, getEntity: (id) => engine.entities.get(id) },
+                  entity.id,
+                  contextUpdate,
+                ),
+              };
+        if (engine.getConnectionEntity(session.connId) !== entity.id)
+          return errorText("Session expired.");
+        const preview = "context_preview" in data ? data.context_preview : undefined;
+        session.perceptionBuffer.push({
+          kind: "system",
+          timestamp: Date.now(),
+          data: {
+            ...data,
+            text: preview
+              ? renderUnifiedContext(preview.context)
+              : JSON.stringify(data.capabilities),
+          },
+        });
+      } catch (error) {
+        return errorText(getErrorMessage(error));
+      }
+    } else {
+      await engine.processCommand(resolved.entityId, cmd);
+    }
     const perceptions = session.perceptionBuffer.splice(0);
     const envelope = perceptions.map((p) => p.data?.memory_service).findLast(Boolean) as
       | MemoryOperationResult
       | undefined;
-    if (envelope) return memoryMcpResult(envelope);
-    const rendered =
-      perceptions.map((p) => formatPerception(p, "markdown")).join("\n\n") || "(no output)";
-    // Legacy-memory commands (`recall`, `skill search`, `memory get` …) attach a
-    // `marina.memory.command.v1` payload; surface it as structuredContent so MCP
-    // clients (Claude Code, Codex, Cursor) parse tiers/ids instead of prose.
+    const preview = perceptions.map((p) => p.data?.context_preview).findLast(Boolean) as
+      | Record<string, unknown>
+      | undefined;
+    const capabilities = perceptions.map((p) => p.data?.capabilities).findLast(Boolean) as
+      | Record<string, unknown>
+      | undefined;
     const memory = perceptions.map((p) => p.data?.memory).findLast(Boolean) as
       | Record<string, unknown>
       | undefined;
-    if (memory && memory.schema === "marina.memory.command.v1")
-      return { ...text(rendered), structuredContent: { ...memory } };
-    return text(rendered);
+    const rendered =
+      perceptions.map((p) => formatPerception(p, "markdown")).join("\n\n") || "(no output)";
+    const result: McpResult =
+      envelope && !inspection
+        ? memoryMcpResult(envelope)
+        : {
+            ...text(rendered),
+            ...(preview
+              ? { structuredContent: preview, isError: !!preview.error }
+              : capabilities
+                ? { structuredContent: capabilities }
+                : memory?.schema === "marina.memory.command.v1"
+                  ? { structuredContent: { ...memory } }
+                  : {}),
+          };
+    if (
+      perceptions.some(
+        (perception) => perception.kind === "error" || perception.kind === "auth_error",
+      )
+    )
+      result.isError = true;
+    const options = session.context;
+    if (
+      options?.mode === "auto" &&
+      options.query &&
+      !cmd.startsWith("context ") &&
+      !result.isError
+    ) {
+      try {
+        const entity = engine.entities.get(resolved.entityId);
+        if (entity && engine.db && engine.getConnectionEntity(session.connId) === entity.id) {
+          // Deliberately rebuild: time-based caches alone cannot honor revocation, edits and erasure.
+          const context = await buildUnifiedContext(engine.db, entity.name, options.query, {
+            ...options,
+            creditReflections: false,
+          });
+          if (engine.getConnectionEntity(session.connId) === entity.id) {
+            const receipt = receiptForUnifiedContext(context, crypto.randomUUID());
+            result.content.push({
+              type: "text",
+              text: `Task memory context for your next decision (not the preceding action):\n${renderUnifiedContext(context)}\nDelivery receipt: ${JSON.stringify(receipt)}`,
+            });
+          }
+        }
+      } catch (error) {
+        // A retrieval failure must never turn an already committed mutation into an apparent failure.
+        logger.warn("mcp", `Context enrichment unavailable: ${getErrorMessage(error)}`);
+        result.content.push({
+          type: "text",
+          text: "Optional task context unavailable. The tool result above is unchanged.",
+        });
+      }
+    }
+    return result;
   });
   session.commandTail = pending.catch(() => undefined);
   return pending;
@@ -578,9 +698,22 @@ export class McpServerAdapter {
       return sessions.get(extra.sessionId);
     }
 
+    function describeTool(name: string): string {
+      const command = engine.commands.getDef(name);
+      return command
+        ? describeCommand(command).description +
+            "\nThis named tool preserves its existing parameter contract; capabilities and invoke expose all current forms."
+        : "Command unavailable in this world; refresh capabilities.";
+    }
+
     /** Local wrapper that captures rateLimiter from closure. */
-    function runCmd(extra: { sessionId?: string }, command: string): Promise<McpResult> {
-      return cmdTool(engine, sessions, extra, command, rateLimiter);
+    function runCmd(
+      extra: { sessionId?: string },
+      command: string,
+      context?: McpSession["context"],
+      inspection?: "capabilities" | "context",
+    ): Promise<McpResult> {
+      return cmdTool(engine, sessions, extra, command, rateLimiter, context, inspection);
     }
 
     registerMemoryTools(mcp, async (request, extra) => {
@@ -590,13 +723,111 @@ export class McpServerAdapter {
       return result.structuredContent ? result : { ...result, isError: true };
     });
 
+    // Canonical discovery and structured execution work for builtins and live extensions.
+    // Existing named tools remain compatibility adapters over runCmd.
+    mcp.tool(
+      "capabilities",
+      "Discover live commands and their typed forms, aliases, scope, rank and gate requirements. Request one command to keep the response compact.",
+      { command: z.string().optional() },
+      async ({ command }, extra) => {
+        const result = await runCmd(extra, "help catalog", undefined, "capabilities");
+        const manifest = result.structuredContent;
+        if (!manifest || !Array.isArray(manifest.commands)) return result;
+        const commands = manifest.commands.filter(
+          (entry) => !command || entry.name === command || entry.aliases.includes(command),
+        );
+        const value = {
+          ...manifest,
+          commands: command
+            ? commands
+            : commands.map(({ forms, ...entry }) => ({
+                ...entry,
+                actions: forms?.map((form: { syntax: string }) => form.syntax),
+              })),
+        };
+        return {
+          content: [{ type: "text", text: JSON.stringify(value) }, ...result.content.slice(1)],
+          structuredContent: value,
+        };
+      },
+    );
+    mcp.tool(
+      "invoke",
+      "Execute a live capability form. Get its syntax and field ids from capabilities(command). Values use those field ids; enable optional groups by id. Selection and composition never bypass execution gates.",
+      {
+        command: z.string(),
+        syntax: z.string(),
+        values: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+        enabled: z.array(z.string()).optional(),
+      },
+      async ({ command, syntax, values = {}, enabled = [] }, extra) => {
+        const resolved = withSession(sessions, extra);
+        if ("error" in resolved) return { ...resolved.error, isError: true };
+        const entity = engine.entities.get(resolved.entityId);
+        if (!entity || engine.getConnectionEntity(resolved.session.connId) !== entity.id)
+          return errorText("Session expired.");
+        const entry = commandManifest(engine.commands, {
+          roomCommands: engine.getEntityRoom(entity.id)?.module.commands,
+        }).find((def) => def.name === command);
+        const form = entry?.forms?.find((candidate) => candidate.syntax === syntax);
+        if (!form)
+          return errorText(
+            "Unknown or changed form. Refresh capabilities; room overrides may require plain command input.",
+          );
+        if (
+          Object.keys(values).some((key) => !form.fields.some((field) => field.id === key)) ||
+          enabled.some((key) => !form.groups.some((group) => group.id === key))
+        )
+          return errorText("Unknown field or optional group.");
+        const composed = composeCommand(
+          form,
+          Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value)])),
+          Object.fromEntries(enabled.map((id) => [id, true])),
+        );
+        if (Object.keys(composed.errors).length) return errorText(JSON.stringify(composed.errors));
+        return runCmd(extra, composed.command);
+      },
+    );
+    mcp.tool(
+      "context",
+      "Preview your own unified memory context for an explicit task/query. mode auto appends freshly authorized task context to later tool responses; manual retrieves only here; off disables automatic context. Call before a decision to inform it.",
+      {
+        query: z.string().max(4000).optional(),
+        mode: z.enum(["auto", "manual", "off"]).default("manual"),
+        scope: z.enum(["all", "evidence"]).default("all"),
+        budgetBytes: z.number().int().min(256).max(16384).default(2048),
+      },
+      async ({ query = "", mode, scope, budgetBytes }, extra) => {
+        if (mode !== "off" && !query.trim())
+          return errorText("Provide the task or query whose memory context you need.");
+        return runCmd(
+          extra,
+          mode === "off"
+            ? "help context"
+            : `context api ${JSON.stringify({ query, scope, budgetBytes })}`,
+          { mode, query, scope, budgetBytes },
+          "context",
+        );
+      },
+    );
+
     // ── Bootstrap ─────────────────────────────────────────────────────────
 
     mcp.tool(
       "login",
       "Log into Marina with a character name. Must be called before other tools.",
-      { name: z.string().describe("Character name (2-20 alphanumeric characters)") },
-      async ({ name }, extra) => {
+      {
+        name: z.string().describe("Character name (2-20 alphanumeric characters)"),
+        task: z
+          .string()
+          .trim()
+          .min(1)
+          .max(4000)
+          .optional()
+          .describe("Explicit task query for initial memory context"),
+        contextMode: z.enum(["manual", "auto", "off"]).default("manual"),
+      },
+      async ({ name, task, contextMode }, extra) => {
         const session = getSession(extra);
         if (!session) return text("Error: no active MCP session.");
         if (session.entityId) return text(`Already logged in. Entity: ${session.entityId}`);
@@ -605,33 +836,39 @@ export class McpServerAdapter {
         }
         const result = engine.login(session.connId, name);
         if ("error" in result) return text(result.error);
+        session.context = undefined;
         session.entityId = result.entityId;
-        engine.sendLook(result.entityId);
-        engine.sendBrief(result.entityId);
+        await onboardParticipant(engine, result.entityId, "mcp", false);
         const output = drainPerceptions(session);
         const tokenNote = result.token ? `\nSession token: \`${result.token}\`` : "";
-        const quickRef = [
-          "",
-          "",
-          "## Now",
-          "Use the **think** tool to take notes and recall memories.",
-          "Use the **memory** tool to set your goal and track beliefs.",
-          "Use the **next** tool when you need guidance on what to do.",
-          "Use the **brief** tool to get world orientation at any time.",
-          "Use the **canvas** tool to publish media, browse the feed, or build interactive UIs.",
-          "Use **command** for any other engine command (try: `help`).",
-        ].join("\n");
-        return text(
-          `Logged in as **${name}** (${result.entityId}).${tokenNote}${quickRef}\n\n${output}`,
-        );
+        const response: McpResult = {
+          ...text(`Logged in as **${name}** (${result.entityId}).${tokenNote}\n\n${output}`),
+          structuredContent: {
+            onboarding: participantOrientation(engine, result.entityId, "mcp", false),
+          },
+        };
+        if (task && contextMode !== "off") {
+          const context = await runCmd(
+            extra,
+            `context api ${JSON.stringify({ query: task, budgetBytes: 2048 })}`,
+            { mode: contextMode, query: task, scope: "all", budgetBytes: 2048 },
+            "context",
+          );
+          response.content.push(...context.content);
+        }
+        return response;
       },
     );
 
     mcp.tool(
       "auth",
       "Reconnect using a previously issued session token.",
-      { token: z.string().describe("Session token from a previous login") },
-      async ({ token }, extra) => {
+      {
+        token: z.string().describe("Session token from a previous login"),
+        task: z.string().trim().min(1).max(4000).optional(),
+        contextMode: z.enum(["manual", "auto", "off"]).default("manual"),
+      },
+      async ({ token, task, contextMode }, extra) => {
         const session = getSession(extra);
         if (!session) return text("Error: no active MCP session.");
         if (session.entityId) return text(`Already logged in. Entity: ${session.entityId}`);
@@ -640,11 +877,26 @@ export class McpServerAdapter {
         }
         const result = engine.reconnect(session.connId, token);
         if ("error" in result) return text(result.error);
+        session.context = undefined;
         session.entityId = result.entityId;
-        engine.sendLook(result.entityId);
-        engine.sendBrief(result.entityId);
+        await onboardParticipant(engine, result.entityId, "mcp", true);
         const output = drainPerceptions(session);
-        return text(`Reconnected as **${result.name}** (${result.entityId}).\n\n${output}`);
+        const response: McpResult = {
+          ...text(`Reconnected as **${result.name}** (${result.entityId}).\n\n${output}`),
+          structuredContent: {
+            onboarding: participantOrientation(engine, result.entityId, "mcp", true),
+          },
+        };
+        if (task && contextMode !== "off") {
+          const context = await runCmd(
+            extra,
+            `context api ${JSON.stringify({ query: task, budgetBytes: 2048 })}`,
+            { mode: contextMode, query: task, scope: "all", budgetBytes: 2048 },
+            "context",
+          );
+          response.content.push(...context.content);
+        }
+        return response;
       },
     );
 
@@ -654,7 +906,7 @@ export class McpServerAdapter {
       "think",
       "Your cognitive tool — take notes, recall memories, or reflect on what you know. " +
         "Use 'note' to record observations, 'recall' to search memories, 'reflect' to synthesize, " +
-        "'context' for the unified, budgeted view across both memory systems (skills, [trusted], " +
+        "'context' for the unified, budgeted view across canonical memory tiers (skills, [trusted], " +
         "[evidence] durable records + sources, [proposal] assistance answers, [unverified] own notes) " +
         "returned as structuredContent.context (schema marina.memory.context.v1).",
       {
@@ -757,19 +1009,11 @@ export class McpServerAdapter {
         }),
     );
 
-    mcp.tool(
-      "next",
-      "Context-aware guidance — tells you the single best thing to do right now based on " +
-        "your goal, objectives, claimed tasks, and exploration state.",
-      {},
-      async (_args, extra) => runCmd(extra, "next"),
-    );
+    mcp.tool("next", describeTool("next"), {}, async (_args, extra) => runCmd(extra, "next"));
 
     mcp.tool(
       "brief",
-      "World orientation signal. Default: compact compass (who is online, counts of projects, " +
-        "tasks, pools). Use mode 'full' for detailed briefing with your memory, tasks, " +
-        "projects, staffing, and standing.",
+      describeTool("brief"),
       {
         mode: z.enum(["compass", "full"]).optional().describe("Briefing depth (default: compass)"),
       },
@@ -781,8 +1025,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "quest",
-      "Guided objectives and onboarding checklists — track structured workflows with step-by-step progress. " +
-        "Complete the onboarding checklist to earn Canvas rank.",
+      describeTool("quest"),
       {
         action: z
           .enum(["status", "list", "start", "complete", "abandon"])
@@ -801,7 +1044,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "look",
-      "Look at the current room or examine a specific target.",
+      describeTool("look"),
       { target: z.string().optional().describe("Optional target to look at") },
       { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       async ({ target }, extra) => {
@@ -812,14 +1055,14 @@ export class McpServerAdapter {
 
     mcp.tool(
       "move",
-      "Move in a direction (north, south, east, west, up, down, etc.).",
+      describeTool("move"),
       { direction: z.string().describe("Direction to move") },
       async ({ direction }, extra) => runCmd(extra, direction),
     );
 
     mcp.tool(
       "say",
-      "Say something to everyone in the current room.",
+      describeTool("say"),
       { message: z.string().describe("Message to say") },
       { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
       async ({ message }, extra) => runCmd(extra, `say ${message}`),
@@ -827,7 +1070,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "tell",
-      "Send a private message to another entity.",
+      describeTool("tell"),
       {
         target: z.string().describe("Name of the entity to message"),
         message: z.string().describe("Private message to send"),
@@ -838,9 +1081,7 @@ export class McpServerAdapter {
         ),
     );
 
-    mcp.tool("who", "List all currently online entities.", {}, async (_args, extra) =>
-      runCmd(extra, "who"),
-    );
+    mcp.tool("who", describeTool("who"), {}, async (_args, extra) => runCmd(extra, "who"));
 
     mcp.tool(
       "examine",
@@ -854,8 +1095,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "channel",
-      "Real-time messaging channels: list, join, leave, send, history. " +
-        "Usage: channel <subcommand> [args]",
+      describeTool("channel"),
       {
         input: z.string().describe("Channel subcommand and arguments, e.g. 'send general Hello!'"),
       },
@@ -864,8 +1104,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "board",
-      "Persistent message boards for async discussion: list, read, post, reply, search, vote. " +
-        "Usage: board <subcommand> [args]",
+      describeTool("board"),
       {
         input: z
           .string()
@@ -876,8 +1115,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "group",
-      "Groups for coordination — auto-creates a channel and board: list, create, join, leave, " +
-        "invite, info. Usage: group <subcommand> [args]",
+      describeTool("group"),
       {
         input: z
           .string()
@@ -888,8 +1126,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "task",
-      "Task tracking: list, create, claim, submit, approve, reject, cancel, bundle. " +
-        "Usage: task <subcommand> [args]",
+      describeTool("task"),
       {
         input: z
           .string()
@@ -903,10 +1140,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "crew",
-      "Multi-agent crews: runtime containers with formations (deliberation, chorus, foundry, swarm, " +
-        "pipeline, debate, mapreduce, blackboard, symbiosis, research, freeform). Subcommands: " +
-        "create, invite, invitations, join, decline, dispatch, info, leave, formation, persist, complete, dissolve. " +
-        "Usage: crew <subcommand> [args]",
+      describeTool("crew"),
       {
         input: z
           .string()
@@ -919,10 +1153,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "evolve",
-      "Opt-in native evolution protocols: sessions, create, start, status, analyze, propose, " +
-        "evaluate, decide, pause, resume, complete. Uses the same participant permissions and " +
-        "world-command path as humans, in-system Pi agents, and SDK clients. Acceptance records " +
-        "a decision but never activates or promotes a candidate.",
+      describeTool("evolve"),
       {
         input: z
           .string()
@@ -936,11 +1167,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "market",
-      "Prediction markets: discovery, leaderboards, and forecasts. " +
-        "Subcommands: list [open|resolved] | search <query> | view <id> | leaderboard | " +
-        "score [entity] | forecast <id>. The `forecast` subcommand runs TabH2O against " +
-        "past resolved markets in the same category to produce a calibrated YES/NO " +
-        "probability — ground your positions in it and cite the resulting inference note.",
+      describeTool("market"),
       {
         input: z
           .string()
@@ -955,21 +1182,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "canvas",
-      "Shared visual surface for rich media, feeds, and interactive UIs. " +
-        "Subcommands: create <name> [desc] | list | info <name> | " +
-        "publish <type> <asset_id> [canvas] [reply:<node_id>] | " +
-        "nodes <name> | layout <grid|timeline|feed> <name> | delete <name> | " +
-        "asset upload <url> | asset list | asset info <id> | asset delete <id> | " +
-        "intent list [canvas] | intent claim <node_id> | intent fail <node_id> [reason] | " +
-        "intent complete <node_id> [--type <type>] <result> | " +
-        "intent complete-rich <node_id> <a2ui_json>. " +
-        "Node types: image, video, pdf, audio, document, text, embed, frame, a2ui. " +
-        "The 'feed' canvas auto-populates from board posts, channel messages, task events, " +
-        "and market activity. Use 'reply:<node_id>' to thread replies on any node. " +
-        "Use 'intent list' to discover nodes with pending work requests from humans, " +
-        "'intent claim' to take ownership, 'intent fail' to report inability to complete, " +
-        "'intent complete' to deliver text results, " +
-        "and 'intent complete-rich' to deliver rich A2UI component results.",
+      describeTool("canvas"),
       {
         input: z
           .string()
@@ -986,8 +1199,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "build",
-      "Extend the world: create rooms, modify descriptions, link exits, edit room code, " +
-        "manage templates, create dynamic commands. Usage: build <subcommand> [args]",
+      describeTool("build"),
       {
         input: z
           .string()
@@ -1060,8 +1272,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "batch",
-      "Execute multiple commands in sequence, separated by semicolons. " +
-        "Example: look ; north ; look ; note Found something",
+      describeTool("batch"),
       {
         input: z.string().describe("Commands separated by semicolons, e.g. 'look ; north ; look'"),
       },
@@ -1187,7 +1398,7 @@ export class McpServerAdapter {
 
     mcp.tool(
       "help",
-      "Get help about available commands.",
+      describeTool("help"),
       { command: z.string().optional().describe("Specific command to get help for") },
       async ({ command }, extra) => {
         const cmd = command ? `help ${command}` : "help";
@@ -1195,7 +1406,7 @@ export class McpServerAdapter {
       },
     );
 
-    mcp.tool("quit", "Disconnect from Marina and end your session.", {}, async (_args, extra) => {
+    mcp.tool("quit", describeTool("quit"), {}, async (_args, extra) => {
       const session = getSession(extra);
       if (!session) return text("Error: no active MCP session.");
       if (!session.entityId) return text("Not logged in.");
@@ -1204,6 +1415,7 @@ export class McpServerAdapter {
       }
       const entityId = session.entityId;
       session.entityId = null;
+      session.context = undefined;
       engine.removeConnection(session.connId);
       return text(`Disconnected entity ${entityId}. Session ended.`);
     });

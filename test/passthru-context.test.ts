@@ -209,6 +209,21 @@ describe("passthru-context", () => {
   // ─── Context building (shared-scope ONLY) ───────────────────────────────────
 
   describe("buildInjectedContext", () => {
+    it("adds a live capability reference only when requested, within the existing budget", async () => {
+      const me = resolvePassthruIdentity(engine, headers({}), { boundEntityName: "Discovery" });
+      const messages = [{ role: "user" as const, content: "What can I do here?" }];
+      const ordinary = await buildInjectedContext(engine, me.entityId, messages);
+      expect(ordinary.systemAddendum ?? "").not.toContain("Marina world command reference");
+      const discovery = await buildInjectedContext(engine, me.entityId, messages, {
+        capabilities: true,
+        budgetBytes: 2048,
+      });
+      expect(discovery.systemAddendum).toContain("Marina world command reference");
+      expect(discovery.systemAddendum).toContain("this proxy does not execute world commands");
+      expect(Buffer.byteLength(discovery.systemAddendum!)).toBeLessThanOrEqual(2048);
+      expect(discovery.receipt?.tiers.some((tier) => tier.tier === "capabilities")).toBe(true);
+    });
+
     it("injects the entity's OWN notes (shared-scope) but NEVER a foreign private note", async () => {
       const me = resolvePassthruIdentity(engine, headers({}), {});
       // My own note — should be eligible.

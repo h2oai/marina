@@ -114,20 +114,6 @@ export function computeReadiness(engine: Engine): ReadinessReport {
 
   const checks: ReadinessCheck[] = [];
 
-  const bridgePending = engine.db?.pendingLegacyBridges(101) ?? [];
-  checks.push({
-    id: "memory-compatibility",
-    label: "Legacy memory synchronization",
-    status: bridgePending.some((job) => job.attempts > 0) ? "degraded" : "ok",
-    detail: `${bridgePending.length}${bridgePending.length === 101 ? "+" : ""} durable bridge intents pending`,
-    ...(bridgePending.length
-      ? {
-          remediation:
-            "Retries run automatically. Inspect legacy-bridge logs and verify that the author's durable world account is active.",
-        }
-      : {}),
-  });
-
   // ── LLM provider key — gates ALL agent spawning ──────────────────────────
   checks.push(
     hasKey

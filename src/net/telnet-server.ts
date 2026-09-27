@@ -5,6 +5,7 @@ import type { Socket } from "bun";
 import type { RateLimiter } from "../auth/rate-limiter";
 import type { Engine } from "../engine/engine";
 import { Logger } from "../engine/logger";
+import { onboardParticipant } from "../engine/onboarding";
 import type { Connection, EntityId, Perception } from "../types";
 import { A } from "./ansi";
 import { formatPerception } from "./formatter";
@@ -115,8 +116,7 @@ export class TelnetServer {
                   socket.data.name = result.name;
                   socket.data.entity = result.entityId;
                   socket.write(`\r\nReconnected as ${result.name}.\r\n\r\n`);
-                  engine.sendLook(result.entityId);
-                  engine.sendBrief(result.entityId);
+                  void onboardParticipant(engine, result.entityId, "telnet", true);
                 }
                 continue;
               }
@@ -135,8 +135,7 @@ export class TelnetServer {
               } else {
                 socket.write(`\r\nWelcome, ${line}.\r\n\r\n`);
               }
-              engine.sendLook(result.entityId);
-              engine.sendBrief(result.entityId);
+              void onboardParticipant(engine, result.entityId, "telnet", false);
               continue;
             }
 

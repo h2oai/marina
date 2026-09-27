@@ -1,6 +1,9 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { CommandUsage } from "./sdk/command-forms";
+import type { DurableMemoryAPI } from "./sdk/memory-operations";
+
 import type { Entity, EntityId, EntityRank, Perception, RoomId } from "./sdk/protocol";
 
 export * from "./sdk/protocol";
@@ -39,14 +42,13 @@ export interface CommandDef {
   name: string;
   aliases?: string[];
   help: string;
+  /** Canonical grammar and optional action metadata used by every interface. */
+  usage?: CommandUsage[];
   handler: CommandHandler;
   minRank?: EntityRank;
   /**
-   * Display group for `help`. When set, it wins over the name→category map
-   * in help.ts, letting a command document its own category instead of
-   * relying on that hand-maintained list. Commands with neither a `category`
-   * nor a map entry fall into "Other" — a state the help-coverage test
-   * forbids, so every primitive stays documented.
+   * Display group shared by help and discovery. Builtins must declare a category;
+   * opaque extensions without one appear in "Other".
    */
   category?: string;
   /**
@@ -169,7 +171,8 @@ export interface NotesAPI {
   recall(query: string): { id: number; content: string; importance: number; score: number }[];
   /** Full-text search of notes */
   search(query: string): { id: number; content: string; importance: number }[];
-  /** Add a note */
+  /** @deprecated New features use durableMemory.run({ operation: "remember", ... }).
+   * Numeric notes remain a compatibility surface. */
   add(content: string, importance?: number, noteType?: string): number;
 }
 
@@ -194,7 +197,9 @@ export interface CommandContext extends RoomContext {
   mcp: McpAPI;
   /** HTTP API (rate-limited GET/POST) */
   http: HttpAPI;
-  /** Notes API (scoped to calling entity) */
+  /** Canonical durable record API, scoped to the calling world account. */
+  durableMemory: DurableMemoryAPI;
+  /** Legacy numeric notes (scoped to calling entity). New features use durableMemory. */
   notes: NotesAPI;
   /** Core memory API (scoped to calling entity) */
   memory: MemoryAPI;
@@ -543,6 +548,7 @@ export type EngineEvent =
   // and turn boundaries.
   | {
       type: "agent_turn_start";
+      memoryReceipt?: string;
       name: string;
       runId?: string;
       traceId?: string;

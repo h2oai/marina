@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * /mem — Agent Memory as a Service
+ * /mem — Deprecated numeric-note compatibility API
  *
  * Exposes Marina's memory systems (notes, recall, core memory, pools, knowledge graph)
  * as a REST API for external agents. Any agent, any framework, any language.
@@ -17,8 +17,7 @@ import type { RateLimiter } from "../auth/rate-limiter";
 import { sanitizeEntityName } from "../engine/entity-name";
 import { isOpenApiMode } from "../engine/trust-profile";
 import { memoryAccess } from "../memory/access";
-import { flushMemoryCompatibility } from "../memory/compatibility";
-import { findDurableTwin } from "../memory/legacy-bridge";
+import { findDurableTwin } from "../memory/legacy-projection";
 import { expandMemoryRecall } from "../memory/retrieval";
 import { buildUnifiedContext, type UnifiedScope } from "../memory/unified-context";
 import type { MarinaDB } from "../persistence/database";
@@ -80,8 +79,10 @@ const VALID_RELATIONSHIPS = new Set([
 const API_DESCRIPTION = {
   name: "Marina Memory API",
   version: 1,
+  deprecated: true,
+  successor: "/v1/memory",
   description:
-    "Persistent memory for AI agents. Store notes, recall with intelligent scoring, " +
+    "Deprecated for new integrations; use /v1/memory. Store legacy numeric notes, recall with scoring, " +
     "build knowledge graphs, manage mutable state, and share memory across agents.",
   auth: {
     open_mode:
@@ -389,17 +390,12 @@ export async function handleMemApi(
     }
     const id = db.createNoteWithLinks(agent, content, { importance, noteType }, links);
 
-    await flushMemoryCompatibility(db);
     const note = db.getNote(id);
     return json(
       {
         id,
         note,
-        durable: findDurableTwin(db, id)
-          ? "synced"
-          : db.getUserByName(agent)
-            ? "pending"
-            : "world_identity_required",
+        durable: findDurableTwin(db, id) ? "synced" : "not_applicable",
       },
       201,
     );
@@ -529,7 +525,6 @@ export async function handleMemApi(
       const note = db.getNote(noteId);
       if (!access.write(note)) return error(404, "Note not found");
       db.deleteNote(noteId, agent);
-      await flushMemoryCompatibility(db);
       return json({ ok: true, id: noteId });
     }
   }
@@ -560,7 +555,6 @@ export async function handleMemApi(
     }
 
     const linkId = db.createNoteLink(sourceId, targetId, relationship);
-    await flushMemoryCompatibility(db);
     return json({ id: linkId, source: sourceId, target: targetId, relationship }, 201);
   }
 
@@ -664,7 +658,6 @@ export async function handleMemApi(
       if (parsed instanceof Response) return parsed;
       const { content, importance, noteType } = parsed;
       const id = db.addPoolNote(pool.id, agent, content, importance, noteType);
-      await flushMemoryCompatibility(db);
       return json({ id, pool: poolName }, 201);
     }
 

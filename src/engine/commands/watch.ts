@@ -52,6 +52,14 @@ export function watchCommand(deps: {
   db: MarinaDB;
 }): CommandDef {
   return {
+    category: "Markets & Forecasting",
+    usage: [
+      "watch create <kind> <key>:<value> [<additional key:value pairs>] [cadence:<duration>] [retirement:<policy>] [notify:<entity-or-channel>]",
+      "watch due [limit:<N>]",
+      "watch list",
+      "watch retire <id> [reason:<text>]",
+      "watch show <id>",
+    ],
     name: "watch",
     aliases: [],
     minRank: 0,

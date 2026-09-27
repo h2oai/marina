@@ -38,11 +38,7 @@ import {
 } from "./db-memory-dependencies";
 import { memoryKnowledgeGraph } from "./db-memory-knowledge-graph";
 import { memoryDatabaseHealth } from "./db-memory-maintenance";
-import {
-  forgetMemoryNotes,
-  projectMemoryRevision,
-  requireCurrentMemoryProjection,
-} from "./db-memory-projections";
+import { forgetMemoryNotes, projectMemoryRevision } from "./db-memory-projections";
 import { rankMemoryVectors } from "./db-memory-ranking";
 import { resolveMemory } from "./db-memory-resolve";
 import { acknowledgeMemoryRequests } from "./db-memory-retention";
@@ -69,7 +65,13 @@ import {
   listMemoryTransfers,
   memoryTransferStatus,
 } from "./db-memory-transfer";
-import { createNote, deleteNote, getNote, reviseNote } from "./db-notes";
+import { isMemoryUpgrade } from "./db-memory-upgrade-scope";
+import {
+  createStoredNote as createNote,
+  deleteStoredNote as deleteNote,
+  getStoredNote as getNote,
+  reviseStoredNote as reviseNote,
+} from "./db-note-storage";
 import type { MemoryActor, MemoryScope } from "./db-principals";
 import { buildFtsQuery } from "./fts";
 
@@ -233,6 +235,7 @@ export function mutation<T extends MemoryReceipt>(
     );
     // Explicit removal and revocation remain possible at the admission limit.
     if (
+      !isMemoryUpgrade(db) &&
       operation !== "memory.forget" &&
       operation !== "cache.delete" &&
       operation !== "transfer.abort" &&
@@ -605,7 +608,7 @@ export function rememberRecord(
   model?: string,
 ): MemoryReceipt {
   authorizeMemorySpace(db, actor, space, "memory:write");
-  input = recordInput(input);
+  input = recordInput(input, { historical: isMemoryUpgrade(db) });
   return mutation(db, actor, space, key, "memory.remember", input, () => {
     const pins = pinMemoryDependencies(
       db,
@@ -613,7 +616,9 @@ export function rememberRecord(
       input.depends_on ?? [],
       input.dependency_versions,
     );
-    const vocabularyVersion = validateMemoryContract(db, actor, space, input);
+    const vocabularyVersion = isMemoryUpgrade(db)
+      ? 0
+      : validateMemoryContract(db, actor, space, input);
     const id = randomUUID();
     const note = createNote(db, `memory:${actor.principalId}`, input.content, undefined, {
       noteType: input.type ?? "fact",
@@ -670,13 +675,40 @@ export function reviseRecord(
   model?: string,
 ): MemoryReceipt {
   authorizeMemorySpace(db, actor, space, "memory:write");
-  input = recordInput(input);
+  // Normalization may preserve an unchanged historical body. A missing current
+  // body must not preempt an existing idempotency receipt after erasure.
+  const stored = db
+    .query<{ content: string }, [string, string]>(
+      "SELECT n.content FROM memory_records r JOIN notes n ON n.id=r.current_note_id WHERE r.space_id=? AND r.id=?",
+    )
+    .get(space, id);
+  input = recordInput(input, {
+    historical: isMemoryUpgrade(db),
+    unchangedContent: stored?.content,
+  });
   return mutation(db, actor, space, key, "memory.revise", { id, expected, input }, () => {
     const previous = row(db, space, id);
     if (previous.version !== expected)
       throw new MemoryError(409, "version_conflict", "Expected version is stale");
-    requireCurrentMemoryProjection(db, id, input);
     const previousAttributes = hydrate(db, previous);
+    if (
+      input.content !== previousAttributes.content &&
+      previousAttributes.metadata.legacy_verification !== undefined
+    ) {
+      input = {
+        ...input,
+        metadata: {
+          ...previousAttributes.metadata,
+          ...input.metadata,
+          legacy_verification: "unverified",
+          legacy_verification_confidence: 0.5,
+        },
+        ...(input.valid_time === undefined &&
+        previousAttributes.metadata.legacy_verification === "disputed"
+          ? { valid_time: { from: previousAttributes.valid_time?.from ?? null, until: null } }
+          : {}),
+      };
+    }
     const dependencyIds = input.depends_on ?? previousAttributes.depends_on;
     const rebinding = input.depends_on !== undefined || input.dependency_versions !== undefined;
     if (previous.stale && rebinding && dependencyIds.length && !input.dependency_versions)
@@ -691,17 +723,19 @@ export function reviseRecord(
     staleMemoryDependents(db, space, id, expected + 1);
     const validTime =
       input.valid_time === undefined ? previousAttributes.valid_time : input.valid_time;
-    const vocabularyVersion = validateMemoryContract(
-      db,
-      actor,
-      space,
-      {
-        ...input,
-        valid_time: validTime,
-        claim: input.claim === undefined ? previousAttributes.claim : input.claim,
-      },
-      id,
-    );
+    const vocabularyVersion = isMemoryUpgrade(db)
+      ? 0
+      : validateMemoryContract(
+          db,
+          actor,
+          space,
+          {
+            ...input,
+            valid_time: validTime,
+            claim: input.claim === undefined ? previousAttributes.claim : input.claim,
+          },
+          id,
+        );
     if (
       input.claim === undefined &&
       previousAttributes.claim &&
@@ -764,7 +798,7 @@ export function reviseRecord(
       "UPDATE memory_index_jobs SET state='cancelled',lease_token=NULL WHERE record_id=? AND state IN ('pending','running')",
       [id],
     );
-    projectMemoryRevision(db, id, input);
+    projectMemoryRevision(db, id, input, old.content);
     return {
       id,
       version,

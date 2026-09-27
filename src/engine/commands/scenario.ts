@@ -66,6 +66,15 @@ export function scenarioCommand(deps: {
   connectorRuntime?: ConnectorRuntime;
 }): CommandDef {
   return {
+    category: "Markets & Forecasting",
+    usage: [
+      "scenario extract <url>",
+      "scenario extract board <name>",
+      "scenario inject <key>=<value>",
+      "scenario personas",
+      "scenario report",
+      "scenario status",
+    ],
     name: "scenario",
     aliases: ["sc"],
     help: HELP,

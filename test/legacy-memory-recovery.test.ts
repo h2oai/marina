@@ -4,7 +4,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { findDurableTwin, replayPendingBridges } from "../src/memory/legacy-bridge";
+import { findDurableTwin } from "../src/memory/legacy-projection";
 import { residentMemoryOperation } from "../src/memory/resident-service";
 import { closeWorldMemoryService } from "../src/memory/world-service";
 import { handleMemApi } from "../src/net/mem-api";
@@ -54,7 +54,8 @@ test("authenticated REST create and delete share the durable lifecycle; open nam
     expect(record.content).toContain("[deleted legacy note #");
     expect(record.valid_time?.until).toBeNumber();
     const ghost = await request("POST", "/mem/notes", { content: "legacy client" }, "ghost-token");
-    expect(ghost.body.durable).toBe("world_identity_required");
+    expect(ghost.body.durable).toBe("synced");
+    expect(db.getPrincipal("human", "Ghost")).toBeUndefined();
     expect(db.getUserByName("Ghost")).toBeUndefined();
   } finally {
     await closeWorldMemoryService(db);
@@ -70,55 +71,31 @@ test("committed create and delete intents replay after reopening without the ori
   try {
     db.createUser({ id: crypto.randomUUID(), name: "Alice" });
     const id = db.createNote("Alice", "durable retry evidence");
-    expect(db.pendingLegacyBridges().length).toBe(1);
+    expect(findDurableTwin(db, id)).toBeDefined();
     db.close();
     db = new MarinaDB(path);
-    await replayPendingBridges(db);
     const twin = findDurableTwin(db, id)!;
     expect(twin).toBeDefined();
-    expect(db.pendingLegacyBridges()).toEqual([]);
+    expect(
+      db
+        .memoryRepository()
+        .raw.query("SELECT 1 FROM sqlite_schema WHERE name='legacy_memory_outbox'")
+        .get(),
+    ).toBeNull();
     db.deleteNote(id, "Alice");
     await closeWorldMemoryService(db);
     db.close();
     db = new MarinaDB(path);
-    await replayPendingBridges(db);
-    expect(db.pendingLegacyBridges()).toEqual([]);
+    expect(
+      db
+        .memoryRepository()
+        .raw.query("SELECT 1 FROM sqlite_schema WHERE name='legacy_memory_outbox'")
+        .get(),
+    ).toBeNull();
     const record = (
       await residentMemoryOperation(db, "Alice", { operation: "get", id: twin.recordId })
     ).result as MemoryRecord;
     expect(record.content).toContain("[deleted legacy note #");
-  } finally {
-    await closeWorldMemoryService(db);
-    db.close();
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test("bounded backfill preserves numeric references and only uses existing active identities", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "marina-bridge-backfill-"));
-  const db = new MarinaDB(join(dir, "world.db"));
-  try {
-    const first = db.createNote("Alice", "first historical fact");
-    const second = db.createNote("Alice", "second historical fact");
-    const ghost = db.createNote("Ghost", "unbound namespace");
-    db.createUser({ id: crypto.randomUUID(), name: "Alice" });
-    expect(db.pendingLegacyBridges()).toEqual([]);
-    const page = db.queueLegacyBridgeBackfill(undefined, 0, 1);
-    expect(page).toEqual({ scanned: 1, afterId: first });
-    await replayPendingBridges(db);
-    expect(db.queueLegacyBridgeBackfill(undefined, page.afterId, 1)).toEqual({
-      scanned: 1,
-      afterId: second,
-    });
-    await replayPendingBridges(db);
-    expect(findDurableTwin(db, first)).toBeDefined();
-    expect(findDurableTwin(db, second)).toBeDefined();
-    expect(db.getNote(first)?.content).toBe("first historical fact");
-    expect(findDurableTwin(db, ghost)).toBeUndefined();
-    expect(db.queueLegacyBridgeBackfill().scanned).toBe(2);
-    await replayPendingBridges(db);
-    expect(findDurableTwin(db, first)?.version).toBe(1);
-    expect(findDurableTwin(db, second)?.version).toBe(1);
   } finally {
     await closeWorldMemoryService(db);
     db.close();

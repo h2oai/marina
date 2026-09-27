@@ -38,6 +38,16 @@ export function labCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
 }): CommandDef {
   return {
+    usage: [
+      "lab compare <run-ids csv> | <questions csv> | <measures JSON> | <interpretation>",
+      "lab event <run> <started|intervention|observation|measure|completed|failed|gap> | <source-ref> | <data JSON>",
+      "lab fork <parent-run> | <fork-point-ref> | <treatments JSON> [| seed]",
+      "lab list",
+      "lab manifest <scenario JSON>",
+      "lab replicate <manifest-hash> | <mode> | <reproducibility> | <count> | <seed-prefix> [| treatments JSON]",
+      "lab run <manifest-hash> | <mode> | <reproducibility> | <seed> [| treatments JSON]",
+      "lab show <run>",
+    ],
     name: "lab",
     aliases: [],
     category: "Experiments",

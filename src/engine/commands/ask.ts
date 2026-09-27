@@ -14,6 +14,8 @@ export function askCommand(deps: {
   answerQuestion?: (query: string, context: string) => Promise<string | undefined>;
 }): CommandDef {
   return {
+    category: "Cognition",
+    usage: ["ask <question>"],
     name: "ask",
     aliases: [],
     help: "Ask Marina through the shared command substrate. Usage: ask <question>",

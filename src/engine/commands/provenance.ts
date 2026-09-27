@@ -8,6 +8,12 @@ import type { CommandDef } from "../../types";
 
 export function provenanceCommand(db: MarinaDB): CommandDef {
   return {
+    usage: [
+      "provenance",
+      "provenance list [journey-id]",
+      "provenance status",
+      "provenance verify [count]",
+    ],
     name: "provenance",
     aliases: [],
     category: "Cognition",

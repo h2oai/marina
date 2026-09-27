@@ -614,8 +614,8 @@ export function globalSearch(db: Database, query: string): GlobalSearchResult[] 
     const noteResults = db
       .query(
         `SELECT n.id, n.content, p.name AS pool_name
-         FROM notes n
-         JOIN notes_fts fts ON n.id = fts.rowid
+         FROM numeric_notes n
+         JOIN notes_fts fts ON n.content_id = fts.rowid
          JOIN memory_pools p ON n.pool_id = p.id
          WHERE notes_fts MATCH ? AND p.group_id IS NULL AND n.tier != 'process'
          ORDER BY fts.rank LIMIT 10`,

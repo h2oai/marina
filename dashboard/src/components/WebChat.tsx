@@ -47,6 +47,7 @@ import { AssetViewerProvider } from "./AssetLightbox";
 import { CanvasNodeEmbed } from "./CanvasNodeEmbed";
 import { PinToCanvas } from "./CanvasReference";
 import { CommandFavorites, FavoriteCommandButton } from "./CommandFavorites";
+import { CommandInputAssistance } from "./CommandInputAssistance";
 import { BoardDetailView, ChannelDetailView } from "./CoordinationCard";
 import { DiffViewer } from "./DiffViewer";
 import { GlassPanel, type PanelFocusProps } from "./GlassPanel";
@@ -433,6 +434,7 @@ interface Perception {
   timestamp?: number;
   tag?: string;
   data?: {
+    onboarding?: import("../../../src/sdk/onboarding").ParticipantOrientation;
     token?: string;
     entityId?: string;
     entityName?: string;
@@ -480,7 +482,25 @@ type TimelineItem =
     };
 
 function handlePerception(raw: unknown) {
+  const internal = raw as {
+    data?: {
+      capabilities?: unknown;
+      context_preview?: { request_id?: string };
+      memory_service?: { request_id?: string };
+    };
+  };
+  if (
+    internal.data?.capabilities ||
+    internal.data?.context_preview?.request_id ||
+    internal.data?.memory_service?.request_id
+  )
+    return;
   const p = raw as Perception;
+  if (p.data?.onboarding)
+    useChatState.setState({
+      orientation: p.data
+        .onboarding as import("../../../src/sdk/onboarding").ParticipantOrientation,
+    });
   if (p.kind === "auth_error") {
     clearToken();
     useChatState.getState().setLoggedIn(false);
@@ -772,6 +792,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
       historyIdxRef.current = -1;
       if (inputRef.current) {
         inputRef.current.value = "";
+        inputRef.current.dispatchEvent(new Event("input", { bubbles: true }));
         inputRef.current.rows = 1;
         cmdValueRef.current = "";
       }
@@ -2627,6 +2648,7 @@ export function WebChat({ isFocused, onToggleFocus }: PanelFocusProps = {}) {
             ) : (
               <>
                 {renderCodeContextStrip()}
+                <CommandInputAssistance input={inputRef} codeMode={!!codePrompt} />
                 <div className="flex items-center gap-1.5">
                   <span
                     className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-success" : "bg-danger"}`}

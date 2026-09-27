@@ -25,6 +25,12 @@ export function inheritanceCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
 }): CommandDef {
   return {
+    usage: [
+      "inheritance [list]",
+      "inheritance export <guide|tradition-pool>",
+      "inheritance export <pool>",
+      "inheritance import <bundle-token>",
+    ],
     name: "inheritance",
     aliases: ["inherit"],
     category: "Knowledge",

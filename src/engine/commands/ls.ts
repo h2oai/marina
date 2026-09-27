@@ -14,6 +14,8 @@ export function lsCommand(deps: {
   getRoomBoards?: (roomId: string) => Board[];
 }): CommandDef {
   return {
+    category: "Navigation",
+    usage: ["ls", "ls <room-id>", "ls entities", "ls rooms"],
     name: "ls",
     aliases: ["list", "dir"],
     help: "Browse rooms, entities, and room contents. Usage: ls [rooms|entities|<room-id>]",

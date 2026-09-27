@@ -1,6 +1,8 @@
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { UnifiedContextResult } from "../sdk/memory-context";
+
 /**
  * Memory receipts — WHAT Marina injected into a proxied model request.
  *
@@ -40,6 +42,8 @@ export interface MemoryReceiptTier {
 export interface MemoryReceipt {
   schema: typeof MEMORY_RECEIPT_SCHEMA;
   requestId: string;
+  /** Omitted on historical passthru receipts, whose budget includes framing. */
+  budgetScope?: "content" | "injection";
   entity: string;
   tiers: MemoryReceiptTier[];
   /** Total injection budget for this identity (`MARINA_PASSTHRU_INJECT_BYTES` / `passthruInjectBytes`). */
@@ -174,4 +178,30 @@ export function renderMemoryReceiptLines(receipt: MemoryReceipt): string[] {
     lines.push(`  [${tier.tier}] ${ids || "—"} (${tier.bytes}B)`);
   }
   return lines;
+}
+
+/** Record exactly the admitted references when unified context is delivered to a participant. */
+export function receiptForUnifiedContext(
+  context: UnifiedContextResult,
+  requestId: string,
+): MemoryReceipt {
+  return {
+    schema: MEMORY_RECEIPT_SCHEMA,
+    requestId,
+    entity: context.entity,
+    budgetScope: "content",
+    budgetBytes: context.budgetBytes,
+    usedBytes: context.usedBytes,
+    truncated: context.truncated,
+    degraded: context.degraded.map((item) => `${item.tier}:${item.code}`),
+    tiers: context.tiers.map((tier) => ({
+      tier: tier.tier,
+      bytes: tier.items.reduce((sum, item) => sum + item.bytes, 0),
+      ids: tier.items.map((item) => ({
+        id: typeof item.meta?.record_id === "string" ? item.meta.record_id : item.id,
+        ...(typeof item.meta?.version === "number" ? { version: item.meta.version } : {}),
+        ...(typeof item.meta?.content_hash === "string" ? { hash: item.meta.content_hash } : {}),
+      })),
+    })),
+  };
 }

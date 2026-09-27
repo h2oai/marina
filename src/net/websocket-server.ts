@@ -8,13 +8,17 @@ import { getInternalModelToken } from "../agent/agent-runtime";
 import type { MarinaAuthProvider } from "../auth/better-auth-provider";
 import type { RateLimiter } from "../auth/rate-limiter";
 import { secretsEqual } from "../auth/secret-compare";
+import { commandManifest } from "../engine/command-manifest";
+import { previewParticipantContext } from "../engine/commands/context";
 import {
   WS_IDLE_TIMEOUT_SECONDS,
   WS_MAX_CONNECTIONS_PER_IP,
   WS_MAX_TOTAL_CONNECTIONS,
 } from "../engine/constants";
 import type { Engine } from "../engine/engine";
+import { getErrorMessage } from "../engine/errors";
 import { Logger } from "../engine/logger";
+import { onboardParticipant } from "../engine/onboarding";
 import { isOpenApiMode } from "../engine/trust-profile";
 import type { MemoryService } from "../memory/service";
 import { worldMemoryService } from "../memory/world-service";
@@ -785,6 +789,9 @@ export class WebSocketServer {
             secret?: string;
             internalToken?: string;
             version?: number;
+            request_id?: string;
+            capability_key?: string;
+            options?: Record<string, unknown>;
           };
           try {
             parsed = JSON.parse(raw);
@@ -871,8 +878,7 @@ export class WebSocketServer {
                 },
               }),
             );
-            engine.sendLook(result.entityId);
-            engine.sendBrief(result.entityId);
+            void onboardParticipant(engine, result.entityId, "websocket", false);
             return;
           }
 
@@ -901,8 +907,94 @@ export class WebSocketServer {
                 },
               }),
             );
-            engine.sendLook(result.entityId);
-            engine.sendBrief(result.entityId);
+            void onboardParticipant(engine, result.entityId, "websocket", true);
+            return;
+          }
+
+          if (parsed.type === "context_preview") {
+            const id = engine.getConnectionEntity(connId);
+            const requestId =
+              typeof parsed.request_id === "string" ? parsed.request_id.slice(0, 100) : undefined;
+            const deliver = (result: unknown) => {
+              if (engine.getConnectionEntity(connId) !== id) return;
+              ws.send(
+                JSON.stringify({
+                  kind: "system",
+                  timestamp: Date.now(),
+                  tag: "context_preview",
+                  data: { context_preview: result },
+                }),
+              );
+            };
+            if (!id || (rateLimiter && !rateLimiter.consume(id))) {
+              deliver({
+                request_id: requestId,
+                error: id ? "Rate limited. Please slow down." : "Sign in to preview context.",
+              });
+              return;
+            }
+            void previewParticipantContext(
+              { db: engine.db, getEntity: (entityId) => engine.entities.get(entityId) },
+              id,
+              { ...parsed.options, request_id: requestId },
+            ).then(deliver, (error) =>
+              deliver({ request_id: requestId, error: getErrorMessage(error) }),
+            );
+            return;
+          }
+          if (parsed.type === "capabilities") {
+            const id = engine.getConnectionEntity(connId);
+            const entity = id ? engine.entities.get(id) : undefined;
+            if (!entity || (rateLimiter && !rateLimiter.consume(entity.id))) {
+              ws.send(
+                JSON.stringify({
+                  kind: "system",
+                  timestamp: Date.now(),
+                  tag: "capabilities",
+                  data: {
+                    capabilities: {
+                      request_id: parsed.request_id,
+                      error: entity
+                        ? "Rate limited. Please slow down."
+                        : "Sign in to discover capabilities.",
+                    },
+                  },
+                }),
+              );
+              return;
+            }
+            const roomCommands = engine.getEntityRoom(entity.id)?.module.commands;
+            const key = JSON.stringify([
+              engine.commands.epoch,
+              engine.commands.revision,
+              entity.room,
+              entity.properties.rank,
+              entity.properties.active_modal,
+              Object.keys(roomCommands ?? {}),
+            ]);
+            const manifest = {
+              schema: "marina.capabilities.v1",
+              request_id: parsed.request_id,
+              revision: engine.commands.revision,
+              key,
+              ...(parsed.capability_key === key
+                ? { unchanged: true }
+                : {
+                    commands: commandManifest(engine.commands, {
+                      rank: entity.properties.rank,
+                      modal: entity.properties.active_modal,
+                      roomCommands,
+                    }),
+                  }),
+            };
+            ws.send(
+              JSON.stringify({
+                kind: "system",
+                timestamp: Date.now(),
+                tag: "capabilities",
+                data: { capabilities: manifest },
+              }),
+            );
             return;
           }
 

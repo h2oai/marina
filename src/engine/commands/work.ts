@@ -20,6 +20,7 @@ interface WorkDeps {
 
 export function workCommand(deps: WorkDeps): CommandDef {
   return {
+    usage: ["work"],
     name: "work",
     aliases: [],
     category: "Coordination",

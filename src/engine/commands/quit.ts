@@ -14,6 +14,8 @@ export function quitCommand(deps: {
   removeConnection: (connId: string, intent: "transient" | "explicit") => void;
 }): CommandDef {
   return {
+    category: "System",
+    usage: ["quit"],
     name: "quit",
     aliases: ["exit", "logout", "disconnect"],
     help: "Disconnect from Marina and end your session.",

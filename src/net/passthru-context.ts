@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createHash } from "node:crypto";
+import { commandManifest } from "../engine/command-manifest";
 import type { Engine } from "../engine/engine";
 import { sanitizeEntityName } from "../engine/entity-name";
+import { participantOrientation } from "../engine/onboarding";
 import { isLocalProfile } from "../engine/trust-profile";
 import {
   buildUnifiedContext,
@@ -12,6 +14,7 @@ import {
   type UnifiedContextResult,
   type UnifiedTier,
 } from "../memory/unified-context";
+import { renderCapabilityRoster } from "../sdk/capabilities";
 import type { Entity, EntityId } from "../types";
 import type { MemoryReceiptDraft, MemoryReceiptRef, MemoryReceiptTier } from "./memory-receipt";
 import type { PassthruAuthResult } from "./model-api";
@@ -291,7 +294,7 @@ export async function buildInjectedContext(
   engine: Engine,
   entityId: EntityId,
   messages: OpenAIMessage[],
-  opts: { budgetBytes?: number } = {},
+  opts: { budgetBytes?: number; capabilities?: boolean } = {},
 ): Promise<InjectedContext> {
   const entity = engine.entities.get(entityId);
   const name = entity?.name;
@@ -311,6 +314,35 @@ export async function buildInjectedContext(
   const maxOwnLines = Math.min(24, Math.max(6, Math.floor(maxLines * 0.6)));
 
   const stable: ContextLine[] = [];
+  if (opts.capabilities) {
+    const orientation = participantOrientation(engine, entityId, "passthru", true);
+    if (orientation)
+      stable.push({
+        tier: "orientation",
+        ref: { id: entityId },
+        text: `Marina orientation: ${truncateToBytes(
+          JSON.stringify({
+            world: orientation.world,
+            room: orientation.room,
+            objective: orientation.objective,
+            actions: orientation.actions.map((action) => action.command),
+          }),
+          400,
+        )}`,
+      });
+    stable.push({
+      tier: "capabilities",
+      ref: { id: `registry:${engine.commands.revision}` },
+      text: `Marina world command reference (available through MCP, SDK and chat; this proxy does not execute world commands as native tool calls): ${renderCapabilityRoster(
+        commandManifest(engine.commands, {
+          rank: entity.properties.rank,
+          modal: entity.properties.active_modal,
+          roomCommands: engine.getEntityRoom(entityId)?.module.commands,
+        }),
+        500,
+      )}`,
+    });
+  }
   const volatile: ContextLine[] = [];
   const degraded: string[] = [];
   let unifiedTruncated = false;

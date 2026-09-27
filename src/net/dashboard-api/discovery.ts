@@ -3,13 +3,8 @@
 
 import { getStanding } from "../../agent/standing";
 import { listWorkItems } from "../../coordination/work-loop";
-import { categorizeCommand } from "../../engine/commands/help";
-import type {
-  CommandCatalogEntry,
-  DiscoveryResult,
-  EntityPreview,
-  QuestProgress,
-} from "../discovery-types";
+import { commandManifest } from "../../engine/command-manifest";
+import type { DiscoveryResult, EntityPreview, QuestProgress } from "../discovery-types";
 import { authorizeEntityRead, type DashboardRouteContext, json } from "./shared";
 
 /** Read-only discovery. Execution still goes through the ordinary command router. */
@@ -19,14 +14,12 @@ export async function handleDiscoveryRoutes(
   const { engine, db, memory, callerId, method, url } = ctx;
   if (method !== "GET") return undefined;
   if (url.pathname === "/api/command-catalog") {
-    const catalog: CommandCatalogEntry[] = engine.commands.allBuiltins().map((cmd) => ({
-      name: cmd.name,
-      aliases: cmd.aliases ?? [],
-      category: categorizeCommand(cmd),
-      help: cmd.help,
-      minRank: cmd.minRank ?? 0,
-      gate: cmd.gate,
-    }));
+    const entity = engine.entities.get(callerId);
+    const catalog = commandManifest(engine.commands, {
+      rank: entity?.properties.rank,
+      modal: entity?.properties.active_modal,
+      roomCommands: entity ? engine.getEntityRoom(entity.id)?.module.commands : undefined,
+    });
     return json(catalog);
   }
   const questMatch = url.pathname.match(/^\/api\/entities\/([^/]+)\/quests$/);

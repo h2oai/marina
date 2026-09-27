@@ -17,6 +17,11 @@ export function reproduceCommand(deps: {
   getEntity: (id: string) => Entity | undefined;
 }): CommandDef {
   return {
+    usage: [
+      "reproduce intellect <parent-ids csv> | <name> | <purpose> | <components JSON> [| contributors csv] [| evidence refs csv]",
+      "reproduce list",
+      "reproduce show <reproduction-id>",
+    ],
     name: "reproduce",
     aliases: [],
     category: "Lineage",

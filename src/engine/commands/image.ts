@@ -17,6 +17,12 @@ interface GenerateOptions {
 
 export function imageCommand(engine: Engine): CommandDef {
   return {
+    category: "Canvas & Media",
+    usage: [
+      "image generate <prompt...>",
+      "image generate <prompt...> [model:<provider/model>] [style:<style>] [width:<px>] [height:<px>] [canvas:<name>]",
+      "image generate <prompt...> [style:synthwave] [width:1024] [canvas:name]",
+    ],
     name: "image",
     help: "Generate images. Usage: image generate <prompt...> [model:<provider/model>] [style:<style>] [width:<px>] [height:<px>] [canvas:<name>] (also --width 1024)",
     handler: async (ctx, input) => {

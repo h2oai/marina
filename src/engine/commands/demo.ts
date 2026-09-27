@@ -19,6 +19,15 @@ export function demoCommand(deps: {
   getEntity: (id: EntityId) => Entity | undefined;
 }): CommandDef {
   return {
+    category: "System",
+    usage: [
+      "demo preflight",
+      "demo qualify",
+      "demo recover",
+      "demo reset",
+      "demo status",
+      "demo warm",
+    ],
     name: "demo",
     aliases: [],
     minRank: 0,

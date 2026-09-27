@@ -116,6 +116,21 @@ it("makes retried writes idempotent and rejects competing revisions", async () =
   expect(historical.data.metadata).toEqual({ stage: 1 });
 });
 
+it("replays a revision receipt after erasure without recreating the record", async () => {
+  const created = await api(route("/records"), "POST", { content: "temporary assertion" });
+  const path = route(`/records/${created.data.id}`);
+  const input = { content: "corrected assertion", expected_version: 1 };
+  const revised = await api(path, "PATCH", input, owner.token, "revision-before-erasure");
+  expect(revised.status).toBe(200);
+  expect((await api(route("/forget"), "POST", { record_ids: [created.data.id] })).status).toBe(200);
+  const retried = await api(path, "PATCH", input, owner.token, "revision-before-erasure");
+  expect(retried).toEqual(revised);
+  expect((await api(path)).status).toBe(404);
+  expect(
+    (await api(path, "PATCH", input, owner.token, "fresh-revision-after-erasure")).status,
+  ).toBe(404);
+});
+
 it("captures original evidence and acknowledges checkpoint cursors atomically", async () => {
   const content = { role: "tool", result: "EXACT_EVIDENCE", detail: "line\n  two" };
   const source = await api(

@@ -21,7 +21,13 @@ const withQuery = (ui: React.ReactNode) => (
 describe("guided command composition", () => {
   it("builds a crew invitation with an optional role and no raw command syntax", () => {
     const compose = vi.fn();
-    render(<CommandFields name="crew" onCompose={compose} />);
+    render(
+      <CommandFields
+        name="crew"
+        forms={[parseCommandForm("crew invite <name> <agent> [role:<r>]")]}
+        onCompose={compose}
+      />,
+    );
     fireEvent.change(screen.getByLabelText("Command action"), {
       target: { value: "crew invite <name> <agent> [role:<r>]" },
     });
@@ -67,6 +73,7 @@ describe("guided command composition", () => {
   it("preserves no-argument actions and removes prose from live usage tables", () => {
     const forms = commandForms({
       name: "code",
+      forms: [parseCommandForm("code profile"), parseCommandForm("code apply <patch_id>")],
       help: "  code profile    Show active profile\n  code apply <patch_id> Apply a pending patch\nExamples:\n  code apply abcd",
     });
     expect(forms.some((form) => form.syntax === "code profile")).toBe(true);
@@ -89,7 +96,11 @@ describe("guided command composition", () => {
     expect(composeCommand(go, { "field-0": "workbench/start" }, {}).command).toBe(
       "goto workbench/start",
     );
-    const probe = commandForms({ name: "probe", help: "" }).find((form) => form.fields.length > 0)!;
+    const probe = commandForms({
+      name: "probe",
+      help: "",
+      forms: [parseCommandForm("probe <kind> <key>:<value> [args...]")],
+    }).find((form) => form.fields.length > 0)!;
     expect(
       composeCommand(probe, { "field-0": "echoing", "field-1": "payload", "field-2": "hello" }, {})
         .command,
@@ -108,7 +119,14 @@ describe("guided command composition", () => {
     ).toBe("probe resolving venue:kalshi ticker:KXFED-26MAR");
   });
   it("preserves multiline code content and exact edit markers", () => {
-    const forms = commandForms({ name: "code", help: "" });
+    const forms = commandForms({
+      name: "code",
+      help: "",
+      forms: [
+        parseCommandForm("code write <path> <content>"),
+        parseCommandForm("code edit <path> [all] <old text> <new text>"),
+      ],
+    });
     const write = forms.find((form) => form.syntax.startsWith("code write "))!;
     expect(
       composeCommand(

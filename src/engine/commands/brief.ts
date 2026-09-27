@@ -19,9 +19,11 @@ import {
 } from "../../net/ansi";
 import type { MarinaDB } from "../../persistence/database";
 import type { CommandDef, Entity, EntityId, RoomContext } from "../../types";
+import { describeCommand } from "../command-manifest";
 import { getRank } from "../permissions";
 
 interface BriefDeps {
+  getCommands?: () => CommandDef[];
   getEntity: (id: EntityId) => Entity | undefined;
   db?: MarinaDB;
   taskManager?: TaskManager;
@@ -46,6 +48,8 @@ interface BriefDeps {
  */
 export function briefCommand(deps: BriefDeps): CommandDef {
   return {
+    category: "Information",
+    usage: ["brief", "brief full", "brief social", "brief unwatch", "brief watch [interval]"],
     name: "brief",
     aliases: [],
     help: "Get oriented. Shows the current shape of the world — who is here, what exists, where to go next. 'brief full' shows the detailed briefing, 'brief social' the social view. Use 'brief watch [N]' for periodic updates, 'brief unwatch' to stop.",
@@ -168,18 +172,16 @@ function sendBootstrap(ctx: RoomContext, eid: EntityId, _entity: Entity, deps: B
     "Humans and agents share the same real-time space; use presence and messages as first-class tools.",
     "",
     category("Get started:"),
-    `  1. ${bold("desire <what matters to you>")} — preserve a desire and begin its journey`,
-    `  2. ${bold("pool guide recall <topic>")} — read what predecessors learned (memory, tasks, navigation, communication, pools, building)`,
-    `  3. ${bold("brief social")} — see who is here before working alone`,
-    `  4. ${bold("next")} — context-aware suggestion for your next action`,
-    "",
-    category("Commands:"),
-    `  ${dim("navigate:")} look, north/south/east/west, map`,
-    `  ${dim("communicate:")} say <text>, tell <name> <text>, channel join general, channel send general <text>`,
-    `  ${dim("remember:")} note <text>, recall <query>, memory set <key> <value>`,
-    `  ${dim("work:")} task list, task claim <id>, project list`,
-    `  ${dim("learn:")} help, ask <question>, web search <query>`,
-    `  ${dim("grow:")} evolve — your self-improvement loop + next step, skill list`,
+    ...(deps.getCommands?.() ?? [])
+      .filter((command) =>
+        ["desire", "guide", "brief", "next", "help", "context", "evolve", "standing"].includes(
+          command.name,
+        ),
+      )
+      .map((command) => {
+        const entry = describeCommand(command);
+        return `  ${bold(entry.forms?.[0]?.syntax ?? entry.name)} — ${entry.description}`;
+      }),
   ];
 
   // No upstream LLM provider: `ask`, agents and crews are inert until one is

@@ -146,7 +146,10 @@ describe("WebSocket Rate Limiting", () => {
     // This one should be rate-limited
     ws.send(JSON.stringify({ type: "command", command: "who" }));
 
-    await waitFor((m) => m.length >= 7, 2000);
+    await waitFor(
+      (m) => m.some((raw) => String(parse(raw).data?.text).includes("Rate limited")),
+      2000,
+    );
 
     const allText = messages.map((m) => parse(m).data?.text ?? "").join("\n");
     expect(allText).toContain("Rate limited");

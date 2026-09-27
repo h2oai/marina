@@ -211,10 +211,10 @@ describe("FTS5 notes: porter stemming (migration 112)", () => {
   it("keeps the index in sync through update and delete triggers", () => {
     const raw = new Database(dbPath);
     try {
-      raw.run("UPDATE notes SET content = ? WHERE id = ?", [
-        "The rollback playbook lives in ops/runbooks/rollback.md",
-        runbook,
-      ]);
+      raw.run(
+        "UPDATE notes SET content = ? WHERE id = (SELECT content_id FROM numeric_notes WHERE id=?)",
+        ["The rollback playbook lives in ops/runbooks/rollback.md", runbook],
+      );
     } finally {
       raw.close();
     }

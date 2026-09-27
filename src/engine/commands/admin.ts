@@ -47,6 +47,20 @@ interface AdminDeps {
 
 export function adminCommand(deps: AdminDeps): CommandDef {
   return {
+    category: "Admin & Security",
+    usage: [
+      "admin <kick|ban|unban|stats|announce|reload|export> [args]",
+      "admin announce <message>",
+      "admin ban <entity> [reason]",
+      "admin bans",
+      "admin export",
+      "admin kick <entity>",
+      "admin reload <room-id>",
+      "admin snapshot <name> [--force] [--compact]",
+      "admin snapshots",
+      "admin stats",
+      "admin unban <entity>",
+    ],
     name: "admin",
     minRank: 5,
     gate: "admin.destructive",

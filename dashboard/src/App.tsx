@@ -1,4 +1,4 @@
-import { workspacePanels } from "./components/workspace-panels-registry";
+import { useWorkspacePanels } from "./components/workspace-panels-registry";
 // Copyright 2025-2026 H2O.ai, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -193,7 +193,7 @@ export default function App() {
     isFocused: focused === key,
     onToggleFocus: () => focus(key),
   });
-  const panels = workspacePanels(legacy, panelProps, worldData);
+  const panels = useWorkspacePanels(legacy, panelProps, worldData);
 
   return (
     <div
