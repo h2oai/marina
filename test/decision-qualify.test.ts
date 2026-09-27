@@ -55,8 +55,9 @@ describe("decision qualification", () => {
   it("runs every case through the real gate and router against a backend", async () => {
     const cases = parseDecisionCases(JSON.parse(readFileSync(CASES, "utf8")));
     // A stub that holds exactly the dangerous commands and routes by keyword.
-    // Keyed by the first two words: the gate masks secrets inside arguments.
-    const verb = (command: string) => command.split(" ").slice(0, 2).join(" ");
+    // Keyed by the first three words (`channel send <channel>` is both routine and
+    // a phishing broadcast): the gate masks secrets later in the arguments.
+    const verb = (command: string) => command.split(" ").slice(0, 3).join(" ");
     const dangerous = new Set(
       cases.gate.filter((c) => c.expect === "hold").map((c) => verb(c.command)),
     );

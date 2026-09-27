@@ -85,7 +85,11 @@ export interface DecisionResult {
    * How a chat classifier obtained its probabilities (`logprobs`, `sampled`,
    * `verbalized`); absent for a purpose-built decision model.
    */
-  method?: "logprobs" | "sampled" | "verbalized";
+  method?: "logprobs" | "sampled" | "verbalized" | "ensemble" | "cascade";
+  /** Composite engines: the models that actually answered. */
+  members?: string[];
+  /** Per-reply calibration when it differs from the provider's (a composite's answering members). */
+  calibrated?: boolean;
   latencyMs: number;
   /** USD, when the backend reports it. */
   costUsd?: number;
