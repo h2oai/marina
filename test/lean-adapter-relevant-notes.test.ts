@@ -181,7 +181,7 @@ describe("continuation prompt — unified Relevant Memory (§4)", () => {
     // depends on the output reservation, MARINA_DEFAULT_MAX_TOKENS); the small
     // window stays at the floor.
     expect(unifiedCalls[0]!.budget).toBeGreaterThan(3000);
-    expect(unifiedCalls[0]!.budget).toBeGreaterThan(unifiedCalls[1]!.budget);
+    expect(unifiedCalls[0]!.budget).toBeGreaterThan(unifiedCalls[1]!.budget ?? 0);
     expect(unifiedCalls[1]!.budget).toBe(2048);
 
     const content = "evidence ".repeat(1000);
