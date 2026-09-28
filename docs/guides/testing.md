@@ -97,11 +97,20 @@ It remains Bun's native runner, without the full-suite wrapper's progress watchd
 
 ## Dashboard runtime and browser tests
 
-Vitest requires Node >=22.12. Bun manages packages; `bun run test:ui` runs Vitest on
-Node. Do not use `bun --bun run test` or `bun test` inside the dashboard: those force
-the wrong runtime/runner. The config rejects the unsupported VM runtime before tests
-load, rather than surfacing misleading missing-window errors. See the
-[Vitest runtime requirements](https://vitest.dev/guide/).
+Install current Node 24 LTS alongside Bun for dashboard development. The dashboard's
+`.node-version` selects Node 24 locally and in CI; `dashboard/package.json` declares
+the supported range: Node 22.22.2+, 24.15.0+, or 26+ (excluding 23 and 25).
+The installed JSDOM requires this newer baseline than Vitest's Node 22.12 minimum.
+Bun manages packages; `bun run test:ui` (or `cd dashboard && bun run test`) explicitly
+launches Vitest with Node. CI installs that runtime instead of relying on the runner
+image's preinstalled version. See the [Vitest runtime requirements](https://vitest.dev/guide/).
+
+Do not use `bun --bun run test` or `bun test` inside the dashboard: those force the
+wrong runtime/runner. With Bun 1.4.2, Vitest 5.0.1 and JSDOM 30.1.1, both `vmThreads`
+and `threads` fail JSDOM's EventTarget receiver check before setup files can run.
+The config gives an actionable error before this initialization failure. Revisit
+native Bun support when this integration passes the complete suite with the same
+DOM assertions and mock isolation.
 
 The dashboard uses four isolated VM workers with JSDOM and cleanup after every test.
 Tests of lazy chunks should await `vi.dynamicImportSettled()` inside `act`, rather
