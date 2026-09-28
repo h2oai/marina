@@ -6,11 +6,14 @@
  *
  *   1. brief      — a family playbook bounded to news since the last published value
  *   2. retrieve   — a search-grounded researcher returns a dated, cited dossier
- *   3. analysts   — several models (one per vendor) forecast from history + baseline
- *                   + dossier, and must say which evidence moved them
+ *   3. analysts   — several models (one per vendor) forecast from the dated
+ *                   history, the start forecast (the Civiqs nowcast with its
+ *                   date, else persistence), the daily tracker (Civiqs) and the
+ *                   dossier, and must say which evidence moved them
  *   4. judge      — the decision backend (Jev when configured) scores each
  *                   analyst's rationale for quality and for grounding in the
- *                   dossier; an ungrounded rationale earns no weight
+ *                   series data it was given plus the verified dossier lines;
+ *                   an ungrounded rationale (or a judge outage) earns no weight
  *   5. aggregate  — deterministic: judge-weighted mean move, scaled by the
  *                   judged confidence and capped (`trustCap`), spread blended;
  *                   wild proposals dropped; nothing usable ⇒ the baseline
@@ -26,14 +29,26 @@ import type { DecisionProvider } from "../../decisions/types";
 import { checkDraft } from "../../decisions/verify";
 import { forecastRound, type RoundForecast } from "../forecast";
 import { type Complete, parseReply } from "../model-forecaster";
-import type { ArenaLock, ArenaRound, Distribution } from "../types";
+import {
+  dailyBlock,
+  dailyOf,
+  datedLines,
+  freshestReading,
+  historyBlock,
+  rulesLines,
+  startLine,
+  withoutDaily,
+} from "../prompt-context";
+import type { ArenaLock, ArenaPoint, ArenaRound, Distribution } from "../types";
 import { buildResearchBrief } from "./briefs";
+import type { CiviqsDaily } from "./civiqs-nowcast";
 import type { ResearchReport, Retriever } from "./retrieve";
 import { type PageText, type VerifiedDossier, verifyDossier } from "./verify";
 
 const MAX_SD_MOVE = 4;
 const EVIDENCE_CHUNK = 1_400;
 const MAX_EVIDENCE_CHUNKS = 4;
+const SERIES_EVIDENCE_POINTS = 12;
 
 export interface ResearchDeps {
   retriever: Retriever;
@@ -54,6 +69,8 @@ export interface JudgedProposal extends Distribution {
   grounded?: number;
   /** The judge failed on this proposal; it then carries no weight. */
   judgeError?: string;
+  judgeLatencyMs?: number;
+  judgeCostUsd?: number;
   weight: number;
 }
 
@@ -63,17 +80,21 @@ export interface ResearchForecast extends RoundForecast {
     verification?: Record<string, number>;
   };
   proposals?: Record<string, JudgedProposal>;
+  /** The judge's identity, latency and cost (present whenever a judge was configured). */
+  judge?: JudgeRecord;
+  /** The daily series the analysts read, when there was one. */
+  dailySource?: string;
   trust?: number;
   roles?: Record<string, string>;
   fallback?: string;
 }
 
 const ANALYST_SYSTEM = [
-  "You are an analyst forecasting a published statistic for a live benchmark scored by CRPS against persistence (the last published value).",
-  "You get the series' recent history, a calibrated baseline, and a research dossier of dated, sourced facts published since the last value.",
-  "The history is the benchmark's OWN measurement and is authoritative: its last value is already the latest wave (dated by field start). If a press report of that same survey shows a different number, it is a different population or question — never replace the level with it.",
-  "Use other sources for CHANGES only: how each pollster moved since its own previous reading (house effects cancel in a change), how far markets or prices moved. Move from the baseline only as far as those changes justify.",
-  "If the dossier holds nothing decisive, stay on the baseline. Size sd honestly.",
+  "You are an analyst forecasting a published statistic for a live benchmark scored by CRPS skill against persistence (the last published value).",
+  "You get the round's resolution and scoring rules, the start forecast (the prompt says what it is: the Civiqs nowcast — the freshest daily reading, with its date — or the persistence baseline), the series' dated history, for Civiqs its recent DAILY tracker, and a research dossier of dated, sourced facts.",
+  "The history and the daily tracker are the benchmark's own measurements of this series. A press report of a different poll is a different population or question: never replace the level with it.",
+  "Use other sources for CHANGES only: how each pollster moved since its own previous reading (house effects cancel in a change), how far markets or prices moved — and only changes the start reading does not already include (dated after it). Move from the start forecast only as far as those changes justify.",
+  "If nothing is decisive, stay on the start forecast. Size sd honestly.",
   'Reply with ONE JSON object: {"mean": number, "sd": number > 0, "evidence": "<the specific facts that moved you, or none>", "reason": "<one or two sentences>"}.',
 ].join(" ");
 
@@ -85,12 +106,56 @@ function chunks(text: string): Evidence[] {
   return out;
 }
 
+/**
+ * The structured facts every analyst is given — the series' own recent
+ * history, the start forecast (the nowcast reading and its date) and the daily
+ * tracker — as judge evidence, labeled as source data, not web research. A
+ * rationale grounded in the series itself is grounded; without these, only
+ * the dossier counted and a data-based rationale scored as ungrounded.
+ */
+export function seriesEvidence(
+  round: ArenaRound,
+  history: ArenaPoint[],
+  start: RoundForecast,
+  daily: CiviqsDaily | undefined,
+): Evidence[] {
+  const label = "STRUCTURED SOURCE DATA (the benchmark's own series; not web research)";
+  const out: Evidence[] = [];
+  if (history.length) {
+    out.push({
+      ref: "series:history",
+      text: `${label}. Published history of ${round.series ?? round.round_id} (date value, oldest first):\n${datedLines(history, SERIES_EVIDENCE_POINTS)}`,
+    });
+  }
+  out.push({ ref: "series:start", text: `${label}. ${startLine(round, start, history)}` });
+  if (daily?.points.length) {
+    out.push({
+      ref: "series:daily",
+      text: `${label}. Civiqs daily tracker from ${daily.source} (date value, oldest first):\n${datedLines(daily.points, daily.points.length)}`,
+    });
+  }
+  return out;
+}
+
+/** What the judge was and what it cost, summed over the proposals it judged. */
+export interface JudgeRecord {
+  provider?: string;
+  model?: string;
+  calls: number;
+  latencyMs: number;
+  costUsd: number;
+  errors: number;
+  error?: string;
+}
+
 export async function researchForecastRound(
   round: ArenaRound,
   lock: ArenaLock,
   deps: ResearchDeps,
 ): Promise<ResearchForecast> {
-  const baseline = deps.base ? await deps.base(round, lock) : forecastRound(round, lock);
+  const given = deps.base ? await deps.base(round, lock) : forecastRound(round, lock);
+  const daily = dailyOf(given);
+  const baseline = withoutDaily(given);
   const keep = (why: string, extra: Partial<ResearchForecast> = {}): ResearchForecast => ({
     ...baseline,
     ...extra,
@@ -100,7 +165,12 @@ export async function researchForecastRound(
     return keep("research agent answers numeric rounds; baseline for this shape");
   }
   const base = baseline.topline;
-  const brief = buildResearchBrief(round, lock);
+  // Search from the nowcast's own date when it is fresher than the weekly history.
+  const nowcastUsed = (baseline as { nowcast?: Record<string, { date: string; value: number }> })
+    .nowcast;
+  const brief = buildResearchBrief(round, lock, {
+    ...(round.series && nowcastUsed?.[round.series] ? { nowcast: nowcastUsed[round.series] } : {}),
+  });
 
   let research: ResearchReport;
   try {
@@ -121,16 +191,19 @@ export async function researchForecastRound(
     ...(checked ? { verification: checked.stats } : {}),
   };
 
-  const history = (lock.answer_history ?? lock.history ?? []).slice(-20);
+  const history = lock.answer_history ?? lock.history ?? [];
   const sourceList = research.sources
     .map((s, i) => `[${i + 1}] ${s.title ?? ""} ${s.url}`)
     .join("\n");
   const user = [
     `Question: ${round.question}`,
     `Unit: ${round.unit ?? "(see question)"}; published around ${round.release_at}; locks ${round.lock_at}.`,
+    ...rulesLines(round),
     "",
-    `History (date value), oldest first:\n${history.map((p) => `${p.date} ${p.value}`).join("\n")}`,
-    `Baseline: ${JSON.stringify(base)}`,
+    historyBlock(round, history, 20),
+    ...(daily ? ["", dailyBlock(daily)] : []),
+    "",
+    startLine(round, baseline, history),
     "",
     checked
       ? `RESEARCH DOSSIER (facts since ${brief.since}). Each cited line is tagged by a mechanical check of its figures against the cited page: rely on [verified] lines; treat [unverified] figures as likely wrong and [unreachable] ones as unconfirmed.\n${checked.annotated}`
@@ -153,10 +226,22 @@ export async function researchForecastRound(
     }),
   );
 
-  // The judge grounds rationales only in what survived verification (when it ran).
-  const evidence = chunks(
-    checked ? checked.verifiedText || "(no verified facts)" : research.report,
-  );
+  // The judge grounds rationales in the series data every analyst was given,
+  // plus only the dossier lines that survived verification (when it ran).
+  const evidence = [
+    ...seriesEvidence(round, history, baseline, daily),
+    ...chunks(checked ? checked.verifiedText || "(no verified facts)" : research.report),
+  ];
+  const judgeRecord: JudgeRecord | undefined = deps.judge
+    ? {
+        provider: deps.judge.kind,
+        ...(deps.judge.model ? { model: deps.judge.model } : {}),
+        calls: 0,
+        latencyMs: 0,
+        costUsd: 0,
+        errors: 0,
+      }
+    : undefined;
   const proposals: Record<string, JudgedProposal> = {};
   await Promise.all(
     raw.map(async ([name, reply]) => {
@@ -178,16 +263,27 @@ export async function researchForecastRound(
       let quality: number | undefined;
       let grounded: number | undefined;
       let judgeError: string | undefined;
+      let judgeLatencyMs: number | undefined;
+      let judgeCostUsd: number | undefined;
       if (deps.judge) {
         const verdict = await checkDraft(
           deps.judge,
-          `Forecast ${mean} ± ${sd} (baseline ${base.mean} ± ${base.sd}). ${reason}`.slice(
+          `Forecast ${mean} ± ${sd} (start forecast ${base.mean} ± ${base.sd}). ${reason}`.slice(
             0,
             3_000,
           ),
           evidence,
           round.question,
         );
+        if (judgeRecord) {
+          judgeRecord.calls++;
+          if (verdict.provider) judgeRecord.provider = verdict.provider;
+          if (verdict.model) judgeRecord.model = verdict.model;
+          judgeRecord.latencyMs = Math.max(judgeRecord.latencyMs, verdict.latencyMs ?? 0);
+          judgeRecord.costUsd += verdict.costUsd ?? 0;
+        }
+        judgeLatencyMs = verdict.latencyMs;
+        judgeCostUsd = verdict.costUsd;
         if (!verdict.error) {
           quality = verdict.signals.quality;
           grounded = verdict.signals.grounded;
@@ -198,6 +294,10 @@ export async function researchForecastRound(
           // gets no weight (it used to keep weight 1 — ~10× a judged run).
           weight = 0;
           judgeError = String(verdict.error).slice(0, 200);
+          if (judgeRecord) {
+            judgeRecord.errors++;
+            judgeRecord.error = judgeError;
+          }
         }
       }
       proposals[name] = {
@@ -208,10 +308,18 @@ export async function researchForecastRound(
         ...(quality === undefined ? {} : { quality }),
         ...(grounded === undefined ? {} : { grounded }),
         ...(judgeError ? { judgeError } : {}),
+        ...(judgeLatencyMs === undefined ? {} : { judgeLatencyMs }),
+        ...(judgeCostUsd === undefined ? {} : { judgeCostUsd }),
       };
     }),
   );
 
+  const audit = {
+    ...(judgeRecord
+      ? { judge: { ...judgeRecord, costUsd: Math.round(judgeRecord.costUsd * 1e6) / 1e6 } }
+      : {}),
+    ...(daily ? { dailySource: daily.source } : {}),
+  };
   const usable = Object.values(proposals);
   const totalWeight = usable.reduce((s, p) => s + p.weight, 0);
   if (usable.length === 0 || totalWeight <= 0) {
@@ -219,6 +327,7 @@ export async function researchForecastRound(
       dossier,
       proposals,
       roles,
+      ...audit,
     });
   }
   const move = usable.reduce((s, p) => s + p.weight * (p.mean - base.mean), 0) / totalWeight;
@@ -234,8 +343,9 @@ export async function researchForecastRound(
     },
     dossier,
     proposals,
+    ...audit,
     trust,
     roles,
-    note: `marina research agent (${research.retriever}; ${usable.length} judged analysts) over the calibrated baseline`,
+    note: `marina research agent (${research.retriever}; ${usable.length} judged analysts) over ${freshestReading(baseline, round.series) ? "the Civiqs nowcast" : "the calibrated baseline"}`,
   };
 }

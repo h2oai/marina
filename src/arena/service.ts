@@ -25,6 +25,8 @@ import {
 } from "./submit";
 
 const logger = new Logger();
+/** Days of the Civiqs daily tracker the model roles read (the quant input). */
+const DAILY_POINTS = 21;
 
 export interface ArenaStatus {
   configured: boolean;
@@ -159,7 +161,10 @@ export async function forecasterFor(
     // Start from the nowcast (fresher than the weekly history for Civiqs; the
     // baseline elsewhere), exactly as the research agent does.
     const { nowcastForecaster } = await import("./research/civiqs-nowcast");
-    const start = nowcastForecaster(arenaData(env), forecastRound, await liveCiviqs(env));
+    const start = nowcastForecaster(arenaData(env), forecastRound, {
+      ...(await liveCiviqs(env)),
+      daily: DAILY_POINTS,
+    });
     return {
       usage,
       forecaster: async (round, lock) =>
@@ -182,7 +187,10 @@ export async function forecasterFor(
   const options = { ...DEFAULT_MODEL_OPTIONS, weight: opts.raw ? 1 : (opts.weight ?? 0.5) };
   if (opts.raw) options.maxSdMove = Number.POSITIVE_INFINITY;
   const { nowcastForecaster } = await import("./research/civiqs-nowcast");
-  const start = nowcastForecaster(arenaData(env), forecastRound, await liveCiviqs(env));
+  const start = nowcastForecaster(arenaData(env), forecastRound, {
+    ...(await liveCiviqs(env)),
+    daily: DAILY_POINTS,
+  });
   return {
     usage,
     forecaster: async (round, lock) =>
@@ -317,7 +325,9 @@ export async function learnFromResolutions(
  * `research:<analyst>[,<analyst>…][@<retriever>[,<retriever>…]]` (up to eight
  * analysts, one vendor each). Retrieval is the spec's `@` list, else
  * `MARINA_ARENA_RESEARCH_RETRIEVER` (default `openrouter-web:openai/gpt-6-luna`;
- * `sonar:<perplexity model>` too, several comma-separated and merged),
+ * `sonar:<perplexity model>` and `tavily:<basic|advanced>` too, several
+ * comma-separated and merged; page text a retriever fetched is used for the
+ * citation check instead of re-fetching),
  * the judge `MARINA_ARENA_RESEARCH_JUDGE` (`jev` — jev-1.13 through OpenRouter's
  * Decisions API — by default when an OpenRouter key is set; `decisions` for the
  * world's configured backend, falling back to `jev`; `none` for equal weights), the cap on the move taken `MARINA_ARENA_RESEARCH_TRUST` (0.5).
@@ -339,8 +349,15 @@ async function researchForecasterFor(
     specRetrievers?.trim() ||
     env.MARINA_ARENA_RESEARCH_RETRIEVER?.trim() ||
     "openrouter-web:openai/gpt-6-luna";
-  if (!orKey) throw new Error("the research retrievers need OPENROUTER_API_KEY");
-  const retriever = retrieve.retrieverFromSpec(retrieverSpec, orKey);
+  const { defaultPageText } = await import("./research/verify");
+  // Page text a retriever already fetched (Tavily) is checked in place of a fetch.
+  const { retriever, pageText } = retrieve.withProvidedText(
+    retrieve.retrieverFromSpec(retrieverSpec, {
+      ...(orKey ? { openrouter: orKey } : {}),
+      ...(env.TAVILY_API_KEY?.trim() ? { tavily: env.TAVILY_API_KEY.trim() } : {}),
+    }),
+    defaultPageText(),
+  );
   const models = analystsPart.split(",");
   const made = models.map((m) => ({
     name: m.replace(/^openrouter\//, ""),
@@ -352,15 +369,17 @@ async function researchForecasterFor(
     orKey,
   );
   const trustCap = Number(env.MARINA_ARENA_RESEARCH_TRUST ?? 0.5);
-  const { defaultPageText } = await import("./research/verify");
-  const pageText = defaultPageText();
   // Structured evidence first: the research agent starts from the Civiqs nowcast.
   const { nowcastForecaster } = await import("./research/civiqs-nowcast");
-  const nowcast = nowcastForecaster(arenaData(env), forecastRound, await liveCiviqs(env));
+  const nowcast = nowcastForecaster(arenaData(env), forecastRound, {
+    ...(await liveCiviqs(env)),
+    daily: DAILY_POINTS,
+  });
   let researchCost = 0;
+  let judgeCalls = 0;
   const usage: Usage = {
     get calls() {
-      return made.reduce((s, m) => s + m.usage.calls, 0);
+      return judgeCalls + made.reduce((s, m) => s + m.usage.calls, 0);
     },
     get inputTokens() {
       return made.reduce((s, m) => s + m.usage.inputTokens, 0);
@@ -368,6 +387,9 @@ async function researchForecasterFor(
     get outputTokens() {
       return made.reduce((s, m) => s + m.usage.outputTokens, 0);
     },
+    // Retrieval + analysts + the judge. The judge's dollars also reach the
+    // daily spend ledger (its metered provider records them); this is the
+    // shadow ledger's per-round cost, a separate account — not a second charge.
     get costUsd() {
       return researchCost + made.reduce((s, m) => s + m.usage.costUsd, 0);
     },
@@ -383,7 +405,8 @@ async function researchForecasterFor(
         pageText,
         base: nowcast,
       });
-      researchCost += f.dossier?.costUsd ?? 0;
+      researchCost += (f.dossier?.costUsd ?? 0) + (f.judge?.costUsd ?? 0);
+      judgeCalls += f.judge?.calls ?? 0;
       return f;
     },
   };
