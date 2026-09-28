@@ -316,3 +316,50 @@ assertion (no notification after revocation) and stays. The `setTimeout(resolve,
 Causes, in order of weight: per-test engine/DB boot in `beforeEach`, real-time
 waits (multi-second sleeps and interval-driven loops such as staleness timers,
 lease expiry and rate-limit refill), and end-to-end HTTP/WebSocket round trips.
+
+## Mutation testing and session model checks
+
+`bun run test:mutation` uses pinned Stryker with its [command test runner](https://stryker-mutator.io/docs/stryker-js/configuration/#testrunner-string)
+to mutate `context-cache.ts` and `mcp-admission.ts`, running the actual Bun/SQLite contract
+and integration tests for each variant. The dedicated CI job requires a 100% score;
+`/tmp/marina-mutation/mutation.json` identifies surviving mutants. The scope is these two
+modules, not repository-wide mutation coverage. Investigate survivors; do not lower the
+threshold to make a broken test suite pass. Stryker operates on sandbox copies, never the
+working sources. Typechecking runs separately because TypeScript 7 no longer provides
+the legacy JavaScript compiler API that Stryker's config rewriter expects.
+
+`bun run check:model` checks the bounded [MCP session model](../../specs/README.md), then
+requires deliberately broken models to produce the expected counterexamples. It needs
+Java 21 and downloads a checksum-pinned TLC release unless `--jar` is supplied. Both
+commands have dedicated Make targets. These checks complement implementation tests;
+finite-state model checking is not a proof of the entire running application.
+
+## Context latency regression gate
+
+`bun run bench:participation-context --output /tmp/context.json` measures the complete
+`buildUnifiedContext` call at 1,000 and 10,000 seeded background records across eight
+tenants, plus a five-tier fixture. One in 100 background records matches the task terms.
+Each scale warms up 20 times, then records 250 cold
+retrievals and 1,000 cache hits. Cold runs invalidate through a real SQLite write outside
+the timed section. The harness asserts cache hit/miss behavior, byte budgets, expected
+evidence, tenant isolation and post-withdrawal visibility. Token-rate throttling is
+bypassed only inside this disposable benchmark process. Unique fixture writes skip dedup;
+write throughput is not measured. Disk SQLite uses the test helper's NORMAL setting;
+production FULL durability remains unchanged. See the [operator runbook](operator-runbook.md#compare-checkpoint-thresholds-on-representative-storage)
+for concurrent MCP/FULL-durability WAL qualification.
+
+CI prepares the PR base (or previous pushed commit) and runs the **same candidate workload**
+against both source trees and the candidate's installed dependencies. Three rounds alternate
+base/candidate order. `bun run check:context-performance --baseline /path/to/base` compares
+the median of their per-run p99s; each must stay below base × 1.5 plus 2 ms for cold reads
+or 0.5 ms for warm reads, and below independent budgets of 250/20 ms respectively. These
+allowances tolerate shared-runner noise while gating material regressions. JSON artifacts
+retain each run's p50/p95/p99 and sample counts for historical comparison. Inspect noisy
+failures on a quiet runner before changing limits. This is a retrieval regression test,
+not a universal capacity SLA, write benchmark or representative production load test.
+
+The benchmark script accepts `--root`, `--records`, `--samples` and `--match-every` for diagnosis. CI's
+comparison uses fixed scales/sample counts and rejects missing or malformed measurements.
+A separate candidate run makes all 10,000 records match and requires cold/warm p99 below
+500/20 ms. This catches broad-query regressions without repeatedly running an already-slow
+historical query plan. An independent load test still exercises admission and FULL SQLite writes.
