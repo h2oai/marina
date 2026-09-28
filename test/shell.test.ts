@@ -211,15 +211,16 @@ describe("Shell", () => {
       expect(text).toContain("exit 0");
     });
 
-    it("the agent.run gate decides, not the rank floor", () => {
+    it("the agent.run gate decides, not the rank floor", async () => {
       const entity = engine.entities.get(conn.entity!);
       if (entity) entity.properties.rank = 0;
-      // A rank-0 holder of the gate is not double-locked by minRank ...
-      engine.processCommand(conn.entity!, "run echo test");
+      // A rank-0 holder of the gate is not double-locked by minRank. Await the
+      // run: it really executes, and must finish before the database closes.
+      await engine.processCommand(conn.entity!, "run echo test");
       expect(stripAnsi(conn.lastText())).not.toContain("at least");
       // ... and without the gate the gate itself refuses.
       revoke(db, conn.entity!, "agent.run");
-      engine.processCommand(conn.entity!, "run echo test");
+      await engine.processCommand(conn.entity!, "run echo test");
       const text = stripAnsi(conn.lastText());
       expect(text).toContain("Not yet");
     });
