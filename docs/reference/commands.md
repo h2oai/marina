@@ -1437,6 +1437,49 @@ Effect: unknown.
 
 - `field-0` (`self|entity|name`): text, required, choices `self`, `entity`, `name`.
 
+## challenge
+
+challenge — held actions waiting on an answer.
+Usage:
+  challenge                               — what you can answer + what you asked
+  challenge approve <token> [once|always] [note]
+                                          — run it now; always also grants its gate
+  challenge deny <token> [reason]         — decline; the requester is told why
+  challenge stats                         — the judge's record per gate vs people's answers
+Creators answer for the agents they spawned, admins for anyone — only for what
+they could do themselves. Nobody answers their own ask.
+
+Category: Civic. Minimum rank: 0.
+Aliases: `challenges`.
+
+### `challenge`
+
+Effect: unknown.
+
+
+### `challenge approve <token> [once|always] [note]`
+
+Effect: unknown.
+
+- `field-0` (`token`): text, required.
+- `field-1` (`once|always`): choice, optional group `option-0`, choices `once`, `always`.
+- `field-2` (`note`): text, optional group `option-1`.
+- Group `option-0`: `once|always`.
+- Group `option-1`: `note`.
+
+### `challenge deny <token> [reason]`
+
+Effect: unknown.
+
+- `field-0` (`token`): text, required.
+- `field-1` (`reason`): text, optional group `option-0`.
+- Group `option-0`: `reason`.
+
+### `challenge stats`
+
+Effect: unknown.
+
+
 ## channel
 
 Real-time messaging channels with persistent history.
@@ -3063,6 +3106,7 @@ Usage: decision check [<request> |] <draft>   — score your own draft before yo
        decision list | decision approve <token> | decision deny <token> [reason]
        decision qualify   — run the labeled gate + route cases against this world's backend
        decision agreement — how often each judge agreed with task creators' verdicts
+       decision settings  — the decision settings; change one with the earned decisions.configure gate
 
 Category: Agents. Minimum rank: 0.
 Aliases: `decisions`.
@@ -3113,6 +3157,15 @@ Effect: unknown.
 
 Effect: unknown.
 
+
+### `decision settings [set <setting> <value> | unset <setting> | history]`
+
+Effect: unknown.
+
+- `field-0` (`setting`): text, optional group `option-0`.
+- `field-1` (`value`): text, optional group `option-0`.
+- `field-2` (`setting`): text, optional group `option-0`.
+- Group `option-0`: `set setting value | unset setting | history`.
 
 ## demo
 

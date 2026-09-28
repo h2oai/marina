@@ -3,7 +3,6 @@
 
 import { RateLimiter } from "../../auth/rate-limiter";
 import { judgeAgreement } from "../../decisions/agreement";
-import { listApprovals, settleApproval } from "../../decisions/approvals";
 import { harnessDecisionProvider } from "../../decisions/engines";
 import type { Evidence } from "../../decisions/evidence";
 import { loadDecisionCases, qualifyBackend, renderBackendReport } from "../../decisions/qualify";
@@ -18,6 +17,7 @@ import {
   type DecisionSettingsDeps,
   runDecisionSettings,
 } from "./admin-decisions";
+import { challengeCommand } from "./challenge";
 
 const USAGE = [
   "Usage: decision check [<request> |] <draft>   — score your own draft before you use it",
@@ -47,11 +47,11 @@ export function resetDecisionQualifyForTests(entities: string[]): void {
 
 /**
  * `decision` — the harness-decision primitive as a TOOL any entity can reach
- * for (`check`, `choose`), plus settling gate `ask` holds for agents you
- * spawned (src/decisions/approvals.ts). Rank 0 by design: the numbers only
+ * for (`check`, `choose`), plus answering gate `ask` holds (they are
+ * challenges — src/engine/challenges.ts — so `decision approve|deny|list` and
+ * `challenge …` are the same thing). Rank 0 by design: the numbers only
  * inform — nothing here blocks, records or rewards on the caller's behalf, so
- * autonomy stays with the agent. Authorization for approvals is ownership,
- * checked per request, and an agent can never approve its own call.
+ * autonomy stays with the agent. Nobody answers their own ask.
  */
 export function decisionCommand(deps: {
   getEntity: (id: EntityId) => Entity | undefined;
@@ -314,55 +314,13 @@ export function decisionCommand(deps: {
         });
       }
 
-      if (sub === "list") {
-        const mine = listApprovals(me.name);
-        if (mine.length === 0) {
-          ctx.send(input.entity, "No tool calls are waiting for your approval.");
-          return;
-        }
-        const now = Date.now();
-        ctx.send(
-          input.entity,
-          [
-            header("Held for your approval"),
-            separator(),
-            ...mine.map(
-              (r) =>
-                `  ${bold(r.token)} ${r.agentName} → ${r.summary}\n    ${dim(`${r.reason} · expires in ${Math.max(0, Math.round((r.expiresAt - now) / 1000))}s`)}`,
-            ),
-          ].join("\n"),
+      // Held gate `ask`s are challenges now (src/engine/challenges.ts); the
+      // old verbs answer them too.
+      if (sub === "list" || sub === "approve" || sub === "deny") {
+        return challengeCommand({ getEntity: (id) => deps.getEntity(id as EntityId) }).handler(
+          ctx,
+          { ...input, tokens: sub === "list" ? ["list"] : tokens },
         );
-        return;
-      }
-
-      if (sub === "approve" || sub === "deny") {
-        const token = tokens[1];
-        if (!token) {
-          ctx.send(input.entity, USAGE);
-          return;
-        }
-        const note = tokens.slice(2).join(" ") || undefined;
-        const result = settleApproval(
-          token,
-          me.name,
-          sub === "approve" ? "approved" : "denied",
-          note,
-        );
-        if (!result.ok) {
-          const why =
-            result.error === "self"
-              ? "An agent cannot approve its own tool call."
-              : result.error === "not_owner"
-                ? "Only the principal that spawned this agent can settle its request."
-                : `No pending request ${token} (it may have expired).`;
-          ctx.send(input.entity, why);
-          return;
-        }
-        ctx.send(
-          input.entity,
-          `${sub === "approve" ? "Approved" : "Denied"} ${result.request.agentName}'s ${result.request.toolName} call (${token}).`,
-        );
-        return;
       }
 
       ctx.send(input.entity, unknownSubcommand("decision", sub, USAGE));

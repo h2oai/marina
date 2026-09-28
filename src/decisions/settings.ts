@@ -126,8 +126,8 @@ export const DECISION_SETTINGS: readonly DecisionSettingSpec[] = [
   {
     name: "approval-timeout",
     env: "MARINA_DECISION_APPROVAL_TIMEOUT_MS",
-    describe: "how long a held call waits for its owner, ms",
-    parse: int(1_000, 3_600_000),
+    describe: "how long a held call's challenge stays open for an answer (nothing waits on it), ms",
+    parse: int(1_000, 86_400_000),
   },
   {
     name: "verify",

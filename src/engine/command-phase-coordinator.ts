@@ -8,9 +8,16 @@ import type { CommandContext, EngineEvent, Entity, EntityId, RoomContext, RoomId
 import type { EntityManager } from "../world/entity-manager";
 import type { RoomManager } from "../world/room-manager";
 import { getAutonomyPosture } from "./autonomy";
+import { raiseForCommand } from "./challenges";
 import type { CommandRouter } from "./command-router";
 import { trackQuestProgress } from "./commands/quest";
 import { getErrorMessage, tryLog } from "./errors";
+import {
+  armGatePass,
+  claimCommandPass,
+  getCurrentCommand,
+  setCurrentCommand,
+} from "./gate-context";
 import type { Logger } from "./logger";
 import { getRank, rankName } from "./permissions";
 import { checkGateForExecution, recordGateExecution } from "./safety-gates";
@@ -37,6 +44,20 @@ export class CommandPhaseCoordinator {
 
   /** Process a single command immediately */
   async execute(entityId: EntityId, raw: string, opts?: { bypassModal?: boolean }): Promise<void> {
+    const previous = getCurrentCommand(entityId);
+    try {
+      await this.executeInner(entityId, raw, opts);
+    } finally {
+      setCurrentCommand(entityId, previous);
+      if (previous === undefined) armGatePass(entityId, undefined);
+    }
+  }
+
+  private async executeInner(
+    entityId: EntityId,
+    raw: string,
+    opts?: { bypassModal?: boolean },
+  ): Promise<void> {
     const commandStartedAt = Date.now();
     const entity = this.host.entities.get(entityId);
     if (!entity) return;
@@ -102,7 +123,15 @@ export class CommandPhaseCoordinator {
     // gate registry promised. The gate (with its standing floor, witness
     // path, and destructive-core carve-out) is the real authority; the rank
     // gate remains for ungated commands and for the default guarded posture.
-    if (def?.minRank && def.minRank > 0) {
+    // The input a refusal would hold: a challenge (src/engine/challenges.ts)
+    // re-dispatches exactly this, and its approval leaves a single-use pass
+    // for it. The pass arms the approved gates for this run only, so gate
+    // checks inside the handler (agent.spawn, code.exec) see the approval.
+    setCurrentCommand(entityId, routedRaw);
+    const pass = claimCommandPass(entityId, routedRaw);
+    armGatePass(entityId, pass);
+
+    if (def?.minRank && def.minRank > 0 && !pass?.rankWaived) {
       const rank = getRank(entity);
       const gateIsAuthority = Boolean(
         def.gate && this.host.db && getAutonomyPosture() !== "guarded",
@@ -112,7 +141,14 @@ export class CommandPhaseCoordinator {
       if (rank < def.minRank && !gateIsAuthority && !isLocalUngated()) {
         this.host.sendToEntity(
           entityId,
-          `You must be at least ${rankName(def.minRank)} (rank ${def.minRank}) to use "${def.name}".`,
+          `You must be at least ${rankName(def.minRank)} (rank ${def.minRank}) to use "${def.name}".` +
+            raiseForCommand({
+              requesterId: entityId,
+              command: routedRaw,
+              reason: `rank ${def.minRank}`,
+              minRank: def.minRank,
+              ...(def.gate ? { gateId: def.gate } : {}),
+            }),
         );
         recordUsage(false);
         return;
