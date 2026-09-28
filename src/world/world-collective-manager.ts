@@ -3,6 +3,7 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { childDailySpendCapEnv } from "../engine/spend-ledger";
 import type { MarinaDB } from "../persistence/database";
 import { MARINA_ROOT } from "../runtime-paths";
 
@@ -119,8 +120,9 @@ export class WorldCollectiveManager {
         MARINA_WORLD: variant.world_template,
         MARINA_COLLECTIVE_CHILD: "1",
         // A child world spends against its own daily budget ($50 unless the
-        // parent sets MARINA_CHILD_DAILY_SPEND_CAP_USD), never the parent's.
-        MARINA_DAILY_SPEND_CAP_USD: process.env.MARINA_CHILD_DAILY_SPEND_CAP_USD?.trim() || "50",
+        // parent sets MARINA_CHILD_DAILY_SPEND_CAP_USD), never the parent's,
+        // and never more than the parent's own cap.
+        MARINA_DAILY_SPEND_CAP_USD: childDailySpendCapEnv(),
         DB_PATH: variant.db_path,
         ASSETS_DIR: assetsDir,
         WS_PORT: String(variant.ws_port),

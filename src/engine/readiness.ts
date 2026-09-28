@@ -281,17 +281,27 @@ export function computeReadiness(engine: Engine): ReadinessReport {
   const spend = dailySpend(env);
   if (spend.capUsd !== undefined) {
     const share = spend.spentUsd / spend.capUsd;
+    const source = env.MARINA_DAILY_SPEND_CAP_USD?.trim()
+      ? "MARINA_DAILY_SPEND_CAP_USD"
+      : "default cap; set MARINA_DAILY_SPEND_CAP_USD to change it";
     checks.push({
       id: "daily-spend",
       label: "Daily spend",
       status: spend.reached ? "off" : share >= 0.8 ? "degraded" : "ok",
-      detail: `${formatSpendUsd(spend.spentUsd)} of ${formatSpendUsd(spend.capUsd)} today (UTC)${spend.reached ? " — model calls, decisions and forecasts are refused; agents paused" : ""}`,
+      detail: `${formatSpendUsd(spend.spentUsd)} of ${formatSpendUsd(spend.capUsd)} today (UTC, ${source})${spend.reached ? " — model calls, decisions, forecasts and media generation are refused; agents paused" : ""}`,
       ...(spend.reached || share >= 0.8
         ? {
             remediation:
-              "Wait for 00:00 UTC, or raise MARINA_DAILY_SPEND_CAP_USD (operator env) if the spend is intended.",
+              "Wait for 00:00 UTC, or raise MARINA_DAILY_SPEND_CAP_USD=<usd> (operator env, restart; 0 = no cap) if the spend is intended.",
           }
         : {}),
+    });
+  } else {
+    checks.push({
+      id: "daily-spend",
+      label: "Daily spend",
+      status: "ok",
+      detail: `${formatSpendUsd(spend.spentUsd)} today (UTC) — uncapped (MARINA_DAILY_SPEND_CAP_USD=${env.MARINA_DAILY_SPEND_CAP_USD?.trim() ?? "0"})`,
     });
   }
 

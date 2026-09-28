@@ -17,8 +17,11 @@ import { Engine } from "../src/engine/engine";
 import { computeReadiness } from "../src/engine/readiness";
 import {
   attachSpendLedger,
+  childDailySpendCapEnv,
+  DEFAULT_DAILY_SPEND_CAP_USD,
   dailyCapRefusal,
   dailySpend,
+  dailySpendCapUsd,
   formatSpendUsd,
   recordSpend,
   resetSpendLedgerForTests,
@@ -73,10 +76,58 @@ describe("spend ledger", () => {
     recordSpend("forecast", 20, day1);
     expect(dailySpend(env, day1)).toMatchObject({ reached: true, capUsd: 50 });
     expect(dailyCapRefusal(env, day1)).toContain("daily spend cap reached ($50.50 today ≥ $50.00");
+    // Unset ⇒ the $25 default cap applies (30.5 + 20 already spent).
+    expect(dailyCapRefusal({}, day1)).toContain("≥ $25.00");
+    expect(dailyCapRefusal({ MARINA_DAILY_SPEND_CAP_USD: "0" }, day1)).toBeUndefined();
+    expect(dailyCapRefusal({ MARINA_DAILY_SPEND_CAP_USD: "off" }, day1)).toBeUndefined();
+    // The refusal says which variable raises it.
+    expect(dailyCapRefusal(env, day1)).toContain("MARINA_DAILY_SPEND_CAP_USD=<usd>");
     expect(dailyCapRefusal(env, Date.parse("2026-09-27T00:00:01Z"))).toBeUndefined();
-    expect(dailyCapRefusal({}, day1)).toBeUndefined(); // no cap set
     expect(formatSpendUsd(0.00007)).toBe("$0.000070");
     expect(formatSpendUsd(50.5)).toBe("$50.50");
+  });
+
+  it("defaults to $25/day; 0 or off uncaps; junk never lifts the cap", () => {
+    expect(DEFAULT_DAILY_SPEND_CAP_USD).toBe(25);
+    expect(dailySpendCapUsd({})).toBe(25);
+    expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "" })).toBe(25);
+    expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "abc" })).toBe(25);
+    expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "-3" })).toBe(25);
+    expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "7.5" })).toBe(7.5);
+    expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "0" })).toBeUndefined();
+    expect(dailySpendCapUsd({ MARINA_DAILY_SPEND_CAP_USD: "OFF" })).toBeUndefined();
+  });
+
+  it("a child world's cap is min(child cap, parent cap)", () => {
+    expect(childDailySpendCapEnv({})).toBe("25"); // default child 50, parent default 25
+    expect(childDailySpendCapEnv({ MARINA_DAILY_SPEND_CAP_USD: "100" })).toBe("50");
+    expect(
+      childDailySpendCapEnv({
+        MARINA_DAILY_SPEND_CAP_USD: "100",
+        MARINA_CHILD_DAILY_SPEND_CAP_USD: "10",
+      }),
+    ).toBe("10");
+    expect(
+      childDailySpendCapEnv({
+        MARINA_DAILY_SPEND_CAP_USD: "5",
+        MARINA_CHILD_DAILY_SPEND_CAP_USD: "10",
+      }),
+    ).toBe("5");
+    // Parent uncapped: the child keeps its own cap; both off ⇒ off.
+    expect(childDailySpendCapEnv({ MARINA_DAILY_SPEND_CAP_USD: "0" })).toBe("50");
+    expect(
+      childDailySpendCapEnv({
+        MARINA_DAILY_SPEND_CAP_USD: "0",
+        MARINA_CHILD_DAILY_SPEND_CAP_USD: "off",
+      }),
+    ).toBe("off");
+    // Child off under a capped parent ⇒ the parent's cap.
+    expect(
+      childDailySpendCapEnv({
+        MARINA_DAILY_SPEND_CAP_USD: "30",
+        MARINA_CHILD_DAILY_SPEND_CAP_USD: "0",
+      }),
+    ).toBe("30");
   });
 
   it("persists by day and source, and reloads the day's total after a restart", () => {
@@ -91,11 +142,13 @@ describe("spend ledger", () => {
       recordSpend("model_api", 1.25);
       recordSpend("model_api", 0.75);
       recordSpend("decision", 0.01);
+      recordSpend("media", 0.04); // migration 142 widened the source CHECK
       const rows = db.getDailySpend(utcDay());
       expect(rows.find((r) => r.source === "model_api")).toMatchObject({ cost_usd: 2, calls: 2 });
       resetSpendLedgerForTests(); // a restart…
       attachSpendLedger(sink); // …reloads today's total from the ledger
-      expect(spentTodayUsd()).toBeCloseTo(2.01);
+      expect(rows.find((r) => r.source === "media")).toMatchObject({ cost_usd: 0.04, calls: 1 });
+      expect(spentTodayUsd()).toBeCloseTo(2.05);
     } finally {
       db.close();
       rmSync(dir, { recursive: true, force: true });

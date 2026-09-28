@@ -8,6 +8,7 @@
 
 import { calculateCost, type Usage as PiUsage } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { defaultModelPrice } from "../../agent/provider-cost";
 import { localOutputBudget } from "../../engine/constants";
 import type { Engine } from "../../engine/engine";
 import { getErrorMessage } from "../../engine/errors";
@@ -1132,7 +1133,16 @@ export function upstreamCostUsd(
   if (metrics.inputTokens === undefined && metrics.outputTokens === undefined) return undefined;
   try {
     costCatalog ??= builtinModels();
-    const model = costCatalog.getModel(target.slice(0, slash), target.slice(slash + 1));
+    const modelId = target.slice(slash + 1);
+    const listed = costCatalog.getModel(target.slice(0, slash), modelId);
+    // Marina's own default ids (e.g. gpt-6-luna) carry their list price even
+    // before pi-ai's catalog lists them, so the daily cap sees their spend.
+    const fallbackPrice = listed ? undefined : defaultModelPrice(modelId);
+    const model =
+      listed ??
+      (fallbackPrice
+        ? ({ cost: fallbackPrice } as unknown as NonNullable<typeof listed>)
+        : undefined);
     if (!model) return undefined;
     const cacheRead = metrics.cacheReadTokens ?? 0;
     const cacheWrite = metrics.cacheWriteTokens ?? 0;

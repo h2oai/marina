@@ -5,6 +5,7 @@ import type { MarinaDB, MediaJobRow, MediaJobType } from "../../persistence/data
 import type { StorageProvider } from "../../storage/provider";
 import type { EngineEvent, EntityId } from "../../types";
 import type { Engine } from "../engine";
+import { dailyCapRefusal, recordSpend } from "../spend-ledger";
 import {
   getImageProvider,
   imageProviderRequiresKey,
@@ -17,8 +18,23 @@ import type { VideoResult } from "./providers/video-util";
 import { publishGeneratedAsset, storeGeneratedAsset } from "./publish";
 
 const POLL_INTERVAL_MS = 5_000;
-const MAX_IMAGE_JOBS_PER_DAY = Number(process.env.MAX_IMAGE_JOBS_PER_DAY ?? "0");
-const MAX_VIDEO_JOBS_PER_DAY = Number(process.env.MAX_VIDEO_JOBS_PER_DAY ?? "0");
+/** Per-entity rolling-24h job caps when `MAX_{IMAGE,VIDEO}_JOBS_PER_DAY` is unset. */
+export const DEFAULT_MAX_IMAGE_JOBS_PER_DAY = 50;
+export const DEFAULT_MAX_VIDEO_JOBS_PER_DAY = 5;
+
+/**
+ * One entity's rolling-24h cap for a media type: a positive integer is the
+ * cap, `0` is explicitly unlimited, unset/blank/junk is the default (a typo
+ * never lifts the cap).
+ */
+export function mediaJobCap(type: MediaJobType, env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (type === "image" ? env.MAX_IMAGE_JOBS_PER_DAY : env.MAX_VIDEO_JOBS_PER_DAY)?.trim();
+  const fallback =
+    type === "image" ? DEFAULT_MAX_IMAGE_JOBS_PER_DAY : DEFAULT_MAX_VIDEO_JOBS_PER_DAY;
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback;
+}
 
 interface BaseJobParams {
   entityId: EntityId;
@@ -78,6 +94,13 @@ export class MediaManager {
 
   async startJob(params: StartJobParams): Promise<MediaJobRow> {
     this.enforceQuota(params.entityName, params.type);
+    const costEstimate = params.costHint ?? estimateCost(params);
+    // A priced (cloud) job counts against the world's daily spend cap; a
+    // local endpoint with no known price is never refused by it.
+    if (costEstimate) {
+      const capped = dailyCapRefusal();
+      if (capped) throw new Error(`${params.type} generation refused: ${capped}`);
+    }
 
     const jobId = crypto.randomUUID();
     const provider = this.extractProvider(params.model);
@@ -118,7 +141,7 @@ export class MediaManager {
       model: params.model,
       prompt: params.prompt,
       options: baseOptions,
-      costEstimate: params.costHint ?? estimateCost(params),
+      costEstimate,
       metadata: params.metadata ?? null,
     });
 
@@ -268,6 +291,7 @@ export class MediaManager {
       });
     }
 
+    this.recordMediaSpend(params);
     this.db.updateMediaJob(jobId, {
       status: "succeeded",
       assetId: stored.id,
@@ -454,6 +478,7 @@ export class MediaManager {
       });
     }
 
+    this.recordMediaSpend(params);
     this.db.updateMediaJob(jobId, {
       status: "succeeded",
       assetId: stored.id,
@@ -468,14 +493,21 @@ export class MediaManager {
   }
 
   private enforceQuota(entityName: string, type: MediaJobType): void {
+    const cap = mediaJobCap(type);
+    if (cap <= 0) return;
     const since = Date.now() - 24 * 60 * 60 * 1000;
     const count = this.db.countMediaJobsSince({ entityName, since, type });
-    const cap = type === "image" ? MAX_IMAGE_JOBS_PER_DAY : MAX_VIDEO_JOBS_PER_DAY;
-    if (cap > 0 && count >= cap) {
+    if (count >= cap) {
+      const envVar = type === "image" ? "MAX_IMAGE_JOBS_PER_DAY" : "MAX_VIDEO_JOBS_PER_DAY";
       throw new Error(
-        `Daily ${type} quota reached (${count}/${cap}). Try again tomorrow or request additional credits.`,
+        `Daily ${type} quota reached (${count}/${cap} in the last 24 h). Try again later, or an operator can raise ${envVar} (0 = unlimited).`,
       );
     }
+  }
+
+  /** A completed job's estimated price goes into the daily spend ledger. */
+  private recordMediaSpend(params: StartJobParams): void {
+    recordSpend("media", params.costHint ?? estimateCost(params) ?? undefined);
   }
 
   private emitFeedEvent(

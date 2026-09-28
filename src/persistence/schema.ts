@@ -68,6 +68,26 @@ INSERT OR IGNORE INTO entity_competence (entity_id, gate, demonstrations, superv
   // Migration 141: role-owned loop sections (operating loop / how to be / every turn) as a
   // JSON object; honored only under earned/open posture or local-ungated.
   { version: 141, sql: "ALTER TABLE roles ADD COLUMN loop TEXT NOT NULL DEFAULT '{}';" },
+  // Migration 142: image/video generation joins the daily spend ledger
+  // (src/engine/spend-ledger.ts, source 'media'). SQLite cannot widen a CHECK
+  // in place, so the table is rebuilt with every existing row carried over.
+  {
+    version: 142,
+    sql: `
+CREATE TABLE spend_daily_v142 (
+  day TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('model_api', 'agent', 'decision', 'forecast', 'media')),
+  cost_usd REAL NOT NULL DEFAULT 0,
+  calls INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (day, source)
+);
+INSERT INTO spend_daily_v142 (day, source, cost_usd, calls, updated_at)
+  SELECT day, source, cost_usd, calls, updated_at FROM spend_daily;
+DROP TABLE spend_daily;
+ALTER TABLE spend_daily_v142 RENAME TO spend_daily;
+`,
+  },
 ];
 export const SCHEMA_VERSION = FORWARD_MIGRATIONS.at(-1)?.version ?? SCHEMA_BASELINE_VERSION;
 

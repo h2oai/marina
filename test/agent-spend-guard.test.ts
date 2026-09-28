@@ -475,3 +475,99 @@ describe("LeanAgentAdapter proxy cost headers", () => {
     expect(options.onResponse).toBeUndefined();
   });
 });
+
+// ─── Provider-reported cost for unpriced models ─────────────────────────────
+
+import { usageCostOf } from "../src/agent/provider-cost";
+import { resetSpendLedgerForTests, spentTodayUsd } from "../src/engine/spend-ledger";
+
+describe("unpriced direct-provider models record the provider's usage.cost", () => {
+  it("usageCostOf reads a number or { total } and ignores junk", () => {
+    expect(usageCostOf({ usage: { cost: 0.0042 } })).toBe(0.0042);
+    expect(usageCostOf({ usage: { cost: { total: 0.5 } } })).toBe(0.5);
+    expect(usageCostOf({ usage: { cost: "free" } })).toBeUndefined();
+    expect(usageCostOf({ usage: { cost: 0 } })).toBeUndefined();
+    expect(usageCostOf(null)).toBeUndefined();
+  });
+
+  it("a synthesized OpenRouter model (catalog price $0) records the streamed usage.cost once", async () => {
+    resetSpendLedgerForTests();
+    const sse = [
+      'data: {"choices":[{"delta":{"content":"hi"}}]}',
+      'data: {"choices":[],"usage":{"prompt_tokens":900,"completion_tokens":40,"cost":0.0031}}',
+      "data: [DONE]",
+      "",
+    ].join("\n\n");
+    const fakeFetch = (async () =>
+      new Response(sse, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      })) as unknown as typeof fetch;
+    const adapter = new LeanAgentAdapter(
+      { name: "luna", model: "openrouter/openai/gpt-6-luna-unlisted" },
+      "ws://localhost:39999",
+      null,
+      "sk-test",
+      undefined,
+      undefined,
+      fakeFetch,
+    );
+    const internals = adapter as unknown as ProxyInternals & { pendingProviderCostUsd: unknown };
+    const options = internals.providerStreamOptions(internals.model, undefined);
+    const response = await options.fetch!("https://openrouter.ai/api/v1/chat/completions");
+    // The body reaches pi-ai byte-identical.
+    expect(await response.text()).toBe(sse);
+    expect(internals.pendingProviderCostUsd).toBeCloseTo(0.0031);
+    const merged = internals.recordTurnUsage(
+      { inputTokens: 900, outputTokens: 40, costUsd: 0 },
+      Date.now(),
+    );
+    expect(merged.costUsd).toBeCloseTo(0.0031);
+    expect(internals.metrics.totalCostUsd).toBeCloseTo(0.0031);
+    expect(spentTodayUsd()).toBeCloseTo(0.0031);
+    // Consumed: the next turn without a reply cost adds nothing.
+    internals.recordTurnUsage({ inputTokens: 1, outputTokens: 1, costUsd: 0 }, Date.now());
+    expect(spentTodayUsd()).toBeCloseTo(0.0031);
+    resetSpendLedgerForTests();
+  });
+
+  it("a catalog price wins over the reply's cost (never double-charged)", async () => {
+    resetSpendLedgerForTests();
+    const { internals } = makeAdapter();
+    const own = internals as unknown as ProxyInternals & { pendingProviderCostUsd: unknown };
+    own.pendingProviderCostUsd = 0.9;
+    const merged = own.recordTurnUsage(
+      { inputTokens: 1, outputTokens: 1, costUsd: 0.01 },
+      Date.now(),
+    );
+    expect(merged.costUsd).toBe(0.01);
+    expect(spentTodayUsd()).toBeCloseTo(0.01);
+    resetSpendLedgerForTests();
+  });
+});
+
+import { defaultModelPrice } from "../src/agent/provider-cost";
+import { upstreamCostUsd } from "../src/net/model-api/upstream";
+
+describe("Marina's default models are priced before pi-ai lists them", () => {
+  it("gpt-6-luna carries its list price on every route", () => {
+    expect(defaultModelPrice("openai/gpt-6-luna")).toEqual(defaultModelPrice("gpt-6-luna"));
+    expect(defaultModelPrice("some-unknown-model")).toBeUndefined();
+    // 1M in + 1M out at $0.10 / $0.50.
+    expect(
+      upstreamCostUsd("openrouter/openai/gpt-6-luna", {
+        inputTokens: 1_000_000,
+        outputTokens: 1_000_000,
+      }),
+    ).toBeCloseTo(0.6);
+    expect(
+      upstreamCostUsd("openai/unknown-x", { inputTokens: 10, outputTokens: 1 }),
+    ).toBeUndefined();
+  });
+
+  it("the Workbench's OpenAI default synthesizes with a nonzero price", () => {
+    const { internals } = makeAdapter(undefined, "openai/gpt-6-luna");
+    const model = (internals as unknown as { model: { cost: { input: number } } }).model;
+    expect(model.cost.input).toBeCloseTo(0.1);
+  });
+});
