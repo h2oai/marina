@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { strict as assert } from "node:assert";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 // Copyright 2025-2026 H2O.ai, Inc.
@@ -26,11 +26,13 @@ const { values } = parseArgs({
     participants: { type: "string", default: "16" },
     records: { type: "string", default: "64" },
     operations: { type: "string", default: "30" },
+    "wal-pages": { type: "string", default: "1000" },
   },
 });
 const participants = Number(values.participants),
   records = Number(values.records),
-  operations = Number(values.operations);
+  operations = Number(values.operations),
+  walPages = Number(values["wal-pages"]);
 if (
   !values.directory ||
   !Number.isInteger(participants) ||
@@ -41,12 +43,17 @@ if (
   records > 1000 ||
   !Number.isInteger(operations) ||
   operations < 1 ||
-  operations > 1000
+  operations > 1000 ||
+  !Number.isInteger(walPages) ||
+  walPages < 1 ||
+  walPages > 1_000_000
 )
   throw new Error(
-    "Use --directory PATH --participants 2..64 --records 1..1000 --operations 1..1000",
+    "Use --directory PATH --participants 2..64 --records 1..1000 --operations 1..1000 --wal-pages 1..1000000",
   );
 const directory = resolve(values.directory);
+if (existsSync(`${directory}/world.db`))
+  throw new Error("Qualification needs a new database directory");
 mkdirSync(directory, { recursive: true, mode: 0o700 });
 // Local admission qualification deliberately removes token-rate throttling; bounded
 // work admission still applies. No providers, room agents or external services run.
@@ -54,6 +61,9 @@ setTrustProfile("local");
 RateLimiter.bypass = true;
 process.env.WS_HOST = "127.0.0.1";
 const db = new MarinaDB(`${directory}/world.db`, { durability: "full" });
+const storage = db.memoryRepository().raw;
+// Only this disposable benchmark connection is tuned; no production setting changes.
+storage.exec(`PRAGMA wal_autocheckpoint=${walPages}`);
 const engine = new Engine({
   db,
   startRoom: roomId("qualification/start"),
@@ -76,6 +86,13 @@ const report: Record<string, unknown> = {
   transport: "MCP over loopback HTTP",
   durability: "FULL",
   rate_throttling: "bypassed for capacity measurement",
+  sqlite: {
+    version: storage.query("SELECT sqlite_version() AS version").get(),
+    journal: storage.query("PRAGMA journal_mode").get(),
+    synchronous: storage.query("PRAGMA synchronous").get(),
+    page_size: storage.query("PRAGMA page_size").get(),
+    wal_autocheckpoint: storage.query("PRAGMA wal_autocheckpoint").get(),
+  },
 };
 const release = Promise.withResolvers<void>();
 const entered = Promise.withResolvers<void>();
@@ -121,13 +138,16 @@ try {
       contextMode: "auto",
     });
     assert.ok(text(logged).includes("Logged in as"), "World login failed");
-    for (let note = 0; note < records; note++)
+    for (let note = 0; note < records; note++) {
+      const writeStart = performance.now();
       db.createNote(
         `LoadResident${i}`,
         `quartz${i} deployment port private-evidence-${i} entry ${note}`,
         undefined,
         { importance: 5, noteType: "fact" },
       );
+      (samples.write ??= []).push(performance.now() - writeStart);
+    }
   }
   // All principals and records exist before measuring cold versus warm retrieval.
   await Promise.all(clients.map((_, index) => measured(index, "cold")));
@@ -183,6 +203,8 @@ try {
   await residentMemoryOperation(db, "LoadResident0", { operation: "me" });
   report.revocation_checked = true;
   report.health = await (await fetch(`${base}/health`)).json();
+  report.wal_bytes_before_checkpoint = statSync(`${directory}/world.db-wal`).size;
+  report.checkpoint = storage.query("PRAGMA wal_checkpoint(PASSIVE)").get();
   report.passed = true;
 } finally {
   release.resolve();

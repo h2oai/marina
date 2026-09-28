@@ -83,6 +83,7 @@ export default defineConfig({
         {
           label: "Interfaces",
           items: [
+            { label: "API Explorer", link: asset("api") },
             { label: "Model API (OpenAI-compatible)", slug: "docs/guides/model-api" },
             { label: "MCP Integration", slug: "docs/guides/mcp-integration" },
             { label: "Dashboard", slug: "docs/guides/dashboard" },

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { beforeEach, expect, it, vi } from "vitest";
 import { getChatWs, useChatState } from "../hooks/use-chat-state";
+import { useWorldState } from "../hooks/use-world-state";
 import { requestParticipant, requestResidentMemory } from "../lib/memory-service";
 
 vi.mock("../hooks/use-chat-state", async (original) => ({
@@ -30,9 +31,74 @@ class Socket extends EventTarget {
 }
 let socket: Socket;
 beforeEach(() => {
+  vi.useRealTimers();
+  useWorldState.setState({ entities: [], capabilityRevision: undefined });
   socket = new Socket();
   vi.mocked(getChatWs).mockReturnValue(socket as unknown as WebSocket);
   useChatState.getState().setLoggedIn(true, "Ada");
+});
+
+it("serves fresh catalog hints without a roundtrip and isolates returned data", async () => {
+  const first = requestParticipant("capabilities");
+  socket.reply("capabilities", { key: "one", commands: [{ name: "look" }] });
+  await first;
+  const cached = await requestParticipant<{ commands: unknown[] }>(
+    "capabilities",
+    {},
+    undefined,
+    "prefer-cache",
+  );
+  cached.commands.length = 0;
+  expect(
+    (
+      await requestParticipant<{ commands: unknown[] }>(
+        "capabilities",
+        {},
+        undefined,
+        "prefer-cache",
+      )
+    ).commands,
+  ).toHaveLength(1);
+  expect(socket.send).toHaveBeenCalledTimes(1);
+});
+
+it("rechecks binding and cancellation before delivering a local catalog hit", async () => {
+  const first = requestParticipant("capabilities");
+  socket.reply("capabilities", { key: "one", commands: [{ name: "look" }] });
+  await first;
+  const controller = new AbortController();
+  const cancelled = requestParticipant("capabilities", {}, controller.signal, "prefer-cache");
+  controller.abort();
+  await expect(cancelled).rejects.toThrow(/cancelled/);
+  const rebound = requestParticipant("capabilities", {}, undefined, "prefer-cache");
+  useChatState.getState().setLoggedIn(false);
+  useChatState.getState().setLoggedIn(true, "Ada");
+  await expect(rebound).rejects.toThrow(/changed/);
+  expect(socket.send).toHaveBeenCalledTimes(1);
+});
+
+it("invalidates local hints on registry revision, time expiry and same-name re-login", async () => {
+  vi.useFakeTimers();
+  try {
+    const fetch = async () => {
+      const request = requestParticipant("capabilities", {}, undefined, "prefer-cache");
+      socket.reply("capabilities", { key: "one", commands: [{ name: "look" }] });
+      await request;
+    };
+    await fetch();
+    useWorldState.setState({ capabilityRevision: "epoch:2" });
+    await fetch();
+    expect(socket.send).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(5001);
+    await fetch();
+    expect(socket.send).toHaveBeenCalledTimes(3);
+    useChatState.getState().setLoggedIn(false);
+    useChatState.getState().setLoggedIn(true, "Ada");
+    await fetch();
+    expect(socket.send).toHaveBeenCalledTimes(4);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("rejects a preview from the previous socket even when the resident name matches", async () => {

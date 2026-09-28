@@ -68,9 +68,13 @@ and the preceding tool result remains intact. Provenance and recall-credit polic
 unchanged. High mutation rates can legitimately produce few cache hits.
 
 Dashboard command discovery coalesces concurrent requests on the same resident,
-connection, room, rank and mode; focus refreshes debounce for 150 ms. The server still
-validates the catalog revision. Memory previews and writes are never coalesced in the
-browser, and changing identity invalidates pending responses.
+connection, room, rank and mode; focus refreshes debounce for 150 ms. Inline assistance
+reuses validated public metadata locally for up to five seconds. Observed registry
+revisions, room/rank/modal changes, socket changes and logout invalidate reuse. Older
+servers and changes not yet observed fall back to the five-second bound. Expired entries
+revalidate with `capability_key` so unchanged catalogs are not retransmitted. Execution
+always checks current server permissions. Memory previews and writes are never coalesced
+in the browser, and changing identity invalidates pending responses.
 
 To measure a deployment-shaped local workload without model calls:
 
@@ -125,6 +129,36 @@ not a raw copy of only the `.db` file. FULL durability remains the production de
 switching to NORMAL trades crash durability for write latency and is not an automatic
 overload response. After disk-full or I/O failures, resolve storage pressure and inspect
 the failed receipt before retrying; use stable idempotency keys where the API supports them.
+
+### Compare checkpoint thresholds on representative storage
+
+SQLite already checkpoints automatically, normally at 1,000 WAL pages. Smaller thresholds
+trade more frequent checkpoint work for a smaller WAL; larger ones can improve write
+throughput while increasing read cost and disk use. A long-lived reader can prevent a
+checkpoint from finishing at any threshold. See [SQLite checkpoint behavior](https://www.sqlite.org/wal.html#checkpointing)
+and the connection-local [wal_autocheckpoint setting](https://www.sqlite.org/pragma.html#pragma_wal_autocheckpoint).
+
+The participation qualifier accepts `--wal-pages` **only for its disposable database**.
+Run the same workload on the target storage with fresh directories:
+
+```sh
+bun run qualify:participation:load --directory /tmp/marina-wal-100 --wal-pages 100 --participants 16 --records 64 --operations 30
+bun run qualify:participation:load --directory /tmp/marina-wal-1000 --wal-pages 1000 --participants 16 --records 64 --operations 30
+bun run qualify:participation:load --directory /tmp/marina-wal-4000 --wal-pages 4000 --participants 16 --records 64 --operations 30
+```
+
+Each report records SQLite version, journal/durability/page settings, write and MCP
+latency percentiles, WAL bytes before a passive checkpoint, and its `busy`, `log`,
+`checkpointed` result. A gap between logged and checkpointed pages after load calls
+for investigating reader lifetimes. WAL file size alone is not an uncheckpointed-page
+count: SQLite can reuse the file. Repeat runs and compare tail latency, not just averages.
+All variants retain FULL durability and check admission recovery and memory isolation.
+
+Keep the production default unless repeated representative runs justify a reviewed
+change on the **owning writer connection** in `database.ts`. A CLI PRAGMA on another
+connection does not tune the server. Change one setting at a time, repeat recovery
+checks, record the old value, and revert if latency or WAL pressure worsens. This is
+measurement guidance, not an automatic tuning algorithm or a power-loss simulation.
 
 ## Reload or restart
 

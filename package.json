@@ -131,12 +131,20 @@
     "qualify:image": "bun scripts/qualify-image.ts",
     "memory:compatibility": "bun scripts/memory-compatibility.ts",
     "qualify:server": "bun scripts/qualify-server.ts",
-    "qualify:participation:load": "bun --env-file=/dev/null scripts/qualify-participation-load.ts"
+    "qualify:participation:load": "bun --env-file=/dev/null scripts/qualify-participation-load.ts",
+    "test:properties": "bun run scripts/test-backend.ts --parallel=2 --timeout=120000 test/context-cache-property.test.ts test/command-order-property.test.ts test/context-security-property.test.ts",
+    "test:explorer": "cd site && bun run build && cd ../dashboard && bun run test:browser --config playwright.explorer.config.ts",
+    "test:mutation": "node node_modules/@stryker-mutator/core/bin/stryker.js run",
+    "check:model": "bun --env-file=/dev/null scripts/check-session-model.ts",
+    "bench:participation-context": "bun --env-file=/dev/null benchmarks/participation-context.ts",
+    "check:context-performance": "bun --env-file=/dev/null scripts/check-context-benchmark.ts"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.9",
     "@biomejs/biome": "^2.5.13",
+    "@stryker-mutator/core": "10.0.0",
     "@types/bun": "^1.4.2",
+    "fast-check": "^4.10.2",
     "typescript": "^7.0.2"
   },
   "trustedDependencies": [

@@ -66,7 +66,7 @@ const FAKE_STATUS = {
   silentTurns: 2,
 };
 
-/** The pre-refactor `buildSnapshot` (per principal, full walk) — the wire oracle. */
+/** The pre-refactor full walk, with the additive capability revision field. */
 function legacyBuildSnapshot(principal: string | undefined, timestamp: number): WorldSnapshot {
   const observer = memoryObserver(engine, principal);
   const spawnedByName = new Map<string, string | null>();
@@ -116,6 +116,7 @@ function legacyBuildSnapshot(principal: string | undefined, timestamp: number): 
   }));
   return {
     timestamp,
+    capabilityRevision: `${engine.commands.epoch}:${engine.commands.revision}`,
     instanceName: engine.instanceName,
     worldName: engine.world?.name ?? "Unknown",
     startRoom: engine.config.startRoom as string,
@@ -174,6 +175,22 @@ function normalized(snapshot: WorldSnapshot): string {
 }
 
 describe("broadcastState — one snapshot per tick, byte-identical per principal", () => {
+  it("publishes registry changes without requiring a catalog roundtrip", () => {
+    const broadcaster = new DashboardBroadcaster();
+    const sink = client(alice);
+    broadcaster.addClient(sink.ws, engine);
+    const first = stateOf(sink).capabilityRevision;
+    engine.commands.registerOwned("fixture", {
+      name: "discovered",
+      help: "New command",
+      handler() {},
+    });
+    broadcaster.broadcastState(engine);
+    expect(stateOf(sink).capabilityRevision).not.toBe(first);
+    expect(stateOf(sink).capabilityRevision).toBe(
+      `${engine.commands.epoch}:${engine.commands.revision}`,
+    );
+  });
   it("masked payloads match the legacy per-principal build for every visibility class", () => {
     const now = 1_700_000_000_000;
     const broadcaster = new DashboardBroadcaster({ now: () => now });

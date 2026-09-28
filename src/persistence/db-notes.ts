@@ -838,6 +838,14 @@ const SHARED_SCORE_EXPR = SCORE_EXPR.replace(
         AS score`,
 );
 
+// Materialize lexical hits once. Joining the projected numeric view directly
+// to FTS can make SQLite rerun the virtual-table MATCH for every owned note.
+// Retain every hit and its original rank: weighted top-20 ranking and ACLs below
+// must stay exact (a lexical LIMIT before scoring would change recall results).
+const MATCHED_NOTES_CTE = `WITH matched_notes AS MATERIALIZED (
+  SELECT rowid, rank FROM notes_fts WHERE notes_fts MATCH ?
+)`;
+
 export function recallNotes(
   db: Database,
   entityName: string,
@@ -861,15 +869,16 @@ export function recallNotes(
   const tierClause = opts?.includeProcess ? "" : `AND ${factLikeClause("n")}`;
   return db
     .query(
-      `SELECT n.*,
+      `${MATCHED_NOTES_CTE}
+      SELECT n.*,
         ${SCORE_EXPR}
       FROM numeric_notes n
-      JOIN notes_fts fts ON n.content_id = fts.rowid
-      WHERE n.entity_name = ? AND n.pool_id IS NULL AND n.verification_status != 'superseded' ${tierClause} AND notes_fts MATCH ?
+      JOIN matched_notes fts ON n.content_id = fts.rowid
+      WHERE n.entity_name = ? AND n.pool_id IS NULL AND n.verification_status != 'superseded' ${tierClause}
       ORDER BY score DESC
       LIMIT 20`,
     )
-    .all(alpha, beta, now, gamma, now, entityName, ftsQuery) as ScoredNoteRow[];
+    .all(ftsQuery, alpha, beta, now, gamma, now, entityName) as ScoredNoteRow[];
 }
 
 export function recallNotesWithType(
@@ -887,15 +896,16 @@ export function recallNotesWithType(
   const now = Date.now();
   return db
     .query(
-      `SELECT n.*,
+      `${MATCHED_NOTES_CTE}
+      SELECT n.*,
         ${SCORE_EXPR}
       FROM numeric_notes n
-      JOIN notes_fts fts ON n.content_id = fts.rowid
-      WHERE n.entity_name = ? AND n.pool_id IS NULL AND n.note_type = ? AND n.verification_status != 'superseded' AND notes_fts MATCH ?
+      JOIN matched_notes fts ON n.content_id = fts.rowid
+      WHERE n.entity_name = ? AND n.pool_id IS NULL AND n.note_type = ? AND n.verification_status != 'superseded'
       ORDER BY score DESC
       LIMIT 20`,
     )
-    .all(alpha, beta, now, gamma, now, entityName, noteType, ftsQuery) as ScoredNoteRow[];
+    .all(ftsQuery, alpha, beta, now, gamma, now, entityName, noteType) as ScoredNoteRow[];
 }
 
 export function findSimilarNotes(

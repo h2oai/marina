@@ -7,6 +7,7 @@ import { parse } from "@babel/parser";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { RateLimiter } from "../src/auth/rate-limiter";
+import { commandManifest } from "../src/engine/command-manifest";
 import type { Engine } from "../src/engine/engine";
 import { createWorldMcpServer } from "../src/net/mcp-world-tools";
 
@@ -146,10 +147,12 @@ export async function generateSurfaceReference(engine: Engine, check: boolean) {
   const server = createWorldMcpServer(engine, new Map(), new RateLimiter());
   const client = new Client({ name: "marina-reference", version: "1" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const toolReference: { name: string; description?: string; inputSchema: unknown }[] = [];
   try {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     const { tools } = await client.listTools();
+    toolReference.push(...tools);
     const lines = [
       "# MCP tool API reference",
       "",
@@ -252,10 +255,13 @@ export async function generateSurfaceReference(engine: Engine, check: boolean) {
     "",
   ];
   let count = 0;
+  const httpReference: (ReturnType<typeof httpDispatchReference>[number] & { source: string })[] =
+    [];
   for (const path of files(join(root, "src/net"))
     .filter((path) => path.endsWith(".ts"))
     .sort()) {
     const entries = httpDispatchReference(readFileSync(path, "utf8"));
+    httpReference.push(...entries.map((entry) => ({ ...entry, source: relative(root, path) })));
     if (!entries.length) continue;
     http.push(`## ${relative(root, path)}`, "");
     for (const entry of entries) {
@@ -273,6 +279,20 @@ export async function generateSurfaceReference(engine: Engine, check: boolean) {
     }
   }
   output("http", `${http.join("\n").trimEnd()}\n`);
+  const explorer = `${JSON.stringify({
+    schema: "marina.api.reference.v1",
+    commands: commandManifest(engine.commands),
+    mcp: toolReference,
+    http: httpReference,
+    sdk: [...modules]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, declaration]) => ({ name, declaration })),
+  })}\n`;
+  const explorerPath = join(root, "docs/reference/api.json");
+  if (check) {
+    if (readFileSync(explorerPath, "utf8") !== explorer)
+      throw new Error("API explorer data is stale; run bun run docs:api");
+  } else writeFileSync(explorerPath, explorer);
   console.log(
     `API reference ${check ? "verified" : "generated"}: MCP tools, ${modules.size} SDK declaration modules, ${count} HTTP dispatch selectors.`,
   );

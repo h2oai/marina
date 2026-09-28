@@ -12,6 +12,7 @@ on:
       - "package.json"
       - ".bun-version"
       - "docs/guides/**"
+      - "docs/reference/api.json"
       - ".github/workflows/site-deploy.yml"
   workflow_dispatch:
 

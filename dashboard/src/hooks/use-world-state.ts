@@ -10,6 +10,7 @@ import {
 import type { DashboardEvent, WorldSnapshot } from "../lib/types";
 
 interface WorldState {
+  capabilityRevision: string | undefined;
   // Real-time data (from WebSocket)
   instanceName: string;
   worldName: string;
@@ -94,6 +95,7 @@ function applyPresence(
 }
 
 export const useWorldState = create<WorldState>((set) => ({
+  capabilityRevision: undefined,
   instanceName: "",
   worldName: "",
   startRoom: "",
@@ -114,6 +116,7 @@ export const useWorldState = create<WorldState>((set) => ({
 
   setSnapshot: (data) =>
     set((state) => ({
+      capabilityRevision: data.capabilityRevision,
       instanceName: data.instanceName ?? state.instanceName,
       worldName: data.worldName ?? state.worldName,
       startRoom: data.startRoom ?? state.startRoom,

@@ -20,6 +20,7 @@ export interface DashboardWSData {
 
 export interface WorldSnapshot {
   timestamp: number;
+  capabilityRevision?: string;
   instanceName: string;
   worldName: string;
   startRoom: string;
@@ -265,6 +266,7 @@ export class DashboardBroadcaster {
     const s = base.shared;
     return {
       timestamp: s.timestamp,
+      capabilityRevision: s.capabilityRevision,
       instanceName: s.instanceName,
       worldName: s.worldName,
       startRoom: s.startRoom,
@@ -347,6 +349,7 @@ export class DashboardBroadcaster {
     return {
       shared: {
         timestamp: this.now(),
+        capabilityRevision: `${engine.commands.epoch}:${engine.commands.revision}`,
         instanceName: engine.instanceName,
         worldName: engine.world?.name ?? "Unknown",
         startRoom: engine.config.startRoom as string,
